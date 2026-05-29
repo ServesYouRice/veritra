@@ -1,82 +1,84 @@
 # WORK IN PROGRESS
 
-Findings from the 2026-05-29 security/quality audit. This file tracks open
-work; close items by ticking them and moving them under "Done" with the
-commit SHA that landed the fix.
+Audit findings + progress log from the 2026-05-29 security/quality pass.
 
----
+## Status at a glance
 
-## Already landed (this session)
+- **Tier 1 (hardening):** 14 items + 11 audit findings landed. Closed.
+- **Tier 2 (spec gaps named in Plan.md):** 6 items landed. Closed.
+- **Tier 3 (largest Plan.md commitments):** open — each item is weeks of work.
+- **Tier 4 (scale & ops):** open — small but not urgent.
 
-| # | Fix | Files |
-|---|---|---|
-| 1 | Username-enumeration timing — bcrypt against dummy hash when lookup fails | auth.go, api.go login |
-| 2 | Conversation privilege escalation — `effectiveConversationRole` caps grant rank | api.go members, types.go RoleRank/ValidRole |
-| 3 | Session token in URL — dropped query fallback; mobile uses Authorization header on WS | api.go principalFromRequest, sync_service.dart |
-| 4 | `claim_token` in URL — moved to X-Veritra-Claim-Token header | api.go claim-status, api_client.dart, api_test.go |
-| 5 | WebSocket origin check (browser cross-origin upgrades rejected) | realtime/websocket.go |
-| 6 | WebSocket rejects unmasked client frames (RFC 6455 §5.1) | realtime/websocket.go |
-| 7 | WebSocket max frame size (1 MiB cap) | realtime/websocket.go |
-| 8 | WebSocket clears http.Server deadlines after Hijack | realtime/websocket.go |
-| 9 | Rate limiter: trusted-proxy aware, separate 10/min auth bucket, bounded map, periodic cleanup | app/app.go, config/config.go |
-| 10 | http.Server Read/Write/Idle timeouts | app/app.go |
-| 11 | Security headers: X-Frame-Options, COOP/CORP, Permissions-Policy, conditional HSTS, CSP on /setup | app/app.go |
-| 12 | retention_seconds bounded to [0, 10 years] | api.go (validRetention) |
-| 13 | idempotency_key ≤ 128 chars, crypto_protocol ≤ 64 chars | api.go createMessageEnvelope |
-| 14 | MarkRead cannot rewind read cursor | storage/sqlite.go MarkRead |
-
----
-
-## Open — Tier 1: finish hardening
-
-_All items in this tier are landed; see Done section below._
-
----
-
-## Open — Tier 2: spec gaps the Plan already names
-
-_All items in this tier are landed; see Done section below._
+All `go test`, `go vet`, `gofmt`, `flutter test`, `flutter analyze` clean
+at HEAD. See git log for the commit boundaries between tiers.
 
 ---
 
 ## Open — Tier 3: largest unfinished commitments from Plan.md
 
-- [ ] **Production E2EE crypto.** OpenMLS/libsignal binding through
-  `cryptoapi.ClientCrypto`. Mark `TestOnlyCryptoService` test-only.
-  Biggest single item in the project.
+These are the MVP commitments that the Plan calls out explicitly and that
+are still scaffolds. They are weeks of work each and require external
+choices (which crypto library, which push provider stack, etc.).
 
-- [ ] **QR rendering + scanning + key-continuity check** on top of the
-  existing device-link API.
+- [ ] **Production E2EE crypto.** Bind a real implementation to
+  `cryptoapi.ClientCrypto` (OpenMLS preferred for group, libsignal as
+  fallback). Replace `UnavailableProductionCrypto` in the wiring and
+  keep `TestOnlyCryptoService` strictly in tests. Server already
+  refuses plaintext at the boundary; tests assert no sentinel leaks
+  into the DB. This is the single biggest remaining item.
 
-- [ ] **Push providers.** APNs, FCM, UnifiedPush implementations of
-  `push.Provider`. Tests proving payloads carry no message text or
-  sender name.
+- [ ] **QR rendering + scanning + key continuity** on top of the
+  existing device-link API. The server side (claim → approve → consume
+  with one-shot claim token) is done; what's missing is the camera
+  pipeline on mobile and a verification step that compares the new
+  device's key fingerprint against the approver's expectation before
+  the session is issued.
+
+- [ ] **Push providers.** Implement `push.Provider` for APNs, FCM, and
+  UnifiedPush. Mandatory: payloads must carry no message text and no
+  sender name (`push.GenericPayload` is the contract). Add provider
+  tests that fail if forbidden fields appear in any rendered payload.
 
 - [ ] **WebRTC media + 1:1 calls** behind `webrtc.SignalingService`.
+  Call signaling records and events exist; media path does not. Pion
+  or LiveKit are the candidate self-hosted options per Plan.md.
 
 - [ ] **Mobile encrypted-attachment upload UX** and encrypted-backup
-  restore UX.
+  restore UX. Server side accepts ciphertext blobs with the
+  `X-Private-Messenger-Encrypted: 1` header; the mobile picker /
+  client-side encryption path is unbuilt.
 
 ---
 
 ## Open — Tier 4: scale & ops
 
-- [ ] **M. Single SQLite connection serializes all I/O**
-  `SetMaxOpenConns(1)`. Correct for write safety, but WAL mode allows
-  concurrent reads. For small instances this is fine — note for scale.
+Smaller, well-bounded, and safe to defer.
 
-- [ ] **H. Schema migrations have no integrity check**
-  `migrationApplied()` only checks version presence. Add a content
-  checksum column so silent edits to applied SQL files are detected.
+- [ ] **M. Single SQLite connection serializes all I/O.**
+  `storage.Open` sets `SetMaxOpenConns(1)`. Correct for write safety,
+  but WAL mode allows concurrent readers. For the documented
+  small-instance target this is fine; for scale, separate reader and
+  writer connection pools and switch readers to deferred transactions.
 
-- [ ] **N. `Hub.Publish` drops events on full client buffer**
-  Recovery via DB-backed `/sync/events` exists. Document the contract.
+- [ ] **H. Schema migrations have no integrity check.**
+  `migrationApplied()` only looks at `schema_migrations.version`.
+  Add a content checksum column so silent edits to applied SQL files
+  are detected on next startup.
+
+- [ ] **N. `Hub.Publish` drops events on full client buffer.**
+  Recovery via DB-backed `/sync/events` exists. Document the contract
+  in `realtime/hub.go` so the drop semantics aren't a surprise.
+
+- [ ] **Dependabot alerts.** GitHub flagged 2 moderate alerts on
+  `ServesYouRice/Veritra` after each push. Triage them; bump or pin
+  affected transitive deps.
 
 ---
 
 ## Done
 
-### 2026-05-29 — Tier 2 (spec gaps)
+### 2026-05-29 — Tier 2 (spec gaps) — commit `f6f844d`
+
 - **L. Login device attribution.** When no `device_id` is provided,
   `LoginRecord` now picks the most-recently-active device
   (`COALESCE(last_seen_at, created_at) DESC`) instead of the oldest.
@@ -96,60 +98,71 @@ _All items in this tier are landed; see Done section below._
 - **S. `ExportAccount` paginated.** New `ExportAccountOptions` (Limit,
   BeforeID), default 1000 with a cap of 5000. Endpoint surfaces
   `next_before` when more messages exist so truncation is no longer
-  silent. Account, devices, and conversations are still returned in full
-  on every page; only messages paginate.
+  silent. Account, devices, and conversations are still returned in
+  full on every page; only messages paginate.
 - **P. Mobile insecure-URL confirmation.** `ConnectScreen._submit` now
   shows a confirmation dialog when the user submits an `http://` URL
   whose host is not local (`localhost`, `127.0.0.1`, `::1`, `*.local`,
   `*.localhost`, RFC 1918 ranges). Cancel aborts the submission;
   Continue Anyway proceeds.
 - **O. Encrypted local session store.** Added `flutter_secure_storage`
-  dependency and `SecureLocalStore` that persists the session as JSON to
-  the platform keystore (Android Keystore-backed EncryptedSharedPrefs,
-  iOS Keychain `first_unlock_this_device`). `main.dart` uses it by
-  default and calls `AppState.tryRestoreSession()` on cold start so the
-  user is no longer kicked out on every app launch. Tests continue to
-  use `MemoryLocalStore`.
+  dependency and `SecureLocalStore` that persists the session as JSON
+  to the platform keystore (Android Keystore-backed
+  EncryptedSharedPrefs, iOS Keychain `first_unlock_this_device`).
+  `main.dart` uses it by default and calls
+  `AppState.tryRestoreSession()` on cold start so the user is no
+  longer kicked out on every app launch. Tests continue to use
+  `MemoryLocalStore`.
 
-### 2026-05-29 — Tier 1 hardening pass
-- **K. Bearer prefix case-insensitive.** `principalFromRequest` uses
-  `EqualFold` on the scheme so `bearer`, `BEARER` work per RFC 7235.
-- **I. Empty community/channel names rejected.** New `validDisplayName`
-  helper applied in `createCommunity` and the channel branch of
-  `communitySubroute`. Returns `invalid_name`.
-- **J. Invite expiry validated.** `createInvite` rejects past
-  `expires_at`, caps at 90 days, and rejects `max_uses` outside [0, 10000].
-- **F. Push de-registration.** `DELETE /api/v1/push/subscriptions/{id}`
-  calls `Store.DisablePushSubscription`, which sets `disabled_at` only on
-  rows owned by the caller. Returns 404 if not found.
-- **E. `devices.last_seen_at` stamped from `PrincipalByTokenHash`.** Best-
-  effort UPDATE throttled by a WHERE clause to one write per minute per
-  device — no row touched if `last_seen_at` was updated within the last
-  60s, so we don't write-amplify on chatty clients.
-- **G. Audit events wired.** New `Store.RecordAuditEvent` writes metadata-
-  only rows to the previously-unused `audit_events` table. Currently
-  fired on: `owner.created`, `account.registered`, `session.login`,
-  `invite.created`, `device_link.approved`,
-  `conversation.member.added`, `conversation.retention.updated`,
-  `account.deleted`. Payloads carry IDs and role names only — never
-  ciphertext, message content, or password hashes.
-- **D. `sync_events.payload_json` no longer duplicates ciphertext.**
-  `messageEventRef` returns `{message_id, conversation_id, edited_at?,
-  deleted_at?}` instead of the full envelope. Realtime WebSocket payloads
-  still carry the full envelope so connected clients get it without a
-  round trip; the persisted log is now a compact reference and the
-  recovering client refetches via `/api/v1/conversations/.../messages`.
-- **C. `sync_events`/`audit_events` retention sweep.** New goroutine
-  `runRetentionSweeper` ticks every 6h, deleting rows older than 30 days
-  (override: `PRIVATE_MESSENGER_SYNC_EVENT_RETENTION_DAYS`). Sweep also
-  runs once at startup. `Store.PruneSyncEvents` and `PruneAuditEvents`
-  expose the operation.
-- **A. Atomic backup via `VACUUM INTO`.** `Store.BackupTo` issues
-  `VACUUM INTO '<dest>'` so the snapshot includes the WAL frames and is a
-  single consistent file. CLI `backup` opens the store, calls it, then
-  `chmod 0600`. Refuses to overwrite an existing destination.
-- **B. Safer restore.** CLI `restore` probes the `-wal` companion for
-  exclusive open before touching anything; if the file is in use, refuses
-  with a clear error. Removes any leftover `-wal`/`-shm` companions
-  before copying the backup over the live DB so SQLite cannot replay a
-  stale journal against the restored file.
+### 2026-05-29 — Tier 1 (hardening) — commit `39277d1`
+
+Initial 14-item fix pass + 11 follow-up audit items, bundled with the
+pre-existing device-link MVP work.
+
+- **Username-enumeration timing.** Login runs bcrypt against a dummy
+  hash when the lookup fails so response time is constant across
+  existent/non-existent usernames.
+- **Conversation privilege escalation.** Callers can no longer grant a
+  role above their own effective rank
+  (`RoleRank` + `effectiveConversationRole` helper).
+- **Session token in URL.** Dropped query-param fallback; Authorization
+  header only; mobile sends `Authorization` header on WebSocket
+  connect. Bearer scheme matched case-insensitively per RFC 7235.
+- **`claim_token` in URL.** Moved from query string to
+  `X-Veritra-Claim-Token` header so it never lands in access logs.
+- **WebSocket hardening.** Origin check rejects browser cross-origin
+  upgrades; client frames must be masked (RFC 6455 §5.1); 1 MiB frame
+  cap; http.Server deadlines cleared after Hijack.
+- **HTTP server.** ReadTimeout / WriteTimeout / IdleTimeout set; rate
+  limiter is now trusted-proxy aware
+  (`PRIVATE_MESSENGER_TRUSTED_PROXIES`), has a separate 10/min auth
+  bucket, a bounded buckets map, and a periodic cleanup goroutine.
+- **Security headers.** Added X-Frame-Options, COOP, CORP,
+  Permissions-Policy, conditional HSTS, and CSP on `/setup`.
+- **Validation.** `retention_seconds` ∈ [0, 10y]; `idempotency_key`
+  ≤128 chars; `crypto_protocol` ≤64 chars; community/channel names
+  non-empty and ≤64 chars; invite `expires_at` must be future and
+  ≤90d; `max_uses` ≤10000.
+- **Read receipts cannot rewind.** SQL `WHERE` on `ON CONFLICT DO
+  UPDATE` compares message `created_at`.
+- **`devices.last_seen_at`** stamped on each authenticated request,
+  throttled to one write per device per minute.
+- **Push de-registration.** `DELETE /api/v1/push/subscriptions/{id}`
+  sets `disabled_at` on rows owned by the caller.
+- **`audit_events` wired.** Metadata-only rows for `owner.created`,
+  `account.registered`, `session.login`, `invite.created`,
+  `device_link.approved`, `conversation.member.added`,
+  `conversation.retention.updated`, `account.deleted`. Never
+  ciphertext or password hashes.
+- **`sync_events.payload_json` no longer duplicates ciphertext.**
+  Persisted payload is the compact message reference; realtime WS
+  payloads still carry the full envelope for connected clients.
+- **`sync_events` / `audit_events` retention sweep.** Background
+  goroutine deletes rows older than 30 days (override via
+  `PRIVATE_MESSENGER_SYNC_EVENT_RETENTION_DAYS`).
+- **Atomic backup.** CLI `backup` uses SQLite `VACUUM INTO` for a
+  single consistent file.
+- **Safer restore.** CLI `restore` probes the `-wal` companion for an
+  exclusive open before touching anything, and removes leftover
+  `-wal`/`-shm` companions before copying so SQLite cannot replay a
+  stale journal.
