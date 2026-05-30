@@ -47,6 +47,10 @@ func (h *Hub) Unregister(client *Client) {
 	close(client.send)
 }
 
+// Publish sends a best-effort realtime copy of an already-durable event.
+// If a client's bounded buffer is full, the event is dropped for that socket;
+// clients must recover missed events through the DB-backed /sync/events API
+// using their last observed event id.
 func (h *Hub) Publish(accountIDs []string, event Event) {
 	payload, err := json.Marshal(event)
 	if err != nil {

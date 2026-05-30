@@ -12,7 +12,7 @@ if (Get-Command go -ErrorAction SilentlyContinue) {
   Pop-Location
 } else {
   $GoLintCommand = 'gofmt -l . > /tmp/private-messenger-gofmt.txt && test ! -s /tmp/private-messenger-gofmt.txt && go vet ./...'
-  docker run --rm -v "${Root}:/workspace" -w /workspace/server golang:1.23 sh -c $GoLintCommand
+  docker run --rm -v "${Root}:/workspace" -w /workspace/server golang:1.25 sh -c $GoLintCommand
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 

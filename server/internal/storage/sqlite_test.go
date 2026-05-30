@@ -9,7 +9,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"private-messenger/server/internal/auth"
@@ -342,6 +344,41 @@ func TestDeviceLinkRequiresApprovalBeforeSession(t *testing.T) {
 	}
 	if _, err := store.ConsumeApprovedDeviceLink(ctx, link.ID, auth.HashToken(claimToken), secondTokenHash, time.Now().UTC().Add(time.Hour)); !errors.Is(err, ErrDeviceLinkInvalid) {
 		t.Fatalf("second consume with token %q err=%v want %v", secondToken, err, ErrDeviceLinkInvalid)
+	}
+}
+
+func TestMigrateRejectsEditedAppliedMigration(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	cfg := config.Config{
+		Addr:         ":0",
+		DataDir:      dir,
+		DatabasePath: filepath.Join(dir, "private-messenger.db"),
+		StoragePath:  filepath.Join(dir, "blobs"),
+		InstanceName: "Test Messenger",
+	}
+	store, err := Open(ctx, cfg)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	initial := fstest.MapFS{
+		"0001_init.sql": {Data: []byte(`CREATE TABLE migrated_thing (id TEXT PRIMARY KEY);`)},
+	}
+	if err := store.Migrate(ctx, initial); err != nil {
+		t.Fatalf("initial migrate: %v", err)
+	}
+	if err := store.Migrate(ctx, initial); err != nil {
+		t.Fatalf("repeat migrate: %v", err)
+	}
+
+	edited := fstest.MapFS{
+		"0001_init.sql": {Data: []byte(`CREATE TABLE migrated_thing (id TEXT PRIMARY KEY, name TEXT);`)},
+	}
+	err = store.Migrate(ctx, edited)
+	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("edited migration err=%v want checksum mismatch", err)
 	}
 }
 

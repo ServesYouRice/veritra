@@ -6,7 +6,7 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 if command -v go >/dev/null 2>&1; then
   (cd "$ROOT/server" && gofmt -l . > /tmp/private-messenger-gofmt.txt && test ! -s /tmp/private-messenger-gofmt.txt && go vet ./...)
 else
-  docker run --rm -v "$ROOT:/workspace" -w /workspace/server golang:1.23 sh -c 'gofmt -l . > /tmp/private-messenger-gofmt.txt && test ! -s /tmp/private-messenger-gofmt.txt && go vet ./...'
+  docker run --rm -v "$ROOT:/workspace" -w /workspace/server golang:1.25 sh -c 'gofmt -l . > /tmp/private-messenger-gofmt.txt && test ! -s /tmp/private-messenger-gofmt.txt && go vet ./...'
 fi
 
 if command -v cargo >/dev/null 2>&1; then

@@ -2,14 +2,16 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
-	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -32,23 +34,80 @@ var (
 )
 
 type Store struct {
-	db *sql.DB
+	db *dbRouter
+}
+
+type dbRouter struct {
+	reader *sql.DB
+	writer *sql.DB
+}
+
+func (db *dbRouter) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	return db.writer.ExecContext(ctx, query, args...)
+}
+
+func (db *dbRouter) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	return db.reader.QueryContext(ctx, query, args...)
+}
+
+func (db *dbRouter) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	return db.reader.QueryRowContext(ctx, query, args...)
+}
+
+func (db *dbRouter) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
+	return db.writer.BeginTx(ctx, opts)
+}
+
+func (db *dbRouter) PingContext(ctx context.Context) error {
+	if err := db.writer.PingContext(ctx); err != nil {
+		return err
+	}
+	return db.reader.PingContext(ctx)
+}
+
+func (db *dbRouter) Close() error {
+	return errors.Join(db.reader.Close(), db.writer.Close())
 }
 
 func Open(ctx context.Context, cfg config.Config) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(cfg.DatabasePath), 0o700); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", cfg.DatabasePath)
+	writer, err := sql.Open("sqlite", cfg.DatabasePath)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	store := &Store{db: db}
-	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;"); err != nil {
-		_ = db.Close()
+	writer.SetMaxOpenConns(1)
+	writer.SetMaxIdleConns(1)
+	if _, err := writer.ExecContext(ctx, "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;"); err != nil {
+		_ = writer.Close()
 		return nil, err
 	}
+
+	readerConns := runtime.NumCPU()
+	if readerConns < 4 {
+		readerConns = 4
+	}
+	if readerConns > 16 {
+		readerConns = 16
+	}
+	reader, err := sql.Open("sqlite", cfg.DatabasePath)
+	if err != nil {
+		_ = writer.Close()
+		return nil, err
+	}
+	reader.SetMaxOpenConns(readerConns)
+	reader.SetMaxIdleConns(readerConns)
+	if _, err := reader.ExecContext(ctx, "PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;"); err != nil {
+		_ = reader.Close()
+		_ = writer.Close()
+		return nil, err
+	}
+
+	// Query calls use their own pool. SQLite's WAL mode gives those reads
+	// deferred transactions by default, while writes stay serialized through
+	// the single writer connection.
+	store := &Store{db: &dbRouter{reader: reader, writer: writer}}
 	return store, nil
 }
 
@@ -75,12 +134,16 @@ func (s *Store) BackupTo(ctx context.Context, dest string) error {
 	// inside the literal to escape per SQLite syntax. The path comes from a
 	// trusted operator (CLI flag), not user input.
 	escaped := strings.ReplaceAll(dest, "'", "''")
-	_, err := s.db.ExecContext(ctx, fmt.Sprintf("VACUUM INTO '%s'", escaped))
+	_, err := s.db.reader.ExecContext(ctx, fmt.Sprintf("VACUUM INTO '%s'", escaped))
 	return err
 }
 
-func (s *Store) Migrate(ctx context.Context, migrations embed.FS) error {
-	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
+func (s *Store) Migrate(ctx context.Context, migrations fs.FS) error {
+	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, checksum_sha256 TEXT NOT NULL, applied_at TEXT NOT NULL)`); err != nil {
+		return err
+	}
+	checksumColumnAdded, err := s.ensureMigrationChecksumColumn(ctx)
+	if err != nil {
 		return err
 	}
 	entries, err := fs.ReadDir(migrations, ".")
@@ -95,16 +158,29 @@ func (s *Store) Migrate(ctx context.Context, migrations embed.FS) error {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		applied, err := s.migrationApplied(ctx, name)
+		sqlBytes, err := fs.ReadFile(migrations, name)
+		if err != nil {
+			return err
+		}
+		checksum := migrationChecksum(sqlBytes)
+		appliedChecksum, applied, err := s.appliedMigrationChecksum(ctx, name)
 		if err != nil {
 			return err
 		}
 		if applied {
+			if appliedChecksum == "" {
+				if !checksumColumnAdded {
+					return fmt.Errorf("migration %s has no stored checksum", name)
+				}
+				if _, err := s.db.ExecContext(ctx, `UPDATE schema_migrations SET checksum_sha256 = ? WHERE version = ? AND (checksum_sha256 IS NULL OR checksum_sha256 = '')`, checksum, name); err != nil {
+					return err
+				}
+				continue
+			}
+			if !strings.EqualFold(appliedChecksum, checksum) {
+				return fmt.Errorf("migration %s checksum mismatch: applied %s, current %s", name, appliedChecksum, checksum)
+			}
 			continue
-		}
-		sqlBytes, err := migrations.ReadFile(name)
-		if err != nil {
-			return err
 		}
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
@@ -114,7 +190,7 @@ func (s *Store) Migrate(ctx context.Context, migrations embed.FS) error {
 			_ = tx.Rollback()
 			return fmt.Errorf("apply migration %s: %w", name, err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, name, nowString()); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, checksum_sha256, applied_at) VALUES(?, ?, ?)`, name, checksum, nowString()); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
@@ -125,12 +201,54 @@ func (s *Store) Migrate(ctx context.Context, migrations embed.FS) error {
 	return nil
 }
 
-func (s *Store) migrationApplied(ctx context.Context, version string) (bool, error) {
-	var count int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, version).Scan(&count); err != nil {
+func (s *Store) ensureMigrationChecksumColumn(ctx context.Context) (bool, error) {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(schema_migrations)`)
+	if err != nil {
 		return false, err
 	}
-	return count > 0, nil
+	defer rows.Close()
+	hasChecksum := false
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull int
+		var defaultValue interface{}
+		var pk int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return false, err
+		}
+		if name == "checksum_sha256" {
+			hasChecksum = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	if hasChecksum {
+		return false, nil
+	}
+	_, err = s.db.ExecContext(ctx, `ALTER TABLE schema_migrations ADD COLUMN checksum_sha256 TEXT`)
+	return err == nil, err
+}
+
+func (s *Store) appliedMigrationChecksum(ctx context.Context, version string) (string, bool, error) {
+	var checksum sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT checksum_sha256 FROM schema_migrations WHERE version = ?`, version).Scan(&checksum)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	if !checksum.Valid {
+		return "", true, nil
+	}
+	return checksum.String, true, nil
+}
+
+func migrationChecksum(sqlBytes []byte) string {
+	sum := sha256.Sum256(sqlBytes)
+	return hex.EncodeToString(sum[:])
 }
 
 func (s *Store) SetupRequired(ctx context.Context) (bool, error) {

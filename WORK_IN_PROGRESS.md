@@ -7,10 +7,10 @@ Audit findings + progress log from the 2026-05-29 security/quality pass.
 - **Tier 1 (hardening):** 14 items + 11 audit findings landed. Closed.
 - **Tier 2 (spec gaps named in Plan.md):** 6 items landed. Closed.
 - **Tier 3 (largest Plan.md commitments):** open — each item is weeks of work.
-- **Tier 4 (scale & ops):** open — small but not urgent.
+- **Tier 4 (scale & ops):** closed.
 
-All `go test`, `go vet`, `gofmt`, `flutter test`, `flutter analyze` clean
-at HEAD. See git log for the commit boundaries between tiers.
+Current verification: Dockerized `scripts/lint.ps1`, `scripts/test.ps1`,
+and `govulncheck` are clean after the Tier 4 follow-up.
 
 ---
 
@@ -50,32 +50,27 @@ choices (which crypto library, which push provider stack, etc.).
 
 ---
 
-## Open — Tier 4: scale & ops
-
-Smaller, well-bounded, and safe to defer.
-
-- [ ] **M. Single SQLite connection serializes all I/O.**
-  `storage.Open` sets `SetMaxOpenConns(1)`. Correct for write safety,
-  but WAL mode allows concurrent readers. For the documented
-  small-instance target this is fine; for scale, separate reader and
-  writer connection pools and switch readers to deferred transactions.
-
-- [ ] **H. Schema migrations have no integrity check.**
-  `migrationApplied()` only looks at `schema_migrations.version`.
-  Add a content checksum column so silent edits to applied SQL files
-  are detected on next startup.
-
-- [ ] **N. `Hub.Publish` drops events on full client buffer.**
-  Recovery via DB-backed `/sync/events` exists. Document the contract
-  in `realtime/hub.go` so the drop semantics aren't a surprise.
-
-- [ ] **Dependabot alerts.** GitHub flagged 2 moderate alerts on
-  `ServesYouRice/Veritra` after each push. Triage them; bump or pin
-  affected transitive deps.
-
----
-
 ## Done
+
+### 2026-05-29 - Tier 4 (scale/ops) + dependency follow-up
+
+- **M. SQLite read/write pools.** `storage.Open` now creates a single
+  serialized writer connection and a bounded WAL reader pool. Existing
+  `Exec`/transaction call sites route to the writer; `Query` call sites
+  route to the reader pool, where SQLite read transactions remain
+  deferred by default.
+- **H. Migration checksums.** `schema_migrations` records a
+  `checksum_sha256` for every SQL migration. Startup now rejects an
+  already-applied migration whose file content changed, and a storage
+  test covers the mismatch path.
+- **N. Realtime drop contract.** `realtime.Hub.Publish` now documents
+  that full client buffers drop only the best-effort socket copy, and
+  clients recover durable events through `/sync/events`.
+- **Dependabot alerts.** `golang.org/x/crypto` was bumped from
+  `v0.36.0` to `v0.52.0`, `golang.org/x/sys` from `v0.31.0` to
+  `v0.45.0`, and the Go toolchain/Docker/CI references were moved to
+  Go 1.25 because those fixed module versions require it. `govulncheck`
+  now reports no vulnerabilities across the scanned server module set.
 
 ### 2026-05-29 — Tier 2 (spec gaps) — commit `f6f844d`
 

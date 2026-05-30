@@ -315,8 +315,10 @@ func TestListMessagesCursorPagination(t *testing.T) {
 		ids = append(ids, createMessage(t, handler, token, conversationID, "page-"+strconv.Itoa(i), []byte("ciphertext")))
 	}
 	type pageT struct {
-		Messages   []struct{ ID string `json:"id"` } `json:"messages"`
-		NextBefore string                            `json:"next_before"`
+		Messages []struct {
+			ID string `json:"id"`
+		} `json:"messages"`
+		NextBefore string `json:"next_before"`
 	}
 	fetch := func(t *testing.T, path string) pageT {
 		t.Helper()

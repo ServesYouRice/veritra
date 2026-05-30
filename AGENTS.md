@@ -1,5 +1,8 @@
 # AGENTS.md
 
+## About the user
+The user has a medical condition where they have difficulty reading big walls of text. They prefer extremely short and concise messages explaining current problems and summaries.
+
 ## Project Overview
 
 Private Messenger is an AGPL-3.0-or-later, self-hostable, privacy-first messenger. The server is a Go modular monolith with SQLite by default. The mobile app is Flutter-first for Android and iOS. Server code must preserve end-to-end encryption boundaries and never require plaintext message bodies.
