@@ -37,6 +37,24 @@ class ApiClient {
     return _sessionFromAuthJson(json);
   }
 
+  Future<Session> register({
+    required String inviteCode,
+    required String username,
+    required String password,
+    required String deviceName,
+    required List<int> deviceKeyPackage,
+  }) async {
+    final json =
+        await _jsonRequest('POST', '/api/v1/register', body: <String, Object?>{
+      'invite_code': inviteCode,
+      'username': username,
+      'password': password,
+      'device_name': deviceName,
+      'device_key_package': base64Encode(deviceKeyPackage),
+    });
+    return _sessionFromAuthJson(json);
+  }
+
   Future<Session> login(
       {required String username,
       required String password,
@@ -78,12 +96,104 @@ class ApiClient {
   }
 
   Future<Conversation> createConversation(String token, String kind) async {
+    return createConversationDetailed(token, kind: kind);
+  }
+
+  Future<Conversation> createConversationDetailed(
+    String token, {
+    required String kind,
+    String? title,
+    String? communityId,
+    String? channelId,
+    List<String> memberAccountIds = const <String>[],
+    int? retentionSeconds,
+  }) async {
+    final trimmedTitle = title?.trim();
     final json = await _jsonRequest('POST', '/api/v1/conversations',
         token: token,
         body: <String, Object?>{
           'kind': kind,
+          if (trimmedTitle != null && trimmedTitle.isNotEmpty)
+            'title': trimmedTitle,
+          if (communityId != null) 'community_id': communityId,
+          if (channelId != null) 'channel_id': channelId,
+          if (memberAccountIds.isNotEmpty)
+            'member_account_ids': memberAccountIds,
+          if (retentionSeconds != null) 'retention_seconds': retentionSeconds,
         });
     return Conversation.fromJson(json);
+  }
+
+  Future<Invite> createInvite(
+    String token, {
+    int maxUses = 1,
+    DateTime? expiresAt,
+  }) async {
+    final json = await _jsonRequest('POST', '/api/v1/invites',
+        token: token,
+        body: <String, Object?>{
+          'max_uses': maxUses,
+          if (expiresAt != null)
+            'expires_at': expiresAt.toUtc().toIso8601String(),
+        });
+    return Invite.fromJson(json);
+  }
+
+  Future<Community> createCommunity(String token, String name) async {
+    final json = await _jsonRequest('POST', '/api/v1/communities',
+        token: token,
+        body: <String, Object?>{
+          'name': name,
+        });
+    return Community.fromJson(json);
+  }
+
+  Future<Channel> createChannel(
+    String token,
+    String communityId,
+    String name, {
+    String kind = 'text',
+  }) async {
+    final json = await _jsonRequest(
+        'POST', '/api/v1/communities/$communityId/channels',
+        token: token,
+        body: <String, Object?>{
+          'name': name,
+          'kind': kind,
+        });
+    return Channel.fromJson(json);
+  }
+
+  Future<void> addConversationMember(
+    String token,
+    String conversationId,
+    String accountId, {
+    String role = 'member',
+  }) async {
+    await _jsonRequest('POST', '/api/v1/conversations/$conversationId/members',
+        token: token,
+        body: <String, Object?>{
+          'account_id': accountId,
+          'role': role,
+        });
+  }
+
+  Future<Conversation> updateRetention(
+    String token,
+    String conversationId,
+    int? retentionSeconds,
+  ) async {
+    final json = await _jsonRequest(
+        'PUT', '/api/v1/conversations/$conversationId/retention',
+        token: token,
+        body: <String, Object?>{
+          'retention_seconds': retentionSeconds,
+        });
+    return Conversation.fromJson(json);
+  }
+
+  Future<void> deleteAccount(String token) async {
+    await _jsonRequest('DELETE', '/api/v1/account', token: token);
   }
 
   Future<void> sendEnvelope(String token, MessageEnvelope envelope) async {

@@ -30,6 +30,11 @@ class AppState extends ChangeNotifier {
   StreamSubscription<Map<String, Object?>>? _syncSubscription;
   List<Conversation> conversations = <Conversation>[];
   List<Device> devices = <Device>[];
+  // Session-local records: the server has no list endpoints for these yet,
+  // so the UI shows what was created from this device during this session.
+  List<Community> communities = <Community>[];
+  Map<String, List<Channel>> channelsByCommunity = <String, List<Channel>>{};
+  List<Invite> invites = <Invite>[];
   Map<String, List<ReceivedMessageEnvelope>> messagesByConversation =
       <String, List<ReceivedMessageEnvelope>>{};
   String? selectedConversationId;
@@ -176,17 +181,206 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> createGroup() async {
+    await startConversation(kind: 'group');
+  }
+
+  /// Creates a DM, group, or community channel conversation and selects it.
+  Future<Conversation?> startConversation({
+    required String kind,
+    String? title,
+    String? communityId,
+    String? channelId,
+    List<String> memberAccountIds = const <String>[],
+    int? retentionSeconds,
+  }) async {
+    Conversation? created;
     await _run(() async {
       final current = session;
       final client = api;
       if (current == null || client == null) {
         return;
       }
-      final conversation =
-          await client.createConversation(current.token, 'group');
+      created = await client.createConversationDetailed(
+        current.token,
+        kind: kind,
+        title: title,
+        communityId: communityId,
+        channelId: channelId,
+        memberAccountIds: memberAccountIds,
+        retentionSeconds: retentionSeconds,
+      );
+      final conversation = created!;
       conversations = <Conversation>[conversation, ...conversations];
       selectedConversationId = conversation.id;
       messagesByConversation[conversation.id] = <ReceivedMessageEnvelope>[];
+    });
+    return error == null ? created : null;
+  }
+
+  Future<void> registerWithInvite(
+    String baseUrl,
+    String inviteCode,
+    String username,
+    String password,
+  ) async {
+    await _run(() async {
+      api = apiClientFactory(baseUrl);
+      session = await api!.register(
+        inviteCode: inviteCode,
+        username: username,
+        password: password,
+        deviceName: 'Mobile device',
+        deviceKeyPackage: await cryptoService.createDeviceKeyPackage(),
+      );
+      await localStore.saveSession(session!);
+      _lastSyncEventId = 0;
+      await localStore.saveSyncCursor(0);
+      await refreshConversations();
+      await refreshDevices();
+      _startSync();
+    });
+  }
+
+  Future<Invite?> createInvite({int maxUses = 1, DateTime? expiresAt}) async {
+    Invite? created;
+    await _run(() async {
+      final current = session;
+      final client = api;
+      if (current == null || client == null) {
+        return;
+      }
+      created = await client.createInvite(
+        current.token,
+        maxUses: maxUses,
+        expiresAt: expiresAt,
+      );
+      invites = <Invite>[created!, ...invites];
+    });
+    return error == null ? created : null;
+  }
+
+  Future<Community?> createCommunity(String name) async {
+    Community? created;
+    await _run(() async {
+      final current = session;
+      final client = api;
+      if (current == null || client == null) {
+        return;
+      }
+      created = await client.createCommunity(current.token, name);
+      communities = <Community>[created!, ...communities];
+    });
+    return error == null ? created : null;
+  }
+
+  /// Creates a channel inside a community, then opens a matching
+  /// community_channel conversation so the channel is immediately usable.
+  Future<void> createChannel(String communityId, String name) async {
+    Channel? channel;
+    await _run(() async {
+      final current = session;
+      final client = api;
+      if (current == null || client == null) {
+        return;
+      }
+      channel = await client.createChannel(current.token, communityId, name);
+      channelsByCommunity = <String, List<Channel>>{
+        ...channelsByCommunity,
+        communityId: <Channel>[
+          channel!,
+          ...channelsByCommunity[communityId] ?? const <Channel>[],
+        ],
+      };
+    });
+    if (error != null || channel == null) {
+      return;
+    }
+    await startConversation(
+      kind: 'community_channel',
+      title: name,
+      communityId: communityId,
+      channelId: channel!.id,
+    );
+  }
+
+  Future<void> addConversationMember(
+    String conversationId,
+    String accountId, {
+    String role = 'member',
+  }) async {
+    await _run(() async {
+      final current = session;
+      final client = api;
+      if (current == null || client == null) {
+        return;
+      }
+      await client.addConversationMember(
+        current.token,
+        conversationId,
+        accountId,
+        role: role,
+      );
+    });
+  }
+
+  Future<void> setConversationRetention(
+    String conversationId,
+    int? retentionSeconds,
+  ) async {
+    await _run(() async {
+      final current = session;
+      final client = api;
+      if (current == null || client == null) {
+        return;
+      }
+      final updated = await client.updateRetention(
+        current.token,
+        conversationId,
+        retentionSeconds,
+      );
+      conversations =
+          conversations.map((c) => c.id == updated.id ? updated : c).toList();
+    });
+  }
+
+  Future<List<MetadataSearchResult>> searchMetadata(String query) async {
+    final current = session;
+    final client = api;
+    if (current == null || client == null || query.trim().isEmpty) {
+      return const <MetadataSearchResult>[];
+    }
+    return client.searchMetadata(current.token, query.trim());
+  }
+
+  /// Best-effort read receipt for the newest visible message. Failures are
+  /// intentionally silent; receipts must never block reading.
+  Future<void> markNewestMessageRead(String conversationId) async {
+    final current = session;
+    final client = api;
+    if (current == null || client == null) {
+      return;
+    }
+    final messages = messagesByConversation[conversationId] ??
+        const <ReceivedMessageEnvelope>[];
+    if (messages.isEmpty) {
+      return;
+    }
+    try {
+      await client.markRead(current.token, conversationId, messages.first.id);
+    } catch (_) {
+      // Ignored: read receipts are advisory.
+    }
+  }
+
+  Future<void> deleteAccount() async {
+    await _run(() async {
+      final current = session;
+      final client = api;
+      if (current == null || client == null) {
+        return;
+      }
+      await client.deleteAccount(current.token);
+      await _clearLocalSession();
     });
   }
 
@@ -331,7 +525,7 @@ class AppState extends ChangeNotifier {
   void selectConversation(String id) {
     selectedConversationId = id;
     notifyListeners();
-    unawaited(refreshSelectedMessages());
+    unawaited(refreshSelectedMessages().then((_) => markNewestMessageRead(id)));
   }
 
   void _startSync() {
@@ -430,6 +624,9 @@ class AppState extends ChangeNotifier {
     selectedConversationId = null;
     activeDeviceLink = null;
     pendingDeviceLinkClaim = null;
+    communities = <Community>[];
+    channelsByCommunity = <String, List<Channel>>{};
+    invites = <Invite>[];
     _lastSyncEventId = 0;
   }
 
