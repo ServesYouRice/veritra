@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/app_state.dart';
-import '../../core/models.dart';
+import '../../ui/format.dart';
 
 class DeviceLinkScreen extends StatelessWidget {
   const DeviceLinkScreen({required this.state, super.key});
@@ -13,12 +14,22 @@ class DeviceLinkScreen extends StatelessWidget {
     return AnimatedBuilder(
       animation: state,
       builder: (context, _) {
+        final theme = Theme.of(context);
         final link = state.activeDeviceLink;
         return Scaffold(
-          appBar: AppBar(title: const Text('Link device')),
+          appBar: AppBar(title: const Text('Link a device')),
           body: ListView(
             padding: const EdgeInsets.all(16),
             children: <Widget>[
+              Text(
+                'Generate a one-time code, enter it on the new device, then '
+                'approve it here with the verification code the new device '
+                'shows.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 16),
               FilledButton.icon(
                 onPressed: state.busy ? null : state.createDeviceLink,
                 icon: const Icon(Icons.qr_code_2),
@@ -26,7 +37,49 @@ class DeviceLinkScreen extends StatelessWidget {
               ),
               if (link != null) ...<Widget>[
                 const SizedBox(height: 16),
-                _DeviceLinkDetails(link: link),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Column(
+                      children: <Widget>[
+                        ListTile(
+                          leading: const Icon(Icons.info_outline),
+                          title: const Text('Status'),
+                          trailing: _StateChip(state: link.state),
+                        ),
+                        _LinkValueTile(
+                          icon: Icons.pin_outlined,
+                          title: 'Link code',
+                          value: link.code ?? '',
+                          copyable: true,
+                        ),
+                        _LinkValueTile(
+                          icon: Icons.verified_outlined,
+                          title: 'Verification code',
+                          value: link.verificationCode,
+                        ),
+                        if (link.linkUri != null)
+                          _LinkValueTile(
+                            icon: Icons.link_outlined,
+                            title: 'Link URI',
+                            value: link.linkUri!,
+                            copyable: true,
+                          ),
+                        _LinkValueTile(
+                          icon: Icons.timer_outlined,
+                          title: 'Expires',
+                          value: formatDateTime(link.expiresAt),
+                        ),
+                        if (link.claimedDeviceName != null)
+                          _LinkValueTile(
+                            icon: Icons.tablet_android_outlined,
+                            title: 'Claimed by',
+                            value: link.claimedDeviceName!,
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 16),
                 OutlinedButton.icon(
                   onPressed: state.busy ? null : state.refreshActiveDeviceLink,
@@ -44,7 +97,7 @@ class DeviceLinkScreen extends StatelessWidget {
                 const SizedBox(height: 12),
                 Text(
                   state.error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                  style: TextStyle(color: theme.colorScheme.error),
                 ),
               ],
             ],
@@ -92,49 +145,30 @@ class DeviceLinkScreen extends StatelessWidget {
   }
 }
 
-class _DeviceLinkDetails extends StatelessWidget {
-  const _DeviceLinkDetails({required this.link});
+class _StateChip extends StatelessWidget {
+  const _StateChip({required this.state});
 
-  final DeviceLink link;
+  final String state;
 
   @override
   Widget build(BuildContext context) {
-    final linkUri = link.linkUri;
-    return Column(
-      children: <Widget>[
-        _LinkValueTile(
-          icon: Icons.pin_outlined,
-          title: 'Link code',
-          value: link.code ?? '',
-        ),
-        _LinkValueTile(
-          icon: Icons.verified_outlined,
-          title: 'Verification code',
-          value: link.verificationCode,
-        ),
-        if (linkUri != null)
-          _LinkValueTile(
-            icon: Icons.link_outlined,
-            title: 'Link URI',
-            value: linkUri,
-          ),
-        _LinkValueTile(
-          icon: Icons.timer_outlined,
-          title: 'Expires',
-          value: link.expiresAt.toLocal().toString(),
-        ),
-        _LinkValueTile(
-          icon: Icons.info_outline,
-          title: 'State',
-          value: link.state,
-        ),
-        if (link.claimedDeviceName != null)
-          _LinkValueTile(
-            icon: Icons.tablet_android_outlined,
-            title: 'Claimed device',
-            value: link.claimedDeviceName!,
-          ),
-      ],
+    final scheme = Theme.of(context).colorScheme;
+    final (background, foreground) = switch (state) {
+      'approved' => (scheme.primaryContainer, scheme.onPrimaryContainer),
+      'claimed' => (scheme.tertiaryContainer, scheme.onTertiaryContainer),
+      _ => (scheme.surfaceContainerHighest, scheme.onSurfaceVariant),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        state,
+        style:
+            Theme.of(context).textTheme.labelSmall?.copyWith(color: foreground),
+      ),
     );
   }
 }
@@ -144,11 +178,13 @@ class _LinkValueTile extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.value,
+    this.copyable = false,
   });
 
   final IconData icon;
   final String title;
   final String value;
+  final bool copyable;
 
   @override
   Widget build(BuildContext context) {
@@ -156,7 +192,18 @@ class _LinkValueTile extends StatelessWidget {
       leading: Icon(icon),
       title: Text(title),
       subtitle: SelectableText(value),
-      contentPadding: EdgeInsets.zero,
+      trailing: copyable && value.isNotEmpty
+          ? IconButton(
+              tooltip: 'Copy',
+              icon: const Icon(Icons.copy_outlined),
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: value));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('$title copied.')),
+                );
+              },
+            )
+          : null,
     );
   }
 }

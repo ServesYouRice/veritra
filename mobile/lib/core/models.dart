@@ -1,17 +1,105 @@
 import 'dart:convert';
 
 class Conversation {
-  Conversation({required this.id, required this.kind, this.title});
+  Conversation({
+    required this.id,
+    required this.kind,
+    this.title,
+    this.communityId,
+    this.channelId,
+    this.retentionSeconds,
+    this.createdAt,
+  });
 
   final String id;
   final String kind;
   final String? title;
+  final String? communityId;
+  final String? channelId;
+  final int? retentionSeconds;
+  final DateTime? createdAt;
+
+  bool get isDm => kind == 'dm';
+  bool get isGroup => kind == 'group';
+  bool get isChannel => kind == 'community_channel';
 
   factory Conversation.fromJson(Map<String, Object?> json) {
     return Conversation(
       id: json['id'] as String,
       kind: json['kind'] as String,
       title: json['title'] as String?,
+      communityId: json['community_id'] as String?,
+      channelId: json['channel_id'] as String?,
+      retentionSeconds: (json['retention_seconds'] as num?)?.toInt(),
+      createdAt: _parseOptionalTime(json['created_at']),
+    );
+  }
+}
+
+class Community {
+  Community({required this.id, required this.name, this.createdAt});
+
+  final String id;
+  final String name;
+  final DateTime? createdAt;
+
+  factory Community.fromJson(Map<String, Object?> json) {
+    return Community(
+      id: json['id'] as String,
+      name: json['name'] as String,
+      createdAt: _parseOptionalTime(json['created_at']),
+    );
+  }
+}
+
+class Channel {
+  Channel({
+    required this.id,
+    required this.communityId,
+    required this.name,
+    required this.kind,
+  });
+
+  final String id;
+  final String communityId;
+  final String name;
+  final String kind;
+
+  factory Channel.fromJson(Map<String, Object?> json) {
+    return Channel(
+      id: json['id'] as String,
+      communityId: json['community_id'] as String,
+      name: json['name'] as String,
+      kind: json['kind'] as String,
+    );
+  }
+}
+
+class Invite {
+  Invite({
+    required this.id,
+    required this.code,
+    required this.maxUses,
+    required this.uses,
+    this.expiresAt,
+    this.createdAt,
+  });
+
+  final String id;
+  final String code;
+  final int maxUses;
+  final int uses;
+  final DateTime? expiresAt;
+  final DateTime? createdAt;
+
+  factory Invite.fromJson(Map<String, Object?> json) {
+    return Invite(
+      id: json['id'] as String,
+      code: json['code'] as String,
+      maxUses: (json['max_uses'] as num?)?.toInt() ?? 0,
+      uses: (json['uses'] as num?)?.toInt() ?? 0,
+      expiresAt: _parseOptionalTime(json['expires_at']),
+      createdAt: _parseOptionalTime(json['created_at']),
     );
   }
 }

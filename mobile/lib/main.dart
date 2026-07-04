@@ -6,6 +6,7 @@ import 'crypto/crypto_service.dart';
 import 'storage/local_store.dart';
 import 'sync/sync_service.dart';
 import 'ui/app_shell.dart';
+import 'ui/theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,11 +22,11 @@ Future<void> main() async {
   // keystore entry, missing secure storage on a new platform) we silently
   // fall through to the connect screen.
   await state.tryRestoreSession();
-  runApp(PrivateMessengerApp(state: state));
+  runApp(VeritraApp(state: state));
 }
 
-class PrivateMessengerApp extends StatelessWidget {
-  const PrivateMessengerApp({required this.state, super.key});
+class VeritraApp extends StatelessWidget {
+  const VeritraApp({required this.state, super.key});
 
   final AppState state;
 
@@ -35,12 +36,10 @@ class PrivateMessengerApp extends StatelessWidget {
       animation: state,
       builder: (context, _) {
         return MaterialApp(
-          title: 'Private Messenger',
-          theme: ThemeData(
-            colorScheme:
-                ColorScheme.fromSeed(seedColor: const Color(0xff126f7a)),
-            useMaterial3: true,
-          ),
+          title: 'Veritra',
+          theme: veritraLightTheme(),
+          darkTheme: veritraDarkTheme(),
+          themeMode: ThemeMode.system,
           home: AppShell(state: state),
         );
       },
