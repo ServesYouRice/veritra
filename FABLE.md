@@ -1,6 +1,9 @@
 # FABLE.md — Deep Audit Report
 
 **Date:** 2026-06-10
+**Status note, 2026-07-04:** this is a dated audit report, not live status. Use
+`WORK_IN_PROGRESS.md` and `docs/TODO.md` for current tracking.
+
 **Scope:** Full repo — Go server, Flutter client, Rust crypto boundary, schema, deploy, CI, docs.
 **Method:** Static read of every source file. No toolchain was available on this machine (no Go, Cargo, Flutter, or Docker daemon), so tests/lints were **not** executed as part of this audit.
 **Prior audits:** OPUS.md (2026-05-29) and CODEX.md (2026-05-30). Most of their findings landed in commits `39277d1`…`ff81b59`. This report focuses on what is **still open or newly found**; confirmed-fixed items are not repeated.

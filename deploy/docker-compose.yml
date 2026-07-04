@@ -6,6 +6,7 @@ services:
     environment:
       PRIVATE_MESSENGER_ADDR: ":8080"
       PRIVATE_MESSENGER_DATA_DIR: /data
+      PRIVATE_MESSENGER_TRUSTED_PROXIES: 172.28.250.0/24
     volumes:
       - messenger-data:/data
     ports:
@@ -21,6 +22,8 @@ services:
       retries: 3
       start_period: 10s
     restart: unless-stopped
+    networks:
+      - messenger-net
 
   caddy:
     image: caddy:2
@@ -35,9 +38,16 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     restart: unless-stopped
+    networks:
+      - messenger-net
+
+networks:
+  messenger-net:
+    ipam:
+      config:
+        - subnet: 172.28.250.0/24
 
 volumes:
   messenger-data:
   caddy-data:
   caddy-config:
-

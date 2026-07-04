@@ -1,5 +1,9 @@
 # Veritra Deep Audit Report
 
+Status note, 2026-07-04: this is a historical audit from 2026-05-30. Some
+findings have since been fixed or superseded. Use `WORK_IN_PROGRESS.md` and
+`docs/TODO.md` for current tracking.
+
 Date: 2026-05-30
 Scope: full repo: Go server, Flutter mobile shell, Rust crypto boundary, docs, CI, deployment.
 

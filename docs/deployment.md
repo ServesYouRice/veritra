@@ -13,6 +13,7 @@ Environment:
 - `PRIVATE_MESSENGER_DATA_DIR`, default `./data`
 - `PRIVATE_MESSENGER_DB_PATH`, default `<data>/private-messenger.db`
 - `PRIVATE_MESSENGER_STORAGE_PATH`, default `<data>/blobs`
+- `PRIVATE_MESSENGER_TRUSTED_PROXIES`, comma-separated CIDRs whose `X-Forwarded-For` headers may be trusted for rate limiting
 
 An example environment file is available at `server/config.example.env`.
 
@@ -44,6 +45,15 @@ Caddy terminates HTTPS on 80/443, provisions/renews certificates automatically,
 reverse-proxies to the server over the internal network, and sets HSTS at the
 edge. Replace the placeholder `email` and domain in `deploy/caddy/Caddyfile`
 before deploying.
+
+When running behind Caddy or any reverse proxy, set
+`PRIVATE_MESSENGER_TRUSTED_PROXIES` to the proxy network CIDR. Without it, the
+rate limiter sees the proxy address instead of the original client IP and can
+bucket the whole instance as one client.
+
+The bundled Compose file creates a dedicated `172.28.250.0/24` network and sets
+`PRIVATE_MESSENGER_TRUSTED_PROXIES` to that subnet. If you change the Compose
+network subnet, update the environment variable too.
 
 ## Single-Node Constraint
 

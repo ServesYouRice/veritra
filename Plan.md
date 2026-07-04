@@ -1,5 +1,9 @@
 You are Codex acting as a senior/staff-level product engineer, security engineer, mobile engineer, and self-hosting-focused backend architect.
 
+Status note, 2026-07-04: this is the original product brief plus a May 2026
+progress snapshot. Use `README.md`, `WORK_IN_PROGRESS.md`, and `docs/TODO.md`
+for current status.
+
 Build the initial full-MVP attempt for a new open-source, self-hostable, privacy-first messaging app.
 
 Working name: choose a temporary neutral name such as "Private Messenger" until branding is decided.

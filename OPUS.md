@@ -1,5 +1,9 @@
 # Veritra — Deep Audit Report
 
+Status note, 2026-07-04: this is a historical audit from 2026-05-29. Some
+findings have since been fixed or superseded. Use `WORK_IN_PROGRESS.md` and
+`docs/TODO.md` for current tracking.
+
 **Date:** 2026-05-29
 **Scope:** Full repository — Go server (`server/`), Flutter client (`mobile/`), Rust crypto boundary (`crypto/rust/`), deployment + CI.
 **Method:** Read of all source in the three components plus infra and the project's own status docs (`WORK_IN_PROGRESS.md`, `docs/TODO.md`, `Plan.md`).

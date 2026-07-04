@@ -9,6 +9,9 @@ Audit findings + progress log from the 2026-05-29 security/quality pass.
 - **Tier 3 (largest Plan.md commitments):** open — each item is weeks of work.
 - **Tier 4 (scale & ops):** closed.
 
+Corrections since this log was written: password login now requires an
+explicit `device_id`, and current code does not stamp `devices.last_seen_at`.
+
 Current verification: Dockerized `scripts/lint.ps1`, `scripts/test.ps1`,
 and `govulncheck` are clean after the Tier 4 follow-up.
 
@@ -25,7 +28,9 @@ choices (which crypto library, which push provider stack, etc.).
   fallback). Replace `UnavailableProductionCrypto` in the wiring and
   keep `TestOnlyCryptoService` strictly in tests. Server already
   refuses plaintext at the boundary; tests assert no sentinel leaks
-  into the DB. This is the single biggest remaining item.
+  into the DB. This must include key-distribution APIs, local private-key
+  storage, and client decrypt/render support. This is the single biggest
+  remaining item.
 
 - [ ] **QR rendering + scanning + key continuity** on top of the
   existing device-link API. The server side (claim → approve → consume
@@ -46,7 +51,9 @@ choices (which crypto library, which push provider stack, etc.).
 - [ ] **Mobile encrypted-attachment upload UX** and encrypted-backup
   restore UX. Server side accepts ciphertext blobs with the
   `X-Private-Messenger-Encrypted: 1` header; the mobile picker /
-  client-side encryption path is unbuilt.
+  client-side encryption path is unbuilt. Ciphertext list/download
+  endpoints are also needed before recipients or restoring devices can
+  fetch stored blobs.
 
 ---
 
@@ -74,11 +81,10 @@ choices (which crypto library, which push provider stack, etc.).
 
 ### 2026-05-29 — Tier 2 (spec gaps) — commit `f6f844d`
 
-- **L. Login device attribution.** When no `device_id` is provided,
-  `LoginRecord` now picks the most-recently-active device
-  (`COALESCE(last_seen_at, created_at) DESC`) instead of the oldest.
-  Combined with the `last_seen_at` stamping from Tier 1, login attaches
-  to the device a user actually used last.
+- **L. Login device attribution (superseded).** Current code now requires
+  an explicit `device_id` for password login, which is safer for the
+  device-key model. The older most-recently-active fallback described in
+  this log is no longer current behavior.
 - **Q. Settings: hidden non-functional push toggle.** Replaced the dead
   `SwitchListTile` with explicit "coming soon" disabled tiles for
   Recovery / Calls / Privacy so the UI no longer implies features that
@@ -140,8 +146,10 @@ pre-existing device-link MVP work.
   ≤90d; `max_uses` ≤10000.
 - **Read receipts cannot rewind.** SQL `WHERE` on `ON CONFLICT DO
   UPDATE` compares message `created_at`.
-- **`devices.last_seen_at`** stamped on each authenticated request,
-  throttled to one write per device per minute.
+- **`devices.last_seen_at` (not current).** This log originally claimed
+  authenticated requests stamped `last_seen_at`, but the current code only
+  reads the field. Treat this as open follow-up if lost-device review UX
+  needs reliable last-seen data.
 - **Push de-registration.** `DELETE /api/v1/push/subscriptions/{id}`
   sets `disabled_at` on rows owned by the caller.
 - **`audit_events` wired.** Metadata-only rows for `owner.created`,

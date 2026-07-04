@@ -36,6 +36,13 @@ Base path: `/api/v1`
 
 The verification code returned to both devices must be compared in the client UX before approval. The server stores only public device key-package metadata and never receives private keys.
 
+## Communities
+
+- `POST /api/v1/communities` creates a community owned by the caller.
+- `POST /api/v1/communities/{id}/channels` creates a channel in a visible community.
+
+There are no list-communities, list-channels, or list-members endpoints yet. The current mobile UI derives community/channel display from conversations plus items created in the current session.
+
 ## Messaging
 
 - `POST /api/v1/conversations` creates DMs, groups, or channel-backed conversations.
@@ -43,7 +50,8 @@ The verification code returned to both devices must be compared in the client UX
 - `POST /api/v1/conversations/{id}/members` adds members.
 - `PUT /api/v1/conversations/{id}/retention` updates disappearing-message retention. New message expiries are capped by this value.
 - `POST /api/v1/messages/envelopes` stores ciphertext-only message envelopes.
-- `GET /api/v1/conversations/{id}/messages` lists non-expired encrypted envelopes.
+- `GET /api/v1/conversations/{id}/messages?limit={n}&before={message_id}` lists non-expired encrypted envelopes. `after` is also accepted, but `before` and `after` are mutually exclusive. Responses include `limit` and optional `next_before`.
+- `POST /api/v1/conversations/{id}/typing` publishes a best-effort realtime typing event.
 - `POST /api/v1/messages/{id}/edit` stores an encrypted edit marker/envelope.
 - `POST /api/v1/messages/{id}/delete` stores an encrypted delete marker and tombstones the server-held envelope.
 - `POST /api/v1/messages/{id}/reactions` stores encrypted reaction payloads.
@@ -56,14 +64,16 @@ Payloads must not include plaintext body fields. Message ciphertext is base64-en
 - `POST /api/v1/attachments?conversation_id={id}` accepts encrypted blobs only when `X-Private-Messenger-Encrypted: 1` is present.
 - `POST /api/v1/backups` accepts client-encrypted backup blobs with `X-Key-Derivation-Metadata`.
 - `POST /api/v1/push/subscriptions` records push endpoints. Push payloads must remain generic.
+- `DELETE /api/v1/push/subscriptions/{id}` disables one of the caller's push subscriptions.
 - `POST /api/v1/calls` creates self-hosted call signaling sessions for conversation members.
 
 Attachment and backup contents are opaque ciphertext to the server.
+Download/list endpoints for stored attachment and backup ciphertext are still TODO.
 
 ## Search and Account Data
 
 - `GET /api/v1/search/metadata?q={query}&limit={n}&offset={n}` searches account usernames, visible community names, and visible channel names. Accounts match on the **exact** (case-insensitive) username only; prefix/contains matching is deliberately not offered for accounts so the user directory cannot be enumerated by probing substrings. Communities and channels (which are scoped to the caller's memberships) use exact/prefix matching so the endpoint stays index-friendly. Pagination metadata includes `limit`, `offset`, and optional `next_offset`.
-- `GET /api/v1/account/export` exports account metadata, devices, visible conversations, and encrypted message envelopes.
+- `GET /api/v1/account/export?limit={n}&before={message_id}` exports account metadata, devices, visible conversations, and encrypted message envelopes. Message export is paginated and returns optional `next_before`.
 - `DELETE /api/v1/account` soft-deletes the account, revokes devices, and removes sessions.
 
 Server-side message-content search is intentionally absent.
