@@ -40,9 +40,11 @@ class _ChatScreenState extends State<ChatScreen> {
                 ? const Text('Conversation')
                 : Row(
                     children: <Widget>[
-                      CircleAvatar(
-                        radius: 16,
-                        child: Icon(conversationIcon(conversation), size: 18),
+                      ExcludeSemantics(
+                        child: CircleAvatar(
+                          radius: 16,
+                          child: Icon(conversationIcon(conversation), size: 18),
+                        ),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -79,15 +81,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         title: 'No conversation selected',
                         message: 'Pick a conversation from the chat list.',
                       )
-                    : messages.isEmpty
-                        ? const EmptyState(
-                            icon: Icons.lock_outline,
-                            title: 'No messages yet',
-                            message:
-                                'Messages are stored as encrypted envelopes '
-                                'only the members can read.',
-                          )
-                        : _MessageList(state: widget.state, messages: messages),
+                    : _messagesPane(conversation.id, messages),
               ),
               _Composer(
                 enabled: conversation != null,
@@ -99,6 +93,51 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         );
       },
+    );
+  }
+
+  /// Message area for the selected conversation. Failures get an explicit
+  /// error + retry instead of masquerading as "No messages yet".
+  Widget _messagesPane(
+    String conversationId,
+    List<ReceivedMessageEnvelope> messages,
+  ) {
+    final loading = widget.state.isLoadingMessages(conversationId);
+    final loadError = widget.state.messageLoadError(conversationId);
+    if (messages.isEmpty) {
+      if (loading) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      if (loadError != null) {
+        return _MessageLoadError(
+          message: loadError,
+          onRetry: () => widget.state.loadMessages(conversationId),
+        );
+      }
+      return const EmptyState(
+        icon: Icons.lock_outline,
+        title: 'No messages yet',
+        message: 'Messages are stored as encrypted envelopes '
+            'only the members can read.',
+      );
+    }
+    return Column(
+      children: <Widget>[
+        if (loadError != null)
+          MaterialBanner(
+            content: Text(loadError),
+            leading: const Icon(Icons.error_outline),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => widget.state.loadMessages(conversationId),
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        Expanded(
+          child: _MessageList(state: widget.state, messages: messages),
+        ),
+      ],
     );
   }
 
@@ -119,6 +158,53 @@ class _ChatScreenState extends State<ChatScreen> {
         SnackBar(content: Text(error)),
       );
     }
+  }
+}
+
+class _MessageLoadError extends StatelessWidget {
+  const _MessageLoadError({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(
+              Icons.cloud_off_outlined,
+              size: 48,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Couldn’t load messages',
+              style: theme.textTheme.titleMedium,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -192,73 +278,81 @@ class _MessageBubble extends StatelessWidget {
     final background =
         mine ? scheme.primaryContainer : scheme.surfaceContainerHigh;
     final foreground = mine ? scheme.onPrimaryContainer : scheme.onSurface;
-    return Align(
-      alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 3),
-          padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
-          decoration: BoxDecoration(
-            color: background,
-            borderRadius: BorderRadius.only(
-              topLeft: const Radius.circular(18),
-              topRight: const Radius.circular(18),
-              bottomLeft: Radius.circular(mine ? 18 : 4),
-              bottomRight: Radius.circular(mine ? 4 : 18),
+    final sender = mine ? 'you' : 'sender ${shortId(message.senderAccountId)}';
+    return Semantics(
+      label: deleted
+          ? 'Deleted message from $sender'
+          : 'Encrypted message from $sender, '
+              '${formatTimeOfDay(message.createdAt)}',
+      child: Align(
+        alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Container(
+            margin: const EdgeInsets.symmetric(vertical: 3),
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
+            decoration: BoxDecoration(
+              color: background,
+              borderRadius: BorderRadius.only(
+                topLeft: const Radius.circular(18),
+                topRight: const Radius.circular(18),
+                bottomLeft: Radius.circular(mine ? 18 : 4),
+                bottomRight: Radius.circular(mine ? 4 : 18),
+              ),
             ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              if (deleted)
-                Text(
-                  'Message deleted',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: foreground.withValues(alpha: 0.7),
-                    fontStyle: FontStyle.italic,
-                  ),
-                )
-              else
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    Icon(
-                      Icons.lock_outline,
-                      size: 16,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                if (deleted)
+                  Text(
+                    'Message deleted',
+                    style: theme.textTheme.bodyMedium?.copyWith(
                       color: foreground.withValues(alpha: 0.7),
+                      fontStyle: FontStyle.italic,
                     ),
-                    const SizedBox(width: 6),
-                    Flexible(
-                      child: Text(
-                        'Encrypted message',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: foreground,
+                  )
+                else
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Icon(
+                        Icons.lock_outline,
+                        size: 16,
+                        color: foreground.withValues(alpha: 0.7),
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          'Encrypted message',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: foreground,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
+                const SizedBox(height: 4),
+                Text(
+                  _metaLine,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: foreground.withValues(alpha: 0.6),
+                  ),
                 ),
-              const SizedBox(height: 4),
-              Text(
-                _metaLine,
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: foreground.withValues(alpha: 0.6),
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
+  // The raw crypto protocol identifier is debug info and stays out of the
+  // reading surface; the lock icon already conveys the encrypted state.
   String get _metaLine {
     final parts = <String>[
       formatTimeOfDay(message.createdAt),
       if (message.editedAt != null) 'edited',
-      message.cryptoProtocol,
     ];
     return parts.join(' · ');
   }

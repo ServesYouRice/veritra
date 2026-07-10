@@ -3,9 +3,10 @@ import 'package:flutter/services.dart';
 
 import '../../core/app_state.dart';
 import '../../ui/format.dart';
+import '../../ui/widgets/account_picker.dart';
 import 'chat_list_screen.dart';
 
-/// Conversation metadata and management: add members by account ID and
+/// Conversation metadata and management: add members by username lookup and
 /// configure disappearing-message retention. The server exposes no member
 /// list endpoint yet, so membership is write-only here.
 class ConversationDetailsScreen extends StatelessWidget {
@@ -71,18 +72,27 @@ class ConversationDetailsScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 16),
-              Text('Members', style: theme.textTheme.titleMedium),
+              Semantics(
+                header: true,
+                child: Text('Members', style: theme.textTheme.titleMedium),
+              ),
               const SizedBox(height: 8),
               Card(
                 child: ListTile(
                   leading: const Icon(Icons.person_add_outlined),
                   title: const Text('Add member'),
-                  subtitle: const Text('Invite an account by its ID'),
+                  subtitle: const Text('Look up an account by username'),
                   onTap: state.busy ? null : () => _addMember(context),
                 ),
               ),
               const SizedBox(height: 16),
-              Text('Disappearing messages', style: theme.textTheme.titleMedium),
+              Semantics(
+                header: true,
+                child: Text(
+                  'Disappearing messages',
+                  style: theme.textTheme.titleMedium,
+                ),
+              ),
               const SizedBox(height: 8),
               Card(
                 child: RadioGroup<int?>(
@@ -90,7 +100,7 @@ class ConversationDetailsScreen extends StatelessWidget {
                       retention == null || retention == 0 ? null : retention,
                   onChanged: (value) {
                     if (!state.busy) {
-                      state.setConversationRetention(conversation.id, value);
+                      _confirmRetentionChange(context, conversation.id, value);
                     }
                   },
                   child: Column(
@@ -107,8 +117,9 @@ class ConversationDetailsScreen extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                'When set, the server deletes encrypted envelopes after this '
-                'time window.',
+                'When set, messages sent from then on are deleted from the '
+                'server after this time window. Existing messages keep the '
+                'timer they were sent with.',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
@@ -128,6 +139,44 @@ class ConversationDetailsScreen extends StatelessWidget {
     _RetentionOption(2592000, '30 days'),
   ];
 
+  /// Retention only stamps an expiry on messages sent after the change —
+  /// existing messages keep their current timer — but it is still a policy
+  /// change worth confirming rather than applying on a stray tap.
+  Future<void> _confirmRetentionChange(
+    BuildContext context,
+    String conversationId,
+    int? retentionSeconds,
+  ) async {
+    final description = retentionSeconds == null
+        ? 'New messages will no longer disappear. Messages that already have '
+            'a timer keep it.'
+        : 'Messages sent from now on will be deleted from the server '
+            '${retentionLabel(retentionSeconds)} after they are sent. '
+            'Existing messages are not affected.';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(retentionSeconds == null
+            ? 'Turn off disappearing messages?'
+            : 'Disappear after ${retentionLabel(retentionSeconds)}?'),
+        content: Text(description),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Apply'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await state.setConversationRetention(conversationId, retentionSeconds);
+    }
+  }
+
   void _copy(BuildContext context, String value, String label) {
     Clipboard.setData(ClipboardData(text: value));
     ScaffoldMessenger.of(context).showSnackBar(
@@ -136,25 +185,23 @@ class ConversationDetailsScreen extends StatelessWidget {
   }
 
   Future<void> _addMember(BuildContext context) async {
-    final controller = TextEditingController();
     String role = 'member';
-    try {
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => StatefulBuilder(
-          builder: (dialogContext, setDialogState) => AlertDialog(
-            title: const Text('Add member'),
-            content: Column(
+    List<SelectedAccount> picked = <SelectedAccount>[];
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('Add member'),
+          content: SizedBox(
+            width: 400,
+            child: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
-                TextField(
-                  controller: controller,
-                  autofocus: true,
-                  autocorrect: false,
-                  decoration: const InputDecoration(
-                    labelText: 'Account ID',
-                    prefixIcon: Icon(Icons.alternate_email),
-                  ),
+                AccountPicker(
+                  state: state,
+                  maxSelection: 1,
+                  onChanged: (value) => setDialogState(() => picked = value),
                 ),
                 const SizedBox(height: 12),
                 SegmentedButton<String>(
@@ -178,34 +225,41 @@ class ConversationDetailsScreen extends StatelessWidget {
                 ),
               ],
             ),
-            actions: <Widget>[
-              TextButton(
-                onPressed: () => Navigator.of(dialogContext).pop(false),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.of(dialogContext).pop(true),
-                child: const Text('Add'),
-              ),
-            ],
           ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: picked.isEmpty
+                  ? null
+                  : () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Add'),
+            ),
+          ],
         ),
-      );
-      final accountId = controller.text.trim();
-      if (confirmed != true || accountId.isEmpty) {
-        return;
-      }
-      await state.addConversationMember(conversationId, accountId, role: role);
-      if (!context.mounted) {
-        return;
-      }
-      final error = state.error;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error ?? 'Member added.')),
-      );
-    } finally {
-      controller.dispose();
+      ),
+    );
+    if (confirmed != true || picked.isEmpty) {
+      return;
     }
+    await state.addConversationMember(
+      conversationId,
+      picked.first.id,
+      role: role,
+    );
+    if (!context.mounted) {
+      return;
+    }
+    final error = state.error;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(error ??
+            'Added ${picked.first.label} to the '
+                'conversation.'),
+      ),
+    );
   }
 }
 

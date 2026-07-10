@@ -37,6 +37,14 @@ class SettingsScreen extends StatelessWidget {
               Card(
                 child: Column(
                   children: <Widget>[
+                    if (session?.username != null) ...<Widget>[
+                      ListTile(
+                        leading: const Icon(Icons.account_circle_outlined),
+                        title: Text('@${session!.username!}'),
+                        subtitle: const Text('Signed in on this instance'),
+                      ),
+                      const Divider(),
+                    ],
                     ListTile(
                       leading: const Icon(Icons.person_outline),
                       title: const Text('Account ID'),

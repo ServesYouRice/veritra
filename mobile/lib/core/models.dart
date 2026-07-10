@@ -187,7 +187,7 @@ class ReceivedMessageEnvelope {
       attachmentRefs: json['attachment_refs'],
       replyToId: json['reply_to_id'] as String?,
       threadRootId: json['thread_root_id'] as String?,
-      createdAt: DateTime.parse(json['created_at'] as String),
+      createdAt: _parseRequiredTime(json['created_at']),
       editedAt: _parseOptionalTime(json['edited_at']),
       deletedAt: _parseOptionalTime(json['deleted_at']),
       expiresAt: _parseOptionalTime(json['expires_at']),
@@ -249,7 +249,7 @@ class SyncEvent {
       accountId: json['account_id'] as String?,
       conversationId: json['conversation_id'] as String?,
       payload: json['payload'],
-      createdAt: DateTime.parse(json['created_at'] as String),
+      createdAt: _parseRequiredTime(json['created_at']),
     );
   }
 }
@@ -280,7 +280,7 @@ class DeviceLink {
       id: json['id'] as String,
       state: json['state'] as String,
       verificationCode: json['verification_code'] as String,
-      expiresAt: DateTime.parse(json['expires_at'] as String),
+      expiresAt: _parseRequiredTime(json['expires_at']),
       code: json['code'] as String?,
       linkUri: json['link_uri'] as String?,
       claimedDeviceName: json['claimed_device_name'] as String?,
@@ -318,7 +318,7 @@ class Device {
       id: json['id'] as String,
       accountId: json['account_id'] as String,
       name: json['name'] as String,
-      createdAt: DateTime.parse(json['created_at'] as String),
+      createdAt: _parseRequiredTime(json['created_at']),
       lastSeenAt: _parseOptionalTime(json['last_seen_at']),
       revokedAt: _parseOptionalTime(json['revoked_at']),
     );
@@ -327,9 +327,23 @@ class Device {
 
 DateTime? _parseOptionalTime(Object? value) {
   if (value is String && value.isNotEmpty) {
-    return DateTime.parse(value);
+    return DateTime.tryParse(value);
   }
   return null;
+}
+
+/// Defensive parse for timestamps the models treat as required. One
+/// malformed row from the server must not throw during model construction
+/// and blank an entire list; fall back to the Unix epoch as an obviously
+/// wrong sentinel instead.
+DateTime _parseRequiredTime(Object? value) {
+  if (value is String && value.isNotEmpty) {
+    final parsed = DateTime.tryParse(value);
+    if (parsed != null) {
+      return parsed;
+    }
+  }
+  return DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
 }
 
 class Session {
@@ -338,10 +352,12 @@ class Session {
     required this.token,
     this.accountId,
     this.deviceId,
+    this.username,
   });
 
   final String baseUrl;
   final String token;
   final String? accountId;
   final String? deviceId;
+  final String? username;
 }

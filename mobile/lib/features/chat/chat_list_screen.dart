@@ -41,14 +41,19 @@ class ChatListScreen extends StatelessWidget {
         child: conversations.isEmpty
             ? ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                children: const <Widget>[
-                  SizedBox(height: 120),
-                  EmptyState(
-                    icon: Icons.chat_bubble_outline,
-                    title: 'No conversations yet',
-                    message: 'Start a direct message or create a group. '
-                        'Everything is end-to-end encrypted.',
-                  ),
+                children: <Widget>[
+                  const SizedBox(height: 120),
+                  // An empty list can mean "still loading"; showing the empty
+                  // state too early reads as "your data is gone".
+                  if (!state.conversationsLoaded)
+                    const Center(child: CircularProgressIndicator())
+                  else
+                    const EmptyState(
+                      icon: Icons.chat_bubble_outline,
+                      title: 'No conversations yet',
+                      message: 'Start a direct message or create a group. '
+                          'Everything is end-to-end encrypted.',
+                    ),
                 ],
               )
             : ListView.separated(
@@ -87,12 +92,15 @@ class _ConversationTile extends StatelessWidget {
     final theme = Theme.of(context);
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      leading: CircleAvatar(
-        radius: 24,
-        backgroundColor: theme.colorScheme.secondaryContainer,
-        child: Icon(
-          conversationIcon(conversation),
-          color: theme.colorScheme.onSecondaryContainer,
+      // Decorative: the tile title already names the conversation.
+      leading: ExcludeSemantics(
+        child: CircleAvatar(
+          radius: 24,
+          backgroundColor: theme.colorScheme.secondaryContainer,
+          child: Icon(
+            conversationIcon(conversation),
+            color: theme.colorScheme.onSecondaryContainer,
+          ),
         ),
       ),
       title: Text(

@@ -70,6 +70,7 @@ class SecureLocalStore implements LocalStore {
       'token': session.token,
       if (session.accountId != null) 'account_id': session.accountId!,
       if (session.deviceId != null) 'device_id': session.deviceId!,
+      if (session.username != null) 'username': session.username!,
     });
     await _storage.write(key: _key, value: encoded);
   }
@@ -92,6 +93,7 @@ class SecureLocalStore implements LocalStore {
         token: token,
         accountId: decoded['account_id'] as String?,
         deviceId: decoded['device_id'] as String?,
+        username: decoded['username'] as String?,
       );
     } catch (_) {
       // Stored payload was tampered with or corrupt — drop it and start over
