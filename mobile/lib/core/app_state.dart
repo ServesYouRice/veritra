@@ -6,6 +6,7 @@ import '../crypto/crypto_service.dart';
 import '../storage/local_store.dart';
 import '../sync/sync_service.dart';
 import 'api_client.dart';
+import 'errors.dart';
 import 'models.dart';
 
 typedef ApiClientFactory = ApiClient Function(String baseUrl);
@@ -42,10 +43,19 @@ class AppState extends ChangeNotifier {
   DeviceLinkClaim? pendingDeviceLinkClaim;
   String? error;
   bool busy = false;
+  // Distinguishes "still fetching the first page" from "genuinely empty" so
+  // the UI doesn't show a misleading empty state during cold start.
+  bool conversationsLoaded = false;
+  final Set<String> _loadingMessageConversations = <String>{};
+  final Map<String, String> _messageLoadErrors = <String, String>{};
   bool _catchingUpSync = false;
   int _lastSyncEventId = 0;
 
   bool get connected => session != null;
+  bool isLoadingMessages(String conversationId) =>
+      _loadingMessageConversations.contains(conversationId);
+  String? messageLoadError(String conversationId) =>
+      _messageLoadErrors[conversationId];
   Conversation? get selectedConversation =>
       conversations.where((c) => c.id == selectedConversationId).firstOrNull;
   List<ReceivedMessageEnvelope> get selectedMessages {
@@ -56,11 +66,17 @@ class AppState extends ChangeNotifier {
     return messagesByConversation[id] ?? const <ReceivedMessageEnvelope>[];
   }
 
-  Future<void> connect(String baseUrl) async {
-    api = apiClientFactory(baseUrl);
-    await api!.setupStatus();
-    error = null;
-    notifyListeners();
+  /// Best-effort probe of the instance's setup state so the connect screen
+  /// can steer users to the right mode. Returns null when the instance is
+  /// unreachable or answers unexpectedly; never sets [error] or [busy].
+  Future<bool?> checkSetupRequired(String baseUrl) async {
+    try {
+      final status = await apiClientFactory(baseUrl).setupStatus();
+      final required = status['setup_required'];
+      return required is bool ? required : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Best-effort hydration of a previously-stored session on cold start.
@@ -88,6 +104,7 @@ class AppState extends ChangeNotifier {
       session = null;
       api = null;
       devices = <Device>[];
+      conversationsLoaded = false;
       messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
       _lastSyncEventId = 0;
       await localStore.saveSyncCursor(0);
@@ -158,16 +175,27 @@ class AppState extends ChangeNotifier {
       return;
     }
     conversations = await client.conversations(current.token);
+    conversationsLoaded = true;
     if (notify) {
       notifyListeners();
     }
   }
 
   Future<void> refreshSelectedMessages({bool notify = true}) async {
+    final conversationId = selectedConversationId;
+    if (conversationId == null) {
+      return;
+    }
+    await _fetchMessages(conversationId);
+    if (notify) {
+      notifyListeners();
+    }
+  }
+
+  Future<void> _fetchMessages(String conversationId) async {
     final current = session;
     final client = api;
-    final conversationId = selectedConversationId;
-    if (current == null || client == null || conversationId == null) {
+    if (current == null || client == null) {
       return;
     }
     final messages = await client.listMessages(current.token, conversationId);
@@ -175,7 +203,22 @@ class AppState extends ChangeNotifier {
       ...messagesByConversation,
       conversationId: messages,
     };
-    if (notify) {
+  }
+
+  /// Loads a conversation's messages with tracked loading/error state so the
+  /// chat pane can show a retry affordance instead of a misleading empty
+  /// state when the fetch fails.
+  Future<void> loadMessages(String conversationId) async {
+    _loadingMessageConversations.add(conversationId);
+    _messageLoadErrors.remove(conversationId);
+    notifyListeners();
+    try {
+      await _fetchMessages(conversationId);
+      unawaited(markNewestMessageRead(conversationId));
+    } catch (err) {
+      _messageLoadErrors[conversationId] = describeError(err);
+    } finally {
+      _loadingMessageConversations.remove(conversationId);
       notifyListeners();
     }
   }
@@ -525,7 +568,7 @@ class AppState extends ChangeNotifier {
   void selectConversation(String id) {
     selectedConversationId = id;
     notifyListeners();
-    unawaited(refreshSelectedMessages().then((_) => markNewestMessageRead(id)));
+    unawaited(loadMessages(id));
   }
 
   void _startSync() {
@@ -589,7 +632,7 @@ class AppState extends ChangeNotifier {
         notifyListeners();
       }
     } catch (err) {
-      error = err.toString();
+      error = describeError(err);
       notifyListeners();
     } finally {
       _catchingUpSync = false;
@@ -611,6 +654,7 @@ class AppState extends ChangeNotifier {
         token: '',
         accountId: current.accountId,
         deviceId: current.deviceId,
+        username: current.username,
       ));
       await localStore.saveSyncCursor(0);
     } else {
@@ -619,8 +663,11 @@ class AppState extends ChangeNotifier {
     session = null;
     api = null;
     conversations = <Conversation>[];
+    conversationsLoaded = false;
     devices = <Device>[];
     messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
+    _loadingMessageConversations.clear();
+    _messageLoadErrors.clear();
     selectedConversationId = null;
     activeDeviceLink = null;
     pendingDeviceLinkClaim = null;
@@ -637,7 +684,7 @@ class AppState extends ChangeNotifier {
     try {
       await body();
     } catch (err) {
-      error = err.toString();
+      error = describeError(err);
     } finally {
       busy = false;
       notifyListeners();

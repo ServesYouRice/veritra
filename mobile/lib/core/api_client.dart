@@ -34,7 +34,7 @@ class ApiClient {
           'device_key_package': base64Encode(deviceKeyPackage),
         },
         setupRequest: true);
-    return _sessionFromAuthJson(json);
+    return _sessionFromAuthJson(json, fallbackUsername: username);
   }
 
   Future<Session> register({
@@ -52,7 +52,7 @@ class ApiClient {
       'device_name': deviceName,
       'device_key_package': base64Encode(deviceKeyPackage),
     });
-    return _sessionFromAuthJson(json);
+    return _sessionFromAuthJson(json, fallbackUsername: username);
   }
 
   Future<Session> login(
@@ -65,7 +65,7 @@ class ApiClient {
           'password': password,
           'device_id': deviceId,
         });
-    return _sessionFromAuthJson(json);
+    return _sessionFromAuthJson(json, fallbackUsername: username);
   }
 
   Future<List<Conversation>> conversations(String token) async {
@@ -353,20 +353,26 @@ class ApiClient {
     return _sessionFromAuthJson(json);
   }
 
-  Session _sessionFromAuthJson(Map<String, Object?> json) {
+  Session _sessionFromAuthJson(
+    Map<String, Object?> json, {
+    String? fallbackUsername,
+  }) {
     return Session(
       baseUrl: baseUrl,
       token: json['token'] as String,
       accountId: json['account_id'] as String? ?? _nestedId(json['account']),
       deviceId: json['device_id'] as String? ?? _nestedId(json['device']),
+      username: _nestedField(json['account'], 'username') ?? fallbackUsername,
     );
   }
 
-  String? _nestedId(Object? value) {
+  String? _nestedId(Object? value) => _nestedField(value, 'id');
+
+  String? _nestedField(Object? value, String field) {
     if (value is Map) {
-      final id = value['id'];
-      if (id is String) {
-        return id;
+      final nested = value[field];
+      if (nested is String) {
+        return nested;
       }
     }
     return null;
@@ -430,18 +436,77 @@ class ApiException implements Exception {
   String get message {
     switch (serverCode) {
       case 'unauthorized':
+        return 'Your session is no longer valid. Sign in again.';
       case 'invalid_credentials':
-        return 'Sign-in failed.';
+        return 'Sign-in failed. Check your username and password.';
       case 'device_id_required':
+      case 'device_session_required':
         return 'This device must be linked before password sign-in.';
       case 'forbidden':
-        return 'You do not have access to that action.';
+        return 'You do not have permission to do that.';
+      case 'not_found':
+        return 'That item was not found. It may have been removed.';
+      case 'already_setup':
+        return 'This server already has an owner. Sign in or join with an '
+            'invite instead.';
+      case 'weak_password':
+        return 'Password must be 12–72 characters.';
+      case 'invalid_invite':
+        return 'That invite code is not valid, has expired, or has already '
+            'been used up.';
+      case 'invalid_device_link':
+        return 'That link code is not valid or has expired. Generate a new '
+            'one on your linked device.';
+      case 'verification_code_required':
+        return 'Enter the verification code shown on the new device.';
       case 'verification_code_mismatch':
-        return 'Verification code did not match.';
+        return 'The verification code did not match. Check both devices and '
+            'try again.';
+      case 'invalid_device_name':
+        return 'That device name is not valid.';
+      case 'invalid_name':
+        return 'That name is not valid.';
+      case 'invalid_max_uses':
+        return 'The invite use limit is not valid.';
+      case 'invalid_expires_at':
+      case 'expires_at_too_far':
+        return 'That expiry time is not valid.';
+      case 'invalid_conversation_kind':
+        return 'The server rejected this conversation type.';
+      case 'invalid_retention_seconds':
+        return 'That disappearing-message duration is not supported.';
+      case 'invalid_role':
+        return 'That member role is not valid.';
+      case 'cannot_grant_higher_role':
+        return 'You cannot grant a role higher than your own.';
+      case 'account_id_required':
+        return 'Choose an account to add.';
+      case 'upload_too_large':
+        return 'That file is too large to upload.';
+      case 'device_key_package_required':
+      case 'non_production_device_key_package':
+        return 'The server refused this build’s encryption keys. A '
+            'client with production encryption support is required.';
       case 'storage_error':
-        return 'Server storage error.';
+      case 'storage_unavailable':
+        return 'The server had a storage problem. Try again shortly.';
     }
-    return 'Request failed ($statusCode).';
+    if (statusCode == 401) {
+      return 'Your session is no longer valid. Sign in again.';
+    }
+    if (statusCode == 403) {
+      return 'You do not have permission to do that.';
+    }
+    if (statusCode == 404) {
+      return 'That item was not found. It may have been removed.';
+    }
+    if (statusCode == 429) {
+      return 'Too many attempts. Wait a moment and try again.';
+    }
+    if (statusCode >= 500) {
+      return 'The server had a problem. Try again shortly.';
+    }
+    return 'The server rejected the request. Check your input and try again.';
   }
 
   @override

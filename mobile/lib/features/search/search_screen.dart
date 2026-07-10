@@ -38,6 +38,16 @@ class _SearchScreenState extends State<SearchScreen> {
     _debounce = Timer(const Duration(milliseconds: 350), () => _search(value));
   }
 
+  void _clear() {
+    _debounce?.cancel();
+    query.clear();
+    setState(() {
+      results = <MetadataSearchResult>[];
+      searching = false;
+      searched = false;
+    });
+  }
+
   Future<void> _search(String value) async {
     final trimmed = value.trim();
     if (trimmed.isEmpty) {
@@ -76,16 +86,26 @@ class _SearchScreenState extends State<SearchScreen> {
     final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: TextField(
-          controller: query,
-          autofocus: true,
-          onChanged: _onChanged,
-          textInputAction: TextInputAction.search,
-          onSubmitted: _search,
-          decoration: const InputDecoration(
-            hintText: 'Search chats, groups, communities…',
-            border: InputBorder.none,
-            filled: false,
+        title: ListenableBuilder(
+          listenable: query,
+          builder: (context, _) => TextField(
+            controller: query,
+            autofocus: true,
+            onChanged: _onChanged,
+            textInputAction: TextInputAction.search,
+            onSubmitted: _search,
+            decoration: InputDecoration(
+              hintText: 'Search chats, groups, communities…',
+              border: InputBorder.none,
+              filled: false,
+              suffixIcon: query.text.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Clear search',
+                      icon: const Icon(Icons.close),
+                      onPressed: _clear,
+                    ),
+            ),
           ),
         ),
         bottom: searching
@@ -117,11 +137,13 @@ class _SearchScreenState extends State<SearchScreen> {
                   itemBuilder: (context, index) {
                     final result = results[index];
                     return ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: theme.colorScheme.secondaryContainer,
-                        child: Icon(
-                          _iconForType(result.type),
-                          color: theme.colorScheme.onSecondaryContainer,
+                      leading: ExcludeSemantics(
+                        child: CircleAvatar(
+                          backgroundColor: theme.colorScheme.secondaryContainer,
+                          child: Icon(
+                            _iconForType(result.type),
+                            color: theme.colorScheme.onSecondaryContainer,
+                          ),
                         ),
                       ),
                       title: Text(result.label),

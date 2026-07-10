@@ -8,28 +8,28 @@ Scope: the Flutter client (`mobile/lib/**`) and the server's `/setup` page. Note
 
 ## Summary table
 
-| ID | Title | Severity | Blocker |
-|---|---|---|---|
-| UI-1 | Errors shown as raw exception strings (`StateError: …`, `Request failed (500)`) | High | Yes |
-| UI-2 | No form validation feedback on any auth field | High | Yes |
-| UI-3 | Connect screen ignores setup status; wrong mode = confusing failures | Medium | Yes |
-| UI-4 | Loading states are inconsistent and largely absent | Medium | No |
-| UI-5 | Chat message load has no error/retry state; failure looks empty | Medium | No |
-| UI-6 | "Add member" / "New conversation" require raw account IDs (no directory) | High | Yes |
-| UI-7 | Session-created records vanish on refresh (invites, communities) with weak warning | Medium | No |
-| UI-8 | No unread indicators, message previews, or ordering by activity | Medium | No |
-| UI-9 | Device-link screen missing QR rendering; code entry only | Medium | Yes |
-| UI-10 | No pull-to-refresh / manual refresh on several screens | Low | No |
-| UI-11 | Attachment button permanently disabled with no path forward | Low | No |
-| UI-12 | Accessibility: unlabeled icon-only controls, no semantics on brand/avatars | Medium | No |
-| UI-13 | Message metadata line leaks raw protocol string into the bubble | Low | No |
-| UI-14 | Empty password/username accepted by UI, rejected opaquely by server | Medium | No |
-| UI-15 | No confirmation that a message failed to send vs. sent | Medium | No |
-| UI-16 | `/setup` page is a dead-end notice with no actionable next step | Low | No |
-| UI-17 | Search bar has no clear button; stale results linger between queries | Low | No |
-| UI-18 | No account/profile screen; account is an ID string only | Medium | No |
-| UI-19 | Timestamps use device-local parsing with silent failure risk | Low | No |
-| UI-20 | Retention radio has no "custom" and no confirmation of destructive change | Low | No |
+| ID | Title | Severity | Blocker | Status (2026-07-10) |
+|---|---|---|---|---|
+| UI-1 | Errors shown as raw exception strings (`StateError: …`, `Request failed (500)`) | High | Yes | **Fixed** — `describeError()` + full `ApiException` code map |
+| UI-2 | No form validation feedback on any auth field | High | Yes | **Fixed** — `Form` + field validators on connect screen |
+| UI-3 | Connect screen ignores setup status; wrong mode = confusing failures | Medium | Yes | **Fixed** — debounced setup probe steers auth mode |
+| UI-4 | Loading states are inconsistent and largely absent | Medium | No | **Partial** — first-load vs. empty distinguished for chat list + messages |
+| UI-5 | Chat message load has no error/retry state; failure looks empty | Medium | No | **Fixed** — per-conversation error state + retry |
+| UI-6 | "Add member" / "New conversation" require raw account IDs (no directory) | High | Yes | **Fixed** — username lookup picker (exact match by server design); raw ID kept as fallback |
+| UI-7 | Session-created records vanish on refresh (invites, communities) with weak warning | Medium | No | Open — needs server list endpoints |
+| UI-8 | No unread indicators, message previews, or ordering by activity | Medium | No | Open — needs server ordering/unread support |
+| UI-9 | Device-link screen missing QR rendering; code entry only | Medium | Yes | Open — needs QR render/scan dependency |
+| UI-10 | No pull-to-refresh / manual refresh on several screens | Low | No | Open — blocked on the same missing list endpoints as UI-7 |
+| UI-11 | Attachment button permanently disabled with no path forward | Low | No | Open — intentional placeholder (blocked on LOG-0/LOG-3) |
+| UI-12 | Accessibility: unlabeled icon-only controls, no semantics on brand/avatars | Medium | No | **Partial** — bubble sender/time semantics, decorative avatars excluded, section headers; full TalkBack/VoiceOver pass still needed |
+| UI-13 | Message metadata line leaks raw protocol string into the bubble | Low | No | **Fixed** — protocol dropped from meta line |
+| UI-14 | Empty password/username accepted by UI, rejected opaquely by server | Medium | No | **Fixed** — with UI-2 |
+| UI-15 | No confirmation that a message failed to send vs. sent | Medium | No | Open — blocked on real sending (LOG-0) |
+| UI-16 | `/setup` page is a dead-end notice with no actionable next step | Low | No | Open — server page, out of client scope |
+| UI-17 | Search bar has no clear button; stale results linger between queries | Low | No | **Fixed** — clear (✕) button resets query + results |
+| UI-18 | No account/profile screen; account is an ID string only | Medium | No | **Partial** — username now stored in session and shown in Settings; full profile surface still open |
+| UI-19 | Timestamps use device-local parsing with silent failure risk | Low | No | **Fixed** — `tryParse` with epoch sentinel; one bad row can't blank a list |
+| UI-20 | Retention radio has no "custom" and no confirmation of destructive change | Low | No | **Fixed** — confirmation dialog stating existing messages keep their timer |
 
 ---
 

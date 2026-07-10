@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
+import '../../ui/widgets/account_picker.dart';
 
-/// Bottom sheet for starting a DM or a private group. The server accepts a
-/// title and initial member account IDs; there is no directory endpoint yet,
-/// so members are added by account ID.
+/// Bottom sheet for starting a DM or a private group. Members are picked by
+/// exact username via metadata search (or a pasted account ID as fallback).
 Future<void> showNewConversationSheet(
   BuildContext context,
   AppState state,
@@ -33,14 +33,13 @@ class _NewConversationForm extends StatefulWidget {
 
 class _NewConversationFormState extends State<_NewConversationForm> {
   final title = TextEditingController();
-  final memberIds = TextEditingController();
+  List<SelectedAccount> members = <SelectedAccount>[];
   String kind = 'dm';
   bool submitting = false;
 
   @override
   void dispose() {
     title.dispose();
-    memberIds.dispose();
     super.dispose();
   }
 
@@ -69,7 +68,12 @@ class _NewConversationFormState extends State<_NewConversationForm> {
               ),
             ],
             selected: <String>{kind},
-            onSelectionChanged: (value) => setState(() => kind = value.first),
+            onSelectionChanged: (value) => setState(() {
+              kind = value.first;
+              // The picker below is re-created per kind (different selection
+              // limits), so drop any members carried over from the old mode.
+              members = <SelectedAccount>[];
+            }),
           ),
           const SizedBox(height: 16),
           if (kind == 'group') ...<Widget>[
@@ -82,16 +86,12 @@ class _NewConversationFormState extends State<_NewConversationForm> {
             ),
             const SizedBox(height: 12),
           ],
-          TextField(
-            controller: memberIds,
-            autocorrect: false,
-            decoration: InputDecoration(
-              labelText: kind == 'dm' ? 'Account ID' : 'Member account IDs',
-              helperText: kind == 'dm'
-                  ? 'The account ID of the person to message.'
-                  : 'Comma-separated account IDs (optional).',
-              prefixIcon: const Icon(Icons.alternate_email),
-            ),
+          AccountPicker(
+            key: ValueKey<String>(kind),
+            state: widget.state,
+            label: kind == 'dm' ? 'Who do you want to message?' : 'Add members',
+            maxSelection: kind == 'dm' ? 1 : null,
+            onChanged: (value) => setState(() => members = value),
           ),
           const SizedBox(height: 20),
           FilledButton.icon(
@@ -105,15 +105,10 @@ class _NewConversationFormState extends State<_NewConversationForm> {
   }
 
   Future<void> _submit() async {
-    final members = memberIds.text
-        .split(',')
-        .map((value) => value.trim())
-        .where((value) => value.isNotEmpty)
-        .toList();
     if (kind == 'dm' && members.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Enter the account ID to start a direct message.'),
+          content: Text('Pick the person to message first.'),
         ),
       );
       return;
@@ -122,7 +117,8 @@ class _NewConversationFormState extends State<_NewConversationForm> {
     final created = await widget.state.startConversation(
       kind: kind,
       title: kind == 'group' ? title.text.trim() : null,
-      memberAccountIds: members,
+      memberAccountIds:
+          members.map((account) => account.id).toList(growable: false),
     );
     if (!mounted) {
       return;
