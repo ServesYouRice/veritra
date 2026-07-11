@@ -39,11 +39,13 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/logout-all", a.withAuth(a.logoutAll))
 	mux.HandleFunc("POST /api/v1/register", a.register)
 	mux.HandleFunc("POST /api/v1/invites", a.withAuth(a.createInvite))
+	mux.HandleFunc("GET /api/v1/invites", a.withAuth(a.listInvites))
 	mux.HandleFunc("GET /api/v1/devices/me", a.withAuth(a.listDevices))
 	mux.HandleFunc("DELETE /api/v1/devices/{id}", a.withAuth(a.revokeDevice))
 	mux.HandleFunc("POST /api/v1/device-links", a.withAuth(a.createDeviceLink))
 	mux.HandleFunc("POST /api/v1/device-links/claim", a.claimDeviceLink)
 	mux.HandleFunc("POST /api/v1/communities", a.withAuth(a.createCommunity))
+	mux.HandleFunc("GET /api/v1/communities", a.withAuth(a.listCommunities))
 	mux.HandleFunc("POST /api/v1/conversations", a.withAuth(a.createConversation))
 	mux.HandleFunc("GET /api/v1/conversations", a.withAuth(a.listConversations))
 	mux.HandleFunc("POST /api/v1/messages/envelopes", a.withAuth(a.createMessageEnvelope))
@@ -292,6 +294,19 @@ func (a *API) createInvite(w http.ResponseWriter, r *http.Request, principal dom
 	writeJSON(w, http.StatusCreated, invite)
 }
 
+func (a *API) listInvites(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	if !domain.CanManageInvites(principal.Role) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	invites, err := a.Store.ListInvites(r.Context(), principal.AccountID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "invites_list_failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"invites": invites})
+}
+
 func (a *API) listDevices(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
 	devices, err := a.Store.ListDevices(r.Context(), principal.AccountID)
 	if err != nil {
@@ -469,8 +484,26 @@ func (a *API) createCommunity(w http.ResponseWriter, r *http.Request, principal 
 	writeJSON(w, http.StatusCreated, community)
 }
 
+func (a *API) listCommunities(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	communities, err := a.Store.ListCommunities(r.Context(), principal.AccountID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "communities_list_failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"communities": communities})
+}
+
 func (a *API) communitySubroute(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/communities/"), "/")
+	if len(parts) == 2 && parts[1] == "channels" && r.Method == http.MethodGet {
+		channels, err := a.Store.ListChannels(r.Context(), parts[0], principal.AccountID)
+		if err != nil {
+			handleStorageError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"channels": channels})
+		return
+	}
 	if len(parts) == 2 && parts[1] == "channels" && r.Method == http.MethodPost {
 		var req struct {
 			Name string `json:"name"`

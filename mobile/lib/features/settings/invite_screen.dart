@@ -6,9 +6,9 @@ import '../../core/models.dart';
 import '../../ui/format.dart';
 import '../../ui/widgets/empty_state.dart';
 
-/// Mint invite codes for the invite-only registration flow. The server has
-/// no list-invites endpoint yet, so only invites created this session are
-/// shown; copy the code before leaving.
+/// Mint invite codes for the invite-only registration flow. Invites the
+/// account has created are listed from the server (`GET /invites`), so codes
+/// survive restarts.
 class InviteScreen extends StatefulWidget {
   const InviteScreen({required this.state, super.key});
 
@@ -31,85 +31,90 @@ class _InviteScreenState extends State<InviteScreen> {
         final invites = widget.state.invites;
         return Scaffold(
           appBar: AppBar(title: const Text('Invites')),
-          body: ListView(
-            padding: const EdgeInsets.all(16),
-            children: <Widget>[
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: <Widget>[
-                      Text('Create an invite',
-                          style: theme.textTheme.titleMedium),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: <Widget>[
-                          Expanded(
-                            child: DropdownButtonFormField<int>(
-                              initialValue: maxUses,
-                              decoration: const InputDecoration(
-                                labelText: 'Max uses',
+          body: RefreshIndicator(
+            onRefresh: widget.state.refreshInvites,
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(16),
+              children: <Widget>[
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: <Widget>[
+                        Text('Create an invite',
+                            style: theme.textTheme.titleMedium),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: <Widget>[
+                            Expanded(
+                              child: DropdownButtonFormField<int>(
+                                initialValue: maxUses,
+                                decoration: const InputDecoration(
+                                  labelText: 'Max uses',
+                                ),
+                                items: const <DropdownMenuItem<int>>[
+                                  DropdownMenuItem(value: 1, child: Text('1')),
+                                  DropdownMenuItem(value: 5, child: Text('5')),
+                                  DropdownMenuItem(
+                                      value: 10, child: Text('10')),
+                                  DropdownMenuItem(
+                                      value: 25, child: Text('25')),
+                                ],
+                                onChanged: (value) =>
+                                    setState(() => maxUses = value ?? 1),
                               ),
-                              items: const <DropdownMenuItem<int>>[
-                                DropdownMenuItem(value: 1, child: Text('1')),
-                                DropdownMenuItem(value: 5, child: Text('5')),
-                                DropdownMenuItem(value: 10, child: Text('10')),
-                                DropdownMenuItem(value: 25, child: Text('25')),
-                              ],
-                              onChanged: (value) =>
-                                  setState(() => maxUses = value ?? 1),
                             ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: DropdownButtonFormField<int?>(
-                              initialValue: expiresInDays,
-                              decoration: const InputDecoration(
-                                labelText: 'Expires',
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: DropdownButtonFormField<int?>(
+                                initialValue: expiresInDays,
+                                decoration: const InputDecoration(
+                                  labelText: 'Expires',
+                                ),
+                                items: const <DropdownMenuItem<int?>>[
+                                  DropdownMenuItem(
+                                      value: 1, child: Text('1 day')),
+                                  DropdownMenuItem(
+                                      value: 7, child: Text('7 days')),
+                                  DropdownMenuItem(
+                                      value: 30, child: Text('30 days')),
+                                  DropdownMenuItem(
+                                      value: null, child: Text('Never')),
+                                ],
+                                onChanged: (value) =>
+                                    setState(() => expiresInDays = value),
                               ),
-                              items: const <DropdownMenuItem<int?>>[
-                                DropdownMenuItem(
-                                    value: 1, child: Text('1 day')),
-                                DropdownMenuItem(
-                                    value: 7, child: Text('7 days')),
-                                DropdownMenuItem(
-                                    value: 30, child: Text('30 days')),
-                                DropdownMenuItem(
-                                    value: null, child: Text('Never')),
-                              ],
-                              onChanged: (value) =>
-                                  setState(() => expiresInDays = value),
                             ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      FilledButton.icon(
-                        onPressed:
-                            widget.state.busy ? null : () => _create(context),
-                        icon: const Icon(Icons.card_giftcard_outlined),
-                        label: const Text('Create invite'),
-                      ),
-                    ],
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        FilledButton.icon(
+                          onPressed:
+                              widget.state.busy ? null : () => _create(context),
+                          icon: const Icon(Icons.card_giftcard_outlined),
+                          label: const Text('Create invite'),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              if (invites.isEmpty)
-                const EmptyState(
-                  icon: Icons.card_giftcard_outlined,
-                  title: 'No invites this session',
-                  message: 'Created invite codes appear here. Copy and '
-                      'share them over a secure channel.',
-                )
-              else ...<Widget>[
-                Text('Created this session',
-                    style: theme.textTheme.titleMedium),
-                const SizedBox(height: 8),
-                for (final invite in invites) _InviteCard(invite: invite),
+                const SizedBox(height: 16),
+                if (invites.isEmpty)
+                  const EmptyState(
+                    icon: Icons.card_giftcard_outlined,
+                    title: 'No invites yet',
+                    message: 'Invite codes you create appear here. Share '
+                        'them over a secure channel.',
+                  )
+                else ...<Widget>[
+                  Text('Your invites', style: theme.textTheme.titleMedium),
+                  const SizedBox(height: 8),
+                  for (final invite in invites) _InviteCard(invite: invite),
+                ],
               ],
-            ],
+            ),
           ),
         );
       },

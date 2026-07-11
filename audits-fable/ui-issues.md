@@ -16,10 +16,10 @@ Scope: the Flutter client (`mobile/lib/**`) and the server's `/setup` page. Note
 | UI-4 | Loading states are inconsistent and largely absent | Medium | No | **Partial** — first-load vs. empty distinguished for chat list + messages |
 | UI-5 | Chat message load has no error/retry state; failure looks empty | Medium | No | **Fixed** — per-conversation error state + retry |
 | UI-6 | "Add member" / "New conversation" require raw account IDs (no directory) | High | Yes | **Fixed** — username lookup picker (exact match by server design); raw ID kept as fallback |
-| UI-7 | Session-created records vanish on refresh (invites, communities) with weak warning | Medium | No | Open — needs server list endpoints |
+| UI-7 | Session-created records vanish on refresh (invites, communities) with weak warning | Medium | No | **Fixed** — server `GET /invites`, `GET /communities`, `GET /communities/{id}/channels` added; client hydrates on session start |
 | UI-8 | No unread indicators, message previews, or ordering by activity | Medium | No | Open — needs server ordering/unread support |
-| UI-9 | Device-link screen missing QR rendering; code entry only | Medium | Yes | Open — needs QR render/scan dependency |
-| UI-10 | No pull-to-refresh / manual refresh on several screens | Low | No | Open — blocked on the same missing list endpoints as UI-7 |
+| UI-9 | Device-link screen missing QR rendering; code entry only | Medium | Yes | **Partial** — link URI rendered as QR (`qr_flutter`); camera scanning on the claiming device still open |
+| UI-10 | No pull-to-refresh / manual refresh on several screens | Low | No | **Fixed** — `RefreshIndicator` on invites and communities screens (chat list already had one) |
 | UI-11 | Attachment button permanently disabled with no path forward | Low | No | Open — intentional placeholder (blocked on LOG-0/LOG-3) |
 | UI-12 | Accessibility: unlabeled icon-only controls, no semantics on brand/avatars | Medium | No | **Partial** — bubble sender/time semantics, decorative avatars excluded, section headers; full TalkBack/VoiceOver pass still needed |
 | UI-13 | Message metadata line leaks raw protocol string into the bubble | Low | No | **Fixed** — protocol dropped from meta line |

@@ -6,9 +6,9 @@ import '../../ui/widgets/empty_state.dart';
 import '../chat/chat_screen.dart';
 
 /// Communities: create a community, add channels, and open channel
-/// conversations. The server has no list-communities endpoint yet, so this
-/// screen shows communities created in this session plus every
-/// community_channel conversation the account is a member of.
+/// conversations. Communities and channels are listed from the server
+/// (`GET /communities`), plus every community_channel conversation the
+/// account is a member of.
 class CommunityScreen extends StatelessWidget {
   const CommunityScreen({required this.state, super.key});
 
@@ -27,55 +27,66 @@ class CommunityScreen extends StatelessWidget {
         icon: const Icon(Icons.group_add_outlined),
         label: const Text('New community'),
       ),
-      body: !hasContent
-          ? const EmptyState(
-              icon: Icons.groups_outlined,
-              title: 'No communities yet',
-              message: 'Create a community to organize people around '
-                  'shared channels — private by default, encrypted '
-                  'everywhere.',
-            )
-          : ListView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
-              children: <Widget>[
-                for (final community in state.communities)
-                  _CommunityCard(
-                    state: state,
-                    community: community,
-                    onCreateChannel: () => _createChannel(context, community),
-                  ),
-                if (channelConversations.isNotEmpty) ...<Widget>[
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
-                    child: Text(
-                      'Channels you are in',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                  ),
-                  Card(
-                    child: Column(
-                      children: <Widget>[
-                        for (final conversation in channelConversations)
-                          ListTile(
-                            leading: const Icon(Icons.tag),
-                            title: Text(conversation.title ?? 'Channel'),
-                            subtitle: const Text('Community channel'),
-                            trailing: const Icon(Icons.chevron_right_outlined),
-                            onTap: () {
-                              state.selectConversation(conversation.id);
-                              Navigator.of(context).push(
-                                MaterialPageRoute<void>(
-                                  builder: (_) => ChatScreen(state: state),
-                                ),
-                              );
-                            },
-                          ),
-                      ],
-                    ),
+      body: RefreshIndicator(
+        onRefresh: state.refreshCommunities,
+        child: !hasContent
+            ? ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: const <Widget>[
+                  SizedBox(height: 120),
+                  EmptyState(
+                    icon: Icons.groups_outlined,
+                    title: 'No communities yet',
+                    message: 'Create a community to organize people around '
+                        'shared channels — private by default, encrypted '
+                        'everywhere.',
                   ),
                 ],
-              ],
-            ),
+              )
+            : ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
+                children: <Widget>[
+                  for (final community in state.communities)
+                    _CommunityCard(
+                      state: state,
+                      community: community,
+                      onCreateChannel: () => _createChannel(context, community),
+                    ),
+                  if (channelConversations.isNotEmpty) ...<Widget>[
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
+                      child: Text(
+                        'Channels you are in',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+                    Card(
+                      child: Column(
+                        children: <Widget>[
+                          for (final conversation in channelConversations)
+                            ListTile(
+                              leading: const Icon(Icons.tag),
+                              title: Text(conversation.title ?? 'Channel'),
+                              subtitle: const Text('Community channel'),
+                              trailing:
+                                  const Icon(Icons.chevron_right_outlined),
+                              onTap: () {
+                                state.selectConversation(conversation.id);
+                                Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (_) => ChatScreen(state: state),
+                                  ),
+                                );
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+      ),
     );
   }
 

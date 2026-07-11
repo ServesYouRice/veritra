@@ -139,6 +139,29 @@ class ApiClient {
     return Invite.fromJson(json);
   }
 
+  Future<List<Invite>> listInvites(String token) async {
+    final json = await _jsonRequest('GET', '/api/v1/invites', token: token);
+    final rows = (json['invites'] as List<Object?>? ?? const <Object?>[])
+        .map((row) => Map<String, Object?>.from(row as Map));
+    return rows.map(Invite.fromJson).toList();
+  }
+
+  Future<List<Community>> listCommunities(String token) async {
+    final json = await _jsonRequest('GET', '/api/v1/communities', token: token);
+    final rows = (json['communities'] as List<Object?>? ?? const <Object?>[])
+        .map((row) => Map<String, Object?>.from(row as Map));
+    return rows.map(Community.fromJson).toList();
+  }
+
+  Future<List<Channel>> listChannels(String token, String communityId) async {
+    final json = await _jsonRequest(
+        'GET', '/api/v1/communities/$communityId/channels',
+        token: token);
+    final rows = (json['channels'] as List<Object?>? ?? const <Object?>[])
+        .map((row) => Map<String, Object?>.from(row as Map));
+    return rows.map(Channel.fromJson).toList();
+  }
+
   Future<Community> createCommunity(String token, String name) async {
     final json = await _jsonRequest('POST', '/api/v1/communities',
         token: token,

@@ -31,8 +31,8 @@ class AppState extends ChangeNotifier {
   StreamSubscription<Map<String, Object?>>? _syncSubscription;
   List<Conversation> conversations = <Conversation>[];
   List<Device> devices = <Device>[];
-  // Session-local records: the server has no list endpoints for these yet,
-  // so the UI shows what was created from this device during this session.
+  // Hydrated from the server list endpoints after auth; also updated
+  // locally when records are created from this device.
   List<Community> communities = <Community>[];
   Map<String, List<Channel>> channelsByCommunity = <String, List<Channel>>{};
   List<Invite> invites = <Invite>[];
@@ -166,6 +166,51 @@ class AppState extends ChangeNotifier {
     }
     devices = await client.devices(current.token);
     notifyListeners();
+  }
+
+  /// Refreshes the caller's invites from the server. Best-effort: members
+  /// without invite permission get a 403, in which case whatever is held
+  /// locally (usually nothing) is kept without surfacing an error.
+  Future<void> refreshInvites() async {
+    final current = session;
+    final client = api;
+    if (current == null || client == null) {
+      return;
+    }
+    try {
+      invites = await client.listInvites(current.token);
+      notifyListeners();
+    } catch (_) {
+      // Ignored: invite listing is a privilege, not a core flow.
+    }
+  }
+
+  /// Refreshes communities (and their channels) the account belongs to.
+  /// Best-effort for the same reason as [refreshInvites].
+  Future<void> refreshCommunities() async {
+    final current = session;
+    final client = api;
+    if (current == null || client == null) {
+      return;
+    }
+    try {
+      final list = await client.listCommunities(current.token);
+      final channels = <String, List<Channel>>{};
+      for (final community in list) {
+        try {
+          channels[community.id] =
+              await client.listChannels(current.token, community.id);
+        } catch (_) {
+          channels[community.id] =
+              channelsByCommunity[community.id] ?? const <Channel>[];
+        }
+      }
+      communities = list;
+      channelsByCommunity = channels;
+      notifyListeners();
+    } catch (_) {
+      // Keep the locally-known records if the server can't list right now.
+    }
   }
 
   Future<void> _refreshConversations({required bool notify}) async {
@@ -585,6 +630,10 @@ class AppState extends ChangeNotifier {
     );
     unawaited(_catchUpSyncEvents());
     unawaited(sync!.connect());
+    // _startSync runs exactly once per established session, which makes it
+    // the single hook for hydrating server-listed records.
+    unawaited(refreshInvites());
+    unawaited(refreshCommunities());
   }
 
   Future<void> _catchUpSyncEvents() async {
