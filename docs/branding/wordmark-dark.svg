@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 220" width="860" height="220" role="img" aria-label="Veritra wordmark">
+  <defs>
+    <linearGradient id="wmGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6366F1"/>
+      <stop offset="1" stop-color="#0EA5E9"/>
+    </linearGradient>
+  </defs>
+  <!-- Shield-V mark, scaled -->
+  <g transform="translate(20 26) scale(0.33)">
+    <path fill="url(#wmGrad)" stroke-linejoin="round"
+          d="M256 44 L424 106 C430 108 434 114 434 120 V264 C434 364 360 434 258 466 C257 466 255 466 254 466 C152 434 78 364 78 264 V120 C78 114 82 108 88 106 Z"/>
+    <path fill="none" stroke="#FFFFFF" stroke-width="46" stroke-linecap="round" stroke-linejoin="round"
+          d="M170 190 L256 338 L342 190"/>
+  </g>
+  <!-- Wordmark (system sans; replace with brand type later) -->
+  <text x="210" y="145" font-family="ui-sans-serif, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif"
+        font-size="104" font-weight="700" letter-spacing="2" fill="#F1F5F9">veritra</text>
+</svg>

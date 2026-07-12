@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Veritra chat bubble with keyhole logo concept">
+  <path fill="#0D9488"
+        d="M160 80
+           h192
+           a96 96 0 0 1 96 96
+           v72
+           a96 96 0 0 1 -96 96
+           h-52
+           l-33 66
+           a12 12 0 0 1 -22 0
+           l-33 -66
+           h-52
+           a96 96 0 0 1 -96 -96
+           v-72
+           a96 96 0 0 1 96 -96
+           Z"/>
+  <g fill="#FFFFFF">
+    <circle cx="256" cy="188" r="38"/>
+    <path d="M256 200 L230 292 a8 8 0 0 0 8 10 h36 a8 8 0 0 0 8 -10 Z"/>
+  </g>
+</svg>

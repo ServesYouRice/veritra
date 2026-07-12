@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Veritra sealed envelope logo concept">
+  <defs>
+    <linearGradient id="envGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#312E81"/>
+      <stop offset="1" stop-color="#1E1B4B"/>
+    </linearGradient>
+  </defs>
+  <!-- Envelope body -->
+  <rect x="72" y="128" width="368" height="272" rx="36" fill="url(#envGrad)"/>
+  <!-- Flap: the fold lines form a V -->
+  <path fill="none" stroke="#818CF8" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"
+        d="M100 168 L256 296 L412 168"/>
+  <!-- Padlock seal at the point of the V -->
+  <g>
+    <circle cx="256" cy="328" r="66" fill="#0EA5E9"/>
+    <rect x="228" y="316" width="56" height="46" rx="10" fill="#FFFFFF"/>
+    <path fill="none" stroke="#FFFFFF" stroke-width="12"
+          d="M238 316 v-12 a18 18 0 0 1 36 0 v12"/>
+  </g>
+</svg>
