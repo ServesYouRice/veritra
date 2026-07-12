@@ -629,3 +629,108 @@ func doRaw(t *testing.T, handler http.Handler, method, path, token string, body 
 	handler.ServeHTTP(rec, req)
 	return rec.Code, rec.Body.Bytes()
 }
+
+func TestListInvitesReturnsOwnInvitesOnly(t *testing.T) {
+	handler, ownerToken, _ := newTestHandlerWithOwner(t)
+	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/invites", ownerToken, map[string]interface{}{
+		"max_uses": 5,
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("create invite status=%d body=%s", status, response)
+	}
+
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/invites", ownerToken, nil)
+	if status != http.StatusOK {
+		t.Fatalf("list invites status=%d body=%s", status, response)
+	}
+	var listed struct {
+		Invites []struct {
+			Code    string `json:"code"`
+			MaxUses int    `json:"max_uses"`
+		} `json:"invites"`
+	}
+	if err := json.Unmarshal(response, &listed); err != nil {
+		t.Fatalf("decode invites: %v", err)
+	}
+	if len(listed.Invites) != 1 || listed.Invites[0].MaxUses != 5 ||
+		listed.Invites[0].Code == "" {
+		t.Fatalf("unexpected invites: %#v", listed.Invites)
+	}
+
+	memberToken := registerMember(t, handler, ownerToken, "listmember")
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/invites", memberToken, nil)
+	if status != http.StatusForbidden {
+		t.Fatalf("member list invites status=%d body=%s", status, response)
+	}
+}
+
+func TestListCommunitiesAndChannelsScopedToMembership(t *testing.T) {
+	handler, ownerToken, _ := newTestHandlerWithOwner(t)
+	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]interface{}{
+		"name": "Neighborhood",
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("create community status=%d body=%s", status, response)
+	}
+	var community struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(response, &community); err != nil {
+		t.Fatalf("decode community: %v", err)
+	}
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/communities/"+community.ID+"/channels", ownerToken, map[string]interface{}{
+		"name": "general",
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("create channel status=%d body=%s", status, response)
+	}
+
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/communities", ownerToken, nil)
+	if status != http.StatusOK {
+		t.Fatalf("list communities status=%d body=%s", status, response)
+	}
+	var communities struct {
+		Communities []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"communities"`
+	}
+	if err := json.Unmarshal(response, &communities); err != nil {
+		t.Fatalf("decode communities: %v", err)
+	}
+	if len(communities.Communities) != 1 || communities.Communities[0].Name != "Neighborhood" {
+		t.Fatalf("unexpected communities: %#v", communities.Communities)
+	}
+
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/communities/"+community.ID+"/channels", ownerToken, nil)
+	if status != http.StatusOK {
+		t.Fatalf("list channels status=%d body=%s", status, response)
+	}
+	var channels struct {
+		Channels []struct {
+			Name string `json:"name"`
+		} `json:"channels"`
+	}
+	if err := json.Unmarshal(response, &channels); err != nil {
+		t.Fatalf("decode channels: %v", err)
+	}
+	if len(channels.Channels) != 1 || channels.Channels[0].Name != "general" {
+		t.Fatalf("unexpected channels: %#v", channels.Channels)
+	}
+
+	memberToken := registerMember(t, handler, ownerToken, "outsider")
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/communities", memberToken, nil)
+	if status != http.StatusOK {
+		t.Fatalf("outsider list communities status=%d body=%s", status, response)
+	}
+	if err := json.Unmarshal(response, &communities); err != nil {
+		t.Fatalf("decode outsider communities: %v", err)
+	}
+	if len(communities.Communities) != 0 {
+		t.Fatalf("outsider should see no communities: %#v", communities.Communities)
+	}
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/communities/"+community.ID+"/channels", memberToken, nil)
+	if status != http.StatusForbidden {
+		t.Fatalf("outsider list channels status=%d body=%s", status, response)
+	}
+}

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../core/app_state.dart';
 import '../../ui/format.dart';
@@ -36,6 +37,46 @@ class DeviceLinkScreen extends StatelessWidget {
                 label: Text(link == null ? 'Create link' : 'Create new link'),
               ),
               if (link != null) ...<Widget>[
+                if (link.linkUri != null &&
+                    link.state == 'pending') ...<Widget>[
+                  const SizedBox(height: 16),
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        children: <Widget>[
+                          Semantics(
+                            label: 'QR code containing the device link. '
+                                'Scan it with the new device.',
+                            child: Container(
+                              // QR codes need a light, uniform quiet zone to
+                              // scan reliably, independent of app theme.
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: QrImageView(
+                                data: link.linkUri!,
+                                version: QrVersions.auto,
+                                size: 220,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            'Scan with the new device, or type the link code '
+                            'below.',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 16),
                 Card(
                   child: Padding(

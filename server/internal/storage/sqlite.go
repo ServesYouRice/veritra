@@ -500,6 +500,81 @@ func (s *Store) CreateInvite(ctx context.Context, createdBy string, maxUses int,
 	return domain.Invite{ID: id, Code: code, CreatedBy: createdBy, MaxUses: maxUses, Uses: 0, ExpiresAt: expiresAt, CreatedAt: createdAt}, nil
 }
 
+// ListInvites returns the invites created by the given account, newest
+// first. Invites are intentionally not visible across accounts: the code is
+// a bearer credential for registration.
+func (s *Store) ListInvites(ctx context.Context, createdBy string) ([]domain.Invite, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, code, created_by, max_uses, uses, expires_at, created_at, revoked_at FROM invites WHERE created_by = ? ORDER BY created_at DESC`, createdBy)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	invites := []domain.Invite{}
+	for rows.Next() {
+		var invite domain.Invite
+		var expires, revoked sql.NullString
+		var created string
+		if err := rows.Scan(&invite.ID, &invite.Code, &invite.CreatedBy, &invite.MaxUses, &invite.Uses, &expires, &created, &revoked); err != nil {
+			return nil, err
+		}
+		invite.ExpiresAt = parseOptionalTime(expires)
+		invite.CreatedAt = parseTime(created)
+		invite.RevokedAt = parseOptionalTime(revoked)
+		invites = append(invites, invite)
+	}
+	return invites, rows.Err()
+}
+
+// ListCommunities returns the communities the given account is a member of,
+// newest first.
+func (s *Store) ListCommunities(ctx context.Context, accountID string) ([]domain.Community, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT c.id, c.name, c.created_by, c.created_at
+		FROM communities c
+		JOIN memberships m ON m.community_id = c.id
+		WHERE m.account_id = ?
+		ORDER BY c.created_at DESC`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	communities := []domain.Community{}
+	for rows.Next() {
+		var community domain.Community
+		var created string
+		if err := rows.Scan(&community.ID, &community.Name, &community.CreatedBy, &created); err != nil {
+			return nil, err
+		}
+		community.CreatedAt = parseTime(created)
+		communities = append(communities, community)
+	}
+	return communities, rows.Err()
+}
+
+// ListChannels returns a community's channels; the caller must be a member
+// of the community.
+func (s *Store) ListChannels(ctx context.Context, communityID, accountID string) ([]domain.Channel, error) {
+	if _, err := s.CommunityMemberRole(ctx, communityID, accountID); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, community_id, name, kind, created_at FROM channels WHERE community_id = ? ORDER BY created_at`, communityID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	channels := []domain.Channel{}
+	for rows.Next() {
+		var channel domain.Channel
+		var created string
+		if err := rows.Scan(&channel.ID, &channel.CommunityID, &channel.Name, &channel.Kind, &created); err != nil {
+			return nil, err
+		}
+		channel.CreatedAt = parseTime(created)
+		channels = append(channels, channel)
+	}
+	return channels, rows.Err()
+}
+
 func (s *Store) ListDevices(ctx context.Context, accountID string) ([]domain.Device, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, account_id, name, key_package, signing_key, created_at, last_seen_at, revoked_at FROM devices WHERE account_id = ? ORDER BY created_at`, accountID)
 	if err != nil {

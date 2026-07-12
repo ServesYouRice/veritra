@@ -207,6 +207,21 @@ class FakeFeatureApiClient extends ApiClient {
   }
 
   @override
+  Future<List<Invite>> listInvites(String token) async {
+    return <Invite>[];
+  }
+
+  @override
+  Future<List<Community>> listCommunities(String token) async {
+    return <Community>[];
+  }
+
+  @override
+  Future<List<Channel>> listChannels(String token, String communityId) async {
+    return <Channel>[];
+  }
+
+  @override
   Future<Community> createCommunity(String token, String name) async {
     return Community(id: 'comm_1', name: name);
   }
