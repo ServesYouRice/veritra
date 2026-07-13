@@ -49,6 +49,9 @@ func (s *Store) CreateOwner(ctx context.Context, input CreateOwnerInput) (Accoun
 	if _, err := tx.ExecContext(ctx, `INSERT INTO devices(id, account_id, name, key_package, auth_secret_hash, created_at) VALUES(?, ?, ?, ?, ?, ?)`, deviceID, accountID, strings.TrimSpace(input.DeviceName), input.KeyPackage, input.DeviceAuthHash, createdAt); err != nil {
 		return AccountDevice{}, err
 	}
+	if err := insertInitialDeviceKeyPackage(ctx, tx, deviceID, input.KeyPackage, createdAt); err != nil {
+		return AccountDevice{}, err
+	}
 	if input.SessionHash != "" {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO sessions(token_hash, account_id, device_id, expires_at, created_at, recent_auth_at) VALUES(?, ?, ?, ?, ?, ?)`, input.SessionHash, accountID, deviceID, formatTime(input.SessionExpiry), createdAt, createdAt); err != nil {
 			return AccountDevice{}, err
@@ -103,6 +106,9 @@ func (s *Store) RegisterWithInvite(ctx context.Context, input RegisterInput) (Ac
 		return AccountDevice{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO devices(id, account_id, name, key_package, auth_secret_hash, created_at) VALUES(?, ?, ?, ?, ?, ?)`, deviceID, accountID, strings.TrimSpace(input.DeviceName), input.KeyPackage, input.DeviceAuthHash, createdAt); err != nil {
+		return AccountDevice{}, err
+	}
+	if err := insertInitialDeviceKeyPackage(ctx, tx, deviceID, input.KeyPackage, createdAt); err != nil {
 		return AccountDevice{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE invites SET uses = uses + 1 WHERE id = ?`, inviteID); err != nil {

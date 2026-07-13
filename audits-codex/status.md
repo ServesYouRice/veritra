@@ -11,7 +11,7 @@ Legend: **Closed** = implemented; **Blocked** = cannot be completed safely witho
 | Finding | Status | Resolution |
 | --- | --- | --- |
 | R-01 | Closed | One-time high-entropy remote setup token; tokenless setup is loopback-only. |
-| R-02 | **Blocked** | The protocol, key lifecycle, rollback rules, and review evidence are specified in `docs/crypto-protocol.md`; production MLS remains fail-closed. Shipping is prevented by `scripts/release-readiness.sh` until OpenMLS integration and independent review complete. |
+| R-02 | **Blocked** | The protocol and rollback rules are specified, and the server now atomically publishes, expires, exports, prunes, and single-use claims conversation-scoped MLS key packages. Production OpenMLS mobile bindings, secure group state, decrypt/rotation/recovery, interop evidence, and independent review remain required; release stays fail-closed. |
 | R-03 | Closed | Reviewed Android/iOS projects and secure platform configuration are committed. |
 | R-04 | Closed | Flutter 3.44.0, lockfile enforcement, source APIs, scripts, and CI are aligned. |
 | R-05 | Closed | Channel kind is validated and channel/backing-conversation creation is atomic. |

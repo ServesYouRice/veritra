@@ -56,6 +56,16 @@ type Device struct {
 	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
 }
 
+type DeviceKeyPackage struct {
+	ID          string    `json:"id"`
+	DeviceID    string    `json:"device_id"`
+	AccountID   string    `json:"account_id,omitempty"`
+	KeyPackage  []byte    `json:"key_package"`
+	Ciphersuite string    `json:"ciphersuite"`
+	CreatedAt   time.Time `json:"created_at"`
+	ExpiresAt   time.Time `json:"expires_at"`
+}
+
 type DeviceLink struct {
 	ID                string     `json:"id"`
 	Code              string     `json:"code,omitempty"`

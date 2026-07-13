@@ -393,21 +393,17 @@ func (s *Store) PruneOperationalRows(ctx context.Context, now time.Time) (int64,
 	cutoff := formatTime(now.UTC().Add(-30 * 24 * time.Hour))
 	queries := []struct {
 		query string
-		arg   string
+		args  []interface{}
 	}{
-		{`DELETE FROM sessions WHERE token_hash IN (SELECT token_hash FROM sessions WHERE expires_at <= ? ORDER BY expires_at LIMIT 500)`, formatTime(now.UTC())},
-		{`DELETE FROM invites WHERE id IN (SELECT id FROM invites WHERE (expires_at IS NOT NULL AND expires_at < ?) OR (revoked_at IS NOT NULL AND revoked_at < ?) ORDER BY COALESCE(revoked_at, expires_at), id LIMIT 500)`, cutoff},
-		{`DELETE FROM device_links WHERE id IN (SELECT id FROM device_links WHERE expires_at < ? AND state IN ('consumed', 'revoked') ORDER BY expires_at, id LIMIT 500)`, cutoff},
-		{`DELETE FROM push_subscriptions WHERE id IN (SELECT id FROM push_subscriptions WHERE disabled_at IS NOT NULL AND disabled_at < ? ORDER BY disabled_at, id LIMIT 500)`, cutoff},
+		{`DELETE FROM sessions WHERE token_hash IN (SELECT token_hash FROM sessions WHERE expires_at <= ? ORDER BY expires_at LIMIT 500)`, []interface{}{formatTime(now.UTC())}},
+		{`DELETE FROM invites WHERE id IN (SELECT id FROM invites WHERE (expires_at IS NOT NULL AND expires_at < ?) OR (revoked_at IS NOT NULL AND revoked_at < ?) ORDER BY COALESCE(revoked_at, expires_at), id LIMIT 500)`, []interface{}{cutoff, cutoff}},
+		{`DELETE FROM device_links WHERE id IN (SELECT id FROM device_links WHERE expires_at < ? AND state IN ('consumed', 'revoked') ORDER BY expires_at, id LIMIT 500)`, []interface{}{cutoff}},
+		{`DELETE FROM push_subscriptions WHERE id IN (SELECT id FROM push_subscriptions WHERE disabled_at IS NOT NULL AND disabled_at < ? ORDER BY disabled_at, id LIMIT 500)`, []interface{}{cutoff}},
+		{`DELETE FROM device_key_packages WHERE id IN (SELECT id FROM device_key_packages WHERE expires_at < ? OR (claimed_at IS NOT NULL AND claimed_at < ?) ORDER BY COALESCE(claimed_at, expires_at), id LIMIT 500)`, []interface{}{formatTime(now.UTC()), cutoff}},
 	}
 	var removed int64
-	for i, item := range queries {
-		var result sql.Result
-		if i == 1 {
-			result, err = tx.ExecContext(ctx, item.query, item.arg, item.arg)
-		} else {
-			result, err = tx.ExecContext(ctx, item.query, item.arg)
-		}
+	for _, item := range queries {
+		result, err := tx.ExecContext(ctx, item.query, item.args...)
 		if err != nil {
 			return 0, err
 		}

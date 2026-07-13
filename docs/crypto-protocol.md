@@ -37,6 +37,7 @@ Status: required design contract; implementation is not production-ready.
 
 - Key packages are single-use, signed, expire within a bounded interval, and are deleted from the server when claimed.
 - Clients maintain a small replenished pool per device and reject reused, expired, unsupported-ciphersuite, or uncredentialed packages.
+- The server accepts at most ten packages per publication, retains at most fifty available packages per active device, and atomically consumes one package for every other active conversation device. A claim fails as a unit if any device has no package.
 - Signature and HPKE keys are generated inside platform secure storage where supported; exportable key bytes must be wrapped immediately by a non-exportable platform key.
 - Rotation creates a new credential/key-package generation and commits updates to every active group.
 

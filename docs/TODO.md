@@ -2,7 +2,6 @@
 
 - Integrate OpenMLS through Rust bindings and Flutter FFI.
 - Implement and independently review the requirements in `crypto-protocol.md`.
-- Design key-distribution APIs for conversation/member device key packages.
 - Add client decrypt/render support after production key storage exists.
 - Store future MLS private keys through the platform keystore integration. The current bounded ciphertext cache, cursor, and encrypted outbox already use platform encrypted storage.
 - Add QR scanning/rendering and production key-continuity checks to the current manual device-link UX.

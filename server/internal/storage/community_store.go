@@ -243,6 +243,9 @@ func (s *Store) ApproveDeviceLink(ctx context.Context, linkID, accountID, verifi
 	if _, err := tx.ExecContext(ctx, `INSERT INTO devices(id, account_id, name, key_package, signing_key, auth_secret_hash, created_at) VALUES(?, ?, ?, ?, ?, ?, ?)`, deviceID, accountID, deviceName, keyPackage, nullableBytes(signingKey), authSecretHash, now); err != nil {
 		return domain.DeviceLink{}, domain.Device{}, err
 	}
+	if err := insertInitialDeviceKeyPackage(ctx, tx, deviceID, keyPackage, now); err != nil {
+		return domain.DeviceLink{}, domain.Device{}, err
+	}
 	result, err := tx.ExecContext(ctx, `UPDATE device_links SET state = ?, approved_device_id = ?, approved_at = ? WHERE id = ? AND state = ?`, domain.DeviceLinkApproved, deviceID, now, linkID, domain.DeviceLinkClaimed)
 	if err != nil {
 		return domain.DeviceLink{}, domain.Device{}, err

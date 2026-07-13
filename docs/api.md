@@ -40,6 +40,11 @@ Base path: `/api/v1`
 
 The verification code returned to both devices must be compared in the client UX before approval. The server stores only public device key-package metadata and never receives private keys.
 
+### MLS key packages
+
+- `POST /api/v1/devices/me/key-packages` publishes up to ten signed, expiring MLS 1.0 key packages for the authenticated device. Packages are opaque to the server and limited to the required ciphersuite.
+- `POST /api/v1/conversations/{id}/key-packages/claim` atomically consumes one package for every other active device in the conversation. The whole claim fails when any device has no package, preventing partial roster creation or package reuse.
+
 ## Communities
 
 - `POST /api/v1/communities` creates a community owned by the caller.
