@@ -8,6 +8,7 @@ This project is licensed AGPL-3.0-or-later. Dependency licenses must be compatib
 | --- | --- | --- | --- |
 | `modernc.org/sqlite` | Pure-Go SQLite driver | BSD-style / compatible notices required | Chosen to support single-binary builds without CGO. Verify exact transitive notices during release. |
 | `golang.org/x/crypto` | Password hashing helpers | BSD-3-Clause | Used for password fallback hashing. |
+| `github.com/SherClockHolmes/webpush-go` | RFC 8291 Web Push encryption and VAPID | MIT | Server-side optional generic wake delivery; pinned in `server/go.mod`. |
 | `flutter_secure_storage` | Platform secure storage for mobile sessions | BSD-3-Clause | Direct Flutter dependency; platform packages are pulled transitively by `flutter pub get`. |
 | Flutter SDK | Mobile client framework | BSD-3-Clause | Toolchain, not vendored. |
 

@@ -72,7 +72,7 @@ Payloads must not include plaintext body fields. Message ciphertext is base64-en
 - `POST /api/v1/backups` accepts client-encrypted backup blobs with `X-Key-Derivation-Metadata`.
 - `GET /api/v1/attachments` and `GET /api/v1/backups` list the caller's encrypted blobs.
 - `GET` and `DELETE` on `/api/v1/attachments/{id}` and `/api/v1/backups/{id}` retrieve or delete authorized ciphertext.
-- `POST /api/v1/push/subscriptions` records push endpoints. Push payloads must remain generic.
+- `POST /api/v1/push/subscriptions` records a `webpush` HTTPS endpoint plus RFC 8291 `public_key` and `auth_secret`. Delivery is enabled only when the operator configures VAPID; payloads remain generic encrypted wake signals.
 - `DELETE /api/v1/push/subscriptions/{id}` disables one of the caller's push subscriptions.
 - `POST /api/v1/calls`, `GET /api/v1/calls`, and the versioned call transition route provide bounded encrypted signaling with expiry.
 

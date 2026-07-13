@@ -2506,12 +2506,66 @@ func (s *Store) MarkRead(ctx context.Context, conversationID, accountID, message
 	return err
 }
 
-func (s *Store) CreatePushSubscription(ctx context.Context, accountID, deviceID, provider, endpoint string) error {
+type PushTarget struct {
+	ID         string
+	Endpoint   string
+	PublicKey  string
+	AuthSecret string
+}
+
+func (s *Store) CreatePushSubscription(ctx context.Context, accountID, deviceID, provider, endpoint, publicKey, authSecret string) (string, error) {
 	id, err := domain.NewID("push")
 	if err != nil {
-		return err
+		return "", err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO push_subscriptions(id, account_id, device_id, provider, endpoint, created_at) VALUES(?, ?, ?, ?, ?, ?)`, id, accountID, nullableEmptyString(deviceID), provider, endpoint, nowString())
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	var activeID string
+	err = tx.QueryRowContext(ctx, `SELECT id FROM push_subscriptions WHERE account_id = ? AND device_id = ? AND provider = ? AND disabled_at IS NULL ORDER BY created_at DESC LIMIT 1`, accountID, deviceID, provider).Scan(&activeID)
+	if errors.Is(err, sql.ErrNoRows) {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO push_subscriptions(id, account_id, device_id, provider, endpoint, public_key, auth_secret, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, id, accountID, nullableEmptyString(deviceID), provider, endpoint, publicKey, authSecret, nowString()); err != nil {
+			return "", err
+		}
+		activeID = id
+	} else if err != nil {
+		return "", err
+	} else if _, err := tx.ExecContext(ctx, `UPDATE push_subscriptions SET endpoint = ?, public_key = ?, auth_secret = ?, created_at = ? WHERE id = ?`, endpoint, publicKey, authSecret, nowString(), activeID); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return activeID, nil
+}
+
+func (s *Store) PushTargetsForConversation(ctx context.Context, conversationID, excludeAccountID string) ([]PushTarget, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT ps.id, ps.endpoint, COALESCE(ps.public_key, ''), COALESCE(ps.auth_secret, '')
+		FROM push_subscriptions ps
+		JOIN memberships m ON m.account_id = ps.account_id
+		WHERE m.conversation_id = ? AND ps.account_id <> ? AND ps.provider = 'webpush' AND ps.disabled_at IS NULL
+		ORDER BY ps.id
+		LIMIT 500`, conversationID, excludeAccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var targets []PushTarget
+	for rows.Next() {
+		var target PushTarget
+		if err := rows.Scan(&target.ID, &target.Endpoint, &target.PublicKey, &target.AuthSecret); err != nil {
+			return nil, err
+		}
+		targets = append(targets, target)
+	}
+	return targets, rows.Err()
+}
+
+func (s *Store) DisablePushTarget(ctx context.Context, subscriptionID string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE push_subscriptions SET disabled_at = COALESCE(disabled_at, ?) WHERE id = ?`, nowString(), subscriptionID)
 	return err
 }
 

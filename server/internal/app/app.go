@@ -20,6 +20,7 @@ import (
 	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/httpapi"
 	"private-messenger/server/internal/messaging"
+	"private-messenger/server/internal/push"
 	"private-messenger/server/internal/realtime"
 	"private-messenger/server/internal/storage"
 	"private-messenger/server/internal/uploads"
@@ -31,6 +32,7 @@ type App struct {
 	Store   *storage.Store
 	Hub     *realtime.Hub
 	Blobs   *uploads.LocalStore
+	Push    push.Provider
 	limiter *rateLimiter
 	metrics *httpMetrics
 	Log     *slog.Logger
@@ -58,11 +60,26 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		_ = store.Close()
 		return nil, err
 	}
+	var pushProvider push.Provider = push.DisabledProvider{}
+	pushConfigured := cfg.VAPIDSubscriber != "" || cfg.VAPIDPublicKey != "" || cfg.VAPIDPrivateKey != ""
+	if pushConfigured {
+		provider, err := push.NewWebPushProvider(push.WebPushConfig{
+			Subscriber: cfg.VAPIDSubscriber,
+			PublicKey:  cfg.VAPIDPublicKey,
+			PrivateKey: cfg.VAPIDPrivateKey,
+		})
+		if err != nil {
+			_ = store.Close()
+			return nil, fmt.Errorf("configure web push: %w", err)
+		}
+		pushProvider = provider
+	}
 	return &App{
 		Config:  cfg,
 		Store:   store,
 		Hub:     realtime.NewHub(),
 		Blobs:   blobs,
+		Push:    pushProvider,
 		limiter: limiter,
 		metrics: newHTTPMetrics(),
 		Log:     logger,
@@ -71,7 +88,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
-	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Log: a.Log, SetupToken: a.Config.SetupToken, DefaultInstanceName: a.Config.InstanceName, Messages: messaging.New(a.Store)}
+	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Push: a.Push, Log: a.Log, SetupToken: a.Config.SetupToken, DefaultInstanceName: a.Config.InstanceName, Messages: messaging.New(a.Store)}
 	api.Register(mux)
 	return securityHeaders(a.requestLogger(a.limiter.middleware(routeTimeouts(mux))))
 }

@@ -16,8 +16,13 @@ Environment:
 - `PRIVATE_MESSENGER_SETUP_TOKEN`, high-entropy one-time secret required for remote first-owner setup
 - `PRIVATE_MESSENGER_MANAGEMENT_ADDR`, loopback/private metrics listener, default `127.0.0.1:9090`
 - `PRIVATE_MESSENGER_TRUSTED_PROXIES`, comma-separated CIDRs whose `X-Forwarded-For` headers may be trusted for rate limiting
+- `PRIVATE_MESSENGER_VAPID_SUBSCRIBER`, `PRIVATE_MESSENGER_VAPID_PUBLIC_KEY`, and `PRIVATE_MESSENGER_VAPID_PRIVATE_KEY`, optional all-or-none encrypted Web Push configuration
 
 An example environment file is available at `server/config.example.env`.
+
+Encrypted Web Push is disabled unless all three VAPID variables are present.
+The subscriber must be a `mailto:` or HTTPS URI. Store the private key only in
+the root-readable environment file; it is never returned by the API or logged.
 
 Generate the setup token out of band, keep it out of logs and command-line
 arguments, and remove it from the environment after the owner is created.

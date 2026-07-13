@@ -9,15 +9,18 @@ import (
 )
 
 type Config struct {
-	Addr           string
-	DataDir        string
-	DatabasePath   string
-	StoragePath    string
-	InstanceName   string
-	SetupToken     string
-	EnableMetrics  bool
-	ManagementAddr string
-	TrustedProxies []*net.IPNet
+	Addr            string
+	DataDir         string
+	DatabasePath    string
+	StoragePath     string
+	InstanceName    string
+	SetupToken      string
+	EnableMetrics   bool
+	ManagementAddr  string
+	TrustedProxies  []*net.IPNet
+	VAPIDSubscriber string
+	VAPIDPublicKey  string
+	VAPIDPrivateKey string
 }
 
 func Load() (Config, error) {
@@ -26,13 +29,16 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg := Config{
-		Addr:           getenv("PRIVATE_MESSENGER_ADDR", ":8080"),
-		DataDir:        getenv("PRIVATE_MESSENGER_DATA_DIR", "./data"),
-		InstanceName:   getenv("PRIVATE_MESSENGER_INSTANCE_NAME", "Private Messenger"),
-		SetupToken:     os.Getenv("PRIVATE_MESSENGER_SETUP_TOKEN"),
-		EnableMetrics:  getenv("PRIVATE_MESSENGER_ENABLE_METRICS", "") == "1",
-		ManagementAddr: getenv("PRIVATE_MESSENGER_MANAGEMENT_ADDR", "127.0.0.1:9090"),
-		TrustedProxies: trustedProxies,
+		Addr:            getenv("PRIVATE_MESSENGER_ADDR", ":8080"),
+		DataDir:         getenv("PRIVATE_MESSENGER_DATA_DIR", "./data"),
+		InstanceName:    getenv("PRIVATE_MESSENGER_INSTANCE_NAME", "Private Messenger"),
+		SetupToken:      os.Getenv("PRIVATE_MESSENGER_SETUP_TOKEN"),
+		EnableMetrics:   getenv("PRIVATE_MESSENGER_ENABLE_METRICS", "") == "1",
+		ManagementAddr:  getenv("PRIVATE_MESSENGER_MANAGEMENT_ADDR", "127.0.0.1:9090"),
+		TrustedProxies:  trustedProxies,
+		VAPIDSubscriber: strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_VAPID_SUBSCRIBER")),
+		VAPIDPublicKey:  strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_VAPID_PUBLIC_KEY")),
+		VAPIDPrivateKey: strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_VAPID_PRIVATE_KEY")),
 	}
 	cfg.DatabasePath = getenv("PRIVATE_MESSENGER_DB_PATH", filepath.Join(cfg.DataDir, "private-messenger.db"))
 	cfg.StoragePath = getenv("PRIVATE_MESSENGER_STORAGE_PATH", filepath.Join(cfg.DataDir, "blobs"))

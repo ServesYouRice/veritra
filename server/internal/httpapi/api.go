@@ -21,6 +21,7 @@ import (
 	"private-messenger/server/internal/auth"
 	"private-messenger/server/internal/domain"
 	"private-messenger/server/internal/messaging"
+	"private-messenger/server/internal/push"
 	"private-messenger/server/internal/realtime"
 	"private-messenger/server/internal/storage"
 	"private-messenger/server/internal/uploads"
@@ -35,6 +36,7 @@ type API struct {
 	SetupToken          string
 	DefaultInstanceName string
 	Messages            *messaging.Service
+	Push                push.Provider
 	typingMu            sync.Mutex
 	typingLast          map[string]time.Time
 }
@@ -943,6 +945,7 @@ func (a *API) createMessageEnvelope(w http.ResponseWriter, r *http.Request, prin
 	}
 	if !result.Duplicate {
 		a.Hub.Publish(result.Recipients, realtime.Event{Version: "v1", Type: "message.envelope.created", ID: result.EventID, ConversationID: result.Envelope.ConversationID, Payload: result.Envelope, CreatedAt: time.Now().UTC()})
+		a.notifyPush(r.Context(), result.Envelope.ConversationID, principal.AccountID)
 	}
 	status := http.StatusCreated
 	if result.Duplicate {
@@ -1311,21 +1314,61 @@ func serveEncryptedBlob(w http.ResponseWriter, r *http.Request, blobs uploads.St
 
 func (a *API) createPushSubscription(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
 	var req struct {
-		Provider string `json:"provider"`
-		Endpoint string `json:"endpoint"`
+		Provider   string `json:"provider"`
+		Endpoint   string `json:"endpoint"`
+		PublicKey  string `json:"public_key"`
+		AuthSecret string `json:"auth_secret"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.Provider == "" || req.Endpoint == "" {
+	if req.Provider != "webpush" || push.ValidateWebPushTarget(push.Notification{Endpoint: req.Endpoint, PublicKey: req.PublicKey, AuthSecret: req.AuthSecret}) != nil {
 		writeError(w, http.StatusBadRequest, "invalid_push_subscription")
 		return
 	}
-	if err := a.Store.CreatePushSubscription(r.Context(), principal.AccountID, principal.DeviceID, req.Provider, req.Endpoint); err != nil {
+	subscriptionID, err := a.Store.CreatePushSubscription(r.Context(), principal.AccountID, principal.DeviceID, req.Provider, req.Endpoint, req.PublicKey, req.AuthSecret)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "push_subscription_failed")
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]string{"status": "ok", "payload_policy": "generic_encrypted_event_only"})
+	writeJSON(w, http.StatusCreated, map[string]string{"status": "ok", "subscription_id": subscriptionID, "payload_policy": "generic_encrypted_event_only"})
+}
+
+func (a *API) notifyPush(ctx context.Context, conversationID, senderAccountID string) {
+	if a.Push == nil {
+		return
+	}
+	targets, err := a.Store.PushTargetsForConversation(ctx, conversationID, senderAccountID)
+	if err != nil || len(targets) == 0 {
+		return
+	}
+	go a.deliverPush(targets)
+}
+
+func (a *API) deliverPush(targets []storage.PushTarget) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	failures := 0
+	for _, target := range targets {
+		err := a.Push.SendEncryptedEventAvailable(ctx, push.Notification{
+			Endpoint:   target.Endpoint,
+			PublicKey:  target.PublicKey,
+			AuthSecret: target.AuthSecret,
+		})
+		switch {
+		case err == nil, errors.Is(err, push.ErrNoProvider):
+		case errors.Is(err, push.ErrSubscriptionGone):
+			_ = a.Store.DisablePushTarget(ctx, target.ID)
+		default:
+			failures++
+		}
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	if failures > 0 {
+		a.warn("push_delivery_incomplete", "failed_count", failures)
+	}
 }
 
 func (a *API) deletePushSubscription(w http.ResponseWriter, r *http.Request, principal domain.Principal) {

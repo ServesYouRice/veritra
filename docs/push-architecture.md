@@ -1,6 +1,6 @@
 # Privacy-preserving push contract
 
-Status: provider implementation pending.
+Status: server Web Push provider implemented; mobile connector pending.
 
 Push is optional and is only a wake-up hint. Delivery never carries message content, sender identity, conversation identity, attachment metadata, ciphertext, or durable sync data.
 
@@ -36,10 +36,16 @@ Receiving it only schedules authenticated `/api/v1/sync/events` catch-up. Notifi
 - Endpoint rotation replaces the server subscription atomically; logout/device revocation unregisters and disables it.
 - Background receipt acknowledges the distributor message when required, performs bounded sync catch-up, and exposes no decrypted content to platform notification services.
 
-## Work required to enable
+## Implemented server boundary
+
+- RFC 8291 encryption and VAPID delivery through the `push.Provider` interface.
+- All-or-none operator VAPID configuration and fail-closed startup validation.
+- HTTPS endpoint/key validation, public-network-only DNS-pinned dialing, no redirects or ambient proxy, strict deadlines, bounded response reads, and terminal endpoint disablement.
+- Fixed generic wake payload and best-effort delivery after durable message commit.
+
+## Work required to enable on mobile
 
 - Review and pin the official Android connector dependency and license.
 - Implement connector selection, registration, rotation, message acknowledgement, and background execution.
-- Implement RFC 8291/VAPID delivery behind the server `push.Provider` interface.
-- Add operator configuration for VAPID/APNs/FCM secrets and readiness without logging them.
+- Add mobile settings for distributor selection and endpoint status.
 - Complete platform entitlement and battery-behavior review before enabling by default.

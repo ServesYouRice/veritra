@@ -344,6 +344,34 @@ class ApiClient {
         });
   }
 
+  Future<String> registerWebPush(
+    String token, {
+    required String endpoint,
+    required String publicKey,
+    required String authSecret,
+  }) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/push/subscriptions',
+      token: token,
+      body: <String, Object?>{
+        'provider': 'webpush',
+        'endpoint': endpoint,
+        'public_key': publicKey,
+        'auth_secret': authSecret,
+      },
+    );
+    return json['subscription_id'] as String;
+  }
+
+  Future<void> disablePush(String token, String subscriptionId) async {
+    await _jsonRequest(
+      'DELETE',
+      '/api/v1/push/subscriptions/$subscriptionId',
+      token: token,
+    );
+  }
+
   Future<List<MetadataSearchResult>> searchMetadata(
     String token,
     String query, {

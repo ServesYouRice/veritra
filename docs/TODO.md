@@ -7,8 +7,8 @@
 - Store future MLS private keys through the platform keystore integration. The current bounded ciphertext cache, cursor, and encrypted outbox already use platform encrypted storage.
 - Add QR scanning/rendering and production key-continuity checks to the current manual device-link UX.
 - Add encrypted backup creation and restore UX on mobile.
-- Add APNs/FCM/UnifiedPush provider implementations.
-- Implement the encrypted provider and mobile lifecycle in `push-architecture.md`; plaintext webhook delivery is forbidden.
+- Add the reviewed Android UnifiedPush connector lifecycle described in `push-architecture.md`; server-side encrypted Web Push delivery is implemented.
+- Add optional APNs/FCM adapters only after provider credential and privacy review.
 - Add client-side local message search.
 - Add attachment upload from Flutter with client-side encryption.
 - Add WebRTC media or LiveKit integration after call E2EE review.
