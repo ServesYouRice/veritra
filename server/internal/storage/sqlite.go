@@ -975,18 +975,43 @@ func (s *Store) AddConversationMember(ctx context.Context, conversationID, accou
 }
 
 func (s *Store) ListConversations(ctx context.Context, accountID string) ([]domain.Conversation, error) {
+	// Order by most recent activity (last non-deleted, non-expired message,
+	// falling back to creation) and compute the caller's unread count from
+	// their read-receipt cursor. Timestamps are fixed-width UTC (see
+	// nowString), so lexical comparison matches chronological order.
+	now := nowString()
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT c.id, c.kind, c.title, c.community_id, c.channel_id, c.created_by, c.retention_seconds, c.created_at
-		FROM conversations c JOIN memberships m ON m.conversation_id = c.id
+		SELECT c.id, c.kind, c.title, c.community_id, c.channel_id, c.created_by, c.retention_seconds, c.created_at,
+		       lm.last_message_at,
+		       COALESCE((
+		           SELECT COUNT(*) FROM message_envelopes me
+		           WHERE me.conversation_id = c.id
+		             AND me.sender_account_id != ?
+		             AND me.deleted_at IS NULL
+		             AND (me.expires_at IS NULL OR me.expires_at > ?)
+		             AND (rr.message_id IS NULL OR me.created_at > (
+		                 SELECT created_at FROM message_envelopes WHERE id = rr.message_id
+		             ))
+		       ), 0) AS unread_count
+		FROM conversations c
+		JOIN memberships m ON m.conversation_id = c.id
+		LEFT JOIN read_receipts rr ON rr.conversation_id = c.id AND rr.account_id = ?
+		LEFT JOIN (
+		    SELECT conversation_id, MAX(created_at) AS last_message_at
+		    FROM message_envelopes
+		    WHERE deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
+		    GROUP BY conversation_id
+		) lm ON lm.conversation_id = c.id
 		WHERE m.account_id = ?
-		ORDER BY c.created_at DESC`, accountID)
+		ORDER BY COALESCE(lm.last_message_at, c.created_at) DESC, c.created_at DESC`,
+		accountID, now, accountID, now, accountID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var conversations []domain.Conversation
 	for rows.Next() {
-		conversation, err := scanConversation(rows)
+		conversation, err := scanConversationWithActivity(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -1860,6 +1885,31 @@ func scanConversation(rows scanner) (domain.Conversation, error) {
 		c.RetentionSeconds = &retention.Int64
 	}
 	c.CreatedAt = parseTime(created.String)
+	return c, nil
+}
+
+// scanConversationWithActivity reads the base conversation columns plus the
+// last_message_at and unread_count derived by ListConversations.
+func scanConversationWithActivity(rows scanner) (domain.Conversation, error) {
+	var c domain.Conversation
+	var title, communityID, channelID, created, lastMessage sql.NullString
+	var retention sql.NullInt64
+	var unread int64
+	if err := rows.Scan(&c.ID, &c.Kind, &title, &communityID, &channelID, &c.CreatedBy, &retention, &created, &lastMessage, &unread); err != nil {
+		return domain.Conversation{}, err
+	}
+	c.Title = stringPtr(title)
+	c.CommunityID = stringPtr(communityID)
+	c.ChannelID = stringPtr(channelID)
+	if retention.Valid {
+		c.RetentionSeconds = &retention.Int64
+	}
+	c.CreatedAt = parseTime(created.String)
+	if lastMessage.Valid && lastMessage.String != "" {
+		t := parseTime(lastMessage.String)
+		c.LastMessageAt = &t
+	}
+	c.UnreadCount = unread
 	return c, nil
 }
 

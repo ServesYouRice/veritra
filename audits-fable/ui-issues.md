@@ -13,15 +13,15 @@ Scope: the Flutter client (`mobile/lib/**`) and the server's `/setup` page. Note
 | UI-1 | Errors shown as raw exception strings (`StateError: …`, `Request failed (500)`) | High | Yes | **Fixed** — `describeError()` + full `ApiException` code map |
 | UI-2 | No form validation feedback on any auth field | High | Yes | **Fixed** — `Form` + field validators on connect screen |
 | UI-3 | Connect screen ignores setup status; wrong mode = confusing failures | Medium | Yes | **Fixed** — debounced setup probe steers auth mode |
-| UI-4 | Loading states are inconsistent and largely absent | Medium | No | **Partial** — first-load vs. empty distinguished for chat list + messages |
+| UI-4 | Loading states are inconsistent and largely absent | Medium | No | **Fixed** — per-list first-load flags (`communitiesLoaded`/`invitesLoaded`/`devicesLoaded`) drive spinners on Communities, Invites, and Settings→Devices; chat list + messages already covered |
 | UI-5 | Chat message load has no error/retry state; failure looks empty | Medium | No | **Fixed** — per-conversation error state + retry |
 | UI-6 | "Add member" / "New conversation" require raw account IDs (no directory) | High | Yes | **Fixed** — username lookup picker (exact match by server design); raw ID kept as fallback |
 | UI-7 | Session-created records vanish on refresh (invites, communities) with weak warning | Medium | No | **Fixed** — server `GET /invites`, `GET /communities`, `GET /communities/{id}/channels` added; client hydrates on session start |
-| UI-8 | No unread indicators, message previews, or ordering by activity | Medium | No | Open — needs server ordering/unread support |
-| UI-9 | Device-link screen missing QR rendering; code entry only | Medium | Yes | **Partial** — link URI rendered as QR (`qr_flutter`); camera scanning on the claiming device still open |
+| UI-8 | No unread indicators, message previews, or ordering by activity | Medium | No | **Fixed (ordering + unread)** — server `ListConversations` now returns `last_message_at` + `unread_count` and orders by activity; chat list shows unread badges, recency ordering, and activity time. Message previews still blocked on decryption (LOG-0) |
+| UI-9 | Device-link screen missing QR rendering; code entry only | Medium | Yes | **Fixed** — link URI rendered as QR (`qr_flutter`); claiming device now scans via camera (`mobile_scanner`) with a "Scan QR code" action on the connect screen. Platform camera-permission manifests must be added when the app shell gains android/ios targets |
 | UI-10 | No pull-to-refresh / manual refresh on several screens | Low | No | **Fixed** — `RefreshIndicator` on invites and communities screens (chat list already had one) |
 | UI-11 | Attachment button permanently disabled with no path forward | Low | No | Open — intentional placeholder (blocked on LOG-0/LOG-3) |
-| UI-12 | Accessibility: unlabeled icon-only controls, no semantics on brand/avatars | Medium | No | **Partial** — bubble sender/time semantics, decorative avatars excluded, section headers; full TalkBack/VoiceOver pass still needed |
+| UI-12 | Accessibility: unlabeled icon-only controls, no semantics on brand/avatars | Medium | No | **Partial** — bubble sender/time semantics; decorative avatars excluded across chat list, communities, and conversation details; all section headers marked `header: true`; chat-list rows merged into one node with an unread-count label. Full manual TalkBack/VoiceOver pass still recommended before launch |
 | UI-13 | Message metadata line leaks raw protocol string into the bubble | Low | No | **Fixed** — protocol dropped from meta line |
 | UI-14 | Empty password/username accepted by UI, rejected opaquely by server | Medium | No | **Fixed** — with UI-2 |
 | UI-15 | No confirmation that a message failed to send vs. sent | Medium | No | Open — blocked on real sending (LOG-0) |
@@ -209,15 +209,17 @@ Scope: the Flutter client (`mobile/lib/**`) and the server's `/setup` page. Note
 
 Ranked by user impact × likelihood-of-being-hit, assuming the crypto blocker (LOG-0) is resolved first (nothing below is reachable without it):
 
-1. **UI-2 + UI-14 — Auth form validation.** Every user passes through this; opaque round-trip failures are the biggest funnel leak.
-2. **UI-1 — Human-readable errors.** Kills the raw `StateError`/`Request failed (500)` experience everywhere at once.
-3. **UI-6 — People picker instead of raw account IDs.** The "start a conversation" flow is currently unusable for non-developers.
-4. **UI-3 — Setup-status-aware connect screen.** Fix the wrong default mode that misdirects every joiner.
-5. **UI-9 — QR device linking.** Manual dual-code entry is the most error-prone reachable flow.
-6. **UI-8 — Chat list recency ordering + unread badges.** Makes the home screen navigable at scale (doesn't need decryption).
-7. **UI-18 — Identity/profile surface + showing usernames** (pairs with UI-6).
-8. **UI-4 / UI-5 — Real loading and error/retry states** (depends on the LOG-24 state refactor to do cleanly).
-9. **UI-12 — Accessibility pass** before any public/App Store release.
-10. **UI-7 — Persist or list invites/communities** so created codes aren't silently lost.
+1. ~~**UI-2 + UI-14 — Auth form validation.**~~ **Done.** Every user passes through this; opaque round-trip failures were the biggest funnel leak.
+2. ~~**UI-1 — Human-readable errors.**~~ **Done.** Kills the raw `StateError`/`Request failed (500)` experience everywhere at once.
+3. ~~**UI-6 — People picker instead of raw account IDs.**~~ **Done.** The "start a conversation" flow was unusable for non-developers.
+4. ~~**UI-3 — Setup-status-aware connect screen.**~~ **Done.** Fixed the wrong default mode that misdirected every joiner.
+5. ~~**UI-9 — QR device linking.**~~ **Done.** QR render + camera scanning both shipped; manual dual-code entry stays as a fallback.
+6. ~~**UI-8 — Chat list recency ordering + unread badges.**~~ **Done (ordering + unread).** Home screen is navigable at scale; message previews still wait on decryption.
+7. **UI-18 — Identity/profile surface + showing usernames** (pairs with UI-6). Username now shown in Settings; full profile surface still open.
+8. ~~**UI-4 — Real loading states.**~~ **Done.** Per-list first-load spinners; UI-5's error/retry was already shipped.
+9. **UI-12 — Accessibility pass** before any public/App Store release. Semantics groundwork in place; a manual TalkBack/VoiceOver pass remains.
+10. ~~**UI-7 — Persist or list invites/communities**~~ **Done.** Created codes survive restarts via the list endpoints.
 
 Lower priority polish: UI-10, UI-11, UI-13, UI-16, UI-17, UI-19, UI-20.
+
+Remaining open work is now gated on the crypto integration (LOG-0) — message previews (UI-8), send/failed status (UI-15), attachments (UI-11) — or is server-page/profile scope (UI-16, UI-18's profile surface).

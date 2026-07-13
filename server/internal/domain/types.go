@@ -106,6 +106,11 @@ type Conversation struct {
 	CreatedBy        string    `json:"created_by"`
 	RetentionSeconds *int64    `json:"retention_seconds,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
+	// LastMessageAt and UnreadCount are populated by ListConversations so the
+	// client can order by recent activity and show unread badges. They are
+	// zero/omitted on single-conversation responses (create, retention).
+	LastMessageAt *time.Time `json:"last_message_at,omitempty"`
+	UnreadCount   int64      `json:"unread_count,omitempty"`
 }
 
 type MessageEnvelope struct {

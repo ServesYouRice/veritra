@@ -9,6 +9,8 @@ class Conversation {
     this.channelId,
     this.retentionSeconds,
     this.createdAt,
+    this.lastMessageAt,
+    this.unreadCount = 0,
   });
 
   final String id;
@@ -18,10 +20,19 @@ class Conversation {
   final String? channelId;
   final int? retentionSeconds;
   final DateTime? createdAt;
+  // Populated by the conversation list endpoint so the chat list can order by
+  // activity and show unread badges. Null/zero for freshly created or
+  // single-conversation responses.
+  final DateTime? lastMessageAt;
+  final int unreadCount;
 
   bool get isDm => kind == 'dm';
   bool get isGroup => kind == 'group';
   bool get isChannel => kind == 'community_channel';
+
+  /// Most recent activity for ordering/display: last message if known,
+  /// otherwise creation time.
+  DateTime? get lastActivityAt => lastMessageAt ?? createdAt;
 
   factory Conversation.fromJson(Map<String, Object?> json) {
     return Conversation(
@@ -32,6 +43,22 @@ class Conversation {
       channelId: json['channel_id'] as String?,
       retentionSeconds: (json['retention_seconds'] as num?)?.toInt(),
       createdAt: _parseOptionalTime(json['created_at']),
+      lastMessageAt: _parseOptionalTime(json['last_message_at']),
+      unreadCount: (json['unread_count'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  Conversation copyWith({int? unreadCount}) {
+    return Conversation(
+      id: id,
+      kind: kind,
+      title: title,
+      communityId: communityId,
+      channelId: channelId,
+      retentionSeconds: retentionSeconds,
+      createdAt: createdAt,
+      lastMessageAt: lastMessageAt,
+      unreadCount: unreadCount ?? this.unreadCount,
     );
   }
 }

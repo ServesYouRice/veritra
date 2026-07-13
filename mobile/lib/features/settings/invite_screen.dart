@@ -43,8 +43,11 @@ class _InviteScreenState extends State<InviteScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: <Widget>[
-                        Text('Create an invite',
-                            style: theme.textTheme.titleMedium),
+                        Semantics(
+                          header: true,
+                          child: Text('Create an invite',
+                              style: theme.textTheme.titleMedium),
+                        ),
                         const SizedBox(height: 12),
                         Row(
                           children: <Widget>[
@@ -102,14 +105,25 @@ class _InviteScreenState extends State<InviteScreen> {
                 ),
                 const SizedBox(height: 16),
                 if (invites.isEmpty)
-                  const EmptyState(
-                    icon: Icons.card_giftcard_outlined,
-                    title: 'No invites yet',
-                    message: 'Invite codes you create appear here. Share '
-                        'them over a secure channel.',
-                  )
+                  // Spinner until the first fetch resolves, then the empty
+                  // state — otherwise "No invites yet" flashes during load.
+                  widget.state.invitesLoaded
+                      ? const EmptyState(
+                          icon: Icons.card_giftcard_outlined,
+                          title: 'No invites yet',
+                          message: 'Invite codes you create appear here. Share '
+                              'them over a secure channel.',
+                        )
+                      : const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 32),
+                          child: Center(child: CircularProgressIndicator()),
+                        )
                 else ...<Widget>[
-                  Text('Your invites', style: theme.textTheme.titleMedium),
+                  Semantics(
+                    header: true,
+                    child: Text('Your invites',
+                        style: theme.textTheme.titleMedium),
+                  ),
                   const SizedBox(height: 8),
                   for (final invite in invites) _InviteCard(invite: invite),
                 ],

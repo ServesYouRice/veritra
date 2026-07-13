@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
+import 'qr_scan_screen.dart';
 
 enum AuthMode { owner, signIn, join, linkDevice }
 
@@ -179,6 +180,12 @@ class _ConnectScreenState extends State<ConnectScreen> {
                         labelText: 'Link code',
                         prefixIcon: Icon(Icons.qr_code_2),
                       ),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: widget.state.busy ? null : _scanLinkCode,
+                      icon: const Icon(Icons.qr_code_scanner),
+                      label: const Text('Scan QR code'),
                     ),
                     if (pendingLink != null) ...<Widget>[
                       const SizedBox(height: 12),
@@ -426,6 +433,19 @@ class _ConnectScreenState extends State<ConnectScreen> {
       }
     }
     return false;
+  }
+
+  /// Opens the camera scanner and fills the link-code field from the result.
+  /// The generating device encodes a `veritra://device-link?code=…` URI, but
+  /// a bare code is accepted too.
+  Future<void> _scanLinkCode() async {
+    final scanned = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(builder: (_) => const QrScanScreen()),
+    );
+    if (!mounted || scanned == null || scanned.isEmpty) {
+      return;
+    }
+    setState(() => linkCode.text = parseDeviceLinkCode(scanned));
   }
 
   Future<void> _completeDeviceLink() {

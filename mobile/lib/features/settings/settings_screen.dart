@@ -97,6 +97,21 @@ class SettingsScreen extends StatelessWidget {
                         ),
                       ),
                     ),
+                    if (state.devices.isEmpty && !state.devicesLoaded) ...[
+                      const Divider(),
+                      const ListTile(
+                        leading: SizedBox.square(
+                          dimension: 24,
+                          child: Center(
+                            child: SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          ),
+                        ),
+                        title: Text('Loading devices…'),
+                      ),
+                    ],
                     if (state.devices.isNotEmpty) const Divider(),
                     for (final device in state.devices)
                       _DeviceTile(
@@ -271,11 +286,14 @@ class _SectionHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
-      child: Text(
-        title,
-        style: theme.textTheme.titleSmall?.copyWith(
-          color: theme.colorScheme.primary,
-          fontWeight: FontWeight.w600,
+      child: Semantics(
+        header: true,
+        child: Text(
+          title,
+          style: theme.textTheme.titleSmall?.copyWith(
+            color: theme.colorScheme.primary,
+            fontWeight: FontWeight.w600,
+          ),
         ),
       ),
     );
