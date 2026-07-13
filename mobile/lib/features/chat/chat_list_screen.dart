@@ -135,7 +135,7 @@ class _ConversationTile extends StatelessWidget {
           children: <Widget>[
             if (activityAt != null)
               Text(
-                formatDate(activityAt),
+                formatDate(context, activityAt),
                 style: theme.textTheme.labelSmall?.copyWith(
                   color: hasUnread
                       ? theme.colorScheme.primary

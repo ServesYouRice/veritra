@@ -123,7 +123,7 @@ type Conversation struct {
 	// zero/omitted on single-conversation responses (create, retention).
 	LastMessageAt *time.Time `json:"last_message_at,omitempty"`
 	UnreadCount   int64      `json:"unread_count,omitempty"`
-	CurrentRole      string    `json:"current_role,omitempty"`
+	CurrentRole   string     `json:"current_role,omitempty"`
 }
 
 type Membership struct {
