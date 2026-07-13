@@ -15,7 +15,6 @@ Date: 2026-07-13
 ## Hard release blockers
 
 - Production MLS/OpenMLS key lifecycle, encryption/decryption, secure private-key storage, verification, rotation, and recovery are not implemented. The client fails closed and `scripts/release-readiness.sh` prevents publishing a production release.
-- A privacy-reviewed optional push delivery adapter and mobile registration/background-wake flow are not implemented.
 
 ## Deferred product work
 
@@ -24,4 +23,4 @@ Date: 2026-07-13
 - Broader application localization can be added when a second supported language is selected; current UI support is explicitly English with locale-aware dates/times and screen-reader semantics.
 - The modular monolith can be split into narrower application services incrementally after the security transaction boundaries stabilize.
 
-See [`audits-codex/status.md`](../audits-codex/status.md) for finding-by-finding remediation status.
+See [`audits-codex/README.md`](../audits-codex/README.md) for the consolidated remaining audit work.
