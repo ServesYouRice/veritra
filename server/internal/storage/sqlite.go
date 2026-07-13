@@ -30,6 +30,7 @@ var (
 	ErrForbidden          = errors.New("forbidden")
 	ErrNotFound           = errors.New("not found")
 	ErrNotMember          = errors.New("account is not a conversation member")
+	ErrInvalidInput       = errors.New("invalid input")
 	ErrDeviceLinkInvalid  = errors.New("device link is invalid, expired, revoked, or already used")
 	ErrDeviceLinkNotReady = errors.New("device link is not approved yet")
 
@@ -865,6 +866,9 @@ func (s *Store) CreateChannel(ctx context.Context, communityID, name, kind, crea
 	}
 	if kind == "" {
 		kind = "private"
+	}
+	if kind != "private" && kind != "announcement" {
+		return domain.Channel{}, ErrInvalidInput
 	}
 	id, err := domain.NewID("chan")
 	if err != nil {

@@ -516,6 +516,13 @@ func (a *API) communitySubroute(w http.ResponseWriter, r *http.Request, principa
 			writeError(w, http.StatusBadRequest, "invalid_name")
 			return
 		}
+		if req.Kind == "" {
+			req.Kind = "private"
+		}
+		if req.Kind != "private" && req.Kind != "announcement" {
+			writeError(w, http.StatusBadRequest, "invalid_channel_kind")
+			return
+		}
 		channel, err := a.Store.CreateChannel(r.Context(), parts[0], req.Name, req.Kind, principal.AccountID)
 		if err != nil {
 			handleStorageError(w, err)
@@ -617,6 +624,15 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 			writeError(w, http.StatusForbidden, "cannot_grant_higher_role")
 			return
 		}
+		currentRole, err := a.Store.ConversationMemberRole(r.Context(), conversationID, req.AccountID)
+		if err != nil && !errors.Is(err, storage.ErrNotMember) {
+			handleStorageError(w, err)
+			return
+		}
+		if err == nil && domain.RoleRank(currentRole) >= domain.RoleRank(effectiveRole) {
+			writeError(w, http.StatusForbidden, "cannot_change_peer_or_higher_role")
+			return
+		}
 		if err := a.Store.AddConversationMember(r.Context(), conversationID, req.AccountID, req.Role); err != nil {
 			handleStorageError(w, err)
 			return
@@ -649,6 +665,15 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 		}
 		writeJSON(w, http.StatusOK, response)
 	case parts[1] == "typing" && r.Method == http.MethodPost:
+		isMember, err := a.Store.IsConversationMember(r.Context(), conversationID, principal.AccountID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "typing_publish_failed")
+			return
+		}
+		if !isMember {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
 		members, err := a.Store.ListConversationMemberIDs(r.Context(), conversationID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "typing_publish_failed")
@@ -1218,11 +1243,8 @@ func (a *API) principalFromRequest(r *http.Request) (domain.Principal, error) {
 
 func (a *API) effectiveConversationRole(ctx context.Context, conversationID string, principal domain.Principal) (string, error) {
 	convRole, err := a.Store.ConversationMemberRole(ctx, conversationID, principal.AccountID)
-	if err != nil && !errors.Is(err, storage.ErrNotMember) {
+	if err != nil {
 		return "", err
-	}
-	if domain.RoleRank(principal.Role) > domain.RoleRank(convRole) {
-		return principal.Role, nil
 	}
 	return convRole, nil
 }
@@ -1347,7 +1369,11 @@ func validRetention(seconds *int64) bool {
 }
 
 func isReservedNonProductionKeyPackage(keyPackage []byte) bool {
-	return string(keyPackage) == "setup-non-production-key-package-placeholder"
+	marker := strings.ToLower(string(keyPackage))
+	return strings.Contains(marker, "test_only") ||
+		strings.Contains(marker, "test-only") ||
+		strings.Contains(marker, "non-production") ||
+		strings.Contains(marker, "placeholder")
 }
 
 func validDisplayName(name string) bool {
@@ -1389,6 +1415,8 @@ func handleStorageError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusForbidden, "forbidden")
 	case errors.Is(err, storage.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found")
+	case errors.Is(err, storage.ErrInvalidInput):
+		writeError(w, http.StatusBadRequest, "invalid_input")
 	case errors.Is(err, storage.ErrDeviceLinkInvalid):
 		writeError(w, http.StatusBadRequest, "invalid_device_link")
 	default:

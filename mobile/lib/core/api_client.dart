@@ -175,7 +175,7 @@ class ApiClient {
     String token,
     String communityId,
     String name, {
-    String kind = 'text',
+    String kind = 'private',
   }) async {
     final json = await _jsonRequest(
         'POST', '/api/v1/communities/$communityId/channels',

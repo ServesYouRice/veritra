@@ -180,8 +180,8 @@ class SettingsScreen extends StatelessWidget {
                     style: TextStyle(color: theme.colorScheme.onErrorContainer),
                   ),
                   subtitle: Text(
-                    'Permanently removes your account and data '
-                    'from this server.',
+                    'Disables sign-in and revokes your devices. Some encrypted '
+                    'records may remain under server retention rules.',
                     style: TextStyle(color: theme.colorScheme.onErrorContainer),
                   ),
                   onTap:
@@ -231,9 +231,10 @@ class SettingsScreen extends StatelessWidget {
     final confirmed = await _confirm(
       context,
       title: 'Delete account?',
-      message: 'This permanently deletes your account, devices, and '
-          'memberships on this server. This cannot be undone.',
-      confirmLabel: 'Delete forever',
+      message: 'This disables your account, ends its sessions, and revokes its '
+          'devices. Encrypted messages and other records may remain according '
+          'to the server retention policy.',
+      confirmLabel: 'Disable account',
       destructive: true,
     );
     if (confirmed) {

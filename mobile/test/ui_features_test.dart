@@ -4,10 +4,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
-import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 import 'package:private_messenger/ui/format.dart';
+
+import 'test_crypto_service.dart';
 
 void main() {
   test('conversation parses community, channel, and retention metadata', () {

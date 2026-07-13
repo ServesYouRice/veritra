@@ -568,6 +568,12 @@ func createMessage(t *testing.T, handler http.Handler, token, conversationID, id
 
 func registerMember(t *testing.T, handler http.Handler, ownerToken, username string) string {
 	t.Helper()
+	token, _ := registerMemberWithID(t, handler, ownerToken, username)
+	return token
+}
+
+func registerMemberWithID(t *testing.T, handler http.Handler, ownerToken, username string) (string, string) {
+	t.Helper()
 	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/invites", ownerToken, map[string]interface{}{"max_uses": 1})
 	if status != http.StatusCreated {
 		t.Fatalf("create invite status=%d body=%s", status, response)
@@ -589,12 +595,32 @@ func registerMember(t *testing.T, handler http.Handler, ownerToken, username str
 		t.Fatalf("register member status=%d body=%s", status, response)
 	}
 	var decoded struct {
-		Token string `json:"token"`
+		Token   string `json:"token"`
+		Account struct {
+			ID string `json:"id"`
+		} `json:"account"`
 	}
 	if err := json.Unmarshal(response, &decoded); err != nil {
 		t.Fatalf("decode register response: %v", err)
 	}
-	return decoded.Token
+	return decoded.Token, decoded.Account.ID
+}
+
+func accountIDFromExport(t *testing.T, handler http.Handler, token string) string {
+	t.Helper()
+	status, response := doJSON(t, handler, http.MethodGet, "/api/v1/account/export", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("export account status=%d body=%s", status, response)
+	}
+	var decoded struct {
+		Account struct {
+			ID string `json:"id"`
+		} `json:"account"`
+	}
+	if err := json.Unmarshal(response, &decoded); err != nil {
+		t.Fatalf("decode account export: %v", err)
+	}
+	return decoded.Account.ID
 }
 
 func doJSON(t *testing.T, handler http.Handler, method, path, token string, body interface{}) (int, []byte) {
@@ -732,5 +758,61 @@ func TestListCommunitiesAndChannelsScopedToMembership(t *testing.T) {
 	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/communities/"+community.ID+"/channels", memberToken, nil)
 	if status != http.StatusForbidden {
 		t.Fatalf("outsider list channels status=%d body=%s", status, response)
+	}
+}
+
+func TestConversationAndChannelAuthorizationBoundaries(t *testing.T) {
+	handler, ownerToken, _ := newTestHandlerWithOwner(t)
+	memberToken, memberID := registerMemberWithID(t, handler, ownerToken, "boundarymember")
+	ownerID := accountIDFromExport(t, handler, ownerToken)
+
+	conversationID := createConversation(t, handler, ownerToken)
+	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+conversationID+"/typing", memberToken, nil)
+	if status != http.StatusForbidden {
+		t.Fatalf("outsider typing status=%d body=%s", status, response)
+	}
+
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+conversationID+"/members", ownerToken, map[string]interface{}{
+		"account_id": memberID,
+		"role":       "moderator",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("promote member status=%d body=%s", status, response)
+	}
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+conversationID+"/members", memberToken, map[string]interface{}{
+		"account_id": ownerID,
+		"role":       "member",
+	})
+	if status != http.StatusForbidden {
+		t.Fatalf("moderator demote owner status=%d body=%s", status, response)
+	}
+
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]interface{}{"name": "Kinds"})
+	if status != http.StatusCreated {
+		t.Fatalf("create community status=%d body=%s", status, response)
+	}
+	var community struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(response, &community); err != nil {
+		t.Fatalf("decode community: %v", err)
+	}
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/communities/"+community.ID+"/channels", ownerToken, map[string]interface{}{
+		"name": "bad-kind",
+		"kind": "text",
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("invalid channel kind status=%d body=%s", status, response)
+	}
+}
+
+func TestAuthenticatedAPIResponsesAreNotCacheable(t *testing.T) {
+	handler, ownerToken, _ := newTestHandlerWithOwner(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/devices/me", nil)
+	req.Header.Set("Authorization", "Bearer "+ownerToken)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if got := rec.Header().Get("Cache-Control"); got != "no-store, private" {
+		t.Fatalf("Cache-Control=%q", got)
 	}
 }
