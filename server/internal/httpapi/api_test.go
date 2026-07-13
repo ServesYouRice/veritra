@@ -782,6 +782,10 @@ func TestConversationAndChannelAuthorizationBoundaries(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("promote member status=%d body=%s", status, response)
 	}
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/sync/events?after=0&limit=100", memberToken, nil)
+	if status != http.StatusOK || !bytes.Contains(response, []byte(`"membership.updated"`)) || !bytes.Contains(response, []byte(conversationID)) {
+		t.Fatalf("member sync missing membership update status=%d body=%s", status, response)
+	}
 	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+conversationID+"/members", memberToken, map[string]interface{}{
 		"account_id": ownerID,
 		"role":       "member",
@@ -806,6 +810,23 @@ func TestConversationAndChannelAuthorizationBoundaries(t *testing.T) {
 	})
 	if status != http.StatusBadRequest {
 		t.Fatalf("invalid channel kind status=%d body=%s", status, response)
+	}
+}
+
+func TestMessageReferencesStayWithinConversation(t *testing.T) {
+	handler, token, _ := newTestHandlerWithOwner(t)
+	firstConversation := createConversation(t, handler, token)
+	secondConversation := createConversation(t, handler, token)
+	messageID := createMessage(t, handler, token, firstConversation, "reference-source", []byte("ciphertext"))
+	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/messages/envelopes", token, map[string]interface{}{
+		"conversation_id": secondConversation,
+		"idempotency_key": "cross-conversation-reference",
+		"ciphertext":      base64.StdEncoding.EncodeToString([]byte("ciphertext")),
+		"crypto_protocol": "mls-openmls-todo",
+		"reply_to_id":     messageID,
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("cross-conversation reply status=%d body=%s", status, response)
 	}
 }
 

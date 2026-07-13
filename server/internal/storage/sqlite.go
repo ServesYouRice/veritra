@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -24,16 +25,17 @@ import (
 )
 
 var (
-	ErrAlreadySetup       = errors.New("instance already has an owner")
-	ErrInviteInvalid      = errors.New("invite is invalid, expired, revoked, or fully used")
-	ErrUnauthorized       = errors.New("unauthorized")
-	ErrForbidden          = errors.New("forbidden")
-	ErrNotFound           = errors.New("not found")
-	ErrNotMember          = errors.New("account is not a conversation member")
-	ErrInvalidInput       = errors.New("invalid input")
-	ErrLastOwner          = errors.New("cannot delete the last active owner")
-	ErrDeviceLinkInvalid  = errors.New("device link is invalid, expired, revoked, or already used")
-	ErrDeviceLinkNotReady = errors.New("device link is not approved yet")
+	ErrAlreadySetup        = errors.New("instance already has an owner")
+	ErrInviteInvalid       = errors.New("invite is invalid, expired, revoked, or fully used")
+	ErrUnauthorized        = errors.New("unauthorized")
+	ErrForbidden           = errors.New("forbidden")
+	ErrNotFound            = errors.New("not found")
+	ErrNotMember           = errors.New("account is not a conversation member")
+	ErrInvalidInput        = errors.New("invalid input")
+	ErrLastOwner           = errors.New("cannot delete the last active owner")
+	ErrIdempotencyConflict = errors.New("idempotency key was reused for a different message")
+	ErrDeviceLinkInvalid   = errors.New("device link is invalid, expired, revoked, or already used")
+	ErrDeviceLinkNotReady  = errors.New("device link is not approved yet")
 
 	// ErrDeviceLinkVerificationFailed is returned when the approver does not
 	// supply the link's verification code, so a device cannot be approved
@@ -973,6 +975,13 @@ func (s *Store) CreateConversation(ctx context.Context, input CreateConversation
 		if _, err := tx.ExecContext(ctx, `INSERT INTO memberships(id, account_id, conversation_id, role, created_at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(account_id, conversation_id) DO NOTHING`, memberRowID, accountID, id, domain.RoleMember, createdAt); err != nil {
 			return domain.Conversation{}, err
 		}
+		payload, err := json.Marshal(map[string]string{"conversation_id": id, "role": domain.RoleMember})
+		if err != nil {
+			return domain.Conversation{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO sync_events(event_type, account_id, conversation_id, payload_json, created_at) VALUES('membership.updated', ?, ?, ?, ?)`, accountID, id, string(payload), createdAt); err != nil {
+			return domain.Conversation{}, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return domain.Conversation{}, err
@@ -991,6 +1000,66 @@ func (s *Store) AddConversationMember(ctx context.Context, conversationID, accou
 	}
 	_, err = s.db.ExecContext(ctx, `INSERT INTO memberships(id, account_id, conversation_id, role, created_at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(account_id, conversation_id) DO UPDATE SET role = excluded.role`, id, accountID, conversationID, role, nowString())
 	return err
+}
+
+func (s *Store) ManageConversationMember(ctx context.Context, conversationID, actorAccountID, targetAccountID, role string) (int64, error) {
+	if role == "" {
+		role = domain.RoleMember
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	var actorRole string
+	if err := tx.QueryRowContext(ctx, `SELECT role FROM memberships WHERE conversation_id = ? AND account_id = ?`, conversationID, actorAccountID).Scan(&actorRole); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, ErrNotMember
+		}
+		return 0, err
+	}
+	if !domain.CanManageMembers(actorRole) || domain.RoleRank(role) > domain.RoleRank(actorRole) {
+		return 0, ErrForbidden
+	}
+	var activeTarget int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM accounts WHERE id = ? AND deleted_at IS NULL`, targetAccountID).Scan(&activeTarget); err != nil {
+		return 0, err
+	}
+	if activeTarget == 0 {
+		return 0, ErrNotFound
+	}
+	var currentRole string
+	err = tx.QueryRowContext(ctx, `SELECT role FROM memberships WHERE conversation_id = ? AND account_id = ?`, conversationID, targetAccountID).Scan(&currentRole)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+	if err == nil && domain.RoleRank(currentRole) >= domain.RoleRank(actorRole) {
+		return 0, ErrForbidden
+	}
+	id, err := domain.NewID("mbr")
+	if err != nil {
+		return 0, err
+	}
+	createdAt := nowString()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO memberships(id, account_id, conversation_id, role, created_at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(account_id, conversation_id) DO UPDATE SET role = excluded.role`, id, targetAccountID, conversationID, role, createdAt); err != nil {
+		return 0, err
+	}
+	payload, err := json.Marshal(map[string]string{"conversation_id": conversationID, "role": role})
+	if err != nil {
+		return 0, err
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO sync_events(event_type, account_id, conversation_id, payload_json, created_at) VALUES('membership.updated', ?, ?, ?, ?)`, targetAccountID, conversationID, string(payload), createdAt)
+	if err != nil {
+		return 0, err
+	}
+	eventID, err := result.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return eventID, nil
 }
 
 func (s *Store) ListConversations(ctx context.Context, accountID string) ([]domain.Conversation, error) {
@@ -1137,54 +1206,130 @@ func (s *Store) IsConversationMember(ctx context.Context, conversationID, accoun
 }
 
 func (s *Store) SaveMessageEnvelope(ctx context.Context, envelope domain.MessageEnvelope) (domain.MessageEnvelope, bool, error) {
-	if err := s.pruneExpiredMessageByIdempotency(ctx, envelope.SenderDeviceID, envelope.IdempotencyKey, time.Now().UTC()); err != nil {
-		return domain.MessageEnvelope{}, false, err
-	}
-	existing, err := s.messageByIdempotency(ctx, envelope.SenderDeviceID, envelope.IdempotencyKey)
-	if err == nil {
-		return existing, true, nil
-	}
-	if !errors.Is(err, ErrNotFound) {
-		return domain.MessageEnvelope{}, false, err
-	}
-	member, err := s.IsConversationMember(ctx, envelope.ConversationID, envelope.SenderAccountID)
-	if err != nil {
-		return domain.MessageEnvelope{}, false, err
-	}
-	if !member {
-		return domain.MessageEnvelope{}, false, ErrNotMember
-	}
-	if envelope.ID == "" {
-		envelope.ID, err = domain.NewID("msg")
-		if err != nil {
-			return domain.MessageEnvelope{}, false, err
-		}
-	}
+	saved, duplicate, _, err := s.saveMessageEnvelope(ctx, envelope, false)
+	return saved, duplicate, err
+}
+
+func (s *Store) SaveMessageEnvelopeWithSyncEvent(ctx context.Context, envelope domain.MessageEnvelope) (domain.MessageEnvelope, bool, int64, error) {
+	return s.saveMessageEnvelope(ctx, envelope, true)
+}
+
+func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.MessageEnvelope, withSyncEvent bool) (domain.MessageEnvelope, bool, int64, error) {
 	if len(envelope.CryptoMetadata) == 0 {
 		envelope.CryptoMetadata = json.RawMessage(`{}`)
 	}
 	if len(envelope.AttachmentRefs) == 0 {
 		envelope.AttachmentRefs = json.RawMessage(`[]`)
 	}
-	envelope.CreatedAt = time.Now().UTC()
-	retentionSeconds, err := s.conversationRetention(ctx, envelope.ConversationID)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return domain.MessageEnvelope{}, false, err
+		return domain.MessageEnvelope{}, false, 0, err
 	}
-	if retentionSeconds != nil {
-		retentionExpiresAt := envelope.CreatedAt.Add(time.Duration(*retentionSeconds) * time.Second)
+	defer tx.Rollback()
+	now := time.Now().UTC()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM message_envelopes WHERE sender_device_id = ? AND idempotency_key = ? AND expires_at IS NOT NULL AND expires_at <= ?`, envelope.SenderDeviceID, envelope.IdempotencyKey, formatTime(now)); err != nil {
+		return domain.MessageEnvelope{}, false, 0, err
+	}
+	existing, err := scanMessage(tx.QueryRowContext(ctx, `SELECT id, conversation_id, sender_account_id, sender_device_id, idempotency_key, ciphertext, crypto_protocol, crypto_metadata_json, attachment_refs_json, reply_to_id, thread_root_id, created_at, edited_at, deleted_at, expires_at FROM message_envelopes WHERE sender_device_id = ? AND idempotency_key = ?`, envelope.SenderDeviceID, envelope.IdempotencyKey))
+	if err == nil {
+		if !sameIdempotentMessage(existing, envelope) {
+			return domain.MessageEnvelope{}, false, 0, ErrIdempotencyConflict
+		}
+		if err := tx.Commit(); err != nil {
+			return domain.MessageEnvelope{}, false, 0, err
+		}
+		return existing, true, 0, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return domain.MessageEnvelope{}, false, 0, err
+	}
+	var memberCount int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM memberships WHERE conversation_id = ? AND account_id = ?`, envelope.ConversationID, envelope.SenderAccountID).Scan(&memberCount); err != nil {
+		return domain.MessageEnvelope{}, false, 0, err
+	}
+	if memberCount == 0 {
+		return domain.MessageEnvelope{}, false, 0, ErrNotMember
+	}
+	for _, referenceID := range []*string{envelope.ReplyToID, envelope.ThreadRootID} {
+		if referenceID == nil || strings.TrimSpace(*referenceID) == "" {
+			continue
+		}
+		var referenceConversation string
+		if err := tx.QueryRowContext(ctx, `SELECT conversation_id FROM message_envelopes WHERE id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`, *referenceID, formatTime(now)).Scan(&referenceConversation); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return domain.MessageEnvelope{}, false, 0, ErrInvalidInput
+			}
+			return domain.MessageEnvelope{}, false, 0, err
+		}
+		if referenceConversation != envelope.ConversationID {
+			return domain.MessageEnvelope{}, false, 0, ErrInvalidInput
+		}
+	}
+	if envelope.ID == "" {
+		envelope.ID, err = domain.NewID("msg")
+		if err != nil {
+			return domain.MessageEnvelope{}, false, 0, err
+		}
+	}
+	envelope.CreatedAt = now
+	var retention sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT retention_seconds FROM conversations WHERE id = ?`, envelope.ConversationID).Scan(&retention); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.MessageEnvelope{}, false, 0, ErrNotFound
+		}
+		return domain.MessageEnvelope{}, false, 0, err
+	}
+	if retention.Valid {
+		retentionExpiresAt := envelope.CreatedAt.Add(time.Duration(retention.Int64) * time.Second)
 		if envelope.ExpiresAt == nil || envelope.ExpiresAt.After(retentionExpiresAt) {
 			envelope.ExpiresAt = &retentionExpiresAt
 		}
 	}
-	_, err = s.db.ExecContext(ctx, `
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO message_envelopes(id, conversation_id, sender_account_id, sender_device_id, idempotency_key, ciphertext, crypto_protocol, crypto_metadata_json, attachment_refs_json, reply_to_id, thread_root_id, created_at, expires_at)
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		envelope.ID, envelope.ConversationID, envelope.SenderAccountID, envelope.SenderDeviceID, envelope.IdempotencyKey, envelope.Ciphertext, envelope.CryptoProtocol, string(envelope.CryptoMetadata), string(envelope.AttachmentRefs), nullableString(envelope.ReplyToID), nullableString(envelope.ThreadRootID), formatTime(envelope.CreatedAt), nullableTime(envelope.ExpiresAt))
 	if err != nil {
-		return domain.MessageEnvelope{}, false, err
+		return domain.MessageEnvelope{}, false, 0, err
 	}
-	return envelope, false, nil
+	var eventID int64
+	if withSyncEvent {
+		payload, err := json.Marshal(map[string]string{"message_id": envelope.ID, "conversation_id": envelope.ConversationID})
+		if err != nil {
+			return domain.MessageEnvelope{}, false, 0, err
+		}
+		result, err := tx.ExecContext(ctx, `INSERT INTO sync_events(event_type, account_id, conversation_id, payload_json, created_at) VALUES('message.envelope.created', NULL, ?, ?, ?)`, envelope.ConversationID, string(payload), formatTime(now))
+		if err != nil {
+			return domain.MessageEnvelope{}, false, 0, err
+		}
+		eventID, err = result.LastInsertId()
+		if err != nil {
+			return domain.MessageEnvelope{}, false, 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.MessageEnvelope{}, false, 0, err
+	}
+	return envelope, false, eventID, nil
+}
+
+func sameIdempotentMessage(existing, requested domain.MessageEnvelope) bool {
+	return existing.ConversationID == requested.ConversationID &&
+		existing.SenderAccountID == requested.SenderAccountID &&
+		existing.SenderDeviceID == requested.SenderDeviceID &&
+		existing.CryptoProtocol == requested.CryptoProtocol &&
+		bytes.Equal(existing.Ciphertext, requested.Ciphertext) &&
+		bytes.Equal(existing.CryptoMetadata, requested.CryptoMetadata) &&
+		bytes.Equal(existing.AttachmentRefs, requested.AttachmentRefs) &&
+		equalOptionalString(existing.ReplyToID, requested.ReplyToID) &&
+		equalOptionalString(existing.ThreadRootID, requested.ThreadRootID)
+}
+
+func equalOptionalString(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func (s *Store) messageByIdempotency(ctx context.Context, deviceID, key string) (domain.MessageEnvelope, error) {

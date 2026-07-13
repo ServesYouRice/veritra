@@ -67,7 +67,7 @@ func TestInviteDeviceAndEncryptedEnvelopeFlow(t *testing.T) {
 		SenderAccountID: owner.Account.ID,
 		SenderDeviceID:  owner.Device.ID,
 		IdempotencyKey:  "send-1",
-		Ciphertext:      []byte("different ciphertext ignored by idempotency"),
+		Ciphertext:      []byte("ciphertext bytes only"),
 		CryptoProtocol:  "mls-openmls-todo",
 	})
 	if err != nil {
@@ -75,6 +75,13 @@ func TestInviteDeviceAndEncryptedEnvelopeFlow(t *testing.T) {
 	}
 	if !duplicate || msg2.ID != msg.ID {
 		t.Fatalf("expected idempotent duplicate, got duplicate=%v id=%s want=%s", duplicate, msg2.ID, msg.ID)
+	}
+	if _, _, err := store.SaveMessageEnvelope(ctx, domain.MessageEnvelope{
+		ConversationID: conversation.ID, SenderAccountID: owner.Account.ID,
+		SenderDeviceID: owner.Device.ID, IdempotencyKey: "send-1",
+		Ciphertext: []byte("different ciphertext"), CryptoProtocol: "mls-openmls-todo",
+	}); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("mismatched idempotency err=%v want %v", err, ErrIdempotencyConflict)
 	}
 	messages, err := store.ListMessages(ctx, conversation.ID, member.Account.ID, ListMessagesOptions{Limit: 10})
 	if err != nil {

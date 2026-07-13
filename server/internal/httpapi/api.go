@@ -633,33 +633,12 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 			writeError(w, http.StatusBadRequest, "invalid_role")
 			return
 		}
-		effectiveRole, err := a.effectiveConversationRole(r.Context(), conversationID, principal)
+		eventID, err := a.Store.ManageConversationMember(r.Context(), conversationID, principal.AccountID, req.AccountID, req.Role)
 		if err != nil {
 			handleStorageError(w, err)
 			return
 		}
-		if !domain.CanManageMembers(effectiveRole) {
-			writeError(w, http.StatusForbidden, "forbidden")
-			return
-		}
-		// A user cannot grant a role higher than their own effective role.
-		if domain.RoleRank(req.Role) > domain.RoleRank(effectiveRole) {
-			writeError(w, http.StatusForbidden, "cannot_grant_higher_role")
-			return
-		}
-		currentRole, err := a.Store.ConversationMemberRole(r.Context(), conversationID, req.AccountID)
-		if err != nil && !errors.Is(err, storage.ErrNotMember) {
-			handleStorageError(w, err)
-			return
-		}
-		if err == nil && domain.RoleRank(currentRole) >= domain.RoleRank(effectiveRole) {
-			writeError(w, http.StatusForbidden, "cannot_change_peer_or_higher_role")
-			return
-		}
-		if err := a.Store.AddConversationMember(r.Context(), conversationID, req.AccountID, req.Role); err != nil {
-			handleStorageError(w, err)
-			return
-		}
+		a.Hub.Publish([]string{req.AccountID}, realtime.Event{Version: "v1", Type: "membership.updated", ID: eventID, ConversationID: conversationID, Payload: map[string]string{"conversation_id": conversationID, "role": req.Role}, CreatedAt: time.Now().UTC()})
 		a.recordAuditEvent(r.Context(), &principal.AccountID, "conversation.member.added", map[string]string{"conversation_id": conversationID, "target_account_id": req.AccountID, "role": req.Role})
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	case parts[1] == "messages" && r.Method == http.MethodGet:
@@ -795,7 +774,7 @@ func (a *API) createMessageEnvelope(w http.ResponseWriter, r *http.Request, prin
 		writeError(w, http.StatusBadRequest, "invalid_expires_at")
 		return
 	}
-	envelope, duplicate, err := a.Store.SaveMessageEnvelope(r.Context(), domain.MessageEnvelope{
+	envelope, duplicate, eventID, err := a.Store.SaveMessageEnvelopeWithSyncEvent(r.Context(), domain.MessageEnvelope{
 		ConversationID:  req.ConversationID,
 		SenderAccountID: principal.AccountID,
 		SenderDeviceID:  principal.DeviceID,
@@ -812,10 +791,10 @@ func (a *API) createMessageEnvelope(w http.ResponseWriter, r *http.Request, prin
 		handleStorageError(w, err)
 		return
 	}
-	ref := messageEventRef(envelope)
-	eventID := a.saveSyncEvent(r.Context(), "message.envelope.created", nil, envelope.ConversationID, ref)
-	members := a.conversationMemberIDs(r.Context(), envelope.ConversationID)
-	a.Hub.Publish(members, realtime.Event{Version: "v1", Type: "message.envelope.created", ID: eventID, ConversationID: envelope.ConversationID, Payload: envelope, CreatedAt: time.Now().UTC()})
+	if !duplicate {
+		members := a.conversationMemberIDs(r.Context(), envelope.ConversationID)
+		a.Hub.Publish(members, realtime.Event{Version: "v1", Type: "message.envelope.created", ID: eventID, ConversationID: envelope.ConversationID, Payload: envelope, CreatedAt: time.Now().UTC()})
+	}
 	status := http.StatusCreated
 	if duplicate {
 		status = http.StatusOK
@@ -1467,6 +1446,8 @@ func handleStorageError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_input")
 	case errors.Is(err, storage.ErrLastOwner):
 		writeError(w, http.StatusConflict, "last_owner_required")
+	case errors.Is(err, storage.ErrIdempotencyConflict):
+		writeError(w, http.StatusConflict, "idempotency_conflict")
 	case errors.Is(err, storage.ErrDeviceLinkInvalid):
 		writeError(w, http.StatusBadRequest, "invalid_device_link")
 	default:
