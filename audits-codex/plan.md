@@ -1,6 +1,6 @@
 # Audit remediation plan
 
-> Implementation status: see [status.md](status.md). The remaining hard blocker is production MLS (R-02); OPS-17 is explicitly deferred maintainability work. Testing gaps remain excluded by request.
+> Implementation status: see [status.md](status.md). The remaining hard blocker is production MLS (R-02). Testing gaps remain excluded by request.
 
 ## Audit summary
 

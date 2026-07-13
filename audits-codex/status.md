@@ -58,7 +58,7 @@ Legend: **Closed** = implemented; **Blocked** = cannot be completed safely witho
 | OPS-08–OPS-10 | Closed | Immutable action/toolchain pins, permissions/timeouts/concurrency, pinned images, SPDX/checksum/provenance release workflow, and private security contact are implemented. |
 | OPS-11–OPS-15 | Closed | Bounded retention jobs, route-aware upload deadlines, realtime budgets/drain, per-connection SQLite PRAGMAs, and indexed batched expiry are implemented. |
 | OPS-16 | Closed | Core APIs use bounded stable cursors; mobile coalesces sync invalidations and persists deltas/cursor atomically. |
-| OPS-17 | **Deferred** | The critical message transaction now uses a narrow domain-facing `messaging.Repository` and application service; mobile persistence is split behind `LocalStore`. Handler/store/client files remain large, so further splitting stays incremental maintainability work rather than a risky rewrite. |
+| OPS-17 | Closed | The critical message transaction uses a narrow domain-facing `messaging.Repository` and application service; mobile persistence is behind `LocalStore`; HTTP handlers and SQLite repositories are split into bounded domain files instead of concrete monoliths. |
 | OPS-18–OPS-19 | Closed | Metrics use a separate loopback management listener and the configured/stored instance name is authoritative. |
 
 ## Verification
