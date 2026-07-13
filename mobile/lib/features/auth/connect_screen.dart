@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../../core/api_client.dart';
 import '../../core/app_state.dart';
 import 'qr_scan_screen.dart';
 
@@ -335,11 +338,13 @@ class _ConnectScreenState extends State<ConnectScreen> {
       return 'Enter the instance URL.';
     }
     final parsed = Uri.tryParse(raw);
-    if (parsed == null ||
-        !parsed.hasScheme ||
-        !(parsed.scheme == 'http' || parsed.scheme == 'https') ||
-        parsed.host.isEmpty) {
+    if (parsed == null) {
       return 'Enter a full URL, e.g. https://chat.example.org';
+    }
+    try {
+      canonicalizeServerOrigin(raw);
+    } on FormatException {
+      return 'Enter only the server origin, e.g. https://chat.example.org';
     }
     return null;
   }
@@ -399,9 +404,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
   }
 
-  /// Returns true if the URL is safe to use (HTTPS, or a clearly-local
-  /// HTTP target like localhost / 127.0.0.1 / *.local), or if the user
-  /// has explicitly confirmed an insecure public URL.
+  /// Release builds permit cleartext only to a literal loopback address.
   Future<bool> _confirmInsecureUrl(String raw) async {
     if (raw.isEmpty) {
       return true; // let downstream validation produce a clearer error
@@ -417,8 +420,16 @@ class _ConnectScreenState extends State<ConnectScreen> {
       return true;
     }
     final host = parsed.host.toLowerCase();
-    if (_isLocalHost(host)) {
+    if (_isLoopbackHost(host)) {
       return true;
+    }
+    if (kReleaseMode) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('HTTPS is required in release builds.')),
+        );
+      }
+      return false;
     }
     final confirmed = await showDialog<bool>(
       context: context,
@@ -444,29 +455,11 @@ class _ConnectScreenState extends State<ConnectScreen> {
     return confirmed ?? false;
   }
 
-  bool _isLocalHost(String host) {
-    if (host == 'localhost' || host == '127.0.0.1' || host == '::1') {
+  bool _isLoopbackHost(String host) {
+    if (host == 'localhost') {
       return true;
     }
-    if (host.endsWith('.local') || host.endsWith('.localhost')) {
-      return true;
-    }
-    // RFC 1918 private ranges + loopback. Cheap string-prefix check; if the
-    // host is an FQDN that happens to start with "10." we still flag it as
-    // local, which is conservative for a dev convenience.
-    if (host.startsWith('10.') || host.startsWith('192.168.')) {
-      return true;
-    }
-    if (host.startsWith('172.')) {
-      final parts = host.split('.');
-      if (parts.length >= 2) {
-        final secondOctet = int.tryParse(parts[1]);
-        if (secondOctet != null && secondOctet >= 16 && secondOctet <= 31) {
-          return true;
-        }
-      }
-    }
-    return false;
+    return InternetAddress.tryParse(host)?.isLoopback ?? false;
   }
 
   /// Opens the camera scanner and fills the link-code field from the result.

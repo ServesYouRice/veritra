@@ -145,7 +145,7 @@ class AppState extends ChangeNotifier {
       _replaceApi(baseUrl);
       final localSession = await localStore.loadSession();
       final deviceId =
-          localSession?.baseUrl == baseUrl ? localSession?.deviceId : null;
+          localSession?.baseUrl == api!.baseUrl ? localSession?.deviceId : null;
       if (deviceId == null || deviceId.isEmpty) {
         throw StateError(
             'Password login requires this device to be linked first.');
