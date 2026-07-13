@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'core/app_state.dart';
 import 'core/api_client.dart';
 import 'crypto/crypto_service.dart';
+import 'push/push_service.dart';
+import 'push/background_push.dart';
 import 'storage/local_store.dart';
 import 'sync/sync_service.dart';
 import 'ui/app_shell.dart';
@@ -18,6 +20,7 @@ Future<void> main() async {
     localStore: SecureLocalStore(),
     syncServiceFactory: (baseUrl, token) =>
         WebSocketSyncService(baseUrl: baseUrl, token: token),
+    pushService: PlatformMobilePushService(),
   );
   // Best-effort: restore a previously stored session so the user doesn't have
   // to re-authenticate on every cold start. If the call fails (corrupt
@@ -25,6 +28,12 @@ Future<void> main() async {
   // fall through to the connect screen.
   runApp(VeritraApp(state: state));
   unawaited(state.tryRestoreSession());
+}
+
+@pragma('vm:entry-point')
+Future<void> pushBackgroundMain() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await performBackgroundPushCatchUp();
 }
 
 class VeritraApp extends StatelessWidget {

@@ -142,6 +142,20 @@ class SettingsScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 16),
+              _SectionHeader(title: 'Notifications', theme: theme),
+              Card(
+                child: ListTile(
+                  enabled: state.pushConfigured && !state.busy,
+                  leading: const Icon(Icons.notifications_outlined),
+                  title: const Text('Push provider'),
+                  subtitle: Text(state.pushConfigured
+                      ? 'Choose an Android UnifiedPush provider'
+                      : 'Not configured by this server'),
+                  trailing: const Icon(Icons.chevron_right_outlined),
+                  onTap: state.choosePushDistributor,
+                ),
+              ),
+              const SizedBox(height: 16),
               _SectionHeader(title: 'Session', theme: theme),
               Card(
                 child: Column(

@@ -37,6 +37,7 @@ type API struct {
 	DefaultInstanceName string
 	Messages            *messaging.Service
 	Push                push.Provider
+	VAPIDPublicKey      string
 	typingMu            sync.Mutex
 	typingLast          map[string]time.Time
 }
@@ -70,6 +71,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/attachments", a.withAuth(a.uploadAttachment))
 	mux.HandleFunc("GET /api/v1/attachments", a.withAuth(a.listAttachments))
 	mux.HandleFunc("POST /api/v1/push/subscriptions", a.withAuth(a.createPushSubscription))
+	mux.HandleFunc("GET /api/v1/push/config", a.withAuth(a.pushConfig))
 	mux.HandleFunc("DELETE /api/v1/push/subscriptions/{id}", a.withAuth(a.deletePushSubscription))
 	mux.HandleFunc("POST /api/v1/calls", a.withAuth(a.createCall))
 	mux.HandleFunc("GET /api/v1/calls", a.withAuth(a.listCalls))
@@ -1332,6 +1334,13 @@ func (a *API) createPushSubscription(w http.ResponseWriter, r *http.Request, pri
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "ok", "subscription_id": subscriptionID, "payload_policy": "generic_encrypted_event_only"})
+}
+
+func (a *API) pushConfig(w http.ResponseWriter, _ *http.Request, _ domain.Principal) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"enabled":          a.VAPIDPublicKey != "",
+		"vapid_public_key": a.VAPIDPublicKey,
+	})
 }
 
 func (a *API) notifyPush(ctx context.Context, conversationID, senderAccountID string) {

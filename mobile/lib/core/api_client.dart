@@ -364,6 +364,12 @@ class ApiClient {
     return json['subscription_id'] as String;
   }
 
+  Future<Map<String, Object?>> pushConfig(String token) => _jsonRequest(
+        'GET',
+        '/api/v1/push/config',
+        token: token,
+      );
+
   Future<void> disablePush(String token, String subscriptionId) async {
     await _jsonRequest(
       'DELETE',

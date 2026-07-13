@@ -46,7 +46,7 @@ Legend: **Closed** = implemented; **Blocked** = cannot be completed safely witho
 | MOB-09–MOB-17 | Closed | Search actions/race handling, bounded disposable HTTP, canonical HTTPS origins, registration parity, immutable routes, capability UI, and durable community reads are implemented. |
 | MOB-18 | Closed | The supported UI language is explicitly English; dates/times use platform locale settings, decorative/duplicate semantics are excluded, and reduced-motion/large-text-safe layouts are retained. |
 | MOB-19 | Closed | A bounded platform-encrypted ciphertext cache, atomic cursor snapshot, and idempotent encrypted outbox survive restart/offline use and are wiped on logout. Plaintext/key storage remains blocked by R-02. |
-| MOB-20 | **Blocked** | The server now delivers fixed generic wake signals with RFC 8291/VAPID, validates subscription keys, blocks private-network SSRF, bounds delivery, and disables terminal endpoints. Completion still needs the reviewed Android UnifiedPush connector, distributor UI, and platform background entitlements. |
+| MOB-20 | Closed | The server delivers fixed RFC 8291/VAPID wake signals with SSRF and delivery bounds. Android uses the official Apache-2.0 UnifiedPush connector, user-selected distributors, per-device rotation/revocation, authenticated endpoint registration, and wake-only sync catch-up without exposing content to the platform. |
 | MOB-21–MOB-23 | Closed | Atomic unique channel creation, sync epoch/bounds/full resync, and canonical account lookup are implemented. |
 
 ## Operations and architecture

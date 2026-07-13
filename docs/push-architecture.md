@@ -35,6 +35,7 @@ Receiving it only schedules authenticated `/api/v1/sync/events` catch-up. Notifi
 - Startup re-registers the account with the selected distributor as required by the UnifiedPush lifecycle.
 - Endpoint rotation replaces the server subscription atomically; logout/device revocation unregisters and disables it.
 - Background receipt acknowledges the distributor message when required, performs bounded sync catch-up, and exposes no decrypted content to platform notification services.
+- When the UI engine is absent, Android starts a short-lived headless Flutter engine, reads the authenticated session from platform-encrypted storage, applies at most 1,000 sync events, commits the ciphertext snapshot and cursor atomically, then destroys the engine.
 
 ## Implemented server boundary
 

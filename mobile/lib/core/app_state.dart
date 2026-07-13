@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../crypto/crypto_service.dart';
+import '../push/push_service.dart';
 import '../storage/local_store.dart';
 import '../sync/sync_service.dart';
 import 'api_client.dart';
@@ -18,17 +19,23 @@ class AppState extends ChangeNotifier {
     required this.cryptoService,
     required this.localStore,
     required this.syncServiceFactory,
-  });
+    MobilePushService? pushService,
+  }) : pushService = pushService ?? DisabledMobilePushService();
 
   final ApiClientFactory apiClientFactory;
   final CryptoService cryptoService;
   final LocalStore localStore;
   final SyncServiceFactory syncServiceFactory;
+  final MobilePushService pushService;
 
   Session? session;
   ApiClient? api;
   SyncService? sync;
   StreamSubscription<Map<String, Object?>>? _syncSubscription;
+  StreamSubscription<PushEvent>? _pushSubscription;
+  String? _pushSubscriptionId;
+  String? _pushInstance;
+  bool pushConfigured = false;
   List<Conversation> conversations = <Conversation>[];
   List<Device> devices = <Device>[];
   // Hydrated from the server list endpoints after auth; also updated
@@ -663,6 +670,7 @@ class AppState extends ChangeNotifier {
     await _run(() async {
       final current = session;
       final client = api;
+      await _stopPush(current, client);
       await _clearLocalSession(preserveDeviceIdentity: true);
       if (current != null && client != null) {
         try {
@@ -754,6 +762,90 @@ class AppState extends ChangeNotifier {
     // the single hook for hydrating server-listed records.
     unawaited(refreshInvites());
     unawaited(refreshCommunities());
+    unawaited(_startPush());
+  }
+
+  Future<void> _startPush() async {
+    final current = session;
+    final client = api;
+    if (current == null || client == null) return;
+    try {
+      final config = await client.pushConfig(current.token);
+      final vapid = config['vapid_public_key'];
+      if (config['enabled'] != true || vapid is! String || vapid.isEmpty) {
+        pushConfigured = false;
+        return;
+      }
+      pushConfigured = true;
+      _pushInstance = '${current.accountId}:${current.deviceId}';
+      await _pushSubscription?.cancel();
+      _pushSubscription = pushService.events.listen(_handlePushEvent);
+      if (await pushService.takePendingWake()) {
+        unawaited(_catchUpSyncEvents());
+      }
+      await pushService.register(instance: _pushInstance!, vapid: vapid);
+      notifyListeners();
+    } catch (_) {
+      // Push is optional; realtime and foreground catch-up remain available.
+    }
+  }
+
+  Future<void> _handlePushEvent(PushEvent event) async {
+    final current = session;
+    final client = api;
+    if (current == null || client == null) return;
+    if (event is PushWakeEvent) {
+      await _catchUpSyncEvents();
+    } else if (event is PushEndpointEvent && event.instance == _pushInstance) {
+      try {
+        _pushSubscriptionId = await client.registerWebPush(
+          current.token,
+          endpoint: event.endpoint,
+          publicKey: event.publicKey,
+          authSecret: event.authSecret,
+        );
+      } catch (_) {
+        // Re-registration on the next startup retries endpoint delivery.
+      }
+    } else if (event is PushUnregisteredEvent &&
+        event.instance == _pushInstance) {
+      final id = _pushSubscriptionId;
+      _pushSubscriptionId = null;
+      if (id != null) {
+        try {
+          await client.disablePush(current.token, id);
+        } catch (_) {}
+      }
+    }
+  }
+
+  Future<void> choosePushDistributor() async {
+    if (!pushConfigured) return;
+    try {
+      await pushService.pickDistributor();
+    } catch (_) {
+      // The platform picker is optional and may have no installed provider.
+    }
+  }
+
+  Future<void> _stopPush(Session? current, ApiClient? client) async {
+    final id = _pushSubscriptionId;
+    final instance = _pushInstance;
+    if (id != null && current != null && client != null) {
+      try {
+        await client.disablePush(current.token, id);
+      } catch (_) {}
+    }
+    if (instance != null) {
+      try {
+        await pushService.unregister(instance);
+      } catch (_) {}
+    }
+    await _pushSubscription?.cancel();
+    _pushSubscription = null;
+    _pushSubscriptionId = null;
+    _pushInstance = null;
+    pushConfigured = false;
   }
 
   Future<void> _catchUpSyncEvents() async {
@@ -852,6 +944,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> _clearLocalSession({bool preserveDeviceIdentity = false}) async {
     final current = session;
+    await _stopPush(current, api);
     unawaited(_syncSubscription?.cancel());
     _syncSubscription = null;
     sync?.dispose();
@@ -947,6 +1040,8 @@ class AppState extends ChangeNotifier {
   void dispose() {
     unawaited(_syncSubscription?.cancel());
     sync?.dispose();
+    unawaited(_pushSubscription?.cancel());
+    pushService.dispose();
     api?.close();
     super.dispose();
   }

@@ -42,3 +42,17 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    implementation("org.unifiedpush.android:connector:3.3.3")
+}
+
+configurations.configureEach {
+    val tink = "com.google.crypto.tink:tink-android:1.21.0"
+    resolutionStrategy {
+        force(tink)
+        dependencySubstitution {
+            substitute(module("com.google.crypto.tink:tink")).using(module(tink))
+        }
+    }
+}
