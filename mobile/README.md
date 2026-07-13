@@ -10,8 +10,6 @@ Local checks:
 flutter test
 ```
 
-Platform projects can be generated with Flutter once the SDK is available:
-
-```sh
-flutter create --platforms android,ios .
-```
+Reviewed Android and iOS platform projects are committed. Android release
+artifacts are left unsigned unless an explicit production signing setup is
+provided; debug signing must never be used for releases.
