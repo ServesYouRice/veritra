@@ -14,6 +14,7 @@ Environment:
 - `PRIVATE_MESSENGER_DB_PATH`, default `<data>/private-messenger.db`
 - `PRIVATE_MESSENGER_STORAGE_PATH`, default `<data>/blobs`
 - `PRIVATE_MESSENGER_SETUP_TOKEN`, high-entropy one-time secret required for remote first-owner setup
+- `PRIVATE_MESSENGER_MANAGEMENT_ADDR`, loopback/private metrics listener, default `127.0.0.1:9090`
 - `PRIVATE_MESSENGER_TRUSTED_PROXIES`, comma-separated CIDRs whose `X-Forwarded-For` headers may be trusted for rate limiting
 
 An example environment file is available at `server/config.example.env`.
@@ -29,9 +30,11 @@ endpoint and exits non-zero on failure. The distroless container image ships no
 shell or `curl`, so the binary performs the probe itself; the Compose file wires
 this as the container `HEALTHCHECK`.
 
-Set `PRIVATE_MESSENGER_ENABLE_METRICS=1` to expose `GET /metrics` with local
+Set `PRIVATE_MESSENGER_ENABLE_METRICS=1` to expose `GET /metrics` on the separate
+management listener with local
 aggregate HTTP counters for operator scraping. The endpoint does not include
-account IDs, request bodies, tokens, message content, or ciphertext.
+account IDs, request bodies, tokens, message content, or ciphertext. Do not
+publish the management listener to the Internet.
 
 The systemd example binds to `127.0.0.1:8080`, stores data in a private
 `StateDirectory`, and optionally reads `/etc/private-messenger/private-messenger.env`.

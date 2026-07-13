@@ -26,11 +26,12 @@ import (
 )
 
 type API struct {
-	Store      *storage.Store
-	Hub        *realtime.Hub
-	Blobs      uploads.Store
-	Log        *slog.Logger
-	SetupToken string
+	Store               *storage.Store
+	Hub                 *realtime.Hub
+	Blobs               uploads.Store
+	Log                 *slog.Logger
+	SetupToken          string
+	DefaultInstanceName string
 }
 
 func (a *API) Register(mux *http.ServeMux) {
@@ -45,6 +46,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/register", a.register)
 	mux.HandleFunc("POST /api/v1/invites", a.withAuth(a.createInvite))
 	mux.HandleFunc("GET /api/v1/invites", a.withAuth(a.listInvites))
+	mux.HandleFunc("DELETE /api/v1/invites/{id}", a.withAuth(a.revokeInvite))
 	mux.HandleFunc("GET /api/v1/devices/me", a.withAuth(a.listDevices))
 	mux.HandleFunc("DELETE /api/v1/devices/{id}", a.withAuth(a.revokeDevice))
 	mux.HandleFunc("POST /api/v1/device-links", a.withAuth(a.createDeviceLink))
@@ -94,7 +96,18 @@ func (a *API) setupStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "setup_status_failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"setup_required": required})
+	response := map[string]interface{}{"setup_required": required}
+	if !required {
+		name, err := a.Store.InstanceName(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "setup_status_failed")
+			return
+		}
+		response["instance_name"] = name
+	} else if strings.TrimSpace(a.DefaultInstanceName) != "" {
+		response["instance_name"] = strings.TrimSpace(a.DefaultInstanceName)
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 type ownerRequest struct {
@@ -114,6 +127,9 @@ func (a *API) createOwner(w http.ResponseWriter, r *http.Request) {
 	var req ownerRequest
 	if !decodeJSON(w, r, &req) {
 		return
+	}
+	if strings.TrimSpace(req.InstanceName) == "" {
+		req.InstanceName = a.DefaultInstanceName
 	}
 	if !validDisplayName(req.InstanceName) || !validUsername(req.Username) || !validOptionalEmail(req.Email) {
 		writeError(w, http.StatusBadRequest, "invalid_identity")
@@ -304,6 +320,10 @@ func (a *API) createInvite(w http.ResponseWriter, r *http.Request, principal dom
 			return
 		}
 	}
+	if req.ExpiresAt == nil {
+		defaultExpiry := time.Now().UTC().Add(7 * 24 * time.Hour)
+		req.ExpiresAt = &defaultExpiry
+	}
 	if req.MaxUses < 0 || req.MaxUses > 10000 {
 		writeError(w, http.StatusBadRequest, "invalid_max_uses")
 		return
@@ -315,6 +335,24 @@ func (a *API) createInvite(w http.ResponseWriter, r *http.Request, principal dom
 	}
 	a.recordAuditEvent(r.Context(), &principal.AccountID, "invite.created", map[string]interface{}{"invite_id": invite.ID, "max_uses": invite.MaxUses})
 	writeJSON(w, http.StatusCreated, invite)
+}
+
+func (a *API) revokeInvite(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	if !domain.CanManageInvites(principal.Role) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	inviteID := strings.TrimSpace(r.PathValue("id"))
+	if inviteID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_invite_id")
+		return
+	}
+	if err := a.Store.RevokeInvite(r.Context(), principal.AccountID, inviteID); err != nil {
+		handleStorageError(w, err)
+		return
+	}
+	a.recordAuditEvent(r.Context(), &principal.AccountID, "invite.revoked", map[string]string{"invite_id": inviteID})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *API) listInvites(w http.ResponseWriter, r *http.Request, principal domain.Principal) {

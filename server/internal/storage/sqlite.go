@@ -83,13 +83,14 @@ func Open(ctx context.Context, cfg config.Config) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(cfg.DatabasePath), 0o700); err != nil {
 		return nil, err
 	}
-	writer, err := sql.Open("sqlite", cfg.DatabasePath)
+	dsn := sqliteDSN(cfg.DatabasePath)
+	writer, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
 	writer.SetMaxOpenConns(1)
 	writer.SetMaxIdleConns(1)
-	if _, err := writer.ExecContext(ctx, "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;"); err != nil {
+	if _, err := writer.ExecContext(ctx, "PRAGMA journal_mode = WAL;"); err != nil {
 		_ = writer.Close()
 		return nil, err
 	}
@@ -101,24 +102,27 @@ func Open(ctx context.Context, cfg config.Config) (*Store, error) {
 	if readerConns > 16 {
 		readerConns = 16
 	}
-	reader, err := sql.Open("sqlite", cfg.DatabasePath)
+	reader, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		_ = writer.Close()
 		return nil, err
 	}
 	reader.SetMaxOpenConns(readerConns)
 	reader.SetMaxIdleConns(readerConns)
-	if _, err := reader.ExecContext(ctx, "PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;"); err != nil {
-		_ = reader.Close()
-		_ = writer.Close()
-		return nil, err
-	}
 
 	// Query calls use their own pool. SQLite's WAL mode gives those reads
 	// deferred transactions by default, while writes stay serialized through
 	// the single writer connection.
 	store := &Store{db: &dbRouter{reader: reader, writer: writer}}
 	return store, nil
+}
+
+func sqliteDSN(path string) string {
+	separator := "?"
+	if strings.Contains(path, "?") {
+		separator = "&"
+	}
+	return path + separator + "_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
 }
 
 func (s *Store) Close() error {
@@ -267,6 +271,17 @@ func (s *Store) SetupRequired(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	return count == 0, nil
+}
+
+func (s *Store) InstanceName(ctx context.Context) (string, error) {
+	var name string
+	if err := s.db.QueryRowContext(ctx, `SELECT name FROM instances WHERE id = 1 AND setup_complete = 1`).Scan(&name); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	return name, nil
 }
 
 type CreateOwnerInput struct {
@@ -522,7 +537,7 @@ func (s *Store) CreateInvite(ctx context.Context, createdBy string, maxUses int,
 // first. Invites are intentionally not visible across accounts: the code is
 // a bearer credential for registration.
 func (s *Store) ListInvites(ctx context.Context, createdBy string) ([]domain.Invite, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, code, created_by, max_uses, uses, expires_at, created_at, revoked_at FROM invites WHERE created_by = ? ORDER BY created_at DESC`, createdBy)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, code, created_by, max_uses, uses, expires_at, created_at, revoked_at FROM invites WHERE created_by = ? AND revoked_at IS NULL AND uses < max_uses AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC`, createdBy, nowString())
 	if err != nil {
 		return nil, err
 	}
@@ -541,6 +556,21 @@ func (s *Store) ListInvites(ctx context.Context, createdBy string) ([]domain.Inv
 		invites = append(invites, invite)
 	}
 	return invites, rows.Err()
+}
+
+func (s *Store) RevokeInvite(ctx context.Context, createdBy, inviteID string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE invites SET revoked_at = ? WHERE id = ? AND created_by = ? AND revoked_at IS NULL`, nowString(), inviteID, createdBy)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // ListCommunities returns the communities the given account is a member of,
@@ -1518,7 +1548,14 @@ func (s *Store) pruneExpiredMessageByIdempotency(ctx context.Context, deviceID, 
 // PruneExpiredMessages deletes server-held encrypted envelopes whose
 // disappearing-message expiry has passed.
 func (s *Store) PruneExpiredMessages(ctx context.Context, now time.Time) (int64, error) {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM message_envelopes WHERE expires_at IS NOT NULL AND expires_at <= ?`, formatTime(now.UTC()))
+	result, err := s.db.ExecContext(ctx, `
+		DELETE FROM message_envelopes
+		WHERE id IN (
+			SELECT id FROM message_envelopes
+			WHERE expires_at IS NOT NULL AND expires_at <= ?
+			ORDER BY expires_at, id
+			LIMIT 500
+		)`, formatTime(now.UTC()))
 	if err != nil {
 		return 0, err
 	}
@@ -1869,6 +1906,9 @@ func (s *Store) DeleteAccount(ctx context.Context, accountID string) error {
 		if activeOwners <= 1 {
 			return ErrLastOwner
 		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE invites SET revoked_at = COALESCE(revoked_at, ?) WHERE created_by = ?`, now, accountID); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE account_id = ?`, accountID); err != nil {
 		return err

@@ -70,10 +70,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
-	if a.Config.EnableMetrics {
-		mux.HandleFunc("GET /metrics", a.metrics.handle)
-	}
-	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Log: a.Log, SetupToken: a.Config.SetupToken}
+	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Log: a.Log, SetupToken: a.Config.SetupToken, DefaultInstanceName: a.Config.InstanceName}
 	api.Register(mux)
 	return securityHeaders(a.requestLogger(a.limiter.middleware(mux)))
 }
@@ -87,17 +84,42 @@ func (a *App) Serve(ctx context.Context) error {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+	var managementServer *http.Server
+	if a.Config.EnableMetrics {
+		managementMux := http.NewServeMux()
+		managementMux.HandleFunc("GET /metrics", a.metrics.handle)
+		managementServer = &http.Server{
+			Addr:              a.Config.ManagementAddr,
+			Handler:           managementMux,
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       10 * time.Second,
+			WriteTimeout:      10 * time.Second,
+			IdleTimeout:       30 * time.Second,
+		}
+	}
+	serveCtx, cancelServe := context.WithCancel(ctx)
+	defer cancelServe()
 	go func() {
-		<-ctx.Done()
+		<-serveCtx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
+		if managementServer != nil {
+			_ = managementServer.Shutdown(shutdownCtx)
+		}
 	}()
 	go a.runRetentionSweeper(ctx)
 	go a.limiter.cleanupLoop(ctx)
 	a.Log.Info("server_starting", "addr", a.Config.Addr)
-	err := server.ListenAndServe()
-	if errors.Is(err, http.ErrServerClosed) {
+	errCh := make(chan error, 2)
+	go func() { errCh <- server.ListenAndServe() }()
+	if managementServer != nil {
+		a.Log.Info("management_server_starting", "addr", a.Config.ManagementAddr)
+		go func() { errCh <- managementServer.ListenAndServe() }()
+	}
+	err := <-errCh
+	cancelServe()
+	if errors.Is(err, http.ErrServerClosed) && ctx.Err() != nil {
 		return nil
 	}
 	return err

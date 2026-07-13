@@ -674,6 +674,7 @@ func TestListInvitesReturnsOwnInvitesOnly(t *testing.T) {
 	}
 	var listed struct {
 		Invites []struct {
+			ID      string `json:"id"`
 			Code    string `json:"code"`
 			MaxUses int    `json:"max_uses"`
 		} `json:"invites"`
@@ -684,6 +685,18 @@ func TestListInvitesReturnsOwnInvitesOnly(t *testing.T) {
 	if len(listed.Invites) != 1 || listed.Invites[0].MaxUses != 5 ||
 		listed.Invites[0].Code == "" {
 		t.Fatalf("unexpected invites: %#v", listed.Invites)
+	}
+	status, response = doJSON(t, handler, http.MethodDelete, "/api/v1/invites/"+listed.Invites[0].ID, ownerToken, nil)
+	if status != http.StatusNoContent {
+		t.Fatalf("revoke invite status=%d body=%s", status, response)
+	}
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/register", "", map[string]interface{}{
+		"invite_code": listed.Invites[0].Code, "username": "revokedinvite",
+		"password": "member-password-123", "device_name": "phone",
+		"device_key_package": base64.StdEncoding.EncodeToString([]byte("revoked-key-package")),
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("revoked invite registration status=%d body=%s", status, response)
 	}
 
 	memberToken := registerMember(t, handler, ownerToken, "listmember")

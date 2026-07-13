@@ -28,11 +28,12 @@ class ApiClient {
     required String deviceName,
     required List<int> deviceKeyPackage,
     String setupToken = '',
-    String instanceName = 'Private Messenger',
+    String? instanceName,
   }) async {
     final json = await _jsonRequest('POST', '/api/v1/setup/owner',
         body: <String, Object?>{
-          'instance_name': instanceName,
+          if (instanceName != null && instanceName.trim().isNotEmpty)
+            'instance_name': instanceName.trim(),
           'username': username,
           'password': password,
           'device_name': deviceName,
@@ -151,6 +152,10 @@ class ApiClient {
     final rows = (json['invites'] as List<Object?>? ?? const <Object?>[])
         .map((row) => Map<String, Object?>.from(row as Map));
     return rows.map(Invite.fromJson).toList();
+  }
+
+  Future<void> revokeInvite(String token, String inviteId) async {
+    await _jsonRequest('DELETE', '/api/v1/invites/$inviteId', token: token);
   }
 
   Future<List<Community>> listCommunities(String token) async {

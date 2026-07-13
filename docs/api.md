@@ -21,6 +21,7 @@ Base path: `/api/v1`
 - `POST /api/v1/register` consumes an invite and creates account, device, and session.
 - `POST /api/v1/invites` creates invite codes for owner/admin users.
 - `GET /api/v1/invites` lists active invites created by the authenticated owner/admin.
+- `DELETE /api/v1/invites/{id}` revokes an invite created by the caller. Invites default to one use and a seven-day expiry.
 
 ## Devices
 

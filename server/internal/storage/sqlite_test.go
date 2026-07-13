@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -98,6 +99,35 @@ func TestInviteDeviceAndEncryptedEnvelopeFlow(t *testing.T) {
 	}
 	if bytes.Contains(dbBytes, []byte(plaintext)) {
 		t.Fatal("database contains runtime plaintext sentinel")
+	}
+}
+
+func TestEverySQLiteConnectionEnforcesSafetyPragmas(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	connections := make([]*sql.Conn, 0, 4)
+	defer func() {
+		for _, connection := range connections {
+			_ = connection.Close()
+		}
+	}()
+	for i := 0; i < 4; i++ {
+		connection, err := store.db.reader.Conn(ctx)
+		if err != nil {
+			t.Fatalf("reader connection %d: %v", i, err)
+		}
+		connections = append(connections, connection)
+		var foreignKeys, busyTimeout int
+		if err := connection.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&foreignKeys); err != nil {
+			t.Fatalf("foreign_keys connection %d: %v", i, err)
+		}
+		if err := connection.QueryRowContext(ctx, `PRAGMA busy_timeout`).Scan(&busyTimeout); err != nil {
+			t.Fatalf("busy_timeout connection %d: %v", i, err)
+		}
+		if foreignKeys != 1 || busyTimeout != 5000 {
+			t.Fatalf("connection %d pragmas foreign_keys=%d busy_timeout=%d", i, foreignKeys, busyTimeout)
+		}
 	}
 }
 

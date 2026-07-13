@@ -365,6 +365,18 @@ class AppState extends ChangeNotifier {
     return error == null ? created : null;
   }
 
+  Future<void> revokeInvite(String inviteId) async {
+    await _run(() async {
+      final current = session;
+      final client = api;
+      if (current == null || client == null) {
+        return;
+      }
+      await client.revokeInvite(current.token, inviteId);
+      invites = invites.where((invite) => invite.id != inviteId).toList();
+    });
+  }
+
   Future<Community?> createCommunity(String name) async {
     Community? created;
     await _run(() async {
