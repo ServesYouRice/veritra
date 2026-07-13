@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'models.dart';
 
@@ -13,6 +14,9 @@ class ApiClient {
   final String baseUrl;
   final HttpClient _httpClient;
   static const _requestTimeout = Duration(seconds: 30);
+  static const _maxJsonResponseBytes = 2 * 1024 * 1024;
+
+  void close() => _httpClient.close(force: true);
 
   Future<Map<String, Object?>> setupStatus() async {
     return _jsonRequest('GET', '/api/v1/setup/status');
@@ -423,7 +427,14 @@ class ApiClient {
       request.write(jsonEncode(body));
     }
     final response = await request.close().timeout(_requestTimeout);
-    final text = await utf8.decodeStream(response).timeout(_requestTimeout);
+    final bytes = BytesBuilder(copy: false);
+    await for (final chunk in response.timeout(_requestTimeout)) {
+      if (bytes.length + chunk.length > _maxJsonResponseBytes) {
+        throw const HttpException('JSON response exceeded the size limit');
+      }
+      bytes.add(chunk);
+    }
+    final text = utf8.decode(bytes.takeBytes());
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw ApiException(response.statusCode, text);
     }

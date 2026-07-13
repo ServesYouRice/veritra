@@ -54,6 +54,7 @@ class AppState extends ChangeNotifier {
   final Set<String> _loadingMessageConversations = <String>{};
   final Map<String, String> _messageLoadErrors = <String, String>{};
   bool _catchingUpSync = false;
+  bool _catchUpRequested = false;
   int _lastSyncEventId = 0;
 
   bool get connected => session != null;
@@ -75,12 +76,15 @@ class AppState extends ChangeNotifier {
   /// can steer users to the right mode. Returns null when the instance is
   /// unreachable or answers unexpectedly; never sets [error] or [busy].
   Future<bool?> checkSetupRequired(String baseUrl) async {
+    final client = apiClientFactory(baseUrl);
     try {
-      final status = await apiClientFactory(baseUrl).setupStatus();
+      final status = await client.setupStatus();
       final required = status['setup_required'];
       return required is bool ? required : null;
     } catch (_) {
       return null;
+    } finally {
+      client.close();
     }
   }
 
@@ -97,7 +101,7 @@ class AppState extends ChangeNotifier {
         return;
       }
       session = restored;
-      api = apiClientFactory(restored.baseUrl);
+      _replaceApi(restored.baseUrl);
       _lastSyncEventId = await localStore.loadSyncCursor();
       await refreshConversations();
       await refreshDevices();
@@ -119,7 +123,7 @@ class AppState extends ChangeNotifier {
   Future<void> createOwner(String baseUrl, String username, String password,
       String setupToken) async {
     await _run(() async {
-      api = apiClientFactory(baseUrl);
+      _replaceApi(baseUrl);
       session = await api!.createOwner(
         username: username,
         password: password,
@@ -138,7 +142,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> login(String baseUrl, String username, String password) async {
     await _run(() async {
-      api = apiClientFactory(baseUrl);
+      _replaceApi(baseUrl);
       final localSession = await localStore.loadSession();
       final deviceId =
           localSession?.baseUrl == baseUrl ? localSession?.deviceId : null;
@@ -326,7 +330,7 @@ class AppState extends ChangeNotifier {
     String password,
   ) async {
     await _run(() async {
-      api = apiClientFactory(baseUrl);
+      _replaceApi(baseUrl);
       session = await api!.register(
         inviteCode: inviteCode,
         username: username,
@@ -564,7 +568,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> claimDeviceLink(String baseUrl, String code) async {
     await _run(() async {
-      api = apiClientFactory(baseUrl);
+      _replaceApi(baseUrl);
       pendingDeviceLinkClaim = await api!.claimDeviceLink(
         code: code,
         deviceName: 'Linked mobile device',
@@ -602,10 +606,15 @@ class AppState extends ChangeNotifier {
     await _run(() async {
       final current = session;
       final client = api;
-      if (current != null && client != null) {
-        await client.logout(current.token);
-      }
       await _clearLocalSession(preserveDeviceIdentity: true);
+      if (current != null && client != null) {
+        try {
+          await client.logout(current.token);
+        } catch (_) {
+          // Local sign-out is the security boundary. The remote token expires
+          // normally if revocation cannot be delivered while offline.
+        }
+      }
     });
   }
 
@@ -665,6 +674,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> _catchUpSyncEvents() async {
     if (_catchingUpSync) {
+      _catchUpRequested = true;
       return;
     }
     final current = session;
@@ -674,44 +684,60 @@ class AppState extends ChangeNotifier {
     }
     _catchingUpSync = true;
     try {
-      final events =
-          await client.syncEvents(current.token, after: _lastSyncEventId);
-      var refreshConversationsNeeded = false;
-      var refreshSelectedMessagesNeeded = false;
-      final selectedId = selectedConversationId;
-      for (final event in events) {
-        if (event.id > _lastSyncEventId) {
-          _lastSyncEventId = event.id;
-        }
-        if (event.conversationId != null) {
-          refreshConversationsNeeded = true;
-          if (event.conversationId == selectedId) {
-            refreshSelectedMessagesNeeded = true;
+      do {
+        _catchUpRequested = false;
+        while (true) {
+          const pageSize = 200;
+          final events = await client.syncEvents(current.token,
+              after: _lastSyncEventId, limit: pageSize);
+          if (events.isEmpty) {
+            break;
           }
-        } else if (event.type.startsWith('device.')) {
-          await refreshDevices();
-          refreshConversationsNeeded = true;
-        } else if (event.type.startsWith('conversation.')) {
-          refreshConversationsNeeded = true;
+          var pageCursor = _lastSyncEventId;
+          var refreshConversationsNeeded = false;
+          var refreshSelectedMessagesNeeded = false;
+          var refreshDevicesNeeded = false;
+          final selectedId = selectedConversationId;
+          for (final event in events) {
+            if (event.id > pageCursor) {
+              pageCursor = event.id;
+            }
+            if (event.conversationId != null) {
+              refreshConversationsNeeded = true;
+              if (event.conversationId == selectedId) {
+                refreshSelectedMessagesNeeded = true;
+              }
+            } else if (event.type.startsWith('device.')) {
+              refreshDevicesNeeded = true;
+              refreshConversationsNeeded = true;
+            } else if (event.type.startsWith('conversation.')) {
+              refreshConversationsNeeded = true;
+            }
+          }
+          if (refreshDevicesNeeded) {
+            await refreshDevices();
+          }
+          if (refreshConversationsNeeded) {
+            await _refreshConversations(notify: false);
+          }
+          if (refreshSelectedMessagesNeeded) {
+            await refreshSelectedMessages(notify: false);
+            // Keep the read cursor aligned with a conversation that is open
+            // while this sync page is applied.
+            await markNewestMessageRead(selectedId!);
+          }
+          await localStore.saveSyncCursor(pageCursor);
+          _lastSyncEventId = pageCursor;
+          notifyListeners();
+          if (events.length < pageSize) {
+            break;
+          }
         }
-      }
-      if (events.isNotEmpty) {
-        await localStore.saveSyncCursor(_lastSyncEventId);
-      }
-      if (refreshSelectedMessagesNeeded) {
-        await refreshSelectedMessages(notify: false);
-        // The conversation is open on screen, so keep the read cursor at the
-        // newest message; otherwise the refresh below would surface an unread
-        // badge for a conversation the user is actively reading.
-        await markNewestMessageRead(selectedId!);
-      }
-      if (refreshConversationsNeeded) {
-        await _refreshConversations(notify: false);
-      }
-      if (events.isNotEmpty) {
-        notifyListeners();
-      }
+      } while (_catchUpRequested);
     } catch (err) {
+      if (err is ApiException && err.statusCode == 401) {
+        await _clearLocalSession(preserveDeviceIdentity: true);
+      }
       error = describeError(err);
       notifyListeners();
     } finally {
@@ -741,6 +767,7 @@ class AppState extends ChangeNotifier {
       await localStore.clear();
     }
     session = null;
+    api?.close();
     api = null;
     conversations = <Conversation>[];
     conversationsLoaded = false;
@@ -760,6 +787,11 @@ class AppState extends ChangeNotifier {
     _lastSyncEventId = 0;
   }
 
+  void _replaceApi(String baseUrl) {
+    api?.close();
+    api = apiClientFactory(baseUrl);
+  }
+
   Future<void> _run(Future<void> Function() body) async {
     busy = true;
     error = null;
@@ -767,6 +799,9 @@ class AppState extends ChangeNotifier {
     try {
       await body();
     } catch (err) {
+      if (err is ApiException && err.statusCode == 401) {
+        await _clearLocalSession(preserveDeviceIdentity: true);
+      }
       error = describeError(err);
     } finally {
       busy = false;
@@ -778,6 +813,7 @@ class AppState extends ChangeNotifier {
   void dispose() {
     unawaited(_syncSubscription?.cancel());
     sync?.dispose();
+    api?.close();
     super.dispose();
   }
 }

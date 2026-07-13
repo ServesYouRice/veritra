@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'core/app_state.dart';
@@ -21,8 +23,8 @@ Future<void> main() async {
   // to re-authenticate on every cold start. If the call fails (corrupt
   // keystore entry, missing secure storage on a new platform) we silently
   // fall through to the connect screen.
-  await state.tryRestoreSession();
   runApp(VeritraApp(state: state));
+  unawaited(state.tryRestoreSession());
 }
 
 class VeritraApp extends StatelessWidget {
