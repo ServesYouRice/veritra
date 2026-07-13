@@ -73,7 +73,7 @@ func (a *App) Handler() http.Handler {
 	if a.Config.EnableMetrics {
 		mux.HandleFunc("GET /metrics", a.metrics.handle)
 	}
-	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Log: a.Log}
+	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Log: a.Log, SetupToken: a.Config.SetupToken}
 	api.Register(mux)
 	return securityHeaders(a.requestLogger(a.limiter.middleware(mux)))
 }

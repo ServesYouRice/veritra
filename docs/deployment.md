@@ -13,9 +13,14 @@ Environment:
 - `PRIVATE_MESSENGER_DATA_DIR`, default `./data`
 - `PRIVATE_MESSENGER_DB_PATH`, default `<data>/private-messenger.db`
 - `PRIVATE_MESSENGER_STORAGE_PATH`, default `<data>/blobs`
+- `PRIVATE_MESSENGER_SETUP_TOKEN`, high-entropy one-time secret required for remote first-owner setup
 - `PRIVATE_MESSENGER_TRUSTED_PROXIES`, comma-separated CIDRs whose `X-Forwarded-For` headers may be trusted for rate limiting
 
 An example environment file is available at `server/config.example.env`.
+
+Generate the setup token out of band, keep it out of logs and command-line
+arguments, and remove it from the environment after the owner is created.
+Tokenless setup is accepted only over a loopback connection.
 
 ## Health Check
 
@@ -27,6 +32,10 @@ this as the container `HEALTHCHECK`.
 Set `PRIVATE_MESSENGER_ENABLE_METRICS=1` to expose `GET /metrics` with local
 aggregate HTTP counters for operator scraping. The endpoint does not include
 account IDs, request bodies, tokens, message content, or ciphertext.
+
+The systemd example binds to `127.0.0.1:8080`, stores data in a private
+`StateDirectory`, and optionally reads `/etc/private-messenger/private-messenger.env`.
+Place TLS reverse-proxy and setup-token settings in that root-readable file.
 
 ## Docker Compose
 

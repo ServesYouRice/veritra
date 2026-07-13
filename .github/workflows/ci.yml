@@ -46,9 +46,9 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: "3.24.5"
+          flutter-version: "3.44.0"
           cache: true
-      - run: flutter pub get
+      - run: flutter pub get --enforce-lockfile
         working-directory: mobile
       - run: flutter test
         working-directory: mobile

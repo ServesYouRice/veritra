@@ -23,6 +23,7 @@ class ApiClient {
     required String password,
     required String deviceName,
     required List<int> deviceKeyPackage,
+    String setupToken = '',
     String instanceName = 'Private Messenger',
   }) async {
     final json = await _jsonRequest('POST', '/api/v1/setup/owner',
@@ -33,7 +34,9 @@ class ApiClient {
           'device_name': deviceName,
           'device_key_package': base64Encode(deviceKeyPackage),
         },
-        setupRequest: true);
+        extraHeaders: setupToken.isEmpty
+            ? const <String, String>{}
+            : <String, String>{'X-Veritra-Setup-Token': setupToken});
     return _sessionFromAuthJson(json, fallbackUsername: username);
   }
 
@@ -406,7 +409,6 @@ class ApiClient {
     String path, {
     String? token,
     Map<String, Object?>? body,
-    bool setupRequest = false,
     Map<String, String> extraHeaders = const <String, String>{},
   }) async {
     final uri = Uri.parse(baseUrl).resolve(path);
@@ -415,9 +417,6 @@ class ApiClient {
     request.headers.contentType = ContentType.json;
     if (token != null) {
       request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
-    }
-    if (setupRequest) {
-      request.headers.set('X-Private-Messenger-Setup', '1');
     }
     extraHeaders.forEach((key, value) => request.headers.set(key, value));
     if (body != null) {

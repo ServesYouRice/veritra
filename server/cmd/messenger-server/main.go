@@ -49,14 +49,20 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
+	dataDirFlagSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "data-dir" {
+			dataDirFlagSet = true
+		}
+	})
 	if dbPath != "" {
 		cfg.DatabasePath = dbPath
-	} else {
+	} else if dataDirFlagSet && os.Getenv("PRIVATE_MESSENGER_DB_PATH") == "" {
 		cfg.DatabasePath = filepath.Join(cfg.DataDir, "private-messenger.db")
 	}
 	if storagePath != "" {
 		cfg.StoragePath = storagePath
-	} else {
+	} else if dataDirFlagSet && os.Getenv("PRIVATE_MESSENGER_STORAGE_PATH") == "" {
 		cfg.StoragePath = filepath.Join(cfg.DataDir, "blobs")
 	}
 

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
@@ -21,6 +22,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
   final url = TextEditingController(text: 'http://localhost:8080');
   final username = TextEditingController();
   final password = TextEditingController();
+  final passwordConfirmation = TextEditingController();
+  final setupToken = TextEditingController();
   final inviteCode = TextEditingController();
   final linkCode = TextEditingController();
   // Signing in (or joining) is the common case; "Owner" only applies to the
@@ -46,6 +49,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
     url.dispose();
     username.dispose();
     password.dispose();
+    passwordConfirmation.dispose();
+    setupToken.dispose();
     inviteCode.dispose();
     linkCode.dispose();
     super.dispose();
@@ -260,6 +265,34 @@ class _ConnectScreenState extends State<ConnectScreen> {
                         ),
                       ),
                     ),
+                    if (_isRegistration) ...<Widget>[
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: passwordConfirmation,
+                        obscureText: !showPassword,
+                        autovalidateMode: AutovalidateMode.onUserInteraction,
+                        validator: (value) => value == password.text
+                            ? null
+                            : 'Passwords do not match.',
+                        decoration: const InputDecoration(
+                          labelText: 'Confirm password',
+                          prefixIcon: Icon(Icons.lock_reset_outlined),
+                        ),
+                      ),
+                    ],
+                    if (mode == AuthMode.owner) ...<Widget>[
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: setupToken,
+                        obscureText: true,
+                        autocorrect: false,
+                        decoration: const InputDecoration(
+                          labelText: 'Setup token',
+                          helperText: 'Required unless connecting on loopback.',
+                          prefixIcon: Icon(Icons.vpn_key_outlined),
+                        ),
+                      ),
+                    ],
                   ],
                   const SizedBox(height: 20),
                   if (mode == AuthMode.linkDevice && pendingLink != null)
@@ -316,8 +349,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
     if (raw.isEmpty) {
       return 'Enter your password.';
     }
-    if (_isRegistration && raw.length < 12) {
-      return 'Password must be at least 12 characters.';
+    final byteLength = utf8.encode(raw).length;
+    if (_isRegistration && (byteLength < 12 || byteLength > 72)) {
+      return 'Password must be 12â€“72 UTF-8 bytes.';
     }
     return null;
   }
@@ -349,8 +383,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
     switch (mode) {
       case AuthMode.owner:
-        return widget.state
-            .createOwner(raw, username.text.trim(), password.text);
+        return widget.state.createOwner(
+            raw, username.text.trim(), password.text, setupToken.text.trim());
       case AuthMode.signIn:
         return widget.state.login(raw, username.text.trim(), password.text);
       case AuthMode.join:

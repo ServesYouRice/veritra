@@ -14,6 +14,7 @@ type Config struct {
 	DatabasePath   string
 	StoragePath    string
 	InstanceName   string
+	SetupToken     string
 	EnableMetrics  bool
 	TrustedProxies []*net.IPNet
 }
@@ -27,6 +28,7 @@ func Load() (Config, error) {
 		Addr:           getenv("PRIVATE_MESSENGER_ADDR", ":8080"),
 		DataDir:        getenv("PRIVATE_MESSENGER_DATA_DIR", "./data"),
 		InstanceName:   getenv("PRIVATE_MESSENGER_INSTANCE_NAME", "Private Messenger"),
+		SetupToken:     os.Getenv("PRIVATE_MESSENGER_SETUP_TOKEN"),
 		EnableMetrics:  getenv("PRIVATE_MESSENGER_ENABLE_METRICS", "") == "1",
 		TrustedProxies: trustedProxies,
 	}

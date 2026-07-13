@@ -116,8 +116,8 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<void> createOwner(
-      String baseUrl, String username, String password) async {
+  Future<void> createOwner(String baseUrl, String username, String password,
+      String setupToken) async {
     await _run(() async {
       api = apiClientFactory(baseUrl);
       session = await api!.createOwner(
@@ -125,6 +125,7 @@ class AppState extends ChangeNotifier {
         password: password,
         deviceName: 'Mobile device',
         deviceKeyPackage: await cryptoService.createDeviceKeyPackage(),
+        setupToken: setupToken,
       );
       await localStore.saveSession(session!);
       _lastSyncEventId = 0;

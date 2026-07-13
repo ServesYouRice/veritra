@@ -16,7 +16,7 @@ else
 fi
 
 if command -v flutter >/dev/null 2>&1; then
-  (cd "$ROOT/mobile" && flutter pub get && flutter test)
+  (cd "$ROOT/mobile" && flutter pub get --enforce-lockfile && flutter test)
 else
-  docker run --rm -v "$ROOT:/workspace" -w /workspace/mobile ghcr.io/cirruslabs/flutter:stable sh -c 'flutter pub get && flutter test'
+  docker run --rm -v "$ROOT:/workspace" -w /workspace/mobile ghcr.io/cirruslabs/flutter:3.44.0 sh -c 'flutter pub get --enforce-lockfile && flutter test'
 fi

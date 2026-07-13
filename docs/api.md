@@ -11,7 +11,7 @@ Base path: `/api/v1`
 
 - `GET /setup` serves a static notice. Browser owner setup is disabled until a client can generate production device key packages.
 - `GET /api/v1/setup/status` returns whether setup is required.
-- `POST /api/v1/setup/owner` creates the first owner account and device. It requires `X-Private-Messenger-Setup: 1` and a real `device_key_package`.
+- `POST /api/v1/setup/owner` atomically creates the first owner, device, and session. Remote setup requires `X-Veritra-Setup-Token` to match `PRIVATE_MESSENGER_SETUP_TOKEN`; without a configured token, setup is accepted only from a loopback peer. A real `device_key_package` is always required.
 
 ## Auth and Invites
 
@@ -20,6 +20,7 @@ Base path: `/api/v1`
 - `POST /api/v1/auth/logout-all` revokes every session for the account except the caller's current one (sign out other/lost devices). Returns `204`.
 - `POST /api/v1/register` consumes an invite and creates account, device, and session.
 - `POST /api/v1/invites` creates invite codes for owner/admin users.
+- `GET /api/v1/invites` lists active invites created by the authenticated owner/admin.
 
 ## Devices
 
@@ -39,9 +40,9 @@ The verification code returned to both devices must be compared in the client UX
 ## Communities
 
 - `POST /api/v1/communities` creates a community owned by the caller.
+- `GET /api/v1/communities` lists communities visible to the caller.
 - `POST /api/v1/communities/{id}/channels` creates a channel in a visible community.
-
-There are no list-communities, list-channels, or list-members endpoints yet. The current mobile UI derives community/channel display from conversations plus items created in the current session.
+- `GET /api/v1/communities/{id}/channels` lists channels for a community member.
 
 ## Messaging
 

@@ -49,7 +49,7 @@ Then open:
 http://localhost:8080/setup
 ```
 
-The browser page is a setup notice only until production client crypto is wired. Owner setup must come from a client that can generate a real device key package.
+The browser page is a setup notice only until production client crypto is wired. Owner setup must come from a client that can generate a real device key package. Remote first-owner setup also requires a high-entropy `PRIVATE_MESSENGER_SETUP_TOKEN`; tokenless setup is loopback-only.
 
 Default data lives under `./data` unless `PRIVATE_MESSENGER_DATA_DIR` is set.
 

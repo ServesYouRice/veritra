@@ -3,15 +3,19 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"private-messenger/server/internal/auth"
 	"private-messenger/server/internal/domain"
@@ -22,10 +26,11 @@ import (
 )
 
 type API struct {
-	Store *storage.Store
-	Hub   *realtime.Hub
-	Blobs uploads.Store
-	Log   *slog.Logger
+	Store      *storage.Store
+	Hub        *realtime.Hub
+	Blobs      uploads.Store
+	Log        *slog.Logger
+	SetupToken string
 }
 
 func (a *API) Register(mux *http.ServeMux) {
@@ -102,12 +107,16 @@ type ownerRequest struct {
 }
 
 func (a *API) createOwner(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("X-Private-Messenger-Setup") != "1" {
-		writeError(w, http.StatusForbidden, "setup_csrf_guard_required")
+	if !a.setupAuthorized(r) {
+		writeError(w, http.StatusForbidden, "setup_authorization_required")
 		return
 	}
 	var req ownerRequest
 	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if !validDisplayName(req.InstanceName) || !validUsername(req.Username) || !validOptionalEmail(req.Email) {
+		writeError(w, http.StatusBadRequest, "invalid_identity")
 		return
 	}
 	passwordHash, err := auth.HashPassword(req.Password)
@@ -127,13 +136,20 @@ func (a *API) createOwner(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "non_production_device_key_package")
 		return
 	}
+	token, tokenHash, err := auth.NewToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "token_create_failed")
+		return
+	}
 	created, err := a.Store.CreateOwner(r.Context(), storage.CreateOwnerInput{
-		InstanceName: req.InstanceName,
-		Username:     req.Username,
-		Email:        req.Email,
-		PasswordHash: passwordHash,
-		DeviceName:   req.DeviceName,
-		KeyPackage:   req.DeviceKeyPackage,
+		InstanceName:  req.InstanceName,
+		Username:      req.Username,
+		Email:         req.Email,
+		PasswordHash:  passwordHash,
+		DeviceName:    req.DeviceName,
+		KeyPackage:    req.DeviceKeyPackage,
+		SessionHash:   tokenHash,
+		SessionExpiry: time.Now().UTC().Add(30 * 24 * time.Hour),
 	})
 	if err != nil {
 		if errors.Is(err, storage.ErrAlreadySetup) {
@@ -143,17 +159,22 @@ func (a *API) createOwner(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "owner_create_failed")
 		return
 	}
-	token, tokenHash, err := auth.NewToken()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "token_create_failed")
-		return
-	}
-	if err := a.Store.CreateSession(r.Context(), tokenHash, created.Account.ID, created.Device.ID, time.Now().UTC().Add(30*24*time.Hour)); err != nil {
-		writeError(w, http.StatusInternalServerError, "session_create_failed")
-		return
-	}
 	a.recordAuditEvent(r.Context(), &created.Account.ID, "owner.created", map[string]string{"device_id": created.Device.ID})
 	writeJSON(w, http.StatusCreated, map[string]interface{}{"account": created.Account, "device": created.Device, "token": token})
+}
+
+func (a *API) setupAuthorized(r *http.Request) bool {
+	if a.SetupToken != "" {
+		provided := r.Header.Get("X-Veritra-Setup-Token")
+		return len(provided) == len(a.SetupToken) &&
+			subtle.ConstantTimeCompare([]byte(provided), []byte(a.SetupToken)) == 1
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && ip.IsLoopback()
 }
 
 type loginRequest struct {
@@ -210,6 +231,10 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	if !validUsername(req.Username) || !validOptionalEmail(req.Email) {
+		writeError(w, http.StatusBadRequest, "invalid_identity")
+		return
+	}
 	passwordHash, err := auth.HashPassword(req.Password)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "weak_password")
@@ -227,13 +252,20 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "non_production_device_key_package")
 		return
 	}
+	token, tokenHash, err := auth.NewToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "token_create_failed")
+		return
+	}
 	created, err := a.Store.RegisterWithInvite(r.Context(), storage.RegisterInput{
-		InviteCode:   req.InviteCode,
-		Username:     req.Username,
-		Email:        req.Email,
-		PasswordHash: passwordHash,
-		DeviceName:   req.DeviceName,
-		KeyPackage:   req.DeviceKeyPackage,
+		InviteCode:    req.InviteCode,
+		Username:      req.Username,
+		Email:         req.Email,
+		PasswordHash:  passwordHash,
+		DeviceName:    req.DeviceName,
+		KeyPackage:    req.DeviceKeyPackage,
+		SessionHash:   tokenHash,
+		SessionExpiry: time.Now().UTC().Add(30 * 24 * time.Hour),
 	})
 	if err != nil {
 		if errors.Is(err, storage.ErrInviteInvalid) {
@@ -241,15 +273,6 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "register_failed")
-		return
-	}
-	token, tokenHash, err := auth.NewToken()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "token_create_failed")
-		return
-	}
-	if err := a.Store.CreateSession(r.Context(), tokenHash, created.Account.ID, created.Device.ID, time.Now().UTC().Add(30*24*time.Hour)); err != nil {
-		writeError(w, http.StatusInternalServerError, "session_create_failed")
 		return
 	}
 	a.recordAuditEvent(r.Context(), &created.Account.ID, "account.registered", map[string]string{"device_id": created.Device.ID})
@@ -1379,6 +1402,31 @@ func isReservedNonProductionKeyPackage(keyPackage []byte) bool {
 func validDisplayName(name string) bool {
 	trimmed := strings.TrimSpace(name)
 	return trimmed != "" && len(trimmed) <= 64
+}
+
+func validUsername(username string) bool {
+	username = strings.TrimSpace(username)
+	if len(username) < 3 || len(username) > 32 {
+		return false
+	}
+	for _, r := range username {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' && r != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+func validOptionalEmail(email *string) bool {
+	if email == nil {
+		return true
+	}
+	value := strings.TrimSpace(*email)
+	if value == "" || len(value) > 254 {
+		return false
+	}
+	parsed, err := mail.ParseAddress(value)
+	return err == nil && parsed.Address == value
 }
 
 func messageQueryLimit(r *http.Request) int {

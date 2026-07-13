@@ -7,16 +7,19 @@ Wants=network-online.target
 Type=simple
 User=private-messenger
 Group=private-messenger
-Environment=PRIVATE_MESSENGER_ADDR=:8080
-Environment=PRIVATE_MESSENGER_DATA_DIR=/var/lib/private-messenger
+Environment=PRIVATE_MESSENGER_ADDR=127.0.0.1:8080
+Environment=PRIVATE_MESSENGER_DATA_DIR=%S/private-messenger
+EnvironmentFile=-/etc/private-messenger/private-messenger.env
+StateDirectory=private-messenger
+StateDirectoryMode=0700
+UMask=0077
 ExecStart=/usr/local/bin/messenger-server serve
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ReadWritePaths=/var/lib/private-messenger
+ReadWritePaths=%S/private-messenger
 
 [Install]
 WantedBy=multi-user.target
-

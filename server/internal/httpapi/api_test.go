@@ -290,6 +290,7 @@ func TestSetupRejectsNonProductionKeyPackage(t *testing.T) {
 		DatabasePath: filepath.Join(dir, "private-messenger.db"),
 		StoragePath:  filepath.Join(dir, "blobs"),
 		InstanceName: "Test Messenger",
+		SetupToken:   "test-setup-token",
 	}, nil)
 	if err != nil {
 		t.Fatalf("new app: %v", err)
@@ -466,6 +467,7 @@ func newTestHandlerWithOwner(t *testing.T) (http.Handler, string, string) {
 		DatabasePath: dbPath,
 		StoragePath:  filepath.Join(dir, "blobs"),
 		InstanceName: "Test Messenger",
+		SetupToken:   "test-setup-token",
 	}, nil)
 	if err != nil {
 		t.Fatalf("new app: %v", err)
@@ -500,6 +502,7 @@ func newTestHandlerWithOwnerDevice(t *testing.T) (http.Handler, string, string) 
 		DatabasePath: filepath.Join(dir, "private-messenger.db"),
 		StoragePath:  filepath.Join(dir, "blobs"),
 		InstanceName: "Test Messenger",
+		SetupToken:   "test-setup-token",
 	}, nil)
 	if err != nil {
 		t.Fatalf("new app: %v", err)
@@ -632,7 +635,7 @@ func doJSON(t *testing.T, handler http.Handler, method, path, token string, body
 	req := httptest.NewRequest(method, path, bytes.NewReader(raw))
 	req.Header.Set("Content-Type", "application/json")
 	if path == "/api/v1/setup/owner" {
-		req.Header.Set("X-Private-Messenger-Setup", "1")
+		req.Header.Set("X-Veritra-Setup-Token", "test-setup-token")
 	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
