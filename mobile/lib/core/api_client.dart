@@ -482,6 +482,8 @@ class ApiException implements Exception {
       case 'already_setup':
         return 'This server already has an owner. Sign in or join with an '
             'invite instead.';
+      case 'last_owner_required':
+        return 'Transfer ownership before disabling the last owner account.';
       case 'weak_password':
         return 'Password must be 12–72 characters.';
       case 'invalid_invite':

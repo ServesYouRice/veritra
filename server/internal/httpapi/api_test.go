@@ -218,12 +218,12 @@ func TestMetadataSearchBackupExportAndAccountDelete(t *testing.T) {
 	}
 
 	status, response = doJSON(t, handler, http.MethodDelete, "/api/v1/account", token, nil)
-	if status != http.StatusNoContent {
+	if status != http.StatusConflict {
 		t.Fatalf("delete account status=%d body=%s", status, response)
 	}
 	status, _ = doJSON(t, handler, http.MethodGet, "/api/v1/conversations", token, nil)
-	if status != http.StatusUnauthorized {
-		t.Fatalf("deleted account token status=%d want %d", status, http.StatusUnauthorized)
+	if status != http.StatusOK {
+		t.Fatalf("last owner token status=%d want %d", status, http.StatusOK)
 	}
 }
 

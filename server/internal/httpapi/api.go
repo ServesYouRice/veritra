@@ -1465,6 +1465,8 @@ func handleStorageError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not_found")
 	case errors.Is(err, storage.ErrInvalidInput):
 		writeError(w, http.StatusBadRequest, "invalid_input")
+	case errors.Is(err, storage.ErrLastOwner):
+		writeError(w, http.StatusConflict, "last_owner_required")
 	case errors.Is(err, storage.ErrDeviceLinkInvalid):
 		writeError(w, http.StatusBadRequest, "invalid_device_link")
 	default:

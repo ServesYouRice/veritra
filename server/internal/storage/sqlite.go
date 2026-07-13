@@ -31,6 +31,7 @@ var (
 	ErrNotFound           = errors.New("not found")
 	ErrNotMember          = errors.New("account is not a conversation member")
 	ErrInvalidInput       = errors.New("invalid input")
+	ErrLastOwner          = errors.New("cannot delete the last active owner")
 	ErrDeviceLinkInvalid  = errors.New("device link is invalid, expired, revoked, or already used")
 	ErrDeviceLinkNotReady = errors.New("device link is not approved yet")
 
@@ -1708,6 +1709,22 @@ func (s *Store) DeleteAccount(ctx context.Context, accountID string) error {
 		return err
 	}
 	defer tx.Rollback()
+	var role string
+	if err := tx.QueryRowContext(ctx, `SELECT role FROM accounts WHERE id = ? AND deleted_at IS NULL`, accountID).Scan(&role); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if role == domain.RoleOwner {
+		var activeOwners int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM accounts WHERE role = 'owner' AND deleted_at IS NULL`).Scan(&activeOwners); err != nil {
+			return err
+		}
+		if activeOwners <= 1 {
+			return ErrLastOwner
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE account_id = ?`, accountID); err != nil {
 		return err
 	}
