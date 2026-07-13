@@ -19,6 +19,7 @@ import (
 
 	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/httpapi"
+	"private-messenger/server/internal/messaging"
 	"private-messenger/server/internal/realtime"
 	"private-messenger/server/internal/storage"
 	"private-messenger/server/internal/uploads"
@@ -70,7 +71,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
-	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Log: a.Log, SetupToken: a.Config.SetupToken, DefaultInstanceName: a.Config.InstanceName}
+	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Log: a.Log, SetupToken: a.Config.SetupToken, DefaultInstanceName: a.Config.InstanceName, Messages: messaging.New(a.Store)}
 	api.Register(mux)
 	return securityHeaders(a.requestLogger(a.limiter.middleware(routeTimeouts(mux))))
 }

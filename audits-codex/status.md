@@ -11,7 +11,7 @@ Legend: **Closed** = implemented; **Blocked** = cannot be completed safely witho
 | Finding | Status | Resolution |
 | --- | --- | --- |
 | R-01 | Closed | One-time high-entropy remote setup token; tokenless setup is loopback-only. |
-| R-02 | **Blocked** | Production MLS remains fail-closed. Shipping is prevented by `scripts/release-readiness.sh`; completion requires a reviewed protocol, OpenMLS integration, secure key lifecycle, interop vectors, and an independent crypto review. |
+| R-02 | **Blocked** | The protocol, key lifecycle, rollback rules, and review evidence are specified in `docs/crypto-protocol.md`; production MLS remains fail-closed. Shipping is prevented by `scripts/release-readiness.sh` until OpenMLS integration and independent review complete. |
 | R-03 | Closed | Reviewed Android/iOS projects and secure platform configuration are committed. |
 | R-04 | Closed | Flutter 3.44.0, lockfile enforcement, source APIs, scripts, and CI are aligned. |
 | R-05 | Closed | Channel kind is validated and channel/backing-conversation creation is atomic. |
@@ -46,7 +46,7 @@ Legend: **Closed** = implemented; **Blocked** = cannot be completed safely witho
 | MOB-09–MOB-17 | Closed | Search actions/race handling, bounded disposable HTTP, canonical HTTPS origins, registration parity, immutable routes, capability UI, and durable community reads are implemented. |
 | MOB-18 | Closed | The supported UI language is explicitly English; dates/times use platform locale settings, decorative/duplicate semantics are excluded, and reduced-motion/large-text-safe layouts are retained. |
 | MOB-19 | Closed | A bounded platform-encrypted ciphertext cache, atomic cursor snapshot, and idempotent encrypted outbox survive restart/offline use and are wiped on logout. Plaintext/key storage remains blocked by R-02. |
-| MOB-20 | **Blocked** | Provider delivery needs an operator/provider choice and credentials plus platform registration/background entitlements. Generic payload and subscription boundaries remain enforced; no provider is silently selected. |
+| MOB-20 | **Blocked** | `docs/push-architecture.md` selects encrypted UnifiedPush/Web Push as the Android-first contract and forbids plaintext webhooks. Completion still needs reviewed connector/Web Push dependencies, operator keys, registration, and platform background entitlements. |
 | MOB-21–MOB-23 | Closed | Atomic unique channel creation, sync epoch/bounds/full resync, and canonical account lookup are implemented. |
 
 ## Operations and architecture
@@ -58,7 +58,7 @@ Legend: **Closed** = implemented; **Blocked** = cannot be completed safely witho
 | OPS-08–OPS-10 | Closed | Immutable action/toolchain pins, permissions/timeouts/concurrency, pinned images, SPDX/checksum/provenance release workflow, and private security contact are implemented. |
 | OPS-11–OPS-15 | Closed | Bounded retention jobs, route-aware upload deadlines, realtime budgets/drain, per-connection SQLite PRAGMAs, and indexed batched expiry are implemented. |
 | OPS-16 | Closed | Core APIs use bounded stable cursors; mobile coalesces sync invalidations and persists deltas/cursor atomically. |
-| OPS-17 | **Deferred** | Security/domain boundaries were narrowed, but the handler/store/client remain large modular-monolith files. Further splitting is maintainability work and must follow transaction-boundary characterization rather than a risky audit-time rewrite. |
+| OPS-17 | **Deferred** | The critical message transaction now uses a narrow domain-facing `messaging.Repository` and application service; mobile persistence is split behind `LocalStore`. Handler/store/client files remain large, so further splitting stays incremental maintainability work rather than a risky rewrite. |
 | OPS-18–OPS-19 | Closed | Metrics use a separate loopback management listener and the configured/stored instance name is authoritative. |
 
 ## Verification

@@ -20,6 +20,7 @@ import (
 
 	"private-messenger/server/internal/auth"
 	"private-messenger/server/internal/domain"
+	"private-messenger/server/internal/messaging"
 	"private-messenger/server/internal/realtime"
 	"private-messenger/server/internal/storage"
 	"private-messenger/server/internal/uploads"
@@ -33,6 +34,7 @@ type API struct {
 	Log                 *slog.Logger
 	SetupToken          string
 	DefaultInstanceName string
+	Messages            *messaging.Service
 	typingMu            sync.Mutex
 	typingLast          map[string]time.Time
 }
@@ -922,7 +924,7 @@ func (a *API) createMessageEnvelope(w http.ResponseWriter, r *http.Request, prin
 		writeError(w, http.StatusBadRequest, "invalid_expires_at")
 		return
 	}
-	envelope, duplicate, eventID, err := a.Store.SaveMessageEnvelopeWithSyncEvent(r.Context(), domain.MessageEnvelope{
+	result, err := a.messageService().Create(r.Context(), domain.MessageEnvelope{
 		ConversationID:  req.ConversationID,
 		SenderAccountID: principal.AccountID,
 		SenderDeviceID:  principal.DeviceID,
@@ -939,15 +941,21 @@ func (a *API) createMessageEnvelope(w http.ResponseWriter, r *http.Request, prin
 		handleStorageError(w, err)
 		return
 	}
-	if !duplicate {
-		members := a.conversationMemberIDs(r.Context(), envelope.ConversationID)
-		a.Hub.Publish(members, realtime.Event{Version: "v1", Type: "message.envelope.created", ID: eventID, ConversationID: envelope.ConversationID, Payload: envelope, CreatedAt: time.Now().UTC()})
+	if !result.Duplicate {
+		a.Hub.Publish(result.Recipients, realtime.Event{Version: "v1", Type: "message.envelope.created", ID: result.EventID, ConversationID: result.Envelope.ConversationID, Payload: result.Envelope, CreatedAt: time.Now().UTC()})
 	}
 	status := http.StatusCreated
-	if duplicate {
+	if result.Duplicate {
 		status = http.StatusOK
 	}
-	writeJSON(w, status, envelope)
+	writeJSON(w, status, result.Envelope)
+}
+
+func (a *API) messageService() *messaging.Service {
+	if a.Messages != nil {
+		return a.Messages
+	}
+	return messaging.New(a.Store)
 }
 
 type encryptedMessageMutationRequest struct {
