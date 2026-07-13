@@ -10,9 +10,11 @@ import 'conversation_details_screen.dart';
 /// Conversation detail screen. Pushed from the chat list; listens to the app
 /// state itself because pushed routes sit outside the root rebuild scope.
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({required this.state, super.key});
+  const ChatScreen(
+      {required this.state, required this.conversationId, super.key});
 
   final AppState state;
+  final String conversationId;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -32,8 +34,10 @@ class _ChatScreenState extends State<ChatScreen> {
     return AnimatedBuilder(
       animation: widget.state,
       builder: (context, _) {
-        final conversation = widget.state.selectedConversation;
-        final messages = widget.state.selectedMessages;
+        final conversation = widget.state.conversations
+            .where((item) => item.id == widget.conversationId)
+            .firstOrNull;
+        final messages = widget.state.messagesFor(widget.conversationId);
         return Scaffold(
           appBar: AppBar(
             title: conversation == null
@@ -146,7 +150,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (text.isEmpty) {
       return;
     }
-    await widget.state.sendMessage(text);
+    await widget.state.sendMessageTo(widget.conversationId, text);
     if (!mounted) {
       return;
     }
@@ -228,10 +232,12 @@ class _MessageList extends StatelessWidget {
         final mine = message.senderAccountId == state.session?.accountId;
         final older = index + 1 < messages.length ? messages[index + 1] : null;
         final showDay = older == null ||
-            formatDate(older.createdAt) != formatDate(message.createdAt);
+            formatDate(context, older.createdAt) !=
+                formatDate(context, message.createdAt);
         return Column(
           children: <Widget>[
-            if (showDay) _DaySeparator(label: formatDate(message.createdAt)),
+            if (showDay)
+              _DaySeparator(label: formatDate(context, message.createdAt)),
             _MessageBubble(message: message, mine: mine),
           ],
         );
@@ -280,10 +286,11 @@ class _MessageBubble extends StatelessWidget {
     final foreground = mine ? scheme.onPrimaryContainer : scheme.onSurface;
     final sender = mine ? 'you' : 'sender ${shortId(message.senderAccountId)}';
     return Semantics(
+      excludeSemantics: true,
       label: deleted
           ? 'Deleted message from $sender'
           : 'Encrypted message from $sender, '
-              '${formatTimeOfDay(message.createdAt)}',
+              '${formatTimeOfDay(context, message.createdAt)}',
       child: Align(
         alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
         child: ConstrainedBox(
@@ -334,7 +341,7 @@ class _MessageBubble extends StatelessWidget {
                   ),
                 const SizedBox(height: 4),
                 Text(
-                  _metaLine,
+                  _metaLine(context),
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: foreground.withValues(alpha: 0.6),
                   ),
@@ -349,9 +356,9 @@ class _MessageBubble extends StatelessWidget {
 
   // The raw crypto protocol identifier is debug info and stays out of the
   // reading surface; the lock icon already conveys the encrypted state.
-  String get _metaLine {
+  String _metaLine(BuildContext context) {
     final parts = <String>[
-      formatTimeOfDay(message.createdAt),
+      formatTimeOfDay(context, message.createdAt),
       if (message.editedAt != null) 'edited',
     ];
     return parts.join(' · ');

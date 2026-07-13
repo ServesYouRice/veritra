@@ -91,9 +91,10 @@ void main() {
 
     await state.createChannel(community!.id, 'general');
     expect(state.channelsByCommunity[community.id], hasLength(1));
-    expect(api.lastConversationBody?['kind'], 'community_channel');
-    expect(api.lastConversationBody?['community_id'], community.id);
     expect(state.conversations, isNotEmpty);
+    expect(state.conversations.first.kind, 'community_channel');
+    expect(state.conversations.first.communityId, community.id);
+    expect(state.selectedConversationId, state.conversations.first.id);
   });
 
   test('registerWithInvite establishes a session', () async {
@@ -228,17 +229,27 @@ class FakeFeatureApiClient extends ApiClient {
   }
 
   @override
-  Future<Channel> createChannel(
+  Future<ChannelCreation> createChannel(
     String token,
     String communityId,
     String name, {
-    String kind = 'text',
+    String kind = 'private',
   }) async {
-    return Channel(
+    final channel = Channel(
       id: 'chan_1',
       communityId: communityId,
       name: name,
       kind: kind,
+    );
+    return ChannelCreation(
+      channel: channel,
+      conversation: Conversation(
+        id: 'conv_channel',
+        kind: 'community_channel',
+        title: name,
+        communityId: communityId,
+        channelId: channel.id,
+      ),
     );
   }
 

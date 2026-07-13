@@ -424,7 +424,7 @@ func TestMessageMarkersSyncSearchExportAndMembershipGuards(t *testing.T) {
 	if len(results) == 0 || results[0].Type != "account" {
 		t.Fatalf("unexpected metadata search results: %#v", results)
 	}
-	if err := store.CreateBackupBlob(ctx, owner.Account.ID, owner.Device.ID, "backup_blob", 64, json.RawMessage(`{"kdf":"test"}`)); err != nil {
+	if err := store.CreateBackupBlob(ctx, owner.Account.ID, owner.Device.ID, "backup_blob", strings.Repeat("a", 64), 64, json.RawMessage(`{"kdf":"test"}`)); err != nil {
 		t.Fatalf("create backup blob: %v", err)
 	}
 	export, err := store.ExportAccount(ctx, owner.Account.ID, ExportAccountOptions{})
@@ -574,7 +574,7 @@ func TestDeviceLinkRequiresApprovalBeforeSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claim token: %v", err)
 	}
-	claimed, err := store.ClaimDeviceLink(ctx, link.Code, "Tablet", []byte("tablet-key-package"), []byte("tablet-signing-key"), claimTokenHash)
+	claimed, err := store.ClaimDeviceLink(ctx, link.Code, "Tablet", []byte("tablet-key-package"), []byte("tablet-signing-key"), claimTokenHash, auth.HashToken("tablet-device-secret"))
 	if err != nil {
 		t.Fatalf("claim device link: %v", err)
 	}

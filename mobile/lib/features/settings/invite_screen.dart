@@ -179,7 +179,8 @@ class _InviteCard extends StatelessWidget {
           subtitle: Text(
             <String>[
               '${invite.maxUses} use${invite.maxUses == 1 ? '' : 's'}',
-              if (expires != null) 'expires ${formatDateTime(expires)}',
+              if (expires != null)
+                'expires ${formatDateTime(context, expires)}',
               if (expires == null) 'never expires',
             ].join(' · '),
           ),

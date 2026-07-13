@@ -28,13 +28,15 @@ class EmptyState extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              CircleAvatar(
-                radius: 32,
-                backgroundColor: theme.colorScheme.primaryContainer,
-                child: Icon(
-                  icon,
-                  size: 32,
-                  color: theme.colorScheme.onPrimaryContainer,
+              ExcludeSemantics(
+                child: CircleAvatar(
+                  radius: 32,
+                  backgroundColor: theme.colorScheme.primaryContainer,
+                  child: Icon(
+                    icon,
+                    size: 32,
+                    color: theme.colorScheme.onPrimaryContainer,
+                  ),
                 ),
               ),
               const SizedBox(height: 16),

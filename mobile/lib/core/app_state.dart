@@ -72,6 +72,10 @@ class AppState extends ChangeNotifier {
     return messagesByConversation[id] ?? const <ReceivedMessageEnvelope>[];
   }
 
+  List<ReceivedMessageEnvelope> messagesFor(String conversationId) =>
+      messagesByConversation[conversationId] ??
+      const <ReceivedMessageEnvelope>[];
+
   /// Best-effort probe of the instance's setup state so the connect screen
   /// can steer users to the right mode. Returns null when the instance is
   /// unreachable or answers unexpectedly; never sets [error] or [busy].
@@ -103,8 +107,26 @@ class AppState extends ChangeNotifier {
       session = restored;
       _replaceApi(restored.baseUrl);
       _lastSyncEventId = await localStore.loadSyncCursor();
-      await refreshConversations();
-      await refreshDevices();
+      final cached = await localStore.loadSnapshot();
+      if (cached != null) {
+        conversations = cached.conversations;
+        messagesByConversation = cached.messagesByConversation;
+        _lastSyncEventId = cached.cursor;
+        conversationsLoaded = true;
+        notifyListeners();
+      }
+      try {
+        await refreshConversations();
+        await refreshDevices();
+      } on ApiException catch (err) {
+        if (err.statusCode == 401) {
+          await _clearLocalSession(preserveDeviceIdentity: true);
+          return;
+        }
+        // Keep the encrypted cache available while offline.
+      } catch (_) {
+        // Keep the encrypted cache available while offline.
+      }
       _startSync();
       notifyListeners();
     } catch (_) {
@@ -146,7 +168,13 @@ class AppState extends ChangeNotifier {
       final localSession = await localStore.loadSession();
       final deviceId =
           localSession?.baseUrl == api!.baseUrl ? localSession?.deviceId : null;
-      if (deviceId == null || deviceId.isEmpty) {
+      final deviceSecret = localSession?.baseUrl == api!.baseUrl
+          ? localSession?.deviceSecret
+          : null;
+      if (deviceId == null ||
+          deviceId.isEmpty ||
+          deviceSecret == null ||
+          deviceSecret.isEmpty) {
         throw StateError(
             'Password login requires this device to be linked first.');
       }
@@ -154,6 +182,7 @@ class AppState extends ChangeNotifier {
         username: username,
         password: password,
         deviceId: deviceId,
+        deviceSecret: deviceSecret,
       );
       await localStore.saveSession(session!);
       _lastSyncEventId = 0;
@@ -239,6 +268,7 @@ class AppState extends ChangeNotifier {
     }
     conversations = await client.conversations(current.token);
     conversationsLoaded = true;
+    await _persistSnapshot();
     if (notify) {
       notifyListeners();
     }
@@ -266,6 +296,7 @@ class AppState extends ChangeNotifier {
       ...messagesByConversation,
       conversationId: messages,
     };
+    await _persistSnapshot();
   }
 
   /// Loads a conversation's messages with tracked loading/error state so the
@@ -391,34 +422,30 @@ class AppState extends ChangeNotifier {
     return error == null ? created : null;
   }
 
-  /// Creates a channel inside a community, then opens a matching
-  /// community_channel conversation so the channel is immediately usable.
+  /// Creates a channel and its backing conversation in one server transaction.
   Future<void> createChannel(String communityId, String name) async {
-    Channel? channel;
     await _run(() async {
       final current = session;
       final client = api;
       if (current == null || client == null) {
         return;
       }
-      channel = await client.createChannel(current.token, communityId, name);
+      final creation =
+          await client.createChannel(current.token, communityId, name);
       channelsByCommunity = <String, List<Channel>>{
         ...channelsByCommunity,
         communityId: <Channel>[
-          channel!,
+          creation.channel,
           ...channelsByCommunity[communityId] ?? const <Channel>[],
         ],
       };
+      conversations = <Conversation>[
+        creation.conversation,
+        ...conversations.where((item) => item.id != creation.conversation.id),
+      ];
+      selectedConversationId = creation.conversation.id;
+      await loadMessages(creation.conversation.id);
     });
-    if (error != null || channel == null) {
-      return;
-    }
-    await startConversation(
-      kind: 'community_channel',
-      title: name,
-      communityId: communityId,
-      channelId: channel!.id,
-    );
   }
 
   Future<void> addConversationMember(
@@ -516,16 +543,26 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> sendMessage(String plaintext) async {
+    final conversationId = selectedConversationId;
+    if (conversationId != null) {
+      await sendMessageTo(conversationId, plaintext);
+    }
+  }
+
+  Future<void> sendMessageTo(String conversationId, String plaintext) async {
     await _run(() async {
       final current = session;
       final client = api;
-      final conversation = selectedConversation;
+      final conversation =
+          conversations.where((item) => item.id == conversationId).firstOrNull;
       if (current == null || client == null || conversation == null) {
         return;
       }
       final encrypted = await cryptoService.encrypt(conversation.id, plaintext);
+      await localStore.enqueueEnvelope(encrypted);
       await client.sendEnvelope(current.token, encrypted);
-      await refreshSelectedMessages(notify: false);
+      await localStore.removePendingEnvelope(encrypted.idempotencyKey);
+      await _fetchMessages(conversationId);
     });
   }
 
@@ -603,9 +640,17 @@ class AppState extends ChangeNotifier {
       if (linkedSession == null) {
         return;
       }
-      session = linkedSession;
+      session = Session(
+        baseUrl: linkedSession.baseUrl,
+        token: linkedSession.token,
+        accountId: linkedSession.accountId,
+        deviceId: linkedSession.deviceId,
+        username: linkedSession.username,
+        deviceSecret: claim.deviceSecret,
+        role: linkedSession.role,
+      );
       pendingDeviceLinkClaim = null;
-      await localStore.saveSession(linkedSession);
+      await localStore.saveSession(session!);
       _lastSyncEventId = 0;
       await localStore.saveSyncCursor(0);
       await refreshConversations();
@@ -639,6 +684,32 @@ class AppState extends ChangeNotifier {
       }
       await client.logoutAll(current.token);
       await refreshDevices();
+    });
+  }
+
+  Future<bool> reauthenticate(String password) async {
+    var succeeded = false;
+    await _run(() async {
+      final current = session;
+      final client = api;
+      final deviceSecret = current?.deviceSecret;
+      if (current == null || client == null || deviceSecret == null) {
+        throw StateError('This device must be linked again.');
+      }
+      await client.reauthenticate(current.token, password, deviceSecret);
+      succeeded = true;
+    });
+    return succeeded;
+  }
+
+  Future<void> changePassword(String newPassword) async {
+    await _run(() async {
+      final current = session;
+      final client = api;
+      if (current == null || client == null) {
+        return;
+      }
+      await client.changePassword(current.token, newPassword);
     });
   }
 
@@ -677,6 +748,7 @@ class AppState extends ChangeNotifier {
       onError: (_) => unawaited(_catchUpSyncEvents()),
     );
     unawaited(_catchUpSyncEvents());
+    unawaited(_flushOutbox());
     unawaited(sync!.connect());
     // _startSync runs exactly once per established session, which makes it
     // the single hook for hydrating server-listed records.
@@ -698,18 +770,21 @@ class AppState extends ChangeNotifier {
     try {
       do {
         _catchUpRequested = false;
+        var pageCursor = _lastSyncEventId;
+        var refreshConversationsNeeded = false;
+        var refreshSelectedMessagesNeeded = false;
+        var refreshDevicesNeeded = false;
+        final selectedId = selectedConversationId;
         while (true) {
           const pageSize = 200;
-          final events = await client.syncEvents(current.token,
-              after: _lastSyncEventId, limit: pageSize);
+          final events = await client.syncEvents(
+            current.token,
+            after: pageCursor,
+            limit: pageSize,
+          );
           if (events.isEmpty) {
             break;
           }
-          var pageCursor = _lastSyncEventId;
-          var refreshConversationsNeeded = false;
-          var refreshSelectedMessagesNeeded = false;
-          var refreshDevicesNeeded = false;
-          final selectedId = selectedConversationId;
           for (final event in events) {
             if (event.id > pageCursor) {
               pageCursor = event.id;
@@ -726,29 +801,47 @@ class AppState extends ChangeNotifier {
               refreshConversationsNeeded = true;
             }
           }
-          if (refreshDevicesNeeded) {
-            await refreshDevices();
-          }
-          if (refreshConversationsNeeded) {
-            await _refreshConversations(notify: false);
-          }
-          if (refreshSelectedMessagesNeeded) {
-            await refreshSelectedMessages(notify: false);
-            // Keep the read cursor aligned with a conversation that is open
-            // while this sync page is applied.
-            await markNewestMessageRead(selectedId!);
-          }
-          await localStore.saveSyncCursor(pageCursor);
-          _lastSyncEventId = pageCursor;
-          notifyListeners();
           if (events.length < pageSize) {
             break;
           }
+        }
+        if (refreshDevicesNeeded) {
+          await refreshDevices();
+        }
+        if (refreshConversationsNeeded) {
+          await _refreshConversations(notify: false);
+        }
+        if (refreshSelectedMessagesNeeded) {
+          await refreshSelectedMessages(notify: false);
+          await markNewestMessageRead(selectedId!);
+        }
+        if (pageCursor > _lastSyncEventId) {
+          await localStore.saveSnapshot(
+            conversations,
+            messagesByConversation,
+            pageCursor,
+          );
+          _lastSyncEventId = pageCursor;
+          notifyListeners();
         }
       } while (_catchUpRequested);
     } catch (err) {
       if (err is ApiException && err.statusCode == 401) {
         await _clearLocalSession(preserveDeviceIdentity: true);
+      } else if (err is ApiException &&
+          err.serverCode == 'full_resync_required') {
+        await _refreshConversations(notify: false);
+        final selectedId = selectedConversationId;
+        if (selectedId != null) {
+          await _fetchMessages(selectedId);
+        }
+        final latest = err.intField('latest_event_id') ?? 0;
+        await localStore.saveSyncCursor(latest);
+        _lastSyncEventId = latest;
+        await _persistSnapshot();
+        error = null;
+        notifyListeners();
+        return;
       }
       error = describeError(err);
       notifyListeners();
@@ -773,8 +866,10 @@ class AppState extends ChangeNotifier {
         accountId: current.accountId,
         deviceId: current.deviceId,
         username: current.username,
+        deviceSecret: current.deviceSecret,
+        role: current.role,
       ));
-      await localStore.saveSyncCursor(0);
+      await localStore.clearCachedState();
     } else {
       await localStore.clear();
     }
@@ -797,6 +892,33 @@ class AppState extends ChangeNotifier {
     channelsByCommunity = <String, List<Channel>>{};
     invites = <Invite>[];
     _lastSyncEventId = 0;
+  }
+
+  Future<void> _persistSnapshot() async {
+    if (session == null) {
+      return;
+    }
+    await localStore.saveSnapshot(
+      conversations,
+      messagesByConversation,
+      _lastSyncEventId,
+    );
+  }
+
+  Future<void> _flushOutbox() async {
+    final current = session;
+    final client = api;
+    if (current == null || client == null) {
+      return;
+    }
+    try {
+      for (final envelope in await localStore.pendingEnvelopes()) {
+        await client.sendEnvelope(current.token, envelope);
+        await localStore.removePendingEnvelope(envelope.idempotencyKey);
+      }
+    } catch (_) {
+      // The encrypted envelopes remain queued for the next reconnect.
+    }
   }
 
   void _replaceApi(String baseUrl) {

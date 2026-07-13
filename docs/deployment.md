@@ -26,7 +26,7 @@ Tokenless setup is accepted only over a loopback connection.
 ## Health Check
 
 `messenger-server healthcheck` probes the locally running server's `/healthz`
-endpoint and exits non-zero on failure. The distroless container image ships no
+endpoint and exits non-zero on failure. The minimal scratch container image ships no
 shell or `curl`, so the binary performs the probe itself; the Compose file wires
 this as the container `HEALTHCHECK`.
 

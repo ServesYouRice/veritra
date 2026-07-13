@@ -167,7 +167,10 @@ class _SearchScreenState extends State<SearchScreen> {
         );
         if (!mounted || conversation == null) return;
         Navigator.of(context).push(MaterialPageRoute<void>(
-          builder: (_) => ChatScreen(state: widget.state),
+          builder: (_) => ChatScreen(
+            state: widget.state,
+            conversationId: conversation.id,
+          ),
         ));
       };
     }
@@ -178,7 +181,10 @@ class _SearchScreenState extends State<SearchScreen> {
       return () {
         widget.state.selectConversation(matches.first.id);
         Navigator.of(context).push(MaterialPageRoute<void>(
-          builder: (_) => ChatScreen(state: widget.state),
+          builder: (_) => ChatScreen(
+            state: widget.state,
+            conversationId: matches.first.id,
+          ),
         ));
       };
     }

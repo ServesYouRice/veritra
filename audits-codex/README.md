@@ -1,5 +1,7 @@
 # Veritra deep audit
 
+> Remediation is tracked in [status.md](status.md). Historical evidence below remains unchanged for traceability.
+
 - **Audit date:** 2026-07-11
 - **Project:** Veritra / Private Messenger
 - **Audited commit:** `eb52fc43be9a7362904a5169b6b84230d7866cef`

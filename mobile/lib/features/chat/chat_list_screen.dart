@@ -69,7 +69,10 @@ class ChatListScreen extends StatelessWidget {
                       state.selectConversation(conversation.id);
                       Navigator.of(context).push(
                         MaterialPageRoute<void>(
-                          builder: (_) => ChatScreen(state: state),
+                          builder: (_) => ChatScreen(
+                            state: state,
+                            conversationId: conversation.id,
+                          ),
                         ),
                       );
                     },

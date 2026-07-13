@@ -72,7 +72,7 @@ func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
 	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Log: a.Log, SetupToken: a.Config.SetupToken, DefaultInstanceName: a.Config.InstanceName}
 	api.Register(mux)
-	return securityHeaders(a.requestLogger(a.limiter.middleware(mux)))
+	return securityHeaders(a.requestLogger(a.limiter.middleware(routeTimeouts(mux))))
 }
 
 func (a *App) Serve(ctx context.Context) error {
@@ -80,8 +80,8 @@ func (a *App) Serve(ctx context.Context) error {
 		Addr:              a.Config.Addr,
 		Handler:           a.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		ReadTimeout:       0,
+		WriteTimeout:      0,
 		IdleTimeout:       120 * time.Second,
 	}
 	var managementServer *http.Server
@@ -101,6 +101,7 @@ func (a *App) Serve(ctx context.Context) error {
 	defer cancelServe()
 	go func() {
 		<-serveCtx.Done()
+		a.Hub.Drain()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
@@ -125,6 +126,28 @@ func (a *App) Serve(ctx context.Context) error {
 	return err
 }
 
+func routeTimeouts(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/sync/ws" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		deadline := 30 * time.Second
+		if r.URL.Path == "/api/v1/attachments" || r.URL.Path == "/api/v1/backups" {
+			deadline = 15 * time.Minute
+		} else if r.URL.Path == "/api/v1/account/export" {
+			deadline = 5 * time.Minute
+		}
+		controller := http.NewResponseController(w)
+		until := time.Now().Add(deadline)
+		_ = controller.SetReadDeadline(until)
+		_ = controller.SetWriteDeadline(until)
+		ctx, cancel := context.WithTimeout(r.Context(), deadline)
+		defer cancel()
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
 // runRetentionSweeper periodically prunes expired message envelopes plus
 // sync_events and audit_events older than the retention window. The event
 // window is 30 days by default and can be overridden via
@@ -139,10 +162,26 @@ func (a *App) runRetentionSweeper(ctx context.Context) {
 	ticker := time.NewTicker(6 * time.Hour)
 	defer ticker.Stop()
 	sweep := func() {
-		if removed, err := a.Store.PruneExpiredMessages(ctx, time.Now().UTC()); err != nil {
+		removed, storageKeys, err := a.Store.PruneExpiredContent(ctx, time.Now().UTC())
+		if err != nil {
 			a.Log.Warn("expired_message_prune_failed", "err", err)
 		} else if removed > 0 {
 			a.Log.Info("expired_messages_pruned", "removed", removed)
+		}
+		for _, storageKey := range storageKeys {
+			if err := a.Blobs.Delete(ctx, storageKey); err != nil {
+				a.Log.Warn("expired_attachment_blob_cleanup_failed", "err", err)
+			}
+		}
+		if removed, err := a.Store.PruneCallSessions(ctx, time.Now().UTC()); err != nil {
+			a.Log.Warn("call_session_prune_failed", "err", err)
+		} else if removed > 0 {
+			a.Log.Info("call_sessions_pruned", "removed", removed)
+		}
+		if removed, err := a.Store.PruneOperationalRows(ctx, time.Now().UTC()); err != nil {
+			a.Log.Warn("operational_row_prune_failed", "err", err)
+		} else if removed > 0 {
+			a.Log.Info("operational_rows_pruned", "removed", removed)
 		}
 		cutoff := time.Now().UTC().Add(-retention)
 		if removed, err := a.Store.PruneSyncEvents(ctx, cutoff); err != nil {
@@ -299,6 +338,14 @@ func routeClass(path string) string {
 		return "/api/v1/communities/{id}"
 	case strings.HasPrefix(path, "/api/v1/push/subscriptions/"):
 		return "/api/v1/push/subscriptions/{id}"
+	case strings.HasPrefix(path, "/api/v1/devices/"):
+		return "/api/v1/devices/{id}"
+	case strings.HasPrefix(path, "/api/v1/attachments/"):
+		return "/api/v1/attachments/{id}"
+	case strings.HasPrefix(path, "/api/v1/backups/"):
+		return "/api/v1/backups/{id}"
+	case strings.HasPrefix(path, "/api/v1/calls/"):
+		return "/api/v1/calls/{id}"
 	default:
 		return path
 	}

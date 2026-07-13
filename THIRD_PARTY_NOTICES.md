@@ -15,6 +15,14 @@ This project is licensed AGPL-3.0-or-later. Dependency licenses must be compatib
 
 Signal/libsignal, OpenMLS, Matrix/Synapse/Element, SimpleX Chat, Mattermost, Zulip, Rocket.Chat, Stoat/Revolt, PocketBase, Pion, LiveKit, Caddy, UnifiedPush, ntfy, and MiroTalk were studied for architecture, deployment, crypto, licensing, and self-hosting lessons. No source code from these projects is copied into this repository.
 
+## Build and Release Dependencies
+
+| Component | Use | License | Notes |
+| --- | --- | --- | --- |
+| GitHub Actions official actions | Checkout, Go setup, artifact upload, provenance attestation | MIT | Pinned to immutable commits in workflow files. |
+| `subosito/flutter-action` | Pinned Flutter SDK setup in CI | MIT | Build-only; pinned to an immutable commit. |
+| `anchore/sbom-action` / Syft | SPDX SBOM generation | Apache-2.0 | Release-only; pinned to an immutable commit. |
+
 ## Release Checklist
 
 - Run dependency license scan.

@@ -27,7 +27,7 @@ const (
 	pingPeriod = (pongWait * 9) / 10
 )
 
-func ServeWebSocket(w http.ResponseWriter, r *http.Request, client *Client, unregister func()) error {
+func ServeWebSocket(w http.ResponseWriter, r *http.Request, client *Client, sessionExpiresAt time.Time, unregister func()) error {
 	defer unregister()
 	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 		http.Error(w, "websocket upgrade required", http.StatusUpgradeRequired)
@@ -68,9 +68,12 @@ func ServeWebSocket(w http.ResponseWriter, r *http.Request, client *Client, unre
 	}
 
 	done := make(chan struct{})
-	go drainClientFrames(conn, done)
+	pongs := make(chan []byte, 4)
+	go drainClientFrames(conn, done, pongs)
 	ticker := time.NewTicker(pingPeriod)
 	defer ticker.Stop()
+	expiryTimer := time.NewTimer(time.Until(sessionExpiresAt))
+	defer expiryTimer.Stop()
 	for {
 		select {
 		case payload, ok := <-client.Send():
@@ -92,6 +95,16 @@ func ServeWebSocket(w http.ResponseWriter, r *http.Request, client *Client, unre
 			if err := rw.Flush(); err != nil {
 				return err
 			}
+		case payload := <-pongs:
+			_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := writePongFrame(rw, payload); err != nil {
+				return err
+			}
+			if err := rw.Flush(); err != nil {
+				return err
+			}
+		case <-expiryTimer.C:
+			return nil
 		case <-done:
 			return nil
 		case <-r.Context().Done():
@@ -104,6 +117,17 @@ func writePingFrame(w io.Writer) error {
 	// FIN bit set, opcode 0x9 (ping), zero-length payload. Server->client frames
 	// are never masked (RFC 6455 §5.1).
 	_, err := w.Write([]byte{0x89, 0x00})
+	return err
+}
+
+func writePongFrame(w io.Writer, payload []byte) error {
+	if len(payload) > 125 {
+		return errors.New("control frame payload too large")
+	}
+	if _, err := w.Write([]byte{0x8a, byte(len(payload))}); err != nil {
+		return err
+	}
+	_, err := w.Write(payload)
 	return err
 }
 
@@ -144,7 +168,7 @@ func writeTextFrame(w io.Writer, payload []byte) error {
 	return err
 }
 
-func drainClientFrames(conn net.Conn, done chan<- struct{}) {
+func drainClientFrames(conn net.Conn, done chan<- struct{}, pongs chan<- []byte) {
 	defer close(done)
 	reader := bufio.NewReader(conn)
 	_ = conn.SetReadDeadline(time.Now().Add(pongWait))
@@ -158,6 +182,10 @@ func drainClientFrames(conn net.Conn, done chan<- struct{}) {
 			return
 		}
 		opcode := first & 0x0f
+		fin := first&0x80 != 0
+		if first&0x70 != 0 || (!fin && opcode >= 0x8) {
+			return
+		}
 		masked := second&0x80 != 0
 		// RFC 6455 §5.1: client frames MUST be masked. Close on violation.
 		if !masked {
@@ -181,17 +209,29 @@ func drainClientFrames(conn net.Conn, done chan<- struct{}) {
 		if length < 0 || length > maxFrameSize {
 			return
 		}
+		if opcode >= 0x8 && length > 125 {
+			return
+		}
 		var mask [4]byte
 		if _, err := io.ReadFull(reader, mask[:]); err != nil {
 			return
 		}
-		if length > 0 {
-			if _, err := io.CopyN(io.Discard, reader, length); err != nil {
-				return
-			}
+		payload := make([]byte, length)
+		if _, err := io.ReadFull(reader, payload); err != nil {
+			return
+		}
+		for i := range payload {
+			payload[i] ^= mask[i%4]
 		}
 		if opcode == 0x8 {
 			return
+		}
+		if opcode == 0x9 {
+			select {
+			case pongs <- payload:
+			default:
+				return
+			}
 		}
 		// A complete frame (data, ping, or pong) proves the peer is alive, so
 		// extend the read deadline. Compliant WebSocket clients answer our pings

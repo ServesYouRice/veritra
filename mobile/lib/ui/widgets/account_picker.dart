@@ -56,8 +56,6 @@ class _AccountPickerState extends State<AccountPicker> {
     super.dispose();
   }
 
-  static final _accountIdPattern = RegExp(r'^acct_[0-9a-fA-F]{8,}$');
-
   bool get _atLimit =>
       widget.maxSelection != null &&
       widget.maxSelection! > 1 &&
@@ -71,7 +69,7 @@ class _AccountPickerState extends State<AccountPicker> {
   Future<void> _lookup(String value) async {
     final query = value.trim();
     final generation = ++_lookupGeneration;
-    if (query.isEmpty || _accountIdPattern.hasMatch(query)) {
+    if (query.isEmpty) {
       setState(() {
         matches = <SelectedAccount>[];
         searching = false;
@@ -130,8 +128,6 @@ class _AccountPickerState extends State<AccountPicker> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final rawId = controller.text.trim();
-    final rawIdAddable = _accountIdPattern.hasMatch(rawId) &&
-        !selected.any((existing) => existing.id == rawId);
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -171,15 +167,7 @@ class _AccountPickerState extends State<AccountPicker> {
                 : null,
           ),
         ),
-        if (rawIdAddable)
-          ListTile(
-            dense: true,
-            leading: const Icon(Icons.alternate_email),
-            title: Text('Add by ID ${shortId(rawId)}'),
-            onTap: () =>
-                _add(SelectedAccount(id: rawId, label: shortId(rawId))),
-          )
-        else if (matches.isNotEmpty)
+        if (matches.isNotEmpty)
           for (final account in matches)
             ListTile(
               dense: true,

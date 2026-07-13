@@ -4,8 +4,8 @@ Base path: `/api/v1`
 
 ## Operations
 
-- `GET /healthz` and `GET /api/v1/health` return storage health.
-- `GET /metrics` exposes local aggregate HTTP counters when `PRIVATE_MESSENGER_ENABLE_METRICS=1`. It does not include user IDs, request bodies, tokens, message content, or ciphertext.
+- `GET /livez` reports process liveness. `GET /healthz`, `GET /readyz`, and `GET /api/v1/health` require database migrations and blob storage to be ready.
+- `GET /metrics` is available only on the separate management listener when `PRIVATE_MESSENGER_ENABLE_METRICS=1`.
 
 ## Setup
 
@@ -16,6 +16,8 @@ Base path: `/api/v1`
 ## Auth and Invites
 
 - `POST /api/v1/auth/login` returns a bearer token for a known local `device_id`. New devices must use device linking instead of password-only login.
+- `POST /api/v1/auth/reauth` verifies the password plus device secret and grants five minutes of recent-auth status.
+- `POST /api/v1/account/password` rotates the password after recent authentication and revokes other sessions.
 - `POST /api/v1/auth/logout` revokes the caller's current session token. Returns `204`.
 - `POST /api/v1/auth/logout-all` revokes every session for the account except the caller's current one (sign out other/lost devices). Returns `204`.
 - `POST /api/v1/register` consumes an invite and creates account, device, and session.
@@ -25,7 +27,7 @@ Base path: `/api/v1`
 
 ## Devices
 
-- `GET /api/v1/devices/me` lists the account's devices.
+- `GET /api/v1/devices/me?limit={n}&after={device_id}` lists the account's devices with a stable cursor.
 - `DELETE /api/v1/devices/{id}` revokes one of the caller's devices, deletes its sessions, and disconnects that device's active sync sockets. Returns `204`, or `404` if the device is not the caller's.
 
 ## Device Linking
@@ -42,13 +44,14 @@ The verification code returned to both devices must be compared in the client UX
 
 - `POST /api/v1/communities` creates a community owned by the caller.
 - `GET /api/v1/communities` lists communities visible to the caller.
-- `POST /api/v1/communities/{id}/channels` creates a channel in a visible community.
+- `POST /api/v1/communities/{id}/channels` atomically creates a channel and its unique backing conversation.
 - `GET /api/v1/communities/{id}/channels` lists channels for a community member.
+- `GET /api/v1/communities/{id}/members` lists scoped community membership.
 
 ## Messaging
 
 - `POST /api/v1/conversations` creates DMs, groups, or channel-backed conversations.
-- `GET /api/v1/conversations` lists visible conversations.
+- `GET /api/v1/conversations?limit={n}&before={conversation_id}` lists visible conversations with a stable cursor.
 - `POST /api/v1/conversations/{id}/members` adds members.
 - `PUT /api/v1/conversations/{id}/retention` updates disappearing-message retention. New message expiries are capped by this value.
 - `POST /api/v1/messages/envelopes` stores ciphertext-only message envelopes.
@@ -57,6 +60,8 @@ The verification code returned to both devices must be compared in the client UX
 - `POST /api/v1/messages/{id}/edit` stores an encrypted edit marker/envelope.
 - `POST /api/v1/messages/{id}/delete` stores an encrypted delete marker and tombstones the server-held envelope.
 - `POST /api/v1/messages/{id}/reactions` stores encrypted reaction payloads.
+- `GET /api/v1/messages/{id}/reactions` retrieves encrypted reaction payloads.
+- `DELETE /api/v1/messages/{id}/reactions` removes the caller's reaction and emits a tombstone event.
 - `POST /api/v1/conversations/{id}/read-receipts` stores read receipt metadata.
 
 Payloads must not include plaintext body fields. Message ciphertext is base64-encoded in JSON.
@@ -65,18 +70,19 @@ Payloads must not include plaintext body fields. Message ciphertext is base64-en
 
 - `POST /api/v1/attachments?conversation_id={id}` accepts encrypted blobs only when `X-Private-Messenger-Encrypted: 1` is present.
 - `POST /api/v1/backups` accepts client-encrypted backup blobs with `X-Key-Derivation-Metadata`.
+- `GET /api/v1/attachments` and `GET /api/v1/backups` list the caller's encrypted blobs.
+- `GET` and `DELETE` on `/api/v1/attachments/{id}` and `/api/v1/backups/{id}` retrieve or delete authorized ciphertext.
 - `POST /api/v1/push/subscriptions` records push endpoints. Push payloads must remain generic.
 - `DELETE /api/v1/push/subscriptions/{id}` disables one of the caller's push subscriptions.
-- `POST /api/v1/calls` creates self-hosted call signaling sessions for conversation members.
+- `POST /api/v1/calls`, `GET /api/v1/calls`, and the versioned call transition route provide bounded encrypted signaling with expiry.
 
-Attachment and backup contents are opaque ciphertext to the server.
-Download/list endpoints for stored attachment and backup ciphertext are still TODO.
+Attachment and backup contents are opaque ciphertext to the server. Account and instance quotas are enforced before metadata commits.
 
 ## Search and Account Data
 
 - `GET /api/v1/search/metadata?q={query}&limit={n}&offset={n}` searches account usernames, visible community names, and visible channel names. Accounts match on the **exact** (case-insensitive) username only; prefix/contains matching is deliberately not offered for accounts so the user directory cannot be enumerated by probing substrings. Communities and channels (which are scoped to the caller's memberships) use exact/prefix matching so the endpoint stays index-friendly. Pagination metadata includes `limit`, `offset`, and optional `next_offset`.
 - `GET /api/v1/account/export?limit={n}&before={message_id}` exports account metadata, devices, visible conversations, and encrypted message envelopes. Message export is paginated and returns optional `next_before`.
-- `DELETE /api/v1/account` soft-deletes the account, revokes devices, and removes sessions.
+- `DELETE /api/v1/account` requires recent authentication, revokes access, scrubs account-controlled metadata, removes private blob records/files, and retains only pseudonymous references needed by shared history.
 
 Server-side message-content search is intentionally absent.
 
@@ -86,4 +92,4 @@ WebSocket endpoint: `/api/v1/sync/ws`
 
 Clients authenticate with `Authorization: Bearer <token>`. Events are versioned and JSON encoded.
 
-Catch-up endpoint: `GET /api/v1/sync/events?after={event_id}` returns durable sync events visible to the authenticated account.
+Catch-up endpoint: `GET /api/v1/sync/events?after={event_id}` returns durable sync events visible to the authenticated account. Expired cursors return a typed `full_resync_required` response with retained bounds and the current epoch.

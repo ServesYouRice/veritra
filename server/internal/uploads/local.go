@@ -22,6 +22,31 @@ func NewLocalStore(root string) (*LocalStore, error) {
 	return &LocalStore{root: root}, nil
 }
 
+func (s *LocalStore) Check(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(s.root, ".readiness-*")
+	if err != nil {
+		return err
+	}
+	path := file.Name()
+	defer os.Remove(path)
+	if err := file.Chmod(0o600); err != nil {
+		file.Close()
+		return err
+	}
+	if _, err := file.Write([]byte{0}); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return err
+	}
+	return file.Close()
+}
+
 func (s *LocalStore) PutEncryptedBlob(ctx context.Context, r io.Reader) (storageKey string, sha256Hex string, size int64, err error) {
 	id, err := domain.NewID("blob")
 	if err != nil {

@@ -1,0 +1,59 @@
+name: Release artifacts
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.25.0"
+          cache-dependency-path: server/go.sum
+      - name: Enforce production release gates
+        run: sh scripts/release-readiness.sh
+      - name: Build deterministic server binaries
+        working-directory: server
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p ../dist
+          GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags="-buildid=" -o ../dist/messenger-server-linux-amd64 ./cmd/messenger-server
+          GOOS=linux GOARCH=arm64 go build -trimpath -buildvcs=false -ldflags="-buildid=" -o ../dist/messenger-server-linux-arm64 ./cmd/messenger-server
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: dist/veritra.spdx.json
+          upload-artifact: false
+      - name: Write checksums
+        working-directory: dist
+        run: sha256sum messenger-server-* veritra.spdx.json > SHA256SUMS
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-path: dist/*
+      - name: Publish immutable tag release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-${{ github.ref_name }}
+          path: dist/
+          if-no-files-found: error

@@ -109,7 +109,7 @@ class DeviceLinkScreen extends StatelessWidget {
                         _LinkValueTile(
                           icon: Icons.timer_outlined,
                           title: 'Expires',
-                          value: formatDateTime(link.expiresAt),
+                          value: formatDateTime(context, link.expiresAt),
                         ),
                         if (link.claimedDeviceName != null)
                           _LinkValueTile(

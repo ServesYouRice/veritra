@@ -182,6 +182,7 @@ class FakeDeviceLinkApiClient extends ApiClient {
     return DeviceLinkClaim(
       deviceLink: _link(state: 'claimed'),
       claimToken: 'claim-token',
+      deviceSecret: 'device-secret',
     );
   }
 

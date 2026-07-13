@@ -67,29 +67,60 @@ class ApiClient {
   Future<Session> login(
       {required String username,
       required String password,
-      required String deviceId}) async {
+      required String deviceId,
+      required String deviceSecret}) async {
     final json = await _jsonRequest('POST', '/api/v1/auth/login',
         body: <String, Object?>{
           'username': username,
           'password': password,
           'device_id': deviceId,
+          'device_secret': deviceSecret,
         });
-    return _sessionFromAuthJson(json, fallbackUsername: username);
+    return _sessionFromAuthJson(json,
+        fallbackUsername: username, fallbackDeviceSecret: deviceSecret);
   }
 
   Future<List<Conversation>> conversations(String token) async {
-    final json =
-        await _jsonRequest('GET', '/api/v1/conversations', token: token);
-    final rows = (json['conversations'] as List<Object?>? ?? const <Object?>[])
-        .map((row) => Map<String, Object?>.from(row as Map));
-    return rows.map(Conversation.fromJson).toList();
+    const pageSize = 100;
+    final result = <Conversation>[];
+    String? before;
+    while (true) {
+      final path = '/api/v1/conversations?limit=$pageSize'
+          '${before == null ? '' : '&before=${Uri.encodeQueryComponent(before)}'}';
+      final json = await _jsonRequest('GET', path, token: token);
+      final page =
+          (json['conversations'] as List<Object?>? ?? const <Object?>[])
+              .map((row) => Conversation.fromJson(
+                    Map<String, Object?>.from(row as Map),
+                  ))
+              .toList();
+      result.addAll(page);
+      if (page.length < pageSize) {
+        return result;
+      }
+      before = page.last.id;
+    }
   }
 
   Future<List<Device>> devices(String token) async {
-    final json = await _jsonRequest('GET', '/api/v1/devices/me', token: token);
-    final rows = (json['devices'] as List<Object?>? ?? const <Object?>[])
-        .map((row) => Map<String, Object?>.from(row as Map));
-    return rows.map(Device.fromJson).toList();
+    const pageSize = 100;
+    final result = <Device>[];
+    String? after;
+    while (true) {
+      final path = '/api/v1/devices/me?limit=$pageSize'
+          '${after == null ? '' : '&after=${Uri.encodeQueryComponent(after)}'}';
+      final json = await _jsonRequest('GET', path, token: token);
+      final page = (json['devices'] as List<Object?>? ?? const <Object?>[])
+          .map((row) => Device.fromJson(
+                Map<String, Object?>.from(row as Map),
+              ))
+          .toList();
+      result.addAll(page);
+      if (page.length < pageSize) {
+        return result;
+      }
+      after = page.last.id;
+    }
   }
 
   Future<void> logout(String token) async {
@@ -98,6 +129,23 @@ class ApiClient {
 
   Future<void> logoutAll(String token) async {
     await _jsonRequest('POST', '/api/v1/auth/logout-all', token: token);
+  }
+
+  Future<void> reauthenticate(
+    String token,
+    String password,
+    String deviceSecret,
+  ) async {
+    await _jsonRequest('POST', '/api/v1/auth/reauth', token: token, body: {
+      'password': password,
+      'device_secret': deviceSecret,
+    });
+  }
+
+  Future<void> changePassword(String token, String newPassword) async {
+    await _jsonRequest('POST', '/api/v1/account/password', token: token, body: {
+      'new_password': newPassword,
+    });
   }
 
   Future<void> revokeDevice(String token, String deviceId) async {
@@ -184,7 +232,7 @@ class ApiClient {
     return Community.fromJson(json);
   }
 
-  Future<Channel> createChannel(
+  Future<ChannelCreation> createChannel(
     String token,
     String communityId,
     String name, {
@@ -197,7 +245,7 @@ class ApiClient {
           'name': name,
           'kind': kind,
         });
-    return Channel.fromJson(json);
+    return ChannelCreation.fromJson(json);
   }
 
   Future<void> addConversationMember(
@@ -357,6 +405,7 @@ class ApiClient {
       deviceLink: DeviceLink.fromJson(
           Map<String, Object?>.from(json['device_link'] as Map)),
       claimToken: json['claim_token'] as String,
+      deviceSecret: json['device_secret'] as String,
     );
   }
 
@@ -392,6 +441,7 @@ class ApiClient {
   Session _sessionFromAuthJson(
     Map<String, Object?> json, {
     String? fallbackUsername,
+    String? fallbackDeviceSecret,
   }) {
     return Session(
       baseUrl: baseUrl,
@@ -399,6 +449,8 @@ class ApiClient {
       accountId: json['account_id'] as String? ?? _nestedId(json['account']),
       deviceId: json['device_id'] as String? ?? _nestedId(json['device']),
       username: _nestedField(json['account'], 'username') ?? fallbackUsername,
+      deviceSecret: json['device_secret'] as String? ?? fallbackDeviceSecret,
+      role: json['role'] as String? ?? _nestedField(json['account'], 'role'),
     );
   }
 
@@ -494,12 +546,26 @@ class ApiException implements Exception {
     return null;
   }
 
+  int? intField(String name) {
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map && decoded[name] is num) {
+        return (decoded[name] as num).toInt();
+      }
+    } catch (_) {
+      return null;
+    }
+    return null;
+  }
+
   String get message {
     switch (serverCode) {
       case 'unauthorized':
         return 'Your session is no longer valid. Sign in again.';
       case 'invalid_credentials':
         return 'Sign-in failed. Check your username and password.';
+      case 'recent_auth_required':
+        return 'Confirm your password before this sensitive action.';
       case 'device_id_required':
       case 'device_session_required':
         return 'This device must be linked before password sign-in.';
