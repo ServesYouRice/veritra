@@ -32,15 +32,20 @@ class CommunityScreen extends StatelessWidget {
         child: !hasContent
             ? ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                children: const <Widget>[
-                  SizedBox(height: 120),
-                  EmptyState(
-                    icon: Icons.groups_outlined,
-                    title: 'No communities yet',
-                    message: 'Create a community to organize people around '
-                        'shared channels — private by default, encrypted '
-                        'everywhere.',
-                  ),
+                children: <Widget>[
+                  const SizedBox(height: 120),
+                  // First-load vs. genuinely empty: a spinner until the initial
+                  // fetch resolves, then the empty state.
+                  if (!state.communitiesLoaded)
+                    const Center(child: CircularProgressIndicator())
+                  else
+                    const EmptyState(
+                      icon: Icons.groups_outlined,
+                      title: 'No communities yet',
+                      message: 'Create a community to organize people around '
+                          'shared channels — private by default, encrypted '
+                          'everywhere.',
+                    ),
                 ],
               )
             : ListView(
@@ -56,9 +61,12 @@ class CommunityScreen extends StatelessWidget {
                   if (channelConversations.isNotEmpty) ...<Widget>[
                     Padding(
                       padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
-                      child: Text(
-                        'Channels you are in',
-                        style: Theme.of(context).textTheme.titleMedium,
+                      child: Semantics(
+                        header: true,
+                        child: Text(
+                          'Channels you are in',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
                       ),
                     ),
                     Card(
@@ -194,11 +202,14 @@ class _CommunityCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
             ListTile(
-              leading: CircleAvatar(
-                backgroundColor: theme.colorScheme.primaryContainer,
-                child: Icon(
-                  Icons.groups_outlined,
-                  color: theme.colorScheme.onPrimaryContainer,
+              // Decorative: the community name is already the tile title.
+              leading: ExcludeSemantics(
+                child: CircleAvatar(
+                  backgroundColor: theme.colorScheme.primaryContainer,
+                  child: Icon(
+                    Icons.groups_outlined,
+                    color: theme.colorScheme.onPrimaryContainer,
+                  ),
                 ),
               ),
               title: Text(community.name),

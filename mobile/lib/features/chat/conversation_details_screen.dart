@@ -44,8 +44,11 @@ class ConversationDetailsScreen extends StatelessWidget {
                 child: Column(
                   children: <Widget>[
                     ListTile(
-                      leading: CircleAvatar(
-                        child: Icon(conversationIcon(conversation)),
+                      // Decorative: the conversation title names it already.
+                      leading: ExcludeSemantics(
+                        child: CircleAvatar(
+                          child: Icon(conversationIcon(conversation)),
+                        ),
                       ),
                       title: Text(conversationTitle(conversation)),
                       subtitle: Text(conversationSubtitle(conversation)),

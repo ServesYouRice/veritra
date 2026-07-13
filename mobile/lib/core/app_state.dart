@@ -44,8 +44,13 @@ class AppState extends ChangeNotifier {
   String? error;
   bool busy = false;
   // Distinguishes "still fetching the first page" from "genuinely empty" so
-  // the UI doesn't show a misleading empty state during cold start.
+  // the UI doesn't show a misleading empty state during cold start. Each list
+  // hydrated after auth carries its own flag so screens can show a spinner
+  // until their first fetch resolves.
   bool conversationsLoaded = false;
+  bool communitiesLoaded = false;
+  bool invitesLoaded = false;
+  bool devicesLoaded = false;
   final Set<String> _loadingMessageConversations = <String>{};
   final Map<String, String> _messageLoadErrors = <String, String>{};
   bool _catchingUpSync = false;
@@ -164,7 +169,11 @@ class AppState extends ChangeNotifier {
     if (current == null || client == null) {
       return;
     }
-    devices = await client.devices(current.token);
+    try {
+      devices = await client.devices(current.token);
+    } finally {
+      devicesLoaded = true;
+    }
     notifyListeners();
   }
 
@@ -179,9 +188,11 @@ class AppState extends ChangeNotifier {
     }
     try {
       invites = await client.listInvites(current.token);
-      notifyListeners();
     } catch (_) {
       // Ignored: invite listing is a privilege, not a core flow.
+    } finally {
+      invitesLoaded = true;
+      notifyListeners();
     }
   }
 
@@ -207,9 +218,11 @@ class AppState extends ChangeNotifier {
       }
       communities = list;
       channelsByCommunity = channels;
-      notifyListeners();
     } catch (_) {
       // Keep the locally-known records if the server can't list right now.
+    } finally {
+      communitiesLoaded = true;
+      notifyListeners();
     }
   }
 
@@ -455,6 +468,19 @@ class AppState extends ChangeNotifier {
     }
     try {
       await client.markRead(current.token, conversationId, messages.first.id);
+      // Clear the unread badge immediately rather than waiting for the next
+      // conversation refresh; the receipt has landed server-side.
+      var changed = false;
+      conversations = conversations.map((c) {
+        if (c.id == conversationId && c.unreadCount != 0) {
+          changed = true;
+          return c.copyWith(unreadCount: 0);
+        }
+        return c;
+      }).toList();
+      if (changed) {
+        notifyListeners();
+      }
     } catch (_) {
       // Ignored: read receipts are advisory.
     }
@@ -671,11 +697,15 @@ class AppState extends ChangeNotifier {
       if (events.isNotEmpty) {
         await localStore.saveSyncCursor(_lastSyncEventId);
       }
-      if (refreshConversationsNeeded) {
-        await _refreshConversations(notify: false);
-      }
       if (refreshSelectedMessagesNeeded) {
         await refreshSelectedMessages(notify: false);
+        // The conversation is open on screen, so keep the read cursor at the
+        // newest message; otherwise the refresh below would surface an unread
+        // badge for a conversation the user is actively reading.
+        await markNewestMessageRead(selectedId!);
+      }
+      if (refreshConversationsNeeded) {
+        await _refreshConversations(notify: false);
       }
       if (events.isNotEmpty) {
         notifyListeners();
@@ -713,6 +743,9 @@ class AppState extends ChangeNotifier {
     api = null;
     conversations = <Conversation>[];
     conversationsLoaded = false;
+    communitiesLoaded = false;
+    invitesLoaded = false;
+    devicesLoaded = false;
     devices = <Device>[];
     messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
     _loadingMessageConversations.clear();

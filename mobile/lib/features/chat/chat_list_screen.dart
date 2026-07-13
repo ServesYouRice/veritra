@@ -90,42 +90,96 @@ class _ConversationTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      // Decorative: the tile title already names the conversation.
-      leading: ExcludeSemantics(
-        child: CircleAvatar(
-          radius: 24,
-          backgroundColor: theme.colorScheme.secondaryContainer,
-          child: Icon(
-            conversationIcon(conversation),
-            color: theme.colorScheme.onSecondaryContainer,
+    final unread = conversation.unreadCount;
+    final hasUnread = unread > 0;
+    final activityAt = conversation.lastActivityAt;
+    final title = conversationTitle(conversation);
+    // MergeSemantics folds the title, activity time, and unread badge into a
+    // single tappable node so a screen reader announces the row once.
+    return MergeSemantics(
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        // Decorative: the tile title already names the conversation.
+        leading: ExcludeSemantics(
+          child: CircleAvatar(
+            radius: 24,
+            backgroundColor: theme.colorScheme.secondaryContainer,
+            child: Icon(
+              conversationIcon(conversation),
+              color: theme.colorScheme.onSecondaryContainer,
+            ),
           ),
         ),
+        title: Text(
+          title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: hasUnread ? FontWeight.w700 : null,
+          ),
+        ),
+        subtitle: Text(
+          conversationSubtitle(conversation),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        trailing: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: <Widget>[
+            if (activityAt != null)
+              Text(
+                formatDate(activityAt),
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: hasUnread
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.onSurfaceVariant,
+                  fontWeight: hasUnread ? FontWeight.w600 : null,
+                ),
+              ),
+            if (hasUnread) ...<Widget>[
+              const SizedBox(height: 4),
+              _UnreadBadge(count: unread),
+            ],
+          ],
+        ),
+        onTap: onTap,
       ),
-      title: Text(
-        conversationTitle(conversation),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: theme.textTheme.titleMedium,
-      ),
-      subtitle: Text(
-        conversationSubtitle(conversation),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: theme.textTheme.bodySmall?.copyWith(
-          color: theme.colorScheme.onSurfaceVariant,
+    );
+  }
+}
+
+class _UnreadBadge extends StatelessWidget {
+  const _UnreadBadge({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final label = count > 99 ? '99+' : '$count';
+    return Semantics(
+      label: '$count unread message${count == 1 ? '' : 's'}',
+      excludeSemantics: true,
+      child: Container(
+        constraints: const BoxConstraints(minWidth: 20),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: scheme.primary,
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Text(
+          label,
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: scheme.onPrimary,
+                fontWeight: FontWeight.w700,
+              ),
         ),
       ),
-      trailing: conversation.createdAt == null
-          ? null
-          : Text(
-              formatDate(conversation.createdAt!),
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-      onTap: onTap,
     );
   }
 }

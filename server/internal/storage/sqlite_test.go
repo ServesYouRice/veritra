@@ -116,6 +116,110 @@ func TestConversationRetentionPolicyMetadataPersists(t *testing.T) {
 	}
 }
 
+func TestListConversationsActivityOrderingAndUnread(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	owner := createTestOwner(t, ctx, store)
+	invite, err := store.CreateInvite(ctx, owner.Account.ID, 1, nil)
+	if err != nil {
+		t.Fatalf("create invite: %v", err)
+	}
+	member := registerTestMember(t, ctx, store, invite.Code, "Member")
+
+	// Two conversations; a message is sent in "older" first, then "newer",
+	// so activity ordering must surface "newer" ahead of "older".
+	older, err := store.CreateConversation(ctx, CreateConversationInput{Kind: "group", CreatedBy: owner.Account.ID})
+	if err != nil {
+		t.Fatalf("create older conversation: %v", err)
+	}
+	if err := store.AddConversationMember(ctx, older.ID, member.Account.ID, domain.RoleMember); err != nil {
+		t.Fatalf("add member to older: %v", err)
+	}
+	newer, err := store.CreateConversation(ctx, CreateConversationInput{Kind: "group", CreatedBy: owner.Account.ID})
+	if err != nil {
+		t.Fatalf("create newer conversation: %v", err)
+	}
+	if err := store.AddConversationMember(ctx, newer.ID, member.Account.ID, domain.RoleMember); err != nil {
+		t.Fatalf("add member to newer: %v", err)
+	}
+
+	olderMsg, _, err := store.SaveMessageEnvelope(ctx, domain.MessageEnvelope{
+		ConversationID:  older.ID,
+		SenderAccountID: owner.Account.ID,
+		SenderDeviceID:  owner.Device.ID,
+		IdempotencyKey:  "older-1",
+		Ciphertext:      []byte("older ciphertext"),
+		CryptoProtocol:  "mls-openmls-todo",
+	})
+	if err != nil {
+		t.Fatalf("save older message: %v", err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if _, _, err := store.SaveMessageEnvelope(ctx, domain.MessageEnvelope{
+		ConversationID:  newer.ID,
+		SenderAccountID: owner.Account.ID,
+		SenderDeviceID:  owner.Device.ID,
+		IdempotencyKey:  "newer-1",
+		Ciphertext:      []byte("newer ciphertext"),
+		CryptoProtocol:  "mls-openmls-todo",
+	}); err != nil {
+		t.Fatalf("save newer message: %v", err)
+	}
+
+	// Member sees the most recently active conversation first and both
+	// unread (the owner sent them).
+	memberList, err := store.ListConversations(ctx, member.Account.ID)
+	if err != nil {
+		t.Fatalf("list for member: %v", err)
+	}
+	if len(memberList) != 2 {
+		t.Fatalf("expected 2 conversations, got %d", len(memberList))
+	}
+	if memberList[0].ID != newer.ID || memberList[1].ID != older.ID {
+		t.Fatalf("activity ordering wrong: got %s then %s", memberList[0].ID, memberList[1].ID)
+	}
+	if memberList[0].LastMessageAt == nil || memberList[1].LastMessageAt == nil {
+		t.Fatalf("last_message_at not populated: %#v", memberList)
+	}
+	for _, c := range memberList {
+		if c.UnreadCount != 1 {
+			t.Fatalf("expected unread 1 for %s, got %d", c.ID, c.UnreadCount)
+		}
+	}
+
+	// The owner authored both messages, so nothing is unread for them.
+	ownerList, err := store.ListConversations(ctx, owner.Account.ID)
+	if err != nil {
+		t.Fatalf("list for owner: %v", err)
+	}
+	for _, c := range ownerList {
+		if c.UnreadCount != 0 {
+			t.Fatalf("owner should have no unread, got %d for %s", c.UnreadCount, c.ID)
+		}
+	}
+
+	// After the member reads the older conversation, its badge clears while
+	// the newer one stays unread.
+	if err := store.MarkRead(ctx, older.ID, member.Account.ID, olderMsg.ID); err != nil {
+		t.Fatalf("mark read: %v", err)
+	}
+	afterRead, err := store.ListConversations(ctx, member.Account.ID)
+	if err != nil {
+		t.Fatalf("list after read: %v", err)
+	}
+	unreadByID := map[string]int64{}
+	for _, c := range afterRead {
+		unreadByID[c.ID] = c.UnreadCount
+	}
+	if unreadByID[older.ID] != 0 {
+		t.Fatalf("older should be read, got %d", unreadByID[older.ID])
+	}
+	if unreadByID[newer.ID] != 1 {
+		t.Fatalf("newer should stay unread, got %d", unreadByID[newer.ID])
+	}
+}
+
 func TestExpiredMessagesAreHiddenAndPruned(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newTestStore(t, ctx)
