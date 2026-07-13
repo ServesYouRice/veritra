@@ -205,28 +205,79 @@ func restore(cfg config.Config, args []string, stdout io.Writer) error {
 	if _, err := os.Stat(src); err != nil {
 		return fmt.Errorf("backup not readable: %w", err)
 	}
-	// Refuse if a server appears to be running against this DB. Acquiring an
-	// exclusive open on the WAL companion is a cheap probe: if a running
-	// server holds it, OpenFile will fail with ERROR_SHARING_VIOLATION on
-	// Windows or the file will be missing harmlessly on a stopped server.
-	walPath := cfg.DatabasePath + "-wal"
-	if probe, err := os.OpenFile(walPath, os.O_RDWR, 0); err == nil {
-		_ = probe.Close()
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("database appears in use (could not lock %s): %w; stop the server first", walPath, err)
-	}
-	// Remove the live DB and any -wal / -shm companions to prevent SQLite
-	// from misreading a stale WAL against the freshly restored main file.
-	for _, leftover := range []string{cfg.DatabasePath, walPath, cfg.DatabasePath + "-shm"} {
-		if err := os.Remove(leftover); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove %s: %w", leftover, err)
-		}
-	}
-	if err := copyFile(src, cfg.DatabasePath, 0o600); err != nil {
+	srcAbs, err := filepath.Abs(src)
+	if err != nil {
 		return err
 	}
+	dstAbs, err := filepath.Abs(cfg.DatabasePath)
+	if err != nil {
+		return err
+	}
+	if srcAbs == dstAbs {
+		return errors.New("backup path must differ from the live database")
+	}
+	if err := os.MkdirAll(filepath.Dir(dstAbs), 0o700); err != nil {
+		return err
+	}
+	stageFile, err := os.CreateTemp(filepath.Dir(dstAbs), ".veritra-restore-*.db")
+	if err != nil {
+		return err
+	}
+	stage := stageFile.Name()
+	if err := stageFile.Close(); err != nil {
+		return err
+	}
+	_ = os.Remove(stage)
+	defer os.Remove(stage)
+	if err := copyFile(srcAbs, stage, 0o600); err != nil {
+		return fmt.Errorf("stage backup: %w", err)
+	}
+	if err := storage.ValidateDatabaseFile(context.Background(), stage); err != nil {
+		return fmt.Errorf("backup validation failed: %w", err)
+	}
+	if _, err := os.Stat(dstAbs); err == nil {
+		probeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		err := storage.ProbeDatabaseExclusive(probeCtx, dstAbs)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("database appears in use; stop the server before restore: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	rollback := dstAbs + ".pre-restore-" + time.Now().UTC().Format("20060102T150405Z")
+	liveExists := false
+	if _, err := os.Stat(dstAbs); err == nil {
+		if err := os.Rename(dstAbs, rollback); err != nil {
+			return fmt.Errorf("preserve live database: %w", err)
+		}
+		liveExists = true
+	}
+	restoreRollback := func(cause error) error {
+		_ = os.Remove(dstAbs)
+		if liveExists {
+			if err := os.Rename(rollback, dstAbs); err != nil {
+				return errors.Join(cause, fmt.Errorf("rollback live database: %w", err))
+			}
+		}
+		return cause
+	}
+	for _, companion := range []string{dstAbs + "-wal", dstAbs + "-shm"} {
+		if err := os.Remove(companion); err != nil && !os.IsNotExist(err) {
+			return restoreRollback(fmt.Errorf("remove stale SQLite companion %s: %w", companion, err))
+		}
+	}
+	if err := os.Rename(stage, dstAbs); err != nil {
+		return restoreRollback(fmt.Errorf("activate staged backup: %w", err))
+	}
+	if err := storage.ValidateDatabaseFile(context.Background(), dstAbs); err != nil {
+		return restoreRollback(fmt.Errorf("restored database validation failed: %w", err))
+	}
 	fmt.Fprintf(stdout, "database restored to: %s\n", cfg.DatabasePath)
-	fmt.Fprintln(stdout, "note: stop the server before restore and restore encrypted blobs separately")
+	if liveExists {
+		fmt.Fprintf(stdout, "previous database preserved for rollback: %s\n", rollback)
+	}
+	fmt.Fprintln(stdout, "note: encrypted blobs must be restored from the matching backup generation")
 	return nil
 }
 
@@ -242,6 +293,11 @@ func copyFile(src, dst string, mode os.FileMode) error {
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := out.Sync(); err != nil {
 		_ = out.Close()
 		_ = os.Remove(tmp)
 		return err

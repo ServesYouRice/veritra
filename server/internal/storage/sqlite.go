@@ -133,6 +133,62 @@ func (s *Store) Check(ctx context.Context) error {
 	return s.db.PingContext(ctx)
 }
 
+func ValidateDatabaseFile(ctx context.Context, path string) error {
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro&_pragma=foreign_keys(1)")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	rows, err := db.QueryContext(ctx, `PRAGMA quick_check`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var result string
+		if err := rows.Scan(&result); err != nil {
+			rows.Close()
+			return err
+		}
+		if result != "ok" {
+			rows.Close()
+			return fmt.Errorf("sqlite quick_check: %s", result)
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	var requiredTables int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('schema_migrations', 'instances', 'accounts', 'message_envelopes')`).Scan(&requiredTables); err != nil {
+		return err
+	}
+	if requiredTables != 4 {
+		return errors.New("backup does not contain the required Veritra schema")
+	}
+	foreignKeys, err := db.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		return err
+	}
+	defer foreignKeys.Close()
+	if foreignKeys.Next() {
+		return errors.New("backup contains foreign-key violations")
+	}
+	return foreignKeys.Err()
+}
+
+func ProbeDatabaseExclusive(ctx context.Context, path string) error {
+	db, err := sql.Open("sqlite", sqliteDSN(path))
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if _, err := db.ExecContext(ctx, `PRAGMA busy_timeout = 250; BEGIN EXCLUSIVE`); err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `ROLLBACK`)
+	return err
+}
+
 // BackupTo writes an atomic single-file copy of the database to dest using
 // SQLite's VACUUM INTO. The destination must not already exist. This holds
 // a read lock for the duration of the copy but does not block writers.
