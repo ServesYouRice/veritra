@@ -2,6 +2,10 @@
 
 Application logic, async behavior, state management, data handling, and implementation quality. Cross-cutting security findings live in [security-issues.md](security-issues.md); pure efficiency findings in [performance-issues.md](performance-issues.md).
 
+> **Historical snapshot:** findings and severities describe `c939f26`, not the
+> current tree. Use [`../audits-codex/README.md`](../audits-codex/README.md) for
+> current release status.
+
 **Severity scale:** Critical / High / Medium / Low / Nice-to-have.
 **Blocker** = must be fixed before a real production launch.
 

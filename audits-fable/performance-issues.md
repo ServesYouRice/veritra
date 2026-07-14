@@ -2,6 +2,10 @@
 
 The server is SQLite-on-a-single-binary by design, so "scale" here means "vertical, single-node, tens-to-low-thousands of users," which is the stated target. Findings are about avoiding cliffs within that envelope and removing needless work.
 
+> **Historical snapshot:** findings and severities describe `c939f26`, not the
+> current tree. Use [`../audits-codex/README.md`](../audits-codex/README.md) for
+> current release status.
+
 **Severity scale:** Critical / High / Medium / Low / Nice-to-have.
 
 ---
@@ -10,26 +14,26 @@ The server is SQLite-on-a-single-binary by design, so "scale" here means "vertic
 
 | ID | Title | Severity | Blocker |
 |---|---|---|---|
-| PERF-1 | `Hub.Publish` holds a global read lock and marshals per call; fan-out N+1 member queries | Medium | No |
+| PERF-1 | Fan-out repeats a member query and holds the hub read lock while delivering | Medium | No |
 | PERF-2 | Every message mutation issues 3–4 separate DB round-trips (member list, save event, publish) | Medium | No |
 | PERF-3 | `ListSyncEvents` UNION+JOIN scans grow with membership; catch-up called on every event | Medium | No |
 | PERF-4 | Mobile catch-up refetches entire conversation list + full message page on any event | Medium | No |
 | PERF-5 | No client-side message persistence: every conversation open is a network round-trip | Medium | No |
-| PERF-6 | Reader pool sized to NumCPU but modernc SQLite reads still serialize on the file | Low | No |
+| PERF-6 | Reader-pool benefit is workload-dependent and unmeasured | Low | No |
 | PERF-7 | `SaveSyncEvent`/audit writes are synchronous on the request path | Low | No |
 | PERF-8 | Retention/prune sweeps do full-table deletes without batching | Low | No |
-| PERF-9 | Metrics map copied under lock on every scrape; unbounded status classes | Low | No |
+| PERF-9 | Metrics counters and scrape share one mutex | Low | No |
 | PERF-10 | Rate-limiter bucket map hashing on every request | Low | No |
 
 ---
 
-## PERF-1 — Hub fan-out does N+1 member lookups and a lock-held marshal
+## PERF-1 — Hub fan-out repeats member lookups and holds a delivery lock
 
 - **Severity:** Medium
-- **Location:** `server/internal/realtime/hub.go:84-99` (`Publish` marshals inside, iterates under `RLock`), callers in `server/internal/httpapi/api.go` each precede it with `conversationMemberIDs` (`:856-863`) → `ListConversationMemberIDs` (`storage/sqlite.go:971-986`)
-- **Description:** Each message send/edit/delete/reaction/read/typing does: one `SELECT account_id FROM memberships` (a DB round-trip) to build the recipient list, then `Hub.Publish` which JSON-marshals the event and walks `subscribers[accountID]` under the hub's `RLock`. The marshal is cheap, but doing it while holding the map lock serializes all publishes against each other; the per-event membership query is a separate DB hit that duplicates work the storage layer already did (e.g., `SaveMessageEnvelope` already validated membership).
-- **Why it matters:** At low volume it's invisible; under a busy group it adds a DB round-trip and a lock-serialized marshal to every event. It's the hot path.
-- **Recommended fix:** Marshal before taking the lock (already the case — good), but move it fully out; cache conversation member lists (invalidate on membership change) so the fan-out doesn't re-query per event; consider publishing by conversation subscription rather than per-account maps.
+- **Location:** `server/internal/realtime/hub.go:84-99` (`Publish` marshals before `RLock`, then iterates under the lock), callers in `server/internal/httpapi/api.go` each precede it with `conversationMemberIDs` (`:856-863`) → `ListConversationMemberIDs` (`storage/sqlite.go:971-986`)
+- **Description:** Each message send/edit/delete/reaction/read/typing performs one `SELECT account_id FROM memberships` to build the recipient list, then walks `subscribers[accountID]` under the hub's `RLock`. The original title's “N+1” and “lock-held marshal” wording was wrong: there is one repeated member query per event, and `json.Marshal` already occurs before the lock. The remaining concern is the extra query and lock-held fan-out iteration.
+- **Why it matters:** At low volume it is invisible; under a busy group it adds a DB round-trip and makes register/unregister writers wait for fan-out iteration on every event.
+- **Recommended fix:** Measure first. If this becomes hot, cache conversation member lists with correct invalidation or subscribe sockets by conversation; copy target clients under the lock and perform channel sends after releasing it.
 - **Blocker:** No.
 
 ## PERF-2 — Message write path is several sequential round-trips
@@ -37,8 +41,8 @@ The server is SQLite-on-a-single-binary by design, so "scale" here means "vertic
 - **Severity:** Medium
 - **Location:** `server/internal/httpapi/api.go:688-743` (`createMessageEnvelope`): `SaveMessageEnvelope` → `SaveSyncEvent` → `ListConversationMemberIDs` → `Hub.Publish`
 - **Description:** A single send performs (inside `SaveMessageEnvelope`) a prune + idempotency select + membership check + insert (LOG-6), then a sync-event insert, then a member-list select, then publish. That's ~6 DB statements per message on the single writer connection.
-- **Why it matters:** All writes funnel through one SQLite writer connection (`SetMaxOpenConns(1)`). Message throughput is bounded by the *serial* sum of these statements. Halving the statement count roughly doubles peak send throughput.
-- **Recommended fix:** Fold the envelope insert + sync-event insert into one transaction; reuse the membership list already known from the insert path for both the sync-event visibility and the publish fan-out.
+- **Why it matters:** All writes funnel through one SQLite writer connection (`SetMaxOpenConns(1)`). Reducing statements should improve the write ceiling, but the original “halving statements roughly doubles throughput” claim was not benchmarked and should not be treated as a measured result.
+- **Recommended fix:** Fold the envelope insert + sync-event insert into one transaction for durability and fewer round-trips. Fetch or return the member list once for publish; the original insert path knew only whether the sender was a member, not the complete list.
 - **Blocker:** No.
 
 ## PERF-3 — Sync catch-up query cost scales with membership
@@ -72,7 +76,7 @@ The server is SQLite-on-a-single-binary by design, so "scale" here means "vertic
 
 - **Severity:** Low
 - **Location:** `server/internal/storage/sqlite.go:93-117` (reader pool sized `NumCPU`, clamped 4–16)
-- **Description:** The split writer/reader-pool design is sound for WAL, but `modernc.org/sqlite` is a pure-Go translation and read concurrency against a single file is limited; the effective win over a single reader connection is modest and workload-dependent. Not a defect — just don't assume linear read scaling from the pool size.
+- **Description:** The split writer/reader-pool design is sound and WAL permits concurrent readers. Code inspection alone does not establish whether 4–16 reader connections materially help this workload; the original claim that modernc reads “still serialize on the file” was too broad. This is a measurement question, not a defect.
 - **Recommended fix:** Benchmark actual read concurrency before tuning the pool up; the current clamp is reasonable.
 - **Blocker:** No.
 

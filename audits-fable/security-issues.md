@@ -4,6 +4,10 @@ Authorization, authentication, abuse resistance, and privacy findings. The codeb
 
 **Context:** Prior audits (`OPUS.md`, `CODEX.md`, `FABLE.md`) were largely addressed; this reflects the current tree at `c939f26`.
 
+> **Historical snapshot:** findings and severities describe `c939f26`, not the
+> current tree. Use [`../audits-codex/README.md`](../audits-codex/README.md) for
+> current release status.
+
 ---
 
 ## Summary table
@@ -43,7 +47,7 @@ Authorization, authentication, abuse resistance, and privacy findings. The codeb
 
 - **Severity:** Medium
 - **Location:** `server/internal/httpapi/api.go:618-625` (`conversationSubroute`, `typing` case)
-- **Description:** Any authenticated user can `POST /api/v1/conversations/{any-id}/typing`. The handler fetches the member list and publishes a `typing.updated` event to all members without verifying the caller belongs to the conversation. Effects: (a) spoofed typing signals injected into arbitrary conversations (the payload carries the attacker's own account_id, but nothing stops the spam), (b) a conversation-ID existence oracle (member lookup failure vs. 204).
+- **Description:** Any authenticated user can `POST /api/v1/conversations/{any-id}/typing`. The handler fetches the member list and publishes a `typing.updated` event to all members without verifying the caller belongs to the conversation. This permits spoofed typing signals in arbitrary known conversations. The original audit also called this a conversation-ID existence oracle; that part was incorrect because an unknown ID produced an empty member list and the same 204 response.
 - **Why it matters:** Cross-conversation event injection breaks the isolation model, and it's the only conversation-scoped route without the guard — clearly an oversight, cheap for an attacker to find.
 - **Recommended fix:** Add the same `IsConversationMember` check used by `MarkRead` before publishing; return 403 otherwise. One test.
 - **Blocker:** Yes (trivial fix).
@@ -54,16 +58,16 @@ Authorization, authentication, abuse resistance, and privacy findings. The codeb
 - **Location:** `server/internal/storage/sqlite.go:816-900` (`CreateConversation` member loop, `AddConversationMember`), `server/internal/httpapi/api.go:506-535`, `:554-592`
 - **Description:** Two related problems:
   1. **No consent:** any user can create a conversation naming any account IDs, or add accounts to conversations they moderate. Targets are joined instantly with no invitation/accept step and (per LOG-4) not even a notification. In an invite-only single instance this is bounded, but it is the harassment/spam primitive of the platform.
-  2. **Oracle:** membership rows FK-reference `accounts(id)`. A guessed/nonexistent account ID makes the insert fail → `500 storage_error`, while a valid ID yields 200/201. Account IDs contain 128 random bits so guessing is impractical — but IDs leak through legitimate channels (search results, sync payloads, exports), and the differing responses confirm liveness/deletion status of a known ID.
+  2. **Identifier-validity oracle:** membership rows FK-reference `accounts(id)`. A guessed/nonexistent account ID makes the insert fail → `500 storage_error`, while a valid ID yields 200/201. Account IDs contain 128 random bits so guessing is impractical, but IDs leak through legitimate channels. This distinguishes an existing row from an unknown ID; it does **not** reliably reveal deletion status because account deletion was soft and retained the row.
 - **Why it matters:** For a privacy-first messenger, "anyone can silently put you in a room" is a product-level privacy defect; the oracle is a lesser but free fix.
 - **Recommended fix:** Validate member IDs inside the creation transaction and return `404 account_not_found` uniformly (fixes the 500 and narrows the oracle to what search already reveals). Product-level: add an invitation/accept model, or at minimum only allow initial members on `dm` (single counterpart) and require joins-by-invite for groups. Skip adding `deleted_at IS NOT NULL` accounts.
-- **Blocker:** Yes for the 500/oracle handling; the consent model can be a fast-follow with LOG-13.
+- **Blocker:** Yes for consistent validation/error handling; the consent model can be a fast-follow with LOG-13.
 
 ## SEC-4 — No storage quotas on uploads
 
 - **Severity:** High
 - **Location:** `server/internal/httpapi/api.go:894-975` (`uploadAttachment` 50 MiB/req, `uploadBackup` 100 MiB/req), `server/internal/uploads/local.go`, `server/internal/storage/sqlite.go:1414-1437`, `:1538-1548`
-- **Description:** Any authenticated account can upload unlimited numbers of attachment blobs (conversation membership only checked when `conversation_id` is supplied — omit it and the blob is an unscoped orphan) and unlimited 100 MiB "backups". There is no per-account byte quota, no per-account object count, no backup-count cap (old backups are never replaced or expired), and no global disk watermark. The general rate limit (240 req/min/IP) allows ~12 GB/min of backup uploads from a single IP.
+- **Description:** Any authenticated account can upload unlimited numbers of attachment blobs (conversation membership only checked when `conversation_id` is supplied — omit it and the blob is an unscoped orphan) and unlimited 100 MiB "backups". There is no per-account byte quota, no per-account object count, no backup-count cap (old backups are never replaced or expired), and no global disk watermark. The general rate limit (240 req/min/IP) permits a theoretical maximum of about 23.4 GiB/min of 100 MiB backup uploads from a single IP, before protocol overhead and other bottlenecks.
 - **Why it matters:** A single invited user — or one compromised session — can fill the server's disk in minutes. On a single-binary SQLite deployment, disk exhaustion takes down the database and the whole instance. This is the cheapest DoS in the system and requires no bugs, just intended APIs.
 - **Recommended fix:** (1) Per-account storage quota (configurable, e.g. 1 GiB default) enforced transactionally against a maintained per-account byte total. (2) Keep only N most-recent backups per account/device, deleting older blobs. (3) Require `conversation_id` on attachments (or auto-expire unattached blobs after 24 h). (4) Optional global free-disk floor check before accepting uploads.
 - **Blocker:** Yes — must land no later than the first release where uploads are reachable from a client.
@@ -131,7 +135,7 @@ Authorization, authentication, abuse resistance, and privacy findings. The codeb
 
 - **Severity:** Low
 - **Location:** `createCommunity`, `createConversation`, `createInvite` handlers (rate limit only)
-- **Description:** Any member can create up to 240 communities/conversations/invites per minute, forever. No per-account caps, no cleanup of empty conversations. This is DB-bloat and search-pollution abuse (community/channel names appear in other members' search only if they share membership, limiting the blast radius).
+- **Description:** Any member can create communities and conversations up to the general request-rate limit, with no aggregate per-account cap or cleanup of empty conversations. Invite creation is restricted to owners/admins; each invite is bounded to 1–10,000 uses, but the number of invite rows per authorized account is uncapped and non-expiring invites had no revoke endpoint. This is primarily DB-bloat and admin-surface risk; community/channel search remains membership-scoped.
 - **Recommended fix:** Per-account creation caps (daily) and an admin-visible count; low priority on invite-only instances.
 - **Blocker:** No.
 

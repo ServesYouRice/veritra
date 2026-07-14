@@ -2,6 +2,10 @@
 
 Deployment, operations, observability, backup/recovery, and release-engineering readiness. This is the "can an operator actually run and keep running this" view.
 
+> **Historical snapshot:** findings and severities describe `c939f26`, not the
+> current tree. Use [`../audits-codex/README.md`](../audits-codex/README.md) for
+> current release status.
+
 **Severity scale:** Critical / High / Medium / Low / Nice-to-have.
 
 ---
@@ -16,7 +20,7 @@ Deployment, operations, observability, backup/recovery, and release-engineering 
 | OPS-4 | No structured error/latency alerting; metrics are counters only, opt-in, unauthenticated | Medium | No |
 | OPS-5 | No graceful WebSocket drain on shutdown | Medium | No |
 | OPS-6 | No config validation / fail-fast for unsafe production settings | Medium | No |
-| OPS-7 | Backup/restore requires manual server stop; no online/scheduled backup | Medium | No |
+| OPS-7 | DB backup is online but manual; restore requires downtime; no scheduling | Medium | No |
 | OPS-8 | No migration rollback / down-migration story | Medium | No |
 | OPS-9 | No admin surface: no way to disable/ban a user, revoke an invite, or inspect abuse | Medium | No |
 | OPS-10 | Single-writer SQLite + local disk = single point of failure, no HA | Medium | No |
@@ -64,8 +68,8 @@ Deployment, operations, observability, backup/recovery, and release-engineering 
 ## OPS-5 — No graceful WebSocket drain on shutdown
 
 - **Severity:** Medium
-- **Location:** `server/internal/app/app.go:81-104` (`server.Shutdown` with 10 s timeout), `server/internal/realtime/websocket.go` (loop exits on `r.Context().Done()`)
-- **Description:** `http.Server.Shutdown` does not close hijacked (WebSocket) connections; it waits for active requests. Long-lived WS connections keep the request context alive, so shutdown relies on the 10 s timeout expiring, after which connections are cut abruptly without a WebSocket Close frame. Clients see an error rather than a clean close and immediately hammer the reconnect loop against a server that's going down.
+- **Location:** `server/internal/app/app.go:81-104` (`server.Shutdown` with 10 s timeout), `server/internal/realtime/websocket.go`
+- **Description:** `http.Server.Shutdown` does not close **or wait for** hijacked WebSocket connections. The original audit incorrectly said those connections force the shutdown timeout to expire. The actual issue remains: without explicit hub shutdown, upgraded sockets receive no WebSocket Close frame and are cut when the process exits, so clients see an abnormal disconnect.
 - **Recommended fix:** On shutdown, signal the hub to send Close frames (1001 "going away") to all clients and stop accepting new upgrades, then wait briefly before forcing exit.
 - **Blocker:** No.
 
@@ -77,11 +81,11 @@ Deployment, operations, observability, backup/recovery, and release-engineering 
 - **Recommended fix:** Add an optional `PRIVATE_MESSENGER_ENV=production` that fails fast (or loudly warns) when: bound to a non-loopback address without a declared TLS/proxy front, or metrics exposed without auth. Log a startup summary of the effective security posture.
 - **Blocker:** No.
 
-## OPS-7 — Backups are offline-only and manual
+## OPS-7 — DB backup is online but manual; restore is offline
 
 - **Severity:** Medium
 - **Location:** `main.go:170-192` (`backup`), `restore` requires the server stopped (probes the WAL lock)
-- **Description:** `VACUUM INTO` actually does *not* require stopping the server (it holds a read lock only) — but there is no scheduling, no retention/rotation of backup files, and `restore` explicitly requires downtime. No documented RPO/RTO. An operator must cron the backup command themselves and manage retention by hand.
+- **Description:** `VACUUM INTO` does not require stopping the server, so calling backups “offline-only” was incorrect. Backup creation is online but unscheduled and operator-managed; restore explicitly requires downtime. There is no built-in retention/rotation or documented RPO/RTO.
 - **Recommended fix:** Provide a scheduled-backup option (internal ticker or documented cron + rotation), and document RPO/RTO and a tested restore runbook. Combine with OPS-3 for blob consistency.
 - **Blocker:** No.
 

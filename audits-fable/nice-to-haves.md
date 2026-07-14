@@ -1,5 +1,10 @@
 # Nice-to-Haves — Veritra Audit (audits-fable)
 
+> **Historical roadmap snapshot:** these recommendations were written against
+> `c939f26`; several have since shipped. Use
+> [`../audits-codex/README.md`](../audits-codex/README.md) for current release
+> status.
+
 Product, polish, developer-experience, architecture, and roadmap items. These are things that would make Veritra feel like a complete, trustworthy production product rather than a foundation. They are **not** blockers (blockers live in [logical-issues.md](logical-issues.md) and [security-issues.md](security-issues.md)) — but several are the difference between "technically works" and "people actually use it."
 
 Grouped as requested:

@@ -1,6 +1,10 @@
 # Testing Gaps — Veritra Audit (audits-fable)
 
-Coverage analysis and missing test classes. The project is unusually well-tested for an MVP foundation (23 Go server tests, 2 Dart test files with ~20 cases, a Rust fail-closed test, and CI running test/vet/fmt/analyze across all three languages). This file is about the gaps that matter for production confidence, and the tests that would have caught the defects in the other audit files.
+Coverage analysis and missing test classes. The project was unusually well-tested for an MVP foundation (27 top-level Go `Test...` functions, 2 Dart test files with 16 cases, a Rust fail-closed test, and CI running test/vet/fmt/analyze across all three languages). This file is about the gaps that mattered for production confidence, and the tests that would have caught the defects in the other audit files.
+
+> **Historical snapshot:** findings and counts describe `c939f26`, not the
+> current tree. Use [`../audits-codex/README.md`](../audits-codex/README.md) for
+> current release status and excluded testing work.
 
 **Severity scale:** Critical / High / Medium / Low / Nice-to-have.
 

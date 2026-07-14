@@ -2,6 +2,11 @@
 
 Scope: the Flutter client (`mobile/lib/**`) and the server's `/setup` page. Note that many UI surfaces cannot currently be exercised at all because the client crypto is a stub (see LOG-0); findings below are from reading the widget tree and tracing state, plus the flows that *are* reachable.
 
+> **Historical snapshot with later status notes:** detailed findings describe
+> `c939f26`; the status column records selected remediation through 2026-07-10.
+> Use [`../audits-codex/README.md`](../audits-codex/README.md) for current release
+> status.
+
 **Severity scale:** Critical / High / Medium / Low / Nice-to-have.
 
 ---
@@ -18,7 +23,7 @@ Scope: the Flutter client (`mobile/lib/**`) and the server's `/setup` page. Note
 | UI-6 | "Add member" / "New conversation" require raw account IDs (no directory) | High | Yes | **Fixed** — username lookup picker (exact match by server design); raw ID kept as fallback |
 | UI-7 | Session-created records vanish on refresh (invites, communities) with weak warning | Medium | No | **Fixed** — server `GET /invites`, `GET /communities`, `GET /communities/{id}/channels` added; client hydrates on session start |
 | UI-8 | No unread indicators, message previews, or ordering by activity | Medium | No | **Fixed (ordering + unread)** — server `ListConversations` now returns `last_message_at` + `unread_count` and orders by activity; chat list shows unread badges, recency ordering, and activity time. Message previews still blocked on decryption (LOG-0) |
-| UI-9 | Device-link screen missing QR rendering; code entry only | Medium | Yes | **Fixed** — link URI rendered as QR (`qr_flutter`); claiming device now scans via camera (`mobile_scanner`) with a "Scan QR code" action on the connect screen. Platform camera-permission manifests must be added when the app shell gains android/ios targets |
+| UI-9 | Device-link screen missing QR rendering; code entry only | Medium | Yes | **Partial** — QR rendering and camera scanning shipped, but `mobile/ios/Runner/Info.plist` still lacks the required `NSCameraUsageDescription`; manual code entry remains available |
 | UI-10 | No pull-to-refresh / manual refresh on several screens | Low | No | **Fixed** — `RefreshIndicator` on invites and communities screens (chat list already had one) |
 | UI-11 | Attachment button permanently disabled with no path forward | Low | No | Open — intentional placeholder (blocked on LOG-0/LOG-3) |
 | UI-12 | Accessibility: unlabeled icon-only controls, no semantics on brand/avatars | Medium | No | **Partial** — bubble sender/time semantics; decorative avatars excluded across chat list, communities, and conversation details; all section headers marked `header: true`; chat-list rows merged into one node with an unread-count label. Full manual TalkBack/VoiceOver pass still recommended before launch |
@@ -213,7 +218,7 @@ Ranked by user impact × likelihood-of-being-hit, assuming the crypto blocker (L
 2. ~~**UI-1 — Human-readable errors.**~~ **Done.** Kills the raw `StateError`/`Request failed (500)` experience everywhere at once.
 3. ~~**UI-6 — People picker instead of raw account IDs.**~~ **Done.** The "start a conversation" flow was unusable for non-developers.
 4. ~~**UI-3 — Setup-status-aware connect screen.**~~ **Done.** Fixed the wrong default mode that misdirected every joiner.
-5. ~~**UI-9 — QR device linking.**~~ **Done.** QR render + camera scanning both shipped; manual dual-code entry stays as a fallback.
+5. **UI-9 — QR device linking.** **Partial.** QR render + camera scanning code shipped, but the iOS camera usage declaration is still missing; manual dual-code entry remains as a fallback.
 6. ~~**UI-8 — Chat list recency ordering + unread badges.**~~ **Done (ordering + unread).** Home screen is navigable at scale; message previews still wait on decryption.
 7. **UI-18 — Identity/profile surface + showing usernames** (pairs with UI-6). Username now shown in Settings; full profile surface still open.
 8. ~~**UI-4 — Real loading states.**~~ **Done.** Per-list first-load spinners; UI-5's error/retry was already shipped.
@@ -222,4 +227,4 @@ Ranked by user impact × likelihood-of-being-hit, assuming the crypto blocker (L
 
 Lower priority polish: UI-10, UI-11, UI-13, UI-16, UI-17, UI-19, UI-20.
 
-Remaining open work is now gated on the crypto integration (LOG-0) — message previews (UI-8), send/failed status (UI-15), attachments (UI-11) — or is server-page/profile scope (UI-16, UI-18's profile surface).
+Remaining open work is gated on crypto integration (LOG-0) — message previews (UI-8), send/failed status (UI-15), attachments (UI-11) — or is platform/configuration and server/profile scope (UI-9's iOS permission declaration, UI-16, UI-18's profile surface).

@@ -5,6 +5,12 @@
 **Scope:** Full repository at commit `c939f26` (branch `main`, clean tree)
 **Mode:** Inspection only — no production code was modified.
 
+> **Archived snapshot.** This audit describes commit `c939f26`; it is not the
+> current remediation backlog. Most actionable findings were fixed after this
+> snapshot. See [`../audits-codex/README.md`](../audits-codex/README.md) for the
+> current release blocker and remaining excluded test work. Corrections made
+> during the 2026-07-14 validity review are incorporated in the topic files.
+
 ---
 
 ## 1. Stack identification
@@ -56,7 +62,7 @@
 
 Finding IDs are stable across files: `UI-n`, `LOG-n`, `SEC-n`, `PERF-n`, `OPS-n`, `TEST-n`, `NTH-n`.
 
-## 5. Overall verdict
+## 5. Historical verdict at `c939f26`
 
 **The project is not production-ready, and — importantly — it is honest about that.** The engineering quality of what exists is well above typical MVP level (fail-closed crypto boundary, checksummed migrations, careful WebSocket hardening, constant-time auth paths). But three realities dominate:
 
@@ -64,7 +70,7 @@ Finding IDs are stable across files: `UI-n`, `LOG-n`, `SEC-n`, `PERF-n`, `OPS-n`
 2. **A handful of real defects exist in the working code** — a conversation role-demotion authorization hole (SEC-1), a client/server enum mismatch that breaks channel creation 100% of the time (LOG-1), a WebSocket keepalive protocol violation that makes the realtime connection churn (LOG-2), and a missing-membership check on typing events (SEC-2).
 3. **Operational abuse controls are missing** — no storage quotas on 50–100 MB uploads, write-only blob storage, no per-account resource limits.
 
-## 6. Recommended fix order
+## 6. Historical recommended fix order
 
 1. **SEC-1** — role demotion via member re-add upsert (small fix, real authz hole).
 2. **SEC-2** — membership check on `typing` endpoint (one-line guard).
@@ -76,3 +82,12 @@ Finding IDs are stable across files: `UI-n`, `LOG-n`, `SEC-n`, `PERF-n`, `OPS-n`
 8. Then the **Tier-3 platform work** (production E2EE, push providers, QR linking, platform folders) tracked in `WORK_IN_PROGRESS.md` — these are the true launch gates and are weeks of work each.
 
 Everything else in these files is ranked within its own document.
+
+## 7. Current status (2026-07-14)
+
+The remediation work after `c939f26` closed nearly all actionable server,
+mobile, operations, and UI findings. Production E2EE is still deliberately
+unavailable and remains the release blocker. This validity pass also reopened
+UI-9 as partial because the iOS app lacks `NSCameraUsageDescription`; manual
+device-link code entry remains available. The broader testing-gap work listed
+in `audits-codex/README.md` remains excluded by request.

@@ -2,6 +2,11 @@
 
 A second pass over the areas the original seven files covered thinly: the message/call/device-link subroutes, the plaintext-prohibition boundary, the sync-event durability contract, push/URL handling, and client-side retry/idempotency. Each item below was verified against the tree at the same commit the other files reference; every finding is new (not a restatement) unless explicitly cross-linked.
 
+> **Historical snapshot:** findings and severities describe `c939f26`, not the
+> current tree. Use [`../audits-codex/README.md`](../audits-codex/README.md) for
+> current release status. The corrections below include the 2026-07-14
+> validity review.
+
 **Severity scale:** Critical / High / Medium / Low / Nice-to-have.
 **Blocker** = must be fixed before a real production launch.
 
@@ -19,7 +24,7 @@ IDs continue the existing sequences: `SEC-15+`, `LOG-25+`, `UI-21+`, `OPS-15+`, 
 | LOG-25 | Sync cursor past the 30-day prune horizon yields a silent, permanent gap | Medium | Yes |
 | LOG-26 | `call_sessions` is insert-only: no lifecycle states, no pruning | Medium | No |
 | LOG-27 | Sync-event write is not atomic with the message write (durability, not just throughput) | Medium | No |
-| LOG-28 | Client idempotency keys are not reused across retries → server idempotency protects nothing | Low | No |
+| LOG-28 | Retry/idempotency lifecycle was undefined in the test client | Low | No |
 | UI-21 | Connect screen pre-fills `http://localhost:8080`; no https enforcement for remote hosts | Low | No |
 | NTH-34 | No block/mute-user capability | Nice-to-have | No |
 | NTH-35 | No per-conversation notification muting (design in before push ships) | Nice-to-have | No |
@@ -88,12 +93,12 @@ Corrections to earlier files are collected at the end.
 - **Blocker:** No, but fix before real client traffic (pairs with PERF-2).
 - **Related:** PERF-2 (same merge, throughput framing), LOG-25 (durable-log completeness), LOG-4 (event-driven delivery).
 
-## LOG-28 — Client idempotency keys are not reused across retries
+## LOG-28 — Retry/idempotency lifecycle was undefined in the test client
 
 - **Severity:** Low
-- **Location:** `mobile/lib/crypto/crypto_service.dart:33` (`idempotencyKey: DateTime.now().microsecondsSinceEpoch.toString()`), `mobile/lib/core/app_state.dart` (send path has no retry that preserves the key), `mobile/lib/core/models.dart:110-131` (key carried but minted per build)
-- **Description:** The idempotency key is generated fresh at message-build time from the current timestamp, and the client has no retry logic that reuses the same key for a resend. The server's idempotency mechanism (and the LOG-6 atomicity fix the audit recommends) only helps when the *same* key arrives twice — but the client never sends the same key twice, because every user-initiated resend builds a new envelope with a new key.
-- **Why it matters:** LOG-6 fixes the server race, but without the client half, the whole feature is inert: a flaky-network retry produces a *new* key and therefore a duplicate message rather than a deduplicated one — the exact outcome idempotency keys exist to prevent. The two findings must land together to have any effect.
+- **Location:** `mobile/lib/crypto/crypto_service.dart:33` in `TestOnlyCryptoService`, `mobile/lib/core/app_state.dart` (no retry state that preserves a key), `mobile/lib/core/models.dart:110-131`
+- **Description:** `TestOnlyCryptoService` generated a fresh timestamp key whenever it built an envelope, and the client had no pending-message retry state that could preserve a key. The original wording overstated this as a shipped production defect: the production crypto service was unavailable and could not send at all. This was a client/crypto integration requirement that tests should model before production sending exists.
+- **Why it matters:** A future production sender must generate the key once per logical message and reuse it across transport retries; otherwise server-side idempotency cannot prevent duplicates.
 - **Recommended fix:** Generate the idempotency key once when the user hits send, persist it with the pending/optimistic message (ties into UI-15), and reuse it for every retry of that message until it succeeds. Use a random UUID rather than a timestamp to avoid collisions across rapid sends.
 - **Blocker:** No, but pair with LOG-6 — neither is useful alone.
 - **Related:** LOG-6 (server-side idempotency race), UI-15 (pending/failed message state + retry).
@@ -126,7 +131,8 @@ Corrections to earlier files are collected at the end.
 ## Corrections and refinements to earlier files
 
 - **SEC-2 scope holds, with a caveat.** The claim that `typing` is "the only conversation-scoped route without the membership guard" is correct for *authorization* — `createCall` checks membership in the storage layer. But `createCall` is unguarded in a *different* dimension (plaintext persistence), tracked here as SEC-15. Worth cross-noting so the two aren't conflated.
-- **SEC-12 slightly overstates invite abuse.** Invite creation is bounded: `createInvite` (`api.go:262-293`) clamps `max_uses` to `[1, 10000]` and expiry to ≤90 days, and `CreateInvite` (`sqlite.go:483-501`) floors `max_uses` at 1. The residual real issue is that invites created *without* an expiry cannot be revoked (no revoke endpoint) — which is an OPS-9 admin-surface gap, not an unbounded-creation gap. Recommend rewording SEC-12 to drop "unlimited invites" and point the invite-revocation piece at OPS-9.
+- **SEC-2 oracle claim retracted.** The missing membership check and cross-conversation typing injection were real. The claimed conversation-ID oracle was not: an unknown ID returned an empty member list and the same 204 response.
+- **SEC-12 needs narrower wording, not removal.** Only owners/admins could create invites, and each invite was bounded to 1–10,000 uses with an optional expiry no more than 90 days out. The aggregate number of invite rows per authorized account was still uncapped, and non-expiring invites had no revoke endpoint. Keep the metadata-growth/admin-surface concern without implying that every member could create invites or that one invite had unlimited uses.
 - **OPS-14 (naming) has an extra instance.** `PRIVATE_MESSENGER_SYNC_EVENT_RETENTION_DAYS` is read via raw `os.Getenv` in `app.go:112`, not through `config.Load()` (`config/config.go`), so it is invisible to anyone reading the config package to learn the tunables. Fold into OPS-14 / OPS-6 (config surface consistency).
 
 ## Amendments to the blocker lists
