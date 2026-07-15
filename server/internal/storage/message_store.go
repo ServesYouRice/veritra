@@ -300,8 +300,9 @@ func (s *Store) ListMessages(ctx context.Context, conversationID, accountID stri
 		}
 		rows, err = s.db.QueryContext(ctx, `SELECT `+cols+` FROM message_envelopes
 			WHERE conversation_id = ? AND (expires_at IS NULL OR expires_at > ?) AND (created_at < ? OR (created_at = ? AND id < ?))
+			AND NOT EXISTS (SELECT 1 FROM account_blocks b WHERE b.blocker_account_id = ? AND b.blocked_account_id = message_envelopes.sender_account_id)
 			ORDER BY created_at DESC, id DESC LIMIT ?`,
-			conversationID, nowString(), cursorAt, cursorAt, opts.BeforeID, limit)
+			conversationID, nowString(), cursorAt, cursorAt, opts.BeforeID, accountID, limit)
 		if err != nil {
 			return nil, err
 		}
@@ -312,15 +313,17 @@ func (s *Store) ListMessages(ctx context.Context, conversationID, accountID stri
 		}
 		rows, err = s.db.QueryContext(ctx, `SELECT `+cols+` FROM message_envelopes
 			WHERE conversation_id = ? AND (expires_at IS NULL OR expires_at > ?) AND (created_at > ? OR (created_at = ? AND id > ?))
+			AND NOT EXISTS (SELECT 1 FROM account_blocks b WHERE b.blocker_account_id = ? AND b.blocked_account_id = message_envelopes.sender_account_id)
 			ORDER BY created_at ASC, id ASC LIMIT ?`,
-			conversationID, nowString(), cursorAt, cursorAt, opts.AfterID, limit)
+			conversationID, nowString(), cursorAt, cursorAt, opts.AfterID, accountID, limit)
 		if err != nil {
 			return nil, err
 		}
 	default:
 		rows, err = s.db.QueryContext(ctx, `SELECT `+cols+` FROM message_envelopes
 			WHERE conversation_id = ? AND (expires_at IS NULL OR expires_at > ?)
-			ORDER BY created_at DESC, id DESC LIMIT ?`, conversationID, nowString(), limit)
+			AND NOT EXISTS (SELECT 1 FROM account_blocks b WHERE b.blocker_account_id = ? AND b.blocked_account_id = message_envelopes.sender_account_id)
+			ORDER BY created_at DESC, id DESC LIMIT ?`, conversationID, nowString(), accountID, limit)
 		if err != nil {
 			return nil, err
 		}
@@ -468,20 +471,37 @@ func (s *Store) PruneExpiredContent(ctx context.Context, now time.Time) (int64, 
 // number of rows removed. Intended to be run periodically by a background
 // sweeper so the table doesn't grow unbounded.
 func (s *Store) PruneSyncEvents(ctx context.Context, olderThan time.Time) (int64, error) {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM sync_events WHERE created_at < ?`, formatTime(olderThan.UTC()))
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
+	return s.pruneEventRows(ctx, `DELETE FROM sync_events WHERE id IN (SELECT id FROM sync_events WHERE created_at < ? ORDER BY id LIMIT 500)`, olderThan)
 }
 
 // PruneAuditEvents deletes audit events older than the cutoff.
 func (s *Store) PruneAuditEvents(ctx context.Context, olderThan time.Time) (int64, error) {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM audit_events WHERE created_at < ?`, formatTime(olderThan.UTC()))
-	if err != nil {
-		return 0, err
+	return s.pruneEventRows(ctx, `DELETE FROM audit_events WHERE id IN (SELECT id FROM audit_events WHERE created_at < ? ORDER BY id LIMIT 500)`, olderThan)
+}
+
+func (s *Store) pruneEventRows(ctx context.Context, query string, olderThan time.Time) (int64, error) {
+	var total int64
+	for {
+		result, err := s.db.ExecContext(ctx, query, formatTime(olderThan.UTC()))
+		if err != nil {
+			return total, err
+		}
+		removed, err := result.RowsAffected()
+		if err != nil {
+			return total, err
+		}
+		total += removed
+		if removed < 500 {
+			return total, nil
+		}
+		timer := time.NewTimer(5 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return total, ctx.Err()
+		case <-timer.C:
+		}
 	}
-	return result.RowsAffected()
 }
 
 // RecordAuditEvent appends a metadata-only audit row. Callers MUST NOT pass
@@ -534,6 +554,16 @@ func (s *Store) ListSyncEvents(ctx context.Context, accountID string, afterID in
 			FROM sync_events se
 			JOIN memberships m ON m.conversation_id = se.conversation_id
 			WHERE se.id > ? AND se.account_id IS NULL AND m.account_id = ?
+			  AND NOT EXISTS (
+			    SELECT 1 FROM account_blocks b
+			    WHERE b.blocker_account_id = m.account_id
+			      AND b.blocked_account_id = CASE
+			        WHEN se.event_type LIKE 'message.%' THEN (SELECT sender_account_id FROM message_envelopes WHERE id = json_extract(se.payload_json, '$.message_id'))
+			        WHEN se.event_type LIKE 'reaction.%' OR se.event_type = 'read_receipt.updated' THEN json_extract(se.payload_json, '$.account_id')
+			        WHEN se.event_type LIKE 'call.%' THEN json_extract(se.payload_json, '$.created_by')
+			        ELSE NULL
+			      END
+			  )
 		) visible_events
 		ORDER BY id ASC
 		LIMIT ?`, afterID, accountID, afterID, accountID, limit)
@@ -562,7 +592,19 @@ func (s *Store) SyncBounds(ctx context.Context, accountID string) (string, int64
 		SELECT MIN(id), MAX(id) FROM (
 			SELECT id FROM sync_events WHERE account_id = ?
 			UNION ALL
-			SELECT se.id FROM sync_events se JOIN memberships m ON m.conversation_id = se.conversation_id WHERE se.account_id IS NULL AND m.account_id = ?
+			SELECT se.id FROM sync_events se
+			JOIN memberships m ON m.conversation_id = se.conversation_id
+			WHERE se.account_id IS NULL AND m.account_id = ?
+			  AND NOT EXISTS (
+			    SELECT 1 FROM account_blocks b
+			    WHERE b.blocker_account_id = m.account_id
+			      AND b.blocked_account_id = CASE
+			        WHEN se.event_type LIKE 'message.%' THEN (SELECT sender_account_id FROM message_envelopes WHERE id = json_extract(se.payload_json, '$.message_id'))
+			        WHEN se.event_type LIKE 'reaction.%' OR se.event_type = 'read_receipt.updated' THEN json_extract(se.payload_json, '$.account_id')
+			        WHEN se.event_type LIKE 'call.%' THEN json_extract(se.payload_json, '$.created_by')
+			        ELSE NULL
+			      END
+			  )
 		)`, accountID, accountID).Scan(&oldest, &latest)
 	if err != nil {
 		return "", 0, 0, err

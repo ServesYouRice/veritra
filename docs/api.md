@@ -62,6 +62,7 @@ The verification code returned to both devices must be compared in the client UX
 - `POST /api/v1/messages/envelopes` stores ciphertext-only message envelopes.
 - `GET /api/v1/conversations/{id}/messages?limit={n}&before={message_id}` lists non-expired encrypted envelopes. `after` is also accepted, but `before` and `after` are mutually exclusive. Responses include `limit` and optional `next_before`.
 - `POST /api/v1/conversations/{id}/typing` publishes a best-effort realtime typing event.
+- `GET` and `PATCH /api/v1/conversations/{id}/notifications` read or update the caller's notification mute (`{"muted":true}`). Muted conversations do not generate push wakeups for that account.
 - `POST /api/v1/messages/{id}/edit` stores an encrypted edit marker/envelope.
 - `POST /api/v1/messages/{id}/delete` stores an encrypted delete marker and tombstones the server-held envelope.
 - `POST /api/v1/messages/{id}/reactions` stores encrypted reaction payloads.
@@ -85,11 +86,23 @@ Attachment and backup contents are opaque ciphertext to the server. Account and 
 
 ## Search and Account Data
 
+- `GET /api/v1/account/blocks` lists accounts blocked by the caller. `PUT /api/v1/account/blocks/{account_id}` blocks an account and `DELETE` removes the block. Blocks prevent new mutual conversation adds and suppress that account's messages, reactions, typing, calls, realtime events, and push wakeups for the blocker.
 - `GET /api/v1/search/metadata?q={query}&limit={n}&offset={n}` searches account usernames, visible community names, and visible channel names. Accounts match on the **exact** (case-insensitive) username only; prefix/contains matching is deliberately not offered for accounts so the user directory cannot be enumerated by probing substrings. Communities and channels (which are scoped to the caller's memberships) use exact/prefix matching so the endpoint stays index-friendly. Pagination metadata includes `limit`, `offset`, and optional `next_offset`.
 - `GET /api/v1/account/export?limit={n}&before={message_id}` exports account metadata, devices, visible conversations, and encrypted message envelopes. Message export is paginated and returns optional `next_before`.
 - `DELETE /api/v1/account` requires recent authentication, revokes access, scrubs account-controlled metadata, removes private blob records/files, and retains only pseudonymous references needed by shared history.
 
 Server-side message-content search is intentionally absent.
+
+## Administration
+
+These routes require an authenticated owner or admin. Status changes and global invite revocation also require recent authentication.
+
+- `GET /api/v1/admin/accounts?limit={n}&after={account_id}` lists non-deleted accounts with username, role, status, device count, encrypted attachment/backup counts, and total encrypted storage bytes.
+- `PATCH /api/v1/admin/accounts/{id}/status` accepts `{"status":"suspended"}` or `{"status":"active"}`. Suspension revokes sessions, disables push subscriptions, and disconnects active sync sockets. Administrators may act only on lower-ranked accounts and cannot act on themselves.
+- `DELETE /api/v1/admin/invites/{id}` revokes any active invite.
+- `GET /api/v1/admin/audit-events?limit={n}&after={event_id}` lists metadata-only operational audit events.
+
+Administrative responses never include message or attachment contents, ciphertext, session tokens, device secrets, password data, or push endpoints/keys.
 
 ## Realtime
 

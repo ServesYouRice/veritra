@@ -240,13 +240,36 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 			writeError(w, http.StatusTooManyRequests, "typing_rate_limited")
 			return
 		}
-		members, err := a.Store.ListConversationMemberIDs(r.Context(), conversationID)
+		members, err := a.Store.ConversationRecipientsForSender(r.Context(), conversationID, principal.AccountID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "typing_publish_failed")
 			return
 		}
 		a.Hub.Publish(members, realtime.Event{Version: "v1", Type: "typing.updated", ConversationID: conversationID, Payload: map[string]string{"account_id": principal.AccountID}, CreatedAt: time.Now().UTC()})
 		w.WriteHeader(http.StatusNoContent)
+	case parts[1] == "notifications" && r.Method == http.MethodGet:
+		muted, err := a.Store.ConversationNotificationsMuted(r.Context(), conversationID, principal.AccountID)
+		if err != nil {
+			handleStorageError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"muted": muted})
+	case parts[1] == "notifications" && (r.Method == http.MethodPut || r.Method == http.MethodPatch):
+		var req struct {
+			Muted *bool `json:"muted"`
+		}
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		if req.Muted == nil {
+			writeError(w, http.StatusBadRequest, "muted_required")
+			return
+		}
+		if err := a.Store.SetConversationNotificationsMuted(r.Context(), conversationID, principal.AccountID, *req.Muted); err != nil {
+			handleStorageError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"muted": *req.Muted})
 	case parts[1] == "read-receipts" && r.Method == http.MethodPost:
 		var req struct {
 			MessageID string `json:"message_id"`
@@ -264,7 +287,7 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 		}
 		payload := map[string]string{"account_id": principal.AccountID, "message_id": req.MessageID}
 		eventID := a.saveSyncEvent(r.Context(), "read_receipt.updated", nil, conversationID, payload)
-		members := a.conversationMemberIDs(r.Context(), conversationID)
+		members := a.conversationRecipientsForSender(r.Context(), conversationID, principal.AccountID)
 		a.Hub.Publish(members, realtime.Event{Version: "v1", Type: "read_receipt.updated", ID: eventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
 		w.WriteHeader(http.StatusNoContent)
 	case parts[1] == "retention" && (r.Method == http.MethodPut || r.Method == http.MethodPatch):
@@ -448,7 +471,7 @@ func (a *API) messageSubroute(w http.ResponseWriter, r *http.Request, principal 
 		}
 		payload := map[string]string{"message_id": messageID, "account_id": principal.AccountID}
 		eventID := a.saveSyncEvent(r.Context(), "reaction.deleted", nil, conversationID, payload)
-		members := a.conversationMemberIDs(r.Context(), conversationID)
+		members := a.conversationRecipientsForSender(r.Context(), conversationID, principal.AccountID)
 		a.Hub.Publish(members, realtime.Event{Version: "v1", Type: "reaction.deleted", ID: eventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
 		w.WriteHeader(http.StatusNoContent)
 	case parts[1] == "reactions" && r.Method == http.MethodPost:
@@ -481,7 +504,7 @@ func (a *API) messageSubroute(w http.ResponseWriter, r *http.Request, principal 
 		}
 		payload := map[string]string{"message_id": messageID, "account_id": principal.AccountID}
 		eventID := a.saveSyncEvent(r.Context(), "reaction.created", nil, message.ConversationID, payload)
-		members := a.conversationMemberIDs(r.Context(), message.ConversationID)
+		members := a.conversationRecipientsForSender(r.Context(), message.ConversationID, principal.AccountID)
 		a.Hub.Publish(members, realtime.Event{Version: "v1", Type: "reaction.created", ID: eventID, ConversationID: message.ConversationID, Payload: payload, CreatedAt: time.Now().UTC()})
 		w.WriteHeader(http.StatusNoContent)
 	default:
@@ -512,7 +535,7 @@ func decodeEncryptedMutation(w http.ResponseWriter, r *http.Request) (encryptedM
 func (a *API) publishMessageEvent(r *http.Request, eventType string, envelope domain.MessageEnvelope) {
 	ref := messageEventRef(envelope)
 	eventID := a.saveSyncEvent(r.Context(), eventType, nil, envelope.ConversationID, ref)
-	members := a.conversationMemberIDs(r.Context(), envelope.ConversationID)
+	members := a.conversationRecipientsForSender(r.Context(), envelope.ConversationID, envelope.SenderAccountID)
 	a.Hub.Publish(members, realtime.Event{Version: "v1", Type: eventType, ID: eventID, ConversationID: envelope.ConversationID, Payload: envelope, CreatedAt: time.Now().UTC()})
 }
 
@@ -528,6 +551,15 @@ func (a *API) conversationMemberIDs(ctx context.Context, conversationID string) 
 	members, err := a.Store.ListConversationMemberIDs(ctx, conversationID)
 	if err != nil {
 		a.warn("conversation_member_list_failed", "conversation_id", conversationID, "err", err)
+		return nil
+	}
+	return members
+}
+
+func (a *API) conversationRecipientsForSender(ctx context.Context, conversationID, senderAccountID string) []string {
+	members, err := a.Store.ConversationRecipientsForSender(ctx, conversationID, senderAccountID)
+	if err != nil {
+		a.warn("conversation_recipient_list_failed", "conversation_id", conversationID, "err", err)
 		return nil
 	}
 	return members

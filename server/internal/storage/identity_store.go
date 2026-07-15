@@ -37,7 +37,7 @@ func (s *Store) CreateOwner(ctx context.Context, input CreateOwnerInput) (Accoun
 	createdAt := nowString()
 	instanceName := strings.TrimSpace(input.InstanceName)
 	if instanceName == "" {
-		instanceName = "Private Messenger"
+		instanceName = "Veritra"
 	}
 	username := domain.NormalizeUsername(input.Username)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO instances(id, name, setup_complete, created_at, updated_at) VALUES(1, ?, 1, ?, ?)`, instanceName, createdAt, createdAt); err != nil {
@@ -148,7 +148,7 @@ func (s *Store) LoginRecord(ctx context.Context, username, deviceID string) (Log
 	err := s.db.QueryRowContext(ctx, `
 		SELECT a.id, a.username, a.password_hash, a.role, d.id, COALESCE(d.auth_secret_hash, '')
 		FROM accounts a JOIN devices d ON d.account_id = a.id
-		WHERE a.username = ? AND d.id = ? AND a.deleted_at IS NULL AND d.revoked_at IS NULL`, username, deviceID).
+		WHERE a.username = ? AND d.id = ? AND a.status = 'active' AND a.deleted_at IS NULL AND d.revoked_at IS NULL`, username, deviceID).
 		Scan(&record.AccountID, &record.Username, &record.PasswordHash, &record.Role, &record.DeviceID, &record.DeviceAuthHash)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -179,6 +179,7 @@ func (s *Store) PrincipalByTokenHash(ctx context.Context, tokenHash string) (dom
 		LEFT JOIN devices d ON d.id = s.device_id
 		WHERE s.token_hash = ?
 		  AND s.expires_at > ?
+		  AND a.status = 'active'
 		  AND a.deleted_at IS NULL
 		  AND (s.device_id IS NULL OR (d.id IS NOT NULL AND d.revoked_at IS NULL))`, tokenHash, nowString()).
 		Scan(&principal.AccountID, &principal.DeviceID, &principal.Username, &principal.Role, &expiresAt, &recentAuthAt)
@@ -195,7 +196,7 @@ func (s *Store) PrincipalByTokenHash(ctx context.Context, tokenHash string) (dom
 
 func (s *Store) ReauthenticationRecord(ctx context.Context, accountID, deviceID string) (string, string, error) {
 	var passwordHash, deviceAuthHash string
-	err := s.db.QueryRowContext(ctx, `SELECT a.password_hash, COALESCE(d.auth_secret_hash, '') FROM accounts a JOIN devices d ON d.account_id = a.id WHERE a.id = ? AND d.id = ? AND a.deleted_at IS NULL AND d.revoked_at IS NULL`, accountID, deviceID).Scan(&passwordHash, &deviceAuthHash)
+	err := s.db.QueryRowContext(ctx, `SELECT a.password_hash, COALESCE(d.auth_secret_hash, '') FROM accounts a JOIN devices d ON d.account_id = a.id WHERE a.id = ? AND d.id = ? AND a.status = 'active' AND a.deleted_at IS NULL AND d.revoked_at IS NULL`, accountID, deviceID).Scan(&passwordHash, &deviceAuthHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", "", ErrUnauthorized
 	}

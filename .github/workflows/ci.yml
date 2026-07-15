@@ -72,3 +72,21 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - run: ./scripts/license-check.sh
+
+  vulnerabilities:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.25.0"
+          cache-dependency-path: server/go.sum
+      - name: Scan Go dependencies
+        working-directory: server
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+      - name: Install pinned Rust audit tool
+        run: cargo install cargo-audit --version 0.21.2 --locked
+      - name: Scan Rust dependencies
+        working-directory: crypto/rust
+        run: cargo audit

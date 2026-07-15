@@ -1,6 +1,6 @@
 # Privacy
 
-Private Messenger defaults to:
+Veritra defaults to:
 
 - no telemetry
 - no analytics

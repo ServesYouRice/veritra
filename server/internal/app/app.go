@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"private-messenger/server/internal/config"
@@ -31,7 +32,7 @@ type App struct {
 	Config  config.Config
 	Store   *storage.Store
 	Hub     *realtime.Hub
-	Blobs   *uploads.LocalStore
+	Blobs   uploads.Store
 	Push    push.Provider
 	limiter *rateLimiter
 	metrics *httpMetrics
@@ -74,14 +75,17 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		}
 		pushProvider = provider
 	}
+	hub := realtime.NewHub()
+	metrics := newHTTPMetrics()
+	metrics.realtimeConnections = hub.ConnectionCount
 	return &App{
 		Config:  cfg,
 		Store:   store,
-		Hub:     realtime.NewHub(),
+		Hub:     hub,
 		Blobs:   blobs,
 		Push:    pushProvider,
 		limiter: limiter,
-		metrics: newHTTPMetrics(),
+		metrics: metrics,
 		Log:     logger,
 	}, nil
 }
@@ -168,18 +172,21 @@ func routeTimeouts(next http.Handler) http.Handler {
 
 // runRetentionSweeper periodically prunes expired message envelopes plus
 // sync_events and audit_events older than the retention window. The event
-// window is 30 days by default and can be overridden via
-// PRIVATE_MESSENGER_SYNC_EVENT_RETENTION_DAYS.
 func (a *App) runRetentionSweeper(ctx context.Context) {
-	retention := 30 * 24 * time.Hour
-	if raw := os.Getenv("PRIVATE_MESSENGER_SYNC_EVENT_RETENTION_DAYS"); raw != "" {
-		if days, err := strconv.Atoi(raw); err == nil && days > 0 {
-			retention = time.Duration(days) * 24 * time.Hour
-		}
+	retention := a.Config.SyncRetention
+	if retention <= 0 {
+		retention = 30 * 24 * time.Hour
 	}
 	ticker := time.NewTicker(6 * time.Hour)
 	defer ticker.Stop()
 	sweep := func() {
+		if cleaner, ok := a.Blobs.(uploads.TemporaryFileCleaner); ok {
+			if removed, err := cleaner.CleanupTemporaryFiles(ctx, time.Now().UTC().Add(-time.Hour)); err != nil {
+				a.Log.Warn("temporary_blob_cleanup_failed", "err", err)
+			} else if removed > 0 {
+				a.Log.Info("temporary_blobs_cleaned", "removed", removed)
+			}
+		}
 		removed, storageKeys, err := a.Store.PruneExpiredContent(ctx, time.Now().UTC())
 		if err != nil {
 			a.Log.Warn("expired_message_prune_failed", "err", err)
@@ -253,12 +260,14 @@ func securityHeaders(next http.Handler) http.Handler {
 
 func (a *App) requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		a.metrics.active.Add(1)
+		defer a.metrics.active.Add(-1)
 		start := time.Now()
 		requestID := newRequestID()
 		w.Header().Set("X-Request-ID", requestID)
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		a.metrics.record(rec.status)
+		a.metrics.record(r.Pattern, rec.status, time.Since(start))
 		a.Log.Info("http_request",
 			"request_id", requestID,
 			"method", r.Method,
@@ -270,38 +279,84 @@ func (a *App) requestLogger(next http.Handler) http.Handler {
 }
 
 type httpMetrics struct {
-	mu          sync.Mutex
-	total       int64
-	statusClass map[string]int64
+	total               atomic.Int64
+	active              atomic.Int64
+	statusClass         [6]atomic.Int64
+	routes              sync.Map
+	realtimeConnections func() int
+}
+
+type routeMetrics struct {
+	total          atomic.Int64
+	durationMicros atomic.Int64
+	latency        [7]atomic.Int64
+}
+
+var latencyBounds = [...]time.Duration{
+	10 * time.Millisecond,
+	50 * time.Millisecond,
+	100 * time.Millisecond,
+	500 * time.Millisecond,
+	time.Second,
+	5 * time.Second,
 }
 
 func newHTTPMetrics() *httpMetrics {
-	return &httpMetrics{statusClass: map[string]int64{}}
+	return &httpMetrics{}
 }
 
-func (m *httpMetrics) record(status int) {
-	class := strconv.Itoa(status/100) + "xx"
-	m.mu.Lock()
-	m.total++
-	m.statusClass[class]++
-	m.mu.Unlock()
+func (m *httpMetrics) record(pattern string, status int, elapsed time.Duration) {
+	m.total.Add(1)
+	class := status / 100
+	if class >= 1 && class <= 5 {
+		m.statusClass[class].Add(1)
+	}
+	if pattern == "" {
+		pattern = "unmatched"
+	}
+	value, _ := m.routes.LoadOrStore(pattern, &routeMetrics{})
+	route := value.(*routeMetrics)
+	route.total.Add(1)
+	route.durationMicros.Add(elapsed.Microseconds())
+	bucket := len(latencyBounds)
+	for i, bound := range latencyBounds {
+		if elapsed <= bound {
+			bucket = i
+			break
+		}
+	}
+	for i := bucket; i < len(route.latency); i++ {
+		route.latency[i].Add(1)
+	}
 }
 
 func (m *httpMetrics) handle(w http.ResponseWriter, r *http.Request) {
-	m.mu.Lock()
-	total := m.total
-	classes := make(map[string]int64, len(m.statusClass))
-	for class, count := range m.statusClass {
-		classes[class] = count
-	}
-	m.mu.Unlock()
-
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	_, _ = fmt.Fprint(w, "# TYPE veritra_http_requests_total counter\n")
-	_, _ = fmt.Fprintf(w, "veritra_http_requests_total %d\n", total)
+	_, _ = fmt.Fprintf(w, "veritra_http_requests_total %d\n", m.total.Load())
+	_, _ = fmt.Fprint(w, "# TYPE veritra_http_active_requests gauge\n")
+	_, _ = fmt.Fprintf(w, "veritra_http_active_requests %d\n", m.active.Load())
 	_, _ = fmt.Fprint(w, "# TYPE veritra_http_responses_total counter\n")
-	for _, class := range []string{"1xx", "2xx", "3xx", "4xx", "5xx"} {
-		_, _ = fmt.Fprintf(w, "veritra_http_responses_total{status_class=%q} %d\n", class, classes[class])
+	for class := 1; class <= 5; class++ {
+		_, _ = fmt.Fprintf(w, "veritra_http_responses_total{status_class=%q} %d\n", strconv.Itoa(class)+"xx", m.statusClass[class].Load())
+	}
+	_, _ = fmt.Fprint(w, "# TYPE veritra_http_route_requests_total counter\n")
+	_, _ = fmt.Fprint(w, "# TYPE veritra_http_request_duration_seconds histogram\n")
+	m.routes.Range(func(key, value any) bool {
+		pattern := key.(string)
+		route := value.(*routeMetrics)
+		_, _ = fmt.Fprintf(w, "veritra_http_route_requests_total{route=%q} %d\n", pattern, route.total.Load())
+		for i, bound := range latencyBounds {
+			_, _ = fmt.Fprintf(w, "veritra_http_request_duration_seconds_bucket{route=%q,le=%q} %d\n", pattern, strconv.FormatFloat(bound.Seconds(), 'f', -1, 64), route.latency[i].Load())
+		}
+		_, _ = fmt.Fprintf(w, "veritra_http_request_duration_seconds_bucket{route=%q,le=\"+Inf\"} %d\n", pattern, route.latency[len(latencyBounds)].Load())
+		_, _ = fmt.Fprintf(w, "veritra_http_request_duration_seconds_sum{route=%q} %s\n", pattern, strconv.FormatFloat(float64(route.durationMicros.Load())/1_000_000, 'f', 6, 64))
+		_, _ = fmt.Fprintf(w, "veritra_http_request_duration_seconds_count{route=%q} %d\n", pattern, route.total.Load())
+		return true
+	})
+	if m.realtimeConnections != nil {
+		_, _ = fmt.Fprint(w, "# TYPE veritra_realtime_connections gauge\n")
+		_, _ = fmt.Fprintf(w, "veritra_realtime_connections %d\n", m.realtimeConnections())
 	}
 }
 

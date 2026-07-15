@@ -650,6 +650,13 @@ func (s *Store) CreateConversation(ctx context.Context, input CreateConversation
 		}
 	}
 	for _, accountID := range input.MemberAccountIDs {
+		var blocked int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM account_blocks WHERE (blocker_account_id = ? AND blocked_account_id = ?) OR (blocker_account_id = ? AND blocked_account_id = ?)`, input.CreatedBy, accountID, accountID, input.CreatedBy).Scan(&blocked); err != nil {
+			return domain.Conversation{}, err
+		}
+		if blocked > 0 {
+			return domain.Conversation{}, ErrForbidden
+		}
 		var active int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM accounts WHERE id = ? AND deleted_at IS NULL`, accountID).Scan(&active); err != nil {
 			return domain.Conversation{}, err
@@ -710,7 +717,9 @@ func (s *Store) AddConversationMember(ctx context.Context, conversationID, accou
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO memberships(id, account_id, conversation_id, role, created_at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(account_id, conversation_id) DO UPDATE SET role = excluded.role`, id, accountID, conversationID, role, nowString())
+	// Adding an existing member must never double as a role-change operation.
+	// Role changes require ManageConversationMember's actor/target rank checks.
+	_, err = s.db.ExecContext(ctx, `INSERT INTO memberships(id, account_id, conversation_id, role, created_at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(account_id, conversation_id) DO NOTHING`, id, accountID, conversationID, role, nowString())
 	return err
 }
 
@@ -739,6 +748,13 @@ func (s *Store) ManageConversationMember(ctx context.Context, conversationID, ac
 	}
 	if activeTarget == 0 {
 		return 0, ErrNotFound
+	}
+	var blocked int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM account_blocks WHERE (blocker_account_id = ? AND blocked_account_id = ?) OR (blocker_account_id = ? AND blocked_account_id = ?)`, actorAccountID, targetAccountID, targetAccountID, actorAccountID).Scan(&blocked); err != nil {
+		return 0, err
+	}
+	if blocked > 0 {
+		return 0, ErrForbidden
 	}
 	var currentRole string
 	err = tx.QueryRowContext(ctx, `SELECT role FROM memberships WHERE conversation_id = ? AND account_id = ?`, conversationID, targetAccountID).Scan(&currentRole)
@@ -793,6 +809,7 @@ func (s *Store) ListConversationsPage(ctx context.Context, accountID string, lim
 			           SELECT COUNT(*) FROM message_envelopes me
 			           WHERE me.conversation_id = c.id
 			             AND me.sender_account_id != ?
+			             AND NOT EXISTS (SELECT 1 FROM account_blocks b WHERE b.blocker_account_id = ? AND b.blocked_account_id = me.sender_account_id)
 			             AND me.deleted_at IS NULL
 			             AND (me.expires_at IS NULL OR me.expires_at > ?)
 			             AND (rr.message_id IS NULL OR me.created_at > (
@@ -808,6 +825,7 @@ func (s *Store) ListConversationsPage(ctx context.Context, accountID string, lim
 				FROM message_envelopes
 				WHERE deleted_at IS NULL
 				  AND (expires_at IS NULL OR expires_at > ?)
+				  AND NOT EXISTS (SELECT 1 FROM account_blocks b WHERE b.blocker_account_id = ? AND b.blocked_account_id = message_envelopes.sender_account_id)
 				GROUP BY conversation_id
 			) lm ON lm.conversation_id = c.id
 			WHERE m.account_id = ?
@@ -821,7 +839,7 @@ func (s *Store) ListConversationsPage(ctx context.Context, accountID string, lim
 		))
 		ORDER BY activity_at DESC, id DESC
 		LIMIT ?`,
-		accountID, now, accountID, now, accountID, beforeID, beforeID, limit)
+		accountID, accountID, now, accountID, now, accountID, accountID, beforeID, beforeID, limit)
 	if err != nil {
 		return nil, err
 	}

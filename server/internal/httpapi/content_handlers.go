@@ -63,6 +63,10 @@ func (a *API) uploadAttachment(w http.ResponseWriter, r *http.Request, principal
 	})
 	if err != nil {
 		_ = a.Blobs.Delete(r.Context(), storageKey)
+		if errors.Is(err, storage.ErrStorageQuota) {
+			handleStorageError(w, err)
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "attachment_record_failed")
 		return
 	}
@@ -138,6 +142,10 @@ func (a *API) uploadBackup(w http.ResponseWriter, r *http.Request, principal dom
 	}
 	if err := a.Store.CreateBackupBlob(r.Context(), principal.AccountID, principal.DeviceID, storageKey, sha, size, metadata); err != nil {
 		_ = a.Blobs.Delete(r.Context(), storageKey)
+		if errors.Is(err, storage.ErrStorageQuota) {
+			handleStorageError(w, err)
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "backup_record_failed")
 		return
 	}

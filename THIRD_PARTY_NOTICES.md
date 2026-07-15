@@ -20,6 +20,11 @@ This project is licensed AGPL-3.0-or-later. Dependency licenses must be compatib
 
 Signal/libsignal, OpenMLS, Matrix/Synapse/Element, SimpleX Chat, Mattermost, Zulip, Rocket.Chat, Stoat/Revolt, PocketBase, Pion, LiveKit, Caddy, UnifiedPush, ntfy, and MiroTalk were studied for architecture, deployment, crypto, licensing, and self-hosting lessons. No source code from these projects is copied into this repository.
 
+OpenMLS dependency candidate review (2026-07-15): upstream `openmls` 0.8.1
+and its optional `openmls_rust_crypto` 0.5.1 provider declare MIT. Neither is
+currently linked or shipped. Their transitive licenses and Android/iOS build
+artifacts still require review before they may move into runtime dependencies.
+
 ## Build and Release Dependencies
 
 | Component | Use | License | Notes |

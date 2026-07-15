@@ -1,6 +1,6 @@
 # Privacy-preserving push contract
 
-Status: server Web Push provider implemented; mobile connector pending.
+Status: server Web Push provider and Android UnifiedPush connector implemented.
 
 Push is optional and is only a wake-up hint. Delivery never carries message content, sender identity, conversation identity, attachment metadata, ciphertext, or durable sync data.
 
@@ -44,9 +44,7 @@ Receiving it only schedules authenticated `/api/v1/sync/events` catch-up. Notifi
 - HTTPS endpoint/key validation, public-network-only DNS-pinned dialing, no redirects or ambient proxy, strict deadlines, bounded response reads, and terminal endpoint disablement.
 - Fixed generic wake payload and best-effort delivery after durable message commit.
 
-## Work required to enable on mobile
+## Remaining provider work
 
-- Review and pin the official Android connector dependency and license.
-- Implement connector selection, registration, rotation, message acknowledgement, and background execution.
-- Add mobile settings for distributor selection and endpoint status.
-- Complete platform entitlement and battery-behavior review before enabling by default.
+- Complete platform entitlement and battery-behavior review before enabling Android delivery by default.
+- Add optional APNs and FCM adapters only after their credential handling and privacy boundaries are reviewed.

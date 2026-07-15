@@ -32,7 +32,7 @@ func (a *API) createCall(w http.ResponseWriter, r *http.Request, principal domai
 		return
 	}
 	eventID := a.saveSyncEvent(r.Context(), "call.signaling", nil, req.ConversationID, call)
-	members := a.conversationMemberIDs(r.Context(), req.ConversationID)
+	members := a.conversationRecipientsForSender(r.Context(), req.ConversationID, principal.AccountID)
 	a.Hub.Publish(members, realtime.Event{Version: "v1", Type: "call.signaling", ID: eventID, ConversationID: req.ConversationID, Payload: call, CreatedAt: time.Now().UTC()})
 	writeJSON(w, http.StatusCreated, call)
 }
@@ -74,7 +74,7 @@ func (a *API) callSubroute(w http.ResponseWriter, r *http.Request, principal dom
 		return
 	}
 	eventID := a.saveSyncEvent(r.Context(), "call.state", nil, call.ConversationID, call)
-	members := a.conversationMemberIDs(r.Context(), call.ConversationID)
+	members := a.conversationRecipientsForSender(r.Context(), call.ConversationID, principal.AccountID)
 	a.Hub.Publish(members, realtime.Event{Version: "v1", Type: "call.state", ID: eventID, ConversationID: call.ConversationID, Payload: call, CreatedAt: time.Now().UTC()})
 	writeJSON(w, http.StatusOK, call)
 }

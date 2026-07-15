@@ -4,7 +4,7 @@
 - Implement and independently review the requirements in `crypto-protocol.md`.
 - Add client decrypt/render support after production key storage exists.
 - Store future MLS private keys through the platform keystore integration. The current bounded ciphertext cache, cursor, and encrypted outbox already use platform encrypted storage.
-- Add QR scanning/rendering and production key-continuity checks to the current manual device-link UX.
+- Complete production cryptographic key-continuity checks for the implemented QR device-link flow.
 - Add encrypted backup creation and restore UX on mobile.
 - Add optional APNs/FCM adapters only after provider credential and privacy review.
 - Add client-side local message search.

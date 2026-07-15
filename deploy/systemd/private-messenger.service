@@ -1,5 +1,5 @@
 [Unit]
-Description=Private Messenger server
+Description=Veritra server
 After=network-online.target
 Wants=network-online.target
 

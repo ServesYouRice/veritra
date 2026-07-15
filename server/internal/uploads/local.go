@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"private-messenger/server/internal/domain"
 )
@@ -20,6 +22,36 @@ func NewLocalStore(root string) (*LocalStore, error) {
 		return nil, err
 	}
 	return &LocalStore{root: root}, nil
+}
+
+// CleanupTemporaryFiles removes stale partial uploads left by interrupted
+// writes while retaining fresh files that may still be in progress.
+func (s *LocalStore) CleanupTemporaryFiles(ctx context.Context, olderThan time.Time) (int, error) {
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return removed, err
+		}
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".tmp") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return removed, err
+		}
+		if !info.ModTime().Before(olderThan) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(s.root, entry.Name())); err != nil && !os.IsNotExist(err) {
+			return removed, err
+		}
+		removed++
+	}
+	return removed, nil
 }
 
 func (s *LocalStore) Check(ctx context.Context) error {
@@ -81,7 +113,7 @@ func (s *LocalStore) PutEncryptedBlob(ctx context.Context, r io.Reader) (storage
 	return id, hex.EncodeToString(hash.Sum(nil)), written, nil
 }
 
-func (s *LocalStore) Open(storageKey string) (*os.File, error) {
+func (s *LocalStore) Open(storageKey string) (io.ReadCloser, error) {
 	return os.Open(filepath.Join(s.root, filepath.Base(storageKey)))
 }
 

@@ -134,7 +134,7 @@ func (s *Store) ListReactions(ctx context.Context, messageID, accountID string) 
 	if !member {
 		return nil, ErrNotMember
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, message_id, account_id, reaction_ciphertext, created_at FROM reactions WHERE message_id = ? ORDER BY created_at, id`, messageID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, message_id, account_id, reaction_ciphertext, created_at FROM reactions WHERE message_id = ? AND NOT EXISTS (SELECT 1 FROM account_blocks b WHERE b.blocker_account_id = ? AND b.blocked_account_id = reactions.account_id) ORDER BY created_at, id`, messageID, accountID)
 	if err != nil {
 		return nil, err
 	}
@@ -190,9 +190,10 @@ func (s *Store) MarkRead(ctx context.Context, conversationID, accountID, message
 		ON CONFLICT(account_id, conversation_id) DO UPDATE SET
 			message_id = excluded.message_id,
 			read_at = excluded.read_at
-		WHERE excluded.message_id != read_receipts.message_id
-		  AND (SELECT created_at FROM message_envelopes WHERE id = excluded.message_id) >=
-		      (SELECT created_at FROM message_envelopes WHERE id = read_receipts.message_id)`,
+		WHERE read_receipts.message_id IS NULL
+		   OR (excluded.message_id != read_receipts.message_id
+		       AND (SELECT created_at FROM message_envelopes WHERE id = excluded.message_id) >=
+		           (SELECT created_at FROM message_envelopes WHERE id = read_receipts.message_id))`,
 		accountID, conversationID, messageID, nowString())
 	return err
 }
@@ -238,8 +239,10 @@ func (s *Store) PushTargetsForConversation(ctx context.Context, conversationID, 
 		FROM push_subscriptions ps
 		JOIN memberships m ON m.account_id = ps.account_id
 		WHERE m.conversation_id = ? AND ps.account_id <> ? AND ps.provider = 'webpush' AND ps.disabled_at IS NULL
+		  AND NOT EXISTS (SELECT 1 FROM account_blocks b WHERE b.blocker_account_id = ps.account_id AND b.blocked_account_id = ?)
+		  AND NOT EXISTS (SELECT 1 FROM conversation_notification_preferences p WHERE p.account_id = ps.account_id AND p.conversation_id = ? AND p.muted = 1)
 		ORDER BY ps.id
-		LIMIT 500`, conversationID, excludeAccountID)
+		LIMIT 500`, conversationID, excludeAccountID, excludeAccountID, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -312,7 +315,7 @@ func (s *Store) ListCallSessions(ctx context.Context, conversationID, accountID 
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, conversation_id, created_by, state, metadata_json, created_at, ended_at, expires_at FROM call_sessions WHERE conversation_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`, conversationID, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, conversation_id, created_by, state, metadata_json, created_at, ended_at, expires_at FROM call_sessions WHERE conversation_id = ? AND NOT EXISTS (SELECT 1 FROM account_blocks b WHERE b.blocker_account_id = ? AND b.blocked_account_id = call_sessions.created_by) ORDER BY created_at DESC, id DESC LIMIT ?`, conversationID, accountID, limit)
 	if err != nil {
 		return nil, err
 	}

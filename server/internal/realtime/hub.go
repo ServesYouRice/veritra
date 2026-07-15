@@ -39,6 +39,14 @@ func NewHub() *Hub {
 	return &Hub{subscribers: map[string]map[*Client]struct{}{}}
 }
 
+// ConnectionCount returns only an aggregate operational gauge. It never
+// exposes account, device, or network identifiers.
+func (h *Hub) ConnectionCount() int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.total
+}
+
 func (h *Hub) Register(accountID, deviceID, remoteIP string) (*Client, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -153,14 +161,15 @@ func (h *Hub) Publish(accountIDs []string, event Event) {
 		return
 	}
 	h.mu.RLock()
-	defer h.mu.RUnlock()
+	clients := make([]*Client, 0)
 	for _, accountID := range accountIDs {
 		for client := range h.subscribers[accountID] {
-			select {
-			case client.send <- payload:
-			default:
-			}
+			clients = append(clients, client)
 		}
+	}
+	h.mu.RUnlock()
+	for _, client := range clients {
+		client.TrySend(payload)
 	}
 }
 
@@ -170,6 +179,20 @@ type Client struct {
 	remoteIP  string
 	send      chan []byte
 	closeOnce sync.Once
+	mu        sync.RWMutex
+	closed    bool
+}
+
+func (c *Client) TrySend(payload []byte) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.closed {
+		return
+	}
+	select {
+	case c.send <- payload:
+	default:
+	}
 }
 
 func (c *Client) Send() <-chan []byte {
@@ -178,6 +201,9 @@ func (c *Client) Send() <-chan []byte {
 
 func (c *Client) Close() {
 	c.closeOnce.Do(func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.closed = true
 		close(c.send)
 	})
 }

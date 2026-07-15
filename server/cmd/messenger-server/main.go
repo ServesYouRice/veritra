@@ -27,6 +27,11 @@ import (
 	"private-messenger/server/migrations"
 )
 
+var (
+	version = "dev"
+	commit  = "unknown"
+)
+
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -94,6 +99,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return restore(cfg, fs.Args(), stdout)
 	case "reset-owner-password":
 		return resetOwnerPassword(ctx, cfg, recoveryAccount, passwordFile, stdout)
+	case "version":
+		fmt.Fprintf(stdout, "veritra %s (%s)\n", version, commit)
+		return nil
 	case "help", "-h", "--help":
 		usage(stdout)
 		return nil
@@ -147,9 +155,27 @@ func resetOwnerPassword(ctx context.Context, cfg config.Config, username, passwo
 }
 
 func serve(ctx context.Context, cfg config.Config) error {
+	if err := cfg.ValidateServe(); err != nil {
+		return err
+	}
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
+	level := slog.LevelInfo
+	switch cfg.LogLevel {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	}
+	options := &slog.HandlerOptions{Level: level}
+	var handler slog.Handler = slog.NewTextHandler(os.Stdout, options)
+	if cfg.LogFormat == "json" {
+		handler = slog.NewJSONHandler(os.Stdout, options)
+	}
+	logger := slog.New(handler)
+	logger.Info("security_posture", "version", version, "commit", commit, "environment", cfg.Environment, "trusted_proxy_networks", len(cfg.TrustedProxies), "metrics_enabled", cfg.EnableMetrics, "log_format", cfg.LogFormat)
 	application, err := app.New(ctx, cfg, logger)
 	if err != nil {
 		return err
@@ -243,7 +269,7 @@ func healthcheck(cfg config.Config) error {
 }
 
 func backup(ctx context.Context, cfg config.Config, args []string, stdout io.Writer) error {
-	out := filepath.Join(cfg.DataDir, "backups", "private-messenger-"+time.Now().UTC().Format("20060102T150405Z"))
+	out := filepath.Join(cfg.DataDir, "backups", "veritra-"+time.Now().UTC().Format("20060102T150405Z"))
 	if len(args) > 0 {
 		out = args[0]
 	}
@@ -556,6 +582,6 @@ func copyFile(src, dst string, mode os.FileMode) error {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "Private Messenger server")
-	fmt.Fprintln(w, "commands: serve, init, migrate, backup, restore, doctor, healthcheck, reset-owner-password")
+	fmt.Fprintln(w, "Veritra server")
+	fmt.Fprintln(w, "commands: serve, init, migrate, backup, restore, doctor, healthcheck, reset-owner-password, version")
 }

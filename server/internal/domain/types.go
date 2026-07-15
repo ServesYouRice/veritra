@@ -45,6 +45,32 @@ type Account struct {
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 }
 
+type AccountBlock struct {
+	AccountID string    `json:"account_id"`
+	Username  string    `json:"username,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type AdminAccount struct {
+	ID              string    `json:"id"`
+	Username        string    `json:"username"`
+	Role            string    `json:"role"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"created_at"`
+	DeviceCount     int64     `json:"device_count"`
+	AttachmentCount int64     `json:"attachment_count"`
+	BackupCount     int64     `json:"backup_count"`
+	StorageBytes    int64     `json:"storage_bytes"`
+}
+
+type AdminAuditEvent struct {
+	ID             int64           `json:"id"`
+	ActorAccountID *string         `json:"actor_account_id,omitempty"`
+	EventType      string          `json:"event_type"`
+	Metadata       json.RawMessage `json:"metadata"`
+	CreatedAt      time.Time       `json:"created_at"`
+}
+
 type Device struct {
 	ID         string     `json:"id"`
 	AccountID  string     `json:"account_id"`
