@@ -19,6 +19,10 @@ Open `preview.html` in a browser to see the full family.
 | `veritra-favicon.svg` | Small-size variant: heavier strokes, no weave gaps (invisible below ~24 px). |
 | `veritra-wordmark.svg` | Horizontal lockup, dark text, for light backgrounds. |
 | `veritra-wordmark-dark.svg` | Horizontal lockup, light text, for dark backgrounds. |
+| `exports/veritra-mark-{512,192}.png` | Transparent raster mark for contexts that can't take SVG. |
+| `exports/veritra-app-icon-{1024,512}.png` | App-store / launcher raster icons. |
+| `exports/veritra-favicon-{48,32,16}.png` | Raster favicons from the small-size variant. |
+| `exports/favicon.ico` | Multi-size ICO (16/32/48, PNG-encoded entries). |
 
 ## Palette
 
@@ -43,3 +47,13 @@ Open `preview.html` in a browser to see the full family.
   (zero-width boxes don't paint).
 - Below ~24 px use `veritra-favicon.svg`; the weave gaps close up and the
   thin strokes alias badly at those sizes.
+- PNG exports were rasterized with headless Chromium (`--screenshot` with
+  `--default-background-color=00000000` for large sizes; a canvas
+  `drawImage` + `toDataURL` pass for 48/32/16, since tiny headless windows
+  don't paint). The ICO is a plain container around the PNG entries.
+
+## Where the mark is used
+
+- `server/websetup/index.html` — the `/setup` page badge and its data-URI
+  SVG favicon, plus the page accent palette.
+- Repository `README.md` — wordmark via a `<picture>` light/dark switch.
