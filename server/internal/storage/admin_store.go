@@ -53,11 +53,15 @@ func (s *Store) SetAccountStatus(ctx context.Context, actorAccountID, targetAcco
 	defer tx.Rollback()
 	var actorRole, targetRole string
 	if err := tx.QueryRowContext(ctx, `SELECT role FROM accounts WHERE id = ? AND status = 'active' AND deleted_at IS NULL`, actorAccountID).Scan(&actorRole); err != nil {
-		if errors.Is(err, sql.ErrNoRows) { return ErrForbidden }
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrForbidden
+		}
 		return err
 	}
 	if err := tx.QueryRowContext(ctx, `SELECT role FROM accounts WHERE id = ? AND deleted_at IS NULL`, targetAccountID).Scan(&targetRole); err != nil {
-		if errors.Is(err, sql.ErrNoRows) { return ErrNotFound }
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
 		return err
 	}
 	if !domain.CanManageInvites(actorRole) || domain.RoleRank(actorRole) <= domain.RoleRank(targetRole) {
@@ -67,31 +71,47 @@ func (s *Store) SetAccountStatus(ctx context.Context, actorAccountID, targetAcco
 		return err
 	}
 	if status == "suspended" {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE account_id = ?`, targetAccountID); err != nil { return err }
-		if _, err := tx.ExecContext(ctx, `UPDATE push_subscriptions SET disabled_at = COALESCE(disabled_at, ?) WHERE account_id = ?`, nowString(), targetAccountID); err != nil { return err }
+		if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE account_id = ?`, targetAccountID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE push_subscriptions SET disabled_at = COALESCE(disabled_at, ?) WHERE account_id = ?`, nowString(), targetAccountID); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
 
 func (s *Store) AdminRevokeInvite(ctx context.Context, inviteID string) error {
 	result, err := s.db.ExecContext(ctx, `UPDATE invites SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`, nowString(), inviteID)
-	if err != nil { return err }
-	if rows, _ := result.RowsAffected(); rows == 0 { return ErrNotFound }
+	if err != nil {
+		return err
+	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return ErrNotFound
+	}
 	return nil
 }
 
 func (s *Store) ListAdminAuditEvents(ctx context.Context, afterID int64, limit int) ([]domain.AdminAuditEvent, error) {
-	if limit <= 0 || limit > 200 { limit = 100 }
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT id, actor_account_id, event_type, metadata_json, created_at FROM audit_events WHERE id > ? ORDER BY id LIMIT ?`, afterID, limit)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	events := make([]domain.AdminAuditEvent, 0)
 	for rows.Next() {
 		var event domain.AdminAuditEvent
 		var actor sql.NullString
 		var metadata, created string
-		if err := rows.Scan(&event.ID, &actor, &event.EventType, &metadata, &created); err != nil { return nil, err }
-		if actor.Valid { event.ActorAccountID = &actor.String }
+		if err := rows.Scan(&event.ID, &actor, &event.EventType, &metadata, &created); err != nil {
+			return nil, err
+		}
+		if actor.Valid {
+			event.ActorAccountID = &actor.String
+		}
 		event.Metadata = []byte(metadata)
 		event.CreatedAt = parseTime(created)
 		events = append(events, event)

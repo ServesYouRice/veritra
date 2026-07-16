@@ -26,4 +26,3 @@ func TestHTTPMetricsExposeBoundedOperationalSignals(t *testing.T) {
 		}
 	}
 }
-
