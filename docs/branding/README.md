@@ -14,7 +14,7 @@ dark backgrounds.
 | `concept-03-verified-v.svg` | Verified V | The V's right arm doubles as a checkmark — "veritas", verified identity. |
 | `concept-04-sealed-envelope.svg` | Sealed Envelope | Envelope fold lines draw the V, sealed with a padlock: the server only stores sealed envelopes. |
 | `concept-05-app-icon.svg` | App Icon V | Bold geometric V on a dark squircle, ready as a mobile app icon. |
-| `concept-06-chainlink-v.svg` | Chain Link V | Two interlocked links form the V — an end-to-end connection. |
+| `concept-06-chainlink-v.svg` | Chain Link V | Two interlocked links form the V — an end-to-end connection. Expanded into a full mark family in [`concept-06/`](concept-06/README.md). |
 | `concept-07-fingerprint-v.svg` | Fingerprint V | Nested chevrons with ridge breaks: identity and key verification. |
 | `concept-08-key-v.svg` | Key V | A key whose bow carries the V — you hold the keys, not the server. |
 | `concept-09-paper-plane.svg` | Paper Plane | Flat-facet folded plane: light, fast, self-hosted delivery. |
