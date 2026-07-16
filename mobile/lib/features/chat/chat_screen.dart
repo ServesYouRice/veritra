@@ -38,6 +38,7 @@ class _ChatScreenState extends State<ChatScreen> {
             .where((item) => item.id == widget.conversationId)
             .firstOrNull;
         final messages = widget.state.messagesFor(widget.conversationId);
+        final pending = widget.state.pendingFor(widget.conversationId);
         return Scaffold(
           appBar: AppBar(
             title: conversation == null
@@ -85,7 +86,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         title: 'No conversation selected',
                         message: 'Pick a conversation from the chat list.',
                       )
-                    : _messagesPane(conversation.id, messages),
+                    : _messagesPane(conversation.id, messages, pending),
               ),
               _Composer(
                 enabled: conversation != null,
@@ -105,10 +106,11 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _messagesPane(
     String conversationId,
     List<ReceivedMessageEnvelope> messages,
+    List<MessageEnvelope> pending,
   ) {
     final loading = widget.state.isLoadingMessages(conversationId);
     final loadError = widget.state.messageLoadError(conversationId);
-    if (messages.isEmpty) {
+    if (messages.isEmpty && pending.isEmpty) {
       if (loading) {
         return const Center(child: CircularProgressIndicator());
       }
@@ -139,7 +141,11 @@ class _ChatScreenState extends State<ChatScreen> {
             ],
           ),
         Expanded(
-          child: _MessageList(state: widget.state, messages: messages),
+          child: _MessageList(
+            state: widget.state,
+            messages: messages,
+            pending: pending,
+          ),
         ),
       ],
     );
@@ -213,10 +219,15 @@ class _MessageLoadError extends StatelessWidget {
 }
 
 class _MessageList extends StatelessWidget {
-  const _MessageList({required this.state, required this.messages});
+  const _MessageList({
+    required this.state,
+    required this.messages,
+    required this.pending,
+  });
 
   final AppState state;
   final List<ReceivedMessageEnvelope> messages;
+  final List<MessageEnvelope> pending;
 
   @override
   Widget build(BuildContext context) {
@@ -226,11 +237,21 @@ class _MessageList extends StatelessWidget {
     return ListView.builder(
       reverse: true,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
-      itemCount: messages.length,
+      itemCount: pending.length + messages.length,
       itemBuilder: (context, index) {
-        final message = messages[index];
+        if (index < pending.length) {
+          final envelope = pending[pending.length - 1 - index];
+          return _PendingMessageBubble(
+            state: state.outboxState(envelope.idempotencyKey),
+            onRetry: () => state.retryEnvelope(envelope.idempotencyKey),
+          );
+        }
+        final messageIndex = index - pending.length;
+        final message = messages[messageIndex];
         final mine = message.senderAccountId == state.session?.accountId;
-        final older = index + 1 < messages.length ? messages[index + 1] : null;
+        final older = messageIndex + 1 < messages.length
+            ? messages[messageIndex + 1]
+            : null;
         final showDay = older == null ||
             formatDate(context, older.createdAt) !=
                 formatDate(context, message.createdAt);
@@ -242,6 +263,59 @@ class _MessageList extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+class _PendingMessageBubble extends StatelessWidget {
+  const _PendingMessageBubble({required this.state, required this.onRetry});
+
+  final OutboxDeliveryState state;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final sending = state == OutboxDeliveryState.sending;
+    final theme = Theme.of(context);
+    return Semantics(
+      liveRegion: true,
+      label: sending
+          ? 'Encrypted message sending'
+          : 'Encrypted message failed to send. Retry available.',
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: Card(
+          margin: const EdgeInsets.symmetric(vertical: 3),
+          color: sending
+              ? theme.colorScheme.primaryContainer
+              : theme.colorScheme.errorContainer,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                if (sending)
+                  const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
+                  Icon(
+                    Icons.error_outline,
+                    size: 18,
+                    color: theme.colorScheme.onErrorContainer,
+                  ),
+                const SizedBox(width: 8),
+                Text(sending ? 'Sending encrypted message' : 'Send failed'),
+                if (!sending) ...<Widget>[
+                  const SizedBox(width: 4),
+                  TextButton(onPressed: onRetry, child: const Text('Retry')),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

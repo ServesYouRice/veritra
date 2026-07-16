@@ -45,6 +45,9 @@ class AppState extends ChangeNotifier {
   List<Invite> invites = <Invite>[];
   Map<String, List<ReceivedMessageEnvelope>> messagesByConversation =
       <String, List<ReceivedMessageEnvelope>>{};
+  List<MessageEnvelope> pendingOutbox = <MessageEnvelope>[];
+  final Map<String, OutboxDeliveryState> _outboxStates =
+      <String, OutboxDeliveryState>{};
   String? selectedConversationId;
   DeviceLink? activeDeviceLink;
   DeviceLinkClaim? pendingDeviceLinkClaim;
@@ -83,6 +86,13 @@ class AppState extends ChangeNotifier {
       messagesByConversation[conversationId] ??
       const <ReceivedMessageEnvelope>[];
 
+  List<MessageEnvelope> pendingFor(String conversationId) => pendingOutbox
+      .where((envelope) => envelope.conversationId == conversationId)
+      .toList(growable: false);
+
+  OutboxDeliveryState outboxState(String idempotencyKey) =>
+      _outboxStates[idempotencyKey] ?? OutboxDeliveryState.failed;
+
   /// Best-effort probe of the instance's setup state so the connect screen
   /// can steer users to the right mode. Returns null when the instance is
   /// unreachable or answers unexpectedly; never sets [error] or [busy].
@@ -113,6 +123,10 @@ class AppState extends ChangeNotifier {
       }
       session = restored;
       _replaceApi(restored.baseUrl);
+      pendingOutbox = await localStore.pendingEnvelopes();
+      for (final envelope in pendingOutbox) {
+        _outboxStates[envelope.idempotencyKey] = OutboxDeliveryState.failed;
+      }
       _lastSyncEventId = await localStore.loadSyncCursor();
       final cached = await localStore.loadSnapshot();
       if (cached != null) {
@@ -567,9 +581,42 @@ class AppState extends ChangeNotifier {
       }
       final encrypted = await cryptoService.encrypt(conversation.id, plaintext);
       await localStore.enqueueEnvelope(encrypted);
-      await client.sendEnvelope(current.token, encrypted);
-      await localStore.removePendingEnvelope(encrypted.idempotencyKey);
+      pendingOutbox = <MessageEnvelope>[...pendingOutbox, encrypted];
+      _outboxStates[encrypted.idempotencyKey] = OutboxDeliveryState.sending;
+      notifyListeners();
+      try {
+        await client.sendEnvelope(current.token, encrypted);
+        await _removeFromOutbox(encrypted);
+      } catch (_) {
+        _outboxStates[encrypted.idempotencyKey] = OutboxDeliveryState.failed;
+        notifyListeners();
+        rethrow;
+      }
       await _fetchMessages(conversationId);
+    });
+  }
+
+  Future<void> retryEnvelope(String idempotencyKey) async {
+    await _run(() async {
+      final current = session;
+      final client = api;
+      final envelope = pendingOutbox
+          .where((item) => item.idempotencyKey == idempotencyKey)
+          .firstOrNull;
+      if (current == null || client == null || envelope == null) {
+        return;
+      }
+      _outboxStates[idempotencyKey] = OutboxDeliveryState.sending;
+      notifyListeners();
+      try {
+        await client.sendEnvelope(current.token, envelope);
+        await _removeFromOutbox(envelope);
+        await _fetchMessages(envelope.conversationId);
+      } catch (_) {
+        _outboxStates[idempotencyKey] = OutboxDeliveryState.failed;
+        notifyListeners();
+        rethrow;
+      }
     });
   }
 
@@ -976,6 +1023,8 @@ class AppState extends ChangeNotifier {
     devicesLoaded = false;
     devices = <Device>[];
     messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
+    pendingOutbox = <MessageEnvelope>[];
+    _outboxStates.clear();
     _loadingMessageConversations.clear();
     _messageLoadErrors.clear();
     selectedConversationId = null;
@@ -1004,14 +1053,33 @@ class AppState extends ChangeNotifier {
     if (current == null || client == null) {
       return;
     }
+    pendingOutbox = await localStore.pendingEnvelopes();
+    for (final envelope in pendingOutbox) {
+      _outboxStates[envelope.idempotencyKey] = OutboxDeliveryState.failed;
+    }
     try {
-      for (final envelope in await localStore.pendingEnvelopes()) {
+      for (final envelope in List<MessageEnvelope>.from(pendingOutbox)) {
+        _outboxStates[envelope.idempotencyKey] = OutboxDeliveryState.sending;
+        notifyListeners();
         await client.sendEnvelope(current.token, envelope);
-        await localStore.removePendingEnvelope(envelope.idempotencyKey);
+        await _removeFromOutbox(envelope);
       }
     } catch (_) {
       // The encrypted envelopes remain queued for the next reconnect.
+      for (final envelope in pendingOutbox) {
+        _outboxStates[envelope.idempotencyKey] = OutboxDeliveryState.failed;
+      }
+      notifyListeners();
     }
+  }
+
+  Future<void> _removeFromOutbox(MessageEnvelope envelope) async {
+    await localStore.removePendingEnvelope(envelope.idempotencyKey);
+    pendingOutbox = pendingOutbox
+        .where((item) => item.idempotencyKey != envelope.idempotencyKey)
+        .toList(growable: false);
+    _outboxStates.remove(envelope.idempotencyKey);
+    notifyListeners();
   }
 
   void _replaceApi(String baseUrl) {

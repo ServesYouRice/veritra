@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+enum OutboxDeliveryState { sending, failed }
+
 class Conversation {
   Conversation({
     required this.id,

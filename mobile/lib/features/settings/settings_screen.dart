@@ -8,6 +8,7 @@ import '../../core/models.dart';
 import '../../ui/format.dart';
 import 'device_link_screen.dart';
 import 'invite_screen.dart';
+import 'profile_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({required this.state, super.key});
@@ -43,7 +44,14 @@ class SettingsScreen extends StatelessWidget {
                       ListTile(
                         leading: const Icon(Icons.account_circle_outlined),
                         title: Text('@${session!.username!}'),
-                        subtitle: const Text('Signed in on this instance'),
+                        subtitle:
+                            const Text('View account and device identity'),
+                        trailing: const Icon(Icons.chevron_right_outlined),
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => ProfileScreen(state: state),
+                          ),
+                        ),
                       ),
                       const Divider(),
                     ],

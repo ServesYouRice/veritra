@@ -29,10 +29,10 @@ Scope: the Flutter client (`mobile/lib/**`) and the server's `/setup` page. Note
 | UI-12 | Accessibility: unlabeled icon-only controls, no semantics on brand/avatars | Medium | No | **Partial** — bubble sender/time semantics; decorative avatars excluded across chat list, communities, and conversation details; all section headers marked `header: true`; chat-list rows merged into one node with an unread-count label. Full manual TalkBack/VoiceOver pass still recommended before launch |
 | UI-13 | Message metadata line leaks raw protocol string into the bubble | Low | No | **Fixed** — protocol dropped from meta line |
 | UI-14 | Empty password/username accepted by UI, rejected opaquely by server | Medium | No | **Fixed** — with UI-2 |
-| UI-15 | No confirmation that a message failed to send vs. sent | Medium | No | Open — blocked on real sending (LOG-0) |
+| UI-15 | No confirmation that a message failed to send vs. sent | Medium | No | **Fixed at the encrypted outbox boundary** — queued envelopes render durable sending/failed state, survive restart, and retry with their original idempotency key; production sending remains fail-closed on LOG-0 |
 | UI-16 | `/setup` page is a dead-end notice with no actionable next step | Low | No | **Fixed** — notice gives the safe stop condition, exact prerequisite, and warns against placeholder/test keys |
 | UI-17 | Search bar has no clear button; stale results linger between queries | Low | No | **Fixed** — clear (✕) button resets query + results |
-| UI-18 | No account/profile screen; account is an ID string only | Medium | No | **Partial** — username now stored in session and shown in Settings; full profile surface still open |
+| UI-18 | No account/profile screen; account is an ID string only | Medium | No | **Fixed** — Settings links to a profile surface with username, instance role, copyable account ID, and current-device identity; unsupported editing and safety-number verification are explicit |
 | UI-19 | Timestamps use device-local parsing with silent failure risk | Low | No | **Fixed** — `tryParse` with epoch sentinel; one bad row can't blank a list |
 | UI-20 | Retention radio has no "custom" and no confirmation of destructive change | Low | No | **Fixed** — confirmation dialog stating existing messages keep their timer |
 
@@ -220,11 +220,11 @@ Ranked by user impact × likelihood-of-being-hit, assuming the crypto blocker (L
 4. ~~**UI-3 — Setup-status-aware connect screen.**~~ **Done.** Fixed the wrong default mode that misdirected every joiner.
 5. ~~**UI-9 — QR device linking.**~~ **Done.** QR rendering, camera scanning, and iOS camera permission copy are present; manual dual-code entry remains as a fallback.
 6. ~~**UI-8 — Chat list recency ordering + unread badges.**~~ **Done (ordering + unread).** Home screen is navigable at scale; message previews still wait on decryption.
-7. **UI-18 — Identity/profile surface + showing usernames** (pairs with UI-6). Username now shown in Settings; full profile surface still open.
+7. **UI-18 — Identity/profile surface + showing usernames** (pairs with UI-6). Fixed with the reachable profile identity surface; cryptographic verification stays release-gated.
 8. ~~**UI-4 — Real loading states.**~~ **Done.** Per-list first-load spinners; UI-5's error/retry was already shipped.
 9. **UI-12 — Accessibility pass** before any public/App Store release. Semantics groundwork in place; a manual TalkBack/VoiceOver pass remains.
 10. ~~**UI-7 — Persist or list invites/communities**~~ **Done.** Created codes survive restarts via the list endpoints.
 
 Lower priority polish: UI-10, UI-11, UI-13, UI-17, UI-19, UI-20.
 
-Remaining open work is gated on crypto integration (LOG-0) — message previews (UI-8), send/failed status (UI-15), attachments (UI-11) — or is profile scope (UI-18's profile surface).
+Remaining open UI work is gated on crypto integration (LOG-0) — message previews (UI-8), send/failed status (UI-15), and attachments (UI-11).
