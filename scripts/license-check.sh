@@ -18,6 +18,7 @@ check_notice "modernc.org/sqlite"
 check_notice "golang.org/x/crypto"
 
 if grep -Eq '^openmls[[:space:]]*=' "$ROOT/crypto/rust/Cargo.toml"; then
+  check_notice "aes-gcm"
   check_notice "openmls"
   check_notice "openmls_basic_credential"
   check_notice "openmls_rust_crypto"

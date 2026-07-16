@@ -5,8 +5,8 @@ pins OpenMLS 0.8.1 and contains a tested native core for signed key packages,
 group creation/join, and authenticated application messages. It also exposes a
 versioned C ABI scaffold and Rust-side credential/key-package boundary types.
 All operational ABI calls still return `PM_CRYPTO_UNAVAILABLE` without reading
-their arguments, so mobile or server code cannot treat the in-memory core as
-production crypto before durable platform state is reviewed.
+their arguments, so mobile or server code cannot treat the native core as
+production crypto before durable platform state is wired and reviewed.
 
 The public header is `rust/include/veritra_crypto.h`. ABI version 1 reserves:
 
@@ -25,7 +25,8 @@ message content or cryptographic material is enabled.
 Before production message sending:
 
 - implement reviewed ownership, allocation, and state-handle semantics behind the ABI
-- replace in-memory provider state with atomic platform-protected persistence
+- wrap the encrypted state key with Android Keystore and iOS Keychain and
+  atomically commit the versioned state envelope, rollback counter, and cursor
 - add MLS test vectors
 - add mobile secure key storage
 - update `docs/crypto-research.md`

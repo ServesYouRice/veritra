@@ -14,6 +14,7 @@ This project is licensed AGPL-3.0-or-later. Dependency licenses must be compatib
 | `flutter_secure_storage` | Platform secure storage for mobile sessions | BSD-3-Clause | Direct Flutter dependency; platform packages are pulled transitively by `flutter pub get`. |
 | `mobile_scanner` 5.2.3 | Device-link QR scanning | BSD-3-Clause | Direct Flutter dependency. Android uses ML Kit, iOS uses the system Vision framework, and web uses ZXing; include their applicable notices/terms in release review. |
 | `web` 1.1.1 | Browser API bindings used by `mobile_scanner` | BSD-3-Clause | Transitive Flutter dependency pinned in `mobile/pubspec.lock`. |
+| `aes-gcm` 0.10.3 | Authenticated encryption for platform-wrapped MLS state envelopes | Apache-2.0 OR MIT | Exact version pinned; uses a platform-unwrapped 256-bit state key and does not replace MLS primitives. |
 | `openmls` 0.8.1 | MLS 1.0 group state and message processing | MIT | Exact version pinned in `crypto/rust/Cargo.lock`; sensitive debug features are disabled. |
 | `openmls_basic_credential` 0.5.0 | Basic MLS credential signing keys | MIT | Exact version pinned; used to bind the application device identity to MLS credentials. |
 | `openmls_rust_crypto` 0.5.1 | RustCrypto provider for OpenMLS | MIT | Exact version pinned; native provider core only, pending platform-secure persistence review. |

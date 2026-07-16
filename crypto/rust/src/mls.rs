@@ -1,8 +1,8 @@
 //! OpenMLS core operations.
 //!
 //! This module is intentionally not exposed through the C ABI yet. It proves
-//! the selected library and protocol flow while the durable encrypted storage,
-//! platform key wrapping, and ownership semantics are still under review.
+//! the selected library and protocol flow while platform key wrapping and ABI
+//! ownership semantics are still under review.
 
 use openmls::prelude::*;
 use openmls::treesync::LeafNodeParameters;
@@ -10,6 +10,8 @@ use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
 use openmls_traits::OpenMlsProvider;
 use tls_codec::{Deserialize as TlsDeserializeTrait, Serialize as TlsSerializeTrait};
+
+mod state;
 
 const CIPHERSUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
 const MAX_ID_BYTES: usize = 128;
@@ -25,17 +27,22 @@ pub enum MlsError {
     GroupOperation,
     InvalidMessage,
     UnexpectedMessage,
+    InvalidState,
+    Rollback,
 }
 
 /// One MLS device identity and its private provider state.
 ///
-/// The provider currently uses OpenMLS memory storage. Callers must not treat
-/// this as restart-safe; the production ABI remains disabled until the same
-/// state is committed atomically through platform-protected storage.
+/// Provider state can be exported only as an authenticated encrypted envelope.
+/// The production ABI remains disabled until platforms atomically commit that
+/// envelope, its rollback counter, and the sync cursor under Keystore/Keychain
+/// protection.
 pub struct MlsDevice {
     provider: OpenMlsRustCrypto,
     signer: SignatureKeyPair,
     credential: CredentialWithKey,
+    account_id: Vec<u8>,
+    device_id: Vec<u8>,
 }
 
 impl MlsDevice {
@@ -55,6 +62,8 @@ impl MlsDevice {
             provider,
             signer,
             credential,
+            account_id: account_id.to_vec(),
+            device_id: device_id.to_vec(),
         })
     }
 
@@ -85,6 +94,15 @@ impl MlsDevice {
             self.credential.clone(),
         )
         .map_err(|_| MlsError::GroupOperation)
+    }
+
+    pub fn load_group(&self, group_id: &[u8]) -> Result<MlsGroup, MlsError> {
+        if group_id.is_empty() || group_id.len() > MAX_ID_BYTES {
+            return Err(MlsError::InvalidIdentity);
+        }
+        MlsGroup::load(self.provider.storage(), &GroupId::from_slice(group_id))
+            .map_err(|_| MlsError::Storage)?
+            .ok_or(MlsError::InvalidState)
     }
 
     pub fn add_member(

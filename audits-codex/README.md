@@ -46,6 +46,13 @@ Complete all of the following before a production release:
 Until every item is complete, retain `PM_CRYPTO_UNAVAILABLE`, the fail-closed
 crypto service, and the release-readiness block.
 
+Current implementation note (2026-07-16): exact OpenMLS dependencies are
+license-reviewed and pinned. The Rust core covers signed key packages, group
+create/add/join/update/remove, authenticated messages, and identity-bound
+encrypted provider-state restart with corruption and rollback rejection. The
+platform key wrapping, mobile ABI, recovery, broader interop evidence, and
+independent review remain release-blocking.
+
 ## Completion evidence
 
 - Two real devices can register, verify, send, receive, and decrypt.

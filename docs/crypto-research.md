@@ -38,6 +38,9 @@ No custom crypto primitives are permitted.
 As of 2026-07-16, the native core pins OpenMLS 0.8.1 with the RustCrypto 0.5.1
 provider and Rust 1.90. Interoperability tests cover signed single-use key
 package validation, group creation/join, bidirectional application messages,
-and malformed/foreign-message rejection. The mobile ABI intentionally remains
-fail-closed until provider state is atomically protected by Android Keystore and
-iOS Keychain wrapping and the complete binding receives independent review.
+malformed/foreign-message rejection, and group update/removal. Provider state
+now serializes to a bounded AES-256-GCM envelope bound to account, device, and a
+monotonic rollback counter; restart, corruption, wrong-key, wrong-identity, and
+rollback tests fail closed. The mobile ABI intentionally remains fail-closed
+until the envelope key and counter are atomically protected by Android Keystore
+and iOS Keychain wrapping and the complete binding receives independent review.
