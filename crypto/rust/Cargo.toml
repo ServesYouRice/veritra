@@ -2,6 +2,7 @@
 name = "private_messenger_crypto"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.90"
 license = "AGPL-3.0-or-later"
 publish = false
 
@@ -9,4 +10,8 @@ publish = false
 crate-type = ["rlib", "staticlib", "cdylib"]
 
 [dependencies]
-
+openmls = { version = "=0.8.1", default-features = false }
+openmls_basic_credential = "=0.5.0"
+openmls_rust_crypto = "=0.5.1"
+openmls_traits = "=0.5.0"
+tls_codec = "=0.4.2"

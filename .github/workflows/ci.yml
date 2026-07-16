@@ -41,7 +41,9 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install pinned Rust toolchain
-        run: rustup toolchain install 1.82.0 --profile minimal --component rustfmt,clippy
+        run: |
+          rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
+          rustup default 1.90.0
       - run: cargo test
         working-directory: crypto/rust
       - run: cargo fmt --check && cargo clippy --all-targets -- -D warnings

@@ -14,16 +14,24 @@ This project is licensed AGPL-3.0-or-later. Dependency licenses must be compatib
 | `flutter_secure_storage` | Platform secure storage for mobile sessions | BSD-3-Clause | Direct Flutter dependency; platform packages are pulled transitively by `flutter pub get`. |
 | `mobile_scanner` 5.2.3 | Device-link QR scanning | BSD-3-Clause | Direct Flutter dependency. Android uses ML Kit, iOS uses the system Vision framework, and web uses ZXing; include their applicable notices/terms in release review. |
 | `web` 1.1.1 | Browser API bindings used by `mobile_scanner` | BSD-3-Clause | Transitive Flutter dependency pinned in `mobile/pubspec.lock`. |
+| `openmls` 0.8.1 | MLS 1.0 group state and message processing | MIT | Exact version pinned in `crypto/rust/Cargo.lock`; sensitive debug features are disabled. |
+| `openmls_basic_credential` 0.5.0 | Basic MLS credential signing keys | MIT | Exact version pinned; used to bind the application device identity to MLS credentials. |
+| `openmls_rust_crypto` 0.5.1 | RustCrypto provider for OpenMLS | MIT | Exact version pinned; native provider core only, pending platform-secure persistence review. |
+| `openmls_traits` 0.5.0 | OpenMLS provider and storage traits | MIT | Exact version pinned. |
+| `tls_codec` 0.4.2 | RFC 9420 TLS presentation-language encoding | MIT | Exact version pinned for MLS transport serialization. |
 | Flutter SDK | Mobile client framework | BSD-3-Clause | Toolchain, not vendored. |
 
 ## Reference Projects Studied, Not Copied
 
 Signal/libsignal, OpenMLS, Matrix/Synapse/Element, SimpleX Chat, Mattermost, Zulip, Rocket.Chat, Stoat/Revolt, PocketBase, Pion, LiveKit, Caddy, UnifiedPush, ntfy, and MiroTalk were studied for architecture, deployment, crypto, licensing, and self-hosting lessons. No source code from these projects is copied into this repository.
 
-OpenMLS dependency candidate review (2026-07-15): upstream `openmls` 0.8.1
-and its optional `openmls_rust_crypto` 0.5.1 provider declare MIT. Neither is
-currently linked or shipped. Their transitive licenses and Android/iOS build
-artifacts still require review before they may move into runtime dependencies.
+OpenMLS dependency review (2026-07-16): the locked graph contains 151
+third-party packages. Every package declares a license. The observed SPDX
+expressions are MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, MPL-2.0,
+Unicode-3.0, LLVM-exception, Unlicense, and dual-license alternatives that
+include MIT/Apache-2.0. No sensitive OpenMLS debug feature is enabled. Preserve
+the generated SPDX SBOM and upstream license texts with releases; Android/iOS
+artifact review remains required before enabling the mobile ABI.
 
 ## Build and Release Dependencies
 

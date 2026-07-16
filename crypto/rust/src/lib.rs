@@ -7,6 +7,8 @@
 
 use core::ffi::c_char;
 
+pub mod mls;
+
 pub const PM_CRYPTO_UNAVAILABLE: i32 = -1;
 pub const PM_CRYPTO_ABI_VERSION: u32 = 1;
 pub const CRYPTO_PROTOCOL: &str = "mls10-openmls-v1";
@@ -133,7 +135,7 @@ pub extern "C" fn pm_crypto_available() -> i32 {
 /// Returns the versioned protocol identifier as a static NUL-terminated string.
 #[no_mangle]
 pub extern "C" fn pm_crypto_protocol() -> *const c_char {
-    b"mls10-openmls-v1\0".as_ptr() as *const c_char
+    c"mls10-openmls-v1".as_ptr()
 }
 
 #[no_mangle]

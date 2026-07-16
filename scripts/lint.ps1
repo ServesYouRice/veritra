@@ -31,7 +31,7 @@ if (Get-Command cargo -ErrorAction SilentlyContinue) {
   } finally { Pop-Location }
 } else {
   $RustLintCommand = 'rustup component add rustfmt clippy >/dev/null && cargo fmt --check && cargo clippy --all-targets -- -D warnings'
-  docker run --rm -v "${Root}:/workspace" -w /workspace/crypto/rust rust:1.82@sha256:d9c3c6f1264a547d84560e06ffd79ed7a799ce0bff0980b26cf10d29af888377 sh -c $RustLintCommand
+  docker run --rm -v "${Root}:/workspace" -w /workspace/crypto/rust rust:1.90@sha256:e227f20ec42af3ea9a3c9c1dd1b2012aa15f12279b5e9d5fb890ca1c2bb5726c sh -c $RustLintCommand
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 

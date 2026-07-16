@@ -33,3 +33,11 @@ Use MLS/OpenMLS as the preferred production crypto direction. In this MVP founda
 
 No custom crypto primitives are permitted.
 
+## Pinned implementation baseline
+
+As of 2026-07-16, the native core pins OpenMLS 0.8.1 with the RustCrypto 0.5.1
+provider and Rust 1.90. Interoperability tests cover signed single-use key
+package validation, group creation/join, bidirectional application messages,
+and malformed/foreign-message rejection. The mobile ABI intentionally remains
+fail-closed until provider state is atomically protected by Android Keystore and
+iOS Keychain wrapping and the complete binding receives independent review.
