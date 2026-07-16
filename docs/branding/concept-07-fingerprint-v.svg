@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Veritra fingerprint V logo concept">
+  <!-- V-shaped ridges with fingerprint-style breaks -->
+  <g fill="none" stroke="#4F46E5" stroke-width="32" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M136 150 L256 360 L376 150"/>
+    <path d="M190 150 L256 265"/>
+    <path d="M290 205 L322 150"/>
+  </g>
+  <circle cx="256" cy="178" r="18" fill="#4F46E5"/>
+</svg>

@@ -14,6 +14,11 @@ dark backgrounds.
 | `concept-03-verified-v.svg` | Verified V | The V's right arm doubles as a checkmark — "veritas", verified identity. |
 | `concept-04-sealed-envelope.svg` | Sealed Envelope | Envelope fold lines draw the V, sealed with a padlock: the server only stores sealed envelopes. |
 | `concept-05-app-icon.svg` | App Icon V | Bold geometric V on a dark squircle, ready as a mobile app icon. |
+| `concept-06-chainlink-v.svg` | Chain Link V | Two interlocked links form the V — an end-to-end connection. |
+| `concept-07-fingerprint-v.svg` | Fingerprint V | Nested chevrons with ridge breaks: identity and key verification. |
+| `concept-08-key-v.svg` | Key V | A key whose bow carries the V — you hold the keys, not the server. |
+| `concept-09-paper-plane.svg` | Paper Plane | Flat-facet folded plane: light, fast, self-hosted delivery. |
+| `concept-10-hex-node.svg` | Hex Node V | Hexagon badge reading as a self-hosted node on the network. |
 | `wordmark.svg` | Wordmark lockup | Shield-V mark plus a lowercase "veritra" wordmark (system font placeholder). |
 | `wordmark-dark.svg` | Wordmark lockup (dark) | Same lockup with light text for dark backgrounds. |
 
