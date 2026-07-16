@@ -44,23 +44,18 @@
         <!-- Veritra chain link mark: two interlocked links, one per party -->
         <svg viewBox="0 0 512 512" role="img" aria-label="Veritra">
           <defs>
-            <mask id="underBottom">
-              <rect width="512" height="512" fill="#fff"/>
-              <circle cx="256" cy="356" r="27" fill="#000"/>
-            </mask>
-            <mask id="underTop">
-              <rect width="512" height="512" fill="#fff"/>
-              <circle cx="256" cy="284" r="27" fill="#000"/>
+            <mask id="tuckUnder">
+              <rect x="-512" y="-512" width="2048" height="2048" fill="#fff"/>
+              <rect x="295.5" y="93" width="90" height="290" rx="45" fill="none" stroke="#000" stroke-width="58"
+                    transform="rotate(35 340.5 238)"/>
             </mask>
           </defs>
-          <g mask="url(#underBottom)">
+          <g mask="url(#tuckUnder)">
             <rect x="126.5" y="93" width="90" height="290" rx="45" fill="none" stroke="#4F46E5" stroke-width="34"
                   transform="rotate(-35 171.5 238)"/>
           </g>
-          <g mask="url(#underTop)">
-            <rect x="295.5" y="93" width="90" height="290" rx="45" fill="none" stroke="#0EA5E9" stroke-width="34"
-                  transform="rotate(35 340.5 238)"/>
-          </g>
+          <rect x="295.5" y="93" width="90" height="290" rx="45" fill="none" stroke="#0EA5E9" stroke-width="34"
+                transform="rotate(35 340.5 238)"/>
         </svg>
       </div>
       <h1>Setup Requires A Crypto Client</h1>

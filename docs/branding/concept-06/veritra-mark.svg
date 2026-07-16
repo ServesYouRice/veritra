@@ -8,24 +8,18 @@
       <stop offset="0" stop-color="#38BDF8"/>
       <stop offset="1" stop-color="#0284C7"/>
     </linearGradient>
-    <!-- Weave: each link breaks where it passes under the other -->
-    <mask id="underBottom">
-      <rect width="512" height="512" fill="#fff"/>
-      <circle cx="256" cy="356" r="27" fill="#000"/>
-    </mask>
-    <mask id="underTop">
-      <rect width="512" height="512" fill="#fff"/>
-      <circle cx="256" cy="284" r="27" fill="#000"/>
+    <!-- Keyline: the left link tucks under the right one with a uniform gap
+         along the right link's edge, keeping both end caps fully rounded -->
+    <mask id="tuckUnder">
+      <rect x="-512" y="-512" width="2048" height="2048" fill="#fff"/>
+      <rect x="295.5" y="93" width="90" height="290" rx="45" fill="none" stroke="#000" stroke-width="54"
+            transform="rotate(35 340.5 238)"/>
     </mask>
   </defs>
-  <!-- Left link: over at the top crossing, under at the bottom -->
-  <g mask="url(#underBottom)">
+  <g mask="url(#tuckUnder)">
     <rect x="126.5" y="93" width="90" height="290" rx="45" fill="none" stroke="url(#linkL)" stroke-width="30"
           transform="rotate(-35 171.5 238)"/>
   </g>
-  <!-- Right link: over at the bottom crossing, under at the top -->
-  <g mask="url(#underTop)">
-    <rect x="295.5" y="93" width="90" height="290" rx="45" fill="none" stroke="url(#linkR)" stroke-width="30"
-          transform="rotate(35 340.5 238)"/>
-  </g>
+  <rect x="295.5" y="93" width="90" height="290" rx="45" fill="none" stroke="url(#linkR)" stroke-width="30"
+        transform="rotate(35 340.5 238)"/>
 </svg>

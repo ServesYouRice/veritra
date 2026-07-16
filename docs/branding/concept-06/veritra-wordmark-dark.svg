@@ -8,24 +8,19 @@
       <stop offset="0" stop-color="#38BDF8"/>
       <stop offset="1" stop-color="#0284C7"/>
     </linearGradient>
-    <mask id="wmUnderBottom">
+    <mask id="wmTuckUnder">
       <rect x="-512" y="-512" width="2048" height="2048" fill="#fff"/>
-      <circle cx="256" cy="356" r="27" fill="#000"/>
-    </mask>
-    <mask id="wmUnderTop">
-      <rect x="-512" y="-512" width="2048" height="2048" fill="#fff"/>
-      <circle cx="256" cy="284" r="27" fill="#000"/>
+      <rect x="295.5" y="93" width="90" height="290" rx="45" fill="none" stroke="#000" stroke-width="54"
+            transform="rotate(35 340.5 238)"/>
     </mask>
   </defs>
   <g transform="translate(-28 -21) scale(0.55)">
-    <g mask="url(#wmUnderBottom)">
+    <g mask="url(#wmTuckUnder)">
       <rect x="126.5" y="93" width="90" height="290" rx="45" fill="none" stroke="url(#wmLinkL)" stroke-width="30"
             transform="rotate(-35 171.5 238)"/>
     </g>
-    <g mask="url(#wmUnderTop)">
-      <rect x="295.5" y="93" width="90" height="290" rx="45" fill="none" stroke="url(#wmLinkR)" stroke-width="30"
-            transform="rotate(35 340.5 238)"/>
-    </g>
+    <rect x="295.5" y="93" width="90" height="290" rx="45" fill="none" stroke="url(#wmLinkR)" stroke-width="30"
+          transform="rotate(35 340.5 238)"/>
   </g>
   <!-- Wordmark (system sans; replace with brand type later) -->
   <text x="240" y="145" font-family="ui-sans-serif, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif"

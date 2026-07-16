@@ -2,9 +2,9 @@
 
 Concept 06 from the exploration round, developed into a usable mark family.
 Two interlocked capsule links draw the V: an end-to-end connection between
-exactly two parties. The weave is explicit — the left (indigo, sender) link
-passes over at the top crossing and under at the bottom, where the right
-(sky, receiver) link passes over.
+exactly two parties. At the junction the right (sky, receiver) link passes
+over and the left (indigo, sender) link tucks under with a uniform keyline
+gap, its tip showing through the right link's loop.
 
 Open `preview.html` in a browser to see the full family.
 
@@ -39,13 +39,16 @@ Open `preview.html` in a browser to see the full family.
 - Both links are the same rounded rect (`90 × 290`, `rx 45`, stroke 30 in a
   512 viewBox) rotated ±35° about its center; the crossings land at
   (256, 284) and (256, 356).
-- The weave is done with masks: each link is erased by a 27 px circle at the
-  crossing where it passes under. Keep the mask on a wrapper `<g>`, not on
-  the rotated rect itself — masks on a transformed element rotate with it.
+- The tuck-under is done with one mask: the left link is erased along the
+  right link's silhouette stroked 24 px wider, leaving a uniform 12 px
+  keyline gap. Don't try to alternate over/under at this geometry — both
+  crossing points sit on the capsules' rounded end caps, so circular bites
+  there amputate the tips. Keep the mask on a wrapper `<g>`, not on the
+  rotated rect itself — masks on a transformed element rotate with it.
 - Gradients are `objectBoundingBox`; fine here because the rotated rects have
   non-degenerate boxes. Don't put gradients on axis-aligned single lines
   (zero-width boxes don't paint).
-- Below ~24 px use `veritra-favicon.svg`; the weave gaps close up and the
+- Below ~24 px use `veritra-favicon.svg`; the keyline gap closes up and the
   thin strokes alias badly at those sizes.
 - PNG exports were rasterized with headless Chromium (`--screenshot` with
   `--default-background-color=00000000` for large sizes; a canvas
