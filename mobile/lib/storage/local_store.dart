@@ -16,6 +16,18 @@ class CachedSnapshot {
   final Map<String, List<ReceivedMessageEnvelope>> messagesByConversation;
 }
 
+class StoredCryptoState {
+  StoredCryptoState({
+    required this.counter,
+    required this.stateKey,
+    required this.sealedState,
+  });
+
+  final int counter;
+  final List<int> stateKey;
+  final List<int> sealedState;
+}
+
 abstract class LocalStore {
   Future<void> saveSession(Session session);
   Future<Session?> loadSession();
@@ -30,6 +42,8 @@ abstract class LocalStore {
   Future<void> enqueueEnvelope(MessageEnvelope envelope);
   Future<List<MessageEnvelope>> pendingEnvelopes();
   Future<void> removePendingEnvelope(String idempotencyKey);
+  Future<void> saveCryptoState(StoredCryptoState state, int syncCursor);
+  Future<StoredCryptoState?> loadCryptoState();
   Future<void> clearCachedState();
   Future<void> clear();
 }
@@ -39,11 +53,13 @@ class MemoryLocalStore implements LocalStore {
   int _syncCursor = 0;
   CachedSnapshot? _snapshot;
   final List<MessageEnvelope> _outbox = <MessageEnvelope>[];
+  StoredCryptoState? _cryptoState;
 
   @override
   Future<void> saveSession(Session session) async {
     if (_session != null && _identity(_session!) != _identity(session)) {
       await clearCachedState();
+      _cryptoState = null;
     }
     _session = session;
   }
@@ -97,6 +113,20 @@ class MemoryLocalStore implements LocalStore {
   }
 
   @override
+  Future<void> saveCryptoState(StoredCryptoState state, int syncCursor) async {
+    _validateCryptoState(state);
+    if (_cryptoState != null && state.counter <= _cryptoState!.counter) {
+      throw StateError('crypto state counter must increase');
+    }
+    _cryptoState = _copyCryptoState(state);
+    _syncCursor = syncCursor;
+  }
+
+  @override
+  Future<StoredCryptoState?> loadCryptoState() async =>
+      _cryptoState == null ? null : _copyCryptoState(_cryptoState!);
+
+  @override
   Future<void> clearCachedState() async {
     _syncCursor = 0;
     _snapshot = null;
@@ -106,6 +136,7 @@ class MemoryLocalStore implements LocalStore {
   @override
   Future<void> clear() async {
     _session = null;
+    _cryptoState = null;
     await clearCachedState();
   }
 }
@@ -140,9 +171,10 @@ class SecureLocalStore implements LocalStore {
       record
         ..remove('snapshot')
         ..remove('outbox')
+        ..remove('crypto_state')
         ..['cursor'] = 0;
     }
-    record['version'] = 2;
+    record['version'] = 3;
     record['session'] = _sessionJson(session);
     await _writeRecord(record);
   }
@@ -259,6 +291,38 @@ class SecureLocalStore implements LocalStore {
   }
 
   @override
+  Future<void> saveCryptoState(StoredCryptoState state, int syncCursor) async {
+    _validateCryptoState(state);
+    final record = await _readRecord();
+    final previous = _cryptoStateFrom(record['crypto_state']);
+    if (previous != null && state.counter <= previous.counter) {
+      throw StateError('crypto state counter must increase');
+    }
+    record
+      ..['crypto_state'] = <String, Object?>{
+        'counter': state.counter,
+        'state_key': base64Encode(state.stateKey),
+        'sealed_state': base64Encode(state.sealedState),
+      }
+      ..['cursor'] = syncCursor;
+    await _writeRecord(record);
+  }
+
+  @override
+  Future<StoredCryptoState?> loadCryptoState() async {
+    final record = await _readRecord();
+    final state = _cryptoStateFrom(record['crypto_state']);
+    if (state != null) {
+      return state;
+    }
+    if (record.containsKey('crypto_state')) {
+      record.remove('crypto_state');
+      await _writeRecord(record);
+    }
+    return null;
+  }
+
+  @override
   Future<void> clearCachedState() async {
     final record = await _readRecord();
     record
@@ -276,13 +340,13 @@ class SecureLocalStore implements LocalStore {
   Future<Map<String, Object?>> _readRecord() async {
     final raw = await _storage.read(key: _key);
     if (raw == null || raw.isEmpty) {
-      return <String, Object?>{'version': 2, 'cursor': 0};
+      return <String, Object?>{'version': 3, 'cursor': 0};
     }
     try {
       return Map<String, Object?>.from(jsonDecode(raw) as Map);
     } catch (_) {
       await _storage.delete(key: _key);
-      return <String, Object?>{'version': 2, 'cursor': 0};
+      return <String, Object?>{'version': 3, 'cursor': 0};
     }
   }
 
@@ -329,4 +393,38 @@ Session? _sessionFrom(Object? raw) {
     deviceSecret: session['device_secret'] as String?,
     role: session['role'] as String?,
   );
+}
+
+StoredCryptoState? _cryptoStateFrom(Object? raw) {
+  if (raw is! Map) {
+    return null;
+  }
+  try {
+    final json = Map<String, Object?>.from(raw);
+    final state = StoredCryptoState(
+      counter: (json['counter'] as num).toInt(),
+      stateKey: base64Decode(json['state_key'] as String),
+      sealedState: base64Decode(json['sealed_state'] as String),
+    );
+    _validateCryptoState(state);
+    return state;
+  } catch (_) {
+    return null;
+  }
+}
+
+StoredCryptoState _copyCryptoState(StoredCryptoState state) =>
+    StoredCryptoState(
+      counter: state.counter,
+      stateKey: List<int>.from(state.stateKey),
+      sealedState: List<int>.from(state.sealedState),
+    );
+
+void _validateCryptoState(StoredCryptoState state) {
+  if (state.counter <= 0 ||
+      state.stateKey.length != 32 ||
+      state.sealedState.isEmpty ||
+      state.sealedState.length > 32 * 1024 * 1024) {
+    throw const FormatException('invalid protected crypto state');
+  }
 }

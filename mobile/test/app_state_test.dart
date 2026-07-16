@@ -60,6 +60,32 @@ void main() {
     expect((await state.localStore.loadSession())?.token, 'token');
   });
 
+  test('crypto state and cursor commit together and reject rollback', () async {
+    final store = MemoryLocalStore();
+    final first = StoredCryptoState(
+      counter: 4,
+      stateKey: List<int>.filled(32, 7),
+      sealedState: <int>[1, 2, 3],
+    );
+    await store.saveCryptoState(first, 91);
+
+    final restored = await store.loadCryptoState();
+    expect(restored?.counter, 4);
+    expect(await store.loadSyncCursor(), 91);
+    await expectLater(
+      store.saveCryptoState(
+        StoredCryptoState(
+          counter: 4,
+          stateKey: List<int>.filled(32, 8),
+          sealedState: <int>[4],
+        ),
+        92,
+      ),
+      throwsStateError,
+    );
+    expect(await store.loadSyncCursor(), 91);
+  });
+
   test('app state drives device link claim through approval', () async {
     final localStore = MemoryLocalStore();
     final api = FakeDeviceLinkApiClient();

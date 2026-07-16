@@ -25,9 +25,10 @@ message content or cryptographic material is enabled.
 Before production message sending:
 
 - implement reviewed ownership, allocation, and state-handle semantics behind the ABI
-- wrap the encrypted state key with Android Keystore and iOS Keychain and
-  atomically commit the versioned state envelope, rollback counter, and cursor
+- connect the native ABI to the mobile protected record; the Flutter store now
+  atomically writes the 32-byte state key, sealed state envelope, monotonic
+  counter, and sync cursor through Android Keystore-backed encrypted storage or
+  iOS Keychain (`ThisDeviceOnly`) storage
 - add MLS test vectors
-- add mobile secure key storage
 - update `docs/crypto-research.md`
 - update `THIRD_PARTY_NOTICES.md`

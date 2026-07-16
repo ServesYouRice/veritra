@@ -42,5 +42,7 @@ malformed/foreign-message rejection, and group update/removal. Provider state
 now serializes to a bounded AES-256-GCM envelope bound to account, device, and a
 monotonic rollback counter; restart, corruption, wrong-key, wrong-identity, and
 rollback tests fail closed. The mobile ABI intentionally remains fail-closed
-until the envelope key and counter are atomically protected by Android Keystore
-and iOS Keychain wrapping and the complete binding receives independent review.
+until the complete binding receives independent review. The Flutter protected
+record can already commit the envelope key, monotonic counter, and sync cursor
+together through Android Keystore-backed encrypted storage or iOS Keychain
+`ThisDeviceOnly` storage; it rejects non-increasing counters before writing.
