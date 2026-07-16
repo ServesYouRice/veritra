@@ -83,11 +83,12 @@ Finding IDs are stable across files: `UI-n`, `LOG-n`, `SEC-n`, `PERF-n`, `OPS-n`
 
 Everything else in these files is ranked within its own document.
 
-## 7. Current status (2026-07-14)
+## 7. Current status (2026-07-16)
 
 The remediation work after `c939f26` closed nearly all actionable server,
 mobile, operations, and UI findings. Production E2EE is still deliberately
-unavailable and remains the release blocker. This validity pass also reopened
-UI-9 as partial because the iOS app lacks `NSCameraUsageDescription`; manual
-device-link code entry remains available. The broader testing-gap work listed
-in `audits-codex/README.md` remains excluded by request.
+unavailable and remains the release blocker. UI-9 is now closed: iOS declares
+the camera usage required by the QR scanner, with manual device-link code entry
+retained as a fallback. UI-16 is also closed: `/setup` now gives operators a
+safe stop condition until a production crypto client exists. The broader
+testing-gap work listed in `audits-codex/README.md` remains excluded by request.

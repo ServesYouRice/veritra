@@ -26,6 +26,8 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Veritra uses the camera to scan device-link QR codes.</string>
 	<key>UIFileSharingEnabled</key>
 	<false/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>

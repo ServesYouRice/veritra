@@ -32,12 +32,13 @@ choices (which crypto library, which push provider stack, etc.).
   storage, and client decrypt/render support. This is the single biggest
   remaining item.
 
-- [ ] **QR rendering + scanning + key continuity** on top of the
-  existing device-link API. The server side (claim → approve → consume
-  with one-shot claim token) is done; what's missing is the camera
-  pipeline on mobile and a verification step that compares the new
-  device's key fingerprint against the approver's expectation before
-  the session is issued.
+- [ ] **Production key continuity** on top of the existing device-link API.
+  QR rendering and scanning are implemented, including the iOS camera usage
+  declaration, and manual code entry remains available. The server side
+  (claim → approve → consume with one-shot claim token) is done; what's
+  missing is a production verification step that compares the new device's
+  key fingerprint against the approver's expectation before the session is
+  issued.
 
 - [ ] **Push providers.** Implement `push.Provider` for APNs, FCM, and
   UnifiedPush. Mandatory: payloads must carry no message text and no

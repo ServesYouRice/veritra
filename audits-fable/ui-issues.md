@@ -3,7 +3,7 @@
 Scope: the Flutter client (`mobile/lib/**`) and the server's `/setup` page. Note that many UI surfaces cannot currently be exercised at all because the client crypto is a stub (see LOG-0); findings below are from reading the widget tree and tracing state, plus the flows that *are* reachable.
 
 > **Historical snapshot with later status notes:** detailed findings describe
-> `c939f26`; the status column records selected remediation through 2026-07-10.
+> `c939f26`; the status column records selected remediation through 2026-07-16.
 > Use [`../audits-codex/README.md`](../audits-codex/README.md) for current release
 > status.
 
@@ -13,7 +13,7 @@ Scope: the Flutter client (`mobile/lib/**`) and the server's `/setup` page. Note
 
 ## Summary table
 
-| ID | Title | Severity | Blocker | Status (2026-07-10) |
+| ID | Title | Severity | Blocker | Status (2026-07-16) |
 |---|---|---|---|---|
 | UI-1 | Errors shown as raw exception strings (`StateError: …`, `Request failed (500)`) | High | Yes | **Fixed** — `describeError()` + full `ApiException` code map |
 | UI-2 | No form validation feedback on any auth field | High | Yes | **Fixed** — `Form` + field validators on connect screen |
@@ -23,14 +23,14 @@ Scope: the Flutter client (`mobile/lib/**`) and the server's `/setup` page. Note
 | UI-6 | "Add member" / "New conversation" require raw account IDs (no directory) | High | Yes | **Fixed** — username lookup picker (exact match by server design); raw ID kept as fallback |
 | UI-7 | Session-created records vanish on refresh (invites, communities) with weak warning | Medium | No | **Fixed** — server `GET /invites`, `GET /communities`, `GET /communities/{id}/channels` added; client hydrates on session start |
 | UI-8 | No unread indicators, message previews, or ordering by activity | Medium | No | **Fixed (ordering + unread)** — server `ListConversations` now returns `last_message_at` + `unread_count` and orders by activity; chat list shows unread badges, recency ordering, and activity time. Message previews still blocked on decryption (LOG-0) |
-| UI-9 | Device-link screen missing QR rendering; code entry only | Medium | Yes | **Partial** — QR rendering and camera scanning shipped, but `mobile/ios/Runner/Info.plist` still lacks the required `NSCameraUsageDescription`; manual code entry remains available |
+| UI-9 | Device-link screen missing QR rendering; code entry only | Medium | Yes | **Fixed** — QR rendering, camera scanning, and the required iOS camera usage declaration are present; manual code entry remains available |
 | UI-10 | No pull-to-refresh / manual refresh on several screens | Low | No | **Fixed** — `RefreshIndicator` on invites and communities screens (chat list already had one) |
 | UI-11 | Attachment button permanently disabled with no path forward | Low | No | Open — intentional placeholder (blocked on LOG-0/LOG-3) |
 | UI-12 | Accessibility: unlabeled icon-only controls, no semantics on brand/avatars | Medium | No | **Partial** — bubble sender/time semantics; decorative avatars excluded across chat list, communities, and conversation details; all section headers marked `header: true`; chat-list rows merged into one node with an unread-count label. Full manual TalkBack/VoiceOver pass still recommended before launch |
 | UI-13 | Message metadata line leaks raw protocol string into the bubble | Low | No | **Fixed** — protocol dropped from meta line |
 | UI-14 | Empty password/username accepted by UI, rejected opaquely by server | Medium | No | **Fixed** — with UI-2 |
 | UI-15 | No confirmation that a message failed to send vs. sent | Medium | No | Open — blocked on real sending (LOG-0) |
-| UI-16 | `/setup` page is a dead-end notice with no actionable next step | Low | No | Open — server page, out of client scope |
+| UI-16 | `/setup` page is a dead-end notice with no actionable next step | Low | No | **Fixed** — notice gives the safe stop condition, exact prerequisite, and warns against placeholder/test keys |
 | UI-17 | Search bar has no clear button; stale results linger between queries | Low | No | **Fixed** — clear (✕) button resets query + results |
 | UI-18 | No account/profile screen; account is an ID string only | Medium | No | **Partial** — username now stored in session and shown in Settings; full profile surface still open |
 | UI-19 | Timestamps use device-local parsing with silent failure risk | Low | No | **Fixed** — `tryParse` with epoch sentinel; one bad row can't blank a list |
@@ -218,13 +218,13 @@ Ranked by user impact × likelihood-of-being-hit, assuming the crypto blocker (L
 2. ~~**UI-1 — Human-readable errors.**~~ **Done.** Kills the raw `StateError`/`Request failed (500)` experience everywhere at once.
 3. ~~**UI-6 — People picker instead of raw account IDs.**~~ **Done.** The "start a conversation" flow was unusable for non-developers.
 4. ~~**UI-3 — Setup-status-aware connect screen.**~~ **Done.** Fixed the wrong default mode that misdirected every joiner.
-5. **UI-9 — QR device linking.** **Partial.** QR render + camera scanning code shipped, but the iOS camera usage declaration is still missing; manual dual-code entry remains as a fallback.
+5. ~~**UI-9 — QR device linking.**~~ **Done.** QR rendering, camera scanning, and iOS camera permission copy are present; manual dual-code entry remains as a fallback.
 6. ~~**UI-8 — Chat list recency ordering + unread badges.**~~ **Done (ordering + unread).** Home screen is navigable at scale; message previews still wait on decryption.
 7. **UI-18 — Identity/profile surface + showing usernames** (pairs with UI-6). Username now shown in Settings; full profile surface still open.
 8. ~~**UI-4 — Real loading states.**~~ **Done.** Per-list first-load spinners; UI-5's error/retry was already shipped.
 9. **UI-12 — Accessibility pass** before any public/App Store release. Semantics groundwork in place; a manual TalkBack/VoiceOver pass remains.
 10. ~~**UI-7 — Persist or list invites/communities**~~ **Done.** Created codes survive restarts via the list endpoints.
 
-Lower priority polish: UI-10, UI-11, UI-13, UI-16, UI-17, UI-19, UI-20.
+Lower priority polish: UI-10, UI-11, UI-13, UI-17, UI-19, UI-20.
 
-Remaining open work is gated on crypto integration (LOG-0) — message previews (UI-8), send/failed status (UI-15), attachments (UI-11) — or is platform/configuration and server/profile scope (UI-9's iOS permission declaration, UI-16, UI-18's profile surface).
+Remaining open work is gated on crypto integration (LOG-0) — message previews (UI-8), send/failed status (UI-15), attachments (UI-11) — or is profile scope (UI-18's profile surface).
