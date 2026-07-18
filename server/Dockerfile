@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.25@sha256:c138bff780910acf4254ab3a6f7ff0f64bbd841f27bd82bfa986fe122c109538 AS build
+FROM --platform=$BUILDPLATFORM golang:1.26@sha256:d52df9c279840adf958d017ebb275651ed8338b953d39817bc3633a2e6b1bbcc AS build
 
 ARG VERSION=dev
 ARG COMMIT=unknown
