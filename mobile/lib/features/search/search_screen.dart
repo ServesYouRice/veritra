@@ -25,6 +25,7 @@ class _SearchScreenState extends State<SearchScreen> {
   List<MetadataSearchResult> results = <MetadataSearchResult>[];
   bool searching = false;
   bool searched = false;
+  int _generation = 0;
 
   @override
   void dispose() {
@@ -39,6 +40,7 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   void _clear() {
+    _generation++;
     _debounce?.cancel();
     query.clear();
     setState(() {
@@ -49,6 +51,7 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Future<void> _search(String value) async {
+    final generation = ++_generation;
     final trimmed = value.trim();
     if (trimmed.isEmpty) {
       setState(() {
@@ -60,7 +63,7 @@ class _SearchScreenState extends State<SearchScreen> {
     setState(() => searching = true);
     try {
       final found = await widget.state.searchMetadata(trimmed);
-      if (!mounted) {
+      if (!mounted || generation != _generation) {
         return;
       }
       setState(() {
@@ -68,14 +71,14 @@ class _SearchScreenState extends State<SearchScreen> {
         searched = true;
       });
     } catch (err) {
-      if (!mounted) {
+      if (!mounted || generation != _generation) {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(err.toString())),
       );
     } finally {
-      if (mounted) {
+      if (mounted && generation == _generation) {
         setState(() => searching = false);
       }
     }
@@ -148,21 +151,44 @@ class _SearchScreenState extends State<SearchScreen> {
                       ),
                       title: Text(result.label),
                       subtitle: Text(_labelForType(result.type)),
-                      onTap: result.type == 'conversation'
-                          ? () {
-                              widget.state.selectConversation(result.id);
-                              Navigator.of(context).push(
-                                MaterialPageRoute<void>(
-                                  builder: (_) =>
-                                      ChatScreen(state: widget.state),
-                                ),
-                              );
-                            }
-                          : null,
+                      onTap: _actionFor(result),
                     );
                   },
                 ),
     );
+  }
+
+  VoidCallback? _actionFor(MetadataSearchResult result) {
+    if (result.type == 'account') {
+      return () async {
+        final conversation = await widget.state.startConversation(
+          kind: 'dm',
+          memberAccountIds: <String>[result.id],
+        );
+        if (!mounted || conversation == null) return;
+        Navigator.of(context).push(MaterialPageRoute<void>(
+          builder: (_) => ChatScreen(
+            state: widget.state,
+            conversationId: conversation.id,
+          ),
+        ));
+      };
+    }
+    if (result.type == 'channel') {
+      final matches = widget.state.conversations
+          .where((conversation) => conversation.channelId == result.id);
+      if (matches.isEmpty) return null;
+      return () {
+        widget.state.selectConversation(matches.first.id);
+        Navigator.of(context).push(MaterialPageRoute<void>(
+          builder: (_) => ChatScreen(
+            state: widget.state,
+            conversationId: matches.first.id,
+          ),
+        ));
+      };
+    }
+    return null;
   }
 
   IconData _iconForType(String type) {

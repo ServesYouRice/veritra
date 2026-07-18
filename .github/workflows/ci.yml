@@ -4,15 +4,24 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   server:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: "1.25"
-      - run: go test ./...
+          go-version: "1.25.0"
+      - name: Test with race detector and coverage
+        run: go test -race -coverprofile=coverage.out ./...
         working-directory: server
       - name: gofmt
         run: |
@@ -29,11 +38,13 @@ jobs:
 
   crypto:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
+          rustup default 1.90.0
       - run: cargo test
         working-directory: crypto/rust
       - run: cargo fmt --check && cargo clippy --all-targets -- -D warnings
@@ -41,14 +52,15 @@ jobs:
 
   mobile:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: stable
-          flutter-version: "3.24.5"
+          flutter-version: "3.44.0"
           cache: true
-      - run: flutter pub get
+      - run: flutter pub get --enforce-lockfile
         working-directory: mobile
       - run: flutter test
         working-directory: mobile
@@ -56,9 +68,60 @@ jobs:
         working-directory: mobile
       - run: dart format --set-exit-if-changed .
         working-directory: mobile
+      - name: Build Android release APK without signing
+        run: flutter build apk --release
+        working-directory: mobile
+
+  mobile-ios:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: "3.44.0"
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+        working-directory: mobile
+      - name: Build iOS release app without code signing
+        run: flutter build ios --release --no-codesign
+        working-directory: mobile
+
+  compose-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Start a fresh-volume deployment
+        run: docker compose -f deploy/docker-compose.yml up --build --wait --wait-timeout 120
+      - name: Verify health over the published loopback port
+        run: curl --fail --silent --show-error http://127.0.0.1:8080/healthz
+      - name: Stop deployment
+        if: always()
+        run: docker compose -f deploy/docker-compose.yml down --volumes
 
   licenses:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - run: ./scripts/license-check.sh
+
+  vulnerabilities:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.25.0"
+          cache-dependency-path: server/go.sum
+      - name: Scan Go dependencies
+        working-directory: server
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+      - name: Install pinned Rust audit tool
+        run: cargo install cargo-audit --version 0.21.2 --locked
+      - name: Scan Rust dependencies
+        working-directory: crypto/rust
+        run: cargo audit

@@ -43,8 +43,11 @@ class _InviteScreenState extends State<InviteScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: <Widget>[
-                        Text('Create an invite',
-                            style: theme.textTheme.titleMedium),
+                        Semantics(
+                          header: true,
+                          child: Text('Create an invite',
+                              style: theme.textTheme.titleMedium),
+                        ),
                         const SizedBox(height: 12),
                         Row(
                           children: <Widget>[
@@ -80,8 +83,6 @@ class _InviteScreenState extends State<InviteScreen> {
                                       value: 7, child: Text('7 days')),
                                   DropdownMenuItem(
                                       value: 30, child: Text('30 days')),
-                                  DropdownMenuItem(
-                                      value: null, child: Text('Never')),
                                 ],
                                 onChanged: (value) =>
                                     setState(() => expiresInDays = value),
@@ -102,16 +103,31 @@ class _InviteScreenState extends State<InviteScreen> {
                 ),
                 const SizedBox(height: 16),
                 if (invites.isEmpty)
-                  const EmptyState(
-                    icon: Icons.card_giftcard_outlined,
-                    title: 'No invites yet',
-                    message: 'Invite codes you create appear here. Share '
-                        'them over a secure channel.',
-                  )
+                  // Spinner until the first fetch resolves, then the empty
+                  // state — otherwise "No invites yet" flashes during load.
+                  widget.state.invitesLoaded
+                      ? const EmptyState(
+                          icon: Icons.card_giftcard_outlined,
+                          title: 'No invites yet',
+                          message: 'Invite codes you create appear here. Share '
+                              'them over a secure channel.',
+                        )
+                      : const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 32),
+                          child: Center(child: CircularProgressIndicator()),
+                        )
                 else ...<Widget>[
-                  Text('Your invites', style: theme.textTheme.titleMedium),
+                  Semantics(
+                    header: true,
+                    child: Text('Your invites',
+                        style: theme.textTheme.titleMedium),
+                  ),
                   const SizedBox(height: 8),
-                  for (final invite in invites) _InviteCard(invite: invite),
+                  for (final invite in invites)
+                    _InviteCard(
+                      invite: invite,
+                      onRevoke: () => widget.state.revokeInvite(invite.id),
+                    ),
                 ],
               ],
             ),
@@ -139,9 +155,10 @@ class _InviteScreenState extends State<InviteScreen> {
 }
 
 class _InviteCard extends StatelessWidget {
-  const _InviteCard({required this.invite});
+  const _InviteCard({required this.invite, required this.onRevoke});
 
   final Invite invite;
+  final VoidCallback onRevoke;
 
   @override
   Widget build(BuildContext context) {
@@ -162,19 +179,35 @@ class _InviteCard extends StatelessWidget {
           subtitle: Text(
             <String>[
               '${invite.maxUses} use${invite.maxUses == 1 ? '' : 's'}',
-              if (expires != null) 'expires ${formatDateTime(expires)}',
+              if (expires != null)
+                'expires ${formatDateTime(context, expires)}',
               if (expires == null) 'never expires',
             ].join(' · '),
           ),
-          trailing: IconButton(
-            tooltip: 'Copy code',
-            icon: const Icon(Icons.copy_outlined),
-            onPressed: () {
-              Clipboard.setData(ClipboardData(text: invite.code));
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Invite code copied.')),
-              );
-            },
+          trailing: MenuAnchor(
+            builder: (context, controller, _) => IconButton(
+              tooltip: 'Invite actions',
+              icon: const Icon(Icons.more_vert),
+              onPressed: () =>
+                  controller.isOpen ? controller.close() : controller.open(),
+            ),
+            menuChildren: <Widget>[
+              MenuItemButton(
+                leadingIcon: const Icon(Icons.copy_outlined),
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: invite.code));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Invite code copied.')),
+                  );
+                },
+                child: const Text('Copy code'),
+              ),
+              MenuItemButton(
+                leadingIcon: const Icon(Icons.block_outlined),
+                onPressed: onRevoke,
+                child: const Text('Revoke'),
+              ),
+            ],
           ),
         ),
       ),

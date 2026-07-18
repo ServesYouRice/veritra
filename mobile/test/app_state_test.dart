@@ -4,9 +4,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
-import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
+
+import 'test_crypto_service.dart';
 
 void main() {
   test('message envelope serializes ciphertext without plaintext body field',
@@ -57,6 +58,32 @@ void main() {
     await localStore.saveSession(
         const Session(baseUrl: 'http://localhost:8080', token: 'token'));
     expect((await state.localStore.loadSession())?.token, 'token');
+  });
+
+  test('crypto state and cursor commit together and reject rollback', () async {
+    final store = MemoryLocalStore();
+    final first = StoredCryptoState(
+      counter: 4,
+      stateKey: List<int>.filled(32, 7),
+      sealedState: <int>[1, 2, 3],
+    );
+    await store.saveCryptoState(first, 91);
+
+    final restored = await store.loadCryptoState();
+    expect(restored?.counter, 4);
+    expect(await store.loadSyncCursor(), 91);
+    await expectLater(
+      store.saveCryptoState(
+        StoredCryptoState(
+          counter: 4,
+          stateKey: List<int>.filled(32, 8),
+          sealedState: <int>[4],
+        ),
+        92,
+      ),
+      throwsStateError,
+    );
+    expect(await store.loadSyncCursor(), 91);
   });
 
   test('app state drives device link claim through approval', () async {
@@ -156,6 +183,66 @@ void main() {
     expect(stored?.token, '');
     expect(stored?.deviceId, 'dev_owner');
   });
+
+  test('failed encrypted envelope persists and retry reuses its key', () async {
+    final localStore = MemoryLocalStore();
+    final api = _OutboxApiClient()..failSend = true;
+    final state = AppState(
+      apiClientFactory: (_) => api,
+      cryptoService: TestOnlyCryptoService(),
+      localStore: localStore,
+      syncServiceFactory: (_, __) => FakeSyncService(),
+    )
+      ..api = api
+      ..session = const Session(
+        baseUrl: 'http://localhost:8080',
+        token: 'owner-token',
+        accountId: 'acct_owner',
+        deviceId: 'dev_owner',
+      )
+      ..conversations = <Conversation>[
+        Conversation(id: 'conv_1', kind: 'group'),
+      ];
+
+    await state.sendMessageTo('conv_1', 'test-only plaintext');
+
+    expect(state.pendingFor('conv_1'), hasLength(1));
+    final key = state.pendingFor('conv_1').single.idempotencyKey;
+    expect(state.outboxState(key), OutboxDeliveryState.failed);
+    expect((await localStore.pendingEnvelopes()).single.idempotencyKey, key);
+
+    api.failSend = false;
+    await state.retryEnvelope(key);
+
+    expect(api.sentKeys, <String>[key, key]);
+    expect(state.pendingFor('conv_1'), isEmpty);
+    expect(await localStore.pendingEnvelopes(), isEmpty);
+  });
+}
+
+class _OutboxApiClient extends ApiClient {
+  _OutboxApiClient() : super(baseUrl: 'http://localhost:8080');
+
+  bool failSend = false;
+  final List<String> sentKeys = <String>[];
+
+  @override
+  Future<void> sendEnvelope(String token, MessageEnvelope envelope) async {
+    sentKeys.add(envelope.idempotencyKey);
+    if (failSend) {
+      throw ApiException(503, 'unavailable');
+    }
+  }
+
+  @override
+  Future<List<ReceivedMessageEnvelope>> listMessages(
+    String token,
+    String conversationId, {
+    int limit = 50,
+    String? before,
+    String? after,
+  }) async =>
+      <ReceivedMessageEnvelope>[];
 }
 
 class FakeDeviceLinkApiClient extends ApiClient {
@@ -172,15 +259,26 @@ class FakeDeviceLinkApiClient extends ApiClient {
   }
 
   @override
+  Future<EnrollmentReservation> reserveDeviceLinkEnrollment(String code) async {
+    return const EnrollmentReservation(
+      id: 'dlink_1',
+      accountId: 'acct_owner',
+      deviceId: 'dev_linked',
+      challenge: <int>[1, 2, 3],
+    );
+  }
+
+  @override
   Future<DeviceLinkClaim> claimDeviceLink({
     required String code,
     required String deviceName,
-    required List<int> deviceKeyPackage,
-    List<int> signingKey = const <int>[],
+    required EnrollmentReservation enrollment,
+    required EnrollmentCredential credential,
   }) async {
     return DeviceLinkClaim(
       deviceLink: _link(state: 'claimed'),
       claimToken: 'claim-token',
+      deviceSecret: 'device-secret',
     );
   }
 

@@ -3,8 +3,11 @@ package httpapi_test
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -218,12 +221,12 @@ func TestMetadataSearchBackupExportAndAccountDelete(t *testing.T) {
 	}
 
 	status, response = doJSON(t, handler, http.MethodDelete, "/api/v1/account", token, nil)
-	if status != http.StatusNoContent {
+	if status != http.StatusConflict {
 		t.Fatalf("delete account status=%d body=%s", status, response)
 	}
 	status, _ = doJSON(t, handler, http.MethodGet, "/api/v1/conversations", token, nil)
-	if status != http.StatusUnauthorized {
-		t.Fatalf("deleted account token status=%d want %d", status, http.StatusUnauthorized)
+	if status != http.StatusOK {
+		t.Fatalf("last owner token status=%d want %d", status, http.StatusOK)
 	}
 }
 
@@ -290,6 +293,7 @@ func TestSetupRejectsNonProductionKeyPackage(t *testing.T) {
 		DatabasePath: filepath.Join(dir, "private-messenger.db"),
 		StoragePath:  filepath.Join(dir, "blobs"),
 		InstanceName: "Test Messenger",
+		SetupToken:   "test-setup-token",
 	}, nil)
 	if err != nil {
 		t.Fatalf("new app: %v", err)
@@ -307,6 +311,38 @@ func TestSetupRejectsNonProductionKeyPackage(t *testing.T) {
 	}
 	if !bytes.Contains(response, []byte("non_production_device_key_package")) {
 		t.Fatalf("setup response missing non_production_device_key_package: %s", response)
+	}
+}
+
+func TestSetupRejectsInvalidUsername(t *testing.T) {
+	dir := t.TempDir()
+	application, err := app.New(context.Background(), config.Config{
+		Addr:         ":0",
+		DataDir:      dir,
+		DatabasePath: filepath.Join(dir, "private-messenger.db"),
+		StoragePath:  filepath.Join(dir, "blobs"),
+		InstanceName: "Test Messenger",
+		SetupToken:   "test-setup-token",
+	}, nil)
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	t.Cleanup(func() { _ = application.Close() })
+	handler := application.Handler()
+	for _, username := range []string{"ab", "own er", "own.er", "аwner"} {
+		status, response := doJSON(t, handler, http.MethodPost, "/api/v1/setup/owner", "", map[string]interface{}{
+			"instance_name":      "Test Messenger",
+			"username":           username,
+			"password":           "owner-password-123",
+			"device_name":        "owner phone",
+			"device_key_package": base64.StdEncoding.EncodeToString([]byte("owner-key-package")),
+		})
+		if status != http.StatusBadRequest {
+			t.Fatalf("username=%q setup status=%d want %d body=%s", username, status, http.StatusBadRequest, response)
+		}
+		if !bytes.Contains(response, []byte("invalid_identity")) {
+			t.Fatalf("username=%q response missing invalid_identity: %s", username, response)
+		}
 	}
 }
 
@@ -332,12 +368,16 @@ func TestDeviceLinkingFlowRequiresExistingDeviceApproval(t *testing.T) {
 		t.Fatalf("created link missing fields: %s", response)
 	}
 
-	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/device-links/claim", "", map[string]interface{}{
+	enrollment := reserveEnrollment(
+		t, handler, "/api/v1/device-links/claim-enrollment", created.DeviceLink.Code,
+	)
+	claimBody := map[string]interface{}{
 		"code":               created.DeviceLink.Code,
 		"device_name":        "linked tablet",
-		"device_key_package": base64.StdEncoding.EncodeToString([]byte("tablet-key-package")),
-		"signing_key":        base64.StdEncoding.EncodeToString([]byte("tablet-signing-key")),
-	})
+		"device_key_package": make([]byte, 64),
+	}
+	addEnrollmentProof(claimBody, enrollment)
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/device-links/claim", "", claimBody)
 	if status != http.StatusAccepted {
 		t.Fatalf("claim device link status=%d body=%s", status, response)
 	}
@@ -466,19 +506,23 @@ func newTestHandlerWithOwner(t *testing.T) (http.Handler, string, string) {
 		DatabasePath: dbPath,
 		StoragePath:  filepath.Join(dir, "blobs"),
 		InstanceName: "Test Messenger",
+		SetupToken:   "test-setup-token",
 	}, nil)
 	if err != nil {
 		t.Fatalf("new app: %v", err)
 	}
 	t.Cleanup(func() { _ = application.Close() })
 	handler := application.Handler()
-	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/setup/owner", "", map[string]interface{}{
+	enrollment := reserveEnrollment(t, handler, "/api/v1/setup/owner/enrollment", "")
+	body := map[string]interface{}{
 		"instance_name":      "Test Messenger",
 		"username":           "owner",
 		"password":           "owner-password-123",
 		"device_name":        "owner phone",
-		"device_key_package": base64.StdEncoding.EncodeToString([]byte("owner-key-package")),
-	})
+		"device_key_package": make([]byte, 64),
+	}
+	addEnrollmentProof(body, enrollment)
+	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/setup/owner", "", body)
 	if status != http.StatusCreated {
 		t.Fatalf("setup owner status=%d body=%s", status, response)
 	}
@@ -500,19 +544,23 @@ func newTestHandlerWithOwnerDevice(t *testing.T) (http.Handler, string, string) 
 		DatabasePath: filepath.Join(dir, "private-messenger.db"),
 		StoragePath:  filepath.Join(dir, "blobs"),
 		InstanceName: "Test Messenger",
+		SetupToken:   "test-setup-token",
 	}, nil)
 	if err != nil {
 		t.Fatalf("new app: %v", err)
 	}
 	t.Cleanup(func() { _ = application.Close() })
 	handler := application.Handler()
-	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/setup/owner", "", map[string]interface{}{
+	enrollment := reserveEnrollment(t, handler, "/api/v1/setup/owner/enrollment", "")
+	body := map[string]interface{}{
 		"instance_name":      "Test Messenger",
 		"username":           "owner",
 		"password":           "owner-password-123",
 		"device_name":        "owner phone",
-		"device_key_package": base64.StdEncoding.EncodeToString([]byte("owner-key-package")),
-	})
+		"device_key_package": make([]byte, 64),
+	}
+	addEnrollmentProof(body, enrollment)
+	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/setup/owner", "", body)
 	if status != http.StatusCreated {
 		t.Fatalf("setup owner status=%d body=%s", status, response)
 	}
@@ -568,6 +616,12 @@ func createMessage(t *testing.T, handler http.Handler, token, conversationID, id
 
 func registerMember(t *testing.T, handler http.Handler, ownerToken, username string) string {
 	t.Helper()
+	token, _ := registerMemberWithID(t, handler, ownerToken, username)
+	return token
+}
+
+func registerMemberWithID(t *testing.T, handler http.Handler, ownerToken, username string) (string, string) {
+	t.Helper()
 	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/invites", ownerToken, map[string]interface{}{"max_uses": 1})
 	if status != http.StatusCreated {
 		t.Fatalf("create invite status=%d body=%s", status, response)
@@ -578,23 +632,46 @@ func registerMember(t *testing.T, handler http.Handler, ownerToken, username str
 	if err := json.Unmarshal(response, &invite); err != nil {
 		t.Fatalf("decode invite: %v", err)
 	}
-	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/register", "", map[string]interface{}{
+	enrollment := reserveEnrollment(t, handler, "/api/v1/register/enrollment", invite.Code)
+	body := map[string]interface{}{
 		"invite_code":        invite.Code,
 		"username":           username,
 		"password":           "member-password-123",
 		"device_name":        username + " phone",
-		"device_key_package": base64.StdEncoding.EncodeToString([]byte(username + "-key-package")),
-	})
+		"device_key_package": make([]byte, 64),
+	}
+	addEnrollmentProof(body, enrollment)
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/register", "", body)
 	if status != http.StatusCreated {
 		t.Fatalf("register member status=%d body=%s", status, response)
 	}
 	var decoded struct {
-		Token string `json:"token"`
+		Token   string `json:"token"`
+		Account struct {
+			ID string `json:"id"`
+		} `json:"account"`
 	}
 	if err := json.Unmarshal(response, &decoded); err != nil {
 		t.Fatalf("decode register response: %v", err)
 	}
-	return decoded.Token
+	return decoded.Token, decoded.Account.ID
+}
+
+func accountIDFromExport(t *testing.T, handler http.Handler, token string) string {
+	t.Helper()
+	status, response := doJSON(t, handler, http.MethodGet, "/api/v1/account/export", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("export account status=%d body=%s", status, response)
+	}
+	var decoded struct {
+		Account struct {
+			ID string `json:"id"`
+		} `json:"account"`
+	}
+	if err := json.Unmarshal(response, &decoded); err != nil {
+		t.Fatalf("decode account export: %v", err)
+	}
+	return decoded.Account.ID
 }
 
 func doJSON(t *testing.T, handler http.Handler, method, path, token string, body interface{}) (int, []byte) {
@@ -605,8 +682,8 @@ func doJSON(t *testing.T, handler http.Handler, method, path, token string, body
 	}
 	req := httptest.NewRequest(method, path, bytes.NewReader(raw))
 	req.Header.Set("Content-Type", "application/json")
-	if path == "/api/v1/setup/owner" {
-		req.Header.Set("X-Private-Messenger-Setup", "1")
+	if path == "/api/v1/setup/owner" || path == "/api/v1/setup/owner/enrollment" {
+		req.Header.Set("X-Veritra-Setup-Token", "test-setup-token")
 	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -614,6 +691,78 @@ func doJSON(t *testing.T, handler http.Handler, method, path, token string, body
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	return rec.Code, rec.Body.Bytes()
+}
+
+type testEnrollment struct {
+	ID         string `json:"id"`
+	AccountID  string `json:"account_id"`
+	DeviceID   string `json:"device_id"`
+	Challenge  []byte `json:"challenge"`
+	SigningKey []byte
+	PrivateKey ed25519.PrivateKey
+}
+
+func reserveEnrollment(t *testing.T, handler http.Handler, path, inviteCode string) testEnrollment {
+	t.Helper()
+	body := interface{}(map[string]interface{}{})
+	if inviteCode != "" {
+		field := "invite_code"
+		if path == "/api/v1/device-links/claim-enrollment" {
+			field = "code"
+		}
+		body = map[string]interface{}{field: inviteCode}
+	}
+	status, response := doJSON(t, handler, http.MethodPost, path, "", body)
+	if status != http.StatusCreated {
+		t.Fatalf("reserve enrollment status=%d body=%s", status, response)
+	}
+	var enrollment testEnrollment
+	if err := json.Unmarshal(response, &enrollment); err != nil {
+		t.Fatalf("decode enrollment: %v", err)
+	}
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate enrollment key: %v", err)
+	}
+	enrollment.SigningKey = publicKey
+	enrollment.PrivateKey = privateKey
+	return enrollment
+}
+
+func addEnrollmentProof(body map[string]interface{}, enrollment testEnrollment) {
+	var keyPackage []byte
+	switch value := body["device_key_package"].(type) {
+	case string:
+		keyPackage, _ = base64.StdEncoding.DecodeString(value)
+	case []byte:
+		keyPackage = value
+	case []int:
+		keyPackage = make([]byte, len(value))
+		for index, item := range value {
+			keyPackage[index] = byte(item)
+		}
+	}
+	body["enrollment_reservation_id"] = enrollment.ID
+	body["signing_key"] = enrollment.SigningKey
+	body["challenge_signature"] = ed25519.Sign(
+		enrollment.PrivateKey,
+		enrollmentProofMessageForTest(
+			enrollment.Challenge,
+			enrollment.SigningKey,
+			keyPackage,
+		),
+	)
+}
+
+func enrollmentProofMessageForTest(challenge, signingKey, keyPackage []byte) []byte {
+	keyPackageHash := sha256.Sum256(keyPackage)
+	proof := []byte("veritra-enrollment-proof-v1")
+	var challengeLength [2]byte
+	binary.BigEndian.PutUint16(challengeLength[:], uint16(len(challenge)))
+	proof = append(proof, challengeLength[:]...)
+	proof = append(proof, challenge...)
+	proof = append(proof, signingKey...)
+	return append(proof, keyPackageHash[:]...)
 }
 
 func doRaw(t *testing.T, handler http.Handler, method, path, token string, body []byte, headers map[string]string) (int, []byte) {
@@ -645,6 +794,7 @@ func TestListInvitesReturnsOwnInvitesOnly(t *testing.T) {
 	}
 	var listed struct {
 		Invites []struct {
+			ID      string `json:"id"`
 			Code    string `json:"code"`
 			MaxUses int    `json:"max_uses"`
 		} `json:"invites"`
@@ -655,6 +805,18 @@ func TestListInvitesReturnsOwnInvitesOnly(t *testing.T) {
 	if len(listed.Invites) != 1 || listed.Invites[0].MaxUses != 5 ||
 		listed.Invites[0].Code == "" {
 		t.Fatalf("unexpected invites: %#v", listed.Invites)
+	}
+	status, response = doJSON(t, handler, http.MethodDelete, "/api/v1/invites/"+listed.Invites[0].ID, ownerToken, nil)
+	if status != http.StatusNoContent {
+		t.Fatalf("revoke invite status=%d body=%s", status, response)
+	}
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/register", "", map[string]interface{}{
+		"invite_code": listed.Invites[0].Code, "username": "revokedinvite",
+		"password": "member-password-123", "device_name": "phone",
+		"device_key_package": base64.StdEncoding.EncodeToString([]byte("revoked-key-package")),
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("revoked invite registration status=%d body=%s", status, response)
 	}
 
 	memberToken := registerMember(t, handler, ownerToken, "listmember")
@@ -732,5 +894,82 @@ func TestListCommunitiesAndChannelsScopedToMembership(t *testing.T) {
 	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/communities/"+community.ID+"/channels", memberToken, nil)
 	if status != http.StatusForbidden {
 		t.Fatalf("outsider list channels status=%d body=%s", status, response)
+	}
+}
+
+func TestConversationAndChannelAuthorizationBoundaries(t *testing.T) {
+	handler, ownerToken, _ := newTestHandlerWithOwner(t)
+	memberToken, memberID := registerMemberWithID(t, handler, ownerToken, "boundarymember")
+	ownerID := accountIDFromExport(t, handler, ownerToken)
+
+	conversationID := createConversation(t, handler, ownerToken)
+	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+conversationID+"/typing", memberToken, nil)
+	if status != http.StatusForbidden {
+		t.Fatalf("outsider typing status=%d body=%s", status, response)
+	}
+
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+conversationID+"/members", ownerToken, map[string]interface{}{
+		"account_id": memberID,
+		"role":       "moderator",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("promote member status=%d body=%s", status, response)
+	}
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/sync/events?after=0&limit=100", memberToken, nil)
+	if status != http.StatusOK || !bytes.Contains(response, []byte(`"membership.updated"`)) || !bytes.Contains(response, []byte(conversationID)) {
+		t.Fatalf("member sync missing membership update status=%d body=%s", status, response)
+	}
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+conversationID+"/members", memberToken, map[string]interface{}{
+		"account_id": ownerID,
+		"role":       "member",
+	})
+	if status != http.StatusForbidden {
+		t.Fatalf("moderator demote owner status=%d body=%s", status, response)
+	}
+
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]interface{}{"name": "Kinds"})
+	if status != http.StatusCreated {
+		t.Fatalf("create community status=%d body=%s", status, response)
+	}
+	var community struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(response, &community); err != nil {
+		t.Fatalf("decode community: %v", err)
+	}
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/communities/"+community.ID+"/channels", ownerToken, map[string]interface{}{
+		"name": "bad-kind",
+		"kind": "text",
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("invalid channel kind status=%d body=%s", status, response)
+	}
+}
+
+func TestMessageReferencesStayWithinConversation(t *testing.T) {
+	handler, token, _ := newTestHandlerWithOwner(t)
+	firstConversation := createConversation(t, handler, token)
+	secondConversation := createConversation(t, handler, token)
+	messageID := createMessage(t, handler, token, firstConversation, "reference-source", []byte("ciphertext"))
+	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/messages/envelopes", token, map[string]interface{}{
+		"conversation_id": secondConversation,
+		"idempotency_key": "cross-conversation-reference",
+		"ciphertext":      base64.StdEncoding.EncodeToString([]byte("ciphertext")),
+		"crypto_protocol": "mls-openmls-todo",
+		"reply_to_id":     messageID,
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("cross-conversation reply status=%d body=%s", status, response)
+	}
+}
+
+func TestAuthenticatedAPIResponsesAreNotCacheable(t *testing.T) {
+	handler, ownerToken, _ := newTestHandlerWithOwner(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/devices/me", nil)
+	req.Header.Set("Authorization", "Bearer "+ownerToken)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if got := rec.Header().Get("Cache-Control"); got != "no-store, private" {
+		t.Fatalf("Cache-Control=%q", got)
 	}
 }

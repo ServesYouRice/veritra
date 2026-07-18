@@ -35,7 +35,7 @@
 
 ## Metadata Leakage
 
-The server necessarily sees account IDs, device IDs, membership, delivery timing, conversation IDs, attachment sizes, and call signaling metadata. Future work should reduce and document this metadata, but v1 must avoid pretending metadata is hidden from the server.
+The server necessarily sees account IDs, device IDs, membership, delivery timing, conversation IDs, attachment sizes, and call lifecycle timing. Call SDP/ICE signaling content must use the strict encrypted-envelope schema and is opaque to the server. Future work should reduce and document the remaining metadata, but v1 must avoid pretending metadata is hidden from the server.
 
 ## Explicit Non-Goals for MVP
 

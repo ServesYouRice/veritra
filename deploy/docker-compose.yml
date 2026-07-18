@@ -22,11 +22,20 @@ services:
       retries: 3
       start_period: 10s
     restart: unless-stopped
+    mem_limit: 1g
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - messenger-net
 
   caddy:
-    image: caddy:2
+    image: caddy:2.11.4@sha256:af5fdcd76f2db5e4e974ee92f96ee8c0fc3edb55bd4ba5032547cbf3f65e486d
     profiles: ["caddy"]
     depends_on:
       - messenger
@@ -38,6 +47,15 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     restart: unless-stopped
+    mem_limit: 512m
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - messenger-net
 

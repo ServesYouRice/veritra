@@ -1,39 +1,75 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'models.dart';
 
 class ApiClient {
-  ApiClient({required this.baseUrl, HttpClient? httpClient})
-      : _httpClient = httpClient ?? HttpClient() {
+  ApiClient({required String baseUrl, HttpClient? httpClient})
+      : baseUrl = canonicalizeServerOrigin(baseUrl),
+        _httpClient = httpClient ?? HttpClient() {
     _httpClient.connectionTimeout = const Duration(seconds: 15);
   }
 
   final String baseUrl;
   final HttpClient _httpClient;
   static const _requestTimeout = Duration(seconds: 30);
+  static const _maxJsonResponseBytes = 2 * 1024 * 1024;
+
+  void close() => _httpClient.close(force: true);
 
   Future<Map<String, Object?>> setupStatus() async {
     return _jsonRequest('GET', '/api/v1/setup/status');
+  }
+
+  Future<EnrollmentReservation> reserveOwnerEnrollment(
+      {String setupToken = ''}) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/setup/owner/enrollment',
+      body: const <String, Object?>{},
+      extraHeaders: setupToken.isEmpty
+          ? const <String, String>{}
+          : <String, String>{'X-Veritra-Setup-Token': setupToken},
+    );
+    return EnrollmentReservation.fromJson(json);
+  }
+
+  Future<EnrollmentReservation> reserveRegistrationEnrollment(
+      String inviteCode) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/register/enrollment',
+      body: <String, Object?>{'invite_code': inviteCode},
+    );
+    return EnrollmentReservation.fromJson(json);
   }
 
   Future<Session> createOwner({
     required String username,
     required String password,
     required String deviceName,
-    required List<int> deviceKeyPackage,
-    String instanceName = 'Private Messenger',
+    required EnrollmentReservation enrollment,
+    required EnrollmentCredential credential,
+    String setupToken = '',
+    String? instanceName,
   }) async {
     final json = await _jsonRequest('POST', '/api/v1/setup/owner',
         body: <String, Object?>{
-          'instance_name': instanceName,
+          if (instanceName != null && instanceName.trim().isNotEmpty)
+            'instance_name': instanceName.trim(),
           'username': username,
           'password': password,
           'device_name': deviceName,
-          'device_key_package': base64Encode(deviceKeyPackage),
+          'enrollment_reservation_id': enrollment.id,
+          'device_key_package': base64Encode(credential.deviceKeyPackage),
+          'signing_key': base64Encode(credential.signingKey),
+          'challenge_signature': base64Encode(credential.challengeSignature),
         },
-        setupRequest: true);
+        extraHeaders: setupToken.isEmpty
+            ? const <String, String>{}
+            : <String, String>{'X-Veritra-Setup-Token': setupToken});
     return _sessionFromAuthJson(json, fallbackUsername: username);
   }
 
@@ -42,7 +78,8 @@ class ApiClient {
     required String username,
     required String password,
     required String deviceName,
-    required List<int> deviceKeyPackage,
+    required EnrollmentReservation enrollment,
+    required EnrollmentCredential credential,
   }) async {
     final json =
         await _jsonRequest('POST', '/api/v1/register', body: <String, Object?>{
@@ -50,7 +87,10 @@ class ApiClient {
       'username': username,
       'password': password,
       'device_name': deviceName,
-      'device_key_package': base64Encode(deviceKeyPackage),
+      'enrollment_reservation_id': enrollment.id,
+      'device_key_package': base64Encode(credential.deviceKeyPackage),
+      'signing_key': base64Encode(credential.signingKey),
+      'challenge_signature': base64Encode(credential.challengeSignature),
     });
     return _sessionFromAuthJson(json, fallbackUsername: username);
   }
@@ -58,29 +98,60 @@ class ApiClient {
   Future<Session> login(
       {required String username,
       required String password,
-      required String deviceId}) async {
+      required String deviceId,
+      required String deviceSecret}) async {
     final json = await _jsonRequest('POST', '/api/v1/auth/login',
         body: <String, Object?>{
           'username': username,
           'password': password,
           'device_id': deviceId,
+          'device_secret': deviceSecret,
         });
-    return _sessionFromAuthJson(json, fallbackUsername: username);
+    return _sessionFromAuthJson(json,
+        fallbackUsername: username, fallbackDeviceSecret: deviceSecret);
   }
 
   Future<List<Conversation>> conversations(String token) async {
-    final json =
-        await _jsonRequest('GET', '/api/v1/conversations', token: token);
-    final rows = (json['conversations'] as List<Object?>? ?? const <Object?>[])
-        .map((row) => Map<String, Object?>.from(row as Map));
-    return rows.map(Conversation.fromJson).toList();
+    const pageSize = 100;
+    final result = <Conversation>[];
+    String? before;
+    while (true) {
+      final path = '/api/v1/conversations?limit=$pageSize'
+          '${before == null ? '' : '&before=${Uri.encodeQueryComponent(before)}'}';
+      final json = await _jsonRequest('GET', path, token: token);
+      final page =
+          (json['conversations'] as List<Object?>? ?? const <Object?>[])
+              .map((row) => Conversation.fromJson(
+                    Map<String, Object?>.from(row as Map),
+                  ))
+              .toList();
+      result.addAll(page);
+      if (page.length < pageSize) {
+        return result;
+      }
+      before = page.last.id;
+    }
   }
 
   Future<List<Device>> devices(String token) async {
-    final json = await _jsonRequest('GET', '/api/v1/devices/me', token: token);
-    final rows = (json['devices'] as List<Object?>? ?? const <Object?>[])
-        .map((row) => Map<String, Object?>.from(row as Map));
-    return rows.map(Device.fromJson).toList();
+    const pageSize = 100;
+    final result = <Device>[];
+    String? after;
+    while (true) {
+      final path = '/api/v1/devices/me?limit=$pageSize'
+          '${after == null ? '' : '&after=${Uri.encodeQueryComponent(after)}'}';
+      final json = await _jsonRequest('GET', path, token: token);
+      final page = (json['devices'] as List<Object?>? ?? const <Object?>[])
+          .map((row) => Device.fromJson(
+                Map<String, Object?>.from(row as Map),
+              ))
+          .toList();
+      result.addAll(page);
+      if (page.length < pageSize) {
+        return result;
+      }
+      after = page.last.id;
+    }
   }
 
   Future<void> logout(String token) async {
@@ -89,6 +160,23 @@ class ApiClient {
 
   Future<void> logoutAll(String token) async {
     await _jsonRequest('POST', '/api/v1/auth/logout-all', token: token);
+  }
+
+  Future<void> reauthenticate(
+    String token,
+    String password,
+    String deviceSecret,
+  ) async {
+    await _jsonRequest('POST', '/api/v1/auth/reauth', token: token, body: {
+      'password': password,
+      'device_secret': deviceSecret,
+    });
+  }
+
+  Future<void> changePassword(String token, String newPassword) async {
+    await _jsonRequest('POST', '/api/v1/account/password', token: token, body: {
+      'new_password': newPassword,
+    });
   }
 
   Future<void> revokeDevice(String token, String deviceId) async {
@@ -146,6 +234,10 @@ class ApiClient {
     return rows.map(Invite.fromJson).toList();
   }
 
+  Future<void> revokeInvite(String token, String inviteId) async {
+    await _jsonRequest('DELETE', '/api/v1/invites/$inviteId', token: token);
+  }
+
   Future<List<Community>> listCommunities(String token) async {
     final json = await _jsonRequest('GET', '/api/v1/communities', token: token);
     final rows = (json['communities'] as List<Object?>? ?? const <Object?>[])
@@ -171,11 +263,11 @@ class ApiClient {
     return Community.fromJson(json);
   }
 
-  Future<Channel> createChannel(
+  Future<ChannelCreation> createChannel(
     String token,
     String communityId,
     String name, {
-    String kind = 'text',
+    String kind = 'private',
   }) async {
     final json = await _jsonRequest(
         'POST', '/api/v1/communities/$communityId/channels',
@@ -184,7 +276,7 @@ class ApiClient {
           'name': name,
           'kind': kind,
         });
-    return Channel.fromJson(json);
+    return ChannelCreation.fromJson(json);
   }
 
   Future<void> addConversationMember(
@@ -283,6 +375,40 @@ class ApiClient {
         });
   }
 
+  Future<String> registerWebPush(
+    String token, {
+    required String endpoint,
+    required String publicKey,
+    required String authSecret,
+  }) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/push/subscriptions',
+      token: token,
+      body: <String, Object?>{
+        'provider': 'webpush',
+        'endpoint': endpoint,
+        'public_key': publicKey,
+        'auth_secret': authSecret,
+      },
+    );
+    return json['subscription_id'] as String;
+  }
+
+  Future<Map<String, Object?>> pushConfig(String token) => _jsonRequest(
+        'GET',
+        '/api/v1/push/config',
+        token: token,
+      );
+
+  Future<void> disablePush(String token, String subscriptionId) async {
+    await _jsonRequest(
+      'DELETE',
+      '/api/v1/push/subscriptions/$subscriptionId',
+      token: token,
+    );
+  }
+
   Future<List<MetadataSearchResult>> searchMetadata(
     String token,
     String query, {
@@ -324,11 +450,20 @@ class ApiClient {
         Map<String, Object?>.from(json['device_link'] as Map));
   }
 
+  Future<EnrollmentReservation> reserveDeviceLinkEnrollment(String code) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/device-links/claim-enrollment',
+      body: <String, Object?>{'code': code},
+    );
+    return EnrollmentReservation.fromJson(json);
+  }
+
   Future<DeviceLinkClaim> claimDeviceLink({
     required String code,
     required String deviceName,
-    required List<int> deviceKeyPackage,
-    List<int> signingKey = const <int>[],
+    required EnrollmentReservation enrollment,
+    required EnrollmentCredential credential,
   }) async {
     final json = await _jsonRequest(
       'POST',
@@ -336,14 +471,17 @@ class ApiClient {
       body: <String, Object?>{
         'code': code,
         'device_name': deviceName,
-        'device_key_package': base64Encode(deviceKeyPackage),
-        if (signingKey.isNotEmpty) 'signing_key': base64Encode(signingKey),
+        'enrollment_reservation_id': enrollment.id,
+        'device_key_package': base64Encode(credential.deviceKeyPackage),
+        'signing_key': base64Encode(credential.signingKey),
+        'challenge_signature': base64Encode(credential.challengeSignature),
       },
     );
     return DeviceLinkClaim(
       deviceLink: DeviceLink.fromJson(
           Map<String, Object?>.from(json['device_link'] as Map)),
       claimToken: json['claim_token'] as String,
+      deviceSecret: json['device_secret'] as String,
     );
   }
 
@@ -379,6 +517,7 @@ class ApiClient {
   Session _sessionFromAuthJson(
     Map<String, Object?> json, {
     String? fallbackUsername,
+    String? fallbackDeviceSecret,
   }) {
     return Session(
       baseUrl: baseUrl,
@@ -386,6 +525,8 @@ class ApiClient {
       accountId: json['account_id'] as String? ?? _nestedId(json['account']),
       deviceId: json['device_id'] as String? ?? _nestedId(json['device']),
       username: _nestedField(json['account'], 'username') ?? fallbackUsername,
+      deviceSecret: json['device_secret'] as String? ?? fallbackDeviceSecret,
+      role: json['role'] as String? ?? _nestedField(json['account'], 'role'),
     );
   }
 
@@ -406,7 +547,6 @@ class ApiClient {
     String path, {
     String? token,
     Map<String, Object?>? body,
-    bool setupRequest = false,
     Map<String, String> extraHeaders = const <String, String>{},
   }) async {
     final uri = Uri.parse(baseUrl).resolve(path);
@@ -416,15 +556,19 @@ class ApiClient {
     if (token != null) {
       request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
     }
-    if (setupRequest) {
-      request.headers.set('X-Private-Messenger-Setup', '1');
-    }
     extraHeaders.forEach((key, value) => request.headers.set(key, value));
     if (body != null) {
       request.write(jsonEncode(body));
     }
     final response = await request.close().timeout(_requestTimeout);
-    final text = await utf8.decodeStream(response).timeout(_requestTimeout);
+    final bytes = BytesBuilder(copy: false);
+    await for (final chunk in response.timeout(_requestTimeout)) {
+      if (bytes.length + chunk.length > _maxJsonResponseBytes) {
+        throw const HttpException('JSON response exceeded the size limit');
+      }
+      bytes.add(chunk);
+    }
+    final text = utf8.decode(bytes.takeBytes());
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw ApiException(response.statusCode, text);
     }
@@ -433,6 +577,28 @@ class ApiClient {
     }
     return Map<String, Object?>.from(jsonDecode(text) as Map);
   }
+}
+
+String canonicalizeServerOrigin(String raw) {
+  final uri = Uri.parse(raw.trim());
+  final scheme = uri.scheme.toLowerCase();
+  if ((scheme != 'http' && scheme != 'https') || uri.host.isEmpty) {
+    throw const FormatException('A full HTTP(S) server origin is required');
+  }
+  if (uri.userInfo.isNotEmpty ||
+      (uri.path.isNotEmpty && uri.path != '/') ||
+      uri.hasQuery ||
+      uri.hasFragment) {
+    throw const FormatException(
+        'Server URL must not contain credentials, a path, query, or fragment');
+  }
+  final defaultPort = scheme == 'https' ? 443 : 80;
+  final origin = Uri(
+    scheme: scheme,
+    host: uri.host.toLowerCase(),
+    port: uri.hasPort && uri.port != defaultPort ? uri.port : null,
+  );
+  return origin.toString().replaceFirst(RegExp(r'/$'), '');
 }
 
 class ApiException implements Exception {
@@ -456,12 +622,26 @@ class ApiException implements Exception {
     return null;
   }
 
+  int? intField(String name) {
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map && decoded[name] is num) {
+        return (decoded[name] as num).toInt();
+      }
+    } catch (_) {
+      return null;
+    }
+    return null;
+  }
+
   String get message {
     switch (serverCode) {
       case 'unauthorized':
         return 'Your session is no longer valid. Sign in again.';
       case 'invalid_credentials':
         return 'Sign-in failed. Check your username and password.';
+      case 'recent_auth_required':
+        return 'Confirm your password before this sensitive action.';
       case 'device_id_required':
       case 'device_session_required':
         return 'This device must be linked before password sign-in.';
@@ -472,6 +652,8 @@ class ApiException implements Exception {
       case 'already_setup':
         return 'This server already has an owner. Sign in or join with an '
             'invite instead.';
+      case 'last_owner_required':
+        return 'Transfer ownership before disabling the last owner account.';
       case 'weak_password':
         return 'Password must be 12–72 characters.';
       case 'invalid_invite':
@@ -507,7 +689,9 @@ class ApiException implements Exception {
       case 'upload_too_large':
         return 'That file is too large to upload.';
       case 'device_key_package_required':
+      case 'invalid_device_key_package':
       case 'non_production_device_key_package':
+      case 'invalid_enrollment':
         return 'The server refused this build’s encryption keys. A '
             'client with production encryption support is required.';
       case 'storage_error':

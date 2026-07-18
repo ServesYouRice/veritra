@@ -1,5 +1,41 @@
 import 'dart:convert';
 
+enum OutboxDeliveryState { sending, failed }
+
+class EnrollmentReservation {
+  const EnrollmentReservation({
+    required this.id,
+    required this.accountId,
+    required this.deviceId,
+    required this.challenge,
+  });
+
+  final String id;
+  final String accountId;
+  final String deviceId;
+  final List<int> challenge;
+
+  factory EnrollmentReservation.fromJson(Map<String, Object?> json) =>
+      EnrollmentReservation(
+        id: json['id'] as String,
+        accountId: json['account_id'] as String,
+        deviceId: json['device_id'] as String,
+        challenge: base64Decode(json['challenge'] as String),
+      );
+}
+
+class EnrollmentCredential {
+  const EnrollmentCredential({
+    required this.deviceKeyPackage,
+    required this.signingKey,
+    required this.challengeSignature,
+  });
+
+  final List<int> deviceKeyPackage;
+  final List<int> signingKey;
+  final List<int> challengeSignature;
+}
+
 class Conversation {
   Conversation({
     required this.id,
@@ -9,6 +45,9 @@ class Conversation {
     this.channelId,
     this.retentionSeconds,
     this.createdAt,
+    this.lastMessageAt,
+    this.unreadCount = 0,
+    this.currentRole,
   });
 
   final String id;
@@ -18,10 +57,20 @@ class Conversation {
   final String? channelId;
   final int? retentionSeconds;
   final DateTime? createdAt;
+  // Populated by the conversation list endpoint so the chat list can order by
+  // activity and show unread badges. Null/zero for freshly created or
+  // single-conversation responses.
+  final DateTime? lastMessageAt;
+  final int unreadCount;
+  final String? currentRole;
 
   bool get isDm => kind == 'dm';
   bool get isGroup => kind == 'group';
   bool get isChannel => kind == 'community_channel';
+
+  /// Most recent activity for ordering/display: last message if known,
+  /// otherwise creation time.
+  DateTime? get lastActivityAt => lastMessageAt ?? createdAt;
 
   factory Conversation.fromJson(Map<String, Object?> json) {
     return Conversation(
@@ -32,8 +81,41 @@ class Conversation {
       channelId: json['channel_id'] as String?,
       retentionSeconds: (json['retention_seconds'] as num?)?.toInt(),
       createdAt: _parseOptionalTime(json['created_at']),
+      lastMessageAt: _parseOptionalTime(json['last_message_at']),
+      unreadCount: (json['unread_count'] as num?)?.toInt() ?? 0,
+      currentRole: json['current_role'] as String?,
     );
   }
+
+  Conversation copyWith({int? unreadCount}) {
+    return Conversation(
+      id: id,
+      kind: kind,
+      title: title,
+      communityId: communityId,
+      channelId: channelId,
+      retentionSeconds: retentionSeconds,
+      createdAt: createdAt,
+      lastMessageAt: lastMessageAt,
+      unreadCount: unreadCount ?? this.unreadCount,
+      currentRole: currentRole,
+    );
+  }
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'id': id,
+        'kind': kind,
+        if (title != null) 'title': title,
+        if (communityId != null) 'community_id': communityId,
+        if (channelId != null) 'channel_id': channelId,
+        if (retentionSeconds != null) 'retention_seconds': retentionSeconds,
+        if (createdAt != null)
+          'created_at': createdAt!.toUtc().toIso8601String(),
+        if (lastMessageAt != null)
+          'last_message_at': lastMessageAt!.toUtc().toIso8601String(),
+        if (unreadCount != 0) 'unread_count': unreadCount,
+        if (currentRole != null) 'current_role': currentRole,
+      };
 }
 
 class Community {
@@ -73,6 +155,23 @@ class Channel {
       kind: json['kind'] as String,
     );
   }
+}
+
+class ChannelCreation {
+  const ChannelCreation({required this.channel, required this.conversation});
+
+  final Channel channel;
+  final Conversation conversation;
+
+  factory ChannelCreation.fromJson(Map<String, Object?> json) =>
+      ChannelCreation(
+        channel: Channel.fromJson(
+          Map<String, Object?>.from(json['channel']! as Map),
+        ),
+        conversation: Conversation.fromJson(
+          Map<String, Object?>.from(json['conversation']! as Map),
+        ),
+      );
 }
 
 class Invite {
@@ -137,6 +236,22 @@ class MessageEnvelope {
       if (threadRootId != null) 'thread_root_id': threadRootId,
     };
   }
+
+  factory MessageEnvelope.fromJson(Map<String, Object?> json) {
+    return MessageEnvelope(
+      conversationId: json['conversation_id'] as String,
+      idempotencyKey: json['idempotency_key'] as String,
+      ciphertext: ReceivedMessageEnvelope._decodeBytes(json['ciphertext']),
+      cryptoProtocol: json['crypto_protocol'] as String,
+      cryptoMetadata: Map<String, Object?>.from(
+        (json['crypto_metadata'] as Map?) ?? const <String, Object?>{},
+      ),
+      attachmentRefs: (json['attachment_refs'] as List?)?.cast<Object?>() ??
+          const <Object?>[],
+      replyToId: json['reply_to_id'] as String?,
+      threadRootId: json['thread_root_id'] as String?,
+    );
+  }
 }
 
 class ReceivedMessageEnvelope {
@@ -193,6 +308,26 @@ class ReceivedMessageEnvelope {
       expiresAt: _parseOptionalTime(json['expires_at']),
     );
   }
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'id': id,
+        'conversation_id': conversationId,
+        'sender_account_id': senderAccountId,
+        'sender_device_id': senderDeviceId,
+        'idempotency_key': idempotencyKey,
+        'ciphertext': base64Encode(ciphertext),
+        'crypto_protocol': cryptoProtocol,
+        if (cryptoMetadata != null) 'crypto_metadata': cryptoMetadata,
+        if (attachmentRefs != null) 'attachment_refs': attachmentRefs,
+        if (replyToId != null) 'reply_to_id': replyToId,
+        if (threadRootId != null) 'thread_root_id': threadRootId,
+        'created_at': createdAt.toUtc().toIso8601String(),
+        if (editedAt != null) 'edited_at': editedAt!.toUtc().toIso8601String(),
+        if (deletedAt != null)
+          'deleted_at': deletedAt!.toUtc().toIso8601String(),
+        if (expiresAt != null)
+          'expires_at': expiresAt!.toUtc().toIso8601String(),
+      };
 
   static List<int> _decodeBytes(Object? value) {
     if (value is String) {
@@ -290,10 +425,15 @@ class DeviceLink {
 }
 
 class DeviceLinkClaim {
-  DeviceLinkClaim({required this.deviceLink, required this.claimToken});
+  DeviceLinkClaim({
+    required this.deviceLink,
+    required this.claimToken,
+    required this.deviceSecret,
+  });
 
   final DeviceLink deviceLink;
   final String claimToken;
+  final String deviceSecret;
 }
 
 class Device {
@@ -353,6 +493,8 @@ class Session {
     this.accountId,
     this.deviceId,
     this.username,
+    this.deviceSecret,
+    this.role,
   });
 
   final String baseUrl;
@@ -360,4 +502,6 @@ class Session {
   final String? accountId;
   final String? deviceId;
   final String? username;
+  final String? deviceSecret;
+  final String? role;
 }

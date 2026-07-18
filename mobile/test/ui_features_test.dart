@@ -4,10 +4,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
-import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 import 'package:private_messenger/ui/format.dart';
+
+import 'test_crypto_service.dart';
 
 void main() {
   test('conversation parses community, channel, and retention metadata', () {
@@ -90,9 +91,10 @@ void main() {
 
     await state.createChannel(community!.id, 'general');
     expect(state.channelsByCommunity[community.id], hasLength(1));
-    expect(api.lastConversationBody?['kind'], 'community_channel');
-    expect(api.lastConversationBody?['community_id'], community.id);
     expect(state.conversations, isNotEmpty);
+    expect(state.conversations.first.kind, 'community_channel');
+    expect(state.conversations.first.communityId, community.id);
+    expect(state.selectedConversationId, state.conversations.first.id);
   });
 
   test('registerWithInvite establishes a session', () async {
@@ -227,17 +229,38 @@ class FakeFeatureApiClient extends ApiClient {
   }
 
   @override
-  Future<Channel> createChannel(
+  Future<ChannelCreation> createChannel(
     String token,
     String communityId,
     String name, {
-    String kind = 'text',
+    String kind = 'private',
   }) async {
-    return Channel(
+    final channel = Channel(
       id: 'chan_1',
       communityId: communityId,
       name: name,
       kind: kind,
+    );
+    return ChannelCreation(
+      channel: channel,
+      conversation: Conversation(
+        id: 'conv_channel',
+        kind: 'community_channel',
+        title: name,
+        communityId: communityId,
+        channelId: channel.id,
+      ),
+    );
+  }
+
+  @override
+  Future<EnrollmentReservation> reserveRegistrationEnrollment(
+      String inviteCode) async {
+    return const EnrollmentReservation(
+      id: 'enroll_1',
+      accountId: 'acct_new',
+      deviceId: 'dev_new',
+      challenge: <int>[1, 2, 3],
     );
   }
 
@@ -247,7 +270,8 @@ class FakeFeatureApiClient extends ApiClient {
     required String username,
     required String password,
     required String deviceName,
-    required List<int> deviceKeyPackage,
+    required EnrollmentReservation enrollment,
+    required EnrollmentCredential credential,
   }) async {
     return const Session(
       baseUrl: 'http://localhost:8080',

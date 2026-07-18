@@ -35,6 +35,8 @@ class ConversationDetailsScreen extends StatelessWidget {
         }
         final theme = Theme.of(context);
         final retention = conversation.retentionSeconds;
+        final canManage = const <String>{'owner', 'admin', 'moderator'}
+            .contains(conversation.currentRole);
         return Scaffold(
           appBar: AppBar(title: const Text('Conversation details')),
           body: ListView(
@@ -44,8 +46,11 @@ class ConversationDetailsScreen extends StatelessWidget {
                 child: Column(
                   children: <Widget>[
                     ListTile(
-                      leading: CircleAvatar(
-                        child: Icon(conversationIcon(conversation)),
+                      // Decorative: the conversation title names it already.
+                      leading: ExcludeSemantics(
+                        child: CircleAvatar(
+                          child: Icon(conversationIcon(conversation)),
+                        ),
                       ),
                       title: Text(conversationTitle(conversation)),
                       subtitle: Text(conversationSubtitle(conversation)),
@@ -66,7 +71,9 @@ class ConversationDetailsScreen extends StatelessWidget {
                       ListTile(
                         leading: const Icon(Icons.schedule_outlined),
                         title: const Text('Created'),
-                        subtitle: Text(formatDateTime(conversation.createdAt!)),
+                        subtitle: Text(
+                          formatDateTime(context, conversation.createdAt!),
+                        ),
                       ),
                   ],
                 ),
@@ -81,8 +88,12 @@ class ConversationDetailsScreen extends StatelessWidget {
                 child: ListTile(
                   leading: const Icon(Icons.person_add_outlined),
                   title: const Text('Add member'),
-                  subtitle: const Text('Look up an account by username'),
-                  onTap: state.busy ? null : () => _addMember(context),
+                  subtitle: Text(canManage
+                      ? 'Look up an account by username'
+                      : 'Moderator permission required'),
+                  onTap: state.busy || !canManage
+                      ? null
+                      : () => _addMember(context),
                 ),
               ),
               const SizedBox(height: 16),
@@ -99,8 +110,12 @@ class ConversationDetailsScreen extends StatelessWidget {
                   groupValue:
                       retention == null || retention == 0 ? null : retention,
                   onChanged: (value) {
-                    if (!state.busy) {
-                      _confirmRetentionChange(context, conversation.id, value);
+                    if (!state.busy && canManage) {
+                      _confirmRetentionChange(
+                        context,
+                        conversation.id,
+                        value,
+                      );
                     }
                   },
                   child: Column(
@@ -109,7 +124,7 @@ class ConversationDetailsScreen extends StatelessWidget {
                         RadioListTile<int?>(
                           value: option.seconds,
                           title: Text(option.label),
-                          enabled: !state.busy,
+                          enabled: !state.busy && canManage,
                         ),
                     ],
                   ),

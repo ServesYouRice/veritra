@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -6,6 +8,7 @@ import '../../core/models.dart';
 import '../../ui/format.dart';
 import 'device_link_screen.dart';
 import 'invite_screen.dart';
+import 'profile_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({required this.state, super.key});
@@ -41,7 +44,14 @@ class SettingsScreen extends StatelessWidget {
                       ListTile(
                         leading: const Icon(Icons.account_circle_outlined),
                         title: Text('@${session!.username!}'),
-                        subtitle: const Text('Signed in on this instance'),
+                        subtitle:
+                            const Text('View account and device identity'),
+                        trailing: const Icon(Icons.chevron_right_outlined),
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => ProfileScreen(state: state),
+                          ),
+                        ),
                       ),
                       const Divider(),
                     ],
@@ -67,16 +77,30 @@ class SettingsScreen extends StatelessWidget {
                     ),
                     const Divider(),
                     ListTile(
-                      leading: const Icon(Icons.card_giftcard_outlined),
-                      title: const Text('Invites'),
-                      subtitle: const Text('Create codes so others can join'),
-                      trailing: const Icon(Icons.chevron_right_outlined),
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => InviteScreen(state: state),
-                        ),
-                      ),
+                      leading: const Icon(Icons.password_outlined),
+                      title: const Text('Change password'),
+                      subtitle:
+                          const Text('Ends sessions on your other devices'),
+                      onTap: state.busy ? null : () => _changePassword(context),
                     ),
+                    if (session?.role == 'owner' ||
+                        session?.role == 'admin') ...<Widget>[
+                      const Divider(),
+                      ListTile(
+                        leading: const Icon(Icons.card_giftcard_outlined),
+                        title: const Text('Invites'),
+                        subtitle: const Text('Create codes so others can join'),
+                        trailing: const Icon(Icons.chevron_right_outlined),
+                        onTap: () async {
+                          if (await _reauthenticate(context) &&
+                              context.mounted) {
+                            Navigator.of(context).push(MaterialPageRoute<void>(
+                              builder: (_) => InviteScreen(state: state),
+                            ));
+                          }
+                        },
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -91,12 +115,29 @@ class SettingsScreen extends StatelessWidget {
                       subtitle: const Text(
                           'Generate a pairing code for another device'),
                       trailing: const Icon(Icons.chevron_right_outlined),
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => DeviceLinkScreen(state: state),
-                        ),
-                      ),
+                      onTap: () async {
+                        if (await _reauthenticate(context) && context.mounted) {
+                          Navigator.of(context).push(MaterialPageRoute<void>(
+                            builder: (_) => DeviceLinkScreen(state: state),
+                          ));
+                        }
+                      },
                     ),
+                    if (state.devices.isEmpty && !state.devicesLoaded) ...[
+                      const Divider(),
+                      const ListTile(
+                        leading: SizedBox.square(
+                          dimension: 24,
+                          child: Center(
+                            child: SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          ),
+                        ),
+                        title: Text('Loading devices…'),
+                      ),
+                    ],
                     if (state.devices.isNotEmpty) const Divider(),
                     for (final device in state.devices)
                       _DeviceTile(
@@ -106,6 +147,20 @@ class SettingsScreen extends StatelessWidget {
                         onRevoke: () => _confirmRevoke(context, device),
                       ),
                   ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              _SectionHeader(title: 'Notifications', theme: theme),
+              Card(
+                child: ListTile(
+                  enabled: state.pushConfigured && !state.busy,
+                  leading: const Icon(Icons.notifications_outlined),
+                  title: const Text('Push provider'),
+                  subtitle: Text(state.pushConfigured
+                      ? 'Choose an Android UnifiedPush provider'
+                      : 'Not configured by this server'),
+                  trailing: const Icon(Icons.chevron_right_outlined),
+                  onTap: state.choosePushDistributor,
                 ),
               ),
               const SizedBox(height: 16),
@@ -165,8 +220,8 @@ class SettingsScreen extends StatelessWidget {
                     style: TextStyle(color: theme.colorScheme.onErrorContainer),
                   ),
                   subtitle: Text(
-                    'Permanently removes your account and data '
-                    'from this server.',
+                    'Disables sign-in and revokes your devices. Some encrypted '
+                    'records may remain under server retention rules.',
                     style: TextStyle(color: theme.colorScheme.onErrorContainer),
                   ),
                   onTap:
@@ -196,7 +251,9 @@ class SettingsScreen extends StatelessWidget {
       confirmLabel: 'Revoke',
     );
     if (confirmed) {
-      await state.revokeDevice(device.id);
+      if (await _reauthenticate(context)) {
+        await state.revokeDevice(device.id);
+      }
     }
   }
 
@@ -208,7 +265,9 @@ class SettingsScreen extends StatelessWidget {
       confirmLabel: 'Sign out others',
     );
     if (confirmed) {
-      await state.logoutOtherDevices();
+      if (await _reauthenticate(context)) {
+        await state.logoutOtherDevices();
+      }
     }
   }
 
@@ -216,13 +275,106 @@ class SettingsScreen extends StatelessWidget {
     final confirmed = await _confirm(
       context,
       title: 'Delete account?',
-      message: 'This permanently deletes your account, devices, and '
-          'memberships on this server. This cannot be undone.',
-      confirmLabel: 'Delete forever',
+      message: 'This disables your account, ends its sessions, and revokes its '
+          'devices. Encrypted messages and other records may remain according '
+          'to the server retention policy.',
+      confirmLabel: 'Disable account',
       destructive: true,
     );
     if (confirmed) {
-      await state.deleteAccount();
+      if (await _reauthenticate(context)) {
+        await state.deleteAccount();
+      }
+    }
+  }
+
+  Future<bool> _reauthenticate(BuildContext context) async {
+    final controller = TextEditingController();
+    try {
+      final password = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Confirm your password'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            obscureText: true,
+            autofillHints: const <String>[AutofillHints.password],
+            decoration: const InputDecoration(labelText: 'Current password'),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+              child: const Text('Continue'),
+            ),
+          ],
+        ),
+      );
+      if (password == null || password.isEmpty) {
+        return false;
+      }
+      final ok = await state.reauthenticate(password);
+      if (!ok && context.mounted && state.error != null) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(state.error!)));
+      }
+      return ok;
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  Future<void> _changePassword(BuildContext context) async {
+    if (!await _reauthenticate(context) || !context.mounted) {
+      return;
+    }
+    final password = TextEditingController();
+    final confirmation = TextEditingController();
+    try {
+      final accepted = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Change password'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              TextField(
+                  controller: password,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                      labelText: 'New password (12–72 bytes)')),
+              TextField(
+                  controller: confirmation,
+                  obscureText: true,
+                  decoration:
+                      const InputDecoration(labelText: 'Confirm new password')),
+            ],
+          ),
+          actions: <Widget>[
+            TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Cancel')),
+            FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('Change')),
+          ],
+        ),
+      );
+      final passwordBytes = utf8.encode(password.text).length;
+      if (accepted != true ||
+          password.text != confirmation.text ||
+          passwordBytes < 12 ||
+          passwordBytes > 72) {
+        return;
+      }
+      await state.changePassword(password.text);
+    } finally {
+      password.dispose();
+      confirmation.dispose();
     }
   }
 
@@ -271,11 +423,14 @@ class _SectionHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
-      child: Text(
-        title,
-        style: theme.textTheme.titleSmall?.copyWith(
-          color: theme.colorScheme.primary,
-          fontWeight: FontWeight.w600,
+      child: Semantics(
+        header: true,
+        child: Text(
+          title,
+          style: theme.textTheme.titleSmall?.copyWith(
+            color: theme.colorScheme.primary,
+            fontWeight: FontWeight.w600,
+          ),
         ),
       ),
     );
@@ -303,8 +458,8 @@ class _DeviceTile extends StatelessWidget {
       if (isCurrent) 'This device',
       if (revoked) 'Revoked',
       if (device.lastSeenAt != null)
-        'Last seen ${formatDateTime(device.lastSeenAt!)}',
-      'Added ${formatDate(device.createdAt)}',
+        'Last seen ${formatDateTime(context, device.lastSeenAt!)}',
+      'Added ${formatDate(context, device.createdAt)}',
     ];
     return ListTile(
       leading: Icon(

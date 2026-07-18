@@ -1,6 +1,6 @@
 # Privacy
 
-Private Messenger defaults to:
+Veritra defaults to:
 
 - no telemetry
 - no analytics
@@ -14,12 +14,18 @@ Private Messenger defaults to:
 
 Operational logs are local to the instance and intentionally sparse. They must not include request bodies, secrets, tokens, private keys, plaintext messages, or plaintext attachments.
 
+For lost-device review, the server stores a coarse `last_seen_at` timestamp for
+each active device. Authenticated activity refreshes it at most once every five
+minutes; it is not an analytics event stream.
+
 ## Account Deletion
 
-Current account deletion is a soft-delete workflow:
+Account deletion immediately:
 
 - active sessions are deleted
-- devices are revoked
-- the account is marked deleted
+- devices are revoked and their names/public key packages are scrubbed
+- username, email, and password credentials are scrubbed
+- memberships, reactions, read receipts, device links, and push endpoints are removed
+- encrypted attachment and backup rows are removed and their blob files are deleted
 
-The current implementation does not yet scrub usernames, optional email values, device key-package metadata, encrypted message envelopes, encrypted attachment rows/blobs, encrypted backup rows/blobs, or push subscription endpoints. Define and implement the final retention/scrubbing policy before production release.
+Pseudonymous account/device IDs and already-sent ciphertext envelopes remain where required to preserve other participants' conversation history and audit integrity. Server backups made before deletion retain their historical snapshot until the operator's documented backup-retention period expires. The server cannot erase plaintext copies or exported backups held by other participants because it never possesses those plaintexts or devices.

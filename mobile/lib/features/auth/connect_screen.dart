@@ -1,8 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../../core/api_client.dart';
 import '../../core/app_state.dart';
+import 'qr_scan_screen.dart';
 
 enum AuthMode { owner, signIn, join, linkDevice }
 
@@ -20,6 +25,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
   final url = TextEditingController(text: 'http://localhost:8080');
   final username = TextEditingController();
   final password = TextEditingController();
+  final passwordConfirmation = TextEditingController();
+  final setupToken = TextEditingController();
   final inviteCode = TextEditingController();
   final linkCode = TextEditingController();
   // Signing in (or joining) is the common case; "Owner" only applies to the
@@ -45,6 +52,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
     url.dispose();
     username.dispose();
     password.dispose();
+    passwordConfirmation.dispose();
+    setupToken.dispose();
     inviteCode.dispose();
     linkCode.dispose();
     super.dispose();
@@ -180,6 +189,12 @@ class _ConnectScreenState extends State<ConnectScreen> {
                         prefixIcon: Icon(Icons.qr_code_2),
                       ),
                     ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: widget.state.busy ? null : _scanLinkCode,
+                      icon: const Icon(Icons.qr_code_scanner),
+                      label: const Text('Scan QR code'),
+                    ),
                     if (pendingLink != null) ...<Widget>[
                       const SizedBox(height: 12),
                       Card(
@@ -253,6 +268,34 @@ class _ConnectScreenState extends State<ConnectScreen> {
                         ),
                       ),
                     ),
+                    if (_isRegistration) ...<Widget>[
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: passwordConfirmation,
+                        obscureText: !showPassword,
+                        autovalidateMode: AutovalidateMode.onUserInteraction,
+                        validator: (value) => value == password.text
+                            ? null
+                            : 'Passwords do not match.',
+                        decoration: const InputDecoration(
+                          labelText: 'Confirm password',
+                          prefixIcon: Icon(Icons.lock_reset_outlined),
+                        ),
+                      ),
+                    ],
+                    if (mode == AuthMode.owner) ...<Widget>[
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: setupToken,
+                        obscureText: true,
+                        autocorrect: false,
+                        decoration: const InputDecoration(
+                          labelText: 'Setup token',
+                          helperText: 'Required unless connecting on loopback.',
+                          prefixIcon: Icon(Icons.vpn_key_outlined),
+                        ),
+                      ),
+                    ],
                   ],
                   const SizedBox(height: 20),
                   if (mode == AuthMode.linkDevice && pendingLink != null)
@@ -295,11 +338,13 @@ class _ConnectScreenState extends State<ConnectScreen> {
       return 'Enter the instance URL.';
     }
     final parsed = Uri.tryParse(raw);
-    if (parsed == null ||
-        !parsed.hasScheme ||
-        !(parsed.scheme == 'http' || parsed.scheme == 'https') ||
-        parsed.host.isEmpty) {
+    if (parsed == null) {
       return 'Enter a full URL, e.g. https://chat.example.org';
+    }
+    try {
+      canonicalizeServerOrigin(raw);
+    } on FormatException {
+      return 'Enter only the server origin, e.g. https://chat.example.org';
     }
     return null;
   }
@@ -309,8 +354,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
     if (raw.isEmpty) {
       return 'Enter your password.';
     }
-    if (_isRegistration && raw.length < 12) {
-      return 'Password must be at least 12 characters.';
+    final byteLength = utf8.encode(raw).length;
+    if (_isRegistration && (byteLength < 12 || byteLength > 72)) {
+      return 'Password must be 12â€“72 UTF-8 bytes.';
     }
     return null;
   }
@@ -342,8 +388,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
     switch (mode) {
       case AuthMode.owner:
-        return widget.state
-            .createOwner(raw, username.text.trim(), password.text);
+        return widget.state.createOwner(
+            raw, username.text.trim(), password.text, setupToken.text.trim());
       case AuthMode.signIn:
         return widget.state.login(raw, username.text.trim(), password.text);
       case AuthMode.join:
@@ -358,9 +404,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
   }
 
-  /// Returns true if the URL is safe to use (HTTPS, or a clearly-local
-  /// HTTP target like localhost / 127.0.0.1 / *.local), or if the user
-  /// has explicitly confirmed an insecure public URL.
+  /// Release builds permit cleartext only to a literal loopback address.
   Future<bool> _confirmInsecureUrl(String raw) async {
     if (raw.isEmpty) {
       return true; // let downstream validation produce a clearer error
@@ -376,8 +420,16 @@ class _ConnectScreenState extends State<ConnectScreen> {
       return true;
     }
     final host = parsed.host.toLowerCase();
-    if (_isLocalHost(host)) {
+    if (_isLoopbackHost(host)) {
       return true;
+    }
+    if (kReleaseMode) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('HTTPS is required in release builds.')),
+        );
+      }
+      return false;
     }
     final confirmed = await showDialog<bool>(
       context: context,
@@ -403,29 +455,24 @@ class _ConnectScreenState extends State<ConnectScreen> {
     return confirmed ?? false;
   }
 
-  bool _isLocalHost(String host) {
-    if (host == 'localhost' || host == '127.0.0.1' || host == '::1') {
+  bool _isLoopbackHost(String host) {
+    if (host == 'localhost') {
       return true;
     }
-    if (host.endsWith('.local') || host.endsWith('.localhost')) {
-      return true;
+    return InternetAddress.tryParse(host)?.isLoopback ?? false;
+  }
+
+  /// Opens the camera scanner and fills the link-code field from the result.
+  /// The generating device encodes a `veritra://device-link?code=…` URI, but
+  /// a bare code is accepted too.
+  Future<void> _scanLinkCode() async {
+    final scanned = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(builder: (_) => const QrScanScreen()),
+    );
+    if (!mounted || scanned == null || scanned.isEmpty) {
+      return;
     }
-    // RFC 1918 private ranges + loopback. Cheap string-prefix check; if the
-    // host is an FQDN that happens to start with "10." we still flag it as
-    // local, which is conservative for a dev convenience.
-    if (host.startsWith('10.') || host.startsWith('192.168.')) {
-      return true;
-    }
-    if (host.startsWith('172.')) {
-      final parts = host.split('.');
-      if (parts.length >= 2) {
-        final secondOctet = int.tryParse(parts[1]);
-        if (secondOctet != null && secondOctet >= 16 && secondOctet <= 31) {
-          return true;
-        }
-      }
-    }
-    return false;
+    setState(() => linkCode.text = parseDeviceLinkCode(scanned));
   }
 
   Future<void> _completeDeviceLink() {

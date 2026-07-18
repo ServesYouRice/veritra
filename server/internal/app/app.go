@@ -15,10 +15,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/httpapi"
+	"private-messenger/server/internal/messaging"
+	"private-messenger/server/internal/push"
 	"private-messenger/server/internal/realtime"
 	"private-messenger/server/internal/storage"
 	"private-messenger/server/internal/uploads"
@@ -29,7 +32,8 @@ type App struct {
 	Config  config.Config
 	Store   *storage.Store
 	Hub     *realtime.Hub
-	Blobs   *uploads.LocalStore
+	Blobs   uploads.Store
+	Push    push.Provider
 	limiter *rateLimiter
 	metrics *httpMetrics
 	Log     *slog.Logger
@@ -57,25 +61,40 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		_ = store.Close()
 		return nil, err
 	}
+	var pushProvider push.Provider = push.DisabledProvider{}
+	pushConfigured := cfg.VAPIDSubscriber != "" || cfg.VAPIDPublicKey != "" || cfg.VAPIDPrivateKey != ""
+	if pushConfigured {
+		provider, err := push.NewWebPushProvider(push.WebPushConfig{
+			Subscriber: cfg.VAPIDSubscriber,
+			PublicKey:  cfg.VAPIDPublicKey,
+			PrivateKey: cfg.VAPIDPrivateKey,
+		})
+		if err != nil {
+			_ = store.Close()
+			return nil, fmt.Errorf("configure web push: %w", err)
+		}
+		pushProvider = provider
+	}
+	hub := realtime.NewHub()
+	metrics := newHTTPMetrics()
+	metrics.realtimeConnections = hub.ConnectionCount
 	return &App{
 		Config:  cfg,
 		Store:   store,
-		Hub:     realtime.NewHub(),
+		Hub:     hub,
 		Blobs:   blobs,
+		Push:    pushProvider,
 		limiter: limiter,
-		metrics: newHTTPMetrics(),
+		metrics: metrics,
 		Log:     logger,
 	}, nil
 }
 
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
-	if a.Config.EnableMetrics {
-		mux.HandleFunc("GET /metrics", a.metrics.handle)
-	}
-	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Log: a.Log}
+	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Push: a.Push, VAPIDPublicKey: a.Config.VAPIDPublicKey, Log: a.Log, SetupToken: a.Config.SetupToken, DefaultInstanceName: a.Config.InstanceName, Messages: messaging.New(a.Store)}
 	api.Register(mux)
-	return securityHeaders(a.requestLogger(a.limiter.middleware(mux)))
+	return securityHeaders(a.requestLogger(a.limiter.middleware(routeTimeouts(mux))))
 }
 
 func (a *App) Serve(ctx context.Context) error {
@@ -83,44 +102,111 @@ func (a *App) Serve(ctx context.Context) error {
 		Addr:              a.Config.Addr,
 		Handler:           a.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		ReadTimeout:       0,
+		WriteTimeout:      0,
 		IdleTimeout:       120 * time.Second,
 	}
+	var managementServer *http.Server
+	if a.Config.EnableMetrics {
+		managementMux := http.NewServeMux()
+		managementMux.HandleFunc("GET /metrics", a.metrics.handle)
+		managementServer = &http.Server{
+			Addr:              a.Config.ManagementAddr,
+			Handler:           managementMux,
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       10 * time.Second,
+			WriteTimeout:      10 * time.Second,
+			IdleTimeout:       30 * time.Second,
+		}
+	}
+	serveCtx, cancelServe := context.WithCancel(ctx)
+	defer cancelServe()
 	go func() {
-		<-ctx.Done()
+		<-serveCtx.Done()
+		a.Hub.Drain()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
+		if managementServer != nil {
+			_ = managementServer.Shutdown(shutdownCtx)
+		}
 	}()
 	go a.runRetentionSweeper(ctx)
 	go a.limiter.cleanupLoop(ctx)
 	a.Log.Info("server_starting", "addr", a.Config.Addr)
-	err := server.ListenAndServe()
-	if errors.Is(err, http.ErrServerClosed) {
+	errCh := make(chan error, 2)
+	go func() { errCh <- server.ListenAndServe() }()
+	if managementServer != nil {
+		a.Log.Info("management_server_starting", "addr", a.Config.ManagementAddr)
+		go func() { errCh <- managementServer.ListenAndServe() }()
+	}
+	err := <-errCh
+	cancelServe()
+	if errors.Is(err, http.ErrServerClosed) && ctx.Err() != nil {
 		return nil
 	}
 	return err
 }
 
+func routeTimeouts(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/sync/ws" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		deadline := 30 * time.Second
+		if r.URL.Path == "/api/v1/attachments" || r.URL.Path == "/api/v1/backups" {
+			deadline = 15 * time.Minute
+		} else if r.URL.Path == "/api/v1/account/export" {
+			deadline = 5 * time.Minute
+		}
+		controller := http.NewResponseController(w)
+		until := time.Now().Add(deadline)
+		_ = controller.SetReadDeadline(until)
+		_ = controller.SetWriteDeadline(until)
+		ctx, cancel := context.WithTimeout(r.Context(), deadline)
+		defer cancel()
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
 // runRetentionSweeper periodically prunes expired message envelopes plus
 // sync_events and audit_events older than the retention window. The event
-// window is 30 days by default and can be overridden via
-// PRIVATE_MESSENGER_SYNC_EVENT_RETENTION_DAYS.
 func (a *App) runRetentionSweeper(ctx context.Context) {
-	retention := 30 * 24 * time.Hour
-	if raw := os.Getenv("PRIVATE_MESSENGER_SYNC_EVENT_RETENTION_DAYS"); raw != "" {
-		if days, err := strconv.Atoi(raw); err == nil && days > 0 {
-			retention = time.Duration(days) * 24 * time.Hour
-		}
+	retention := a.Config.SyncRetention
+	if retention <= 0 {
+		retention = 30 * 24 * time.Hour
 	}
 	ticker := time.NewTicker(6 * time.Hour)
 	defer ticker.Stop()
 	sweep := func() {
-		if removed, err := a.Store.PruneExpiredMessages(ctx, time.Now().UTC()); err != nil {
+		if cleaner, ok := a.Blobs.(uploads.TemporaryFileCleaner); ok {
+			if removed, err := cleaner.CleanupTemporaryFiles(ctx, time.Now().UTC().Add(-time.Hour)); err != nil {
+				a.Log.Warn("temporary_blob_cleanup_failed", "err", err)
+			} else if removed > 0 {
+				a.Log.Info("temporary_blobs_cleaned", "removed", removed)
+			}
+		}
+		removed, storageKeys, err := a.Store.PruneExpiredContent(ctx, time.Now().UTC())
+		if err != nil {
 			a.Log.Warn("expired_message_prune_failed", "err", err)
 		} else if removed > 0 {
 			a.Log.Info("expired_messages_pruned", "removed", removed)
+		}
+		for _, storageKey := range storageKeys {
+			if err := a.Blobs.Delete(ctx, storageKey); err != nil {
+				a.Log.Warn("expired_attachment_blob_cleanup_failed", "err", err)
+			}
+		}
+		if removed, err := a.Store.PruneCallSessions(ctx, time.Now().UTC()); err != nil {
+			a.Log.Warn("call_session_prune_failed", "err", err)
+		} else if removed > 0 {
+			a.Log.Info("call_sessions_pruned", "removed", removed)
+		}
+		if removed, err := a.Store.PruneOperationalRows(ctx, time.Now().UTC()); err != nil {
+			a.Log.Warn("operational_row_prune_failed", "err", err)
+		} else if removed > 0 {
+			a.Log.Info("operational_rows_pruned", "removed", removed)
 		}
 		cutoff := time.Now().UTC().Add(-retention)
 		if removed, err := a.Store.PruneSyncEvents(ctx, cutoff); err != nil {
@@ -158,6 +244,10 @@ func securityHeaders(next http.Handler) http.Handler {
 		h.Set("Cross-Origin-Opener-Policy", "same-origin")
 		h.Set("Cross-Origin-Resource-Policy", "same-origin")
 		h.Set("Permissions-Policy", "geolocation=(), microphone=(), camera=(), payment=()")
+		if strings.HasPrefix(r.URL.Path, "/api/v1/") && r.URL.Path != "/api/v1/health" {
+			h.Set("Cache-Control", "no-store, private")
+			h.Set("Pragma", "no-cache")
+		}
 		if r.TLS != nil {
 			h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 		}
@@ -170,12 +260,14 @@ func securityHeaders(next http.Handler) http.Handler {
 
 func (a *App) requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		a.metrics.active.Add(1)
+		defer a.metrics.active.Add(-1)
 		start := time.Now()
 		requestID := newRequestID()
 		w.Header().Set("X-Request-ID", requestID)
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		a.metrics.record(rec.status)
+		a.metrics.record(r.Pattern, rec.status, time.Since(start))
 		a.Log.Info("http_request",
 			"request_id", requestID,
 			"method", r.Method,
@@ -187,38 +279,84 @@ func (a *App) requestLogger(next http.Handler) http.Handler {
 }
 
 type httpMetrics struct {
-	mu          sync.Mutex
-	total       int64
-	statusClass map[string]int64
+	total               atomic.Int64
+	active              atomic.Int64
+	statusClass         [6]atomic.Int64
+	routes              sync.Map
+	realtimeConnections func() int
+}
+
+type routeMetrics struct {
+	total          atomic.Int64
+	durationMicros atomic.Int64
+	latency        [7]atomic.Int64
+}
+
+var latencyBounds = [...]time.Duration{
+	10 * time.Millisecond,
+	50 * time.Millisecond,
+	100 * time.Millisecond,
+	500 * time.Millisecond,
+	time.Second,
+	5 * time.Second,
 }
 
 func newHTTPMetrics() *httpMetrics {
-	return &httpMetrics{statusClass: map[string]int64{}}
+	return &httpMetrics{}
 }
 
-func (m *httpMetrics) record(status int) {
-	class := strconv.Itoa(status/100) + "xx"
-	m.mu.Lock()
-	m.total++
-	m.statusClass[class]++
-	m.mu.Unlock()
+func (m *httpMetrics) record(pattern string, status int, elapsed time.Duration) {
+	m.total.Add(1)
+	class := status / 100
+	if class >= 1 && class <= 5 {
+		m.statusClass[class].Add(1)
+	}
+	if pattern == "" {
+		pattern = "unmatched"
+	}
+	value, _ := m.routes.LoadOrStore(pattern, &routeMetrics{})
+	route := value.(*routeMetrics)
+	route.total.Add(1)
+	route.durationMicros.Add(elapsed.Microseconds())
+	bucket := len(latencyBounds)
+	for i, bound := range latencyBounds {
+		if elapsed <= bound {
+			bucket = i
+			break
+		}
+	}
+	for i := bucket; i < len(route.latency); i++ {
+		route.latency[i].Add(1)
+	}
 }
 
 func (m *httpMetrics) handle(w http.ResponseWriter, r *http.Request) {
-	m.mu.Lock()
-	total := m.total
-	classes := make(map[string]int64, len(m.statusClass))
-	for class, count := range m.statusClass {
-		classes[class] = count
-	}
-	m.mu.Unlock()
-
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	_, _ = fmt.Fprint(w, "# TYPE veritra_http_requests_total counter\n")
-	_, _ = fmt.Fprintf(w, "veritra_http_requests_total %d\n", total)
+	_, _ = fmt.Fprintf(w, "veritra_http_requests_total %d\n", m.total.Load())
+	_, _ = fmt.Fprint(w, "# TYPE veritra_http_active_requests gauge\n")
+	_, _ = fmt.Fprintf(w, "veritra_http_active_requests %d\n", m.active.Load())
 	_, _ = fmt.Fprint(w, "# TYPE veritra_http_responses_total counter\n")
-	for _, class := range []string{"1xx", "2xx", "3xx", "4xx", "5xx"} {
-		_, _ = fmt.Fprintf(w, "veritra_http_responses_total{status_class=%q} %d\n", class, classes[class])
+	for class := 1; class <= 5; class++ {
+		_, _ = fmt.Fprintf(w, "veritra_http_responses_total{status_class=%q} %d\n", strconv.Itoa(class)+"xx", m.statusClass[class].Load())
+	}
+	_, _ = fmt.Fprint(w, "# TYPE veritra_http_route_requests_total counter\n")
+	_, _ = fmt.Fprint(w, "# TYPE veritra_http_request_duration_seconds histogram\n")
+	m.routes.Range(func(key, value any) bool {
+		pattern := key.(string)
+		route := value.(*routeMetrics)
+		_, _ = fmt.Fprintf(w, "veritra_http_route_requests_total{route=%q} %d\n", pattern, route.total.Load())
+		for i, bound := range latencyBounds {
+			_, _ = fmt.Fprintf(w, "veritra_http_request_duration_seconds_bucket{route=%q,le=%q} %d\n", pattern, strconv.FormatFloat(bound.Seconds(), 'f', -1, 64), route.latency[i].Load())
+		}
+		_, _ = fmt.Fprintf(w, "veritra_http_request_duration_seconds_bucket{route=%q,le=\"+Inf\"} %d\n", pattern, route.latency[len(latencyBounds)].Load())
+		_, _ = fmt.Fprintf(w, "veritra_http_request_duration_seconds_sum{route=%q} %s\n", pattern, strconv.FormatFloat(float64(route.durationMicros.Load())/1_000_000, 'f', 6, 64))
+		_, _ = fmt.Fprintf(w, "veritra_http_request_duration_seconds_count{route=%q} %d\n", pattern, route.total.Load())
+		return true
+	})
+	if m.realtimeConnections != nil {
+		_, _ = fmt.Fprint(w, "# TYPE veritra_realtime_connections gauge\n")
+		_, _ = fmt.Fprintf(w, "veritra_realtime_connections %d\n", m.realtimeConnections())
 	}
 }
 
@@ -273,6 +411,14 @@ func routeClass(path string) string {
 		return "/api/v1/communities/{id}"
 	case strings.HasPrefix(path, "/api/v1/push/subscriptions/"):
 		return "/api/v1/push/subscriptions/{id}"
+	case strings.HasPrefix(path, "/api/v1/devices/"):
+		return "/api/v1/devices/{id}"
+	case strings.HasPrefix(path, "/api/v1/attachments/"):
+		return "/api/v1/attachments/{id}"
+	case strings.HasPrefix(path, "/api/v1/backups/"):
+		return "/api/v1/backups/{id}"
+	case strings.HasPrefix(path, "/api/v1/calls/"):
+		return "/api/v1/calls/{id}"
 	default:
 		return path
 	}

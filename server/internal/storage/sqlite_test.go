@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -31,12 +32,17 @@ func TestInviteDeviceAndEncryptedEnvelopeFlow(t *testing.T) {
 		t.Fatalf("create invite: %v", err)
 	}
 	memberHash, _ := auth.HashPassword("member-password-123")
+	memberReservation, err := store.ReserveRegistrationEnrollment(ctx, invite.Code)
+	if err != nil {
+		t.Fatalf("reserve member enrollment: %v", err)
+	}
 	member, err := store.RegisterWithInvite(ctx, RegisterInput{
-		InviteCode:   invite.Code,
-		Username:     "Member",
-		PasswordHash: memberHash,
-		DeviceName:   "Member phone",
-		KeyPackage:   []byte("member-key-package"),
+		EnrollmentReservationID: memberReservation.ID,
+		InviteCode:              invite.Code,
+		Username:                "Member",
+		PasswordHash:            memberHash,
+		DeviceName:              "Member phone",
+		KeyPackage:              []byte("member-key-package"),
 	})
 	if err != nil {
 		t.Fatalf("register with invite: %v", err)
@@ -67,7 +73,7 @@ func TestInviteDeviceAndEncryptedEnvelopeFlow(t *testing.T) {
 		SenderAccountID: owner.Account.ID,
 		SenderDeviceID:  owner.Device.ID,
 		IdempotencyKey:  "send-1",
-		Ciphertext:      []byte("different ciphertext ignored by idempotency"),
+		Ciphertext:      []byte("ciphertext bytes only"),
 		CryptoProtocol:  "mls-openmls-todo",
 	})
 	if err != nil {
@@ -75,6 +81,13 @@ func TestInviteDeviceAndEncryptedEnvelopeFlow(t *testing.T) {
 	}
 	if !duplicate || msg2.ID != msg.ID {
 		t.Fatalf("expected idempotent duplicate, got duplicate=%v id=%s want=%s", duplicate, msg2.ID, msg.ID)
+	}
+	if _, _, err := store.SaveMessageEnvelope(ctx, domain.MessageEnvelope{
+		ConversationID: conversation.ID, SenderAccountID: owner.Account.ID,
+		SenderDeviceID: owner.Device.ID, IdempotencyKey: "send-1",
+		Ciphertext: []byte("different ciphertext"), CryptoProtocol: "mls-openmls-todo",
+	}); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("mismatched idempotency err=%v want %v", err, ErrIdempotencyConflict)
 	}
 	messages, err := store.ListMessages(ctx, conversation.ID, member.Account.ID, ListMessagesOptions{Limit: 10})
 	if err != nil {
@@ -91,6 +104,35 @@ func TestInviteDeviceAndEncryptedEnvelopeFlow(t *testing.T) {
 	}
 	if bytes.Contains(dbBytes, []byte(plaintext)) {
 		t.Fatal("database contains runtime plaintext sentinel")
+	}
+}
+
+func TestEverySQLiteConnectionEnforcesSafetyPragmas(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	connections := make([]*sql.Conn, 0, 4)
+	defer func() {
+		for _, connection := range connections {
+			_ = connection.Close()
+		}
+	}()
+	for i := 0; i < 4; i++ {
+		connection, err := store.db.reader.Conn(ctx)
+		if err != nil {
+			t.Fatalf("reader connection %d: %v", i, err)
+		}
+		connections = append(connections, connection)
+		var foreignKeys, busyTimeout int
+		if err := connection.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&foreignKeys); err != nil {
+			t.Fatalf("foreign_keys connection %d: %v", i, err)
+		}
+		if err := connection.QueryRowContext(ctx, `PRAGMA busy_timeout`).Scan(&busyTimeout); err != nil {
+			t.Fatalf("busy_timeout connection %d: %v", i, err)
+		}
+		if foreignKeys != 1 || busyTimeout != 5000 {
+			t.Fatalf("connection %d pragmas foreign_keys=%d busy_timeout=%d", i, foreignKeys, busyTimeout)
+		}
 	}
 }
 
@@ -113,6 +155,110 @@ func TestConversationRetentionPolicyMetadataPersists(t *testing.T) {
 	}
 	if conversations[0].RetentionSeconds == nil || *conversations[0].RetentionSeconds != retention {
 		t.Fatalf("retention not persisted: %#v", conversations[0].RetentionSeconds)
+	}
+}
+
+func TestListConversationsActivityOrderingAndUnread(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	owner := createTestOwner(t, ctx, store)
+	invite, err := store.CreateInvite(ctx, owner.Account.ID, 1, nil)
+	if err != nil {
+		t.Fatalf("create invite: %v", err)
+	}
+	member := registerTestMember(t, ctx, store, invite.Code, "Member")
+
+	// Two conversations; a message is sent in "older" first, then "newer",
+	// so activity ordering must surface "newer" ahead of "older".
+	older, err := store.CreateConversation(ctx, CreateConversationInput{Kind: "group", CreatedBy: owner.Account.ID})
+	if err != nil {
+		t.Fatalf("create older conversation: %v", err)
+	}
+	if err := store.AddConversationMember(ctx, older.ID, member.Account.ID, domain.RoleMember); err != nil {
+		t.Fatalf("add member to older: %v", err)
+	}
+	newer, err := store.CreateConversation(ctx, CreateConversationInput{Kind: "group", CreatedBy: owner.Account.ID})
+	if err != nil {
+		t.Fatalf("create newer conversation: %v", err)
+	}
+	if err := store.AddConversationMember(ctx, newer.ID, member.Account.ID, domain.RoleMember); err != nil {
+		t.Fatalf("add member to newer: %v", err)
+	}
+
+	olderMsg, _, err := store.SaveMessageEnvelope(ctx, domain.MessageEnvelope{
+		ConversationID:  older.ID,
+		SenderAccountID: owner.Account.ID,
+		SenderDeviceID:  owner.Device.ID,
+		IdempotencyKey:  "older-1",
+		Ciphertext:      []byte("older ciphertext"),
+		CryptoProtocol:  "mls-openmls-todo",
+	})
+	if err != nil {
+		t.Fatalf("save older message: %v", err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if _, _, err := store.SaveMessageEnvelope(ctx, domain.MessageEnvelope{
+		ConversationID:  newer.ID,
+		SenderAccountID: owner.Account.ID,
+		SenderDeviceID:  owner.Device.ID,
+		IdempotencyKey:  "newer-1",
+		Ciphertext:      []byte("newer ciphertext"),
+		CryptoProtocol:  "mls-openmls-todo",
+	}); err != nil {
+		t.Fatalf("save newer message: %v", err)
+	}
+
+	// Member sees the most recently active conversation first and both
+	// unread (the owner sent them).
+	memberList, err := store.ListConversations(ctx, member.Account.ID)
+	if err != nil {
+		t.Fatalf("list for member: %v", err)
+	}
+	if len(memberList) != 2 {
+		t.Fatalf("expected 2 conversations, got %d", len(memberList))
+	}
+	if memberList[0].ID != newer.ID || memberList[1].ID != older.ID {
+		t.Fatalf("activity ordering wrong: got %s then %s", memberList[0].ID, memberList[1].ID)
+	}
+	if memberList[0].LastMessageAt == nil || memberList[1].LastMessageAt == nil {
+		t.Fatalf("last_message_at not populated: %#v", memberList)
+	}
+	for _, c := range memberList {
+		if c.UnreadCount != 1 {
+			t.Fatalf("expected unread 1 for %s, got %d", c.ID, c.UnreadCount)
+		}
+	}
+
+	// The owner authored both messages, so nothing is unread for them.
+	ownerList, err := store.ListConversations(ctx, owner.Account.ID)
+	if err != nil {
+		t.Fatalf("list for owner: %v", err)
+	}
+	for _, c := range ownerList {
+		if c.UnreadCount != 0 {
+			t.Fatalf("owner should have no unread, got %d for %s", c.UnreadCount, c.ID)
+		}
+	}
+
+	// After the member reads the older conversation, its badge clears while
+	// the newer one stays unread.
+	if err := store.MarkRead(ctx, older.ID, member.Account.ID, olderMsg.ID); err != nil {
+		t.Fatalf("mark read: %v", err)
+	}
+	afterRead, err := store.ListConversations(ctx, member.Account.ID)
+	if err != nil {
+		t.Fatalf("list after read: %v", err)
+	}
+	unreadByID := map[string]int64{}
+	for _, c := range afterRead {
+		unreadByID[c.ID] = c.UnreadCount
+	}
+	if unreadByID[older.ID] != 0 {
+		t.Fatalf("older should be read, got %d", unreadByID[older.ID])
+	}
+	if unreadByID[newer.ID] != 1 {
+		t.Fatalf("newer should stay unread, got %d", unreadByID[newer.ID])
 	}
 }
 
@@ -283,7 +429,7 @@ func TestMessageMarkersSyncSearchExportAndMembershipGuards(t *testing.T) {
 	if len(results) == 0 || results[0].Type != "account" {
 		t.Fatalf("unexpected metadata search results: %#v", results)
 	}
-	if err := store.CreateBackupBlob(ctx, owner.Account.ID, owner.Device.ID, "backup_blob", 64, json.RawMessage(`{"kdf":"test"}`)); err != nil {
+	if err := store.CreateBackupBlob(ctx, owner.Account.ID, owner.Device.ID, "backup_blob", strings.Repeat("a", 64), 64, json.RawMessage(`{"kdf":"test"}`)); err != nil {
 		t.Fatalf("create backup blob: %v", err)
 	}
 	export, err := store.ExportAccount(ctx, owner.Account.ID, ExportAccountOptions{})
@@ -429,11 +575,15 @@ func TestDeviceLinkRequiresApprovalBeforeSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create device link: %v", err)
 	}
+	enrollment, err := store.ReserveDeviceLinkEnrollment(ctx, link.Code)
+	if err != nil {
+		t.Fatalf("reserve device link enrollment: %v", err)
+	}
 	claimToken, claimTokenHash, err := auth.NewToken()
 	if err != nil {
 		t.Fatalf("claim token: %v", err)
 	}
-	claimed, err := store.ClaimDeviceLink(ctx, link.Code, "Tablet", []byte("tablet-key-package"), []byte("tablet-signing-key"), claimTokenHash)
+	claimed, err := store.ClaimDeviceLink(ctx, link.Code, "Tablet", []byte("tablet-key-package"), []byte("tablet-signing-key"), claimTokenHash, auth.HashToken("tablet-device-secret"))
 	if err != nil {
 		t.Fatalf("claim device link: %v", err)
 	}
@@ -454,7 +604,7 @@ func TestDeviceLinkRequiresApprovalBeforeSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("approve device link: %v", err)
 	}
-	if approved.State != domain.DeviceLinkApproved || device.AccountID != owner.Account.ID || device.Name != "Tablet" {
+	if approved.State != domain.DeviceLinkApproved || device.AccountID != owner.Account.ID || device.Name != "Tablet" || device.ID != enrollment.DeviceID {
 		t.Fatalf("unexpected approved device link: %#v %#v", approved, device)
 	}
 	if _, err := store.ConsumeApprovedDeviceLink(ctx, link.ID, auth.HashToken("wrong-claim-token"), sessionTokenHash, time.Now().UTC().Add(time.Hour)); !errors.Is(err, ErrDeviceLinkInvalid) {
@@ -540,16 +690,21 @@ func newTestStore(t *testing.T, ctx context.Context) (*Store, config.Config) {
 
 func createTestOwner(t *testing.T, ctx context.Context, store *Store) AccountDevice {
 	t.Helper()
+	reservation, err := store.ReserveOwnerEnrollment(ctx)
+	if err != nil {
+		t.Fatalf("reserve owner enrollment: %v", err)
+	}
 	hash, err := auth.HashPassword("owner-password-123")
 	if err != nil {
 		t.Fatalf("hash password: %v", err)
 	}
 	owner, err := store.CreateOwner(ctx, CreateOwnerInput{
-		InstanceName: "Test Messenger",
-		Username:     "Owner",
-		PasswordHash: hash,
-		DeviceName:   "Owner phone",
-		KeyPackage:   []byte("owner-key-package"),
+		EnrollmentReservationID: reservation.ID,
+		InstanceName:            "Test Messenger",
+		Username:                "Owner",
+		PasswordHash:            hash,
+		DeviceName:              "Owner phone",
+		KeyPackage:              []byte("owner-key-package"),
 	})
 	if err != nil {
 		t.Fatalf("create owner: %v", err)
@@ -559,16 +714,21 @@ func createTestOwner(t *testing.T, ctx context.Context, store *Store) AccountDev
 
 func registerTestMember(t *testing.T, ctx context.Context, store *Store, inviteCode, username string) AccountDevice {
 	t.Helper()
+	reservation, err := store.ReserveRegistrationEnrollment(ctx, inviteCode)
+	if err != nil {
+		t.Fatalf("reserve member enrollment: %v", err)
+	}
 	hash, err := auth.HashPassword("member-password-123")
 	if err != nil {
 		t.Fatalf("hash password: %v", err)
 	}
 	member, err := store.RegisterWithInvite(ctx, RegisterInput{
-		InviteCode:   inviteCode,
-		Username:     username,
-		PasswordHash: hash,
-		DeviceName:   username + " phone",
-		KeyPackage:   []byte(username + "-key-package"),
+		EnrollmentReservationID: reservation.ID,
+		InviteCode:              inviteCode,
+		Username:                username,
+		PasswordHash:            hash,
+		DeviceName:              username + " phone",
+		KeyPackage:              []byte(username + "-key-package"),
 	})
 	if err != nil {
 		t.Fatalf("register member %s: %v", username, err)

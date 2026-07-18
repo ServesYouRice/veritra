@@ -10,9 +10,11 @@ import 'conversation_details_screen.dart';
 /// Conversation detail screen. Pushed from the chat list; listens to the app
 /// state itself because pushed routes sit outside the root rebuild scope.
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({required this.state, super.key});
+  const ChatScreen(
+      {required this.state, required this.conversationId, super.key});
 
   final AppState state;
+  final String conversationId;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -32,8 +34,11 @@ class _ChatScreenState extends State<ChatScreen> {
     return AnimatedBuilder(
       animation: widget.state,
       builder: (context, _) {
-        final conversation = widget.state.selectedConversation;
-        final messages = widget.state.selectedMessages;
+        final conversation = widget.state.conversations
+            .where((item) => item.id == widget.conversationId)
+            .firstOrNull;
+        final messages = widget.state.messagesFor(widget.conversationId);
+        final pending = widget.state.pendingFor(widget.conversationId);
         return Scaffold(
           appBar: AppBar(
             title: conversation == null
@@ -81,7 +86,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         title: 'No conversation selected',
                         message: 'Pick a conversation from the chat list.',
                       )
-                    : _messagesPane(conversation.id, messages),
+                    : _messagesPane(conversation.id, messages, pending),
               ),
               _Composer(
                 enabled: conversation != null,
@@ -101,10 +106,11 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _messagesPane(
     String conversationId,
     List<ReceivedMessageEnvelope> messages,
+    List<MessageEnvelope> pending,
   ) {
     final loading = widget.state.isLoadingMessages(conversationId);
     final loadError = widget.state.messageLoadError(conversationId);
-    if (messages.isEmpty) {
+    if (messages.isEmpty && pending.isEmpty) {
       if (loading) {
         return const Center(child: CircularProgressIndicator());
       }
@@ -135,7 +141,11 @@ class _ChatScreenState extends State<ChatScreen> {
             ],
           ),
         Expanded(
-          child: _MessageList(state: widget.state, messages: messages),
+          child: _MessageList(
+            state: widget.state,
+            messages: messages,
+            pending: pending,
+          ),
         ),
       ],
     );
@@ -146,7 +156,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (text.isEmpty) {
       return;
     }
-    await widget.state.sendMessage(text);
+    await widget.state.sendMessageTo(widget.conversationId, text);
     if (!mounted) {
       return;
     }
@@ -209,10 +219,15 @@ class _MessageLoadError extends StatelessWidget {
 }
 
 class _MessageList extends StatelessWidget {
-  const _MessageList({required this.state, required this.messages});
+  const _MessageList({
+    required this.state,
+    required this.messages,
+    required this.pending,
+  });
 
   final AppState state;
   final List<ReceivedMessageEnvelope> messages;
+  final List<MessageEnvelope> pending;
 
   @override
   Widget build(BuildContext context) {
@@ -222,20 +237,85 @@ class _MessageList extends StatelessWidget {
     return ListView.builder(
       reverse: true,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
-      itemCount: messages.length,
+      itemCount: pending.length + messages.length,
       itemBuilder: (context, index) {
-        final message = messages[index];
+        if (index < pending.length) {
+          final envelope = pending[pending.length - 1 - index];
+          return _PendingMessageBubble(
+            state: state.outboxState(envelope.idempotencyKey),
+            onRetry: () => state.retryEnvelope(envelope.idempotencyKey),
+          );
+        }
+        final messageIndex = index - pending.length;
+        final message = messages[messageIndex];
         final mine = message.senderAccountId == state.session?.accountId;
-        final older = index + 1 < messages.length ? messages[index + 1] : null;
+        final older = messageIndex + 1 < messages.length
+            ? messages[messageIndex + 1]
+            : null;
         final showDay = older == null ||
-            formatDate(older.createdAt) != formatDate(message.createdAt);
+            formatDate(context, older.createdAt) !=
+                formatDate(context, message.createdAt);
         return Column(
           children: <Widget>[
-            if (showDay) _DaySeparator(label: formatDate(message.createdAt)),
+            if (showDay)
+              _DaySeparator(label: formatDate(context, message.createdAt)),
             _MessageBubble(message: message, mine: mine),
           ],
         );
       },
+    );
+  }
+}
+
+class _PendingMessageBubble extends StatelessWidget {
+  const _PendingMessageBubble({required this.state, required this.onRetry});
+
+  final OutboxDeliveryState state;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final sending = state == OutboxDeliveryState.sending;
+    final theme = Theme.of(context);
+    return Semantics(
+      liveRegion: true,
+      label: sending
+          ? 'Encrypted message sending'
+          : 'Encrypted message failed to send. Retry available.',
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: Card(
+          margin: const EdgeInsets.symmetric(vertical: 3),
+          color: sending
+              ? theme.colorScheme.primaryContainer
+              : theme.colorScheme.errorContainer,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                if (sending)
+                  const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
+                  Icon(
+                    Icons.error_outline,
+                    size: 18,
+                    color: theme.colorScheme.onErrorContainer,
+                  ),
+                const SizedBox(width: 8),
+                Text(sending ? 'Sending encrypted message' : 'Send failed'),
+                if (!sending) ...<Widget>[
+                  const SizedBox(width: 4),
+                  TextButton(onPressed: onRetry, child: const Text('Retry')),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -280,10 +360,11 @@ class _MessageBubble extends StatelessWidget {
     final foreground = mine ? scheme.onPrimaryContainer : scheme.onSurface;
     final sender = mine ? 'you' : 'sender ${shortId(message.senderAccountId)}';
     return Semantics(
+      excludeSemantics: true,
       label: deleted
           ? 'Deleted message from $sender'
           : 'Encrypted message from $sender, '
-              '${formatTimeOfDay(message.createdAt)}',
+              '${formatTimeOfDay(context, message.createdAt)}',
       child: Align(
         alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
         child: ConstrainedBox(
@@ -334,7 +415,7 @@ class _MessageBubble extends StatelessWidget {
                   ),
                 const SizedBox(height: 4),
                 Text(
-                  _metaLine,
+                  _metaLine(context),
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: foreground.withValues(alpha: 0.6),
                   ),
@@ -349,9 +430,9 @@ class _MessageBubble extends StatelessWidget {
 
   // The raw crypto protocol identifier is debug info and stays out of the
   // reading surface; the lock icon already conveys the encrypted state.
-  String get _metaLine {
+  String _metaLine(BuildContext context) {
     final parts = <String>[
-      formatTimeOfDay(message.createdAt),
+      formatTimeOfDay(context, message.createdAt),
       if (message.editedAt != null) 'edited',
     ];
     return parts.join(' · ');

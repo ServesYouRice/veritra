@@ -27,10 +27,12 @@ const (
 )
 
 type Principal struct {
-	AccountID string `json:"account_id"`
-	DeviceID  string `json:"device_id,omitempty"`
-	Username  string `json:"username"`
-	Role      string `json:"role"`
+	AccountID    string     `json:"account_id"`
+	DeviceID     string     `json:"device_id,omitempty"`
+	Username     string     `json:"username"`
+	Role         string     `json:"role"`
+	ExpiresAt    time.Time  `json:"-"`
+	RecentAuthAt *time.Time `json:"-"`
 }
 
 type Account struct {
@@ -43,6 +45,32 @@ type Account struct {
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 }
 
+type AccountBlock struct {
+	AccountID string    `json:"account_id"`
+	Username  string    `json:"username,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type AdminAccount struct {
+	ID              string    `json:"id"`
+	Username        string    `json:"username"`
+	Role            string    `json:"role"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"created_at"`
+	DeviceCount     int64     `json:"device_count"`
+	AttachmentCount int64     `json:"attachment_count"`
+	BackupCount     int64     `json:"backup_count"`
+	StorageBytes    int64     `json:"storage_bytes"`
+}
+
+type AdminAuditEvent struct {
+	ID             int64           `json:"id"`
+	ActorAccountID *string         `json:"actor_account_id,omitempty"`
+	EventType      string          `json:"event_type"`
+	Metadata       json.RawMessage `json:"metadata"`
+	CreatedAt      time.Time       `json:"created_at"`
+}
+
 type Device struct {
 	ID         string     `json:"id"`
 	AccountID  string     `json:"account_id"`
@@ -52,6 +80,16 @@ type Device struct {
 	CreatedAt  time.Time  `json:"created_at"`
 	LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
 	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+}
+
+type DeviceKeyPackage struct {
+	ID          string    `json:"id"`
+	DeviceID    string    `json:"device_id"`
+	AccountID   string    `json:"account_id,omitempty"`
+	KeyPackage  []byte    `json:"key_package"`
+	Ciphersuite string    `json:"ciphersuite"`
+	CreatedAt   time.Time `json:"created_at"`
+	ExpiresAt   time.Time `json:"expires_at"`
 }
 
 type DeviceLink struct {
@@ -106,6 +144,18 @@ type Conversation struct {
 	CreatedBy        string    `json:"created_by"`
 	RetentionSeconds *int64    `json:"retention_seconds,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
+	// LastMessageAt and UnreadCount are populated by ListConversations so the
+	// client can order by recent activity and show unread badges. They are
+	// zero/omitted on single-conversation responses (create, retention).
+	LastMessageAt *time.Time `json:"last_message_at,omitempty"`
+	UnreadCount   int64      `json:"unread_count,omitempty"`
+	CurrentRole   string     `json:"current_role,omitempty"`
+}
+
+type Membership struct {
+	AccountID string    `json:"account_id"`
+	Role      string    `json:"role"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type MessageEnvelope struct {
@@ -137,6 +187,25 @@ type AttachmentEnvelope struct {
 	CreatedAt        time.Time       `json:"created_at"`
 }
 
+type BackupBlob struct {
+	ID                    string          `json:"id"`
+	AccountID             string          `json:"account_id"`
+	DeviceID              *string         `json:"device_id,omitempty"`
+	StorageKey            string          `json:"-"`
+	CiphertextSHA256      string          `json:"ciphertext_sha256"`
+	SizeBytes             int64           `json:"size_bytes"`
+	KeyDerivationMetadata json.RawMessage `json:"key_derivation_metadata"`
+	CreatedAt             time.Time       `json:"created_at"`
+}
+
+type Reaction struct {
+	ID                 string    `json:"id"`
+	MessageID          string    `json:"message_id"`
+	AccountID          string    `json:"account_id"`
+	ReactionCiphertext []byte    `json:"reaction_ciphertext"`
+	CreatedAt          time.Time `json:"created_at"`
+}
+
 type CallSession struct {
 	ID             string          `json:"id"`
 	ConversationID string          `json:"conversation_id"`
@@ -145,6 +214,7 @@ type CallSession struct {
 	Metadata       json.RawMessage `json:"metadata"`
 	CreatedAt      time.Time       `json:"created_at"`
 	EndedAt        *time.Time      `json:"ended_at,omitempty"`
+	ExpiresAt      *time.Time      `json:"expires_at,omitempty"`
 }
 
 type MetadataSearchResult struct {
@@ -163,10 +233,12 @@ type SyncEvent struct {
 }
 
 type AccountExport struct {
-	Account       Account           `json:"account"`
-	Devices       []Device          `json:"devices"`
-	Conversations []Conversation    `json:"conversations"`
-	Messages      []MessageEnvelope `json:"messages"`
+	ManifestVersion string                       `json:"manifest_version"`
+	Account         Account                      `json:"account"`
+	Devices         []Device                     `json:"devices"`
+	Conversations   []Conversation               `json:"conversations"`
+	Messages        []MessageEnvelope            `json:"messages"`
+	Categories      map[string][]json.RawMessage `json:"categories"`
 }
 
 func CanManageInvites(role string) bool {
@@ -202,6 +274,15 @@ func NewID(prefix string) (string, error) {
 		return "", err
 	}
 	return prefix + "_" + hex.EncodeToString(b[:]), nil
+}
+
+func ValidID(prefix, value string) bool {
+	wantPrefix := prefix + "_"
+	if !strings.HasPrefix(value, wantPrefix) || len(value) != len(wantPrefix)+32 {
+		return false
+	}
+	_, err := hex.DecodeString(value[len(wantPrefix):])
+	return err == nil && value == strings.ToLower(value)
 }
 
 func NewInviteCode() (string, error) {

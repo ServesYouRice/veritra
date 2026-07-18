@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 abstract class SyncService {
   Stream<Map<String, Object?>> get events;
@@ -29,41 +30,50 @@ class WebSocketSyncService implements SyncService {
 
   Future<void> _runConnectLoop() async {
     var delay = const Duration(seconds: 1);
+    final random = Random.secure();
     while (!_disposed) {
       try {
-        await _connectOnce();
-        delay = const Duration(seconds: 1);
+        final connectedFor = await _connectOnce();
+        if (connectedFor >= const Duration(seconds: 30)) {
+          delay = const Duration(seconds: 1);
+        }
       } catch (err, stackTrace) {
         if (!_disposed && !_controller.isClosed) {
           _controller.addError(err, stackTrace);
         }
       }
       if (!_disposed) {
-        await Future<void>.delayed(delay);
+        final jitter = Duration(milliseconds: random.nextInt(750));
+        await Future<void>.delayed(delay + jitter);
         final nextSeconds = delay.inSeconds * 2;
         delay = Duration(seconds: nextSeconds > 30 ? 30 : nextSeconds);
       }
     }
   }
 
-  Future<void> _connectOnce() async {
+  Future<Duration> _connectOnce() async {
     final base = Uri.parse(baseUrl);
-    final uri = base.replace(
-      scheme: base.scheme == 'https' ? 'wss' : 'ws',
-      path: '/api/v1/sync/ws',
-    );
+    final uri = base.resolve('/api/v1/sync/ws').replace(
+          scheme: base.scheme == 'https' ? 'wss' : 'ws',
+          query: null,
+          fragment: null,
+        );
     // Send the token via the Authorization header so it never lands in URLs,
     // server access logs, or reverse-proxy logs.
     final socket = await WebSocket.connect(
       uri.toString(),
       headers: <String, dynamic>{'Authorization': 'Bearer $token'},
     ).timeout(const Duration(seconds: 15));
-    socket.pingInterval = const Duration(seconds: 30);
     _socket = socket;
+    final connectedAt = DateTime.now();
     final done = Completer<void>();
     socket.listen((data) {
       if (!_disposed && !_controller.isClosed && data is String) {
-        _controller.add(Map<String, Object?>.from(jsonDecode(data) as Map));
+        try {
+          _controller.add(Map<String, Object?>.from(jsonDecode(data) as Map));
+        } catch (err, stackTrace) {
+          _controller.addError(err, stackTrace);
+        }
       }
     }, onDone: () {
       if (!done.isCompleted) {
@@ -78,6 +88,8 @@ class WebSocketSyncService implements SyncService {
       }
     }, cancelOnError: true);
     await done.future;
+    _socket = null;
+    return DateTime.now().difference(connectedAt);
   }
 
   @override
