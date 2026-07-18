@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Veritra chain link V logo concept">
+  <!-- Two interlocked capsule links form the V: an end-to-end connection -->
+  <rect x="138" y="123" width="90" height="230" rx="45" fill="none" stroke="#6366F1" stroke-width="30"
+        transform="rotate(-35 183 238)"/>
+  <rect x="284" y="123" width="90" height="230" rx="45" fill="none" stroke="#0EA5E9" stroke-width="30"
+        transform="rotate(35 329 238)"/>
+</svg>

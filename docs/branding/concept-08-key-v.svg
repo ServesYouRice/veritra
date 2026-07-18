@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Veritra key V logo concept">
+  <defs>
+    <linearGradient id="keyGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6366F1"/>
+      <stop offset="1" stop-color="#0EA5E9"/>
+    </linearGradient>
+  </defs>
+  <!-- Key bow: a disc carrying the V -->
+  <circle cx="256" cy="148" r="86" fill="url(#keyGrad)"/>
+  <path fill="none" stroke="#FFFFFF" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"
+        d="M222 116 L256 178 L290 116"/>
+  <!-- Shaft and teeth -->
+  <!-- Solid color: objectBoundingBox gradients don't paint zero-width strokes -->
+  <g fill="none" stroke="#4F46E5" stroke-linecap="round">
+    <path stroke-width="44" d="M256 234 V398"/>
+    <path stroke-width="34" d="M278 330 h48"/>
+    <path stroke-width="34" d="M278 388 h30"/>
+  </g>
+</svg>

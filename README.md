@@ -1,4 +1,7 @@
-# Veritra
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/branding/concept-06/veritra-wordmark-dark.svg">
+  <img src="docs/branding/concept-06/veritra-wordmark.svg" alt="Veritra" width="380">
+</picture>
 
 Veritra is an open-source, self-hostable, privacy-first messaging app. The first product shape is closer to WhatsApp or Signal than Discord: direct messages, private group chats, lightweight communities, optional channels, simple roles, and end-to-end encrypted message envelopes.
 

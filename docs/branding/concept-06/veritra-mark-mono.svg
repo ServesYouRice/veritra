@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Veritra chain link mark, monochrome">
+  <defs>
+    <mask id="tuckUnderM">
+      <rect x="-512" y="-512" width="2048" height="2048" fill="#fff"/>
+      <rect x="295.5" y="93" width="90" height="290" rx="45" fill="none" stroke="#000" stroke-width="54"
+            transform="rotate(35 340.5 238)"/>
+    </mask>
+  </defs>
+  <g mask="url(#tuckUnderM)">
+    <rect x="126.5" y="93" width="90" height="290" rx="45" fill="none" stroke="#0F172A" stroke-width="30"
+          transform="rotate(-35 171.5 238)"/>
+  </g>
+  <rect x="295.5" y="93" width="90" height="290" rx="45" fill="none" stroke="#0F172A" stroke-width="30"
+        transform="rotate(35 340.5 238)"/>
+</svg>

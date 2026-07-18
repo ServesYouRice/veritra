@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Veritra verified checkmark V logo concept">
+  <defs>
+    <linearGradient id="checkGrad" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#0EA5E9"/>
+      <stop offset="1" stop-color="#22C55E"/>
+    </linearGradient>
+  </defs>
+  <!-- Left arm: quieter, reads as the "V" -->
+  <path fill="none" stroke="#475569" stroke-width="56" stroke-linecap="round"
+        d="M128 168 L256 372"/>
+  <!-- Right arm: bright, reads as the "verified" tick -->
+  <path fill="none" stroke="url(#checkGrad)" stroke-width="56" stroke-linecap="round"
+        d="M256 372 L396 132"/>
+  <circle cx="396" cy="132" r="34" fill="#22C55E"/>
+</svg>
