@@ -12,6 +12,9 @@ Base path: `/api/v1`
 - `GET /setup` serves a static notice. Browser owner setup is disabled until a client can generate production device key packages.
 - `GET /api/v1/setup/status` returns whether setup is required.
 - `POST /api/v1/setup/owner` atomically creates the first owner, device, and session. Remote setup requires `X-Veritra-Setup-Token` to match `PRIVATE_MESSENGER_SETUP_TOKEN`; without a configured token, setup is accepted only from a loopback peer. A real `device_key_package` is always required.
+- `POST /api/v1/setup/owner/enrollment` reserves the final account/device IDs
+  and returns a short-lived, domain-separated signing challenge before the MLS
+  credential is generated.
 
 ## Auth and Invites
 
@@ -21,6 +24,8 @@ Base path: `/api/v1`
 - `POST /api/v1/auth/logout` revokes the caller's current session token. Returns `204`.
 - `POST /api/v1/auth/logout-all` revokes every session for the account except the caller's current one (sign out other/lost devices). Returns `204`.
 - `POST /api/v1/register` consumes an invite and creates account, device, and session.
+- `POST /api/v1/register/enrollment` validates the invite and reserves the
+  final IDs and enrollment challenge.
 - `POST /api/v1/invites` creates invite codes for owner/admin users.
 - `GET /api/v1/invites` lists active invites created by the authenticated owner/admin.
 - `DELETE /api/v1/invites/{id}` revokes an invite created by the caller. Invites default to one use and a seven-day expiry.
@@ -34,11 +39,20 @@ Base path: `/api/v1`
 
 - `POST /api/v1/device-links` creates a short-lived one-time QR/link code from an authenticated existing device.
 - `GET /api/v1/device-links/{id}` returns the authenticated account's current link state for approval UX.
-- `POST /api/v1/device-links/claim` lets the new device submit the code, device name, and public key package. It returns a claim token, but not a session.
+- `POST /api/v1/device-links/claim-enrollment` reserves the new device ID and
+  returns an account/device-bound enrollment challenge before key generation.
+- `POST /api/v1/device-links/claim` verifies the signed key-package enrollment
+  proof and lets the new device submit the code and device name. It returns a
+  claim token, but not a session.
 - `POST /api/v1/device-links/{id}/approve` must be called by an already authenticated device on the same account before the new device is trusted. Body: `{"verification_code":"123456"}`.
 - `GET /api/v1/device-links/{id}/claim-status` lets the new device poll for approval using `X-Veritra-Claim-Token`. Once approved, the server creates a device-scoped session and consumes the link.
 
 The verification code returned to both devices must be compared in the client UX before approval. The server stores only public device key-package metadata and never receives private keys.
+
+Owner and invite registration finalization includes the enrollment reservation
+ID, public Ed25519 credential key, challenge signature, and key package. The
+server verifies the signature and atomically consumes the reservation, binding
+the credential to the reserved account/device IDs and preventing replay.
 
 ### MLS key packages
 

@@ -26,14 +26,12 @@ func (s *Store) CreateOwner(ctx context.Context, input CreateOwnerInput) (Accoun
 	if count > 0 {
 		return AccountDevice{}, ErrAlreadySetup
 	}
-	accountID, err := domain.NewID("acct")
+	reservation, err := enrollmentReservationForTx(ctx, tx, input.EnrollmentReservationID, "owner")
 	if err != nil {
 		return AccountDevice{}, err
 	}
-	deviceID, err := domain.NewID("dev")
-	if err != nil {
-		return AccountDevice{}, err
-	}
+	accountID := reservation.AccountID
+	deviceID := reservation.DeviceID
 	createdAt := nowString()
 	instanceName := strings.TrimSpace(input.InstanceName)
 	if instanceName == "" {
@@ -46,7 +44,7 @@ func (s *Store) CreateOwner(ctx context.Context, input CreateOwnerInput) (Accoun
 	if _, err := tx.ExecContext(ctx, `INSERT INTO accounts(id, username, email, password_hash, role, status, created_at) VALUES(?, ?, ?, ?, 'owner', 'active', ?)`, accountID, username, nullableString(input.Email), input.PasswordHash, createdAt); err != nil {
 		return AccountDevice{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO devices(id, account_id, name, key_package, auth_secret_hash, created_at) VALUES(?, ?, ?, ?, ?, ?)`, deviceID, accountID, strings.TrimSpace(input.DeviceName), input.KeyPackage, input.DeviceAuthHash, createdAt); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO devices(id, account_id, name, key_package, signing_key, auth_secret_hash, created_at) VALUES(?, ?, ?, ?, ?, ?, ?)`, deviceID, accountID, strings.TrimSpace(input.DeviceName), input.KeyPackage, input.SigningKey, input.DeviceAuthHash, createdAt); err != nil {
 		return AccountDevice{}, err
 	}
 	if err := insertInitialDeviceKeyPackage(ctx, tx, deviceID, input.KeyPackage, createdAt); err != nil {
@@ -57,26 +55,31 @@ func (s *Store) CreateOwner(ctx context.Context, input CreateOwnerInput) (Accoun
 			return AccountDevice{}, err
 		}
 	}
+	if err := consumeEnrollmentReservation(ctx, tx, reservation.ID); err != nil {
+		return AccountDevice{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return AccountDevice{}, err
 	}
 	created, _ := time.Parse(time.RFC3339Nano, createdAt)
 	return AccountDevice{
 		Account: domain.Account{ID: accountID, Username: username, Email: input.Email, Role: domain.RoleOwner, Status: "active", CreatedAt: created},
-		Device:  domain.Device{ID: deviceID, AccountID: accountID, Name: strings.TrimSpace(input.DeviceName), KeyPackage: input.KeyPackage, CreatedAt: created},
+		Device:  domain.Device{ID: deviceID, AccountID: accountID, Name: strings.TrimSpace(input.DeviceName), KeyPackage: input.KeyPackage, SigningKey: input.SigningKey, CreatedAt: created},
 	}, nil
 }
 
 type RegisterInput struct {
-	InviteCode     string
-	Username       string
-	Email          *string
-	PasswordHash   string
-	DeviceName     string
-	KeyPackage     []byte
-	DeviceAuthHash string
-	SessionHash    string
-	SessionExpiry  time.Time
+	EnrollmentReservationID string
+	InviteCode              string
+	Username                string
+	Email                   *string
+	PasswordHash            string
+	DeviceName              string
+	KeyPackage              []byte
+	SigningKey              []byte
+	DeviceAuthHash          string
+	SessionHash             string
+	SessionExpiry           time.Time
 }
 
 func (s *Store) RegisterWithInvite(ctx context.Context, input RegisterInput) (AccountDevice, error) {
@@ -92,20 +95,21 @@ func (s *Store) RegisterWithInvite(ctx context.Context, input RegisterInput) (Ac
 		}
 		return AccountDevice{}, err
 	}
-	accountID, err := domain.NewID("acct")
+	reservation, err := enrollmentReservationForTx(ctx, tx, input.EnrollmentReservationID, "register")
 	if err != nil {
 		return AccountDevice{}, err
 	}
-	deviceID, err := domain.NewID("dev")
-	if err != nil {
-		return AccountDevice{}, err
+	if reservation.InviteID == nil || *reservation.InviteID != inviteID {
+		return AccountDevice{}, ErrEnrollmentInvalid
 	}
+	accountID := reservation.AccountID
+	deviceID := reservation.DeviceID
 	createdAt := nowString()
 	username := domain.NormalizeUsername(input.Username)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO accounts(id, username, email, password_hash, role, status, created_at) VALUES(?, ?, ?, ?, 'member', 'active', ?)`, accountID, username, nullableString(input.Email), input.PasswordHash, createdAt); err != nil {
 		return AccountDevice{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO devices(id, account_id, name, key_package, auth_secret_hash, created_at) VALUES(?, ?, ?, ?, ?, ?)`, deviceID, accountID, strings.TrimSpace(input.DeviceName), input.KeyPackage, input.DeviceAuthHash, createdAt); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO devices(id, account_id, name, key_package, signing_key, auth_secret_hash, created_at) VALUES(?, ?, ?, ?, ?, ?, ?)`, deviceID, accountID, strings.TrimSpace(input.DeviceName), input.KeyPackage, input.SigningKey, input.DeviceAuthHash, createdAt); err != nil {
 		return AccountDevice{}, err
 	}
 	if err := insertInitialDeviceKeyPackage(ctx, tx, deviceID, input.KeyPackage, createdAt); err != nil {
@@ -119,13 +123,16 @@ func (s *Store) RegisterWithInvite(ctx context.Context, input RegisterInput) (Ac
 			return AccountDevice{}, err
 		}
 	}
+	if err := consumeEnrollmentReservation(ctx, tx, reservation.ID); err != nil {
+		return AccountDevice{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return AccountDevice{}, err
 	}
 	created, _ := time.Parse(time.RFC3339Nano, createdAt)
 	return AccountDevice{
 		Account: domain.Account{ID: accountID, Username: username, Email: input.Email, Role: domain.RoleMember, Status: "active", CreatedAt: created},
-		Device:  domain.Device{ID: deviceID, AccountID: accountID, Name: strings.TrimSpace(input.DeviceName), KeyPackage: input.KeyPackage, CreatedAt: created},
+		Device:  domain.Device{ID: deviceID, AccountID: accountID, Name: strings.TrimSpace(input.DeviceName), KeyPackage: input.KeyPackage, SigningKey: input.SigningKey, CreatedAt: created},
 	}, nil
 }
 
@@ -192,6 +199,25 @@ func (s *Store) PrincipalByTokenHash(ctx context.Context, tokenHash string) (dom
 	principal.ExpiresAt = parseTime(expiresAt)
 	principal.RecentAuthAt = parseOptionalTime(recentAuthAt)
 	return principal, nil
+}
+
+// MarkDeviceSeen records coarse device activity for lost-device review. The
+// five-minute write throttle avoids turning every authenticated request into a
+// database write while keeping the value useful to the account owner.
+func (s *Store) MarkDeviceSeen(ctx context.Context, deviceID string) error {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return nil
+	}
+	now := time.Now().UTC()
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE devices
+		SET last_seen_at = ?
+		WHERE id = ?
+		  AND revoked_at IS NULL
+		  AND (last_seen_at IS NULL OR last_seen_at <= ?)`,
+		formatTime(now), deviceID, formatTime(now.Add(-5*time.Minute)))
+	return err
 }
 
 func (s *Store) ReauthenticationRecord(ctx context.Context, accountID, deviceID string) (string, string, error) {

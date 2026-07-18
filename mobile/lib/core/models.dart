@@ -2,6 +2,40 @@ import 'dart:convert';
 
 enum OutboxDeliveryState { sending, failed }
 
+class EnrollmentReservation {
+  const EnrollmentReservation({
+    required this.id,
+    required this.accountId,
+    required this.deviceId,
+    required this.challenge,
+  });
+
+  final String id;
+  final String accountId;
+  final String deviceId;
+  final List<int> challenge;
+
+  factory EnrollmentReservation.fromJson(Map<String, Object?> json) =>
+      EnrollmentReservation(
+        id: json['id'] as String,
+        accountId: json['account_id'] as String,
+        deviceId: json['device_id'] as String,
+        challenge: base64Decode(json['challenge'] as String),
+      );
+}
+
+class EnrollmentCredential {
+  const EnrollmentCredential({
+    required this.deviceKeyPackage,
+    required this.signingKey,
+    required this.challengeSignature,
+  });
+
+  final List<int> deviceKeyPackage;
+  final List<int> signingKey;
+  final List<int> challengeSignature;
+}
+
 class Conversation {
   Conversation({
     required this.id,

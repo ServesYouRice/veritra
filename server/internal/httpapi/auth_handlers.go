@@ -1,7 +1,10 @@
 package httpapi
 
 import (
+	"crypto/ed25519"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/binary"
 	"errors"
 	"net"
 	"net/http"
@@ -63,12 +66,32 @@ func (a *API) setupStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 type ownerRequest struct {
-	InstanceName     string  `json:"instance_name"`
-	Username         string  `json:"username"`
-	Email            *string `json:"email,omitempty"`
-	Password         string  `json:"password"`
-	DeviceName       string  `json:"device_name"`
-	DeviceKeyPackage []byte  `json:"device_key_package"`
+	EnrollmentReservationID string  `json:"enrollment_reservation_id"`
+	InstanceName            string  `json:"instance_name"`
+	Username                string  `json:"username"`
+	Email                   *string `json:"email,omitempty"`
+	Password                string  `json:"password"`
+	DeviceName              string  `json:"device_name"`
+	DeviceKeyPackage        []byte  `json:"device_key_package"`
+	SigningKey              []byte  `json:"signing_key"`
+	ChallengeSignature      []byte  `json:"challenge_signature"`
+}
+
+func (a *API) reserveOwnerEnrollment(w http.ResponseWriter, r *http.Request) {
+	if !a.setupAuthorized(r) {
+		writeError(w, http.StatusForbidden, "setup_authorization_required")
+		return
+	}
+	reservation, err := a.Store.ReserveOwnerEnrollment(r.Context())
+	if errors.Is(err, storage.ErrAlreadySetup) {
+		writeError(w, http.StatusConflict, "already_setup")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "enrollment_reservation_failed")
+		return
+	}
+	writeJSON(w, http.StatusCreated, enrollmentReservationResponse(reservation))
 }
 
 func (a *API) createOwner(w http.ResponseWriter, r *http.Request) {
@@ -104,6 +127,17 @@ func (a *API) createOwner(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "non_production_device_key_package")
 		return
 	}
+	if len(req.DeviceKeyPackage) < 64 || len(req.DeviceKeyPackage) > 48<<10 {
+		writeError(w, http.StatusBadRequest, "invalid_device_key_package")
+		return
+	}
+	reservation, ok := a.verifyEnrollment(
+		r, req.EnrollmentReservationID, "owner", req.SigningKey, req.DeviceKeyPackage, req.ChallengeSignature,
+	)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid_enrollment")
+		return
+	}
 	token, tokenHash, err := auth.NewToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "token_create_failed")
@@ -115,19 +149,25 @@ func (a *API) createOwner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	created, err := a.Store.CreateOwner(r.Context(), storage.CreateOwnerInput{
-		InstanceName:   req.InstanceName,
-		Username:       req.Username,
-		Email:          req.Email,
-		PasswordHash:   passwordHash,
-		DeviceName:     req.DeviceName,
-		KeyPackage:     req.DeviceKeyPackage,
-		DeviceAuthHash: deviceAuthHash,
-		SessionHash:    tokenHash,
-		SessionExpiry:  time.Now().UTC().Add(30 * 24 * time.Hour),
+		EnrollmentReservationID: reservation.ID,
+		InstanceName:            req.InstanceName,
+		Username:                req.Username,
+		Email:                   req.Email,
+		PasswordHash:            passwordHash,
+		DeviceName:              req.DeviceName,
+		KeyPackage:              req.DeviceKeyPackage,
+		SigningKey:              req.SigningKey,
+		DeviceAuthHash:          deviceAuthHash,
+		SessionHash:             tokenHash,
+		SessionExpiry:           time.Now().UTC().Add(30 * 24 * time.Hour),
 	})
 	if err != nil {
 		if errors.Is(err, storage.ErrAlreadySetup) {
 			writeError(w, http.StatusConflict, "already_setup")
+			return
+		}
+		if errors.Is(err, storage.ErrEnrollmentInvalid) {
+			writeError(w, http.StatusBadRequest, "invalid_enrollment")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "owner_create_failed")
@@ -194,12 +234,34 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 }
 
 type registerRequest struct {
-	InviteCode       string  `json:"invite_code"`
-	Username         string  `json:"username"`
-	Email            *string `json:"email,omitempty"`
-	Password         string  `json:"password"`
-	DeviceName       string  `json:"device_name"`
-	DeviceKeyPackage []byte  `json:"device_key_package"`
+	EnrollmentReservationID string  `json:"enrollment_reservation_id"`
+	InviteCode              string  `json:"invite_code"`
+	Username                string  `json:"username"`
+	Email                   *string `json:"email,omitempty"`
+	Password                string  `json:"password"`
+	DeviceName              string  `json:"device_name"`
+	DeviceKeyPackage        []byte  `json:"device_key_package"`
+	SigningKey              []byte  `json:"signing_key"`
+	ChallengeSignature      []byte  `json:"challenge_signature"`
+}
+
+func (a *API) reserveRegistrationEnrollment(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		InviteCode string `json:"invite_code"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	reservation, err := a.Store.ReserveRegistrationEnrollment(r.Context(), req.InviteCode)
+	if errors.Is(err, storage.ErrInviteInvalid) {
+		writeError(w, http.StatusBadRequest, "invalid_invite")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "enrollment_reservation_failed")
+		return
+	}
+	writeJSON(w, http.StatusCreated, enrollmentReservationResponse(reservation))
 }
 
 func (a *API) register(w http.ResponseWriter, r *http.Request) {
@@ -228,6 +290,17 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "non_production_device_key_package")
 		return
 	}
+	if len(req.DeviceKeyPackage) < 64 || len(req.DeviceKeyPackage) > 48<<10 {
+		writeError(w, http.StatusBadRequest, "invalid_device_key_package")
+		return
+	}
+	reservation, ok := a.verifyEnrollment(
+		r, req.EnrollmentReservationID, "register", req.SigningKey, req.DeviceKeyPackage, req.ChallengeSignature,
+	)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid_enrollment")
+		return
+	}
 	token, tokenHash, err := auth.NewToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "token_create_failed")
@@ -239,19 +312,25 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	created, err := a.Store.RegisterWithInvite(r.Context(), storage.RegisterInput{
-		InviteCode:     req.InviteCode,
-		Username:       req.Username,
-		Email:          req.Email,
-		PasswordHash:   passwordHash,
-		DeviceName:     req.DeviceName,
-		KeyPackage:     req.DeviceKeyPackage,
-		DeviceAuthHash: deviceAuthHash,
-		SessionHash:    tokenHash,
-		SessionExpiry:  time.Now().UTC().Add(30 * 24 * time.Hour),
+		EnrollmentReservationID: reservation.ID,
+		InviteCode:              req.InviteCode,
+		Username:                req.Username,
+		Email:                   req.Email,
+		PasswordHash:            passwordHash,
+		DeviceName:              req.DeviceName,
+		KeyPackage:              req.DeviceKeyPackage,
+		SigningKey:              req.SigningKey,
+		DeviceAuthHash:          deviceAuthHash,
+		SessionHash:             tokenHash,
+		SessionExpiry:           time.Now().UTC().Add(30 * 24 * time.Hour),
 	})
 	if err != nil {
 		if errors.Is(err, storage.ErrInviteInvalid) {
 			writeError(w, http.StatusBadRequest, "invalid_invite")
+			return
+		}
+		if errors.Is(err, storage.ErrEnrollmentInvalid) {
+			writeError(w, http.StatusBadRequest, "invalid_enrollment")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "register_failed")
@@ -259,6 +338,50 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 	}
 	a.recordAuditEvent(r.Context(), &created.Account.ID, "account.registered", map[string]string{"device_id": created.Device.ID})
 	writeJSON(w, http.StatusCreated, map[string]interface{}{"account": created.Account, "device": created.Device, "token": token, "device_secret": deviceSecret})
+}
+
+func enrollmentReservationResponse(reservation storage.EnrollmentReservation) map[string]interface{} {
+	return map[string]interface{}{
+		"id":         reservation.ID,
+		"account_id": reservation.AccountID,
+		"device_id":  reservation.DeviceID,
+		"challenge":  reservation.Challenge,
+		"expires_at": reservation.ExpiresAt,
+	}
+}
+
+func (a *API) verifyEnrollment(
+	r *http.Request,
+	reservationID string,
+	kind string,
+	signingKey []byte,
+	keyPackage []byte,
+	signature []byte,
+) (storage.EnrollmentReservation, bool) {
+	if len(signingKey) != ed25519.PublicKeySize || len(signature) != ed25519.SignatureSize {
+		return storage.EnrollmentReservation{}, false
+	}
+	reservation, err := a.Store.EnrollmentReservation(r.Context(), reservationID)
+	if err != nil || reservation.Kind != kind {
+		return storage.EnrollmentReservation{}, false
+	}
+	proof := enrollmentProofMessage(reservation.Challenge, signingKey, keyPackage)
+	if !ed25519.Verify(ed25519.PublicKey(signingKey), proof, signature) {
+		return storage.EnrollmentReservation{}, false
+	}
+	return reservation, true
+}
+
+func enrollmentProofMessage(challenge, signingKey, keyPackage []byte) []byte {
+	keyPackageHash := sha256.Sum256(keyPackage)
+	proof := []byte("veritra-enrollment-proof-v1")
+	var challengeLength [2]byte
+	binary.BigEndian.PutUint16(challengeLength[:], uint16(len(challenge)))
+	proof = append(proof, challengeLength[:]...)
+	proof = append(proof, challenge...)
+	proof = append(proof, signingKey...)
+	proof = append(proof, keyPackageHash[:]...)
+	return proof
 }
 
 type inviteRequest struct {
@@ -369,10 +492,31 @@ func (a *API) createDeviceLink(w http.ResponseWriter, r *http.Request, principal
 }
 
 type claimDeviceLinkRequest struct {
-	Code             string `json:"code"`
-	DeviceName       string `json:"device_name"`
-	DeviceKeyPackage []byte `json:"device_key_package"`
-	SigningKey       []byte `json:"signing_key,omitempty"`
+	EnrollmentReservationID string `json:"enrollment_reservation_id"`
+	Code                    string `json:"code"`
+	DeviceName              string `json:"device_name"`
+	DeviceKeyPackage        []byte `json:"device_key_package"`
+	SigningKey              []byte `json:"signing_key,omitempty"`
+	ChallengeSignature      []byte `json:"challenge_signature"`
+}
+
+func (a *API) reserveDeviceLinkEnrollment(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Code string `json:"code"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	reservation, err := a.Store.ReserveDeviceLinkEnrollment(r.Context(), req.Code)
+	if errors.Is(err, storage.ErrDeviceLinkInvalid) {
+		writeError(w, http.StatusBadRequest, "invalid_device_link")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "enrollment_reservation_failed")
+		return
+	}
+	writeJSON(w, http.StatusCreated, enrollmentReservationResponse(reservation))
 }
 
 func (a *API) claimDeviceLink(w http.ResponseWriter, r *http.Request) {
@@ -390,6 +534,25 @@ func (a *API) claimDeviceLink(w http.ResponseWriter, r *http.Request) {
 	}
 	if isReservedNonProductionKeyPackage(req.DeviceKeyPackage) {
 		writeError(w, http.StatusBadRequest, "non_production_device_key_package")
+		return
+	}
+	if len(req.DeviceKeyPackage) < 64 || len(req.DeviceKeyPackage) > 48<<10 {
+		writeError(w, http.StatusBadRequest, "invalid_device_key_package")
+		return
+	}
+	if len(req.SigningKey) != ed25519.PublicKeySize || len(req.ChallengeSignature) != ed25519.SignatureSize {
+		writeError(w, http.StatusBadRequest, "invalid_enrollment")
+		return
+	}
+	reservation, err := a.Store.DeviceLinkEnrollment(
+		r.Context(), req.Code, req.EnrollmentReservationID,
+	)
+	if err != nil || !ed25519.Verify(
+		ed25519.PublicKey(req.SigningKey),
+		enrollmentProofMessage(reservation.Challenge, req.SigningKey, req.DeviceKeyPackage),
+		req.ChallengeSignature,
+	) {
+		writeError(w, http.StatusBadRequest, "invalid_enrollment")
 		return
 	}
 	claimToken, claimTokenHash, err := auth.NewToken()

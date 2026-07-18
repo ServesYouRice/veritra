@@ -1,8 +1,8 @@
 You are Codex acting as a senior/staff-level product engineer, security engineer, mobile engineer, and self-hosting-focused backend architect.
 
-Status note, 2026-07-04: this is the original product brief plus a May 2026
-progress snapshot. Use `README.md`, `WORK_IN_PROGRESS.md`, and `docs/TODO.md`
-for current status.
+This is the original product brief. It is retained for durable product and
+security requirements only. Use `README.md` for implemented capabilities and
+`REMAINING-WORK.md` for current status.
 
 Build the initial full-MVP attempt for a new open-source, self-hostable, privacy-first messaging app.
 
@@ -20,46 +20,6 @@ The app is not primarily a Discord clone. It may eventually support servers/work
 - E2EE everywhere
 
 The project should aim for a full MVP, but do not create a huge fragile prototype. Build in stages, with clear architecture, clean boundaries, tests, and documented assumptions. If something is too large for the first implementation pass, create the interface, docs, test stubs, and a clear TODO/ADR rather than faking insecure behavior.
-
-============================================================
-CURRENT PROGRESS - 2026-05-29
-============================================================
-
-The repository is no longer empty. It now has an initial MVP foundation with the working product name `Veritra`, while some Go module/package names still use `private-messenger`.
-
-Completed or substantially scaffolded:
-- Phase 0 repository setup: AGPL license, README, AGENTS.md, NOTICE / THIRD_PARTY_NOTICES.md, SECURITY.md, CONTRIBUTING.md, scripts, Makefile, Docker Compose, Caddy, systemd, docs, ADR folder, and initial project layout exist.
-- Phase 1 research and decisions: reference research, threat model, crypto research, deployment, privacy, API, data model, recovery, push, calls, sync, and ADRs 0001-0005 exist.
-- Phase 2 backend foundation: Go modular monolith skeleton starts through `messenger-server`, loads config, uses privacy-safe structured logging, applies embedded SQLite migrations, serves setup UI/API, creates owner account, supports invite-only registration, sessions, devices, health/doctor, and operator database backup/restore commands.
-- Phase 3 domain model: accounts, devices, invites, communities, channels, conversations, memberships, simple roles, encrypted message envelopes, encrypted attachment metadata/blob storage, retention metadata, reactions, read receipts, push subscriptions, encrypted backup blob records, call signaling sessions, metadata-only search, account export, and account delete are implemented or scaffolded.
-- Phase 4 realtime/sync: small-instance WebSocket hub and durable sync event catch-up exist for encrypted message envelopes, markers, reactions, read receipts, retention updates, call signaling, and account-scoped device updates.
-- Phase 5 crypto boundaries: server-side crypto API interfaces, Rust placeholder crate, device key-package model, ciphertext-only message persistence, plaintext-field API rejection, and plaintext persistence tests exist. Production OpenMLS/libsignal integration remains incomplete and must not be represented as production-ready.
-- Phase 6 mobile shell: Flutter app shell, feature folders, app state, API client, sync service abstraction, crypto service abstraction, local store abstraction, connect/setup/login/chat/settings screens, metadata search parsing, encrypted envelope serialization, and device-link API models/helpers exist. Production crypto/local encrypted storage/QR UX remain incomplete.
-- Phase 7 attachments: server accepts encrypted blobs only with an explicit encrypted-upload header and stores opaque blobs locally with metadata. Flutter encrypted upload UX remains incomplete.
-- Phase 8 push: provider abstraction and generic payload policy tests exist. APNs/FCM/UnifiedPush provider implementations remain incomplete.
-- Phase 9 calls: self-hosted call signaling records and events exist. WebRTC media/E2EE calls remain incomplete.
-- Phase 10 deployment: Docker Compose, Caddy, systemd, deployment docs, config example, and single-binary-oriented CLI commands exist.
-
-Latest progress in this pass:
-- Added a short-lived QR/device-linking foundation: existing authenticated device creates a one-time link, new device claims it with public key-package metadata, existing device approves it, and the new device polls with a claim token to receive a device-scoped session exactly once.
-- Added SQLite migration `0002_device_links.sql`.
-- Added backend domain/storage/API tests for the approval-gated device-link flow.
-- Added Flutter API client helpers, models, and parser test coverage for device-link creation, claim, approval, and completion.
-- Updated API, data model, recovery, and TODO docs to describe server-side device linking and the remaining client-side cryptographic verification work.
-- Added a Flutter manual device-link UX scaffold: existing devices can create and approve link codes from Settings, and new devices can claim/poll a link from first launch.
-- Added authenticated device-link status refresh so the approving device can see claim state and claimed device name before approval.
-- Added ranked, paginated server-side metadata search for usernames, visible communities, and visible channels without touching message contents or ciphertext blobs.
-
-Current verification status:
-- Host `gofmt`/Go/Flutter/Rust tools are not installed.
-- `scripts/test.ps1` could not run directly because PowerShell script execution is disabled.
-- Docker Desktop was started and `powershell -ExecutionPolicy Bypass -File .\scripts\test.ps1` passed for Go, Rust, and Flutter.
-- `powershell -ExecutionPolicy Bypass -File .\scripts\lint.ps1` passed for Go formatting/vet, Rust fmt/clippy, and Flutter analyze.
-
-Highest-priority remaining work:
-- Integrate production OpenMLS/libsignal-backed device/message crypto and mark all test-only crypto paths as non-production.
-- Add QR scanning/rendering and production key-continuity checks to the mobile device-link UX.
-- Implement encrypted local mobile storage, encrypted backup restore UX, client-side message search, push providers, attachment upload from Flutter, and WebRTC media.
 
 ============================================================
 NON-NEGOTIABLE PRODUCT REQUIREMENTS

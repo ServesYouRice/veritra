@@ -32,12 +32,17 @@ func TestInviteDeviceAndEncryptedEnvelopeFlow(t *testing.T) {
 		t.Fatalf("create invite: %v", err)
 	}
 	memberHash, _ := auth.HashPassword("member-password-123")
+	memberReservation, err := store.ReserveRegistrationEnrollment(ctx, invite.Code)
+	if err != nil {
+		t.Fatalf("reserve member enrollment: %v", err)
+	}
 	member, err := store.RegisterWithInvite(ctx, RegisterInput{
-		InviteCode:   invite.Code,
-		Username:     "Member",
-		PasswordHash: memberHash,
-		DeviceName:   "Member phone",
-		KeyPackage:   []byte("member-key-package"),
+		EnrollmentReservationID: memberReservation.ID,
+		InviteCode:              invite.Code,
+		Username:                "Member",
+		PasswordHash:            memberHash,
+		DeviceName:              "Member phone",
+		KeyPackage:              []byte("member-key-package"),
 	})
 	if err != nil {
 		t.Fatalf("register with invite: %v", err)
@@ -570,6 +575,10 @@ func TestDeviceLinkRequiresApprovalBeforeSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create device link: %v", err)
 	}
+	enrollment, err := store.ReserveDeviceLinkEnrollment(ctx, link.Code)
+	if err != nil {
+		t.Fatalf("reserve device link enrollment: %v", err)
+	}
 	claimToken, claimTokenHash, err := auth.NewToken()
 	if err != nil {
 		t.Fatalf("claim token: %v", err)
@@ -595,7 +604,7 @@ func TestDeviceLinkRequiresApprovalBeforeSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("approve device link: %v", err)
 	}
-	if approved.State != domain.DeviceLinkApproved || device.AccountID != owner.Account.ID || device.Name != "Tablet" {
+	if approved.State != domain.DeviceLinkApproved || device.AccountID != owner.Account.ID || device.Name != "Tablet" || device.ID != enrollment.DeviceID {
 		t.Fatalf("unexpected approved device link: %#v %#v", approved, device)
 	}
 	if _, err := store.ConsumeApprovedDeviceLink(ctx, link.ID, auth.HashToken("wrong-claim-token"), sessionTokenHash, time.Now().UTC().Add(time.Hour)); !errors.Is(err, ErrDeviceLinkInvalid) {
@@ -681,16 +690,21 @@ func newTestStore(t *testing.T, ctx context.Context) (*Store, config.Config) {
 
 func createTestOwner(t *testing.T, ctx context.Context, store *Store) AccountDevice {
 	t.Helper()
+	reservation, err := store.ReserveOwnerEnrollment(ctx)
+	if err != nil {
+		t.Fatalf("reserve owner enrollment: %v", err)
+	}
 	hash, err := auth.HashPassword("owner-password-123")
 	if err != nil {
 		t.Fatalf("hash password: %v", err)
 	}
 	owner, err := store.CreateOwner(ctx, CreateOwnerInput{
-		InstanceName: "Test Messenger",
-		Username:     "Owner",
-		PasswordHash: hash,
-		DeviceName:   "Owner phone",
-		KeyPackage:   []byte("owner-key-package"),
+		EnrollmentReservationID: reservation.ID,
+		InstanceName:            "Test Messenger",
+		Username:                "Owner",
+		PasswordHash:            hash,
+		DeviceName:              "Owner phone",
+		KeyPackage:              []byte("owner-key-package"),
 	})
 	if err != nil {
 		t.Fatalf("create owner: %v", err)
@@ -700,16 +714,21 @@ func createTestOwner(t *testing.T, ctx context.Context, store *Store) AccountDev
 
 func registerTestMember(t *testing.T, ctx context.Context, store *Store, inviteCode, username string) AccountDevice {
 	t.Helper()
+	reservation, err := store.ReserveRegistrationEnrollment(ctx, inviteCode)
+	if err != nil {
+		t.Fatalf("reserve member enrollment: %v", err)
+	}
 	hash, err := auth.HashPassword("member-password-123")
 	if err != nil {
 		t.Fatalf("hash password: %v", err)
 	}
 	member, err := store.RegisterWithInvite(ctx, RegisterInput{
-		InviteCode:   inviteCode,
-		Username:     username,
-		PasswordHash: hash,
-		DeviceName:   username + " phone",
-		KeyPackage:   []byte(username + "-key-package"),
+		EnrollmentReservationID: reservation.ID,
+		InviteCode:              inviteCode,
+		Username:                username,
+		PasswordHash:            hash,
+		DeviceName:              username + " phone",
+		KeyPackage:              []byte(username + "-key-package"),
 	})
 	if err != nil {
 		t.Fatalf("register member %s: %v", username, err)

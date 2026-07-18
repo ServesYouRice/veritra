@@ -13,7 +13,14 @@ Status: required design contract; implementation is not production-ready.
 
 - An account ID is not a cryptographic identity by itself.
 - Device credentials bind the account ID, device ID, protocol version, and signature public key.
-- Initial-device creation and linked-device approval must sign a server nonce and the complete public device credential.
+- Initial-device creation and linked-device claims sign an account/device-bound
+  server challenge plus the Ed25519 public key and SHA-256 key-package
+  commitment. Linked-device approval still requires the human verification
+  step on an existing authenticated device.
+- Owner and invite registration reserve the final account/device IDs before
+  key generation. The domain-separated reservation challenge includes those
+  IDs; final enrollment verifies the Ed25519 credential signature and consumes
+  the reservation atomically.
 - Existing devices show a short authentication string derived from both credentials before approval.
 - Removing a device requires an MLS remove proposal/commit in every affected group. Server revocation alone does not claim cryptographic removal.
 

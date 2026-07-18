@@ -23,11 +23,35 @@ class ApiClient {
     return _jsonRequest('GET', '/api/v1/setup/status');
   }
 
+  Future<EnrollmentReservation> reserveOwnerEnrollment(
+      {String setupToken = ''}) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/setup/owner/enrollment',
+      body: const <String, Object?>{},
+      extraHeaders: setupToken.isEmpty
+          ? const <String, String>{}
+          : <String, String>{'X-Veritra-Setup-Token': setupToken},
+    );
+    return EnrollmentReservation.fromJson(json);
+  }
+
+  Future<EnrollmentReservation> reserveRegistrationEnrollment(
+      String inviteCode) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/register/enrollment',
+      body: <String, Object?>{'invite_code': inviteCode},
+    );
+    return EnrollmentReservation.fromJson(json);
+  }
+
   Future<Session> createOwner({
     required String username,
     required String password,
     required String deviceName,
-    required List<int> deviceKeyPackage,
+    required EnrollmentReservation enrollment,
+    required EnrollmentCredential credential,
     String setupToken = '',
     String? instanceName,
   }) async {
@@ -38,7 +62,10 @@ class ApiClient {
           'username': username,
           'password': password,
           'device_name': deviceName,
-          'device_key_package': base64Encode(deviceKeyPackage),
+          'enrollment_reservation_id': enrollment.id,
+          'device_key_package': base64Encode(credential.deviceKeyPackage),
+          'signing_key': base64Encode(credential.signingKey),
+          'challenge_signature': base64Encode(credential.challengeSignature),
         },
         extraHeaders: setupToken.isEmpty
             ? const <String, String>{}
@@ -51,7 +78,8 @@ class ApiClient {
     required String username,
     required String password,
     required String deviceName,
-    required List<int> deviceKeyPackage,
+    required EnrollmentReservation enrollment,
+    required EnrollmentCredential credential,
   }) async {
     final json =
         await _jsonRequest('POST', '/api/v1/register', body: <String, Object?>{
@@ -59,7 +87,10 @@ class ApiClient {
       'username': username,
       'password': password,
       'device_name': deviceName,
-      'device_key_package': base64Encode(deviceKeyPackage),
+      'enrollment_reservation_id': enrollment.id,
+      'device_key_package': base64Encode(credential.deviceKeyPackage),
+      'signing_key': base64Encode(credential.signingKey),
+      'challenge_signature': base64Encode(credential.challengeSignature),
     });
     return _sessionFromAuthJson(json, fallbackUsername: username);
   }
@@ -419,11 +450,20 @@ class ApiClient {
         Map<String, Object?>.from(json['device_link'] as Map));
   }
 
+  Future<EnrollmentReservation> reserveDeviceLinkEnrollment(String code) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/device-links/claim-enrollment',
+      body: <String, Object?>{'code': code},
+    );
+    return EnrollmentReservation.fromJson(json);
+  }
+
   Future<DeviceLinkClaim> claimDeviceLink({
     required String code,
     required String deviceName,
-    required List<int> deviceKeyPackage,
-    List<int> signingKey = const <int>[],
+    required EnrollmentReservation enrollment,
+    required EnrollmentCredential credential,
   }) async {
     final json = await _jsonRequest(
       'POST',
@@ -431,8 +471,10 @@ class ApiClient {
       body: <String, Object?>{
         'code': code,
         'device_name': deviceName,
-        'device_key_package': base64Encode(deviceKeyPackage),
-        if (signingKey.isNotEmpty) 'signing_key': base64Encode(signingKey),
+        'enrollment_reservation_id': enrollment.id,
+        'device_key_package': base64Encode(credential.deviceKeyPackage),
+        'signing_key': base64Encode(credential.signingKey),
+        'challenge_signature': base64Encode(credential.challengeSignature),
       },
     );
     return DeviceLinkClaim(
@@ -647,7 +689,9 @@ class ApiException implements Exception {
       case 'upload_too_large':
         return 'That file is too large to upload.';
       case 'device_key_package_required':
+      case 'invalid_device_key_package':
       case 'non_production_device_key_package':
+      case 'invalid_enrollment':
         return 'The server refused this build’s encryption keys. A '
             'client with production encryption support is required.';
       case 'storage_error':

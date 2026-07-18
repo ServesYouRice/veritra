@@ -14,7 +14,7 @@ This document records projects studied for architecture, deployment, licensing, 
 | Mattermost | https://github.com/mattermost/mattermost | Mixed; server source AGPL-family per Mattermost docs | Possibly, but complex | Go + React; self-hosted team collaboration | Modular monolith lessons, permissions, operational docs | Open-core licensing complexity, Slack-first product shape | No |
 | Zulip | https://github.com/zulip/zulip | Apache-2.0 | Yes | Python/Django + TS; PostgreSQL | Thread/topic UX, tests, docs quality | Enterprise/team-chat-first mental model | No |
 | Rocket.Chat | https://github.com/RocketChat/Rocket.Chat | MIT for community source outside EE directories | Yes, preserve notices | TypeScript/Meteor; MongoDB | Realtime API and self-hosted admin lessons | MongoDB requirement, large workspace model | No |
-| Stoat/Revolt | https://github.com/stoatchat/stoatchat | Check exact repo license before reuse | TBD | Rust services plus self-host compose | Discord-like communities and deployment examples | Discord-first scope and prior security issues | No |
+| Stoat/Revolt | https://github.com/stoatchat/stoatchat | Not evaluated for reuse | N/A; no code reused | Rust services plus self-host compose | Discord-like communities and deployment examples | Discord-first scope and prior security issues | No |
 | PocketBase | https://github.com/pocketbase/pocketbase | MIT | Yes, preserve notices | Go single binary, SQLite, realtime | Single executable setup, embedded DB, admin UX | Generic backend framework as app core | No |
 | Pion WebRTC | https://github.com/pion/webrtc | MIT | Yes, preserve notices | Go WebRTC library | Self-hosted WebRTC primitives, signaling integration | Building full SFU too early | No |
 | LiveKit | https://github.com/livekit/livekit | Apache-2.0 | Yes, preserve notices | Go SFU, Docker/single binary/Kubernetes | Production call architecture and Flutter SDK | Mandatory external media service in v1 | No |
@@ -26,4 +26,3 @@ This document records projects studied for architecture, deployment, licensing, 
 ## Conclusion
 
 Build an original project. Forking would import product direction, operational complexity, licensing obligations, and code volume that do not match the mobile-first, E2EE-everywhere, simple self-hosting goal.
-

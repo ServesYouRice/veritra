@@ -259,11 +259,21 @@ class FakeDeviceLinkApiClient extends ApiClient {
   }
 
   @override
+  Future<EnrollmentReservation> reserveDeviceLinkEnrollment(String code) async {
+    return const EnrollmentReservation(
+      id: 'dlink_1',
+      accountId: 'acct_owner',
+      deviceId: 'dev_linked',
+      challenge: <int>[1, 2, 3],
+    );
+  }
+
+  @override
   Future<DeviceLinkClaim> claimDeviceLink({
     required String code,
     required String deviceName,
-    required List<int> deviceKeyPackage,
-    List<int> signingKey = const <int>[],
+    required EnrollmentReservation enrollment,
+    required EnrollmentCredential credential,
   }) async {
     return DeviceLinkClaim(
       deviceLink: _link(state: 'claimed'),

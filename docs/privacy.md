@@ -14,6 +14,10 @@ Veritra defaults to:
 
 Operational logs are local to the instance and intentionally sparse. They must not include request bodies, secrets, tokens, private keys, plaintext messages, or plaintext attachments.
 
+For lost-device review, the server stores a coarse `last_seen_at` timestamp for
+each active device. Authenticated activity refreshes it at most once every five
+minutes; it is not an analytics event stream.
+
 ## Account Deletion
 
 Account deletion immediately:

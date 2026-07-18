@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
@@ -163,7 +164,7 @@ func (s *Store) ClaimDeviceLink(ctx context.Context, code, deviceName string, ke
 	result, err := tx.ExecContext(ctx, `
 		UPDATE device_links
 		SET state = ?, claimed_device_name = ?, claimed_key_package = ?, claimed_signing_key = ?, claim_token_hash = ?, claimed_auth_secret_hash = ?, claimed_at = ?
-		WHERE id = ? AND state = ?`,
+		WHERE id = ? AND state = ? AND claimed_device_id IS NOT NULL`,
 		domain.DeviceLinkClaimed, deviceName, keyPackage, nullableBytes(signingKey), claimTokenHash, authSecretHash, now, link.ID, domain.DeviceLinkPending)
 	if err != nil {
 		return domain.DeviceLink{}, err
@@ -184,6 +185,76 @@ func (s *Store) ClaimDeviceLink(ctx context.Context, code, deviceName string, ke
 	link.ClaimedAt = &claimedAt
 	link.Code = ""
 	return link, nil
+}
+
+func (s *Store) ReserveDeviceLinkEnrollment(ctx context.Context, code string) (EnrollmentReservation, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return EnrollmentReservation{}, err
+	}
+	defer tx.Rollback()
+	var linkID, accountID string
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, account_id FROM device_links
+		WHERE code = ? AND state = ? AND claimed_device_id IS NULL
+		  AND revoked_at IS NULL AND expires_at > ?`,
+		strings.TrimSpace(code), domain.DeviceLinkPending, nowString()).Scan(&linkID, &accountID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return EnrollmentReservation{}, ErrDeviceLinkInvalid
+	}
+	if err != nil {
+		return EnrollmentReservation{}, err
+	}
+	deviceID, err := domain.NewID("dev")
+	if err != nil {
+		return EnrollmentReservation{}, err
+	}
+	nonce := make([]byte, 32)
+	if _, err := rand.Read(nonce); err != nil {
+		return EnrollmentReservation{}, err
+	}
+	challenge := encodeEnrollmentChallenge(linkID, accountID, deviceID, nonce)
+	result, err := tx.ExecContext(ctx, `
+		UPDATE device_links SET claimed_device_id = ?, claim_challenge = ?
+		WHERE id = ? AND state = ? AND claimed_device_id IS NULL`,
+		deviceID, challenge, linkID, domain.DeviceLinkPending)
+	if err != nil {
+		return EnrollmentReservation{}, err
+	}
+	if rows, _ := result.RowsAffected(); rows != 1 {
+		return EnrollmentReservation{}, ErrDeviceLinkInvalid
+	}
+	if err := tx.Commit(); err != nil {
+		return EnrollmentReservation{}, err
+	}
+	return EnrollmentReservation{
+		ID: linkID, Kind: "device_link", AccountID: accountID,
+		DeviceID: deviceID, Challenge: challenge,
+	}, nil
+}
+
+func (s *Store) DeviceLinkEnrollment(ctx context.Context, code, linkID string) (EnrollmentReservation, error) {
+	var reservation EnrollmentReservation
+	var expiresAt string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, account_id, claimed_device_id, claim_challenge, expires_at
+		FROM device_links
+		WHERE id = ? AND code = ? AND state = ? AND claimed_device_id IS NOT NULL
+		  AND claim_challenge IS NOT NULL AND revoked_at IS NULL AND expires_at > ?`,
+		strings.TrimSpace(linkID), strings.TrimSpace(code), domain.DeviceLinkPending,
+		nowString()).Scan(
+		&reservation.ID, &reservation.AccountID, &reservation.DeviceID,
+		&reservation.Challenge, &expiresAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return EnrollmentReservation{}, ErrDeviceLinkInvalid
+	}
+	if err != nil {
+		return EnrollmentReservation{}, err
+	}
+	reservation.Kind = "device_link"
+	reservation.ExpiresAt = parseTime(expiresAt)
+	return reservation, nil
 }
 
 func (s *Store) DeviceLinkForAccount(ctx context.Context, linkID, accountID string) (domain.DeviceLink, error) {
@@ -213,13 +284,14 @@ func (s *Store) ApproveDeviceLink(ctx context.Context, linkID, accountID, verifi
 	var keyPackage []byte
 	var signingKey []byte
 	var authSecretHash string
+	var deviceID string
 	row := tx.QueryRowContext(ctx, `
 		SELECT id, code, account_id, created_by_device_id, state, verification_code, claimed_device_name, approved_device_id, created_at, expires_at, claimed_at, approved_at, consumed_at, revoked_at,
-		       claimed_device_name, claimed_key_package, claimed_signing_key, claimed_auth_secret_hash
+		       claimed_device_name, claimed_key_package, claimed_signing_key, claimed_auth_secret_hash, claimed_device_id
 		FROM device_links
 		WHERE id = ? AND account_id = ? AND state = ? AND revoked_at IS NULL AND expires_at > ?`,
 		linkID, accountID, domain.DeviceLinkClaimed, nowString())
-	if err := scanDeviceLinkForApproval(row, &link, &deviceName, &keyPackage, &signingKey, &authSecretHash); err != nil {
+	if err := scanDeviceLinkForApproval(row, &link, &deviceName, &keyPackage, &signingKey, &authSecretHash, &deviceID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.DeviceLink{}, domain.Device{}, ErrDeviceLinkInvalid
 		}
@@ -234,10 +306,6 @@ func (s *Store) ApproveDeviceLink(ctx context.Context, linkID, accountID, verifi
 	}
 	if strings.TrimSpace(deviceName) == "" || len(keyPackage) == 0 || authSecretHash == "" {
 		return domain.DeviceLink{}, domain.Device{}, ErrDeviceLinkInvalid
-	}
-	deviceID, err := domain.NewID("dev")
-	if err != nil {
-		return domain.DeviceLink{}, domain.Device{}, err
 	}
 	now := nowString()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO devices(id, account_id, name, key_package, signing_key, auth_secret_hash, created_at) VALUES(?, ?, ?, ?, ?, ?, ?)`, deviceID, accountID, deviceName, keyPackage, nullableBytes(signingKey), authSecretHash, now); err != nil {

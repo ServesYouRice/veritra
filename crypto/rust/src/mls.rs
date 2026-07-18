@@ -8,7 +8,8 @@ use openmls::prelude::*;
 use openmls::treesync::LeafNodeParameters;
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
-use openmls_traits::OpenMlsProvider;
+use openmls_traits::{signatures::Signer, OpenMlsProvider};
+use sha2::{Digest, Sha256};
 use tls_codec::{Deserialize as TlsDeserializeTrait, Serialize as TlsSerializeTrait};
 
 mod state;
@@ -80,6 +81,44 @@ impl MlsDevice {
             .key_package()
             .tls_serialize_detached()
             .map_err(|_| MlsError::KeyGeneration)
+    }
+
+    pub fn signing_public_key(&self) -> &[u8] {
+        self.signer.public()
+    }
+
+    /// Signs a server challenge with the same Ed25519 identity key carried by
+    /// this device's MLS credential. The server must domain-separate and bind
+    /// the challenge to its reserved account and device identifiers.
+    pub fn sign_enrollment_challenge(&self, challenge: &[u8]) -> Result<Vec<u8>, MlsError> {
+        if challenge.is_empty() {
+            return Err(MlsError::InvalidIdentity);
+        }
+        self.signer
+            .sign(challenge)
+            .map_err(|_| MlsError::KeyGeneration)
+    }
+
+    pub fn create_enrollment_credential(
+        &self,
+        challenge: &[u8],
+    ) -> Result<EnrollmentCredential, MlsError> {
+        if challenge.is_empty() || challenge.len() > u16::MAX as usize {
+            return Err(MlsError::InvalidIdentity);
+        }
+        let key_package = self.create_key_package()?;
+        let signing_public_key = self.signing_public_key().to_vec();
+        let mut proof = b"veritra-enrollment-proof-v1".to_vec();
+        proof.extend_from_slice(&(challenge.len() as u16).to_be_bytes());
+        proof.extend_from_slice(challenge);
+        proof.extend_from_slice(&signing_public_key);
+        proof.extend_from_slice(&Sha256::digest(&key_package));
+        let challenge_signature = self.sign_enrollment_challenge(&proof)?;
+        Ok(EnrollmentCredential {
+            key_package,
+            signing_public_key,
+            challenge_signature,
+        })
     }
 
     pub fn create_group(&self, group_id: &[u8]) -> Result<MlsGroup, MlsError> {
@@ -232,6 +271,13 @@ pub struct AddMemberMessages {
     pub welcome: Vec<u8>,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub struct EnrollmentCredential {
+    pub key_package: Vec<u8>,
+    pub signing_public_key: Vec<u8>,
+    pub challenge_signature: Vec<u8>,
+}
+
 fn group_create_config() -> MlsGroupCreateConfig {
     MlsGroupCreateConfig::builder()
         .padding_size(PADDING_BYTES)
@@ -350,5 +396,25 @@ mod tests {
             alice.add_member(&mut group, b"not a key package"),
             Err(MlsError::InvalidKeyPackage)
         );
+    }
+
+    #[test]
+    fn enrollment_challenge_uses_mls_credential_signer() {
+        let device = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
+        let signature = device
+            .sign_enrollment_challenge(b"veritra-enrollment-v1 challenge")
+            .unwrap();
+        assert_eq!(device.signing_public_key().len(), 32);
+        assert_eq!(signature.len(), 64);
+        assert_eq!(
+            device.sign_enrollment_challenge(b""),
+            Err(MlsError::InvalidIdentity)
+        );
+        let enrollment = device
+            .create_enrollment_credential(b"reserved server challenge")
+            .unwrap();
+        assert!(enrollment.key_package.len() >= crate::MIN_KEY_PACKAGE_BYTES);
+        assert_eq!(enrollment.signing_public_key, device.signing_public_key());
+        assert_eq!(enrollment.challenge_signature.len(), 64);
     }
 }

@@ -14,7 +14,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	"private-messenger/server/internal/auth"
 	"private-messenger/server/internal/domain"
@@ -46,6 +45,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/health", a.health)
 	mux.HandleFunc("GET /setup", a.setupPage)
 	mux.HandleFunc("GET /api/v1/setup/status", a.setupStatus)
+	mux.HandleFunc("POST /api/v1/setup/owner/enrollment", a.reserveOwnerEnrollment)
 	mux.HandleFunc("POST /api/v1/setup/owner", a.createOwner)
 	mux.HandleFunc("POST /api/v1/auth/login", a.login)
 	mux.HandleFunc("POST /api/v1/auth/reauth", a.withAuth(a.reauthenticate))
@@ -53,6 +53,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/logout-all", a.withRecentAuth(a.logoutAll))
 	mux.HandleFunc("POST /api/v1/account/password", a.withRecentAuth(a.changePassword))
 	mux.HandleFunc("POST /api/v1/register", a.register)
+	mux.HandleFunc("POST /api/v1/register/enrollment", a.reserveRegistrationEnrollment)
 	mux.HandleFunc("POST /api/v1/invites", a.withRecentAuth(a.createInvite))
 	mux.HandleFunc("GET /api/v1/invites", a.withAuth(a.listInvites))
 	mux.HandleFunc("DELETE /api/v1/invites/{id}", a.withRecentAuth(a.revokeInvite))
@@ -60,6 +61,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/devices/me/key-packages", a.withAuth(a.publishDeviceKeyPackages))
 	mux.HandleFunc("DELETE /api/v1/devices/{id}", a.withRecentAuth(a.revokeDevice))
 	mux.HandleFunc("POST /api/v1/device-links", a.withRecentAuth(a.createDeviceLink))
+	mux.HandleFunc("POST /api/v1/device-links/claim-enrollment", a.reserveDeviceLinkEnrollment)
 	mux.HandleFunc("POST /api/v1/device-links/claim", a.claimDeviceLink)
 	mux.HandleFunc("POST /api/v1/communities", a.withAuth(a.createCommunity))
 	mux.HandleFunc("GET /api/v1/communities", a.withAuth(a.listCommunities))
@@ -113,6 +115,9 @@ func (a *API) withAuth(next authedHandler) http.HandlerFunc {
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
+		}
+		if err := a.Store.MarkDeviceSeen(r.Context(), principal.DeviceID); err != nil {
+			a.warn("device_last_seen_update_failed", "err", err)
 		}
 		next(w, r, principal)
 	}
@@ -285,13 +290,22 @@ func validDisplayName(name string) bool {
 	return trimmed != "" && len(trimmed) <= 64
 }
 
+// validUsername enforces an ASCII-only charset (letters, digits, '_', '-') and a
+// 3-32 character length bound. ASCII-only is deliberate: it keeps usernames free
+// of confusable/homoglyph characters (e.g. Cyrillic 'а' vs Latin 'a') that could
+// be used to impersonate another account, and it keeps NormalizeUsername's
+// case-folding unambiguous (no Unicode fold collisions).
 func validUsername(username string) bool {
 	username = strings.TrimSpace(username)
 	if len(username) < 3 || len(username) > 32 {
 		return false
 	}
-	for _, r := range username {
-		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' && r != '-' {
+	for i := 0; i < len(username); i++ {
+		c := username[i]
+		isLower := c >= 'a' && c <= 'z'
+		isUpper := c >= 'A' && c <= 'Z'
+		isDigit := c >= '0' && c <= '9'
+		if !isLower && !isUpper && !isDigit && c != '_' && c != '-' {
 			return false
 		}
 	}

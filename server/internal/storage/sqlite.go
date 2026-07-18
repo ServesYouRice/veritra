@@ -36,6 +36,7 @@ var (
 	ErrDeviceLinkNotReady  = errors.New("device link is not approved yet")
 	ErrStorageQuota        = errors.New("encrypted storage quota exceeded")
 	ErrSyncCursorExpired   = errors.New("sync cursor is older than retained history")
+	ErrEnrollmentInvalid   = errors.New("enrollment reservation is invalid, expired, or already used")
 
 	// ErrDeviceLinkVerificationFailed is returned when the approver does not
 	// supply the link's verification code, so a device cannot be approved
@@ -408,15 +409,17 @@ func (s *Store) InstanceName(ctx context.Context) (string, error) {
 }
 
 type CreateOwnerInput struct {
-	InstanceName   string
-	Username       string
-	Email          *string
-	PasswordHash   string
-	DeviceName     string
-	KeyPackage     []byte
-	DeviceAuthHash string
-	SessionHash    string
-	SessionExpiry  time.Time
+	EnrollmentReservationID string
+	InstanceName            string
+	Username                string
+	Email                   *string
+	PasswordHash            string
+	DeviceName              string
+	KeyPackage              []byte
+	SigningKey              []byte
+	DeviceAuthHash          string
+	SessionHash             string
+	SessionExpiry           time.Time
 }
 
 type AccountDevice struct {
@@ -485,12 +488,12 @@ func scanDeviceLink(rows scanner, link *domain.DeviceLink) error {
 	return nil
 }
 
-func scanDeviceLinkForApproval(rows scanner, link *domain.DeviceLink, deviceName *string, keyPackage *[]byte, signingKey *[]byte, authSecretHash *string) error {
+func scanDeviceLinkForApproval(rows scanner, link *domain.DeviceLink, deviceName *string, keyPackage *[]byte, signingKey *[]byte, authSecretHash *string, deviceID *string) error {
 	var code, createdByDeviceID, claimedDeviceName, approvedDeviceID, claimedDeviceNameForDevice sql.NullString
 	var created, expires, claimed, approved, consumed, revoked sql.NullString
 	if err := rows.Scan(
 		&link.ID, &code, &link.AccountID, &createdByDeviceID, &link.State, &link.VerificationCode, &claimedDeviceName, &approvedDeviceID, &created, &expires, &claimed, &approved, &consumed, &revoked,
-		&claimedDeviceNameForDevice, keyPackage, signingKey, authSecretHash,
+		&claimedDeviceNameForDevice, keyPackage, signingKey, authSecretHash, deviceID,
 	); err != nil {
 		return err
 	}

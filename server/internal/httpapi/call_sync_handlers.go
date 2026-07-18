@@ -86,6 +86,15 @@ func validCallMetadata(raw json.RawMessage) bool {
 	if len(raw) > 64<<10 || containsPlaintextMessageKey(raw) {
 		return false
 	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil || len(fields) != 3 {
+		return false
+	}
+	for _, name := range []string{"version", "ciphertext", "protocol"} {
+		if _, ok := fields[name]; !ok {
+			return false
+		}
+	}
 	var envelope struct {
 		Version    int    `json:"version"`
 		Ciphertext []byte `json:"ciphertext"`
@@ -94,7 +103,10 @@ func validCallMetadata(raw json.RawMessage) bool {
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return false
 	}
-	return envelope.Version == 1 && len(envelope.Ciphertext) > 0 && len(envelope.Ciphertext) <= 48<<10 && strings.TrimSpace(envelope.Protocol) != ""
+	return envelope.Version == 1 &&
+		len(envelope.Ciphertext) > 0 &&
+		len(envelope.Ciphertext) <= 48<<10 &&
+		envelope.Protocol == "mls10-openmls-v1"
 }
 
 func (a *API) syncEvents(w http.ResponseWriter, r *http.Request, principal domain.Principal) {

@@ -20,7 +20,8 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: "1.25.0"
-      - run: go test ./...
+      - name: Test with race detector and coverage
+        run: go test -race -coverprofile=coverage.out ./...
         working-directory: server
       - name: gofmt
         run: |
@@ -67,6 +68,38 @@ jobs:
         working-directory: mobile
       - run: dart format --set-exit-if-changed .
         working-directory: mobile
+      - name: Build Android release APK without signing
+        run: flutter build apk --release
+        working-directory: mobile
+
+  mobile-ios:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: "3.44.0"
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+        working-directory: mobile
+      - name: Build iOS release app without code signing
+        run: flutter build ios --release --no-codesign
+        working-directory: mobile
+
+  compose-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Start a fresh-volume deployment
+        run: docker compose -f deploy/docker-compose.yml up --build --wait --wait-timeout 120
+      - name: Verify health over the published loopback port
+        run: curl --fail --silent --show-error http://127.0.0.1:8080/healthz
+      - name: Stop deployment
+        if: always()
+        run: docker compose -f deploy/docker-compose.yml down --volumes
 
   licenses:
     runs-on: ubuntu-latest

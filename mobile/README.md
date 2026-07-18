@@ -2,7 +2,11 @@
 
 Flutter mobile shell for Android and iOS.
 
-The current client includes screens, state boundaries, API serialization, sync and storage abstractions, manual device-link screens, and a crypto interface. Production message encryption and production QR/key verification are not implemented here; the default crypto service fails closed.
+The current client includes screens, state boundaries, API serialization, sync
+and protected-storage abstractions, QR device-link screens, enrollment
+preflight, and a reviewed ABI-v2 Dart binding. Native MLS libraries, full group
+orchestration, and credential-derived QR/SAS verification are not yet wired;
+the default crypto service therefore remains fail-closed.
 
 Local checks:
 

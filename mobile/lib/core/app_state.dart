@@ -167,11 +167,17 @@ class AppState extends ChangeNotifier {
       String setupToken) async {
     await _run(() async {
       _replaceApi(baseUrl);
+      final enrollment = await api!.reserveOwnerEnrollment(
+        setupToken: setupToken,
+      );
+      final credential =
+          await cryptoService.createEnrollmentCredential(enrollment);
       session = await api!.createOwner(
         username: username,
         password: password,
         deviceName: 'Mobile device',
-        deviceKeyPackage: await cryptoService.createDeviceKeyPackage(),
+        enrollment: enrollment,
+        credential: credential,
         setupToken: setupToken,
       );
       await localStore.saveSession(session!);
@@ -383,12 +389,16 @@ class AppState extends ChangeNotifier {
   ) async {
     await _run(() async {
       _replaceApi(baseUrl);
+      final enrollment = await api!.reserveRegistrationEnrollment(inviteCode);
+      final credential =
+          await cryptoService.createEnrollmentCredential(enrollment);
       session = await api!.register(
         inviteCode: inviteCode,
         username: username,
         password: password,
         deviceName: 'Mobile device',
-        deviceKeyPackage: await cryptoService.createDeviceKeyPackage(),
+        enrollment: enrollment,
+        credential: credential,
       );
       await localStore.saveSession(session!);
       _lastSyncEventId = 0;
@@ -672,10 +682,14 @@ class AppState extends ChangeNotifier {
   Future<void> claimDeviceLink(String baseUrl, String code) async {
     await _run(() async {
       _replaceApi(baseUrl);
+      final enrollment = await api!.reserveDeviceLinkEnrollment(code);
+      final credential =
+          await cryptoService.createEnrollmentCredential(enrollment);
       pendingDeviceLinkClaim = await api!.claimDeviceLink(
         code: code,
         deviceName: 'Linked mobile device',
-        deviceKeyPackage: await cryptoService.createDeviceKeyPackage(),
+        enrollment: enrollment,
+        credential: credential,
       );
     });
   }

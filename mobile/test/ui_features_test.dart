@@ -254,12 +254,24 @@ class FakeFeatureApiClient extends ApiClient {
   }
 
   @override
+  Future<EnrollmentReservation> reserveRegistrationEnrollment(
+      String inviteCode) async {
+    return const EnrollmentReservation(
+      id: 'enroll_1',
+      accountId: 'acct_new',
+      deviceId: 'dev_new',
+      challenge: <int>[1, 2, 3],
+    );
+  }
+
+  @override
   Future<Session> register({
     required String inviteCode,
     required String username,
     required String password,
     required String deviceName,
-    required List<int> deviceKeyPackage,
+    required EnrollmentReservation enrollment,
+    required EnrollmentCredential credential,
   }) async {
     return const Session(
       baseUrl: 'http://localhost:8080',
