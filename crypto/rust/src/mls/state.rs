@@ -46,9 +46,10 @@ impl MlsDevice {
         push_u16_bytes(&mut header, self.signer.public())?;
         header.extend_from_slice(&nonce);
         let cipher = Aes256Gcm::new_from_slice(state_key).map_err(|_| MlsError::InvalidState)?;
+        let nonce = Nonce::try_from(nonce.as_slice()).map_err(|_| MlsError::InvalidState)?;
         let ciphertext = cipher
             .encrypt(
-                Nonce::from_slice(&nonce),
+                &nonce,
                 Payload {
                     msg: &plaintext,
                     aad: &header,
@@ -100,9 +101,10 @@ impl MlsDevice {
             return Err(MlsError::InvalidState);
         }
         let cipher = Aes256Gcm::new_from_slice(state_key).map_err(|_| MlsError::InvalidState)?;
+        let nonce = Nonce::try_from(nonce.as_slice()).map_err(|_| MlsError::InvalidState)?;
         let plaintext = cipher
             .decrypt(
-                Nonce::from_slice(&nonce),
+                &nonce,
                 Payload {
                     msg: ciphertext,
                     aad: &sealed[..aad_end],
