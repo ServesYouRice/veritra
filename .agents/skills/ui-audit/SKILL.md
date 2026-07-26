@@ -5,33 +5,37 @@ description: Audit a site's UI for missing pages and outdated patterns, then mod
 
 # UI Audit & Modernization
 
-A repeatable workflow for auditing a site's UI and modernizing it without
+A repeatable workflow for auditing a **web/HTML** UI and modernizing it without
 breaking what works. Follow the phases in order; do not skip verification.
+
+Not for native app UI (Flutter, SwiftUI, Compose) — Phases 2–4 assume routes,
+CSS, and a DOM.
 
 ## Phase 0 — Orient before touching anything
 
-1. Read every `*.md` in the repo root (`AGENTS.md` first — it sets user
-   preferences). Old audit files tell you what was already fixed; never
-   re-report or churn resolved findings.
-2. Read ALL of: `src/pages/`, `src/components/`, `src/layouts/`, the global
-   stylesheet, `src/lib/`, the content schema, and the test suite. The audit
-   is only as good as your inventory.
-3. Establish a green baseline before changing code: `npm run check`,
-   `npm run build`, run the tests. If the baseline is red, report that first.
+1. Read `AGENTS.md` (or `CLAUDE.md` if that is the pointer) and the repo's
+   work tracker. Do not sweep every `*.md` in the repo; superseded audits are
+   context bloat and re-reporting a fixed finding is worse than silence.
+2. Inventory the UI surface: routes/pages, shared components and layouts, the
+   global stylesheet, the content schema, and the test suite. Read the files
+   you will actually touch; list the rest.
+3. Establish a green baseline before changing code: the repo's check, build,
+   and test commands. If the baseline is red, report that first and stop.
 
-## Phase 1 — Write a plan.md and commit it
+## Phase 1 — Record the plan where the repo already tracks work
 
-Before any UI change, write a `plan.md` at the repo root containing:
+**Do not create a `plan.md`, an audit file, or any other new tracking file.**
+Repos accumulate these faster than they retire them.
 
-- **Audit summary** — 2–3 sentences on the state of the codebase.
-- **Missing surfaces table** — each row: "feature already implemented" →
-  "missing page/surface" → "fix".
-- **Modernization list** — the specific outdated patterns found and the
-  modern replacement for each (name the CSS feature, not just "modernize").
-- **Verification plan** and **order of work** (plan → pages → styles → tests).
+- If the repo has a board or task directory (for example
+  `implementation/KANBAN.md`), add one card in that format and stop.
+- Otherwise put the plan in your reply to the user, not on disk.
 
-Commit the plan on its own. Delete plan.md at the end once executed (fold
-anything durable into README or a skill).
+Either way the plan is four short parts: state of the UI in 2–3 sentences; a
+missing-surfaces table ("feature already implemented" → "missing surface" →
+"fix"); the outdated patterns found with the specific modern replacement for
+each (name the CSS feature, not just "modernize"); and the order of work with
+its verification.
 
 ## Phase 2 — Find missing pages (features without a surface)
 
@@ -136,9 +140,12 @@ Always keep the `prefers-reduced-motion: reduce` kill switch and any
 
 ## Phase 5 — Land it
 
-- Commit in logical units: plan → missing pages → modernization. Each
-  message says why, not just what.
-- Push, then propose deleting scaffolding (`plan.md`, stale audit files) —
-  per AGENTS.md, always ask before deleting anything you didn't create.
+- Commit in logical units: missing pages → modernization. Each message says
+  why, not just what.
+- Leave no scaffolding behind. Any temporary config or note you created gets
+  deleted or `.git/info/exclude`d before you finish. Ask before deleting
+  anything you did not create.
+- Update the board card you opened in Phase 1; do not write a completion
+  report file.
 - Report to the user in short, plain sentences (see AGENTS.md): what was
   missing, what was added, what was modernized, proof it passes.

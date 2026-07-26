@@ -5,7 +5,7 @@
 
 Veritra is an open-source, self-hostable, privacy-first messaging app. The first product shape is closer to WhatsApp or Signal than Discord: direct messages, private group chats, lightweight communities, optional channels, simple roles, and end-to-end encrypted message envelopes.
 
-This repository is an initial MVP foundation with fail-closed boundaries around unfinished production features. See `REMAINING-WORK.md` for the single current work list.
+This repository is an initial MVP foundation with fail-closed boundaries around unfinished production features. See [`implementation/KANBAN.md`](implementation/KANBAN.md) for the single current work list.
 
 ## Current Status
 
@@ -74,7 +74,8 @@ server/   Go server, migrations, setup notice
 mobile/   Flutter mobile client shell
 crypto/   Rust crypto boundary and docs
 deploy/   Docker Compose, Caddy, systemd
-docs/     Architecture, threat model, ADRs
+implementation/  Active board, executable task cards, archived planning
+docs/             Branding assets
 scripts/  Dockerized development commands
 ```
 
@@ -82,5 +83,5 @@ scripts/  Dockerized development commands
 
 The MVP foundation is compatible with E2EE everywhere, but full production cryptography is not complete. Any feature that would require plaintext on the server is rejected or documented as future work.
 
-See [`REMAINING-WORK.md`](REMAINING-WORK.md) for the current release blockers
-and deferred product work.
+See [`implementation/KANBAN.md`](implementation/KANBAN.md) for release blockers,
+user decisions, and deferred work.
