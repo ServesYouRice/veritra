@@ -29,14 +29,16 @@ import (
 )
 
 type App struct {
-	Config  config.Config
-	Store   *storage.Store
-	Hub     *realtime.Hub
-	Blobs   uploads.Store
-	Push    push.Provider
-	limiter *rateLimiter
-	metrics *httpMetrics
-	Log     *slog.Logger
+	Config       config.Config
+	Store        *storage.Store
+	Hub          *realtime.Hub
+	Blobs        uploads.Store
+	Push         push.Provider
+	limiter      *rateLimiter
+	loginBackoff *httpapi.LoginBackoff
+	metrics      *httpMetrics
+	ready        atomic.Bool
+	Log          *slog.Logger
 }
 
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, error) {
@@ -51,12 +53,27 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		_ = store.Close()
 		return nil, err
 	}
+	setupRequired, err := store.SetupRequired(ctx)
+	if err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("check setup state: %w", err)
+	}
+	if cfg.Environment == "production" && setupRequired && strings.TrimSpace(cfg.SetupToken) == "" {
+		_ = store.Close()
+		return nil, errors.New("fresh production instance requires PRIVATE_MESSENGER_SETUP_TOKEN")
+	}
 	blobs, err := uploads.NewLocalStore(cfg.StoragePath)
 	if err != nil {
 		_ = store.Close()
 		return nil, err
 	}
-	limiter, err := newRateLimiter(cfg.TrustedProxies, 240, 10)
+	clientIdentities := httpapi.NewClientIdentityResolver(cfg.TrustedProxies)
+	limiter, err := newRateLimiter(clientIdentities, 240, 10, 5)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	loginBackoff, err := httpapi.NewLoginBackoff()
 	if err != nil {
 		_ = store.Close()
 		return nil, err
@@ -78,21 +95,24 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	hub := realtime.NewHub()
 	metrics := newHTTPMetrics()
 	metrics.realtimeConnections = hub.ConnectionCount
-	return &App{
-		Config:  cfg,
-		Store:   store,
-		Hub:     hub,
-		Blobs:   blobs,
-		Push:    pushProvider,
-		limiter: limiter,
-		metrics: metrics,
-		Log:     logger,
-	}, nil
+	application := &App{
+		Config:       cfg,
+		Store:        store,
+		Hub:          hub,
+		Blobs:        blobs,
+		Push:         pushProvider,
+		limiter:      limiter,
+		loginBackoff: loginBackoff,
+		metrics:      metrics,
+		Log:          logger,
+	}
+	application.ready.Store(true)
+	return application, nil
 }
 
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
-	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Push: a.Push, VAPIDPublicKey: a.Config.VAPIDPublicKey, Log: a.Log, SetupToken: a.Config.SetupToken, DefaultInstanceName: a.Config.InstanceName, Messages: messaging.New(a.Store)}
+	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Push: a.Push, VAPIDPublicKey: a.Config.VAPIDPublicKey, Log: a.Log, SetupToken: a.Config.SetupToken, DefaultInstanceName: a.Config.InstanceName, Messages: messaging.New(a.Store), ClientIdentities: a.limiter.clientIdentities, LoginBackoff: a.loginBackoff, Ready: a.ready.Load}
 	api.Register(mux)
 	return securityHeaders(a.requestLogger(a.limiter.middleware(routeTimeouts(mux))))
 }
@@ -123,8 +143,9 @@ func (a *App) Serve(ctx context.Context) error {
 	defer cancelServe()
 	go func() {
 		<-serveCtx.Done()
+		a.ready.Store(false)
 		a.Hub.Drain()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
 		if managementServer != nil {
@@ -155,7 +176,8 @@ func routeTimeouts(next http.Handler) http.Handler {
 			return
 		}
 		deadline := 30 * time.Second
-		if r.URL.Path == "/api/v1/attachments" || r.URL.Path == "/api/v1/backups" {
+		if r.URL.Path == "/api/v1/attachments" || r.URL.Path == "/api/v1/backups" ||
+			(r.Method == http.MethodGet && (strings.HasPrefix(r.URL.Path, "/api/v1/attachments/") || strings.HasPrefix(r.URL.Path, "/api/v1/backups/"))) {
 			deadline = 15 * time.Minute
 		} else if r.URL.Path == "/api/v1/account/export" {
 			deadline = 5 * time.Minute
@@ -187,17 +209,13 @@ func (a *App) runRetentionSweeper(ctx context.Context) {
 				a.Log.Info("temporary_blobs_cleaned", "removed", removed)
 			}
 		}
-		removed, storageKeys, err := a.Store.PruneExpiredContent(ctx, time.Now().UTC())
+		removed, _, err := a.Store.PruneExpiredContent(ctx, time.Now().UTC())
 		if err != nil {
 			a.Log.Warn("expired_message_prune_failed", "err", err)
 		} else if removed > 0 {
 			a.Log.Info("expired_messages_pruned", "removed", removed)
 		}
-		for _, storageKey := range storageKeys {
-			if err := a.Blobs.Delete(ctx, storageKey); err != nil {
-				a.Log.Warn("expired_attachment_blob_cleanup_failed", "err", err)
-			}
-		}
+		a.reconcileBlobDeletions(ctx)
 		if removed, err := a.Store.PruneCallSessions(ctx, time.Now().UTC()); err != nil {
 			a.Log.Warn("call_session_prune_failed", "err", err)
 		} else if removed > 0 {
@@ -228,6 +246,28 @@ func (a *App) runRetentionSweeper(ctx context.Context) {
 		case <-ticker.C:
 			sweep()
 		}
+	}
+}
+
+func (a *App) reconcileBlobDeletions(ctx context.Context) {
+	storageKeys, err := a.Store.PendingBlobDeletions(ctx, 500)
+	if err != nil {
+		a.Log.Warn("blob_cleanup_queue_read_failed")
+		return
+	}
+	failed := 0
+	for _, storageKey := range storageKeys {
+		if err := a.Blobs.Delete(ctx, storageKey); err != nil {
+			failed++
+			_ = a.Store.RecordBlobDeletionFailure(ctx, storageKey)
+			continue
+		}
+		if err := a.Store.CompleteBlobDeletion(ctx, storageKey); err != nil {
+			failed++
+		}
+	}
+	if failed > 0 {
+		a.Log.Warn("blob_cleanup_incomplete", "failed_count", failed)
 	}
 }
 
@@ -425,29 +465,32 @@ func routeClass(path string) string {
 }
 
 type rateLimiter struct {
-	salt           [16]byte
-	trustedProxies []*net.IPNet
-	generalLimit   int
-	authLimit      int
+	salt             [16]byte
+	clientIdentities *httpapi.ClientIdentityResolver
+	generalLimit     int
+	authLimit        int
+	enrollmentLimit  int
 
 	mu      sync.Mutex
 	buckets map[string]*bucket
 }
 
 type bucket struct {
-	general int
-	auth    int
-	reset   time.Time
+	general    int
+	auth       int
+	enrollment int
+	reset      time.Time
 }
 
 const maxRateLimitEntries = 65536
 
-func newRateLimiter(trustedProxies []*net.IPNet, general, auth int) (*rateLimiter, error) {
+func newRateLimiter(clientIdentities *httpapi.ClientIdentityResolver, general, auth, enrollment int) (*rateLimiter, error) {
 	rl := &rateLimiter{
-		trustedProxies: trustedProxies,
-		generalLimit:   general,
-		authLimit:      auth,
-		buckets:        map[string]*bucket{},
+		clientIdentities: clientIdentities,
+		generalLimit:     general,
+		authLimit:        auth,
+		enrollmentLimit:  enrollment,
+		buckets:          map[string]*bucket{},
 	}
 	if _, err := rand.Read(rl.salt[:]); err != nil {
 		return nil, err
@@ -480,12 +523,14 @@ func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
 		key := remoteHash(rl.salt[:], clientIP)
 		now := time.Now()
 		auth := isAuthEndpoint(r.URL.Path)
+		enrollment := isEnrollmentEndpoint(r.URL.Path)
 
 		rl.mu.Lock()
 		b, ok := rl.buckets[key]
 		if !ok || b.reset.Before(now) {
 			if len(rl.buckets) >= maxRateLimitEntries && !ok {
 				rl.mu.Unlock()
+				w.Header().Set("Retry-After", "60")
 				http.Error(w, "rate limited", http.StatusTooManyRequests)
 				return
 			}
@@ -496,11 +541,17 @@ func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
 		if auth {
 			b.auth++
 		}
+		if enrollment {
+			b.enrollment++
+		}
 		overGeneral := b.general > rl.generalLimit
 		overAuth := auth && b.auth > rl.authLimit
+		overEnrollment := enrollment && b.enrollment > rl.enrollmentLimit
+		retryAfter := boundedRetryAfter(b.reset.Sub(now))
 		rl.mu.Unlock()
 
-		if overGeneral || overAuth {
+		if overGeneral || overAuth || overEnrollment {
+			w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 			http.Error(w, "rate limited", http.StatusTooManyRequests)
 			return
 		}
@@ -519,49 +570,23 @@ func isAuthEndpoint(path string) bool {
 	return strings.HasPrefix(path, "/api/v1/device-links/") && strings.HasSuffix(path, "/claim-status")
 }
 
-func (rl *rateLimiter) clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	if len(rl.trustedProxies) == 0 {
-		return host
-	}
-	directIP := net.ParseIP(host)
-	if directIP == nil || !ipInAny(directIP, rl.trustedProxies) {
-		return host
-	}
-	xff := r.Header.Get("X-Forwarded-For")
-	if xff == "" {
-		if real := strings.TrimSpace(r.Header.Get("X-Real-IP")); real != "" {
-			return real
-		}
-		return host
-	}
-	parts := strings.Split(xff, ",")
-	for i := len(parts) - 1; i >= 0; i-- {
-		candidate := strings.TrimSpace(parts[i])
-		if candidate == "" {
-			continue
-		}
-		ip := net.ParseIP(candidate)
-		if ip == nil {
-			continue
-		}
-		if !ipInAny(ip, rl.trustedProxies) {
-			return candidate
-		}
-	}
-	return strings.TrimSpace(parts[0])
+func isEnrollmentEndpoint(path string) bool {
+	return strings.HasSuffix(path, "/enrollment")
 }
 
-func ipInAny(ip net.IP, cidrs []*net.IPNet) bool {
-	for _, cidr := range cidrs {
-		if cidr.Contains(ip) {
-			return true
-		}
+func (rl *rateLimiter) clientIP(r *http.Request) string {
+	return rl.clientIdentities.ClientIP(r)
+}
+
+func boundedRetryAfter(duration time.Duration) int {
+	seconds := int(duration.Round(time.Second) / time.Second)
+	if seconds < 1 {
+		return 1
 	}
-	return false
+	if seconds > 60 {
+		return 60
+	}
+	return seconds
 }
 
 func remoteHash(salt []byte, host string) string {

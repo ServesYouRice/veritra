@@ -25,4 +25,19 @@ class TestOnlyCryptoService implements CryptoService {
       },
     );
   }
+
+  @override
+  Future<DeviceLinkVerification> deriveDeviceLinkVerification({
+    required String accountId,
+    required String protocolVersion,
+    required List<int> linkNonce,
+    required String peerDeviceId,
+    required List<int> peerSigningKey,
+    required bool localIsExistingDevice,
+  }) async {
+    return DeviceLinkVerification(
+      transcriptHash: List<int>.filled(32, 7),
+      sas: '654321',
+    );
+  }
 }

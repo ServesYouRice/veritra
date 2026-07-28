@@ -22,6 +22,10 @@ type EnrollmentReservation struct {
 	InviteID  *string
 	Challenge []byte
 	ExpiresAt time.Time
+	ProtocolVersion       string
+	LinkNonce             []byte
+	ExistingDeviceID      string
+	ExistingSigningKey    []byte
 }
 
 func (s *Store) ReserveOwnerEnrollment(ctx context.Context) (EnrollmentReservation, error) {

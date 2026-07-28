@@ -3,7 +3,6 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -26,14 +25,13 @@ func (a *API) createCall(w http.ResponseWriter, r *http.Request, principal domai
 		writeError(w, http.StatusBadRequest, "invalid_call_metadata")
 		return
 	}
-	call, err := a.Store.CreateCallSession(r.Context(), req.ConversationID, principal.AccountID, req.Metadata)
+	call, eventID, err := a.Store.CreateCallSessionWithSyncEvent(r.Context(), req.ConversationID, principal.AccountID, req.Metadata)
 	if err != nil {
 		handleStorageError(w, err)
 		return
 	}
-	eventID := a.saveSyncEvent(r.Context(), "call.signaling", nil, req.ConversationID, call)
 	members := a.conversationRecipientsForSender(r.Context(), req.ConversationID, principal.AccountID)
-	a.Hub.Publish(members, realtime.Event{Version: "v1", Type: "call.signaling", ID: eventID, ConversationID: req.ConversationID, Payload: call, CreatedAt: time.Now().UTC()})
+	a.publishCommittedEvent(members, realtime.Event{Version: "v1", Type: "call.signaling", ID: eventID, ConversationID: req.ConversationID, Payload: call, CreatedAt: time.Now().UTC()})
 	writeJSON(w, http.StatusCreated, call)
 }
 
@@ -68,14 +66,13 @@ func (a *API) callSubroute(w http.ResponseWriter, r *http.Request, principal dom
 		writeError(w, http.StatusBadRequest, "invalid_call_metadata")
 		return
 	}
-	call, err := a.Store.TransitionCallSession(r.Context(), parts[0], principal.AccountID, req.State, req.Metadata)
+	call, eventID, err := a.Store.TransitionCallSessionWithSyncEvent(r.Context(), parts[0], principal.AccountID, req.State, req.Metadata)
 	if err != nil {
 		handleStorageError(w, err)
 		return
 	}
-	eventID := a.saveSyncEvent(r.Context(), "call.state", nil, call.ConversationID, call)
 	members := a.conversationRecipientsForSender(r.Context(), call.ConversationID, principal.AccountID)
-	a.Hub.Publish(members, realtime.Event{Version: "v1", Type: "call.state", ID: eventID, ConversationID: call.ConversationID, Payload: call, CreatedAt: time.Now().UTC()})
+	a.publishCommittedEvent(members, realtime.Event{Version: "v1", Type: "call.state", ID: eventID, ConversationID: call.ConversationID, Payload: call, CreatedAt: time.Now().UTC()})
 	writeJSON(w, http.StatusOK, call)
 }
 
@@ -185,14 +182,8 @@ func (a *API) deleteAccount(w http.ResponseWriter, r *http.Request, principal do
 		handleStorageError(w, err)
 		return
 	}
-	var blobDeleteFailures int
 	for _, storageKey := range storageKeys {
-		if err := a.Blobs.Delete(r.Context(), storageKey); err != nil {
-			blobDeleteFailures++
-		}
-	}
-	if blobDeleteFailures > 0 {
-		a.Log.Error("account_blob_cleanup_incomplete", "failed_count", blobDeleteFailures)
+		a.completeQueuedBlobDeletion(r.Context(), storageKey)
 	}
 	a.Hub.DisconnectAccount(principal.AccountID)
 	a.recordAuditEvent(r.Context(), &principal.AccountID, "account.deleted", nil)
@@ -205,12 +196,10 @@ func (a *API) syncWebSocket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	remoteIP := strings.TrimSpace(r.RemoteAddr)
-	if host, _, splitErr := net.SplitHostPort(r.RemoteAddr); splitErr == nil {
-		remoteIP = host
-	}
+	remoteIP := a.clientIP(r)
 	client, err := a.Hub.Register(principal.AccountID, principal.DeviceID, remoteIP)
 	if err != nil {
+		w.Header().Set("Retry-After", "60")
 		writeError(w, http.StatusTooManyRequests, "realtime_connection_limit")
 		return
 	}

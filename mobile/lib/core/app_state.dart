@@ -649,10 +649,15 @@ class AppState extends ChangeNotifier {
       if (current == null || client == null || link == null) {
         return;
       }
+      if (link.verificationCode.isEmpty ||
+          verificationCode.trim() != link.verificationCode ||
+          link.transcriptHash?.length != 32) {
+        throw StateError('Device-link verification did not match locally');
+      }
       activeDeviceLink = await client.approveDeviceLink(
         current.token,
         link.id,
-        verificationCode,
+        link.transcriptHash!,
       );
     });
   }
@@ -666,16 +671,47 @@ class AppState extends ChangeNotifier {
         return;
       }
       final refreshed = await client.deviceLink(current.token, link.id);
-      activeDeviceLink = DeviceLink(
+      var merged = DeviceLink(
         id: refreshed.id,
         state: refreshed.state,
-        verificationCode: refreshed.verificationCode,
+        verificationCode: link.verificationCode,
         expiresAt: refreshed.expiresAt,
         code: link.code ?? refreshed.code,
         linkUri: link.linkUri ?? refreshed.linkUri,
         claimedDeviceName: refreshed.claimedDeviceName,
         approvedDeviceId: refreshed.approvedDeviceId,
+        accountId: refreshed.accountId,
+        createdByDeviceId: refreshed.createdByDeviceId,
+        protocolVersion: refreshed.protocolVersion,
+        linkNonce: refreshed.linkNonce,
+        existingSigningKey: refreshed.existingSigningKey,
+        claimedDeviceId: refreshed.claimedDeviceId,
+        claimedSigningKey: refreshed.claimedSigningKey,
+        transcriptHash: link.transcriptHash ?? refreshed.transcriptHash,
       );
+      if (refreshed.state == 'claimed' &&
+          refreshed.accountId != null &&
+          refreshed.protocolVersion != null &&
+          refreshed.linkNonce?.length == 32 &&
+          refreshed.claimedDeviceId != null &&
+          refreshed.claimedSigningKey?.length == 32) {
+        final verification =
+            await cryptoService.deriveDeviceLinkVerification(
+          accountId: refreshed.accountId!,
+          protocolVersion: refreshed.protocolVersion!,
+          linkNonce: refreshed.linkNonce!,
+          peerDeviceId: refreshed.claimedDeviceId!,
+          peerSigningKey: refreshed.claimedSigningKey!,
+          localIsExistingDevice: true,
+        );
+        if (refreshed.transcriptHash != null &&
+            !_constantTimeBytesEqual(
+                verification.transcriptHash, refreshed.transcriptHash!)) {
+          throw StateError('Device-link transcript was substituted');
+        }
+        merged = _deviceLinkWithVerification(merged, verification);
+      }
+      activeDeviceLink = merged;
     });
   }
 
@@ -685,11 +721,37 @@ class AppState extends ChangeNotifier {
       final enrollment = await api!.reserveDeviceLinkEnrollment(code);
       final credential =
           await cryptoService.createEnrollmentCredential(enrollment);
-      pendingDeviceLinkClaim = await api!.claimDeviceLink(
+      if (enrollment.protocolVersion == null ||
+          enrollment.linkNonce?.length != 32 ||
+          enrollment.existingDeviceId == null ||
+          enrollment.existingSigningKey?.length != 32) {
+        throw StateError('Device-link transcript context is incomplete');
+      }
+      final verification = await cryptoService.deriveDeviceLinkVerification(
+        accountId: enrollment.accountId,
+        protocolVersion: enrollment.protocolVersion!,
+        linkNonce: enrollment.linkNonce!,
+        peerDeviceId: enrollment.existingDeviceId!,
+        peerSigningKey: enrollment.existingSigningKey!,
+        localIsExistingDevice: false,
+      );
+      final claimed = await api!.claimDeviceLink(
         code: code,
         deviceName: 'Linked mobile device',
         enrollment: enrollment,
         credential: credential,
+        verification: verification,
+      );
+      if (claimed.deviceLink.transcriptHash != null &&
+          !_constantTimeBytesEqual(
+              claimed.deviceLink.transcriptHash!, verification.transcriptHash)) {
+        throw StateError('Device-link transcript was substituted');
+      }
+      pendingDeviceLinkClaim = DeviceLinkClaim(
+        deviceLink:
+            _deviceLinkWithVerification(claimed.deviceLink, verification),
+        claimToken: claimed.claimToken,
+        deviceSecret: claimed.deviceSecret,
       );
     });
   }
@@ -701,9 +763,13 @@ class AppState extends ChangeNotifier {
       if (client == null || claim == null) {
         return;
       }
+      if (claim.deviceLink.transcriptHash?.length != 32) {
+        throw StateError('Device-link transcript is unavailable');
+      }
       final linkedSession = await client.completeDeviceLinkClaim(
         claim.deviceLink.id,
         claim.claimToken,
+        claim.deviceLink.transcriptHash!,
       );
       if (linkedSession == null) {
         return;
@@ -927,6 +993,7 @@ class AppState extends ChangeNotifier {
         var refreshConversationsNeeded = false;
         var refreshSelectedMessagesNeeded = false;
         var refreshDevicesNeeded = false;
+        final messageRepairIds = <String>{};
         final selectedId = selectedConversationId;
         while (true) {
           const pageSize = 200;
@@ -944,7 +1011,15 @@ class AppState extends ChangeNotifier {
             }
             if (event.conversationId != null) {
               refreshConversationsNeeded = true;
-              if (event.conversationId == selectedId) {
+              if (event.type == 'message.envelope.edited' ||
+                  event.type == 'message.envelope.deleted') {
+                final messageId = _messageIdFromSyncEvent(event);
+                if (messageId != null) {
+                  messageRepairIds.add(messageId);
+                } else if (event.conversationId == selectedId) {
+                  refreshSelectedMessagesNeeded = true;
+                }
+              } else if (event.conversationId == selectedId) {
                 refreshSelectedMessagesNeeded = true;
               }
             } else if (event.type.startsWith('device.')) {
@@ -963,6 +1038,9 @@ class AppState extends ChangeNotifier {
         }
         if (refreshConversationsNeeded) {
           await _refreshConversations(notify: false);
+        }
+        for (final messageId in messageRepairIds) {
+          await _repairMessage(messageId);
         }
         if (refreshSelectedMessagesNeeded) {
           await refreshSelectedMessages(notify: false);
@@ -1000,6 +1078,49 @@ class AppState extends ChangeNotifier {
       notifyListeners();
     } finally {
       _catchingUpSync = false;
+    }
+  }
+
+  String? _messageIdFromSyncEvent(SyncEvent event) {
+    final payload = event.payload;
+    if (payload is! Map) {
+      return null;
+    }
+    final value = payload['message_id'];
+    return value is String && value.isNotEmpty ? value : null;
+  }
+
+  Future<void> _repairMessage(String messageId) async {
+    final current = session;
+    final client = api;
+    if (current == null || client == null) {
+      return;
+    }
+    try {
+      final repaired = await client.message(current.token, messageId);
+      final existing = messagesByConversation[repaired.conversationId] ??
+          const <ReceivedMessageEnvelope>[];
+      final updated = <ReceivedMessageEnvelope>[
+        repaired,
+        ...existing.where((message) => message.id != repaired.id),
+      ]..sort((left, right) {
+          final byCreatedAt = right.createdAt.compareTo(left.createdAt);
+          return byCreatedAt != 0 ? byCreatedAt : right.id.compareTo(left.id);
+        });
+      messagesByConversation = <String, List<ReceivedMessageEnvelope>>{
+        ...messagesByConversation,
+        repaired.conversationId: updated,
+      };
+    } on ApiException catch (err) {
+      if (err.statusCode != 404) {
+        rethrow;
+      }
+      messagesByConversation = <String, List<ReceivedMessageEnvelope>>{
+        for (final entry in messagesByConversation.entries)
+          entry.key: entry.value
+              .where((message) => message.id != messageId)
+              .toList(growable: false),
+      };
     }
   }
 
@@ -1127,6 +1248,37 @@ class AppState extends ChangeNotifier {
     api?.close();
     super.dispose();
   }
+}
+
+DeviceLink _deviceLinkWithVerification(
+    DeviceLink link, DeviceLinkVerification verification) {
+  return DeviceLink(
+    id: link.id,
+    state: link.state,
+    verificationCode: verification.sas,
+    expiresAt: link.expiresAt,
+    code: link.code,
+    linkUri: link.linkUri,
+    claimedDeviceName: link.claimedDeviceName,
+    approvedDeviceId: link.approvedDeviceId,
+    accountId: link.accountId,
+    createdByDeviceId: link.createdByDeviceId,
+    protocolVersion: link.protocolVersion,
+    linkNonce: link.linkNonce,
+    existingSigningKey: link.existingSigningKey,
+    claimedDeviceId: link.claimedDeviceId,
+    claimedSigningKey: link.claimedSigningKey,
+    transcriptHash: verification.transcriptHash,
+  );
+}
+
+bool _constantTimeBytesEqual(List<int> left, List<int> right) {
+  if (left.length != right.length) return false;
+  var difference = 0;
+  for (var index = 0; index < left.length; index++) {
+    difference |= left[index] ^ right[index];
+  }
+  return difference == 0;
 }
 
 extension FirstOrNull<T> on Iterable<T> {

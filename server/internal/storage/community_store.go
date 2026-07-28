@@ -15,6 +15,8 @@ import (
 	"private-messenger/server/internal/domain"
 )
 
+const deviceLinkProtocolVersion = "veritra-device-link-v1"
+
 func (s *Store) ListCommunities(ctx context.Context, accountID string) ([]domain.Community, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT c.id, c.name, c.created_by, c.created_at
@@ -97,11 +99,14 @@ func (s *Store) CreateDeviceLink(ctx context.Context, accountID, deviceID string
 	if ttl <= 0 || ttl > 30*time.Minute {
 		ttl = 10 * time.Minute
 	}
-	var count int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices WHERE id = ? AND account_id = ? AND revoked_at IS NULL`, deviceID, accountID).Scan(&count); err != nil {
+	var existingSigningKey []byte
+	if err := s.db.QueryRowContext(ctx, `SELECT signing_key FROM devices WHERE id = ? AND account_id = ? AND revoked_at IS NULL`, deviceID, accountID).Scan(&existingSigningKey); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.DeviceLink{}, ErrUnauthorized
+		}
 		return domain.DeviceLink{}, err
 	}
-	if count == 0 {
+	if len(existingSigningKey) != 32 {
 		return domain.DeviceLink{}, ErrUnauthorized
 	}
 	id, err := domain.NewID("dlink")
@@ -112,16 +117,16 @@ func (s *Store) CreateDeviceLink(ctx context.Context, accountID, deviceID string
 	if err != nil {
 		return domain.DeviceLink{}, err
 	}
-	verificationCode, err := domain.NewVerificationCode()
-	if err != nil {
+	linkNonce := make([]byte, 32)
+	if _, err := rand.Read(linkNonce); err != nil {
 		return domain.DeviceLink{}, err
 	}
 	createdAt := time.Now().UTC()
 	expiresAt := createdAt.Add(ttl)
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO device_links(id, code, account_id, created_by_device_id, state, verification_code, created_at, expires_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, code, accountID, deviceID, domain.DeviceLinkPending, verificationCode, formatTime(createdAt), formatTime(expiresAt))
+		INSERT INTO device_links(id, code, account_id, created_by_device_id, state, verification_code, protocol_version, link_nonce, created_at, expires_at)
+		VALUES(?, ?, ?, ?, ?, '', ?, ?, ?, ?)`,
+		id, code, accountID, deviceID, domain.DeviceLinkPending, deviceLinkProtocolVersion, linkNonce, formatTime(createdAt), formatTime(expiresAt))
 	if err != nil {
 		return domain.DeviceLink{}, err
 	}
@@ -131,16 +136,18 @@ func (s *Store) CreateDeviceLink(ctx context.Context, accountID, deviceID string
 		AccountID:         accountID,
 		CreatedByDeviceID: deviceID,
 		State:             domain.DeviceLinkPending,
-		VerificationCode:  verificationCode,
+		ProtocolVersion:   deviceLinkProtocolVersion,
+		LinkNonce:         linkNonce,
+		ExistingSigningKey: existingSigningKey,
 		CreatedAt:         createdAt,
 		ExpiresAt:         expiresAt,
 	}, nil
 }
 
-func (s *Store) ClaimDeviceLink(ctx context.Context, code, deviceName string, keyPackage, signingKey []byte, claimTokenHash, authSecretHash string) (domain.DeviceLink, error) {
+func (s *Store) ClaimDeviceLink(ctx context.Context, code, deviceName string, keyPackage, signingKey, transcriptHash []byte, claimTokenHash, authSecretHash string) (domain.DeviceLink, error) {
 	code = strings.TrimSpace(code)
 	deviceName = strings.TrimSpace(deviceName)
-	if code == "" || deviceName == "" || len(keyPackage) == 0 || claimTokenHash == "" || authSecretHash == "" {
+	if code == "" || deviceName == "" || len(keyPackage) == 0 || len(signingKey) != 32 || len(transcriptHash) != 32 || claimTokenHash == "" || authSecretHash == "" {
 		return domain.DeviceLink{}, ErrDeviceLinkInvalid
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -150,9 +157,10 @@ func (s *Store) ClaimDeviceLink(ctx context.Context, code, deviceName string, ke
 	defer tx.Rollback()
 	var link domain.DeviceLink
 	row := tx.QueryRowContext(ctx, `
-		SELECT id, code, account_id, created_by_device_id, state, verification_code, claimed_device_name, approved_device_id, created_at, expires_at, claimed_at, approved_at, consumed_at, revoked_at
-		FROM device_links
-		WHERE code = ? AND state = ? AND revoked_at IS NULL AND expires_at > ?`,
+		SELECT dl.id, dl.code, dl.account_id, dl.created_by_device_id, dl.state, dl.verification_code, dl.claimed_device_name, dl.approved_device_id, dl.created_at, dl.expires_at, dl.claimed_at, dl.approved_at, dl.consumed_at, dl.revoked_at,
+		       dl.protocol_version, dl.link_nonce, dl.claimed_device_id, dl.claimed_signing_key, dl.claimed_transcript_hash, creator.signing_key
+		FROM device_links dl JOIN devices creator ON creator.id = dl.created_by_device_id AND creator.revoked_at IS NULL
+		WHERE dl.code = ? AND dl.state = ? AND dl.revoked_at IS NULL AND dl.expires_at > ?`,
 		code, domain.DeviceLinkPending, nowString())
 	if err := scanDeviceLink(row, &link); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -163,9 +171,9 @@ func (s *Store) ClaimDeviceLink(ctx context.Context, code, deviceName string, ke
 	now := nowString()
 	result, err := tx.ExecContext(ctx, `
 		UPDATE device_links
-		SET state = ?, claimed_device_name = ?, claimed_key_package = ?, claimed_signing_key = ?, claim_token_hash = ?, claimed_auth_secret_hash = ?, claimed_at = ?
+		SET state = ?, claimed_device_name = ?, claimed_key_package = ?, claimed_signing_key = ?, claimed_transcript_hash = ?, claim_token_hash = ?, claimed_auth_secret_hash = ?, claimed_at = ?
 		WHERE id = ? AND state = ? AND claimed_device_id IS NOT NULL`,
-		domain.DeviceLinkClaimed, deviceName, keyPackage, nullableBytes(signingKey), claimTokenHash, authSecretHash, now, link.ID, domain.DeviceLinkPending)
+		domain.DeviceLinkClaimed, deviceName, keyPackage, signingKey, transcriptHash, claimTokenHash, authSecretHash, now, link.ID, domain.DeviceLinkPending)
 	if err != nil {
 		return domain.DeviceLink{}, err
 	}
@@ -182,6 +190,8 @@ func (s *Store) ClaimDeviceLink(ctx context.Context, code, deviceName string, ke
 	claimedAt := parseTime(now)
 	link.State = domain.DeviceLinkClaimed
 	link.ClaimedDeviceName = &deviceName
+	link.ClaimedSigningKey = append([]byte(nil), signingKey...)
+	link.TranscriptHash = append([]byte(nil), transcriptHash...)
 	link.ClaimedAt = &claimedAt
 	link.Code = ""
 	return link, nil
@@ -193,12 +203,14 @@ func (s *Store) ReserveDeviceLinkEnrollment(ctx context.Context, code string) (E
 		return EnrollmentReservation{}, err
 	}
 	defer tx.Rollback()
-	var linkID, accountID string
+	var linkID, accountID, existingDeviceID, protocolVersion string
+	var linkNonce, existingSigningKey []byte
 	err = tx.QueryRowContext(ctx, `
-		SELECT id, account_id FROM device_links
-		WHERE code = ? AND state = ? AND claimed_device_id IS NULL
-		  AND revoked_at IS NULL AND expires_at > ?`,
-		strings.TrimSpace(code), domain.DeviceLinkPending, nowString()).Scan(&linkID, &accountID)
+		SELECT dl.id, dl.account_id, dl.created_by_device_id, dl.protocol_version, dl.link_nonce, creator.signing_key
+		FROM device_links dl JOIN devices creator ON creator.id = dl.created_by_device_id AND creator.revoked_at IS NULL
+		WHERE dl.code = ? AND dl.state = ? AND dl.claimed_device_id IS NULL
+		  AND dl.revoked_at IS NULL AND dl.expires_at > ?`,
+		strings.TrimSpace(code), domain.DeviceLinkPending, nowString()).Scan(&linkID, &accountID, &existingDeviceID, &protocolVersion, &linkNonce, &existingSigningKey)
 	if errors.Is(err, sql.ErrNoRows) {
 		return EnrollmentReservation{}, ErrDeviceLinkInvalid
 	}
@@ -230,6 +242,8 @@ func (s *Store) ReserveDeviceLinkEnrollment(ctx context.Context, code string) (E
 	return EnrollmentReservation{
 		ID: linkID, Kind: "device_link", AccountID: accountID,
 		DeviceID: deviceID, Challenge: challenge,
+		ProtocolVersion: protocolVersion, LinkNonce: linkNonce,
+		ExistingDeviceID: existingDeviceID, ExistingSigningKey: existingSigningKey,
 	}, nil
 }
 
@@ -259,9 +273,10 @@ func (s *Store) DeviceLinkEnrollment(ctx context.Context, code, linkID string) (
 
 func (s *Store) DeviceLinkForAccount(ctx context.Context, linkID, accountID string) (domain.DeviceLink, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, code, account_id, created_by_device_id, state, verification_code, claimed_device_name, approved_device_id, created_at, expires_at, claimed_at, approved_at, consumed_at, revoked_at
-		FROM device_links
-		WHERE id = ? AND account_id = ? AND revoked_at IS NULL`, linkID, accountID)
+		SELECT dl.id, dl.code, dl.account_id, dl.created_by_device_id, dl.state, dl.verification_code, dl.claimed_device_name, dl.approved_device_id, dl.created_at, dl.expires_at, dl.claimed_at, dl.approved_at, dl.consumed_at, dl.revoked_at,
+		       dl.protocol_version, dl.link_nonce, dl.claimed_device_id, dl.claimed_signing_key, dl.claimed_transcript_hash, creator.signing_key
+		FROM device_links dl JOIN devices creator ON creator.id = dl.created_by_device_id
+		WHERE dl.id = ? AND dl.account_id = ? AND dl.revoked_at IS NULL`, linkID, accountID)
 	var link domain.DeviceLink
 	if err := scanDeviceLink(row, &link); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -273,68 +288,78 @@ func (s *Store) DeviceLinkForAccount(ctx context.Context, linkID, accountID stri
 	return link, nil
 }
 
-func (s *Store) ApproveDeviceLink(ctx context.Context, linkID, accountID, verificationCode string) (domain.DeviceLink, domain.Device, error) {
+func (s *Store) ApproveDeviceLink(ctx context.Context, linkID, accountID string, transcriptHash []byte) (domain.DeviceLink, domain.Device, error) {
+	link, device, _, err := s.approveDeviceLink(ctx, linkID, accountID, transcriptHash, "")
+	return link, device, err
+}
+
+func (s *Store) ApproveDeviceLinkWithSyncEvent(ctx context.Context, linkID, accountID string, transcriptHash []byte) (domain.DeviceLink, domain.Device, int64, error) {
+	return s.approveDeviceLink(ctx, linkID, accountID, transcriptHash, "device.updated")
+}
+
+func (s *Store) approveDeviceLink(ctx context.Context, linkID, accountID string, transcriptHash []byte, eventType string) (domain.DeviceLink, domain.Device, int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return domain.DeviceLink{}, domain.Device{}, err
+		return domain.DeviceLink{}, domain.Device{}, 0, err
 	}
 	defer tx.Rollback()
 	var link domain.DeviceLink
 	var deviceName string
 	var keyPackage []byte
-	var signingKey []byte
 	var authSecretHash string
-	var deviceID string
 	row := tx.QueryRowContext(ctx, `
-		SELECT id, code, account_id, created_by_device_id, state, verification_code, claimed_device_name, approved_device_id, created_at, expires_at, claimed_at, approved_at, consumed_at, revoked_at,
-		       claimed_device_name, claimed_key_package, claimed_signing_key, claimed_auth_secret_hash, claimed_device_id
-		FROM device_links
-		WHERE id = ? AND account_id = ? AND state = ? AND revoked_at IS NULL AND expires_at > ?`,
+		SELECT dl.id, dl.code, dl.account_id, dl.created_by_device_id, dl.state, dl.verification_code, dl.claimed_device_name, dl.approved_device_id, dl.created_at, dl.expires_at, dl.claimed_at, dl.approved_at, dl.consumed_at, dl.revoked_at,
+		       dl.protocol_version, dl.link_nonce, dl.claimed_device_id, dl.claimed_signing_key, dl.claimed_transcript_hash, creator.signing_key,
+		       dl.claimed_device_name, dl.claimed_key_package, dl.claimed_auth_secret_hash
+		FROM device_links dl JOIN devices creator ON creator.id = dl.created_by_device_id AND creator.revoked_at IS NULL
+		WHERE dl.id = ? AND dl.account_id = ? AND dl.state = ? AND dl.revoked_at IS NULL AND dl.expires_at > ?`,
 		linkID, accountID, domain.DeviceLinkClaimed, nowString())
-	if err := scanDeviceLinkForApproval(row, &link, &deviceName, &keyPackage, &signingKey, &authSecretHash, &deviceID); err != nil {
+	if err := scanDeviceLinkForApproval(row, &link, &deviceName, &keyPackage, &authSecretHash); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return domain.DeviceLink{}, domain.Device{}, ErrDeviceLinkInvalid
+			return domain.DeviceLink{}, domain.Device{}, 0, ErrDeviceLinkInvalid
 		}
-		return domain.DeviceLink{}, domain.Device{}, err
+		return domain.DeviceLink{}, domain.Device{}, 0, err
 	}
-	// The approver must confirm the out-of-band verification code shown on both
-	// devices. Without this, an authenticated user could blindly approve an
-	// attacker-controlled claimed device. Constant-time compare avoids leaking
-	// the code through timing.
-	if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(verificationCode)), []byte(link.VerificationCode)) != 1 {
-		return domain.DeviceLink{}, domain.Device{}, ErrDeviceLinkVerificationFailed
+	if len(transcriptHash) != 32 || subtle.ConstantTimeCompare(transcriptHash, link.TranscriptHash) != 1 {
+		return domain.DeviceLink{}, domain.Device{}, 0, ErrDeviceLinkVerificationFailed
 	}
-	if strings.TrimSpace(deviceName) == "" || len(keyPackage) == 0 || authSecretHash == "" {
-		return domain.DeviceLink{}, domain.Device{}, ErrDeviceLinkInvalid
+	if strings.TrimSpace(deviceName) == "" || len(keyPackage) == 0 || len(link.ClaimedSigningKey) != 32 || link.ClaimedDeviceID == "" || authSecretHash == "" {
+		return domain.DeviceLink{}, domain.Device{}, 0, ErrDeviceLinkInvalid
 	}
 	now := nowString()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO devices(id, account_id, name, key_package, signing_key, auth_secret_hash, created_at) VALUES(?, ?, ?, ?, ?, ?, ?)`, deviceID, accountID, deviceName, keyPackage, nullableBytes(signingKey), authSecretHash, now); err != nil {
-		return domain.DeviceLink{}, domain.Device{}, err
+	deviceID := link.ClaimedDeviceID
+	if _, err := tx.ExecContext(ctx, `INSERT INTO devices(id, account_id, name, key_package, signing_key, auth_secret_hash, created_at) VALUES(?, ?, ?, ?, ?, ?, ?)`, deviceID, accountID, deviceName, keyPackage, link.ClaimedSigningKey, authSecretHash, now); err != nil {
+		return domain.DeviceLink{}, domain.Device{}, 0, err
 	}
 	if err := insertInitialDeviceKeyPackage(ctx, tx, deviceID, keyPackage, now); err != nil {
-		return domain.DeviceLink{}, domain.Device{}, err
+		return domain.DeviceLink{}, domain.Device{}, 0, err
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE device_links SET state = ?, approved_device_id = ?, approved_at = ? WHERE id = ? AND state = ?`, domain.DeviceLinkApproved, deviceID, now, linkID, domain.DeviceLinkClaimed)
 	if err != nil {
-		return domain.DeviceLink{}, domain.Device{}, err
+		return domain.DeviceLink{}, domain.Device{}, 0, err
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return domain.DeviceLink{}, domain.Device{}, err
+		return domain.DeviceLink{}, domain.Device{}, 0, err
 	}
 	if rows == 0 {
-		return domain.DeviceLink{}, domain.Device{}, ErrDeviceLinkInvalid
-	}
-	if err := tx.Commit(); err != nil {
-		return domain.DeviceLink{}, domain.Device{}, err
+		return domain.DeviceLink{}, domain.Device{}, 0, ErrDeviceLinkInvalid
 	}
 	approvedAt := parseTime(now)
 	link.State = domain.DeviceLinkApproved
 	link.Code = ""
 	link.ApprovedDeviceID = &deviceID
 	link.ApprovedAt = &approvedAt
-	device := domain.Device{ID: deviceID, AccountID: accountID, Name: deviceName, KeyPackage: keyPackage, SigningKey: signingKey, CreatedAt: approvedAt}
-	return link, device, nil
+	device := domain.Device{ID: deviceID, AccountID: accountID, Name: deviceName, KeyPackage: keyPackage, SigningKey: link.ClaimedSigningKey, CreatedAt: approvedAt}
+	payload := map[string]interface{}{"device": device, "device_link_id": link.ID}
+	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, &accountID, "", payload, now)
+	if err != nil {
+		return domain.DeviceLink{}, domain.Device{}, 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.DeviceLink{}, domain.Device{}, 0, err
+	}
+	return link, device, eventID, nil
 }
 
 func (s *Store) ConsumeApprovedDeviceLink(ctx context.Context, linkID, claimTokenHash, sessionTokenHash string, sessionExpiresAt time.Time) (AccountDevice, error) {
@@ -397,6 +422,18 @@ func (s *Store) ConsumeApprovedDeviceLink(ctx context.Context, linkID, claimToke
 		return AccountDevice{}, err
 	}
 	return linked, nil
+}
+
+func (s *Store) DeviceLinkTranscriptForClaim(ctx context.Context, linkID, claimTokenHash string) ([]byte, error) {
+	var transcriptHash []byte
+	err := s.db.QueryRowContext(ctx, `
+		SELECT claimed_transcript_hash FROM device_links
+		WHERE id = ? AND claim_token_hash = ? AND state = ? AND revoked_at IS NULL`,
+		linkID, claimTokenHash, domain.DeviceLinkConsumed).Scan(&transcriptHash)
+	if errors.Is(err, sql.ErrNoRows) || len(transcriptHash) != 32 {
+		return nil, ErrDeviceLinkInvalid
+	}
+	return transcriptHash, err
 }
 
 func (s *Store) CreateCommunity(ctx context.Context, name, createdBy string) (domain.Community, error) {
@@ -742,6 +779,22 @@ func (s *Store) CreateConversation(ctx context.Context, input CreateConversation
 			}
 		}
 	}
+	var dmLow, dmHigh string
+	if input.Kind == "dm" {
+		dmLow, dmHigh = dmAccountPair(input.CreatedBy, input.MemberAccountIDs[0])
+		var existingID string
+		err := tx.QueryRowContext(ctx, `SELECT conversation_id FROM dm_conversation_pairs WHERE account_id_low = ? AND account_id_high = ?`, dmLow, dmHigh).Scan(&existingID)
+		if err == nil {
+			conversation, err := scanConversation(tx.QueryRowContext(ctx, `SELECT id, kind, title, community_id, channel_id, created_by, retention_seconds, created_at FROM conversations WHERE id = ?`, existingID))
+			if err != nil {
+				return domain.Conversation{}, err
+			}
+			return conversation, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return domain.Conversation{}, err
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO conversations(id, kind, title, community_id, channel_id, created_by, retention_seconds, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, id, input.Kind, nullableString(input.Title), nullableString(input.CommunityID), nullableString(input.ChannelID), input.CreatedBy, nullableInt64(input.RetentionSeconds), createdAt); err != nil {
 		return domain.Conversation{}, err
 	}
@@ -770,6 +823,19 @@ func (s *Store) CreateConversation(ctx context.Context, input CreateConversation
 			return domain.Conversation{}, err
 		}
 	}
+	if input.Kind == "dm" {
+		result, err := tx.ExecContext(ctx, `INSERT INTO dm_conversation_pairs(account_id_low, account_id_high, conversation_id) VALUES(?, ?, ?) ON CONFLICT(account_id_low, account_id_high) DO NOTHING`, dmLow, dmHigh, id)
+		if err != nil {
+			return domain.Conversation{}, err
+		}
+		inserted, err := result.RowsAffected()
+		if err != nil {
+			return domain.Conversation{}, err
+		}
+		if inserted != 1 {
+			return domain.Conversation{}, ErrIdempotencyConflict
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.Conversation{}, err
 	}
@@ -777,9 +843,31 @@ func (s *Store) CreateConversation(ctx context.Context, input CreateConversation
 	return domain.Conversation{ID: id, Kind: input.Kind, Title: input.Title, CommunityID: input.CommunityID, ChannelID: input.ChannelID, CreatedBy: input.CreatedBy, RetentionSeconds: input.RetentionSeconds, CreatedAt: created}, nil
 }
 
+func dmAccountPair(first, second string) (string, string) {
+	if first < second {
+		return first, second
+	}
+	return second, first
+}
+
 func (s *Store) AddConversationMember(ctx context.Context, conversationID, accountID, role string) error {
 	if role == "" {
 		role = domain.RoleMember
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var kind string
+	if err := tx.QueryRowContext(ctx, `SELECT kind FROM conversations WHERE id = ?`, conversationID).Scan(&kind); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if kind == "dm" {
+		return ErrForbidden
 	}
 	id, err := domain.NewID("mbr")
 	if err != nil {
@@ -787,8 +875,10 @@ func (s *Store) AddConversationMember(ctx context.Context, conversationID, accou
 	}
 	// Adding an existing member must never double as a role-change operation.
 	// Role changes require ManageConversationMember's actor/target rank checks.
-	_, err = s.db.ExecContext(ctx, `INSERT INTO memberships(id, account_id, conversation_id, role, created_at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(account_id, conversation_id) DO NOTHING`, id, accountID, conversationID, role, nowString())
-	return err
+	if _, err = tx.ExecContext(ctx, `INSERT INTO memberships(id, account_id, conversation_id, role, created_at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(account_id, conversation_id) DO NOTHING`, id, accountID, conversationID, role, nowString()); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ManageConversationMember(ctx context.Context, conversationID, actorAccountID, targetAccountID, role string) (int64, error) {
@@ -800,12 +890,15 @@ func (s *Store) ManageConversationMember(ctx context.Context, conversationID, ac
 		return 0, err
 	}
 	defer tx.Rollback()
-	var actorRole string
-	if err := tx.QueryRowContext(ctx, `SELECT role FROM memberships WHERE conversation_id = ? AND account_id = ?`, conversationID, actorAccountID).Scan(&actorRole); err != nil {
+	var actorRole, conversationKind string
+	if err := tx.QueryRowContext(ctx, `SELECT m.role, c.kind FROM memberships m JOIN conversations c ON c.id = m.conversation_id WHERE m.conversation_id = ? AND m.account_id = ?`, conversationID, actorAccountID).Scan(&actorRole, &conversationKind); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, ErrNotMember
 		}
 		return 0, err
+	}
+	if conversationKind == "dm" {
+		return 0, ErrForbidden
 	}
 	if !domain.CanManageMembers(actorRole) || domain.RoleRank(role) > domain.RoleRank(actorRole) {
 		return 0, ErrForbidden
@@ -840,15 +933,8 @@ func (s *Store) ManageConversationMember(ctx context.Context, conversationID, ac
 	if _, err := tx.ExecContext(ctx, `INSERT INTO memberships(id, account_id, conversation_id, role, created_at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(account_id, conversation_id) DO UPDATE SET role = excluded.role`, id, targetAccountID, conversationID, role, createdAt); err != nil {
 		return 0, err
 	}
-	payload, err := json.Marshal(map[string]string{"conversation_id": conversationID, "role": role})
-	if err != nil {
-		return 0, err
-	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO sync_events(event_type, account_id, conversation_id, payload_json, created_at) VALUES('membership.updated', ?, ?, ?, ?)`, targetAccountID, conversationID, string(payload), createdAt)
-	if err != nil {
-		return 0, err
-	}
-	eventID, err := result.LastInsertId()
+	payload := map[string]string{"conversation_id": conversationID, "account_id": targetAccountID, "role": role, "mls_coordination": "pending"}
+	eventID, err := insertSyncEvent(ctx, tx, "membership.updated", nil, conversationID, payload, createdAt)
 	if err != nil {
 		return 0, err
 	}
@@ -856,6 +942,115 @@ func (s *Store) ManageConversationMember(ctx context.Context, conversationID, ac
 		return 0, err
 	}
 	return eventID, nil
+}
+
+func (s *Store) ListConversationMembers(ctx context.Context, conversationID, requesterAccountID string) ([]domain.Membership, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var authorized bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM memberships WHERE conversation_id = ? AND account_id = ?)`, conversationID, requesterAccountID).Scan(&authorized); err != nil {
+		return nil, err
+	}
+	if !authorized {
+		return nil, ErrNotMember
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT account_id, role, created_at FROM memberships WHERE conversation_id = ? ORDER BY created_at, account_id`, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	members := make([]domain.Membership, 0)
+	for rows.Next() {
+		var member domain.Membership
+		var createdAt string
+		if err := rows.Scan(&member.AccountID, &member.Role, &createdAt); err != nil {
+			return nil, err
+		}
+		member.CreatedAt = parseTime(createdAt)
+		members = append(members, member)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return members, nil
+}
+
+type MembershipRemovalEvents struct {
+	RemainingMembersEventID int64
+	RemovedMemberEventID    int64
+}
+
+func (s *Store) RemoveConversationMember(ctx context.Context, conversationID, actorAccountID, targetAccountID string) (MembershipRemovalEvents, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return MembershipRemovalEvents{}, err
+	}
+	defer tx.Rollback()
+	var actorRole, kind string
+	if err := tx.QueryRowContext(ctx, `SELECT m.role, c.kind FROM memberships m JOIN conversations c ON c.id = m.conversation_id WHERE m.conversation_id = ? AND m.account_id = ?`, conversationID, actorAccountID).Scan(&actorRole, &kind); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return MembershipRemovalEvents{}, ErrNotMember
+		}
+		return MembershipRemovalEvents{}, err
+	}
+	if kind != "group" {
+		return MembershipRemovalEvents{}, ErrForbidden
+	}
+	var targetRole string
+	if err := tx.QueryRowContext(ctx, `SELECT role FROM memberships WHERE conversation_id = ? AND account_id = ?`, conversationID, targetAccountID).Scan(&targetRole); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return MembershipRemovalEvents{}, ErrNotFound
+		}
+		return MembershipRemovalEvents{}, err
+	}
+	if actorAccountID == targetAccountID {
+		if targetRole == domain.RoleOwner {
+			var owners int
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM memberships WHERE conversation_id = ? AND role = ?`, conversationID, domain.RoleOwner).Scan(&owners); err != nil {
+				return MembershipRemovalEvents{}, err
+			}
+			if owners <= 1 {
+				return MembershipRemovalEvents{}, ErrLastOwner
+			}
+		}
+	} else if !domain.CanManageMembers(actorRole) || domain.RoleRank(targetRole) >= domain.RoleRank(actorRole) {
+		return MembershipRemovalEvents{}, ErrForbidden
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM memberships WHERE conversation_id = ? AND account_id = ?`, conversationID, targetAccountID)
+	if err != nil {
+		return MembershipRemovalEvents{}, err
+	}
+	removed, err := result.RowsAffected()
+	if err != nil {
+		return MembershipRemovalEvents{}, err
+	}
+	if removed != 1 {
+		return MembershipRemovalEvents{}, ErrNotFound
+	}
+	eventType := "membership.removed"
+	if actorAccountID == targetAccountID {
+		eventType = "membership.left"
+	}
+	now := nowString()
+	payload := map[string]string{"conversation_id": conversationID, "account_id": targetAccountID, "mls_coordination": "pending"}
+	remainingEventID, err := insertSyncEvent(ctx, tx, eventType, nil, conversationID, payload, now)
+	if err != nil {
+		return MembershipRemovalEvents{}, err
+	}
+	removedEventID, err := insertSyncEvent(ctx, tx, eventType, &targetAccountID, "", payload, now)
+	if err != nil {
+		return MembershipRemovalEvents{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return MembershipRemovalEvents{}, err
+	}
+	return MembershipRemovalEvents{RemainingMembersEventID: remainingEventID, RemovedMemberEventID: removedEventID}, nil
 }
 
 func (s *Store) ListConversations(ctx context.Context, accountID string) ([]domain.Conversation, error) {
@@ -924,25 +1119,37 @@ func (s *Store) ListConversationsPage(ctx context.Context, accountID string, lim
 }
 
 func (s *Store) UpdateConversationRetention(ctx context.Context, conversationID, updatedBy string, retentionSeconds *int64) (domain.Conversation, error) {
-	role, err := s.ConversationMemberRole(ctx, conversationID, updatedBy)
-	if err != nil {
-		return domain.Conversation{}, err
-	}
-	if !domain.CanManageMembers(role) {
-		return domain.Conversation{}, ErrForbidden
-	}
+	conversation, _, err := s.updateConversationRetention(ctx, conversationID, updatedBy, retentionSeconds, "")
+	return conversation, err
+}
+
+func (s *Store) UpdateConversationRetentionWithSyncEvent(ctx context.Context, conversationID, updatedBy string, retentionSeconds *int64) (domain.Conversation, int64, error) {
+	return s.updateConversationRetention(ctx, conversationID, updatedBy, retentionSeconds, "retention.updated")
+}
+
+func (s *Store) updateConversationRetention(ctx context.Context, conversationID, updatedBy string, retentionSeconds *int64, eventType string) (domain.Conversation, int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return domain.Conversation{}, err
+		return domain.Conversation{}, 0, err
 	}
 	defer tx.Rollback()
+	var role string
+	if err := tx.QueryRowContext(ctx, `SELECT role FROM memberships WHERE conversation_id = ? AND account_id = ?`, conversationID, updatedBy).Scan(&role); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.Conversation{}, 0, ErrNotMember
+		}
+		return domain.Conversation{}, 0, err
+	}
+	if !domain.CanManageMembers(role) {
+		return domain.Conversation{}, 0, ErrForbidden
+	}
 	now := nowString()
 	if _, err := tx.ExecContext(ctx, `UPDATE conversations SET retention_seconds = ? WHERE id = ?`, nullableInt64(retentionSeconds), conversationID); err != nil {
-		return domain.Conversation{}, err
+		return domain.Conversation{}, 0, err
 	}
 	if retentionSeconds == nil {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM disappearing_policies WHERE conversation_id = ?`, conversationID); err != nil {
-			return domain.Conversation{}, err
+			return domain.Conversation{}, 0, err
 		}
 	} else {
 		if _, err := tx.ExecContext(ctx, `
@@ -950,13 +1157,21 @@ func (s *Store) UpdateConversationRetention(ctx context.Context, conversationID,
 			VALUES(?, ?, ?, ?)
 			ON CONFLICT(conversation_id) DO UPDATE SET retention_seconds = excluded.retention_seconds, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
 			conversationID, *retentionSeconds, updatedBy, now); err != nil {
-			return domain.Conversation{}, err
+			return domain.Conversation{}, 0, err
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return domain.Conversation{}, err
+	conversation, err := scanConversation(tx.QueryRowContext(ctx, `SELECT id, kind, title, community_id, channel_id, created_by, retention_seconds, created_at FROM conversations WHERE id = ?`, conversationID))
+	if err != nil {
+		return domain.Conversation{}, 0, err
 	}
-	return s.ConversationByID(ctx, conversationID)
+	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, nil, conversationID, conversation, now)
+	if err != nil {
+		return domain.Conversation{}, 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Conversation{}, 0, err
+	}
+	return conversation, eventID, nil
 }
 
 func (s *Store) ConversationByID(ctx context.Context, conversationID string) (domain.Conversation, error) {

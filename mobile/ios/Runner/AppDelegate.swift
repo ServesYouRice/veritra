@@ -7,6 +7,10 @@ import UIKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    guard pm_crypto_abi_version() == PM_CRYPTO_ABI_VERSION,
+          pm_crypto_available() == PM_CRYPTO_UNAVAILABLE else {
+      return false
+    }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 

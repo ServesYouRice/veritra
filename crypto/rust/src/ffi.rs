@@ -241,6 +241,47 @@ pub unsafe extern "C" fn pm_crypto_device_signing_public_key(
     })
 }
 
+/// Derives the credential-bound device-link transcript hash. The SAS is
+/// formatted locally by the caller from the first four hash bytes.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_device_link_transcript_hash(
+    handle: *mut PmCryptoHandle,
+    protocol_version: PmByteSlice,
+    peer_device_id: PmByteSlice,
+    peer_signing_public_key: PmByteSlice,
+    link_nonce: PmByteSlice,
+    local_is_existing_device: u8,
+    out: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if local_is_existing_device > 1 {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let protocol_version = unsafe { borrowed(protocol_version, 64)? };
+        let peer_device_id = unsafe { borrowed(peer_device_id, MAX_ID_BYTES)? };
+        let peer_signing_public_key = unsafe { borrowed(peer_signing_public_key, 32)? };
+        let link_nonce = unsafe { borrowed(link_nonce, 32)? };
+        if peer_signing_public_key.len() != 32 || link_nonce.len() != 32 {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let transcript_hash = unsafe {
+            with_device(handle, |device| {
+                device
+                    .derive_device_link_verification(
+                        protocol_version,
+                        peer_device_id,
+                        peer_signing_public_key,
+                        link_nonce,
+                        local_is_existing_device == 1,
+                    )
+                    .map(|verification| verification.transcript_hash)
+                    .map_err(|_| PM_CRYPTO_INVALID_ARGUMENT)
+            })?
+        };
+        unsafe { output(out, transcript_hash) }
+    })
+}
+
 /// Signs the server-provided, domain-separated enrollment challenge.
 ///
 /// # Safety

@@ -85,41 +85,84 @@ func (s *Store) AttachmentForAccount(ctx context.Context, id, accountID string) 
 }
 
 func (s *Store) DeleteAttachment(ctx context.Context, id, accountID string) (domain.AttachmentEnvelope, error) {
-	attachment, err := s.AttachmentForAccount(ctx, id, accountID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.AttachmentEnvelope{}, err
+	}
+	defer tx.Rollback()
+	attachment, err := scanAttachment(tx.QueryRowContext(ctx, `
+		SELECT a.id, a.owner_account_id, a.conversation_id, a.storage_key, a.ciphertext_sha256, a.size_bytes, a.crypto_metadata_json, a.created_at
+		FROM attachment_envelopes a
+		LEFT JOIN memberships m ON m.conversation_id = a.conversation_id AND m.account_id = ?
+		WHERE a.id = ? AND (a.owner_account_id = ? OR m.id IS NOT NULL)`, accountID, id, accountID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.AttachmentEnvelope{}, ErrNotFound
+	}
 	if err != nil {
 		return domain.AttachmentEnvelope{}, err
 	}
 	if attachment.OwnerAccountID != accountID {
 		return domain.AttachmentEnvelope{}, ErrForbidden
 	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM attachment_envelopes WHERE id = ? AND owner_account_id = ?`, id, accountID)
+	result, err := tx.ExecContext(ctx, `DELETE FROM attachment_envelopes WHERE id = ? AND owner_account_id = ?`, id, accountID)
 	if err != nil {
 		return domain.AttachmentEnvelope{}, err
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
 		return domain.AttachmentEnvelope{}, ErrNotFound
 	}
-	return attachment, nil
+	if err := enqueueBlobDeletion(ctx, tx, attachment.StorageKey); err != nil {
+		return domain.AttachmentEnvelope{}, err
+	}
+	return attachment, tx.Commit()
 }
 
 func (s *Store) CreateReaction(ctx context.Context, messageID, accountID string, reactionCiphertext []byte) error {
-	msg, err := s.MessageByID(ctx, messageID)
+	_, _, err := s.createReaction(ctx, messageID, accountID, reactionCiphertext, "")
+	return err
+}
+
+func (s *Store) CreateReactionWithSyncEvent(ctx context.Context, messageID, accountID string, reactionCiphertext []byte) (string, int64, error) {
+	return s.createReaction(ctx, messageID, accountID, reactionCiphertext, "reaction.created")
+}
+
+func (s *Store) createReaction(ctx context.Context, messageID, accountID string, reactionCiphertext []byte, eventType string) (string, int64, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return "", 0, err
 	}
-	member, err := s.IsConversationMember(ctx, msg.ConversationID, accountID)
-	if err != nil {
-		return err
+	defer tx.Rollback()
+	var conversationID string
+	if err := tx.QueryRowContext(ctx, `SELECT conversation_id FROM message_envelopes WHERE id = ? AND (expires_at IS NULL OR expires_at > ?)`, messageID, nowString()).Scan(&conversationID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", 0, ErrNotFound
+		}
+		return "", 0, err
+	}
+	var member bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM memberships WHERE conversation_id = ? AND account_id = ?)`, conversationID, accountID).Scan(&member); err != nil {
+		return "", 0, err
 	}
 	if !member {
-		return ErrNotMember
+		return "", 0, ErrNotMember
 	}
 	id, err := domain.NewID("react")
 	if err != nil {
-		return err
+		return "", 0, err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO reactions(id, message_id, account_id, reaction_ciphertext, created_at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(message_id, account_id) DO UPDATE SET reaction_ciphertext = excluded.reaction_ciphertext, created_at = excluded.created_at`, id, messageID, accountID, reactionCiphertext, nowString())
-	return err
+	now := nowString()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO reactions(id, message_id, account_id, reaction_ciphertext, created_at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(message_id, account_id) DO UPDATE SET reaction_ciphertext = excluded.reaction_ciphertext, created_at = excluded.created_at`, id, messageID, accountID, reactionCiphertext, now); err != nil {
+		return "", 0, err
+	}
+	payload := map[string]string{"message_id": messageID, "account_id": accountID}
+	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, nil, conversationID, payload, now)
+	if err != nil {
+		return "", 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", 0, err
+	}
+	return conversationID, eventID, nil
 }
 
 func (s *Store) ListReactions(ctx context.Context, messageID, accountID string) ([]domain.Reaction, error) {
@@ -153,38 +196,79 @@ func (s *Store) ListReactions(ctx context.Context, messageID, accountID string) 
 }
 
 func (s *Store) DeleteReaction(ctx context.Context, messageID, accountID string) (string, error) {
-	message, err := s.MessageByID(ctx, messageID)
+	conversationID, _, err := s.deleteReaction(ctx, messageID, accountID, "")
+	return conversationID, err
+}
+
+func (s *Store) DeleteReactionWithSyncEvent(ctx context.Context, messageID, accountID string) (string, int64, error) {
+	return s.deleteReaction(ctx, messageID, accountID, "reaction.deleted")
+}
+
+func (s *Store) deleteReaction(ctx context.Context, messageID, accountID, eventType string) (string, int64, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM reactions WHERE message_id = ? AND account_id = ?`, messageID, accountID)
+	defer tx.Rollback()
+	var conversationID string
+	if err := tx.QueryRowContext(ctx, `SELECT conversation_id FROM message_envelopes WHERE id = ? AND (expires_at IS NULL OR expires_at > ?)`, messageID, nowString()).Scan(&conversationID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", 0, ErrNotFound
+		}
+		return "", 0, err
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM reactions WHERE message_id = ? AND account_id = ?`, messageID, accountID)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
-		return "", ErrNotFound
+		return "", 0, ErrNotFound
 	}
-	return message.ConversationID, nil
+	now := nowString()
+	payload := map[string]string{"message_id": messageID, "account_id": accountID}
+	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, nil, conversationID, payload, now)
+	if err != nil {
+		return "", 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", 0, err
+	}
+	return conversationID, eventID, nil
 }
 
 func (s *Store) MarkRead(ctx context.Context, conversationID, accountID, messageID string) error {
-	member, err := s.IsConversationMember(ctx, conversationID, accountID)
+	_, err := s.markRead(ctx, conversationID, accountID, messageID, "")
+	return err
+}
+
+func (s *Store) MarkReadWithSyncEvent(ctx context.Context, conversationID, accountID, messageID string) (int64, error) {
+	return s.markRead(ctx, conversationID, accountID, messageID, "read_receipt.updated")
+}
+
+func (s *Store) markRead(ctx context.Context, conversationID, accountID, messageID, eventType string) (int64, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return 0, err
+	}
+	defer tx.Rollback()
+	var member bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM memberships WHERE conversation_id = ? AND account_id = ?)`, conversationID, accountID).Scan(&member); err != nil {
+		return 0, err
 	}
 	if !member {
-		return ErrNotMember
+		return 0, ErrNotMember
 	}
 	var count int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM message_envelopes WHERE id = ? AND conversation_id = ? AND (expires_at IS NULL OR expires_at > ?)`, messageID, conversationID, nowString()).Scan(&count); err != nil {
-		return err
+	now := nowString()
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM message_envelopes WHERE id = ? AND conversation_id = ? AND (expires_at IS NULL OR expires_at > ?)`, messageID, conversationID, now).Scan(&count); err != nil {
+		return 0, err
 	}
 	if count == 0 {
-		return ErrNotFound
+		return 0, ErrNotFound
 	}
 	// Guard against rewinding the read cursor: only advance to a message
 	// whose created_at is at or after the currently-recorded one.
-	_, err = s.db.ExecContext(ctx, `
+	if _, err = tx.ExecContext(ctx, `
 		INSERT INTO read_receipts(account_id, conversation_id, message_id, read_at)
 		VALUES(?, ?, ?, ?)
 		ON CONFLICT(account_id, conversation_id) DO UPDATE SET
@@ -194,8 +278,18 @@ func (s *Store) MarkRead(ctx context.Context, conversationID, accountID, message
 		   OR (excluded.message_id != read_receipts.message_id
 		       AND (SELECT created_at FROM message_envelopes WHERE id = excluded.message_id) >=
 		           (SELECT created_at FROM message_envelopes WHERE id = read_receipts.message_id))`,
-		accountID, conversationID, messageID, nowString())
-	return err
+		accountID, conversationID, messageID, now); err != nil {
+		return 0, err
+	}
+	payload := map[string]string{"account_id": accountID, "message_id": messageID}
+	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, nil, conversationID, payload, now)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return eventID, nil
 }
 
 type PushTarget struct {
@@ -281,27 +375,48 @@ func (s *Store) DisablePushSubscription(ctx context.Context, subscriptionID, acc
 }
 
 func (s *Store) CreateCallSession(ctx context.Context, conversationID, accountID string, metadata json.RawMessage) (domain.CallSession, error) {
-	member, err := s.IsConversationMember(ctx, conversationID, accountID)
+	call, _, err := s.createCallSession(ctx, conversationID, accountID, metadata, "")
+	return call, err
+}
+
+func (s *Store) CreateCallSessionWithSyncEvent(ctx context.Context, conversationID, accountID string, metadata json.RawMessage) (domain.CallSession, int64, error) {
+	return s.createCallSession(ctx, conversationID, accountID, metadata, "call.signaling")
+}
+
+func (s *Store) createCallSession(ctx context.Context, conversationID, accountID string, metadata json.RawMessage, eventType string) (domain.CallSession, int64, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return domain.CallSession{}, err
+		return domain.CallSession{}, 0, err
+	}
+	defer tx.Rollback()
+	var member bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM memberships WHERE conversation_id = ? AND account_id = ?)`, conversationID, accountID).Scan(&member); err != nil {
+		return domain.CallSession{}, 0, err
 	}
 	if !member {
-		return domain.CallSession{}, ErrNotMember
+		return domain.CallSession{}, 0, ErrNotMember
 	}
 	id, err := domain.NewID("call")
 	if err != nil {
-		return domain.CallSession{}, err
+		return domain.CallSession{}, 0, err
 	}
 	if len(metadata) == 0 {
 		metadata = json.RawMessage(`{}`)
 	}
 	createdAt := time.Now().UTC()
 	expiresAt := createdAt.Add(2 * time.Minute)
-	_, err = s.db.ExecContext(ctx, `INSERT INTO call_sessions(id, conversation_id, created_by, state, metadata_json, created_at, expires_at) VALUES(?, ?, ?, 'ringing', ?, ?, ?)`, id, conversationID, accountID, string(metadata), formatTime(createdAt), formatTime(expiresAt))
-	if err != nil {
-		return domain.CallSession{}, err
+	call := domain.CallSession{ID: id, ConversationID: conversationID, CreatedBy: accountID, State: "ringing", Metadata: metadata, CreatedAt: createdAt, ExpiresAt: &expiresAt}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO call_sessions(id, conversation_id, created_by, state, metadata_json, created_at, expires_at) VALUES(?, ?, ?, 'ringing', ?, ?, ?)`, id, conversationID, accountID, string(metadata), formatTime(createdAt), formatTime(expiresAt)); err != nil {
+		return domain.CallSession{}, 0, err
 	}
-	return domain.CallSession{ID: id, ConversationID: conversationID, CreatedBy: accountID, State: "ringing", Metadata: metadata, CreatedAt: createdAt, ExpiresAt: &expiresAt}, nil
+	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, nil, conversationID, call, formatTime(createdAt))
+	if err != nil {
+		return domain.CallSession{}, 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.CallSession{}, 0, err
+	}
+	return call, eventID, nil
 }
 
 func (s *Store) ListCallSessions(ctx context.Context, conversationID, accountID string, limit int) ([]domain.CallSession, error) {
@@ -332,29 +447,38 @@ func (s *Store) ListCallSessions(ctx context.Context, conversationID, accountID 
 }
 
 func (s *Store) TransitionCallSession(ctx context.Context, callID, accountID, nextState string, metadata json.RawMessage) (domain.CallSession, error) {
+	call, _, err := s.transitionCallSession(ctx, callID, accountID, nextState, metadata, "")
+	return call, err
+}
+
+func (s *Store) TransitionCallSessionWithSyncEvent(ctx context.Context, callID, accountID, nextState string, metadata json.RawMessage) (domain.CallSession, int64, error) {
+	return s.transitionCallSession(ctx, callID, accountID, nextState, metadata, "call.state")
+}
+
+func (s *Store) transitionCallSession(ctx context.Context, callID, accountID, nextState string, metadata json.RawMessage, eventType string) (domain.CallSession, int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return domain.CallSession{}, err
+		return domain.CallSession{}, 0, err
 	}
 	defer tx.Rollback()
 	call, err := scanCall(tx.QueryRowContext(ctx, `SELECT id, conversation_id, created_by, state, metadata_json, created_at, ended_at, expires_at FROM call_sessions WHERE id = ?`, callID))
 	if errors.Is(err, sql.ErrNoRows) {
-		return domain.CallSession{}, ErrNotFound
+		return domain.CallSession{}, 0, ErrNotFound
 	}
 	if err != nil {
-		return domain.CallSession{}, err
+		return domain.CallSession{}, 0, err
 	}
 	var memberCount int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM memberships WHERE conversation_id = ? AND account_id = ?`, call.ConversationID, accountID).Scan(&memberCount); err != nil {
-		return domain.CallSession{}, err
+		return domain.CallSession{}, 0, err
 	}
 	if memberCount == 0 {
-		return domain.CallSession{}, ErrNotMember
+		return domain.CallSession{}, 0, ErrNotMember
 	}
 	allowed := (call.State == "ringing" && (nextState == "active" || nextState == "rejected" || nextState == "missed" || nextState == "ended")) ||
 		(call.State == "active" && nextState == "ended") || call.State == nextState
 	if !allowed {
-		return domain.CallSession{}, ErrInvalidInput
+		return domain.CallSession{}, 0, ErrInvalidInput
 	}
 	if len(metadata) > 0 {
 		call.Metadata = metadata
@@ -371,12 +495,16 @@ func (s *Store) TransitionCallSession(ctx context.Context, callID, accountID, ne
 		call.ExpiresAt = &expires
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE call_sessions SET state = ?, metadata_json = ?, ended_at = ?, expires_at = ? WHERE id = ?`, call.State, string(call.Metadata), nullableTime(call.EndedAt), nullableTime(call.ExpiresAt), call.ID); err != nil {
-		return domain.CallSession{}, err
+		return domain.CallSession{}, 0, err
+	}
+	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, nil, call.ConversationID, call, formatTime(now))
+	if err != nil {
+		return domain.CallSession{}, 0, err
 	}
 	if err := tx.Commit(); err != nil {
-		return domain.CallSession{}, err
+		return domain.CallSession{}, 0, err
 	}
-	return call, nil
+	return call, eventID, nil
 }
 
 func (s *Store) PruneCallSessions(ctx context.Context, now time.Time) (int64, error) {
@@ -494,18 +622,29 @@ func (s *Store) BackupForAccount(ctx context.Context, id, accountID string) (dom
 }
 
 func (s *Store) DeleteBackup(ctx context.Context, id, accountID string) (domain.BackupBlob, error) {
-	backup, err := s.BackupForAccount(ctx, id, accountID)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return domain.BackupBlob{}, err
 	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM backup_blobs WHERE id = ? AND account_id = ?`, id, accountID)
+	defer tx.Rollback()
+	backup, err := scanBackup(tx.QueryRowContext(ctx, `SELECT id, account_id, device_id, storage_key, ciphertext_sha256, size_bytes, key_derivation_metadata_json, created_at FROM backup_blobs WHERE id = ? AND account_id = ?`, id, accountID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.BackupBlob{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.BackupBlob{}, err
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM backup_blobs WHERE id = ? AND account_id = ?`, id, accountID)
 	if err != nil {
 		return domain.BackupBlob{}, err
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
 		return domain.BackupBlob{}, ErrNotFound
 	}
-	return backup, nil
+	if err := enqueueBlobDeletion(ctx, tx, backup.StorageKey); err != nil {
+		return domain.BackupBlob{}, err
+	}
+	return backup, tx.Commit()
 }
 
 // ExportAccountOptions controls pagination of the message portion of an

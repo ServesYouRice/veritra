@@ -98,7 +98,12 @@ type DeviceLink struct {
 	AccountID         string     `json:"account_id,omitempty"`
 	CreatedByDeviceID string     `json:"created_by_device_id,omitempty"`
 	State             string     `json:"state"`
-	VerificationCode  string     `json:"verification_code"`
+	ProtocolVersion   string     `json:"protocol_version,omitempty"`
+	LinkNonce         []byte     `json:"link_nonce,omitempty"`
+	ExistingSigningKey []byte    `json:"existing_signing_key,omitempty"`
+	ClaimedDeviceID   string     `json:"claimed_device_id,omitempty"`
+	ClaimedSigningKey []byte     `json:"claimed_signing_key,omitempty"`
+	TranscriptHash    []byte     `json:"transcript_hash,omitempty"`
 	ClaimedDeviceName *string    `json:"claimed_device_name,omitempty"`
 	ApprovedDeviceID  *string    `json:"approved_device_id,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`

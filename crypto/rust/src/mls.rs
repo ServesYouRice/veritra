@@ -18,6 +18,8 @@ const CIPHERSUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA2
 const MAX_ID_BYTES: usize = 128;
 const PADDING_BYTES: usize = 256;
 const CREDENTIAL_FORMAT_VERSION: u8 = 1;
+const DEVICE_LINK_PROTOCOL_VERSION: &[u8] = b"veritra-device-link-v1";
+const DEVICE_LINK_TRANSCRIPT_DOMAIN: &[u8] = b"veritra-device-link-transcript";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MlsError {
@@ -44,6 +46,12 @@ pub struct MlsDevice {
     credential: CredentialWithKey,
     account_id: Vec<u8>,
     device_id: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeviceLinkVerification {
+    pub transcript_hash: Vec<u8>,
+    pub sas: String,
 }
 
 impl MlsDevice {
@@ -85,6 +93,41 @@ impl MlsDevice {
 
     pub fn signing_public_key(&self) -> &[u8] {
         self.signer.public()
+    }
+
+    pub fn derive_device_link_verification(
+        &self,
+        protocol_version: &[u8],
+        peer_device_id: &[u8],
+        peer_signing_public_key: &[u8],
+        link_nonce: &[u8],
+        local_is_existing_device: bool,
+    ) -> Result<DeviceLinkVerification, MlsError> {
+        let (existing_device_id, existing_key, new_device_id, new_key) =
+            if local_is_existing_device {
+                (
+                    self.device_id.as_slice(),
+                    self.signing_public_key(),
+                    peer_device_id,
+                    peer_signing_public_key,
+                )
+            } else {
+                (
+                    peer_device_id,
+                    peer_signing_public_key,
+                    self.device_id.as_slice(),
+                    self.signing_public_key(),
+                )
+            };
+        derive_device_link_verification(
+            protocol_version,
+            &self.account_id,
+            link_nonce,
+            existing_device_id,
+            existing_key,
+            new_device_id,
+            new_key,
+        )
     }
 
     /// Signs a server challenge with the same Ed25519 identity key carried by
@@ -265,6 +308,56 @@ impl MlsDevice {
     }
 }
 
+pub fn derive_device_link_verification(
+    protocol_version: &[u8],
+    account_id: &[u8],
+    link_nonce: &[u8],
+    existing_device_id: &[u8],
+    existing_signing_public_key: &[u8],
+    new_device_id: &[u8],
+    new_signing_public_key: &[u8],
+) -> Result<DeviceLinkVerification, MlsError> {
+    if protocol_version != DEVICE_LINK_PROTOCOL_VERSION
+        || account_id.is_empty()
+        || account_id.len() > MAX_ID_BYTES
+        || existing_device_id.is_empty()
+        || existing_device_id.len() > MAX_ID_BYTES
+        || new_device_id.is_empty()
+        || new_device_id.len() > MAX_ID_BYTES
+        || link_nonce.len() != 32
+        || existing_signing_public_key.len() != 32
+        || new_signing_public_key.len() != 32
+    {
+        return Err(MlsError::InvalidIdentity);
+    }
+    let mut transcript = Vec::with_capacity(256);
+    append_transcript_field(&mut transcript, DEVICE_LINK_TRANSCRIPT_DOMAIN)?;
+    append_transcript_field(&mut transcript, protocol_version)?;
+    append_transcript_field(&mut transcript, account_id)?;
+    append_transcript_field(&mut transcript, link_nonce)?;
+    append_transcript_field(&mut transcript, existing_device_id)?;
+    append_transcript_field(&mut transcript, existing_signing_public_key)?;
+    append_transcript_field(&mut transcript, new_device_id)?;
+    append_transcript_field(&mut transcript, new_signing_public_key)?;
+    let transcript_hash = Sha256::digest(&transcript).to_vec();
+    let sas_value = u32::from_be_bytes(
+        transcript_hash[..4]
+            .try_into()
+            .map_err(|_| MlsError::InvalidState)?,
+    ) % 100_000_000;
+    Ok(DeviceLinkVerification {
+        transcript_hash,
+        sas: format!("{sas_value:08}"),
+    })
+}
+
+fn append_transcript_field(out: &mut Vec<u8>, value: &[u8]) -> Result<(), MlsError> {
+    let length = u16::try_from(value.len()).map_err(|_| MlsError::InvalidIdentity)?;
+    out.extend_from_slice(&length.to_be_bytes());
+    out.extend_from_slice(value);
+    Ok(())
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub struct AddMemberMessages {
     pub commit: Vec<u8>,
@@ -416,5 +509,88 @@ mod tests {
         assert!(enrollment.key_package.len() >= crate::MIN_KEY_PACKAGE_BYTES);
         assert_eq!(enrollment.signing_public_key, device.signing_public_key());
         assert_eq!(enrollment.challenge_signature.len(), 64);
+    }
+
+    #[test]
+    fn device_link_sas_is_credential_bound_and_symmetric() {
+        let existing = MlsDevice::new(b"account-vector", b"device-existing").unwrap();
+        let new = MlsDevice::new(b"account-vector", b"device-new").unwrap();
+        let nonce = [0x42; 32];
+        let from_existing = existing
+            .derive_device_link_verification(
+                DEVICE_LINK_PROTOCOL_VERSION,
+                b"device-new",
+                new.signing_public_key(),
+                &nonce,
+                true,
+            )
+            .unwrap();
+        let from_new = new
+            .derive_device_link_verification(
+                DEVICE_LINK_PROTOCOL_VERSION,
+                b"device-existing",
+                existing.signing_public_key(),
+                &nonce,
+                false,
+            )
+            .unwrap();
+        assert_eq!(from_existing, from_new);
+
+        let mut substituted_key = new.signing_public_key().to_vec();
+        substituted_key[0] ^= 1;
+        let substituted = existing
+            .derive_device_link_verification(
+                DEVICE_LINK_PROTOCOL_VERSION,
+                b"device-new",
+                &substituted_key,
+                &nonce,
+                true,
+            )
+            .unwrap();
+        assert_ne!(from_existing, substituted);
+
+        let mismatched_nonce = existing
+            .derive_device_link_verification(
+                DEVICE_LINK_PROTOCOL_VERSION,
+                b"device-new",
+                new.signing_public_key(),
+                &[0x43; 32],
+                true,
+            )
+            .unwrap();
+        assert_ne!(from_existing, mismatched_nonce);
+        assert_eq!(
+            existing.derive_device_link_verification(
+                b"veritra-device-link-v2",
+                b"device-new",
+                new.signing_public_key(),
+                &nonce,
+                true,
+            ),
+            Err(MlsError::InvalidIdentity)
+        );
+    }
+
+    #[test]
+    fn device_link_transcript_has_a_stable_vector() {
+        let verification = derive_device_link_verification(
+            DEVICE_LINK_PROTOCOL_VERSION,
+            b"acct_01",
+            &[0x11; 32],
+            b"dev_old",
+            &[0x22; 32],
+            b"dev_new",
+            &[0x33; 32],
+        )
+        .unwrap();
+        assert_eq!(
+            verification.transcript_hash,
+            vec![
+                0x8c, 0xce, 0x0b, 0x98, 0x04, 0x9c, 0xcb, 0xd2, 0x0f, 0xb4, 0x97, 0x73,
+                0x2f, 0xb8, 0xe2, 0xc2, 0x06, 0x07, 0xb5, 0x93, 0xfa, 0xc2, 0x9f, 0xa8,
+                0xf3, 0xd4, 0x46, 0x31, 0x12, 0x24, 0xf0, 0x43,
+            ]
+        );
+        assert_eq!(verification.sas, "62313624");
     }
 }

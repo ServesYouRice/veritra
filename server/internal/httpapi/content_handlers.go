@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -62,7 +61,7 @@ func (a *API) uploadAttachment(w http.ResponseWriter, r *http.Request, principal
 		CryptoMetadata:   metadata,
 	})
 	if err != nil {
-		_ = a.Blobs.Delete(r.Context(), storageKey)
+		a.cleanupUncommittedBlob(r.Context(), storageKey)
 		if errors.Is(err, storage.ErrStorageQuota) {
 			handleStorageError(w, err)
 			return
@@ -107,9 +106,7 @@ func (a *API) attachmentSubroute(w http.ResponseWriter, r *http.Request, princip
 			handleStorageError(w, err)
 			return
 		}
-		if err := a.Blobs.Delete(r.Context(), deleted.StorageKey); err != nil {
-			a.warn("attachment_blob_cleanup_failed", "attachment_id", deleted.ID, "err", err)
-		}
+		a.completeQueuedBlobDeletion(r.Context(), deleted.StorageKey)
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		writeError(w, http.StatusNotFound, "not_found")
@@ -141,7 +138,7 @@ func (a *API) uploadBackup(w http.ResponseWriter, r *http.Request, principal dom
 		return
 	}
 	if err := a.Store.CreateBackupBlob(r.Context(), principal.AccountID, principal.DeviceID, storageKey, sha, size, metadata); err != nil {
-		_ = a.Blobs.Delete(r.Context(), storageKey)
+		a.cleanupUncommittedBlob(r.Context(), storageKey)
 		if errors.Is(err, storage.ErrStorageQuota) {
 			handleStorageError(w, err)
 			return
@@ -182,9 +179,7 @@ func (a *API) backupSubroute(w http.ResponseWriter, r *http.Request, principal d
 			handleStorageError(w, err)
 			return
 		}
-		if err := a.Blobs.Delete(r.Context(), deleted.StorageKey); err != nil {
-			a.warn("backup_blob_cleanup_failed", "backup_id", deleted.ID, "err", err)
-		}
+		a.completeQueuedBlobDeletion(r.Context(), deleted.StorageKey)
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		writeError(w, http.StatusNotFound, "not_found")
@@ -192,8 +187,12 @@ func (a *API) backupSubroute(w http.ResponseWriter, r *http.Request, principal d
 }
 
 func serveEncryptedBlob(w http.ResponseWriter, r *http.Request, blobs uploads.Store, storageKey, sha string, size int64) {
-	file, err := blobs.Open(storageKey)
+	file, err := blobs.Open(r.Context(), storageKey, sha, size)
 	if err != nil {
+		if errors.Is(err, uploads.ErrBlobIntegrity) {
+			writeError(w, http.StatusInternalServerError, "blob_integrity_failed")
+			return
+		}
 		writeError(w, http.StatusNotFound, "blob_not_found")
 		return
 	}
@@ -201,11 +200,34 @@ func serveEncryptedBlob(w http.ResponseWriter, r *http.Request, blobs uploads.St
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	if sha != "" {
 		w.Header().Set("ETag", `"sha256-`+sha+`"`)
 	}
-	_, _ = io.Copy(w, file)
+	http.ServeContent(w, r, "encrypted.bin", time.Time{}, file)
+}
+
+func (a *API) cleanupUncommittedBlob(ctx context.Context, storageKey string) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := a.Blobs.Delete(cleanupCtx, storageKey); err == nil {
+		return
+	}
+	if err := a.Store.QueueBlobDeletion(cleanupCtx, storageKey); err != nil {
+		a.warn("blob_cleanup_queue_failed")
+	}
+}
+
+func (a *API) completeQueuedBlobDeletion(ctx context.Context, storageKey string) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := a.Blobs.Delete(cleanupCtx, storageKey); err != nil {
+		_ = a.Store.RecordBlobDeletionFailure(cleanupCtx, storageKey)
+		a.warn("blob_cleanup_deferred")
+		return
+	}
+	if err := a.Store.CompleteBlobDeletion(cleanupCtx, storageKey); err != nil {
+		a.warn("blob_cleanup_completion_failed")
+	}
 }
 
 func (a *API) createPushSubscription(w http.ResponseWriter, r *http.Request, principal domain.Principal) {

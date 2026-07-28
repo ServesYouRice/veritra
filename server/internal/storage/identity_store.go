@@ -311,27 +311,44 @@ func (s *Store) DeleteAccountSessionsExcept(ctx context.Context, accountID, keep
 // belongs to a different account, so a caller can only revoke its own devices.
 // PrincipalByTokenHash already rejects revoked devices on their next request.
 func (s *Store) RevokeDevice(ctx context.Context, accountID, deviceID string) error {
+	_, err := s.revokeDevice(ctx, accountID, deviceID, "")
+	return err
+}
+
+func (s *Store) RevokeDeviceWithSyncEvent(ctx context.Context, accountID, deviceID string) (int64, error) {
+	return s.revokeDevice(ctx, accountID, deviceID, "device.revoked")
+}
+
+func (s *Store) revokeDevice(ctx context.Context, accountID, deviceID, eventType string) (int64, error) {
 	now := nowString()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer tx.Rollback()
 	result, err := tx.ExecContext(ctx, `UPDATE devices SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ? AND account_id = ?`, now, deviceID, accountID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if rows == 0 {
-		return ErrNotFound
+		return 0, ErrNotFound
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE device_id = ?`, deviceID); err != nil {
-		return err
+		return 0, err
 	}
-	return tx.Commit()
+	payload := map[string]string{"device_id": deviceID}
+	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, &accountID, "", payload, now)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return eventID, nil
 }
 
 func (s *Store) CreateInvite(ctx context.Context, createdBy string, maxUses int, expiresAt *time.Time) (domain.Invite, error) {

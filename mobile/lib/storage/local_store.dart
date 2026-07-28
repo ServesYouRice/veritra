@@ -149,7 +149,6 @@ class SecureLocalStore implements LocalStore {
       : _storage = storage ??
             const FlutterSecureStorage(
               aOptions: AndroidOptions(
-                encryptedSharedPreferences: true,
                 resetOnError: true,
               ),
               iOptions: IOSOptions(

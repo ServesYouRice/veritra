@@ -338,6 +338,18 @@ class ApiClient {
     return rows.map(ReceivedMessageEnvelope.fromJson).toList();
   }
 
+  Future<ReceivedMessageEnvelope> message(
+    String token,
+    String messageId,
+  ) async {
+    final json = await _jsonRequest(
+      'GET',
+      '/api/v1/messages/${Uri.encodeComponent(messageId)}',
+      token: token,
+    );
+    return ReceivedMessageEnvelope.fromJson(json);
+  }
+
   Future<List<SyncEvent>> syncEvents(
     String token, {
     int after = 0,
@@ -464,6 +476,7 @@ class ApiClient {
     required String deviceName,
     required EnrollmentReservation enrollment,
     required EnrollmentCredential credential,
+    required DeviceLinkVerification verification,
   }) async {
     final json = await _jsonRequest(
       'POST',
@@ -475,6 +488,7 @@ class ApiClient {
         'device_key_package': base64Encode(credential.deviceKeyPackage),
         'signing_key': base64Encode(credential.signingKey),
         'challenge_signature': base64Encode(credential.challengeSignature),
+        'transcript_hash': base64Encode(verification.transcriptHash),
       },
     );
     return DeviceLinkClaim(
@@ -488,20 +502,20 @@ class ApiClient {
   Future<DeviceLink> approveDeviceLink(
     String token,
     String linkId,
-    String verificationCode,
+    List<int> transcriptHash,
   ) async {
     final json = await _jsonRequest(
       'POST',
       '/api/v1/device-links/$linkId/approve',
       token: token,
-      body: <String, Object?>{'verification_code': verificationCode},
+      body: <String, Object?>{'transcript_hash': base64Encode(transcriptHash)},
     );
     return DeviceLink.fromJson(
         Map<String, Object?>.from(json['device_link'] as Map));
   }
 
-  Future<Session?> completeDeviceLinkClaim(
-      String linkId, String claimToken) async {
+  Future<Session?> completeDeviceLinkClaim(String linkId, String claimToken,
+      List<int> expectedTranscriptHash) async {
     final json = await _jsonRequest(
       'GET',
       '/api/v1/device-links/$linkId/claim-status',
@@ -511,7 +525,31 @@ class ApiClient {
     if (token == null) {
       return null;
     }
+    final transcriptHash = _decodeRequiredBytes(json['transcript_hash']);
+    if (!_bytesEqual(transcriptHash, expectedTranscriptHash)) {
+      throw ApiException(409, '{"error":"transcript_mismatch"}');
+    }
     return _sessionFromAuthJson(json);
+  }
+
+  List<int> _decodeRequiredBytes(Object? value) {
+    if (value is! String) {
+      throw ApiException(502, 'Invalid binary API field');
+    }
+    try {
+      return base64Decode(value);
+    } on FormatException {
+      throw ApiException(502, 'Invalid binary API field');
+    }
+  }
+
+  bool _bytesEqual(List<int> left, List<int> right) {
+    if (left.length != right.length) return false;
+    var difference = 0;
+    for (var index = 0; index < left.length; index++) {
+      difference |= left[index] ^ right[index];
+    }
+    return difference == 0;
   }
 
   Session _sessionFromAuthJson(
@@ -662,11 +700,10 @@ class ApiException implements Exception {
       case 'invalid_device_link':
         return 'That link code is not valid or has expired. Generate a new '
             'one on your linked device.';
-      case 'verification_code_required':
-        return 'Enter the verification code shown on the new device.';
-      case 'verification_code_mismatch':
-        return 'The verification code did not match. Check both devices and '
-            'try again.';
+      case 'transcript_hash_required':
+      case 'transcript_mismatch':
+        return 'The locally verified device credentials changed. Generate a '
+            'new link and compare both devices again.';
       case 'invalid_device_name':
         return 'That device name is not valid.';
       case 'invalid_name':

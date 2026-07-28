@@ -158,6 +158,11 @@ func serve(ctx context.Context, cfg config.Config) error {
 	if err := cfg.ValidateServe(); err != nil {
 		return err
 	}
+	lock, err := acquireInstanceLock(cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	level := slog.LevelInfo

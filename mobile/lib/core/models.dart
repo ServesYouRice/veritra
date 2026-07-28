@@ -8,12 +8,20 @@ class EnrollmentReservation {
     required this.accountId,
     required this.deviceId,
     required this.challenge,
+    this.protocolVersion,
+    this.linkNonce,
+    this.existingDeviceId,
+    this.existingSigningKey,
   });
 
   final String id;
   final String accountId;
   final String deviceId;
   final List<int> challenge;
+  final String? protocolVersion;
+  final List<int>? linkNonce;
+  final String? existingDeviceId;
+  final List<int>? existingSigningKey;
 
   factory EnrollmentReservation.fromJson(Map<String, Object?> json) =>
       EnrollmentReservation(
@@ -21,8 +29,15 @@ class EnrollmentReservation {
         accountId: json['account_id'] as String,
         deviceId: json['device_id'] as String,
         challenge: base64Decode(json['challenge'] as String),
+        protocolVersion: json['protocol_version'] as String?,
+        linkNonce: _decodeOptionalBytes(json['link_nonce']),
+        existingDeviceId: json['existing_device_id'] as String?,
+        existingSigningKey: _decodeOptionalBytes(json['existing_signing_key']),
       );
 }
+
+List<int>? _decodeOptionalBytes(Object? value) =>
+    value is String && value.isNotEmpty ? base64Decode(value) : null;
 
 class EnrollmentCredential {
   const EnrollmentCredential({
@@ -34,6 +49,16 @@ class EnrollmentCredential {
   final List<int> deviceKeyPackage;
   final List<int> signingKey;
   final List<int> challengeSignature;
+}
+
+class DeviceLinkVerification {
+  const DeviceLinkVerification({
+    required this.transcriptHash,
+    required this.sas,
+  });
+
+  final List<int> transcriptHash;
+  final String sas;
 }
 
 class Conversation {
@@ -399,6 +424,14 @@ class DeviceLink {
     this.linkUri,
     this.claimedDeviceName,
     this.approvedDeviceId,
+    this.accountId,
+    this.createdByDeviceId,
+    this.protocolVersion,
+    this.linkNonce,
+    this.existingSigningKey,
+    this.claimedDeviceId,
+    this.claimedSigningKey,
+    this.transcriptHash,
   });
 
   final String id;
@@ -409,17 +442,33 @@ class DeviceLink {
   final String? linkUri;
   final String? claimedDeviceName;
   final String? approvedDeviceId;
+  final String? accountId;
+  final String? createdByDeviceId;
+  final String? protocolVersion;
+  final List<int>? linkNonce;
+  final List<int>? existingSigningKey;
+  final String? claimedDeviceId;
+  final List<int>? claimedSigningKey;
+  final List<int>? transcriptHash;
 
   factory DeviceLink.fromJson(Map<String, Object?> json) {
     return DeviceLink(
       id: json['id'] as String,
       state: json['state'] as String,
-      verificationCode: json['verification_code'] as String,
+      verificationCode: json['verification_code'] as String? ?? '',
       expiresAt: _parseRequiredTime(json['expires_at']),
       code: json['code'] as String?,
       linkUri: json['link_uri'] as String?,
       claimedDeviceName: json['claimed_device_name'] as String?,
       approvedDeviceId: json['approved_device_id'] as String?,
+      accountId: json['account_id'] as String?,
+      createdByDeviceId: json['created_by_device_id'] as String?,
+      protocolVersion: json['protocol_version'] as String?,
+      linkNonce: _decodeOptionalBytes(json['link_nonce']),
+      existingSigningKey: _decodeOptionalBytes(json['existing_signing_key']),
+      claimedDeviceId: json['claimed_device_id'] as String?,
+      claimedSigningKey: _decodeOptionalBytes(json['claimed_signing_key']),
+      transcriptHash: _decodeOptionalBytes(json['transcript_hash']),
     );
   }
 }

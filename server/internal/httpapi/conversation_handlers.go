@@ -168,12 +168,45 @@ func (a *API) listConversations(w http.ResponseWriter, r *http.Request, principa
 
 func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/conversations/"), "/")
+	if len(parts) == 3 && parts[1] == "members" && r.Method == http.MethodDelete {
+		conversationID := parts[0]
+		targetAccountID := strings.TrimSpace(parts[2])
+		if targetAccountID == "me" {
+			targetAccountID = principal.AccountID
+		}
+		if !domain.ValidID("acct", targetAccountID) {
+			writeError(w, http.StatusBadRequest, "invalid_account_id")
+			return
+		}
+		events, err := a.Store.RemoveConversationMember(r.Context(), conversationID, principal.AccountID, targetAccountID)
+		if err != nil {
+			handleStorageError(w, err)
+			return
+		}
+		eventType := "membership.removed"
+		if targetAccountID == principal.AccountID {
+			eventType = "membership.left"
+		}
+		payload := map[string]string{"conversation_id": conversationID, "account_id": targetAccountID, "mls_coordination": "pending"}
+		a.publishCommittedEvent(a.conversationMemberIDs(r.Context(), conversationID), realtime.Event{Version: "v1", Type: eventType, ID: events.RemainingMembersEventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
+		a.publishCommittedEvent([]string{targetAccountID}, realtime.Event{Version: "v1", Type: eventType, ID: events.RemovedMemberEventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
+		a.recordAuditEvent(r.Context(), &principal.AccountID, "conversation.member.removed", map[string]string{"conversation_id": conversationID, "target_account_id": targetAccountID})
+		writeJSON(w, http.StatusOK, map[string]string{"status": "membership_removed", "mls_coordination": "pending"})
+		return
+	}
 	if len(parts) != 2 {
 		writeError(w, http.StatusNotFound, "not_found")
 		return
 	}
 	conversationID := parts[0]
 	switch {
+	case parts[1] == "members" && r.Method == http.MethodGet:
+		members, err := a.Store.ListConversationMembers(r.Context(), conversationID, principal.AccountID)
+		if err != nil {
+			handleStorageError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"members": members})
 	case parts[1] == "members" && r.Method == http.MethodPost:
 		var req struct {
 			AccountID string `json:"account_id"`
@@ -198,9 +231,10 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 			handleStorageError(w, err)
 			return
 		}
-		a.Hub.Publish([]string{req.AccountID}, realtime.Event{Version: "v1", Type: "membership.updated", ID: eventID, ConversationID: conversationID, Payload: map[string]string{"conversation_id": conversationID, "role": req.Role}, CreatedAt: time.Now().UTC()})
+		payload := map[string]string{"conversation_id": conversationID, "account_id": req.AccountID, "role": req.Role, "mls_coordination": "pending"}
+		a.publishCommittedEvent(a.conversationMemberIDs(r.Context(), conversationID), realtime.Event{Version: "v1", Type: "membership.updated", ID: eventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
 		a.recordAuditEvent(r.Context(), &principal.AccountID, "conversation.member.added", map[string]string{"conversation_id": conversationID, "target_account_id": req.AccountID, "role": req.Role})
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		writeJSON(w, http.StatusOK, map[string]string{"status": "membership_updated", "mls_coordination": "pending"})
 	case parts[1] == "messages" && r.Method == http.MethodGet:
 		limit := normalizeLimit(messageQueryLimit(r), 100, 200)
 		before := strings.TrimSpace(r.URL.Query().Get("before"))
@@ -237,6 +271,7 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 			return
 		}
 		if !a.allowTyping(principal.AccountID, conversationID, time.Now()) {
+			w.Header().Set("Retry-After", "1")
 			writeError(w, http.StatusTooManyRequests, "typing_rate_limited")
 			return
 		}
@@ -281,14 +316,14 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 			writeError(w, http.StatusBadRequest, "message_id_required")
 			return
 		}
-		if err := a.Store.MarkRead(r.Context(), conversationID, principal.AccountID, req.MessageID); err != nil {
+		eventID, err := a.Store.MarkReadWithSyncEvent(r.Context(), conversationID, principal.AccountID, req.MessageID)
+		if err != nil {
 			handleStorageError(w, err)
 			return
 		}
 		payload := map[string]string{"account_id": principal.AccountID, "message_id": req.MessageID}
-		eventID := a.saveSyncEvent(r.Context(), "read_receipt.updated", nil, conversationID, payload)
 		members := a.conversationRecipientsForSender(r.Context(), conversationID, principal.AccountID)
-		a.Hub.Publish(members, realtime.Event{Version: "v1", Type: "read_receipt.updated", ID: eventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
+		a.publishCommittedEvent(members, realtime.Event{Version: "v1", Type: "read_receipt.updated", ID: eventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
 		w.WriteHeader(http.StatusNoContent)
 	case parts[1] == "retention" && (r.Method == http.MethodPut || r.Method == http.MethodPatch):
 		var req struct {
@@ -301,7 +336,7 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 			writeError(w, http.StatusBadRequest, "invalid_retention_seconds")
 			return
 		}
-		conversation, err := a.Store.UpdateConversationRetention(r.Context(), conversationID, principal.AccountID, req.RetentionSeconds)
+		conversation, eventID, err := a.Store.UpdateConversationRetentionWithSyncEvent(r.Context(), conversationID, principal.AccountID, req.RetentionSeconds)
 		if err != nil {
 			handleStorageError(w, err)
 			return
@@ -311,9 +346,8 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 			retentionMeta["retention_seconds"] = *req.RetentionSeconds
 		}
 		a.recordAuditEvent(r.Context(), &principal.AccountID, "conversation.retention.updated", retentionMeta)
-		eventID := a.saveSyncEvent(r.Context(), "retention.updated", nil, conversationID, conversation)
 		members := a.conversationMemberIDs(r.Context(), conversationID)
-		a.Hub.Publish(members, realtime.Event{Version: "v1", Type: "retention.updated", ID: eventID, ConversationID: conversationID, Payload: conversation, CreatedAt: time.Now().UTC()})
+		a.publishCommittedEvent(members, realtime.Event{Version: "v1", Type: "retention.updated", ID: eventID, ConversationID: conversationID, Payload: conversation, CreatedAt: time.Now().UTC()})
 		writeJSON(w, http.StatusOK, conversation)
 	default:
 		writeError(w, http.StatusNotFound, "not_found")
@@ -401,7 +435,7 @@ func (a *API) createMessageEnvelope(w http.ResponseWriter, r *http.Request, prin
 		return
 	}
 	if !result.Duplicate {
-		a.Hub.Publish(result.Recipients, realtime.Event{Version: "v1", Type: "message.envelope.created", ID: result.EventID, ConversationID: result.Envelope.ConversationID, Payload: result.Envelope, CreatedAt: time.Now().UTC()})
+		a.publishCommittedEvent(result.Recipients, realtime.Event{Version: "v1", Type: "message.envelope.created", ID: result.EventID, ConversationID: result.Envelope.ConversationID, Payload: result.Envelope, CreatedAt: time.Now().UTC()})
 		a.notifyPush(r.Context(), result.Envelope.ConversationID, principal.AccountID)
 	}
 	status := http.StatusCreated
@@ -426,6 +460,15 @@ type encryptedMessageMutationRequest struct {
 
 func (a *API) messageSubroute(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/messages/"), "/")
+	if len(parts) == 1 && parts[0] != "" && r.Method == http.MethodGet {
+		envelope, err := a.Store.MessageForAccount(r.Context(), parts[0], principal.AccountID)
+		if err != nil {
+			handleStorageError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, envelope)
+		return
+	}
 	if len(parts) != 2 {
 		writeError(w, http.StatusNotFound, "not_found")
 		return
@@ -437,24 +480,24 @@ func (a *API) messageSubroute(w http.ResponseWriter, r *http.Request, principal 
 		if !ok {
 			return
 		}
-		envelope, err := a.Store.UpdateMessageEnvelope(r.Context(), messageID, principal.AccountID, req.Ciphertext, req.CryptoProtocol, req.CryptoMetadata)
+		envelope, eventID, err := a.Store.UpdateMessageEnvelopeWithSyncEvent(r.Context(), messageID, principal.AccountID, req.Ciphertext, req.CryptoProtocol, req.CryptoMetadata)
 		if err != nil {
 			handleStorageError(w, err)
 			return
 		}
-		a.publishMessageEvent(r, "message.envelope.edited", envelope)
+		a.publishMessageEvent(r, "message.envelope.edited", eventID, envelope)
 		writeJSON(w, http.StatusOK, envelope)
 	case parts[1] == "delete" && r.Method == http.MethodPost:
 		req, ok := decodeEncryptedMutation(w, r)
 		if !ok {
 			return
 		}
-		envelope, err := a.Store.DeleteMessageEnvelope(r.Context(), messageID, principal.AccountID, req.Ciphertext, req.CryptoProtocol, req.CryptoMetadata)
+		envelope, eventID, err := a.Store.DeleteMessageEnvelopeWithSyncEvent(r.Context(), messageID, principal.AccountID, req.Ciphertext, req.CryptoProtocol, req.CryptoMetadata)
 		if err != nil {
 			handleStorageError(w, err)
 			return
 		}
-		a.publishMessageEvent(r, "message.envelope.deleted", envelope)
+		a.publishMessageEvent(r, "message.envelope.deleted", eventID, envelope)
 		writeJSON(w, http.StatusOK, envelope)
 	case parts[1] == "reactions" && r.Method == http.MethodGet:
 		reactions, err := a.Store.ListReactions(r.Context(), messageID, principal.AccountID)
@@ -464,15 +507,14 @@ func (a *API) messageSubroute(w http.ResponseWriter, r *http.Request, principal 
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"reactions": reactions})
 	case parts[1] == "reactions" && r.Method == http.MethodDelete:
-		conversationID, err := a.Store.DeleteReaction(r.Context(), messageID, principal.AccountID)
+		conversationID, eventID, err := a.Store.DeleteReactionWithSyncEvent(r.Context(), messageID, principal.AccountID)
 		if err != nil {
 			handleStorageError(w, err)
 			return
 		}
 		payload := map[string]string{"message_id": messageID, "account_id": principal.AccountID}
-		eventID := a.saveSyncEvent(r.Context(), "reaction.deleted", nil, conversationID, payload)
 		members := a.conversationRecipientsForSender(r.Context(), conversationID, principal.AccountID)
-		a.Hub.Publish(members, realtime.Event{Version: "v1", Type: "reaction.deleted", ID: eventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
+		a.publishCommittedEvent(members, realtime.Event{Version: "v1", Type: "reaction.deleted", ID: eventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
 		w.WriteHeader(http.StatusNoContent)
 	case parts[1] == "reactions" && r.Method == http.MethodPost:
 		raw, ok := readLimitedJSON(w, r)
@@ -493,19 +535,14 @@ func (a *API) messageSubroute(w http.ResponseWriter, r *http.Request, principal 
 			writeError(w, http.StatusBadRequest, "reaction_ciphertext_required")
 			return
 		}
-		if err := a.Store.CreateReaction(r.Context(), messageID, principal.AccountID, req.ReactionCiphertext); err != nil {
-			handleStorageError(w, err)
-			return
-		}
-		message, err := a.Store.MessageByID(r.Context(), messageID)
+		conversationID, eventID, err := a.Store.CreateReactionWithSyncEvent(r.Context(), messageID, principal.AccountID, req.ReactionCiphertext)
 		if err != nil {
 			handleStorageError(w, err)
 			return
 		}
 		payload := map[string]string{"message_id": messageID, "account_id": principal.AccountID}
-		eventID := a.saveSyncEvent(r.Context(), "reaction.created", nil, message.ConversationID, payload)
-		members := a.conversationRecipientsForSender(r.Context(), message.ConversationID, principal.AccountID)
-		a.Hub.Publish(members, realtime.Event{Version: "v1", Type: "reaction.created", ID: eventID, ConversationID: message.ConversationID, Payload: payload, CreatedAt: time.Now().UTC()})
+		members := a.conversationRecipientsForSender(r.Context(), conversationID, principal.AccountID)
+		a.publishCommittedEvent(members, realtime.Event{Version: "v1", Type: "reaction.created", ID: eventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		writeError(w, http.StatusNotFound, "not_found")
@@ -532,19 +569,17 @@ func decodeEncryptedMutation(w http.ResponseWriter, r *http.Request) (encryptedM
 	return req, true
 }
 
-func (a *API) publishMessageEvent(r *http.Request, eventType string, envelope domain.MessageEnvelope) {
-	ref := messageEventRef(envelope)
-	eventID := a.saveSyncEvent(r.Context(), eventType, nil, envelope.ConversationID, ref)
+func (a *API) publishMessageEvent(r *http.Request, eventType string, eventID int64, envelope domain.MessageEnvelope) {
 	members := a.conversationRecipientsForSender(r.Context(), envelope.ConversationID, envelope.SenderAccountID)
-	a.Hub.Publish(members, realtime.Event{Version: "v1", Type: eventType, ID: eventID, ConversationID: envelope.ConversationID, Payload: envelope, CreatedAt: time.Now().UTC()})
+	a.publishCommittedEvent(members, realtime.Event{Version: "v1", Type: eventType, ID: eventID, ConversationID: envelope.ConversationID, Payload: envelope, CreatedAt: time.Now().UTC()})
 }
 
-func (a *API) saveSyncEvent(ctx context.Context, eventType string, accountID *string, conversationID string, payload interface{}) int64 {
-	eventID, err := a.Store.SaveSyncEvent(ctx, eventType, accountID, conversationID, payload)
-	if err != nil {
-		a.warn("sync_event_save_failed", "event_type", eventType, "err", err)
+func (a *API) publishCommittedEvent(accountIDs []string, event realtime.Event) {
+	if event.ID <= 0 {
+		a.warn("realtime_event_without_commit", "event_type", event.Type)
+		return
 	}
-	return eventID
+	a.Hub.Publish(accountIDs, event)
 }
 
 func (a *API) conversationMemberIDs(ctx context.Context, conversationID string) []string {
@@ -575,21 +610,4 @@ func (a *API) warn(message string, args ...interface{}) {
 	if a.Log != nil {
 		a.Log.Warn(message, args...)
 	}
-}
-
-// messageEventRef is the compact form persisted in sync_events.payload_json:
-// just the IDs the client needs to refetch the full envelope, never the
-// ciphertext. This keeps the audit/sync log from duplicating message bodies.
-func messageEventRef(envelope domain.MessageEnvelope) map[string]interface{} {
-	ref := map[string]interface{}{
-		"message_id":      envelope.ID,
-		"conversation_id": envelope.ConversationID,
-	}
-	if envelope.EditedAt != nil {
-		ref["edited_at"] = envelope.EditedAt
-	}
-	if envelope.DeletedAt != nil {
-		ref["deleted_at"] = envelope.DeletedAt
-	}
-	return ref
 }

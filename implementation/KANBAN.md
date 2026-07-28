@@ -4,7 +4,7 @@ Status: **NO-GO** — production crypto remains fail-closed.
 
 ## User decisions
 
-- [ ] **D01** Approve the encrypted mobile database selected by I08. Blocks I09, I12, I18, I19.
+- [ ] **D01** Approve `drift` 2.34.3 + `sqlite3` 3.5.0 with the `sqlite3mc` hook and explicit ChaCha20; keep a random 256-bit hex key in device-bound `flutter_secure_storage` and fail closed if cipher/key checks fail. Tradeoff: more Dart/codegen surface than `sqflite_sqlcipher`, but a verified, current encryption path with typed transactional migrations. Blocks I09, I12, I18, I19.
 - [ ] **D02** Keep encrypted backup/recovery in the first production release? Recommended: yes. Blocks I18 scope.
 - [ ] **D03** Defer native APNs/FCM and calls until after core messaging? Recommended: yes.
 - [ ] **D04** Minimize admin audit events by omitting block/member target IDs unless operationally required?
@@ -12,11 +12,12 @@ Status: **NO-GO** — production crypto remains fail-closed.
 
 ## Ready
 
-- [ ] [I01 — Establish a clean baseline](tasks/I01-baseline.md)
+- None.
 
 ## Doing
 
-- None.
+- [ ] [I15 — Derive device-link SAS locally](tasks/I15-device-link.md)
+
 
 ## Blocked
 
@@ -26,27 +27,14 @@ Status: **NO-GO** — production crypto remains fail-closed.
 
 ## Backlog
 
-- [ ] [I02 — Fix key-package claims](tasks/I02-key-packages.md) — after I01
-- [ ] [I03 — Make mutations and events atomic](tasks/I03-atomic-events.md) — after I01
-- [ ] [I04 — Enforce DM and member lifecycle](tasks/I04-membership.md) — after I02, I03
-- [ ] [I05 — Add old-message repair](tasks/I05-sync-repair.md) — after I03
-- [ ] [I06 — Harden proxy, setup, and throttles](tasks/I06-proxy-auth.md) — after I01
-- [ ] [I07 — Make encrypted blobs durable](tasks/I07-blobs.md) — after I01
-- [ ] [I08 — Select the encrypted mobile database](tasks/I08-database-decision.md) — after I01
-- [ ] [I10 — Package Rust for Android/iOS](tasks/I10-native-packaging.md) — after I01
-- [ ] [I11 — Complete Dart/native bindings](tasks/I11-dart-ffi.md) — after I10
 - [ ] [I12 — Commit MLS state and cursor together](tasks/I12-mls-state.md) — after I09, I11
 - [ ] [I13 — Implement conversation MLS flow](tasks/I13-mls-orchestration.md) — after I02, I04, I12
 - [ ] [I14 — Define encrypted app payloads](tasks/I14-payloads.md) — after I13
-- [ ] [I15 — Derive device-link SAS locally](tasks/I15-device-link.md) — after I11
 - [ ] [I16 — Remove revoked devices from groups](tasks/I16-revocation.md) — after I04, I13, I15
 - [ ] [I17 — Add encrypted attachment UX](tasks/I17-attachments.md) — after I07, I09, I14
 - [ ] [I19 — Fix mobile sync, history, and outbox](tasks/I19-mobile-sync.md) — after I05, I09, I14
 - [ ] [I20 — Add identity and safety UX](tasks/I20-safety-ux.md) — after I04, I14, I19
 - [ ] [I26 — Verify peer identity out of band](tasks/I26-peer-verification.md) — after I13, I15, I20
-- [ ] [I21 — Harden production deployment](tasks/I21-deployment.md) — after I06, I07
-- [ ] [I22 — Add live API contracts](tasks/I22-api-contracts.md) — after I04, I05
-- [ ] [I23 — Test proxy and WebSocket adversarial paths](tasks/I23-proxy-websocket.md) — after I06
 - [ ] [I24 — Build signed apps and run real-device checks](tasks/I24-release-builds.md) — after I16–I23, I26
 
 ## Later
@@ -63,4 +51,17 @@ Status: **NO-GO** — production crypto remains fail-closed.
 
 ## Done
 
+- 2026-07-28: I21 — Enforced a tested single-writer process lock, one-time production setup secret lifecycle, readiness-first graceful drain, clean-host backup/restore drill, hardened deployment examples/runbook, and aligned pinned toolchains; the user-requested fresh Compose smoke remains reserved for the final pre-push gate.
+- 2026-07-28: I23 — Hardened WebSocket handshakes and frame parsing, added fuzz/adversarial coverage for masking, fragmentation, bounds, control frames, UTF-8, close, lifecycle, slow clients, and proved trusted-proxy connection limits under the race detector.
+- 2026-07-28: I22 — Added a migrated live-server contract suite covering every Flutter API route, typed JSON models, errors, and pagination with synthetic ciphertext; CI and aggregate tests pass.
+- 2026-07-28: I11 — Bound the complete ABI v2 with typed errors, bounded secret handling, native finalization/idempotent close, and a passing Dart-to-Rust lifecycle conformance test; the app remains on the unavailable crypto service.
+- 2026-07-28: I10 — Pinned Rust 1.90 mobile targets, added reproducible Android JNI/iOS XCFramework packaging with source/license metadata, linked the fail-closed ABI, and added CI symbol/build checks.
+- 2026-07-28: I08 — Recommended exact Drift/SQLite3MC versions and a device-bound random-key design; documented the smaller-surface tradeoff for D01 approval.
+- 2026-07-28: I07 — Made encrypted blob writes durable across file and directory sync, validated size and digest before reads, added authorized range downloads, and persisted deletion retries.
+- 2026-07-28: I06 — Unified spoof-resistant HTTP/WebSocket/setup client identity, added strict enrollment and privacy-safe login backoff with bounded retry guidance, and made reference production setup fail closed.
+- 2026-07-28: I05 — Added a scoped single-envelope repair endpoint and mobile sync repair-by-ID so old edits/deletes converge outside the newest page.
+- 2026-07-28: I04 — Enforced unique two-account DMs and added scoped rosters plus safe group leave/removal with rank, last-owner, atomic lifecycle events, and explicit pending MLS coordination.
+- 2026-07-28: I03 — Durable mutations and sync events are atomic for message edits/deletes, reactions, receipts, retention, calls, and device events; realtime publishing requires a committed event ID.
+- 2026-07-28: I02 — Key-package claims now use migrated memberships transactionally; storage/API tests cover non-members, requester-device exclusion, and single-use behavior.
+- 2026-07-28: I01 — Established a clean baseline; fixed the fail-closed setup notice, updated the scanner API callback, and removed the deprecated secure-storage option. Tests and lint pass; release readiness fails only at the intentional crypto gate.
 - 2026-07-26: Consolidated active work; archived audits, old plans, and superseded docs.

@@ -39,9 +39,8 @@ var (
 	ErrEnrollmentInvalid   = errors.New("enrollment reservation is invalid, expired, or already used")
 
 	// ErrDeviceLinkVerificationFailed is returned when the approver does not
-	// supply the link's verification code, so a device cannot be approved
-	// without the human confirming the out-of-band code shown on both devices.
-	ErrDeviceLinkVerificationFailed = errors.New("device link verification code does not match")
+	// supply the same credential-bound transcript hash committed by the claimant.
+	ErrDeviceLinkVerificationFailed = errors.New("device link transcript does not match")
 )
 
 type Store struct {
@@ -466,34 +465,15 @@ func scanDevice(rows scanner) (domain.Device, error) {
 }
 
 func scanDeviceLink(rows scanner, link *domain.DeviceLink) error {
-	var code, createdByDeviceID, claimedDeviceName, approvedDeviceID sql.NullString
-	var created, expires, claimed, approved, consumed, revoked sql.NullString
-	if err := rows.Scan(&link.ID, &code, &link.AccountID, &createdByDeviceID, &link.State, &link.VerificationCode, &claimedDeviceName, &approvedDeviceID, &created, &expires, &claimed, &approved, &consumed, &revoked); err != nil {
-		return err
-	}
-	if code.Valid {
-		link.Code = code.String
-	}
-	if createdByDeviceID.Valid {
-		link.CreatedByDeviceID = createdByDeviceID.String
-	}
-	link.ClaimedDeviceName = stringPtr(claimedDeviceName)
-	link.ApprovedDeviceID = stringPtr(approvedDeviceID)
-	link.CreatedAt = parseTime(created.String)
-	link.ExpiresAt = parseTime(expires.String)
-	link.ClaimedAt = parseOptionalTime(claimed)
-	link.ApprovedAt = parseOptionalTime(approved)
-	link.ConsumedAt = parseOptionalTime(consumed)
-	link.RevokedAt = parseOptionalTime(revoked)
-	return nil
-}
-
-func scanDeviceLinkForApproval(rows scanner, link *domain.DeviceLink, deviceName *string, keyPackage *[]byte, signingKey *[]byte, authSecretHash *string, deviceID *string) error {
-	var code, createdByDeviceID, claimedDeviceName, approvedDeviceID, claimedDeviceNameForDevice sql.NullString
+	var code, createdByDeviceID, claimedDeviceName, approvedDeviceID, claimedDeviceID sql.NullString
+	var legacyVerificationCode string
 	var created, expires, claimed, approved, consumed, revoked sql.NullString
 	if err := rows.Scan(
-		&link.ID, &code, &link.AccountID, &createdByDeviceID, &link.State, &link.VerificationCode, &claimedDeviceName, &approvedDeviceID, &created, &expires, &claimed, &approved, &consumed, &revoked,
-		&claimedDeviceNameForDevice, keyPackage, signingKey, authSecretHash, deviceID,
+		&link.ID, &code, &link.AccountID, &createdByDeviceID, &link.State,
+		&legacyVerificationCode, &claimedDeviceName, &approvedDeviceID,
+		&created, &expires, &claimed, &approved, &consumed, &revoked,
+		&link.ProtocolVersion, &link.LinkNonce, &claimedDeviceID,
+		&link.ClaimedSigningKey, &link.TranscriptHash, &link.ExistingSigningKey,
 	); err != nil {
 		return err
 	}
@@ -504,6 +484,43 @@ func scanDeviceLinkForApproval(rows scanner, link *domain.DeviceLink, deviceName
 		link.CreatedByDeviceID = createdByDeviceID.String
 	}
 	link.ClaimedDeviceName = stringPtr(claimedDeviceName)
+	if claimedDeviceID.Valid {
+		link.ClaimedDeviceID = claimedDeviceID.String
+	}
+	link.ApprovedDeviceID = stringPtr(approvedDeviceID)
+	link.CreatedAt = parseTime(created.String)
+	link.ExpiresAt = parseTime(expires.String)
+	link.ClaimedAt = parseOptionalTime(claimed)
+	link.ApprovedAt = parseOptionalTime(approved)
+	link.ConsumedAt = parseOptionalTime(consumed)
+	link.RevokedAt = parseOptionalTime(revoked)
+	return nil
+}
+
+func scanDeviceLinkForApproval(rows scanner, link *domain.DeviceLink, deviceName *string, keyPackage *[]byte, authSecretHash *string) error {
+	var code, createdByDeviceID, claimedDeviceName, approvedDeviceID, claimedDeviceID, claimedDeviceNameForDevice sql.NullString
+	var legacyVerificationCode string
+	var created, expires, claimed, approved, consumed, revoked sql.NullString
+	if err := rows.Scan(
+		&link.ID, &code, &link.AccountID, &createdByDeviceID, &link.State,
+		&legacyVerificationCode, &claimedDeviceName, &approvedDeviceID,
+		&created, &expires, &claimed, &approved, &consumed, &revoked,
+		&link.ProtocolVersion, &link.LinkNonce, &claimedDeviceID,
+		&link.ClaimedSigningKey, &link.TranscriptHash, &link.ExistingSigningKey,
+		&claimedDeviceNameForDevice, keyPackage, authSecretHash,
+	); err != nil {
+		return err
+	}
+	if code.Valid {
+		link.Code = code.String
+	}
+	if createdByDeviceID.Valid {
+		link.CreatedByDeviceID = createdByDeviceID.String
+	}
+	link.ClaimedDeviceName = stringPtr(claimedDeviceName)
+	if claimedDeviceID.Valid {
+		link.ClaimedDeviceID = claimedDeviceID.String
+	}
 	link.ApprovedDeviceID = stringPtr(approvedDeviceID)
 	link.CreatedAt = parseTime(created.String)
 	link.ExpiresAt = parseTime(expires.String)

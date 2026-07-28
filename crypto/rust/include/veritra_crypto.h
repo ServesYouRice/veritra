@@ -59,6 +59,11 @@ void pm_crypto_device_destroy(PmCryptoHandle *handle);
 void pm_crypto_buffer_free(PmOwnedBuffer buffer);
 int32_t pm_crypto_device_signing_public_key(PmCryptoHandle *handle,
                                             PmOwnedBuffer *out);
+int32_t pm_crypto_device_link_transcript_hash(
+    PmCryptoHandle *handle, PmByteSlice protocol_version,
+    PmByteSlice peer_device_id,
+    PmByteSlice peer_signing_public_key, PmByteSlice link_nonce,
+    uint8_t local_is_existing_device, PmOwnedBuffer *out);
 int32_t pm_crypto_device_sign_enrollment_challenge(PmCryptoHandle *handle,
                                                    PmByteSlice challenge,
                                                    PmOwnedBuffer *out);

@@ -34,14 +34,21 @@ type API struct {
 	Messages            *messaging.Service
 	Push                push.Provider
 	VAPIDPublicKey      string
+	ClientIdentities    *ClientIdentityResolver
+	LoginBackoff        *LoginBackoff
+	Ready               func() bool
 	typingMu            sync.Mutex
 	typingLast          map[string]time.Time
+}
+
+func (a *API) clientIP(r *http.Request) string {
+	return a.ClientIdentities.ClientIP(r)
 }
 
 func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /livez", a.liveness)
 	mux.HandleFunc("GET /healthz", a.health)
-	mux.HandleFunc("GET /readyz", a.health)
+	mux.HandleFunc("GET /readyz", a.readiness)
 	mux.HandleFunc("GET /api/v1/health", a.health)
 	mux.HandleFunc("GET /setup", a.setupPage)
 	mux.HandleFunc("GET /api/v1/setup/status", a.setupStatus)
@@ -331,11 +338,15 @@ func messageQueryLimit(r *http.Request) int {
 
 func deviceLinkPayload(link domain.DeviceLink) map[string]interface{} {
 	payload := map[string]interface{}{
-		"id":                link.ID,
-		"state":             link.State,
-		"verification_code": link.VerificationCode,
-		"created_at":        link.CreatedAt,
-		"expires_at":        link.ExpiresAt,
+		"id":                   link.ID,
+		"state":                link.State,
+		"account_id":           link.AccountID,
+		"created_by_device_id": link.CreatedByDeviceID,
+		"protocol_version":     link.ProtocolVersion,
+		"link_nonce":           link.LinkNonce,
+		"existing_signing_key": link.ExistingSigningKey,
+		"created_at":           link.CreatedAt,
+		"expires_at":           link.ExpiresAt,
 	}
 	if link.Code != "" {
 		payload["code"] = link.Code
@@ -343,6 +354,15 @@ func deviceLinkPayload(link domain.DeviceLink) map[string]interface{} {
 	}
 	if link.ClaimedDeviceName != nil {
 		payload["claimed_device_name"] = *link.ClaimedDeviceName
+	}
+	if link.ClaimedDeviceID != "" {
+		payload["claimed_device_id"] = link.ClaimedDeviceID
+	}
+	if len(link.ClaimedSigningKey) != 0 {
+		payload["claimed_signing_key"] = link.ClaimedSigningKey
+	}
+	if len(link.TranscriptHash) != 0 {
+		payload["transcript_hash"] = link.TranscriptHash
 	}
 	if link.ApprovedDeviceID != nil {
 		payload["approved_device_id"] = *link.ApprovedDeviceID
