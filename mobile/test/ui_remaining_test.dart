@@ -429,6 +429,11 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
+      await tester.scrollUntilVisible(
+        find.text('Block @alice'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
       expect(find.text('Block @alice'), findsOneWidget);
       await tester.tap(find.text('Block @alice'));
       await tester.pumpAndSettle();
