@@ -108,7 +108,7 @@ void main() {
       conversationId: group.id,
       idempotencyKey: 'contract-envelope-1',
       ciphertext: List<int>.generate(48, (index) => 128 + index),
-      cryptoProtocol: 'mls-openmls-todo',
+      cryptoProtocol: 'mls10-openmls-v1',
       cryptoMetadata: const {'format': 'contract-v1'},
     );
     await client.sendEnvelope(owner.token, envelope);

@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.25.0"
+          go-version: "1.25.12"
       - name: Test with race detector and coverage
         run: go test -race -coverprofile=coverage.out ./...
         working-directory: server
@@ -57,7 +57,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.25.0"
+          go-version: "1.25.12"
           cache-dependency-path: server/go.sum
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
@@ -74,6 +74,9 @@ jobs:
           sh scripts/verify-mobile-crypto.sh android
           cargo build --manifest-path crypto/rust/Cargo.toml --locked --release
       - run: flutter pub get --enforce-lockfile
+        working-directory: mobile
+      - name: Verify Dart dependency license files
+        run: sh ../scripts/check-dart-licenses.sh
         working-directory: mobile
       - run: flutter test
         env:
@@ -146,13 +149,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.25.0"
+          go-version: "1.25.12"
           cache-dependency-path: server/go.sum
       - name: Scan Go dependencies
         working-directory: server
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
       - name: Install pinned Rust audit tool
-        run: cargo install cargo-audit --version 0.21.2 --locked
+        run: cargo install cargo-audit --version 0.22.2 --locked
       - name: Scan Rust dependencies
         working-directory: crypto/rust
-        run: cargo audit
+        run: sh ../../scripts/audit-rust.sh

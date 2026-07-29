@@ -27,7 +27,7 @@ This project is licensed AGPL-3.0-or-later. Dependency licenses must be compatib
 | `openmls_basic_credential` 0.5.0 | Basic MLS credential signing keys | MIT | Exact version pinned; used to bind the application device identity to MLS credentials. |
 | `openmls_rust_crypto` 0.5.1 | RustCrypto provider for OpenMLS | MIT | Exact version pinned; native provider core only, pending platform-secure persistence review. |
 | `openmls_traits` 0.5.0 | OpenMLS provider and storage traits | MIT | Exact version pinned. |
-| `sha2` 0.10.9 | SHA-256 enrollment key-package commitment | Apache-2.0 OR MIT | Exact version pinned; used only to bind the public key package into the signed enrollment proof. |
+| `sha2` 0.11.0 | SHA-256 enrollment key-package commitment | Apache-2.0 OR MIT | Exact version pinned; used only to bind the public key package into the signed enrollment proof. |
 | `tls_codec` 0.4.2 | RFC 9420 TLS presentation-language encoding | MIT | Exact version pinned for MLS transport serialization. |
 | Flutter SDK | Mobile client framework | BSD-3-Clause | Toolchain, not vendored. |
 
@@ -35,13 +35,21 @@ This project is licensed AGPL-3.0-or-later. Dependency licenses must be compatib
 
 Signal/libsignal, OpenMLS, Matrix/Synapse/Element, SimpleX Chat, Mattermost, Zulip, Rocket.Chat, Stoat/Revolt, PocketBase, Pion, LiveKit, Caddy, UnifiedPush, ntfy, and MiroTalk were studied for architecture, deployment, crypto, licensing, and self-hosting lessons. No source code from these projects is copied into this repository.
 
-OpenMLS dependency review (2026-07-16): the locked graph contains 151
+OpenMLS dependency review (2026-07-29): the locked graph contains 170
 third-party packages. Every package declares a license. The observed SPDX
-expressions are MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, MPL-2.0,
-Unicode-3.0, LLVM-exception, Unlicense, and dual-license alternatives that
-include MIT/Apache-2.0. No sensitive OpenMLS debug feature is enabled. Preserve
-the generated SPDX SBOM and upstream license texts with releases; Android/iOS
-artifact review remains required before enabling the mobile ABI.
+expressions are MIT, Apache-2.0, BSD-1-Clause, BSD-2-Clause, BSD-3-Clause,
+MPL-2.0, Unicode-3.0, LLVM-exception, LGPL-2.1-or-later, Unlicense, and
+dual-/multi-license alternatives that include MIT or Apache-2.0. No sensitive
+OpenMLS debug feature is enabled. Preserve the generated SPDX SBOM and upstream
+license texts with releases; Android/iOS artifact review remains required
+before enabling the mobile ABI.
+
+Go dependency review (2026-07-29): `go-licenses` reported MIT licenses for
+`webpush-go`, `go-humanize`, `golang-jwt/jwt`, and `modernc.org/libc`, and
+BSD-3-Clause licenses for `google/uuid`, `bigfft`, `golang.org/x/crypto`,
+`golang.org/x/sys`, `modernc.org/memory`, and `modernc.org/sqlite`.
+`modernc.org/mathutil` 1.7.1 was not classified by the scanner; its packaged
+license and source header were reviewed manually and are BSD-3-Clause.
 
 ## Build and Release Dependencies
 
