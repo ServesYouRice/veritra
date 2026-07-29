@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:typed_data';
@@ -73,6 +74,10 @@ typedef _HandleSliceOutputNative = Int32 Function(
     Pointer<_PmCryptoHandle>, _PmByteSlice, Pointer<_PmOwnedBuffer>);
 typedef _HandleSliceOutputDart = int Function(
     Pointer<_PmCryptoHandle>, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _HandleSliceTwoOutputsNative = Int32 Function(Pointer<_PmCryptoHandle>,
+    _PmByteSlice, Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>);
+typedef _HandleSliceTwoOutputsDart = int Function(Pointer<_PmCryptoHandle>,
+    _PmByteSlice, Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>);
 typedef _DeviceLinkTranscriptNative = Int32 Function(
     Pointer<_PmCryptoHandle>,
     _PmByteSlice,
@@ -101,10 +106,18 @@ typedef _AddMemberNative = Int32 Function(
     Pointer<_PmCryptoHandle>,
     _PmByteSlice,
     _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
     Pointer<_PmOwnedBuffer>,
     Pointer<_PmOwnedBuffer>);
-typedef _AddMemberDart = int Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
-    _PmByteSlice, Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>);
+typedef _AddMemberDart = int Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>);
 typedef _RemoveMemberNative = Int32 Function(Pointer<_PmCryptoHandle>,
     _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
 typedef _RemoveMemberDart = int Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
@@ -113,6 +126,10 @@ typedef _SealNative = Int32 Function(
     Pointer<_PmCryptoHandle>, _PmByteSlice, Uint64, Pointer<_PmOwnedBuffer>);
 typedef _SealDart = int Function(
     Pointer<_PmCryptoHandle>, _PmByteSlice, int, Pointer<_PmOwnedBuffer>);
+typedef _AttachmentChunkNative = Int32 Function(_PmByteSlice, _PmByteSlice,
+    Uint32, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _AttachmentChunkDart = int Function(_PmByteSlice, _PmByteSlice, int,
+    _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
 
 class NativeCryptoBindings {
   NativeCryptoBindings._(DynamicLibrary library)
@@ -137,8 +154,8 @@ class NativeCryptoBindings {
             library.lookupFunction<_HandleOutputNative, _HandleOutputDart>(
                 'pm_crypto_device_signing_public_key'),
         _deviceLinkTranscript = library.lookupFunction<
-                _DeviceLinkTranscriptNative, _DeviceLinkTranscriptDart>(
-            'pm_crypto_device_link_transcript_hash'),
+            _DeviceLinkTranscriptNative,
+            _DeviceLinkTranscriptDart>('pm_crypto_device_link_transcript_hash'),
         _signChallenge = library
             .lookupFunction<_HandleSliceOutputNative, _HandleSliceOutputDart>(
                 'pm_crypto_device_sign_enrollment_challenge'),
@@ -150,23 +167,28 @@ class NativeCryptoBindings {
         _groupCreate =
             library.lookupFunction<_HandleSliceNative, _HandleSliceDart>(
                 'pm_crypto_group_create'),
-        _groupJoin =
-            library.lookupFunction<_HandleSliceNative, _HandleSliceDart>(
-                'pm_crypto_group_join'),
+        _groupJoin = library.lookupFunction<_HandleTwoSlicesNative,
+            _HandleTwoSlicesDart>('pm_crypto_group_join'),
         _groupAdd = library.lookupFunction<_AddMemberNative, _AddMemberDart>(
             'pm_crypto_group_add_member'),
         _groupCommit = library.lookupFunction<_HandleTwoSlicesNative,
             _HandleTwoSlicesDart>('pm_crypto_group_process_commit'),
         _groupUpdate = library.lookupFunction<_HandleSliceOutputNative,
             _HandleSliceOutputDart>('pm_crypto_group_self_update'),
+        _groupSafety = library.lookupFunction<_HandleSliceTwoOutputsNative,
+            _HandleSliceTwoOutputsDart>('pm_crypto_group_safety_number'),
         _groupRemove =
             library.lookupFunction<_RemoveMemberNative, _RemoveMemberDart>(
                 'pm_crypto_group_remove_member'),
         _groupEncrypt = library.lookupFunction<_HandleTwoSlicesOutputNative,
             _HandleTwoSlicesOutputDart>('pm_crypto_group_encrypt'),
         _groupDecrypt = library.lookupFunction<_HandleTwoSlicesOutputNative,
-            _HandleTwoSlicesOutputDart>('pm_crypto_group_decrypt') {
-    if (_abiVersion() != 2) {
+            _HandleTwoSlicesOutputDart>('pm_crypto_group_decrypt'),
+        _attachmentEncrypt = library.lookupFunction<_AttachmentChunkNative,
+            _AttachmentChunkDart>('pm_crypto_attachment_encrypt_chunk'),
+        _attachmentDecrypt = library.lookupFunction<_AttachmentChunkNative,
+            _AttachmentChunkDart>('pm_crypto_attachment_decrypt_chunk') {
+    if (_abiVersion() != 4) {
       throw const NativeCryptoException(NativeCryptoError.abiMismatch);
     }
     _deviceFinalizer = NativeFinalizer(library
@@ -188,13 +210,16 @@ class NativeCryptoBindings {
   final _HandleOutputDart _createKeyPackage;
   final _SealDart _seal;
   final _HandleSliceDart _groupCreate;
-  final _HandleSliceDart _groupJoin;
+  final _HandleTwoSlicesDart _groupJoin;
   final _AddMemberDart _groupAdd;
   final _HandleTwoSlicesDart _groupCommit;
   final _HandleSliceOutputDart _groupUpdate;
+  final _HandleSliceTwoOutputsDart _groupSafety;
   final _RemoveMemberDart _groupRemove;
   final _HandleTwoSlicesOutputDart _groupEncrypt;
   final _HandleTwoSlicesOutputDart _groupDecrypt;
+  final _AttachmentChunkDart _attachmentEncrypt;
+  final _AttachmentChunkDart _attachmentDecrypt;
   late final NativeFinalizer _deviceFinalizer;
 
   static NativeCryptoBindings load() {
@@ -206,6 +231,47 @@ class NativeCryptoBindings {
 
   static NativeCryptoBindings open(String path) =>
       NativeCryptoBindings._(DynamicLibrary.open(path));
+
+  List<int> encryptAttachmentChunk({
+    required List<int> key,
+    required List<int> noncePrefix,
+    required int chunkIndex,
+    required List<int> context,
+    required List<int> plaintext,
+  }) =>
+      _attachmentChunk(
+          _attachmentEncrypt, key, noncePrefix, chunkIndex, context, plaintext);
+
+  List<int> decryptAttachmentChunk({
+    required List<int> key,
+    required List<int> noncePrefix,
+    required int chunkIndex,
+    required List<int> context,
+    required List<int> ciphertext,
+  }) =>
+      _attachmentChunk(_attachmentDecrypt, key, noncePrefix, chunkIndex,
+          context, ciphertext);
+
+  List<int> _attachmentChunk(
+    _AttachmentChunkDart operation,
+    List<int> key,
+    List<int> noncePrefix,
+    int chunkIndex,
+    List<int> context,
+    List<int> input,
+  ) {
+    _bounded(key, 32, exact: true);
+    _bounded(noncePrefix, 8, exact: true);
+    _bounded(context, 512);
+    _bounded(input, 1024 * 1024 + 16);
+    if (chunkIndex < 0 || chunkIndex > 0xffffffff) {
+      throw ArgumentError.value(chunkIndex, 'chunkIndex');
+    }
+    return _withByteLists(
+        <List<int>>[key, noncePrefix, context, input],
+        (slices) => _output((out) => operation(
+            slices[0], slices[1], chunkIndex, slices[2], slices[3], out)));
+  }
 
   NativeCryptoDevice createDevice(String accountId, String deviceId) {
     _bounded(accountId.codeUnits, 128);
@@ -464,10 +530,20 @@ class NativeCryptoDevice implements Finalizable {
     _bindings._bounded(peerSigningKey, 32, exact: true);
     _bindings._bounded(linkNonce, 32, exact: true);
     final transcriptHash = _bindings._withByteLists(
-      [protocolVersion.codeUnits, peerDeviceId.codeUnits, peerSigningKey, linkNonce],
-      (slices) => _bindings._output((out) =>
-          _bindings._deviceLinkTranscript(_liveHandle, slices[0], slices[1],
-              slices[2], slices[3], localIsExistingDevice ? 1 : 0, out)),
+      [
+        protocolVersion.codeUnits,
+        peerDeviceId.codeUnits,
+        peerSigningKey,
+        linkNonce
+      ],
+      (slices) => _bindings._output((out) => _bindings._deviceLinkTranscript(
+          _liveHandle,
+          slices[0],
+          slices[1],
+          slices[2],
+          slices[3],
+          localIsExistingDevice ? 1 : 0,
+          out)),
     );
     if (transcriptHash.length != 32) {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
@@ -504,16 +580,32 @@ class NativeCryptoDevice implements Finalizable {
   void createGroup(String groupId) => _withOne(groupId.codeUnits,
       (group) => _bindings._groupCreate(_liveHandle, group), 128);
 
-  void joinGroup(List<int> welcome) => _withOne(welcome,
-      (value) => _bindings._groupJoin(_liveHandle, value), 4 * 1024 * 1024);
+  void joinGroup(String expectedGroupId, List<int> welcome) {
+    _bindings._bounded(expectedGroupId.codeUnits, 128);
+    _bindings._bounded(welcome, 4 * 1024 * 1024);
+    _withTwo(expectedGroupId.codeUnits, welcome,
+        (group, value) => _bindings._groupJoin(_liveHandle, group, value));
+  }
 
   ({List<int> commit, List<int> welcome}) addMember(
-      String groupId, List<int> keyPackage) {
+    String groupId,
+    List<int> keyPackage,
+    String expectedAccountId,
+    String expectedDeviceId,
+  ) {
     _bindings._bounded(groupId.codeUnits, 128);
     _bindings._bounded(keyPackage, 48 * 1024);
-    return _bindings._withByteLists([groupId.codeUnits, keyPackage], (slices) {
-      final result = _bindings._twoOutputs((commit, welcome) => _bindings
-          ._groupAdd(_liveHandle, slices[0], slices[1], commit, welcome));
+    _bindings._bounded(expectedAccountId.codeUnits, 128);
+    _bindings._bounded(expectedDeviceId.codeUnits, 128);
+    return _bindings._withByteLists([
+      groupId.codeUnits,
+      keyPackage,
+      expectedAccountId.codeUnits,
+      expectedDeviceId.codeUnits,
+    ], (slices) {
+      final result = _bindings._twoOutputs((commit, welcome) =>
+          _bindings._groupAdd(_liveHandle, slices[0], slices[1], slices[2],
+              slices[3], commit, welcome));
       return (commit: result.first, welcome: result.second);
     });
   }
@@ -531,6 +623,19 @@ class NativeCryptoDevice implements Finalizable {
         Uint8List.fromList(groupId.codeUnits),
         (group) => _bindings
             ._output((out) => _bindings._groupUpdate(_liveHandle, group, out)));
+  }
+
+  ({List<int> transcriptHash, String digits}) conversationSafetyNumber(
+      String groupId) {
+    _bindings._bounded(groupId.codeUnits, 128);
+    return _bindings._withSlice(Uint8List.fromList(groupId.codeUnits), (group) {
+      final values = _bindings._twoOutputs((hash, digits) =>
+          _bindings._groupSafety(_liveHandle, group, hash, digits));
+      return (
+        transcriptHash: values.first,
+        digits: utf8.decode(values.second, allowMalformed: false),
+      );
+    });
   }
 
   List<int> removeMember(String groupId, String accountId, String deviceId) {

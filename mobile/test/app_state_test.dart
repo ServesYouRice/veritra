@@ -229,7 +229,7 @@ void main() {
 
     expect(state.pendingFor('conv_1'), hasLength(1));
     final key = state.pendingFor('conv_1').single.idempotencyKey;
-    expect(state.outboxState(key), OutboxDeliveryState.failed);
+    expect(state.outboxState(key), OutboxDeliveryState.retrying);
     expect((await localStore.pendingEnvelopes()).single.idempotencyKey, key);
 
     api.failSend = false;
@@ -307,14 +307,13 @@ class _OutboxApiClient extends ApiClient {
   }
 
   @override
-  Future<List<ReceivedMessageEnvelope>> listMessages(
+  Future<MessagePage> listMessagePage(
     String token,
     String conversationId, {
     int limit = 50,
     String? before,
-    String? after,
   }) async =>
-      <ReceivedMessageEnvelope>[];
+      const MessagePage(messages: <ReceivedMessageEnvelope>[]);
 }
 
 class FakeDeviceLinkApiClient extends ApiClient {
@@ -342,13 +341,73 @@ class FakeDeviceLinkApiClient extends ApiClient {
       challenge: <int>[1, 2, 3],
       protocolVersion: 'veritra-device-link-v1',
       linkNonce: <int>[
-        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
       ],
       existingDeviceId: 'dev_owner',
       existingSigningKey: <int>[
-        2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
-        2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
       ],
     );
   }
@@ -431,14 +490,13 @@ class FakeDeviceLinkApiClient extends ApiClient {
   Future<void> logout(String token) async {}
 
   @override
-  Future<List<ReceivedMessageEnvelope>> listMessages(
+  Future<MessagePage> listMessagePage(
     String token,
     String conversationId, {
     int limit = 50,
     String? before,
-    String? after,
   }) async {
-    return <ReceivedMessageEnvelope>[
+    return MessagePage(messages: <ReceivedMessageEnvelope>[
       ReceivedMessageEnvelope(
         id: 'msg_1',
         conversationId: conversationId,
@@ -449,7 +507,7 @@ class FakeDeviceLinkApiClient extends ApiClient {
         cryptoProtocol: 'mls-openmls-todo',
         createdAt: DateTime.parse('2026-05-29T12:00:00Z'),
       ),
-    ];
+    ]);
   }
 
   @override
@@ -482,8 +540,7 @@ class FakeDeviceLinkApiClient extends ApiClient {
       linkNonce: List<int>.filled(32, 1),
       existingSigningKey: List<int>.filled(32, 2),
       claimedDeviceId: state == 'pending' ? null : 'dev_linked',
-      claimedSigningKey:
-          state == 'pending' ? null : List<int>.filled(32, 9),
+      claimedSigningKey: state == 'pending' ? null : List<int>.filled(32, 9),
       transcriptHash:
           state == 'pending' ? null : List<int>.filled(32, transcriptByte),
     );
@@ -543,15 +600,14 @@ class _RepairApiClient extends FakeDeviceLinkApiClient {
   }
 
   @override
-  Future<List<ReceivedMessageEnvelope>> listMessages(
+  Future<MessagePage> listMessagePage(
     String token,
     String conversationId, {
     int limit = 50,
     String? before,
-    String? after,
   }) async {
     listMessagesCalls++;
-    return <ReceivedMessageEnvelope>[];
+    return const MessagePage(messages: <ReceivedMessageEnvelope>[]);
   }
 }
 

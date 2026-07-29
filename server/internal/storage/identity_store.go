@@ -345,6 +345,54 @@ func (s *Store) revokeDevice(ctx context.Context, accountID, deviceID, eventType
 	if err != nil {
 		return 0, err
 	}
+	if eventType != "" {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT m.conversation_id, MIN(d.id)
+			FROM memberships m
+			JOIN memberships participants ON participants.conversation_id = m.conversation_id
+			JOIN devices d ON d.account_id = participants.account_id
+			WHERE m.account_id = ? AND d.revoked_at IS NULL AND d.id <> ?
+			GROUP BY m.conversation_id`, accountID, deviceID)
+		if err != nil {
+			return 0, err
+		}
+		type pendingRevocation struct{ conversationID, coordinatorDeviceID string }
+		pending := make([]pendingRevocation, 0)
+		for rows.Next() {
+			var item pendingRevocation
+			if err := rows.Scan(&item.conversationID, &item.coordinatorDeviceID); err != nil {
+				rows.Close()
+				return 0, err
+			}
+			pending = append(pending, item)
+		}
+		if err := rows.Close(); err != nil {
+			return 0, err
+		}
+		for _, item := range pending {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO mls_revocations(conversation_id, revoked_device_id, revoked_account_id,
+					coordinator_device_id, state, requested_at)
+				VALUES(?, ?, ?, ?, 'pending', ?)
+				ON CONFLICT(conversation_id, revoked_device_id) DO NOTHING`,
+				item.conversationID, deviceID, accountID, item.coordinatorDeviceID, now); err != nil {
+				return 0, err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT OR IGNORE INTO mls_revocation_required_devices(
+					conversation_id, revoked_device_id, device_id)
+				SELECT ?, ?, d.id FROM memberships m
+				JOIN devices d ON d.account_id = m.account_id
+				WHERE m.conversation_id = ? AND d.revoked_at IS NULL AND d.id <> ?`,
+				item.conversationID, deviceID, item.conversationID, deviceID); err != nil {
+				return 0, err
+			}
+			if _, err := insertSyncEvent(ctx, tx, "mls.revocation.pending", nil,
+				item.conversationID, map[string]string{"device_id": deviceID, "account_id": accountID}, now); err != nil {
+				return 0, err
+			}
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}

@@ -1,6 +1,9 @@
 package httpapi
 
 import (
+	"crypto/hmac"
+	"crypto/sha1"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -13,6 +16,21 @@ import (
 	"private-messenger/server/internal/storage"
 )
 
+func (a *API) callConfig(w http.ResponseWriter, _ *http.Request, principal domain.Principal) {
+	if len(a.TURNURLs) == 0 || a.TURNSharedSecret == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"enabled": false, "ice_servers": []any{}})
+		return
+	}
+	expires := time.Now().UTC().Add(10 * time.Minute)
+	username := strconv.FormatInt(expires.Unix(), 10) + ":" + principal.AccountID
+	mac := hmac.New(sha1.New, []byte(a.TURNSharedSecret))
+	_, _ = mac.Write([]byte(username))
+	credential := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "ice_servers": []any{
+		map[string]any{"urls": a.TURNURLs, "username": username, "credential": credential},
+	}, "expires_at": expires})
+}
+
 func (a *API) createCall(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
 	var req struct {
 		ConversationID string          `json:"conversation_id"`
@@ -21,7 +39,7 @@ func (a *API) createCall(w http.ResponseWriter, r *http.Request, principal domai
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if !validCallMetadata(req.Metadata) {
+	if !validCallMetadata(req.Metadata) || callMetadataSenderDevice(req.Metadata) != principal.DeviceID {
 		writeError(w, http.StatusBadRequest, "invalid_call_metadata")
 		return
 	}
@@ -62,7 +80,7 @@ func (a *API) callSubroute(w http.ResponseWriter, r *http.Request, principal dom
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if len(req.Metadata) > 0 && !validCallMetadata(req.Metadata) {
+	if len(req.Metadata) > 0 && (!validCallMetadata(req.Metadata) || callMetadataSenderDevice(req.Metadata) != principal.DeviceID) {
 		writeError(w, http.StatusBadRequest, "invalid_call_metadata")
 		return
 	}
@@ -76,6 +94,16 @@ func (a *API) callSubroute(w http.ResponseWriter, r *http.Request, principal dom
 	writeJSON(w, http.StatusOK, call)
 }
 
+func callMetadataSenderDevice(raw json.RawMessage) string {
+	var value struct {
+		SenderDeviceID string `json:"sender_device_id"`
+	}
+	if json.Unmarshal(raw, &value) != nil {
+		return ""
+	}
+	return value.SenderDeviceID
+}
+
 func validCallMetadata(raw json.RawMessage) bool {
 	if len(raw) == 0 {
 		return true
@@ -84,18 +112,20 @@ func validCallMetadata(raw json.RawMessage) bool {
 		return false
 	}
 	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil || len(fields) != 3 {
+	if err := json.Unmarshal(raw, &fields); err != nil || len(fields) != 5 {
 		return false
 	}
-	for _, name := range []string{"version", "ciphertext", "protocol"} {
+	for _, name := range []string{"version", "ciphertext", "protocol", "sender_device_id", "action_id"} {
 		if _, ok := fields[name]; !ok {
 			return false
 		}
 	}
 	var envelope struct {
-		Version    int    `json:"version"`
-		Ciphertext []byte `json:"ciphertext"`
-		Protocol   string `json:"protocol"`
+		Version        int    `json:"version"`
+		Ciphertext     []byte `json:"ciphertext"`
+		Protocol       string `json:"protocol"`
+		SenderDeviceID string `json:"sender_device_id"`
+		ActionID       string `json:"action_id"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return false
@@ -103,7 +133,9 @@ func validCallMetadata(raw json.RawMessage) bool {
 	return envelope.Version == 1 &&
 		len(envelope.Ciphertext) > 0 &&
 		len(envelope.Ciphertext) <= 48<<10 &&
-		envelope.Protocol == "mls10-openmls-v1"
+		envelope.Protocol == "mls10-openmls-v1" &&
+		len(envelope.SenderDeviceID) > 0 && len(envelope.SenderDeviceID) <= 128 &&
+		len(envelope.ActionID) > 0 && len(envelope.ActionID) <= 128
 }
 
 func (a *API) syncEvents(w http.ResponseWriter, r *http.Request, principal domain.Principal) {

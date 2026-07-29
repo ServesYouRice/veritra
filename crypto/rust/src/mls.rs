@@ -103,22 +103,22 @@ impl MlsDevice {
         link_nonce: &[u8],
         local_is_existing_device: bool,
     ) -> Result<DeviceLinkVerification, MlsError> {
-        let (existing_device_id, existing_key, new_device_id, new_key) =
-            if local_is_existing_device {
-                (
-                    self.device_id.as_slice(),
-                    self.signing_public_key(),
-                    peer_device_id,
-                    peer_signing_public_key,
-                )
-            } else {
-                (
-                    peer_device_id,
-                    peer_signing_public_key,
-                    self.device_id.as_slice(),
-                    self.signing_public_key(),
-                )
-            };
+        let (existing_device_id, existing_key, new_device_id, new_key) = if local_is_existing_device
+        {
+            (
+                self.device_id.as_slice(),
+                self.signing_public_key(),
+                peer_device_id,
+                peer_signing_public_key,
+            )
+        } else {
+            (
+                peer_device_id,
+                peer_signing_public_key,
+                self.device_id.as_slice(),
+                self.signing_public_key(),
+            )
+        };
         derive_device_link_verification(
             protocol_version,
             &self.account_id,
@@ -191,11 +191,17 @@ impl MlsDevice {
         &self,
         group: &mut MlsGroup,
         key_package_bytes: &[u8],
+        expected_account_id: &[u8],
+        expected_device_id: &[u8],
     ) -> Result<AddMemberMessages, MlsError> {
         let key_package = KeyPackageIn::tls_deserialize_exact(key_package_bytes)
             .map_err(|_| MlsError::InvalidKeyPackage)?
             .validate(self.provider.crypto(), ProtocolVersion::Mls10)
             .map_err(|_| MlsError::InvalidKeyPackage)?;
+        let expected_identity = encode_device_identity(expected_account_id, expected_device_id)?;
+        if key_package.leaf_node().credential().serialized_content() != expected_identity {
+            return Err(MlsError::InvalidKeyPackage);
+        }
         let (commit, welcome, _) = group
             .add_members(&self.provider, &self.signer, &[key_package])
             .map_err(|_| MlsError::GroupOperation)?;
@@ -268,13 +274,53 @@ impl MlsDevice {
             .ok_or(MlsError::InvalidIdentity)
     }
 
-    pub fn join_group(&self, welcome_bytes: &[u8]) -> Result<MlsGroup, MlsError> {
+    pub fn conversation_safety_number(
+        &self,
+        group: &MlsGroup,
+    ) -> Result<DeviceLinkVerification, MlsError> {
+        let mut members = group
+            .members()
+            .map(|member| {
+                let mut value = Vec::new();
+                append_transcript_field(&mut value, member.credential.serialized_content())?;
+                append_transcript_field(&mut value, member.signature_key.as_slice())?;
+                Ok(value)
+            })
+            .collect::<Result<Vec<_>, MlsError>>()?;
+        members.sort();
+        let mut transcript = Vec::new();
+        append_transcript_field(&mut transcript, b"veritra-conversation-safety-v1")?;
+        append_transcript_field(&mut transcript, group.group_id().as_slice())?;
+        append_transcript_field(&mut transcript, &group.epoch().as_u64().to_be_bytes())?;
+        for member in members {
+            append_transcript_field(&mut transcript, &member)?;
+        }
+        let transcript_hash = Sha256::digest(&transcript).to_vec();
+        let sas_value = u64::from_be_bytes(
+            transcript_hash[..8]
+                .try_into()
+                .map_err(|_| MlsError::InvalidState)?,
+        ) % 1_000_000_000_000;
+        Ok(DeviceLinkVerification {
+            transcript_hash,
+            sas: format!("{sas_value:012}"),
+        })
+    }
+
+    pub fn join_group(
+        &self,
+        expected_group_id: &[u8],
+        welcome_bytes: &[u8],
+    ) -> Result<MlsGroup, MlsError> {
+        if expected_group_id.is_empty() || expected_group_id.len() > MAX_ID_BYTES {
+            return Err(MlsError::InvalidIdentity);
+        }
         let message = MlsMessageIn::tls_deserialize_exact(welcome_bytes)
             .map_err(|_| MlsError::InvalidMessage)?;
         let MlsMessageBodyIn::Welcome(welcome) = message.extract() else {
             return Err(MlsError::UnexpectedMessage);
         };
-        StagedWelcome::new_from_welcome(
+        let group = StagedWelcome::new_from_welcome(
             &self.provider,
             group_create_config().join_config(),
             welcome,
@@ -282,7 +328,11 @@ impl MlsDevice {
         )
         .map_err(|_| MlsError::GroupOperation)?
         .into_group(&self.provider)
-        .map_err(|_| MlsError::GroupOperation)
+        .map_err(|_| MlsError::GroupOperation)?;
+        if group.group_id().as_slice() != expected_group_id {
+            return Err(MlsError::InvalidMessage);
+        }
+        Ok(group)
     }
 
     pub fn encrypt(&self, group: &mut MlsGroup, plaintext: &[u8]) -> Result<Vec<u8>, MlsError> {
@@ -408,10 +458,10 @@ mod tests {
 
         let mut alice_group = alice.create_group(b"conv_test").unwrap();
         let add = alice
-            .add_member(&mut alice_group, &bob_key_package)
+            .add_member(&mut alice_group, &bob_key_package, b"acct_bob", b"dev_bob")
             .unwrap();
         alice.merge_pending_commit(&mut alice_group).unwrap();
-        let mut bob_group = bob.join_group(&add.welcome).unwrap();
+        let mut bob_group = bob.join_group(b"conv_test", &add.welcome).unwrap();
 
         let alice_ciphertext = alice.encrypt(&mut alice_group, b"alice payload").unwrap();
         assert_ne!(alice_ciphertext, b"alice payload");
@@ -453,10 +503,10 @@ mod tests {
         let bob_key_package = bob.create_key_package().unwrap();
         let mut alice_group = alice.create_group(b"conv_test").unwrap();
         let add = alice
-            .add_member(&mut alice_group, &bob_key_package)
+            .add_member(&mut alice_group, &bob_key_package, b"acct_bob", b"dev_bob")
             .unwrap();
         alice.merge_pending_commit(&mut alice_group).unwrap();
-        let mut bob_group = bob.join_group(&add.welcome).unwrap();
+        let mut bob_group = bob.join_group(b"conv_test", &add.welcome).unwrap();
 
         let update = bob.self_update(&mut bob_group).unwrap();
         bob.merge_pending_commit(&mut bob_group).unwrap();
@@ -486,9 +536,24 @@ mod tests {
         let alice = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
         let mut group = alice.create_group(b"conv_test").unwrap();
         assert_eq!(
-            alice.add_member(&mut group, b"not a key package"),
+            alice.add_member(&mut group, b"not a key package", b"acct_bob", b"dev_bob",),
             Err(MlsError::InvalidKeyPackage)
         );
+
+        let bob = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+        let bob_package = bob.create_key_package().unwrap();
+        assert_eq!(
+            alice.add_member(&mut group, &bob_package, b"acct_mallory", b"dev_bob",),
+            Err(MlsError::InvalidKeyPackage)
+        );
+        let add = alice
+            .add_member(&mut group, &bob_package, b"acct_bob", b"dev_bob")
+            .unwrap();
+        alice.merge_pending_commit(&mut group).unwrap();
+        assert!(matches!(
+            bob.join_group(b"conv_substituted", &add.welcome),
+            Err(MlsError::InvalidMessage)
+        ));
     }
 
     #[test]
@@ -586,9 +651,9 @@ mod tests {
         assert_eq!(
             verification.transcript_hash,
             vec![
-                0x8c, 0xce, 0x0b, 0x98, 0x04, 0x9c, 0xcb, 0xd2, 0x0f, 0xb4, 0x97, 0x73,
-                0x2f, 0xb8, 0xe2, 0xc2, 0x06, 0x07, 0xb5, 0x93, 0xfa, 0xc2, 0x9f, 0xa8,
-                0xf3, 0xd4, 0x46, 0x31, 0x12, 0x24, 0xf0, 0x43,
+                0x8c, 0xce, 0x0b, 0x98, 0x04, 0x9c, 0xcb, 0xd2, 0x0f, 0xb4, 0x97, 0x73, 0x2f, 0xb8,
+                0xe2, 0xc2, 0x06, 0x07, 0xb5, 0x93, 0xfa, 0xc2, 0x9f, 0xa8, 0xf3, 0xd4, 0x46, 0x31,
+                0x12, 0x24, 0xf0, 0x43,
             ]
         );
         assert_eq!(verification.sas, "62313624");

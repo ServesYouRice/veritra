@@ -430,7 +430,7 @@ func TestMessageMarkersSyncSearchExportAndMembershipGuards(t *testing.T) {
 	if len(results) == 0 || results[0].Type != "account" {
 		t.Fatalf("unexpected metadata search results: %#v", results)
 	}
-	if err := store.CreateBackupBlob(ctx, owner.Account.ID, owner.Device.ID, "backup_blob", strings.Repeat("a", 64), 64, json.RawMessage(`{"kdf":"test"}`)); err != nil {
+	if err := store.CreateBackupBlob(ctx, owner.Account.ID, owner.Device.ID, "backup_blob", strings.Repeat("a", 64), 64, json.RawMessage(`{"state_counter":1}`), make([]byte, 32)); err != nil {
 		t.Fatalf("create backup blob: %v", err)
 	}
 	export, err := store.ExportAccount(ctx, owner.Account.ID, ExportAccountOptions{})
@@ -759,6 +759,13 @@ func TestDMUniquenessAndGroupMemberLifecycle(t *testing.T) {
 	if err != nil || len(members) != 3 {
 		t.Fatalf("authorized roster members=%#v err=%v", members, err)
 	}
+	// Co-members get usernames so the client can name people instead of
+	// showing raw account IDs.
+	for _, member := range members {
+		if member.Username == "" {
+			t.Fatalf("roster member %s has no username", member.AccountID)
+		}
+	}
 	if members, err := store.ListConversationMembers(ctx, group.ID, outsider.Account.ID); !errors.Is(err, ErrNotMember) || len(members) != 0 {
 		t.Fatalf("outsider roster members=%#v err=%v want no disclosure", members, err)
 	}
@@ -976,6 +983,67 @@ func newTestStore(t *testing.T, ctx context.Context) (*Store, config.Config) {
 		t.Fatalf("migrate: %v", err)
 	}
 	return store, cfg
+}
+
+func TestListConversationsPageNamesDMPeerPerViewer(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	owner := createTestOwner(t, ctx, store)
+
+	invite, err := store.CreateInvite(ctx, owner.Account.ID, 1, nil)
+	if err != nil {
+		t.Fatalf("create invite: %v", err)
+	}
+	peer := registerTestMember(t, ctx, store, invite.Code, "dmpeer")
+
+	dm, err := store.CreateConversation(ctx, CreateConversationInput{
+		Kind:             "dm",
+		CreatedBy:        owner.Account.ID,
+		MemberAccountIDs: []string{peer.Account.ID},
+	})
+	if err != nil {
+		t.Fatalf("create dm: %v", err)
+	}
+	group, err := store.CreateConversation(ctx, CreateConversationInput{
+		Kind:             "group",
+		CreatedBy:        owner.Account.ID,
+		MemberAccountIDs: []string{peer.Account.ID},
+	})
+	if err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+
+	find := func(accountID, conversationID string) domain.Conversation {
+		t.Helper()
+		page, err := store.ListConversationsPage(ctx, accountID, 100, "")
+		if err != nil {
+			t.Fatalf("list conversations for %s: %v", accountID, err)
+		}
+		for _, conversation := range page {
+			if conversation.ID == conversationID {
+				return conversation
+			}
+		}
+		t.Fatalf("conversation %s not listed for %s", conversationID, accountID)
+		return domain.Conversation{}
+	}
+
+	// Each side sees the other, never themselves.
+	ownerView := find(owner.Account.ID, dm.ID)
+	if ownerView.PeerAccountID != peer.Account.ID || ownerView.PeerUsername != "dmpeer" {
+		t.Fatalf("owner DM peer=%q/%q want %q/dmpeer", ownerView.PeerAccountID, ownerView.PeerUsername, peer.Account.ID)
+	}
+	peerView := find(peer.Account.ID, dm.ID)
+	if peerView.PeerAccountID != owner.Account.ID || peerView.PeerUsername == "" {
+		t.Fatalf("peer DM peer=%q/%q want %q with a username", peerView.PeerAccountID, peerView.PeerUsername, owner.Account.ID)
+	}
+
+	// Groups have no single counterpart; claiming one would mislabel the row.
+	groupView := find(owner.Account.ID, group.ID)
+	if groupView.PeerAccountID != "" || groupView.PeerUsername != "" {
+		t.Fatalf("group peer=%q/%q want empty", groupView.PeerAccountID, groupView.PeerUsername)
+	}
 }
 
 func createTestOwner(t *testing.T, ctx context.Context, store *Store) AccountDevice {

@@ -297,4 +297,33 @@ mod tests {
             Err(MlsError::InvalidState)
         ));
     }
+
+    #[test]
+    fn skipped_epoch_fails_without_advancing_group_state() {
+        let alice = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
+        let bob = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+        let mut alice_group = alice.create_group(b"conv_epoch_gap").unwrap();
+        let add = alice
+            .add_member(
+                &mut alice_group,
+                &bob.create_key_package().unwrap(),
+                b"acct_bob",
+                b"dev_bob",
+            )
+            .unwrap();
+        alice.merge_pending_commit(&mut alice_group).unwrap();
+        let mut bob_group = bob.join_group(b"conv_epoch_gap", &add.welcome).unwrap();
+
+        let first = alice.self_update(&mut alice_group).unwrap();
+        alice.merge_pending_commit(&mut alice_group).unwrap();
+        let second = alice.self_update(&mut alice_group).unwrap();
+        alice.merge_pending_commit(&mut alice_group).unwrap();
+
+        assert_eq!(
+            bob.process_commit(&mut bob_group, &second),
+            Err(MlsError::InvalidMessage)
+        );
+        bob.process_commit(&mut bob_group, &first).unwrap();
+        bob.process_commit(&mut bob_group, &second).unwrap();
+    }
 }

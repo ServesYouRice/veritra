@@ -9,9 +9,14 @@ import 'chat_screen.dart';
 import 'new_conversation_sheet.dart';
 
 class ChatListScreen extends StatelessWidget {
-  const ChatListScreen({required this.state, super.key});
+  const ChatListScreen({required this.state, this.embedded = false, super.key});
 
   final AppState state;
+
+  /// When embedded in the wide-layout workspace the list is one pane of a
+  /// master-detail view: tapping a row updates the detail pane instead of
+  /// pushing a full-screen route.
+  final bool embedded;
 
   @override
   Widget build(BuildContext context) {
@@ -65,8 +70,14 @@ class ChatListScreen extends StatelessWidget {
                   final conversation = conversations[index];
                   return _ConversationTile(
                     conversation: conversation,
+                    muted: state.isMuted(conversation.id),
+                    selected: embedded &&
+                        state.selectedConversationId == conversation.id,
                     onTap: () {
-                      state.selectConversation(conversation.id);
+                      state.selectAndPrepare(conversation.id);
+                      if (embedded) {
+                        return;
+                      }
                       Navigator.of(context).push(
                         MaterialPageRoute<void>(
                           builder: (_) => ChatScreen(
@@ -85,10 +96,17 @@ class ChatListScreen extends StatelessWidget {
 }
 
 class _ConversationTile extends StatelessWidget {
-  const _ConversationTile({required this.conversation, required this.onTap});
+  const _ConversationTile({
+    required this.conversation,
+    required this.onTap,
+    this.muted = false,
+    this.selected = false,
+  });
 
   final Conversation conversation;
   final VoidCallback onTap;
+  final bool muted;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
@@ -102,24 +120,34 @@ class _ConversationTile extends StatelessWidget {
     return MergeSemantics(
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        // Decorative: the tile title already names the conversation.
-        leading: ExcludeSemantics(
-          child: CircleAvatar(
-            radius: 24,
-            backgroundColor: theme.colorScheme.secondaryContainer,
-            child: Icon(
-              conversationIcon(conversation),
-              color: theme.colorScheme.onSecondaryContainer,
+        selected: selected,
+        selectedTileColor:
+            theme.colorScheme.secondaryContainer.withValues(alpha: 0.35),
+        leading: conversationAvatar(context, conversation),
+        title: Row(
+          children: <Widget>[
+            Flexible(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: hasUnread ? FontWeight.w700 : null,
+                ),
+              ),
             ),
-          ),
-        ),
-        title: Text(
-          title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: theme.textTheme.titleMedium?.copyWith(
-            fontWeight: hasUnread ? FontWeight.w700 : null,
-          ),
+            if (muted) ...<Widget>[
+              const SizedBox(width: 6),
+              Semantics(
+                label: 'Muted',
+                child: Icon(
+                  Icons.notifications_off_outlined,
+                  size: 16,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ],
         ),
         subtitle: Text(
           conversationSubtitle(conversation),
@@ -203,6 +231,12 @@ String conversationTitle(Conversation conversation) {
     return title;
   }
   if (conversation.isDm) {
+    final peerId = conversation.peerAccountId;
+    // Name the person, not the conversation kind. Falls back to a shortened
+    // account ID rather than a generic label so two DMs are never identical.
+    if (peerId != null) {
+      return accountLabel(peerId, conversation.peerUsername);
+    }
     return 'Direct message';
   }
   if (conversation.isChannel) {
@@ -222,6 +256,33 @@ String conversationSubtitle(Conversation conversation) {
       'Disappearing (${retentionLabel(retention)})',
   ];
   return parts.join(' · ');
+}
+
+/// Avatar for a conversation row: peer initials for a named DM, otherwise the
+/// kind icon. Decorative in both cases — the title carries the identity.
+Widget conversationAvatar(
+  BuildContext context,
+  Conversation conversation, {
+  double radius = 24,
+}) {
+  final scheme = Theme.of(context).colorScheme;
+  final peerId = conversation.peerAccountId;
+  return ExcludeSemantics(
+    child: CircleAvatar(
+      radius: radius,
+      backgroundColor: scheme.secondaryContainer,
+      foregroundColor: scheme.onSecondaryContainer,
+      child: conversation.isDm && peerId != null
+          ? Text(
+              accountInitials(peerId, conversation.peerUsername),
+              style: TextStyle(
+                fontSize: radius * 0.7,
+                fontWeight: FontWeight.w600,
+              ),
+            )
+          : Icon(conversationIcon(conversation), size: radius * 0.9),
+    ),
+  );
 }
 
 String retentionLabel(int seconds) {

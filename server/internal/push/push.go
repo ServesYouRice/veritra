@@ -23,9 +23,33 @@ var (
 )
 
 type Notification struct {
+	Provider   string
 	Endpoint   string
 	PublicKey  string
 	AuthSecret string
+}
+
+type Router struct{ providers map[string]Provider }
+
+func NewRouter(providers map[string]Provider) Provider {
+	copy := make(map[string]Provider, len(providers))
+	for name, provider := range providers {
+		if provider != nil {
+			copy[name] = provider
+		}
+	}
+	if len(copy) == 0 {
+		return DisabledProvider{}
+	}
+	return &Router{providers: copy}
+}
+
+func (r *Router) SendEncryptedEventAvailable(ctx context.Context, notification Notification) error {
+	provider := r.providers[notification.Provider]
+	if provider == nil {
+		return ErrNoProvider
+	}
+	return provider.SendEncryptedEventAvailable(ctx, notification)
 }
 
 type Provider interface {
@@ -81,6 +105,9 @@ func NewWebPushProvider(config WebPushConfig) (*WebPushProvider, error) {
 }
 
 func (p *WebPushProvider) SendEncryptedEventAvailable(ctx context.Context, notification Notification) error {
+	if notification.Provider != "webpush" {
+		return ErrNoProvider
+	}
 	if err := ValidateWebPushTarget(notification); err != nil {
 		return err
 	}

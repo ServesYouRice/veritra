@@ -31,7 +31,7 @@ func TestMessageAPIRejectsPlaintextFields(t *testing.T) {
 		"idempotency_key": "send-plaintext",
 		"body":            sentinel,
 		"ciphertext":      base64.StdEncoding.EncodeToString([]byte("ciphertext")),
-		"crypto_protocol": "mls-openmls-todo",
+		"crypto_protocol": "mls10-openmls-v1",
 	}
 	status, _ := doJSON(t, handler, http.MethodPost, "/api/v1/messages/envelopes", token, body)
 	if status != http.StatusBadRequest {
@@ -41,7 +41,7 @@ func TestMessageAPIRejectsPlaintextFields(t *testing.T) {
 		"conversation_id": conversationID,
 		"idempotency_key": "send-nested-plaintext",
 		"ciphertext":      base64.StdEncoding.EncodeToString([]byte("ciphertext")),
-		"crypto_protocol": "mls-openmls-todo",
+		"crypto_protocol": "mls10-openmls-v1",
 		"crypto_metadata": map[string]interface{}{"body": sentinel},
 	}
 	status, _ = doJSON(t, handler, http.MethodPost, "/api/v1/messages/envelopes", token, nested)
@@ -73,7 +73,7 @@ func TestMessageAPIAcceptsCiphertextEnvelope(t *testing.T) {
 		"conversation_id": conversationID,
 		"idempotency_key": "send-ciphertext",
 		"ciphertext":      base64.StdEncoding.EncodeToString([]byte("ciphertext")),
-		"crypto_protocol": "mls-openmls-todo",
+		"crypto_protocol": "mls10-openmls-v1",
 	}
 	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/messages/envelopes", token, body)
 	if status != http.StatusCreated {
@@ -101,7 +101,7 @@ func TestMessageLifecycleAndSyncRoutes(t *testing.T) {
 
 	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/messages/"+messageID+"/edit", token, map[string]interface{}{
 		"ciphertext":      base64.StdEncoding.EncodeToString([]byte("ciphertext-v2")),
-		"crypto_protocol": "mls-openmls-todo",
+		"crypto_protocol": "mls10-openmls-v1",
 	})
 	if status != http.StatusOK {
 		t.Fatalf("edit status=%d body=%s", status, response)
@@ -112,6 +112,7 @@ func TestMessageLifecycleAndSyncRoutes(t *testing.T) {
 
 	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/messages/"+messageID+"/reactions", token, map[string]interface{}{
 		"reaction_ciphertext": base64.StdEncoding.EncodeToString([]byte("encrypted reaction")),
+		"crypto_protocol":     "mls10-openmls-v1",
 	})
 	if status != http.StatusNoContent {
 		t.Fatalf("reaction status=%d body=%s", status, response)
@@ -124,7 +125,7 @@ func TestMessageLifecycleAndSyncRoutes(t *testing.T) {
 
 	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/messages/"+messageID+"/delete", token, map[string]interface{}{
 		"ciphertext":      base64.StdEncoding.EncodeToString([]byte("encrypted delete marker")),
-		"crypto_protocol": "mls-openmls-todo",
+		"crypto_protocol": "mls10-openmls-v1",
 	})
 	if status != http.StatusOK {
 		t.Fatalf("delete status=%d body=%s", status, response)
@@ -149,22 +150,41 @@ func TestConversationScopedWritesRequireMembership(t *testing.T) {
 	conversationID := createConversation(t, handler, ownerToken)
 	messageID := createMessage(t, handler, ownerToken, conversationID, "owner-only", []byte("ciphertext"))
 	memberToken := registerMember(t, handler, ownerToken, "outsider")
+	status, response := doJSON(t, handler, http.MethodGet, "/api/v1/devices/me", memberToken, nil)
+	if status != http.StatusOK {
+		t.Fatalf("member device status=%d body=%s", status, response)
+	}
+	var memberDevices struct {
+		Devices []struct {
+			ID string `json:"id"`
+		} `json:"devices"`
+	}
+	if err := json.Unmarshal(response, &memberDevices); err != nil || len(memberDevices.Devices) != 1 {
+		t.Fatalf("decode member device: %v", err)
+	}
 
-	status, response := doRaw(t, handler, http.MethodPost, "/api/v1/attachments?conversation_id="+conversationID, memberToken, []byte("encrypted attachment"), map[string]string{
+	status, response = doRaw(t, handler, http.MethodPost, "/api/v1/attachments?conversation_id="+conversationID, memberToken, []byte("encrypted attachment"), map[string]string{
 		"X-Private-Messenger-Encrypted": "1",
-		"X-Crypto-Metadata":             "{}",
+		"X-Crypto-Metadata":             `{"version":1,"algorithm":"AES-256-GCM-chunked","chunk_size":1048576}`,
 	})
 	if status != http.StatusForbidden {
 		t.Fatalf("attachment status=%d body=%s", status, response)
 	}
 
-	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/calls", memberToken, map[string]interface{}{"conversation_id": conversationID})
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/calls", memberToken, map[string]interface{}{
+		"conversation_id": conversationID,
+		"metadata": map[string]interface{}{
+			"version": 1, "ciphertext": base64.StdEncoding.EncodeToString([]byte("encrypted call")),
+			"protocol": "mls10-openmls-v1", "sender_device_id": memberDevices.Devices[0].ID, "action_id": "call-action",
+		},
+	})
 	if status != http.StatusForbidden {
 		t.Fatalf("call status=%d body=%s", status, response)
 	}
 
 	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/messages/"+messageID+"/reactions", memberToken, map[string]interface{}{
 		"reaction_ciphertext": base64.StdEncoding.EncodeToString([]byte("encrypted reaction")),
+		"crypto_protocol":     "mls10-openmls-v1",
 	})
 	if status != http.StatusForbidden {
 		t.Fatalf("reaction status=%d body=%s", status, response)
@@ -206,7 +226,8 @@ func TestMetadataSearchBackupExportAndAccountDelete(t *testing.T) {
 
 	status, response = doRaw(t, handler, http.MethodPost, "/api/v1/backups", token, []byte("encrypted backup blob"), map[string]string{
 		"X-Private-Messenger-Encrypted": "1",
-		"X-Key-Derivation-Metadata":     `{"kdf":"client-side-test"}`,
+		"X-Key-Derivation-Metadata":     `{"version":1,"algorithm":"AES-256-GCM-chunked","chunk_size":1048576,"state_counter":1}`,
+		"X-Recovery-Token":              base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)),
 	})
 	if status != http.StatusCreated {
 		t.Fatalf("backup status=%d body=%s", status, response)
@@ -255,7 +276,7 @@ func TestAttachmentDownloadRangeAuthorizationAndIntegrity(t *testing.T) {
 	payload := []byte("encrypted attachment payload")
 	status, response := doRaw(t, handler, http.MethodPost, "/api/v1/attachments?conversation_id="+conversationID, ownerToken, payload, map[string]string{
 		"X-Private-Messenger-Encrypted": "1",
-		"X-Crypto-Metadata":             "{}",
+		"X-Crypto-Metadata":             `{"version":1,"algorithm":"AES-256-GCM-chunked","chunk_size":1048576}`,
 	})
 	if status != http.StatusCreated {
 		t.Fatalf("upload status=%d body=%s", status, response)
@@ -434,12 +455,12 @@ func TestDeviceLinkingFlowRequiresExistingDeviceApproval(t *testing.T) {
 	}
 	var created struct {
 		DeviceLink struct {
-			ID                    string `json:"id"`
-			Code                  string `json:"code"`
-			State                 string `json:"state"`
-			ProtocolVersion       string `json:"protocol_version"`
-			LinkNonce             []byte `json:"link_nonce"`
-			ExistingSigningKey    []byte `json:"existing_signing_key"`
+			ID                 string `json:"id"`
+			Code               string `json:"code"`
+			State              string `json:"state"`
+			ProtocolVersion    string `json:"protocol_version"`
+			LinkNonce          []byte `json:"link_nonce"`
+			ExistingSigningKey []byte `json:"existing_signing_key"`
 		} `json:"device_link"`
 	}
 	if err := json.Unmarshal(response, &created); err != nil {
@@ -517,7 +538,7 @@ func TestDeviceLinkingFlowRequiresExistingDeviceApproval(t *testing.T) {
 	var completed struct {
 		Token          string `json:"token"`
 		TranscriptHash []byte `json:"transcript_hash"`
-		Device struct {
+		Device         struct {
 			ID   string `json:"id"`
 			Name string `json:"name"`
 		} `json:"device"`
@@ -726,7 +747,7 @@ func TestSingleMessageRepairIsScopedAndIncludesOldDeleteMarkers(t *testing.T) {
 	newestID := createMessage(t, handler, ownerToken, conversation.ID, "repair-new", []byte("new ciphertext"))
 	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/messages/"+oldID+"/edit", ownerToken, map[string]interface{}{
 		"ciphertext":      base64.StdEncoding.EncodeToString([]byte("edited old ciphertext")),
-		"crypto_protocol": "mls-openmls-todo",
+		"crypto_protocol": "mls10-openmls-v1",
 	})
 	if status != http.StatusOK {
 		t.Fatalf("edit old message status=%d body=%s", status, response)
@@ -749,7 +770,7 @@ func TestSingleMessageRepairIsScopedAndIncludesOldDeleteMarkers(t *testing.T) {
 	}
 	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/messages/"+oldID+"/delete", ownerToken, map[string]interface{}{
 		"ciphertext":      base64.StdEncoding.EncodeToString([]byte("encrypted delete marker")),
-		"crypto_protocol": "mls-openmls-todo",
+		"crypto_protocol": "mls10-openmls-v1",
 	})
 	if status != http.StatusOK {
 		t.Fatalf("delete old message status=%d body=%s", status, response)
@@ -864,7 +885,7 @@ func createMessage(t *testing.T, handler http.Handler, token, conversationID, id
 		"conversation_id": conversationID,
 		"idempotency_key": idempotencyKey,
 		"ciphertext":      base64.StdEncoding.EncodeToString(ciphertext),
-		"crypto_protocol": "mls-openmls-todo",
+		"crypto_protocol": "mls10-openmls-v1",
 	})
 	if status != http.StatusCreated {
 		t.Fatalf("create message status=%d body=%s", status, response)
@@ -958,12 +979,12 @@ func doJSON(t *testing.T, handler http.Handler, method, path, token string, body
 }
 
 type testEnrollment struct {
-	ID         string `json:"id"`
-	AccountID  string `json:"account_id"`
-	DeviceID   string `json:"device_id"`
-	Challenge  []byte `json:"challenge"`
-	SigningKey []byte
-	PrivateKey ed25519.PrivateKey
+	ID                 string `json:"id"`
+	AccountID          string `json:"account_id"`
+	DeviceID           string `json:"device_id"`
+	Challenge          []byte `json:"challenge"`
+	SigningKey         []byte
+	PrivateKey         ed25519.PrivateKey
 	ProtocolVersion    string `json:"protocol_version"`
 	LinkNonce          []byte `json:"link_nonce"`
 	ExistingDeviceID   string `json:"existing_device_id"`
@@ -1223,7 +1244,7 @@ func TestMessageReferencesStayWithinConversation(t *testing.T) {
 		"conversation_id": secondConversation,
 		"idempotency_key": "cross-conversation-reference",
 		"ciphertext":      base64.StdEncoding.EncodeToString([]byte("ciphertext")),
-		"crypto_protocol": "mls-openmls-todo",
+		"crypto_protocol": "mls10-openmls-v1",
 		"reply_to_id":     messageID,
 	})
 	if status != http.StatusBadRequest {

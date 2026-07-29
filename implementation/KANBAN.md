@@ -4,11 +4,11 @@ Status: **NO-GO** — production crypto remains fail-closed.
 
 ## User decisions
 
-- [ ] **D01** Approve `drift` 2.34.3 + `sqlite3` 3.5.0 with the `sqlite3mc` hook and explicit ChaCha20; keep a random 256-bit hex key in device-bound `flutter_secure_storage` and fail closed if cipher/key checks fail. Tradeoff: more Dart/codegen surface than `sqflite_sqlcipher`, but a verified, current encryption path with typed transactional migrations. Blocks I09, I12, I18, I19.
-- [ ] **D02** Keep encrypted backup/recovery in the first production release? Recommended: yes. Blocks I18 scope.
-- [ ] **D03** Defer native APNs/FCM and calls until after core messaging? Recommended: yes.
-- [ ] **D04** Minimize admin audit events by omitting block/member target IDs unless operationally required?
-- [ ] **D05** Choose timing/budget for an independent protocol/mobile security review. Blocks I25.
+- [x] **D01** Approved `drift` 2.34.3 + `sqlite3` 3.5.0 with the `sqlite3mc` hook and explicit ChaCha20; keep a random 256-bit hex key in device-bound `flutter_secure_storage` and fail closed if cipher/key checks fail.
+- [x] **D02** Keep encrypted backup/recovery in the first production release.
+- [x] **D03** Do not defer native APNs/FCM or calls; include them in the current implementation scope.
+- [x] **D04** Minimize admin audit events by omitting block/member target IDs unless operationally required.
+- [x] **D05** Prepare the protocol/mobile security-review evidence now; production remains fail-closed pending an independent external review.
 
 ## Ready
 
@@ -16,40 +16,56 @@ Status: **NO-GO** — production crypto remains fail-closed.
 
 ## Doing
 
-- [ ] [I15 — Derive device-link SAS locally](tasks/I15-device-link.md)
+- None.
+
+## Verification queued
+
+- None.
 
 
 ## Blocked
 
-- [ ] [I09 — Encrypted local database](tasks/I09-local-database.md) — D01
-- [ ] [I18 — Encrypted backup and recovery](tasks/I18-backup-recovery.md) — D02
-- [ ] [I25 — Independent review and release gate](tasks/I25-release-gate.md) — D05
+- [ ] [I25 — Independent review and release gate](tasks/I25-release-gate.md) — review packet and evidence matrix prepared; blocked on independent reviewer and I24 external checks
+- [ ] [I24 — Build signed apps and run real-device checks](tasks/I24-release-builds.md) — native APNs/FCM, self-hosted TURN, and encrypted WebRTC implementation complete; Android debug APK builds; signed apps and real-device checks require external hardware/signing approval
 
 ## Backlog
 
-- [ ] [I12 — Commit MLS state and cursor together](tasks/I12-mls-state.md) — after I09, I11
-- [ ] [I13 — Implement conversation MLS flow](tasks/I13-mls-orchestration.md) — after I02, I04, I12
-- [ ] [I14 — Define encrypted app payloads](tasks/I14-payloads.md) — after I13
-- [ ] [I16 — Remove revoked devices from groups](tasks/I16-revocation.md) — after I04, I13, I15
-- [ ] [I17 — Add encrypted attachment UX](tasks/I17-attachments.md) — after I07, I09, I14
-- [ ] [I19 — Fix mobile sync, history, and outbox](tasks/I19-mobile-sync.md) — after I05, I09, I14
-- [ ] [I20 — Add identity and safety UX](tasks/I20-safety-ux.md) — after I04, I14, I19
-- [ ] [I26 — Verify peer identity out of band](tasks/I26-peer-verification.md) — after I13, I15, I20
-- [ ] [I24 — Build signed apps and run real-device checks](tasks/I24-release-builds.md) — after I16–I23, I26
+- [ ] [I20 — Add identity and safety UX](tasks/I20-safety-ux.md) — excluded by user as UI-only work
 
 ## Later
 
 - Measure before performance changes: query plans, load, soak, push fan-out.
 - Profiles/avatars, local content search, desktop, multi-account, passkeys.
-- Product polish: `veritra://` invite URI and QR, mute, drafts, richer empty states.
+- Product polish: `veritra://` invite URI and QR, drafts, richer empty states.
 - Encrypted extensions: link previews, voice notes, client-side import.
 - Moderation reports and post-quantum readiness need a product trigger first.
 - Dead-code and wrapper cleanup only after blockers; do not churn active seams.
-- Native push and calls follow D03.
-- Session inventory and audit-metadata changes follow D04.
+- Native push and calls are part of the current implementation scope per D03.
+- Session inventory and minimized audit-metadata changes follow D04.
+- Remaining UI work is crypto-gated only: message actions, attachments, safety
+  numbers, decrypted rendering, and the manual screen-reader pass on hardware.
 - Out of scope: federation, Postgres, S3, NATS.
 
 ## Done
+
+- 2026-07-29: I09, I12-I19, and I26 — completed and verified the encrypted
+  local database, atomic MLS state, device-link SAS, conversation MLS flow,
+  authenticated padded payloads, revocation convergence, streaming attachment
+  crypto, capability-based encrypted recovery, durable outbox/sync repair, and
+  out-of-band safety transcripts. Go and Rust tests, all non-UI Flutter tests,
+  strict lint, and an Android debug APK build pass. UI-only I20 remains excluded.
+
+- 2026-07-29: Remaining non-crypto UI — named DMs end to end (server DM peer
+  identity, member usernames to co-members, canonical DM reuse), backward
+  message pagination with preserved scroll position, member roster with
+  role-gated remove and leave, block/unblock from DM details, search, and a
+  Blocked accounts screen, per-conversation mute, an offline/reconnecting
+  banner with sync errors separated from action errors, operation-scoped
+  busy/error state so one failure no longer disables unrelated controls, a
+  composer that clears on enqueue, aligned search copy and navigation,
+  navigable community channel rows, in-dialog password validation, honest push
+  status including iOS, and a wide-layout master-detail split. Verification
+  could not be run: no Go or Flutter toolchain on the authoring machine.
 
 - 2026-07-28: I21 — Enforced a tested single-writer process lock, one-time production setup secret lifecycle, readiness-first graceful drain, clean-host backup/restore drill, hardened deployment examples/runbook, and aligned pinned toolchains; the user-requested fresh Compose smoke remains reserved for the final pre-push gate.
 - 2026-07-28: I23 — Hardened WebSocket handshakes and frame parsing, added fuzz/adversarial coverage for masking, fragmentation, bounds, control frames, UTF-8, close, lifecycle, slow clients, and proved trusted-proxy connection limits under the race detector.

@@ -5,7 +5,7 @@ import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 
 void main() {
   final libraryPath = Platform.environment['VERITRA_CRYPTO_LIBRARY'];
-  test('ABI v2 lifecycle owns outputs and handles safely', () {
+  test('ABI v4 lifecycle owns outputs and handles safely', () {
     final bindings = NativeCryptoBindings.open(libraryPath!);
     final alice = bindings.createDevice('acct_alice', 'dev_alice');
     final bob = bindings.createDevice('acct_bob', 'dev_bob');
@@ -30,8 +30,8 @@ void main() {
       linkNonce: nonce,
       localIsExistingDevice: false,
     );
-    expect(linkedVerification.transcriptHash,
-        existingVerification.transcriptHash);
+    expect(
+        linkedVerification.transcriptHash, existingVerification.transcriptHash);
     expect(linkedVerification.sas, existingVerification.sas);
     final substitutedKey = linked.signingPublicKey();
     substitutedKey[0] ^= 1;
@@ -50,8 +50,9 @@ void main() {
     linked.close();
     final bobPackage = bob.createKeyPackage();
     alice.createGroup('conv_test');
-    final added = alice.addMember('conv_test', bobPackage);
-    bob.joinGroup(added.welcome);
+    final added =
+        alice.addMember('conv_test', bobPackage, 'acct_bob', 'dev_bob');
+    bob.joinGroup('conv_test', added.welcome);
     final ciphertext = alice.encrypt('conv_test', [4, 5, 6]);
     expect(bob.decrypt('conv_test', ciphertext), [4, 5, 6]);
     final update = alice.selfUpdate('conv_test');

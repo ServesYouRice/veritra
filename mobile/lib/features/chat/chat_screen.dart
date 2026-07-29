@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
@@ -10,11 +12,19 @@ import 'conversation_details_screen.dart';
 /// Conversation detail screen. Pushed from the chat list; listens to the app
 /// state itself because pushed routes sit outside the root rebuild scope.
 class ChatScreen extends StatefulWidget {
-  const ChatScreen(
-      {required this.state, required this.conversationId, super.key});
+  const ChatScreen({
+    required this.state,
+    required this.conversationId,
+    this.showBackButton = true,
+    super.key,
+  });
 
   final AppState state;
   final String conversationId;
+
+  /// False when the screen is the detail pane of the wide master-detail
+  /// layout, where there is no route to pop back to.
+  final bool showBackButton;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -22,11 +32,34 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final composer = TextEditingController();
+  final scroll = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    scroll.addListener(_maybeLoadOlder);
+  }
 
   @override
   void dispose() {
+    scroll.removeListener(_maybeLoadOlder);
+    scroll.dispose();
     composer.dispose();
     super.dispose();
+  }
+
+  /// The list is reversed, so scrolling back in time approaches maxScrollExtent.
+  /// Requesting the next page slightly before the edge keeps the loader from
+  /// appearing as a hard stop. [AppState.loadOlderMessages] is idempotent, so
+  /// repeated scroll callbacks are harmless.
+  void _maybeLoadOlder() {
+    if (!scroll.hasClients || !scroll.position.hasContentDimensions) {
+      return;
+    }
+    final remaining = scroll.position.maxScrollExtent - scroll.position.pixels;
+    if (remaining < 400) {
+      unawaited(widget.state.loadOlderMessages(widget.conversationId));
+    }
   }
 
   @override
@@ -41,22 +74,29 @@ class _ChatScreenState extends State<ChatScreen> {
         final pending = widget.state.pendingFor(widget.conversationId);
         return Scaffold(
           appBar: AppBar(
+            automaticallyImplyLeading: widget.showBackButton,
             title: conversation == null
                 ? const Text('Conversation')
                 : Row(
                     children: <Widget>[
-                      ExcludeSemantics(
-                        child: CircleAvatar(
-                          radius: 16,
-                          child: Icon(conversationIcon(conversation), size: 18),
-                        ),
-                      ),
+                      conversationAvatar(context, conversation, radius: 16),
                       const SizedBox(width: 12),
                       Expanded(
-                        child: Text(
-                          conversationTitle(conversation),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: <Widget>[
+                            Text(
+                              conversationTitle(conversation),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            if (widget.state.isMuted(conversation.id))
+                              Text(
+                                'Muted',
+                                style: Theme.of(context).textTheme.labelSmall,
+                              ),
+                          ],
                         ),
                       ),
                     ],
@@ -91,7 +131,9 @@ class _ChatScreenState extends State<ChatScreen> {
               _Composer(
                 enabled: conversation != null,
                 controller: composer,
-                busy: widget.state.busy,
+                // Scoped to the send operation: an unrelated background task
+                // no longer disables the composer.
+                busy: widget.state.isBusy(Ops.send),
                 onSend: _send,
               ),
             ],
@@ -143,6 +185,8 @@ class _ChatScreenState extends State<ChatScreen> {
         Expanded(
           child: _MessageList(
             state: widget.state,
+            conversationId: conversationId,
+            controller: scroll,
             messages: messages,
             pending: pending,
           ),
@@ -156,14 +200,17 @@ class _ChatScreenState extends State<ChatScreen> {
     if (text.isEmpty) {
       return;
     }
-    await widget.state.sendMessageTo(widget.conversationId, text);
-    if (!mounted) {
+    // Clear immediately: the envelope is queued to the durable outbox and its
+    // pending bubble carries the sending/failed state and the retry action,
+    // so holding the typed text hostage to a round trip only prevents the
+    // user from sending a second message.
+    composer.clear();
+    final sent = await widget.state.sendMessageTo(widget.conversationId, text);
+    if (!mounted || sent) {
       return;
     }
-    final error = widget.state.error;
-    if (error == null) {
-      composer.clear();
-    } else {
+    final error = widget.state.errorFor(Ops.send);
+    if (error != null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(error)),
       );
@@ -221,24 +268,59 @@ class _MessageLoadError extends StatelessWidget {
 class _MessageList extends StatelessWidget {
   const _MessageList({
     required this.state,
+    required this.conversationId,
+    required this.controller,
     required this.messages,
     required this.pending,
   });
 
   final AppState state;
+  final String conversationId;
+  final ScrollController controller;
   final List<ReceivedMessageEnvelope> messages;
   final List<MessageEnvelope> pending;
 
+  bool get _isDm =>
+      state.conversations
+          .where((item) => item.id == conversationId)
+          .firstOrNull
+          ?.isDm ??
+      false;
+
+  /// Names a sender from the loaded roster when possible, falling back to a
+  /// shortened account ID. Server-supplied display metadata, not a verified
+  /// identity claim.
+  String _senderLabel(String accountId) {
+    final member = state
+        .membersFor(conversationId)
+        .where((item) => item.accountId == accountId)
+        .firstOrNull;
+    return accountLabel(accountId, member?.username);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final hasMore = state.hasMoreHistory(conversationId);
+    final loadingOlder = state.isLoadingOlder(conversationId);
     // Messages arrive newest-first; the list is reversed so index 0 renders
-    // at the bottom. A day separator is emitted whenever the calendar day
-    // changes relative to the next-older message.
+    // at the bottom. Because older items are appended to the end of the
+    // reversed list, prepending history does not move the visible messages,
+    // which is what preserves the scroll position across a page load. A day
+    // separator is emitted whenever the calendar day changes relative to the
+    // next-older message.
+    final footerCount = hasMore || loadingOlder ? 1 : 0;
     return ListView.builder(
+      controller: controller,
       reverse: true,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
-      itemCount: pending.length + messages.length,
+      itemCount: pending.length + messages.length + footerCount,
       itemBuilder: (context, index) {
+        if (index == pending.length + messages.length) {
+          return _HistoryFooter(
+            loading: loadingOlder,
+            onLoad: () => state.loadOlderMessages(conversationId),
+          );
+        }
         if (index < pending.length) {
           final envelope = pending[pending.length - 1 - index];
           return _PendingMessageBubble(
@@ -259,10 +341,46 @@ class _MessageList extends StatelessWidget {
           children: <Widget>[
             if (showDay)
               _DaySeparator(label: formatDate(context, message.createdAt)),
-            _MessageBubble(message: message, mine: mine),
+            _MessageBubble(
+              message: message,
+              mine: mine,
+              senderLabel: _senderLabel(message.senderAccountId),
+              // In a DM the app bar already says who the other person is;
+              // only group and channel bubbles need a per-message sender.
+              showSender: !mine && !_isDm,
+            ),
           ],
         );
       },
+    );
+  }
+}
+
+/// Top-of-list affordance for older history: a spinner while a page is in
+/// flight, and an explicit button otherwise so history is reachable without
+/// relying on a scroll gesture.
+class _HistoryFooter extends StatelessWidget {
+  const _HistoryFooter({required this.loading, required this.onLoad});
+
+  final bool loading;
+  final VoidCallback onLoad;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      child: Center(
+        child: loading
+            ? const SizedBox.square(
+                dimension: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : TextButton.icon(
+                onPressed: onLoad,
+                icon: const Icon(Icons.history),
+                label: const Text('Load older messages'),
+              ),
+      ),
     );
   }
 }
@@ -345,10 +463,17 @@ class _DaySeparator extends StatelessWidget {
 }
 
 class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({required this.message, required this.mine});
+  const _MessageBubble({
+    required this.message,
+    required this.mine,
+    required this.senderLabel,
+    required this.showSender,
+  });
 
   final ReceivedMessageEnvelope message;
   final bool mine;
+  final String senderLabel;
+  final bool showSender;
 
   @override
   Widget build(BuildContext context) {
@@ -358,7 +483,7 @@ class _MessageBubble extends StatelessWidget {
     final background =
         mine ? scheme.primaryContainer : scheme.surfaceContainerHigh;
     final foreground = mine ? scheme.onPrimaryContainer : scheme.onSurface;
-    final sender = mine ? 'you' : 'sender ${shortId(message.senderAccountId)}';
+    final sender = mine ? 'you' : senderLabel;
     return Semantics(
       excludeSemantics: true,
       label: deleted
@@ -385,6 +510,17 @@ class _MessageBubble extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
+                if (showSender)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 2),
+                    child: Text(
+                      senderLabel,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: foreground.withValues(alpha: 0.8),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
                 if (deleted)
                   Text(
                     'Message deleted',

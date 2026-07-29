@@ -10,13 +10,19 @@ This project is licensed AGPL-3.0-or-later. Dependency licenses must be compatib
 | `golang.org/x/crypto` | Password hashing helpers | BSD-3-Clause | Used for password fallback hashing. |
 | `github.com/SherClockHolmes/webpush-go` | RFC 8291 Web Push encryption and VAPID | MIT | Server-side optional generic wake delivery; pinned in `server/go.mod`. |
 | `org.unifiedpush.android:connector` 3.3.3 | Android push distributor registration and RFC 8291 decryption | Apache-2.0 | Official connector; receives only a fixed generic wake event. |
+| `com.google.firebase:firebase-messaging` 25.0.1 | Native Android FCM wake delivery | Apache-2.0 | Exact dependency; data is restricted to a fixed generic wake. Firebase/Google service terms apply when enabled. |
+| `flutter_webrtc` 1.5.2 | Native Android/iOS WebRTC audio/video and DTLS-SRTP media | MIT | Exact Flutter dependency from the verified flutter-webrtc.org publisher; bundles platform WebRTC components whose notices are included by release packaging. |
 | `com.google.crypto.tink:tink-android` 1.21.0 | Android keystore-backed Web Push key handling | Apache-2.0 | Forced to one Android artifact to avoid duplicate classes across secure storage and UnifiedPush. |
 | `flutter_secure_storage` | Platform secure storage for mobile sessions | BSD-3-Clause | Direct Flutter dependency; platform packages are pulled transitively by `flutter pub get`. |
+| `drift` 2.34.3 | Typed transactional mobile persistence and schema migrations | MIT | Direct Flutter dependency; used only over the encrypted SQLite3MC connection. |
+| `sqlite3` 3.5.0 | Native SQLite bindings and verified build-hook artifacts | MIT | Configured with the `sqlite3mc` hook; system SQLite fallback is not used. |
+| SQLite3 Multiple Ciphers | ChaCha20-Poly1305 encryption for the mobile database | MIT | Bundled through `sqlite3` 3.5.0 build hooks; the cipher is selected and verified explicitly before schema access. |
+| `path_provider` 2.1.6 | Private application-support database location | BSD-3-Clause | Direct Flutter dependency maintained by flutter.dev. |
 | `ffi` 2.2.0 | Dart bindings for the reviewed native MLS ABI | BSD-3-Clause | Direct Flutter dependency pinned in `mobile/pubspec.lock`. |
 | `qr_flutter` 4.1.0 | Device-link QR rendering | BSD-3-Clause | Direct Flutter dependency pinned in `mobile/pubspec.lock`. |
 | `mobile_scanner` 5.2.3 | Device-link QR scanning | BSD-3-Clause | Direct Flutter dependency. Android uses ML Kit, iOS uses the system Vision framework, and web uses ZXing; include their applicable notices/terms in release review. |
 | `web` 1.1.1 | Browser API bindings used by `mobile_scanner` | BSD-3-Clause | Transitive Flutter dependency pinned in `mobile/pubspec.lock`. |
-| `aes-gcm` 0.10.3 | Authenticated encryption for platform-wrapped MLS state envelopes | Apache-2.0 OR MIT | Exact version pinned; uses a platform-unwrapped 256-bit state key and does not replace MLS primitives. |
+| `aes-gcm` 0.11.0 | Authenticated encryption for platform-wrapped MLS state, attachment, and backup chunks | Apache-2.0 OR MIT | Exact version pinned; does not replace MLS message protection. |
 | `openmls` 0.8.1 | MLS 1.0 group state and message processing | MIT | Exact version pinned in `crypto/rust/Cargo.lock`; sensitive debug features are disabled. |
 | `openmls_basic_credential` 0.5.0 | Basic MLS credential signing keys | MIT | Exact version pinned; used to bind the application device identity to MLS credentials. |
 | `openmls_rust_crypto` 0.5.1 | RustCrypto provider for OpenMLS | MIT | Exact version pinned; native provider core only, pending platform-secure persistence review. |
@@ -44,6 +50,8 @@ artifact review remains required before enabling the mobile ABI.
 | GitHub Actions official actions | Checkout, Go setup, artifact upload, provenance attestation | MIT | Pinned to immutable commits in workflow files. |
 | `subosito/flutter-action` | Pinned Flutter SDK setup in CI | MIT | Build-only; pinned to an immutable commit. |
 | `anchore/sbom-action` / Syft | SPDX SBOM generation | Apache-2.0 | Release-only; pinned to an immutable commit. |
+| `drift_dev` 2.34.5 | Generates checked Drift table and query bindings | MIT | Development-only; generated source is committed for reproducible builds. |
+| `build_runner` 2.15.1 | Runs Dart source generation | BSD-3-Clause | Development-only and pinned for the Flutter 3.44/Dart toolchain. |
 
 ## Release Checklist
 

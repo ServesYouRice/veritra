@@ -89,7 +89,7 @@ func TestDeleteBackupQueuesBlob(t *testing.T) {
 	defer store.Close()
 	owner := createTestOwner(t, ctx, store)
 	key := "blob_00000000000000000000000000000002"
-	if err := store.CreateBackupBlob(ctx, owner.Account.ID, owner.Device.ID, key, "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", 10, json.RawMessage(`{"kdf":"test"}`)); err != nil {
+	if err := store.CreateBackupBlob(ctx, owner.Account.ID, owner.Device.ID, key, "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", 10, json.RawMessage(`{"state_counter":1}`), make([]byte, 32)); err != nil {
 		t.Fatal(err)
 	}
 	backups, err := store.ListBackups(ctx, owner.Account.ID, 10)

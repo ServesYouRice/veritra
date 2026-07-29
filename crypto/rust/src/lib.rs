@@ -7,13 +7,14 @@
 
 use core::ffi::c_char;
 
+pub mod attachment;
 mod ffi;
 pub mod mls;
 
 pub use ffi::{PmCryptoHandle, PmOwnedBuffer};
 
 pub const PM_CRYPTO_UNAVAILABLE: i32 = -1;
-pub const PM_CRYPTO_ABI_VERSION: u32 = 2;
+pub const PM_CRYPTO_ABI_VERSION: u32 = 4;
 pub const CRYPTO_PROTOCOL: &str = "mls10-openmls-v1";
 
 pub const MAX_ACCOUNT_ID_BYTES: usize = 128;

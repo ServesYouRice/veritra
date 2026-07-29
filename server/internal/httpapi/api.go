@@ -34,6 +34,9 @@ type API struct {
 	Messages            *messaging.Service
 	Push                push.Provider
 	VAPIDPublicKey      string
+	PushProviders       []string
+	TURNURLs            []string
+	TURNSharedSecret    string
 	ClientIdentities    *ClientIdentityResolver
 	LoginBackoff        *LoginBackoff
 	Ready               func() bool
@@ -52,6 +55,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/health", a.health)
 	mux.HandleFunc("GET /setup", a.setupPage)
 	mux.HandleFunc("GET /api/v1/setup/status", a.setupStatus)
+	mux.HandleFunc("GET /api/v1/recovery/{token}", a.recoverBackup)
 	mux.HandleFunc("POST /api/v1/setup/owner/enrollment", a.reserveOwnerEnrollment)
 	mux.HandleFunc("POST /api/v1/setup/owner", a.createOwner)
 	mux.HandleFunc("POST /api/v1/auth/login", a.login)
@@ -75,6 +79,11 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/conversations", a.withAuth(a.createConversation))
 	mux.HandleFunc("GET /api/v1/conversations", a.withAuth(a.listConversations))
 	mux.HandleFunc("POST /api/v1/conversations/{id}/key-packages/claim", a.withAuth(a.claimConversationKeyPackages))
+	mux.HandleFunc("POST /api/v1/conversations/{id}/mls/messages", a.withAuth(a.createMLSMessage))
+	mux.HandleFunc("GET /api/v1/mls/messages", a.withAuth(a.listMLSMessages))
+	mux.HandleFunc("GET /api/v1/mls/messages/{id}", a.withAuth(a.getMLSMessage))
+	mux.HandleFunc("GET /api/v1/mls/revocations", a.withAuth(a.listMLSRevocations))
+	mux.HandleFunc("POST /api/v1/conversations/{id}/mls/revocations/{device_id}/confirm", a.withAuth(a.confirmMLSRevocation))
 	mux.HandleFunc("POST /api/v1/messages/envelopes", a.withAuth(a.createMessageEnvelope))
 	mux.HandleFunc("POST /api/v1/attachments", a.withAuth(a.uploadAttachment))
 	mux.HandleFunc("GET /api/v1/attachments", a.withAuth(a.listAttachments))
@@ -82,6 +91,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/push/config", a.withAuth(a.pushConfig))
 	mux.HandleFunc("DELETE /api/v1/push/subscriptions/{id}", a.withAuth(a.deletePushSubscription))
 	mux.HandleFunc("POST /api/v1/calls", a.withAuth(a.createCall))
+	mux.HandleFunc("GET /api/v1/calls/config", a.withAuth(a.callConfig))
 	mux.HandleFunc("GET /api/v1/calls", a.withAuth(a.listCalls))
 	mux.HandleFunc("/api/v1/calls/", a.withAuth(a.callSubroute))
 	mux.HandleFunc("GET /api/v1/sync/ws", a.syncWebSocket)

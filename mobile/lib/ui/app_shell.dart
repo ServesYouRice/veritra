@@ -3,12 +3,15 @@ import 'package:flutter/material.dart';
 import '../core/app_state.dart';
 import '../features/auth/connect_screen.dart';
 import '../features/chat/chat_list_screen.dart';
+import '../features/chat/chat_screen.dart';
 import '../features/communities/community_screen.dart';
 import '../features/settings/settings_screen.dart';
+import 'widgets/connection_banner.dart';
+import 'widgets/empty_state.dart';
 
-/// Root scaffold. A conversation is a detail route pushed from the chat
-/// list, not a tab; navigation adapts to a rail on wide layouts per
-/// Material 3 guidance.
+/// Root scaffold. Navigation adapts to a rail on wide layouts per Material 3
+/// guidance, and at that width the chat list and the selected conversation
+/// sit side by side instead of the conversation covering the list.
 class AppShell extends StatefulWidget {
   const AppShell({required this.state, super.key});
 
@@ -46,39 +49,59 @@ class _AppShellState extends State<AppShell> {
     if (!widget.state.connected) {
       return ConnectScreen(state: widget.state);
     }
+    final wide = MediaQuery.sizeOf(context).width >= AppShell._railBreakpoint;
+    // At rail width the chat list keeps its own pane and opening a
+    // conversation fills the detail pane, so selection survives navigating
+    // between destinations. Narrow layouts keep pushing a full-screen route.
     final pages = <Widget>[
-      ChatListScreen(state: widget.state),
+      wide
+          ? _ChatWorkspace(state: widget.state)
+          : ChatListScreen(state: widget.state),
       CommunityScreen(state: widget.state),
       SettingsScreen(state: widget.state),
     ];
-    final wide = MediaQuery.sizeOf(context).width >= AppShell._railBreakpoint;
     if (wide) {
       return Scaffold(
         body: SafeArea(
-          child: Row(
+          child: Column(
             children: <Widget>[
-              NavigationRail(
-                selectedIndex: index,
-                onDestinationSelected: (value) => setState(() => index = value),
-                labelType: NavigationRailLabelType.all,
-                destinations: <NavigationRailDestination>[
-                  for (final destination in _destinations)
-                    NavigationRailDestination(
-                      icon: Icon(destination.icon),
-                      selectedIcon: Icon(destination.selectedIcon),
-                      label: Text(destination.label),
+              ConnectionBanner(state: widget.state),
+              Expanded(
+                child: Row(
+                  children: <Widget>[
+                    NavigationRail(
+                      selectedIndex: index,
+                      onDestinationSelected: (value) =>
+                          setState(() => index = value),
+                      labelType: NavigationRailLabelType.all,
+                      destinations: <NavigationRailDestination>[
+                        for (final destination in _destinations)
+                          NavigationRailDestination(
+                            icon: Icon(destination.icon),
+                            selectedIcon: Icon(destination.selectedIcon),
+                            label: Text(destination.label),
+                          ),
+                      ],
                     ),
-                ],
+                    const VerticalDivider(width: 1),
+                    Expanded(child: pages[index]),
+                  ],
+                ),
               ),
-              const VerticalDivider(width: 1),
-              Expanded(child: pages[index]),
             ],
           ),
         ),
       );
     }
     return Scaffold(
-      body: SafeArea(child: pages[index]),
+      body: SafeArea(
+        child: Column(
+          children: <Widget>[
+            ConnectionBanner(state: widget.state),
+            Expanded(child: pages[index]),
+          ],
+        ),
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: index,
         onDestinationSelected: (value) => setState(() => index = value),
@@ -91,6 +114,41 @@ class _AppShellState extends State<AppShell> {
             ),
         ],
       ),
+    );
+  }
+}
+
+/// Master-detail chat layout for wide windows.
+class _ChatWorkspace extends StatelessWidget {
+  const _ChatWorkspace({required this.state});
+
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = state.selectedConversationId;
+    return Row(
+      children: <Widget>[
+        SizedBox(
+          width: 360,
+          child: ChatListScreen(state: state, embedded: true),
+        ),
+        const VerticalDivider(width: 1),
+        Expanded(
+          child: selected == null
+              ? const EmptyState(
+                  icon: Icons.forum_outlined,
+                  title: 'No conversation selected',
+                  message: 'Pick a conversation from the list to read it here.',
+                )
+              : ChatScreen(
+                  key: ValueKey<String>(selected),
+                  state: state,
+                  conversationId: selected,
+                  showBackButton: false,
+                ),
+        ),
+      ],
     );
   }
 }

@@ -131,16 +131,16 @@ func (s *Store) CreateDeviceLink(ctx context.Context, accountID, deviceID string
 		return domain.DeviceLink{}, err
 	}
 	return domain.DeviceLink{
-		ID:                id,
-		Code:              code,
-		AccountID:         accountID,
-		CreatedByDeviceID: deviceID,
-		State:             domain.DeviceLinkPending,
-		ProtocolVersion:   deviceLinkProtocolVersion,
-		LinkNonce:         linkNonce,
+		ID:                 id,
+		Code:               code,
+		AccountID:          accountID,
+		CreatedByDeviceID:  deviceID,
+		State:              domain.DeviceLinkPending,
+		ProtocolVersion:    deviceLinkProtocolVersion,
+		LinkNonce:          linkNonce,
 		ExistingSigningKey: existingSigningKey,
-		CreatedAt:         createdAt,
-		ExpiresAt:         expiresAt,
+		CreatedAt:          createdAt,
+		ExpiresAt:          expiresAt,
 	}, nil
 }
 
@@ -957,7 +957,14 @@ func (s *Store) ListConversationMembers(ctx context.Context, conversationID, req
 	if !authorized {
 		return nil, ErrNotMember
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT account_id, role, created_at FROM memberships WHERE conversation_id = ? ORDER BY created_at, account_id`, conversationID)
+	// The username join is scoped to a conversation the requester already
+	// belongs to, so it exposes no account metadata beyond shared membership.
+	rows, err := tx.QueryContext(ctx, `
+		SELECT m.account_id, m.role, m.created_at, COALESCE(a.username, '')
+		FROM memberships m
+		LEFT JOIN accounts a ON a.id = m.account_id
+		WHERE m.conversation_id = ?
+		ORDER BY m.created_at, m.account_id`, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -966,7 +973,7 @@ func (s *Store) ListConversationMembers(ctx context.Context, conversationID, req
 	for rows.Next() {
 		var member domain.Membership
 		var createdAt string
-		if err := rows.Scan(&member.AccountID, &member.Role, &createdAt); err != nil {
+		if err := rows.Scan(&member.AccountID, &member.Role, &createdAt, &member.Username); err != nil {
 			return nil, err
 		}
 		member.CreatedAt = parseTime(createdAt)
@@ -1078,7 +1085,22 @@ func (s *Store) ListConversationsPage(ctx context.Context, accountID string, lim
 			             AND (rr.message_id IS NULL OR me.created_at > (
 			                 SELECT created_at FROM message_envelopes WHERE id = rr.message_id
 			             ))
-			       ), 0) AS unread_count
+			       ), 0) AS unread_count,
+			       -- DM counterpart identity. Restricted to two-account DMs
+			       -- the requester is already a member of, so it reveals
+			       -- nothing beyond shared membership. NULL for group and
+			       -- channel conversations.
+			       CASE WHEN c.kind = 'dm' THEN (
+			           SELECT m2.account_id FROM memberships m2
+			           WHERE m2.conversation_id = c.id AND m2.account_id != ?
+			           ORDER BY m2.created_at, m2.account_id LIMIT 1
+			       ) END AS peer_account_id,
+			       CASE WHEN c.kind = 'dm' THEN (
+			           SELECT COALESCE(a2.username, '') FROM memberships m2
+			           LEFT JOIN accounts a2 ON a2.id = m2.account_id
+			           WHERE m2.conversation_id = c.id AND m2.account_id != ?
+			           ORDER BY m2.created_at, m2.account_id LIMIT 1
+			       ) END AS peer_username
 			FROM conversations c
 			JOIN memberships m ON m.conversation_id = c.id
 			LEFT JOIN read_receipts rr
@@ -1095,14 +1117,14 @@ func (s *Store) ListConversationsPage(ctx context.Context, accountID string, lim
 		)
 		SELECT id, kind, title, community_id, channel_id, created_by,
 		       retention_seconds, created_at, current_role, last_message_at,
-		       unread_count
+		       unread_count, peer_account_id, peer_username
 		FROM conversation_activity
 		WHERE (? = '' OR (activity_at, id) < (
 			SELECT activity_at, id FROM conversation_activity WHERE id = ?
 		))
 		ORDER BY activity_at DESC, id DESC
 		LIMIT ?`,
-		accountID, accountID, now, accountID, now, accountID, accountID, beforeID, beforeID, limit)
+		accountID, accountID, now, accountID, accountID, accountID, now, accountID, accountID, beforeID, beforeID, limit)
 	if err != nil {
 		return nil, err
 	}

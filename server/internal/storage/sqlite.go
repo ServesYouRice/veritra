@@ -554,13 +554,16 @@ func scanConversation(rows scanner) (domain.Conversation, error) {
 func scanConversationWithRole(rows scanner) (domain.Conversation, error) {
 	var c domain.Conversation
 	var title, communityID, channelID, created, lastMessage sql.NullString
+	var peerAccountID, peerUsername sql.NullString
 	var retention sql.NullInt64
 	var unread int64
 	if err := rows.Scan(&c.ID, &c.Kind, &title, &communityID, &channelID,
 		&c.CreatedBy, &retention, &created, &c.CurrentRole, &lastMessage,
-		&unread); err != nil {
+		&unread, &peerAccountID, &peerUsername); err != nil {
 		return domain.Conversation{}, err
 	}
+	c.PeerAccountID = peerAccountID.String
+	c.PeerUsername = peerUsername.String
 	c.Title = stringPtr(title)
 	c.CommunityID = stringPtr(communityID)
 	c.ChannelID = stringPtr(channelID)

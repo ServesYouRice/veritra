@@ -70,7 +70,7 @@ func (a *API) communitySubroute(w http.ResponseWriter, r *http.Request, principa
 			handleStorageError(w, err)
 			return
 		}
-		a.recordAuditEvent(r.Context(), &principal.AccountID, "community.member.updated", map[string]string{"community_id": parts[0], "target_account_id": req.AccountID, "role": req.Role})
+		a.recordAuditEvent(r.Context(), &principal.AccountID, "community.member.updated", map[string]string{"community_id": parts[0], "role": req.Role})
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		return
 	}
@@ -190,7 +190,7 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 		payload := map[string]string{"conversation_id": conversationID, "account_id": targetAccountID, "mls_coordination": "pending"}
 		a.publishCommittedEvent(a.conversationMemberIDs(r.Context(), conversationID), realtime.Event{Version: "v1", Type: eventType, ID: events.RemainingMembersEventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
 		a.publishCommittedEvent([]string{targetAccountID}, realtime.Event{Version: "v1", Type: eventType, ID: events.RemovedMemberEventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
-		a.recordAuditEvent(r.Context(), &principal.AccountID, "conversation.member.removed", map[string]string{"conversation_id": conversationID, "target_account_id": targetAccountID})
+		a.recordAuditEvent(r.Context(), &principal.AccountID, "conversation.member.removed", map[string]string{"conversation_id": conversationID})
 		writeJSON(w, http.StatusOK, map[string]string{"status": "membership_removed", "mls_coordination": "pending"})
 		return
 	}
@@ -233,7 +233,7 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 		}
 		payload := map[string]string{"conversation_id": conversationID, "account_id": req.AccountID, "role": req.Role, "mls_coordination": "pending"}
 		a.publishCommittedEvent(a.conversationMemberIDs(r.Context(), conversationID), realtime.Event{Version: "v1", Type: "membership.updated", ID: eventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
-		a.recordAuditEvent(r.Context(), &principal.AccountID, "conversation.member.added", map[string]string{"conversation_id": conversationID, "target_account_id": req.AccountID, "role": req.Role})
+		a.recordAuditEvent(r.Context(), &principal.AccountID, "conversation.member.added", map[string]string{"conversation_id": conversationID, "role": req.Role})
 		writeJSON(w, http.StatusOK, map[string]string{"status": "membership_updated", "mls_coordination": "pending"})
 	case parts[1] == "messages" && r.Method == http.MethodGet:
 		limit := normalizeLimit(messageQueryLimit(r), 100, 200)
@@ -388,6 +388,8 @@ type messageEnvelopeRequest struct {
 	ExpiresAt      *time.Time      `json:"expires_at,omitempty"`
 }
 
+const productionMessageCryptoProtocol = "mls10-openmls-v1"
+
 func (a *API) createMessageEnvelope(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
 	raw, ok := readLimitedJSON(w, r)
 	if !ok {
@@ -405,7 +407,7 @@ func (a *API) createMessageEnvelope(w http.ResponseWriter, r *http.Request, prin
 		writeError(w, http.StatusBadRequest, "device_session_required")
 		return
 	}
-	if req.ConversationID == "" || req.IdempotencyKey == "" || len(req.Ciphertext) == 0 || req.CryptoProtocol == "" {
+	if req.ConversationID == "" || req.IdempotencyKey == "" || len(req.Ciphertext) == 0 || req.CryptoProtocol != productionMessageCryptoProtocol {
 		writeError(w, http.StatusBadRequest, "invalid_encrypted_envelope")
 		return
 	}
@@ -527,11 +529,12 @@ func (a *API) messageSubroute(w http.ResponseWriter, r *http.Request, principal 
 		}
 		var req struct {
 			ReactionCiphertext []byte `json:"reaction_ciphertext"`
+			CryptoProtocol     string `json:"crypto_protocol"`
 		}
 		if !decodeRawJSON(w, raw, &req) {
 			return
 		}
-		if len(req.ReactionCiphertext) == 0 {
+		if len(req.ReactionCiphertext) == 0 || req.CryptoProtocol != productionMessageCryptoProtocol {
 			writeError(w, http.StatusBadRequest, "reaction_ciphertext_required")
 			return
 		}
@@ -562,7 +565,7 @@ func decodeEncryptedMutation(w http.ResponseWriter, r *http.Request) (encryptedM
 	if !decodeRawJSON(w, raw, &req) {
 		return encryptedMessageMutationRequest{}, false
 	}
-	if len(req.Ciphertext) == 0 || req.CryptoProtocol == "" {
+	if len(req.Ciphertext) == 0 || req.CryptoProtocol != productionMessageCryptoProtocol {
 		writeError(w, http.StatusBadRequest, "invalid_encrypted_marker")
 		return encryptedMessageMutationRequest{}, false
 	}

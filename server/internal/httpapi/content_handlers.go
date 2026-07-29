@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -38,7 +40,7 @@ func (a *API) uploadAttachment(w http.ResponseWriter, r *http.Request, principal
 	if len(metadata) == 0 {
 		metadata = json.RawMessage(`{}`)
 	}
-	if !json.Valid(metadata) {
+	if !validAttachmentCryptoMetadata(metadata) {
 		writeError(w, http.StatusBadRequest, "invalid_crypto_metadata")
 		return
 	}
@@ -70,6 +72,23 @@ func (a *API) uploadAttachment(w http.ResponseWriter, r *http.Request, principal
 		return
 	}
 	writeJSON(w, http.StatusCreated, attachment)
+}
+
+func validAttachmentCryptoMetadata(raw json.RawMessage) bool {
+	var metadata struct {
+		Version   int    `json:"version"`
+		Algorithm string `json:"algorithm"`
+		ChunkSize int    `json:"chunk_size"`
+	}
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		return false
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil || len(fields) != 3 {
+		return false
+	}
+	return metadata.Version == 1 && metadata.Algorithm == "AES-256-GCM-chunked" &&
+		metadata.ChunkSize == 1024*1024
 }
 
 func (a *API) listAttachments(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
@@ -123,10 +142,16 @@ func (a *API) uploadBackup(w http.ResponseWriter, r *http.Request, principal dom
 		writeError(w, http.StatusBadRequest, "key_derivation_metadata_required")
 		return
 	}
-	if !json.Valid(metadata) {
+	if !validBackupCryptoMetadata(metadata) {
 		writeError(w, http.StatusBadRequest, "invalid_key_derivation_metadata")
 		return
 	}
+	recoveryToken, err := base64.RawURLEncoding.DecodeString(r.Header.Get("X-Recovery-Token"))
+	if err != nil || len(recoveryToken) != 32 {
+		writeError(w, http.StatusBadRequest, "recovery_token_required")
+		return
+	}
+	recoveryTokenHash := sha256.Sum256(recoveryToken)
 	storageKey, sha, size, err := a.Blobs.PutEncryptedBlob(r.Context(), http.MaxBytesReader(w, r.Body, 100<<20))
 	if err != nil {
 		var maxErr *http.MaxBytesError
@@ -137,7 +162,7 @@ func (a *API) uploadBackup(w http.ResponseWriter, r *http.Request, principal dom
 		writeError(w, http.StatusInternalServerError, "backup_upload_failed")
 		return
 	}
-	if err := a.Store.CreateBackupBlob(r.Context(), principal.AccountID, principal.DeviceID, storageKey, sha, size, metadata); err != nil {
+	if err := a.Store.CreateBackupBlob(r.Context(), principal.AccountID, principal.DeviceID, storageKey, sha, size, metadata, recoveryTokenHash[:]); err != nil {
 		a.cleanupUncommittedBlob(r.Context(), storageKey)
 		if errors.Is(err, storage.ErrStorageQuota) {
 			handleStorageError(w, err)
@@ -147,6 +172,34 @@ func (a *API) uploadBackup(w http.ResponseWriter, r *http.Request, principal dom
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]interface{}{"storage_key": storageKey, "ciphertext_sha256": sha, "size_bytes": size})
+}
+
+func validBackupCryptoMetadata(raw json.RawMessage) bool {
+	var metadata struct {
+		Version      int    `json:"version"`
+		Algorithm    string `json:"algorithm"`
+		ChunkSize    int    `json:"chunk_size"`
+		StateCounter int64  `json:"state_counter"`
+	}
+	var fields map[string]json.RawMessage
+	return json.Unmarshal(raw, &metadata) == nil && json.Unmarshal(raw, &fields) == nil &&
+		len(fields) == 4 && metadata.Version == 1 && metadata.Algorithm == "AES-256-GCM-chunked" &&
+		metadata.ChunkSize == 1024*1024 && metadata.StateCounter > 0
+}
+
+func (a *API) recoverBackup(w http.ResponseWriter, r *http.Request) {
+	token, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(r.PathValue("token")))
+	if err != nil || len(token) != 32 {
+		writeError(w, http.StatusNotFound, "not_found")
+		return
+	}
+	hash := sha256.Sum256(token)
+	backup, err := a.Store.BackupForRecoveryToken(r.Context(), hash[:])
+	if err != nil {
+		handleStorageError(w, err)
+		return
+	}
+	serveEncryptedBlob(w, r, a.Blobs, backup.StorageKey, backup.CiphertextSHA256, backup.SizeBytes)
 }
 
 func (a *API) listBackups(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
@@ -240,7 +293,9 @@ func (a *API) createPushSubscription(w http.ResponseWriter, r *http.Request, pri
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.Provider != "webpush" || push.ValidateWebPushTarget(push.Notification{Endpoint: req.Endpoint, PublicKey: req.PublicKey, AuthSecret: req.AuthSecret}) != nil {
+	valid := (req.Provider == "webpush" && push.ValidateWebPushTarget(push.Notification{Provider: "webpush", Endpoint: req.Endpoint, PublicKey: req.PublicKey, AuthSecret: req.AuthSecret}) == nil) ||
+		((req.Provider == "fcm" || req.Provider == "apns") && push.ValidateNativeTarget(req.Provider, req.Endpoint) == nil && req.PublicKey == "" && req.AuthSecret == "")
+	if !valid {
 		writeError(w, http.StatusBadRequest, "invalid_push_subscription")
 		return
 	}
@@ -254,7 +309,8 @@ func (a *API) createPushSubscription(w http.ResponseWriter, r *http.Request, pri
 
 func (a *API) pushConfig(w http.ResponseWriter, _ *http.Request, _ domain.Principal) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"enabled":          a.VAPIDPublicKey != "",
+		"enabled":          len(a.PushProviders) > 0,
+		"providers":        a.PushProviders,
 		"vapid_public_key": a.VAPIDPublicKey,
 	})
 }
@@ -276,6 +332,7 @@ func (a *API) deliverPush(targets []storage.PushTarget) {
 	failures := 0
 	for _, target := range targets {
 		err := a.Push.SendEncryptedEventAvailable(ctx, push.Notification{
+			Provider:   target.Provider,
 			Endpoint:   target.Endpoint,
 			PublicKey:  target.PublicKey,
 			AuthSecret: target.AuthSecret,

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -11,22 +12,31 @@ import (
 )
 
 type Config struct {
-	Addr            string
-	DataDir         string
-	DatabasePath    string
-	StoragePath     string
-	InstanceName    string
-	SetupToken      string
-	EnableMetrics   bool
-	ManagementAddr  string
-	TrustedProxies  []*net.IPNet
-	VAPIDSubscriber string
-	VAPIDPublicKey  string
-	VAPIDPrivateKey string
-	Environment     string
-	LogLevel        string
-	LogFormat       string
-	SyncRetention   time.Duration
+	Addr             string
+	DataDir          string
+	DatabasePath     string
+	StoragePath      string
+	InstanceName     string
+	SetupToken       string
+	EnableMetrics    bool
+	ManagementAddr   string
+	TrustedProxies   []*net.IPNet
+	VAPIDSubscriber  string
+	VAPIDPublicKey   string
+	VAPIDPrivateKey  string
+	FCMProjectID     string
+	FCMClientEmail   string
+	FCMPrivateKey    string
+	APNsTeamID       string
+	APNsKeyID        string
+	APNsBundleID     string
+	APNsPrivateKey   string
+	TURNURLs         []string
+	TURNSharedSecret string
+	Environment      string
+	LogLevel         string
+	LogFormat        string
+	SyncRetention    time.Duration
 }
 
 func Load() (Config, error) {
@@ -35,20 +45,29 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg := Config{
-		Addr:            getenv("PRIVATE_MESSENGER_ADDR", ":8080"),
-		DataDir:         getenv("PRIVATE_MESSENGER_DATA_DIR", "./data"),
-		InstanceName:    getenv("PRIVATE_MESSENGER_INSTANCE_NAME", "Veritra"),
-		SetupToken:      os.Getenv("PRIVATE_MESSENGER_SETUP_TOKEN"),
-		EnableMetrics:   getenv("PRIVATE_MESSENGER_ENABLE_METRICS", "") == "1",
-		ManagementAddr:  getenv("PRIVATE_MESSENGER_MANAGEMENT_ADDR", "127.0.0.1:9090"),
-		TrustedProxies:  trustedProxies,
-		VAPIDSubscriber: strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_VAPID_SUBSCRIBER")),
-		VAPIDPublicKey:  strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_VAPID_PUBLIC_KEY")),
-		VAPIDPrivateKey: strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_VAPID_PRIVATE_KEY")),
-		Environment:     strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_ENV", "development"))),
-		LogLevel:        strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_LOG_LEVEL", "info"))),
-		LogFormat:       strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_LOG_FORMAT", "text"))),
-		SyncRetention:   30 * 24 * time.Hour,
+		Addr:             getenv("PRIVATE_MESSENGER_ADDR", ":8080"),
+		DataDir:          getenv("PRIVATE_MESSENGER_DATA_DIR", "./data"),
+		InstanceName:     getenv("PRIVATE_MESSENGER_INSTANCE_NAME", "Veritra"),
+		SetupToken:       os.Getenv("PRIVATE_MESSENGER_SETUP_TOKEN"),
+		EnableMetrics:    getenv("PRIVATE_MESSENGER_ENABLE_METRICS", "") == "1",
+		ManagementAddr:   getenv("PRIVATE_MESSENGER_MANAGEMENT_ADDR", "127.0.0.1:9090"),
+		TrustedProxies:   trustedProxies,
+		VAPIDSubscriber:  strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_VAPID_SUBSCRIBER")),
+		VAPIDPublicKey:   strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_VAPID_PUBLIC_KEY")),
+		VAPIDPrivateKey:  strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_VAPID_PRIVATE_KEY")),
+		FCMProjectID:     strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_FCM_PROJECT_ID")),
+		FCMClientEmail:   strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_FCM_CLIENT_EMAIL")),
+		FCMPrivateKey:    strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_FCM_PRIVATE_KEY")),
+		APNsTeamID:       strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_APNS_TEAM_ID")),
+		APNsKeyID:        strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_APNS_KEY_ID")),
+		APNsBundleID:     strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_APNS_BUNDLE_ID")),
+		APNsPrivateKey:   strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_APNS_PRIVATE_KEY")),
+		TURNURLs:         splitNonEmpty(os.Getenv("PRIVATE_MESSENGER_TURN_URLS")),
+		TURNSharedSecret: strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_TURN_SHARED_SECRET")),
+		Environment:      strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_ENV", "development"))),
+		LogLevel:         strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_LOG_LEVEL", "info"))),
+		LogFormat:        strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_LOG_FORMAT", "text"))),
+		SyncRetention:    30 * 24 * time.Hour,
 	}
 	if cfg.Environment != "development" && cfg.Environment != "production" {
 		return Config{}, fmt.Errorf("PRIVATE_MESSENGER_ENV must be development or production")
@@ -58,6 +77,15 @@ func Load() (Config, error) {
 	}
 	if cfg.LogFormat != "text" && cfg.LogFormat != "json" {
 		return Config{}, fmt.Errorf("PRIVATE_MESSENGER_LOG_FORMAT must be text or json")
+	}
+	if (len(cfg.TURNURLs) == 0) != (cfg.TURNSharedSecret == "") {
+		return Config{}, fmt.Errorf("TURN URLs and shared secret must be configured together")
+	}
+	for _, raw := range cfg.TURNURLs {
+		value, err := url.Parse(raw)
+		if err != nil || (value.Scheme != "turn" && value.Scheme != "turns") || value.Host == "" || value.User != nil {
+			return Config{}, fmt.Errorf("invalid PRIVATE_MESSENGER_TURN_URLS entry")
+		}
 	}
 	if raw := strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_SYNC_EVENT_RETENTION_DAYS")); raw != "" {
 		days, err := strconv.Atoi(raw)
@@ -69,6 +97,16 @@ func Load() (Config, error) {
 	cfg.DatabasePath = getenv("PRIVATE_MESSENGER_DB_PATH", filepath.Join(cfg.DataDir, "private-messenger.db"))
 	cfg.StoragePath = getenv("PRIVATE_MESSENGER_STORAGE_PATH", filepath.Join(cfg.DataDir, "blobs"))
 	return cfg, nil
+}
+
+func splitNonEmpty(raw string) []string {
+	result := make([]string, 0)
+	for _, item := range strings.Split(raw, ",") {
+		if value := strings.TrimSpace(item); value != "" {
+			result = append(result, value)
+		}
+	}
+	return result
 }
 
 // ValidateServe rejects unsafe production listener configurations. TLS is

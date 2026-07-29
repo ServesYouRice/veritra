@@ -78,7 +78,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		_ = store.Close()
 		return nil, err
 	}
-	var pushProvider push.Provider = push.DisabledProvider{}
+	providers := map[string]push.Provider{}
 	pushConfigured := cfg.VAPIDSubscriber != "" || cfg.VAPIDPublicKey != "" || cfg.VAPIDPrivateKey != ""
 	if pushConfigured {
 		provider, err := push.NewWebPushProvider(push.WebPushConfig{
@@ -90,8 +90,30 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 			_ = store.Close()
 			return nil, fmt.Errorf("configure web push: %w", err)
 		}
-		pushProvider = provider
+		providers["webpush"] = provider
 	}
+	fcmConfigured := cfg.FCMProjectID != "" || cfg.FCMClientEmail != "" || cfg.FCMPrivateKey != ""
+	if fcmConfigured {
+		provider, err := push.NewFCMProvider(push.FCMConfig{ProjectID: cfg.FCMProjectID,
+			ClientEmail: cfg.FCMClientEmail, PrivateKey: cfg.FCMPrivateKey})
+		if err != nil {
+			_ = store.Close()
+			return nil, fmt.Errorf("configure FCM: %w", err)
+		}
+		providers["fcm"] = provider
+	}
+	apnsConfigured := cfg.APNsTeamID != "" || cfg.APNsKeyID != "" || cfg.APNsBundleID != "" || cfg.APNsPrivateKey != ""
+	if apnsConfigured {
+		provider, err := push.NewAPNsProvider(push.APNsConfig{TeamID: cfg.APNsTeamID,
+			KeyID: cfg.APNsKeyID, BundleID: cfg.APNsBundleID,
+			PrivateKey: cfg.APNsPrivateKey, Sandbox: cfg.Environment != "production"})
+		if err != nil {
+			_ = store.Close()
+			return nil, fmt.Errorf("configure APNs: %w", err)
+		}
+		providers["apns"] = provider
+	}
+	pushProvider := push.NewRouter(providers)
 	hub := realtime.NewHub()
 	metrics := newHTTPMetrics()
 	metrics.realtimeConnections = hub.ConnectionCount
@@ -112,7 +134,17 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
-	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Push: a.Push, VAPIDPublicKey: a.Config.VAPIDPublicKey, Log: a.Log, SetupToken: a.Config.SetupToken, DefaultInstanceName: a.Config.InstanceName, Messages: messaging.New(a.Store), ClientIdentities: a.limiter.clientIdentities, LoginBackoff: a.loginBackoff, Ready: a.ready.Load}
+	pushProviders := make([]string, 0, 3)
+	if a.Config.VAPIDPublicKey != "" {
+		pushProviders = append(pushProviders, "webpush")
+	}
+	if a.Config.FCMProjectID != "" {
+		pushProviders = append(pushProviders, "fcm")
+	}
+	if a.Config.APNsTeamID != "" {
+		pushProviders = append(pushProviders, "apns")
+	}
+	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Push: a.Push, PushProviders: pushProviders, VAPIDPublicKey: a.Config.VAPIDPublicKey, TURNURLs: a.Config.TURNURLs, TURNSharedSecret: a.Config.TURNSharedSecret, Log: a.Log, SetupToken: a.Config.SetupToken, DefaultInstanceName: a.Config.InstanceName, Messages: messaging.New(a.Store), ClientIdentities: a.limiter.clientIdentities, LoginBackoff: a.loginBackoff, Ready: a.ready.Load}
 	api.Register(mux)
 	return securityHeaders(a.requestLogger(a.limiter.middleware(routeTimeouts(mux))))
 }

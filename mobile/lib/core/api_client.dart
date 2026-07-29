@@ -316,6 +316,266 @@ class ApiClient {
         token: token, body: envelope.toJson());
   }
 
+  Future<AttachmentEnvelope> uploadEncryptedAttachment(
+    String token,
+    String conversationId,
+    Stream<List<int>> ciphertext, {
+    required int ciphertextLength,
+    required Map<String, Object?> cryptoMetadata,
+  }) async {
+    if (ciphertextLength <= 0 || ciphertextLength > 50 * 1024 * 1024) {
+      throw ArgumentError.value(ciphertextLength, 'ciphertextLength');
+    }
+    final uri = Uri.parse(baseUrl).resolve(Uri(
+      path: '/api/v1/attachments',
+      queryParameters: <String, String>{'conversation_id': conversationId},
+    ).toString());
+    final request = await _httpClient.postUrl(uri).timeout(_requestTimeout);
+    request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+    request.headers.set('X-Private-Messenger-Encrypted', '1');
+    request.headers.set('X-Crypto-Metadata', jsonEncode(cryptoMetadata));
+    request.contentLength = ciphertextLength;
+    await request.addStream(ciphertext).timeout(_requestTimeout);
+    final response = await request.close().timeout(_requestTimeout);
+    final bytes = await response.fold<BytesBuilder>(
+        BytesBuilder(copy: false), (builder, chunk) => builder..add(chunk));
+    final text = utf8.decode(bytes.takeBytes());
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ApiException(response.statusCode, text);
+    }
+    return AttachmentEnvelope.fromJson(
+        Map<String, Object?>.from(jsonDecode(text) as Map));
+  }
+
+  Future<Stream<List<int>>> downloadEncryptedAttachment(
+      String token, String attachmentId) async {
+    final uri = Uri.parse(baseUrl)
+        .resolve('/api/v1/attachments/${Uri.encodeComponent(attachmentId)}');
+    final request = await _httpClient.getUrl(uri).timeout(_requestTimeout);
+    request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+    final response = await request.close().timeout(_requestTimeout);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final body = await utf8.decodeStream(response);
+      throw ApiException(response.statusCode, body);
+    }
+    return response;
+  }
+
+  Future<void> uploadEncryptedBackup(
+    String token,
+    Stream<List<int>> ciphertext, {
+    required int ciphertextLength,
+    required List<int> recoveryToken,
+    required Map<String, Object?> cryptoMetadata,
+  }) async {
+    if (ciphertextLength <= 0 ||
+        ciphertextLength > 100 * 1024 * 1024 ||
+        recoveryToken.length != 32) {
+      throw ArgumentError('invalid encrypted backup');
+    }
+    final request = await _httpClient
+        .postUrl(Uri.parse(baseUrl).resolve('/api/v1/backups'))
+        .timeout(_requestTimeout);
+    request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+    request.headers.set('X-Private-Messenger-Encrypted', '1');
+    request.headers.set('X-Recovery-Token',
+        base64Url.encode(recoveryToken).replaceAll('=', ''));
+    request.headers
+        .set('X-Key-Derivation-Metadata', jsonEncode(cryptoMetadata));
+    request.contentLength = ciphertextLength;
+    await request.addStream(ciphertext).timeout(_requestTimeout);
+    final response = await request.close().timeout(_requestTimeout);
+    final body = await utf8.decodeStream(response);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ApiException(response.statusCode, body);
+    }
+  }
+
+  Future<Stream<List<int>>> recoverEncryptedBackup(
+      List<int> recoveryToken) async {
+    if (recoveryToken.length != 32)
+      throw ArgumentError.value(recoveryToken, 'recoveryToken');
+    final encoded = base64Url.encode(recoveryToken).replaceAll('=', '');
+    final request = await _httpClient
+        .getUrl(Uri.parse(baseUrl).resolve('/api/v1/recovery/$encoded'))
+        .timeout(_requestTimeout);
+    final response = await request.close().timeout(_requestTimeout);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final body = await utf8.decodeStream(response);
+      throw ApiException(response.statusCode, body);
+    }
+    return response;
+  }
+
+  Future<void> publishDeviceKeyPackages(
+    String token,
+    List<List<int>> keyPackages, {
+    Duration lifetime = const Duration(days: 14),
+  }) async {
+    final expiresAt = DateTime.now().toUtc().add(lifetime).toIso8601String();
+    await _jsonRequest(
+      'POST',
+      '/api/v1/devices/me/key-packages',
+      token: token,
+      body: <String, Object?>{
+        'key_packages': <Object?>[
+          for (final keyPackage in keyPackages)
+            <String, Object?>{
+              'key_package': base64Encode(keyPackage),
+              'ciphersuite': 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519',
+              'expires_at': expiresAt,
+            },
+        ],
+      },
+    );
+  }
+
+  Future<List<DeviceKeyPackage>> claimConversationKeyPackages(
+    String token,
+    String conversationId,
+  ) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/conversations/${Uri.encodeComponent(conversationId)}'
+          '/key-packages/claim',
+      token: token,
+    );
+    final rows = json['key_packages'] as List<Object?>? ?? const <Object?>[];
+    return rows
+        .map((row) =>
+            DeviceKeyPackage.fromJson(Map<String, Object?>.from(row as Map)))
+        .toList(growable: false);
+  }
+
+  Future<MlsMessage> sendMlsMessage(
+    String token,
+    String conversationId, {
+    required String kind,
+    required List<int> payload,
+    required String idempotencyKey,
+    String? recipientDeviceId,
+    String? revocationDeviceId,
+  }) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/conversations/${Uri.encodeComponent(conversationId)}'
+          '/mls/messages',
+      token: token,
+      body: <String, Object?>{
+        'kind': kind,
+        'payload': base64Encode(payload),
+        'idempotency_key': idempotencyKey,
+        if (recipientDeviceId != null) 'recipient_device_id': recipientDeviceId,
+        if (revocationDeviceId != null)
+          'revocation_device_id': revocationDeviceId,
+      },
+    );
+    return MlsMessage.fromJson(
+      Map<String, Object?>.from(json['mls_message'] as Map),
+    );
+  }
+
+  Future<MlsMessage> mlsMessage(String token, String messageId) async {
+    final json = await _jsonRequest(
+      'GET',
+      '/api/v1/mls/messages/${Uri.encodeComponent(messageId)}',
+      token: token,
+    );
+    return MlsMessage.fromJson(
+      Map<String, Object?>.from(json['mls_message'] as Map),
+    );
+  }
+
+  Future<List<MlsMessage>> mlsMessages(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async {
+    final json = await _jsonRequest(
+      'GET',
+      Uri(
+        path: '/api/v1/mls/messages',
+        queryParameters: <String, String>{
+          'after': after.toString(),
+          'limit': limit.toString(),
+        },
+      ).toString(),
+      token: token,
+    );
+    final rows = json['mls_messages'] as List<Object?>? ?? const <Object?>[];
+    return rows
+        .map(
+            (row) => MlsMessage.fromJson(Map<String, Object?>.from(row as Map)))
+        .toList(growable: false);
+  }
+
+  Future<List<MlsRevocation>> mlsRevocations(String token) async {
+    final json =
+        await _jsonRequest('GET', '/api/v1/mls/revocations', token: token);
+    final rows = json['mls_revocations'] as List<Object?>? ?? const <Object?>[];
+    return rows
+        .map((row) =>
+            MlsRevocation.fromJson(Map<String, Object?>.from(row as Map)))
+        .toList(growable: false);
+  }
+
+  Future<List<Map<String, Object?>>> callIceServers(String token) async {
+    final json =
+        await _jsonRequest('GET', '/api/v1/calls/config', token: token);
+    return (json['ice_servers'] as List<Object?>? ?? const <Object?>[])
+        .map((item) => Map<String, Object?>.from(item as Map))
+        .toList(growable: false);
+  }
+
+  Future<CallSession> createCall(String token, String conversationId,
+      Map<String, Object?> encryptedMetadata) async {
+    final json = await _jsonRequest('POST', '/api/v1/calls',
+        token: token,
+        body: <String, Object?>{
+          'conversation_id': conversationId,
+          'metadata': encryptedMetadata
+        });
+    return CallSession.fromJson(json);
+  }
+
+  Future<CallSession> transitionCall(String token, String callId, String state,
+      {Map<String, Object?>? encryptedMetadata}) async {
+    final json = await _jsonRequest(
+        'POST', '/api/v1/calls/${Uri.encodeComponent(callId)}/state',
+        token: token,
+        body: <String, Object?>{
+          'state': state,
+          if (encryptedMetadata != null) 'metadata': encryptedMetadata
+        });
+    return CallSession.fromJson(json);
+  }
+
+  Future<List<CallSession>> calls(String token, String conversationId) async {
+    final json = await _jsonRequest(
+        'GET',
+        Uri(path: '/api/v1/calls', queryParameters: <String, String>{
+          'conversation_id': conversationId
+        }).toString(),
+        token: token);
+    return (json['calls'] as List<Object?>? ?? const <Object?>[])
+        .map((item) =>
+            CallSession.fromJson(Map<String, Object?>.from(item as Map)))
+        .toList(growable: false);
+  }
+
+  Future<void> confirmMlsRevocation(
+    String token,
+    String conversationId,
+    String revokedDeviceId,
+  ) async {
+    await _jsonRequest(
+      'POST',
+      '/api/v1/conversations/${Uri.encodeComponent(conversationId)}'
+          '/mls/revocations/${Uri.encodeComponent(revokedDeviceId)}/confirm',
+      token: token,
+    );
+  }
+
   Future<List<ReceivedMessageEnvelope>> listMessages(
     String token,
     String conversationId, {
@@ -336,6 +596,113 @@ class ApiClient {
     final rows = (json['messages'] as List<Object?>? ?? const <Object?>[])
         .map((row) => Map<String, Object?>.from(row as Map));
     return rows.map(ReceivedMessageEnvelope.fromJson).toList();
+  }
+
+  /// Backward page of message history. Unlike [listMessages] this preserves
+  /// the server's `next_before` cursor so the chat view can tell "no more
+  /// history" apart from "a short page".
+  Future<MessagePage> listMessagePage(
+    String token,
+    String conversationId, {
+    int limit = 50,
+    String? before,
+  }) async {
+    final path = Uri(
+      path: '/api/v1/conversations/$conversationId/messages',
+      queryParameters: <String, String>{
+        'limit': limit.toString(),
+        if (before != null && before.isNotEmpty) 'before': before,
+      },
+    ).toString();
+    final json = await _jsonRequest('GET', path, token: token);
+    final rows = (json['messages'] as List<Object?>? ?? const <Object?>[])
+        .map((row) => Map<String, Object?>.from(row as Map));
+    final nextBefore = json['next_before'];
+    return MessagePage(
+      messages: rows.map(ReceivedMessageEnvelope.fromJson).toList(),
+      nextBefore:
+          nextBefore is String && nextBefore.isNotEmpty ? nextBefore : null,
+    );
+  }
+
+  Future<List<ConversationMember>> conversationMembers(
+    String token,
+    String conversationId,
+  ) async {
+    final json = await _jsonRequest(
+      'GET',
+      '/api/v1/conversations/${Uri.encodeComponent(conversationId)}/members',
+      token: token,
+    );
+    final rows = (json['members'] as List<Object?>? ?? const <Object?>[])
+        .map((row) => Map<String, Object?>.from(row as Map));
+    return rows.map(ConversationMember.fromJson).toList();
+  }
+
+  /// Removes a member, or leaves the conversation when [accountId] is `me`.
+  /// The server records this as membership only; MLS removal is coordinated
+  /// separately and is not implied by a successful response.
+  Future<void> removeConversationMember(
+    String token,
+    String conversationId,
+    String accountId,
+  ) async {
+    await _jsonRequest(
+      'DELETE',
+      '/api/v1/conversations/${Uri.encodeComponent(conversationId)}'
+          '/members/${Uri.encodeComponent(accountId)}',
+      token: token,
+    );
+  }
+
+  Future<bool> conversationMuted(String token, String conversationId) async {
+    final json = await _jsonRequest(
+      'GET',
+      '/api/v1/conversations/${Uri.encodeComponent(conversationId)}'
+          '/notifications',
+      token: token,
+    );
+    return json['muted'] == true;
+  }
+
+  Future<bool> setConversationMuted(
+    String token,
+    String conversationId,
+    bool muted,
+  ) async {
+    final json = await _jsonRequest(
+      'PUT',
+      '/api/v1/conversations/${Uri.encodeComponent(conversationId)}'
+          '/notifications',
+      token: token,
+      body: <String, Object?>{'muted': muted},
+    );
+    return json['muted'] == true;
+  }
+
+  Future<List<BlockedAccount>> listBlocks(String token) async {
+    final json =
+        await _jsonRequest('GET', '/api/v1/account/blocks', token: token);
+    final rows = (json['blocks'] as List<Object?>? ?? const <Object?>[])
+        .map((row) => Map<String, Object?>.from(row as Map));
+    return rows.map(BlockedAccount.fromJson).toList();
+  }
+
+  Future<BlockedAccount> blockAccount(String token, String accountId) async {
+    final json = await _jsonRequest(
+      'PUT',
+      '/api/v1/account/blocks/${Uri.encodeComponent(accountId)}',
+      token: token,
+    );
+    return BlockedAccount.fromJson(json);
+  }
+
+  Future<void> unblockAccount(String token, String accountId) async {
+    await _jsonRequest(
+      'DELETE',
+      '/api/v1/account/blocks/${Uri.encodeComponent(accountId)}',
+      token: token,
+    );
   }
 
   Future<ReceivedMessageEnvelope> message(
@@ -374,6 +741,7 @@ class ApiClient {
         token: token,
         body: <String, Object?>{
           'reaction_ciphertext': base64Encode(reactionCiphertext),
+          'crypto_protocol': 'mls10-openmls-v1',
         });
   }
 
@@ -404,6 +772,22 @@ class ApiClient {
         'auth_secret': authSecret,
       },
     );
+    return json['subscription_id'] as String;
+  }
+
+  Future<String> registerNativePush(
+    String token, {
+    required String provider,
+    required String deviceToken,
+  }) async {
+    final json = await _jsonRequest('POST', '/api/v1/push/subscriptions',
+        token: token,
+        body: <String, Object?>{
+          'provider': provider,
+          'endpoint': deviceToken,
+          'public_key': '',
+          'auth_secret': '',
+        });
     return json['subscription_id'] as String;
   }
 

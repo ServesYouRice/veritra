@@ -19,6 +19,12 @@ recovery, stop the server and use `reset-owner-password --account ...
 requires clients to register new push subscriptions; never place private keys
 in command arguments or logs.
 
+Native FCM and APNs use the matching `PRIVATE_MESSENGER_FCM_*` and
+`PRIVATE_MESSENGER_APNS_*` environment secrets. Push payloads are fixed generic
+wake events. Calls require a self-hosted coturn-compatible shared secret via
+`PRIVATE_MESSENGER_TURN_URLS` and `PRIVATE_MESSENGER_TURN_SHARED_SECRET`; TURN
+relays see DTLS-SRTP ciphertext, not call media plaintext.
+
 ## Upgrade and rollback
 
 1. Run a completed backup and copy its whole directory off-host.

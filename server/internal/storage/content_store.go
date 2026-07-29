@@ -294,6 +294,7 @@ func (s *Store) markRead(ctx context.Context, conversationID, accountID, message
 
 type PushTarget struct {
 	ID         string
+	Provider   string
 	Endpoint   string
 	PublicKey  string
 	AuthSecret string
@@ -329,10 +330,10 @@ func (s *Store) CreatePushSubscription(ctx context.Context, accountID, deviceID,
 
 func (s *Store) PushTargetsForConversation(ctx context.Context, conversationID, excludeAccountID string) ([]PushTarget, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT ps.id, ps.endpoint, COALESCE(ps.public_key, ''), COALESCE(ps.auth_secret, '')
+		SELECT ps.id, ps.provider, ps.endpoint, COALESCE(ps.public_key, ''), COALESCE(ps.auth_secret, '')
 		FROM push_subscriptions ps
 		JOIN memberships m ON m.account_id = ps.account_id
-		WHERE m.conversation_id = ? AND ps.account_id <> ? AND ps.provider = 'webpush' AND ps.disabled_at IS NULL
+		WHERE m.conversation_id = ? AND ps.account_id <> ? AND ps.provider IN ('webpush', 'fcm', 'apns') AND ps.disabled_at IS NULL
 		  AND NOT EXISTS (SELECT 1 FROM account_blocks b WHERE b.blocker_account_id = ps.account_id AND b.blocked_account_id = ?)
 		  AND NOT EXISTS (SELECT 1 FROM conversation_notification_preferences p WHERE p.account_id = ps.account_id AND p.conversation_id = ? AND p.muted = 1)
 		ORDER BY ps.id
@@ -344,7 +345,7 @@ func (s *Store) PushTargetsForConversation(ctx context.Context, conversationID, 
 	var targets []PushTarget
 	for rows.Next() {
 		var target PushTarget
-		if err := rows.Scan(&target.ID, &target.Endpoint, &target.PublicKey, &target.AuthSecret); err != nil {
+		if err := rows.Scan(&target.ID, &target.Provider, &target.Endpoint, &target.PublicKey, &target.AuthSecret); err != nil {
 			return nil, err
 		}
 		targets = append(targets, target)
@@ -551,7 +552,7 @@ func (s *Store) PruneOperationalRows(ctx context.Context, now time.Time) (int64,
 	return removed, nil
 }
 
-func (s *Store) CreateBackupBlob(ctx context.Context, accountID, deviceID, storageKey, ciphertextSHA256 string, sizeBytes int64, keyDerivationMetadata json.RawMessage) error {
+func (s *Store) CreateBackupBlob(ctx context.Context, accountID, deviceID, storageKey, ciphertextSHA256 string, sizeBytes int64, keyDerivationMetadata json.RawMessage, recoveryTokenHash []byte) error {
 	if len(keyDerivationMetadata) == 0 {
 		keyDerivationMetadata = json.RawMessage(`{}`)
 	}
@@ -567,10 +568,44 @@ func (s *Store) CreateBackupBlob(ctx context.Context, accountID, deviceID, stora
 	if err := enforceBlobQuota(ctx, tx, accountID, sizeBytes); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO backup_blobs(id, account_id, device_id, storage_key, ciphertext_sha256, size_bytes, key_derivation_metadata_json, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, id, accountID, nullableEmptyString(deviceID), storageKey, ciphertextSHA256, sizeBytes, string(keyDerivationMetadata), nowString()); err != nil {
+	if len(recoveryTokenHash) != 32 {
+		return ErrInvalidInput
+	}
+	var stateCounter int64
+	if err := json.Unmarshal(keyDerivationMetadata, &struct {
+		StateCounter *int64 `json:"state_counter"`
+	}{StateCounter: &stateCounter}); err != nil || stateCounter <= 0 {
+		return ErrInvalidInput
+	}
+	var previousCounter sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT MAX(CAST(json_extract(key_derivation_metadata_json, '$.state_counter') AS INTEGER))
+		FROM backup_blobs WHERE account_id = ? AND device_id = ?`, accountID, deviceID).Scan(&previousCounter); err != nil {
+		return err
+	}
+	if previousCounter.Valid && stateCounter <= previousCounter.Int64 {
+		return ErrInvalidInput
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE backup_blobs SET recovery_token_hash = NULL
+		WHERE account_id = ? AND device_id = ?`, accountID, deviceID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO backup_blobs(id, account_id, device_id, storage_key, ciphertext_sha256, size_bytes, key_derivation_metadata_json, created_at, recovery_token_hash) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, accountID, nullableEmptyString(deviceID), storageKey, ciphertextSHA256, sizeBytes, string(keyDerivationMetadata), nowString(), recoveryTokenHash); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+func (s *Store) BackupForRecoveryToken(ctx context.Context, recoveryTokenHash []byte) (domain.BackupBlob, error) {
+	if len(recoveryTokenHash) != 32 {
+		return domain.BackupBlob{}, ErrNotFound
+	}
+	backup, err := scanBackup(s.db.QueryRowContext(ctx, `SELECT id, account_id, device_id, storage_key,
+		ciphertext_sha256, size_bytes, key_derivation_metadata_json, created_at
+		FROM backup_blobs WHERE recovery_token_hash = ?`, recoveryTokenHash))
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.BackupBlob{}, ErrNotFound
+	}
+	return backup, err
 }
 
 func enforceBlobQuota(ctx context.Context, tx *sql.Tx, accountID string, incoming int64) error {

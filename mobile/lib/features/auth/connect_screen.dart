@@ -354,9 +354,14 @@ class _ConnectScreenState extends State<ConnectScreen> {
     if (raw.isEmpty) {
       return 'Enter your password.';
     }
+    // Checked in UTF-8 bytes to match the server's bcrypt limit; the message
+    // stays in user language rather than exposing the encoding detail.
     final byteLength = utf8.encode(raw).length;
-    if (_isRegistration && (byteLength < 12 || byteLength > 72)) {
-      return 'Password must be 12â€“72 UTF-8 bytes.';
+    if (_isRegistration && byteLength < 12) {
+      return 'Use at least 12 characters.';
+    }
+    if (_isRegistration && byteLength > 72) {
+      return 'That password is too long. Use a shorter one.';
     }
     return null;
   }
