@@ -111,6 +111,9 @@ gate. The contract fixture was corrected to use the allowlisted
 `mls10-openmls-v1` marker, and the DM block-action widget test now scrolls its
 lazy list before interacting with the action. `govulncheck` initially found
 three reachable Go standard-library issues; pinning Go 1.25.12 cleared them.
+The CI Compose smoke job now supplies a disposable setup token so a fresh
+production volume can pass startup validation without weakening the required
+first-owner setup gate.
 
 | Evidence | Result | Artifact / note |
 |---|---|---|

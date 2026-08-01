@@ -128,6 +128,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
       - name: Start a fresh-volume deployment
+        env:
+          PRIVATE_MESSENGER_SETUP_TOKEN: ci-smoke-setup-token
         run: docker compose -f deploy/docker-compose.yml up --build --wait --wait-timeout 120
       - name: Verify health over the published loopback port
         run: curl --fail --silent --show-error http://127.0.0.1:8080/healthz
