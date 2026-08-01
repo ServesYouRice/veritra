@@ -115,6 +115,13 @@ The CI Compose smoke job now supplies a disposable setup token so a fresh
 production volume can pass startup validation without weakening the required
 first-owner setup gate.
 
+Follow-up verification on 2026-08-01 for commit `2344495` passed
+`scripts/test.ps1`, `scripts/lint.ps1`, direct license notices, the 157-package
+Dart license scan, and the guarded Rust advisory audit. The corrected
+fresh-volume Compose smoke became healthy and returned 200 from loopback
+`/healthz`; the release-readiness check still fails at the intentional crypto
+gate.
+
 | Evidence | Result | Artifact / note |
 |---|---|---|
 | Go tests | Pass | `go test ./...` in pinned Go 1.25 container |
