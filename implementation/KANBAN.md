@@ -48,6 +48,7 @@ Status: **NO-GO** — production crypto remains fail-closed.
 - [ ] [I22 — Add live API contracts](tasks/I22-api-contracts.md) — after I04, I05
 - [ ] [I23 — Test proxy and WebSocket adversarial paths](tasks/I23-proxy-websocket.md) — after I06
 - [ ] [I24 — Build signed apps and run real-device checks](tasks/I24-release-builds.md) — after I16–I23, I26
+- [ ] [I27 — Rebuild the app's visual design](../design/README.md) — no code dependencies; needs a direction chosen from `design/preview.html` first
 
 ## Later
 
