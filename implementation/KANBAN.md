@@ -11,7 +11,8 @@ Historical source material remains read-only under `archive/2026-07-26/`.
 There are no unblocked local implementation cards. The remaining release work
 needs signing credentials, supported physical Android and iOS devices, macOS
 for the iOS build, an operator-controlled TURN deployment, push-provider
-credentials, a coordinated upstream OpenMLS/HPKE security update, and an
+credentials, a coordinated upstream OpenMLS/HPKE security update, a chosen
+visual-design direction, and an
 independent security reviewer. Do not remove
 `PM_CRYPTO_UNAVAILABLE` or replace `UnavailableCryptoService` until every
 release gate below passes.
@@ -78,6 +79,16 @@ Blocked by I24 and an independent reviewer. Completion requires:
    `PM_CRYPTO_UNAVAILABLE`, and require release readiness to pass.
 
 Do not weaken or delete a gate to declare success.
+
+### I28 - Rebuild the app's visual design (decision blocked)
+
+The app is stock Material 3 with the defaults left on: one teal seed expanded by
+`ColorScheme.fromSeed`, no `TextTheme`, no fonts or images, and stock Flutter
+launcher icons. [`design/`](../design/README.md) holds four proposed directions
+rendered side by side against today's UI in `design/preview.html`; nothing there
+is wired into the build. This card has no code dependencies, but it stays
+blocked until an owner picks one direction. Crypto-gated screens listed below
+must remain unavailable regardless of the direction chosen.
 
 ### Crypto-gated mobile UI
 
