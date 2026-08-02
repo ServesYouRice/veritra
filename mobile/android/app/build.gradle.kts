@@ -4,6 +4,12 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+fun quotedBuildValue(name: String): String {
+    val value = providers.gradleProperty(name).orElse("").get()
+    require(!value.contains('"') && !value.contains('\\')) { "$name contains invalid characters" }
+    return "\"$value\""
+}
+
 android {
     namespace = "org.veritra.private_messenger"
     compileSdk = flutter.compileSdkVersion
@@ -14,6 +20,8 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    buildFeatures { buildConfig = true }
+
     defaultConfig {
         applicationId = "org.veritra.private_messenger"
         // You can update the following values to match your application needs.
@@ -22,6 +30,10 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        buildConfigField("String", "VERITRA_FCM_APPLICATION_ID", quotedBuildValue("VERITRA_FCM_APPLICATION_ID"))
+        buildConfigField("String", "VERITRA_FCM_API_KEY", quotedBuildValue("VERITRA_FCM_API_KEY"))
+        buildConfigField("String", "VERITRA_FCM_PROJECT_ID", quotedBuildValue("VERITRA_FCM_PROJECT_ID"))
+        buildConfigField("String", "VERITRA_FCM_SENDER_ID", quotedBuildValue("VERITRA_FCM_SENDER_ID"))
     }
 
     buildTypes {
@@ -45,6 +57,7 @@ flutter {
 
 dependencies {
     implementation("org.unifiedpush.android:connector:3.3.3")
+    implementation("com.google.firebase:firebase-messaging:25.0.1")
 }
 
 configurations.configureEach {

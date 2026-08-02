@@ -17,6 +17,7 @@ class VeritraPushService : PushService() {
         val keys = endpoint.pubKeySet ?: return
         PushEventBridge.emit(mapOf(
             "type" to "endpoint",
+            "provider" to "webpush",
             "instance" to instance,
             "endpoint" to endpoint.url,
             "publicKey" to keys.pubKey,

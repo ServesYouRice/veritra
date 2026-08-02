@@ -9,7 +9,7 @@ go_lint='unformatted="$(gofmt -l .)"; if [ -n "$unformatted" ]; then echo "gofmt
 if command -v go >/dev/null 2>&1; then
   (cd "$ROOT/server" && sh -c "$go_lint")
 else
-  docker run --rm -v "$ROOT:/workspace" -w /workspace/server golang:1.25@sha256:c138bff780910acf4254ab3a6f7ff0f64bbd841f27bd82bfa986fe122c109538 sh -c "$go_lint"
+  docker run --rm -v "$ROOT:/workspace" -w /workspace/server golang:1.25.12@sha256:9006890ecba0a168034d99516084099ae3114d9f2b7d6572c77f2dde57ebc980 sh -c "$go_lint"
 fi
 
 if command -v cargo >/dev/null 2>&1; then

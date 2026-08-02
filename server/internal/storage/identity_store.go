@@ -311,27 +311,92 @@ func (s *Store) DeleteAccountSessionsExcept(ctx context.Context, accountID, keep
 // belongs to a different account, so a caller can only revoke its own devices.
 // PrincipalByTokenHash already rejects revoked devices on their next request.
 func (s *Store) RevokeDevice(ctx context.Context, accountID, deviceID string) error {
+	_, err := s.revokeDevice(ctx, accountID, deviceID, "")
+	return err
+}
+
+func (s *Store) RevokeDeviceWithSyncEvent(ctx context.Context, accountID, deviceID string) (int64, error) {
+	return s.revokeDevice(ctx, accountID, deviceID, "device.revoked")
+}
+
+func (s *Store) revokeDevice(ctx context.Context, accountID, deviceID, eventType string) (int64, error) {
 	now := nowString()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer tx.Rollback()
 	result, err := tx.ExecContext(ctx, `UPDATE devices SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ? AND account_id = ?`, now, deviceID, accountID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if rows == 0 {
-		return ErrNotFound
+		return 0, ErrNotFound
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE device_id = ?`, deviceID); err != nil {
-		return err
+		return 0, err
 	}
-	return tx.Commit()
+	payload := map[string]string{"device_id": deviceID}
+	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, &accountID, "", payload, now)
+	if err != nil {
+		return 0, err
+	}
+	if eventType != "" {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT m.conversation_id, MIN(d.id)
+			FROM memberships m
+			JOIN memberships participants ON participants.conversation_id = m.conversation_id
+			JOIN devices d ON d.account_id = participants.account_id
+			WHERE m.account_id = ? AND d.revoked_at IS NULL AND d.id <> ?
+			GROUP BY m.conversation_id`, accountID, deviceID)
+		if err != nil {
+			return 0, err
+		}
+		type pendingRevocation struct{ conversationID, coordinatorDeviceID string }
+		pending := make([]pendingRevocation, 0)
+		for rows.Next() {
+			var item pendingRevocation
+			if err := rows.Scan(&item.conversationID, &item.coordinatorDeviceID); err != nil {
+				rows.Close()
+				return 0, err
+			}
+			pending = append(pending, item)
+		}
+		if err := rows.Close(); err != nil {
+			return 0, err
+		}
+		for _, item := range pending {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO mls_revocations(conversation_id, revoked_device_id, revoked_account_id,
+					coordinator_device_id, state, requested_at)
+				VALUES(?, ?, ?, ?, 'pending', ?)
+				ON CONFLICT(conversation_id, revoked_device_id) DO NOTHING`,
+				item.conversationID, deviceID, accountID, item.coordinatorDeviceID, now); err != nil {
+				return 0, err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT OR IGNORE INTO mls_revocation_required_devices(
+					conversation_id, revoked_device_id, device_id)
+				SELECT ?, ?, d.id FROM memberships m
+				JOIN devices d ON d.account_id = m.account_id
+				WHERE m.conversation_id = ? AND d.revoked_at IS NULL AND d.id <> ?`,
+				item.conversationID, deviceID, item.conversationID, deviceID); err != nil {
+				return 0, err
+			}
+			if _, err := insertSyncEvent(ctx, tx, "mls.revocation.pending", nil,
+				item.conversationID, map[string]string{"device_id": deviceID, "account_id": accountID}, now); err != nil {
+				return 0, err
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return eventID, nil
 }
 
 func (s *Store) CreateInvite(ctx context.Context, createdBy string, maxUses int, expiresAt *time.Time) (domain.Invite, error) {

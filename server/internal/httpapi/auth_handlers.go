@@ -31,6 +31,14 @@ func (a *API) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+func (a *API) readiness(w http.ResponseWriter, r *http.Request) {
+	if a.Ready != nil && !a.Ready() {
+		writeError(w, http.StatusServiceUnavailable, "server_draining")
+		return
+	}
+	a.health(w, r)
+}
+
 func (a *API) liveness(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "alive"})
 }
@@ -183,11 +191,7 @@ func (a *API) setupAuthorized(r *http.Request) bool {
 		return len(provided) == len(a.SetupToken) &&
 			subtle.ConstantTimeCompare([]byte(provided), []byte(a.SetupToken)) == 1
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	ip := net.ParseIP(strings.Trim(host, "[]"))
+	ip := net.ParseIP(a.clientIP(r))
 	return ip != nil && ip.IsLoopback()
 }
 
@@ -207,6 +211,10 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "device_id_required")
 		return
 	}
+	if retryAfter := a.LoginBackoff.RetryAfter(req.Username, time.Now()); retryAfter > 0 {
+		writeRetryError(w, "login_backoff", retryAfter)
+		return
+	}
 	record, lookupErr := a.Store.LoginRecord(r.Context(), req.Username, req.DeviceID)
 	// Always run bcrypt — against a dummy hash when the lookup failed — so
 	// response time does not leak whether the username exists.
@@ -217,9 +225,14 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	passwordOK := auth.VerifyPasswordOrDummy(storedHash, req.Password)
 	deviceOK := lookupErr == nil && record.DeviceAuthHash != "" && subtle.ConstantTimeCompare([]byte(auth.HashToken(req.DeviceSecret)), []byte(record.DeviceAuthHash)) == 1
 	if lookupErr != nil || !passwordOK || !deviceOK {
+		if retryAfter := a.LoginBackoff.Failed(req.Username, time.Now()); retryAfter > 0 {
+			writeRetryError(w, "login_backoff", retryAfter)
+			return
+		}
 		writeError(w, http.StatusUnauthorized, "invalid_credentials")
 		return
 	}
+	a.LoginBackoff.Succeeded(req.Username)
 	token, tokenHash, err := auth.NewToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "token_create_failed")
@@ -231,6 +244,18 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	}
 	a.recordAuditEvent(r.Context(), &record.AccountID, "session.login", map[string]string{"device_id": record.DeviceID})
 	writeJSON(w, http.StatusOK, map[string]interface{}{"token": token, "account_id": record.AccountID, "device_id": record.DeviceID, "role": record.Role})
+}
+
+func writeRetryError(w http.ResponseWriter, code string, retryAfter time.Duration) {
+	seconds := int(retryAfter.Round(time.Second) / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+	if seconds > 60 {
+		seconds = 60
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(seconds))
+	writeError(w, http.StatusTooManyRequests, code)
 }
 
 type registerRequest struct {
@@ -341,13 +366,20 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 }
 
 func enrollmentReservationResponse(reservation storage.EnrollmentReservation) map[string]interface{} {
-	return map[string]interface{}{
+	response := map[string]interface{}{
 		"id":         reservation.ID,
 		"account_id": reservation.AccountID,
 		"device_id":  reservation.DeviceID,
 		"challenge":  reservation.Challenge,
 		"expires_at": reservation.ExpiresAt,
 	}
+	if reservation.ProtocolVersion != "" {
+		response["protocol_version"] = reservation.ProtocolVersion
+		response["link_nonce"] = reservation.LinkNonce
+		response["existing_device_id"] = reservation.ExistingDeviceID
+		response["existing_signing_key"] = reservation.ExistingSigningKey
+	}
+	return response
 }
 
 func (a *API) verifyEnrollment(
@@ -498,6 +530,7 @@ type claimDeviceLinkRequest struct {
 	DeviceKeyPackage        []byte `json:"device_key_package"`
 	SigningKey              []byte `json:"signing_key,omitempty"`
 	ChallengeSignature      []byte `json:"challenge_signature"`
+	TranscriptHash          []byte `json:"transcript_hash"`
 }
 
 func (a *API) reserveDeviceLinkEnrollment(w http.ResponseWriter, r *http.Request) {
@@ -540,7 +573,7 @@ func (a *API) claimDeviceLink(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_device_key_package")
 		return
 	}
-	if len(req.SigningKey) != ed25519.PublicKeySize || len(req.ChallengeSignature) != ed25519.SignatureSize {
+	if len(req.SigningKey) != ed25519.PublicKeySize || len(req.ChallengeSignature) != ed25519.SignatureSize || len(req.TranscriptHash) != sha256.Size {
 		writeError(w, http.StatusBadRequest, "invalid_enrollment")
 		return
 	}
@@ -565,7 +598,7 @@ func (a *API) claimDeviceLink(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "device_secret_create_failed")
 		return
 	}
-	link, err := a.Store.ClaimDeviceLink(r.Context(), req.Code, req.DeviceName, req.DeviceKeyPackage, req.SigningKey, claimTokenHash, deviceAuthHash)
+	link, err := a.Store.ClaimDeviceLink(r.Context(), req.Code, req.DeviceName, req.DeviceKeyPackage, req.SigningKey, req.TranscriptHash, claimTokenHash, deviceAuthHash)
 	if err != nil {
 		if errors.Is(err, storage.ErrDeviceLinkInvalid) {
 			writeError(w, http.StatusBadRequest, "invalid_device_link")
@@ -610,20 +643,20 @@ func (a *API) deviceLinkSubroute(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var req struct {
-			VerificationCode string `json:"verification_code"`
+			TranscriptHash []byte `json:"transcript_hash"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		if strings.TrimSpace(req.VerificationCode) == "" {
-			writeError(w, http.StatusBadRequest, "verification_code_required")
+		if len(req.TranscriptHash) != sha256.Size {
+			writeError(w, http.StatusBadRequest, "transcript_hash_required")
 			return
 		}
-		link, device, err := a.Store.ApproveDeviceLink(r.Context(), linkID, principal.AccountID, req.VerificationCode)
+		link, device, eventID, err := a.Store.ApproveDeviceLinkWithSyncEvent(r.Context(), linkID, principal.AccountID, req.TranscriptHash)
 		if err != nil {
 			switch {
 			case errors.Is(err, storage.ErrDeviceLinkVerificationFailed):
-				writeError(w, http.StatusBadRequest, "verification_code_mismatch")
+				writeError(w, http.StatusBadRequest, "transcript_mismatch")
 			case errors.Is(err, storage.ErrDeviceLinkInvalid):
 				writeError(w, http.StatusBadRequest, "invalid_device_link")
 			default:
@@ -632,8 +665,7 @@ func (a *API) deviceLinkSubroute(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		payload := map[string]interface{}{"device": device, "device_link_id": link.ID}
-		eventID := a.saveSyncEvent(r.Context(), "device.updated", &principal.AccountID, "", payload)
-		a.Hub.Publish([]string{principal.AccountID}, realtime.Event{Version: "v1", Type: "device.updated", ID: eventID, Payload: payload, CreatedAt: time.Now().UTC()})
+		a.publishCommittedEvent([]string{principal.AccountID}, realtime.Event{Version: "v1", Type: "device.updated", ID: eventID, Payload: payload, CreatedAt: time.Now().UTC()})
 		a.recordAuditEvent(r.Context(), &principal.AccountID, "device_link.approved", map[string]string{"link_id": link.ID, "device_id": device.ID})
 		writeJSON(w, http.StatusOK, map[string]interface{}{"device_link": deviceLinkPayload(link), "device": device})
 	case parts[1] == "claim-status" && r.Method == http.MethodGet:
@@ -660,7 +692,12 @@ func (a *API) deviceLinkSubroute(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"account": linked.Account, "device": linked.Device, "token": sessionToken})
+		transcriptHash, err := a.Store.DeviceLinkTranscriptForClaim(r.Context(), linkID, auth.HashToken(claimToken))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_device_link")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"account": linked.Account, "device": linked.Device, "token": sessionToken, "transcript_hash": transcriptHash})
 	default:
 		writeError(w, http.StatusNotFound, "not_found")
 	}
@@ -764,10 +801,13 @@ func (a *API) revokeDevice(w http.ResponseWriter, r *http.Request, principal dom
 		writeError(w, http.StatusBadRequest, "invalid_device_id")
 		return
 	}
-	if err := a.Store.RevokeDevice(r.Context(), principal.AccountID, deviceID); err != nil {
+	eventID, err := a.Store.RevokeDeviceWithSyncEvent(r.Context(), principal.AccountID, deviceID)
+	if err != nil {
 		handleStorageError(w, err)
 		return
 	}
+	payload := map[string]string{"device_id": deviceID}
+	a.publishCommittedEvent([]string{principal.AccountID}, realtime.Event{Version: "v1", Type: "device.revoked", ID: eventID, Payload: payload, CreatedAt: time.Now().UTC()})
 	a.Hub.DisconnectDevice(principal.AccountID, deviceID)
 	a.recordAuditEvent(r.Context(), &principal.AccountID, "device.revoked", map[string]string{"device_id": deviceID})
 	w.WriteHeader(http.StatusNoContent)

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -429,7 +430,7 @@ func TestMessageMarkersSyncSearchExportAndMembershipGuards(t *testing.T) {
 	if len(results) == 0 || results[0].Type != "account" {
 		t.Fatalf("unexpected metadata search results: %#v", results)
 	}
-	if err := store.CreateBackupBlob(ctx, owner.Account.ID, owner.Device.ID, "backup_blob", strings.Repeat("a", 64), 64, json.RawMessage(`{"kdf":"test"}`)); err != nil {
+	if err := store.CreateBackupBlob(ctx, owner.Account.ID, owner.Device.ID, "backup_blob", strings.Repeat("a", 64), 64, json.RawMessage(`{"state_counter":1}`), make([]byte, 32)); err != nil {
 		t.Fatalf("create backup blob: %v", err)
 	}
 	export, err := store.ExportAccount(ctx, owner.Account.ID, ExportAccountOptions{})
@@ -583,11 +584,12 @@ func TestDeviceLinkRequiresApprovalBeforeSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claim token: %v", err)
 	}
-	claimed, err := store.ClaimDeviceLink(ctx, link.Code, "Tablet", []byte("tablet-key-package"), []byte("tablet-signing-key"), claimTokenHash, auth.HashToken("tablet-device-secret"))
+	transcriptHash := bytes.Repeat([]byte{3}, 32)
+	claimed, err := store.ClaimDeviceLink(ctx, link.Code, "Tablet", []byte("tablet-key-package"), bytes.Repeat([]byte{2}, 32), transcriptHash, claimTokenHash, auth.HashToken("tablet-device-secret"))
 	if err != nil {
 		t.Fatalf("claim device link: %v", err)
 	}
-	if claimed.State != domain.DeviceLinkClaimed || claimed.VerificationCode != link.VerificationCode {
+	if claimed.State != domain.DeviceLinkClaimed || !bytes.Equal(claimed.TranscriptHash, transcriptHash) {
 		t.Fatalf("unexpected claimed link: %#v", claimed)
 	}
 	_, sessionTokenHash, err := auth.NewToken()
@@ -597,10 +599,10 @@ func TestDeviceLinkRequiresApprovalBeforeSession(t *testing.T) {
 	if _, err := store.ConsumeApprovedDeviceLink(ctx, link.ID, auth.HashToken(claimToken), sessionTokenHash, time.Now().UTC().Add(time.Hour)); !errors.Is(err, ErrDeviceLinkNotReady) {
 		t.Fatalf("pre-approval consume err=%v want %v", err, ErrDeviceLinkNotReady)
 	}
-	if _, _, err := store.ApproveDeviceLink(ctx, link.ID, owner.Account.ID, "000000"); !errors.Is(err, ErrDeviceLinkVerificationFailed) {
+	if _, _, err := store.ApproveDeviceLink(ctx, link.ID, owner.Account.ID, bytes.Repeat([]byte{4}, 32)); !errors.Is(err, ErrDeviceLinkVerificationFailed) {
 		t.Fatalf("wrong verification code err=%v want %v", err, ErrDeviceLinkVerificationFailed)
 	}
-	approved, device, err := store.ApproveDeviceLink(ctx, link.ID, owner.Account.ID, link.VerificationCode)
+	approved, device, err := store.ApproveDeviceLink(ctx, link.ID, owner.Account.ID, transcriptHash)
 	if err != nil {
 		t.Fatalf("approve device link: %v", err)
 	}
@@ -630,6 +632,16 @@ func TestDeviceLinkRequiresApprovalBeforeSession(t *testing.T) {
 	}
 	if _, err := store.ConsumeApprovedDeviceLink(ctx, link.ID, auth.HashToken(claimToken), secondTokenHash, time.Now().UTC().Add(time.Hour)); !errors.Is(err, ErrDeviceLinkInvalid) {
 		t.Fatalf("second consume with token %q err=%v want %v", secondToken, err, ErrDeviceLinkInvalid)
+	}
+	expired, err := store.CreateDeviceLink(ctx, owner.Account.ID, owner.Device.ID, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE device_links SET expires_at = ? WHERE id = ?`, formatTime(time.Now().UTC().Add(-time.Minute)), expired.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReserveDeviceLinkEnrollment(ctx, expired.Code); !errors.Is(err, ErrDeviceLinkInvalid) {
+		t.Fatalf("expired link enrollment err=%v want %v", err, ErrDeviceLinkInvalid)
 	}
 }
 
@@ -668,6 +680,291 @@ func TestMigrateRejectsEditedAppliedMigration(t *testing.T) {
 	}
 }
 
+func TestDMUniquenessAndGroupMemberLifecycle(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	owner := createTestOwner(t, ctx, store)
+
+	register := func(username string) AccountDevice {
+		invite, err := store.CreateInvite(ctx, owner.Account.ID, 1, nil)
+		if err != nil {
+			t.Fatalf("create %s invite: %v", username, err)
+		}
+		return registerTestMember(t, ctx, store, invite.Code, username)
+	}
+	member := register("lifemember")
+	outsider := register("lifeoutsider")
+	removable := register("liferemovable")
+
+	start := make(chan struct{})
+	results := make(chan struct {
+		conversation domain.Conversation
+		err          error
+	}, 2)
+	var wg sync.WaitGroup
+	for _, input := range []CreateConversationInput{
+		{Kind: "dm", CreatedBy: owner.Account.ID, MemberAccountIDs: []string{member.Account.ID}},
+		{Kind: "dm", CreatedBy: member.Account.ID, MemberAccountIDs: []string{owner.Account.ID}},
+	} {
+		wg.Add(1)
+		go func(input CreateConversationInput) {
+			defer wg.Done()
+			<-start
+			conversation, err := store.CreateConversation(ctx, input)
+			results <- struct {
+				conversation domain.Conversation
+				err          error
+			}{conversation: conversation, err: err}
+		}(input)
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	var dmID string
+	for result := range results {
+		if result.err != nil {
+			t.Fatalf("concurrent DM create: %v", result.err)
+		}
+		if dmID == "" {
+			dmID = result.conversation.ID
+		} else if result.conversation.ID != dmID {
+			t.Fatalf("duplicate DM ids: %s and %s", dmID, result.conversation.ID)
+		}
+	}
+	retry, err := store.CreateConversation(ctx, CreateConversationInput{Kind: "dm", CreatedBy: owner.Account.ID, MemberAccountIDs: []string{member.Account.ID}})
+	if err != nil || retry.ID != dmID {
+		t.Fatalf("DM retry conversation=%#v err=%v want id=%s", retry, err, dmID)
+	}
+	var dmCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM conversations WHERE kind = 'dm'`).Scan(&dmCount); err != nil || dmCount != 1 {
+		t.Fatalf("DM count=%d err=%v want 1", dmCount, err)
+	}
+	if err := store.AddConversationMember(ctx, dmID, outsider.Account.ID, domain.RoleMember); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("add third DM member err=%v want %v", err, ErrForbidden)
+	}
+	if _, err := store.ManageConversationMember(ctx, dmID, owner.Account.ID, outsider.Account.ID, domain.RoleMember); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("manage third DM member err=%v want %v", err, ErrForbidden)
+	}
+
+	group, err := store.CreateConversation(ctx, CreateConversationInput{
+		Kind:             "group",
+		CreatedBy:        owner.Account.ID,
+		MemberAccountIDs: []string{member.Account.ID, removable.Account.ID},
+	})
+	if err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	members, err := store.ListConversationMembers(ctx, group.ID, owner.Account.ID)
+	if err != nil || len(members) != 3 {
+		t.Fatalf("authorized roster members=%#v err=%v", members, err)
+	}
+	// Co-members get usernames so the client can name people instead of
+	// showing raw account IDs.
+	for _, member := range members {
+		if member.Username == "" {
+			t.Fatalf("roster member %s has no username", member.AccountID)
+		}
+	}
+	if members, err := store.ListConversationMembers(ctx, group.ID, outsider.Account.ID); !errors.Is(err, ErrNotMember) || len(members) != 0 {
+		t.Fatalf("outsider roster members=%#v err=%v want no disclosure", members, err)
+	}
+	if _, err := store.RemoveConversationMember(ctx, group.ID, member.Account.ID, owner.Account.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("lower-rank removal err=%v want %v", err, ErrForbidden)
+	}
+	if _, err := store.RemoveConversationMember(ctx, group.ID, owner.Account.ID, owner.Account.ID); !errors.Is(err, ErrLastOwner) {
+		t.Fatalf("last owner leave err=%v want %v", err, ErrLastOwner)
+	}
+	events, err := store.RemoveConversationMember(ctx, group.ID, owner.Account.ID, removable.Account.ID)
+	if err != nil || events.RemainingMembersEventID <= 0 || events.RemovedMemberEventID <= 0 {
+		t.Fatalf("authorized removal events=%#v err=%v", events, err)
+	}
+	if _, err := store.RemoveConversationMember(ctx, group.ID, owner.Account.ID, removable.Account.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("removal retry err=%v want %v", err, ErrNotFound)
+	}
+	var payload string
+	if err := store.db.QueryRowContext(ctx, `SELECT payload_json FROM sync_events WHERE id = ?`, events.RemovedMemberEventID).Scan(&payload); err != nil || !strings.Contains(payload, `"mls_coordination":"pending"`) {
+		t.Fatalf("removal event payload=%s err=%v", payload, err)
+	}
+	if eventID, err := store.ManageConversationMember(ctx, group.ID, owner.Account.ID, member.Account.ID, domain.RoleOwner); err != nil || eventID <= 0 {
+		t.Fatalf("promote second owner event_id=%d err=%v", eventID, err)
+	}
+	if _, err := store.RemoveConversationMember(ctx, group.ID, owner.Account.ID, owner.Account.ID); err != nil {
+		t.Fatalf("owner leave after transfer: %v", err)
+	}
+	remaining, err := store.ListConversationMembers(ctx, group.ID, member.Account.ID)
+	if err != nil || len(remaining) != 1 || remaining[0].AccountID != member.Account.ID || remaining[0].Role != domain.RoleOwner {
+		t.Fatalf("remaining roster=%#v err=%v", remaining, err)
+	}
+}
+
+func TestClaimConversationKeyPackagesUsesMigratedMembershipsOnce(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+
+	owner := createTestOwner(t, ctx, store)
+	memberInvite, err := store.CreateInvite(ctx, owner.Account.ID, 1, nil)
+	if err != nil {
+		t.Fatalf("create member invite: %v", err)
+	}
+	member := registerTestMember(t, ctx, store, memberInvite.Code, "member")
+	outsiderInvite, err := store.CreateInvite(ctx, owner.Account.ID, 1, nil)
+	if err != nil {
+		t.Fatalf("create outsider invite: %v", err)
+	}
+	outsider := registerTestMember(t, ctx, store, outsiderInvite.Code, "outsider")
+	conversation, err := store.CreateConversation(ctx, CreateConversationInput{
+		Kind:             "group",
+		CreatedBy:        owner.Account.ID,
+		MemberAccountIDs: []string{member.Account.ID},
+	})
+	if err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+
+	packages, err := store.ClaimConversationKeyPackages(ctx, conversation.ID, outsider.Account.ID, outsider.Device.ID)
+	if !errors.Is(err, ErrNotMember) || len(packages) != 0 {
+		t.Fatalf("non-member claim packages=%#v err=%v want no packages and %v", packages, err, ErrNotMember)
+	}
+
+	packages, err = store.ClaimConversationKeyPackages(ctx, conversation.ID, owner.Account.ID, owner.Device.ID)
+	if err != nil {
+		t.Fatalf("member claim from migrated database: %v", err)
+	}
+	if len(packages) != 1 {
+		t.Fatalf("claimed %d packages want 1: %#v", len(packages), packages)
+	}
+	if packages[0].DeviceID != member.Device.ID || !bytes.Equal(packages[0].KeyPackage, member.Device.KeyPackage) {
+		t.Fatalf("claimed wrong device package: %#v", packages[0])
+	}
+	if packages[0].DeviceID == owner.Device.ID {
+		t.Fatal("requester device package must be excluded")
+	}
+
+	packages, err = store.ClaimConversationKeyPackages(ctx, conversation.ID, owner.Account.ID, owner.Device.ID)
+	if !errors.Is(err, ErrKeyPackageUnavailable) || len(packages) != 0 {
+		t.Fatalf("repeated claim packages=%#v err=%v want no packages and %v", packages, err, ErrKeyPackageUnavailable)
+	}
+	var ownerClaims int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM device_key_packages WHERE device_id = ? AND claimed_at IS NOT NULL`, owner.Device.ID).Scan(&ownerClaims); err != nil {
+		t.Fatalf("count requester claims: %v", err)
+	}
+	if ownerClaims != 0 {
+		t.Fatalf("requester device had %d packages consumed", ownerClaims)
+	}
+}
+
+func TestSyncEventFailureRollsBackDurableMutations(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+
+	owner := createTestOwner(t, ctx, store)
+	invite, err := store.CreateInvite(ctx, owner.Account.ID, 1, nil)
+	if err != nil {
+		t.Fatalf("create invite: %v", err)
+	}
+	member := registerTestMember(t, ctx, store, invite.Code, "atomicmember")
+	conversation, err := store.CreateConversation(ctx, CreateConversationInput{
+		Kind:             "group",
+		CreatedBy:        owner.Account.ID,
+		MemberAccountIDs: []string{member.Account.ID},
+	})
+	if err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+	message, _, err := store.SaveMessageEnvelope(ctx, domain.MessageEnvelope{
+		ConversationID:  conversation.ID,
+		SenderAccountID: owner.Account.ID,
+		SenderDeviceID:  owner.Device.ID,
+		IdempotencyKey:  "atomic-event-message",
+		Ciphertext:      []byte("original ciphertext"),
+		CryptoProtocol:  "mls-openmls-todo",
+	})
+	if err != nil {
+		t.Fatalf("save message: %v", err)
+	}
+	if err := store.CreateReaction(ctx, message.ID, member.Account.ID, []byte("original reaction")); err != nil {
+		t.Fatalf("create initial reaction: %v", err)
+	}
+	call, err := store.CreateCallSession(ctx, conversation.ID, owner.Account.ID, nil)
+	if err != nil {
+		t.Fatalf("create initial call: %v", err)
+	}
+	var initialEventCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sync_events`).Scan(&initialEventCount); err != nil {
+		t.Fatalf("count initial events: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `CREATE TRIGGER fail_sync_event BEFORE INSERT ON sync_events BEGIN SELECT RAISE(FAIL, 'forced sync event failure'); END`); err != nil {
+		t.Fatalf("create failure trigger: %v", err)
+	}
+
+	if _, eventID, err := store.UpdateMessageEnvelopeWithSyncEvent(ctx, message.ID, owner.Account.ID, []byte("edited ciphertext"), "mls-openmls-todo", nil); err == nil || eventID != 0 {
+		t.Fatalf("update err=%v event_id=%d want failure and zero", err, eventID)
+	}
+	if _, eventID, err := store.DeleteMessageEnvelopeWithSyncEvent(ctx, message.ID, owner.Account.ID, []byte("delete marker"), "mls-openmls-todo", nil); err == nil || eventID != 0 {
+		t.Fatalf("delete err=%v event_id=%d want failure and zero", err, eventID)
+	}
+	storedMessage, err := store.MessageByID(ctx, message.ID)
+	if err != nil || !bytes.Equal(storedMessage.Ciphertext, message.Ciphertext) || storedMessage.DeletedAt != nil {
+		t.Fatalf("message mutation was not rolled back: %#v err=%v", storedMessage, err)
+	}
+
+	if _, eventID, err := store.CreateReactionWithSyncEvent(ctx, message.ID, member.Account.ID, []byte("changed reaction")); err == nil || eventID != 0 {
+		t.Fatalf("reaction create err=%v event_id=%d want failure and zero", err, eventID)
+	}
+	if _, eventID, err := store.DeleteReactionWithSyncEvent(ctx, message.ID, member.Account.ID); err == nil || eventID != 0 {
+		t.Fatalf("reaction delete err=%v event_id=%d want failure and zero", err, eventID)
+	}
+	var reactionCiphertext []byte
+	if err := store.db.QueryRowContext(ctx, `SELECT reaction_ciphertext FROM reactions WHERE message_id = ? AND account_id = ?`, message.ID, member.Account.ID).Scan(&reactionCiphertext); err != nil || !bytes.Equal(reactionCiphertext, []byte("original reaction")) {
+		t.Fatalf("reaction mutation was not rolled back: %q err=%v", reactionCiphertext, err)
+	}
+
+	if eventID, err := store.MarkReadWithSyncEvent(ctx, conversation.ID, member.Account.ID, message.ID); err == nil || eventID != 0 {
+		t.Fatalf("read receipt err=%v event_id=%d want failure and zero", err, eventID)
+	}
+	var receiptCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM read_receipts WHERE account_id = ? AND conversation_id = ?`, member.Account.ID, conversation.ID).Scan(&receiptCount); err != nil || receiptCount != 0 {
+		t.Fatalf("read receipt was not rolled back: count=%d err=%v", receiptCount, err)
+	}
+
+	retention := int64(3600)
+	if _, eventID, err := store.UpdateConversationRetentionWithSyncEvent(ctx, conversation.ID, owner.Account.ID, &retention); err == nil || eventID != 0 {
+		t.Fatalf("retention err=%v event_id=%d want failure and zero", err, eventID)
+	}
+	storedConversation, err := store.ConversationByID(ctx, conversation.ID)
+	if err != nil || storedConversation.RetentionSeconds != nil {
+		t.Fatalf("retention mutation was not rolled back: %#v err=%v", storedConversation, err)
+	}
+
+	if _, eventID, err := store.CreateCallSessionWithSyncEvent(ctx, conversation.ID, owner.Account.ID, nil); err == nil || eventID != 0 {
+		t.Fatalf("call create err=%v event_id=%d want failure and zero", err, eventID)
+	}
+	if _, eventID, err := store.TransitionCallSessionWithSyncEvent(ctx, call.ID, owner.Account.ID, "active", nil); err == nil || eventID != 0 {
+		t.Fatalf("call transition err=%v event_id=%d want failure and zero", err, eventID)
+	}
+	var callCount int
+	var callState string
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*), MIN(state) FROM call_sessions WHERE conversation_id = ?`, conversation.ID).Scan(&callCount, &callState); err != nil || callCount != 1 || callState != "ringing" {
+		t.Fatalf("call mutation was not rolled back: count=%d state=%q err=%v", callCount, callState, err)
+	}
+
+	if eventID, err := store.RevokeDeviceWithSyncEvent(ctx, member.Account.ID, member.Device.ID); err == nil || eventID != 0 {
+		t.Fatalf("device revoke err=%v event_id=%d want failure and zero", err, eventID)
+	}
+	var revokedAt sql.NullString
+	if err := store.db.QueryRowContext(ctx, `SELECT revoked_at FROM devices WHERE id = ?`, member.Device.ID).Scan(&revokedAt); err != nil || revokedAt.Valid {
+		t.Fatalf("device revoke was not rolled back: revoked_at=%v err=%v", revokedAt, err)
+	}
+
+	var finalEventCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sync_events`).Scan(&finalEventCount); err != nil || finalEventCount != initialEventCount {
+		t.Fatalf("failed mutations changed event count: initial=%d final=%d err=%v", initialEventCount, finalEventCount, err)
+	}
+}
+
 func newTestStore(t *testing.T, ctx context.Context) (*Store, config.Config) {
 	t.Helper()
 	dir := t.TempDir()
@@ -688,6 +985,67 @@ func newTestStore(t *testing.T, ctx context.Context) (*Store, config.Config) {
 	return store, cfg
 }
 
+func TestListConversationsPageNamesDMPeerPerViewer(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	owner := createTestOwner(t, ctx, store)
+
+	invite, err := store.CreateInvite(ctx, owner.Account.ID, 1, nil)
+	if err != nil {
+		t.Fatalf("create invite: %v", err)
+	}
+	peer := registerTestMember(t, ctx, store, invite.Code, "dmpeer")
+
+	dm, err := store.CreateConversation(ctx, CreateConversationInput{
+		Kind:             "dm",
+		CreatedBy:        owner.Account.ID,
+		MemberAccountIDs: []string{peer.Account.ID},
+	})
+	if err != nil {
+		t.Fatalf("create dm: %v", err)
+	}
+	group, err := store.CreateConversation(ctx, CreateConversationInput{
+		Kind:             "group",
+		CreatedBy:        owner.Account.ID,
+		MemberAccountIDs: []string{peer.Account.ID},
+	})
+	if err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+
+	find := func(accountID, conversationID string) domain.Conversation {
+		t.Helper()
+		page, err := store.ListConversationsPage(ctx, accountID, 100, "")
+		if err != nil {
+			t.Fatalf("list conversations for %s: %v", accountID, err)
+		}
+		for _, conversation := range page {
+			if conversation.ID == conversationID {
+				return conversation
+			}
+		}
+		t.Fatalf("conversation %s not listed for %s", conversationID, accountID)
+		return domain.Conversation{}
+	}
+
+	// Each side sees the other, never themselves.
+	ownerView := find(owner.Account.ID, dm.ID)
+	if ownerView.PeerAccountID != peer.Account.ID || ownerView.PeerUsername != "dmpeer" {
+		t.Fatalf("owner DM peer=%q/%q want %q/dmpeer", ownerView.PeerAccountID, ownerView.PeerUsername, peer.Account.ID)
+	}
+	peerView := find(peer.Account.ID, dm.ID)
+	if peerView.PeerAccountID != owner.Account.ID || peerView.PeerUsername == "" {
+		t.Fatalf("peer DM peer=%q/%q want %q with a username", peerView.PeerAccountID, peerView.PeerUsername, owner.Account.ID)
+	}
+
+	// Groups have no single counterpart; claiming one would mislabel the row.
+	groupView := find(owner.Account.ID, group.ID)
+	if groupView.PeerAccountID != "" || groupView.PeerUsername != "" {
+		t.Fatalf("group peer=%q/%q want empty", groupView.PeerAccountID, groupView.PeerUsername)
+	}
+}
+
 func createTestOwner(t *testing.T, ctx context.Context, store *Store) AccountDevice {
 	t.Helper()
 	reservation, err := store.ReserveOwnerEnrollment(ctx)
@@ -705,6 +1063,7 @@ func createTestOwner(t *testing.T, ctx context.Context, store *Store) AccountDev
 		PasswordHash:            hash,
 		DeviceName:              "Owner phone",
 		KeyPackage:              []byte("owner-key-package"),
+		SigningKey:              bytes.Repeat([]byte{1}, 32),
 	})
 	if err != nil {
 		t.Fatalf("create owner: %v", err)

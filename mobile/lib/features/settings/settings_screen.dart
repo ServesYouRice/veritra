@@ -1,11 +1,13 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/app_state.dart';
 import '../../core/models.dart';
 import '../../ui/format.dart';
+import 'blocked_accounts_screen.dart';
 import 'device_link_screen.dart';
 import 'invite_screen.dart';
 import 'profile_screen.dart';
@@ -150,7 +152,29 @@ class SettingsScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 16),
+              _SectionHeader(title: 'Safety', theme: theme),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.block_outlined),
+                  title: const Text('Blocked accounts'),
+                  subtitle: Text(
+                    state.blocksLoaded
+                        ? (state.blockedAccounts.isEmpty
+                            ? 'No one is blocked'
+                            : '${state.blockedAccounts.length} blocked')
+                        : 'Review and undo blocks',
+                  ),
+                  trailing: const Icon(Icons.chevron_right_outlined),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => BlockedAccountsScreen(state: state),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
               _SectionHeader(title: 'Notifications', theme: theme),
+              _PushStatusCard(state: state),
               Card(
                 child: ListTile(
                   enabled: state.pushConfigured && !state.busy,
@@ -334,48 +358,94 @@ class SettingsScreen extends StatelessWidget {
     }
     final password = TextEditingController();
     final confirmation = TextEditingController();
+    final formKey = GlobalKey<FormState>();
     try {
+      // Validation lives inside the dialog: silently closing on a mismatch
+      // left the user unable to tell whether a security-sensitive change had
+      // been applied.
       final accepted = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
           title: const Text('Change password'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              TextField(
+          content: Form(
+            key: formKey,
+            autovalidateMode: AutovalidateMode.onUserInteraction,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                TextFormField(
                   controller: password,
                   obscureText: true,
                   decoration: const InputDecoration(
-                      labelText: 'New password (12–72 bytes)')),
-              TextField(
+                    labelText: 'New password',
+                    helperText: 'At least 12 characters.',
+                  ),
+                  validator: _validateNewPassword,
+                  // Re-run the confirmation check when the first field
+                  // changes, so an already-typed confirmation is not left
+                  // showing a stale "matches" state.
+                  onChanged: (_) => formKey.currentState?.validate(),
+                ),
+                TextFormField(
                   controller: confirmation,
                   obscureText: true,
                   decoration:
-                      const InputDecoration(labelText: 'Confirm new password')),
-            ],
+                      const InputDecoration(labelText: 'Confirm new password'),
+                  validator: (value) => (value ?? '') != password.text
+                      ? 'Passwords do not match.'
+                      : null,
+                ),
+              ],
+            ),
           ),
           actions: <Widget>[
             TextButton(
                 onPressed: () => Navigator.of(dialogContext).pop(false),
                 child: const Text('Cancel')),
             FilledButton(
-                onPressed: () => Navigator.of(dialogContext).pop(true),
+                onPressed: () {
+                  if (formKey.currentState?.validate() ?? false) {
+                    Navigator.of(dialogContext).pop(true);
+                  }
+                },
                 child: const Text('Change')),
           ],
         ),
       );
-      final passwordBytes = utf8.encode(password.text).length;
-      if (accepted != true ||
-          password.text != confirmation.text ||
-          passwordBytes < 12 ||
-          passwordBytes > 72) {
+      if (accepted != true) {
         return;
       }
       await state.changePassword(password.text);
+      if (!context.mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(state.error ??
+              'Password changed. Your other devices were signed out.'),
+        ),
+      );
     } finally {
       password.dispose();
       confirmation.dispose();
     }
+  }
+
+  /// Length is checked in UTF-8 bytes to match the server's bcrypt limit, but
+  /// the message stays in user language.
+  static String? _validateNewPassword(String? value) {
+    final raw = value ?? '';
+    if (raw.isEmpty) {
+      return 'Enter a new password.';
+    }
+    final bytes = utf8.encode(raw).length;
+    if (bytes < 12) {
+      return 'Use at least 12 characters.';
+    }
+    if (bytes > 72) {
+      return 'That password is too long. Use a shorter one.';
+    }
+    return null;
   }
 
   Future<bool> _confirm(
@@ -410,6 +480,55 @@ class SettingsScreen extends StatelessWidget {
       ),
     );
     return result ?? false;
+  }
+}
+
+/// States plainly whether this device will actually receive notifications.
+/// Silence about a missing distributor or an unsupported platform reads as
+/// "push works", which is the one thing it must never imply.
+class _PushStatusCard extends StatelessWidget {
+  const _PushStatusCard({required this.state});
+
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final iOS = defaultTargetPlatform == TargetPlatform.iOS;
+    final String title;
+    final String detail;
+    final IconData icon;
+    var warn = true;
+    if (iOS) {
+      title = 'Push is not available on iOS yet';
+      detail = 'Messages arrive while the app is open. Apple push delivery '
+          'is still being integrated.';
+      icon = Icons.notifications_off_outlined;
+    } else if (!state.pushConfigured) {
+      title = 'This server has no push provider';
+      detail = 'The operator has not configured push keys. Messages arrive '
+          'while the app is open.';
+      icon = Icons.cloud_off_outlined;
+    } else if (!state.pushRegistered) {
+      title = 'No push distributor registered';
+      detail = 'Install a UnifiedPush distributor and pick it below, or '
+          'messages will only arrive while the app is open.';
+      icon = Icons.warning_amber_outlined;
+    } else {
+      title = 'Push notifications are active';
+      detail = 'Notifications never contain message text or sender names.';
+      icon = Icons.notifications_active_outlined;
+      warn = false;
+    }
+    final scheme = theme.colorScheme;
+    return Card(
+      color: warn ? scheme.surfaceContainerHighest : null,
+      child: ListTile(
+        leading: Icon(icon, color: warn ? scheme.onSurfaceVariant : null),
+        title: Text(title),
+        subtitle: Text(detail),
+      ),
+    );
   }
 }
 

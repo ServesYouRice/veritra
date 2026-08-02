@@ -74,7 +74,7 @@ func (s *Store) ClaimConversationKeyPackages(ctx context.Context, conversationID
 	}
 	defer tx.Rollback()
 	var member bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conversation_members WHERE conversation_id = ? AND account_id = ?)`, conversationID, requesterAccountID).Scan(&member); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM memberships WHERE conversation_id = ? AND account_id = ?)`, conversationID, requesterAccountID).Scan(&member); err != nil {
 		return nil, err
 	}
 	if !member {
@@ -83,7 +83,7 @@ func (s *Store) ClaimConversationKeyPackages(ctx context.Context, conversationID
 	rows, err := tx.QueryContext(ctx, `
 		SELECT d.id, d.account_id
 		FROM devices d
-		JOIN conversation_members cm ON cm.account_id = d.account_id
+		JOIN memberships cm ON cm.account_id = d.account_id
 		WHERE cm.conversation_id = ? AND d.revoked_at IS NULL AND d.id <> ?
 		ORDER BY d.account_id, d.id`, conversationID, requesterDeviceID)
 	if err != nil {

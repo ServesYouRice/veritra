@@ -212,41 +212,118 @@ func (s *Store) MessageByID(ctx context.Context, messageID string) (domain.Messa
 	return msg, nil
 }
 
+// MessageForAccount returns one unexpired envelope only when the requester is
+// currently a member of its conversation. Missing and unauthorized IDs are
+// intentionally indistinguishable so this lookup cannot probe other chats.
+func (s *Store) MessageForAccount(ctx context.Context, messageID, accountID string) (domain.MessageEnvelope, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT me.id, me.conversation_id, me.sender_account_id, me.sender_device_id,
+		       me.idempotency_key, me.ciphertext, me.crypto_protocol,
+		       me.crypto_metadata_json, me.attachment_refs_json, me.reply_to_id,
+		       me.thread_root_id, me.created_at, me.edited_at, me.deleted_at, me.expires_at
+		FROM message_envelopes me
+		JOIN memberships m ON m.conversation_id = me.conversation_id AND m.account_id = ?
+		WHERE me.id = ? AND (me.expires_at IS NULL OR me.expires_at > ?)
+		  AND NOT EXISTS (
+		    SELECT 1 FROM account_blocks b
+		    WHERE b.blocker_account_id = ? AND b.blocked_account_id = me.sender_account_id
+		  )`, accountID, messageID, nowString(), accountID)
+	message, err := scanMessage(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.MessageEnvelope{}, ErrNotFound
+		}
+		return domain.MessageEnvelope{}, err
+	}
+	return message, nil
+}
+
 func (s *Store) UpdateMessageEnvelope(ctx context.Context, messageID, accountID string, ciphertext []byte, cryptoProtocol string, cryptoMetadata json.RawMessage) (domain.MessageEnvelope, error) {
+	envelope, _, err := s.updateMessageEnvelope(ctx, messageID, accountID, ciphertext, cryptoProtocol, cryptoMetadata, "")
+	return envelope, err
+}
+
+func (s *Store) UpdateMessageEnvelopeWithSyncEvent(ctx context.Context, messageID, accountID string, ciphertext []byte, cryptoProtocol string, cryptoMetadata json.RawMessage) (domain.MessageEnvelope, int64, error) {
+	return s.updateMessageEnvelope(ctx, messageID, accountID, ciphertext, cryptoProtocol, cryptoMetadata, "message.envelope.edited")
+}
+
+func (s *Store) updateMessageEnvelope(ctx context.Context, messageID, accountID string, ciphertext []byte, cryptoProtocol string, cryptoMetadata json.RawMessage, eventType string) (domain.MessageEnvelope, int64, error) {
 	if len(ciphertext) == 0 || strings.TrimSpace(cryptoProtocol) == "" {
-		return domain.MessageEnvelope{}, ErrForbidden
+		return domain.MessageEnvelope{}, 0, ErrForbidden
 	}
 	if len(cryptoMetadata) == 0 {
 		cryptoMetadata = json.RawMessage(`{}`)
 	}
-	result, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.MessageEnvelope{}, 0, err
+	}
+	defer tx.Rollback()
+	now := nowString()
+	result, err := tx.ExecContext(ctx, `
 		UPDATE message_envelopes
 		SET ciphertext = ?, crypto_protocol = ?, crypto_metadata_json = ?, edited_at = ?
 		WHERE id = ? AND sender_account_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
-		ciphertext, cryptoProtocol, string(cryptoMetadata), nowString(), messageID, accountID, nowString())
+		ciphertext, cryptoProtocol, string(cryptoMetadata), now, messageID, accountID, now)
 	if err != nil {
-		return domain.MessageEnvelope{}, err
+		return domain.MessageEnvelope{}, 0, err
 	}
-	return s.messageAfterOwnedMutation(ctx, messageID, result)
+	envelope, err := messageAfterOwnedMutationTx(ctx, tx, messageID, result, now)
+	if err != nil {
+		return domain.MessageEnvelope{}, 0, err
+	}
+	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, nil, envelope.ConversationID, map[string]string{"message_id": envelope.ID, "conversation_id": envelope.ConversationID}, now)
+	if err != nil {
+		return domain.MessageEnvelope{}, 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.MessageEnvelope{}, 0, err
+	}
+	return envelope, eventID, nil
 }
 
 func (s *Store) DeleteMessageEnvelope(ctx context.Context, messageID, accountID string, markerCiphertext []byte, cryptoProtocol string, cryptoMetadata json.RawMessage) (domain.MessageEnvelope, error) {
+	envelope, _, err := s.deleteMessageEnvelope(ctx, messageID, accountID, markerCiphertext, cryptoProtocol, cryptoMetadata, "")
+	return envelope, err
+}
+
+func (s *Store) DeleteMessageEnvelopeWithSyncEvent(ctx context.Context, messageID, accountID string, markerCiphertext []byte, cryptoProtocol string, cryptoMetadata json.RawMessage) (domain.MessageEnvelope, int64, error) {
+	return s.deleteMessageEnvelope(ctx, messageID, accountID, markerCiphertext, cryptoProtocol, cryptoMetadata, "message.envelope.deleted")
+}
+
+func (s *Store) deleteMessageEnvelope(ctx context.Context, messageID, accountID string, markerCiphertext []byte, cryptoProtocol string, cryptoMetadata json.RawMessage, eventType string) (domain.MessageEnvelope, int64, error) {
 	if len(markerCiphertext) == 0 || strings.TrimSpace(cryptoProtocol) == "" {
-		return domain.MessageEnvelope{}, ErrForbidden
+		return domain.MessageEnvelope{}, 0, ErrForbidden
 	}
 	if len(cryptoMetadata) == 0 {
 		cryptoMetadata = json.RawMessage(`{"deleted":true}`)
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.MessageEnvelope{}, 0, err
+	}
+	defer tx.Rollback()
 	now := nowString()
-	result, err := s.db.ExecContext(ctx, `
+	result, err := tx.ExecContext(ctx, `
 		UPDATE message_envelopes
 		SET ciphertext = ?, crypto_protocol = ?, crypto_metadata_json = ?, deleted_at = ?
 		WHERE id = ? AND sender_account_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
-		markerCiphertext, cryptoProtocol, string(cryptoMetadata), now, messageID, accountID, nowString())
+		markerCiphertext, cryptoProtocol, string(cryptoMetadata), now, messageID, accountID, now)
 	if err != nil {
-		return domain.MessageEnvelope{}, err
+		return domain.MessageEnvelope{}, 0, err
 	}
-	return s.messageAfterOwnedMutation(ctx, messageID, result)
+	envelope, err := messageAfterOwnedMutationTx(ctx, tx, messageID, result, now)
+	if err != nil {
+		return domain.MessageEnvelope{}, 0, err
+	}
+	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, nil, envelope.ConversationID, map[string]string{"message_id": envelope.ID, "conversation_id": envelope.ConversationID}, now)
+	if err != nil {
+		return domain.MessageEnvelope{}, 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.MessageEnvelope{}, 0, err
+	}
+	return envelope, eventID, nil
 }
 
 func (s *Store) messageAfterOwnedMutation(ctx context.Context, messageID string, result sql.Result) (domain.MessageEnvelope, error) {
@@ -263,6 +340,24 @@ func (s *Store) messageAfterOwnedMutation(ctx context.Context, messageID string,
 		return domain.MessageEnvelope{}, ErrForbidden
 	}
 	return s.MessageByID(ctx, messageID)
+}
+
+func messageAfterOwnedMutationTx(ctx context.Context, tx *sql.Tx, messageID string, result sql.Result, now string) (domain.MessageEnvelope, error) {
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return domain.MessageEnvelope{}, err
+	}
+	if rows == 0 {
+		var exists int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM message_envelopes WHERE id = ? AND (expires_at IS NULL OR expires_at > ?)`, messageID, now).Scan(&exists); err != nil {
+			return domain.MessageEnvelope{}, err
+		}
+		if exists == 0 {
+			return domain.MessageEnvelope{}, ErrNotFound
+		}
+		return domain.MessageEnvelope{}, ErrForbidden
+	}
+	return scanMessage(tx.QueryRowContext(ctx, `SELECT id, conversation_id, sender_account_id, sender_device_id, idempotency_key, ciphertext, crypto_protocol, crypto_metadata_json, attachment_refs_json, reply_to_id, thread_root_id, created_at, edited_at, deleted_at, expires_at FROM message_envelopes WHERE id = ?`, messageID))
 }
 
 // ListMessagesOptions controls pagination for ListMessages. Only one of
@@ -461,6 +556,11 @@ func (s *Store) PruneExpiredContent(ctx context.Context, now time.Time) (int64, 
 		return 0, nil, err
 	}
 	storageKeys = append(storageKeys, orphanKeys...)
+	for _, storageKey := range storageKeys {
+		if err := enqueueBlobDeletion(ctx, tx, storageKey); err != nil {
+			return 0, nil, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return 0, nil, err
 	}
@@ -521,11 +621,26 @@ func (s *Store) RecordAuditEvent(ctx context.Context, actorAccountID *string, ev
 }
 
 func (s *Store) SaveSyncEvent(ctx context.Context, eventType string, accountID *string, conversationID string, payload interface{}) (int64, error) {
+	return insertSyncEvent(ctx, s.db, eventType, accountID, conversationID, payload, nowString())
+}
+
+type syncEventExecer interface {
+	ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
+}
+
+func insertOptionalSyncEvent(ctx context.Context, execer syncEventExecer, eventType string, accountID *string, conversationID string, payload interface{}, createdAt string) (int64, error) {
+	if eventType == "" {
+		return 0, nil
+	}
+	return insertSyncEvent(ctx, execer, eventType, accountID, conversationID, payload, createdAt)
+}
+
+func insertSyncEvent(ctx context.Context, execer syncEventExecer, eventType string, accountID *string, conversationID string, payload interface{}, createdAt string) (int64, error) {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		return 0, err
 	}
-	result, err := s.db.ExecContext(ctx, `INSERT INTO sync_events(event_type, account_id, conversation_id, payload_json, created_at) VALUES(?, ?, ?, ?, ?)`, eventType, nullableString(accountID), nullableEmptyString(conversationID), string(payloadBytes), nowString())
+	result, err := execer.ExecContext(ctx, `INSERT INTO sync_events(event_type, account_id, conversation_id, payload_json, created_at) VALUES(?, ?, ?, ?, ?)`, eventType, nullableString(accountID), nullableEmptyString(conversationID), string(payloadBytes), createdAt)
 	if err != nil {
 		return 0, err
 	}

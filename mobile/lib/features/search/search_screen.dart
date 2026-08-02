@@ -7,9 +7,11 @@ import '../../core/models.dart';
 import '../../ui/widgets/empty_state.dart';
 import '../chat/chat_screen.dart';
 
-/// Metadata-only search: conversation titles, communities, channels.
-/// Message contents are ciphertext on the server and cannot be searched
-/// there by design.
+/// Metadata-only search over what the server actually indexes: accounts by
+/// exact username, plus communities and channels by name. Message contents
+/// are ciphertext on the server and cannot be searched there by design, and
+/// account lookup stays exact-match so the user directory cannot be
+/// enumerated.
 class SearchScreen extends StatefulWidget {
   const SearchScreen({required this.state, super.key});
 
@@ -98,7 +100,9 @@ class _SearchScreenState extends State<SearchScreen> {
             textInputAction: TextInputAction.search,
             onSubmitted: _search,
             decoration: InputDecoration(
-              hintText: 'Search chats, groups, communities…',
+              // The server searches accounts, communities, and channels only.
+              // Promising chats and groups made search look broken.
+              hintText: 'Search people, communities, channels…',
               border: InputBorder.none,
               filled: false,
               suffixIcon: query.text.isEmpty
@@ -122,16 +126,16 @@ class _SearchScreenState extends State<SearchScreen> {
           ? const EmptyState(
               icon: Icons.search,
               title: 'Search metadata',
-              message: 'Find conversations, communities, and channels by '
-                  'name. Message contents are end-to-end encrypted and '
-                  'never searchable on the server.',
+              message: 'Find people by exact username, plus communities and '
+                  'channels by name. Message contents are end-to-end '
+                  'encrypted and never searchable on the server.',
             )
           : results.isEmpty
               ? const EmptyState(
                   icon: Icons.search_off,
                   title: 'No results',
-                  message: 'Nothing matched. Only names and titles are '
-                      'searchable — not message contents.',
+                  message: 'Nothing matched. Usernames must match exactly, '
+                      'and message contents are never searchable.',
                 )
               : ListView.separated(
                   itemCount: results.length,
@@ -139,6 +143,7 @@ class _SearchScreenState extends State<SearchScreen> {
                       const Divider(indent: 72, height: 1),
                   itemBuilder: (context, index) {
                     final result = results[index];
+                    final action = _actionFor(result);
                     return ListTile(
                       leading: ExcludeSemantics(
                         child: CircleAvatar(
@@ -150,8 +155,18 @@ class _SearchScreenState extends State<SearchScreen> {
                         ),
                       ),
                       title: Text(result.label),
-                      subtitle: Text(_labelForType(result.type)),
-                      onTap: _actionFor(result),
+                      subtitle: Text(_subtitleFor(result)),
+                      // Blocking from search is the quickest path away from
+                      // unwanted contact, so it lives beside the result.
+                      trailing: result.type == 'account'
+                          ? _AccountResultActions(
+                              state: widget.state,
+                              accountId: result.id,
+                              label: result.label,
+                            )
+                          : null,
+                      enabled: action != null,
+                      onTap: action,
                     );
                   },
                 ),
@@ -161,34 +176,78 @@ class _SearchScreenState extends State<SearchScreen> {
   VoidCallback? _actionFor(MetadataSearchResult result) {
     if (result.type == 'account') {
       return () async {
+        // startConversation reuses the existing DM with this account rather
+        // than creating a second, indistinguishable thread.
         final conversation = await widget.state.startConversation(
           kind: 'dm',
           memberAccountIds: <String>[result.id],
         );
-        if (!mounted || conversation == null) return;
-        Navigator.of(context).push(MaterialPageRoute<void>(
-          builder: (_) => ChatScreen(
-            state: widget.state,
-            conversationId: conversation.id,
-          ),
-        ));
+        if (!mounted) return;
+        if (conversation == null) {
+          final error = widget.state.error;
+          if (error != null) {
+            ScaffoldMessenger.of(context)
+                .showSnackBar(SnackBar(content: Text(error)));
+          }
+          return;
+        }
+        _open(conversation.id);
       };
     }
     if (result.type == 'channel') {
       final matches = widget.state.conversations
           .where((conversation) => conversation.channelId == result.id);
       if (matches.isEmpty) return null;
-      return () {
-        widget.state.selectConversation(matches.first.id);
-        Navigator.of(context).push(MaterialPageRoute<void>(
-          builder: (_) => ChatScreen(
-            state: widget.state,
-            conversationId: matches.first.id,
-          ),
-        ));
-      };
+      return () => _open(matches.first.id);
+    }
+    if (result.type == 'community') {
+      final channels =
+          widget.state.channelsByCommunity[result.id] ?? const <Channel>[];
+      // A community is not a conversation. Navigate to a channel of it when
+      // one is known; otherwise the row stays explicitly inert instead of
+      // looking tappable and doing nothing.
+      for (final channel in channels) {
+        final matches = widget.state.conversations
+            .where((conversation) => conversation.channelId == channel.id);
+        if (matches.isNotEmpty) {
+          return () => _open(matches.first.id);
+        }
+      }
+      return null;
+    }
+    if (result.type == 'conversation') {
+      final matches = widget.state.conversations
+          .where((conversation) => conversation.id == result.id);
+      if (matches.isEmpty) return null;
+      return () => _open(matches.first.id);
     }
     return null;
+  }
+
+  void _open(String conversationId) {
+    widget.state.selectAndPrepare(conversationId);
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => ChatScreen(
+        state: widget.state,
+        conversationId: conversationId,
+      ),
+    ));
+  }
+
+  /// Explains inert rows instead of leaving a dead tap target unexplained.
+  String _subtitleFor(MetadataSearchResult result) {
+    final type = _labelForType(result.type);
+    if (_actionFor(result) != null) {
+      return type;
+    }
+    switch (result.type) {
+      case 'community':
+        return '$type · No channel you can open yet';
+      case 'channel':
+        return '$type · Join the community to open it';
+      default:
+        return type;
+    }
   }
 
   IconData _iconForType(String type) {
@@ -219,5 +278,45 @@ class _SearchScreenState extends State<SearchScreen> {
       default:
         return type;
     }
+  }
+}
+
+/// Block/unblock straight from an account result.
+class _AccountResultActions extends StatelessWidget {
+  const _AccountResultActions({
+    required this.state,
+    required this.accountId,
+    required this.label,
+  });
+
+  final AppState state;
+  final String accountId;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final blocked = state.isBlocked(accountId);
+    return IconButton(
+      tooltip: blocked ? 'Unblock $label' : 'Block $label',
+      icon: Icon(blocked ? Icons.person_off : Icons.block),
+      onPressed: state.isBusy(Ops.blocks)
+          ? null
+          : () async {
+              final ok = blocked
+                  ? await state.unblockAccount(accountId)
+                  : await state.blockAccount(accountId);
+              if (!context.mounted) {
+                return;
+              }
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(ok
+                      ? (blocked ? '$label unblocked.' : '$label blocked.')
+                      : state.errorFor(Ops.blocks) ??
+                          'Could not update the block.'),
+                ),
+              );
+            },
+    );
   }
 }

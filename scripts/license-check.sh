@@ -44,12 +44,22 @@ if grep -Eq '^[[:space:]]+mobile_scanner:' "$ROOT/mobile/pubspec.yaml"; then
   check_notice "mobile_scanner"
 fi
 
+for dependency in drift sqlite3 path_provider flutter_webrtc; do
+  if grep -Eq "^[[:space:]]+${dependency}:" "$ROOT/mobile/pubspec.yaml"; then
+    check_notice "$dependency"
+  fi
+done
+
 if grep -Fq 'org.unifiedpush.android:connector' "$ROOT/mobile/android/app/build.gradle.kts"; then
   check_notice "org.unifiedpush.android:connector"
 fi
 
 if grep -Fq 'com.google.crypto.tink:tink-android' "$ROOT/mobile/android/app/build.gradle.kts"; then
   check_notice "com.google.crypto.tink:tink-android"
+fi
+
+if grep -Fq 'com.google.firebase:firebase-messaging' "$ROOT/mobile/android/app/build.gradle.kts"; then
+  check_notice 'com.google.firebase:firebase-messaging'
 fi
 
 if [ "$missing" -ne 0 ]; then

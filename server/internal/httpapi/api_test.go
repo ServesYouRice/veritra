@@ -31,7 +31,7 @@ func TestMessageAPIRejectsPlaintextFields(t *testing.T) {
 		"idempotency_key": "send-plaintext",
 		"body":            sentinel,
 		"ciphertext":      base64.StdEncoding.EncodeToString([]byte("ciphertext")),
-		"crypto_protocol": "mls-openmls-todo",
+		"crypto_protocol": "mls10-openmls-v1",
 	}
 	status, _ := doJSON(t, handler, http.MethodPost, "/api/v1/messages/envelopes", token, body)
 	if status != http.StatusBadRequest {
@@ -41,7 +41,7 @@ func TestMessageAPIRejectsPlaintextFields(t *testing.T) {
 		"conversation_id": conversationID,
 		"idempotency_key": "send-nested-plaintext",
 		"ciphertext":      base64.StdEncoding.EncodeToString([]byte("ciphertext")),
-		"crypto_protocol": "mls-openmls-todo",
+		"crypto_protocol": "mls10-openmls-v1",
 		"crypto_metadata": map[string]interface{}{"body": sentinel},
 	}
 	status, _ = doJSON(t, handler, http.MethodPost, "/api/v1/messages/envelopes", token, nested)
@@ -73,7 +73,7 @@ func TestMessageAPIAcceptsCiphertextEnvelope(t *testing.T) {
 		"conversation_id": conversationID,
 		"idempotency_key": "send-ciphertext",
 		"ciphertext":      base64.StdEncoding.EncodeToString([]byte("ciphertext")),
-		"crypto_protocol": "mls-openmls-todo",
+		"crypto_protocol": "mls10-openmls-v1",
 	}
 	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/messages/envelopes", token, body)
 	if status != http.StatusCreated {
@@ -101,7 +101,7 @@ func TestMessageLifecycleAndSyncRoutes(t *testing.T) {
 
 	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/messages/"+messageID+"/edit", token, map[string]interface{}{
 		"ciphertext":      base64.StdEncoding.EncodeToString([]byte("ciphertext-v2")),
-		"crypto_protocol": "mls-openmls-todo",
+		"crypto_protocol": "mls10-openmls-v1",
 	})
 	if status != http.StatusOK {
 		t.Fatalf("edit status=%d body=%s", status, response)
@@ -112,6 +112,7 @@ func TestMessageLifecycleAndSyncRoutes(t *testing.T) {
 
 	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/messages/"+messageID+"/reactions", token, map[string]interface{}{
 		"reaction_ciphertext": base64.StdEncoding.EncodeToString([]byte("encrypted reaction")),
+		"crypto_protocol":     "mls10-openmls-v1",
 	})
 	if status != http.StatusNoContent {
 		t.Fatalf("reaction status=%d body=%s", status, response)
@@ -124,7 +125,7 @@ func TestMessageLifecycleAndSyncRoutes(t *testing.T) {
 
 	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/messages/"+messageID+"/delete", token, map[string]interface{}{
 		"ciphertext":      base64.StdEncoding.EncodeToString([]byte("encrypted delete marker")),
-		"crypto_protocol": "mls-openmls-todo",
+		"crypto_protocol": "mls10-openmls-v1",
 	})
 	if status != http.StatusOK {
 		t.Fatalf("delete status=%d body=%s", status, response)
@@ -149,22 +150,41 @@ func TestConversationScopedWritesRequireMembership(t *testing.T) {
 	conversationID := createConversation(t, handler, ownerToken)
 	messageID := createMessage(t, handler, ownerToken, conversationID, "owner-only", []byte("ciphertext"))
 	memberToken := registerMember(t, handler, ownerToken, "outsider")
+	status, response := doJSON(t, handler, http.MethodGet, "/api/v1/devices/me", memberToken, nil)
+	if status != http.StatusOK {
+		t.Fatalf("member device status=%d body=%s", status, response)
+	}
+	var memberDevices struct {
+		Devices []struct {
+			ID string `json:"id"`
+		} `json:"devices"`
+	}
+	if err := json.Unmarshal(response, &memberDevices); err != nil || len(memberDevices.Devices) != 1 {
+		t.Fatalf("decode member device: %v", err)
+	}
 
-	status, response := doRaw(t, handler, http.MethodPost, "/api/v1/attachments?conversation_id="+conversationID, memberToken, []byte("encrypted attachment"), map[string]string{
+	status, response = doRaw(t, handler, http.MethodPost, "/api/v1/attachments?conversation_id="+conversationID, memberToken, []byte("encrypted attachment"), map[string]string{
 		"X-Private-Messenger-Encrypted": "1",
-		"X-Crypto-Metadata":             "{}",
+		"X-Crypto-Metadata":             `{"version":1,"algorithm":"AES-256-GCM-chunked","chunk_size":1048576}`,
 	})
 	if status != http.StatusForbidden {
 		t.Fatalf("attachment status=%d body=%s", status, response)
 	}
 
-	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/calls", memberToken, map[string]interface{}{"conversation_id": conversationID})
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/calls", memberToken, map[string]interface{}{
+		"conversation_id": conversationID,
+		"metadata": map[string]interface{}{
+			"version": 1, "ciphertext": base64.StdEncoding.EncodeToString([]byte("encrypted call")),
+			"protocol": "mls10-openmls-v1", "sender_device_id": memberDevices.Devices[0].ID, "action_id": "call-action",
+		},
+	})
 	if status != http.StatusForbidden {
 		t.Fatalf("call status=%d body=%s", status, response)
 	}
 
 	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/messages/"+messageID+"/reactions", memberToken, map[string]interface{}{
 		"reaction_ciphertext": base64.StdEncoding.EncodeToString([]byte("encrypted reaction")),
+		"crypto_protocol":     "mls10-openmls-v1",
 	})
 	if status != http.StatusForbidden {
 		t.Fatalf("reaction status=%d body=%s", status, response)
@@ -206,7 +226,8 @@ func TestMetadataSearchBackupExportAndAccountDelete(t *testing.T) {
 
 	status, response = doRaw(t, handler, http.MethodPost, "/api/v1/backups", token, []byte("encrypted backup blob"), map[string]string{
 		"X-Private-Messenger-Encrypted": "1",
-		"X-Key-Derivation-Metadata":     `{"kdf":"client-side-test"}`,
+		"X-Key-Derivation-Metadata":     `{"version":1,"algorithm":"AES-256-GCM-chunked","chunk_size":1048576,"state_counter":1}`,
+		"X-Recovery-Token":              base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)),
 	})
 	if status != http.StatusCreated {
 		t.Fatalf("backup status=%d body=%s", status, response)
@@ -246,6 +267,52 @@ func TestAttachmentInvalidMetadataDoesNotWriteBlob(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("invalid attachment metadata wrote blobs: %#v", entries)
+	}
+}
+
+func TestAttachmentDownloadRangeAuthorizationAndIntegrity(t *testing.T) {
+	handler, ownerToken, dbPath := newTestHandlerWithOwner(t)
+	conversationID := createConversation(t, handler, ownerToken)
+	payload := []byte("encrypted attachment payload")
+	status, response := doRaw(t, handler, http.MethodPost, "/api/v1/attachments?conversation_id="+conversationID, ownerToken, payload, map[string]string{
+		"X-Private-Messenger-Encrypted": "1",
+		"X-Crypto-Metadata":             `{"version":1,"algorithm":"AES-256-GCM-chunked","chunk_size":1048576}`,
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("upload status=%d body=%s", status, response)
+	}
+	var attachment struct {
+		ID         string `json:"id"`
+		StorageKey string `json:"storage_key"`
+	}
+	if err := json.Unmarshal(response, &attachment); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/attachments/"+attachment.ID, nil)
+	req.Header.Set("Authorization", "Bearer "+ownerToken)
+	req.Header.Set("Range", "bytes=10-19")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusPartialContent || !bytes.Equal(rec.Body.Bytes(), payload[10:20]) {
+		t.Fatalf("range status=%d body=%q", rec.Code, rec.Body.Bytes())
+	}
+	if got := rec.Header().Get("Content-Range"); got != "bytes 10-19/28" {
+		t.Fatalf("Content-Range = %q", got)
+	}
+
+	outsiderToken := registerMember(t, handler, ownerToken, "download-outsider")
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/attachments/"+attachment.ID, outsiderToken, nil)
+	if status != http.StatusNotFound {
+		t.Fatalf("outsider status=%d body=%s", status, response)
+	}
+
+	if err := os.Truncate(filepath.Join(filepath.Dir(dbPath), "blobs", attachment.StorageKey), int64(len(payload)-1)); err != nil {
+		t.Fatal(err)
+	}
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/attachments/"+attachment.ID, ownerToken, nil)
+	if status != http.StatusInternalServerError || !bytes.Contains(response, []byte("blob_integrity_failed")) {
+		t.Fatalf("truncated status=%d body=%s", status, response)
 	}
 }
 
@@ -314,6 +381,39 @@ func TestSetupRejectsNonProductionKeyPackage(t *testing.T) {
 	}
 }
 
+func TestLoginBackoffIsBoundedAndAccountPrivacySafe(t *testing.T) {
+	handler, _, deviceID := newTestHandlerWithOwnerDevice(t)
+	for _, username := range []string{"owner", "missing-account"} {
+		for attempt := 1; attempt <= 3; attempt++ {
+			body, err := json.Marshal(map[string]interface{}{
+				"username":      username,
+				"password":      "wrong-password",
+				"device_id":     deviceID,
+				"device_secret": "wrong-device-secret",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if attempt < 3 && recorder.Code != http.StatusUnauthorized {
+				t.Fatalf("username=%q attempt=%d status=%d body=%s", username, attempt, recorder.Code, recorder.Body.String())
+			}
+			if attempt == 3 {
+				if recorder.Code != http.StatusTooManyRequests || !bytes.Contains(recorder.Body.Bytes(), []byte(`"error":"login_backoff"`)) {
+					t.Fatalf("username=%q backoff status=%d body=%s", username, recorder.Code, recorder.Body.String())
+				}
+				retryAfter, err := strconv.Atoi(recorder.Header().Get("Retry-After"))
+				if err != nil || retryAfter < 1 || retryAfter > 60 {
+					t.Fatalf("username=%q Retry-After=%q err=%v", username, recorder.Header().Get("Retry-After"), err)
+				}
+			}
+		}
+	}
+}
+
 func TestSetupRejectsInvalidUsername(t *testing.T) {
 	dir := t.TempDir()
 	application, err := app.New(context.Background(), config.Config{
@@ -355,16 +455,18 @@ func TestDeviceLinkingFlowRequiresExistingDeviceApproval(t *testing.T) {
 	}
 	var created struct {
 		DeviceLink struct {
-			ID               string `json:"id"`
-			Code             string `json:"code"`
-			State            string `json:"state"`
-			VerificationCode string `json:"verification_code"`
+			ID                 string `json:"id"`
+			Code               string `json:"code"`
+			State              string `json:"state"`
+			ProtocolVersion    string `json:"protocol_version"`
+			LinkNonce          []byte `json:"link_nonce"`
+			ExistingSigningKey []byte `json:"existing_signing_key"`
 		} `json:"device_link"`
 	}
 	if err := json.Unmarshal(response, &created); err != nil {
 		t.Fatalf("decode device link: %v", err)
 	}
-	if created.DeviceLink.ID == "" || created.DeviceLink.Code == "" || created.DeviceLink.VerificationCode == "" {
+	if created.DeviceLink.ID == "" || created.DeviceLink.Code == "" || created.DeviceLink.ProtocolVersion == "" || len(created.DeviceLink.LinkNonce) != 32 || len(created.DeviceLink.ExistingSigningKey) != 32 {
 		t.Fatalf("created link missing fields: %s", response)
 	}
 
@@ -375,6 +477,7 @@ func TestDeviceLinkingFlowRequiresExistingDeviceApproval(t *testing.T) {
 		"code":               created.DeviceLink.Code,
 		"device_name":        "linked tablet",
 		"device_key_package": make([]byte, 64),
+		"transcript_hash":    bytes.Repeat([]byte{7}, 32),
 	}
 	addEnrollmentProof(claimBody, enrollment)
 	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/device-links/claim", "", claimBody)
@@ -384,14 +487,14 @@ func TestDeviceLinkingFlowRequiresExistingDeviceApproval(t *testing.T) {
 	var claimed struct {
 		ClaimToken string `json:"claim_token"`
 		DeviceLink struct {
-			State            string `json:"state"`
-			VerificationCode string `json:"verification_code"`
+			State          string `json:"state"`
+			TranscriptHash []byte `json:"transcript_hash"`
 		} `json:"device_link"`
 	}
 	if err := json.Unmarshal(response, &claimed); err != nil {
 		t.Fatalf("decode claimed device link: %v", err)
 	}
-	if claimed.ClaimToken == "" || claimed.DeviceLink.State != "claimed" || claimed.DeviceLink.VerificationCode != created.DeviceLink.VerificationCode {
+	if claimed.ClaimToken == "" || claimed.DeviceLink.State != "claimed" || !bytes.Equal(claimed.DeviceLink.TranscriptHash, bytes.Repeat([]byte{7}, 32)) {
 		t.Fatalf("unexpected claimed response: %s", response)
 	}
 
@@ -411,7 +514,13 @@ func TestDeviceLinkingFlowRequiresExistingDeviceApproval(t *testing.T) {
 	}
 
 	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/device-links/"+created.DeviceLink.ID+"/approve", ownerToken, map[string]interface{}{
-		"verification_code": created.DeviceLink.VerificationCode,
+		"transcript_hash": bytes.Repeat([]byte{8}, 32),
+	})
+	if status != http.StatusBadRequest || !bytes.Contains(response, []byte("transcript_mismatch")) {
+		t.Fatalf("substituted transcript approval status=%d body=%s", status, response)
+	}
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/device-links/"+created.DeviceLink.ID+"/approve", ownerToken, map[string]interface{}{
+		"transcript_hash": bytes.Repeat([]byte{7}, 32),
 	})
 	if status != http.StatusOK {
 		t.Fatalf("approve device link status=%d body=%s", status, response)
@@ -427,8 +536,9 @@ func TestDeviceLinkingFlowRequiresExistingDeviceApproval(t *testing.T) {
 		t.Fatalf("approved claim status=%d body=%s", status, response)
 	}
 	var completed struct {
-		Token  string `json:"token"`
-		Device struct {
+		Token          string `json:"token"`
+		TranscriptHash []byte `json:"transcript_hash"`
+		Device         struct {
 			ID   string `json:"id"`
 			Name string `json:"name"`
 		} `json:"device"`
@@ -436,7 +546,7 @@ func TestDeviceLinkingFlowRequiresExistingDeviceApproval(t *testing.T) {
 	if err := json.Unmarshal(response, &completed); err != nil {
 		t.Fatalf("decode completed link: %v", err)
 	}
-	if completed.Token == "" || completed.Device.ID == "" || completed.Device.Name != "linked tablet" {
+	if completed.Token == "" || completed.Device.ID == "" || completed.Device.Name != "linked tablet" || !bytes.Equal(completed.TranscriptHash, bytes.Repeat([]byte{7}, 32)) {
 		t.Fatalf("unexpected completed link: %s", response)
 	}
 	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/devices/me", completed.Token, nil)
@@ -493,6 +603,181 @@ func TestListMessagesCursorPagination(t *testing.T) {
 	}
 	if page3.NextBefore != "" {
 		t.Fatalf("page 3 should not advertise more, got next_before=%q", page3.NextBefore)
+	}
+}
+
+func TestConversationKeyPackageClaimsAreAuthorizedAndSingleUse(t *testing.T) {
+	handler, ownerToken, ownerDeviceID := newTestHandlerWithOwnerDevice(t)
+	_, memberAccountID := registerMemberWithID(t, handler, ownerToken, "claimmember")
+	outsiderToken := registerMember(t, handler, ownerToken, "claimoutsider")
+
+	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/conversations", ownerToken, map[string]interface{}{
+		"kind":               "group",
+		"member_account_ids": []string{memberAccountID},
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("create conversation status=%d body=%s", status, response)
+	}
+	var conversation struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(response, &conversation); err != nil {
+		t.Fatalf("decode conversation: %v", err)
+	}
+	claimPath := "/api/v1/conversations/" + conversation.ID + "/key-packages/claim"
+
+	status, response = doJSON(t, handler, http.MethodPost, claimPath, outsiderToken, nil)
+	if status != http.StatusForbidden || !bytes.Contains(response, []byte(`"error":"forbidden"`)) {
+		t.Fatalf("non-member claim status=%d body=%s", status, response)
+	}
+
+	status, response = doJSON(t, handler, http.MethodPost, claimPath, ownerToken, nil)
+	if status != http.StatusOK {
+		t.Fatalf("member claim status=%d body=%s", status, response)
+	}
+	var claimed struct {
+		KeyPackages []struct {
+			DeviceID string `json:"device_id"`
+		} `json:"key_packages"`
+	}
+	if err := json.Unmarshal(response, &claimed); err != nil {
+		t.Fatalf("decode key packages: %v", err)
+	}
+	if len(claimed.KeyPackages) != 1 || claimed.KeyPackages[0].DeviceID == ownerDeviceID {
+		t.Fatalf("claim did not exclude requester device: %s", response)
+	}
+
+	status, response = doJSON(t, handler, http.MethodPost, claimPath, ownerToken, nil)
+	if status != http.StatusConflict || !bytes.Contains(response, []byte(`"error":"key_package_unavailable"`)) {
+		t.Fatalf("repeated claim status=%d body=%s", status, response)
+	}
+}
+
+func TestDMAndGroupMembershipLifecycleAPI(t *testing.T) {
+	handler, ownerToken, _ := newTestHandlerWithOwnerDevice(t)
+	ownerID := accountIDFromExport(t, handler, ownerToken)
+	memberToken, memberID := registerMemberWithID(t, handler, ownerToken, "apilifemember")
+	outsiderToken, outsiderID := registerMemberWithID(t, handler, ownerToken, "apilifeoutsider")
+
+	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/conversations", ownerToken, map[string]interface{}{
+		"kind":               "dm",
+		"member_account_ids": []string{memberID},
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("create DM status=%d body=%s", status, response)
+	}
+	var dm struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(response, &dm); err != nil {
+		t.Fatalf("decode DM: %v", err)
+	}
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/conversations", memberToken, map[string]interface{}{
+		"kind":               "dm",
+		"member_account_ids": []string{ownerID},
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("retry DM status=%d body=%s", status, response)
+	}
+	var retriedDM struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(response, &retriedDM); err != nil || retriedDM.ID != dm.ID {
+		t.Fatalf("retry DM=%#v err=%v want id=%s", retriedDM, err, dm.ID)
+	}
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+dm.ID+"/members", ownerToken, map[string]interface{}{"account_id": outsiderID})
+	if status != http.StatusForbidden {
+		t.Fatalf("third DM member status=%d body=%s", status, response)
+	}
+
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/conversations/"+dm.ID+"/members", memberToken, nil)
+	if status != http.StatusOK || !bytes.Contains(response, []byte(ownerID)) || !bytes.Contains(response, []byte(memberID)) {
+		t.Fatalf("authorized DM roster status=%d body=%s", status, response)
+	}
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/conversations/"+dm.ID+"/members", outsiderToken, nil)
+	if status != http.StatusForbidden {
+		t.Fatalf("outsider DM roster status=%d body=%s", status, response)
+	}
+
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/conversations", ownerToken, map[string]interface{}{
+		"kind":               "group",
+		"member_account_ids": []string{memberID},
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("create group status=%d body=%s", status, response)
+	}
+	var group struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(response, &group); err != nil {
+		t.Fatalf("decode group: %v", err)
+	}
+	status, response = doJSON(t, handler, http.MethodDelete, "/api/v1/conversations/"+group.ID+"/members/me", ownerToken, nil)
+	if status != http.StatusConflict || !bytes.Contains(response, []byte(`"error":"last_owner_required"`)) {
+		t.Fatalf("last owner leave status=%d body=%s", status, response)
+	}
+	status, response = doJSON(t, handler, http.MethodDelete, "/api/v1/conversations/"+group.ID+"/members/me", memberToken, nil)
+	if status != http.StatusOK || !bytes.Contains(response, []byte(`"mls_coordination":"pending"`)) {
+		t.Fatalf("member leave status=%d body=%s", status, response)
+	}
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/conversations/"+group.ID+"/members", memberToken, nil)
+	if status != http.StatusForbidden {
+		t.Fatalf("departed member roster status=%d body=%s", status, response)
+	}
+}
+
+func TestSingleMessageRepairIsScopedAndIncludesOldDeleteMarkers(t *testing.T) {
+	handler, ownerToken, _ := newTestHandlerWithOwnerDevice(t)
+	memberToken, memberID := registerMemberWithID(t, handler, ownerToken, "repairmember")
+	outsiderToken := registerMember(t, handler, ownerToken, "repairoutsider")
+	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/conversations", ownerToken, map[string]interface{}{
+		"kind":               "group",
+		"member_account_ids": []string{memberID},
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("create repair conversation status=%d body=%s", status, response)
+	}
+	var conversation struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(response, &conversation); err != nil {
+		t.Fatalf("decode conversation: %v", err)
+	}
+	oldID := createMessage(t, handler, ownerToken, conversation.ID, "repair-old", []byte("old ciphertext"))
+	newestID := createMessage(t, handler, ownerToken, conversation.ID, "repair-new", []byte("new ciphertext"))
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/messages/"+oldID+"/edit", ownerToken, map[string]interface{}{
+		"ciphertext":      base64.StdEncoding.EncodeToString([]byte("edited old ciphertext")),
+		"crypto_protocol": "mls10-openmls-v1",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("edit old message status=%d body=%s", status, response)
+	}
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/conversations/"+conversation.ID+"/messages?limit=1", memberToken, nil)
+	if status != http.StatusOK || !bytes.Contains(response, []byte(newestID)) || bytes.Contains(response, []byte(oldID)) {
+		t.Fatalf("newest page status=%d body=%s", status, response)
+	}
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/messages/"+oldID, memberToken, nil)
+	if status != http.StatusOK || !bytes.Contains(response, []byte(base64.StdEncoding.EncodeToString([]byte("edited old ciphertext")))) {
+		t.Fatalf("authorized old lookup status=%d body=%s", status, response)
+	}
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/messages/"+oldID, outsiderToken, nil)
+	if status != http.StatusNotFound {
+		t.Fatalf("outsider old lookup status=%d body=%s", status, response)
+	}
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/messages/msg_missing", memberToken, nil)
+	if status != http.StatusNotFound {
+		t.Fatalf("missing lookup status=%d body=%s", status, response)
+	}
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/messages/"+oldID+"/delete", ownerToken, map[string]interface{}{
+		"ciphertext":      base64.StdEncoding.EncodeToString([]byte("encrypted delete marker")),
+		"crypto_protocol": "mls10-openmls-v1",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("delete old message status=%d body=%s", status, response)
+	}
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/messages/"+oldID, memberToken, nil)
+	if status != http.StatusOK || !bytes.Contains(response, []byte(`"deleted_at"`)) || !bytes.Contains(response, []byte(base64.StdEncoding.EncodeToString([]byte("encrypted delete marker")))) {
+		t.Fatalf("deleted marker lookup status=%d body=%s", status, response)
 	}
 }
 
@@ -600,7 +885,7 @@ func createMessage(t *testing.T, handler http.Handler, token, conversationID, id
 		"conversation_id": conversationID,
 		"idempotency_key": idempotencyKey,
 		"ciphertext":      base64.StdEncoding.EncodeToString(ciphertext),
-		"crypto_protocol": "mls-openmls-todo",
+		"crypto_protocol": "mls10-openmls-v1",
 	})
 	if status != http.StatusCreated {
 		t.Fatalf("create message status=%d body=%s", status, response)
@@ -694,12 +979,16 @@ func doJSON(t *testing.T, handler http.Handler, method, path, token string, body
 }
 
 type testEnrollment struct {
-	ID         string `json:"id"`
-	AccountID  string `json:"account_id"`
-	DeviceID   string `json:"device_id"`
-	Challenge  []byte `json:"challenge"`
-	SigningKey []byte
-	PrivateKey ed25519.PrivateKey
+	ID                 string `json:"id"`
+	AccountID          string `json:"account_id"`
+	DeviceID           string `json:"device_id"`
+	Challenge          []byte `json:"challenge"`
+	SigningKey         []byte
+	PrivateKey         ed25519.PrivateKey
+	ProtocolVersion    string `json:"protocol_version"`
+	LinkNonce          []byte `json:"link_nonce"`
+	ExistingDeviceID   string `json:"existing_device_id"`
+	ExistingSigningKey []byte `json:"existing_signing_key"`
 }
 
 func reserveEnrollment(t *testing.T, handler http.Handler, path, inviteCode string) testEnrollment {
@@ -955,7 +1244,7 @@ func TestMessageReferencesStayWithinConversation(t *testing.T) {
 		"conversation_id": secondConversation,
 		"idempotency_key": "cross-conversation-reference",
 		"ciphertext":      base64.StdEncoding.EncodeToString([]byte("ciphertext")),
-		"crypto_protocol": "mls-openmls-todo",
+		"crypto_protocol": "mls10-openmls-v1",
 		"reply_to_id":     messageID,
 	})
 	if status != http.StatusBadRequest {

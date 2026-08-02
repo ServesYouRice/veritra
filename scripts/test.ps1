@@ -9,7 +9,7 @@ if (Get-Command go -ErrorAction SilentlyContinue) {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   } finally { Pop-Location }
 } else {
-  docker run --rm -v "${Root}:/workspace" -w /workspace/server golang:1.25@sha256:c138bff780910acf4254ab3a6f7ff0f64bbd841f27bd82bfa986fe122c109538 go test ./...
+  docker run --rm -v "${Root}:/workspace" -w /workspace/server golang:1.25.12@sha256:9006890ecba0a168034d99516084099ae3114d9f2b7d6572c77f2dde57ebc980 go test ./...
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 

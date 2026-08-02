@@ -127,6 +127,11 @@ func (s *Store) DeleteAccountData(ctx context.Context, accountID string) ([]stri
 	if err := blobRows.Close(); err != nil {
 		return nil, err
 	}
+	for _, storageKey := range storageKeys {
+		if err := enqueueBlobDeletion(ctx, tx, storageKey); err != nil {
+			return nil, err
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE invites SET revoked_at = COALESCE(revoked_at, ?) WHERE created_by = ?`, now, accountID); err != nil {
 		return nil, err
 	}

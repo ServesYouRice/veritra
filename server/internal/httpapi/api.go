@@ -34,17 +34,28 @@ type API struct {
 	Messages            *messaging.Service
 	Push                push.Provider
 	VAPIDPublicKey      string
+	PushProviders       []string
+	TURNURLs            []string
+	TURNSharedSecret    string
+	ClientIdentities    *ClientIdentityResolver
+	LoginBackoff        *LoginBackoff
+	Ready               func() bool
 	typingMu            sync.Mutex
 	typingLast          map[string]time.Time
+}
+
+func (a *API) clientIP(r *http.Request) string {
+	return a.ClientIdentities.ClientIP(r)
 }
 
 func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /livez", a.liveness)
 	mux.HandleFunc("GET /healthz", a.health)
-	mux.HandleFunc("GET /readyz", a.health)
+	mux.HandleFunc("GET /readyz", a.readiness)
 	mux.HandleFunc("GET /api/v1/health", a.health)
 	mux.HandleFunc("GET /setup", a.setupPage)
 	mux.HandleFunc("GET /api/v1/setup/status", a.setupStatus)
+	mux.HandleFunc("GET /api/v1/recovery/{token}", a.recoverBackup)
 	mux.HandleFunc("POST /api/v1/setup/owner/enrollment", a.reserveOwnerEnrollment)
 	mux.HandleFunc("POST /api/v1/setup/owner", a.createOwner)
 	mux.HandleFunc("POST /api/v1/auth/login", a.login)
@@ -68,6 +79,11 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/conversations", a.withAuth(a.createConversation))
 	mux.HandleFunc("GET /api/v1/conversations", a.withAuth(a.listConversations))
 	mux.HandleFunc("POST /api/v1/conversations/{id}/key-packages/claim", a.withAuth(a.claimConversationKeyPackages))
+	mux.HandleFunc("POST /api/v1/conversations/{id}/mls/messages", a.withAuth(a.createMLSMessage))
+	mux.HandleFunc("GET /api/v1/mls/messages", a.withAuth(a.listMLSMessages))
+	mux.HandleFunc("GET /api/v1/mls/messages/{id}", a.withAuth(a.getMLSMessage))
+	mux.HandleFunc("GET /api/v1/mls/revocations", a.withAuth(a.listMLSRevocations))
+	mux.HandleFunc("POST /api/v1/conversations/{id}/mls/revocations/{device_id}/confirm", a.withAuth(a.confirmMLSRevocation))
 	mux.HandleFunc("POST /api/v1/messages/envelopes", a.withAuth(a.createMessageEnvelope))
 	mux.HandleFunc("POST /api/v1/attachments", a.withAuth(a.uploadAttachment))
 	mux.HandleFunc("GET /api/v1/attachments", a.withAuth(a.listAttachments))
@@ -75,6 +91,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/push/config", a.withAuth(a.pushConfig))
 	mux.HandleFunc("DELETE /api/v1/push/subscriptions/{id}", a.withAuth(a.deletePushSubscription))
 	mux.HandleFunc("POST /api/v1/calls", a.withAuth(a.createCall))
+	mux.HandleFunc("GET /api/v1/calls/config", a.withAuth(a.callConfig))
 	mux.HandleFunc("GET /api/v1/calls", a.withAuth(a.listCalls))
 	mux.HandleFunc("/api/v1/calls/", a.withAuth(a.callSubroute))
 	mux.HandleFunc("GET /api/v1/sync/ws", a.syncWebSocket)
@@ -331,11 +348,15 @@ func messageQueryLimit(r *http.Request) int {
 
 func deviceLinkPayload(link domain.DeviceLink) map[string]interface{} {
 	payload := map[string]interface{}{
-		"id":                link.ID,
-		"state":             link.State,
-		"verification_code": link.VerificationCode,
-		"created_at":        link.CreatedAt,
-		"expires_at":        link.ExpiresAt,
+		"id":                   link.ID,
+		"state":                link.State,
+		"account_id":           link.AccountID,
+		"created_by_device_id": link.CreatedByDeviceID,
+		"protocol_version":     link.ProtocolVersion,
+		"link_nonce":           link.LinkNonce,
+		"existing_signing_key": link.ExistingSigningKey,
+		"created_at":           link.CreatedAt,
+		"expires_at":           link.ExpiresAt,
 	}
 	if link.Code != "" {
 		payload["code"] = link.Code
@@ -343,6 +364,15 @@ func deviceLinkPayload(link domain.DeviceLink) map[string]interface{} {
 	}
 	if link.ClaimedDeviceName != nil {
 		payload["claimed_device_name"] = *link.ClaimedDeviceName
+	}
+	if link.ClaimedDeviceID != "" {
+		payload["claimed_device_id"] = link.ClaimedDeviceID
+	}
+	if len(link.ClaimedSigningKey) != 0 {
+		payload["claimed_signing_key"] = link.ClaimedSigningKey
+	}
+	if len(link.TranscriptHash) != 0 {
+		payload["transcript_hash"] = link.TranscriptHash
 	}
 	if link.ApprovedDeviceID != nil {
 		payload["approved_device_id"] = *link.ApprovedDeviceID

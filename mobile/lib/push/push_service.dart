@@ -9,12 +9,14 @@ sealed class PushEvent {
 class PushEndpointEvent extends PushEvent {
   const PushEndpointEvent({
     required this.instance,
+    this.provider = 'webpush',
     required this.endpoint,
     required this.publicKey,
     required this.authSecret,
   });
 
   final String instance;
+  final String provider;
   final String endpoint;
   final String publicKey;
   final String authSecret;
@@ -83,15 +85,18 @@ class PlatformMobilePushService implements MobilePushService {
     switch (event['type']) {
       case 'endpoint':
         final instance = event['instance'];
+        final provider = event['provider'];
         final endpoint = event['endpoint'];
         final publicKey = event['publicKey'];
         final authSecret = event['authSecret'];
         if (instance is String &&
+            provider is String &&
             endpoint is String &&
             publicKey is String &&
             authSecret is String) {
           _events.add(PushEndpointEvent(
             instance: instance,
+            provider: provider,
             endpoint: endpoint,
             publicKey: publicKey,
             authSecret: authSecret,

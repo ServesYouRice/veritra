@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.25.0"
+          go-version: "1.25.12"
       - name: Test with race detector and coverage
         run: go test -race -coverprofile=coverage.out ./...
         working-directory: server
@@ -52,29 +52,55 @@ jobs:
 
   mobile:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.25.12"
+          cache-dependency-path: server/go.sum
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: stable
           flutter-version: "3.44.0"
           cache: true
+      - name: Install pinned Rust Android targets
+        run: |
+          rustup toolchain install 1.90.0 --profile minimal
+          rustup target add --toolchain 1.90.0 aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+      - name: Build and verify Android crypto libraries
+        run: |
+          sh scripts/build-mobile-crypto.sh android
+          sh scripts/verify-mobile-crypto.sh android
+          cargo build --manifest-path crypto/rust/Cargo.toml --locked --release
       - run: flutter pub get --enforce-lockfile
         working-directory: mobile
+      - name: Verify Dart dependency license files
+        run: sh ../scripts/check-dart-licenses.sh
+        working-directory: mobile
       - run: flutter test
+        env:
+          VERITRA_CRYPTO_LIBRARY: ${{ github.workspace }}/crypto/rust/target/release/libprivate_messenger_crypto.so
         working-directory: mobile
       - run: flutter analyze
         working-directory: mobile
+      - name: Test live Go/Dart API contracts
+        run: sh scripts/test-api-contracts.sh
       - run: dart format --set-exit-if-changed .
         working-directory: mobile
       - name: Build Android release APK without signing
         run: flutter build apk --release
         working-directory: mobile
+      - name: Verify Android ABI packaging
+        run: |
+          unzip -l mobile/build/app/outputs/flutter-apk/app-release.apk | grep -q 'lib/arm64-v8a/libprivate_messenger_crypto.so'
+          unzip -l mobile/build/app/outputs/flutter-apk/app-release.apk | grep -q 'lib/armeabi-v7a/libprivate_messenger_crypto.so'
+          unzip -l mobile/build/app/outputs/flutter-apk/app-release.apk | grep -q 'lib/x86_64/libprivate_messenger_crypto.so'
+          test -s mobile/android/app/src/main/assets/veritra-crypto/cargo-metadata.json
 
   mobile-ios:
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
@@ -82,6 +108,14 @@ jobs:
           channel: stable
           flutter-version: "3.44.0"
           cache: true
+      - name: Install pinned Rust iOS targets
+        run: |
+          rustup toolchain install 1.90.0 --profile minimal
+          rustup target add --toolchain 1.90.0 aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+      - name: Build and verify iOS crypto XCFramework
+        run: |
+          sh scripts/build-mobile-crypto.sh ios
+          sh scripts/verify-mobile-crypto.sh ios
       - run: flutter pub get --enforce-lockfile
         working-directory: mobile
       - name: Build iOS release app without code signing
@@ -94,6 +128,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
       - name: Start a fresh-volume deployment
+        env:
+          PRIVATE_MESSENGER_SETUP_TOKEN: ci-smoke-setup-token
         run: docker compose -f deploy/docker-compose.yml up --build --wait --wait-timeout 120
       - name: Verify health over the published loopback port
         run: curl --fail --silent --show-error http://127.0.0.1:8080/healthz
@@ -115,13 +151,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.25.0"
+          go-version: "1.25.12"
           cache-dependency-path: server/go.sum
       - name: Scan Go dependencies
         working-directory: server
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
       - name: Install pinned Rust audit tool
-        run: cargo install cargo-audit --version 0.21.2 --locked
+        run: cargo install cargo-audit --version 0.22.2 --locked
       - name: Scan Rust dependencies
         working-directory: crypto/rust
-        run: cargo audit
+        run: sh ../../scripts/audit-rust.sh

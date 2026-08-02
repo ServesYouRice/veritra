@@ -34,17 +34,19 @@ void main() {
     expect(result.label, 'Family');
   });
 
-  test('device link parses QR verification metadata', () {
+  test('device link parses transcript metadata without a server SAS', () {
     final link = DeviceLink.fromJson(<String, Object?>{
       'id': 'dlink_1',
       'state': 'pending',
-      'verification_code': '123456',
       'expires_at': '2026-05-29T12:00:00Z',
       'code': 'PAIRCODE',
       'link_uri': 'veritra://device-link?code=PAIRCODE',
+      'protocol_version': 'veritra-device-link-v1',
+      'link_nonce': 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=',
     });
     expect(link.code, 'PAIRCODE');
-    expect(link.verificationCode, '123456');
+    expect(link.verificationCode, isEmpty);
+    expect(link.linkNonce, hasLength(32));
   });
 
   test('app state can store session through local abstraction', () async {
@@ -131,6 +133,25 @@ void main() {
     expect(state.activeDeviceLink?.approvedDeviceId, 'dev_linked');
   });
 
+  test('device link rejects a server-substituted transcript', () async {
+    final api = FakeDeviceLinkApiClient(transcriptByte: 8);
+    final state = AppState(
+      apiClientFactory: (_) => api,
+      cryptoService: TestOnlyCryptoService(),
+      localStore: MemoryLocalStore(),
+      syncServiceFactory: (_, __) => FakeSyncService(),
+    )
+      ..api = api
+      ..session = const Session(
+        baseUrl: 'http://localhost:8080',
+        token: 'owner-token',
+      );
+    await state.createDeviceLink();
+    await state.refreshActiveDeviceLink();
+    expect(state.error, contains('substituted'));
+    expect(state.activeDeviceLink?.verificationCode, isNot('654321'));
+  });
+
   test('app state refreshes encrypted messages for selected conversation',
       () async {
     final api = FakeDeviceLinkApiClient();
@@ -208,7 +229,7 @@ void main() {
 
     expect(state.pendingFor('conv_1'), hasLength(1));
     final key = state.pendingFor('conv_1').single.idempotencyKey;
-    expect(state.outboxState(key), OutboxDeliveryState.failed);
+    expect(state.outboxState(key), OutboxDeliveryState.retrying);
     expect((await localStore.pendingEnvelopes()).single.idempotencyKey, key);
 
     api.failSend = false;
@@ -217,6 +238,57 @@ void main() {
     expect(api.sentKeys, <String>[key, key]);
     expect(state.pendingFor('conv_1'), isEmpty);
     expect(await localStore.pendingEnvelopes(), isEmpty);
+  });
+
+  test('sync repairs an old edited envelope by id without newest-page reload',
+      () async {
+    final localStore = MemoryLocalStore();
+    final conversation = Conversation(id: 'conv_1', kind: 'group');
+    final newest = ReceivedMessageEnvelope(
+      id: 'msg_newest',
+      conversationId: conversation.id,
+      senderAccountId: 'acct_owner',
+      senderDeviceId: 'dev_owner',
+      idempotencyKey: 'idem_newest',
+      ciphertext: <int>[1],
+      cryptoProtocol: 'mls-openmls-todo',
+      createdAt: DateTime.parse('2026-05-29T12:01:00Z'),
+    );
+    await localStore.saveSession(const Session(
+      baseUrl: 'http://localhost:8080',
+      token: 'owner-token',
+      accountId: 'acct_owner',
+      deviceId: 'dev_owner',
+    ));
+    await localStore.saveSnapshot(
+      <Conversation>[conversation],
+      <String, List<ReceivedMessageEnvelope>>{
+        conversation.id: <ReceivedMessageEnvelope>[newest],
+      },
+      0,
+    );
+    final api = _RepairApiClient();
+    final state = AppState(
+      apiClientFactory: (_) => api,
+      cryptoService: TestOnlyCryptoService(),
+      localStore: localStore,
+      syncServiceFactory: (_, __) => FakeSyncService(),
+    )..selectedConversationId = conversation.id;
+
+    await state.tryRestoreSession();
+    await api.repairFetched.future.timeout(const Duration(seconds: 2));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(api.listMessagesCalls, 0);
+    expect(state.messagesFor(conversation.id).map((message) => message.id),
+        <String>['msg_newest', 'msg_old']);
+    final repaired = state
+        .messagesFor(conversation.id)
+        .singleWhere((message) => message.id == 'msg_old');
+    expect(repaired.ciphertext, <int>[9, 9]);
+    expect(repaired.editedAt, isNotNull);
+    expect(await localStore.loadSyncCursor(), 7);
+    state.dispose();
   });
 }
 
@@ -235,18 +307,20 @@ class _OutboxApiClient extends ApiClient {
   }
 
   @override
-  Future<List<ReceivedMessageEnvelope>> listMessages(
+  Future<MessagePage> listMessagePage(
     String token,
     String conversationId, {
     int limit = 50,
     String? before,
-    String? after,
   }) async =>
-      <ReceivedMessageEnvelope>[];
+      const MessagePage(messages: <ReceivedMessageEnvelope>[]);
 }
 
 class FakeDeviceLinkApiClient extends ApiClient {
-  FakeDeviceLinkApiClient() : super(baseUrl: 'http://localhost:8080');
+  FakeDeviceLinkApiClient({this.transcriptByte = 7})
+      : super(baseUrl: 'http://localhost:8080');
+
+  final int transcriptByte;
 
   @override
   Future<DeviceLink> createDeviceLink(String token) async {
@@ -265,6 +339,76 @@ class FakeDeviceLinkApiClient extends ApiClient {
       accountId: 'acct_owner',
       deviceId: 'dev_linked',
       challenge: <int>[1, 2, 3],
+      protocolVersion: 'veritra-device-link-v1',
+      linkNonce: <int>[
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+      ],
+      existingDeviceId: 'dev_owner',
+      existingSigningKey: <int>[
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+      ],
     );
   }
 
@@ -274,6 +418,7 @@ class FakeDeviceLinkApiClient extends ApiClient {
     required String deviceName,
     required EnrollmentReservation enrollment,
     required EnrollmentCredential credential,
+    required DeviceLinkVerification verification,
   }) async {
     return DeviceLinkClaim(
       deviceLink: _link(state: 'claimed'),
@@ -286,9 +431,9 @@ class FakeDeviceLinkApiClient extends ApiClient {
   Future<DeviceLink> approveDeviceLink(
     String token,
     String linkId,
-    String verificationCode,
+    List<int> transcriptHash,
   ) async {
-    if (verificationCode != '654321') {
+    if (transcriptHash.length != 32 || transcriptHash.first != 7) {
       throw StateError('verification mismatch');
     }
     return _link(
@@ -299,8 +444,8 @@ class FakeDeviceLinkApiClient extends ApiClient {
   }
 
   @override
-  Future<Session?> completeDeviceLinkClaim(
-      String linkId, String claimToken) async {
+  Future<Session?> completeDeviceLinkClaim(String linkId, String claimToken,
+      List<int> expectedTranscriptHash) async {
     return const Session(
       baseUrl: 'http://localhost:8080',
       token: 'linked-token',
@@ -345,14 +490,13 @@ class FakeDeviceLinkApiClient extends ApiClient {
   Future<void> logout(String token) async {}
 
   @override
-  Future<List<ReceivedMessageEnvelope>> listMessages(
+  Future<MessagePage> listMessagePage(
     String token,
     String conversationId, {
     int limit = 50,
     String? before,
-    String? after,
   }) async {
-    return <ReceivedMessageEnvelope>[
+    return MessagePage(messages: <ReceivedMessageEnvelope>[
       ReceivedMessageEnvelope(
         id: 'msg_1',
         conversationId: conversationId,
@@ -363,7 +507,7 @@ class FakeDeviceLinkApiClient extends ApiClient {
         cryptoProtocol: 'mls-openmls-todo',
         createdAt: DateTime.parse('2026-05-29T12:00:00Z'),
       ),
-    ];
+    ]);
   }
 
   @override
@@ -384,13 +528,86 @@ class FakeDeviceLinkApiClient extends ApiClient {
     return DeviceLink(
       id: 'dlink_1',
       state: state,
-      verificationCode: '654321',
+      verificationCode: state == 'pending' ? '' : '654321',
       expiresAt: DateTime.parse('2026-05-29T12:00:00Z'),
       code: code,
       linkUri: code == null ? null : 'veritra://device-link?code=$code',
       claimedDeviceName: claimedDeviceName,
       approvedDeviceId: approvedDeviceId,
+      accountId: 'acct_owner',
+      createdByDeviceId: 'dev_owner',
+      protocolVersion: 'veritra-device-link-v1',
+      linkNonce: List<int>.filled(32, 1),
+      existingSigningKey: List<int>.filled(32, 2),
+      claimedDeviceId: state == 'pending' ? null : 'dev_linked',
+      claimedSigningKey: state == 'pending' ? null : List<int>.filled(32, 9),
+      transcriptHash:
+          state == 'pending' ? null : List<int>.filled(32, transcriptByte),
     );
+  }
+}
+
+class _RepairApiClient extends FakeDeviceLinkApiClient {
+  final Completer<void> repairFetched = Completer<void>();
+  int listMessagesCalls = 0;
+
+  @override
+  Future<List<Conversation>> conversations(String token) async =>
+      <Conversation>[Conversation(id: 'conv_1', kind: 'group')];
+
+  @override
+  Future<List<SyncEvent>> syncEvents(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async {
+    if (after >= 7) {
+      return <SyncEvent>[];
+    }
+    return <SyncEvent>[
+      SyncEvent(
+        id: 7,
+        type: 'message.envelope.edited',
+        conversationId: 'conv_1',
+        payload: <String, Object?>{
+          'message_id': 'msg_old',
+          'conversation_id': 'conv_1',
+        },
+        createdAt: DateTime.parse('2026-05-29T12:02:00Z'),
+      ),
+    ];
+  }
+
+  @override
+  Future<ReceivedMessageEnvelope> message(
+    String token,
+    String messageId,
+  ) async {
+    if (!repairFetched.isCompleted) {
+      repairFetched.complete();
+    }
+    return ReceivedMessageEnvelope(
+      id: messageId,
+      conversationId: 'conv_1',
+      senderAccountId: 'acct_owner',
+      senderDeviceId: 'dev_owner',
+      idempotencyKey: 'idem_old',
+      ciphertext: <int>[9, 9],
+      cryptoProtocol: 'mls-openmls-todo',
+      createdAt: DateTime.parse('2026-05-29T12:00:00Z'),
+      editedAt: DateTime.parse('2026-05-29T12:02:00Z'),
+    );
+  }
+
+  @override
+  Future<MessagePage> listMessagePage(
+    String token,
+    String conversationId, {
+    int limit = 50,
+    String? before,
+  }) async {
+    listMessagesCalls++;
+    return const MessagePage(messages: <ReceivedMessageEnvelope>[]);
   }
 }
 

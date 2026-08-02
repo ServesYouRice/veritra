@@ -295,14 +295,13 @@ class FakeFeatureApiClient extends ApiClient {
   }
 
   @override
-  Future<List<ReceivedMessageEnvelope>> listMessages(
+  Future<MessagePage> listMessagePage(
     String token,
     String conversationId, {
     int limit = 50,
     String? before,
-    String? after,
   }) async {
-    return <ReceivedMessageEnvelope>[];
+    return const MessagePage(messages: <ReceivedMessageEnvelope>[]);
   }
 
   @override

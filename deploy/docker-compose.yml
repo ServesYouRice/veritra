@@ -6,7 +6,24 @@ services:
     environment:
       PRIVATE_MESSENGER_ADDR: ":8080"
       PRIVATE_MESSENGER_DATA_DIR: /data
+      PRIVATE_MESSENGER_ENV: production
+      # Required for the first owner only. Generate a strong random value in
+      # the host environment, complete setup, then unset it and recreate this
+      # service; initialized production instances start safely without it.
+      PRIVATE_MESSENGER_SETUP_TOKEN: "${PRIVATE_MESSENGER_SETUP_TOKEN:-}"
       PRIVATE_MESSENGER_TRUSTED_PROXIES: 172.28.250.0/24
+      PRIVATE_MESSENGER_VAPID_SUBSCRIBER: "${PRIVATE_MESSENGER_VAPID_SUBSCRIBER:-}"
+      PRIVATE_MESSENGER_VAPID_PUBLIC_KEY: "${PRIVATE_MESSENGER_VAPID_PUBLIC_KEY:-}"
+      PRIVATE_MESSENGER_VAPID_PRIVATE_KEY: "${PRIVATE_MESSENGER_VAPID_PRIVATE_KEY:-}"
+      PRIVATE_MESSENGER_FCM_PROJECT_ID: "${PRIVATE_MESSENGER_FCM_PROJECT_ID:-}"
+      PRIVATE_MESSENGER_FCM_CLIENT_EMAIL: "${PRIVATE_MESSENGER_FCM_CLIENT_EMAIL:-}"
+      PRIVATE_MESSENGER_FCM_PRIVATE_KEY: "${PRIVATE_MESSENGER_FCM_PRIVATE_KEY:-}"
+      PRIVATE_MESSENGER_APNS_TEAM_ID: "${PRIVATE_MESSENGER_APNS_TEAM_ID:-}"
+      PRIVATE_MESSENGER_APNS_KEY_ID: "${PRIVATE_MESSENGER_APNS_KEY_ID:-}"
+      PRIVATE_MESSENGER_APNS_BUNDLE_ID: "${PRIVATE_MESSENGER_APNS_BUNDLE_ID:-}"
+      PRIVATE_MESSENGER_APNS_PRIVATE_KEY: "${PRIVATE_MESSENGER_APNS_PRIVATE_KEY:-}"
+      PRIVATE_MESSENGER_TURN_URLS: "${PRIVATE_MESSENGER_TURN_URLS:-}"
+      PRIVATE_MESSENGER_TURN_SHARED_SECRET: "${PRIVATE_MESSENGER_TURN_SHARED_SECRET:-}"
     volumes:
       - messenger-data:/data
     ports:
@@ -22,6 +39,7 @@ services:
       retries: 3
       start_period: 10s
     restart: unless-stopped
+    stop_grace_period: 30s
     mem_limit: 1g
     pids_limit: 256
     security_opt:

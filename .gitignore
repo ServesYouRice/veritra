@@ -20,6 +20,9 @@ mobile/.dart_tool/
 mobile/.flutter-plugins
 mobile/.flutter-plugins-dependencies
 mobile/.packages
+mobile/android/app/src/main/jniLibs/
+mobile/android/app/src/main/assets/veritra-crypto/
+mobile/ios/Frameworks/
 
 # Rust
 crypto/rust/target/

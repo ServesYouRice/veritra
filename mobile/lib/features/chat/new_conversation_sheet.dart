@@ -104,12 +104,26 @@ class _NewConversationFormState extends State<_NewConversationForm> {
     );
   }
 
+  String? _validate() {
+    if (kind == 'dm') {
+      return members.isEmpty ? 'Pick the person to message first.' : null;
+    }
+    if (title.text.trim().isEmpty) {
+      return 'Give the group a name.';
+    }
+    if (members.isEmpty) {
+      return 'Add at least one other member.';
+    }
+    return null;
+  }
+
   Future<void> _submit() async {
-    if (kind == 'dm' && members.isEmpty) {
+    // An empty, unnamed group is almost always a mis-tap, and once created it
+    // sits in the chat list indistinguishable from the others.
+    final problem = _validate();
+    if (problem != null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Pick the person to message first.'),
-        ),
+        SnackBar(content: Text(problem)),
       );
       return;
     }

@@ -52,19 +52,25 @@ class CommunityScreen extends StatelessWidget {
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
                 children: <Widget>[
+                  // Channels are navigable inside their community card, which
+                  // is the only place they appear; the old duplicate
+                  // "Channels you are in" section listed the same rows again
+                  // with different behaviour.
                   for (final community in state.communities)
                     _CommunityCard(
                       state: state,
                       community: community,
                       onCreateChannel: () => _createChannel(context, community),
+                      onOpenChannel: (conversationId) =>
+                          _openChannel(context, conversationId),
                     ),
-                  if (channelConversations.isNotEmpty) ...<Widget>[
+                  if (_orphanChannels(state).isNotEmpty) ...<Widget>[
                     Padding(
                       padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
                       child: Semantics(
                         header: true,
                         child: Text(
-                          'Channels you are in',
+                          'Other channels you are in',
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                       ),
@@ -72,24 +78,15 @@ class CommunityScreen extends StatelessWidget {
                     Card(
                       child: Column(
                         children: <Widget>[
-                          for (final conversation in channelConversations)
+                          for (final conversation in _orphanChannels(state))
                             ListTile(
                               leading: const Icon(Icons.tag),
                               title: Text(conversation.title ?? 'Channel'),
                               subtitle: const Text('Community channel'),
                               trailing:
                                   const Icon(Icons.chevron_right_outlined),
-                              onTap: () {
-                                state.selectConversation(conversation.id);
-                                Navigator.of(context).push(
-                                  MaterialPageRoute<void>(
-                                    builder: (_) => ChatScreen(
-                                      state: state,
-                                      conversationId: conversation.id,
-                                    ),
-                                  ),
-                                );
-                              },
+                              onTap: () =>
+                                  _openChannel(context, conversation.id),
                             ),
                         ],
                       ),
@@ -99,6 +96,34 @@ class CommunityScreen extends StatelessWidget {
               ),
       ),
     );
+  }
+
+  void _openChannel(BuildContext context, String conversationId) {
+    state.selectAndPrepare(conversationId);
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ChatScreen(
+          state: state,
+          conversationId: conversationId,
+        ),
+      ),
+    );
+  }
+
+  /// Channel conversations whose community is not in the listed set — for
+  /// example a channel in a community the account can no longer list. Without
+  /// this fallback they would be unreachable.
+  static List<Conversation> _orphanChannels(AppState state) {
+    final known = <String>{
+      for (final channels in state.channelsByCommunity.values)
+        for (final channel in channels) channel.id,
+    };
+    return state.conversations
+        .where((conversation) =>
+            conversation.isChannel &&
+            (conversation.channelId == null ||
+                !known.contains(conversation.channelId)))
+        .toList(growable: false);
   }
 
   Future<void> _createCommunity(BuildContext context) async {
@@ -187,11 +212,13 @@ class _CommunityCard extends StatelessWidget {
     required this.state,
     required this.community,
     required this.onCreateChannel,
+    required this.onOpenChannel,
   });
 
   final AppState state;
   final Community community;
   final VoidCallback onCreateChannel;
+  final void Function(String conversationId) onOpenChannel;
 
   @override
   Widget build(BuildContext context) {
@@ -228,15 +255,57 @@ class _CommunityCard extends StatelessWidget {
                 icon: const Icon(Icons.add),
               ),
             ),
-            for (final channel in channels)
-              ListTile(
+            if (channels.isEmpty)
+              const ListTile(
                 dense: true,
-                leading: const SizedBox(width: 40, child: Icon(Icons.tag)),
-                title: Text(channel.name),
+                leading: SizedBox(width: 40, child: Icon(Icons.tag)),
+                title: Text('No channels yet'),
+                subtitle: Text('Use + to create the first one.'),
+              ),
+            for (final channel in channels)
+              _ChannelTile(
+                channel: channel,
+                conversationId: _conversationIdFor(channel.id),
+                onOpen: onOpenChannel,
               ),
           ],
         ),
       ),
+    );
+  }
+
+  /// The conversation backing a channel, if this account is a member of it.
+  String? _conversationIdFor(String channelId) => state.conversations
+      .where((conversation) => conversation.channelId == channelId)
+      .firstOrNull
+      ?.id;
+}
+
+/// A channel row inside its community card. Rows without a backing
+/// conversation say why they cannot be opened instead of silently ignoring
+/// the tap.
+class _ChannelTile extends StatelessWidget {
+  const _ChannelTile({
+    required this.channel,
+    required this.conversationId,
+    required this.onOpen,
+  });
+
+  final Channel channel;
+  final String? conversationId;
+  final void Function(String conversationId) onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final id = conversationId;
+    return ListTile(
+      dense: true,
+      enabled: id != null,
+      leading: const SizedBox(width: 40, child: Icon(Icons.tag)),
+      title: Text(channel.name),
+      subtitle: id == null ? const Text('You are not a member yet') : null,
+      trailing: id == null ? null : const Icon(Icons.chevron_right_outlined),
+      onTap: id == null ? null : () => onOpen(id),
     );
   }
 }

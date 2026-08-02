@@ -8,11 +8,15 @@
 # set at this edge — the app only emits HSTS when it terminates TLS itself,
 # which it does not when running behind this proxy.
 messenger.example.com {
-	reverse_proxy messenger:8080
+	reverse_proxy messenger:8080 {
+		# Overwrite client-supplied forwarding headers. The application trusts
+		# only this proxy network and walks the resulting chain right-to-left.
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Real-IP {remote_host}
+	}
 	header {
 		Referrer-Policy "no-referrer"
 		X-Content-Type-Options "nosniff"
 		Strict-Transport-Security "max-age=63072000; includeSubDomains"
 	}
 }
-

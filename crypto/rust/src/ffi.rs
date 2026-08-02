@@ -1,4 +1,4 @@
-use crate::{mls::MlsDevice, PmByteSlice};
+use crate::{attachment, mls::MlsDevice, PmByteSlice};
 use core::ptr;
 use std::{
     panic::{catch_unwind, AssertUnwindSafe},
@@ -17,6 +17,8 @@ const MAX_CHALLENGE_BYTES: usize = 4096;
 const MAX_KEY_PACKAGE_BYTES: usize = 48 * 1024;
 const MAX_HANDSHAKE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
+const ATTACHMENT_KEY_BYTES: usize = 32;
+const ATTACHMENT_NONCE_PREFIX_BYTES: usize = 8;
 
 /// Opaque, library-owned device state. Callers receive only a pointer and must
 /// destroy it exactly once with [`pm_crypto_device_destroy`].
@@ -241,6 +243,47 @@ pub unsafe extern "C" fn pm_crypto_device_signing_public_key(
     })
 }
 
+/// Derives the credential-bound device-link transcript hash. The SAS is
+/// formatted locally by the caller from the first four hash bytes.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_device_link_transcript_hash(
+    handle: *mut PmCryptoHandle,
+    protocol_version: PmByteSlice,
+    peer_device_id: PmByteSlice,
+    peer_signing_public_key: PmByteSlice,
+    link_nonce: PmByteSlice,
+    local_is_existing_device: u8,
+    out: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if local_is_existing_device > 1 {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let protocol_version = unsafe { borrowed(protocol_version, 64)? };
+        let peer_device_id = unsafe { borrowed(peer_device_id, MAX_ID_BYTES)? };
+        let peer_signing_public_key = unsafe { borrowed(peer_signing_public_key, 32)? };
+        let link_nonce = unsafe { borrowed(link_nonce, 32)? };
+        if peer_signing_public_key.len() != 32 || link_nonce.len() != 32 {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let transcript_hash = unsafe {
+            with_device(handle, |device| {
+                device
+                    .derive_device_link_verification(
+                        protocol_version,
+                        peer_device_id,
+                        peer_signing_public_key,
+                        link_nonce,
+                        local_is_existing_device == 1,
+                    )
+                    .map(|verification| verification.transcript_hash)
+                    .map_err(|_| PM_CRYPTO_INVALID_ARGUMENT)
+            })?
+        };
+        unsafe { output(out, transcript_hash) }
+    })
+}
+
 /// Signs the server-provided, domain-separated enrollment challenge.
 ///
 /// # Safety
@@ -381,14 +424,16 @@ pub unsafe extern "C" fn pm_crypto_group_create(
 #[no_mangle]
 pub unsafe extern "C" fn pm_crypto_group_join(
     handle: *mut PmCryptoHandle,
+    expected_group_id: PmByteSlice,
     welcome: PmByteSlice,
 ) -> i32 {
     ffi_call(|| {
+        let expected_group_id = unsafe { borrowed(expected_group_id, MAX_ID_BYTES)? };
         let welcome = unsafe { borrowed(welcome, MAX_HANDSHAKE_BYTES)? };
         unsafe {
             with_device(handle, |device| {
                 device
-                    .join_group(welcome)
+                    .join_group(expected_group_id, welcome)
                     .map(|_| ())
                     .map_err(|_| PM_CRYPTO_ERROR)
             })
@@ -405,6 +450,8 @@ pub unsafe extern "C" fn pm_crypto_group_add_member(
     handle: *mut PmCryptoHandle,
     group_id: PmByteSlice,
     key_package: PmByteSlice,
+    expected_account_id: PmByteSlice,
+    expected_device_id: PmByteSlice,
     out_commit: *mut PmOwnedBuffer,
     out_welcome: *mut PmOwnedBuffer,
 ) -> i32 {
@@ -414,11 +461,18 @@ pub unsafe extern "C" fn pm_crypto_group_add_member(
         }
         let group_id = unsafe { borrowed(group_id, MAX_ID_BYTES)? };
         let key_package = unsafe { borrowed(key_package, MAX_KEY_PACKAGE_BYTES)? };
+        let expected_account_id = unsafe { borrowed(expected_account_id, MAX_ID_BYTES)? };
+        let expected_device_id = unsafe { borrowed(expected_device_id, MAX_ID_BYTES)? };
         let messages = unsafe {
             with_device(handle, |device| {
                 let mut group = device.load_group(group_id).map_err(|_| PM_CRYPTO_ERROR)?;
                 let messages = device
-                    .add_member(&mut group, key_package)
+                    .add_member(
+                        &mut group,
+                        key_package,
+                        expected_account_id,
+                        expected_device_id,
+                    )
                     .map_err(|_| PM_CRYPTO_ERROR)?;
                 device
                     .merge_pending_commit(&mut group)
@@ -479,6 +533,37 @@ pub unsafe extern "C" fn pm_crypto_group_self_update(
             })?
         };
         unsafe { output(out_commit, commit) }
+    })
+}
+
+/// Derives a server-independent safety transcript for the current group.
+///
+/// # Safety
+/// `handle` must be live, `group_id` readable, and both outputs writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_group_safety_number(
+    handle: *mut PmCryptoHandle,
+    group_id: PmByteSlice,
+    out_hash: *mut PmOwnedBuffer,
+    out_digits: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if out_hash.is_null() || out_digits.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let group_id = unsafe { borrowed(group_id, MAX_ID_BYTES)? };
+        let verification = unsafe {
+            with_device(handle, |device| {
+                let group = device.load_group(group_id).map_err(|_| PM_CRYPTO_ERROR)?;
+                device
+                    .conversation_safety_number(&group)
+                    .map_err(|_| PM_CRYPTO_ERROR)
+            })?
+        };
+        unsafe {
+            output(out_hash, verification.transcript_hash)?;
+            output(out_digits, verification.sas.into_bytes())
+        }
     })
 }
 
@@ -566,6 +651,64 @@ pub unsafe extern "C" fn pm_crypto_group_decrypt(
             })?
         };
         unsafe { output(out_plaintext, plaintext) }
+    })
+}
+
+/// Encrypts one independently authenticated attachment chunk.
+///
+/// # Safety
+/// All slices must remain readable for the call and `out_ciphertext` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_attachment_encrypt_chunk(
+    key: PmByteSlice,
+    nonce_prefix: PmByteSlice,
+    chunk_index: u32,
+    context: PmByteSlice,
+    plaintext: PmByteSlice,
+    out_ciphertext: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        let key = unsafe { borrowed(key, ATTACHMENT_KEY_BYTES)? };
+        let nonce_prefix = unsafe { borrowed(nonce_prefix, ATTACHMENT_NONCE_PREFIX_BYTES)? };
+        if key.len() != ATTACHMENT_KEY_BYTES || nonce_prefix.len() != ATTACHMENT_NONCE_PREFIX_BYTES
+        {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let context = unsafe { borrowed(context, 512)? };
+        let plaintext = unsafe { borrowed(plaintext, attachment::MAX_ATTACHMENT_CHUNK)? };
+        let encrypted =
+            attachment::encrypt_chunk(key, nonce_prefix, chunk_index, context, plaintext)
+                .map_err(|_| PM_CRYPTO_ERROR)?;
+        unsafe { output(out_ciphertext, encrypted) }
+    })
+}
+
+/// Decrypts and authenticates one attachment chunk.
+///
+/// # Safety
+/// All slices must remain readable for the call and `out_plaintext` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_attachment_decrypt_chunk(
+    key: PmByteSlice,
+    nonce_prefix: PmByteSlice,
+    chunk_index: u32,
+    context: PmByteSlice,
+    ciphertext: PmByteSlice,
+    out_plaintext: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        let key = unsafe { borrowed(key, ATTACHMENT_KEY_BYTES)? };
+        let nonce_prefix = unsafe { borrowed(nonce_prefix, ATTACHMENT_NONCE_PREFIX_BYTES)? };
+        if key.len() != ATTACHMENT_KEY_BYTES || nonce_prefix.len() != ATTACHMENT_NONCE_PREFIX_BYTES
+        {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let context = unsafe { borrowed(context, 512)? };
+        let ciphertext = unsafe { borrowed(ciphertext, attachment::MAX_ATTACHMENT_CHUNK + 16)? };
+        let decrypted =
+            attachment::decrypt_chunk(key, nonce_prefix, chunk_index, context, ciphertext)
+                .map_err(|_| PM_CRYPTO_ERROR)?;
+        unsafe { output(out_plaintext, decrypted) }
     })
 }
 
@@ -703,6 +846,8 @@ mod tests {
                     alice,
                     slice(b"conv_test"),
                     slice(&bob_package),
+                    slice(b"acct_bob"),
+                    slice(b"dev_bob"),
                     &mut commit,
                     &mut welcome,
                 )
@@ -713,7 +858,7 @@ mod tests {
         let welcome = unsafe { take(welcome) };
         assert!(!commit.is_empty());
         assert_eq!(
-            unsafe { pm_crypto_group_join(bob, slice(&welcome)) },
+            unsafe { pm_crypto_group_join(bob, slice(b"conv_test"), slice(&welcome)) },
             PM_CRYPTO_OK
         );
 

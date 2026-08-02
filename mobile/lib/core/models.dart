@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-enum OutboxDeliveryState { sending, failed }
+enum OutboxDeliveryState { sending, failed, retrying, terminal }
 
 class EnrollmentReservation {
   const EnrollmentReservation({
@@ -8,12 +8,20 @@ class EnrollmentReservation {
     required this.accountId,
     required this.deviceId,
     required this.challenge,
+    this.protocolVersion,
+    this.linkNonce,
+    this.existingDeviceId,
+    this.existingSigningKey,
   });
 
   final String id;
   final String accountId;
   final String deviceId;
   final List<int> challenge;
+  final String? protocolVersion;
+  final List<int>? linkNonce;
+  final String? existingDeviceId;
+  final List<int>? existingSigningKey;
 
   factory EnrollmentReservation.fromJson(Map<String, Object?> json) =>
       EnrollmentReservation(
@@ -21,8 +29,15 @@ class EnrollmentReservation {
         accountId: json['account_id'] as String,
         deviceId: json['device_id'] as String,
         challenge: base64Decode(json['challenge'] as String),
+        protocolVersion: json['protocol_version'] as String?,
+        linkNonce: _decodeOptionalBytes(json['link_nonce']),
+        existingDeviceId: json['existing_device_id'] as String?,
+        existingSigningKey: _decodeOptionalBytes(json['existing_signing_key']),
       );
 }
+
+List<int>? _decodeOptionalBytes(Object? value) =>
+    value is String && value.isNotEmpty ? base64Decode(value) : null;
 
 class EnrollmentCredential {
   const EnrollmentCredential({
@@ -34,6 +49,16 @@ class EnrollmentCredential {
   final List<int> deviceKeyPackage;
   final List<int> signingKey;
   final List<int> challengeSignature;
+}
+
+class DeviceLinkVerification {
+  const DeviceLinkVerification({
+    required this.transcriptHash,
+    required this.sas,
+  });
+
+  final List<int> transcriptHash;
+  final String sas;
 }
 
 class Conversation {
@@ -48,6 +73,8 @@ class Conversation {
     this.lastMessageAt,
     this.unreadCount = 0,
     this.currentRole,
+    this.peerAccountId,
+    this.peerUsername,
   });
 
   final String id;
@@ -63,6 +90,11 @@ class Conversation {
   final DateTime? lastMessageAt;
   final int unreadCount;
   final String? currentRole;
+  // Counterpart of a two-account DM, supplied by the conversation list so the
+  // chat list can name the other person instead of every DM reading the same.
+  // Server-authored display metadata, never a cryptographic identity claim.
+  final String? peerAccountId;
+  final String? peerUsername;
 
   bool get isDm => kind == 'dm';
   bool get isGroup => kind == 'group';
@@ -84,6 +116,8 @@ class Conversation {
       lastMessageAt: _parseOptionalTime(json['last_message_at']),
       unreadCount: (json['unread_count'] as num?)?.toInt() ?? 0,
       currentRole: json['current_role'] as String?,
+      peerAccountId: _nonEmpty(json['peer_account_id']),
+      peerUsername: _nonEmpty(json['peer_username']),
     );
   }
 
@@ -99,6 +133,8 @@ class Conversation {
       lastMessageAt: lastMessageAt,
       unreadCount: unreadCount ?? this.unreadCount,
       currentRole: currentRole,
+      peerAccountId: peerAccountId,
+      peerUsername: peerUsername,
     );
   }
 
@@ -115,7 +151,62 @@ class Conversation {
           'last_message_at': lastMessageAt!.toUtc().toIso8601String(),
         if (unreadCount != 0) 'unread_count': unreadCount,
         if (currentRole != null) 'current_role': currentRole,
+        if (peerAccountId != null) 'peer_account_id': peerAccountId,
+        if (peerUsername != null) 'peer_username': peerUsername,
       };
+}
+
+/// A conversation member as returned by the scoped roster endpoint. This is
+/// server-recorded membership, which is not the same thing as the MLS group
+/// roster; the UI must never present it as cryptographic proof of who can
+/// decrypt.
+class ConversationMember {
+  ConversationMember({
+    required this.accountId,
+    required this.role,
+    this.username,
+    this.joinedAt,
+  });
+
+  final String accountId;
+  final String role;
+  final String? username;
+  final DateTime? joinedAt;
+
+  factory ConversationMember.fromJson(Map<String, Object?> json) {
+    return ConversationMember(
+      accountId: json['account_id'] as String,
+      role: (json['role'] as String?) ?? 'member',
+      username: _nonEmpty(json['username']),
+      joinedAt: _parseOptionalTime(json['created_at']),
+    );
+  }
+}
+
+/// An account the signed-in user has blocked.
+class BlockedAccount {
+  BlockedAccount({required this.accountId, this.username, this.createdAt});
+
+  final String accountId;
+  final String? username;
+  final DateTime? createdAt;
+
+  factory BlockedAccount.fromJson(Map<String, Object?> json) {
+    return BlockedAccount(
+      accountId: json['account_id'] as String,
+      username: _nonEmpty(json['username']),
+      createdAt: _parseOptionalTime(json['created_at']),
+    );
+  }
+}
+
+/// One backward page of message envelopes. [nextBefore] is the cursor for the
+/// next older page, or null when the server has no more history to give.
+class MessagePage {
+  const MessagePage({required this.messages, this.nextBefore});
+
+  final List<ReceivedMessageEnvelope> messages;
+  final String? nextBefore;
 }
 
 class Community {
@@ -252,6 +343,179 @@ class MessageEnvelope {
       threadRootId: json['thread_root_id'] as String?,
     );
   }
+}
+
+class DeviceKeyPackage {
+  DeviceKeyPackage({
+    required this.id,
+    required this.deviceId,
+    required this.accountId,
+    required this.keyPackage,
+    required this.ciphersuite,
+    required this.expiresAt,
+  });
+
+  final String id;
+  final String deviceId;
+  final String accountId;
+  final List<int> keyPackage;
+  final String ciphersuite;
+  final DateTime expiresAt;
+
+  factory DeviceKeyPackage.fromJson(Map<String, Object?> json) =>
+      DeviceKeyPackage(
+        id: json['id'] as String,
+        deviceId: json['device_id'] as String,
+        accountId: json['account_id'] as String? ?? '',
+        keyPackage: _decodeModelBytes(json['key_package']),
+        ciphersuite: json['ciphersuite'] as String,
+        expiresAt: DateTime.parse(json['expires_at'] as String).toUtc(),
+      );
+}
+
+class MlsMessage {
+  MlsMessage({
+    required this.id,
+    required this.conversationId,
+    required this.senderAccountId,
+    required this.senderDeviceId,
+    required this.kind,
+    required this.payload,
+    required this.idempotencyKey,
+    required this.syncEventId,
+    required this.createdAt,
+    this.recipientDeviceId,
+    this.revocationDeviceId,
+  });
+
+  final String id;
+  final String conversationId;
+  final String senderAccountId;
+  final String senderDeviceId;
+  final String? recipientDeviceId;
+  final String? revocationDeviceId;
+  final String kind;
+  final List<int> payload;
+  final String idempotencyKey;
+  final int syncEventId;
+  final DateTime createdAt;
+
+  factory MlsMessage.fromJson(Map<String, Object?> json) => MlsMessage(
+        id: json['id'] as String,
+        conversationId: json['conversation_id'] as String,
+        senderAccountId: json['sender_account_id'] as String,
+        senderDeviceId: json['sender_device_id'] as String,
+        recipientDeviceId: json['recipient_device_id'] as String?,
+        revocationDeviceId: json['revocation_device_id'] as String?,
+        kind: json['kind'] as String,
+        payload: _decodeModelBytes(json['payload']),
+        idempotencyKey: json['idempotency_key'] as String,
+        syncEventId: (json['sync_event_id'] as num).toInt(),
+        createdAt: DateTime.parse(json['created_at'] as String).toUtc(),
+      );
+}
+
+class MlsRevocation {
+  MlsRevocation({
+    required this.conversationId,
+    required this.revokedDeviceId,
+    required this.revokedAccountId,
+    required this.coordinatorDeviceId,
+    required this.state,
+    required this.requestedAt,
+    this.commitMessageId,
+    this.completedAt,
+  });
+
+  final String conversationId;
+  final String revokedDeviceId;
+  final String revokedAccountId;
+  final String coordinatorDeviceId;
+  final String state;
+  final String? commitMessageId;
+  final DateTime requestedAt;
+  final DateTime? completedAt;
+
+  factory MlsRevocation.fromJson(Map<String, Object?> json) => MlsRevocation(
+        conversationId: json['conversation_id'] as String,
+        revokedDeviceId: json['revoked_device_id'] as String,
+        revokedAccountId: json['revoked_account_id'] as String,
+        coordinatorDeviceId: json['coordinator_device_id'] as String,
+        state: json['state'] as String,
+        commitMessageId: json['commit_message_id'] as String?,
+        requestedAt: DateTime.parse(json['requested_at'] as String).toUtc(),
+        completedAt: json['completed_at'] == null
+            ? null
+            : DateTime.parse(json['completed_at'] as String).toUtc(),
+      );
+}
+
+class AttachmentEnvelope {
+  AttachmentEnvelope({
+    required this.id,
+    required this.ownerAccountId,
+    required this.storageKey,
+    required this.ciphertextSha256,
+    required this.sizeBytes,
+    required this.createdAt,
+    this.conversationId,
+    this.cryptoMetadata,
+  });
+
+  final String id;
+  final String ownerAccountId;
+  final String? conversationId;
+  final String storageKey;
+  final String ciphertextSha256;
+  final int sizeBytes;
+  final Object? cryptoMetadata;
+  final DateTime createdAt;
+
+  factory AttachmentEnvelope.fromJson(Map<String, Object?> json) =>
+      AttachmentEnvelope(
+        id: json['id'] as String,
+        ownerAccountId: json['owner_account_id'] as String,
+        conversationId: json['conversation_id'] as String?,
+        storageKey: json['storage_key'] as String,
+        ciphertextSha256: json['ciphertext_sha256'] as String,
+        sizeBytes: (json['size_bytes'] as num).toInt(),
+        cryptoMetadata: json['crypto_metadata'],
+        createdAt: DateTime.parse(json['created_at'] as String).toUtc(),
+      );
+}
+
+class CallSession {
+  CallSession(
+      {required this.id,
+      required this.conversationId,
+      required this.createdBy,
+      required this.state,
+      required this.metadata,
+      required this.createdAt,
+      this.endedAt,
+      this.expiresAt});
+  final String id;
+  final String conversationId;
+  final String createdBy;
+  final String state;
+  final Map<String, Object?> metadata;
+  final DateTime createdAt;
+  final DateTime? endedAt;
+  final DateTime? expiresAt;
+
+  factory CallSession.fromJson(Map<String, Object?> json) => CallSession(
+      id: json['id'] as String,
+      conversationId: json['conversation_id'] as String,
+      createdBy: json['created_by'] as String,
+      state: json['state'] as String,
+      metadata: Map<String, Object?>.from(json['metadata'] as Map? ?? const {}),
+      createdAt: DateTime.parse(json['created_at'] as String).toUtc(),
+      endedAt: json['ended_at'] == null
+          ? null
+          : DateTime.parse(json['ended_at'] as String).toUtc(),
+      expiresAt: json['expires_at'] == null
+          ? null
+          : DateTime.parse(json['expires_at'] as String).toUtc());
 }
 
 class ReceivedMessageEnvelope {
@@ -399,6 +663,14 @@ class DeviceLink {
     this.linkUri,
     this.claimedDeviceName,
     this.approvedDeviceId,
+    this.accountId,
+    this.createdByDeviceId,
+    this.protocolVersion,
+    this.linkNonce,
+    this.existingSigningKey,
+    this.claimedDeviceId,
+    this.claimedSigningKey,
+    this.transcriptHash,
   });
 
   final String id;
@@ -409,17 +681,33 @@ class DeviceLink {
   final String? linkUri;
   final String? claimedDeviceName;
   final String? approvedDeviceId;
+  final String? accountId;
+  final String? createdByDeviceId;
+  final String? protocolVersion;
+  final List<int>? linkNonce;
+  final List<int>? existingSigningKey;
+  final String? claimedDeviceId;
+  final List<int>? claimedSigningKey;
+  final List<int>? transcriptHash;
 
   factory DeviceLink.fromJson(Map<String, Object?> json) {
     return DeviceLink(
       id: json['id'] as String,
       state: json['state'] as String,
-      verificationCode: json['verification_code'] as String,
+      verificationCode: json['verification_code'] as String? ?? '',
       expiresAt: _parseRequiredTime(json['expires_at']),
       code: json['code'] as String?,
       linkUri: json['link_uri'] as String?,
       claimedDeviceName: json['claimed_device_name'] as String?,
       approvedDeviceId: json['approved_device_id'] as String?,
+      accountId: json['account_id'] as String?,
+      createdByDeviceId: json['created_by_device_id'] as String?,
+      protocolVersion: json['protocol_version'] as String?,
+      linkNonce: _decodeOptionalBytes(json['link_nonce']),
+      existingSigningKey: _decodeOptionalBytes(json['existing_signing_key']),
+      claimedDeviceId: json['claimed_device_id'] as String?,
+      claimedSigningKey: _decodeOptionalBytes(json['claimed_signing_key']),
+      transcriptHash: _decodeOptionalBytes(json['transcript_hash']),
     );
   }
 }
@@ -465,11 +753,27 @@ class Device {
   }
 }
 
+/// Treats an absent, non-string, or empty JSON value as null. The server
+/// omits optional display fields, but a defensive empty string must not
+/// become a blank username in the UI.
+String? _nonEmpty(Object? value) {
+  if (value is String && value.isNotEmpty) {
+    return value;
+  }
+  return null;
+}
+
 DateTime? _parseOptionalTime(Object? value) {
   if (value is String && value.isNotEmpty) {
     return DateTime.tryParse(value);
   }
   return null;
+}
+
+List<int> _decodeModelBytes(Object? value) {
+  if (value is String) return base64Decode(value);
+  if (value is List) return value.whereType<int>().toList(growable: false);
+  throw const FormatException('invalid binary field');
 }
 
 /// Defensive parse for timestamps the models treat as required. One

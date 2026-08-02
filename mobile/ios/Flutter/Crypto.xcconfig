@@ -1,0 +1,4 @@
+HEADER_SEARCH_PATHS = $(inherited) $(SRCROOT)/../../crypto/rust/include
+VERITRA_CRYPTO_LIBRARY[sdk=iphoneos*] = $(SRCROOT)/Frameworks/VeritraCrypto.xcframework/ios-arm64/libprivate_messenger_crypto.a
+VERITRA_CRYPTO_LIBRARY[sdk=iphonesimulator*] = $(SRCROOT)/Frameworks/VeritraCrypto.xcframework/ios-arm64_x86_64-simulator/libprivate_messenger_crypto.a
+OTHER_LDFLAGS = $(inherited) -Wl,-force_load,$(VERITRA_CRYPTO_LIBRARY)

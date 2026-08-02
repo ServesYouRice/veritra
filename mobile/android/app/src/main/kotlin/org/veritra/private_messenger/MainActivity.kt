@@ -5,6 +5,9 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
+import com.google.firebase.FirebaseApp
+import com.google.firebase.FirebaseOptions
+import com.google.firebase.messaging.FirebaseMessaging
 import org.unifiedpush.android.connector.UnifiedPush
 
 class MainActivity : FlutterActivity() {
@@ -25,7 +28,7 @@ class MainActivity : FlutterActivity() {
                     } else {
                         instance = nextInstance
                         vapid = nextVapid
-                        registerWithDistributor(usePicker = false)
+                        if (!registerWithFCM()) registerWithDistributor(usePicker = false)
                         result.success(null)
                     }
                 }
@@ -40,6 +43,9 @@ class MainActivity : FlutterActivity() {
                 "unregister" -> {
                     val target = call.argument<String>("instance")
                     if (!target.isNullOrBlank()) UnifiedPush.unregister(applicationContext, target)
+                    if (FirebaseApp.getApps(applicationContext).isNotEmpty()) {
+                        FirebaseMessaging.getInstance().deleteToken()
+                    }
                     result.success(null)
                 }
                 "takeWake" -> result.success(PushEventBridge.takePendingWake(applicationContext))
@@ -61,6 +67,31 @@ class MainActivity : FlutterActivity() {
         } else {
             UnifiedPush.tryUseCurrentOrDefaultDistributor(this, callback)
         }
+    }
+
+    private fun registerWithFCM(): Boolean {
+        val targetInstance = instance ?: return false
+        if (BuildConfig.VERITRA_FCM_APPLICATION_ID.isBlank() ||
+            BuildConfig.VERITRA_FCM_API_KEY.isBlank() ||
+            BuildConfig.VERITRA_FCM_PROJECT_ID.isBlank() ||
+            BuildConfig.VERITRA_FCM_SENDER_ID.isBlank()) return false
+        if (FirebaseApp.getApps(applicationContext).isEmpty()) {
+            FirebaseApp.initializeApp(applicationContext, FirebaseOptions.Builder()
+                .setApplicationId(BuildConfig.VERITRA_FCM_APPLICATION_ID)
+                .setApiKey(BuildConfig.VERITRA_FCM_API_KEY)
+                .setProjectId(BuildConfig.VERITRA_FCM_PROJECT_ID)
+                .setGcmSenderId(BuildConfig.VERITRA_FCM_SENDER_ID)
+                .build())
+        }
+        applicationContext.getSharedPreferences("veritra_push_state", Context.MODE_PRIVATE)
+            .edit().putString("fcm_instance", targetInstance).apply()
+        FirebaseMessaging.getInstance().token
+            .addOnSuccessListener { token -> PushEventBridge.emit(mapOf(
+                "type" to "endpoint", "provider" to "fcm",
+                "instance" to targetInstance, "endpoint" to token,
+                "publicKey" to "", "authSecret" to "")) }
+            .addOnFailureListener { registerWithDistributor(usePicker = false) }
+        return true
     }
 
     companion object {

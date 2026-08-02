@@ -23,7 +23,7 @@ func (a *API) blockAccount(w http.ResponseWriter, r *http.Request, principal dom
 		handleStorageError(w, err)
 		return
 	}
-	a.recordAuditEvent(r.Context(), &principal.AccountID, "account.blocked", map[string]string{"target_account_id": targetID})
+	a.recordAuditEvent(r.Context(), &principal.AccountID, "account.blocked", nil)
 	writeJSON(w, http.StatusOK, block)
 }
 
@@ -33,6 +33,6 @@ func (a *API) unblockAccount(w http.ResponseWriter, r *http.Request, principal d
 		handleStorageError(w, err)
 		return
 	}
-	a.recordAuditEvent(r.Context(), &principal.AccountID, "account.unblocked", map[string]string{"target_account_id": targetID})
+	a.recordAuditEvent(r.Context(), &principal.AccountID, "account.unblocked", nil)
 	w.WriteHeader(http.StatusNoContent)
 }

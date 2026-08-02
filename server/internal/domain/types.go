@@ -92,21 +92,51 @@ type DeviceKeyPackage struct {
 	ExpiresAt   time.Time `json:"expires_at"`
 }
 
+type MLSMessage struct {
+	ID                 string    `json:"id"`
+	ConversationID     string    `json:"conversation_id"`
+	SenderAccountID    string    `json:"sender_account_id"`
+	SenderDeviceID     string    `json:"sender_device_id"`
+	RecipientDeviceID  string    `json:"recipient_device_id,omitempty"`
+	RevocationDeviceID string    `json:"revocation_device_id,omitempty"`
+	Kind               string    `json:"kind"`
+	Payload            []byte    `json:"payload"`
+	IdempotencyKey     string    `json:"idempotency_key"`
+	SyncEventID        int64     `json:"sync_event_id"`
+	CreatedAt          time.Time `json:"created_at"`
+}
+
+type MLSRevocation struct {
+	ConversationID      string     `json:"conversation_id"`
+	RevokedDeviceID     string     `json:"revoked_device_id"`
+	RevokedAccountID    string     `json:"revoked_account_id"`
+	CoordinatorDeviceID string     `json:"coordinator_device_id"`
+	State               string     `json:"state"`
+	CommitMessageID     *string    `json:"commit_message_id,omitempty"`
+	RequestedAt         time.Time  `json:"requested_at"`
+	CompletedAt         *time.Time `json:"completed_at,omitempty"`
+}
+
 type DeviceLink struct {
-	ID                string     `json:"id"`
-	Code              string     `json:"code,omitempty"`
-	AccountID         string     `json:"account_id,omitempty"`
-	CreatedByDeviceID string     `json:"created_by_device_id,omitempty"`
-	State             string     `json:"state"`
-	VerificationCode  string     `json:"verification_code"`
-	ClaimedDeviceName *string    `json:"claimed_device_name,omitempty"`
-	ApprovedDeviceID  *string    `json:"approved_device_id,omitempty"`
-	CreatedAt         time.Time  `json:"created_at"`
-	ExpiresAt         time.Time  `json:"expires_at"`
-	ClaimedAt         *time.Time `json:"claimed_at,omitempty"`
-	ApprovedAt        *time.Time `json:"approved_at,omitempty"`
-	ConsumedAt        *time.Time `json:"consumed_at,omitempty"`
-	RevokedAt         *time.Time `json:"revoked_at,omitempty"`
+	ID                 string     `json:"id"`
+	Code               string     `json:"code,omitempty"`
+	AccountID          string     `json:"account_id,omitempty"`
+	CreatedByDeviceID  string     `json:"created_by_device_id,omitempty"`
+	State              string     `json:"state"`
+	ProtocolVersion    string     `json:"protocol_version,omitempty"`
+	LinkNonce          []byte     `json:"link_nonce,omitempty"`
+	ExistingSigningKey []byte     `json:"existing_signing_key,omitempty"`
+	ClaimedDeviceID    string     `json:"claimed_device_id,omitempty"`
+	ClaimedSigningKey  []byte     `json:"claimed_signing_key,omitempty"`
+	TranscriptHash     []byte     `json:"transcript_hash,omitempty"`
+	ClaimedDeviceName  *string    `json:"claimed_device_name,omitempty"`
+	ApprovedDeviceID   *string    `json:"approved_device_id,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
+	ExpiresAt          time.Time  `json:"expires_at"`
+	ClaimedAt          *time.Time `json:"claimed_at,omitempty"`
+	ApprovedAt         *time.Time `json:"approved_at,omitempty"`
+	ConsumedAt         *time.Time `json:"consumed_at,omitempty"`
+	RevokedAt          *time.Time `json:"revoked_at,omitempty"`
 }
 
 type Invite struct {
@@ -150,12 +180,21 @@ type Conversation struct {
 	LastMessageAt *time.Time `json:"last_message_at,omitempty"`
 	UnreadCount   int64      `json:"unread_count,omitempty"`
 	CurrentRole   string     `json:"current_role,omitempty"`
+	// PeerAccountID and PeerUsername identify the counterpart of a two-account
+	// DM so clients can name the conversation without guessing. They are only
+	// populated for kind "dm" in list responses, and only for a requester who
+	// is already a member — the same authorization that lets them read the
+	// conversation at all. Never set for groups or channels.
+	PeerAccountID string `json:"peer_account_id,omitempty"`
+	PeerUsername  string `json:"peer_username,omitempty"`
 }
 
 type Membership struct {
 	AccountID string    `json:"account_id"`
 	Role      string    `json:"role"`
 	CreatedAt time.Time `json:"created_at"`
+	// Username is the peer's display handle, returned only to co-members.
+	Username string `json:"username,omitempty"`
 }
 
 type MessageEnvelope struct {

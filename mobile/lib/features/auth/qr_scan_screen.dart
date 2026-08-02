@@ -80,8 +80,7 @@ class _QrScanScreenState extends State<QrScanScreen> {
           MobileScanner(
             controller: _controller,
             onDetect: _onDetect,
-            errorBuilder: (context, error, child) =>
-                _ScannerError(error: error),
+            errorBuilder: (context, error) => _ScannerError(error: error),
           ),
           // Simple reticle to guide framing.
           IgnorePointer(

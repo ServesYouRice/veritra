@@ -6,7 +6,7 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 if command -v go >/dev/null 2>&1; then
   (cd "$ROOT/server" && go test ./...)
 else
-  docker run --rm -v "$ROOT:/workspace" -w /workspace/server golang:1.25@sha256:c138bff780910acf4254ab3a6f7ff0f64bbd841f27bd82bfa986fe122c109538 go test ./...
+  docker run --rm -v "$ROOT:/workspace" -w /workspace/server golang:1.25.12@sha256:9006890ecba0a168034d99516084099ae3114d9f2b7d6572c77f2dde57ebc980 go test ./...
 fi
 
 if command -v cargo >/dev/null 2>&1; then

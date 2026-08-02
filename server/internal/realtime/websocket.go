@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -29,7 +30,7 @@ const (
 
 func ServeWebSocket(w http.ResponseWriter, r *http.Request, client *Client, sessionExpiresAt time.Time, unregister func()) error {
 	defer unregister()
-	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+	if !isWebSocketUpgrade(r) {
 		http.Error(w, "websocket upgrade required", http.StatusUpgradeRequired)
 		return errors.New("websocket upgrade required")
 	}
@@ -37,8 +38,9 @@ func ServeWebSocket(w http.ResponseWriter, r *http.Request, client *Client, sess
 		http.Error(w, "origin not allowed", http.StatusForbidden)
 		return errors.New("origin not allowed")
 	}
-	key := r.Header.Get("Sec-WebSocket-Key")
-	if key == "" {
+	key := strings.TrimSpace(r.Header.Get("Sec-WebSocket-Key"))
+	decodedKey, err := base64.StdEncoding.DecodeString(key)
+	if err != nil || len(decodedKey) != 16 {
 		http.Error(w, "missing websocket key", http.StatusBadRequest)
 		return errors.New("missing websocket key")
 	}
@@ -113,6 +115,19 @@ func ServeWebSocket(w http.ResponseWriter, r *http.Request, client *Client, sess
 	}
 }
 
+func isWebSocketUpgrade(r *http.Request) bool {
+	if !strings.EqualFold(strings.TrimSpace(r.Header.Get("Upgrade")), "websocket") ||
+		strings.TrimSpace(r.Header.Get("Sec-WebSocket-Version")) != "13" {
+		return false
+	}
+	for _, token := range strings.Split(r.Header.Get("Connection"), ",") {
+		if strings.EqualFold(strings.TrimSpace(token), "upgrade") {
+			return true
+		}
+	}
+	return false
+}
+
 func writePingFrame(w io.Writer) error {
 	// FIN bit set, opcode 0x9 (ping), zero-length payload. Server->client frames
 	// are never masked (RFC 6455 §5.1).
@@ -138,7 +153,9 @@ func originAllowed(r *http.Request) bool {
 		return true
 	}
 	originURL, err := url.Parse(origin)
-	if err != nil || originURL.Host == "" {
+	if err != nil || originURL.Host == "" || originURL.User != nil ||
+		(originURL.Scheme != "http" && originURL.Scheme != "https") ||
+		originURL.Path != "" || originURL.RawQuery != "" || originURL.Fragment != "" {
 		return false
 	}
 	return strings.EqualFold(originURL.Host, r.Host)
@@ -172,6 +189,8 @@ func drainClientFrames(conn net.Conn, done chan<- struct{}, pongs chan<- []byte)
 	defer close(done)
 	reader := bufio.NewReader(conn)
 	_ = conn.SetReadDeadline(time.Now().Add(pongWait))
+	var fragmentedOpcode byte
+	var fragmentedPayload []byte
 	for {
 		first, err := reader.ReadByte()
 		if err != nil {
@@ -183,7 +202,10 @@ func drainClientFrames(conn net.Conn, done chan<- struct{}, pongs chan<- []byte)
 		}
 		opcode := first & 0x0f
 		fin := first&0x80 != 0
-		if first&0x70 != 0 || (!fin && opcode >= 0x8) {
+		if first&0x70 != 0 || !validOpcode(opcode) || (!fin && opcode >= 0x8) {
+			return
+		}
+		if opcode == 0 && fragmentedOpcode == 0 || opcode >= 1 && opcode <= 2 && fragmentedOpcode != 0 {
 			return
 		}
 		masked := second&0x80 != 0
@@ -199,12 +221,19 @@ func drainClientFrames(conn net.Conn, done chan<- struct{}, pongs chan<- []byte)
 				return
 			}
 			length = int64(binary.BigEndian.Uint16(buf[:]))
+			if length < 126 {
+				return
+			}
 		case 127:
 			var buf [8]byte
 			if _, err := io.ReadFull(reader, buf[:]); err != nil {
 				return
 			}
-			length = int64(binary.BigEndian.Uint64(buf[:]))
+			unsignedLength := binary.BigEndian.Uint64(buf[:])
+			if unsignedLength>>63 != 0 || unsignedLength <= 65535 {
+				return
+			}
+			length = int64(unsignedLength)
 		}
 		if length < 0 || length > maxFrameSize {
 			return
@@ -224,6 +253,9 @@ func drainClientFrames(conn net.Conn, done chan<- struct{}, pongs chan<- []byte)
 			payload[i] ^= mask[i%4]
 		}
 		if opcode == 0x8 {
+			if !validClosePayload(payload) {
+				return
+			}
 			return
 		}
 		if opcode == 0x9 {
@@ -233,9 +265,49 @@ func drainClientFrames(conn net.Conn, done chan<- struct{}, pongs chan<- []byte)
 				return
 			}
 		}
+		if opcode == 0x1 || opcode == 0x2 {
+			if fin {
+				if opcode == 0x1 && !utf8.Valid(payload) {
+					return
+				}
+			} else {
+				fragmentedOpcode = opcode
+				fragmentedPayload = append(fragmentedPayload[:0], payload...)
+			}
+		} else if opcode == 0 {
+			if len(fragmentedPayload)+len(payload) > maxFrameSize {
+				return
+			}
+			fragmentedPayload = append(fragmentedPayload, payload...)
+			if fin {
+				if fragmentedOpcode == 0x1 && !utf8.Valid(fragmentedPayload) {
+					return
+				}
+				fragmentedOpcode = 0
+				fragmentedPayload = fragmentedPayload[:0]
+			}
+		}
 		// A complete frame (data, ping, or pong) proves the peer is alive, so
 		// extend the read deadline. Compliant WebSocket clients answer our pings
 		// with pongs automatically, which keeps this refreshed on idle links.
 		_ = conn.SetReadDeadline(time.Now().Add(pongWait))
 	}
+}
+
+func validOpcode(opcode byte) bool {
+	return opcode <= 2 || opcode >= 8 && opcode <= 10
+}
+
+func validClosePayload(payload []byte) bool {
+	if len(payload) == 0 {
+		return true
+	}
+	if len(payload) == 1 {
+		return false
+	}
+	code := binary.BigEndian.Uint16(payload[:2])
+	validCode := code >= 3000 && code <= 4999 ||
+		code == 1000 || code == 1001 || code == 1002 || code == 1003 ||
+		code >= 1007 && code <= 1014
+	return validCode && utf8.Valid(payload[2:])
 }

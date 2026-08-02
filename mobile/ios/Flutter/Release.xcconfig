@@ -1,1 +1,2 @@
+#include "Crypto.xcconfig"
 #include "Generated.xcconfig"

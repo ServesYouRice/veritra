@@ -15,13 +15,17 @@ import (
 const enrollmentLifetime = 10 * time.Minute
 
 type EnrollmentReservation struct {
-	ID        string
-	Kind      string
-	AccountID string
-	DeviceID  string
-	InviteID  *string
-	Challenge []byte
-	ExpiresAt time.Time
+	ID                 string
+	Kind               string
+	AccountID          string
+	DeviceID           string
+	InviteID           *string
+	Challenge          []byte
+	ExpiresAt          time.Time
+	ProtocolVersion    string
+	LinkNonce          []byte
+	ExistingDeviceID   string
+	ExistingSigningKey []byte
 }
 
 func (s *Store) ReserveOwnerEnrollment(ctx context.Context) (EnrollmentReservation, error) {
