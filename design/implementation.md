@@ -1,15 +1,21 @@
 # Landing it in Flutter
 
-For after a direction is picked. Nothing here has been built yet.
+Direction decided: **K2 · Bone**. Steps 1 and 2 are built but **not yet
+verified** — no Flutter toolchain was available on the machine that wrote them,
+so `flutter analyze`, `flutter test` and `dart format` have not run. Steps 3
+onward are open.
 
 ## Order of work
 
 Each step is independently shippable and visible on its own.
 
-1. **Tokens + theme** — rewrite `mobile/lib/ui/theme.dart`. Every screen changes
-   at once, for free, because they all read from `Theme.of(context)` already.
-2. **Typography** — bundle the font, fill in the `TextTheme`. Biggest visible
-   jump per line changed.
+1. ~~**Tokens + theme**~~ — done. `mobile/lib/ui/tokens.dart` holds the palette,
+   radii, spacing, motion and state colours; `mobile/lib/ui/theme.dart` builds
+   explicit light and dark `ColorScheme`s from them. Every screen changes at
+   once, for free, because they all read from `Theme.of(context)` already.
+2. ~~**Typography**~~ — done, without bundling a font. The `TextTheme` now
+   carries the `redesign.md` §1 ramp on the platform faces, which is where
+   nearly all of the improvement comes from and avoids a notices entry.
 3. **Chat list** — `chat_list_screen.dart`. The screen users see most.
 4. **Conversation** — bubbles and composer, `chat_screen.dart`.
 5. **Connect** — `connect_screen.dart`.
@@ -37,8 +43,10 @@ Keep the existing component overrides in `theme.dart` (`inputDecorationTheme`,
 `cardTheme`, `filledButtonTheme`, …) — they are already doing the right thing,
 they just need the new radii and colours.
 
-Add the two gradients from `directions.md` as constants. `--grad-fill` is not
-optional: the bright brand gradient fails contrast under text.
+**No gradients.** That instruction applied to A and C; K2 · Bone uses a single
+flat accent, so the `--grad` / `--grad-fill` split — and the contrast trap in
+its middle stops — does not exist here. Nothing in the theme should introduce
+one.
 
 ## Dependencies — read before adding anything
 
@@ -125,5 +133,6 @@ icon-generator dependency for a one-time export is not worth the notices churn.
 
 ## Board
 
-Tracked as card **I28** in `implementation/KANBAN.md`. It is decision blocked:
-pick one direction from `preview.html` before any of the work above starts.
+Tracked as card **I28** in `implementation/KANBAN.md`. The direction decision is
+made (K2 · Bone) and steps 1-2 are written; the card records exactly what was
+and was not verified.

@@ -49,6 +49,15 @@ production crypto, upgrade the coordinated OpenMLS crates when published,
 refresh the lockfile/notices/SBOM, remove the exceptions, and rerun all vectors
 and Android/iOS native builds.
 
+Upstream re-checked on 2026-08-07 against the crates.io index. OpenMLS 0.8.1
+(2026-02-13) is still `max_stable_version`; 0.9.0-rc.1 and 0.9.0-rc.2 were
+published on 2026-08-03 and 2026-08-06. hpke-rs 0.6.1 (2026-03-20) remains the
+end of the 0.6 line, with 0.7.0 published 2026-07-15. A coordinated 0.9.0 stable
+therefore looks close but has not shipped. Release candidates do not satisfy
+this card: adopting one is an unreleased crypto dependency and needs approval
+plus independent review. Re-check before the 2026-08-29 exception deadline; if
+0.9.0 stable lands first, that upgrade is the fix.
+
 ### I24 - Signed builds and real-device verification (external)
 
 Native APNs/FCM, self-hosted TURN support, encrypted WebRTC signaling, and
@@ -80,15 +89,60 @@ Blocked by I24 and an independent reviewer. Completion requires:
 
 Do not weaken or delete a gate to declare success.
 
-### I28 - Rebuild the app's visual design (decision blocked)
+### I28 - Rebuild the app's visual design (in progress, unverified)
 
 The app is stock Material 3 with the defaults left on: one teal seed expanded by
 `ColorScheme.fromSeed`, no `TextTheme`, no fonts or images, and stock Flutter
-launcher icons. [`design/`](../design/README.md) holds four proposed directions
+launcher icons. [`design/`](../design/README.md) holds the proposed directions
 rendered side by side against today's UI in `design/preview.html`; nothing there
 is wired into the build. This card has no code dependencies, but it stays
 blocked until an owner picks one direction. Crypto-gated screens listed below
 must remain unavailable regardless of the direction chosen.
+
+On 2026-08-07 the owner rejected A (reads as Viber: its `#6366F1` indigo sits
+about ten degrees of hue from Viber's `#7360F2`) and C (overdone), while keeping
+C's plum ground. Eleven variants of a single revised direction were explored —
+A's structure on C's plum, indigo and gradient removed — and the owner selected
+**K2 · Bone**: no accent hue at all, a warm near-white (`#EDE4DA`) carrying
+every accent slot over the plum ground, inverting to warm paper (`#F8F6F1`) with
+a deep plum accent (`#3A2E42`) in light mode. Palettes, the five Bone
+temperatures, the semantic state palette and every measured contrast ratio are
+in `design/directions.md`.
+
+**Landed (steps 1-2 of `design/implementation.md`):**
+
+- `mobile/lib/ui/tokens.dart` (new) - Bone palette for both brightnesses,
+  radii, spacing, motion, the `design/redesign.md` §1 type ramp, and a
+  `VeritraStateColors` theme extension carrying verified/warning/info. Error is
+  deliberately left to `ColorScheme.error` so there is one source of truth.
+- `mobile/lib/ui/theme.dart` - replaced `ColorScheme.fromSeed` with explicit
+  light and dark `ColorScheme` constructors, added the `TextTheme` (the app
+  previously customised no text styles at all), and set component themes to
+  zero elevation with a transparent surface tint so surfaces separate by tone
+  rather than shadow.
+
+No new dependency and no bundled font: the platform faces carry the ramp, which
+avoids a `THIRD_PARTY_NOTICES.md` entry and the approval that would need.
+`veritraLightTheme()`/`veritraDarkTheme()` keep their signatures, so
+`mobile/lib/main.dart` is unchanged. No screen file was touched, and the six
+string assertions in `mobile/test/profile_screen_test.dart` are unaffected -
+that test pumps a bare `MaterialApp` with no theme.
+
+**Not verified.** This machine has no Flutter, Dart, Go, Rust, or Docker
+toolchain, so `flutter analyze`, `flutter test`, and the
+`dart format --set-exit-if-changed` step in `scripts/lint.sh` have **not** been
+run against these two files. Only structural checks were possible: delimiter
+balance, 80-column compliance, no tabs, and confirmation that every token
+referenced by `theme.dart` is defined in `tokens.dart`. Run `scripts/lint.ps1`
+and `scripts/test.ps1` before trusting this card.
+
+**Remaining (steps 3-8):** chat list, conversation bubbles and composer,
+connect, settings/communities/search/details, shared widgets, motion, app icon
+export from `docs/branding/concept-06/veritra-app-icon.svg`, and
+`server/websetup/index.html`. The redacted-bar bubble in `design/redesign.md` §2
+must bucket its widths rather than deriving them linearly from ciphertext
+length, or message length becomes readable over someone's shoulder.
+Crypto-gated screens stay unavailable regardless of the direction.
 
 ### Crypto-gated mobile UI
 
