@@ -15,7 +15,7 @@ dependencies:
   qr_flutter: ^4.1.0
   mobile_scanner: ^7.4.0
   path_provider: 2.1.6
-  flutter_webrtc: 1.5.2
+  flutter_webrtc: 1.6.0
   sqlite3: 3.5.0
 
 dev_dependencies:
