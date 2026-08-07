@@ -7,10 +7,13 @@ yet** — this folder is ideas and mockups, pending a decision.
 
 Open [`preview.html`](preview.html) in a browser.
 
-It renders **five** versions of the same three screens — Chats, Conversation,
-Connect. The first row is what ships today; the four below are proposed
-directions. There is a light/dark toggle at the top right; every direction is
-tuned for both.
+It renders **sixteen** versions of the same three screens — Chats, Conversation,
+Connect. The first row is what ships today. Then eleven variants of one
+direction, all sharing an identical plum ground, type scale, radii and density:
+**E–J** are six accent hues, and **K1–K5** spend no accent hue at all, varying
+only the temperature of the near-white that carries the accent slots. The four
+original directions follow for reference. There is a light/dark toggle at the
+top right; every variant is tuned for both.
 
 Pick a direction by looking, then read the rest.
 
@@ -37,18 +40,24 @@ The teal is not even intentional — `mobile/lib/ui/theme.dart:6` says it was
 
 | File | What it is |
 | --- | --- |
-| [`preview.html`](preview.html) | **The main thing.** Five looks, three screens each, light + dark |
-| [`directions.md`](directions.md) | The four palettes side by side, with a recommendation |
+| [`preview.html`](preview.html) | **The main thing.** Sixteen looks, three screens each, light + dark |
+| [`directions.md`](directions.md) | Every palette side by side, with a recommendation |
 | [`redesign.md`](redesign.md) | Token system + what changes on each screen |
 | [`implementation.md`](implementation.md) | How it lands in Flutter, once a direction is picked |
 
 `redesign.md` applies to **whichever** direction is chosen — the layout work is
 shared, only the skin differs.
 
-## Recommendation in one line
+## Decided
 
-**Direction A · Ink** — it is the only one that already matches the brand in
-`docs/branding/concept-06/`, and dark-first suits a privacy product.
+**K2 · Bone**, chosen 2026-08-07. A's discipline on C's plum with no accent hue
+at all: a warm near-white carries every accent slot, so the ground is the
+identity and the whole colour wheel stays free for state.
+
+The tokens and theme are built — see `mobile/lib/ui/tokens.dart` and
+`mobile/lib/ui/theme.dart`, tracked as **I28**. The remaining screen work is
+listed in [`implementation.md`](implementation.md). Everything else in this
+folder is kept as the record of what was considered.
 
 ## Scope
 

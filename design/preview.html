@@ -109,6 +109,159 @@
         --a1: #4f46e5; --a2: #0284c7;
       }
 
+      /* ==================================================================
+         REVISIONS OF A + C — Ink's structure (tone-only depth, hairlines,
+         12/20 radii, rationed accent) on Aurora's plum ground, with the
+         indigo dropped: #6366F1 sits ~10 degrees from Viber's #7360F2.
+         Both are flat-accent — no gradient, no coloured shadow — which is
+         what made Aurora read as overdone.
+         ================================================================== */
+
+      /* ---- E · EMBER --------------------------------------------------- */
+      .dir-ember {
+        --bg: #16111f; --surface: #211a2d; --surface2: #2b233a;
+        --border: rgb(255 255 255 / 9%); --text: #f3effa; --muted: #a79ec0;
+        --a1: #e9a23b; --a2: #e9a23b; --on-accent: #1a1220;
+        --r-sm: 10px; --r-md: 12px; --r-lg: 20px; --r-bubble: 18px;
+        --track: -0.014em; --title-track: -0.035em;
+      }
+      :root[data-theme="light"] .dir-ember {
+        --bg: #f8f5fa; --surface: #ffffff; --surface2: #f0ebf4;
+        --border: rgb(26 18 38 / 11%); --text: #1a1226; --muted: #675e79;
+        --a1: #a8590c; --a2: #a8590c; --on-accent: #ffffff;
+      }
+      /* Flat accent: collapse the fill gradient onto the single hue. */
+      .dir-ember { --f1: var(--a1); --f2: var(--a1); }
+      /* Ember is a warning-adjacent hue, so a column of amber bubbles would
+         re-create Aurora's loudness. Sent bubbles stay on tone; the accent is
+         held to Ink's four: send, active nav, unread badge, focus ring. */
+      .dir-ember .bub.me { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+
+      /* ---- F · DUSK ---------------------------------------------------- */
+      .dir-dusk {
+        --bg: #16111f; --surface: #211a2d; --surface2: #2b233a;
+        --border: rgb(255 255 255 / 9%); --text: #f3effa; --muted: #a79ec0;
+        --a1: #38bdf8; --a2: #38bdf8; --on-accent: #04202e;
+        --r-sm: 10px; --r-md: 12px; --r-lg: 20px; --r-bubble: 18px;
+        --track: -0.014em; --title-track: -0.035em;
+      }
+      :root[data-theme="light"] .dir-dusk {
+        --bg: #f7f5fa; --surface: #ffffff; --surface2: #eeeaf4;
+        --border: rgb(26 18 38 / 11%); --text: #1a1226; --muted: #655d77;
+        --a1: #0369a1; --a2: #0369a1; --on-accent: #ffffff;
+      }
+      .dir-dusk { --f1: var(--a1); --f2: var(--a1); }
+
+      /* ---- G..K — same ground and structure, accent only ---------------
+         Every one of these shares E/F's plum, hairlines, 12/20 radii and
+         62px rows, so a comparison between them is a pure hue comparison.
+         All sit at least 46 degrees of hue from #7360F2. Directions whose
+         accent is too bright to tile keep sent bubbles on tone instead.
+         ------------------------------------------------------------------ */
+      .dir-rose, .dir-fuchsia, .dir-jade, .dir-azure {
+        --bg: #16111f; --surface: #211a2d; --surface2: #2b233a;
+        --border: rgb(255 255 255 / 9%); --text: #f3effa; --muted: #a79ec0;
+        --r-sm: 10px; --r-md: 12px; --r-lg: 20px; --r-bubble: 18px;
+        --track: -0.014em; --title-track: -0.035em;
+        --f1: var(--a1); --f2: var(--a1);
+      }
+      :root[data-theme="light"] .dir-rose,
+      :root[data-theme="light"] .dir-fuchsia,
+      :root[data-theme="light"] .dir-jade,
+      :root[data-theme="light"] .dir-azure {
+        --bg: #f7f5fa; --surface: #ffffff; --surface2: #eeeaf4;
+        --border: rgb(26 18 38 / 11%); --text: #1a1226; --muted: #655d77;
+        --on-accent: #ffffff;
+      }
+
+      .dir-rose    { --a1: #f2879f; --a2: #f2879f; --on-accent: #2a0f17; }
+      .dir-fuchsia { --a1: #ee7bd0; --a2: #ee7bd0; --on-accent: #2c0c24; }
+      .dir-jade    { --a1: #42d6a0; --a2: #42d6a0; --on-accent: #06251a; }
+      .dir-azure   { --a1: #6fb2ff; --a2: #6fb2ff; --on-accent: #051d33; }
+
+      :root[data-theme="light"] .dir-rose    { --a1: #b03a55; --a2: #b03a55; }
+      :root[data-theme="light"] .dir-fuchsia { --a1: #a83a8c; --a2: #a83a8c; }
+      :root[data-theme="light"] .dir-jade    { --a1: #0f7a57; --a2: #0f7a57; }
+      :root[data-theme="light"] .dir-azure   { --a1: #1667c7; --a2: #1667c7; }
+
+      /* Fuchsia is too high-energy to tile down a whole column. */
+      .dir-fuchsia .bub.me {
+        background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+      }
+
+      /* ---- K1..K5 — THE BONE FAMILY -----------------------------------
+         No accent hue at all: a near-white carries every accent slot, so the
+         plum ground is the whole identity. The five differ only in the
+         temperature of that near-white, and in the neutral biased to match
+         it — a muted grey that leans toward its own bone reads as chosen
+         rather than inherited. Light mode inverts: the bone becomes paper
+         and the accent becomes a deep tone of the same temperature.
+         ------------------------------------------------------------------ */
+      .dir-chalk, .dir-bone, .dir-greige, .dir-ash, .dir-steel {
+        --bg: #16111f; --surface: #211a2d; --surface2: #2b233a;
+        --border: rgb(255 255 255 / 9%); --text: #f3effa;
+        --r-sm: 10px; --r-md: 12px; --r-lg: 20px; --r-bubble: 18px;
+        --track: -0.014em; --title-track: -0.035em;
+        --f1: var(--a1); --f2: var(--a1);
+      }
+      .dir-chalk  { --a1: #f4f4f6; --on-accent: #1a1620; --muted: #a39fa6; }
+      .dir-bone   { --a1: #ede4da; --on-accent: #1e1620; --muted: #a89ea6; }
+      .dir-greige { --a1: #dcd3c6; --on-accent: #1f1a16; --muted: #a79c93; }
+      .dir-ash    { --a1: #e4ddea; --on-accent: #1b1522; --muted: #a79eb4; }
+      .dir-steel  { --a1: #d8e0e8; --on-accent: #161b21; --muted: #9fa8b4; }
+      .dir-chalk, .dir-bone, .dir-greige, .dir-ash, .dir-steel { --a2: var(--a1); }
+
+      :root[data-theme="light"] .dir-chalk {
+        --bg: #f6f7f9; --surface: #ffffff; --surface2: #ecedf1;
+        --border: rgb(22 20 26 / 11%); --text: #16141a; --muted: #63606b;
+        --a1: #332f3a; --on-accent: #ffffff;
+      }
+      :root[data-theme="light"] .dir-bone {
+        --bg: #f8f6f1; --surface: #ffffff; --surface2: #f0ede6;
+        --border: rgb(26 22 32 / 11%); --text: #1a1620; --muted: #6b6169;
+        --a1: #3a2e42; --on-accent: #ffffff;
+      }
+      :root[data-theme="light"] .dir-greige {
+        --bg: #f7f4ec; --surface: #ffffff; --surface2: #efebe0;
+        --border: rgb(28 24 16 / 12%); --text: #1c1810; --muted: #6e6558;
+        --a1: #403528; --on-accent: #ffffff;
+      }
+      :root[data-theme="light"] .dir-ash {
+        --bg: #f7f5fa; --surface: #ffffff; --surface2: #eeeaf4;
+        --border: rgb(26 18 38 / 11%); --text: #1a1226; --muted: #665d77;
+        --a1: #372c43; --on-accent: #ffffff;
+      }
+      :root[data-theme="light"] .dir-steel {
+        --bg: #f5f7f9; --surface: #ffffff; --surface2: #eaeef2;
+        --border: rgb(20 25 32 / 11%); --text: #141920; --muted: #5f6873;
+        --a1: #2c333b; --on-accent: #ffffff;
+      }
+      /* A near-white tiled down a whole column would blow out the ground the
+         direction is built on, so sent bubbles stay on tone. */
+      .dir-chalk .bub.me, .dir-bone .bub.me, .dir-greige .bub.me,
+      .dir-ash .bub.me, .dir-steel .bub.me {
+        background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+      }
+
+      /* ---- Semantic state ----------------------------------------------
+         Bone's actual payoff: spending no hue on brand leaves the whole
+         wheel free for meaning. These are the four states that matter in a
+         messenger, and none of them collides with an accent.
+         ------------------------------------------------------------------ */
+      .skin { --st-ok: #4ade80; --st-warn: #fbbf24; --st-err: #fb7185; --st-info: #7dd3fc; }
+      :root[data-theme="light"] .skin {
+        --st-ok: #15803d; --st-warn: #b45309; --st-err: #be123c; --st-info: #0369a1;
+      }
+      .stateboard {
+        background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-md);
+        padding: 18px; display: flex; flex-wrap: wrap; gap: 10px 26px; margin-bottom: 14px;
+      }
+      .st { display: inline-flex; align-items: center; gap: 9px; color: var(--text); font-size: 13.5px; }
+      .st::before { content: ""; width: 9px; height: 9px; border-radius: 999px; background: var(--c); flex: 0 0 auto; }
+      .st.ok { --c: var(--st-ok); } .st.warn { --c: var(--st-warn); }
+      .st.err { --c: var(--st-err); } .st.info { --c: var(--st-info); }
+      .st b { color: var(--c); font-weight: 600; }
+
       /* ---- B · VAULT --------------------------------------------------- */
       .dir-vault {
         --bg: #fafafa; --surface: #ffffff; --surface2: #f0f0f0;
@@ -393,10 +546,15 @@
         <button class="toggle" id="themeBtn" type="button">Switch to light</button>
       </header>
       <p class="lede">
-        The first row is <b>what ships today</b>. The four below it are proposed directions.
+        The first row is <b>what ships today</b>. Below it are eleven variants of one direction —
+        A's structure on C's plum, with the Viber-adjacent indigo and the gradient removed.
+        <b>E–J</b> are six accent hues. <b>K1–K5</b> spend no accent hue at all, varying only the
+        temperature of the near-white that carries the accent slots. Ground, type, radii and
+        density are identical throughout, so every comparison here is a <b>pure colour
+        comparison</b>. The four original directions follow at the end for reference.
         Every screen is drawn from one shared markup template and re-skinned by CSS variables,
         so the differences you see are genuinely only palette, type, shape and density —
-        the layout improvements are common to all four. Flip light/dark with the button above;
+        the layout improvements are common to all of them. Flip light/dark with the button above;
         each direction is tuned for both. Pick a direction, then read
         <code>design/directions.md</code>.
       </p>
@@ -421,6 +579,238 @@
         </div>
         <div class="phones skin dir-now" data-tpl="tpl-now"></div>
         <p class="caption">Chats · Conversation · Connect — as built today.</p>
+      </section>
+
+      <!-- ============================== EMBER ============================= -->
+      <section class="dir">
+        <div class="dir-head">
+          <h2>E · Ember</h2>
+          <span class="tag rec">Revision of A + C</span>
+        </div>
+        <p class="dir-note">
+          Ink's structure on Aurora's plum. Surfaces separate by <b>tone, not shadow</b>, over 1px
+          hairlines; 12/20 radii, 62px rows. The indigo is gone — it sat about ten degrees from
+          Viber's <code>#7360F2</code> — and so is the gradient, the coloured shadow and the 28px
+          radii that made Aurora feel overdone. The accent is a single flat <b>ember</b>, held to
+          four places: send button, active nav, unread badge, focus ring. Sent bubbles stay on tone,
+          because a column of amber would just be loudness in a different hue.
+          <b>Best if</b> you want warm and editorial, and are willing to reshoot the brand assets.
+        </p>
+        <div class="swatches">
+          <span class="sw"><i style="background:#16111f"></i><b>Plum</b> <span>#16111F</span></span>
+          <span class="sw"><i style="background:#211a2d"></i><b>Surface</b> <span>#211A2D</span></span>
+          <span class="sw"><i style="background:#2b233a"></i><b>Raised</b> <span>#2B233A</span></span>
+          <span class="sw"><i style="background:#e9a23b"></i><b>Ember</b> <span>#E9A23B</span></span>
+          <span class="sw"><i style="background:#a8590c"></i><b>Ember lt</b> <span>#A8590C</span></span>
+          <span class="sw"><i style="background:#f3effa"></i><b>Text</b> <span>#F3EFFA</span></span>
+        </div>
+        <div class="phones skin dir-ember" data-tpl="tpl-new"></div>
+        <p class="caption">Warm. Full break from the Indigo/Sky brand — <code>docs/branding/</code> would need redoing.</p>
+      </section>
+
+      <!-- ============================== DUSK ============================== -->
+      <section class="dir">
+        <div class="dir-head">
+          <h2>F · Dusk</h2>
+          <span class="tag rec">Revision of A + C</span>
+        </div>
+        <p class="dir-note">
+          Identical structure and plum ground to E — same tone-only depth, same hairlines, same
+          radii and density — but the accent stays <b>Sky</b>. That is the half of the existing brand
+          that was never the problem: only the Viber-adjacent indigo is dropped, so the mark and
+          wordmark need a ground swap rather than a new palette. Flat, no gradient. Sent bubbles do
+          carry the accent here, since sky-blue is the conventional read and tests at 7.8:1.
+          <b>Best if</b> you want the plum without paying for a rebrand.
+        </p>
+        <div class="swatches">
+          <span class="sw"><i style="background:#16111f"></i><b>Plum</b> <span>#16111F</span></span>
+          <span class="sw"><i style="background:#211a2d"></i><b>Surface</b> <span>#211A2D</span></span>
+          <span class="sw"><i style="background:#2b233a"></i><b>Raised</b> <span>#2B233A</span></span>
+          <span class="sw"><i style="background:#38bdf8"></i><b>Sky</b> <span>#38BDF8</span></span>
+          <span class="sw"><i style="background:#0369a1"></i><b>Sky lt</b> <span>#0369A1</span></span>
+          <span class="sw"><i style="background:#f3effa"></i><b>Text</b> <span>#F3EFFA</span></span>
+        </div>
+        <div class="phones skin dir-dusk" data-tpl="tpl-new"></div>
+        <p class="caption">Cool. Keeps the Sky half of <code>docs/branding/</code>; only the navy ground changes to plum.</p>
+      </section>
+
+      <!-- =========================== ROSE ================================ -->
+      <section class="dir">
+        <div class="dir-head"><h2>G · Rose</h2><span class="tag rec">Plum family</span></div>
+        <p class="dir-note">
+          The closest accent to the ground itself — rose sits about 20 degrees from plum, so the
+          whole screen reads as one temperature. <b>Warmest and friendliest</b> of the set; this is
+          the approachable feeling C was reaching for, without the gradient.
+          <b>Watch for</b> pink-on-plum drifting toward a consumer-social read.
+        </p>
+        <div class="swatches">
+          <span class="sw"><i style="background:#f2879f"></i><b>Rose</b> <span>#F2879F</span></span>
+          <span class="sw"><i style="background:#b03a55"></i><b>Rose lt</b> <span>#B03A55</span></span>
+          <span class="sw"><i style="background:#16111f"></i><b>Plum</b> <span>#16111F</span></span>
+        </div>
+        <div class="phones skin dir-rose" data-tpl="tpl-new"></div>
+      </section>
+
+      <!-- ========================= FUCHSIA =============================== -->
+      <section class="dir">
+        <div class="dir-head"><h2>H · Fuchsia</h2><span class="tag rec">Plum family</span></div>
+        <p class="dir-note">
+          Rose pushed to full saturation — the <b>boldest</b> option here, and the only one that
+          competes with the ground for attention. Sent bubbles stay on tone; tiled fuchsia would be
+          exactly the loudness that got C rejected. <b>Watch for</b> magenta-on-purple reading gaudy
+          if it ever leaks past the four accent slots.
+        </p>
+        <div class="swatches">
+          <span class="sw"><i style="background:#ee7bd0"></i><b>Fuchsia</b> <span>#EE7BD0</span></span>
+          <span class="sw"><i style="background:#a83a8c"></i><b>Fuchsia lt</b> <span>#A83A8C</span></span>
+          <span class="sw"><i style="background:#16111f"></i><b>Plum</b> <span>#16111F</span></span>
+        </div>
+        <div class="phones skin dir-fuchsia" data-tpl="tpl-new"></div>
+      </section>
+
+      <!-- ============================ JADE =============================== -->
+      <section class="dir">
+        <div class="dir-head"><h2>I · Jade</h2><span class="tag rec">Complementary</span></div>
+        <p class="dir-note">
+          Plum's near-opposite, so the accent separates hardest from the ground — <b>10:1, the
+          highest in the set</b>. Cool, clean, slightly clinical.
+          <b>One real cost:</b> green is the natural colour for “verified” and “encrypted”. Spend it
+          as the brand accent and the security states need a different signal.
+        </p>
+        <div class="swatches">
+          <span class="sw"><i style="background:#42d6a0"></i><b>Jade</b> <span>#42D6A0</span></span>
+          <span class="sw"><i style="background:#0f7a57"></i><b>Jade lt</b> <span>#0F7A57</span></span>
+          <span class="sw"><i style="background:#16111f"></i><b>Plum</b> <span>#16111F</span></span>
+        </div>
+        <div class="phones skin dir-jade" data-tpl="tpl-new"></div>
+      </section>
+
+      <!-- =========================== AZURE =============================== -->
+      <section class="dir">
+        <div class="dir-head"><h2>J · Azure</h2><span class="tag rec">Complementary</span></div>
+        <p class="dir-note">
+          A true blue rather than F's cyan-leaning sky — deeper, more classical, the most
+          conventional “messenger” read of the seven. <b>Note</b> it is the closest of this set to
+          the hue that was rejected: 46 degrees from Viber's <code>#7360F2</code>, against 89 for
+          Rose and 100 for Jade. Still unmistakably blue, not violet, but it is the one to check
+          against the thing you did not like.
+        </p>
+        <div class="swatches">
+          <span class="sw"><i style="background:#6fb2ff"></i><b>Azure</b> <span>#6FB2FF</span></span>
+          <span class="sw"><i style="background:#1667c7"></i><b>Azure lt</b> <span>#1667C7</span></span>
+          <span class="sw"><i style="background:#16111f"></i><b>Plum</b> <span>#16111F</span></span>
+        </div>
+        <div class="phones skin dir-azure" data-tpl="tpl-new"></div>
+      </section>
+
+      <!-- ======================= THE BONE FAMILY ========================= -->
+      <section class="dir">
+        <div class="dir-head"><h2>K · Bone — five temperatures</h2><span class="tag rec">No accent hue</span></div>
+        <p class="dir-note">
+          <b>No accent colour at all.</b> A near-white carries every accent slot, so the plum ground
+          is the entire identity and nothing competes with it. The five below differ only in the
+          <b>temperature</b> of that near-white — and in the muted grey biased to match it, since a
+          neutral that leans toward its own bone reads as chosen rather than inherited. Ground, type,
+          radii and density are identical, so this is a pure temperature comparison. In light mode
+          each one inverts: the bone becomes the paper, the accent becomes a deep tone of the same
+          temperature.
+        </p>
+        <p class="dir-note">
+          The real payoff is below — with no brand hue spent, <b>the whole colour wheel stays free
+          for meaning</b>. These four states are unambiguous here in a way they cannot be in any
+          direction whose brand already owns green or amber:
+        </p>
+        <div class="stateboard skin dir-bone">
+          <span class="st ok">Verified — <b>safety number matches</b></span>
+          <span class="st warn">Warning — <b>key expiring</b></span>
+          <span class="st err">Error — <b>device revoked</b></span>
+          <span class="st info">Info — <b>syncing</b></span>
+        </div>
+        <p class="caption" style="margin-bottom:22px">
+          Dark <code>#4ADE80 · #FBBF24 · #FB7185 · #7DD3FC</code> — 6.9:1 to 11.1:1 on plum.
+          Light <code>#15803D · #B45309 · #BE123C · #0369A1</code> — 4.56:1 to 5.7:1 on paper,
+          so the light set only just clears AA and should not be shrunk below body size.
+        </p>
+      </section>
+
+      <!-- ============================ CHALK ============================== -->
+      <section class="dir">
+        <div class="dir-head"><h2>K1 · Chalk</h2><span class="tag rec">Neutral</span></div>
+        <p class="dir-note">
+          Faintly cool, almost pure. The <b>starkest</b> of the five and the most contemporary —
+          this is the white-pill-on-dark look. Least warmth, most edge.
+        </p>
+        <div class="swatches">
+          <span class="sw"><i style="background:#f4f4f6"></i><b>Chalk</b> <span>#F4F4F6</span></span>
+          <span class="sw"><i style="background:#332f3a"></i><b>Deep</b> <span>#332F3A</span></span>
+          <span class="sw"><i style="background:#a39fa6"></i><b>Muted</b> <span>#A39FA6</span></span>
+        </div>
+        <div class="phones skin dir-chalk" data-tpl="tpl-new"></div>
+      </section>
+
+      <!-- ============================= BONE ============================== -->
+      <section class="dir">
+        <div class="dir-head"><h2>K2 · Bone</h2><span class="tag rec">The original</span></div>
+        <p class="dir-note">
+          Warm paper — the version you saw first. Enough warmth to feel like a document rather than
+          a dashboard, without reading as sepia. <b>The middle of the range</b>, and the safest pick
+          if you do not want to commit hard either way.
+        </p>
+        <div class="swatches">
+          <span class="sw"><i style="background:#ede4da"></i><b>Bone</b> <span>#EDE4DA</span></span>
+          <span class="sw"><i style="background:#3a2e42"></i><b>Deep</b> <span>#3A2E42</span></span>
+          <span class="sw"><i style="background:#a89ea6"></i><b>Muted</b> <span>#A89EA6</span></span>
+        </div>
+        <div class="phones skin dir-bone" data-tpl="tpl-new"></div>
+      </section>
+
+      <!-- ============================ GREIGE ============================= -->
+      <section class="dir">
+        <div class="dir-head"><h2>K3 · Greige</h2><span class="tag rec">Warmest</span></div>
+        <p class="dir-note">
+          Deeper and warmer — the accent stops being "white" and starts being a material. The most
+          <b>analog</b> of the five; its light mode is the closest thing here to actual paper stock.
+          <b>Watch for</b> the warmth reading as dated if the type is not kept crisp.
+        </p>
+        <div class="swatches">
+          <span class="sw"><i style="background:#dcd3c6"></i><b>Greige</b> <span>#DCD3C6</span></span>
+          <span class="sw"><i style="background:#403528"></i><b>Deep</b> <span>#403528</span></span>
+          <span class="sw"><i style="background:#a79c93"></i><b>Muted</b> <span>#A79C93</span></span>
+        </div>
+        <div class="phones skin dir-greige" data-tpl="tpl-new"></div>
+      </section>
+
+      <!-- ============================= ASH =============================== -->
+      <section class="dir">
+        <div class="dir-head"><h2>K4 · Ash</h2><span class="tag rec">Most cohesive</span></div>
+        <p class="dir-note">
+          The bone leans <b>into</b> the plum instead of away from it — the accent is a pale tint of
+          the ground itself. The most cohesive of the five, and the one that most looks like a single
+          considered colour rather than a dark screen with white on it.
+          <b>Cost:</b> least contrast in character; it can read soft.
+        </p>
+        <div class="swatches">
+          <span class="sw"><i style="background:#e4ddea"></i><b>Ash</b> <span>#E4DDEA</span></span>
+          <span class="sw"><i style="background:#372c43"></i><b>Deep</b> <span>#372C43</span></span>
+          <span class="sw"><i style="background:#a79eb4"></i><b>Muted</b> <span>#A79EB4</span></span>
+        </div>
+        <div class="phones skin dir-ash" data-tpl="tpl-new"></div>
+      </section>
+
+      <!-- ============================ STEEL ============================== -->
+      <section class="dir">
+        <div class="dir-head"><h2>K5 · Steel</h2><span class="tag rec">Coolest</span></div>
+        <p class="dir-note">
+          Leans blue-grey, against the plum's warmth. The <b>most technical</b> read of the five —
+          the slight cool cast reads as instrument rather than document, which suits a security
+          product. It is also the sharpest contrast of temperature against the ground.
+        </p>
+        <div class="swatches">
+          <span class="sw"><i style="background:#d8e0e8"></i><b>Steel</b> <span>#D8E0E8</span></span>
+          <span class="sw"><i style="background:#2c333b"></i><b>Deep</b> <span>#2C333B</span></span>
+          <span class="sw"><i style="background:#9fa8b4"></i><b>Muted</b> <span>#9FA8B4</span></span>
+        </div>
+        <div class="phones skin dir-steel" data-tpl="tpl-new"></div>
       </section>
 
       <!-- ============================== INK ============================== -->
