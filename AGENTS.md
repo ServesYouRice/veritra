@@ -14,6 +14,11 @@ and iOS. Rust/OpenMLS provides the crypto boundary.
 Production messaging is intentionally unavailable until the mobile MLS path and
 release evidence are complete.
 
+Sequencing is fixed by decision D06 on the board: mobile ships first, desktop
+(Windows and macOS) comes after that release as additional targets in this
+repository, and embedded chat is deferred behind a product trigger. Do not start
+desktop or embedding work, or add server-side plaintext paths to serve them.
+
 ## Non-negotiable boundaries
 
 - The server stores ciphertext only for message bodies and attachments.
@@ -26,15 +31,19 @@ release evidence are complete.
 
 ## How to work
 
-1. Read `implementation/KANBAN.md`.
+1. Read `docs/board.md`.
 2. Claim one Ready card and read only that card plus its named files.
 3. Confirm the card is still true before editing.
 4. Make the smallest complete change and run the card's checks.
 5. Update the board. Report changed files, checks, and blockers briefly.
 
-Use judgment and match nearby code. Do not load `implementation/archive/`
-unless a card links a specific archived reference. Prefer local, reversible
-actions. Ask before destructive, external, release, or dependency changes.
+Use judgment and match nearby code. Do not load `docs/archive/` unless a card
+links a specific archived reference. Prefer local, reversible actions. Ask
+before destructive, external, release, or dependency changes.
+
+All documentation lives in `docs/`: `board.md` (the board), `overview.md`
+(architecture), `design.md` (visual spec), `operations.md` (self-hosting),
+`crypto.md` (the MLS boundary). Do not create documentation outside it.
 
 Use a stronger advisor only for a genuinely hard security, protocol, migration,
 or dependency decision; the original executor still implements the task. Use

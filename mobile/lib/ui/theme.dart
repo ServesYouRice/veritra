@@ -90,7 +90,7 @@ const ColorScheme _lightScheme = ColorScheme(
 
 /// Applies the ramp in [BoneType] to Material's slots.
 ///
-/// Only seven styles are specified in `design/redesign.md`; the larger display
+/// Only seven styles are specified in `docs/design.md`; the larger display
 /// slots are scaled from `display` so nothing falls back to an unstyled
 /// default. `labelSmall` is `micro`, which callers must uppercase themselves.
 ///

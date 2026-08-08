@@ -3,13 +3,17 @@
 Self-hosted, privacy-first messenger. AGPL-3.0-or-later.
 Go server · Flutter app · Rust/OpenMLS crypto.
 
-**Snapshot:** commit `6c22e44` · verified 2026-08-05
+Orientation for someone new to the repository: what it is, how it is put
+together, and how to run it. **Current work and status live in
+[`board.md`](board.md)**, not here.
+
+**Snapshot:** server behaviour below verified at commit `6c22e44` on 2026-08-05.
 
 ---
 
 ## 1. Does it start by itself?
 
-**Yes.** Built and ran it today from a clean checkout — no config, no setup.
+**Yes.** Built and run from a clean checkout — no config, no setup.
 
 ```sh
 cd server && go run ./cmd/messenger-server serve
@@ -98,10 +102,10 @@ flowchart TB
     G --> R["🚫 Release blocked"]
 ```
 
-Both halves confirmed today: Rust suite passes **17/17**, including
-`ffi_group_lifecycle_exchanges_and_revokes_messages` — a full two-device MLS
-exchange through the C ABI. And `release-readiness.sh` correctly reports
-`release blocked: production MLS crypto is not wired`.
+Both halves were confirmed at this snapshot: the Rust suite passes **17/17**,
+including `ffi_group_lifecycle_exchanges_and_revokes_messages` — a full
+two-device MLS exchange through the C ABI. And `release-readiness.sh` correctly
+reports `release blocked: production MLS crypto is not wired`.
 
 **What this means in the app:**
 
@@ -124,8 +128,9 @@ exchange through the C ABI. And `release-readiness.sh` correctly reports
 | Rust crypto | `crypto/rust/` | 2.3k LOC | 🟡 complete, ABI not wired |
 | Migrations | `server/migrations/` | 23 files | ✅ |
 | Deploy | `deploy/` | Compose · Caddy · systemd | ✅ |
-| Design | `design/` | 4 proposals | ⬜ nothing wired, awaiting pick |
-| Board | `implementation/KANBAN.md` | — | single source of truth |
+| Design | [`design.md`](design.md) | palette + per-screen spec | 🟡 K2 · Bone, landing as I28 |
+| Branding | [`branding/`](branding/) | marks, wordmarks, icons | ✅ |
+| Board | [`board.md`](board.md) | — | single source of truth |
 
 ### Server modules
 
@@ -202,61 +207,48 @@ TURN for calls · Prometheus metrics on a private `:9090`.
 
 ---
 
-## 6. Status board
+## 6. Status and roadmap
+
+**Status lives in one place: [`board.md`](board.md).** Card state, release
+evidence, verification runs and the independent-review brief are all there. This
+document deliberately does not repeat them — the duplicate copy is what went
+stale last time. In shape: most cards are done, one is active and unblocked, and
+the rest wait on people, hardware or upstream.
+
+### Sequencing (decision D06)
 
 ```mermaid
 flowchart LR
-    subgraph DONE["✅ Done — 24 cards"]
-        D["I01–I23, I26<br/>server, storage, sync, crypto core,<br/>attachments, backup, calls, non-crypto UI"]
-    end
-    subgraph BLK["⛔ Blocked — 4 cards"]
-        B1["I24 · signed builds<br/>+ real devices"]
-        B2["I25 · independent review"]
-        B3["I27 · HPKE advisories"]
-        B4["I28 · visual design"]
-    end
-    DONE --> BLK --> REL["🚀 Release"]
+    P1["📱 Phase 1 · Mobile<br/>Android + iOS<br/><b>current</b>"]
+    P2["🖥️ Phase 2 · Desktop<br/>Windows + macOS<br/>same repo, same crypto core"]
+    P3["🧩 Phase 3 · Embedded<br/>client SDK, not a widget<br/><i>deferred</i>"]
+    P1 -->|"release ships"| P2
+    P2 -->|"product trigger<br/>+ E2EE question answered"| P3
 ```
 
-### The 4 blockers
+Mobile is the entire first release. Desktop follows as **additional Flutter
+targets in this repository**, reusing the reviewed Rust core — not a fork, which
+would owe a separate independent security review for a second copy of the same
+protocol. Embedding is deferred until someone answers whether embedded
+conversations stay end-to-end encrypted; if they do, the deliverable is a client
+SDK, because there is no server-side key to hand a drop-in widget. Full triggers
+are in the board's roadmap section.
 
-| # | What | Blocked on | Can you unblock it? |
-| --- | --- | --- | --- |
-| **I28** | Pick a visual direction | **Your decision** | ✅ **Yes — today, alone** |
-| **I27** | 6 HPKE/libcrux advisories | Upstream OpenMLS release | ❌ wait for upstream |
-| **I24** | Signed builds + device matrix<br/>*(code is done — push, TURN, WebRTC all shipped)* | Signing keys, 2 phones, a Mac, TURN host, push creds | 🟡 partly — needs hardware |
-| **I25** | Independent security review | An external reviewer (**not assigned**) | 🟡 you can hire one |
-
-> ⏰ **I27 re-review is due 2026-08-29** — 24 days out. The advisory exceptions
-> in `scripts/audit-rust.sh` are time-bounded and expire then.
-
-### I28 in one paragraph
-
-The app is stock Material 3 with the defaults left on — one teal seed, no
-`TextTheme`, no fonts, stock Flutter launcher icons. `design/` holds four
-proposed directions rendered side by side in **`design/preview.html`** (open it
-in a browser). Recommendation there is **Direction A · Ink**, because it already
-matches the branding in `docs/branding/concept-06/`. Nothing is wired in — it
-needs one decision, then the work is mechanical.
+A self-hosted internal-network deployment is Phase 2 plus this same server. It
+needs no server change.
 
 ---
 
-## 7. Verified today (2026-08-05)
+## 7. Verification
 
-| Check | Result |
-| --- | --- |
-| `go build` | ✅ clean |
-| `go test ./...` | ✅ all packages pass |
-| `cargo test` | ✅ 17/17 |
-| Server cold start + endpoints | ✅ see §1 |
-| Production startup gates | ✅ fail closed correctly |
-| `doctor` | ✅ storage ok |
-| `release-readiness.sh` | ⛔ blocked *(expected — the gate works)* |
-| Working tree | ✅ clean, branch matches `main` |
+The last full recorded run, its date and its results are in the board's release
+evidence matrix. Reproduce with the commands in §8 — they fall back to pinned
+Docker images when a toolchain is missing, so the checks are runnable anywhere
+Docker is.
 
-Not run here (no toolchain in this environment): Flutter analyze/tests, Android
-build, Compose smoke. Last recorded run in `KANBAN.md` — analyzer clean, 70
-tests pass, 2 environment skips, Compose healthy.
+Two results are worth knowing before you run them: `release-readiness.sh` is
+**expected to fail** at the intentional crypto gate, and `cargo-audit` is
+**conditional** on the time-bounded I27 exceptions.
 
 ---
 
@@ -283,9 +275,8 @@ messenger-server reset-owner-password --account <u> --password-file <f>
 | --- | --- |
 | **Does it start?** | ✅ Yes — clean, zero config, self-migrating |
 | **Is it usable?** | ❌ No — messaging is intentionally fail-closed |
-| **Is the code done?** | ✅ Essentially — 24 of 28 cards, all suites green |
-| **What's left?** | 4 blockers, 3 needing people/hardware/upstream |
-| **Your move** | **Open `design/preview.html`, pick a direction (I28)** |
+| **Is the code done?** | ✅ Essentially — see [`board.md`](board.md) for the count |
+| **What's left?** | one local card; the rest need people, hardware or upstream |
 
-The engineering is done and it holds together. What remains is not code —
-it's a design decision, an upstream dependency, some hardware, and a reviewer.
+The engineering is done and it holds together. What remains is a visual rebuild
+to finish, an upstream dependency, some hardware, and a reviewer.

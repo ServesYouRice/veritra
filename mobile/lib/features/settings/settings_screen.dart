@@ -6,7 +6,14 @@ import 'package:flutter/services.dart';
 
 import '../../core/app_state.dart';
 import '../../core/models.dart';
+import '../../ui/avatar.dart';
 import '../../ui/format.dart';
+import '../../ui/motion.dart';
+import '../../ui/tokens.dart';
+import '../../ui/widgets/large_title_bar.dart';
+import '../../ui/widgets/section_header.dart';
+import '../../ui/widgets/status_pill.dart';
+import '../../ui/widgets/tile_group.dart';
 import 'blocked_accounts_screen.dart';
 import 'device_link_screen.dart';
 import 'invite_screen.dart';
@@ -24,9 +31,10 @@ class SettingsScreen extends StatelessWidget {
       builder: (context, _) {
         final theme = Theme.of(context);
         final session = state.session;
+        final isAdmin = session?.role == 'owner' || session?.role == 'admin';
         return Scaffold(
-          appBar: AppBar(
-            title: const Text('Settings'),
+          appBar: LargeTitleBar(
+            title: 'Settings',
             actions: <Widget>[
               IconButton(
                 tooltip: 'Refresh',
@@ -36,204 +44,189 @@ class SettingsScreen extends StatelessWidget {
             ],
           ),
           body: ListView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(
+              BoneSpacing.gutter,
+              BoneSpacing.sm,
+              BoneSpacing.gutter,
+              BoneSpacing.xl,
+            ),
             children: <Widget>[
-              _SectionHeader(title: 'Account', theme: theme),
-              Card(
-                child: Column(
-                  children: <Widget>[
-                    if (session?.username != null) ...<Widget>[
-                      ListTile(
-                        leading: const Icon(Icons.account_circle_outlined),
-                        title: Text('@${session!.username!}'),
-                        subtitle:
-                            const Text('View account and device identity'),
-                        trailing: const Icon(Icons.chevron_right_outlined),
-                        onTap: () => Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (_) => ProfileScreen(state: state),
+              _IdentityHeader(
+                session: session,
+                onTap: session?.username == null
+                    ? null
+                    : () => Navigator.of(context).push(
+                          sharedAxisRoute<void>(
+                            (_) => ProfileScreen(state: state),
                           ),
                         ),
-                      ),
-                      const Divider(),
-                    ],
-                    ListTile(
-                      leading: const Icon(Icons.person_outline),
-                      title: const Text('Account ID'),
-                      subtitle: Text(
-                        session?.accountId == null
-                            ? 'Unknown'
-                            : shortId(session!.accountId!),
-                      ),
-                      trailing: session?.accountId == null
-                          ? null
-                          : IconButton(
-                              tooltip: 'Copy account ID',
-                              icon: const Icon(Icons.copy_outlined),
-                              onPressed: () => _copy(
-                                context,
-                                session!.accountId!,
-                                'Account ID',
-                              ),
-                            ),
-                    ),
-                    const Divider(),
-                    ListTile(
-                      leading: const Icon(Icons.password_outlined),
-                      title: const Text('Change password'),
-                      subtitle:
-                          const Text('Ends sessions on your other devices'),
-                      onTap: state.busy ? null : () => _changePassword(context),
-                    ),
-                    if (session?.role == 'owner' ||
-                        session?.role == 'admin') ...<Widget>[
-                      const Divider(),
-                      ListTile(
-                        leading: const Icon(Icons.card_giftcard_outlined),
-                        title: const Text('Invites'),
-                        subtitle: const Text('Create codes so others can join'),
-                        trailing: const Icon(Icons.chevron_right_outlined),
-                        onTap: () async {
-                          if (await _reauthenticate(context) &&
-                              context.mounted) {
-                            Navigator.of(context).push(MaterialPageRoute<void>(
-                              builder: (_) => InviteScreen(state: state),
-                            ));
-                          }
-                        },
-                      ),
-                    ],
-                  ],
-                ),
               ),
-              const SizedBox(height: 16),
-              _SectionHeader(title: 'Devices', theme: theme),
-              Card(
-                child: Column(
-                  children: <Widget>[
+              const SectionHeader('Account'),
+              TileGroup(
+                children: <Widget>[
+                  ListTile(
+                    leading: const Icon(Icons.person_outline),
+                    title: const Text('Account ID'),
+                    subtitle: Text(
+                      session?.accountId == null
+                          ? 'Unknown'
+                          : shortId(session!.accountId!),
+                      style: BoneType.mono.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    trailing: session?.accountId == null
+                        ? null
+                        : IconButton(
+                            tooltip: 'Copy account ID',
+                            icon: const Icon(Icons.copy_outlined),
+                            onPressed: () => _copy(
+                              context,
+                              session!.accountId!,
+                              'Account ID',
+                            ),
+                          ),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.password_outlined),
+                    title: const Text('Change password'),
+                    subtitle: const Text('Ends sessions on your other devices'),
+                    onTap: state.busy ? null : () => _changePassword(context),
+                  ),
+                  if (isAdmin)
                     ListTile(
-                      leading: const Icon(Icons.qr_code_2),
-                      title: const Text('Link a new device'),
-                      subtitle: const Text(
-                          'Generate a pairing code for another device'),
-                      trailing: const Icon(Icons.chevron_right_outlined),
+                      leading: const Icon(Icons.card_giftcard_outlined),
+                      title: const Text('Invites'),
+                      subtitle: const Text('Create codes so others can join'),
                       onTap: () async {
                         if (await _reauthenticate(context) && context.mounted) {
-                          Navigator.of(context).push(MaterialPageRoute<void>(
-                            builder: (_) => DeviceLinkScreen(state: state),
+                          Navigator.of(context).push(sharedAxisRoute<void>(
+                            (_) => InviteScreen(state: state),
                           ));
                         }
                       },
                     ),
-                    if (state.devices.isEmpty && !state.devicesLoaded) ...[
-                      const Divider(),
-                      const ListTile(
-                        leading: SizedBox.square(
-                          dimension: 24,
-                          child: Center(
-                            child: SizedBox.square(
-                              dimension: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
+                ],
+              ),
+              const SectionHeader('Devices'),
+              TileGroup(
+                children: <Widget>[
+                  ListTile(
+                    leading: const Icon(Icons.qr_code_2),
+                    title: const Text('Link a new device'),
+                    subtitle: const Text(
+                        'Generate a pairing code for another device'),
+                    onTap: () async {
+                      if (await _reauthenticate(context) && context.mounted) {
+                        Navigator.of(context).push(sharedAxisRoute<void>(
+                          (_) => DeviceLinkScreen(state: state),
+                        ));
+                      }
+                    },
+                  ),
+                  if (state.devices.isEmpty && !state.devicesLoaded)
+                    const ListTile(
+                      leading: SizedBox.square(
+                        dimension: 24,
+                        child: Center(
+                          child: SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
                           ),
                         ),
-                        title: Text('Loading devices…'),
                       ),
-                    ],
-                    if (state.devices.isNotEmpty) const Divider(),
-                    for (final device in state.devices)
-                      _DeviceTile(
-                        device: device,
-                        isCurrent: device.id == session?.deviceId,
-                        busy: state.busy,
-                        onRevoke: () => _confirmRevoke(context, device),
-                      ),
-                  ],
-                ),
+                      title: Text('Loading devices…'),
+                    ),
+                  for (final device in state.devices)
+                    _DeviceTile(
+                      device: device,
+                      isCurrent: device.id == session?.deviceId,
+                      busy: state.busy,
+                      onRevoke: () => _confirmRevoke(context, device),
+                    ),
+                ],
               ),
-              const SizedBox(height: 16),
-              _SectionHeader(title: 'Safety', theme: theme),
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.block_outlined),
-                  title: const Text('Blocked accounts'),
-                  subtitle: Text(
-                    state.blocksLoaded
-                        ? (state.blockedAccounts.isEmpty
-                            ? 'No one is blocked'
-                            : '${state.blockedAccounts.length} blocked')
-                        : 'Review and undo blocks',
-                  ),
-                  trailing: const Icon(Icons.chevron_right_outlined),
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => BlockedAccountsScreen(state: state),
+              const SectionHeader('Safety'),
+              TileGroup(
+                children: <Widget>[
+                  ListTile(
+                    leading: const Icon(Icons.block_outlined),
+                    title: const Text('Blocked accounts'),
+                    subtitle: Text(
+                      state.blocksLoaded
+                          ? (state.blockedAccounts.isEmpty
+                              ? 'No one is blocked'
+                              : '${state.blockedAccounts.length} blocked')
+                          : 'Review and undo blocks',
+                    ),
+                    onTap: () => Navigator.of(context).push(
+                      sharedAxisRoute<void>(
+                        (_) => BlockedAccountsScreen(state: state),
+                      ),
                     ),
                   ),
-                ),
+                ],
               ),
-              const SizedBox(height: 16),
-              _SectionHeader(title: 'Notifications', theme: theme),
-              _PushStatusCard(state: state),
-              Card(
-                child: ListTile(
-                  enabled: state.pushConfigured && !state.busy,
-                  leading: const Icon(Icons.notifications_outlined),
-                  title: const Text('Push provider'),
-                  subtitle: Text(state.pushConfigured
-                      ? 'Choose an Android UnifiedPush provider'
-                      : 'Not configured by this server'),
-                  trailing: const Icon(Icons.chevron_right_outlined),
-                  onTap: state.choosePushDistributor,
-                ),
+              const SectionHeader('Notifications'),
+              _PushStatusRow(state: state),
+              const SizedBox(height: BoneSpacing.sm),
+              TileGroup(
+                children: <Widget>[
+                  ListTile(
+                    enabled: state.pushConfigured && !state.busy,
+                    leading: const Icon(Icons.notifications_outlined),
+                    title: const Text('Push provider'),
+                    subtitle: Text(state.pushConfigured
+                        ? 'Choose an Android UnifiedPush provider'
+                        : 'Not configured by this server'),
+                    onTap: state.choosePushDistributor,
+                  ),
+                ],
               ),
-              const SizedBox(height: 16),
-              _SectionHeader(title: 'Session', theme: theme),
-              Card(
-                child: Column(
-                  children: <Widget>[
-                    ListTile(
-                      leading: const Icon(Icons.logout),
-                      title: const Text('Sign out'),
-                      onTap: state.busy ? null : state.logout,
-                    ),
-                    const Divider(),
-                    ListTile(
-                      leading: const Icon(Icons.phonelink_erase_outlined),
-                      title: const Text('Sign out other devices'),
-                      subtitle:
-                          const Text('Ends every session except this one'),
-                      onTap: state.busy
-                          ? null
-                          : () => _confirmLogoutOthers(context),
-                    ),
-                  ],
-                ),
+              const SectionHeader('Session'),
+              TileGroup(
+                children: <Widget>[
+                  ListTile(
+                    leading: const Icon(Icons.logout),
+                    title: const Text('Sign out'),
+                    onTap: state.busy ? null : state.logout,
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.phonelink_erase_outlined),
+                    title: const Text('Sign out other devices'),
+                    subtitle: const Text('Ends every session except this one'),
+                    onTap:
+                        state.busy ? null : () => _confirmLogoutOthers(context),
+                  ),
+                ],
               ),
-              const SizedBox(height: 16),
-              _SectionHeader(title: 'Coming soon', theme: theme),
-              const Card(
-                child: Column(
-                  children: <Widget>[
-                    ListTile(
-                      enabled: false,
-                      leading: Icon(Icons.key_outlined),
-                      title: Text('Recovery'),
-                      subtitle: Text('Encrypted backup & recovery key'),
-                    ),
-                    ListTile(
-                      enabled: false,
-                      leading: Icon(Icons.video_call_outlined),
-                      title: Text('Calls'),
-                      subtitle: Text('1:1 audio/video'),
-                    ),
-                  ],
-                ),
+              const SectionHeader('Coming soon'),
+              const TileGroup(
+                children: <Widget>[
+                  ListTile(
+                    enabled: false,
+                    leading: Icon(Icons.key_outlined),
+                    title: Text('Recovery'),
+                    subtitle: Text('Encrypted backup & recovery key'),
+                  ),
+                  ListTile(
+                    enabled: false,
+                    leading: Icon(Icons.video_call_outlined),
+                    title: Text('Calls'),
+                    subtitle: Text('1:1 audio/video'),
+                  ),
+                ],
               ),
-              const SizedBox(height: 16),
-              _SectionHeader(title: 'Danger zone', theme: theme),
-              Card(
-                color: theme.colorScheme.errorContainer,
+              const SectionHeader('Danger zone'),
+              // The one filled surface left in this direction. It is doing
+              // real work — it is the only row on the screen you cannot undo.
+              Container(
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.errorContainer,
+                  borderRadius: BorderRadius.circular(BoneRadii.lg),
+                  border: Border.all(color: theme.colorScheme.error),
+                ),
+                clipBehavior: Clip.antiAlias,
                 child: ListTile(
                   leading: Icon(
                     Icons.delete_forever_outlined,
@@ -252,7 +245,6 @@ class SettingsScreen extends StatelessWidget {
                       state.busy ? null : () => _confirmDeleteAccount(context),
                 ),
               ),
-              const SizedBox(height: 24),
             ],
           ),
         );
@@ -483,11 +475,108 @@ class SettingsScreen extends StatelessWidget {
   }
 }
 
+/// Identity at the top of settings: who you are and which instance you are on
+/// (`docs/design.md` §6). The host matters on a self-hosted product — it
+/// is the one piece of context that tells you which server this session is
+/// actually talking to.
+class _IdentityHeader extends StatelessWidget {
+  const _IdentityHeader({required this.session, this.onTap});
+
+  final Session? session;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final username = session?.username;
+    final accountId = session?.accountId;
+    final host = session == null
+        ? null
+        : (Uri.tryParse(session!.baseUrl)?.host ?? session!.baseUrl);
+    final colors = avatarColorsFor(context, accountId ?? 'unknown');
+    return Padding(
+      padding: const EdgeInsets.only(bottom: BoneSpacing.sm),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(BoneRadii.lg),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(BoneRadii.lg),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: BoneSpacing.sm,
+              vertical: BoneSpacing.md,
+            ),
+            child: Row(
+              children: <Widget>[
+                ExcludeSemantics(
+                  child: Container(
+                    width: 56,
+                    height: 56,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: colors.fill,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: colors.ring),
+                    ),
+                    child: Text(
+                      accountInitials(accountId ?? '', username),
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w600,
+                        color: colors.glyph,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: BoneSpacing.lg),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Text(
+                        username == null ? 'Signed in' : '@$username',
+                        style: theme.textTheme.titleLarge,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (host != null) ...<Widget>[
+                        const SizedBox(height: 2),
+                        Text(
+                          host,
+                          style: BoneType.mono.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                if (session?.role != null) ...<Widget>[
+                  const SizedBox(width: BoneSpacing.sm),
+                  StatusPill(label: session!.role!),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// States plainly whether this device will actually receive notifications.
 /// Silence about a missing distributor or an unsupported platform reads as
 /// "push works", which is the one thing it must never imply.
-class _PushStatusCard extends StatelessWidget {
-  const _PushStatusCard({required this.state});
+///
+/// The state palette earns its keep here: warning amber and verified green
+/// say which of the two this is before the sentence is read.
+class _PushStatusRow extends StatelessWidget {
+  const _PushStatusRow({required this.state});
 
   final AppState state;
 
@@ -521,37 +610,24 @@ class _PushStatusCard extends StatelessWidget {
       warn = false;
     }
     final scheme = theme.colorScheme;
-    return Card(
-      color: warn ? scheme.surfaceContainerHighest : null,
-      child: ListTile(
-        leading: Icon(icon, color: warn ? scheme.onSurfaceVariant : null),
-        title: Text(title),
-        subtitle: Text(detail),
-      ),
-    );
-  }
-}
-
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({required this.title, required this.theme});
-
-  final String title;
-  final ThemeData theme;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
-      child: Semantics(
-        header: true,
-        child: Text(
-          title,
-          style: theme.textTheme.titleSmall?.copyWith(
-            color: theme.colorScheme.primary,
-            fontWeight: FontWeight.w600,
+    final states = theme.extension<VeritraStateColors>() ??
+        (theme.brightness == Brightness.dark
+            ? VeritraStateColors.dark
+            : VeritraStateColors.light);
+    final tint = warn ? states.warning : states.verified;
+    return TileGroup(
+      children: <Widget>[
+        ListTile(
+          leading: Icon(icon, color: tint),
+          title: Text(title),
+          subtitle: Text(
+            detail,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
           ),
         ),
-      ),
+      ],
     );
   }
 }
@@ -573,9 +649,10 @@ class _DeviceTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final revoked = device.revokedAt != null;
+    // State moved out of the joined string and onto a pill: "Revoked" is the
+    // fact that changes what the row means, and it was previously the second
+    // clause of a ' · '-joined sentence.
     final details = <String>[
-      if (isCurrent) 'This device',
-      if (revoked) 'Revoked',
       if (device.lastSeenAt != null)
         'Last seen ${formatDateTime(context, device.lastSeenAt!)}',
       'Added ${formatDate(context, device.createdAt)}',
@@ -585,16 +662,36 @@ class _DeviceTile extends StatelessWidget {
         isCurrent ? Icons.phone_android : Icons.devices_other,
         color: revoked ? theme.disabledColor : null,
       ),
-      title: Text(
-        device.name,
-        style: revoked
-            ? TextStyle(
-                color: theme.disabledColor,
-                decoration: TextDecoration.lineThrough,
-              )
-            : null,
+      title: Row(
+        children: <Widget>[
+          Flexible(
+            child: Text(
+              device.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: revoked
+                  ? TextStyle(
+                      color: theme.disabledColor,
+                      decoration: TextDecoration.lineThrough,
+                    )
+                  : null,
+            ),
+          ),
+          if (revoked) ...<Widget>[
+            const SizedBox(width: BoneSpacing.sm),
+            const StatusPill(label: 'Revoked', tone: StatusTone.error),
+          ] else if (isCurrent) ...<Widget>[
+            const SizedBox(width: BoneSpacing.sm),
+            const StatusPill(label: 'This device'),
+          ],
+        ],
       ),
-      subtitle: Text(details.join(' · ')),
+      subtitle: Text(
+        details.join(' · '),
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
+        ),
+      ),
       trailing: revoked
           ? null
           : IconButton(

@@ -15,11 +15,13 @@ reviewed.
 The server now reserves final account/device IDs before key generation and
 atomically verifies and consumes a signed enrollment proof covering the server
 challenge, Ed25519 public key, and SHA-256 key-package commitment. The Flutter
-client models this preflight, and its low-level Dart FFI binding validates ABI
-v3 and uses the owned device/buffer calls. Native libraries are packaged for
-Android/iOS, while the production service remains behind the release gate.
+client models this preflight, and its low-level Dart FFI binding requires ABI
+version 4 exactly (`native_crypto_bindings.dart`) and uses the owned
+device/buffer calls. Native libraries are packaged for Android/iOS, while the
+production service remains behind the release gate.
 
-The public header is `rust/include/veritra_crypto.h`. ABI version 3 defines:
+The public header is `crypto/rust/include/veritra_crypto.h`, which pins
+`PM_CRYPTO_ABI_VERSION` at 4. That version defines:
 
 - account/device-bound opaque handles with exactly-once destruction
 - library-owned, zero-on-free output buffers

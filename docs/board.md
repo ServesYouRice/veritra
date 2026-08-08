@@ -8,14 +8,18 @@ Historical source material remains read-only under `archive/2026-07-26/`.
 
 **NO-GO:** production crypto remains fail-closed.
 
-There are no unblocked local implementation cards. The remaining release work
-needs signing credentials, supported physical Android and iOS devices, macOS
-for the iOS build, an operator-controlled TURN deployment, push-provider
-credentials, a coordinated upstream OpenMLS/HPKE security update, a chosen
-visual-design direction, and an
-independent security reviewer. Do not remove
-`PM_CRYPTO_UNAVAILABLE` or replace `UnavailableCryptoService` until every
-release gate below passes.
+**Active local work: I28, the K2 · Bone visual rebuild.** It is the only card
+that can move without external inputs, and it is the current priority.
+
+Every other remaining card is externally blocked. They need signing
+credentials, supported physical Android and iOS devices, macOS for the iOS
+build, an operator-controlled TURN deployment, push-provider credentials, a
+coordinated upstream OpenMLS/HPKE security update, and an independent security
+reviewer. Do not remove `PM_CRYPTO_UNAVAILABLE` or replace
+`UnavailableCryptoService` until every release gate below passes.
+
+Product sequencing is fixed by **D06**: finish the mobile release first, then
+desktop, then evaluate embedding. See [Roadmap after release](#roadmap-after-release).
 
 ## Approved decisions
 
@@ -28,8 +32,88 @@ release gate below passes.
   operationally required.
 - **D05:** Prepare protocol/mobile review evidence now and keep production
   fail-closed until an independent external review is complete.
+- **D06:** Ship mobile first. Android and iOS are the whole of release one.
+  Windows and macOS come after that release, as additional targets in this
+  repository reusing the reviewed Rust crypto core — **not** as a fork.
+  Embedding Veritra chat in other products is deferred behind a product
+  trigger and an explicit answer on whether embedded conversations stay
+  end-to-end encrypted. Recorded 2026-08-07; rationale and triggers are in
+  [Roadmap after release](#roadmap-after-release).
 
 ## Remaining work
+
+Ordered by what can actually move: I28 is local and unblocked, the rest are
+waiting on people, hardware, or upstream.
+
+### I28 - Rebuild the app's visual design (active, priority)
+
+Direction decided **2026-08-07: K2 · Bone**, after eleven variants. The owner
+rejected A (reads as Viber: its `#6366F1` indigo sits about ten degrees of hue
+from Viber's `#7360F2`) and C (overdone), while keeping C's plum ground.
+
+**The palette, the per-screen spec, the deviations taken, the test contracts and
+the accessibility notes are all in [`design.md`](design.md).** This card carries
+only what is true of the work right now.
+
+All eight steps are written. Steps 1-2 are committed; steps 3-8 are in the
+working tree, verified but not yet committed.
+
+**Committed (steps 1-2):** `mobile/lib/ui/tokens.dart` (new) and
+`mobile/lib/ui/theme.dart` - the Bone palette for both brightnesses, radii,
+spacing, motion, the type ramp, and a `VeritraStateColors` extension.
+`ColorScheme.fromSeed` is gone, replaced by explicit light and dark
+constructors. `veritraLightTheme()`/`veritraDarkTheme()` keep their signatures,
+so `mobile/lib/main.dart` is unchanged.
+
+**In the working tree (steps 3-8):** the shared vocabulary - `avatar.dart`,
+`motion.dart`, `status_pill.dart`, `section_header.dart`, `tile_group.dart`,
+`large_title_bar.dart`, `veritra_mark.dart` - plus `chat_visuals_test.dart`.
+Screens touched: chat list, conversation, connect, settings, profile, device
+link, invites, blocked accounts, communities, search, conversation details, the
+empty state, the connection banner, and the shell's nav. Plus
+`server/websetup/index.html` on Bone tokens carrying the wordmark, and the app
+icon across every Android and iOS size.
+
+No new dependency and no bundled font.
+
+**Verification status - verified 2026-08-08** against the pinned Docker
+toolchains, on the working tree described above. Every step had been written on
+machines with no Flutter, Dart, Go, Rust or Docker toolchain, so this was the
+first real run.
+
+| Check | Result |
+|---|---|
+| `flutter analyze` | Pass - no issues found |
+| `dart format --set-exit-if-changed .` | Pass, after reformatting 4 files |
+| `flutter test` | Pass - 79 tests, 2 environment skips |
+| `gofmt -l .` and `go vet ./...` | Pass - clean |
+| `go test ./...` | Pass - every package, including `websetup` |
+
+The first run failed, and found two defects that inspection had not:
+
+1. **`TileGroup` wrapped `ListTile` in a `Container` carrying a background
+   colour.** `ListTile` paints its background and ink splashes onto the nearest
+   `Material` ancestor, so a decorated box between them hides both, and Flutter
+   asserts on exactly that. This was a real defect, not a test artifact - it
+   would have fired in any debug run of the settings, profile, invite,
+   blocked-accounts and conversation-details screens. Fixed by making the group
+   a `Material` that carries the colour, border and radius itself; the reason is
+   recorded in the widget so it is not undone.
+2. **`profile_screen_test.dart` could no longer find `Encryption identity
+   pending`.** The taller Bone profile screen pushes that group below the 800px
+   test viewport and a `ListView` does not build what it has not laid out. Fixed
+   by scrolling to it in the test rather than relaxing the assertion: that
+   notice being genuinely on screen is a crypto-honesty guarantee, and it
+   survives scrolling.
+
+Not covered by this run: golden tests (none exist), Android and iOS builds, the
+Compose smoke, and every manual and accessibility check in I24. Rendering was
+never executed - `flutter test` does not prove the screens *look* right, only
+that they build, analyze, and keep their contracts.
+
+Crypto-gated screens stay unavailable regardless of the direction chosen. The
+redesign touched no crypto, storage, sync, or gate: the redacted bars read
+`ciphertext.length`, which the client already holds, and decrypt nothing.
 
 ### I27 - Close upstream HPKE/libcrux advisories (upstream/review blocked)
 
@@ -89,61 +173,6 @@ Blocked by I24 and an independent reviewer. Completion requires:
 
 Do not weaken or delete a gate to declare success.
 
-### I28 - Rebuild the app's visual design (in progress, unverified)
-
-The app is stock Material 3 with the defaults left on: one teal seed expanded by
-`ColorScheme.fromSeed`, no `TextTheme`, no fonts or images, and stock Flutter
-launcher icons. [`design/`](../design/README.md) holds the proposed directions
-rendered side by side against today's UI in `design/preview.html`; nothing there
-is wired into the build. This card has no code dependencies, but it stays
-blocked until an owner picks one direction. Crypto-gated screens listed below
-must remain unavailable regardless of the direction chosen.
-
-On 2026-08-07 the owner rejected A (reads as Viber: its `#6366F1` indigo sits
-about ten degrees of hue from Viber's `#7360F2`) and C (overdone), while keeping
-C's plum ground. Eleven variants of a single revised direction were explored —
-A's structure on C's plum, indigo and gradient removed — and the owner selected
-**K2 · Bone**: no accent hue at all, a warm near-white (`#EDE4DA`) carrying
-every accent slot over the plum ground, inverting to warm paper (`#F8F6F1`) with
-a deep plum accent (`#3A2E42`) in light mode. Palettes, the five Bone
-temperatures, the semantic state palette and every measured contrast ratio are
-in `design/directions.md`.
-
-**Landed (steps 1-2 of `design/implementation.md`):**
-
-- `mobile/lib/ui/tokens.dart` (new) - Bone palette for both brightnesses,
-  radii, spacing, motion, the `design/redesign.md` §1 type ramp, and a
-  `VeritraStateColors` theme extension carrying verified/warning/info. Error is
-  deliberately left to `ColorScheme.error` so there is one source of truth.
-- `mobile/lib/ui/theme.dart` - replaced `ColorScheme.fromSeed` with explicit
-  light and dark `ColorScheme` constructors, added the `TextTheme` (the app
-  previously customised no text styles at all), and set component themes to
-  zero elevation with a transparent surface tint so surfaces separate by tone
-  rather than shadow.
-
-No new dependency and no bundled font: the platform faces carry the ramp, which
-avoids a `THIRD_PARTY_NOTICES.md` entry and the approval that would need.
-`veritraLightTheme()`/`veritraDarkTheme()` keep their signatures, so
-`mobile/lib/main.dart` is unchanged. No screen file was touched, and the six
-string assertions in `mobile/test/profile_screen_test.dart` are unaffected -
-that test pumps a bare `MaterialApp` with no theme.
-
-**Not verified.** This machine has no Flutter, Dart, Go, Rust, or Docker
-toolchain, so `flutter analyze`, `flutter test`, and the
-`dart format --set-exit-if-changed` step in `scripts/lint.sh` have **not** been
-run against these two files. Only structural checks were possible: delimiter
-balance, 80-column compliance, no tabs, and confirmation that every token
-referenced by `theme.dart` is defined in `tokens.dart`. Run `scripts/lint.ps1`
-and `scripts/test.ps1` before trusting this card.
-
-**Remaining (steps 3-8):** chat list, conversation bubbles and composer,
-connect, settings/communities/search/details, shared widgets, motion, app icon
-export from `docs/branding/concept-06/veritra-app-icon.svg`, and
-`server/websetup/index.html`. The redacted-bar bubble in `design/redesign.md` §2
-must bucket its widths rather than deriving them linearly from ciphertext
-length, or message length becomes readable over someone's shoulder.
-Crypto-gated screens stay unavailable regardless of the direction.
-
 ### Crypto-gated mobile UI
 
 The non-crypto identity and safety UI is complete: canonical named DMs, member
@@ -187,11 +216,20 @@ fresh-volume Compose smoke became healthy and returned 200 from loopback
 `/healthz`; the release-readiness check still fails at the intentional crypto
 gate.
 
+Verification on 2026-08-08 covered the **uncommitted I28 working tree** on top
+of `d60e45b`, using the pinned Flutter 3.44.0 and Go 1.25.12 Docker images:
+`flutter analyze` clean, `dart format --set-exit-if-changed` clean after
+reformatting four files, `flutter test` 79 pass with 2 environment skips,
+`gofmt`/`go vet` clean, and `go test ./...` passing in every package. Two
+defects were found and fixed first - see the I28 card. Rust and the Compose
+smoke were not re-run, because I28 changed no Rust and no deployment file. This
+evidence is not bound to a commit yet; bind it when the I28 work is committed.
+
 | Evidence | Result | Artifact / note |
 |---|---|---|
 | Go tests | Pass | `go test ./...` in pinned Go 1.25 container |
 | Rust tests and vectors | Pass | 17 tests with pinned Rust 1.90 |
-| Flutter analyze/tests | Pass | Analyzer clean; 70 pass, 2 environment skips |
+| Flutter analyze/tests | Pass | Analyzer clean; 79 pass, 2 environment skips (2026-08-08, I28 tree) |
 | Crypto-gated end-user flows | Pending | UI paths listed above remain unavailable |
 | Contract/integration tests | Pass | Live server and real host native library |
 | Direct license notices | Pass | Full transitive scan remains required |
@@ -323,10 +361,61 @@ state, composer clearing on durable enqueue, accurate search/navigation,
 community channel navigation, password validation, honest push status, and a
 wide master-detail layout.
 
+## Roadmap after release
+
+Decided 2026-08-07 as **D06**. One product, one repository, three phases. Each
+phase starts only when the phase before it has shipped.
+
+### Phase 1 - Mobile (current)
+
+Android and iOS are the entire first release. Nothing below may pull work,
+review attention, or dependencies forward into it.
+
+### Phase 2 - Windows and macOS
+
+Trigger: the mobile release has shipped and the native crypto core plus its
+packaging are stable and independently reviewed.
+
+Desktop is an **additional Flutter target in this repository**, not a fork.
+Forking would produce two divergent copies of the same MLS protocol and would
+owe a separate independent security review for each — the worst available
+outcome for a product whose only real asset is one reviewed crypto core. The
+Flutter client in `mobile/lib/` and the Rust core in `crypto/rust/` are reused
+as they are.
+
+What is genuinely new, and what the phase must design rather than inherit:
+desktop key storage (there is no `flutter_secure_storage` equivalent guarantee
+on Windows), update and signing channels, sandboxing, and multi-instance
+behaviour against the single-writer data-dir lock. A self-hosted internal
+network deployment is the same server with a desktop client attached; it needs
+no server change.
+
+This supersedes the archived R09 card in
+`archive/2026-07-26/legacy-implementation/09-deferred-roadmap.md`, which set the
+same trigger.
+
+### Phase 3 - Embedded chat (deferred, needs a decision first)
+
+Trigger: a real product asking for it, plus an explicit owner answer to one
+question — **do embedded conversations stay end-to-end encrypted?**
+
+- **Yes** - then the deliverable is a client SDK: the Rust core plus bindings,
+  shipped from this repository. The embedding application performs the MLS
+  operations itself. There is no drop-in widget, because there is no key on the
+  server to give one.
+- **No** - then it is a different product with a different server. Server-side
+  plaintext contradicts the non-negotiable boundary in `AGENTS.md` and must not
+  be added to this codebase to serve an embedding use case.
+
+Until that question is answered, no embedding work starts. Note that the
+current API is account-and-device shaped: there are no bot tokens, service
+accounts, or machine credentials, and adding them is part of this phase, not a
+prerequisite bolted on early.
+
 ## Later, not release-blocking
 
 - Measure query plans, load, soak behavior, and push fan-out before tuning.
-- Profiles/avatars, local content search, desktop, multi-account, and passkeys.
+- Profiles/avatars, local content search, multi-account, and passkeys.
 - Invite URI/QR polish, drafts, richer empty states, link previews, voice notes,
   and client-side import.
 - Moderation reports and post-quantum readiness need a product trigger.

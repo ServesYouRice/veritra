@@ -3,8 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
+import '../../ui/avatar.dart';
 import '../../ui/format.dart';
+import '../../ui/tokens.dart';
 import '../../ui/widgets/empty_state.dart';
+import '../../ui/widgets/large_title_bar.dart';
 
 /// Review and undo blocks. Blocking is enforced by the server for delivery;
 /// it is not a claim about the other person's device, and the copy here says
@@ -40,7 +43,7 @@ class _BlockedAccountsScreenState extends State<BlockedAccountsScreen> {
         final blocks = state.blockedAccounts;
         final error = state.errorFor(Ops.blocks);
         return Scaffold(
-          appBar: AppBar(title: const Text('Blocked accounts')),
+          appBar: const LargeTitleBar(title: 'Blocked accounts'),
           body: RefreshIndicator(
             onRefresh: state.refreshBlocks,
             child: blocks.isEmpty
@@ -65,18 +68,38 @@ class _BlockedAccountsScreenState extends State<BlockedAccountsScreen> {
                         ),
                     ],
                   )
-                : ListView.separated(
+                // Dividers dropped for the same reason as the chat list:
+                // rows separate by spacing, not by a rule between them.
+                : ListView.builder(
                     physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: BoneSpacing.sm,
+                      vertical: BoneSpacing.sm,
+                    ),
                     itemCount: blocks.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
                     itemBuilder: (context, index) {
                       final block = blocks[index];
                       final label =
                           accountLabel(block.accountId, block.username);
+                      final colors = avatarColorsFor(context, block.accountId);
                       return MergeSemantics(
                         child: ListTile(
-                          leading: const ExcludeSemantics(
-                            child: CircleAvatar(child: Icon(Icons.person_off)),
+                          leading: ExcludeSemantics(
+                            child: Container(
+                              width: 40,
+                              height: 40,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: colors.fill,
+                                shape: BoxShape.circle,
+                                border: Border.all(color: colors.ring),
+                              ),
+                              child: Icon(
+                                Icons.person_off_outlined,
+                                size: 18,
+                                color: colors.glyph,
+                              ),
+                            ),
                           ),
                           title: Text(label),
                           subtitle: Text(block.createdAt == null
