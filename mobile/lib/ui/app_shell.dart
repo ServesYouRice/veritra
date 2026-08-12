@@ -6,6 +6,7 @@ import '../features/chat/chat_list_screen.dart';
 import '../features/chat/chat_screen.dart';
 import '../features/communities/community_screen.dart';
 import '../features/settings/settings_screen.dart';
+import 'tokens.dart';
 import 'widgets/connection_banner.dart';
 import 'widgets/empty_state.dart';
 
@@ -102,17 +103,131 @@ class _AppShellState extends State<AppShell> {
           ],
         ),
       ),
-      bottomNavigationBar: NavigationBar(
+      bottomNavigationBar: _FloatingNav(
         selectedIndex: index,
-        onDestinationSelected: (value) => setState(() => index = value),
-        destinations: <NavigationDestination>[
-          for (final destination in _destinations)
-            NavigationDestination(
-              icon: Icon(destination.icon),
-              selectedIcon: Icon(destination.selectedIcon),
-              label: destination.label,
+        destinations: _destinations,
+        onSelected: (value) => setState(() => index = value),
+      ),
+    );
+  }
+}
+
+/// A pill above the bottom edge instead of a full-width `NavigationBar`
+/// (`docs/design.md` §8).
+///
+/// It is still the `Scaffold`'s `bottomNavigationBar` rather than a `Stack`
+/// overlay, so page content is inset above it rather than scrolling behind
+/// it. That is deliberate: two of the three destinations own a
+/// `FloatingActionButton`, and floating the nav over the page puts a centred
+/// pill and a bottom-right FAB in the same strip with nothing arbitrating
+/// between them on a narrow screen. The pill is where the visual change is.
+class _FloatingNav extends StatelessWidget {
+  const _FloatingNav({
+    required this.selectedIndex,
+    required this.destinations,
+    required this.onSelected,
+  });
+
+  final int selectedIndex;
+  final List<_Destination> destinations;
+  final ValueChanged<int> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          BoneSpacing.xl,
+          BoneSpacing.sm,
+          BoneSpacing.xl,
+          BoneSpacing.md,
+        ),
+        child: Container(
+          padding: const EdgeInsets.all(BoneSpacing.xs),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerLow,
+            borderRadius: BorderRadius.circular(BoneRadii.pill),
+            border: Border.all(color: scheme.outlineVariant),
+          ),
+          child: Row(
+            children: <Widget>[
+              for (var i = 0; i < destinations.length; i++)
+                Expanded(
+                  child: _NavItem(
+                    destination: destinations[i],
+                    selected: i == selectedIndex,
+                    onTap: () => onSelected(i),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NavItem extends StatelessWidget {
+  const _NavItem({
+    required this.destination,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final _Destination destination;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final foreground = selected ? scheme.onPrimary : scheme.onSurfaceVariant;
+    // NavigationBar supplied the selected/button semantics for free; a
+    // hand-rolled bar has to say it itself or the nav stops announcing which
+    // destination is current.
+    return Semantics(
+      selected: selected,
+      button: true,
+      child: Material(
+        color: selected ? scheme.primary : Colors.transparent,
+        borderRadius: BorderRadius.circular(BoneRadii.pill),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(BoneRadii.pill),
+          child: Container(
+            constraints: const BoxConstraints(
+              minHeight: BoneSpacing.minTapTarget,
             ),
-        ],
+            alignment: Alignment.center,
+            padding: const EdgeInsets.symmetric(horizontal: BoneSpacing.sm),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                ExcludeSemantics(
+                  child: Icon(
+                    selected ? destination.selectedIcon : destination.icon,
+                    size: 20,
+                    color: foreground,
+                  ),
+                ),
+                const SizedBox(width: BoneSpacing.sm),
+                Flexible(
+                  child: Text(
+                    destination.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: foreground,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

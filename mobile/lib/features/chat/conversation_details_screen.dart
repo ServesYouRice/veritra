@@ -5,8 +5,14 @@ import 'package:flutter/services.dart';
 
 import '../../core/app_state.dart';
 import '../../core/models.dart';
+import '../../ui/avatar.dart';
 import '../../ui/format.dart';
+import '../../ui/tokens.dart';
 import '../../ui/widgets/account_picker.dart';
+import '../../ui/widgets/large_title_bar.dart';
+import '../../ui/widgets/section_header.dart';
+import '../../ui/widgets/status_pill.dart';
+import '../../ui/widgets/tile_group.dart';
 import 'chat_list_screen.dart';
 
 /// Conversation metadata and management: who is in it, notification mute,
@@ -59,9 +65,9 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
             .where((c) => c.id == conversationId)
             .firstOrNull;
         if (conversation == null) {
-          return Scaffold(
-            appBar: AppBar(title: const Text('Conversation')),
-            body: const Center(child: Text('Conversation not found.')),
+          return const Scaffold(
+            appBar: LargeTitleBar(title: 'Conversation'),
+            body: Center(child: Text('Conversation not found.')),
           );
         }
         final theme = Theme.of(context);
@@ -76,122 +82,129 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
         final members = state.membersFor(conversationId);
         final memberError = state.errorFor(Ops.members);
         return Scaffold(
-          appBar: AppBar(title: const Text('Conversation details')),
+          appBar: const LargeTitleBar(title: 'Conversation details'),
           body: ListView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(
+              BoneSpacing.gutter,
+              BoneSpacing.sm,
+              BoneSpacing.gutter,
+              BoneSpacing.xl,
+            ),
             children: <Widget>[
-              Card(
-                child: Column(
-                  children: <Widget>[
-                    ListTile(
-                      leading:
-                          conversationAvatar(context, conversation, radius: 20),
-                      title: Text(conversationTitle(conversation)),
-                      subtitle: Text(conversationSubtitle(conversation)),
-                    ),
-                    const Divider(),
-                    ListTile(
-                      leading: const Icon(Icons.tag_outlined),
-                      title: const Text('Conversation ID'),
-                      subtitle: Text(shortId(conversation.id)),
-                      trailing: IconButton(
-                        tooltip: 'Copy ID',
-                        icon: const Icon(Icons.copy_outlined),
-                        onPressed: () =>
-                            _copy(context, conversation.id, 'Conversation ID'),
-                      ),
-                    ),
-                    if (conversation.createdAt != null)
-                      ListTile(
-                        leading: const Icon(Icons.schedule_outlined),
-                        title: const Text('Created'),
-                        subtitle: Text(
-                          formatDateTime(context, conversation.createdAt!),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              _Header('Notifications', theme),
-              const SizedBox(height: 8),
-              Card(
-                child: SwitchListTile(
-                  secondary: const Icon(Icons.notifications_off_outlined),
-                  title: const Text('Mute notifications'),
-                  subtitle: const Text(
-                    'Stops push for this conversation. Messages still arrive '
-                    'and still count as unread.',
+              TileGroup(
+                children: <Widget>[
+                  ListTile(
+                    leading:
+                        conversationAvatar(context, conversation, radius: 20),
+                    title: Text(conversationTitle(conversation)),
+                    subtitle: Text(conversationSubtitle(conversation)),
                   ),
-                  value: state.isMuted(conversationId),
-                  onChanged: state.isBusy(Ops.mute)
-                      ? null
-                      : (value) => _setMuted(context, value),
-                ),
+                  ListTile(
+                    leading: const Icon(Icons.tag_outlined),
+                    title: Text(
+                      'CONVERSATION ID',
+                      style: theme.textTheme.labelSmall,
+                    ),
+                    subtitle: Text(
+                      shortId(conversation.id),
+                      style: BoneType.mono.copyWith(
+                        color: theme.colorScheme.onSurface,
+                      ),
+                    ),
+                    trailing: IconButton(
+                      tooltip: 'Copy ID',
+                      icon: const Icon(Icons.copy_outlined),
+                      onPressed: () =>
+                          _copy(context, conversation.id, 'Conversation ID'),
+                    ),
+                  ),
+                  if (conversation.createdAt != null)
+                    ListTile(
+                      leading: const Icon(Icons.schedule_outlined),
+                      title: Text(
+                        'CREATED',
+                        style: theme.textTheme.labelSmall,
+                      ),
+                      subtitle: Text(
+                        formatDateTime(context, conversation.createdAt!),
+                      ),
+                    ),
+                ],
+              ),
+              const SectionHeader('Notifications'),
+              TileGroup(
+                children: <Widget>[
+                  SwitchListTile(
+                    secondary: const Icon(Icons.notifications_off_outlined),
+                    title: const Text('Mute notifications'),
+                    subtitle: const Text(
+                      'Stops push for this conversation. Messages still '
+                      'arrive and still count as unread.',
+                    ),
+                    value: state.isMuted(conversationId),
+                    onChanged: state.isBusy(Ops.mute)
+                        ? null
+                        : (value) => _setMuted(context, value),
+                  ),
+                ],
               ),
               if (state.errorFor(Ops.mute) != null)
                 _InlineError(message: state.errorFor(Ops.mute)!),
-              const SizedBox(height: 16),
-              _Header('Members', theme),
-              const SizedBox(height: 8),
+              const SectionHeader('Members'),
               if (memberError != null) _InlineError(message: memberError),
-              Card(
-                child: Column(
-                  children: <Widget>[
-                    if (members.isEmpty && state.isBusy(Ops.members))
-                      const ListTile(
-                        leading: SizedBox.square(
-                          dimension: 24,
-                          child: Center(
-                            child: SizedBox.square(
-                              dimension: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
+              TileGroup(
+                children: <Widget>[
+                  if (members.isEmpty && state.isBusy(Ops.members))
+                    const ListTile(
+                      leading: SizedBox.square(
+                        dimension: 24,
+                        child: Center(
+                          child: SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
                           ),
                         ),
-                        title: Text('Loading members…'),
-                      )
-                    else if (members.isEmpty)
-                      const ListTile(
-                        leading: Icon(Icons.person_outline),
-                        title: Text('Member list unavailable'),
-                        subtitle: Text(
-                          'The server did not return the roster for this '
-                          'conversation.',
-                        ),
-                      )
-                    else
-                      for (final member in members)
-                        _MemberTile(
-                          member: member,
-                          isSelf: member.accountId == state.session?.accountId,
-                          // Only a manager can remove someone, never
-                          // themselves through this control, and never anyone
-                          // ranked at or above their own role.
-                          canRemove: canManage &&
-                              !isDm &&
-                              member.accountId != state.session?.accountId &&
-                              _outranks(myRole, member.role),
-                          busy: state.isBusy(Ops.members),
-                          onRemove: () => _confirmRemove(context, member),
-                        ),
-                    if (!isDm) ...<Widget>[
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(Icons.person_add_outlined),
-                        title: const Text('Add member'),
-                        subtitle: Text(canManage
-                            ? 'Look up an account by username'
-                            : 'Moderator permission required'),
-                        onTap: state.isBusy(Ops.members) || !canManage
-                            ? null
-                            : () => _addMember(context, myRole),
                       ),
-                    ],
-                  ],
-                ),
+                      title: Text('Loading members…'),
+                    )
+                  else if (members.isEmpty)
+                    const ListTile(
+                      leading: Icon(Icons.person_outline),
+                      title: Text('Member list unavailable'),
+                      subtitle: Text(
+                        'The server did not return the roster for this '
+                        'conversation.',
+                      ),
+                    )
+                  else
+                    for (final member in members)
+                      _MemberTile(
+                        member: member,
+                        isSelf: member.accountId == state.session?.accountId,
+                        // Only a manager can remove someone, never
+                        // themselves through this control, and never anyone
+                        // ranked at or above their own role.
+                        canRemove: canManage &&
+                            !isDm &&
+                            member.accountId != state.session?.accountId &&
+                            _outranks(myRole, member.role),
+                        busy: state.isBusy(Ops.members),
+                        onRemove: () => _confirmRemove(context, member),
+                      ),
+                  if (!isDm)
+                    ListTile(
+                      leading: const Icon(Icons.person_add_outlined),
+                      title: const Text('Add member'),
+                      subtitle: Text(canManage
+                          ? 'Look up an account by username'
+                          : 'Moderator permission required'),
+                      onTap: state.isBusy(Ops.members) || !canManage
+                          ? null
+                          : () => _addMember(context, myRole),
+                    ),
+                ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: BoneSpacing.sm),
               Text(
                 'This is the server\'s membership record. Encrypted delivery '
                 'follows a separate group update, so a change here is not by '
@@ -200,68 +213,63 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
-              const SizedBox(height: 16),
-              _Header('Safety', theme),
-              const SizedBox(height: 8),
-              Card(
-                child: Column(
-                  children: <Widget>[
-                    if (isDm && conversation.peerAccountId != null)
-                      _BlockTile(
-                        state: state,
-                        accountId: conversation.peerAccountId!,
-                        label: accountLabel(
-                          conversation.peerAccountId!,
-                          conversation.peerUsername,
-                        ),
+              const SectionHeader('Safety'),
+              TileGroup(
+                children: <Widget>[
+                  if (isDm && conversation.peerAccountId != null)
+                    _BlockTile(
+                      state: state,
+                      accountId: conversation.peerAccountId!,
+                      label: accountLabel(
+                        conversation.peerAccountId!,
+                        conversation.peerUsername,
                       ),
-                    if (isDm && conversation.peerAccountId != null)
-                      const Divider(height: 1),
-                    ListTile(
-                      leading: const Icon(Icons.logout),
-                      title: Text(isDm
-                          ? 'Leave this conversation'
-                          : 'Leave conversation'),
-                      subtitle: const Text(
-                        'You stop receiving new messages. Messages already on '
-                        'other members\' devices are not deleted.',
-                      ),
-                      onTap: state.isBusy(Ops.members)
-                          ? null
-                          : () => _confirmLeave(context),
                     ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              _Header('Disappearing messages', theme),
-              const SizedBox(height: 8),
-              Card(
-                child: RadioGroup<int?>(
-                  groupValue:
-                      retention == null || retention == 0 ? null : retention,
-                  onChanged: (value) {
-                    if (!state.busy && canManage) {
-                      _confirmRetentionChange(
-                        context,
-                        conversation.id,
-                        value,
-                      );
-                    }
-                  },
-                  child: Column(
-                    children: <Widget>[
-                      for (final option in _retentionOptions)
-                        RadioListTile<int?>(
-                          value: option.seconds,
-                          title: Text(option.label),
-                          enabled: !state.busy && canManage,
-                        ),
-                    ],
+                  ListTile(
+                    leading: const Icon(Icons.logout),
+                    title: Text(isDm
+                        ? 'Leave this conversation'
+                        : 'Leave conversation'),
+                    subtitle: const Text(
+                      'You stop receiving new messages. Messages already on '
+                      'other members\' devices are not deleted.',
+                    ),
+                    onTap: state.isBusy(Ops.members)
+                        ? null
+                        : () => _confirmLeave(context),
                   ),
-                ),
+                ],
               ),
-              const SizedBox(height: 8),
+              const SectionHeader('Disappearing messages'),
+              TileGroup(
+                dividerIndent: 0,
+                children: <Widget>[
+                  RadioGroup<int?>(
+                    groupValue:
+                        retention == null || retention == 0 ? null : retention,
+                    onChanged: (value) {
+                      if (!state.busy && canManage) {
+                        _confirmRetentionChange(
+                          context,
+                          conversation.id,
+                          value,
+                        );
+                      }
+                    },
+                    child: Column(
+                      children: <Widget>[
+                        for (final option in _retentionOptions)
+                          RadioListTile<int?>(
+                            value: option.seconds,
+                            title: Text(option.label),
+                            enabled: !state.busy && canManage,
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: BoneSpacing.sm),
               Text(
                 'When set, messages sent from then on are deleted from the '
                 'server after this time window. Existing messages keep the '
@@ -558,8 +566,10 @@ class _MemberTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final label = accountLabel(member.accountId, member.username);
+    final colors = avatarColorsFor(context, member.accountId);
+    // Role moved onto a pill; what is left in the subtitle is the one thing
+    // that is genuinely a detail.
     final details = <String>[
-      _roleLabel(member.role),
       if (isSelf) 'You',
       if (member.joinedAt != null)
         'Joined ${formatDate(context, member.joinedAt!)}',
@@ -567,14 +577,41 @@ class _MemberTile extends StatelessWidget {
     return MergeSemantics(
       child: ListTile(
         leading: ExcludeSemantics(
-          child: CircleAvatar(
-            backgroundColor: theme.colorScheme.secondaryContainer,
-            foregroundColor: theme.colorScheme.onSecondaryContainer,
-            child: Text(accountInitials(member.accountId, member.username)),
+          child: Container(
+            width: 40,
+            height: 40,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: colors.fill,
+              shape: BoxShape.circle,
+              border: Border.all(color: colors.ring),
+            ),
+            child: Text(
+              accountInitials(member.accountId, member.username),
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                color: colors.glyph,
+              ),
+            ),
           ),
         ),
-        title: Text(label),
-        subtitle: Text(details.join(' · ')),
+        title: Row(
+          children: <Widget>[
+            Flexible(
+              child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
+            const SizedBox(width: BoneSpacing.sm),
+            StatusPill(label: _roleLabel(member.role)),
+          ],
+        ),
+        subtitle: details.isEmpty
+            ? null
+            : Text(
+                details.join(' · '),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
         trailing: canRemove
             ? IconButton(
                 tooltip: 'Remove $label',
@@ -661,21 +698,6 @@ class _InlineError extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _Header extends StatelessWidget {
-  const _Header(this.title, this.theme);
-
-  final String title;
-  final ThemeData theme;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      header: true,
-      child: Text(title, style: theme.textTheme.titleMedium),
     );
   }
 }

@@ -46,6 +46,17 @@ void main() {
     expect(find.text('owner'), findsOneWidget);
     expect(find.byTooltip('Copy Account ID'), findsOneWidget);
     expect(find.byTooltip('Copy Current device'), findsOneWidget);
+
+    // The K2 · Bone profile screen is taller than the 800px test viewport --
+    // the avatar, the display-sized title and the section headers push the
+    // Encryption group below the fold, and a `ListView` does not build what it
+    // has not laid out. Scroll to it rather than weaken the assertion: the
+    // point of this one is that the honest "pending" notice is really on
+    // screen, and that guarantee survives scrolling.
+    await tester.scrollUntilVisible(
+      find.text('Encryption identity pending'),
+      200,
+    );
     expect(find.text('Encryption identity pending'), findsOneWidget);
   });
 }

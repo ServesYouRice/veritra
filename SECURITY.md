@@ -1,6 +1,6 @@
 # Security Policy
 
-Private Messenger is currently an MVP foundation and has not received a production security audit.
+Veritra is currently an MVP foundation and has not received a production security audit.
 
 ## Supported Versions
 

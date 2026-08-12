@@ -1,8 +1,17 @@
-# Veritra Branding — Logo Concepts
+# Veritra Branding
 
-Five exploratory logo directions for Veritra, an open-source, self-hostable,
-privacy-first E2EE messenger. These are starting points for discussion, not a
-final identity.
+**Decided: concept 06, the Chain Link V**, expanded into a full mark family in
+[`concept-06/`](concept-06/README.md). That is the one the app, the setup page
+and the README use. Everything else on this page is the exploration that
+produced it — kept as a record, not as live options.
+
+⚠️ **The palette below is superseded.** These marks were drawn on the
+Indigo→Sky gradient over an Ink ground. The app adopted **K2 · Bone** on
+2026-08-07, which drops that palette entirely — see
+[`../design.md`](../design.md) §K. The shipped app icon is
+`concept-06/veritra-app-icon-bone.svg`, the same geometry on the Bone palette;
+`concept-06/veritra-app-icon.svg` is the old brand and must not be exported.
+The remaining concepts on this page have not been redrawn.
 
 Open `preview.html` in a browser to see all concepts side by side on light and
 dark backgrounds.
@@ -22,7 +31,10 @@ dark backgrounds.
 | `wordmark.svg` | Wordmark lockup | Shield-V mark plus a lowercase "veritra" wordmark (system font placeholder). |
 | `wordmark-dark.svg` | Wordmark lockup (dark) | Same lockup with light text for dark backgrounds. |
 
-## Palette
+## Palette (superseded — historical)
+
+The palette these SVGs were drawn on. Superseded by K2 · Bone; see
+[`../design.md`](../design.md) §K for what the app actually uses.
 
 - Indigo `#6366F1` → Sky `#0EA5E9` gradient (trust, calm, technical)
 - Teal `#0D9488` (alternate accent)

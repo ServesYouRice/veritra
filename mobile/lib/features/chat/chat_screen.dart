@@ -1,11 +1,15 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
 import '../../core/models.dart';
 import '../../ui/format.dart';
+import '../../ui/motion.dart';
+import '../../ui/tokens.dart';
 import '../../ui/widgets/empty_state.dart';
+import '../../ui/widgets/status_pill.dart';
 import 'chat_list_screen.dart';
 import 'conversation_details_screen.dart';
 
@@ -67,6 +71,7 @@ class _ChatScreenState extends State<ChatScreen> {
     return AnimatedBuilder(
       animation: widget.state,
       builder: (context, _) {
+        final theme = Theme.of(context);
         final conversation = widget.state.conversations
             .where((item) => item.id == widget.conversationId)
             .firstOrNull;
@@ -75,12 +80,19 @@ class _ChatScreenState extends State<ChatScreen> {
         return Scaffold(
           appBar: AppBar(
             automaticallyImplyLeading: widget.showBackButton,
+            titleSpacing: widget.showBackButton ? 0 : BoneSpacing.gutter,
             title: conversation == null
                 ? const Text('Conversation')
                 : Row(
                     children: <Widget>[
-                      conversationAvatar(context, conversation, radius: 16),
-                      const SizedBox(width: 12),
+                      conversationAvatar(
+                        context,
+                        conversation,
+                        radius: 17,
+                        // Only the pushed layout: see conversationAvatar.
+                        hero: widget.showBackButton,
+                      ),
+                      const SizedBox(width: BoneSpacing.md),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -91,11 +103,14 @@ class _ChatScreenState extends State<ChatScreen> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
-                            if (widget.state.isMuted(conversation.id))
-                              Text(
-                                'Muted',
-                                style: Theme.of(context).textTheme.labelSmall,
-                              ),
+                            // The subtitle line is the honest one-word status
+                            // of the thread, in the micro style.
+                            Text(
+                              widget.state.isMuted(conversation.id)
+                                  ? 'MUTED · ENCRYPTED'
+                                  : 'ENCRYPTED',
+                              style: theme.textTheme.labelSmall,
+                            ),
                           ],
                         ),
                       ),
@@ -106,8 +121,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 IconButton(
                   tooltip: 'Conversation details',
                   onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => ConversationDetailsScreen(
+                    sharedAxisRoute<void>(
+                      (_) => ConversationDetailsScreen(
                         state: widget.state,
                         conversationId: conversation.id,
                       ),
@@ -115,6 +130,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                   icon: const Icon(Icons.info_outline),
                 ),
+              const SizedBox(width: BoneSpacing.sm),
             ],
           ),
           body: Column(
@@ -238,13 +254,13 @@ class _MessageLoadError extends StatelessWidget {
               size: 48,
               color: theme.colorScheme.onSurfaceVariant,
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: BoneSpacing.lg),
             Text(
               'Couldn’t load messages',
               style: theme.textTheme.titleMedium,
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: BoneSpacing.sm),
             Text(
               message,
               style: theme.textTheme.bodyMedium?.copyWith(
@@ -252,7 +268,7 @@ class _MessageLoadError extends StatelessWidget {
               ),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: BoneSpacing.lg),
             FilledButton.icon(
               onPressed: onRetry,
               icon: const Icon(Icons.refresh),
@@ -312,7 +328,10 @@ class _MessageList extends StatelessWidget {
     return ListView.builder(
       controller: controller,
       reverse: true,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+      padding: const EdgeInsets.symmetric(
+        horizontal: BoneSpacing.gutter,
+        vertical: BoneSpacing.lg,
+      ),
       itemCount: pending.length + messages.length + footerCount,
       itemBuilder: (context, index) {
         if (index == pending.length + messages.length) {
@@ -368,7 +387,7 @@ class _HistoryFooter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 16),
+      padding: const EdgeInsets.symmetric(vertical: BoneSpacing.lg),
       child: Center(
         child: loading
             ? const SizedBox.square(
@@ -395,6 +414,7 @@ class _PendingMessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final sending = state == OutboxDeliveryState.sending;
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return Semantics(
       liveRegion: true,
       label: sending
@@ -402,35 +422,43 @@ class _PendingMessageBubble extends StatelessWidget {
           : 'Encrypted message failed to send. Retry available.',
       child: Align(
         alignment: Alignment.centerRight,
-        child: Card(
+        child: Container(
           margin: const EdgeInsets.symmetric(vertical: 3),
-          color: sending
-              ? theme.colorScheme.primaryContainer
-              : theme.colorScheme.errorContainer,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                if (sending)
-                  const SizedBox.square(
-                    dimension: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                else
-                  Icon(
-                    Icons.error_outline,
-                    size: 18,
-                    color: theme.colorScheme.onErrorContainer,
-                  ),
-                const SizedBox(width: 8),
-                Text(sending ? 'Sending encrypted message' : 'Send failed'),
-                if (!sending) ...<Widget>[
-                  const SizedBox(width: 4),
-                  TextButton(onPressed: onRetry, child: const Text('Retry')),
-                ],
-              ],
+          padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
+          decoration: BoxDecoration(
+            color:
+                sending ? scheme.surfaceContainerHigh : scheme.errorContainer,
+            borderRadius: _bubbleRadius(mine: true),
+            border: Border.all(
+              color: sending ? scheme.outlineVariant : scheme.error,
             ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              if (sending)
+                const SizedBox.square(
+                  dimension: 15,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else
+                Icon(
+                  Icons.error_outline,
+                  size: 18,
+                  color: scheme.onErrorContainer,
+                ),
+              const SizedBox(width: BoneSpacing.sm),
+              Text(
+                sending ? 'Sending encrypted message' : 'Send failed',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: sending ? scheme.onSurface : scheme.onErrorContainer,
+                ),
+              ),
+              if (!sending) ...<Widget>[
+                const SizedBox(width: BoneSpacing.xs),
+                TextButton(onPressed: onRetry, child: const Text('Retry')),
+              ],
+            ],
           ),
         ),
       ),
@@ -445,21 +473,55 @@ class _DaySeparator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Center(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(999),
-          ),
-          child: Text(label, style: theme.textTheme.labelSmall),
-        ),
-      ),
+      padding: const EdgeInsets.symmetric(vertical: BoneSpacing.md),
+      // The date is already the spoken form, so the pill needs no separate
+      // semantics label — only the uppercasing, which StatusPill does.
+      child: Center(child: StatusPill(label: label)),
     );
   }
+}
+
+/// Corner radii for a bubble: square-ish on the tail corner, [BoneRadii.bubble]
+/// everywhere else.
+BorderRadius _bubbleRadius({required bool mine}) => BorderRadius.only(
+      topLeft: const Radius.circular(BoneRadii.bubble),
+      topRight: const Radius.circular(BoneRadii.bubble),
+      bottomLeft: Radius.circular(mine ? BoneRadii.bubble : 5),
+      bottomRight: Radius.circular(mine ? 5 : BoneRadii.bubble),
+    );
+
+/// Widths of the redacted bars that stand in for an undecryptable message,
+/// as fractions of the bubble's content width.
+///
+/// **The widths are bucketed on purpose. Do not make this linear in
+/// [byteLength].** A bar whose width tracked the ciphertext length exactly
+/// would make the length of every message readable over the user's shoulder —
+/// a real, if small, regression against a threat this app takes seriously, and
+/// one that today's identical-width bubbles happen not to have. Six buckets
+/// keep the rhythm of a real conversation while leaking only which of six
+/// ranges a message falls in.
+///
+/// The thresholds are coarse by design and are byte counts of the whole
+/// envelope, which carries a large constant crypto overhead; they are not
+/// character counts and should not be tuned to look like them.
+///
+/// Capped at three lines so one long message cannot dominate the thread.
+List<double> redactedBarFractions(int byteLength) {
+  const thresholds = <int>[64, 128, 224, 384, 640];
+  var bucket = 0;
+  while (bucket < thresholds.length && byteLength > thresholds[bucket]) {
+    bucket++;
+  }
+  const shapes = <List<double>>[
+    <double>[0.30],
+    <double>[0.46],
+    <double>[0.64],
+    <double>[0.88],
+    <double>[1, 0.58],
+    <double>[1, 1, 0.71],
+  ];
+  return shapes[bucket];
 }
 
 class _MessageBubble extends StatelessWidget {
@@ -475,14 +537,22 @@ class _MessageBubble extends StatelessWidget {
   final String senderLabel;
   final bool showSender;
 
+  /// Horizontal padding inside the bubble, doubled — the amount the bars have
+  /// to give back to the container.
+  static const double _insetX = 28;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final deleted = message.deletedAt != null;
+    // Bone keeps sent bubbles **on tone**: a near-white accent tiled down a
+    // whole column would blow out the plum ground the direction is built on
+    // (`docs/design.md` §K). Mine and theirs separate by one tonal step
+    // plus a hairline, not by fill colour.
     final background =
-        mine ? scheme.primaryContainer : scheme.surfaceContainerHigh;
-    final foreground = mine ? scheme.onPrimaryContainer : scheme.onSurface;
+        mine ? scheme.surfaceContainerHigh : scheme.surfaceContainerLow;
+    final foreground = scheme.onSurface;
     final sender = mine ? 'you' : senderLabel;
     return Semantics(
       excludeSemantics: true,
@@ -490,91 +560,139 @@ class _MessageBubble extends StatelessWidget {
           ? 'Deleted message from $sender'
           : 'Encrypted message from $sender, '
               '${formatTimeOfDay(context, message.createdAt)}',
-      child: Align(
-        alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: Container(
-            margin: const EdgeInsets.symmetric(vertical: 3),
-            padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
-            decoration: BoxDecoration(
-              color: background,
-              borderRadius: BorderRadius.only(
-                topLeft: const Radius.circular(18),
-                topRight: const Radius.circular(18),
-                bottomLeft: Radius.circular(mine ? 18 : 4),
-                bottomRight: Radius.circular(mine ? 4 : 18),
-              ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                if (showSender)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 2),
-                    child: Text(
-                      senderLabel,
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: foreground.withValues(alpha: 0.8),
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                if (deleted)
-                  Text(
-                    'Message deleted',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: foreground.withValues(alpha: 0.7),
-                      fontStyle: FontStyle.italic,
-                    ),
-                  )
-                else
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      Icon(
-                        Icons.lock_outline,
-                        size: 16,
-                        color: foreground.withValues(alpha: 0.7),
-                      ),
-                      const SizedBox(width: 6),
-                      Flexible(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Taken from the layout rather than the window so the bubble is
+          // sized to its pane in the wide master-detail layout too.
+          final maxWidth = math.min(420.0, constraints.maxWidth * 0.82);
+          return Align(
+            alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: maxWidth),
+              child: Container(
+                margin: const EdgeInsets.symmetric(vertical: 3),
+                padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
+                decoration: BoxDecoration(
+                  color: background,
+                  borderRadius: _bubbleRadius(mine: mine),
+                  border: Border.all(color: scheme.outlineVariant),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    if (showSender)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 5),
                         child: Text(
-                          'Encrypted message',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: foreground,
+                          senderLabel,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
                           ),
                         ),
                       ),
-                    ],
-                  ),
-                const SizedBox(height: 4),
-                Text(
-                  _metaLine(context),
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: foreground.withValues(alpha: 0.6),
-                  ),
+                    if (deleted)
+                      Text(
+                        'Message deleted',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      )
+                    else
+                      _RedactedBars(
+                        byteLength: message.ciphertext.length,
+                        contentWidth: maxWidth - _insetX,
+                        color: foreground,
+                      ),
+                    const SizedBox(height: 6),
+                    _metaLine(context, scheme),
+                  ],
                 ),
-              ],
+              ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
 
   // The raw crypto protocol identifier is debug info and stays out of the
-  // reading surface; the lock icon already conveys the encrypted state.
-  String _metaLine(BuildContext context) {
+  // reading surface; the lock glyph carries the encrypted state now that the
+  // bars have replaced the `Encrypted message` row that used to say it in
+  // every single bubble.
+  Widget _metaLine(BuildContext context, ColorScheme scheme) {
+    final theme = Theme.of(context);
     final parts = <String>[
       formatTimeOfDay(context, message.createdAt),
       if (message.editedAt != null) 'edited',
     ];
-    return parts.join(' · ');
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        if (message.deletedAt == null) ...<Widget>[
+          Icon(
+            Icons.lock_outline,
+            size: 12,
+            color: scheme.onSurfaceVariant,
+          ),
+          const SizedBox(width: 4),
+        ],
+        Text(parts.join(' · '), style: theme.textTheme.labelSmall),
+      ],
+    );
   }
 }
 
+/// The ciphertext, drawn honestly: bars where the text would be.
+///
+/// This replaces the identical lock icon + `Encrypted message` row that used
+/// to render in every bubble and turned a thread into a stack of identical
+/// grey blocks (`docs/design.md` §2). It degrades correctly — when the
+/// mobile MLS path lands, real text replaces the bars in the same bubble and
+/// nothing else about the layout moves.
+class _RedactedBars extends StatelessWidget {
+  const _RedactedBars({
+    required this.byteLength,
+    required this.contentWidth,
+    required this.color,
+  });
+
+  final int byteLength;
+  final double contentWidth;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final fractions = redactedBarFractions(byteLength);
+    // Scale the bar height with the text scale so the block keeps the
+    // proportions of the text it stands in for at 200% scale.
+    final scale = MediaQuery.textScalerOf(context).scale(14.5) / 14.5;
+    final barHeight = 10.0 * scale;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        for (var i = 0; i < fractions.length; i++) ...<Widget>[
+          if (i > 0) SizedBox(height: 6.0 * scale),
+          Container(
+            width: math.max(24.0, contentWidth * fractions[i]),
+            height: barHeight,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: isDark ? 0.20 : 0.16),
+              borderRadius: BorderRadius.circular(barHeight / 2),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// One rounded pill holding the attachment button, the field and send
+/// (`docs/design.md` §4), rather than a bordered row of three separate
+/// Material controls.
 class _Composer extends StatelessWidget {
   const _Composer({
     required this.enabled,
@@ -591,45 +709,79 @@ class _Composer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: <Widget>[
-            IconButton(
-              // Attachment upload requires client-side encryption, which is
-              // not integrated yet; the control stays visible but disabled.
-              onPressed: null,
-              icon: const Icon(Icons.attach_file),
-              tooltip: 'Attachments require client crypto (coming soon)',
-            ),
-            Expanded(
-              child: TextField(
-                controller: controller,
-                enabled: enabled,
-                minLines: 1,
-                maxLines: 4,
-                textInputAction: TextInputAction.newline,
-                decoration: const InputDecoration(hintText: 'Message'),
+        padding: const EdgeInsets.fromLTRB(
+          BoneSpacing.md,
+          BoneSpacing.sm,
+          BoneSpacing.md,
+          BoneSpacing.md,
+        ),
+        child: Container(
+          padding: const EdgeInsets.all(BoneSpacing.xs),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainer,
+            borderRadius: BorderRadius.circular(BoneRadii.pill),
+            border: Border.all(color: scheme.outlineVariant),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: <Widget>[
+              IconButton(
+                // Attachment upload requires client-side encryption, which is
+                // not integrated yet; the control stays visible but disabled.
+                onPressed: null,
+                icon: const Icon(Icons.attach_file),
+                tooltip: 'Attachments require client crypto (coming soon)',
               ),
-            ),
-            const SizedBox(width: 8),
-            IconButton.filled(
-              onPressed: enabled && !busy ? () => onSend() : null,
-              icon: busy
-                  ? SizedBox.square(
-                      dimension: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: theme.colorScheme.onPrimary,
-                      ),
-                    )
-                  : const Icon(Icons.send),
-              tooltip: 'Send',
-            ),
-          ],
+              Expanded(
+                child: TextField(
+                  controller: controller,
+                  enabled: enabled,
+                  minLines: 1,
+                  maxLines: 4,
+                  textInputAction: TextInputAction.newline,
+                  style: theme.textTheme.bodyMedium,
+                  // The field's own fill and border are cleared: the pill
+                  // around it is the input surface now, and the theme's
+                  // `inputDecorationTheme` would otherwise draw a rounded box
+                  // inside a rounded box.
+                  decoration: InputDecoration(
+                    hintText: 'Message',
+                    filled: false,
+                    isDense: true,
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    disabledBorder: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: BoneSpacing.xs,
+                      vertical: 12,
+                    ),
+                    hintStyle: theme.textTheme.bodyMedium?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: BoneSpacing.xs),
+              IconButton.filled(
+                onPressed: enabled && !busy ? () => onSend() : null,
+                icon: busy
+                    ? SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: scheme.onPrimary,
+                        ),
+                      )
+                    : const Icon(Icons.send),
+                tooltip: 'Send',
+              ),
+            ],
+          ),
         ),
       ),
     );

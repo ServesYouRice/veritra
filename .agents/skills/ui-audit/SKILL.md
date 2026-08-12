@@ -28,7 +28,7 @@ CSS, and a DOM.
 Repos accumulate these faster than they retire them.
 
 - If the repo has a board or task directory (for example
-  `implementation/KANBAN.md`), add one card in that format and stop.
+  `docs/board.md`), add one card in that format and stop.
 - Otherwise put the plan in your reply to the user, not on disk.
 
 Either way the plan is four short parts: state of the UI in 2–3 sentences; a

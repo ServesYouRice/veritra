@@ -2,7 +2,13 @@ import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
 import '../../core/models.dart';
+import '../../ui/avatar.dart';
+import '../../ui/motion.dart';
+import '../../ui/tokens.dart';
 import '../../ui/widgets/empty_state.dart';
+import '../../ui/widgets/large_title_bar.dart';
+import '../../ui/widgets/section_header.dart';
+import '../../ui/widgets/tile_group.dart';
 import '../chat/chat_screen.dart';
 
 /// Communities: create a community, add channels, and open channel
@@ -20,10 +26,13 @@ class CommunityScreen extends StatelessWidget {
         state.conversations.where((c) => c.isChannel).toList();
     final hasContent =
         state.communities.isNotEmpty || channelConversations.isNotEmpty;
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
-      appBar: AppBar(title: const Text('Communities')),
+      appBar: const LargeTitleBar(title: 'Communities'),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: state.busy ? null : () => _createCommunity(context),
+        backgroundColor: scheme.primary,
+        foregroundColor: scheme.onPrimary,
         icon: const Icon(Icons.group_add_outlined),
         label: const Text('New community'),
       ),
@@ -65,31 +74,17 @@ class CommunityScreen extends StatelessWidget {
                           _openChannel(context, conversationId),
                     ),
                   if (_orphanChannels(state).isNotEmpty) ...<Widget>[
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
-                      child: Semantics(
-                        header: true,
-                        child: Text(
-                          'Other channels you are in',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                      ),
-                    ),
-                    Card(
-                      child: Column(
-                        children: <Widget>[
-                          for (final conversation in _orphanChannels(state))
-                            ListTile(
-                              leading: const Icon(Icons.tag),
-                              title: Text(conversation.title ?? 'Channel'),
-                              subtitle: const Text('Community channel'),
-                              trailing:
-                                  const Icon(Icons.chevron_right_outlined),
-                              onTap: () =>
-                                  _openChannel(context, conversation.id),
-                            ),
-                        ],
-                      ),
+                    const SectionHeader('Other channels you are in'),
+                    TileGroup(
+                      children: <Widget>[
+                        for (final conversation in _orphanChannels(state))
+                          ListTile(
+                            leading: const Icon(Icons.tag),
+                            title: Text(conversation.title ?? 'Channel'),
+                            subtitle: const Text('Community channel'),
+                            onTap: () => _openChannel(context, conversation.id),
+                          ),
+                      ],
                     ),
                   ],
                 ],
@@ -101,8 +96,8 @@ class CommunityScreen extends StatelessWidget {
   void _openChannel(BuildContext context, String conversationId) {
     state.selectAndPrepare(conversationId);
     Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => ChatScreen(
+      sharedAxisRoute<void>(
+        (_) => ChatScreen(
           state: state,
           conversationId: conversationId,
         ),
@@ -222,54 +217,59 @@ class _CommunityCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final channels =
         state.channelsByCommunity[community.id] ?? const <Channel>[];
+    final colors = avatarColorsFor(context, community.id);
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Card(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            ListTile(
-              // Decorative: the community name is already the tile title.
-              leading: ExcludeSemantics(
-                child: CircleAvatar(
-                  backgroundColor: theme.colorScheme.primaryContainer,
-                  child: Icon(
-                    Icons.groups_outlined,
-                    color: theme.colorScheme.onPrimaryContainer,
-                  ),
+      padding: const EdgeInsets.only(bottom: BoneSpacing.md),
+      child: TileGroup(
+        children: <Widget>[
+          ListTile(
+            // Decorative: the community name is already the tile title.
+            leading: ExcludeSemantics(
+              child: Container(
+                width: 40,
+                height: 40,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: colors.fill,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: colors.ring),
+                ),
+                child: Icon(
+                  Icons.groups_outlined,
+                  size: 18,
+                  color: colors.glyph,
                 ),
               ),
-              title: Text(community.name),
-              subtitle: Text(
-                channels.isEmpty
-                    ? 'No channels yet'
-                    : '${channels.length} channel'
-                        '${channels.length == 1 ? '' : 's'}',
-              ),
-              trailing: IconButton(
-                tooltip: 'New channel',
-                onPressed: state.busy ? null : onCreateChannel,
-                icon: const Icon(Icons.add),
-              ),
             ),
-            if (channels.isEmpty)
-              const ListTile(
-                dense: true,
-                leading: SizedBox(width: 40, child: Icon(Icons.tag)),
-                title: Text('No channels yet'),
-                subtitle: Text('Use + to create the first one.'),
-              ),
-            for (final channel in channels)
-              _ChannelTile(
-                channel: channel,
-                conversationId: _conversationIdFor(channel.id),
-                onOpen: onOpenChannel,
-              ),
-          ],
-        ),
+            title: Text(community.name),
+            subtitle: Text(
+              channels.isEmpty
+                  ? 'No channels yet'
+                  : '${channels.length} channel'
+                      '${channels.length == 1 ? '' : 's'}',
+            ),
+            trailing: IconButton(
+              tooltip: 'New channel',
+              onPressed: state.busy ? null : onCreateChannel,
+              icon: const Icon(Icons.add),
+            ),
+          ),
+          if (channels.isEmpty)
+            const ListTile(
+              dense: true,
+              leading: SizedBox(width: 40, child: Icon(Icons.tag)),
+              title: Text('No channels yet'),
+              subtitle: Text('Use + to create the first one.'),
+            ),
+          for (final channel in channels)
+            _ChannelTile(
+              channel: channel,
+              conversationId: _conversationIdFor(channel.id),
+              onOpen: onOpenChannel,
+            ),
+        ],
       ),
     );
   }
@@ -304,7 +304,6 @@ class _ChannelTile extends StatelessWidget {
       leading: const SizedBox(width: 40, child: Icon(Icons.tag)),
       title: Text(channel.name),
       subtitle: id == null ? const Text('You are not a member yet') : null,
-      trailing: id == null ? null : const Icon(Icons.chevron_right_outlined),
       onTap: id == null ? null : () => onOpen(id),
     );
   }

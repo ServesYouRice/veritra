@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Veritra app icon">
+  <!-- K2 · Bone app icon. Same geometry as veritra-app-icon.svg; the palette
+       differs because this direction drops the Indigo/Sky gradient entirely
+       and spends no accent hue. Ground is the Bone dark canvas (#16111F) and
+       the mark is the Bone accent (#EDE4DA) — 14.0:1, per docs/design.md §K.
+
+       The PNG exports in exports/ and under mobile/android and mobile/ios were
+       rendered from this geometry, not from this file: no SVG rasteriser was
+       available. Re-export with any rasteriser and the result should match. -->
+  <defs>
+    <mask id="boneTuckUnder">
+      <rect x="-512" y="-512" width="2048" height="2048" fill="#fff"/>
+      <rect x="295.5" y="93" width="90" height="290" rx="45" fill="none" stroke="#000" stroke-width="54"
+            transform="rotate(35 340.5 238)"/>
+    </mask>
+  </defs>
+  <!-- Squircle background. iOS exports drop this and go full-bleed opaque:
+       the system applies its own mask and rejects an alpha channel. -->
+  <rect x="16" y="16" width="480" height="480" rx="120" fill="#16111F"/>
+  <!-- Mark, scaled and optically centered: its centre is y=238, not 256. -->
+  <g transform="translate(256 256) scale(0.82) translate(-256 -238)">
+    <g mask="url(#boneTuckUnder)">
+      <rect x="126.5" y="93" width="90" height="290" rx="45" fill="none" stroke="#EDE4DA" stroke-width="30"
+            transform="rotate(-35 171.5 238)"/>
+    </g>
+    <rect x="295.5" y="93" width="90" height="290" rx="45" fill="none" stroke="#EDE4DA" stroke-width="30"
+          transform="rotate(35 340.5 238)"/>
+  </g>
+</svg>

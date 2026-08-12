@@ -7,6 +7,10 @@ import 'package:flutter/material.dart';
 
 import '../../core/api_client.dart';
 import '../../core/app_state.dart';
+import '../../core/models.dart';
+import '../../ui/tokens.dart';
+import '../../ui/widgets/section_header.dart';
+import '../../ui/widgets/veritra_mark.dart';
 import 'qr_scan_screen.dart';
 
 enum AuthMode { owner, signIn, join, linkDevice }
@@ -96,231 +100,89 @@ class _ConnectScreenState extends State<ConnectScreen> {
               key: formKey,
               child: ListView(
                 shrinkWrap: true,
-                padding: const EdgeInsets.all(24),
+                padding: const EdgeInsets.all(BoneSpacing.xl),
                 children: <Widget>[
-                  _BrandHeader(theme: theme),
-                  const SizedBox(height: 24),
-                  SegmentedButton<AuthMode>(
-                    segments: <ButtonSegment<AuthMode>>[
-                      ButtonSegment<AuthMode>(
-                        value: AuthMode.owner,
-                        label: const Text('Owner'),
-                        // Owner creation is rejected once an instance is set
-                        // up, so don't offer a mode that can only fail.
-                        enabled: setupRequired != false,
-                      ),
-                      ButtonSegment<AuthMode>(
-                        value: AuthMode.signIn,
-                        label: const Text('Sign in'),
-                        enabled: setupRequired != true,
-                      ),
-                      ButtonSegment<AuthMode>(
-                        value: AuthMode.join,
-                        label: const Text('Join'),
-                        enabled: setupRequired != true,
-                      ),
-                      ButtonSegment<AuthMode>(
-                        value: AuthMode.linkDevice,
-                        label: const Text('Link'),
-                        enabled: setupRequired != true,
-                      ),
-                    ],
-                    selected: <AuthMode>{mode},
-                    onSelectionChanged: (value) =>
-                        setState(() => mode = value.first),
+                  const _BrandHeader(),
+                  const SizedBox(height: BoneSpacing.xl + BoneSpacing.sm),
+                  // One path, chosen by the probe rather than asked for. The
+                  // four-way SegmentedButton this replaces read as a debug
+                  // menu and was the first thing a new user saw
+                  // (`docs/design.md` §5).
+                  SectionHeader(
+                    _modeTitle,
+                    padding: const EdgeInsets.only(bottom: BoneSpacing.xs),
                   ),
-                  const SizedBox(height: 8),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Text(
-                      _modeDescription,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
+                  Text(
+                    _modeDescription,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
                     ),
                   ),
+                  const SizedBox(height: BoneSpacing.xl),
                   if (setupRequired == true) ...<Widget>[
-                    Card(
-                      color: theme.colorScheme.secondaryContainer,
-                      child: ListTile(
-                        leading: Icon(
-                          Icons.rocket_launch_outlined,
-                          color: theme.colorScheme.onSecondaryContainer,
-                        ),
-                        title: Text(
-                          'Fresh instance detected',
-                          style: TextStyle(
-                            color: theme.colorScheme.onSecondaryContainer,
-                          ),
-                        ),
-                        subtitle: Text(
-                          'No owner account exists yet — create it below.',
-                          style: TextStyle(
-                            color: theme.colorScheme.onSecondaryContainer,
-                          ),
-                        ),
-                      ),
+                    const _Callout(
+                      icon: Icons.rocket_launch_outlined,
+                      title: 'Fresh instance detected',
+                      message: 'No owner account exists yet — create it '
+                          'below.',
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: BoneSpacing.lg),
                   ],
-                  TextFormField(
-                    controller: url,
-                    keyboardType: TextInputType.url,
-                    autocorrect: false,
-                    autovalidateMode: AutovalidateMode.onUserInteraction,
-                    validator: _validateUrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Instance URL',
-                      prefixIcon: Icon(Icons.dns_outlined),
+                  _Field(
+                    label: 'Instance URL',
+                    child: TextFormField(
+                      controller: url,
+                      keyboardType: TextInputType.url,
+                      autocorrect: false,
+                      autovalidateMode: AutovalidateMode.onUserInteraction,
+                      validator: _validateUrl,
+                      decoration: const InputDecoration(
+                        hintText: 'https://chat.example.org',
+                        prefixIcon: Icon(Icons.dns_outlined),
+                      ),
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  if (mode == AuthMode.linkDevice) ...<Widget>[
-                    TextFormField(
-                      controller: linkCode,
-                      autocorrect: false,
-                      autovalidateMode: AutovalidateMode.onUserInteraction,
-                      validator: (value) =>
-                          value == null || value.trim().isEmpty
-                              ? 'Enter the link code from your existing device.'
-                              : null,
-                      decoration: const InputDecoration(
-                        labelText: 'Link code',
-                        prefixIcon: Icon(Icons.qr_code_2),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    OutlinedButton.icon(
-                      onPressed: widget.state.busy ? null : _scanLinkCode,
-                      icon: const Icon(Icons.qr_code_scanner),
-                      label: const Text('Scan QR code'),
-                    ),
-                    if (pendingLink != null) ...<Widget>[
-                      const SizedBox(height: 12),
-                      Card(
-                        child: ListTile(
-                          leading: const Icon(Icons.verified_outlined),
-                          title: const Text('Verification code'),
-                          subtitle: SelectableText(
-                            pendingLink.verificationCode,
-                            style: theme.textTheme.headlineSmall,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Confirm this code on your already-linked device, '
-                        'then check approval below.',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ] else ...<Widget>[
-                    if (mode == AuthMode.join) ...<Widget>[
-                      TextFormField(
-                        controller: inviteCode,
-                        autocorrect: false,
-                        autovalidateMode: AutovalidateMode.onUserInteraction,
-                        validator: (value) =>
-                            value == null || value.trim().isEmpty
-                                ? 'Enter the invite code you received.'
-                                : null,
-                        decoration: const InputDecoration(
-                          labelText: 'Invite code',
-                          prefixIcon: Icon(Icons.card_giftcard_outlined),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                    ],
-                    TextFormField(
-                      controller: username,
-                      autocorrect: false,
-                      autovalidateMode: AutovalidateMode.onUserInteraction,
-                      validator: (value) =>
-                          value == null || value.trim().isEmpty
-                              ? 'Enter a username.'
-                              : null,
-                      decoration: const InputDecoration(
-                        labelText: 'Username',
-                        prefixIcon: Icon(Icons.person_outline),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: password,
-                      obscureText: !showPassword,
-                      autovalidateMode: AutovalidateMode.onUserInteraction,
-                      validator: _validatePassword,
-                      decoration: InputDecoration(
-                        labelText: 'Password',
-                        helperText:
-                            _isRegistration ? 'At least 12 characters.' : null,
-                        prefixIcon: const Icon(Icons.lock_outline),
-                        suffixIcon: IconButton(
-                          tooltip:
-                              showPassword ? 'Hide password' : 'Show password',
-                          icon: Icon(showPassword
-                              ? Icons.visibility_off_outlined
-                              : Icons.visibility_outlined),
-                          onPressed: () =>
-                              setState(() => showPassword = !showPassword),
-                        ),
-                      ),
-                    ),
-                    if (_isRegistration) ...<Widget>[
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: passwordConfirmation,
-                        obscureText: !showPassword,
-                        autovalidateMode: AutovalidateMode.onUserInteraction,
-                        validator: (value) => value == password.text
-                            ? null
-                            : 'Passwords do not match.',
-                        decoration: const InputDecoration(
-                          labelText: 'Confirm password',
-                          prefixIcon: Icon(Icons.lock_reset_outlined),
-                        ),
-                      ),
-                    ],
-                    if (mode == AuthMode.owner) ...<Widget>[
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: setupToken,
-                        obscureText: true,
-                        autocorrect: false,
-                        decoration: const InputDecoration(
-                          labelText: 'Setup token',
-                          helperText: 'Required unless connecting on loopback.',
-                          prefixIcon: Icon(Icons.vpn_key_outlined),
-                        ),
-                      ),
-                    ],
-                  ],
-                  const SizedBox(height: 20),
-                  if (mode == AuthMode.linkDevice && pendingLink != null)
-                    FilledButton.icon(
-                      onPressed: widget.state.busy ? null : _completeDeviceLink,
-                      icon: const Icon(Icons.sync),
-                      label: const Text('Check approval'),
-                    )
+                  const SizedBox(height: BoneSpacing.lg),
+                  if (mode == AuthMode.linkDevice)
+                    ..._linkDeviceFields(theme, pendingLink)
                   else
-                    FilledButton.icon(
-                      onPressed: widget.state.busy ? null : _submit,
-                      icon: widget.state.busy
-                          ? const SizedBox.square(
-                              dimension: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : Icon(mode == AuthMode.linkDevice
-                              ? Icons.qr_code_2
-                              : Icons.login),
-                      label: Text(_submitLabel),
-                    ),
+                    ..._credentialFields(),
+                  const SizedBox(height: BoneSpacing.xl),
+                  SizedBox(
+                    width: double.infinity,
+                    child: mode == AuthMode.linkDevice && pendingLink != null
+                        ? FilledButton.icon(
+                            onPressed:
+                                widget.state.busy ? null : _completeDeviceLink,
+                            icon: const Icon(Icons.sync),
+                            label: const Text('Check approval'),
+                          )
+                        : FilledButton.icon(
+                            onPressed: widget.state.busy ? null : _submit,
+                            icon: widget.state.busy
+                                ? const SizedBox.square(
+                                    dimension: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : Icon(mode == AuthMode.linkDevice
+                                    ? Icons.qr_code_2
+                                    : Icons.login),
+                            label: Text(_submitLabel),
+                          ),
+                  ),
                   if (widget.state.error != null) ...<Widget>[
-                    const SizedBox(height: 16),
+                    const SizedBox(height: BoneSpacing.lg),
                     _ErrorCard(message: widget.state.error!),
                   ],
+                  const SizedBox(height: BoneSpacing.sm),
+                  Center(
+                    child: TextButton(
+                      onPressed: _showOtherWays,
+                      child: const Text('Other ways to connect'),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -328,6 +190,186 @@ class _ConnectScreenState extends State<ConnectScreen> {
         ),
       ),
     );
+  }
+
+  List<Widget> _linkDeviceFields(ThemeData theme, DeviceLink? pendingLink) {
+    return <Widget>[
+      _Field(
+        label: 'Link code',
+        child: TextFormField(
+          controller: linkCode,
+          autocorrect: false,
+          autovalidateMode: AutovalidateMode.onUserInteraction,
+          validator: (value) => value == null || value.trim().isEmpty
+              ? 'Enter the link code from your existing device.'
+              : null,
+          style: BoneType.mono,
+          decoration: const InputDecoration(
+            hintText: 'From Settings → Link device',
+            prefixIcon: Icon(Icons.qr_code_2),
+          ),
+        ),
+      ),
+      const SizedBox(height: BoneSpacing.md),
+      OutlinedButton.icon(
+        onPressed: widget.state.busy ? null : _scanLinkCode,
+        icon: const Icon(Icons.qr_code_scanner),
+        label: const Text('Scan QR code'),
+      ),
+      if (pendingLink != null) ...<Widget>[
+        const SizedBox(height: BoneSpacing.lg),
+        _Callout(
+          icon: Icons.verified_outlined,
+          title: 'Verification code',
+          message: 'Confirm this code on your already-linked device, then '
+              'check approval below.',
+          child: SelectableText(
+            pendingLink.verificationCode,
+            style: BoneType.mono.copyWith(
+              fontSize: 22,
+              letterSpacing: 3,
+              color: theme.colorScheme.onSurface,
+            ),
+          ),
+        ),
+      ],
+    ];
+  }
+
+  List<Widget> _credentialFields() {
+    return <Widget>[
+      if (mode == AuthMode.join) ...<Widget>[
+        _Field(
+          label: 'Invite code',
+          child: TextFormField(
+            controller: inviteCode,
+            autocorrect: false,
+            autovalidateMode: AutovalidateMode.onUserInteraction,
+            validator: (value) => value == null || value.trim().isEmpty
+                ? 'Enter the invite code you received.'
+                : null,
+            style: BoneType.mono,
+            decoration: const InputDecoration(
+              hintText: 'From an admin on this instance',
+              prefixIcon: Icon(Icons.card_giftcard_outlined),
+            ),
+          ),
+        ),
+        const SizedBox(height: BoneSpacing.lg),
+      ],
+      _Field(
+        label: 'Username',
+        child: TextFormField(
+          controller: username,
+          autocorrect: false,
+          autovalidateMode: AutovalidateMode.onUserInteraction,
+          validator: (value) => value == null || value.trim().isEmpty
+              ? 'Enter a username.'
+              : null,
+          decoration: const InputDecoration(
+            hintText: 'Your name on this instance',
+            prefixIcon: Icon(Icons.person_outline),
+          ),
+        ),
+      ),
+      const SizedBox(height: BoneSpacing.lg),
+      _Field(
+        label: 'Password',
+        child: TextFormField(
+          controller: password,
+          obscureText: !showPassword,
+          autovalidateMode: AutovalidateMode.onUserInteraction,
+          validator: _validatePassword,
+          decoration: InputDecoration(
+            hintText: _isRegistration ? 'At least 12 characters' : null,
+            prefixIcon: const Icon(Icons.lock_outline),
+            suffixIcon: IconButton(
+              tooltip: showPassword ? 'Hide password' : 'Show password',
+              icon: Icon(showPassword
+                  ? Icons.visibility_off_outlined
+                  : Icons.visibility_outlined),
+              onPressed: () => setState(() => showPassword = !showPassword),
+            ),
+          ),
+        ),
+      ),
+      if (_isRegistration) ...<Widget>[
+        const SizedBox(height: BoneSpacing.lg),
+        _Field(
+          label: 'Confirm password',
+          child: TextFormField(
+            controller: passwordConfirmation,
+            obscureText: !showPassword,
+            autovalidateMode: AutovalidateMode.onUserInteraction,
+            validator: (value) =>
+                value == password.text ? null : 'Passwords do not match.',
+            decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.lock_reset_outlined),
+            ),
+          ),
+        ),
+      ],
+      if (mode == AuthMode.owner) ...<Widget>[
+        const SizedBox(height: BoneSpacing.lg),
+        _Field(
+          label: 'Setup token',
+          child: TextFormField(
+            controller: setupToken,
+            obscureText: true,
+            autocorrect: false,
+            decoration: const InputDecoration(
+              hintText: 'Required unless connecting on loopback',
+              prefixIcon: Icon(Icons.vpn_key_outlined),
+            ),
+          ),
+        ),
+      ],
+    ];
+  }
+
+  /// The three paths that are not the probed one, behind a single link.
+  ///
+  /// The gating is the same as the old segmented button's `enabled` flags:
+  /// a mode that can only fail against this instance is not offered.
+  Future<void> _showOtherWays() async {
+    final chosen = await showModalBottomSheet<AuthMode>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        final available = <AuthMode>[
+          if (setupRequired != false) AuthMode.owner,
+          if (setupRequired != true) AuthMode.signIn,
+          if (setupRequired != true) AuthMode.join,
+          if (setupRequired != true) AuthMode.linkDevice,
+        ]..remove(mode);
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: BoneSpacing.xl),
+                child: SectionHeader('Other ways to connect'),
+              ),
+              for (final option in available)
+                ListTile(
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: BoneSpacing.xl,
+                  ),
+                  leading: Icon(_modeIcon(option)),
+                  title: Text(_titleFor(option)),
+                  subtitle: Text(_descriptionFor(option)),
+                  onTap: () => Navigator.of(sheetContext).pop(option),
+                ),
+              const SizedBox(height: BoneSpacing.lg),
+            ],
+          ),
+        );
+      },
+    );
+    if (chosen != null && mounted) {
+      setState(() => mode = chosen);
+    }
   }
 
   bool get _isRegistration => mode == AuthMode.owner || mode == AuthMode.join;
@@ -366,7 +408,24 @@ class _ConnectScreenState extends State<ConnectScreen> {
     return null;
   }
 
-  String get _modeDescription {
+  String get _modeTitle => _titleFor(mode);
+
+  String get _modeDescription => _descriptionFor(mode);
+
+  static String _titleFor(AuthMode mode) {
+    switch (mode) {
+      case AuthMode.owner:
+        return 'Create the owner account';
+      case AuthMode.signIn:
+        return 'Sign in';
+      case AuthMode.join:
+        return 'Join with an invite';
+      case AuthMode.linkDevice:
+        return 'Link this device';
+    }
+  }
+
+  static String _descriptionFor(AuthMode mode) {
     switch (mode) {
       case AuthMode.owner:
         return 'First run only: create the owner account on a fresh '
@@ -380,6 +439,19 @@ class _ConnectScreenState extends State<ConnectScreen> {
       case AuthMode.linkDevice:
         return 'Enter the link code generated on your existing device '
             '(Settings → Link device).';
+    }
+  }
+
+  static IconData _modeIcon(AuthMode mode) {
+    switch (mode) {
+      case AuthMode.owner:
+        return Icons.rocket_launch_outlined;
+      case AuthMode.signIn:
+        return Icons.login;
+      case AuthMode.join:
+        return Icons.card_giftcard_outlined;
+      case AuthMode.linkDevice:
+        return Icons.qr_code_2;
     }
   }
 
@@ -498,35 +570,60 @@ class _ConnectScreenState extends State<ConnectScreen> {
   }
 }
 
-class _BrandHeader extends StatelessWidget {
-  const _BrandHeader({required this.theme});
+/// A field with its label above the box in the `micro` style, rather than a
+/// Material `labelText` notched into the border (`docs/design.md` §5).
+///
+/// The label is a plain `Text`, so a screen reader meets it immediately before
+/// the field it names. Every field also carries a `hintText`, so a field
+/// reached directly still announces what it wants — dropping `labelText` is
+/// what costs the built-in accessible name, and the hint is what buys it back.
+class _Field extends StatelessWidget {
+  const _Field({required this.label, required this.child});
 
-  final ThemeData theme;
+  final String label;
+  final Widget child;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.only(
+            left: BoneSpacing.xs,
+            bottom: BoneSpacing.sm,
+          ),
+          child: Text(
+            label.toUpperCase(),
+            style: theme.textTheme.labelSmall,
+          ),
+        ),
+        child,
+      ],
+    );
+  }
+}
+
+/// Brand moment. One of the few places a direction this restrained shows the
+/// mark at all, so it gets the wordmark and a line of positioning rather than
+/// a tinted circle with a stock shield in it.
+class _BrandHeader extends StatelessWidget {
+  const _BrandHeader();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Column(
       children: <Widget>[
-        ExcludeSemantics(
-          child: CircleAvatar(
-            radius: 36,
-            backgroundColor: theme.colorScheme.primaryContainer,
-            child: Icon(
-              Icons.shield_outlined,
-              size: 36,
-              color: theme.colorScheme.onPrimaryContainer,
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
+        VeritraMark(size: 72, color: theme.colorScheme.onSurface),
+        const SizedBox(height: BoneSpacing.lg),
         Text(
           'Veritra',
-          style: theme.textTheme.headlineMedium?.copyWith(
-            fontWeight: FontWeight.w700,
-          ),
+          style: theme.textTheme.displayMedium,
           textAlign: TextAlign.center,
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: BoneSpacing.xs),
         Text(
           'Self-hosted, end-to-end encrypted messaging',
           style: theme.textTheme.bodyMedium?.copyWith(
@@ -539,6 +636,64 @@ class _BrandHeader extends StatelessWidget {
   }
 }
 
+/// A bordered note on tone. Replaces the filled `secondaryContainer` cards,
+/// which in this direction would be a block of near-white.
+class _Callout extends StatelessWidget {
+  const _Callout({
+    required this.icon,
+    required this.title,
+    required this.message,
+    this.child,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+  final Widget? child;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(BoneSpacing.lg),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(BoneRadii.lg),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          ExcludeSemantics(
+            child: Icon(icon, size: 20, color: scheme.onSurfaceVariant),
+          ),
+          const SizedBox(width: BoneSpacing.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(title, style: theme.textTheme.titleMedium),
+                const SizedBox(height: BoneSpacing.xs),
+                Text(
+                  message,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+                if (child != null) ...<Widget>[
+                  const SizedBox(height: BoneSpacing.md),
+                  child!,
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ErrorCard extends StatelessWidget {
   const _ErrorCard({required this.message});
 
@@ -546,23 +701,29 @@ class _ErrorCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Card(
-      color: scheme.errorContainer,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          children: <Widget>[
-            Icon(Icons.error_outline, color: scheme.onErrorContainer),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                message,
-                style: TextStyle(color: scheme.onErrorContainer),
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(BoneSpacing.md),
+      decoration: BoxDecoration(
+        color: scheme.errorContainer,
+        borderRadius: BorderRadius.circular(BoneRadii.md),
+        border: Border.all(color: scheme.error),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(Icons.error_outline, size: 20, color: scheme.onErrorContainer),
+          const SizedBox(width: BoneSpacing.md),
+          Expanded(
+            child: Text(
+              message,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: scheme.onErrorContainer,
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

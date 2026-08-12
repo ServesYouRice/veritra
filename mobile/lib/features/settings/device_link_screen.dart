@@ -4,6 +4,10 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../core/app_state.dart';
 import '../../ui/format.dart';
+import '../../ui/tokens.dart';
+import '../../ui/widgets/large_title_bar.dart';
+import '../../ui/widgets/status_pill.dart';
+import '../../ui/widgets/tile_group.dart';
 
 class DeviceLinkScreen extends StatelessWidget {
   const DeviceLinkScreen({required this.state, super.key});
@@ -18,9 +22,14 @@ class DeviceLinkScreen extends StatelessWidget {
         final theme = Theme.of(context);
         final link = state.activeDeviceLink;
         return Scaffold(
-          appBar: AppBar(title: const Text('Link a device')),
+          appBar: const LargeTitleBar(title: 'Link a device'),
           body: ListView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(
+              BoneSpacing.gutter,
+              BoneSpacing.sm,
+              BoneSpacing.gutter,
+              BoneSpacing.xl,
+            ),
             children: <Widget>[
               Text(
                 'Generate a one-time code, enter it on the new device, then '
@@ -39,89 +48,99 @@ class DeviceLinkScreen extends StatelessWidget {
               if (link != null) ...<Widget>[
                 if (link.linkUri != null &&
                     link.state == 'pending') ...<Widget>[
-                  const SizedBox(height: 16),
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        children: <Widget>[
-                          Semantics(
-                            label: 'QR code containing the device link. '
-                                'Scan it with the new device.',
-                            child: Container(
-                              // QR codes need a light, uniform quiet zone to
-                              // scan reliably, independent of app theme.
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: QrImageView(
-                                data: link.linkUri!,
-                                version: QrVersions.auto,
-                                size: 220,
+                  const SizedBox(height: BoneSpacing.lg),
+                  TileGroup(
+                    children: <Widget>[
+                      Padding(
+                        padding: const EdgeInsets.all(BoneSpacing.lg),
+                        child: Column(
+                          children: <Widget>[
+                            Semantics(
+                              label: 'QR code containing the device link. '
+                                  'Scan it with the new device.',
+                              child: Container(
+                                // QR codes need a light, uniform quiet zone
+                                // to scan reliably, independent of app theme.
+                                padding: const EdgeInsets.all(BoneSpacing.md),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius:
+                                      BorderRadius.circular(BoneRadii.md),
+                                ),
+                                child: QrImageView(
+                                  data: link.linkUri!,
+                                  version: QrVersions.auto,
+                                  size: 220,
+                                ),
                               ),
                             ),
-                          ),
-                          const SizedBox(height: 12),
-                          Text(
-                            'Scan with the new device, or type the link code '
-                            'below.',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant,
+                            const SizedBox(height: BoneSpacing.md),
+                            Text(
+                              'Scan with the new device, or type the link '
+                              'code below.',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                              textAlign: TextAlign.center,
                             ),
-                            textAlign: TextAlign.center,
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
+                    ],
                   ),
                 ],
-                const SizedBox(height: 16),
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Column(
-                      children: <Widget>[
-                        ListTile(
-                          leading: const Icon(Icons.info_outline),
-                          title: const Text('Status'),
-                          trailing: _StateChip(state: link.state),
-                        ),
-                        _LinkValueTile(
-                          icon: Icons.pin_outlined,
-                          title: 'Link code',
-                          value: link.code ?? '',
-                          copyable: true,
-                        ),
-                        _LinkValueTile(
-                          icon: Icons.verified_outlined,
-                          title: 'Verification code',
-                          value: link.verificationCode,
-                        ),
-                        if (link.linkUri != null)
-                          _LinkValueTile(
-                            icon: Icons.link_outlined,
-                            title: 'Link URI',
-                            value: link.linkUri!,
-                            copyable: true,
-                          ),
-                        _LinkValueTile(
-                          icon: Icons.timer_outlined,
-                          title: 'Expires',
-                          value: formatDateTime(context, link.expiresAt),
-                        ),
-                        if (link.claimedDeviceName != null)
-                          _LinkValueTile(
-                            icon: Icons.tablet_android_outlined,
-                            title: 'Claimed by',
-                            value: link.claimedDeviceName!,
-                          ),
-                      ],
+                const SizedBox(height: BoneSpacing.lg),
+                TileGroup(
+                  children: <Widget>[
+                    ListTile(
+                      leading: const Icon(Icons.info_outline),
+                      title: Text(
+                        'STATUS',
+                        style: theme.textTheme.labelSmall,
+                      ),
+                      trailing: StatusPill(
+                        label: link.state,
+                        tone: switch (link.state) {
+                          'approved' => StatusTone.verified,
+                          'claimed' => StatusTone.info,
+                          _ => StatusTone.neutral,
+                        },
+                      ),
                     ),
-                  ),
+                    _LinkValueTile(
+                      icon: Icons.pin_outlined,
+                      title: 'Link code',
+                      value: link.code ?? '',
+                      copyable: true,
+                    ),
+                    _LinkValueTile(
+                      icon: Icons.verified_outlined,
+                      title: 'Verification code',
+                      value: link.verificationCode,
+                    ),
+                    if (link.linkUri != null)
+                      _LinkValueTile(
+                        icon: Icons.link_outlined,
+                        title: 'Link URI',
+                        value: link.linkUri!,
+                        copyable: true,
+                      ),
+                    _LinkValueTile(
+                      icon: Icons.timer_outlined,
+                      title: 'Expires',
+                      value: formatDateTime(context, link.expiresAt),
+                      mono: false,
+                    ),
+                    if (link.claimedDeviceName != null)
+                      _LinkValueTile(
+                        icon: Icons.tablet_android_outlined,
+                        title: 'Claimed by',
+                        value: link.claimedDeviceName!,
+                        mono: false,
+                      ),
+                  ],
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: BoneSpacing.lg),
                 OutlinedButton.icon(
                   onPressed: state.busy ? null : state.refreshActiveDeviceLink,
                   icon: const Icon(Icons.refresh),
@@ -186,53 +205,35 @@ class DeviceLinkScreen extends StatelessWidget {
   }
 }
 
-class _StateChip extends StatelessWidget {
-  const _StateChip({required this.state});
-
-  final String state;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final (background, foreground) = switch (state) {
-      'approved' => (scheme.primaryContainer, scheme.onPrimaryContainer),
-      'claimed' => (scheme.tertiaryContainer, scheme.onTertiaryContainer),
-      _ => (scheme.surfaceContainerHighest, scheme.onSurfaceVariant),
-    };
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        state,
-        style:
-            Theme.of(context).textTheme.labelSmall?.copyWith(color: foreground),
-      ),
-    );
-  }
-}
-
+/// One link fact: a `micro` label over the value. Codes and URIs render in
+/// `mono`, which is the ramp step that exists for identifiers.
 class _LinkValueTile extends StatelessWidget {
   const _LinkValueTile({
     required this.icon,
     required this.title,
     required this.value,
     this.copyable = false,
+    this.mono = true,
   });
 
   final IconData icon;
   final String title;
   final String value;
   final bool copyable;
+  final bool mono;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return ListTile(
       leading: Icon(icon),
-      title: Text(title),
-      subtitle: SelectableText(value),
+      title: Text(title.toUpperCase(), style: theme.textTheme.labelSmall),
+      subtitle: SelectableText(
+        value,
+        style: mono
+            ? BoneType.mono.copyWith(color: theme.colorScheme.onSurface)
+            : theme.textTheme.bodyMedium,
+      ),
       trailing: copyable && value.isNotEmpty
           ? IconButton(
               tooltip: 'Copy',

@@ -9,7 +9,7 @@ import 'package:flutter/material.dart';
 /// [VeritraStateColors].
 ///
 /// Palettes and their measured contrast ratios live in
-/// `design/directions.md`. Every pair here was checked against WCAG 2.1 AA
+/// `docs/design.md`. Every pair here was checked against WCAG 2.1 AA
 /// before being written down; re-run that check if any value changes.
 class BoneColors {
   const BoneColors._();
@@ -94,7 +94,7 @@ class BoneDurations {
   static const Curve curve = Curves.easeOutCubic;
 }
 
-/// The type ramp from `design/redesign.md` §1.
+/// The type ramp from `docs/design.md` §1.
 ///
 /// Sizes and weights are that table's; tracking is converted from `em` to the
 /// logical pixels Flutter's `letterSpacing` expects, so -0.03em at 27px is

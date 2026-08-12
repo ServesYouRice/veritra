@@ -4,7 +4,11 @@ import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
 import '../../core/models.dart';
+import '../../ui/avatar.dart';
+import '../../ui/motion.dart';
+import '../../ui/tokens.dart';
 import '../../ui/widgets/empty_state.dart';
+import '../../ui/widgets/status_pill.dart';
 import '../chat/chat_screen.dart';
 
 /// Metadata-only search over what the server actually indexes: accounts by
@@ -89,29 +93,52 @@ class _SearchScreenState extends State<SearchScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return Scaffold(
       appBar: AppBar(
+        toolbarHeight: 64,
+        titleSpacing: BoneSpacing.sm,
+        // The field sits in the same pill the composer uses, so the two
+        // typing surfaces in the app are the same object.
         title: ListenableBuilder(
           listenable: query,
-          builder: (context, _) => TextField(
-            controller: query,
-            autofocus: true,
-            onChanged: _onChanged,
-            textInputAction: TextInputAction.search,
-            onSubmitted: _search,
-            decoration: InputDecoration(
-              // The server searches accounts, communities, and channels only.
-              // Promising chats and groups made search look broken.
-              hintText: 'Search people, communities, channels…',
-              border: InputBorder.none,
-              filled: false,
-              suffixIcon: query.text.isEmpty
-                  ? null
-                  : IconButton(
-                      tooltip: 'Clear search',
-                      icon: const Icon(Icons.close),
-                      onPressed: _clear,
-                    ),
+          builder: (context, _) => Container(
+            padding: const EdgeInsets.symmetric(horizontal: BoneSpacing.md),
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainer,
+              borderRadius: BorderRadius.circular(BoneRadii.pill),
+              border: Border.all(color: scheme.outlineVariant),
+            ),
+            child: TextField(
+              controller: query,
+              autofocus: true,
+              onChanged: _onChanged,
+              textInputAction: TextInputAction.search,
+              onSubmitted: _search,
+              style: theme.textTheme.bodyMedium,
+              decoration: InputDecoration(
+                // The server searches accounts, communities, and channels
+                // only. Promising chats and groups made search look broken.
+                hintText: 'Search people, communities, channels…',
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                filled: false,
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                prefixIcon: const Icon(Icons.search, size: 20),
+                prefixIconConstraints: const BoxConstraints(
+                  minWidth: 32,
+                  minHeight: 32,
+                ),
+                suffixIcon: query.text.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: 'Clear search',
+                        icon: const Icon(Icons.close),
+                        onPressed: _clear,
+                      ),
+              ),
             ),
           ),
         ),
@@ -137,36 +164,71 @@ class _SearchScreenState extends State<SearchScreen> {
                   message: 'Nothing matched. Usernames must match exactly, '
                       'and message contents are never searchable.',
                 )
-              : ListView.separated(
+              : ListView.builder(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: BoneSpacing.sm,
+                    vertical: BoneSpacing.sm,
+                  ),
                   itemCount: results.length,
-                  separatorBuilder: (_, __) =>
-                      const Divider(indent: 72, height: 1),
                   itemBuilder: (context, index) {
                     final result = results[index];
                     final action = _actionFor(result);
-                    return ListTile(
-                      leading: ExcludeSemantics(
-                        child: CircleAvatar(
-                          backgroundColor: theme.colorScheme.secondaryContainer,
-                          child: Icon(
-                            _iconForType(result.type),
-                            color: theme.colorScheme.onSecondaryContainer,
+                    final reason = _inertReason(result);
+                    final colors = avatarColorsFor(context, result.id);
+                    return MergeSemantics(
+                      child: ListTile(
+                        leading: ExcludeSemantics(
+                          child: Container(
+                            width: 40,
+                            height: 40,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: colors.fill,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: colors.ring),
+                            ),
+                            child: Icon(
+                              _iconForType(result.type),
+                              size: 18,
+                              color: colors.glyph,
+                            ),
                           ),
                         ),
+                        title: Row(
+                          children: <Widget>[
+                            Flexible(
+                              child: Text(
+                                result.label,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: BoneSpacing.sm),
+                            StatusPill(label: _labelForType(result.type)),
+                          ],
+                        ),
+                        // Explains inert rows instead of leaving a dead tap
+                        // target unexplained; silent when the row works.
+                        subtitle: reason == null
+                            ? null
+                            : Text(
+                                reason,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              ),
+                        // Blocking from search is the quickest path away from
+                        // unwanted contact, so it lives beside the result.
+                        trailing: result.type == 'account'
+                            ? _AccountResultActions(
+                                state: widget.state,
+                                accountId: result.id,
+                                label: result.label,
+                              )
+                            : null,
+                        enabled: action != null,
+                        onTap: action,
                       ),
-                      title: Text(result.label),
-                      subtitle: Text(_subtitleFor(result)),
-                      // Blocking from search is the quickest path away from
-                      // unwanted contact, so it lives beside the result.
-                      trailing: result.type == 'account'
-                          ? _AccountResultActions(
-                              state: widget.state,
-                              accountId: result.id,
-                              label: result.label,
-                            )
-                          : null,
-                      enabled: action != null,
-                      onTap: action,
                     );
                   },
                 ),
@@ -226,27 +288,30 @@ class _SearchScreenState extends State<SearchScreen> {
 
   void _open(String conversationId) {
     widget.state.selectAndPrepare(conversationId);
-    Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => ChatScreen(
+    Navigator.of(context).push(sharedAxisRoute<void>(
+      (_) => ChatScreen(
         state: widget.state,
         conversationId: conversationId,
       ),
     ));
   }
 
-  /// Explains inert rows instead of leaving a dead tap target unexplained.
-  String _subtitleFor(MetadataSearchResult result) {
-    final type = _labelForType(result.type);
+  /// Why a row cannot be opened, or null when it can.
+  ///
+  /// The result's kind used to be the first clause of this string; it is a
+  /// pill on the title row now, which leaves this saying only the thing the
+  /// user could not otherwise work out.
+  String? _inertReason(MetadataSearchResult result) {
     if (_actionFor(result) != null) {
-      return type;
+      return null;
     }
     switch (result.type) {
       case 'community':
-        return '$type · No channel you can open yet';
+        return 'No channel you can open yet';
       case 'channel':
-        return '$type · Join the community to open it';
+        return 'Join the community to open it';
       default:
-        return type;
+        return null;
     }
   }
 

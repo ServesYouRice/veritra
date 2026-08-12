@@ -4,7 +4,12 @@ import 'package:flutter/services.dart';
 import '../../core/app_state.dart';
 import '../../core/models.dart';
 import '../../ui/format.dart';
+import '../../ui/tokens.dart';
 import '../../ui/widgets/empty_state.dart';
+import '../../ui/widgets/large_title_bar.dart';
+import '../../ui/widgets/section_header.dart';
+import '../../ui/widgets/status_pill.dart';
+import '../../ui/widgets/tile_group.dart';
 
 /// Mint invite codes for the invite-only registration flow. Invites the
 /// account has created are listed from the server (`GET /invites`), so codes
@@ -27,81 +32,89 @@ class _InviteScreenState extends State<InviteScreen> {
     return AnimatedBuilder(
       animation: widget.state,
       builder: (context, _) {
-        final theme = Theme.of(context);
         final invites = widget.state.invites;
         return Scaffold(
-          appBar: AppBar(title: const Text('Invites')),
+          appBar: const LargeTitleBar(title: 'Invites'),
           body: RefreshIndicator(
             onRefresh: widget.state.refreshInvites,
             child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(
+                BoneSpacing.gutter,
+                BoneSpacing.sm,
+                BoneSpacing.gutter,
+                BoneSpacing.xl,
+              ),
               children: <Widget>[
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: <Widget>[
-                        Semantics(
-                          header: true,
-                          child: Text('Create an invite',
-                              style: theme.textTheme.titleMedium),
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: <Widget>[
-                            Expanded(
-                              child: DropdownButtonFormField<int>(
-                                initialValue: maxUses,
-                                decoration: const InputDecoration(
-                                  labelText: 'Max uses',
-                                ),
-                                items: const <DropdownMenuItem<int>>[
-                                  DropdownMenuItem(value: 1, child: Text('1')),
-                                  DropdownMenuItem(value: 5, child: Text('5')),
-                                  DropdownMenuItem(
-                                      value: 10, child: Text('10')),
-                                  DropdownMenuItem(
-                                      value: 25, child: Text('25')),
-                                ],
-                                onChanged: (value) =>
-                                    setState(() => maxUses = value ?? 1),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: DropdownButtonFormField<int?>(
-                                initialValue: expiresInDays,
-                                decoration: const InputDecoration(
-                                  labelText: 'Expires',
-                                ),
-                                items: const <DropdownMenuItem<int?>>[
-                                  DropdownMenuItem(
-                                      value: 1, child: Text('1 day')),
-                                  DropdownMenuItem(
-                                      value: 7, child: Text('7 days')),
-                                  DropdownMenuItem(
-                                      value: 30, child: Text('30 days')),
-                                ],
-                                onChanged: (value) =>
-                                    setState(() => expiresInDays = value),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        FilledButton.icon(
-                          onPressed:
-                              widget.state.busy ? null : () => _create(context),
-                          icon: const Icon(Icons.card_giftcard_outlined),
-                          label: const Text('Create invite'),
-                        ),
-                      ],
-                    ),
-                  ),
+                const SectionHeader(
+                  'Create an invite',
+                  padding: EdgeInsets.only(bottom: BoneSpacing.sm),
                 ),
-                const SizedBox(height: 16),
+                TileGroup(
+                  dividerIndent: 0,
+                  children: <Widget>[
+                    Padding(
+                      padding: const EdgeInsets.all(BoneSpacing.lg),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: <Widget>[
+                          Row(
+                            children: <Widget>[
+                              Expanded(
+                                child: _Labelled(
+                                  label: 'Max uses',
+                                  child: DropdownButtonFormField<int>(
+                                    initialValue: maxUses,
+                                    items: const <DropdownMenuItem<int>>[
+                                      DropdownMenuItem(
+                                          value: 1, child: Text('1')),
+                                      DropdownMenuItem(
+                                          value: 5, child: Text('5')),
+                                      DropdownMenuItem(
+                                          value: 10, child: Text('10')),
+                                      DropdownMenuItem(
+                                          value: 25, child: Text('25')),
+                                    ],
+                                    onChanged: (value) =>
+                                        setState(() => maxUses = value ?? 1),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: BoneSpacing.md),
+                              Expanded(
+                                child: _Labelled(
+                                  label: 'Expires',
+                                  child: DropdownButtonFormField<int?>(
+                                    initialValue: expiresInDays,
+                                    items: const <DropdownMenuItem<int?>>[
+                                      DropdownMenuItem(
+                                          value: 1, child: Text('1 day')),
+                                      DropdownMenuItem(
+                                          value: 7, child: Text('7 days')),
+                                      DropdownMenuItem(
+                                          value: 30, child: Text('30 days')),
+                                    ],
+                                    onChanged: (value) =>
+                                        setState(() => expiresInDays = value),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: BoneSpacing.lg),
+                          FilledButton.icon(
+                            onPressed: widget.state.busy
+                                ? null
+                                : () => _create(context),
+                            icon: const Icon(Icons.card_giftcard_outlined),
+                            label: const Text('Create invite'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: BoneSpacing.sm),
                 if (invites.isEmpty)
                   // Spinner until the first fetch resolves, then the empty
                   // state — otherwise "No invites yet" flashes during load.
@@ -117,17 +130,16 @@ class _InviteScreenState extends State<InviteScreen> {
                           child: Center(child: CircularProgressIndicator()),
                         )
                 else ...<Widget>[
-                  Semantics(
-                    header: true,
-                    child: Text('Your invites',
-                        style: theme.textTheme.titleMedium),
+                  const SectionHeader('Your invites'),
+                  TileGroup(
+                    children: <Widget>[
+                      for (final invite in invites)
+                        _InviteRow(
+                          invite: invite,
+                          onRevoke: () => widget.state.revokeInvite(invite.id),
+                        ),
+                    ],
                   ),
-                  const SizedBox(height: 8),
-                  for (final invite in invites)
-                    _InviteCard(
-                      invite: invite,
-                      onRevoke: () => widget.state.revokeInvite(invite.id),
-                    ),
                 ],
               ],
             ),
@@ -154,8 +166,38 @@ class _InviteScreenState extends State<InviteScreen> {
   }
 }
 
-class _InviteCard extends StatelessWidget {
-  const _InviteCard({required this.invite, required this.onRevoke});
+/// A form control with the same `micro` label treatment the connect screen
+/// uses, so the two forms in the app read as one system.
+class _Labelled extends StatelessWidget {
+  const _Labelled({required this.label, required this.child});
+
+  final String label;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.only(
+            left: BoneSpacing.xs,
+            bottom: BoneSpacing.sm,
+          ),
+          child: Text(
+            label.toUpperCase(),
+            style: theme.textTheme.labelSmall,
+          ),
+        ),
+        child,
+      ],
+    );
+  }
+}
+
+class _InviteRow extends StatelessWidget {
+  const _InviteRow({required this.invite, required this.onRevoke});
 
   final Invite invite;
   final VoidCallback onRevoke;
@@ -164,52 +206,64 @@ class _InviteCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final expires = invite.expiresAt;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Card(
-        child: ListTile(
-          leading: const Icon(Icons.confirmation_number_outlined),
-          title: SelectableText(
-            invite.code,
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontFamily: 'monospace',
-              letterSpacing: 1.2,
+    final exhausted = invite.maxUses > 0 && invite.uses >= invite.maxUses;
+    return ListTile(
+      leading: const Icon(Icons.confirmation_number_outlined),
+      title: Row(
+        children: <Widget>[
+          Flexible(
+            child: SelectableText(
+              invite.code,
+              style: BoneType.mono.copyWith(
+                fontSize: 15,
+                letterSpacing: 1.2,
+                color: theme.colorScheme.onSurface,
+              ),
             ),
           ),
-          subtitle: Text(
-            <String>[
-              '${invite.maxUses} use${invite.maxUses == 1 ? '' : 's'}',
-              if (expires != null)
-                'expires ${formatDateTime(context, expires)}',
-              if (expires == null) 'never expires',
-            ].join(' · '),
+          const SizedBox(width: BoneSpacing.sm),
+          // Uses are the fact that decides whether the code still works, so
+          // they get the pill rather than a clause in the joined subtitle.
+          StatusPill(
+            label: '${invite.uses}/${invite.maxUses}',
+            tone: exhausted ? StatusTone.warning : StatusTone.neutral,
+            uppercase: false,
+            semanticsLabel: '${invite.uses} of ${invite.maxUses} uses',
           ),
-          trailing: MenuAnchor(
-            builder: (context, controller, _) => IconButton(
-              tooltip: 'Invite actions',
-              icon: const Icon(Icons.more_vert),
-              onPressed: () =>
-                  controller.isOpen ? controller.close() : controller.open(),
-            ),
-            menuChildren: <Widget>[
-              MenuItemButton(
-                leadingIcon: const Icon(Icons.copy_outlined),
-                onPressed: () {
-                  Clipboard.setData(ClipboardData(text: invite.code));
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Invite code copied.')),
-                  );
-                },
-                child: const Text('Copy code'),
-              ),
-              MenuItemButton(
-                leadingIcon: const Icon(Icons.block_outlined),
-                onPressed: onRevoke,
-                child: const Text('Revoke'),
-              ),
-            ],
-          ),
+        ],
+      ),
+      subtitle: Text(
+        expires == null
+            ? 'Never expires'
+            : 'Expires ${formatDateTime(context, expires)}',
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
         ),
+      ),
+      trailing: MenuAnchor(
+        builder: (context, controller, _) => IconButton(
+          tooltip: 'Invite actions',
+          icon: const Icon(Icons.more_vert),
+          onPressed: () =>
+              controller.isOpen ? controller.close() : controller.open(),
+        ),
+        menuChildren: <Widget>[
+          MenuItemButton(
+            leadingIcon: const Icon(Icons.copy_outlined),
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: invite.code));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Invite code copied.')),
+              );
+            },
+            child: const Text('Copy code'),
+          ),
+          MenuItemButton(
+            leadingIcon: const Icon(Icons.block_outlined),
+            onPressed: onRevoke,
+            child: const Text('Revoke'),
+          ),
+        ],
       ),
     );
   }

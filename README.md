@@ -5,15 +5,25 @@
 
 Veritra is an open-source, self-hostable, privacy-first messaging app. The first product shape is closer to WhatsApp or Signal than Discord: direct messages, private group chats, lightweight communities, optional channels, simple roles, and end-to-end encrypted message envelopes.
 
-This repository is an initial MVP foundation with fail-closed boundaries around unfinished production features. See [`implementation/KANBAN.md`](implementation/KANBAN.md) for the single current work list.
+This repository is an initial MVP foundation with fail-closed boundaries around unfinished production features. See [`docs/board.md`](docs/board.md) for the single current work list, and [`docs/overview.md`](docs/overview.md) for an architecture walkthrough.
 
 ## Current Status
 
 - License: AGPL-3.0-or-later.
 - Server: Go modular monolith, single binary target, SQLite-first.
-- Mobile: Flutter shell for Android and iOS architecture.
+- Mobile: Flutter client for Android and iOS.
 - Crypto: server-side ciphertext-only model plus MLS/OpenMLS integration boundary. Production message crypto is not complete.
 - Hosting: single binary goal plus Docker Compose and Caddy examples.
+
+## Roadmap
+
+One product, one repository, three phases — decided as **D06** on the board.
+
+1. **Mobile** — Android and iOS. This is the entire first release, and the current work.
+2. **Desktop** — Windows and macOS, after that release. Additional Flutter targets in this repository reusing the same reviewed Rust crypto core, not a fork. A self-hosted internal-network deployment is this plus the same server.
+3. **Embedded chat** — deferred. If embedded conversations must stay end-to-end encrypted, the deliverable is a client SDK rather than a drop-in widget, because the server holds no key it could hand one. That question has to be answered before any work starts.
+
+Triggers and rationale are in [`docs/board.md`](docs/board.md#roadmap-after-release).
 
 ## Quickstart
 
@@ -70,18 +80,34 @@ Default data lives under `./data` unless `PRIVATE_MESSENGER_DATA_DIR` is set.
 ## Repository Layout
 
 ```text
-server/   Go server, migrations, setup notice
-mobile/   Flutter mobile client shell
-crypto/   Rust crypto boundary and docs
-deploy/   Docker Compose, Caddy, systemd
-implementation/  Active board, executable task cards, archived planning
-docs/             Branding assets
-scripts/  Dockerized development commands
+server/     Go server, migrations, setup notice
+mobile/     Flutter client for Android and iOS
+crypto/     Rust crypto boundary
+deploy/     Docker Compose, Caddy, systemd
+scripts/    Dockerized development commands
+docs/       All documentation (see below)
 ```
+
+Every document lives in [`docs/`](docs/):
+
+| File | What it is |
+| --- | --- |
+| [`board.md`](docs/board.md) | **The board.** Active cards, decisions, release evidence, roadmap, review brief |
+| [`overview.md`](docs/overview.md) | Architecture walkthrough — what it is, how it fits together, how to run it |
+| [`design.md`](docs/design.md) | The K2 · Bone palette, per-screen spec, and how it landed in Flutter |
+| [`operations.md`](docs/operations.md) | Self-hosting: setup, secrets, upgrade, rollback, restore drill |
+| [`crypto.md`](docs/crypto.md) | The MLS/OpenMLS boundary and its C ABI |
+| [`branding/`](docs/branding/) | Marks, wordmarks, icons |
+| [`archive/`](docs/archive/) | Read-only history. Do not load unless a card links a specific file |
+
+Two documents are authoritative and should be read before changing anything:
+[`AGENTS.md`](AGENTS.md) for the non-negotiable boundaries, and
+[`docs/board.md`](docs/board.md) for what is actually being worked on.
+Everything else describes; those two decide.
 
 ## Important Caveat
 
 The MVP foundation is compatible with E2EE everywhere, but full production cryptography is not complete. Any feature that would require plaintext on the server is rejected or documented as future work.
 
-See [`implementation/KANBAN.md`](implementation/KANBAN.md) for release blockers,
+See [`docs/board.md`](docs/board.md) for release blockers,
 user decisions, and deferred work.
