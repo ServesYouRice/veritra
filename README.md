@@ -85,25 +85,30 @@ mobile/     Flutter client for Android and iOS
 crypto/     Rust crypto boundary
 deploy/     Docker Compose, Caddy, systemd
 scripts/    Dockerized development commands
-docs/       All documentation (see below)
+docs/       Authoritative project documentation (see below)
+implementation/  LLM-ready execution contracts derived from the audit consensus
 ```
 
-Every document lives in [`docs/`](docs/):
+Authoritative project documentation lives in [`docs/`](docs/):
 
 | File | What it is |
 | --- | --- |
 | [`board.md`](docs/board.md) | **The board.** Active cards, decisions, release evidence, roadmap, review brief |
+| [`audit-consensus.md`](docs/audit-consensus.md) | Reconciled Codex/Opus findings, implementation order, acceptance checks, source trace |
 | [`overview.md`](docs/overview.md) | Architecture walkthrough — what it is, how it fits together, how to run it |
 | [`design.md`](docs/design.md) | The K2 · Bone palette, per-screen spec, and how it landed in Flutter |
 | [`operations.md`](docs/operations.md) | Self-hosting: setup, secrets, upgrade, rollback, restore drill |
 | [`crypto.md`](docs/crypto.md) | The MLS/OpenMLS boundary and its C ABI |
 | [`branding/`](docs/branding/) | Marks, wordmarks, icons |
+| [`audits-codex/`](docs/audits-codex/) and [`audits-opus/`](docs/audits-opus/) | Read-only source audits; not implementation status |
 | [`archive/`](docs/archive/) | Read-only history. Do not load unless a card links a specific file |
 
 Two documents are authoritative and should be read before changing anything:
 [`AGENTS.md`](AGENTS.md) for the non-negotiable boundaries, and
 [`docs/board.md`](docs/board.md) for what is actually being worked on.
-Everything else describes; those two decide.
+For audit-derived work, [`implementation/README.md`](implementation/README.md)
+then provides the claimable task contracts. It is derivative: the board and
+consensus win if they disagree.
 
 ## Important Caveat
 

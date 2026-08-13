@@ -3,20 +3,25 @@
 This is the single authoritative record for active implementation work,
 completed work, release evidence, and the independent-review handoff.
 Historical source material remains read-only under `archive/2026-07-26/`.
+The 2026-08-08 audit source snapshots are read-only under `audits-codex/` and
+`audits-opus/`; their decisions live in `audit-consensus.md`.
 
 ## Current status
 
 **NO-GO:** production crypto remains fail-closed.
 
-**Active local work: I28, the K2 · Bone visual rebuild.** It is the only card
-that can move without external inputs, and it is the current priority.
+Audit reconciliation and Claude's second-round review have consensus with no
+open objections. No implementation card is claimed. The first Ready card is
+**I29, recovery capability secrecy and lifecycle**; I40 follows immediately
+because its Rust exception guard must land before 2026-08-29. I30-I43 and
+dependency-blocked I45 contain the remaining local release work.
 
-Every other remaining card is externally blocked. They need signing
-credentials, supported physical Android and iOS devices, macOS for the iOS
-build, an operator-controlled TURN deployment, push-provider credentials, a
-coordinated upstream OpenMLS/HPKE security update, and an independent security
-reviewer. Do not remove `PM_CRYPTO_UNAVAILABLE` or replace
-`UnavailableCryptoService` until every release gate below passes.
+I24, I25 and I27 still need signing credentials, supported physical Android
+and iOS devices, macOS for the iOS build, an operator-controlled TURN
+deployment, push-provider credentials, a coordinated upstream OpenMLS/HPKE
+security update and an independent security reviewer. Do not remove
+`PM_CRYPTO_UNAVAILABLE` or replace `UnavailableCryptoService` until every
+release gate below passes.
 
 Product sequencing is fixed by **D06**: finish the mobile release first, then
 desktop, then evaluate embedding. See [Roadmap after release](#roadmap-after-release).
@@ -39,81 +44,53 @@ desktop, then evaluate embedding. See [Roadmap after release](#roadmap-after-rel
   trigger and an explicit answer on whether embedded conversations stay
   end-to-end encrypted. Recorded 2026-08-07; rationale and triggers are in
   [Roadmap after release](#roadmap-after-release).
+- **D07:** The Codex and Opus audits are source evidence, not competing
+  backlogs. [`audit-consensus.md`](audit-consensus.md) is their authoritative
+  disposition and source-to-card trace. This board alone owns implementation
+  status. Recorded 2026-08-13.
+- **D08:** Root [`implementation/`](../implementation/) contains claimable LLM
+  execution contracts derived from the consensus. It may split a card into
+  non-overlapping tasks but cannot change scope, severity, dependencies or
+  status. This board and the consensus win on any conflict. Recorded 2026-08-13.
 
 ## Remaining work
 
-Ordered by what can actually move: I28 is local and unblocked, the rest are
-waiting on people, hardware, or upstream.
+Ordered by production impact and dependency. Detailed scope, disputes and
+acceptance checks are in [`audit-consensus.md`](audit-consensus.md); claimable
+task boundaries and orchestration rules are in
+[`implementation/README.md`](../implementation/README.md).
 
-### I28 - Rebuild the app's visual design (active, priority)
+### Audit-derived implementation queue
 
-Direction decided **2026-08-07: K2 · Bone**, after eleven variants. The owner
-rejected A (reads as Viber: its `#6366F1` indigo sits about ten degrees of hue
-from Viber's `#7360F2`) and C (overdone), while keeping C's plum ground.
+| ID | Status | Work | Depends on |
+|---|---|---|---|
+| I29 | Ready, first | Recovery capability secrecy and lifecycle | — |
+| I30 | Ready | One MLS-aware sync owner | — |
+| I31 | Ready | Lossless message outbox | — |
+| I32 | Ready | Account-scoped session lifecycle | — |
+| I33 | Blocked by I30 | Poison-event and stale-device recovery | I30 |
+| I34 | Blocked by I31 | Reliable MLS control outbox | I31 pattern |
+| I35 | Ready | Retention and attachment-prune convergence | — |
+| I36 | Ready | Committed-message fanout and bounded push work | — |
+| I37 | Ready | Setup and authentication hardening | — |
+| I38 | Ready | Safe account export | — |
+| I39 | Blocked by I32 | Fail-closed encrypted database key recovery | I32 |
+| I40 | Ready, next; due 2026-08-29 | Release evidence and toolchain integrity | — |
+| I41 | Blocked by I36, conditional D03 | Push registration and platform readiness | I36 |
+| I42 | Ready, conditional D03 | Authorized calls and native lifecycle | — |
+| I43 | Ready, feeds I24 | First-run and accessibility baseline | — |
+| I44 | Prepared, split before claim | Mobile and API quality | release blockers |
+| I45 | Blocked by I29/I39, required by D02 | Backup, restore and migration safety | I29, I39 |
+| I46 | Prepared | Supported deployment hardening | — |
+| I47 | Prepared, conditional | Operational visibility and capacity evidence | I35, I36 |
+| I48 | Prepared | Transport, realtime and logging hardening | I32 |
+| I49 | Measure, then split | Performance and architecture work | correctness cards |
+| I50 | Deferred | Product and ecosystem backlog | D06 / mobile release |
 
-**The palette, the per-screen spec, the deviations taken, the test contracts and
-the accessibility notes are all in [`design.md`](design.md).** This card carries
-only what is true of the work right now.
-
-All eight steps are written. Steps 1-2 are committed; steps 3-8 are in the
-working tree, verified but not yet committed.
-
-**Committed (steps 1-2):** `mobile/lib/ui/tokens.dart` (new) and
-`mobile/lib/ui/theme.dart` - the Bone palette for both brightnesses, radii,
-spacing, motion, the type ramp, and a `VeritraStateColors` extension.
-`ColorScheme.fromSeed` is gone, replaced by explicit light and dark
-constructors. `veritraLightTheme()`/`veritraDarkTheme()` keep their signatures,
-so `mobile/lib/main.dart` is unchanged.
-
-**In the working tree (steps 3-8):** the shared vocabulary - `avatar.dart`,
-`motion.dart`, `status_pill.dart`, `section_header.dart`, `tile_group.dart`,
-`large_title_bar.dart`, `veritra_mark.dart` - plus `chat_visuals_test.dart`.
-Screens touched: chat list, conversation, connect, settings, profile, device
-link, invites, blocked accounts, communities, search, conversation details, the
-empty state, the connection banner, and the shell's nav. Plus
-`server/websetup/index.html` on Bone tokens carrying the wordmark, and the app
-icon across every Android and iOS size.
-
-No new dependency and no bundled font.
-
-**Verification status - verified 2026-08-08** against the pinned Docker
-toolchains, on the working tree described above. Every step had been written on
-machines with no Flutter, Dart, Go, Rust or Docker toolchain, so this was the
-first real run.
-
-| Check | Result |
-|---|---|
-| `flutter analyze` | Pass - no issues found |
-| `dart format --set-exit-if-changed .` | Pass, after reformatting 4 files |
-| `flutter test` | Pass - 79 tests, 2 environment skips |
-| `gofmt -l .` and `go vet ./...` | Pass - clean |
-| `go test ./...` | Pass - every package, including `websetup` |
-
-The first run failed, and found two defects that inspection had not:
-
-1. **`TileGroup` wrapped `ListTile` in a `Container` carrying a background
-   colour.** `ListTile` paints its background and ink splashes onto the nearest
-   `Material` ancestor, so a decorated box between them hides both, and Flutter
-   asserts on exactly that. This was a real defect, not a test artifact - it
-   would have fired in any debug run of the settings, profile, invite,
-   blocked-accounts and conversation-details screens. Fixed by making the group
-   a `Material` that carries the colour, border and radius itself; the reason is
-   recorded in the widget so it is not undone.
-2. **`profile_screen_test.dart` could no longer find `Encryption identity
-   pending`.** The taller Bone profile screen pushes that group below the 800px
-   test viewport and a `ListView` does not build what it has not laid out. Fixed
-   by scrolling to it in the test rather than relaxing the assertion: that
-   notice being genuinely on screen is a crypto-honesty guarantee, and it
-   survives scrolling.
-
-Not covered by this run: golden tests (none exist), Android and iOS builds, the
-Compose smoke, and every manual and accessibility check in I24. Rendering was
-never executed - `flutter test` does not prove the screens *look* right, only
-that they build, analyze, and keep their contracts.
-
-Crypto-gated screens stay unavailable regardless of the direction chosen. The
-redesign touched no crypto, storage, sync, or gate: the redacted bars read
-`ciphertext.length`, which the client already holds, and decrypt nothing.
+No audit-derived implementation is complete merely because it appears in this
+table. Claim one eligible task under the Ready card, confirm its source paths
+still match current code, run its named checks, then update this board and the
+consensus register.
 
 ### I27 - Close upstream HPKE/libcrux advisories (upstream/review blocked)
 
@@ -216,20 +193,22 @@ fresh-volume Compose smoke became healthy and returned 200 from loopback
 `/healthz`; the release-readiness check still fails at the intentional crypto
 gate.
 
-Verification on 2026-08-08 covered the **uncommitted I28 working tree** on top
-of `d60e45b`, using the pinned Flutter 3.44.0 and Go 1.25.12 Docker images:
+Verification on 2026-08-08 covered the final I28 tree on top of `d60e45b`,
+using the pinned Flutter 3.44.0 and Go 1.25.12 Docker images:
 `flutter analyze` clean, `dart format --set-exit-if-changed` clean after
 reformatting four files, `flutter test` 79 pass with 2 environment skips,
 `gofmt`/`go vet` clean, and `go test ./...` passing in every package. Two
-defects were found and fixed first - see the I28 card. Rust and the Compose
-smoke were not re-run, because I28 changed no Rust and no deployment file. This
-evidence is not bound to a commit yet; bind it when the I28 work is committed.
+defects were found and fixed first. That exact relevant source tree was
+committed as `6083e3f`; no mobile, web-setup or branding file changed between
+that commit and `194bd0c`. Rust and the Compose smoke were not re-run because
+I28 changed no Rust or deployment file. Golden, manual and real-device visual
+evidence remains in I24/I43.
 
 | Evidence | Result | Artifact / note |
 |---|---|---|
 | Go tests | Pass | `go test ./...` in pinned Go 1.25 container |
 | Rust tests and vectors | Pass | 17 tests with pinned Rust 1.90 |
-| Flutter analyze/tests | Pass | Analyzer clean; 79 pass, 2 environment skips (2026-08-08, I28 tree) |
+| Flutter analyze/tests | Pass | Analyzer clean; 79 pass, 2 environment skips (`6083e3f`) |
 | Crypto-gated end-user flows | Pending | UI paths listed above remain unavailable |
 | Contract/integration tests | Pass | Live server and real host native library |
 | Direct license notices | Pass | Full transitive scan remains required |
@@ -353,6 +332,7 @@ checksums, and GitHub provenance only after every gate passes.
 | I23 | Hardened WebSocket handshakes and frames with adversarial, fuzz, lifecycle, slow-client, trusted-proxy, and race coverage. |
 | I24 | Implemented native push, self-hosted TURN configuration, encrypted WebRTC signaling, and an Android debug build; external release checks remain. |
 | I26 | Added out-of-band group safety transcripts/numbers with local persistence and changed-state detection. |
+| I28 | Landed the K2 Bone visual system, all app screens, shared widgets, web setup and Android/iOS icons in `6083e3f`; automated Flutter/Go checks passed, while golden/manual/device evidence remains in I24/I43. |
 
 Completed non-crypto product UI also includes named DMs, canonical DM reuse,
 history pagination with preserved position, role-gated roster actions, blocked

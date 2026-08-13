@@ -34,7 +34,7 @@ paths. It is **not** a cryptographic review of MLS — see
 ### Outbox silently deletes the oldest queued messages at the cap
 
 **Severity:** Critical
-**Location:** [`mobile/lib/storage/encrypted_database.dart:479-503`](../mobile/lib/storage/encrypted_database.dart#L479-L503), cap set at [`mobile/lib/storage/local_store.dart:530`](../mobile/lib/storage/local_store.dart#L530), call sites at `local_store.dart:636` and `:788`
+**Location:** [`mobile/lib/storage/encrypted_database.dart:479-503`](../../mobile/lib/storage/encrypted_database.dart#L479-L503), cap set at [`mobile/lib/storage/local_store.dart:530`](../../mobile/lib/storage/local_store.dart#L530), call sites at `local_store.dart:636` and `:788`
 
 **Problem**
 
@@ -107,7 +107,7 @@ Never evict a queued message. At the cap, refuse the enqueue and surface it:
 ### One malformed or unfetchable sync event wedges catch-up forever
 
 **Severity:** High
-**Location:** [`mobile/lib/core/app_state.dart:1543-1571`](../mobile/lib/core/app_state.dart#L1543-L1571) (`_processCryptoSyncEvent`), consumed at `:1467-1472`, error handler at `:1503-1524`
+**Location:** [`mobile/lib/core/app_state.dart:1543-1571`](../../mobile/lib/core/app_state.dart#L1543-L1571) (`_processCryptoSyncEvent`), consumed at `:1467-1472`, error handler at `:1503-1524`
 
 **Problem**
 
@@ -190,7 +190,7 @@ disable a device.
 ### MLS outbox has no error handling and blocks head-of-line forever
 
 **Severity:** High
-**Location:** [`mobile/lib/core/app_state.dart:1757-1771`](../mobile/lib/core/app_state.dart#L1757-L1771)
+**Location:** [`mobile/lib/core/app_state.dart:1757-1771`](../../mobile/lib/core/app_state.dart#L1757-L1771)
 
 **Problem**
 
@@ -269,7 +269,7 @@ Give it the same discipline `_flushOutbox` already has:
 ### Committed message returns 500 and then never fans out
 
 **Severity:** High
-**Location:** [`server/internal/messaging/service.go:34-52`](../server/internal/messaging/service.go#L34-L52), handler at [`server/internal/httpapi/conversation_handlers.go:422-447`](../server/internal/httpapi/conversation_handlers.go#L422-L447)
+**Location:** [`server/internal/messaging/service.go:34-52`](../../server/internal/messaging/service.go#L34-L52), handler at [`server/internal/httpapi/conversation_handlers.go:422-447`](../../server/internal/httpapi/conversation_handlers.go#L422-L447)
 
 **Problem**
 
@@ -349,7 +349,7 @@ The commit is the point of no return; treat it that way.
 ### Expired-message sweeper drains only 500 rows per 6 hours
 
 **Severity:** High
-**Location:** [`server/internal/storage/message_store.go:483-530`](../server/internal/storage/message_store.go#L483-L530), scheduled at [`server/internal/app/app.go:229-282`](../server/internal/app/app.go#L229-L282)
+**Location:** [`server/internal/storage/message_store.go:483-530`](../../server/internal/storage/message_store.go#L483-L530), scheduled at [`server/internal/app/app.go:229-282`](../../server/internal/app/app.go#L229-L282)
 
 **Problem**
 
@@ -427,7 +427,7 @@ volume.
 ### Attachment prune deletes blobs whose database rows survive
 
 **Severity:** High
-**Location:** [`server/internal/storage/message_store.go:490-522`](../server/internal/storage/message_store.go#L490-L522)
+**Location:** [`server/internal/storage/message_store.go:490-522`](../../server/internal/storage/message_store.go#L490-L522)
 
 **Problem**
 
@@ -514,7 +514,7 @@ Make all three statements operate on one explicitly materialised message set:
 ### `resetOnError: true` silently destroys the local database key
 
 **Severity:** High
-**Location:** [`mobile/lib/storage/local_store.dart:511-518`](../mobile/lib/storage/local_store.dart#L511-L518)
+**Location:** [`mobile/lib/storage/local_store.dart:511-518`](../../mobile/lib/storage/local_store.dart#L511-L518)
 
 **Problem**
 
@@ -600,7 +600,7 @@ recorded approved decision.
 ### Unbounded client paging loops with no iteration cap
 
 **Severity:** Medium
-**Location:** [`mobile/lib/core/api_client.dart:114-134`](../mobile/lib/core/api_client.dart#L114-L134) (`conversations`), [`:136-155`](../mobile/lib/core/api_client.dart#L136-L155) (`devices`)
+**Location:** [`mobile/lib/core/api_client.dart:114-134`](../../mobile/lib/core/api_client.dart#L114-L134) (`conversations`), [`:136-155`](../../mobile/lib/core/api_client.dart#L136-L155) (`devices`)
 
 **Problem**
 
@@ -654,7 +654,7 @@ paging helper in `api_client.dart`.
 ### Catch-up does one sequential round trip per repaired message
 
 **Severity:** Medium
-**Location:** [`mobile/lib/core/app_state.dart:1461-1463`](../mobile/lib/core/app_state.dart#L1461-L1463), `_repairMessage` at `:1578-1604`
+**Location:** [`mobile/lib/core/app_state.dart:1461-1463`](../../mobile/lib/core/app_state.dart#L1461-L1463), `_repairMessage` at `:1578-1604`
 
 **Problem**
 
@@ -708,7 +708,7 @@ hits a poison event.
 ### Quota rejection (507) is retried forever
 
 **Severity:** Medium
-**Location:** [`mobile/lib/core/app_state.dart:1735`](../mobile/lib/core/app_state.dart#L1735)
+**Location:** [`mobile/lib/core/app_state.dart:1735`](../../mobile/lib/core/app_state.dart#L1735)
 
 **Problem**
 
@@ -754,7 +754,7 @@ explanation, when the actual cause is one they can act on.
 ### Unchecked casts throw `TypeError` instead of `ApiException`
 
 **Severity:** Medium
-**Location:** [`mobile/lib/core/api_client.dart:944`](../mobile/lib/core/api_client.dart#L944) and the surrounding `_sessionFromAuthJson`
+**Location:** [`mobile/lib/core/api_client.dart:944`](../../mobile/lib/core/api_client.dart#L944) and the surrounding `_sessionFromAuthJson`
 
 **Problem**
 
@@ -808,7 +808,7 @@ a user is both unhelpful and unprofessional.
 ### `_flushOutbox` has no re-entrancy guard
 
 **Severity:** Medium
-**Location:** [`mobile/lib/core/app_state.dart:1696`](../mobile/lib/core/app_state.dart#L1696)
+**Location:** [`mobile/lib/core/app_state.dart:1696`](../../mobile/lib/core/app_state.dart#L1696)
 
 **Problem**
 
@@ -844,7 +844,7 @@ proven in `_catchUpSyncEvents`. Same for `_flushMlsOutbox` when fixing
 ### Typing throttle map grows unbounded and rescans on insert
 
 **Severity:** Low
-**Location:** [`server/internal/httpapi/conversation_handlers.go:357-377`](../server/internal/httpapi/conversation_handlers.go#L357-L377)
+**Location:** [`server/internal/httpapi/conversation_handlers.go:357-377`](../../server/internal/httpapi/conversation_handlers.go#L357-L377)
 
 **Problem**
 
@@ -886,7 +886,7 @@ fixed-capacity LRU. Both remove the growth and the per-request scan.
 ### `parseTime` silently yields the zero time
 
 **Severity:** Low
-**Location:** [`server/internal/storage/sqlite.go:707-713`](../server/internal/storage/sqlite.go#L707-L713)
+**Location:** [`server/internal/storage/sqlite.go:707-713`](../../server/internal/storage/sqlite.go#L707-L713)
 
 **Problem**
 
@@ -929,7 +929,7 @@ timestamps in the main tables.
 ### Non-null assertion depends on a distant condition
 
 **Severity:** Low
-**Location:** [`mobile/lib/core/app_state.dart:1459`](../mobile/lib/core/app_state.dart#L1459)
+**Location:** [`mobile/lib/core/app_state.dart:1459`](../../mobile/lib/core/app_state.dart#L1459)
 
 **Problem**
 
@@ -972,7 +972,7 @@ Cheap, and removes the dependency on distant reasoning.
 ### Trailing slashes 404 on subroute handlers
 
 **Severity:** Low
-**Location:** [`server/internal/httpapi/conversation_handlers.go:44`](../server/internal/httpapi/conversation_handlers.go#L44) and `:170`
+**Location:** [`server/internal/httpapi/conversation_handlers.go:44`](../../server/internal/httpapi/conversation_handlers.go#L44) and `:170`
 
 **Problem**
 
@@ -1008,7 +1008,7 @@ it. Add a contract test asserting both forms resolve identically.
 ### WebSocket drain sends no close frame
 
 **Severity:** Low
-**Location:** [`server/internal/realtime/hub.go:141-152`](../server/internal/realtime/hub.go#L141-L152) and [`server/internal/realtime/websocket.go:79-115`](../server/internal/realtime/websocket.go#L79-L115)
+**Location:** [`server/internal/realtime/hub.go:141-152`](../../server/internal/realtime/hub.go#L141-L152) and [`server/internal/realtime/websocket.go:79-115`](../../server/internal/realtime/websocket.go#L79-L115)
 
 **Problem**
 
@@ -1046,7 +1046,7 @@ worst case for `Hub.Register`.
 ### Rust release profile does not pin `panic` or enable overflow checks
 
 **Severity:** Low
-**Location:** [`crypto/rust/Cargo.toml`](../crypto/rust/Cargo.toml) — no `[profile.release]` section
+**Location:** [`crypto/rust/Cargo.toml`](../../crypto/rust/Cargo.toml) — no `[profile.release]` section
 
 **Problem**
 
