@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'api_client.dart';
+import '../storage/local_store.dart';
 
 /// Maps any thrown error to a sentence safe to show to end users.
 ///
@@ -9,6 +10,10 @@ import 'api_client.dart';
 /// text is developer-facing, sometimes leaks internals (server error codes,
 /// "Bad state: …" prefixes), and never tells the user what to do next.
 String describeError(Object error) {
+  if (error is OutboxFullException) {
+    return 'Your encrypted message queue is full. Send or discard a pending '
+        'message before composing another.';
+  }
   if (error is ApiException) {
     return error.message;
   }

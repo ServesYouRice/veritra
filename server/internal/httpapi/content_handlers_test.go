@@ -26,6 +26,39 @@ func TestServeEncryptedBlobStopsAfterInterruptedDownload(t *testing.T) {
 	}
 }
 
+func TestRecoveryRangeRequiresSingleContiguousRange(t *testing.T) {
+	tests := []struct {
+		name   string
+		header string
+		start  int64
+		end    int64
+		valid  bool
+	}{
+		{name: "full", start: 0, end: 99, valid: true},
+		{name: "bounded", header: "bytes=10-19", start: 10, end: 19, valid: true},
+		{name: "open ended", header: "bytes=10-", start: 10, end: 99, valid: true},
+		{name: "suffix rejected", header: "bytes=-10", valid: false},
+		{name: "multiple rejected", header: "bytes=0-9,10-19", valid: false},
+		{name: "invalid end", header: "bytes=20-10", valid: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/recovery", nil)
+			if test.header != "" {
+				request.Header.Set("Range", test.header)
+			}
+			start, end, err := recoveryRange(request, 100)
+			if test.valid {
+				if err != nil || start != test.start || end != test.end {
+					t.Fatalf("range=(%d,%d) err=%v", start, end, err)
+				}
+			} else if err == nil {
+				t.Fatalf("accepted invalid range (%d,%d)", start, end)
+			}
+		})
+	}
+}
+
 type downloadTestStore struct {
 	reader uploads.ReadSeekCloser
 }

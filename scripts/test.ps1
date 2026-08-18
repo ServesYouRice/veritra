@@ -1,6 +1,8 @@
 $ErrorActionPreference = "Stop"
 
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
+$GoVersion = (Get-Content -Raw (Join-Path $Root ".go-version")).Trim()
+$GoImage = "golang:${GoVersion}@sha256:9006890ecba0a168034d99516084099ae3114d9f2b7d6572c77f2dde57ebc980"
 
 if (Get-Command go -ErrorAction SilentlyContinue) {
   Push-Location (Join-Path $Root "server")
@@ -9,7 +11,7 @@ if (Get-Command go -ErrorAction SilentlyContinue) {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   } finally { Pop-Location }
 } else {
-  docker run --rm -v "${Root}:/workspace" -w /workspace/server golang:1.25.12@sha256:9006890ecba0a168034d99516084099ae3114d9f2b7d6572c77f2dde57ebc980 go test ./...
+  docker run --rm -v "${Root}:/workspace" -w /workspace/server $GoImage go test ./...
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 

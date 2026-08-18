@@ -32,6 +32,7 @@ Local Go, Flutter, and Rust toolchains are optional. The preferred path is Docke
 ```sh
 ./scripts/test.sh
 ./scripts/lint.sh
+./scripts/verify.sh  # complete local gate; fails if required tools are absent
 ```
 
 On Windows PowerShell:
@@ -62,7 +63,13 @@ Then open:
 http://localhost:8080/setup
 ```
 
-The browser page is a setup notice only until production client crypto is wired. Owner setup must come from a client that can generate a real device key package. Remote first-owner setup also requires a high-entropy `PRIVATE_MESSENGER_SETUP_TOKEN`; tokenless setup is loopback-only.
+The browser page is a setup notice only until production client crypto is wired. Owner setup must come from a client that can generate a real device key package. Remote first-owner setup also requires a high-entropy `PRIVATE_MESSENGER_SETUP_TOKEN`; generate one with `messenger-server generate-setup-token`. Tokenless setup is loopback-only.
+
+The mobile app starts with an empty server field and requires an HTTPS origin;
+`http://localhost:8080` is browser-only. For a public deployment, use the
+Compose+Caddy profile or another trusted TLS reverse proxy. For a LAN-only
+deployment, use Caddy's internal TLS and install its CA certificate on the
+device; the mobile app does not bypass certificate validation.
 
 Default data lives under `./data` unless `PRIVATE_MESSENGER_DATA_DIR` is set.
 

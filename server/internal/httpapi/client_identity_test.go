@@ -101,4 +101,8 @@ func TestSetupAuthorizationUsesResolvedIdentityAndToken(t *testing.T) {
 	if !api.setupAuthorized(loopback) {
 		t.Fatal("valid setup token was rejected")
 	}
+	loopback.Header.Set("X-Veritra-Setup-Token", "short")
+	if api.setupAuthorized(loopback) {
+		t.Fatal("short setup token was accepted")
+	}
 }

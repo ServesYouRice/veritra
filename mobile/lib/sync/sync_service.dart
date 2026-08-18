@@ -9,6 +9,93 @@ abstract class SyncService {
   void dispose();
 }
 
+typedef SyncOwnerWork = Future<void> Function();
+
+/// Serializes all event catch-up requests for one authenticated account.
+///
+/// The owner is deliberately transport-agnostic: realtime, foreground resume
+/// and persisted push wakes all submit work here, while the callback performs
+/// the ordered event/crypto/storage transaction. A request arriving during a
+/// run is coalesced into one follow-up pass instead of starting a second owner.
+class AccountSyncEngine {
+  AccountSyncEngine({
+    required this.isOwner,
+    required this.work,
+  });
+
+  final bool Function() isOwner;
+  final SyncOwnerWork work;
+  bool _running = false;
+  bool _requested = false;
+  bool _disposed = false;
+  Future<void>? _active;
+  final List<Completer<void>> _waiters = <Completer<void>>[];
+
+  Future<void> request() {
+    if (_disposed || !isOwner()) return Future<void>.value();
+    final waiter = Completer<void>();
+    _waiters.add(waiter);
+    if (_running) {
+      _requested = true;
+      return waiter.future;
+    }
+    final active = _run();
+    _active = active;
+    unawaited(active);
+    return waiter.future;
+  }
+
+  /// Requests one follow-up pass without making the current owner wait on
+  /// itself. This is used when a newer durable wake arrives mid-pass.
+  void markRequested() {
+    if (!_disposed && isOwner()) _requested = true;
+  }
+
+  Future<void> _run() async {
+    _running = true;
+    Object? failure;
+    StackTrace? failureStack;
+    try {
+      do {
+        _requested = false;
+        if (_disposed || !isOwner()) break;
+        await work();
+      } while (_requested && !_disposed && isOwner());
+    } catch (error, stackTrace) {
+      failure = error;
+      failureStack = stackTrace;
+    } finally {
+      _running = false;
+      final waiters = List<Completer<void>>.from(_waiters);
+      _waiters.clear();
+      for (final waiter in waiters) {
+        if (waiter.isCompleted) continue;
+        if (failure != null) {
+          waiter.completeError(failure!, failureStack);
+        } else {
+          waiter.complete();
+        }
+      }
+    }
+  }
+
+  void dispose() {
+    _disposed = true;
+    _requested = false;
+    if (!_running) {
+      for (final waiter in _waiters) {
+        if (!waiter.isCompleted) waiter.complete();
+      }
+      _waiters.clear();
+    }
+  }
+
+  Future<void> cancelAndDrain() async {
+    dispose();
+    await _active;
+  }
+}
+
 class WebSocketSyncService implements SyncService {
   WebSocketSyncService({required this.baseUrl, required this.token});
 

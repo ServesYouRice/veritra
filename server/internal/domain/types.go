@@ -246,14 +246,20 @@ type Reaction struct {
 }
 
 type CallSession struct {
-	ID             string          `json:"id"`
-	ConversationID string          `json:"conversation_id"`
-	CreatedBy      string          `json:"created_by"`
-	State          string          `json:"state"`
-	Metadata       json.RawMessage `json:"metadata"`
-	CreatedAt      time.Time       `json:"created_at"`
-	EndedAt        *time.Time      `json:"ended_at,omitempty"`
-	ExpiresAt      *time.Time      `json:"expires_at,omitempty"`
+	ID                string          `json:"id"`
+	ConversationID    string          `json:"conversation_id"`
+	CreatedBy         string          `json:"created_by"`
+	InvitedAccountID  string          `json:"invited_account_id"`
+	State             string          `json:"state"`
+	Version           int64           `json:"version"`
+	Metadata          json.RawMessage `json:"metadata"`
+	CreatedAt         time.Time       `json:"created_at"`
+	EndedAt           *time.Time      `json:"ended_at,omitempty"`
+	ExpiresAt         *time.Time      `json:"expires_at,omitempty"`
+	CreateActionID    string          `json:"-"`
+	CreateActionHash  string          `json:"-"`
+	LastActionID      string          `json:"-"`
+	LastActionHash    string          `json:"-"`
 }
 
 type MetadataSearchResult struct {

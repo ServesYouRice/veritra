@@ -11,11 +11,37 @@ The 2026-08-08 audit source snapshots are read-only under `audits-codex/` and
 **NO-GO:** production crypto remains fail-closed.
 
 Audit reconciliation and Claude's second-round review have consensus with no
-open objections. No implementation card is claimed. The first Ready card is
-**I29, recovery capability secrecy and lifecycle**; I40 follows immediately
-because its Rust exception guard must land before 2026-08-29. I30-I43 and
-dependency-blocked I45 contain the remaining local release work.
+open objections. T29 is implemented by Codex on 2026-08-14; its required
+toolchain checks are pending because this workspace has no Go/Docker runtime.
+T40A is implemented by Codex on 2026-08-14; its Cargo checks are pending. T40B
+is implemented by Codex on 2026-08-14; its Go/Docker checks are pending. T40C
+is implemented by Codex on 2026-08-14; its release gate intentionally blocks
+without approval evidence and its Go/Docker checks are pending. T40D is
+implemented by Codex on 2026-08-14; its full verification checks are pending.
+T30A
+is implemented by Codex on 2026-08-14; its Flutter checks are pending
+because this workspace has no Flutter runtime. T31 is implemented by Codex on
+2026-08-14; its Flutter checks are pending because this workspace has no
+Flutter runtime. T30B is implemented by Codex on 2026-08-14; its Flutter and
+Go checks are pending because this workspace has no Flutter or Go runtime.
+T32 is implemented by Codex on 2026-08-14; its Flutter checks are pending
+because this workspace has no Flutter runtime.
+T35 is implemented by Codex on 2026-08-14; its Go checks are pending because
+this workspace has no Go runtime.
+T36A/T36B are implemented by Codex on 2026-08-14; their Go checks are pending
+because this workspace has no Go runtime. T37A/T37B and the safe T37C
+migration/idle plumbing are implemented by Codex on 2026-08-14; T37C session
+rotation and cost promotion remain policy/toolchain deferred. I38 is implemented
+by Codex on 2026-08-14; its Go/Flutter checks are pending. I39, I41, T42B/I43
+and dependency-blocked I45 contain the remaining local release work.
+T42A is implemented by Codex on 2026-08-14; its server checks are pending
+because this workspace has no Go runtime. T42B design-stage work is claimed by
+Codex on 2026-08-14; its proposed platform design remains pending explicit
+approval before native permissions or provider changes.
 
+T43A/T43B/T43C are implemented by Codex on 2026-08-14; their Flutter checks
+and T43C's golden/device evidence are pending because this workspace has no
+Flutter runtime or signed-device environment.
 I24, I25 and I27 still need signing credentials, supported physical Android
 and iOS devices, macOS for the iOS build, an operator-controlled TURN
 deployment, push-provider credentials, a coordinated upstream OpenMLS/HPKE
@@ -64,21 +90,21 @@ task boundaries and orchestration rules are in
 
 | ID | Status | Work | Depends on |
 |---|---|---|---|
-| I29 | Ready, first | Recovery capability secrecy and lifecycle | — |
-| I30 | Ready | One MLS-aware sync owner | — |
-| I31 | Ready | Lossless message outbox | — |
-| I32 | Ready | Account-scoped session lifecycle | — |
+| I29 | Implemented; checks pending (Codex, 2026-08-14) | Recovery capability secrecy and lifecycle | — |
+| I30 | Implemented (T30A/T30B); checks pending (Codex, 2026-08-14) | One MLS-aware sync owner | — |
+| I31 | Implemented (T31); checks pending (Codex, 2026-08-14) | Lossless message outbox | — |
+| I32 | Implemented (T32); checks pending (Codex, 2026-08-14) | Account-scoped session lifecycle | — |
 | I33 | Blocked by I30 | Poison-event and stale-device recovery | I30 |
 | I34 | Blocked by I31 | Reliable MLS control outbox | I31 pattern |
-| I35 | Ready | Retention and attachment-prune convergence | — |
-| I36 | Ready | Committed-message fanout and bounded push work | — |
-| I37 | Ready | Setup and authentication hardening | — |
-| I38 | Ready | Safe account export | — |
+| I35 | Implemented (T35); checks pending (Codex, 2026-08-14) | Retention and attachment-prune convergence | — |
+| I36 | T36A/T36B implemented; checks pending (Codex, 2026-08-14) | Committed-message fanout and bounded push work | — |
+| I37 | T37A/T37B implemented; T37C safe migration/idle plumbing implemented; rotation and cost promotion deferred; checks pending (Codex, 2026-08-14) | Setup and authentication hardening | — |
+| I38 | Implemented (T38); checks pending (Codex, 2026-08-14) | Safe account export | — |
 | I39 | Blocked by I32 | Fail-closed encrypted database key recovery | I32 |
-| I40 | Ready, next; due 2026-08-29 | Release evidence and toolchain integrity | — |
+| I40 | T40A/T40B/T40C/T40D implemented; checks pending (Codex, 2026-08-14); due 2026-08-29 | Release evidence and toolchain integrity | — |
 | I41 | Blocked by I36, conditional D03 | Push registration and platform readiness | I36 |
-| I42 | Ready, conditional D03 | Authorized calls and native lifecycle | — |
-| I43 | Ready, feeds I24 | First-run and accessibility baseline | — |
+| I42 | T42A implemented; T42B design claimed/proposed, approval pending; checks pending (Codex, 2026-08-14), conditional D03 | Authorized calls and native lifecycle | — |
+| I43 | T43A/T43B/T43C implemented; checks/evidence pending (Codex, 2026-08-14) | First-run and accessibility baseline | — |
 | I44 | Prepared, split before claim | Mobile and API quality | release blockers |
 | I45 | Blocked by I29/I39, required by D02 | Backup, restore and migration safety | I29, I39 |
 | I46 | Prepared | Supported deployment hardening | — |
@@ -204,24 +230,24 @@ that commit and `194bd0c`. Rust and the Compose smoke were not re-run because
 I28 changed no Rust or deployment file. Golden, manual and real-device visual
 evidence remains in I24/I43.
 
-| Evidence | Result | Artifact / note |
+| Evidence | Result | Toolchain / artifact / note |
 |---|---|---|
-| Go tests | Pass | `go test ./...` in pinned Go 1.25 container |
-| Rust tests and vectors | Pass | 17 tests with pinned Rust 1.90 |
-| Flutter analyze/tests | Pass | Analyzer clean; 79 pass, 2 environment skips (`6083e3f`) |
-| Crypto-gated end-user flows | Pending | UI paths listed above remain unavailable |
-| Contract/integration tests | Pass | Live server and real host native library |
-| Direct license notices | Pass | Full transitive scan remains required |
-| Dart package license files | Pass | 157 fetched packages contain `LICENSE*` or `COPYING*` |
+| Go tests | Pass | Go 1.25.12; `go test ./...` in pinned container |
+| Rust tests and vectors | Pass | Rust 1.90; 17 tests |
+| Flutter analyze/tests | Pass | Flutter 3.44.0; analyzer clean; 79 pass, 2 environment skips (`6083e3f`) |
+| Crypto-gated end-user flows | Pending | No activated production crypto toolchain; UI paths listed above remain unavailable |
+| Contract/integration tests | Pass | Go 1.25.12 and real host native library |
+| Direct license notices | Pass | Host tooling; full transitive scan remains required |
+| Dart package license files | Pass | Flutter 3.44.0; 157 fetched packages contain `LICENSE*` or `COPYING*` |
 | Go vulnerability scan | Pass | Go 1.25.12; zero reachable vulnerabilities |
-| Rust vulnerability scan | Conditional | Guarded temporary exceptions for I27; production remains blocked |
-| Android debug build | Pass | Unsigned `app-debug.apk`; not release evidence |
-| Android unsigned release build | Pass | 120,668,346-byte APK; three verified native ABIs; SHA-256 `B3569C9E9D5E097822CF18FF376E2275172474871B623656A46D282E28691717` |
-| Android signed release build | Pending | Requires signing approval |
-| iOS reproducible release build | External | Requires macOS and signing |
-| SPDX SBOM/checksums/provenance | External | Generated by the gated release workflow |
-| Release-readiness gate | Expected fail, verified | `PM_CRYPTO_UNAVAILABLE` remains wired |
-| Fresh-volume Compose smoke | Pass | Container became healthy; loopback `/healthz` returned 200; disposable volume removed |
+| Rust vulnerability scan | Conditional | Rust 1.90; guarded temporary exceptions for I27; production remains blocked |
+| Android debug build | Pass | Flutter 3.44.0; unsigned `app-debug.apk`; not release evidence |
+| Android unsigned release build | Pass | Flutter 3.44.0; 120,668,346-byte APK; three verified native ABIs; SHA-256 `B3569C9E9D5E097822CF18FF376E2275172474871B623656A46D282E28691717` |
+| Android signed release build | Pending | Flutter release toolchain; requires signing approval |
+| iOS reproducible release build | External | Flutter 3.44.0; requires macOS and signing |
+| SPDX SBOM/checksums/provenance | External | Gated Go 1.25.12 release workflow; generated at publication |
+| Release-readiness gate | Expected fail, verified | Host tooling; `PM_CRYPTO_UNAVAILABLE` remains wired |
+| Fresh-volume Compose smoke | Pass | Go 1.25.12 container; healthy; loopback `/healthz` returned 200; disposable volume removed |
 
 | Real-device flow | Android | iOS |
 |---|---|---|
@@ -233,6 +259,12 @@ evidence remains in I24/I43.
 | FCM/APNs background wake | Pending credentials/hardware | Pending credentials/hardware |
 | TURN call under network changes | Pending TURN/hardware | Pending TURN/hardware |
 | TalkBack/VoiceOver/large text | Pending hardware | Pending hardware |
+
+T43C adds automated semantic-label, 320dp/200% text-scale and compact-nav
+contracts in `mobile/test/ui_accessibility_test.dart`; Flutter execution is
+pending in this workspace. Golden screenshots, browser rendering, signed
+device runs and TalkBack/VoiceOver checks remain G24 evidence, not claims made
+by the automated tests.
 
 Record each independent finding here with its ID, severity, affected revision
 and file, remediation revision, reviewer retest, and residual-risk decision.

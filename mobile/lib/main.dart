@@ -6,7 +6,6 @@ import 'core/app_state.dart';
 import 'core/api_client.dart';
 import 'crypto/crypto_service.dart';
 import 'push/push_service.dart';
-import 'push/background_push.dart';
 import 'storage/local_store.dart';
 import 'sync/sync_service.dart';
 import 'ui/app_shell.dart';
@@ -22,36 +21,55 @@ Future<void> main() async {
         WebSocketSyncService(baseUrl: baseUrl, token: token),
     pushService: PlatformMobilePushService(),
   );
-  // Best-effort: restore a previously stored session so the user doesn't have
-  // to re-authenticate on every cold start. If the call fails (corrupt
-  // keystore entry, missing secure storage on a new platform) we silently
-  // fall through to the connect screen.
+  // Restore is represented by an explicit startup state while the app shell
+  // remains mounted; failures enter recovery instead of flashing logout or
+  // resetting the durable cursor.
   runApp(VeritraApp(state: state));
   unawaited(state.tryRestoreSession());
 }
 
-@pragma('vm:entry-point')
-Future<void> pushBackgroundMain() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await performBackgroundPushCatchUp();
-}
-
-class VeritraApp extends StatelessWidget {
+class VeritraApp extends StatefulWidget {
   const VeritraApp({required this.state, super.key});
 
   final AppState state;
 
   @override
+  State<VeritraApp> createState() => _VeritraAppState();
+}
+
+class _VeritraAppState extends State<VeritraApp>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    widget.state.handleAppLifecycleState(
+      WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed,
+    );
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    widget.state.handleAppLifecycleState(state);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: state,
+      animation: widget.state,
       builder: (context, _) {
         return MaterialApp(
           title: 'Veritra',
           theme: veritraLightTheme(),
           darkTheme: veritraDarkTheme(),
           themeMode: ThemeMode.system,
-          home: AppShell(state: state),
+          home: AppShell(state: widget.state),
         );
       },
     );

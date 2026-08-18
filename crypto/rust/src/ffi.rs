@@ -925,4 +925,23 @@ mod tests {
             pm_crypto_device_destroy(bob);
         }
     }
+
+    #[test]
+    fn release_profile_keeps_ffi_panic_guard_active() {
+        let result = ffi_call(|| -> Result<(), i32> {
+            panic!("panic guard test");
+        });
+        assert_eq!(result, PM_CRYPTO_PANIC);
+    }
+
+    #[test]
+    fn release_profile_keeps_overflow_checks_active() {
+        let result = ffi_call(|| -> Result<(), i32> {
+            let left = std::hint::black_box(usize::MAX);
+            let right = std::hint::black_box(1_usize);
+            let _wrapped = left + right;
+            Ok(())
+        });
+        assert_eq!(result, PM_CRYPTO_PANIC);
+    }
 }

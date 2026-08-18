@@ -2,6 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/features/chat/chat_list_screen.dart';
 import 'package:private_messenger/features/chat/chat_screen.dart';
 import 'package:private_messenger/ui/avatar.dart';
+import 'package:private_messenger/ui/theme.dart';
+import 'package:private_messenger/ui/tokens.dart';
 
 /// Pure-function contracts behind the K2 · Bone chat surfaces. Nothing here
 /// pumps a widget: these are the properties that are easy to break in a later
@@ -91,6 +93,52 @@ void main() {
       expect(retentionLabel(3600), '1 hour');
       expect(retentionChipLabel(1800), '30m');
       expect(retentionLabel(1800), '30 minutes');
+    });
+  });
+
+  group('non-text control contrast', () {
+    test('opaque and composited boundaries clear 3:1 in both palettes', () {
+      for (final theme in <ThemeData>[
+        veritraLightTheme(),
+        veritraDarkTheme(),
+      ]) {
+        final scheme = theme.colorScheme;
+        final surfaces = <Color>[
+          scheme.surface,
+          scheme.surfaceContainerLowest,
+          scheme.surfaceContainerLow,
+          scheme.surfaceContainer,
+          scheme.surfaceContainerHigh,
+          scheme.surfaceContainerHighest,
+        ];
+
+        for (final surface in surfaces) {
+          expect(
+            contrastRatio(scheme.outline, surface),
+            greaterThanOrEqualTo(3),
+          );
+          expect(
+            contrastRatio(
+              compositeColor(scheme.outlineVariant, surface),
+              surface,
+            ),
+            greaterThanOrEqualTo(3),
+          );
+        }
+
+        // Focused and error controls use opaque state borders. The
+        // errorContainer border on ConnectionBanner is a decorative status
+        // boundary, not a control-identifying edge, so it is intentionally
+        // outside this outlineVariant contract.
+        expect(
+          contrastRatio(scheme.primary, scheme.surfaceContainer),
+          greaterThanOrEqualTo(3),
+        );
+        expect(
+          contrastRatio(scheme.error, scheme.errorContainer),
+          greaterThanOrEqualTo(3),
+        );
+      }
     });
   });
 }

@@ -161,8 +161,8 @@ class NativeCryptoService implements MlsConversationCryptoService {
 
   @override
   Future<void> processMlsMessage(MlsMessage message) => _serial(() async {
-        if (message.senderDeviceId == _deviceId ||
-            await localStore.hasProcessedMlsMessage(message.id)) {
+        final marker = 'mls:${message.syncEventId}:${message.id}';
+        if (await localStore.hasProcessedMlsMessage(marker)) {
           return;
         }
         final previous = await _requiredState();
@@ -171,6 +171,15 @@ class NativeCryptoService implements MlsConversationCryptoService {
           throw StateError('unrecorded MLS message is behind the sync cursor');
         }
         try {
+          if (message.senderDeviceId == _deviceId) {
+            await localStore.commitSyncEvent(SyncEventCommit(
+              eventKey: marker,
+              conversationId: message.conversationId,
+              expectedCursor: previousCursor,
+              cursor: message.syncEventId,
+            ));
+            return;
+          }
           final device = _requiredDevice();
           switch (message.kind) {
             case 'welcome':
@@ -182,12 +191,12 @@ class NativeCryptoService implements MlsConversationCryptoService {
             case 'commit':
               device.processCommit(message.conversationId, message.payload);
               break;
-            default:
+          default:
               throw StateError('unsupported MLS transport message');
           }
           final next = _sealNext(previous);
           await localStore.commitMlsTransition(MlsStateTransition(
-            messageId: message.id,
+            messageId: marker,
             conversationId: message.conversationId,
             expectedCounter: previous.counter,
             expectedCursor: previousCursor,
@@ -301,13 +310,21 @@ class NativeCryptoService implements MlsConversationCryptoService {
             metadata['version'] != 1) {
           throw const FormatException('invalid encrypted call signal');
         }
-        if (senderDeviceId == _deviceId) return null;
-        final marker = 'call:${call.id}:$actionId';
+        final marker = 'call:$syncEventId:${call.id}:$actionId';
         if (await localStore.hasProcessedMlsMessage(marker)) return null;
         final previous = await _requiredState();
         final cursor = await localStore.loadSyncCursor();
         if (syncEventId <= cursor)
           throw StateError('call signal is behind the sync cursor');
+        if (senderDeviceId == _deviceId) {
+          await localStore.commitSyncEvent(SyncEventCommit(
+            eventKey: marker,
+            conversationId: call.conversationId,
+            expectedCursor: cursor,
+            cursor: syncEventId,
+          ));
+          return null;
+        }
         try {
           final plaintext = _requiredDevice()
               .decrypt(call.conversationId, base64Decode(encoded));
@@ -337,6 +354,9 @@ class NativeCryptoService implements MlsConversationCryptoService {
       _serial(() async {
         final previous = await _requiredState();
         final cursor = await localStore.loadSyncCursor();
+        if (!await localStore.hasOutboxCapacity()) {
+          throw const OutboxFullException();
+        }
         try {
           final idempotencyKey = _randomIdempotencyKey();
           final payload = AppPayloadCodec().encode(
@@ -366,6 +386,7 @@ class NativeCryptoService implements MlsConversationCryptoService {
               expectedCursor: cursor,
               state: _sealNext(previous),
               envelope: envelope,
+              draftText: plaintext,
             ),
           );
           return envelope;
@@ -381,17 +402,26 @@ class NativeCryptoService implements MlsConversationCryptoService {
     int syncEventId,
   ) =>
       _serial(() async {
-        if (envelope.senderDeviceId == _deviceId) return null;
         if (envelope.cryptoProtocol != 'mls10-openmls-v1') {
           throw StateError('unsupported message crypto protocol');
         }
-        final marker = 'application:${envelope.id}';
+        final marker = 'application:$syncEventId:${envelope.id}';
         if (await localStore.hasProcessedMlsMessage(marker)) return null;
         final previous = await _requiredState();
         final cursor = await localStore.loadSyncCursor();
         if (syncEventId <= cursor) {
           throw StateError(
               'unrecorded application message is behind the cursor');
+        }
+        if (envelope.senderDeviceId == _deviceId) {
+          await localStore.commitSyncEvent(SyncEventCommit(
+            eventKey: marker,
+            conversationId: envelope.conversationId,
+            expectedCursor: cursor,
+            cursor: syncEventId,
+            envelope: envelope,
+          ));
+          return null;
         }
         try {
           final plaintext = _requiredDevice()

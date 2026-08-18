@@ -52,13 +52,29 @@ agree.
 | Raised | `#2B233A` | `#F0EDE6` |
 | Text | `#F3EFFA` | `#1A1620` |
 | Muted | `#A89EA6` | `#6B6169` |
-| Outline | `#6F6675` | `#8A808A` |
+| Outline | `#A89EA6` | `#8A808A` |
 | Accent | `#EDE4DA` | `#3A2E42` |
 | On accent | `#1E1620` | `#FFFFFF` |
-| Border | `rgb(255 255 255 / 9%)` | `rgb(26 22 32 / 11%)` |
+| Border | `rgb(168 158 166 / 60%)` | `rgb(26 22 32 / 50%)` |
 
 Surfaces separate by **tone, not shadow**, over 1px hairlines. Structural radii
 are 12 and 20; controls use 10, bubbles 18, pills 999. Rows are 62dp.
+
+### Non-text boundary contrast
+
+T43A measures the final painted boundary, including alpha compositing, against
+every Material surface role used by the app. The minimum ratios are:
+
+| Palette | Opaque `outline` | Composited `outlineVariant` |
+| --- | ---: | ---: |
+| Dark | 5.77:1 | 3.02:1 |
+| Light | 3.25:1 | 3.29:1 |
+
+The contract is covered by `mobile/test/chat_visuals_test.dart` and protects
+both the token values and the surface-role mapping in `theme.dart`.
+The `ConnectionBanner`'s error-container hairline is a decorative status
+boundary; actionable error controls use the opaque `error` border and are
+covered separately.
 
 ### The five bone temperatures
 
@@ -134,7 +150,7 @@ That alone was most of why the app looked generic.
 | `body` | 14.5 / 400 / -0.01em | Default reading text |
 | `label` | 13.5 / 600 | Row titles, buttons |
 | `caption` | 11.5 / 400 | Row subtitles |
-| `micro` | 10 / 700 / 0.11em / uppercase | Group headers, field labels, chips |
+| `micro` | 11 / 700 / 0.11em / uppercase | Group headers, field labels, chips |
 | `mono` | 13 / 400 | IDs, invite codes, fingerprints |
 
 `micro` is what makes group headers and field labels read as designed rather

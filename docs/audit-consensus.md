@@ -119,6 +119,22 @@ every commit boundary, cursor expiry, foreground/background overlap and account
 switching prove that background work discards no application envelope and cursor
 advancement cannot outrun either message persistence or MLS state.
 
+**Implementation note (2026-08-14):** T30A removes the headless sync engine,
+keeps push wakes as native persisted generation markers, gates foreground
+consumption on the resumed lifecycle, and acknowledges only the generation
+observed after a successful foreground drain. The required Flutter checks are
+pending because Flutter is unavailable in the current workspace.
+
+**Implementation note (T30B, 2026-08-14):** The mobile sync owner now
+coalesces waiters and drains on session teardown; ordered events commit one
+dedupe marker, affected ciphertext and cursor transaction at a time. Message
+sync events carry immutable envelope revisions, own-sender events commit their
+cursor without reprocessing local crypto, and encrypted local metadata fences
+transactions to an origin/account/device/generation lease. Cursor-expiry
+responses retain the cursor and expose `deviceRecoveryRequired`; they never
+authorize a blind jump. Required Flutter and Go checks are pending because
+those runtimes are unavailable in the workspace.
+
 ### I31 - Lossless message outbox
 
 **Decision:** Merge Codex LOG-02/LOG-11/UI-02 and TEST-03's message-outbox scope with Opus
@@ -135,6 +151,14 @@ oldest item; retries survive restart; concurrent flush requests coalesce; 401,
 404, 409, 413, 422 and 507 follow their specified terminal/auth behavior; quota
 failure has accurate, actionable user copy.
 
+**Implementation note (2026-08-14):** T31 makes the encrypted outbox lossless
+at its 100-envelope bound, checks capacity before MLS advancement and again in
+the atomic database transition, persists local recovery drafts, and coalesces
+delivery through one retry worker. 507/quota failures are terminal and expose
+copy/discard recovery; 401 preserves the accepted local row for reauthentication.
+The required Flutter checks are pending because Flutter is unavailable in the
+current workspace.
+
 ### I32 - Account-scoped session lifecycle
 
 **Decision:** Merge Codex LOG-03/LOG-04/UI-03/TEST-02/ARCH-06 with Opus P11.
@@ -149,6 +173,14 @@ failure has accurate, actionable user copy.
 **Accept when:** deterministic paused-future tests show no false logged-out
 flash, no old-account write after logout/switch, no live socket after teardown
 and no cursor mutation after a failed restore.
+
+**Implementation note (T32, 2026-08-14):** AppState now exposes explicit
+`initializing`, `ready` and `recoveryRequired` lifecycle states, serializes
+restore/auth/session transitions, awaits sync subscription teardown, and keeps
+failed restore cursors/local state intact. Account identity changes clear MLS
+markers, control outbox, peer verifications and encrypted projections;
+generation checks fence sync, outbox and push work. Required Flutter checks
+are pending because Flutter is unavailable in the workspace.
 
 ### I33 - Poison-event and stale-device recovery
 
@@ -202,6 +234,14 @@ unrelated group can continue.
 cancellation stops promptly, attachment rows and blobs remain consistent and a
 sustained-ingest test stays below the documented backlog target.
 
+**Implementation note (T35, 2026-08-14):** The four bounded cleanup paths now
+yield across a 64-batch/10-second sweep budget. Expired message IDs,
+attachment IDs and storage keys are materialized per transaction so surviving
+attachment references are preserved before blob deletion is queued. Aggregate
+retention backlog/oldest-age metrics and expiry-aligned indexes are exposed;
+the supported backlog target is documented in `docs/operations.md`. Required
+Go checks are pending because Go is unavailable in the workspace.
+
 ### I36 - Committed-message fanout and bounded push work
 
 **Decision:** Merge Codex LOG-07/PERF-02/ARCH-03/NTH-14 with Opus L4/P10.
@@ -216,6 +256,26 @@ fix.**
 **Accept when:** an injected recipient-lookup failure cannot create a committed
 message with lost fanout; 100-target bursts stay within worker/socket bounds;
 restart and partial provider failure preserve eligible wake work.
+
+**Implementation note (T36A, 2026-08-14):** The message commit path now returns
+the conversation membership recipient snapshot from the same transaction that
+inserts the envelope and sync event. The messaging service no longer performs a
+post-commit recipient query; idempotent duplicates still return no recipients.
+T36B durable wake jobs and bounded provider delivery are recorded below.
+Required Go checks are pending because Go is unavailable in the workspace.
+
+**Implementation note (T36B, 2026-08-14):** A SQLite `push_wake_jobs` outbox
+now records only event/routing identifiers and subscription references in the
+same message transaction. Per-provider workers claim at most 64 jobs with
+opaque leases, send at most eight concurrently with 10-second deadlines, and
+retry transient failures with expiry and jitter. Delivery rechecks membership,
+mute/block state, device revocation and current subscription credentials before
+sending; gone or invalid targets are retired only when the claimed credentials
+still match. Worker lifecycle is tied to `serveCtx`, and aggregate provider
+delivery/backlog metrics are exposed. Delivery is intentionally at-least-once
+around a crash between provider acceptance and acknowledgement; payloads stay
+generic. Required Go checks are pending because Go is unavailable in the
+workspace.
 
 ### I37 - Setup and authentication hardening
 
@@ -237,6 +297,35 @@ startup; generated tokens work and compare through fixed-size hashes;
 full-table tests cannot fail open or lock all new users out; reauth cannot
 exceed its documented CPU/guessing budget.
 
+**Implementation note (T37A, 2026-08-14):** Production setup tokens now use
+unpadded base64url with a decoded minimum of 32 bytes, reject reserved and
+obviously low-diversity placeholders, and are validated during config loading,
+serve validation and app startup. `setupAuthorized` compares fixed-size
+SHA-256 digests. The CLI generates a CSPRNG-backed token, and deployment
+guidance/CI use the supported encoding. T37C session hardening is tracked
+below. Required Go checks are pending because Go is unavailable in the
+workspace.
+
+**Implementation note (T37B, 2026-08-14):** Reauthentication now shares the
+strict credential route budget and applies independent salted backoff scopes
+for session, account/device and source/account/device. Login failures combine
+account and source/device scopes. Both bounded tables sweep expiry state and
+use bounded eviction sampling under pressure, while preserving
+existing blocked entries when possible; failure state does not become an
+unbounded sliding lock. Aggregate occupancy and pressure-eviction metrics are
+exposed without usernames, addresses, device IDs or tokens. Required Go checks
+remain pending because Go is unavailable in the workspace.
+
+**Implementation note (T37C, 2026-08-14):** The server now has an explicit
+bcrypt target-cost configuration, benchmark coverage for legacy cost 10 versus
+the proposed higher target, conditional rehash-on-success for login and
+reauthentication, and per-session `last_used_at`/absolute-lifetime plumbing.
+The default remains cost 10 because the required Go/hardware benchmark is not
+available here. Active-session token rotation is deferred: invalidating the old
+hash before a response can be delivered would strand current clients, so a
+reviewed idempotent refresh protocol and coordinated client changes are
+required before enabling it. Required Go checks remain pending.
+
 ### I38 - Safe account export
 
 **Decision:** Merge Codex SEC-02/NTH-19 with Opus H3. **High, release blocker.
@@ -249,6 +338,15 @@ No dependency.**
 **Accept when:** a bearer token without recent auth is rejected, exports contain
 no reusable secret, schema/authorization tests pass and the client download
 does not log or expose the payload.
+
+**Implementation note (T38, 2026-08-14):** The export route now requires
+recent authentication and requires its dedicated audit write to succeed. Export
+manifest `v2` omits push `auth_secret` and other reusable session/recovery
+capabilities, excludes raw server audit history, and preserves message
+ciphertext and protocol metadata. The mobile client downloads bounded pages
+into a local versioned JSON file after reauthentication; it does not log the
+export body. Required Go and Flutter checks remain pending because those
+toolchains are unavailable in the workspace.
 
 ### I39 - Fail-closed encrypted database key recovery
 
@@ -285,6 +383,44 @@ I29.**
 unreviewed commit cannot publish; toolchain drift fails CI; the 2026-08-29
 exception deadline fails automatically and an injected expired date proves the
 guard; the tested commit equals the packaged commit.
+
+**Implementation note (2026-08-14):** T40A adds the parseable, UTC-pinned
+exception policy and deterministic expiry guard, runs the guard in CI and
+release readiness, pins the Rust release FFI profile, and adds release-mode
+panic/overflow tests. The required Cargo checks remain pending because Cargo
+is unavailable in the current workspace; production crypto remains fail-closed.
+
+**Implementation note (2026-08-14):** T40B adds `.go-version` as the canonical
+Go 1.25.12 pin, makes `go.mod`, setup-go, local test/lint fallbacks and the
+container consume or verify it, and fails a dedicated drift check on mismatch.
+The container build verifies the compiler version and labels the final image;
+Compose CI checks that label and executes the packaged binary. Release records
+the immutable multi-platform image digest as a release artifact. Go/Docker
+checks remain pending because those runtimes are unavailable in this workspace;
+production crypto remains fail-closed.
+
+**Implementation note (2026-08-14):** T40C replaces marker-only release
+readiness with a versioned positive evidence policy and offline validator.
+Approval evidence is bound to the candidate commit and requires production
+crypto behavior proof, independent review, a complete successful CI job set,
+and a multi-platform container digest whose commit/toolchain labels match. The
+release workflow queries the exact commit's CI run, verifies the tag target,
+stages an immutable image tag, validates its evidence, then promotes release
+tags and records the digest. The legacy unavailable markers remain
+defense-in-depth. Adversarial validator tests cover renamed markers, skipped
+jobs, unreviewed/stale approvals and artifact commit mismatch. The gate remains
+blocked in this workspace because production crypto and independent-review
+approval files do not exist; Go/Docker execution is also unavailable.
+
+**Implementation note (2026-08-14):** T40D adds `verify.sh` as the explicit
+full local gate with a machine-readable summary and no environment-dependent
+skips; the existing test/lint scripts remain fast fallback paths. CI now keeps
+Go and Flutter coverage artifacts, retains the Go/Rust scans, and runs a
+lockfile-aware mobile policy that fails on Dart retractions, missing lock data,
+dynamic Gradle versions or insecure repositories. The complete local gate is
+blocked here because Go, Cargo, cargo-audit, Flutter and Dart are unavailable;
+the mobile dependency check consequently fails closed rather than skipping.
+No new dependency was added.
 
 ### I41 - Push registration and platform readiness
 
@@ -327,6 +463,19 @@ rewrite or end calls; stale transitions fail; signed-device tests pass denied
 permissions, restrictive NAT/TURN, background/terminated and network-change
 cases.
 
+**Implementation note (2026-08-14):** T42A restricts server call sessions to
+active, exactly two-account DMs and persists the derived invited participant.
+Creation and transitions use action fingerprints for idempotent retries;
+transitions require an expected version and update through a versioned CAS.
+The storage layer enforces the initiator/invitee transition matrix, rejects
+unsupported legacy group/channel calls, and keeps signaling metadata opaque.
+Focused Go checks remain pending because this workspace has no Go runtime.
+
+The T42B platform checkpoint is claimed for design-stage work and documented in
+[`call-platform-design-proposal.md`](call-platform-design-proposal.md) and is
+not approved yet; native permissions, entitlements, and provider changes must
+wait for that approval.
+
 ### I43 - First-run and accessibility baseline
 
 **Decision:** Merge Codex UI-04/UI-05/UI-07/UI-08/TEST-04/NTH-02 with Opus
@@ -350,6 +499,35 @@ U1/U2/U3/U4/U16/U20/R6/R15/H5. **High, pre-release. Coordinate with I24.**
 **Accept when:** fresh install, linked device, offline, DNS/TLS failure and
 fresh-server setup are actionable; 320 px and 200% text do not clip; control
 contrast and semantic traversal pass; visual evidence is bound to a commit.
+
+**Implementation note (T43A, 2026-08-14):** the dark opaque outline now uses
+the muted token, while dark and light alpha borders use stronger, measured
+composites. A pure-Dart WCAG helper and `chat_visuals_test.dart` check opaque
+`outline` and composited `outlineVariant` against every Material surface role
+used by the themes. Flutter test/analyze checks and the required visual/device
+evidence remain pending because this workspace has no Flutter runtime; T43B and
+T43C are tracked by separate implementation notes below.
+
+**Implementation note (T43B, 2026-08-14):** the mobile connect flow starts
+with an empty origin, rejects cleartext URLs without a development bypass, and
+probes the HTTPS setup endpoint into typed reachable, fresh-instance, DNS,
+TLS, timeout, wrong-server and unavailable states. Local device identity and
+the probed origin select owner, invite registration or password sign-in; the
+sign-in failure offers a direct link-device action. QR parsing rejects
+unrelated URLs, accepts only HTTPS origin hints, and requires confirmation
+before filling the origin; submission still requires a successful probe. iOS
+declares local-network usage. Required Flutter checks remain pending; T43C
+visual/accessibility evidence is still outstanding.
+
+**Implementation note (T43C, 2026-08-14):** authentication fields now expose
+persistent semantic labels and autofill metadata, the shared micro type is
+11px, compact navigation removes visual labels below its safe width or at
+larger text scales while retaining announced labels, and the setup page uses
+border-box sizing with responsive padding. `ui_accessibility_test.dart` covers
+semantic labels, 320dp/200% text construction and compact navigation. Flutter
+tests/analyze and the websetup Go test are pending because the runtimes are
+unavailable; golden screenshots, browser rendering and signed-device/manual
+accessibility evidence remain external G24 work.
 
 ## Dependency-blocked release package
 

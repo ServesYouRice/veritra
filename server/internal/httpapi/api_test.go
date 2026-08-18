@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
@@ -17,9 +18,27 @@ import (
 	"strconv"
 	"testing"
 
+	_ "modernc.org/sqlite"
+
 	"private-messenger/server/internal/app"
 	"private-messenger/server/internal/config"
 )
+
+func TestAccountExportRequiresRecentAuthentication(t *testing.T) {
+	handler, token, dbPath := newTestHandlerWithOwner(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open test database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`UPDATE sessions SET recent_auth_at = NULL`); err != nil {
+		t.Fatalf("clear recent auth: %v", err)
+	}
+	status, response := doJSON(t, handler, http.MethodGet, "/api/v1/account/export", token, nil)
+	if status != http.StatusForbidden || !bytes.Contains(response, []byte("recent_auth_required")) {
+		t.Fatalf("stale export status=%d body=%s", status, response)
+	}
+}
 
 func TestMessageAPIRejectsPlaintextFields(t *testing.T) {
 	handler, token, dbPath := newTestHandlerWithOwner(t)
@@ -224,13 +243,24 @@ func TestMetadataSearchBackupExportAndAccountDelete(t *testing.T) {
 		t.Fatalf("metadata search returned ciphertext content: %s", response)
 	}
 
+	recoveryToken := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))
 	status, response = doRaw(t, handler, http.MethodPost, "/api/v1/backups", token, []byte("encrypted backup blob"), map[string]string{
 		"X-Private-Messenger-Encrypted": "1",
 		"X-Key-Derivation-Metadata":     `{"version":1,"algorithm":"AES-256-GCM-chunked","chunk_size":1048576,"state_counter":1}`,
-		"X-Recovery-Token":              base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)),
+		"X-Recovery-Token":              recoveryToken,
 	})
 	if status != http.StatusCreated {
 		t.Fatalf("backup status=%d body=%s", status, response)
+	}
+	status, response = doRaw(t, handler, http.MethodGet, "/api/v1/recovery", "", nil, map[string]string{
+		"X-Recovery-Token": recoveryToken,
+	})
+	if status != http.StatusOK || !bytes.Equal(response, []byte("encrypted backup blob")) {
+		t.Fatalf("recovery status=%d body=%q", status, response)
+	}
+	status, _ = doRaw(t, handler, http.MethodGet, "/api/v1/recovery/"+recoveryToken, "", nil, nil)
+	if status != http.StatusNotFound {
+		t.Fatalf("legacy/replayed recovery status=%d want %d", status, http.StatusNotFound)
 	}
 
 	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/account/export", token, nil)

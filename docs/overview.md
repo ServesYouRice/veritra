@@ -257,8 +257,18 @@ Two results are worth knowing before you run them: `release-readiness.sh` is
 ```sh
 ./scripts/test.sh       # Go + Rust + Flutter (Docker fallback if no toolchain)
 ./scripts/lint.sh       # formatters + linters
+./scripts/verify.sh     # complete gate; no environment-dependent skips
 ./scripts/dev.sh        # local dev server
 ```
+
+`test.sh` and `lint.sh` are fast developer paths with pinned Docker fallbacks.
+`verify.sh` is the release-grade local path: it requires Go, Cargo/cargo-audit,
+Flutter and Dart, runs race/coverage, native/API, license, Rust-audit and
+mobile dependency checks, and writes `dist/verify-summary.json`. Missing
+tooling is a blocked result, not a skipped release check. The mobile policy
+requires `pubspec.lock`, scans `dart pub outdated --json --show-all` for
+retractions, and rejects unpinned or insecure Gradle inputs; it does not claim
+to be a vulnerability scanner.
 
 ```sh
 # server subcommands

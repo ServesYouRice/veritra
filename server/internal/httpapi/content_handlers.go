@@ -188,18 +188,175 @@ func validBackupCryptoMetadata(raw json.RawMessage) bool {
 }
 
 func (a *API) recoverBackup(w http.ResponseWriter, r *http.Request) {
-	token, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(r.PathValue("token")))
+	token, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(r.Header.Get("X-Recovery-Token")))
 	if err != nil || len(token) != 32 {
 		writeError(w, http.StatusNotFound, "not_found")
 		return
 	}
 	hash := sha256.Sum256(token)
-	backup, err := a.Store.BackupForRecoveryToken(r.Context(), hash[:])
+	start, err := recoveryRangeStart(r)
 	if err != nil {
+		writeError(w, http.StatusRequestedRangeNotSatisfiable, "invalid_recovery_range")
+		return
+	}
+	transfer, err := a.Store.BeginRecoveryTransfer(r.Context(), hash[:], start)
+	if err != nil {
+		if errors.Is(err, storage.ErrRecoveryBusy) {
+			writeError(w, http.StatusConflict, "recovery_transfer_in_progress")
+			return
+		}
+		if errors.Is(err, storage.ErrRecoveryRange) {
+			writeError(w, http.StatusRequestedRangeNotSatisfiable, "invalid_recovery_range")
+			return
+		}
 		handleStorageError(w, err)
 		return
 	}
-	serveEncryptedBlob(w, r, a.Blobs, backup.StorageKey, backup.CiphertextSHA256, backup.SizeBytes)
+	start, end, err = recoveryRange(r, transfer.Backup.SizeBytes)
+	if err != nil {
+		_ = finalizeRecoveryTransfer(r, a.Store, transfer, 0, 0)
+		writeError(w, http.StatusRequestedRangeNotSatisfiable, "invalid_recovery_range")
+		return
+	}
+	serveRecoveryBlob(w, r, a.Store, a.Blobs, transfer, end-start+1)
+}
+
+func recoveryRange(r *http.Request, size int64) (int64, int64, error) {
+	if size < 0 {
+		return 0, 0, errors.New("invalid recovery size")
+	}
+	start, err := recoveryRangeStart(r)
+	if err != nil {
+		return 0, 0, err
+	}
+	if strings.TrimSpace(r.Header.Get("Range")) == "" {
+		if size == 0 {
+			return 0, -1, nil
+		}
+		return 0, size - 1, nil
+	}
+	header := strings.TrimSpace(r.Header.Get("Range"))
+	spec := strings.TrimSpace(strings.TrimPrefix(header, "bytes="))
+	if strings.Contains(spec, ",") {
+		return 0, 0, errors.New("multiple recovery ranges are not supported")
+	}
+	parts := strings.Split(spec, "-")
+	if len(parts) != 2 || parts[0] == "" {
+		return 0, 0, errors.New("invalid recovery range")
+	}
+	if start >= size {
+		return 0, 0, errors.New("invalid recovery range")
+	}
+	end := size - 1
+	if strings.TrimSpace(parts[1]) != "" {
+		end, err = strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
+		if err != nil || end < start || end >= size {
+			return 0, 0, errors.New("invalid recovery range")
+		}
+	}
+	return start, end, nil
+}
+
+func recoveryRangeStart(r *http.Request) (int64, error) {
+	header := strings.TrimSpace(r.Header.Get("Range"))
+	if header == "" {
+		return 0, nil
+	}
+	if !strings.HasPrefix(header, "bytes=") {
+		return 0, errors.New("invalid recovery range")
+	}
+	spec := strings.TrimSpace(strings.TrimPrefix(header, "bytes="))
+	if strings.Contains(spec, ",") {
+		return 0, errors.New("multiple recovery ranges are not supported")
+	}
+	parts := strings.Split(spec, "-")
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" {
+		return 0, errors.New("invalid recovery range")
+	}
+	start, err := strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
+	if err != nil || start < 0 {
+		return 0, errors.New("invalid recovery range")
+	}
+	return start, nil
+}
+
+type recoveryResponseWriter struct {
+	http.ResponseWriter
+	written int64
+	status  int
+	err     error
+}
+
+func (w *recoveryResponseWriter) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	n, err := w.ResponseWriter.Write(p)
+	w.written += int64(n)
+	if err != nil {
+		w.err = err
+	}
+	return n, err
+}
+
+func (w *recoveryResponseWriter) WriteHeader(status int) {
+	if w.status != 0 {
+		return
+	}
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func serveRecoveryBlob(w http.ResponseWriter, r *http.Request, store *storage.Store, blobs uploads.Store, transfer storage.RecoveryTransfer, expected int64) {
+	file, err := blobs.Open(r.Context(), transfer.Backup.StorageKey, transfer.Backup.CiphertextSHA256, transfer.Backup.SizeBytes)
+	if err != nil {
+		_ = finalizeRecoveryTransfer(r, store, transfer, 0, 0)
+		if errors.Is(err, uploads.ErrBlobIntegrity) {
+			writeError(w, http.StatusInternalServerError, "blob_integrity_failed")
+			return
+		}
+		writeError(w, http.StatusNotFound, "blob_not_found")
+		return
+	}
+	defer file.Close()
+	w.Header().Set("Cache-Control", "no-store, private")
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", "attachment")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if transfer.Backup.CiphertextSHA256 != "" {
+		w.Header().Set("ETag", `"sha256-`+transfer.Backup.CiphertextSHA256+`"`)
+	}
+	tracked := &recoveryResponseWriter{ResponseWriter: w}
+	request := r.Clone(r.Context())
+	request.Header.Del("If-Match")
+	request.Header.Del("If-None-Match")
+	request.Header.Del("If-Modified-Since")
+	request.Header.Del("If-Unmodified-Since")
+	request.Header.Del("If-Range")
+	http.ServeContent(tracked, request, "encrypted.bin", time.Time{}, file)
+	validResponse := tracked.status == http.StatusOK || tracked.status == http.StatusPartialContent
+	if r.Header.Get("Range") != "" {
+		validResponse = validResponse && tracked.status == http.StatusPartialContent &&
+			w.Header().Get("Content-Range") == "bytes "+strconv.FormatInt(transfer.StartOffset, 10)+"-"+
+			strconv.FormatInt(transfer.StartOffset+expected-1, 10)+"/"+strconv.FormatInt(transfer.Backup.SizeBytes, 10)
+	} else {
+		validResponse = validResponse && tracked.status == http.StatusOK
+	}
+	if contentLength, err := strconv.ParseInt(w.Header().Get("Content-Length"), 10, 64); err != nil || contentLength != expected {
+		validResponse = false
+	}
+	if !validResponse || tracked.written > expected {
+		tracked.written = 0
+	}
+	if err := finalizeRecoveryTransfer(r, store, transfer, tracked.written, expected); err != nil {
+		return
+	}
+}
+
+func finalizeRecoveryTransfer(r *http.Request, store *storage.Store, transfer storage.RecoveryTransfer, written, expected int64) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+	defer cancel()
+	return store.CompleteRecoveryTransfer(ctx, transfer.LeaseID, transfer.StartOffset, written, expected)
 }
 
 func (a *API) listBackups(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
@@ -313,44 +470,6 @@ func (a *API) pushConfig(w http.ResponseWriter, _ *http.Request, _ domain.Princi
 		"providers":        a.PushProviders,
 		"vapid_public_key": a.VAPIDPublicKey,
 	})
-}
-
-func (a *API) notifyPush(ctx context.Context, conversationID, senderAccountID string) {
-	if a.Push == nil {
-		return
-	}
-	targets, err := a.Store.PushTargetsForConversation(ctx, conversationID, senderAccountID)
-	if err != nil || len(targets) == 0 {
-		return
-	}
-	go a.deliverPush(targets)
-}
-
-func (a *API) deliverPush(targets []storage.PushTarget) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	failures := 0
-	for _, target := range targets {
-		err := a.Push.SendEncryptedEventAvailable(ctx, push.Notification{
-			Provider:   target.Provider,
-			Endpoint:   target.Endpoint,
-			PublicKey:  target.PublicKey,
-			AuthSecret: target.AuthSecret,
-		})
-		switch {
-		case err == nil, errors.Is(err, push.ErrNoProvider):
-		case errors.Is(err, push.ErrSubscriptionGone):
-			_ = a.Store.DisablePushTarget(ctx, target.ID)
-		default:
-			failures++
-		}
-		if ctx.Err() != nil {
-			break
-		}
-	}
-	if failures > 0 {
-		a.warn("push_delivery_incomplete", "failed_count", failures)
-	}
 }
 
 func (a *API) deletePushSubscription(w http.ResponseWriter, r *http.Request, principal domain.Principal) {

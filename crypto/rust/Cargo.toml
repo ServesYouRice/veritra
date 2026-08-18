@@ -9,6 +9,10 @@ publish = false
 [lib]
 crate-type = ["rlib", "staticlib", "cdylib"]
 
+[profile.release]
+panic = "unwind"
+overflow-checks = true
+
 [dependencies]
 aes-gcm = "=0.11.0"
 openmls = { version = "=0.8.1", default-features = false }

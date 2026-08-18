@@ -118,7 +118,7 @@ func (a *API) createOwner(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_identity")
 		return
 	}
-	passwordHash, err := auth.HashPassword(req.Password)
+	passwordHash, err := auth.HashPasswordWithCost(req.Password, a.passwordCost())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "weak_password")
 		return
@@ -188,8 +188,9 @@ func (a *API) createOwner(w http.ResponseWriter, r *http.Request) {
 func (a *API) setupAuthorized(r *http.Request) bool {
 	if a.SetupToken != "" {
 		provided := r.Header.Get("X-Veritra-Setup-Token")
-		return len(provided) == len(a.SetupToken) &&
-			subtle.ConstantTimeCompare([]byte(provided), []byte(a.SetupToken)) == 1
+		providedSum := sha256.Sum256([]byte(provided))
+		expectedSum := sha256.Sum256([]byte(a.SetupToken))
+		return subtle.ConstantTimeCompare(providedSum[:], expectedSum[:]) == 1
 	}
 	ip := net.ParseIP(a.clientIP(r))
 	return ip != nil && ip.IsLoopback()
@@ -211,7 +212,8 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "device_id_required")
 		return
 	}
-	if retryAfter := a.LoginBackoff.RetryAfter(req.Username, time.Now()); retryAfter > 0 {
+	backoffKeys := a.loginBackoffKeys(r, req.Username, req.DeviceID)
+	if retryAfter := a.LoginBackoff.RetryAfterAny(time.Now(), backoffKeys...); retryAfter > 0 {
 		writeRetryError(w, "login_backoff", retryAfter)
 		return
 	}
@@ -222,17 +224,24 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	if lookupErr == nil {
 		storedHash = record.PasswordHash
 	}
-	passwordOK := auth.VerifyPasswordOrDummy(storedHash, req.Password)
+	passwordOK := auth.VerifyPasswordOrDummyWithCost(storedHash, req.Password, a.passwordCost())
 	deviceOK := lookupErr == nil && record.DeviceAuthHash != "" && subtle.ConstantTimeCompare([]byte(auth.HashToken(req.DeviceSecret)), []byte(record.DeviceAuthHash)) == 1
 	if lookupErr != nil || !passwordOK || !deviceOK {
-		if retryAfter := a.LoginBackoff.Failed(req.Username, time.Now()); retryAfter > 0 {
+		if retryAfter := a.LoginBackoff.FailedAny(time.Now(), backoffKeys...); retryAfter > 0 {
 			writeRetryError(w, "login_backoff", retryAfter)
 			return
 		}
 		writeError(w, http.StatusUnauthorized, "invalid_credentials")
 		return
 	}
-	a.LoginBackoff.Succeeded(req.Username)
+	if updatedHash, changed, err := auth.RehashPasswordIfNeeded(record.PasswordHash, req.Password, a.passwordCost()); err != nil {
+		a.warn("password_rehash_failed", "err", err)
+	} else if changed {
+		if _, err := a.Store.UpgradePasswordHash(r.Context(), record.AccountID, record.PasswordHash, updatedHash); err != nil {
+			a.warn("password_rehash_update_failed", "err", err)
+		}
+	}
+	a.LoginBackoff.SucceededAny(backoffKeys...)
 	token, tokenHash, err := auth.NewToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "token_create_failed")
@@ -298,7 +307,7 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_identity")
 		return
 	}
-	passwordHash, err := auth.HashPassword(req.Password)
+	passwordHash, err := auth.HashPasswordWithCost(req.Password, a.passwordCost())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "weak_password")
 		return
@@ -730,24 +739,52 @@ func (a *API) reauthenticate(w http.ResponseWriter, r *http.Request, principal d
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	backoffKeys := a.reauthenticationBackoffKeys(r, principal)
+	if retryAfter := a.LoginBackoff.RetryAfterAny(time.Now(), backoffKeys...); retryAfter > 0 {
+		writeRetryError(w, "reauth_backoff", retryAfter)
+		return
+	}
 	passwordHash, deviceAuthHash, err := a.Store.ReauthenticationRecord(r.Context(), principal.AccountID, principal.DeviceID)
-	if err != nil {
+	passwordOK := auth.VerifyPasswordOrDummyWithCost(passwordHash, req.Password, a.passwordCost())
+	deviceOK := err == nil && deviceAuthHash != "" && subtle.ConstantTimeCompare([]byte(auth.HashToken(req.DeviceSecret)), []byte(deviceAuthHash)) == 1
+	if err != nil || !passwordOK || !deviceOK {
+		if retryAfter := a.LoginBackoff.FailedAny(time.Now(), backoffKeys...); retryAfter > 0 {
+			writeRetryError(w, "reauth_backoff", retryAfter)
+			return
+		}
 		writeError(w, http.StatusUnauthorized, "invalid_credentials")
 		return
 	}
-	passwordOK := auth.VerifyPasswordOrDummy(passwordHash, req.Password)
-	deviceOK := deviceAuthHash != "" && subtle.ConstantTimeCompare([]byte(auth.HashToken(req.DeviceSecret)), []byte(deviceAuthHash)) == 1
-	if !passwordOK || !deviceOK {
-		writeError(w, http.StatusUnauthorized, "invalid_credentials")
-		return
+	if updatedHash, changed, err := auth.RehashPasswordIfNeeded(passwordHash, req.Password, a.passwordCost()); err != nil {
+		a.warn("password_rehash_failed", "err", err)
+	} else if changed {
+		if _, err := a.Store.UpgradePasswordHash(r.Context(), principal.AccountID, passwordHash, updatedHash); err != nil {
+			a.warn("password_rehash_update_failed", "err", err)
+		}
 	}
 	token := bearerToken(r)
 	if token == "" || a.Store.MarkSessionRecentlyAuthenticated(r.Context(), auth.HashToken(token)) != nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	a.LoginBackoff.SucceededAny(backoffKeys...)
 	a.recordAuditEvent(r.Context(), &principal.AccountID, "session.reauthenticated", map[string]string{"device_id": principal.DeviceID})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) loginBackoffKeys(r *http.Request, username, deviceID string) []string {
+	return []string{
+		"login-account\x00" + strings.ToLower(strings.TrimSpace(username)),
+		"login-source-device\x00" + a.clientIP(r) + "\x00" + strings.TrimSpace(deviceID) + "\x00" + strings.ToLower(strings.TrimSpace(username)),
+	}
+}
+
+func (a *API) reauthenticationBackoffKeys(r *http.Request, principal domain.Principal) []string {
+	return []string{
+		"reauth-session\x00" + auth.HashToken(bearerToken(r)),
+		"reauth-account-device\x00" + principal.AccountID + "\x00" + principal.DeviceID,
+		"reauth-source-account-device\x00" + a.clientIP(r) + "\x00" + principal.AccountID + "\x00" + principal.DeviceID,
+	}
 }
 
 func (a *API) changePassword(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
@@ -757,7 +794,7 @@ func (a *API) changePassword(w http.ResponseWriter, r *http.Request, principal d
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	hash, err := auth.HashPassword(req.NewPassword)
+	hash, err := auth.HashPasswordWithCost(req.NewPassword, a.passwordCost())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "weak_password")
 		return
