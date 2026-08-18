@@ -42,6 +42,15 @@ approval before native permissions or provider changes.
 T43A/T43B/T43C are implemented by Codex on 2026-08-14; their Flutter checks
 and T43C's golden/device evidence are pending because this workspace has no
 Flutter runtime or signed-device environment.
+
+The branding assets were the last place where the repository still showed the
+palette I28 dropped: only the app icon had been redrawn, so the root README,
+the favicon and the primary mark still shipped Indigo→Sky. Those were redrawn
+on Bone on 2026-08-18 and every raster re-rendered from its SVG with macOS
+QuickLook, which also retires the "no rasteriser was available" caveat in
+[`design.md`](design.md). Visual verification was by rendered contact sheet,
+not by device; golden tests remain the known gap and are now unblocked, since
+the pinned Flutter image can generate them in a container.
 I24, I25 and I27 still need signing credentials, supported physical Android
 and iOS devices, macOS for the iOS build, an operator-controlled TURN
 deployment, push-provider credentials, a coordinated upstream OpenMLS/HPKE
@@ -364,7 +373,7 @@ checksums, and GitHub provenance only after every gate passes.
 | I23 | Hardened WebSocket handshakes and frames with adversarial, fuzz, lifecycle, slow-client, trusted-proxy, and race coverage. |
 | I24 | Implemented native push, self-hosted TURN configuration, encrypted WebRTC signaling, and an Android debug build; external release checks remain. |
 | I26 | Added out-of-band group safety transcripts/numbers with local persistence and changed-state detection. |
-| I28 | Landed the K2 Bone visual system, all app screens, shared widgets, web setup and Android/iOS icons in `6083e3f`; automated Flutter/Go checks passed, while golden/manual/device evidence remains in I24/I43. |
+| I28 | Landed the K2 Bone visual system, all app screens, shared widgets, web setup and Android/iOS icons in `6083e3f`; automated Flutter/Go checks passed, while golden/manual/device evidence remains in I24/I43. Closed out on 2026-08-18 by redrawing the `concept-06` mark family on Bone — mark, wordmarks, favicon and every raster export — and re-rendering the Android/iOS launcher icons from the SVG; the old Indigo→Sky files moved to `docs/branding/concept-06/superseded/`. |
 
 Completed non-crypto product UI also includes named DMs, canonical DM reuse,
 history pagination with preserved position, role-gated roster actions, blocked

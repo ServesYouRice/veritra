@@ -5,13 +5,17 @@
 and the README use. Everything else on this page is the exploration that
 produced it — kept as a record, not as live options.
 
-⚠️ **The palette below is superseded.** These marks were drawn on the
-Indigo→Sky gradient over an Ink ground. The app adopted **K2 · Bone** on
+⚠️ **The palette below is superseded.** These exploration marks were drawn on
+the Indigo→Sky gradient over an Ink ground. The app adopted **K2 · Bone** on
 2026-08-07, which drops that palette entirely — see
-[`../design.md`](../design.md) §K. The shipped app icon is
-`concept-06/veritra-app-icon-bone.svg`, the same geometry on the Bone palette;
-`concept-06/veritra-app-icon.svg` is the old brand and must not be exported.
-The remaining concepts on this page have not been redrawn.
+[`../design.md`](../design.md) §K.
+
+The chosen family in [`concept-06/`](concept-06/README.md) **has been redrawn
+on Bone in full** — mark, wordmarks, favicon, app icon and every raster export.
+The old gradient versions of those files are in
+[`concept-06/superseded/`](concept-06/superseded/README.md) and must not be
+used. The other nine concepts on this page have not been redrawn; they are a
+record of the exploration, not live options.
 
 Open `preview.html` in a browser to see all concepts side by side on light and
 dark backgrounds.
