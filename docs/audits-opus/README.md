@@ -1,5 +1,9 @@
 # audits-opus
 
+> Source audit snapshot. It is evidence, not the implementation backlog.
+> Decisions and corrected severities live in
+> [`../audit-consensus.md`](../audit-consensus.md).
+
 Independent production-readiness audit of Veritra, performed 2026-08-08 against
 the **working tree** (commit `d60e45b` plus the uncommitted I28 "K2 · Bone"
 visual rebuild described in `docs/board.md`).
@@ -7,11 +11,9 @@ visual rebuild described in `docs/board.md`).
 This is an **audit only**. No application code was read-modified. Every file in
 this folder is a document.
 
-> **Note on `AGENTS.md`.** That file says "Do not create documentation outside
-> `docs/`." This folder was created at explicit user instruction, which
-> supersedes it for this task. If the findings are adopted, the right long-term
-> home is either `docs/` or `docs/archive/2026-08-08/audits-opus/`, matching how
-> the earlier `audits-codex` / `audits-fable` passes were archived.
+The source snapshot was moved under `docs/` when the two audits were
+reconciled on 2026-08-13. Its findings remain unchanged apart from repaired
+relative links.
 
 ## Files
 

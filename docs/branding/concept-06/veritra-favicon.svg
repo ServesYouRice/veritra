@@ -1,7 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Veritra favicon">
-  <!-- Small-size variant: heavier strokes, no weave gaps (they vanish below ~24px) -->
-  <rect x="126.5" y="93" width="90" height="290" rx="45" fill="none" stroke="#4F46E5" stroke-width="44"
-        transform="rotate(-35 171.5 238)"/>
-  <rect x="295.5" y="93" width="90" height="290" rx="45" fill="none" stroke="#0EA5E9" stroke-width="44"
-        transform="rotate(35 340.5 238)"/>
+  <!-- Small-size variant: heavier strokes and no keyline gap, which closes up
+       and aliases badly below ~24px.
+
+       K2 · Bone carries its own ground here, unlike the old Indigo/Sky
+       favicon. The direction spends no accent hue, so a bare transparent mark
+       would be a near-white on a light browser tab or a near-black on a dark
+       one — invisible either way. The plum squircle makes the favicon legible
+       against any tab chrome and matches the launcher icon. -->
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="#16111F"/>
+  <!-- Mark, optically centered: its centre is y=238, not 256. -->
+  <g transform="translate(256 256) scale(0.86) translate(-256 -238)">
+    <rect x="126.5" y="93" width="90" height="290" rx="45" fill="none" stroke="#EDE4DA" stroke-width="52"
+          transform="rotate(-35 171.5 238)"/>
+    <rect x="295.5" y="93" width="90" height="290" rx="45" fill="none" stroke="#EDE4DA" stroke-width="52"
+          transform="rotate(35 340.5 238)"/>
+  </g>
 </svg>

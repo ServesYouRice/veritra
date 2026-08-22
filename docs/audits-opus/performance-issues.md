@@ -33,7 +33,7 @@ then arrives in production. The three High findings are all superlinear.
 ### Full blob re-hash on every download and every Range request
 
 **Severity:** High
-**Location:** [`server/internal/uploads/local.go:159-191`](../server/internal/uploads/local.go#L159-L191); called from [`content_handlers.go:242-260`](../server/internal/httpapi/content_handlers.go#L242-L260)
+**Location:** [`server/internal/uploads/local.go:159-191`](../../server/internal/uploads/local.go#L159-L191); called from [`content_handlers.go:242-260`](../../server/internal/httpapi/content_handlers.go#L242-L260)
 
 **Problem**
 
@@ -112,7 +112,7 @@ path on the server.
 ### `SyncBounds` scans the account's entire event history per poll
 
 **Severity:** High
-**Location:** [`server/internal/storage/message_store.go:700-728`](../server/internal/storage/message_store.go#L700-L728); called unconditionally from `ListSyncEvents` at `:651`
+**Location:** [`server/internal/storage/message_store.go:700-728`](../../server/internal/storage/message_store.go#L700-L728); called unconditionally from `ListSyncEvents` at `:651`
 
 **Problem**
 
@@ -216,7 +216,7 @@ certainly prevents index use on the block lookup.
 ### Quota check runs two unindexed `SUM()` scans in the write transaction
 
 **Severity:** High
-**Location:** [`server/internal/storage/content_store.go:611-628`](../server/internal/storage/content_store.go#L611-L628)
+**Location:** [`server/internal/storage/content_store.go:611-628`](../../server/internal/storage/content_store.go#L611-L628)
 
 **Problem**
 
@@ -289,7 +289,7 @@ attachments are unblocked.
 ### `Hub.Register` is O(connections) under the global write lock
 
 **Severity:** Medium
-**Location:** [`server/internal/realtime/hub.go:50-81`](../server/internal/realtime/hub.go#L50-L81)
+**Location:** [`server/internal/realtime/hub.go:50-81`](../../server/internal/realtime/hub.go#L50-L81)
 
 **Problem**
 
@@ -357,7 +357,7 @@ so they all back off by the same amount and return in a synchronised herd.
 ### Root rebuild reconstructs both `ThemeData`s per notification
 
 **Severity:** Medium
-**Location:** [`mobile/lib/main.dart:44-58`](../mobile/lib/main.dart#L44-L58)
+**Location:** [`mobile/lib/main.dart:44-58`](../../mobile/lib/main.dart#L44-L58)
 
 **Problem**
 
@@ -413,7 +413,7 @@ app.
 ### Linear roster and conversation scans per message bubble per frame
 
 **Severity:** Medium
-**Location:** [`mobile/lib/features/chat/chat_screen.dart:309-315`](../mobile/lib/features/chat/chat_screen.dart#L309-L315) (`_senderLabel`), `:299-304` (`_isDm`)
+**Location:** [`mobile/lib/features/chat/chat_screen.dart:309-315`](../../mobile/lib/features/chat/chat_screen.dart#L309-L315) (`_senderLabel`), `:299-304` (`_isDm`)
 
 **Problem**
 
@@ -469,7 +469,7 @@ size — so the largest, most active conversations are the ones that stutter.
 ### `MarkDeviceSeen` takes the write lock on every authenticated request
 
 **Severity:** Medium
-**Location:** [`server/internal/httpapi/api.go:136-138`](../server/internal/httpapi/api.go#L136-L138); statement at [`server/internal/storage/identity_store.go:207-221`](../server/internal/storage/identity_store.go#L207-L221)
+**Location:** [`server/internal/httpapi/api.go:136-138`](../../server/internal/httpapi/api.go#L136-L138); statement at [`server/internal/storage/identity_store.go:207-221`](../../server/internal/storage/identity_store.go#L207-L221)
 
 **Problem**
 
@@ -525,7 +525,7 @@ including pure reads.
 ### `_repairMessage` copies the message map and re-sorts per message
 
 **Severity:** Medium
-**Location:** [`mobile/lib/core/app_state.dart:1578-1604`](../mobile/lib/core/app_state.dart#L1578-L1604)
+**Location:** [`mobile/lib/core/app_state.dart:1578-1604`](../../mobile/lib/core/app_state.dart#L1578-L1604)
 
 **Problem**
 
@@ -577,7 +577,7 @@ isolate, so it competes directly with rendering.
 ### Flat blob directory, fully enumerated every 6 hours
 
 **Severity:** Medium
-**Location:** [`server/internal/uploads/local.go:32-43`](../server/internal/uploads/local.go#L32-L43) (flat root), `:56-82` (`CleanupTemporaryFiles`)
+**Location:** [`server/internal/uploads/local.go:32-43`](../../server/internal/uploads/local.go#L32-L43) (flat root), `:56-82` (`CleanupTemporaryFiles`)
 
 **Problem**
 
@@ -638,7 +638,7 @@ instance has data to migrate.
 ### Push fan-out is unbounded goroutines, serial delivery, one shared budget
 
 **Severity:** Medium
-**Location:** [`server/internal/httpapi/content_handlers.go:318-354`](../server/internal/httpapi/content_handlers.go#L318-L354)
+**Location:** [`server/internal/httpapi/content_handlers.go:318-354`](../../server/internal/httpapi/content_handlers.go#L318-L354)
 
 **Problem**
 
@@ -714,7 +714,7 @@ verification will pass while the real behaviour is broken.
 ### Startup fires ~8 concurrent unawaited network operations
 
 **Severity:** Low
-**Location:** [`mobile/lib/core/app_state.dart:1278-1305`](../mobile/lib/core/app_state.dart#L1278-L1305)
+**Location:** [`mobile/lib/core/app_state.dart:1278-1305`](../../mobile/lib/core/app_state.dart#L1278-L1305)
 
 **Problem**
 

@@ -5,27 +5,28 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Veritra — Chain Link V identity</title>
 <style>
+  /* K2 · Bone tokens, from docs/design.md §K. */
   :root {
-    --bg: #F8FAFC; --fg: #0F172A; --muted: #64748B; --card: #FFFFFF; --border: #E2E8F0;
+    --bg: #F8F6F1; --fg: #1A1620; --muted: #6B6169; --card: #FFFFFF; --border: #8A808A;
   }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #0B1220; --fg: #E2E8F0; --muted: #94A3B8; --card: #111A2E; --border: #1E293B; }
+    :root { --bg: #16111F; --fg: #F3EFFA; --muted: #A89EA6; --card: #211A2D; --border: #A89EA6; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; padding: 2rem; background: var(--bg); color: var(--fg);
          font-family: ui-sans-serif, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif; }
-  h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
+  h1 { font-size: 1.6rem; margin: 0 0 .25rem; letter-spacing: -.03em; }
   p.lead { color: var(--muted); margin: 0 0 2rem; max-width: 62ch; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1.25rem; }
-  .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 1.25rem; }
-  .card h2 { font-size: 1rem; margin: 0 0 .25rem; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 20px; padding: 1.25rem; }
+  .card h2 { font-size: 1rem; margin: 0 0 .25rem; letter-spacing: -.02em; }
   .card p { font-size: .85rem; color: var(--muted); margin: 0 0 1rem; }
   .swatches { display: flex; gap: .75rem; flex-wrap: wrap; }
   .swatch { flex: 1; min-width: 100px; border-radius: 12px; display: flex; align-items: center;
             justify-content: center; padding: 1rem; gap: 1rem; }
-  .swatch.light { background: #FFFFFF; border: 1px solid #E2E8F0; }
-  .swatch.dark  { background: #0B1220; border: 1px solid #1E293B; }
-  .swatch.brand { background: linear-gradient(135deg, #4F46E5, #0284C7); }
+  /* The two grounds the direction actually ships on. There is no third. */
+  .swatch.paper { background: #F8F6F1; border: 1px solid #8A808A; }
+  .swatch.plum  { background: #16111F; border: 1px solid #A89EA6; }
   .swatch img { width: 96px; height: 96px; }
   .wide { grid-column: 1 / -1; }
   .wide .swatch img { width: 100%; max-width: 520px; height: auto; }
@@ -33,79 +34,70 @@
   .sizes figure { margin: 0; text-align: center; }
   .sizes figcaption { font-size: .7rem; color: var(--muted); margin-top: .35rem; }
   .chips { display: flex; gap: .6rem; flex-wrap: wrap; }
-  .chip { border-radius: 10px; padding: .9rem .8rem .5rem; min-width: 108px; color: #fff;
-          font-size: .7rem; font-family: ui-monospace, monospace; }
+  .chip { border-radius: 10px; padding: .9rem .8rem .5rem; min-width: 108px;
+          font-size: .7rem; font-family: ui-monospace, monospace; border: 1px solid var(--border); }
 </style>
 </head>
 <body>
   <h1>Veritra — Chain Link V identity</h1>
-  <p class="lead">Concept 06 developed into a mark family. Two interlocked links draw the V: an end-to-end connection between exactly two parties, with the receiver's link passing over and the sender's tucking under it, its tip visible through the loop. Indigo is the sender, sky is the receiver.</p>
+  <p class="lead">Concept 06 developed into a mark family, on the K2 · Bone palette. Two interlocked links draw the V: an end-to-end connection between exactly two parties, with the receiver's link passing over and the sender's tucking under it, its tip visible through the loop. The direction spends no accent hue, so the two links are one colour and the ground carries the identity.</p>
   <div class="grid">
     <div class="card">
       <h2>Primary mark</h2>
-      <p>Gradient two-link mark with a keyline tuck-under. Works on light, dark, and photographic backgrounds.</p>
+      <p>Flat two-link mark with a keyline tuck-under. Deep plum on paper, bone on plum.</p>
       <div class="swatches">
-        <div class="swatch light"><img src="veritra-mark.svg" alt="Primary mark on light"></div>
-        <div class="swatch dark"><img src="veritra-mark.svg" alt="Primary mark on dark"></div>
+        <div class="swatch paper"><img src="veritra-mark.svg" alt="Primary mark on paper"></div>
+        <div class="swatch plum"><img src="veritra-mark-bone.svg" alt="Bone mark on plum"></div>
       </div>
     </div>
     <div class="card">
       <h2>Monochrome</h2>
-      <p>Single-ink variant for print, engraving, and one-color contexts. The keyline gap carries the interlock.</p>
+      <p>Single-ink variant for print, engraving, and one-colour contexts. The keyline gap carries the interlock.</p>
       <div class="swatches">
-        <div class="swatch light"><img src="veritra-mark-mono.svg" alt="Mono mark on light"></div>
-        <div class="swatch brand"><img src="veritra-mark-white.svg" alt="White mark on brand gradient"></div>
-      </div>
-    </div>
-    <div class="card">
-      <h2>White knockout</h2>
-      <p>For dark and brand-color surfaces.</p>
-      <div class="swatches">
-        <div class="swatch dark"><img src="veritra-mark-white.svg" alt="White mark on dark"></div>
-        <div class="swatch brand"><img src="veritra-mark-white.svg" alt="White mark on gradient"></div>
+        <div class="swatch paper"><img src="veritra-mark-mono.svg" alt="Mono mark on paper"></div>
       </div>
     </div>
     <div class="card">
       <h2>App icon</h2>
-      <p>Mark at 82% on an ink squircle. Fits iOS and Android adaptive-icon safe zones.</p>
+      <p>Mark at 82% on a plum squircle. Fits iOS and Android adaptive-icon safe zones.</p>
       <div class="swatches">
-        <div class="swatch light"><img src="veritra-app-icon.svg" alt="App icon on light"></div>
-        <div class="swatch dark"><img src="veritra-app-icon.svg" alt="App icon on dark"></div>
+        <div class="swatch paper"><img src="veritra-app-icon-bone.svg" alt="App icon on paper"></div>
+        <div class="swatch plum"><img src="veritra-app-icon-bone.svg" alt="App icon on plum"></div>
       </div>
     </div>
     <div class="card">
       <h2>Favicon / small sizes</h2>
-      <p>Simplified variant: heavier strokes, no keyline gap — it vanishes below ~24&nbsp;px.</p>
+      <p>Simplified variant: heavier strokes, no keyline gap — it vanishes below ~24&nbsp;px. It carries its own ground, because a hueless mark on a transparent field is invisible on one tab colour or the other.</p>
       <div class="swatches">
-        <div class="swatch light sizes">
+        <div class="swatch paper sizes">
           <figure><img src="veritra-favicon.svg" style="width:48px;height:48px" alt="Favicon 48"><figcaption>48</figcaption></figure>
           <figure><img src="veritra-favicon.svg" style="width:32px;height:32px" alt="Favicon 32"><figcaption>32</figcaption></figure>
           <figure><img src="veritra-favicon.svg" style="width:16px;height:16px" alt="Favicon 16"><figcaption>16</figcaption></figure>
         </div>
-        <div class="swatch dark sizes">
-          <figure><img src="veritra-favicon.svg" style="width:48px;height:48px" alt="Favicon 48 dark"><figcaption>48</figcaption></figure>
-          <figure><img src="veritra-favicon.svg" style="width:32px;height:32px" alt="Favicon 32 dark"><figcaption>32</figcaption></figure>
-          <figure><img src="veritra-favicon.svg" style="width:16px;height:16px" alt="Favicon 16 dark"><figcaption>16</figcaption></figure>
+        <div class="swatch plum sizes">
+          <figure><img src="veritra-favicon.svg" style="width:48px;height:48px" alt="Favicon 48 on plum"><figcaption>48</figcaption></figure>
+          <figure><img src="veritra-favicon.svg" style="width:32px;height:32px" alt="Favicon 32 on plum"><figcaption>32</figcaption></figure>
+          <figure><img src="veritra-favicon.svg" style="width:16px;height:16px" alt="Favicon 16 on plum"><figcaption>16</figcaption></figure>
         </div>
       </div>
     </div>
     <div class="card">
       <h2>Palette</h2>
-      <p>Indigo (sender) and sky (receiver) endpoints, ink for surfaces.</p>
+      <p>Every value is a token from <code>docs/design.md</code> §K, not a brand colour of its own — which is what keeps green, amber, red and blue free to mean verified, warning, error and info.</p>
       <div class="chips">
-        <div class="chip" style="background:#818CF8">#818CF8</div>
-        <div class="chip" style="background:#4F46E5">#4F46E5</div>
-        <div class="chip" style="background:#38BDF8">#38BDF8</div>
-        <div class="chip" style="background:#0284C7">#0284C7</div>
-        <div class="chip" style="background:#0B1220">#0B1220</div>
+        <div class="chip" style="background:#3A2E42;color:#FFFFFF">#3A2E42</div>
+        <div class="chip" style="background:#EDE4DA;color:#1E1620">#EDE4DA</div>
+        <div class="chip" style="background:#16111F;color:#F3EFFA">#16111F</div>
+        <div class="chip" style="background:#1A1620;color:#F3EFFA">#1A1620</div>
+        <div class="chip" style="background:#F8F6F1;color:#1A1620">#F8F6F1</div>
       </div>
     </div>
     <div class="card wide">
       <h2>Wordmark lockup</h2>
-      <p>Mark + lowercase wordmark (system sans placeholder; swap in a brand typeface later).</p>
+      <p>Mark + lowercase wordmark (system sans placeholder; swap in a brand typeface later). Tracking is 0.06em, matching <code>server/websetup/index.html</code>.</p>
       <div class="swatches">
-        <div class="swatch light"><img src="veritra-wordmark.svg" alt="Wordmark on light"></div>
-        <div class="swatch dark"><img src="veritra-wordmark-dark.svg" alt="Wordmark on dark"></div>
+        <div class="swatch paper"><img src="veritra-wordmark.svg" alt="Wordmark on paper"></div>
+        <div class="swatch plum"><img src="veritra-wordmark-dark.svg" alt="Wordmark on plum"></div>
       </div>
     </div>
   </div>

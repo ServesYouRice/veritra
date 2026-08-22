@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Veritra chain link mark, bone">
+  <!-- K2 · Bone, dark-ground variant. #EDE4DA is the dark-mode accent from
+       docs/design.md §K — 14.0:1 on the #16111F canvas. Replaces the old
+       pure-white knockout (superseded/veritra-mark-white.svg): the app's
+       on-dark accent is this warm near-white, not #FFFFFF. -->
+  <defs>
+    <mask id="tuckUnderBone">
+      <rect x="-512" y="-512" width="2048" height="2048" fill="#fff"/>
+      <rect x="295.5" y="93" width="90" height="290" rx="45" fill="none" stroke="#000" stroke-width="54"
+            transform="rotate(35 340.5 238)"/>
+    </mask>
+  </defs>
+  <g mask="url(#tuckUnderBone)">
+    <rect x="126.5" y="93" width="90" height="290" rx="45" fill="none" stroke="#EDE4DA" stroke-width="30"
+          transform="rotate(-35 171.5 238)"/>
+  </g>
+  <rect x="295.5" y="93" width="90" height="290" rx="45" fill="none" stroke="#EDE4DA" stroke-width="30"
+        transform="rotate(35 340.5 238)"/>
+</svg>

@@ -32,6 +32,7 @@ Local Go, Flutter, and Rust toolchains are optional. The preferred path is Docke
 ```sh
 ./scripts/test.sh
 ./scripts/lint.sh
+./scripts/verify.sh  # complete local gate; fails if required tools are absent
 ```
 
 On Windows PowerShell:
@@ -62,7 +63,13 @@ Then open:
 http://localhost:8080/setup
 ```
 
-The browser page is a setup notice only until production client crypto is wired. Owner setup must come from a client that can generate a real device key package. Remote first-owner setup also requires a high-entropy `PRIVATE_MESSENGER_SETUP_TOKEN`; tokenless setup is loopback-only.
+The browser page is a setup notice only until production client crypto is wired. Owner setup must come from a client that can generate a real device key package. Remote first-owner setup also requires a high-entropy `PRIVATE_MESSENGER_SETUP_TOKEN`; generate one with `messenger-server generate-setup-token`. Tokenless setup is loopback-only.
+
+The mobile app starts with an empty server field and requires an HTTPS origin;
+`http://localhost:8080` is browser-only. For a public deployment, use the
+Compose+Caddy profile or another trusted TLS reverse proxy. For a LAN-only
+deployment, use Caddy's internal TLS and install its CA certificate on the
+device; the mobile app does not bypass certificate validation.
 
 Default data lives under `./data` unless `PRIVATE_MESSENGER_DATA_DIR` is set.
 
@@ -85,25 +92,30 @@ mobile/     Flutter client for Android and iOS
 crypto/     Rust crypto boundary
 deploy/     Docker Compose, Caddy, systemd
 scripts/    Dockerized development commands
-docs/       All documentation (see below)
+docs/       Authoritative project documentation (see below)
+implementation/  LLM-ready execution contracts derived from the audit consensus
 ```
 
-Every document lives in [`docs/`](docs/):
+Authoritative project documentation lives in [`docs/`](docs/):
 
 | File | What it is |
 | --- | --- |
 | [`board.md`](docs/board.md) | **The board.** Active cards, decisions, release evidence, roadmap, review brief |
+| [`audit-consensus.md`](docs/audit-consensus.md) | Reconciled Codex/Opus findings, implementation order, acceptance checks, source trace |
 | [`overview.md`](docs/overview.md) | Architecture walkthrough — what it is, how it fits together, how to run it |
 | [`design.md`](docs/design.md) | The K2 · Bone palette, per-screen spec, and how it landed in Flutter |
 | [`operations.md`](docs/operations.md) | Self-hosting: setup, secrets, upgrade, rollback, restore drill |
 | [`crypto.md`](docs/crypto.md) | The MLS/OpenMLS boundary and its C ABI |
 | [`branding/`](docs/branding/) | Marks, wordmarks, icons |
+| [`audits-codex/`](docs/audits-codex/) and [`audits-opus/`](docs/audits-opus/) | Read-only source audits; not implementation status |
 | [`archive/`](docs/archive/) | Read-only history. Do not load unless a card links a specific file |
 
 Two documents are authoritative and should be read before changing anything:
 [`AGENTS.md`](AGENTS.md) for the non-negotiable boundaries, and
 [`docs/board.md`](docs/board.md) for what is actually being worked on.
-Everything else describes; those two decide.
+For audit-derived work, [`implementation/README.md`](implementation/README.md)
+then provides the claimable task contracts. It is derivative: the board and
+consensus win if they disagree.
 
 ## Important Caveat
 
