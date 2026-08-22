@@ -1,5 +1,9 @@
 # Veritra Production Audit
 
+> Source audit snapshot. It is evidence, not the implementation backlog.
+> Decisions and corrected severities live in
+> [`../audit-consensus.md`](../audit-consensus.md).
+
 ## Outcome
 
 **Production decision: NO-GO.** The project has a strong engineering baseline and correctly fails closed while production MLS is unavailable, but it is not yet safe or functionally complete for launch. The most serious blockers are:

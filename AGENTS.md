@@ -32,23 +32,27 @@ desktop or embedding work, or add server-side plaintext paths to serve them.
 ## How to work
 
 1. Read `docs/board.md`.
-2. Claim one Ready card and read only that card plus its named files.
-3. Confirm the card is still true before editing.
-4. Make the smallest complete change and run the card's checks.
-5. Update the board. Report changed files, checks, and blockers briefly.
+2. Read `implementation/KANBAN.md`, then its linked task index and workflow.
+3. Claim one eligible implementation task and read only that task plus its
+   named audit sections and files.
+4. Confirm the task is still true before editing.
+5. Make the smallest complete change and run the task's checks.
+6. Update the board and consensus. Report changed files, checks, and blockers briefly.
 
 Use judgment and match nearby code. Do not load `docs/archive/` unless a card
 links a specific archived reference. Prefer local, reversible actions. Ask
 before destructive, external, release, or dependency changes.
 
-All documentation lives in `docs/`: `board.md` (the board), `overview.md`
-(architecture), `design.md` (visual spec), `operations.md` (self-hosting),
-`crypto.md` (the MLS boundary). Do not create documentation outside it.
+Project documentation lives in `docs/`: `board.md` (status),
+`audit-consensus.md` (audit decisions and implementation acceptance),
+`overview.md` (architecture), `design.md` (visual spec), `operations.md`
+(self-hosting), and `crypto.md` (the MLS boundary). The root `implementation/`
+directory is the sole exception: it contains derived LLM execution contracts,
+not authoritative product decisions.
 
-Use a stronger advisor only for a genuinely hard security, protocol, migration,
-or dependency decision; the original executor still implements the task. Use
-multiple agents only for independent, non-overlapping cards. One coordinator
-owns board updates.
+Follow each task's model/advisor contract. The original executor still
+implements the task after advice. Use multiple agents only for independent,
+non-overlapping tasks. One coordinator owns board and consensus updates.
 
 ## Project gotchas
 

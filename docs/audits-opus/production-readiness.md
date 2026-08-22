@@ -46,7 +46,7 @@ for completing card **I24**, not for a build without calls.
 ### Container ships a Go toolchain CI never tests
 
 **Severity:** High
-**Location:** [`server/Dockerfile:1`](../server/Dockerfile#L1) vs [`.github/workflows/ci.yml:22`](../.github/workflows/ci.yml#L22) and [`.github/workflows/release.yml:25`](../.github/workflows/release.yml#L25)
+**Location:** [`server/Dockerfile:1`](../../server/Dockerfile#L1) vs [`.github/workflows/ci.yml:22`](../../.github/workflows/ci.yml#L22) and [`.github/workflows/release.yml:25`](../../.github/workflows/release.yml#L25)
 
 **Problem**
 
@@ -121,7 +121,7 @@ CI installs 1.90.0 — these agree, which is the model to copy).
 ### The release gate is two greps and is trivially bypassed
 
 **Severity:** High
-**Location:** [`scripts/release-readiness.sh`](../scripts/release-readiness.sh)
+**Location:** [`scripts/release-readiness.sh`](../../scripts/release-readiness.sh)
 
 **Problem**
 
@@ -203,7 +203,7 @@ can be disabled by a rename.
 ### No vulnerability scanning in CI; the I27 exception has no tripwire
 
 **Severity:** High
-**Location:** [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) — six jobs (`server`, `crypto`, `mobile`, `mobile-ios`, `compose-smoke`, `licenses`), none of which scans for vulnerabilities; [`scripts/audit-rust.sh:12`](../scripts/audit-rust.sh#L12)
+**Location:** [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) — six jobs (`server`, `crypto`, `mobile`, `mobile-ios`, `compose-smoke`, `licenses`), none of which scans for vulnerabilities; [`scripts/audit-rust.sh:12`](../../scripts/audit-rust.sh#L12)
 
 **Problem**
 
@@ -280,7 +280,7 @@ well argued — but because nothing will tell anyone when they stop being valid.
 ### Shutdown grace, drain deadline and upload timeout contradict each other
 
 **Severity:** Medium
-**Location:** [`deploy/docker-compose.yml:42`](../deploy/docker-compose.yml#L42), [`server/internal/app/app.go:180`](../server/internal/app/app.go#L180), [`server/internal/app/app.go:210-216`](../server/internal/app/app.go#L210-L216), [`docs/operations.md:37-40`](../docs/operations.md#L37-L40)
+**Location:** [`deploy/docker-compose.yml:42`](../../deploy/docker-compose.yml#L42), [`server/internal/app/app.go:180`](../../server/internal/app/app.go#L180), [`server/internal/app/app.go:210-216`](../../server/internal/app/app.go#L210-L216), [`docs/operations.md:37-40`](../../docs/operations.md#L37-L40)
 
 **Problem**
 
@@ -346,7 +346,7 @@ again.
 ### No down migrations; any rollback across one is a full restore
 
 **Severity:** Medium
-**Location:** [`server/migrations/`](../server/migrations/) — 23 forward-only `.sql` files; [`server/internal/storage/sqlite.go:278-339`](../server/internal/storage/sqlite.go#L278-L339); documented at [`docs/operations.md:34-35`](../docs/operations.md#L34-L35)
+**Location:** [`server/migrations/`](../../server/migrations/) — 23 forward-only `.sql` files; [`server/internal/storage/sqlite.go:278-339`](../../server/internal/storage/sqlite.go#L278-L339); documented at [`docs/operations.md:34-35`](../../docs/operations.md#L34-L35)
 
 **Problem**
 
@@ -406,7 +406,7 @@ missing — and [R8](#r8) notes that no shipped deployment automates one.
 ### No golden tests, and the visual rebuild was never rendered
 
 **Severity:** Medium
-**Location:** [`mobile/test/`](../mobile/test/) — 13 test files, no `*.png` goldens, no `matchesGoldenFile`
+**Location:** [`mobile/test/`](../../mobile/test/) — 13 test files, no `*.png` goldens, no `matchesGoldenFile`
 
 **Problem**
 
@@ -485,7 +485,7 @@ The rebuild is unverified visually, and goldens are what convert it from
 ### Coverage is measured and then discarded
 
 **Severity:** Low
-**Location:** [`.github/workflows/ci.yml:24`](../.github/workflows/ci.yml#L24)
+**Location:** [`.github/workflows/ci.yml:24`](../../.github/workflows/ci.yml#L24)
 
 **Problem**
 
@@ -530,7 +530,7 @@ all the kind of defect a coverage report points at directly.
 ### No automated backup in any shipped deployment
 
 **Severity:** Medium
-**Location:** [`deploy/docker-compose.yml`](../deploy/docker-compose.yml), [`deploy/systemd/private-messenger.service`](../deploy/systemd/private-messenger.service), [`docs/operations.md:42-57`](../docs/operations.md#L42-L57)
+**Location:** [`deploy/docker-compose.yml`](../../deploy/docker-compose.yml), [`deploy/systemd/private-messenger.service`](../../deploy/systemd/private-messenger.service), [`docs/operations.md:42-57`](../../docs/operations.md#L42-L57)
 
 **Problem**
 
@@ -591,7 +591,7 @@ operational gap in the deployment story.
 ### Compose service lacks `cap_drop` and `read_only`
 
 **Severity:** Low
-**Location:** [`deploy/docker-compose.yml:35-53`](../deploy/docker-compose.yml#L35-L53)
+**Location:** [`deploy/docker-compose.yml:35-53`](../../deploy/docker-compose.yml#L35-L53)
 
 **Problem**
 
@@ -713,7 +713,7 @@ a deprecation window. Before the first release it is a mechanical change.
 ### `pubspec.yaml` identity is stale
 
 **Severity:** Low
-**Location:** [`mobile/pubspec.yaml:1-4`](../mobile/pubspec.yaml#L1-L4)
+**Location:** [`mobile/pubspec.yaml:1-4`](../../mobile/pubspec.yaml#L1-L4)
 
 **Problem**
 
@@ -762,7 +762,7 @@ against a different client version.
 ### No export-compliance key; every upload will prompt
 
 **Severity:** Low
-**Location:** [`mobile/ios/Runner/Info.plist`](../mobile/ios/Runner/Info.plist)
+**Location:** [`mobile/ios/Runner/Info.plist`](../../mobile/ios/Runner/Info.plist)
 
 **Problem**
 
@@ -804,7 +804,7 @@ during the first upload attempt costs a day.
 ### iOS lacks the background modes and CallKit path calls require
 
 **Severity:** High (for the calls feature)
-**Location:** [`mobile/ios/Runner/Info.plist`](../mobile/ios/Runner/Info.plist) — `UIBackgroundModes` contains only `remote-notification`
+**Location:** [`mobile/ios/Runner/Info.plist`](../../mobile/ios/Runner/Info.plist) — `UIBackgroundModes` contains only `remote-notification`
 
 **Problem**
 
@@ -891,7 +891,7 @@ scope involved.
 ### Android lacks the foreground-service type calls require
 
 **Severity:** High (for the calls feature)
-**Location:** [`mobile/android/app/src/main/AndroidManifest.xml`](../mobile/android/app/src/main/AndroidManifest.xml)
+**Location:** [`mobile/android/app/src/main/AndroidManifest.xml`](../../mobile/android/app/src/main/AndroidManifest.xml)
 
 **Problem**
 
@@ -962,7 +962,7 @@ The board records this as pending hardware and TURN. The hardware will not fix i
 ### iOS cannot reach a LAN server
 
 **Severity:** Medium
-**Location:** [`mobile/ios/Runner/Info.plist`](../mobile/ios/Runner/Info.plist) — no `NSLocalNetworkUsageDescription`
+**Location:** [`mobile/ios/Runner/Info.plist`](../../mobile/ios/Runner/Info.plist) — no `NSLocalNetworkUsageDescription`
 
 **Problem**
 

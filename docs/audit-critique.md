@@ -1,10 +1,17 @@
 # Critique of `audits-codex/`
 
+> Supporting adjudication notes from 2026-08-11. Do not extract work from this
+> file. The later multi-review consensus corrected additional issues—including
+> recovery-leak severity, MLS poison-event handling and terminal MLS outbox
+> behavior. The authoritative decision and implementation queue is
+> [`audit-consensus.md`](audit-consensus.md).
+
 Every claim below was re-checked against the working tree. "✅ Verified" means I
 read the cited code this pass and the described behaviour is present. Where the
 opus audit was itself wrong, that is recorded too.
 
-Codex filed 76 findings across 8 chapters. This critique covers the ones where
+Codex filed 96 findings across 8 chapters (76 outside the nice-to-have chapter).
+This critique covers the ones where
 the two audits disagree, where codex is factually wrong, and where either audit
 has a gap. Findings the two audits agree on with no material difference are
 listed once at the end.
@@ -381,10 +388,11 @@ implementation, and both say so. Codex SEC-03 correctly refuses to convert a
 dependency-reachability argument into cryptographic assurance. That judgement is
 right and should be preserved verbatim in any release brief.
 
-**On the count.** 76 findings across 8 chapters, with the same root defect
-appearing as LOG-01, ARCH-01, TEST-01 and PERF-08. The cross-referencing is
-disclosed and honest, but it means the headline number is roughly 1.5× the
-number of distinct defects. Fix-order planning should work from distinct roots.
+**On the count.** 96 findings across 8 chapters (76 outside the nice-to-have
+chapter), with the same root defect appearing as LOG-01, ARCH-01, TEST-01 and
+PERF-08. The cross-referencing is disclosed and honest, but it means the
+headline number is roughly 1.5× the number of distinct defects. Fix-order
+planning should work from distinct roots.
 
 ---
 

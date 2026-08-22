@@ -52,13 +52,29 @@ agree.
 | Raised | `#2B233A` | `#F0EDE6` |
 | Text | `#F3EFFA` | `#1A1620` |
 | Muted | `#A89EA6` | `#6B6169` |
-| Outline | `#6F6675` | `#8A808A` |
+| Outline | `#A89EA6` | `#8A808A` |
 | Accent | `#EDE4DA` | `#3A2E42` |
 | On accent | `#1E1620` | `#FFFFFF` |
-| Border | `rgb(255 255 255 / 9%)` | `rgb(26 22 32 / 11%)` |
+| Border | `rgb(168 158 166 / 60%)` | `rgb(26 22 32 / 50%)` |
 
 Surfaces separate by **tone, not shadow**, over 1px hairlines. Structural radii
 are 12 and 20; controls use 10, bubbles 18, pills 999. Rows are 62dp.
+
+### Non-text boundary contrast
+
+T43A measures the final painted boundary, including alpha compositing, against
+every Material surface role used by the app. The minimum ratios are:
+
+| Palette | Opaque `outline` | Composited `outlineVariant` |
+| --- | ---: | ---: |
+| Dark | 5.77:1 | 3.02:1 |
+| Light | 3.25:1 | 3.29:1 |
+
+The contract is covered by `mobile/test/chat_visuals_test.dart` and protects
+both the token values and the surface-role mapping in `theme.dart`.
+The `ConnectionBanner`'s error-container hairline is a decorative status
+boundary; actionable error controls use the opaque `error` border and are
+covered separately.
 
 ### The five bone temperatures
 
@@ -134,7 +150,7 @@ That alone was most of why the app looked generic.
 | `body` | 14.5 / 400 / -0.01em | Default reading text |
 | `label` | 13.5 / 600 | Row titles, buttons |
 | `caption` | 11.5 / 400 | Row subtitles |
-| `micro` | 10 / 700 / 0.11em / uppercase | Group headers, field labels, chips |
+| `micro` | 11 / 700 / 0.11em / uppercase | Group headers, field labels, chips |
 | `mono` | 13 / 400 | IDs, invite codes, fingerprints |
 
 `micro` is what makes group headers and field labels read as designed rather
@@ -240,6 +256,10 @@ The `errorContainer` treatment stays on the danger zone; it is doing real work.
 Was a `CircleAvatar` + icon. Now the concept-06 chain-link mark as low-opacity
 line art. One shared widget already existed and was used consistently — only its
 interior changed.
+
+The mark family behind it was redrawn on Bone on 2026-08-18, so
+`branding/concept-06/` and this document no longer disagree about the palette;
+see [`branding/concept-06/README.md`](branding/concept-06/README.md).
 
 ### §8 Chrome
 
@@ -403,19 +423,21 @@ The Android `mipmap-*/ic_launcher.png` set and the fifteen images in
 `mobile/ios/Runner/Assets.xcassets/AppIcon.appiconset/` are the chain-link mark
 on the Bone palette, replacing the stock Flutter icon.
 
-Two notes for whoever regenerates them:
+The source is `branding/concept-06/veritra-app-icon-bone.svg`. The old
+Indigo→Sky icon it replaced now lives in `branding/concept-06/superseded/`,
+which is where every file of that brand went — the directory itself is the
+warning, so there is no longer a same-directory file to export by mistake.
 
-- The source is `branding/concept-06/veritra-app-icon-bone.svg`, **not**
-  `veritra-app-icon.svg`. The latter is the old Indigo→Sky brand on an Ink
-  ground — the palette this direction dropped. Exporting it would ship an icon
-  that matches nothing else in the app.
-- No rasteriser existed on the machine that produced them (no ImageMagick,
-  Inkscape, rsvg, Python/PIL or sharp), so the mark was evaluated analytically —
-  it is two stroked rounded rectangles with an exact signed-distance function —
-  and encoded to PNG directly. The geometry was compared against the existing
-  `exports/veritra-app-icon-512.png` and matches. Any real rasteriser will
-  reproduce it from the SVG; no icon-generator dependency was added, and none is
-  worth the notices churn.
+Both sets were **re-rendered from the SVG on 2026-08-18** with macOS QuickLook
+(`qlmanage -t`), replacing the earlier PNGs that had been encoded analytically
+because no rasteriser was available at the time. Still no icon-generator
+dependency: a new one means a license review and a `THIRD_PARTY_NOTICES.md`
+entry per `AGENTS.md`, and QuickLook ships with the OS. The recovery technique
+QuickLook needs — it composites onto opaque white, so alpha has to be recovered
+from a white and a black render — is written up in
+[`branding/concept-06/README.md`](branding/concept-06/README.md).
 
-iOS images are full-bleed and opaque, because the system applies its own mask
-and rejects an alpha channel. Android keeps the squircle and its alpha corners.
+iOS images are full-bleed and opaque, and carry **no alpha channel at all**:
+the system applies its own mask and rejects an alpha channel, including a fully
+opaque one, so those files are written as PNG colour type 2. Android keeps the
+squircle and its alpha corners.
