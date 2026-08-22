@@ -5,7 +5,7 @@ import UIKit
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, FlutterStreamHandler {
   private var pushEvents: FlutterEventSink?
   private var pushInstance: String?
-  private let wakeKey = "veritra_pending_push_wake"
+  private let wakeGenerationKey = "veritra_pending_push_wake_generation"
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -46,11 +46,23 @@ import UIKit
           self.pushEvents?(["type": "unregistered", "instance": instance])
         }
         self.pushInstance = nil
+        UserDefaults.standard.removeObject(forKey: self.wakeGenerationKey)
         result(nil)
-      case "takeWake":
-        let pending = UserDefaults.standard.bool(forKey: self.wakeKey)
-        if pending { UserDefaults.standard.removeObject(forKey: self.wakeKey) }
-        result(pending)
+      case "pendingWakeGeneration":
+        result(UserDefaults.standard.integer(forKey: self.wakeGenerationKey))
+      case "acknowledgeWake":
+        guard let arguments = call.arguments as? [String: Any],
+              let generation = arguments["generation"] as? NSNumber,
+              generation.int64Value > 0 else {
+          result(FlutterError(code: "invalid_arguments", message: "Wake generation is required", details: nil)); return
+        }
+        let current = UserDefaults.standard.integer(forKey: self.wakeGenerationKey)
+        if current == generation.intValue {
+          UserDefaults.standard.removeObject(forKey: self.wakeGenerationKey)
+          result(true)
+        } else {
+          result(false)
+        }
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -88,7 +100,8 @@ import UIKit
           userInfo["event"] as? String == "new_encrypted_event_available" else {
       completionHandler(.noData); return
     }
-    UserDefaults.standard.set(true, forKey: wakeKey)
+    let next = UserDefaults.standard.integer(forKey: wakeGenerationKey) + 1
+    UserDefaults.standard.set(next, forKey: wakeGenerationKey)
     pushEvents?(["type": "wake"])
     completionHandler(.newData)
   }

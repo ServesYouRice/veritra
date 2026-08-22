@@ -131,6 +131,9 @@ class LocalPeerVerifications extends Table {
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   EncryptedLocalDatabase(super.executor);
 
+  static const outboxDraftPrefix = 'outbox.draft.';
+  static const syncLeaseName = 'sync.owner.lease';
+
   @override
   int get schemaVersion => 6;
 
@@ -184,6 +187,15 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           await delete(localCiphertextEnvelopes).go();
           await delete(localConversations).go();
           await delete(localOutboxEntries).go();
+          await delete(localMlsTransitions).go();
+          await delete(localMlsOutboxEntries).go();
+          await delete(localPeerVerifications).go();
+          await customStatement(
+              'DELETE FROM local_metadata WHERE name LIKE ?',
+              <Object?>['$outboxDraftPrefix%']);
+          await (delete(localMetadata)
+                ..where((table) => table.name.equals(syncLeaseName)))
+              .go();
           await delete(localCryptoStates).go();
           await into(localSyncStates).insertOnConflictUpdate(
             LocalSyncStatesCompanion.insert(singleton: const Value(1)),
@@ -407,9 +419,15 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               String payloadJson
             })>
         envelopes,
-    required int cursor,
+    required int? cursor,
   }) =>
       transaction(() async {
+        final previousCursor = cursor == null
+            ? null
+            : await (select(localSyncStates)
+                  ..where((table) => table.singleton.equals(1)))
+                .getSingleOrNull();
+        if (cursor != null && (previousCursor?.cursor ?? 0) > cursor) return;
         await delete(localCiphertextEnvelopes).go();
         await delete(localConversations).go();
         var position = 0;
@@ -432,10 +450,12 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             ),
           );
         }
-        await into(localSyncStates).insertOnConflictUpdate(
-          LocalSyncStatesCompanion.insert(
-              singleton: const Value(1), cursor: Value(cursor)),
-        );
+        if (cursor != null) {
+          await into(localSyncStates).insertOnConflictUpdate(
+            LocalSyncStatesCompanion.insert(
+                singleton: const Value(1), cursor: Value(cursor)),
+          );
+        }
       });
 
   Future<
@@ -475,11 +495,32 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required String idempotencyKey,
     required String conversationId,
     required String payloadJson,
+    required String? draftText,
     required int queuedAt,
     required int maxEntries,
   }) =>
       transaction(() async {
-        await into(localOutboxEntries).insertOnConflictUpdate(
+        final existing = await (select(localOutboxEntries)
+              ..where((table) => table.idempotencyKey.equals(idempotencyKey)))
+            .getSingleOrNull();
+        if (existing != null) {
+          final existingDraft = await _readMetadataInTransaction(
+              _outboxDraftName(idempotencyKey));
+          if (existing.payloadJson != payloadJson ||
+              (existingDraft != null && existingDraft != draftText)) {
+            throw StateError('outbox idempotency key conflict');
+          }
+          if (existingDraft == null && draftText != null) {
+            await _writeMetadataInTransaction(
+                _outboxDraftName(idempotencyKey), draftText);
+          }
+          return;
+        }
+        final count = await outboxCount();
+        if (count >= maxEntries) {
+          throw StateError('outbox_full');
+        }
+        await into(localOutboxEntries).insert(
           LocalOutboxEntriesCompanion.insert(
             idempotencyKey: idempotencyKey,
             conversationId: conversationId,
@@ -487,20 +528,22 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             payloadJson: payloadJson,
           ),
         );
-        final rows = await (select(localOutboxEntries)
-              ..orderBy([
-                (table) => OrderingTerm.asc(table.queuedAt),
-                (table) => OrderingTerm.asc(table.idempotencyKey),
-              ]))
-            .get();
-        final excess = rows.length - maxEntries;
-        for (final row in rows.take(excess > 0 ? excess : 0)) {
-          await (delete(localOutboxEntries)
-                ..where(
-                    (table) => table.idempotencyKey.equals(row.idempotencyKey)))
-              .go();
+        if (draftText != null) {
+          await _writeMetadataInTransaction(
+              _outboxDraftName(idempotencyKey), draftText);
         }
       });
+
+  String _outboxDraftName(String idempotencyKey) =>
+      '$outboxDraftPrefix$idempotencyKey';
+
+  Future<int> outboxCount() async {
+    final row = await customSelect(
+      'SELECT COUNT(*) AS count FROM local_outbox_entries',
+      readsFrom: {localOutboxEntries},
+    ).getSingle();
+    return row.read<int>('count');
+  }
 
   Future<List<String>> readOutboxJson() async {
     final rows = await (select(localOutboxEntries)
@@ -519,7 +562,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             int attemptCount,
             int? nextAttemptAt,
             String? failureClass,
-            bool terminal
+            bool terminal,
+            String? draftText
           })>> readOutboxRecords() async {
     final rows = await (select(localOutboxEntries)
           ..orderBy([
@@ -527,15 +571,14 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             (table) => OrderingTerm.asc(table.idempotencyKey)
           ]))
         .get();
-    return rows
-        .map((row) => (
+    return Future.wait(rows.map((row) async => (
               payloadJson: row.payloadJson,
               attemptCount: row.attemptCount,
               nextAttemptAt: row.nextAttemptAt,
               failureClass: row.failureClass,
-              terminal: row.terminal
-            ))
-        .toList(growable: false);
+              terminal: row.terminal,
+              draftText: await readMetadata(_outboxDraftName(row.idempotencyKey))
+            )));
   }
 
   Future<void> markOutboxFailure(
@@ -543,24 +586,27 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required String failureClass,
     required bool terminal,
     int? nextAttemptAt,
-  }) async {
-    await (update(localOutboxEntries)
-          ..where((table) => table.idempotencyKey.equals(idempotencyKey)))
-        .write(LocalOutboxEntriesCompanion(
-      attemptCount: const Value.absent(),
-      failureClass: Value(failureClass),
-      terminal: Value(terminal),
-      nextAttemptAt: Value(nextAttemptAt),
-    ));
-    await customStatement(
-        'UPDATE local_outbox_entries '
-        'SET attempt_count = attempt_count + 1 WHERE idempotency_key = ?',
-        <Object?>[idempotencyKey]);
-  }
+  }) => transaction(() async {
+        await (update(localOutboxEntries)
+              ..where((table) => table.idempotencyKey.equals(idempotencyKey)))
+            .write(LocalOutboxEntriesCompanion(
+          attemptCount: const Value.absent(),
+          failureClass: Value(failureClass),
+          terminal: Value(terminal),
+          nextAttemptAt: Value(nextAttemptAt),
+        ));
+        await customStatement(
+            'UPDATE local_outbox_entries '
+            'SET attempt_count = attempt_count + 1 WHERE idempotency_key = ?',
+            <Object?>[idempotencyKey]);
+      });
 
   Future<void> deleteOutbox(String idempotencyKey) => transaction(() async {
         await (delete(localOutboxEntries)
               ..where((table) => table.idempotencyKey.equals(idempotencyKey)))
+            .go();
+        await (delete(localMetadata)
+              ..where((table) => table.name.equals(_outboxDraftName(idempotencyKey))))
             .go();
       });
 
@@ -604,8 +650,10 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         upsertedEnvelopes,
     required List<String> deletedEnvelopeIds,
     MlsCommitFailureInjector? failureInjector,
+    String? leaseKey,
   }) =>
       transaction(() async {
+        await _assertSyncLeaseInTransaction(leaseKey);
         final processed = await (select(localMlsTransitions)
               ..where((table) => table.messageId.equals(messageId)))
             .getSingleOrNull();
@@ -680,6 +728,67 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         );
       });
 
+  Future<void> commitSyncEvent({
+    required String eventKey,
+    required String conversationId,
+    required int expectedCursor,
+    required int cursor,
+    ({String id, String conversationId, String payloadJson})? envelope,
+    String? leaseKey,
+  }) =>
+      transaction(() async {
+        await _assertSyncLeaseInTransaction(leaseKey);
+        final processed = await (select(localMlsTransitions)
+              ..where((table) => table.messageId.equals(eventKey)))
+            .getSingleOrNull();
+        if (processed != null) return;
+        final previousCursor = await (select(localSyncStates)
+              ..where((table) => table.singleton.equals(1)))
+            .getSingleOrNull();
+        if ((previousCursor?.cursor ?? 0) != expectedCursor ||
+            cursor <= expectedCursor) {
+          throw StateError('stale sync event commit');
+        }
+        if (envelope != null) {
+          final existing = await (select(localCiphertextEnvelopes)
+                ..where((table) => table.id.equals(envelope.id)))
+              .getSingleOrNull();
+          var position = existing?.position;
+          if (position == null) {
+            final tail = await (select(localCiphertextEnvelopes)
+                  ..where((table) =>
+                      table.conversationId.equals(envelope.conversationId))
+                  ..orderBy([(table) => OrderingTerm.desc(table.position)])
+                  ..limit(1))
+                .getSingleOrNull();
+            position = (tail?.position ?? -1) + 1;
+          }
+          await into(localCiphertextEnvelopes).insertOnConflictUpdate(
+            LocalCiphertextEnvelopesCompanion.insert(
+              id: envelope.id,
+              conversationId: envelope.conversationId,
+              position: position,
+              payloadJson: envelope.payloadJson,
+            ),
+          );
+        }
+        final state = await (select(localCryptoStates)
+              ..where((table) => table.singleton.equals(1)))
+            .getSingleOrNull();
+        await into(localMlsTransitions).insert(
+          LocalMlsTransitionsCompanion.insert(
+            messageId: eventKey,
+            conversationId: conversationId,
+            cursor: cursor,
+            counter: state?.counter ?? 0,
+          ),
+        );
+        await into(localSyncStates).insertOnConflictUpdate(
+          LocalSyncStatesCompanion.insert(
+              singleton: const Value(1), cursor: Value(cursor)),
+        );
+      });
+
   Future<bool> hasProcessedMlsMessage(String messageId) async {
     final row = await (select(localMlsTransitions)
           ..where((table) => table.messageId.equals(messageId)))
@@ -703,8 +812,10 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               List<int> payload,
             })>
         messages,
+    String? leaseKey,
   }) =>
       transaction(() async {
+        await _assertSyncLeaseInTransaction(leaseKey);
         final previousState = await (select(localCryptoStates)
               ..where((table) => table.singleton.equals(1)))
             .getSingleOrNull();
@@ -751,9 +862,12 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required String idempotencyKey,
     required String conversationId,
     required String payloadJson,
+    required String? draftText,
     required int maxEntries,
+    String? leaseKey,
   }) =>
       transaction(() async {
+        await _assertSyncLeaseInTransaction(leaseKey);
         final previousState = await (select(localCryptoStates)
               ..where((table) => table.singleton.equals(1)))
             .getSingleOrNull();
@@ -765,6 +879,15 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             counter != expectedCounter + 1) {
           throw StateError('stale outgoing application MLS transition');
         }
+        if (await (select(localOutboxEntries)
+                ..where((table) => table.idempotencyKey.equals(idempotencyKey)))
+            .getSingleOrNull() !=
+            null) {
+          throw StateError('outbox idempotency key conflict');
+        }
+        if (await outboxCount() >= maxEntries) {
+          throw StateError('outbox_full');
+        }
         await into(localCryptoStates).insertOnConflictUpdate(
           LocalCryptoStatesCompanion.insert(
             singleton: const Value(1),
@@ -773,7 +896,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             sealedState: Uint8List.fromList(sealedState),
           ),
         );
-        await into(localOutboxEntries).insertOnConflictUpdate(
+        await into(localOutboxEntries).insert(
           LocalOutboxEntriesCompanion.insert(
             idempotencyKey: idempotencyKey,
             conversationId: conversationId,
@@ -781,18 +904,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             payloadJson: payloadJson,
           ),
         );
-        final rows = await (select(localOutboxEntries)
-              ..orderBy([
-                (table) => OrderingTerm.asc(table.queuedAt),
-                (table) => OrderingTerm.asc(table.idempotencyKey),
-              ]))
-            .get();
-        final excess = rows.length - maxEntries;
-        for (final row in rows.take(excess > 0 ? excess : 0)) {
-          await (delete(localOutboxEntries)
-                ..where(
-                    (table) => table.idempotencyKey.equals(row.idempotencyKey)))
-              .go();
+        if (draftText != null) {
+          await _writeMetadataInTransaction(_outboxDraftName(idempotencyKey),
+              draftText);
         }
       });
 
@@ -802,8 +916,10 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required int counter,
     required List<int> stateKey,
     required List<int> sealedState,
+    String? leaseKey,
   }) =>
       transaction(() async {
+        await _assertSyncLeaseInTransaction(leaseKey);
         final previousState = await (select(localCryptoStates)
               ..where((table) => table.singleton.equals(1)))
             .getSingleOrNull();
@@ -894,10 +1010,16 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     );
   }
 
-  Future<void> clearCachedState() => transaction(() async {
+  Future<void> clearCachedState({bool preserveOutbox = false}) =>
+      transaction(() async {
         await delete(localCiphertextEnvelopes).go();
         await delete(localConversations).go();
-        await delete(localOutboxEntries).go();
+        if (!preserveOutbox) {
+          await delete(localOutboxEntries).go();
+          await customStatement(
+              'DELETE FROM local_metadata WHERE name LIKE ?',
+              <Object?>['$outboxDraftPrefix%']);
+        }
         await into(localSyncStates).insertOnConflictUpdate(
           LocalSyncStatesCompanion.insert(singleton: const Value(1)),
         );
@@ -923,6 +1045,40 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           ..where((table) => table.name.equals(name)))
         .getSingleOrNull();
     return row?.value;
+  }
+
+  Future<String?> _readMetadataInTransaction(String name) async {
+    final row = await (select(localMetadata)
+          ..where((table) => table.name.equals(name)))
+        .getSingleOrNull();
+    return row?.value;
+  }
+
+  Future<void> _assertSyncLeaseInTransaction(String? leaseKey) async {
+    if (leaseKey == null) return;
+    final stored = await _readMetadataInTransaction(syncLeaseName);
+    if (stored != leaseKey) {
+      throw StateError('sync owner lease is no longer active');
+    }
+  }
+
+  Future<void> acquireSyncLease(String leaseKey) => transaction(() async {
+        await _writeMetadataInTransaction(syncLeaseName, leaseKey);
+      });
+
+  Future<void> releaseSyncLease(String leaseKey) => transaction(() async {
+        final stored = await _readMetadataInTransaction(syncLeaseName);
+        if (stored == leaseKey) {
+          await (delete(localMetadata)
+                ..where((table) => table.name.equals(syncLeaseName)))
+              .go();
+        }
+      });
+
+  Future<void> _writeMetadataInTransaction(String name, String value) async {
+    await into(localMetadata).insertOnConflictUpdate(
+      LocalMetadataCompanion.insert(name: name, value: value),
+    );
   }
 
   Future<void> writeMetadata(String name, String value) =>

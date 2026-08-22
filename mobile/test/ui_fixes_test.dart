@@ -85,18 +85,30 @@ void main() {
     expect(state.messagesByConversation['conv_1'], isEmpty);
   });
 
-  test('checkSetupRequired parses the probe and swallows failures', () async {
+  test('setup probe preserves actionable states without global errors', () async {
     final api = _FlakyMessagesApi();
     final state = _connectedState(api);
 
     api.setupRequired = true;
-    expect(await state.checkSetupRequired('http://localhost:8080'), isTrue);
+    expect(
+      (await state.probeSetup('https://localhost:8443')).state,
+      SetupProbeState.reachable,
+    );
+    expect(await state.checkSetupRequired('https://localhost:8443'), isTrue);
 
     api.setupRequired = false;
-    expect(await state.checkSetupRequired('http://localhost:8080'), isFalse);
+    expect(await state.checkSetupRequired('https://localhost:8443'), isFalse);
+    expect(
+      (await state.probeSetup('http://localhost:8080')).state,
+      SetupProbeState.insecureTransport,
+    );
 
     api.failSetupStatus = true;
-    expect(await state.checkSetupRequired('http://localhost:8080'), isNull);
+    expect(await state.checkSetupRequired('https://localhost:8443'), isNull);
+    expect(
+      (await state.probeSetup('https://localhost:8443')).state,
+      SetupProbeState.unavailable,
+    );
     expect(state.error, isNull);
   });
 
@@ -156,7 +168,10 @@ class _FlakyMessagesApi extends ApiClient {
     if (failSetupStatus) {
       throw const SocketException('unreachable');
     }
-    return <String, Object?>{'setup_required': setupRequired};
+    return <String, Object?>{
+      'setup_required': setupRequired,
+      'instance_name': 'Test Veritra',
+    };
   }
 
   @override

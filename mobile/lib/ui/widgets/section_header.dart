@@ -8,7 +8,7 @@ import '../tokens.dart';
 /// in settings and `_Header` in conversation details — with different type and
 /// different colour, which is why grouped screens never quite matched.
 ///
-/// It renders the `micro` step of the ramp: 10/700 with wide tracking, in the
+/// It renders the `micro` step of the ramp: 11/700 with wide tracking, in the
 /// muted colour, uppercased here because Flutter has no text-transform. That
 /// is what makes a group header read as designed rather than as a leftover
 /// `Text`. `Semantics(header: true)` is preserved from both originals, so a

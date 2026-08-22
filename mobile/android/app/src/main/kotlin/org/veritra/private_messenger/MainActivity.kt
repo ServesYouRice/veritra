@@ -46,9 +46,19 @@ class MainActivity : FlutterActivity() {
                     if (FirebaseApp.getApps(applicationContext).isNotEmpty()) {
                         FirebaseMessaging.getInstance().deleteToken()
                     }
+                    PushEventBridge.clearPendingWake(applicationContext)
                     result.success(null)
                 }
-                "takeWake" -> result.success(PushEventBridge.takePendingWake(applicationContext))
+                "pendingWakeGeneration" ->
+                    result.success(PushEventBridge.pendingWakeGeneration(applicationContext))
+                "acknowledgeWake" -> {
+                    val generation = call.argument<Number>("generation")?.toLong()
+                    if (generation == null || generation <= 0) {
+                        result.error("invalid_arguments", "Wake generation is required", null)
+                    } else {
+                        result.success(PushEventBridge.acknowledgeWake(applicationContext, generation))
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
@@ -102,7 +112,8 @@ class MainActivity : FlutterActivity() {
 
 object PushEventBridge : EventChannel.StreamHandler {
     private const val PREFS = "veritra_push_state"
-    private const val PENDING_WAKE = "pending_wake"
+    private const val LEGACY_PENDING_WAKE = "pending_wake"
+    private const val PENDING_WAKE_GENERATION = "pending_wake_generation"
     @Volatile private var sink: EventChannel.EventSink? = null
 
     override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
@@ -117,23 +128,41 @@ object PushEventBridge : EventChannel.StreamHandler {
         sink?.success(event)
     }
 
+    @Synchronized
     fun markWake(context: Context) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putBoolean(PENDING_WAKE, true).apply()
+        val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val next = migrateLegacyGeneration(preferences) + 1
+        preferences.edit().putLong(PENDING_WAKE_GENERATION, next).commit()
         emit(mapOf("type" to "wake"))
     }
 
-    fun hasListener(): Boolean = sink != null
-
-    fun clearPendingWake(context: Context) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().remove(PENDING_WAKE).apply()
+    @Synchronized
+    fun pendingWakeGeneration(context: Context): Long {
+        val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        return migrateLegacyGeneration(preferences)
     }
 
-    fun takePendingWake(context: Context): Boolean {
+    @Synchronized
+    fun acknowledgeWake(context: Context, generation: Long): Boolean {
         val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val pending = preferences.getBoolean(PENDING_WAKE, false)
-        if (pending) preferences.edit().remove(PENDING_WAKE).apply()
-        return pending
+        val current = migrateLegacyGeneration(preferences)
+        if (current != generation) return false
+        preferences.edit().remove(PENDING_WAKE_GENERATION).remove(LEGACY_PENDING_WAKE).commit()
+        return true
+    }
+
+    @Synchronized
+    fun clearPendingWake(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().remove(PENDING_WAKE_GENERATION).remove(LEGACY_PENDING_WAKE).commit()
+    }
+
+    private fun migrateLegacyGeneration(preferences: android.content.SharedPreferences): Long {
+        val current = preferences.getLong(PENDING_WAKE_GENERATION, 0L)
+        if (current > 0L) return current
+        if (!preferences.getBoolean(LEGACY_PENDING_WAKE, false)) return 0L
+        preferences.edit().putLong(PENDING_WAKE_GENERATION, 1L)
+            .remove(LEGACY_PENDING_WAKE).commit()
+        return 1L
     }
 }

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "required_ci_jobs": [
+    "server",
+    "crypto",
+    "mobile",
+    "mobile-ios",
+    "compose-smoke",
+    "licenses",
+    "vulnerabilities"
+  ],
+  "approvals": {
+    "production_crypto": {
+      "path": "release/production-crypto-approval.json",
+      "status": "approved",
+      "behavior_test": "pass",
+      "not_author": true
+    },
+    "independent_review": {
+      "path": "release/independent-review-approval.json",
+      "status": "approved",
+      "not_author": true
+    }
+  }
+}

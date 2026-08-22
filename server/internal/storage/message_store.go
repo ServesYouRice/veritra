@@ -16,15 +16,25 @@ import (
 )
 
 func (s *Store) SaveMessageEnvelope(ctx context.Context, envelope domain.MessageEnvelope) (domain.MessageEnvelope, bool, error) {
-	saved, duplicate, _, err := s.saveMessageEnvelope(ctx, envelope, false)
+	saved, duplicate, _, err := s.saveMessageEnvelope(ctx, envelope, false, nil)
 	return saved, duplicate, err
 }
 
 func (s *Store) SaveMessageEnvelopeWithSyncEvent(ctx context.Context, envelope domain.MessageEnvelope) (domain.MessageEnvelope, bool, int64, error) {
-	return s.saveMessageEnvelope(ctx, envelope, true)
+	return s.saveMessageEnvelope(ctx, envelope, true, nil)
 }
 
-func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.MessageEnvelope, withSyncEvent bool) (domain.MessageEnvelope, bool, int64, error) {
+// SaveMessageEnvelopeWithSyncEventAndRecipients commits the message, sync event,
+// and authorized conversation recipient snapshot through one transaction.
+// The recipient snapshot is an ephemeral authorization result for realtime
+// fanout; it is not persisted as message content or push work.
+func (s *Store) SaveMessageEnvelopeWithSyncEventAndRecipients(ctx context.Context, envelope domain.MessageEnvelope) (domain.MessageEnvelope, bool, int64, []string, error) {
+	var recipients []string
+	saved, duplicate, eventID, err := s.saveMessageEnvelope(ctx, envelope, true, &recipients)
+	return saved, duplicate, eventID, recipients, err
+}
+
+func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.MessageEnvelope, withSyncEvent bool, recipients *[]string) (domain.MessageEnvelope, bool, int64, error) {
 	if len(envelope.CryptoMetadata) == 0 {
 		envelope.CryptoMetadata = json.RawMessage(`{}`)
 	}
@@ -122,7 +132,7 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 	}
 	var eventID int64
 	if withSyncEvent {
-		payload, err := json.Marshal(map[string]string{"message_id": envelope.ID, "conversation_id": envelope.ConversationID})
+		payload, err := json.Marshal(messageSyncEventPayload(envelope))
 		if err != nil {
 			return domain.MessageEnvelope{}, false, 0, err
 		}
@@ -132,6 +142,34 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 		}
 		eventID, err = result.LastInsertId()
 		if err != nil {
+			return domain.MessageEnvelope{}, false, 0, err
+		}
+		wakeExpiresAt := now.Add(pushWakeJobTTL)
+		if envelope.ExpiresAt != nil && envelope.ExpiresAt.Before(wakeExpiresAt) {
+			wakeExpiresAt = envelope.ExpiresAt.UTC()
+		}
+		if err := enqueuePushWakeJobs(ctx, tx, eventID, envelope.ConversationID, envelope.SenderAccountID, formatTime(now), formatTime(wakeExpiresAt)); err != nil {
+			return domain.MessageEnvelope{}, false, 0, err
+		}
+	}
+	if recipients != nil && withSyncEvent {
+		rows, err := tx.QueryContext(ctx, `SELECT account_id FROM memberships WHERE conversation_id = ? ORDER BY account_id`, envelope.ConversationID)
+		if err != nil {
+			return domain.MessageEnvelope{}, false, 0, err
+		}
+		for rows.Next() {
+			var accountID string
+			if err := rows.Scan(&accountID); err != nil {
+				rows.Close()
+				return domain.MessageEnvelope{}, false, 0, err
+			}
+			*recipients = append(*recipients, accountID)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return domain.MessageEnvelope{}, false, 0, err
+		}
+		if err := rows.Close(); err != nil {
 			return domain.MessageEnvelope{}, false, 0, err
 		}
 	}
@@ -272,7 +310,7 @@ func (s *Store) updateMessageEnvelope(ctx context.Context, messageID, accountID 
 	if err != nil {
 		return domain.MessageEnvelope{}, 0, err
 	}
-	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, nil, envelope.ConversationID, map[string]string{"message_id": envelope.ID, "conversation_id": envelope.ConversationID}, now)
+	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, nil, envelope.ConversationID, messageSyncEventPayload(envelope), now)
 	if err != nil {
 		return domain.MessageEnvelope{}, 0, err
 	}
@@ -316,7 +354,7 @@ func (s *Store) deleteMessageEnvelope(ctx context.Context, messageID, accountID 
 	if err != nil {
 		return domain.MessageEnvelope{}, 0, err
 	}
-	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, nil, envelope.ConversationID, map[string]string{"message_id": envelope.ID, "conversation_id": envelope.ConversationID}, now)
+	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, nil, envelope.ConversationID, messageSyncEventPayload(envelope), now)
 	if err != nil {
 		return domain.MessageEnvelope{}, 0, err
 	}
@@ -487,15 +525,49 @@ func (s *Store) PruneExpiredContent(ctx context.Context, now time.Time) (int64, 
 	}
 	defer tx.Rollback()
 	cutoff := formatTime(now.UTC())
-	rows, err := tx.QueryContext(ctx, `
+	if _, err := tx.ExecContext(ctx, `CREATE TEMP TABLE prune_expired_message_ids(id TEXT PRIMARY KEY)`); err != nil {
+		return 0, nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO prune_expired_message_ids(id)
+		SELECT id FROM message_envelopes
+		WHERE expires_at IS NOT NULL AND expires_at <= ?
+		ORDER BY expires_at, id LIMIT 500`, cutoff); err != nil {
+		return 0, nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE TEMP TABLE prune_expired_attachment_ids(id TEXT PRIMARY KEY)`); err != nil {
+		return 0, nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE TEMP TABLE prune_expired_storage_keys(storage_key TEXT PRIMARY KEY)`); err != nil {
+		return 0, nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO prune_expired_attachment_ids(id)
+		SELECT DISTINCT attachment_id FROM message_attachments
+		WHERE message_id IN (SELECT id FROM prune_expired_message_ids)`); err != nil {
+		return 0, nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO prune_expired_storage_keys(storage_key)
 		SELECT DISTINCT a.storage_key
 		FROM attachment_envelopes a
-		JOIN message_attachments ma ON ma.attachment_id = a.id
-		WHERE ma.message_id IN (
-			SELECT id FROM message_envelopes
-			WHERE expires_at IS NOT NULL AND expires_at <= ?
-			ORDER BY expires_at, id LIMIT 500
-		)`, cutoff)
+		JOIN prune_expired_attachment_ids pa ON pa.id = a.id`); err != nil {
+		return 0, nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM message_attachments
+		WHERE message_id IN (SELECT id FROM prune_expired_message_ids)`); err != nil {
+		return 0, nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM attachment_envelopes
+		WHERE id IN (SELECT id FROM prune_expired_attachment_ids)
+		  AND NOT EXISTS (SELECT 1 FROM message_attachments ma WHERE ma.attachment_id = attachment_envelopes.id)`); err != nil {
+		return 0, nil, err
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT storage_key FROM prune_expired_storage_keys p
+		WHERE NOT EXISTS (SELECT 1 FROM attachment_envelopes a WHERE a.storage_key = p.storage_key)`)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -511,23 +583,9 @@ func (s *Store) PruneExpiredContent(ctx context.Context, now time.Time) (int64, 
 	if err := rows.Close(); err != nil {
 		return 0, nil, err
 	}
-	if _, err := tx.ExecContext(ctx, `
-		DELETE FROM attachment_envelopes WHERE id IN (
-			SELECT ma.attachment_id FROM message_attachments ma
-			JOIN message_envelopes me ON me.id = ma.message_id
-			WHERE me.expires_at IS NOT NULL AND me.expires_at <= ?
-			ORDER BY me.expires_at, me.id LIMIT 500
-		)`, cutoff); err != nil {
-		return 0, nil, err
-	}
 	result, err := tx.ExecContext(ctx, `
 		DELETE FROM message_envelopes
-		WHERE id IN (
-			SELECT id FROM message_envelopes
-			WHERE expires_at IS NOT NULL AND expires_at <= ?
-			ORDER BY expires_at, id
-			LIMIT 500
-		)`, cutoff)
+		WHERE id IN (SELECT id FROM prune_expired_message_ids)`)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -560,6 +618,15 @@ func (s *Store) PruneExpiredContent(ctx context.Context, now time.Time) (int64, 
 		if err := enqueueBlobDeletion(ctx, tx, storageKey); err != nil {
 			return 0, nil, err
 		}
+	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE prune_expired_attachment_ids`); err != nil {
+		return 0, nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE prune_expired_storage_keys`); err != nil {
+		return 0, nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE prune_expired_message_ids`); err != nil {
+		return 0, nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, nil, err
@@ -622,6 +689,17 @@ func (s *Store) RecordAuditEvent(ctx context.Context, actorAccountID *string, ev
 
 func (s *Store) SaveSyncEvent(ctx context.Context, eventType string, accountID *string, conversationID string, payload interface{}) (int64, error) {
 	return insertSyncEvent(ctx, s.db, eventType, accountID, conversationID, payload, nowString())
+}
+
+// Message sync events carry the immutable ciphertext envelope as it existed
+// at that event version. A later edit must never make replay fetch a newer
+// representation for an older cursor position.
+func messageSyncEventPayload(envelope domain.MessageEnvelope) map[string]interface{} {
+	return map[string]interface{}{
+		"message_id":      envelope.ID,
+		"conversation_id": envelope.ConversationID,
+		"envelope":        envelope,
+	}
 }
 
 type syncEventExecer interface {

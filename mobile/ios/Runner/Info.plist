@@ -28,6 +28,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Veritra uses the camera to scan device-link QR codes.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Veritra connects to a Veritra server you host on your own network.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Veritra uses the microphone only during calls you start or answer.</string>
 	<key>UIFileSharingEnabled</key>

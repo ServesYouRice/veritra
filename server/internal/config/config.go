@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net"
 	"net/url"
@@ -36,11 +37,22 @@ type Config struct {
 	Environment      string
 	LogLevel         string
 	LogFormat        string
+	PasswordCost     int
 	SyncRetention    time.Duration
 }
 
+const (
+	DefaultPasswordCost = 10
+	MinPasswordCost     = 10
+	MaxPasswordCost     = 15
+)
+
 func Load() (Config, error) {
 	trustedProxies, err := parseCIDRs(getenv("PRIVATE_MESSENGER_TRUSTED_PROXIES", ""))
+	if err != nil {
+		return Config{}, err
+	}
+	passwordCost, err := parsePasswordCost(os.Getenv("PRIVATE_MESSENGER_BCRYPT_COST"))
 	if err != nil {
 		return Config{}, err
 	}
@@ -48,7 +60,7 @@ func Load() (Config, error) {
 		Addr:             getenv("PRIVATE_MESSENGER_ADDR", ":8080"),
 		DataDir:          getenv("PRIVATE_MESSENGER_DATA_DIR", "./data"),
 		InstanceName:     getenv("PRIVATE_MESSENGER_INSTANCE_NAME", "Veritra"),
-		SetupToken:       os.Getenv("PRIVATE_MESSENGER_SETUP_TOKEN"),
+		SetupToken:       strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_SETUP_TOKEN")),
 		EnableMetrics:    getenv("PRIVATE_MESSENGER_ENABLE_METRICS", "") == "1",
 		ManagementAddr:   getenv("PRIVATE_MESSENGER_MANAGEMENT_ADDR", "127.0.0.1:9090"),
 		TrustedProxies:   trustedProxies,
@@ -67,10 +79,16 @@ func Load() (Config, error) {
 		Environment:      strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_ENV", "development"))),
 		LogLevel:         strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_LOG_LEVEL", "info"))),
 		LogFormat:        strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_LOG_FORMAT", "text"))),
+		PasswordCost:     passwordCost,
 		SyncRetention:    30 * 24 * time.Hour,
 	}
 	if cfg.Environment != "development" && cfg.Environment != "production" {
 		return Config{}, fmt.Errorf("PRIVATE_MESSENGER_ENV must be development or production")
+	}
+	if cfg.Environment == "production" && cfg.SetupToken != "" {
+		if err := ValidateSetupToken(cfg.SetupToken); err != nil {
+			return Config{}, err
+		}
 	}
 	if cfg.LogLevel != "debug" && cfg.LogLevel != "info" && cfg.LogLevel != "warn" && cfg.LogLevel != "error" {
 		return Config{}, fmt.Errorf("PRIVATE_MESSENGER_LOG_LEVEL must be debug, info, warn, or error")
@@ -99,6 +117,43 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
+func parsePasswordCost(raw string) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return DefaultPasswordCost, nil
+	}
+	cost, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || cost < MinPasswordCost || cost > MaxPasswordCost {
+		return 0, fmt.Errorf("PRIVATE_MESSENGER_BCRYPT_COST must be between %d and %d", MinPasswordCost, MaxPasswordCost)
+	}
+	return cost, nil
+}
+
+// ValidateSetupToken accepts the one supported operator encoding: unpadded
+// URL-safe base64 containing at least 32 decoded bytes. The decoded-size check
+// enforces the entropy floor; string length alone is not sufficient.
+func ValidateSetupToken(token string) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return fmt.Errorf("PRIVATE_MESSENGER_SETUP_TOKEN must not be empty")
+	}
+	switch strings.ToLower(token) {
+	case "ci-smoke-setup-token", "contract-setup-token", "test-setup-token", "change-me", "replace-me":
+		return fmt.Errorf("PRIVATE_MESSENGER_SETUP_TOKEN is a reserved placeholder")
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil || len(decoded) < 32 {
+		return fmt.Errorf("PRIVATE_MESSENGER_SETUP_TOKEN must be unpadded base64url encoding of at least 32 random bytes; generate one with `messenger-server generate-setup-token`")
+	}
+	unique := make(map[byte]struct{}, len(decoded))
+	for _, value := range decoded {
+		unique[value] = struct{}{}
+	}
+	if len(unique) < 4 {
+		return fmt.Errorf("PRIVATE_MESSENGER_SETUP_TOKEN has insufficient byte diversity")
+	}
+	return nil
+}
+
 func splitNonEmpty(raw string) []string {
 	result := make([]string, 0)
 	for _, item := range strings.Split(raw, ",") {
@@ -113,6 +168,11 @@ func splitNonEmpty(raw string) []string {
 // expected at a reverse proxy; a non-loopback application listener therefore
 // requires at least one explicitly trusted proxy network.
 func (c Config) ValidateServe() error {
+	if c.Environment == "production" && c.SetupToken != "" {
+		if err := ValidateSetupToken(c.SetupToken); err != nil {
+			return err
+		}
+	}
 	host, _, err := net.SplitHostPort(c.Addr)
 	if err != nil {
 		return fmt.Errorf("invalid PRIVATE_MESSENGER_ADDR %q: %w", c.Addr, err)

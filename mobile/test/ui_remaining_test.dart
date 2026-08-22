@@ -531,7 +531,7 @@ void main() {
       expect(sendButton.onPressed, isNotNull);
     });
 
-    testWidgets('the composer clears immediately after enqueueing',
+    testWidgets('the composer clears after durable acceptance',
         (tester) async {
       final api = _FakeApi()..holdSend = Completer<void>();
       final state = _connectedState(api)
@@ -552,6 +552,7 @@ void main() {
 
       api.holdSend!.complete();
       await tester.pumpAndSettle();
+      expect(find.text('first'), findsNothing);
     });
   });
 

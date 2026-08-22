@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "timezone": "UTC",
+  "cargo_audit_version": "0.22.2",
+  "review_deadline": "2026-08-29T00:00:00Z",
+  "exceptions": [
+    {
+      "id": "RUSTSEC-2026-0209",
+      "scope": "optional libcrux AES-GCM backend is outside the normal build graph",
+      "rationale": "The pinned OpenMLS classical X25519 suite does not activate this optional backend; the graph guard fails if it becomes reachable."
+    },
+    {
+      "id": "RUSTSEC-2026-0211",
+      "scope": "optional libcrux ChaCha20-Poly1305 backend is outside the normal build graph",
+      "rationale": "The pinned OpenMLS classical X25519 suite does not activate this optional backend; the graph guard fails if it becomes reachable."
+    },
+    {
+      "id": "RUSTSEC-2026-0124",
+      "scope": "SHAKE/secrets code in the locked HPKE graph",
+      "rationale": "The affected post-quantum branches are unreachable while Veritra pins the reviewed classical MLS ciphersuite; this exception expires for coordinated re-review."
+    },
+    {
+      "id": "RUSTSEC-2026-0212",
+      "scope": "SHAKE/secrets code in the locked HPKE graph",
+      "rationale": "The affected post-quantum branches are unreachable while Veritra pins the reviewed classical MLS ciphersuite; this exception expires for coordinated re-review."
+    },
+    {
+      "id": "RUSTSEC-2026-0207",
+      "scope": "SHAKE/secrets code in the locked HPKE graph",
+      "rationale": "The affected post-quantum branches are unreachable while Veritra pins the reviewed classical MLS ciphersuite; this exception expires for coordinated re-review."
+    },
+    {
+      "id": "RUSTSEC-2026-0208",
+      "scope": "SHAKE/secrets code in the locked HPKE graph",
+      "rationale": "The affected post-quantum branches are unreachable while Veritra pins the reviewed classical MLS ciphersuite; this exception expires for coordinated re-review."
+    }
+  ]
+}

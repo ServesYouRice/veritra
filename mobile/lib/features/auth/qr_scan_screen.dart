@@ -1,18 +1,50 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import '../../core/api_client.dart';
+
 /// Pulls the `code` query parameter out of a scanned device-link URI
 /// (`veritra://device-link?code=…`), falling back to the raw scan when it is
 /// not a recognizable URI (e.g. a bare code was encoded).
 String parseDeviceLinkCode(String scanned) {
   final uri = Uri.tryParse(scanned);
   if (uri != null) {
+    if (uri.scheme.isNotEmpty &&
+        (uri.scheme.toLowerCase() != 'veritra' ||
+            uri.host.toLowerCase() != 'device-link')) {
+      return '';
+    }
     final code = uri.queryParameters['code'];
     if (code != null && code.trim().isNotEmpty) {
       return code.trim();
     }
+    if (uri.scheme.isNotEmpty) {
+      return '';
+    }
   }
   return scanned.trim();
+}
+
+/// Reads an optional HTTPS origin from a future structured link. The caller
+/// must show it and obtain explicit confirmation before filling the URL field;
+/// this parser never trusts a QR payload by itself.
+String? parseDeviceLinkOrigin(String scanned) {
+  final uri = Uri.tryParse(scanned);
+  if (uri == null ||
+      uri.scheme.toLowerCase() != 'veritra' ||
+      uri.host.toLowerCase() != 'device-link') {
+    return null;
+  }
+  final raw = uri.queryParameters['origin'];
+  if (raw == null || raw.trim().isEmpty) {
+    return null;
+  }
+  try {
+    final origin = canonicalizeServerOrigin(raw);
+    return Uri.parse(origin).scheme == 'https' ? origin : null;
+  } on FormatException {
+    return null;
+  }
 }
 
 /// Full-screen camera scanner for device-link QR codes. Pops with the raw

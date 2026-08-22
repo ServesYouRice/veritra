@@ -10,6 +10,13 @@ import 'tokens.dart';
 import 'widgets/connection_banner.dart';
 import 'widgets/empty_state.dart';
 
+bool shouldShowFloatingNavLabels({
+  required double width,
+  required double textScale,
+}) {
+  return width >= 440 && textScale < 1.1;
+}
+
 /// Root scaffold. Navigation adapts to a rail on wide layouts per Material 3
 /// guidance, and at that width the chat list and the selected conversation
 /// sit side by side instead of the conversation covering the list.
@@ -47,6 +54,12 @@ class _AppShellState extends State<AppShell> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.state.lifecycle == SessionLifecycle.initializing) {
+      return const _StartupState();
+    }
+    if (widget.state.lifecycle == SessionLifecycle.recoveryRequired) {
+      return _RecoveryState(state: widget.state);
+    }
     if (!widget.state.connected) {
       return ConnectScreen(state: widget.state);
     }
@@ -185,10 +198,15 @@ class _NavItem extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final foreground = selected ? scheme.onPrimary : scheme.onSurfaceVariant;
+    final showLabels = shouldShowFloatingNavLabels(
+      width: MediaQuery.sizeOf(context).width,
+      textScale: MediaQuery.textScalerOf(context).scale(1),
+    );
     // NavigationBar supplied the selected/button semantics for free; a
     // hand-rolled bar has to say it itself or the nav stops announcing which
     // destination is current.
     return Semantics(
+      label: destination.label,
       selected: selected,
       button: true,
       child: Material(
@@ -213,17 +231,19 @@ class _NavItem extends StatelessWidget {
                     color: foreground,
                   ),
                 ),
-                const SizedBox(width: BoneSpacing.sm),
-                Flexible(
-                  child: Text(
-                    destination.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.labelMedium?.copyWith(
-                      color: foreground,
+                if (showLabels) ...<Widget>[
+                  const SizedBox(width: BoneSpacing.sm),
+                  Flexible(
+                    child: Text(
+                      destination.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: foreground,
+                      ),
                     ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
@@ -264,6 +284,80 @@ class _ChatWorkspace extends StatelessWidget {
                 ),
         ),
       ],
+    );
+  }
+}
+
+class _StartupState extends StatelessWidget {
+  const _StartupState();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              CircularProgressIndicator(),
+              SizedBox(height: BoneSpacing.lg),
+              Text('Restoring this device…'),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RecoveryState extends StatelessWidget {
+  const _RecoveryState({required this.state});
+
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(BoneSpacing.xl),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 480),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  const Icon(Icons.lock_reset_outlined, size: 48),
+                  const SizedBox(height: BoneSpacing.lg),
+                  Text(
+                    'Device recovery needed',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
+                  const SizedBox(height: BoneSpacing.sm),
+                  Text(
+                    state.recoveryMessage ??
+                        'This device needs attention before it can be used.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: BoneSpacing.lg),
+                  FilledButton(
+                    onPressed: state.busy ? null : state.tryRestoreSession,
+                    child: const Text('Retry restore'),
+                  ),
+                  TextButton(
+                    onPressed: state.busy
+                        ? null
+                        : state.continueWithoutRestore,
+                    child: const Text('Continue to sign in'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

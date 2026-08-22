@@ -31,6 +31,16 @@ func TestInstanceLockRejectsSecondWriter(t *testing.T) {
 	}
 }
 
+func TestGenerateSetupTokenProducesValidToken(t *testing.T) {
+	var output bytes.Buffer
+	if err := generateSetupToken(&output); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.ValidateSetupToken(strings.TrimSpace(output.String())); err != nil {
+		t.Fatalf("generated token rejected: %v", err)
+	}
+}
+
 func TestOffHostBackupRestoresOnCleanHost(t *testing.T) {
 	ctx := context.Background()
 	source := commandConfig(t.TempDir())

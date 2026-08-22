@@ -2,15 +2,35 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"time"
 
 	_ "modernc.org/sqlite"
 
 	"private-messenger/server/internal/domain"
 )
+
+// RecoveryCapabilityLifetime bounds the window in which a recovery capability
+// can be used. A transfer may finish after this deadline only when it was
+// already leased before expiry; a new or resumed transfer cannot start then.
+const RecoveryCapabilityLifetime = 15 * time.Minute
+
+// RecoveryLeaseLifetime is deliberately shorter than the capability lifetime
+// so a crashed process cannot strand a resumable transfer until expiry.
+const RecoveryLeaseLifetime = 2 * time.Minute
+
+// RecoveryTransfer is an approved, serialized range of an encrypted backup.
+// LeaseID is internal state and must never be returned to a client or logged.
+type RecoveryTransfer struct {
+	Backup      domain.BackupBlob
+	LeaseID     string
+	StartOffset int64
+}
 
 func (s *Store) CreateAttachmentEnvelope(ctx context.Context, attachment domain.AttachmentEnvelope) (domain.AttachmentEnvelope, error) {
 	if attachment.ConversationID != nil {
@@ -375,6 +395,8 @@ func (s *Store) DisablePushSubscription(ctx context.Context, subscriptionID, acc
 	return nil
 }
 
+const callSelectColumns = `id, conversation_id, created_by, invited_account_id, state, metadata_json, created_at, ended_at, expires_at, version, create_action_id, create_action_hash, last_action_id, last_action_hash`
+
 func (s *Store) CreateCallSession(ctx context.Context, conversationID, accountID string, metadata json.RawMessage) (domain.CallSession, error) {
 	call, _, err := s.createCallSession(ctx, conversationID, accountID, metadata, "")
 	return call, err
@@ -390,24 +412,55 @@ func (s *Store) createCallSession(ctx context.Context, conversationID, accountID
 		return domain.CallSession{}, 0, err
 	}
 	defer tx.Rollback()
-	var member bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM memberships WHERE conversation_id = ? AND account_id = ?)`, conversationID, accountID).Scan(&member); err != nil {
+	var kind string
+	var actorMembers, memberCount int
+	var invitedAccountID string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT c.kind,
+		       SUM(CASE WHEN a.id = ? THEN 1 ELSE 0 END),
+		       COUNT(a.id),
+		       COALESCE(MAX(CASE WHEN a.id != ? THEN a.id END), '')
+		FROM conversations c
+		LEFT JOIN memberships m ON m.conversation_id = c.id
+		LEFT JOIN accounts a ON a.id = m.account_id AND a.status = 'active' AND a.deleted_at IS NULL
+		WHERE c.id = ?
+		GROUP BY c.id, c.kind`, accountID, accountID, conversationID).Scan(&kind, &actorMembers, &memberCount, &invitedAccountID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.CallSession{}, 0, ErrNotMember
+		}
 		return domain.CallSession{}, 0, err
 	}
-	if !member {
+	if actorMembers == 0 {
 		return domain.CallSession{}, 0, ErrNotMember
+	}
+	if kind != "dm" || memberCount != 2 || invitedAccountID == "" {
+		return domain.CallSession{}, 0, ErrInvalidInput
+	}
+	if len(metadata) == 0 {
+		metadata = json.RawMessage(`{}`)
+	}
+	actionID := callActionID(metadata)
+	actionHash := callActionHash(actionID, accountID, "ringing", 0, metadata)
+	if actionID != "" {
+		existing, err := scanCall(tx.QueryRowContext(ctx, `SELECT `+callSelectColumns+` FROM call_sessions WHERE conversation_id = ? AND created_by = ? AND create_action_id = ?`, conversationID, accountID, actionID))
+		if err == nil {
+			if existing.CreateActionHash != actionHash {
+				return domain.CallSession{}, 0, ErrIdempotencyConflict
+			}
+			return existing, 0, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return domain.CallSession{}, 0, err
+		}
 	}
 	id, err := domain.NewID("call")
 	if err != nil {
 		return domain.CallSession{}, 0, err
 	}
-	if len(metadata) == 0 {
-		metadata = json.RawMessage(`{}`)
-	}
 	createdAt := time.Now().UTC()
 	expiresAt := createdAt.Add(2 * time.Minute)
-	call := domain.CallSession{ID: id, ConversationID: conversationID, CreatedBy: accountID, State: "ringing", Metadata: metadata, CreatedAt: createdAt, ExpiresAt: &expiresAt}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO call_sessions(id, conversation_id, created_by, state, metadata_json, created_at, expires_at) VALUES(?, ?, ?, 'ringing', ?, ?, ?)`, id, conversationID, accountID, string(metadata), formatTime(createdAt), formatTime(expiresAt)); err != nil {
+	call := domain.CallSession{ID: id, ConversationID: conversationID, CreatedBy: accountID, InvitedAccountID: invitedAccountID, State: "ringing", Version: 1, Metadata: metadata, CreatedAt: createdAt, ExpiresAt: &expiresAt, CreateActionID: actionID, CreateActionHash: actionHash}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO call_sessions(id, conversation_id, created_by, invited_account_id, state, metadata_json, created_at, expires_at, version, create_action_id, create_action_hash) VALUES(?, ?, ?, ?, 'ringing', ?, ?, ?, 1, ?, ?)`, id, conversationID, accountID, invitedAccountID, string(metadata), formatTime(createdAt), formatTime(expiresAt), actionID, actionHash); err != nil {
 		return domain.CallSession{}, 0, err
 	}
 	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, nil, conversationID, call, formatTime(createdAt))
@@ -428,10 +481,21 @@ func (s *Store) ListCallSessions(ctx context.Context, conversationID, accountID 
 	if !member {
 		return nil, ErrNotMember
 	}
+	var kind string
+	var memberCount int
+	if err := s.db.QueryRowContext(ctx, `SELECT c.kind, COUNT(a.id) FROM conversations c JOIN memberships m ON m.conversation_id = c.id JOIN accounts a ON a.id = m.account_id AND a.status = 'active' AND a.deleted_at IS NULL WHERE c.id = ? GROUP BY c.id, c.kind`, conversationID).Scan(&kind, &memberCount); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if kind != "dm" || memberCount != 2 {
+		return nil, ErrInvalidInput
+	}
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, conversation_id, created_by, state, metadata_json, created_at, ended_at, expires_at FROM call_sessions WHERE conversation_id = ? AND NOT EXISTS (SELECT 1 FROM account_blocks b WHERE b.blocker_account_id = ? AND b.blocked_account_id = call_sessions.created_by) ORDER BY created_at DESC, id DESC LIMIT ?`, conversationID, accountID, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+callSelectColumns+` FROM call_sessions WHERE conversation_id = ? AND NOT EXISTS (SELECT 1 FROM account_blocks b WHERE b.blocker_account_id = ? AND b.blocked_account_id = call_sessions.created_by) ORDER BY created_at DESC, id DESC LIMIT ?`, conversationID, accountID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -447,37 +511,89 @@ func (s *Store) ListCallSessions(ctx context.Context, conversationID, accountID 
 	return calls, rows.Err()
 }
 
-func (s *Store) TransitionCallSession(ctx context.Context, callID, accountID, nextState string, metadata json.RawMessage) (domain.CallSession, error) {
-	call, _, err := s.transitionCallSession(ctx, callID, accountID, nextState, metadata, "")
+func (s *Store) TransitionCallSession(ctx context.Context, callID, accountID string, expectedVersion int64, nextState string, metadata json.RawMessage) (domain.CallSession, error) {
+	call, _, err := s.transitionCallSession(ctx, callID, accountID, expectedVersion, nextState, metadata, "")
 	return call, err
 }
 
-func (s *Store) TransitionCallSessionWithSyncEvent(ctx context.Context, callID, accountID, nextState string, metadata json.RawMessage) (domain.CallSession, int64, error) {
-	return s.transitionCallSession(ctx, callID, accountID, nextState, metadata, "call.state")
+func (s *Store) TransitionCallSessionWithSyncEvent(ctx context.Context, callID, accountID string, expectedVersion int64, nextState string, metadata json.RawMessage) (domain.CallSession, int64, error) {
+	return s.transitionCallSession(ctx, callID, accountID, expectedVersion, nextState, metadata, "call.state")
 }
 
-func (s *Store) transitionCallSession(ctx context.Context, callID, accountID, nextState string, metadata json.RawMessage, eventType string) (domain.CallSession, int64, error) {
+func (s *Store) transitionCallSession(ctx context.Context, callID, accountID string, expectedVersion int64, nextState string, metadata json.RawMessage, eventType string) (domain.CallSession, int64, error) {
+	if expectedVersion <= 0 {
+		return domain.CallSession{}, 0, ErrInvalidInput
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return domain.CallSession{}, 0, err
 	}
 	defer tx.Rollback()
-	call, err := scanCall(tx.QueryRowContext(ctx, `SELECT id, conversation_id, created_by, state, metadata_json, created_at, ended_at, expires_at FROM call_sessions WHERE id = ?`, callID))
+	call, err := scanCall(tx.QueryRowContext(ctx, `SELECT `+callSelectColumns+` FROM call_sessions WHERE id = ?`, callID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.CallSession{}, 0, ErrNotFound
 	}
 	if err != nil {
 		return domain.CallSession{}, 0, err
 	}
+	var kind string
 	var memberCount int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM memberships WHERE conversation_id = ? AND account_id = ?`, call.ConversationID, accountID).Scan(&memberCount); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT c.kind, COUNT(a.id) FROM conversations c LEFT JOIN memberships m ON m.conversation_id = c.id LEFT JOIN accounts a ON a.id = m.account_id AND a.status = 'active' AND a.deleted_at IS NULL WHERE c.id = ? GROUP BY c.id, c.kind`, call.ConversationID).Scan(&kind, &memberCount); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.CallSession{}, 0, ErrNotFound
+		}
 		return domain.CallSession{}, 0, err
 	}
-	if memberCount == 0 {
+	if kind != "dm" || memberCount != 2 || call.InvitedAccountID == "" {
+		return domain.CallSession{}, 0, ErrInvalidInput
+	}
+	var activeMember bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM memberships m JOIN accounts a ON a.id = m.account_id WHERE m.conversation_id = ? AND m.account_id = ? AND a.status = 'active' AND a.deleted_at IS NULL)`, call.ConversationID, accountID).Scan(&activeMember); err != nil {
+		return domain.CallSession{}, 0, err
+	}
+	if !activeMember {
 		return domain.CallSession{}, 0, ErrNotMember
 	}
-	allowed := (call.State == "ringing" && (nextState == "active" || nextState == "rejected" || nextState == "missed" || nextState == "ended")) ||
-		(call.State == "active" && nextState == "ended") || call.State == nextState
+	if accountID != call.CreatedBy && accountID != call.InvitedAccountID {
+		var member bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM memberships WHERE conversation_id = ? AND account_id = ?)`, call.ConversationID, accountID).Scan(&member); err != nil {
+			return domain.CallSession{}, 0, err
+		}
+		if member {
+			return domain.CallSession{}, 0, ErrForbidden
+		}
+		return domain.CallSession{}, 0, ErrNotMember
+	}
+	actionID := callActionID(metadata)
+	actionHash := callActionHash(actionID, accountID, nextState, expectedVersion, metadata)
+	if actionID != "" && actionID == call.LastActionID {
+		if actionHash != call.LastActionHash {
+			return domain.CallSession{}, 0, ErrIdempotencyConflict
+		}
+		return call, 0, nil
+	}
+	if expectedVersion != call.Version {
+		return domain.CallSession{}, 0, ErrCallVersion
+	}
+	if nextState == call.State && len(metadata) == 0 {
+		return call, 0, nil
+	}
+	if nextState == call.State && isTerminalCallState(call.State) {
+		return domain.CallSession{}, 0, ErrInvalidInput
+	}
+	allowed := false
+	switch {
+	case nextState == call.State:
+		allowed = true
+	case accountID == call.CreatedBy && call.State == "ringing" && nextState == "ended":
+		allowed = true
+	case accountID == call.CreatedBy && call.State == "active" && nextState == "ended":
+		allowed = true
+	case accountID == call.InvitedAccountID && call.State == "ringing" && (nextState == "active" || nextState == "rejected" || nextState == "missed"):
+		allowed = true
+	case accountID == call.InvitedAccountID && call.State == "active" && nextState == "ended":
+		allowed = true
+	}
 	if !allowed {
 		return domain.CallSession{}, 0, ErrInvalidInput
 	}
@@ -486,8 +602,11 @@ func (s *Store) transitionCallSession(ctx context.Context, callID, accountID, ne
 	}
 	now := time.Now().UTC()
 	call.State = nextState
+	call.Version++
+	call.LastActionID = actionID
+	call.LastActionHash = actionHash
 	terminal := nextState == "rejected" || nextState == "missed" || nextState == "ended"
-	if terminal {
+	if terminal && call.EndedAt == nil {
 		call.EndedAt = &now
 		expires := now.Add(7 * 24 * time.Hour)
 		call.ExpiresAt = &expires
@@ -495,8 +614,16 @@ func (s *Store) transitionCallSession(ctx context.Context, callID, accountID, ne
 		expires := now.Add(4 * time.Hour)
 		call.ExpiresAt = &expires
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE call_sessions SET state = ?, metadata_json = ?, ended_at = ?, expires_at = ? WHERE id = ?`, call.State, string(call.Metadata), nullableTime(call.EndedAt), nullableTime(call.ExpiresAt), call.ID); err != nil {
+	result, err := tx.ExecContext(ctx, `UPDATE call_sessions SET state = ?, metadata_json = ?, ended_at = ?, expires_at = ?, version = ?, last_action_id = ?, last_action_hash = ? WHERE id = ? AND version = ?`, call.State, string(call.Metadata), nullableTime(call.EndedAt), nullableTime(call.ExpiresAt), call.Version, call.LastActionID, call.LastActionHash, call.ID, expectedVersion)
+	if err != nil {
 		return domain.CallSession{}, 0, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return domain.CallSession{}, 0, err
+	}
+	if rows != 1 {
+		return domain.CallSession{}, 0, ErrCallVersion
 	}
 	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, nil, call.ConversationID, call, formatTime(now))
 	if err != nil {
@@ -506,6 +633,34 @@ func (s *Store) transitionCallSession(ctx context.Context, callID, accountID, ne
 		return domain.CallSession{}, 0, err
 	}
 	return call, eventID, nil
+}
+
+func callActionID(metadata json.RawMessage) string {
+	var envelope struct {
+		ActionID string `json:"action_id"`
+	}
+	if json.Unmarshal(metadata, &envelope) != nil {
+		return ""
+	}
+	return envelope.ActionID
+}
+
+func callActionHash(actionID, accountID, state string, expectedVersion int64, metadata json.RawMessage) string {
+	hash := sha256.New()
+	_, _ = hash.Write([]byte(actionID))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write([]byte(accountID))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write([]byte(state))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write([]byte(strconv.FormatInt(expectedVersion, 10)))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write(metadata)
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func isTerminalCallState(state string) bool {
+	return state == "rejected" || state == "missed" || state == "ended"
 }
 
 func (s *Store) PruneCallSessions(ctx context.Context, now time.Time) (int64, error) {
@@ -585,12 +740,143 @@ func (s *Store) CreateBackupBlob(ctx context.Context, accountID, deviceID, stora
 	if previousCounter.Valid && stateCounter <= previousCounter.Int64 {
 		return ErrInvalidInput
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE backup_blobs SET recovery_token_hash = NULL
-		WHERE account_id = ? AND device_id = ?`, accountID, deviceID); err != nil {
+	recoveryExpiresAt := time.Now().UTC().Add(RecoveryCapabilityLifetime)
+	if _, err := tx.ExecContext(ctx, `UPDATE backup_blobs SET recovery_token_hash = NULL,
+		recovery_expires_at = NULL, recovery_next_offset = 0, recovery_lease_id = NULL,
+		recovery_lease_expires_at = NULL WHERE account_id = ? AND device_id = ?`, accountID, deviceID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO backup_blobs(id, account_id, device_id, storage_key, ciphertext_sha256, size_bytes, key_derivation_metadata_json, created_at, recovery_token_hash) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, accountID, nullableEmptyString(deviceID), storageKey, ciphertextSHA256, sizeBytes, string(keyDerivationMetadata), nowString(), recoveryTokenHash); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO backup_blobs(id, account_id, device_id, storage_key, ciphertext_sha256, size_bytes, key_derivation_metadata_json, created_at, recovery_token_hash, recovery_expires_at, recovery_next_offset) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`, id, accountID, nullableEmptyString(deviceID), storageKey, ciphertextSHA256, sizeBytes, string(keyDerivationMetadata), nowString(), recoveryTokenHash, formatTime(recoveryExpiresAt)); err != nil {
 		return err
+	}
+	return tx.Commit()
+}
+
+// BeginRecoveryTransfer atomically leases the next contiguous byte range for
+// a valid recovery capability. Reusing an earlier range, beginning after a
+// gap, or racing an active transfer is rejected.
+func (s *Store) BeginRecoveryTransfer(ctx context.Context, recoveryTokenHash []byte, start int64) (RecoveryTransfer, error) {
+	if len(recoveryTokenHash) != 32 || start < 0 {
+		return RecoveryTransfer{}, ErrRecoveryRange
+	}
+	leaseID, err := domain.NewID("recovery_lease")
+	if err != nil {
+		return RecoveryTransfer{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return RecoveryTransfer{}, err
+	}
+	defer tx.Rollback()
+
+	var transfer RecoveryTransfer
+	var deviceID sql.NullString
+	var metadata, created, recoveryExpiresAt string
+	var nextOffset int64
+	var lease, leaseExpiresAt sql.NullString
+	err = tx.QueryRowContext(ctx, `SELECT id, account_id, device_id, storage_key,
+		ciphertext_sha256, size_bytes, key_derivation_metadata_json, created_at,
+		recovery_expires_at, recovery_next_offset, recovery_lease_id,
+		recovery_lease_expires_at FROM backup_blobs
+		WHERE recovery_token_hash = ?`, recoveryTokenHash).Scan(
+		&transfer.Backup.ID, &transfer.Backup.AccountID, &deviceID,
+		&transfer.Backup.StorageKey, &transfer.Backup.CiphertextSHA256,
+		&transfer.Backup.SizeBytes, &metadata, &created, &recoveryExpiresAt,
+		&nextOffset, &lease, &leaseExpiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RecoveryTransfer{}, ErrNotFound
+	}
+	if err != nil {
+		return RecoveryTransfer{}, err
+	}
+	transfer.Backup.DeviceID = stringPtr(deviceID)
+	transfer.Backup.KeyDerivationMetadata = json.RawMessage(metadata)
+	transfer.Backup.CreatedAt = parseTime(created)
+	expiresAt := parseTime(recoveryExpiresAt)
+	now := time.Now().UTC()
+	if recoveryExpiresAt == "" || !expiresAt.After(now) {
+		return RecoveryTransfer{}, ErrNotFound
+	}
+	if lease.Valid && parseTime(leaseExpiresAt.String).After(now) {
+		return RecoveryTransfer{}, ErrRecoveryBusy
+	}
+	if start != nextOffset {
+		return RecoveryTransfer{}, ErrRecoveryRange
+	}
+	leaseDeadline := now.Add(RecoveryLeaseLifetime)
+	if leaseDeadline.After(expiresAt) {
+		leaseDeadline = expiresAt
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE backup_blobs SET recovery_lease_id = ?,
+		recovery_lease_expires_at = ? WHERE id = ? AND recovery_token_hash = ?
+		AND recovery_next_offset = ? AND (recovery_lease_id IS NULL OR recovery_lease_expires_at <= ?)`,
+		leaseID, formatTime(leaseDeadline), transfer.Backup.ID, recoveryTokenHash,
+		nextOffset, formatTime(now))
+	if err != nil {
+		return RecoveryTransfer{}, err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return RecoveryTransfer{}, err
+	} else if rows != 1 {
+		return RecoveryTransfer{}, ErrRecoveryBusy
+	}
+	if err := tx.Commit(); err != nil {
+		return RecoveryTransfer{}, err
+	}
+	transfer.LeaseID = leaseID
+	transfer.StartOffset = nextOffset
+	return transfer, nil
+}
+
+// CompleteRecoveryTransfer advances a leased transfer by the bytes that the
+// HTTP writer successfully handed off. A complete final range consumes the
+// capability by clearing its hash; an interrupted range keeps it resumable.
+func (s *Store) CompleteRecoveryTransfer(ctx context.Context, leaseID string, startOffset, bytesWritten, expected int64) error {
+	if leaseID == "" || startOffset < 0 || bytesWritten < 0 || expected < 0 || bytesWritten > expected {
+		return ErrInvalidInput
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var id string
+	var nextOffset, sizeBytes int64
+	now := time.Now().UTC()
+	if err := tx.QueryRowContext(ctx, `SELECT id, recovery_next_offset, size_bytes
+		FROM backup_blobs WHERE recovery_lease_id = ? AND recovery_next_offset = ?
+		AND recovery_lease_expires_at > ?`, leaseID, startOffset, formatTime(now)).Scan(&id, &nextOffset, &sizeBytes); errors.Is(err, sql.ErrNoRows) {
+		return ErrRecoveryBusy
+	} else if err != nil {
+		return err
+	}
+	if nextOffset > sizeBytes || bytesWritten > sizeBytes-nextOffset {
+		return ErrInvalidInput
+	}
+	newOffset := nextOffset + bytesWritten
+	var query string
+	var args []interface{}
+	if bytesWritten == expected && newOffset == sizeBytes {
+		query = `UPDATE backup_blobs SET recovery_token_hash = NULL,
+			recovery_next_offset = ?, recovery_lease_id = NULL,
+			recovery_lease_expires_at = NULL WHERE recovery_lease_id = ?
+			AND recovery_next_offset = ? AND recovery_lease_expires_at > ?`
+		args = []interface{}{newOffset, leaseID, startOffset, formatTime(now)}
+	} else {
+		query = `UPDATE backup_blobs SET recovery_next_offset = ?,
+			recovery_lease_id = NULL, recovery_lease_expires_at = NULL
+			WHERE recovery_lease_id = ? AND recovery_next_offset = ?
+			AND recovery_lease_expires_at > ?`
+		args = []interface{}{newOffset, leaseID, startOffset, formatTime(now)}
+	}
+	result, err := tx.ExecContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return err
+	} else if rows != 1 {
+		return ErrRecoveryBusy
 	}
 	return tx.Commit()
 }
@@ -601,7 +887,7 @@ func (s *Store) BackupForRecoveryToken(ctx context.Context, recoveryTokenHash []
 	}
 	backup, err := scanBackup(s.db.QueryRowContext(ctx, `SELECT id, account_id, device_id, storage_key,
 		ciphertext_sha256, size_bytes, key_derivation_metadata_json, created_at
-		FROM backup_blobs WHERE recovery_token_hash = ?`, recoveryTokenHash))
+		FROM backup_blobs WHERE recovery_token_hash = ? AND recovery_expires_at > ?`, recoveryTokenHash, nowString()))
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.BackupBlob{}, ErrNotFound
 	}

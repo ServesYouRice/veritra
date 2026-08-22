@@ -1,7 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../crypto/crypto_service.dart';
 import '../push/push_service.dart';
@@ -20,7 +24,74 @@ typedef SyncServiceFactory = SyncService Function(String baseUrl, String token);
 /// app has actually observed.
 enum ConnectionStatus { connecting, online, offline }
 
+enum SessionLifecycle { initializing, ready, recoveryRequired }
+
 enum PeerVerificationStatus { unverified, verified, changed }
+
+enum SetupProbeState {
+  idle,
+  probing,
+  reachable,
+  invalidOrigin,
+  insecureTransport,
+  dnsFailure,
+  tlsFailure,
+  timedOut,
+  notVeritra,
+  unavailable,
+}
+
+class SetupProbeResult {
+  const SetupProbeResult({
+    required this.state,
+    this.setupRequired,
+    this.instanceName,
+  });
+
+  const SetupProbeResult.idle() : this(state: SetupProbeState.idle);
+
+  const SetupProbeResult.probing() : this(state: SetupProbeState.probing);
+
+  final SetupProbeState state;
+  final bool? setupRequired;
+  final String? instanceName;
+
+  bool get isReachable => state == SetupProbeState.reachable;
+
+  String get message {
+    switch (state) {
+      case SetupProbeState.idle:
+        return '';
+      case SetupProbeState.probing:
+        return 'Checking the server…';
+      case SetupProbeState.reachable:
+        final name = instanceName?.trim();
+        return name == null || name.isEmpty
+            ? 'Veritra server reached.'
+            : 'Connected to $name.';
+      case SetupProbeState.invalidOrigin:
+        return 'Enter an HTTPS server origin, for example '
+            'https://chat.example.org.';
+      case SetupProbeState.insecureTransport:
+        return 'Veritra requires HTTPS. Put a self-hosted server behind TLS '
+            'with a trusted certificate or Caddy.';
+      case SetupProbeState.dnsFailure:
+        return 'That address could not be found. Check the hostname and try '
+            'again.';
+      case SetupProbeState.tlsFailure:
+        return 'The server certificate was not accepted. Use a trusted '
+            'certificate or configure Caddy TLS.';
+      case SetupProbeState.timedOut:
+        return 'The server took too long to respond. Check the address and '
+            'connection.';
+      case SetupProbeState.notVeritra:
+        return 'That address does not look like a Veritra server.';
+      case SetupProbeState.unavailable:
+        return 'Could not reach the server. Check the address and your '
+            'connection.';
+    }
+  }
+}
 
 class IncomingCallSignal {
   const IncomingCallSignal(this.call, this.signal);
@@ -73,6 +144,8 @@ class AppState extends ChangeNotifier {
   List<MessageEnvelope> pendingOutbox = <MessageEnvelope>[];
   final Map<String, OutboxDeliveryState> _outboxStates =
       <String, OutboxDeliveryState>{};
+  final Map<String, PendingEnvelopeRecord> _outboxRecords =
+      <String, PendingEnvelopeRecord>{};
   String? selectedConversationId;
   DeviceLink? activeDeviceLink;
   DeviceLinkClaim? pendingDeviceLinkClaim;
@@ -88,9 +161,12 @@ class AppState extends ChangeNotifier {
   bool devicesLoaded = false;
   final Set<String> _loadingMessageConversations = <String>{};
   final Map<String, String> _messageLoadErrors = <String, String>{};
-  bool _catchingUpSync = false;
-  bool _catchUpRequested = false;
+  AccountSyncEngine? _syncOwner;
+  LocalSyncLease? _syncLease;
+  int _sessionGeneration = 0;
   int _lastSyncEventId = 0;
+  AppLifecycleState _lifecycleState = AppLifecycleState.resumed;
+  int _pendingWakeGeneration = 0;
 
   // Backward pagination. A conversation is absent from _historyCursors until
   // its first page lands; a null value means the server reported no older
@@ -112,12 +188,20 @@ class AppState extends ChangeNotifier {
   // Why the last background sync failed. Kept apart from [error] so a
   // connection problem is never reported as the result of a user action.
   String? syncError;
+  bool deviceRecoveryRequired = false;
+  SessionLifecycle lifecycle = SessionLifecycle.initializing;
+  String? recoveryMessage;
 
   final Set<String> _busyOps = <String>{};
   final Map<String, String> _opErrors = <String, String>{};
   final StreamController<IncomingCallSignal> _callSignals =
       StreamController<IncomingCallSignal>.broadcast();
   bool _disposed = false;
+  bool _flushingOutbox = false;
+  bool _flushOutboxRequested = false;
+  String? _manualRetryKey;
+  Timer? _outboxRetryTimer;
+  Future<void> _sessionTransitionTail = Future<void>.value();
   Stream<IncomingCallSignal> get callSignals => _callSignals.stream;
 
   @override
@@ -126,6 +210,17 @@ class AppState extends ChangeNotifier {
   }
 
   bool get connected => session != null;
+
+  bool get _isForeground => _lifecycleState == AppLifecycleState.resumed;
+
+  /// The UI forwards lifecycle changes here so background push remains a
+  /// durable wake marker and the foreground sync owner is the only consumer.
+  void handleAppLifecycleState(AppLifecycleState state) {
+    _lifecycleState = state;
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_resumeForegroundSync());
+    }
+  }
 
   MlsConversationCryptoService? get _mlsCrypto =>
       cryptoService is MlsConversationCryptoService
@@ -190,43 +285,185 @@ class AppState extends ChangeNotifier {
   OutboxDeliveryState outboxState(String idempotencyKey) =>
       _outboxStates[idempotencyKey] ?? OutboxDeliveryState.failed;
 
-  /// Best-effort probe of the instance's setup state so the connect screen
-  /// can steer users to the right mode. Returns null when the instance is
-  /// unreachable or answers unexpectedly; never sets [error] or [busy].
-  Future<bool?> checkSetupRequired(String baseUrl) async {
-    final client = apiClientFactory(baseUrl);
+  PendingEnvelopeRecord? outboxRecord(String idempotencyKey) =>
+      _outboxRecords[idempotencyKey];
+
+  void _setOutboxRecords(List<PendingEnvelopeRecord> records) {
+    _outboxRecords
+      ..clear()
+      ..addEntries(records.map((record) =>
+          MapEntry(record.envelope.idempotencyKey, record)));
+    pendingOutbox = records
+        .map((record) => record.envelope)
+        .toList(growable: false);
+  }
+
+  String outboxFailureMessage(String idempotencyKey) {
+    final failure = _outboxRecords[idempotencyKey]?.failureClass ?? '';
+    if (failure.contains('storage_quota_exceeded') || failure.contains(':507:')) {
+      return 'The server is out of storage for this account. Delete older '
+          'attachments or ask the administrator for more space.';
+    }
+    return 'This encrypted message could not be sent. Copy it or discard it.';
+  }
+
+  /// Probe the instance without changing global action state. The result is
+  /// typed so onboarding can distinguish invalid input, TLS, DNS, timeout,
+  /// wrong-server and generic availability failures.
+  Future<SetupProbeResult> probeSetup(String baseUrl) async {
+    final String origin;
     try {
-      final status = await client.setupStatus();
+      origin = canonicalizeServerOrigin(baseUrl);
+    } on FormatException {
+      return const SetupProbeResult(state: SetupProbeState.invalidOrigin);
+    }
+    if (Uri.parse(origin).scheme != 'https') {
+      return const SetupProbeResult(
+        state: SetupProbeState.insecureTransport,
+      );
+    }
+
+    ApiClient? client;
+    try {
+      client = apiClientFactory(origin);
+      final status = await client!.setupStatus();
       final required = status['setup_required'];
-      return required is bool ? required : null;
+      if (required is! bool) {
+        return const SetupProbeResult(state: SetupProbeState.notVeritra);
+      }
+      final name = status['instance_name'];
+      return SetupProbeResult(
+        state: SetupProbeState.reachable,
+        setupRequired: required,
+        instanceName: name is String ? name : null,
+      );
+    } on HandshakeException {
+      return const SetupProbeResult(state: SetupProbeState.tlsFailure);
+    } on TimeoutException {
+      return const SetupProbeResult(state: SetupProbeState.timedOut);
+    } on SocketException catch (err) {
+      final message = err.message.toLowerCase();
+      final dns = message.contains('failed host lookup') ||
+          message.contains('nodename') ||
+          message.contains('name or service not known') ||
+          message.contains('unknown host');
+      return SetupProbeResult(
+        state: dns ? SetupProbeState.dnsFailure : SetupProbeState.unavailable,
+      );
+    } on ApiException catch (err) {
+      return SetupProbeResult(
+        state: err.statusCode >= 400 && err.statusCode < 500
+            ? SetupProbeState.notVeritra
+            : SetupProbeState.unavailable,
+      );
+    } on FormatException {
+      return const SetupProbeResult(state: SetupProbeState.notVeritra);
+    } on HttpException {
+      return const SetupProbeResult(state: SetupProbeState.notVeritra);
     } catch (_) {
-      return null;
+      return const SetupProbeResult(state: SetupProbeState.unavailable);
     } finally {
-      client.close();
+      client?.close();
+    }
+  }
+
+  /// Compatibility helper for non-UI callers that only need setup state.
+  /// New onboarding code should use [probeSetup] to preserve failure detail.
+  Future<bool?> checkSetupRequired(String baseUrl) async {
+    return (await probeSetup(baseUrl)).setupRequired;
+  }
+
+  Future<bool> hasStoredDeviceIdentity() async {
+    try {
+      final stored = await localStore.loadSession();
+      return _hasDeviceIdentity(session) || _hasDeviceIdentity(stored);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> hasStoredDeviceIdentityForOrigin(String baseUrl) async {
+    final String origin;
+    try {
+      origin = canonicalizeServerOrigin(baseUrl);
+    } on FormatException {
+      return false;
+    }
+    try {
+      final stored = await localStore.loadSession();
+      return _hasDeviceIdentity(session, origin) ||
+          _hasDeviceIdentity(stored, origin);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool _hasDeviceIdentity(Session? candidate, [String? origin]) {
+    if (candidate == null ||
+        candidate.deviceId == null ||
+        candidate.deviceId!.isEmpty ||
+        candidate.deviceSecret == null ||
+        candidate.deviceSecret!.isEmpty) {
+      return false;
+    }
+    if (origin == null) {
+      return true;
+    }
+    try {
+      return canonicalizeServerOrigin(candidate.baseUrl) == origin;
+    } on FormatException {
+      return false;
     }
   }
 
   /// Best-effort hydration of a previously-stored session on cold start.
   /// Failures are swallowed: a stale or unreadable session simply lands the
   /// user on the connect screen rather than crashing the app.
-  Future<void> tryRestoreSession() async {
+  Future<void> tryRestoreSession() =>
+      _enqueueSessionTransition(_tryRestoreSession);
+
+  Future<void> _tryRestoreSession() async {
+    if (_disposed) return;
+    final transitionGeneration = ++_sessionGeneration;
+    lifecycle = SessionLifecycle.initializing;
+    recoveryMessage = null;
+    notifyListeners();
     try {
-      final restored = await localStore.loadSession();
-      if (restored == null) {
+      final stored = await localStore.loadSession();
+      if (!_lifecycleGenerationActive(transitionGeneration)) return;
+      if (stored == null) {
+        lifecycle = SessionLifecycle.ready;
+        notifyListeners();
         return;
       }
+      final restored = Session(
+        baseUrl: canonicalizeServerOrigin(stored.baseUrl),
+        token: stored.token,
+        accountId: stored.accountId,
+        deviceId: stored.deviceId,
+        username: stored.username,
+        deviceSecret: stored.deviceSecret,
+        role: stored.role,
+      );
       if (restored.token.isEmpty) {
+        lifecycle = SessionLifecycle.ready;
+        notifyListeners();
         return;
       }
       session = restored;
       _replaceApi(restored.baseUrl);
       await _mlsCrypto?.activateSession(restored);
-      pendingOutbox = await localStore.pendingEnvelopes();
+      if (!_lifecycleGenerationActive(transitionGeneration)) return;
+      final records = await localStore.pendingEnvelopeRecords();
+      if (!_lifecycleGenerationActive(transitionGeneration)) return;
+      _setOutboxRecords(records);
       for (final envelope in pendingOutbox) {
         _outboxStates[envelope.idempotencyKey] = OutboxDeliveryState.failed;
       }
       _lastSyncEventId = await localStore.loadSyncCursor();
+      if (!_lifecycleGenerationActive(transitionGeneration)) return;
       final cached = await localStore.loadSnapshot();
+      if (!_lifecycleGenerationActive(transitionGeneration)) return;
       if (cached != null) {
         conversations = cached.conversations;
         messagesByConversation = cached.messagesByConversation;
@@ -237,9 +474,11 @@ class AppState extends ChangeNotifier {
       try {
         await refreshConversations();
         await refreshDevices();
+        if (!_lifecycleGenerationActive(transitionGeneration)) return;
       } on ApiException catch (err) {
         if (err.statusCode == 401) {
-          await _clearLocalSession(preserveDeviceIdentity: true);
+          await _clearLocalSession(
+              preserveDeviceIdentity: true, preserveOutbox: true);
           return;
         }
         // Keep the encrypted cache available while offline.
@@ -247,18 +486,33 @@ class AppState extends ChangeNotifier {
         // Keep the encrypted cache available while offline.
       }
       _startSync();
+      lifecycle = SessionLifecycle.ready;
       notifyListeners();
     } catch (_) {
-      // Runtime state falls back to the connect screen; the cached device ID
-      // stays available for password login on an already-linked device.
+      // Keep the encrypted database and cursor intact. Recovery is explicit so
+      // a keystore/database failure cannot look like an ordinary logout.
+      await _mlsCrypto?.dispose();
+      api?.close();
       session = null;
       api = null;
+      sync?.dispose();
+      sync = null;
       devices = <Device>[];
       conversationsLoaded = false;
       messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
-      _lastSyncEventId = 0;
-      await localStore.saveSyncCursor(0);
+      lifecycle = SessionLifecycle.recoveryRequired;
+      recoveryMessage =
+          'This device could not restore its encrypted session. Retry or '
+          'continue to sign in without clearing local data.';
+      notifyListeners();
     }
+  }
+
+  void continueWithoutRestore() {
+    if (lifecycle != SessionLifecycle.recoveryRequired) return;
+    lifecycle = SessionLifecycle.ready;
+    recoveryMessage = null;
+    notifyListeners();
   }
 
   Future<void> createOwner(String baseUrl, String username, String password,
@@ -388,7 +642,10 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<void> _refreshConversations({required bool notify}) async {
+  Future<void> _refreshConversations({
+    required bool notify,
+    bool persist = true,
+  }) async {
     final current = session;
     final client = api;
     if (current == null || client == null) {
@@ -396,24 +653,27 @@ class AppState extends ChangeNotifier {
     }
     conversations = await client.conversations(current.token);
     conversationsLoaded = true;
-    await _persistSnapshot();
+    if (persist) await _persistSnapshot();
     if (notify) {
       notifyListeners();
     }
   }
 
-  Future<void> refreshSelectedMessages({bool notify = true}) async {
+  Future<void> refreshSelectedMessages({
+    bool notify = true,
+    bool persist = true,
+  }) async {
     final conversationId = selectedConversationId;
     if (conversationId == null) {
       return;
     }
-    await _fetchMessages(conversationId);
+    await _fetchMessages(conversationId, persist: persist);
     if (notify) {
       notifyListeners();
     }
   }
 
-  Future<void> _fetchMessages(String conversationId) async {
+  Future<void> _fetchMessages(String conversationId, {bool persist = true}) async {
     final current = session;
     final client = api;
     if (current == null || client == null) {
@@ -437,7 +697,7 @@ class AppState extends ChangeNotifier {
       conversationId: <ReceivedMessageEnvelope>[...page.messages, ...older],
     };
     _historyCursors[conversationId] = page.nextBefore;
-    await _persistSnapshot();
+    if (persist) await _persistSnapshot();
   }
 
   /// Messages arrive newest-first. A cached message is "older" than a fresh
@@ -936,6 +1196,89 @@ class AppState extends ChangeNotifier {
     });
   }
 
+  /// Streams bounded server pages into a local JSON file. The file contains
+  /// page objects so a large account never needs to be assembled in memory.
+  /// The server's export remains ciphertext-only for message content.
+  Future<String?> exportAccount() async {
+    String? path;
+    await _run(() async {
+      final current = session;
+      final client = api;
+      if (current == null || client == null) {
+        return;
+      }
+
+      final directory = await getApplicationDocumentsDirectory();
+      final stamp = DateTime.now().toUtc().toIso8601String().replaceAll(
+            RegExp(r'[^0-9]'),
+            '',
+          );
+      final file = File(
+        '${directory.path}${Platform.pathSeparator}'
+        'veritra-account-export-v2-$stamp.json',
+      );
+      final temporaryFile = File('${file.path}.part');
+      IOSink? sink;
+      var completed = false;
+      try {
+        const header = '{"manifest_version":"v2","pages":[';
+        const footer = ']}';
+        const maxExportBytes = 256 * 1024 * 1024;
+        var totalBytes = utf8.encode(header).length;
+        sink = temporaryFile.openWrite();
+        sink.write(header);
+        String? before;
+        var firstPage = true;
+        var pageCount = 0;
+        while (true) {
+          if (pageCount >= 2000) {
+            throw const StateError('Account export has too many pages');
+          }
+          final page = await client.exportAccountPage(
+            current.token,
+            limit: 250,
+            before: before,
+          );
+          final encodedPage = utf8.encode(jsonEncode(page));
+          final separatorBytes = firstPage ? 0 : 1;
+          if (totalBytes + separatorBytes + encodedPage.length +
+                  utf8.encode(footer).length >
+              maxExportBytes) {
+            throw const StateError('Account export exceeds the size limit');
+          }
+          if (!firstPage) {
+            sink.add(const <int>[0x2c]);
+          }
+          sink.add(encodedPage);
+          totalBytes += separatorBytes + encodedPage.length;
+          firstPage = false;
+          pageCount++;
+          final next = page['next_before'];
+          if (next == null) {
+            break;
+          }
+          if (next is! String || next.isEmpty || next == before) {
+            throw const StateError('Account export cursor did not advance');
+          }
+          before = next;
+        }
+        sink.write(footer);
+        await sink.flush();
+        await sink.close();
+        sink = null;
+        await temporaryFile.rename(file.path);
+        completed = true;
+        path = file.path;
+      } finally {
+        await sink?.close();
+        if (!completed && await temporaryFile.exists()) {
+          await temporaryFile.delete();
+        }
+      }
+    });
+    return error == null ? path : null;
+  }
+
   Future<void> sendMessage(String plaintext) async {
     final conversationId = selectedConversationId;
     if (conversationId != null) {
@@ -965,48 +1308,44 @@ class AppState extends ChangeNotifier {
       if (current == null || client == null || conversation == null) {
         return;
       }
+      if (!await localStore.hasOutboxCapacity()) {
+        throw const OutboxFullException();
+      }
       final encrypted = await cryptoService.encrypt(conversation.id, plaintext);
-      await localStore.enqueueEnvelope(encrypted);
+      await localStore.enqueueEnvelope(encrypted, draftText: plaintext);
+      final record = (await localStore.pendingEnvelopeRecords())
+          .where((item) => item.envelope.idempotencyKey == encrypted.idempotencyKey)
+          .firstOrNull;
+      if (record != null) {
+        _outboxRecords[encrypted.idempotencyKey] = record;
+      }
       pendingOutbox = <MessageEnvelope>[...pendingOutbox, encrypted];
       _outboxStates[encrypted.idempotencyKey] = OutboxDeliveryState.sending;
       notifyListeners();
-      try {
-        await client.sendEnvelope(current.token, encrypted);
-        await _removeFromOutbox(encrypted);
-      } catch (err) {
-        await _recordOutboxFailure(encrypted, err, 0);
-        notifyListeners();
-        rethrow;
-      }
-      await _fetchMessages(conversationId);
+      // Durable acceptance is the send result. Network delivery is owned by
+      // the single retry worker, so a slow connection never holds the draft.
+      unawaited(_flushOutbox());
     });
   }
 
   Future<void> retryEnvelope(String idempotencyKey) async {
     await _runScoped(Ops.send, () async {
-      final current = session;
-      final client = api;
-      final envelope = pendingOutbox
-          .where((item) => item.idempotencyKey == idempotencyKey)
-          .firstOrNull;
-      if (current == null || client == null || envelope == null) {
+      final record = _outboxRecords[idempotencyKey] ??
+          (await localStore.pendingEnvelopeRecords())
+              .where((item) => item.envelope.idempotencyKey == idempotencyKey)
+              .firstOrNull;
+      if (record == null || record.terminal) {
         return;
       }
       _outboxStates[idempotencyKey] = OutboxDeliveryState.sending;
       notifyListeners();
-      try {
-        await client.sendEnvelope(current.token, envelope);
-        await _removeFromOutbox(envelope);
-        await _fetchMessages(envelope.conversationId);
-      } catch (err) {
-        final record = (await localStore.pendingEnvelopeRecords())
-            .where((item) => item.envelope.idempotencyKey == idempotencyKey)
-            .firstOrNull;
-        await _recordOutboxFailure(envelope, err, record?.attemptCount ?? 0);
-        notifyListeners();
-        rethrow;
-      }
+      _manualRetryKey = idempotencyKey;
+      await _flushOutbox();
     });
+  }
+
+  Future<void> discardEnvelope(String idempotencyKey) async {
+    await _removeFromOutboxByKey(idempotencyKey);
   }
 
   Future<void> createDeviceLink() async {
@@ -1275,21 +1614,60 @@ class AppState extends ChangeNotifier {
     unawaited(loadMessages(id));
   }
 
-  void _startSync() {
+  Future<void> _startSync() async {
     final current = session;
     if (current == null) {
       return;
     }
-    unawaited(_syncSubscription?.cancel());
+    final ownerGeneration = ++_sessionGeneration;
+    final previousOwner = _syncOwner;
+    final previousLease = _syncLease;
+    _syncOwner = null;
+    _syncLease = null;
+    previousOwner?.dispose();
+    await previousOwner?.cancelAndDrain();
+    if (previousLease != null) {
+      await localStore.releaseSyncLease(previousLease);
+    }
+    if (ownerGeneration != _sessionGeneration || !_sameSession(current)) {
+      return;
+    }
+    final accountId = current.accountId;
+    final deviceId = current.deviceId;
+    if (accountId == null || deviceId == null) return;
+    final lease = LocalSyncLease(
+      origin: current.baseUrl,
+      accountId: accountId,
+      deviceId: deviceId,
+      generation: ownerGeneration,
+    );
+    await localStore.acquireSyncLease(lease);
+    if (ownerGeneration != _sessionGeneration || !_sameSession(current)) {
+      await localStore.releaseSyncLease(lease);
+      return;
+    }
+    _syncLease = lease;
+    _syncOwner = AccountSyncEngine(
+      isOwner: () => ownerGeneration == _sessionGeneration &&
+          _sameSession(current),
+      work: () => _runOwnedCatchUp(current, ownerGeneration),
+    );
+    final previousSubscription = _syncSubscription;
+    _syncSubscription = null;
+    await previousSubscription?.cancel();
     sync?.dispose();
     sync = syncServiceFactory(current.baseUrl, current.token);
     _setConnectionStatus(ConnectionStatus.connecting);
     _syncSubscription = sync!.events.listen(
-      (_) => unawaited(_catchUpSyncEvents()),
+      (_) {
+        unawaited(_catchUpSyncEvents());
+        unawaited(_flushOutbox());
+      },
       onError: (_) {
         // A dropped socket alone is not proof the server is unreachable; the
         // catch-up attempt that follows decides online vs. offline.
         unawaited(_catchUpSyncEvents());
+        unawaited(_flushOutbox());
       },
     );
     unawaited(_catchUpSyncEvents());
@@ -1310,14 +1688,19 @@ class AppState extends ChangeNotifier {
     }
     connectionStatus = status;
     notifyListeners();
+    if (status == ConnectionStatus.online) {
+      unawaited(_flushOutbox());
+    }
   }
 
   Future<void> _startPush() async {
     final current = session;
     final client = api;
     if (current == null || client == null) return;
+    final ownerGeneration = _sessionGeneration;
     try {
       final config = await client.pushConfig(current.token);
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
       final vapid = config['vapid_public_key'] as String? ?? '';
       if (config['enabled'] != true) {
         pushConfigured = false;
@@ -1327,9 +1710,13 @@ class AppState extends ChangeNotifier {
       _pushInstance = '${current.accountId}:${current.deviceId}';
       await _pushSubscription?.cancel();
       _pushSubscription = pushService.events.listen(_handlePushEvent);
-      if (await pushService.takePendingWake()) {
+      final wakeGeneration = await pushService.pendingWakeGeneration();
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      if (wakeGeneration > 0) {
+        _pendingWakeGeneration = max(_pendingWakeGeneration, wakeGeneration);
         unawaited(_catchUpSyncEvents());
       }
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
       await pushService.register(instance: _pushInstance!, vapid: vapid);
       notifyListeners();
     } catch (_) {
@@ -1341,17 +1728,23 @@ class AppState extends ChangeNotifier {
     final current = session;
     final client = api;
     if (current == null || client == null) return;
+    final ownerGeneration = _sessionGeneration;
     if (event is PushWakeEvent) {
-      await _catchUpSyncEvents();
+      if (_isForeground) {
+        await _observePendingWake();
+        await _catchUpSyncEvents();
+      }
     } else if (event is PushEndpointEvent && event.instance == _pushInstance) {
       try {
-        _pushSubscriptionId = event.provider == 'webpush'
+        final subscriptionId = event.provider == 'webpush'
             ? await client.registerWebPush(current.token,
                 endpoint: event.endpoint,
                 publicKey: event.publicKey,
                 authSecret: event.authSecret)
             : await client.registerNativePush(current.token,
                 provider: event.provider, deviceToken: event.endpoint);
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        _pushSubscriptionId = subscriptionId;
         notifyListeners();
       } catch (_) {
         // Re-registration on the next startup retries endpoint delivery.
@@ -1365,6 +1758,75 @@ class AppState extends ChangeNotifier {
           await client.disablePush(current.token, id);
         } catch (_) {}
       }
+    }
+  }
+
+  Future<void> _resumeForegroundSync() async {
+    if (session == null || api == null) return;
+    await _observePendingWake();
+    await _catchUpSyncEvents();
+    await _flushOutbox();
+  }
+
+  Future<void> _observePendingWake() async {
+    if (!_isForeground) return;
+    try {
+      final generation = await pushService.pendingWakeGeneration();
+      if (generation > _pendingWakeGeneration) {
+        _pendingWakeGeneration = generation;
+      }
+    } catch (_) {
+      // Push is optional; a later resume or wake event can observe it again.
+    }
+  }
+
+  bool _sameSession(Session expected) {
+    final active = session;
+    return active != null &&
+        active.baseUrl == expected.baseUrl &&
+        active.token == expected.token &&
+        active.accountId == expected.accountId &&
+        active.deviceId == expected.deviceId;
+  }
+
+  bool _syncOwnerActive(Session expected, int generation) =>
+      generation == _sessionGeneration && _sameSession(expected);
+
+  bool _lifecycleGenerationActive(int generation) =>
+      !_disposed && generation == _sessionGeneration;
+
+  Future<void> _acknowledgePendingWake(Session owner,
+      {int? ownerGeneration}) async {
+    if (!_isForeground ||
+        !_sameSession(owner) ||
+        (ownerGeneration != null &&
+            !_syncOwnerActive(owner, ownerGeneration)) ||
+        _pendingWakeGeneration <= 0) {
+      return;
+    }
+    final generation = _pendingWakeGeneration;
+    try {
+      final acknowledged = await pushService.acknowledgeWake(generation);
+      final ownerStillActive = ownerGeneration == null
+          ? _sameSession(owner)
+          : _syncOwnerActive(owner, ownerGeneration);
+      if (!ownerStillActive) return;
+      if (acknowledged) {
+        _pendingWakeGeneration = 0;
+        final latest = await pushService.pendingWakeGeneration();
+        final latestOwnerStillActive = ownerGeneration == null
+            ? _sameSession(owner)
+            : _syncOwnerActive(owner, ownerGeneration);
+        if (!latestOwnerStillActive) return;
+        if (latest > generation) {
+          _pendingWakeGeneration = latest;
+          _syncOwner?.markRequested();
+        }
+      } else {
+        await _observePendingWake();
+      }
+    } catch (_) {
+      // A failed platform acknowledgement leaves the durable marker intact.
     }
   }
 
@@ -1398,119 +1860,99 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _catchUpSyncEvents() async {
-    if (_catchingUpSync) {
-      _catchUpRequested = true;
+    if (!_isForeground) return;
+    await _syncOwner?.request();
+  }
+
+  Future<void> _runOwnedCatchUp(
+      Session current, int ownerGeneration) async {
+    if (!_isForeground ||
+        ownerGeneration != _sessionGeneration ||
+        !_sameSession(current)) {
       return;
     }
-    final current = session;
     final client = api;
-    if (current == null || client == null) {
+    if (client == null) {
       return;
     }
-    _catchingUpSync = true;
     try {
-      do {
-        _catchUpRequested = false;
-        var pageCursor = _lastSyncEventId;
-        var refreshConversationsNeeded = false;
-        var refreshSelectedMessagesNeeded = false;
-        var refreshDevicesNeeded = false;
-        final messageRepairIds = <String>{};
-        final cryptoEvents = <SyncEvent>[];
-        final selectedId = selectedConversationId;
-        while (true) {
-          const pageSize = 200;
-          final events = await client.syncEvents(
-            current.token,
-            after: pageCursor,
-            limit: pageSize,
-          );
-          if (events.isEmpty) {
-            break;
+      var pageCursor = await localStore.loadSyncCursor();
+      _lastSyncEventId = pageCursor;
+      const pageSize = 200;
+      while (true) {
+        if (!_isForeground || !_syncOwnerActive(current, ownerGeneration)) {
+          return;
+        }
+        final events = await client.syncEvents(
+          current.token,
+          after: pageCursor,
+          limit: pageSize,
+        );
+        if (!_isForeground || !_syncOwnerActive(current, ownerGeneration)) {
+          return;
+        }
+        if (events.isEmpty) break;
+        var returnedCursor = pageCursor;
+        for (final event in events) {
+          if (event.id <= returnedCursor) {
+            throw StateError('sync events are not strictly ordered');
           }
-          for (final event in events) {
-            if (event.id > pageCursor) {
-              pageCursor = event.id;
+          returnedCursor = event.id;
+          final committedCursor = await localStore.loadSyncCursor();
+          if (event.id <= committedCursor) continue;
+          if (!_syncOwnerActive(current, ownerGeneration)) return;
+
+          if (_isCryptoSyncEvent(event.type)) {
+            if (_mlsCrypto == null) {
+              throw StateError(
+                  'deviceRecoveryRequired: MLS crypto is unavailable');
             }
-            if (event.conversationId != null) {
-              if (event.type == 'mls.message.created' ||
-                  event.type == 'message.envelope.created' ||
-                  event.type.startsWith('call.')) {
-                cryptoEvents.add(event);
-              }
-              refreshConversationsNeeded = true;
-              if (event.type.startsWith('message.envelope.')) {
-                final messageId = _messageIdFromSyncEvent(event);
-                if (messageId != null) {
-                  messageRepairIds.add(messageId);
-                } else if (event.conversationId == selectedId) {
-                  refreshSelectedMessagesNeeded = true;
-                }
-              } else if (event.conversationId == selectedId &&
-                  !event.type.startsWith('reaction.') &&
-                  event.type != 'read_receipt.updated') {
-                refreshSelectedMessagesNeeded = true;
-              }
-            } else if (event.type.startsWith('device.')) {
-              refreshDevicesNeeded = true;
-              refreshConversationsNeeded = true;
-            } else if (event.type.startsWith('conversation.')) {
-              refreshConversationsNeeded = true;
-            }
+            final envelope = await _processCryptoSyncEvent(event);
+            if (envelope != null) _mergeReceivedEnvelope(envelope);
+          } else {
+            await _refreshProjectionForSyncEvent(event);
+            final expectedCursor = await localStore.loadSyncCursor();
+            await localStore.commitSyncEvent(SyncEventCommit(
+              eventKey: 'sync:${event.id}',
+              conversationId: event.conversationId ?? '',
+              expectedCursor: expectedCursor,
+              cursor: event.id,
+            ));
           }
-          if (events.length < pageSize) {
-            break;
-          }
-        }
-        if (refreshDevicesNeeded) {
-          await refreshDevices();
-        }
-        if (refreshConversationsNeeded) {
-          await _refreshConversations(notify: false);
-        }
-        for (final messageId in messageRepairIds) {
-          await _repairMessage(messageId);
-        }
-        if (refreshSelectedMessagesNeeded) {
-          await refreshSelectedMessages(notify: false);
-          await markNewestMessageRead(selectedId!);
-        }
-        if (_mlsCrypto != null) {
-          for (final event in cryptoEvents) {
-            await _processCryptoSyncEvent(event);
-            _lastSyncEventId = await localStore.loadSyncCursor();
-          }
-          await _processMlsRevocations();
-        }
-        if (pageCursor > _lastSyncEventId) {
-          await localStore.saveSnapshot(
-            conversations,
-            messagesByConversation,
-            pageCursor,
-          );
-          _lastSyncEventId = pageCursor;
+          _lastSyncEventId = await localStore.loadSyncCursor();
           notifyListeners();
         }
-      } while (_catchUpRequested);
+        pageCursor = await localStore.loadSyncCursor();
+        if (events.length < pageSize) break;
+      }
+      if (_mlsCrypto != null) {
+        await _processMlsRevocations();
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+      }
+      await _acknowledgePendingWake(current,
+          ownerGeneration: ownerGeneration);
       lastSyncedAt = DateTime.now();
       syncError = null;
+      deviceRecoveryRequired = false;
       _setConnectionStatus(ConnectionStatus.online);
     } catch (err) {
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
       if (err is ApiException && err.statusCode == 401) {
-        await _clearLocalSession(preserveDeviceIdentity: true);
+        await _clearLocalSession(
+            preserveDeviceIdentity: true,
+            preserveOutbox: true,
+            drainSyncOwner: false);
       } else if (err is ApiException &&
-          err.serverCode == 'full_resync_required' &&
-          _mlsCrypto == null) {
-        await _boundedFullResync();
-        final latest = err.intField('latest_event_id') ?? 0;
-        await localStore.saveSyncCursor(latest);
-        _lastSyncEventId = latest;
-        await _persistSnapshot();
-        error = null;
-        lastSyncedAt = DateTime.now();
-        _setConnectionStatus(ConnectionStatus.online);
+          err.serverCode == 'full_resync_required') {
+        deviceRecoveryRequired = true;
+        syncError =
+            'This device needs sync recovery before messages can continue.';
+        _setConnectionStatus(ConnectionStatus.offline);
         notifyListeners();
         return;
+      } else if (err is StateError &&
+          err.message.toString().startsWith('deviceRecoveryRequired:')) {
+        deviceRecoveryRequired = true;
       }
       // Background sync failure is a connection fact, not the outcome of
       // whatever the user last tapped. Writing it to the shared [error] made
@@ -1519,9 +1961,37 @@ class AppState extends ChangeNotifier {
       syncError = describeError(err);
       _setConnectionStatus(ConnectionStatus.offline);
       notifyListeners();
-    } finally {
-      _catchingUpSync = false;
     }
+  }
+
+  bool _isCryptoSyncEvent(String type) =>
+      type == 'mls.message.created' ||
+      type.startsWith('message.envelope.') ||
+      type == 'call.signaling' ||
+      type == 'call.state';
+
+  Future<void> _refreshProjectionForSyncEvent(SyncEvent event) async {
+    final type = event.type;
+    if (type.startsWith('device.')) {
+      await refreshDevices();
+      await _refreshConversations(notify: false, persist: false);
+      return;
+    }
+    if (type.startsWith('conversation.') || type.startsWith('membership.')) {
+      await _refreshConversations(notify: false, persist: false);
+      return;
+    }
+    if (type.startsWith('reaction.') || type == 'read_receipt.updated') {
+      if (event.conversationId == selectedConversationId) {
+        await refreshSelectedMessages(notify: false, persist: false);
+      }
+      return;
+    }
+    if (type == 'mls.revocation.pending' ||
+        type == 'mls.revocation.completed') {
+      return;
+    }
+    throw StateError('unsupported sync event type: $type');
   }
 
   String? _messageIdFromSyncEvent(SyncEvent event) {
@@ -1540,25 +2010,33 @@ class AppState extends ChangeNotifier {
     return value is String && value.isNotEmpty ? value : null;
   }
 
-  Future<void> _processCryptoSyncEvent(SyncEvent event) async {
+  Future<ReceivedMessageEnvelope?> _processCryptoSyncEvent(
+      SyncEvent event) async {
     final current = session;
     final client = api;
     final mls = _mlsCrypto;
-    if (current == null || client == null || mls == null) return;
+    if (current == null || client == null || mls == null) return null;
     switch (event.type) {
       case 'mls.message.created':
         final id = _mlsMessageIdFromSyncEvent(event);
         if (id == null)
           throw StateError('MLS sync event is missing its message');
         await mls.processMlsMessage(await client.mlsMessage(current.token, id));
-        break;
+        return null;
       case 'message.envelope.created':
+      case 'message.envelope.edited':
+      case 'message.envelope.deleted':
         final id = _messageIdFromSyncEvent(event);
         if (id == null)
           throw StateError('message sync event is missing its envelope');
-        final envelope = await client.message(current.token, id);
-        await mls.processApplicationMessage(envelope, event.id);
-        break;
+        final envelope = _envelopeFromSyncEvent(event);
+        if (envelope == null && event.type != 'message.envelope.created') {
+          throw StateError('message sync event lacks an immutable envelope');
+        }
+        final resolved =
+            envelope ?? await client.message(current.token, id);
+        await mls.processApplicationMessage(resolved, event.id);
+        return resolved;
       case 'call.signaling':
       case 'call.state':
         if (event.payload is! Map)
@@ -1567,65 +2045,58 @@ class AppState extends ChangeNotifier {
             Map<String, Object?>.from(event.payload as Map));
         final signal = await mls.processCallSignal(call, event.id);
         if (signal != null) _callSignals.add(IncomingCallSignal(call, signal));
-        break;
+        return null;
     }
+    throw StateError('unsupported crypto sync event type: ${event.type}');
   }
 
-  Future<void> _repairMessage(String messageId) async {
-    final current = session;
-    final client = api;
-    if (current == null || client == null) {
-      return;
-    }
-    try {
-      final repaired = await client.message(current.token, messageId);
-      final existing = messagesByConversation[repaired.conversationId] ??
-          const <ReceivedMessageEnvelope>[];
-      final updated = <ReceivedMessageEnvelope>[
-        repaired,
-        ...existing.where((message) => message.id != repaired.id),
-      ]..sort((left, right) {
-          final byCreatedAt = right.createdAt.compareTo(left.createdAt);
-          return byCreatedAt != 0 ? byCreatedAt : right.id.compareTo(left.id);
-        });
-      messagesByConversation = <String, List<ReceivedMessageEnvelope>>{
-        ...messagesByConversation,
-        repaired.conversationId: updated,
-      };
-    } on ApiException catch (err) {
-      if (err.statusCode != 404) {
-        rethrow;
-      }
-      messagesByConversation = <String, List<ReceivedMessageEnvelope>>{
-        for (final entry in messagesByConversation.entries)
-          entry.key: entry.value
-              .where((message) => message.id != messageId)
-              .toList(growable: false),
-      };
-    }
+  ReceivedMessageEnvelope? _envelopeFromSyncEvent(SyncEvent event) {
+    final payload = event.payload;
+    if (payload is! Map) return null;
+    final raw = payload['envelope'];
+    if (raw is! Map) return null;
+    return ReceivedMessageEnvelope.fromJson(Map<String, Object?>.from(raw));
   }
 
-  Future<void> _boundedFullResync() async {
-    await _refreshConversations(notify: false);
-    final retained = <String>{
-      if (selectedConversationId != null) selectedConversationId!,
-      ...messagesByConversation.keys,
-    };
-    final available = conversations.map((item) => item.id).toSet();
+  void _mergeReceivedEnvelope(ReceivedMessageEnvelope envelope) {
+    final existing = messagesByConversation[envelope.conversationId] ??
+        const <ReceivedMessageEnvelope>[];
+    final updated = <ReceivedMessageEnvelope>[
+      envelope,
+      ...existing.where((item) => item.id != envelope.id),
+    ]..sort((left, right) {
+        final byCreatedAt = right.createdAt.compareTo(left.createdAt);
+        return byCreatedAt != 0 ? byCreatedAt : right.id.compareTo(left.id);
+      });
     messagesByConversation = <String, List<ReceivedMessageEnvelope>>{
-      for (final id in retained.where(available.contains).take(100))
-        id: messagesByConversation[id] ?? const <ReceivedMessageEnvelope>[],
+      ...messagesByConversation,
+      envelope.conversationId: updated,
     };
-    for (final id in messagesByConversation.keys.toList(growable: false)) {
-      await _fetchMessages(id);
-    }
   }
 
-  Future<void> _clearLocalSession({bool preserveDeviceIdentity = false}) async {
+  Future<void> _clearLocalSession({
+    bool preserveDeviceIdentity = false,
+    bool preserveOutbox = false,
+    bool drainSyncOwner = true,
+  }) async {
+    _sessionGeneration++;
+    final previousOwner = _syncOwner;
+    _syncOwner = null;
+    previousOwner?.dispose();
+    if (drainSyncOwner) {
+      await previousOwner?.cancelAndDrain();
+    }
+    final previousLease = _syncLease;
+    _syncLease = null;
+    if (previousLease != null) {
+      await localStore.releaseSyncLease(previousLease);
+    }
+    await _mlsCrypto?.dispose();
     final current = session;
     await _stopPush(current, api);
-    unawaited(_syncSubscription?.cancel());
+    final previousSubscription = _syncSubscription;
     _syncSubscription = null;
+    await previousSubscription?.cancel();
     sync?.dispose();
     sync = null;
     if (preserveDeviceIdentity &&
@@ -1641,7 +2112,7 @@ class AppState extends ChangeNotifier {
         deviceSecret: current.deviceSecret,
         role: current.role,
       ));
-      await localStore.clearCachedState();
+      await localStore.clearCachedState(preserveOutbox: preserveOutbox);
     } else {
       await localStore.clear();
     }
@@ -1657,6 +2128,10 @@ class AppState extends ChangeNotifier {
     messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
     pendingOutbox = <MessageEnvelope>[];
     _outboxStates.clear();
+    _outboxRecords.clear();
+    _outboxRetryTimer?.cancel();
+    _outboxRetryTimer = null;
+    _manualRetryKey = null;
     _loadingMessageConversations.clear();
     _messageLoadErrors.clear();
     selectedConversationId = null;
@@ -1677,36 +2152,55 @@ class AppState extends ChangeNotifier {
     lastSyncedAt = null;
     syncError = null;
     _lastSyncEventId = 0;
+    _pendingWakeGeneration = 0;
+    deviceRecoveryRequired = false;
+    lifecycle = SessionLifecycle.ready;
+    recoveryMessage = null;
   }
 
   Future<void> _persistSnapshot() async {
     if (session == null) {
       return;
     }
-    await localStore.saveSnapshot(
-      conversations,
-      messagesByConversation,
-      _lastSyncEventId,
-    );
+    await localStore.saveProjection(conversations, messagesByConversation);
   }
 
   Future<void> _flushOutbox() async {
-    final current = session;
-    final client = api;
-    if (current == null || client == null) {
+    if (_flushingOutbox) {
+      _flushOutboxRequested = true;
       return;
     }
+    _flushingOutbox = true;
+    try {
+      do {
+        _flushOutboxRequested = false;
+        await _flushOutboxOnce();
+      } while (_flushOutboxRequested && !_disposed);
+    } finally {
+      _flushingOutbox = false;
+      _manualRetryKey = null;
+      unawaited(_scheduleOutboxRetry());
+    }
+  }
+
+  Future<void> _flushOutboxOnce() async {
+    final current = session;
+    final client = api;
+    if (current == null || client == null) return;
+    final ownerGeneration = _sessionGeneration;
     final records = await localStore.pendingEnvelopeRecords();
-    pendingOutbox =
-        records.map((item) => item.envelope).toList(growable: false);
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
+    _setOutboxRecords(records);
     final now = DateTime.now().toUtc();
     for (final record in records) {
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
       final envelope = record.envelope;
       if (record.terminal) {
         _outboxStates[envelope.idempotencyKey] = OutboxDeliveryState.terminal;
         continue;
       }
-      if (record.nextAttemptAt?.isAfter(now) ?? false) {
+      final manualRetry = _manualRetryKey == envelope.idempotencyKey;
+      if (!manualRetry && (record.nextAttemptAt?.isAfter(now) ?? false)) {
         _outboxStates[envelope.idempotencyKey] = OutboxDeliveryState.retrying;
         continue;
       }
@@ -1714,11 +2208,16 @@ class AppState extends ChangeNotifier {
       notifyListeners();
       try {
         await client.sendEnvelope(current.token, envelope);
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
         await _removeFromOutbox(envelope);
       } catch (err) {
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
         await _recordOutboxFailure(envelope, err, record.attemptCount);
         if (err is ApiException && err.statusCode == 401) {
-          await _clearLocalSession(preserveDeviceIdentity: true);
+          await _clearLocalSession(
+              preserveDeviceIdentity: true,
+              preserveOutbox: true,
+              drainSyncOwner: false);
           break;
         }
       }
@@ -1731,18 +2230,26 @@ class AppState extends ChangeNotifier {
     Object error,
     int previousAttempts,
   ) async {
-    final auth = error is ApiException && error.statusCode == 401;
-    final terminal = error is ApiException &&
-        <int>{400, 403, 404, 409, 413, 422}.contains(error.statusCode);
+    final apiError = error is ApiException ? error : null;
+    final auth = apiError?.statusCode == 401;
+    final terminal = apiError != null &&
+        <int>{400, 403, 404, 409, 413, 422, 507}.contains(apiError.statusCode);
+    final retryable = (apiError != null &&
+            <int>{408, 429, 500, 502, 503, 504}.contains(apiError.statusCode)) ||
+        error is SocketException ||
+        error is TimeoutException ||
+        error is HttpException;
     final failureClass = auth
         ? 'auth'
         : terminal
-            ? 'terminal'
-            : 'retryable';
+            ? 'terminal:${apiError?.statusCode ?? 0}:${apiError?.serverCode ?? 'rejected'}'
+            : retryable
+                ? 'retryable:${apiError?.statusCode ?? 'network'}'
+                : 'failed';
     final exponent = min(previousAttempts, 8);
-    final nextAttempt = auth || terminal
-        ? null
-        : DateTime.now().toUtc().add(Duration(seconds: 1 << exponent));
+    final nextAttempt = retryable
+        ? DateTime.now().toUtc().add(Duration(seconds: 1 << exponent))
+        : null;
     await localStore.recordOutboxFailure(envelope.idempotencyKey,
         failureClass: failureClass,
         terminal: terminal,
@@ -1751,14 +2258,46 @@ class AppState extends ChangeNotifier {
         ? OutboxDeliveryState.terminal
         : auth
             ? OutboxDeliveryState.failed
-            : OutboxDeliveryState.retrying;
+            : retryable
+                ? OutboxDeliveryState.retrying
+                : OutboxDeliveryState.failed;
+    final updated = (await localStore.pendingEnvelopeRecords())
+        .where((item) => item.envelope.idempotencyKey == envelope.idempotencyKey)
+        .firstOrNull;
+    if (updated != null) {
+      _outboxRecords[envelope.idempotencyKey] = updated;
+    }
+  }
+
+  Future<void> _scheduleOutboxRetry() async {
+    _outboxRetryTimer?.cancel();
+    _outboxRetryTimer = null;
+    if (_disposed || session == null || api == null) return;
+    final records = await localStore.pendingEnvelopeRecords();
+    final now = DateTime.now().toUtc();
+    DateTime? earliest;
+    for (final record in records) {
+      final due = record.nextAttemptAt;
+      if (record.terminal || due == null || !due.isAfter(now)) continue;
+      if (earliest == null || due.isBefore(earliest)) earliest = due;
+    }
+    if (earliest == null) return;
+    final delay = earliest.difference(now);
+    _outboxRetryTimer = Timer(delay.isNegative ? Duration.zero : delay, () {
+      _outboxRetryTimer = null;
+      unawaited(_flushOutbox());
+    });
   }
 
   Future<void> _flushMlsOutbox() async {
     final current = session;
     final client = api;
     if (current == null || client == null || _mlsCrypto == null) return;
-    for (final message in await localStore.pendingMlsMessages()) {
+    final ownerGeneration = _sessionGeneration;
+    final messages = await localStore.pendingMlsMessages();
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
+    for (final message in messages) {
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
       await client.sendMlsMessage(
         current.token,
         message.conversationId,
@@ -1768,6 +2307,7 @@ class AppState extends ChangeNotifier {
         recipientDeviceId: message.recipientDeviceId,
         revocationDeviceId: message.revocationDeviceId,
       );
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
       await localStore.removePendingMlsMessage(message.idempotencyKey);
     }
   }
@@ -1807,12 +2347,18 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _removeFromOutbox(MessageEnvelope envelope) async {
-    await localStore.removePendingEnvelope(envelope.idempotencyKey);
+    await _removeFromOutboxByKey(envelope.idempotencyKey);
+  }
+
+  Future<void> _removeFromOutboxByKey(String idempotencyKey) async {
+    await localStore.removePendingEnvelope(idempotencyKey);
     pendingOutbox = pendingOutbox
-        .where((item) => item.idempotencyKey != envelope.idempotencyKey)
+        .where((item) => item.idempotencyKey != idempotencyKey)
         .toList(growable: false);
-    _outboxStates.remove(envelope.idempotencyKey);
+    _outboxRecords.remove(idempotencyKey);
+    _outboxStates.remove(idempotencyKey);
     notifyListeners();
+    unawaited(_scheduleOutboxRetry());
   }
 
   void _replaceApi(String baseUrl) {
@@ -1825,44 +2371,67 @@ class AppState extends ChangeNotifier {
   /// failure cannot disable this control (or vice versa). Returns true when
   /// the body completed without error.
   Future<bool> _runScoped(String op, Future<void> Function() body) async {
-    _busyOps.add(op);
-    _opErrors.remove(op);
-    notifyListeners();
-    try {
-      await body();
-      return true;
-    } catch (err) {
-      if (err is ApiException && err.statusCode == 401) {
-        await _clearLocalSession(preserveDeviceIdentity: true);
-      }
-      _opErrors[op] = describeError(err);
-      return false;
-    } finally {
-      _busyOps.remove(op);
+    var succeeded = false;
+    await _enqueueSessionTransition(() async {
+      _busyOps.add(op);
+      _opErrors.remove(op);
       notifyListeners();
-    }
+      try {
+        await body();
+        succeeded = true;
+      } catch (err) {
+        if (err is ApiException && err.statusCode == 401) {
+          await _clearLocalSession(
+              preserveDeviceIdentity: true, preserveOutbox: true);
+        }
+        _opErrors[op] = describeError(err);
+      } finally {
+        _busyOps.remove(op);
+        notifyListeners();
+      }
+    });
+    return succeeded;
   }
 
   Future<void> _run(Future<void> Function() body) async {
-    busy = true;
-    error = null;
-    notifyListeners();
-    try {
-      await body();
-    } catch (err) {
-      if (err is ApiException && err.statusCode == 401) {
-        await _clearLocalSession(preserveDeviceIdentity: true);
-      }
-      error = describeError(err);
-    } finally {
-      busy = false;
+    await _enqueueSessionTransition(() async {
+      busy = true;
+      error = null;
       notifyListeners();
-    }
+      try {
+        await body();
+      } catch (err) {
+        if (err is ApiException && err.statusCode == 401) {
+          await _clearLocalSession(
+              preserveDeviceIdentity: true, preserveOutbox: true);
+        }
+        error = describeError(err);
+      } finally {
+        busy = false;
+        notifyListeners();
+      }
+    });
+  }
+
+  Future<void> _enqueueSessionTransition(
+      Future<void> Function() action) {
+    final next = _sessionTransitionTail.then((_) => action());
+    _sessionTransitionTail = next.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    return next;
   }
 
   @override
   void dispose() {
     _disposed = true;
+    _sessionGeneration++;
+    _syncOwner?.dispose();
+    unawaited(_syncOwner?.cancelAndDrain());
+    _syncOwner = null;
+    _outboxRetryTimer?.cancel();
+    _outboxRetryTimer = null;
     unawaited(_syncSubscription?.cancel());
     sync?.dispose();
     unawaited(_pushSubscription?.cancel());

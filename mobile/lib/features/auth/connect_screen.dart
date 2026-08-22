@@ -1,8 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/api_client.dart';
@@ -26,20 +24,22 @@ class ConnectScreen extends StatefulWidget {
 
 class _ConnectScreenState extends State<ConnectScreen> {
   final formKey = GlobalKey<FormState>();
-  final url = TextEditingController(text: 'http://localhost:8080');
+  final url = TextEditingController();
   final username = TextEditingController();
   final password = TextEditingController();
   final passwordConfirmation = TextEditingController();
   final setupToken = TextEditingController();
   final inviteCode = TextEditingController();
   final linkCode = TextEditingController();
-  // Signing in (or joining) is the common case; "Owner" only applies to the
-  // very first user of a fresh instance, so the setup probe below promotes
-  // it when the server reports that setup is still required.
-  AuthMode mode = AuthMode.signIn;
+  // An unlinked device cannot use password sign-in. The probe promotes this
+  // to owner for a fresh instance, or sign-in when local device credentials
+  // match the probed origin.
+  AuthMode mode = AuthMode.join;
   bool showPassword = false;
-  // null = unknown (instance not probed / unreachable).
+  SetupProbeResult _probeResult = const SetupProbeResult.idle();
   bool? setupRequired;
+  bool _hasStoredDevice = false;
+  bool _modeManuallySelected = false;
   Timer? _setupProbeDebounce;
   int _setupProbeGeneration = 0;
 
@@ -47,7 +47,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
   void initState() {
     super.initState();
     url.addListener(_scheduleSetupProbe);
-    _probeSetupStatus();
+    unawaited(_loadStoredDeviceIdentity());
   }
 
   @override
@@ -64,25 +64,61 @@ class _ConnectScreenState extends State<ConnectScreen> {
   }
 
   void _scheduleSetupProbe() {
+    _modeManuallySelected = false;
     _setupProbeDebounce?.cancel();
+    _setupProbeGeneration++;
+    final target = url.text.trim();
+    if (target.isEmpty) {
+      setState(() {
+        _probeResult = const SetupProbeResult.idle();
+        setupRequired = null;
+        if (_hasStoredDevice) {
+          mode = AuthMode.signIn;
+        } else {
+          mode = AuthMode.join;
+        }
+      });
+      return;
+    }
+    setState(() {
+      _probeResult = const SetupProbeResult.probing();
+      setupRequired = null;
+    });
     _setupProbeDebounce =
         Timer(const Duration(milliseconds: 600), _probeSetupStatus);
+  }
+
+  Future<void> _loadStoredDeviceIdentity() async {
+    final linked = await widget.state.hasStoredDeviceIdentity();
+    if (!mounted) return;
+    setState(() {
+      _hasStoredDevice = linked;
+      if (url.text.trim().isEmpty && !_modeManuallySelected) {
+        mode = linked ? AuthMode.signIn : AuthMode.join;
+      }
+    });
   }
 
   Future<void> _probeSetupStatus() async {
     final target = url.text.trim();
     final generation = ++_setupProbeGeneration;
-    final required =
-        target.isEmpty ? null : await widget.state.checkSetupRequired(target);
+    if (target.isEmpty) return;
+    final result = await widget.state.probeSetup(target);
+    final linked = result.isReachable
+        ? await widget.state.hasStoredDeviceIdentityForOrigin(target)
+        : _hasStoredDevice;
     if (!mounted || generation != _setupProbeGeneration) {
       return;
     }
     setState(() {
-      setupRequired = required;
-      if (required == true) {
+      _probeResult = result;
+      setupRequired = result.setupRequired;
+      _hasStoredDevice = linked;
+      if (_modeManuallySelected) return;
+      if (result.setupRequired == true) {
         mode = AuthMode.owner;
-      } else if (required == false && mode == AuthMode.owner) {
-        mode = AuthMode.signIn;
+      } else if (result.isReachable) {
+        mode = linked ? AuthMode.signIn : AuthMode.join;
       }
     });
   }
@@ -142,6 +178,10 @@ class _ConnectScreenState extends State<ConnectScreen> {
                       ),
                     ),
                   ),
+                  if (_probeResult.state != SetupProbeState.idle) ...<Widget>[
+                    const SizedBox(height: BoneSpacing.sm),
+                    _ProbeStatus(result: _probeResult),
+                  ],
                   const SizedBox(height: BoneSpacing.lg),
                   if (mode == AuthMode.linkDevice)
                     ..._linkDeviceFields(theme, pendingLink)
@@ -174,7 +214,18 @@ class _ConnectScreenState extends State<ConnectScreen> {
                   ),
                   if (widget.state.error != null) ...<Widget>[
                     const SizedBox(height: BoneSpacing.lg),
-                    _ErrorCard(message: widget.state.error!),
+                    _ErrorCard(
+                      message: widget.state.error!,
+                      action: widget.state.error!.contains('linked')
+                          ? TextButton(
+                              onPressed: () => setState(() {
+                                _modeManuallySelected = true;
+                                mode = AuthMode.linkDevice;
+                              }),
+                              child: const Text('Link this device instead'),
+                            )
+                          : null,
+                    ),
                   ],
                   const SizedBox(height: BoneSpacing.sm),
                   Center(
@@ -261,6 +312,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
         label: 'Username',
         child: TextFormField(
           controller: username,
+          autofillHints: const <String>[AutofillHints.username],
           autocorrect: false,
           autovalidateMode: AutovalidateMode.onUserInteraction,
           validator: (value) => value == null || value.trim().isEmpty
@@ -277,6 +329,11 @@ class _ConnectScreenState extends State<ConnectScreen> {
         label: 'Password',
         child: TextFormField(
           controller: password,
+          autofillHints: <String>[
+            _isRegistration
+                ? AutofillHints.newPassword
+                : AutofillHints.password,
+          ],
           obscureText: !showPassword,
           autovalidateMode: AutovalidateMode.onUserInteraction,
           validator: _validatePassword,
@@ -304,6 +361,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
             validator: (value) =>
                 value == password.text ? null : 'Passwords do not match.',
             decoration: const InputDecoration(
+              hintText: 'Repeat your password',
               prefixIcon: Icon(Icons.lock_reset_outlined),
             ),
           ),
@@ -368,7 +426,10 @@ class _ConnectScreenState extends State<ConnectScreen> {
       },
     );
     if (chosen != null && mounted) {
-      setState(() => mode = chosen);
+      setState(() {
+        _modeManuallySelected = true;
+        mode = chosen;
+      });
     }
   }
 
@@ -382,6 +443,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
     final parsed = Uri.tryParse(raw);
     if (parsed == null) {
       return 'Enter a full URL, e.g. https://chat.example.org';
+    }
+    if (parsed.scheme.toLowerCase() != 'https') {
+      return 'Veritra requires HTTPS. Use an https:// server origin.';
     }
     try {
       canonicalizeServerOrigin(raw);
@@ -460,9 +524,42 @@ class _ConnectScreenState extends State<ConnectScreen> {
       return;
     }
     final raw = url.text.trim();
-    if (!await _confirmInsecureUrl(raw)) {
+    final result = await widget.state.probeSetup(raw);
+    if (!mounted) return;
+    if (!result.isReachable) {
+      setState(() {
+        _probeResult = result;
+        setupRequired = result.setupRequired;
+      });
       return;
     }
+    final linked = await widget.state.hasStoredDeviceIdentityForOrigin(raw);
+    if (!mounted) return;
+    if (!_modeManuallySelected && result.setupRequired == true) {
+      setState(() {
+        _probeResult = result;
+        setupRequired = true;
+        mode = AuthMode.owner;
+      });
+      return;
+    }
+    if (!_modeManuallySelected && result.setupRequired == false) {
+      final discoveredMode = linked ? AuthMode.signIn : AuthMode.join;
+      if (mode != discoveredMode) {
+        setState(() {
+          _probeResult = result;
+          setupRequired = false;
+          _hasStoredDevice = linked;
+          mode = discoveredMode;
+        });
+        return;
+      }
+    }
+    setState(() {
+      _probeResult = result;
+      setupRequired = result.setupRequired;
+      _hasStoredDevice = linked;
+    });
     switch (mode) {
       case AuthMode.owner:
         return widget.state.createOwner(
@@ -481,64 +578,6 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
   }
 
-  /// Release builds permit cleartext only to a literal loopback address.
-  Future<bool> _confirmInsecureUrl(String raw) async {
-    if (raw.isEmpty) {
-      return true; // let downstream validation produce a clearer error
-    }
-    final parsed = Uri.tryParse(raw);
-    if (parsed == null || !parsed.hasScheme) {
-      return true;
-    }
-    if (parsed.scheme == 'https') {
-      return true;
-    }
-    if (parsed.scheme != 'http') {
-      return true;
-    }
-    final host = parsed.host.toLowerCase();
-    if (_isLoopbackHost(host)) {
-      return true;
-    }
-    if (kReleaseMode) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('HTTPS is required in release builds.')),
-        );
-      }
-      return false;
-    }
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Use insecure connection?'),
-        content: Text(
-          'You are about to connect to $host over plain HTTP.\n\n'
-          'Your password, session token, and message metadata would be sent '
-          'in cleartext. Use https:// in production.',
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Continue anyway'),
-          ),
-        ],
-      ),
-    );
-    return confirmed ?? false;
-  }
-
-  bool _isLoopbackHost(String host) {
-    if (host == 'localhost') {
-      return true;
-    }
-    return InternetAddress.tryParse(host)?.isLoopback ?? false;
-  }
-
   /// Opens the camera scanner and fills the link-code field from the result.
   /// The generating device encodes a `veritra://device-link?code=…` URI, but
   /// a bare code is accepted too.
@@ -549,7 +588,57 @@ class _ConnectScreenState extends State<ConnectScreen> {
     if (!mounted || scanned == null || scanned.isEmpty) {
       return;
     }
-    setState(() => linkCode.text = parseDeviceLinkCode(scanned));
+    final origin = parseDeviceLinkOrigin(scanned);
+    if (origin != null && !await _confirmScannedOrigin(origin)) {
+      return;
+    }
+    final code = parseDeviceLinkCode(scanned);
+    if (!mounted) return;
+    if (code.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('That is not a Veritra device-link QR.')),
+      );
+      return;
+    }
+    setState(() {
+      _modeManuallySelected = true;
+      linkCode.text = code;
+    });
+    if (origin != null) {
+      url.text = origin;
+      _modeManuallySelected = true;
+    }
+    if (origin != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Server origin filled. Verify it before continuing.'),
+        ),
+      );
+    }
+  }
+
+  Future<bool> _confirmScannedOrigin(String origin) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Confirm server'),
+        content: Text(
+          'This QR code suggests $origin. The app will still probe the '
+          'server before using it. Continue with this HTTPS origin?',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Use origin'),
+          ),
+        ],
+      ),
+    );
+    return confirmed ?? false;
   }
 
   Future<void> _completeDeviceLink() {
@@ -573,10 +662,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
 /// A field with its label above the box in the `micro` style, rather than a
 /// Material `labelText` notched into the border (`docs/design.md` §5).
 ///
-/// The label is a plain `Text`, so a screen reader meets it immediately before
-/// the field it names. Every field also carries a `hintText`, so a field
-/// reached directly still announces what it wants — dropping `labelText` is
-/// what costs the built-in accessible name, and the hint is what buys it back.
+/// The label remains visually above the control, while the explicit
+/// [Semantics] wrapper gives a screen reader a durable name after the hint
+/// disappears during editing.
 class _Field extends StatelessWidget {
   const _Field({required this.label, required this.child});
 
@@ -599,7 +687,10 @@ class _Field extends StatelessWidget {
             style: theme.textTheme.labelSmall,
           ),
         ),
-        child,
+        Semantics(
+          label: label,
+          child: child,
+        ),
       ],
     );
   }
@@ -694,10 +785,62 @@ class _Callout extends StatelessWidget {
   }
 }
 
+class _ProbeStatus extends StatelessWidget {
+  const _ProbeStatus({required this.result});
+
+  final SetupProbeResult result;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    if (result.state == SetupProbeState.probing) {
+      return Semantics(
+        liveRegion: true,
+        label: result.message,
+        child: Row(
+          children: <Widget>[
+            const SizedBox.square(
+              dimension: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: BoneSpacing.sm),
+            Text(result.message, style: theme.textTheme.bodySmall),
+          ],
+        ),
+      );
+    }
+    final reachable = result.isReachable;
+    final color = reachable ? scheme.primary : scheme.error;
+    return Semantics(
+      liveRegion: true,
+      label: result.message,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(
+            reachable ? Icons.check_circle_outline : Icons.info_outline,
+            size: 18,
+            color: color,
+          ),
+          const SizedBox(width: BoneSpacing.sm),
+          Expanded(
+            child: Text(
+              result.message,
+              style: theme.textTheme.bodySmall?.copyWith(color: color),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ErrorCard extends StatelessWidget {
-  const _ErrorCard({required this.message});
+  const _ErrorCard({required this.message, this.action});
 
   final String message;
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
@@ -716,11 +859,17 @@ class _ErrorCard extends StatelessWidget {
           Icon(Icons.error_outline, size: 20, color: scheme.onErrorContainer),
           const SizedBox(width: BoneSpacing.md),
           Expanded(
-            child: Text(
-              message,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: scheme.onErrorContainer,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  message,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: scheme.onErrorContainer,
+                  ),
+                ),
+                if (action != null) action!,
+              ],
             ),
           ),
         ],

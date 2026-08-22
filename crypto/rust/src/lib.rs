@@ -7,6 +7,9 @@
 
 use core::ffi::c_char;
 
+#[cfg(not(panic = "unwind"))]
+compile_error!("Veritra's FFI crate requires panic=unwind");
+
 pub mod attachment;
 mod ffi;
 pub mod mls;

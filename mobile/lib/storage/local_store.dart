@@ -12,6 +12,16 @@ import 'encrypted_database.dart';
 final Map<String, Future<void>> _databaseOpenTails = <String, Future<void>>{};
 final Map<String, Future<void>> _databaseWriteTails = <String, Future<void>>{};
 
+const int maxPendingEnvelopes = 100;
+
+class OutboxFullException implements Exception {
+  const OutboxFullException();
+
+  @override
+  String toString() =>
+      'The encrypted message queue is full. Send or discard a pending message first.';
+}
+
 Future<T> _serializeDatabaseWrite<T>(
   String path,
   Future<T> Function() action,
@@ -115,12 +125,14 @@ class OutgoingApplicationStateTransition {
     required this.expectedCursor,
     required this.state,
     required this.envelope,
+    this.draftText,
   });
 
   final int expectedCounter;
   final int expectedCursor;
   final StoredCryptoState state;
   final MessageEnvelope envelope;
+  final String? draftText;
 }
 
 class LocalBackupData {
@@ -148,6 +160,7 @@ class PendingEnvelopeRecord {
     required this.envelope,
     required this.attemptCount,
     required this.terminal,
+    this.draftText,
     this.nextAttemptAt,
     this.failureClass,
   });
@@ -156,6 +169,39 @@ class PendingEnvelopeRecord {
   final bool terminal;
   final DateTime? nextAttemptAt;
   final String? failureClass;
+  final String? draftText;
+}
+
+class SyncEventCommit {
+  const SyncEventCommit({
+    required this.eventKey,
+    required this.conversationId,
+    required this.expectedCursor,
+    required this.cursor,
+    this.envelope,
+  });
+
+  final String eventKey;
+  final String conversationId;
+  final int expectedCursor;
+  final int cursor;
+  final ReceivedMessageEnvelope? envelope;
+}
+
+class LocalSyncLease {
+  const LocalSyncLease({
+    required this.origin,
+    required this.accountId,
+    required this.deviceId,
+    required this.generation,
+  });
+
+  final String origin;
+  final String accountId;
+  final String deviceId;
+  final int generation;
+
+  String get key => '$origin\u0000$accountId\u0000$deviceId\u0000$generation';
 }
 
 abstract class LocalStore {
@@ -168,8 +214,13 @@ abstract class LocalStore {
     Map<String, List<ReceivedMessageEnvelope>> messagesByConversation,
     int cursor,
   );
+  Future<void> saveProjection(
+    List<Conversation> conversations,
+    Map<String, List<ReceivedMessageEnvelope>> messagesByConversation,
+  );
   Future<CachedSnapshot?> loadSnapshot();
-  Future<void> enqueueEnvelope(MessageEnvelope envelope);
+  Future<void> enqueueEnvelope(MessageEnvelope envelope, {String? draftText});
+  Future<bool> hasOutboxCapacity();
   Future<List<MessageEnvelope>> pendingEnvelopes();
   Future<List<PendingEnvelopeRecord>> pendingEnvelopeRecords();
   Future<void> recordOutboxFailure(
@@ -181,6 +232,9 @@ abstract class LocalStore {
   Future<void> removePendingEnvelope(String idempotencyKey);
   Future<void> saveCryptoState(StoredCryptoState state, int syncCursor);
   Future<void> commitMlsTransition(MlsStateTransition transition);
+  Future<void> commitSyncEvent(SyncEventCommit commit);
+  Future<void> acquireSyncLease(LocalSyncLease lease);
+  Future<void> releaseSyncLease(LocalSyncLease lease);
   Future<bool> hasProcessedMlsMessage(String messageId);
   Future<void> commitOutgoingMlsTransition(
       OutgoingMlsStateTransition transition);
@@ -200,7 +254,7 @@ abstract class LocalStore {
       String conversationId, String peerAccountId, List<int> transcriptHash);
   Future<List<int>?> loadPeerVerification(
       String conversationId, String peerAccountId);
-  Future<void> clearCachedState();
+  Future<void> clearCachedState({bool preserveOutbox = false});
   Future<void> clear();
 }
 
@@ -216,12 +270,27 @@ class MemoryLocalStore implements LocalStore {
   final Map<String, PendingMlsMessage> _mlsOutbox =
       <String, PendingMlsMessage>{};
   final Map<String, List<int>> _peerVerifications = <String, List<int>>{};
+  String? _syncLeaseKey;
+
+  @override
+  Future<void> acquireSyncLease(LocalSyncLease lease) async {
+    _syncLeaseKey = lease.key;
+  }
+
+  @override
+  Future<void> releaseSyncLease(LocalSyncLease lease) async {
+    if (_syncLeaseKey == lease.key) _syncLeaseKey = null;
+  }
 
   @override
   Future<void> saveSession(Session session) async {
     if (_session != null && _identity(_session!) != _identity(session)) {
       await clearCachedState();
       _cryptoState = null;
+      _processedMlsMessages.clear();
+      _mlsOutbox.clear();
+      _peerVerifications.clear();
+      _syncLeaseKey = null;
     }
     _session = session;
   }
@@ -243,9 +312,11 @@ class MemoryLocalStore implements LocalStore {
     Map<String, List<ReceivedMessageEnvelope>> messagesByConversation,
     int cursor,
   ) async {
-    _syncCursor = cursor;
+    if (cursor < _syncCursor) return;
+    final retainedCursor = cursor;
+    _syncCursor = retainedCursor;
     _snapshot = CachedSnapshot(
-      cursor: cursor,
+      cursor: retainedCursor,
       conversations: List<Conversation>.from(conversations),
       messagesByConversation: messagesByConversation.map(
         (key, value) =>
@@ -258,16 +329,57 @@ class MemoryLocalStore implements LocalStore {
   Future<CachedSnapshot?> loadSnapshot() async => _snapshot;
 
   @override
-  Future<void> enqueueEnvelope(MessageEnvelope envelope) async {
-    _outbox.removeWhere(
-      (item) => item.idempotencyKey == envelope.idempotencyKey,
+  Future<void> saveProjection(
+    List<Conversation> conversations,
+    Map<String, List<ReceivedMessageEnvelope>> messagesByConversation,
+  ) async {
+    final cursor = _syncCursor;
+    _snapshot = CachedSnapshot(
+      cursor: cursor,
+      conversations: List<Conversation>.from(conversations),
+      messagesByConversation: messagesByConversation.map(
+        (key, value) =>
+            MapEntry(key, List<ReceivedMessageEnvelope>.from(value)),
+      ),
     );
-    _outbox.add(envelope);
-    _outboxRecords.putIfAbsent(
-        envelope.idempotencyKey,
-        () => PendingEnvelopeRecord(
-            envelope: envelope, attemptCount: 0, terminal: false));
   }
+
+  @override
+  Future<void> enqueueEnvelope(MessageEnvelope envelope,
+      {String? draftText}) async {
+    final existing = _outboxRecords[envelope.idempotencyKey];
+    if (existing != null) {
+      if (existing.envelope.toJson().toString() != envelope.toJson().toString() ||
+          (existing.draftText != null && existing.draftText != draftText)) {
+        throw StateError('outbox idempotency key conflict');
+      }
+      if (existing.draftText == null && draftText != null) {
+        _outboxRecords[envelope.idempotencyKey] = PendingEnvelopeRecord(
+          envelope: existing.envelope,
+          attemptCount: existing.attemptCount,
+          terminal: existing.terminal,
+          nextAttemptAt: existing.nextAttemptAt,
+          failureClass: existing.failureClass,
+          draftText: draftText,
+        );
+      }
+      return;
+    }
+    if (_outbox.length >= maxPendingEnvelopes) {
+      throw const OutboxFullException();
+    }
+    _outbox.add(envelope);
+    _outboxRecords[envelope.idempotencyKey] = PendingEnvelopeRecord(
+      envelope: envelope,
+      attemptCount: 0,
+      terminal: false,
+      draftText: draftText,
+    );
+  }
+
+  @override
+  Future<bool> hasOutboxCapacity() async =>
+      _outbox.length < maxPendingEnvelopes;
 
   @override
   Future<List<MessageEnvelope>> pendingEnvelopes() async =>
@@ -295,7 +407,8 @@ class MemoryLocalStore implements LocalStore {
         attemptCount: existing.attemptCount + 1,
         terminal: terminal,
         nextAttemptAt: nextAttemptAt,
-        failureClass: failureClass);
+        failureClass: failureClass,
+        draftText: existing.draftText);
   }
 
   @override
@@ -350,6 +463,34 @@ class MemoryLocalStore implements LocalStore {
   }
 
   @override
+  Future<void> commitSyncEvent(SyncEventCommit commit) async {
+    if (_processedMlsMessages.contains(commit.eventKey)) return;
+    if (commit.expectedCursor != _syncCursor ||
+        commit.cursor <= commit.expectedCursor) {
+      throw StateError('stale sync event commit');
+    }
+    final nextMessages = <String, List<ReceivedMessageEnvelope>>{
+      for (final entry in _snapshot?.messagesByConversation.entries ??
+          const <MapEntry<String, List<ReceivedMessageEnvelope>>>[])
+        entry.key: List<ReceivedMessageEnvelope>.from(entry.value),
+    };
+    final envelope = commit.envelope;
+    if (envelope != null) {
+      final messages =
+          nextMessages[envelope.conversationId] ??= <ReceivedMessageEnvelope>[];
+      messages.removeWhere((item) => item.id == envelope.id);
+      messages.add(envelope);
+    }
+    _processedMlsMessages.add(commit.eventKey);
+    _syncCursor = commit.cursor;
+    _snapshot = CachedSnapshot(
+      cursor: commit.cursor,
+      conversations: _snapshot?.conversations ?? const <Conversation>[],
+      messagesByConversation: nextMessages,
+    );
+  }
+
+  @override
   Future<bool> hasProcessedMlsMessage(String messageId) async =>
       _processedMlsMessages.contains(messageId);
 
@@ -388,12 +529,20 @@ class MemoryLocalStore implements LocalStore {
       currentCounter: _cryptoState?.counter ?? 0,
       currentCursor: _syncCursor,
     );
+    final existing = _outboxRecords[transition.envelope.idempotencyKey];
+    if (existing != null) {
+      throw StateError('outbox idempotency key conflict');
+    }
+    if (_outbox.length >= maxPendingEnvelopes) {
+      throw const OutboxFullException();
+    }
     _cryptoState = _copyCryptoState(transition.state);
-    _outbox.removeWhere(
-        (item) => item.idempotencyKey == transition.envelope.idempotencyKey);
     _outbox.add(transition.envelope);
     _outboxRecords[transition.envelope.idempotencyKey] = PendingEnvelopeRecord(
-        envelope: transition.envelope, attemptCount: 0, terminal: false);
+        envelope: transition.envelope,
+        attemptCount: 0,
+        terminal: false,
+        draftText: transition.draftText);
   }
 
   @override
@@ -476,11 +625,13 @@ class MemoryLocalStore implements LocalStore {
   }
 
   @override
-  Future<void> clearCachedState() async {
+  Future<void> clearCachedState({bool preserveOutbox = false}) async {
     _syncCursor = 0;
     _snapshot = null;
-    _outbox.clear();
-    _outboxRecords.clear();
+    if (!preserveOutbox) {
+      _outbox.clear();
+      _outboxRecords.clear();
+    }
   }
 
   @override
@@ -490,6 +641,7 @@ class MemoryLocalStore implements LocalStore {
     _processedMlsMessages.clear();
     _mlsOutbox.clear();
     _peerVerifications.clear();
+    _syncLeaseKey = null;
     await clearCachedState();
   }
 }
@@ -527,23 +679,39 @@ class SecureLocalStore implements LocalStore {
   static const _migrationMarker = 'legacy_secure_record_migrated';
   static const _maxCachedConversations = 20;
   static const _maxMessagesPerConversation = 200;
-  static const _maxPendingEnvelopes = 100;
   final FlutterSecureStorage _storage;
   final Future<Directory> Function() _directoryProvider;
   final LocalDatabaseFactory _databaseFactory;
   final MlsCommitFailureInjector? _mlsCommitFailureInjector;
   Future<EncryptedLocalDatabase>? _openingDatabase;
   String? _databasePath;
+  String? _syncLeaseKey;
+
+  @override
+  Future<void> acquireSyncLease(LocalSyncLease lease) async {
+    final database = await _database();
+    await database.acquireSyncLease(lease.key);
+    _syncLeaseKey = lease.key;
+  }
+
+  @override
+  Future<void> releaseSyncLease(LocalSyncLease lease) async {
+    final key = _syncLeaseKey;
+    if (key != lease.key) return;
+    await (await _database()).releaseSyncLease(key);
+    _syncLeaseKey = null;
+  }
 
   @override
   Future<void> saveSession(Session session) async {
     final database = await _database();
     final previous = _sessionFromJson(await database.readSessionJson());
+    final changed = previous != null && _identity(previous) != _identity(session);
     await database.writeSessionJson(
       jsonEncode(_sessionJson(session)),
-      clearIdentityState:
-          previous != null && _identity(previous) != _identity(session),
+      clearIdentityState: changed,
     );
+    if (changed) _syncLeaseKey = null;
   }
 
   @override
@@ -567,6 +735,21 @@ class SecureLocalStore implements LocalStore {
     int cursor,
   ) async {
     if (cursor < 0) throw const FormatException('invalid sync cursor');
+    await _replaceProjection(conversations, messagesByConversation, cursor);
+  }
+
+  @override
+  Future<void> saveProjection(
+    List<Conversation> conversations,
+    Map<String, List<ReceivedMessageEnvelope>> messagesByConversation,
+  ) =>
+      _replaceProjection(conversations, messagesByConversation, null);
+
+  Future<void> _replaceProjection(
+    List<Conversation> conversations,
+    Map<String, List<ReceivedMessageEnvelope>> messagesByConversation,
+    int? cursor,
+  ) async {
     final boundedConversations =
         conversations.take(_maxCachedConversations).toList(growable: false);
     final conversationIds = boundedConversations.map((item) => item.id).toSet();
@@ -623,20 +806,33 @@ class SecureLocalStore implements LocalStore {
   }
 
   @override
-  Future<void> enqueueEnvelope(MessageEnvelope envelope) async {
+  Future<void> enqueueEnvelope(MessageEnvelope envelope,
+      {String? draftText}) async {
     final database = await _database();
     final path = _databasePath;
     if (path == null) throw StateError('encrypted database path unavailable');
     await _serializeDatabaseWrite(path, () async {
-      await database.upsertOutbox(
-        idempotencyKey: envelope.idempotencyKey,
-        conversationId: envelope.conversationId,
-        payloadJson: jsonEncode(envelope.toJson()),
-        queuedAt: DateTime.now().microsecondsSinceEpoch,
-        maxEntries: _maxPendingEnvelopes,
-      );
+      try {
+        await database.upsertOutbox(
+          idempotencyKey: envelope.idempotencyKey,
+          conversationId: envelope.conversationId,
+          payloadJson: jsonEncode(envelope.toJson()),
+          draftText: draftText,
+          queuedAt: DateTime.now().microsecondsSinceEpoch,
+          maxEntries: maxPendingEnvelopes,
+        );
+      } on StateError catch (error) {
+        if (error.message == 'outbox_full') {
+          throw const OutboxFullException();
+        }
+        rethrow;
+      }
     });
   }
+
+  @override
+  Future<bool> hasOutboxCapacity() async =>
+      (await (await _database()).outboxCount()) < maxPendingEnvelopes;
 
   @override
   Future<List<MessageEnvelope>> pendingEnvelopes() async =>
@@ -657,6 +853,7 @@ class SecureLocalStore implements LocalStore {
                     : DateTime.fromMicrosecondsSinceEpoch(item.nextAttemptAt!,
                         isUtc: true),
                 failureClass: item.failureClass,
+                draftText: item.draftText,
               ))
           .toList(growable: false);
 
@@ -716,6 +913,25 @@ class SecureLocalStore implements LocalStore {
           .toList(growable: false),
       deletedEnvelopeIds: transition.deletedEnvelopeIds,
       failureInjector: _mlsCommitFailureInjector,
+      leaseKey: _syncLeaseKey,
+    );
+  }
+
+  @override
+  Future<void> commitSyncEvent(SyncEventCommit commit) async {
+    await (await _database()).commitSyncEvent(
+      eventKey: commit.eventKey,
+      conversationId: commit.conversationId,
+      expectedCursor: commit.expectedCursor,
+      cursor: commit.cursor,
+      envelope: commit.envelope == null
+          ? null
+          : (
+              id: commit.envelope!.id,
+              conversationId: commit.envelope!.conversationId,
+              payloadJson: jsonEncode(commit.envelope!.toJson()),
+            ),
+      leaseKey: _syncLeaseKey,
     );
   }
 
@@ -747,6 +963,7 @@ class SecureLocalStore implements LocalStore {
                 payload: message.payload,
               ))
           .toList(growable: false),
+      leaseKey: _syncLeaseKey,
     );
   }
 
@@ -776,17 +993,26 @@ class SecureLocalStore implements LocalStore {
       currentCounter: transition.expectedCounter,
       currentCursor: transition.expectedCursor,
     );
-    await (await _database()).commitOutgoingApplicationTransition(
-      expectedCounter: transition.expectedCounter,
-      expectedCursor: transition.expectedCursor,
-      counter: transition.state.counter,
-      stateKey: transition.state.stateKey,
-      sealedState: transition.state.sealedState,
-      idempotencyKey: transition.envelope.idempotencyKey,
-      conversationId: transition.envelope.conversationId,
-      payloadJson: jsonEncode(transition.envelope.toJson()),
-      maxEntries: _maxPendingEnvelopes,
-    );
+    try {
+      await (await _database()).commitOutgoingApplicationTransition(
+        expectedCounter: transition.expectedCounter,
+        expectedCursor: transition.expectedCursor,
+        counter: transition.state.counter,
+        stateKey: transition.state.stateKey,
+        sealedState: transition.state.sealedState,
+        idempotencyKey: transition.envelope.idempotencyKey,
+        conversationId: transition.envelope.conversationId,
+        payloadJson: jsonEncode(transition.envelope.toJson()),
+        maxEntries: maxPendingEnvelopes,
+        draftText: transition.draftText,
+        leaseKey: _syncLeaseKey,
+      );
+    } on StateError catch (error) {
+      if (error.message == 'outbox_full') {
+        throw const OutboxFullException();
+      }
+      rethrow;
+    }
   }
 
   @override
@@ -803,6 +1029,7 @@ class SecureLocalStore implements LocalStore {
       counter: state.counter,
       stateKey: state.stateKey,
       sealedState: state.sealedState,
+      leaseKey: _syncLeaseKey,
     );
   }
 
@@ -910,14 +1137,15 @@ class SecureLocalStore implements LocalStore {
           database.readPeerVerification(conversationId, peerAccountId));
 
   @override
-  Future<void> clearCachedState() async {
-    await (await _database()).clearCachedState();
+  Future<void> clearCachedState({bool preserveOutbox = false}) async {
+    await (await _database()).clearCachedState(preserveOutbox: preserveOutbox);
   }
 
   @override
   Future<void> clear() async {
     await (await _database()).clearAll();
     await _storage.delete(key: _legacyRecordKey);
+    _syncLeaseKey = null;
   }
 
   Future<EncryptedLocalDatabase> _database() =>
