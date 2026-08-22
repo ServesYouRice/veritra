@@ -136,6 +136,11 @@ void main() {
     expect((await client.pushConfig(owner.token))['enabled'], isFalse);
     await client.disablePush(owner.token, pushId);
 
+    final accountExport = await client.exportAccountPage(owner.token);
+    expect(accountExport['manifest_version'], 'v2');
+    expect(accountExport['messages'], isA<List<Object?>>());
+    expect(jsonEncode(accountExport), isNot(contains('auth_secret')));
+
     final link = await client.createDeviceLink(owner.token);
     final fetchedLink = await client.deviceLink(owner.token, link.id);
     expect(fetchedLink.id, link.id);

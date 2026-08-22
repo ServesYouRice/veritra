@@ -93,6 +93,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return doctor(ctx, cfg, stdout)
 	case "healthcheck":
 		return healthcheck(cfg)
+	case "generate-setup-token":
+		return generateSetupToken(stdout)
 	case "backup":
 		return backup(ctx, cfg, fs.Args(), stdout)
 	case "restore":
@@ -108,6 +110,15 @@ func run(args []string, stdout, stderr io.Writer) error {
 	default:
 		return fmt.Errorf("unknown command %q", command)
 	}
+}
+
+func generateSetupToken(stdout io.Writer) error {
+	token, _, err := auth.NewToken()
+	if err != nil {
+		return fmt.Errorf("generate setup token: %w", err)
+	}
+	_, err = fmt.Fprintln(stdout, token)
+	return err
 }
 
 func resetOwnerPassword(ctx context.Context, cfg config.Config, username, passwordFile string, stdout io.Writer) error {
@@ -129,7 +140,11 @@ func resetOwnerPassword(ctx context.Context, cfg config.Config, username, passwo
 		return errors.New("password file is too large")
 	}
 	password := strings.TrimRight(string(raw), "\r\n")
-	hash, err := auth.HashPassword(password)
+	cost := cfg.PasswordCost
+	if cost == 0 {
+		cost = auth.DefaultBcryptCost
+	}
+	hash, err := auth.HashPasswordWithCost(password, cost)
 	if err != nil {
 		return fmt.Errorf("new password rejected: %w", err)
 	}
@@ -588,5 +603,5 @@ func copyFile(src, dst string, mode os.FileMode) error {
 
 func usage(w io.Writer) {
 	fmt.Fprintln(w, "Veritra server")
-	fmt.Fprintln(w, "commands: serve, init, migrate, backup, restore, doctor, healthcheck, reset-owner-password, version")
+	fmt.Fprintln(w, "commands: serve, init, migrate, backup, restore, doctor, healthcheck, generate-setup-token, reset-owner-password, version")
 }

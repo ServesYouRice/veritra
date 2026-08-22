@@ -61,6 +61,23 @@ void main() {
     expect(parseDeviceLinkCode('  BARECODE  '), 'BARECODE');
   });
 
+  test('device-link QR rejects unrelated URLs and accepts HTTPS origins only',
+      () {
+    expect(parseDeviceLinkCode('https://example.org/not-a-link'), isEmpty);
+    expect(
+      parseDeviceLinkOrigin(
+        'veritra://device-link?code=ABCD&origin=https%3A%2F%2Fchat.example.org',
+      ),
+      'https://chat.example.org',
+    );
+    expect(
+      parseDeviceLinkOrigin(
+        'veritra://device-link?code=ABCD&origin=http%3A%2F%2Flocalhost',
+      ),
+      isNull,
+    );
+  });
+
   test('markNewestMessageRead clears the unread badge locally', () async {
     final api = _ReadApiClient();
     final state = _connectedState(api);

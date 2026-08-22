@@ -30,6 +30,7 @@ var (
 	ErrNotFound            = errors.New("not found")
 	ErrNotMember           = errors.New("account is not a conversation member")
 	ErrInvalidInput        = errors.New("invalid input")
+	ErrCallVersion         = errors.New("call version is stale")
 	ErrLastOwner           = errors.New("cannot delete the last active owner")
 	ErrIdempotencyConflict = errors.New("idempotency key was reused for a different message")
 	ErrDeviceLinkInvalid   = errors.New("device link is invalid, expired, revoked, or already used")
@@ -37,6 +38,8 @@ var (
 	ErrStorageQuota        = errors.New("encrypted storage quota exceeded")
 	ErrSyncCursorExpired   = errors.New("sync cursor is older than retained history")
 	ErrEnrollmentInvalid   = errors.New("enrollment reservation is invalid, expired, or already used")
+	ErrRecoveryBusy        = errors.New("recovery transfer is already in progress")
+	ErrRecoveryRange       = errors.New("recovery range is not the next approved range")
 
 	// ErrDeviceLinkVerificationFailed is returned when the approver does not
 	// supply the same credential-bound transcript hash committed by the claimant.
@@ -627,7 +630,7 @@ func scanCall(rows scanner) (domain.CallSession, error) {
 	var call domain.CallSession
 	var metadata, created string
 	var ended, expires sql.NullString
-	if err := rows.Scan(&call.ID, &call.ConversationID, &call.CreatedBy, &call.State, &metadata, &created, &ended, &expires); err != nil {
+	if err := rows.Scan(&call.ID, &call.ConversationID, &call.CreatedBy, &call.InvitedAccountID, &call.State, &metadata, &created, &ended, &expires, &call.Version, &call.CreateActionID, &call.CreateActionHash, &call.LastActionID, &call.LastActionHash); err != nil {
 		return domain.CallSession{}, err
 	}
 	call.Metadata = json.RawMessage(metadata)

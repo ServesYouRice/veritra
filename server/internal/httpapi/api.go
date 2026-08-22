@@ -31,6 +31,7 @@ type API struct {
 	Log                 *slog.Logger
 	SetupToken          string
 	DefaultInstanceName string
+	PasswordCost        int
 	Messages            *messaging.Service
 	Push                push.Provider
 	VAPIDPublicKey      string
@@ -44,6 +45,13 @@ type API struct {
 	typingLast          map[string]time.Time
 }
 
+func (a *API) passwordCost() int {
+	if a.PasswordCost >= auth.MinBcryptCost && a.PasswordCost <= auth.MaxBcryptCost {
+		return a.PasswordCost
+	}
+	return auth.DefaultBcryptCost
+}
+
 func (a *API) clientIP(r *http.Request) string {
 	return a.ClientIdentities.ClientIP(r)
 }
@@ -55,7 +63,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/health", a.health)
 	mux.HandleFunc("GET /setup", a.setupPage)
 	mux.HandleFunc("GET /api/v1/setup/status", a.setupStatus)
-	mux.HandleFunc("GET /api/v1/recovery/{token}", a.recoverBackup)
+	mux.HandleFunc("GET /api/v1/recovery", a.recoverBackup)
 	mux.HandleFunc("POST /api/v1/setup/owner/enrollment", a.reserveOwnerEnrollment)
 	mux.HandleFunc("POST /api/v1/setup/owner", a.createOwner)
 	mux.HandleFunc("POST /api/v1/auth/login", a.login)
@@ -97,7 +105,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/sync/ws", a.syncWebSocket)
 	mux.HandleFunc("GET /api/v1/sync/events", a.withAuth(a.syncEvents))
 	mux.HandleFunc("GET /api/v1/search/metadata", a.withAuth(a.searchMetadata))
-	mux.HandleFunc("GET /api/v1/account/export", a.withAuth(a.exportAccount))
+	mux.HandleFunc("GET /api/v1/account/export", a.withRecentAuth(a.exportAccount))
 	mux.HandleFunc("DELETE /api/v1/account", a.withRecentAuth(a.deleteAccount))
 	mux.HandleFunc("GET /api/v1/account/blocks", a.withAuth(a.listAccountBlocks))
 	mux.HandleFunc("PUT /api/v1/account/blocks/{id}", a.withAuth(a.blockAccount))
@@ -135,6 +143,13 @@ func (a *API) withAuth(next authedHandler) http.HandlerFunc {
 		}
 		if err := a.Store.MarkDeviceSeen(r.Context(), principal.DeviceID); err != nil {
 			a.warn("device_last_seen_update_failed", "err", err)
+		}
+		if err := a.Store.TouchSession(r.Context(), auth.HashToken(bearerToken(r))); err != nil {
+			if !errors.Is(err, storage.ErrUnauthorized) {
+				a.warn("session_touch_failed", "err", err)
+			}
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
 		}
 		next(w, r, principal)
 	}
@@ -394,6 +409,8 @@ func handleStorageError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "last_owner_required")
 	case errors.Is(err, storage.ErrIdempotencyConflict):
 		writeError(w, http.StatusConflict, "idempotency_conflict")
+	case errors.Is(err, storage.ErrCallVersion):
+		writeError(w, http.StatusConflict, "call_version_conflict")
 	case errors.Is(err, storage.ErrDeviceLinkInvalid):
 		writeError(w, http.StatusBadRequest, "invalid_device_link")
 	case errors.Is(err, storage.ErrStorageQuota):

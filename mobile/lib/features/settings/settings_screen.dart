@@ -167,6 +167,18 @@ class SettingsScreen extends StatelessWidget {
                   ),
                 ],
               ),
+              const SectionHeader('Your data'),
+              TileGroup(
+                children: <Widget>[
+                  ListTile(
+                    leading: const Icon(Icons.download_outlined),
+                    title: const Text('Export account data'),
+                    subtitle: const Text(
+                        'Save encrypted messages and account metadata locally'),
+                    onTap: state.busy ? null : () => _exportAccount(context),
+                  ),
+                ],
+              ),
               const SectionHeader('Notifications'),
               _PushStatusRow(state: state),
               const SizedBox(height: BoneSpacing.sm),
@@ -421,6 +433,23 @@ class SettingsScreen extends StatelessWidget {
       password.dispose();
       confirmation.dispose();
     }
+  }
+
+  Future<void> _exportAccount(BuildContext context) async {
+    if (!await _reauthenticate(context) || !context.mounted) {
+      return;
+    }
+    final path = await state.exportAccount();
+    if (!context.mounted) {
+      return;
+    }
+    final message = path == null
+        ? (state.error ?? 'Account export failed.')
+        : 'Account export saved locally.';
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(message),
+      duration: const Duration(seconds: 4),
+    ));
   }
 
   /// Length is checked in UTF-8 bytes to match the server's bcrypt limit, but

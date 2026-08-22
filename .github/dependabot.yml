@@ -5,11 +5,19 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      go-dependencies:
+        patterns:
+          - "*"
   - package-ecosystem: cargo
     directory: /crypto/rust
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      rust-dependencies:
+        patterns:
+          - "*"
   - package-ecosystem: pub
     directory: /mobile
     schedule:
@@ -23,13 +31,25 @@ updates:
       # the discussion on #40 before lifting this.
       - dependency-name: flutter_secure_storage
         update-types: ["version-update:semver-major"]
+    groups:
+      dart-dependencies:
+        patterns:
+          - "*"
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
   - package-ecosystem: docker
     directory: /server
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      container-images:
+        patterns:
+          - "*"

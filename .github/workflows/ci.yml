@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.25.13"
+          go-version-file: .go-version
       - name: Test with race detector and coverage
         run: go test -race -coverprofile=coverage.out ./...
         working-directory: server
@@ -35,6 +35,16 @@ jobs:
       - name: go vet
         run: go vet ./...
         working-directory: server
+      - name: Summarize Go coverage
+        run: go tool cover -func=coverage.out | tee coverage-summary.txt
+        working-directory: server
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: go-coverage-${{ github.run_id }}
+          path: |
+            server/coverage.out
+            server/coverage-summary.txt
+          if-no-files-found: error
 
   crypto:
     runs-on: ubuntu-latest
@@ -45,7 +55,7 @@ jobs:
         run: |
           rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
           rustup default 1.90.0
-      - run: cargo test
+      - run: cargo test --release --locked
         working-directory: crypto/rust
       - run: cargo fmt --check && cargo clippy --all-targets -- -D warnings
         working-directory: crypto/rust
@@ -57,7 +67,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.25.13"
+          go-version-file: .go-version
           cache-dependency-path: server/go.sum
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
@@ -75,13 +85,20 @@ jobs:
           cargo build --manifest-path crypto/rust/Cargo.toml --locked --release
       - run: flutter pub get --enforce-lockfile
         working-directory: mobile
+      - name: Verify mobile dependency policy and retractions
+        run: sh scripts/check-mobile-dependencies.sh
       - name: Verify Dart dependency license files
         run: sh ../scripts/check-dart-licenses.sh
         working-directory: mobile
-      - run: flutter test
+      - run: flutter test --coverage
         env:
           VERITRA_CRYPTO_LIBRARY: ${{ github.workspace }}/crypto/rust/target/release/libprivate_messenger_crypto.so
         working-directory: mobile
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: flutter-coverage-${{ github.run_id }}
+          path: mobile/coverage/lcov.info
+          if-no-files-found: error
       - run: flutter analyze
         working-directory: mobile
       - name: Test live Go/Dart API contracts
@@ -127,12 +144,23 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - name: Verify Go toolchain alignment
+        run: sh scripts/check-go-toolchain.sh
+      - name: Build a fresh deployment image
+        run: docker compose -f deploy/docker-compose.yml build --build-arg "GO_VERSION=$(tr -d '[:space:]' < .go-version)" --build-arg "COMMIT=$GITHUB_SHA"
       - name: Start a fresh-volume deployment
         env:
-          PRIVATE_MESSENGER_SETUP_TOKEN: ci-smoke-setup-token
-        run: docker compose -f deploy/docker-compose.yml up --build --wait --wait-timeout 120
+          PRIVATE_MESSENGER_SETUP_TOKEN: AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA
+        run: docker compose -f deploy/docker-compose.yml up --wait --wait-timeout 120
       - name: Verify health over the published loopback port
         run: curl --fail --silent --show-error http://127.0.0.1:8080/healthz
+      - name: Verify packaged container toolchain
+        run: |
+          image="$(docker compose -f deploy/docker-compose.yml images -q messenger)"
+          test -n "$image"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.veritra.go-toolchain"}}' "$image")" = "$(tr -d '[:space:]' < .go-version)"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$GITHUB_SHA"
+          docker run --rm --entrypoint /usr/local/bin/messenger-server "$image" version
       - name: Stop deployment
         if: always()
         run: docker compose -f deploy/docker-compose.yml down --volumes
@@ -151,7 +179,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.25.13"
+          go-version-file: .go-version
           cache-dependency-path: server/go.sum
       - name: Scan Go dependencies
         working-directory: server

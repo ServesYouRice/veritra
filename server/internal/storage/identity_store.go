@@ -13,6 +13,20 @@ import (
 	"private-messenger/server/internal/domain"
 )
 
+const (
+	SessionIdleLifetime     = 30 * 24 * time.Hour
+	SessionAbsoluteLifetime = 30 * 24 * time.Hour
+)
+
+func sessionLifetime(createdAt time.Time, requestedExpiry time.Time) (string, string) {
+	idleExpiry := createdAt.Add(SessionIdleLifetime)
+	if !requestedExpiry.IsZero() && requestedExpiry.Before(idleExpiry) {
+		idleExpiry = requestedExpiry
+	}
+	absoluteExpiry := createdAt.Add(SessionAbsoluteLifetime)
+	return formatTime(idleExpiry), formatTime(absoluteExpiry)
+}
+
 func (s *Store) CreateOwner(ctx context.Context, input CreateOwnerInput) (AccountDevice, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -33,6 +47,7 @@ func (s *Store) CreateOwner(ctx context.Context, input CreateOwnerInput) (Accoun
 	accountID := reservation.AccountID
 	deviceID := reservation.DeviceID
 	createdAt := nowString()
+	sessionExpiresAt, sessionAbsoluteExpiresAt := sessionLifetime(parseTime(createdAt), input.SessionExpiry)
 	instanceName := strings.TrimSpace(input.InstanceName)
 	if instanceName == "" {
 		instanceName = "Veritra"
@@ -51,7 +66,7 @@ func (s *Store) CreateOwner(ctx context.Context, input CreateOwnerInput) (Accoun
 		return AccountDevice{}, err
 	}
 	if input.SessionHash != "" {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO sessions(token_hash, account_id, device_id, expires_at, created_at, recent_auth_at) VALUES(?, ?, ?, ?, ?, ?)`, input.SessionHash, accountID, deviceID, formatTime(input.SessionExpiry), createdAt, createdAt); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO sessions(token_hash, account_id, device_id, expires_at, created_at, recent_auth_at, last_used_at, absolute_expires_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, input.SessionHash, accountID, deviceID, sessionExpiresAt, createdAt, createdAt, createdAt, sessionAbsoluteExpiresAt); err != nil {
 			return AccountDevice{}, err
 		}
 	}
@@ -105,6 +120,7 @@ func (s *Store) RegisterWithInvite(ctx context.Context, input RegisterInput) (Ac
 	accountID := reservation.AccountID
 	deviceID := reservation.DeviceID
 	createdAt := nowString()
+	sessionExpiresAt, sessionAbsoluteExpiresAt := sessionLifetime(parseTime(createdAt), input.SessionExpiry)
 	username := domain.NormalizeUsername(input.Username)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO accounts(id, username, email, password_hash, role, status, created_at) VALUES(?, ?, ?, ?, 'member', 'active', ?)`, accountID, username, nullableString(input.Email), input.PasswordHash, createdAt); err != nil {
 		return AccountDevice{}, err
@@ -119,7 +135,7 @@ func (s *Store) RegisterWithInvite(ctx context.Context, input RegisterInput) (Ac
 		return AccountDevice{}, err
 	}
 	if input.SessionHash != "" {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO sessions(token_hash, account_id, device_id, expires_at, created_at, recent_auth_at) VALUES(?, ?, ?, ?, ?, ?)`, input.SessionHash, accountID, deviceID, formatTime(input.SessionExpiry), createdAt, createdAt); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO sessions(token_hash, account_id, device_id, expires_at, created_at, recent_auth_at, last_used_at, absolute_expires_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, input.SessionHash, accountID, deviceID, sessionExpiresAt, createdAt, createdAt, createdAt, sessionAbsoluteExpiresAt); err != nil {
 			return AccountDevice{}, err
 		}
 	}
@@ -172,7 +188,8 @@ func (s *Store) CreateSession(ctx context.Context, tokenHash, accountID, deviceI
 		return ErrForbidden
 	}
 	now := nowString()
-	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions(token_hash, account_id, device_id, expires_at, created_at, recent_auth_at) VALUES(?, ?, ?, ?, ?, ?)`, tokenHash, accountID, nullableEmptyString(deviceID), formatTime(expiresAt), now, now)
+	idleExpiresAt, absoluteExpiresAt := sessionLifetime(time.Now().UTC(), expiresAt)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions(token_hash, account_id, device_id, expires_at, created_at, recent_auth_at, last_used_at, absolute_expires_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, tokenHash, accountID, nullableEmptyString(deviceID), idleExpiresAt, now, now, now, absoluteExpiresAt)
 	return err
 }
 
@@ -180,15 +197,19 @@ func (s *Store) PrincipalByTokenHash(ctx context.Context, tokenHash string) (dom
 	principal := domain.Principal{}
 	var expiresAt string
 	var recentAuthAt sql.NullString
+	now := time.Now().UTC()
 	err := s.db.QueryRowContext(ctx, `
 		SELECT a.id, COALESCE(s.device_id, ''), a.username, a.role, s.expires_at, s.recent_auth_at
 		FROM sessions s JOIN accounts a ON a.id = s.account_id
 		LEFT JOIN devices d ON d.id = s.device_id
 		WHERE s.token_hash = ?
 		  AND s.expires_at > ?
+		  AND s.absolute_expires_at > ?
+		  AND s.last_used_at > ?
 		  AND a.status = 'active'
 		  AND a.deleted_at IS NULL
-		  AND (s.device_id IS NULL OR (d.id IS NOT NULL AND d.revoked_at IS NULL))`, tokenHash, nowString()).
+		  AND (s.device_id IS NULL OR (d.id IS NOT NULL AND d.revoked_at IS NULL))`,
+		tokenHash, formatTime(now), formatTime(now), formatTime(now.Add(-SessionIdleLifetime))).
 		Scan(&principal.AccountID, &principal.DeviceID, &principal.Username, &principal.Role, &expiresAt, &recentAuthAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -229,8 +250,40 @@ func (s *Store) ReauthenticationRecord(ctx context.Context, accountID, deviceID 
 	return passwordHash, deviceAuthHash, err
 }
 
+func (s *Store) UpgradePasswordHash(ctx context.Context, accountID, currentHash, updatedHash string) (bool, error) {
+	result, err := s.db.ExecContext(ctx, `UPDATE accounts SET password_hash = ? WHERE id = ? AND password_hash = ? AND deleted_at IS NULL`, updatedHash, accountID, currentHash)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	return rows == 1, err
+}
+
+func (s *Store) TouchSession(ctx context.Context, tokenHash string) error {
+	now := time.Now().UTC()
+	idleExpiry := formatTime(now.Add(SessionIdleLifetime))
+	nowStringValue := formatTime(now)
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE sessions
+		SET last_used_at = ?,
+		    expires_at = CASE WHEN absolute_expires_at < ? THEN absolute_expires_at ELSE ? END
+		WHERE token_hash = ?
+		  AND expires_at > ?
+		  AND absolute_expires_at > ?
+		  AND last_used_at > ?`,
+		nowStringValue, idleExpiry, idleExpiry, tokenHash, nowStringValue, nowStringValue, formatTime(now.Add(-SessionIdleLifetime)))
+	if err != nil {
+		return err
+	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return ErrUnauthorized
+	}
+	return nil
+}
+
 func (s *Store) MarkSessionRecentlyAuthenticated(ctx context.Context, tokenHash string) error {
-	result, err := s.db.ExecContext(ctx, `UPDATE sessions SET recent_auth_at = ? WHERE token_hash = ? AND expires_at > ?`, nowString(), tokenHash, nowString())
+	now := time.Now().UTC()
+	result, err := s.db.ExecContext(ctx, `UPDATE sessions SET recent_auth_at = ?, last_used_at = ? WHERE token_hash = ? AND expires_at > ? AND absolute_expires_at > ? AND last_used_at > ?`, formatTime(now), formatTime(now), tokenHash, formatTime(now), formatTime(now), formatTime(now.Add(-SessionIdleLifetime)))
 	if err != nil {
 		return err
 	}

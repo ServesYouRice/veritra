@@ -74,17 +74,22 @@ func (a *API) callSubroute(w http.ResponseWriter, r *http.Request, principal dom
 		return
 	}
 	var req struct {
-		State    string          `json:"state"`
-		Metadata json.RawMessage `json:"metadata,omitempty"`
+		State           string          `json:"state"`
+		ExpectedVersion int64           `json:"expected_version"`
+		Metadata        json.RawMessage `json:"metadata,omitempty"`
 	}
 	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.ExpectedVersion <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_call_version")
 		return
 	}
 	if len(req.Metadata) > 0 && (!validCallMetadata(req.Metadata) || callMetadataSenderDevice(req.Metadata) != principal.DeviceID) {
 		writeError(w, http.StatusBadRequest, "invalid_call_metadata")
 		return
 	}
-	call, eventID, err := a.Store.TransitionCallSessionWithSyncEvent(r.Context(), parts[0], principal.AccountID, req.State, req.Metadata)
+	call, eventID, err := a.Store.TransitionCallSessionWithSyncEvent(r.Context(), parts[0], principal.AccountID, req.ExpectedVersion, req.State, req.Metadata)
 	if err != nil {
 		handleStorageError(w, err)
 		return
@@ -190,6 +195,14 @@ func (a *API) exportAccount(w http.ResponseWriter, r *http.Request, principal do
 	export, err := a.Store.ExportAccount(r.Context(), principal.AccountID, storage.ExportAccountOptions{Limit: limit, BeforeID: before})
 	if err != nil {
 		handleStorageError(w, err)
+		return
+	}
+	if err := a.Store.RecordAuditEvent(r.Context(), &principal.AccountID, "account.exported", map[string]string{
+		"schema_version": export.ManifestVersion,
+		"scope":          "account",
+	}); err != nil {
+		a.warn("account_export_audit_failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "export_audit_failed")
 		return
 	}
 	response := map[string]interface{}{

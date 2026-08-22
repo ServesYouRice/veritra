@@ -1,15 +1,86 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/widgets.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/push/push_service.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
 import 'test_crypto_service.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('account sync owner coalesces overlapping requests', () async {
+    final gate = Completer<void>();
+    var runs = 0;
+    var owner = true;
+    final engine = AccountSyncEngine(
+      isOwner: () => owner,
+      work: () async {
+        runs++;
+        if (runs == 1) await gate.future;
+      },
+    );
+
+    final first = engine.request();
+    await Future<void>.delayed(Duration.zero);
+    final second = engine.request();
+    expect(runs, 1);
+    gate.complete();
+    await Future.wait(<Future<void>>[first, second]);
+    expect(runs, 2);
+
+    owner = false;
+    await engine.request();
+    expect(runs, 2);
+    engine.dispose();
+  });
+
+  test('paused push wake does not sync and resumes from the durable marker',
+      () async {
+    final localStore = MemoryLocalStore();
+    await localStore.saveSession(const Session(
+      baseUrl: 'http://localhost:8080',
+      token: 'owner-token',
+      accountId: 'acct_owner',
+      deviceId: 'dev_owner',
+    ));
+    final api = _WakeApiClient();
+    final push = _WakePushService(initialGeneration: 1);
+    final state = AppState(
+      apiClientFactory: (_) => api,
+      cryptoService: TestOnlyCryptoService(),
+      localStore: localStore,
+      syncServiceFactory: (_, __) => FakeSyncService(),
+      pushService: push,
+    );
+    state.handleAppLifecycleState(AppLifecycleState.paused);
+
+    await state.tryRestoreSession();
+    await push.registered.future.timeout(const Duration(seconds: 2));
+    push.emitWake();
+    await Future<void>.delayed(Duration.zero);
+    expect(api.syncCalls, 0);
+    expect(await localStore.loadSyncCursor(), 0);
+    expect(push.generation, 2);
+
+    state.handleAppLifecycleState(AppLifecycleState.resumed);
+    await api.cursorAdvanced.future.timeout(const Duration(seconds: 2));
+    for (var attempt = 0;
+        attempt < 10 && await localStore.loadSyncCursor() != 7;
+        attempt++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(await localStore.loadSyncCursor(), 7);
+    expect(push.acknowledged, <int>[2]);
+    expect(push.generation, 0);
+    state.dispose();
+  });
+
   test('message envelope serializes ciphertext without plaintext body field',
       () {
     final envelope = MessageEnvelope(
@@ -227,6 +298,14 @@ void main() {
 
     await state.sendMessageTo('conv_1', 'test-only plaintext');
 
+    for (var attempt = 0;
+        attempt < 20 && state.outboxState(
+                state.pendingFor('conv_1').single.idempotencyKey) ==
+            OutboxDeliveryState.sending;
+        attempt++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+
     expect(state.pendingFor('conv_1'), hasLength(1));
     final key = state.pendingFor('conv_1').single.idempotencyKey;
     expect(state.outboxState(key), OutboxDeliveryState.retrying);
@@ -240,7 +319,59 @@ void main() {
     expect(await localStore.pendingEnvelopes(), isEmpty);
   });
 
-  test('sync repairs an old edited envelope by id without newest-page reload',
+  test('restore failure enters recovery without resetting the cursor', () async {
+    final localStore = _FailingRestoreStore();
+    await localStore.saveSyncCursor(42);
+    final state = AppState(
+      apiClientFactory: (_) => throw UnimplementedError(),
+      cryptoService: TestOnlyCryptoService(),
+      localStore: localStore,
+      syncServiceFactory: (_, __) => FakeSyncService(),
+    );
+
+    await state.tryRestoreSession();
+
+    expect(state.lifecycle, SessionLifecycle.recoveryRequired);
+    expect(state.recoveryMessage, isNotNull);
+    expect(await localStore.loadSyncCursor(), 42);
+    state.continueWithoutRestore();
+    expect(state.lifecycle, SessionLifecycle.ready);
+    state.dispose();
+  });
+
+  test('full outbox refuses before encryption and keeps all entries', () async {
+    final localStore = MemoryLocalStore();
+    for (var index = 0; index < maxPendingEnvelopes; index++) {
+      await localStore.enqueueEnvelope(_outboxEnvelope('queued_$index'));
+    }
+    final crypto = _CountingCryptoService();
+    final state = AppState(
+      apiClientFactory: (_) => _OutboxApiClient(),
+      cryptoService: crypto,
+      localStore: localStore,
+      syncServiceFactory: (_, __) => FakeSyncService(),
+    )
+      ..api = _OutboxApiClient()
+      ..session = const Session(
+        baseUrl: 'http://localhost:8080',
+        token: 'owner-token',
+        accountId: 'acct_owner',
+        deviceId: 'dev_owner',
+      )
+      ..conversations = <Conversation>[Conversation(id: 'conv_1', kind: 'group')];
+
+    expect(await state.sendMessageTo('conv_1', 'not accepted'), isFalse);
+    expect(crypto.encryptCalls, 0);
+    expect(await localStore.pendingEnvelopes(), hasLength(maxPendingEnvelopes));
+    expect(
+      (await localStore.pendingEnvelopes())
+          .map((item) => item.idempotencyKey),
+      contains('queued_0'),
+    );
+    state.dispose();
+  });
+
+  test('sync fails closed when an edited event lacks its immutable envelope',
       () async {
     final localStore = MemoryLocalStore();
     final conversation = Conversation(id: 'conv_1', kind: 'group');
@@ -276,21 +407,118 @@ void main() {
     )..selectedConversationId = conversation.id;
 
     await state.tryRestoreSession();
-    await api.repairFetched.future.timeout(const Duration(seconds: 2));
-    await Future<void>.delayed(Duration.zero);
-
+    for (var attempt = 0;
+        attempt < 20 && !state.deviceRecoveryRequired;
+        attempt++) {
+      await Future<void>.delayed(Duration.zero);
+    }
     expect(api.listMessagesCalls, 0);
+    expect(state.deviceRecoveryRequired, isTrue);
+    expect(await localStore.loadSyncCursor(), 0);
     expect(state.messagesFor(conversation.id).map((message) => message.id),
-        <String>['msg_newest', 'msg_old']);
-    final repaired = state
-        .messagesFor(conversation.id)
-        .singleWhere((message) => message.id == 'msg_old');
-    expect(repaired.ciphertext, <int>[9, 9]);
-    expect(repaired.editedAt, isNotNull);
-    expect(await localStore.loadSyncCursor(), 7);
+        <String>['msg_newest']);
     state.dispose();
   });
 }
+
+class _WakePushService implements MobilePushService {
+  _WakePushService({required int initialGeneration})
+      : generation = initialGeneration;
+
+  final _events = StreamController<PushEvent>.broadcast();
+  final registered = Completer<void>();
+  final List<int> acknowledged = <int>[];
+  int generation;
+
+  @override
+  Stream<PushEvent> get events => _events.stream;
+
+  @override
+  Future<void> register({required String instance, required String vapid}) {
+    if (!registered.isCompleted) registered.complete();
+    return Future<void>.value();
+  }
+
+  @override
+  Future<void> pickDistributor() async {}
+
+  @override
+  Future<void> unregister(String instance) async {}
+
+  @override
+  Future<int> pendingWakeGeneration() async => generation;
+
+  @override
+  Future<bool> acknowledgeWake(int target) async {
+    if (target != generation) return false;
+    acknowledged.add(target);
+    generation = 0;
+    return true;
+  }
+
+  void emitWake() {
+    generation++;
+    _events.add(const PushWakeEvent());
+  }
+
+  @override
+  void dispose() {
+    unawaited(_events.close());
+  }
+}
+
+class _WakeApiClient extends FakeDeviceLinkApiClient {
+  final cursorAdvanced = Completer<void>();
+  int syncCalls = 0;
+  bool _sentEvent = false;
+
+  @override
+  Future<Map<String, Object?>> pushConfig(String token) async =>
+      <String, Object?>{'enabled': true, 'vapid_public_key': 'test-vapid'};
+
+  @override
+  Future<List<Conversation>> conversations(String token) async =>
+      <Conversation>[Conversation(id: 'conv_1', kind: 'group')];
+
+  @override
+  Future<List<Device>> devices(String token) async => <Device>[];
+
+  @override
+  Future<List<SyncEvent>> syncEvents(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async {
+    syncCalls++;
+    if (_sentEvent) return <SyncEvent>[];
+    _sentEvent = true;
+    if (!cursorAdvanced.isCompleted) cursorAdvanced.complete();
+    return <SyncEvent>[
+      SyncEvent(
+        id: 7,
+        type: 'conversation.updated',
+        createdAt: DateTime.parse('2026-08-14T12:00:00Z'),
+      ),
+    ];
+  }
+}
+
+class _CountingCryptoService extends TestOnlyCryptoService {
+  int encryptCalls = 0;
+
+  @override
+  Future<MessageEnvelope> encrypt(String conversationId, String plaintext) {
+    encryptCalls++;
+    return super.encrypt(conversationId, plaintext);
+  }
+}
+
+MessageEnvelope _outboxEnvelope(String key) => MessageEnvelope(
+      conversationId: 'conv_1',
+      idempotencyKey: key,
+      ciphertext: <int>[1, 2, 3],
+      cryptoProtocol: 'test-only-not-production',
+    );
 
 class _OutboxApiClient extends ApiClient {
   _OutboxApiClient() : super(baseUrl: 'http://localhost:8080');
@@ -608,6 +836,13 @@ class _RepairApiClient extends FakeDeviceLinkApiClient {
   }) async {
     listMessagesCalls++;
     return const MessagePage(messages: <ReceivedMessageEnvelope>[]);
+  }
+}
+
+class _FailingRestoreStore extends MemoryLocalStore {
+  @override
+  Future<Session?> loadSession() async {
+    throw StateError('database key unavailable');
   }
 }
 

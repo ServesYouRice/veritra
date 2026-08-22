@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 /// Design tokens for the **K2 · Bone** direction.
@@ -20,13 +22,13 @@ class BoneColors {
   static const Color darkRaised = Color(0xff2b233a);
   static const Color darkText = Color(0xfff3effa);
   static const Color darkMuted = Color(0xffa89ea6);
-  static const Color darkOutline = Color(0xff6f6675);
+  // The original outline fell below 3:1 against the raised dark surface.
+  static const Color darkOutline = darkMuted;
   static const Color darkAccent = Color(0xffede4da);
   static const Color darkOnAccent = Color(0xff1e1620);
 
-  /// 9% white. Hairlines carry separation because this direction uses tone
-  /// rather than shadow.
-  static const Color darkBorder = Color(0x17ffffff);
+  /// Strong enough after compositing against canvas, surface and raised roles.
+  static const Color darkBorder = Color(0x99a89ea6);
 
   // --- Light: warm paper, deep plum accent --------------------------------
   static const Color lightCanvas = Color(0xfff8f6f1);
@@ -38,8 +40,8 @@ class BoneColors {
   static const Color lightAccent = Color(0xff3a2e42);
   static const Color lightOnAccent = Color(0xffffffff);
 
-  /// 11% of [lightText].
-  static const Color lightBorder = Color(0x1c1a1620);
+  /// Strong enough after compositing against the light surface roles.
+  static const Color lightBorder = Color(0x801a1620);
 
   // --- Error, as a Material role ------------------------------------------
   static const Color darkError = Color(0xfffb7185);
@@ -143,7 +145,7 @@ class BoneType {
   /// Group headers, field labels and chips. Callers must uppercase the string
   /// themselves — Flutter has no text-transform.
   static const TextStyle micro = TextStyle(
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: FontWeight.w700,
     letterSpacing: 1.1,
     height: 1.2,
@@ -225,4 +227,53 @@ class VeritraStateColors extends ThemeExtension<VeritraStateColors> {
       info: Color.lerp(info, other.info, t)!,
     );
   }
+}
+
+/// Returns the opaque colour visible when [foreground] is painted over
+/// [background]. Keeping this here makes contrast tests exercise the same
+/// alpha compositing that a one-pixel Material border uses on screen.
+Color compositeColor(Color foreground, Color background) {
+  final alpha = foreground.alpha;
+  if (alpha == 0) {
+    return background;
+  }
+  if (alpha == 255) {
+    return foreground;
+  }
+
+  int blend(int front, int back) =>
+      (front * alpha + back * (255 - alpha) + 127) ~/ 255;
+
+  return Color.fromARGB(
+    255,
+    blend(foreground.red, background.red),
+    blend(foreground.green, background.green),
+    blend(foreground.blue, background.blue),
+  );
+}
+
+/// WCAG relative luminance contrast ratio for two opaque colours.
+double contrastRatio(Color first, Color second) {
+  double luminance(Color color) {
+    double channel(int value) {
+      final normalized = value / 255;
+      return normalized <= 0.04045
+          ? normalized / 12.92
+          : math.pow((normalized + 0.055) / 1.055, 2.4).toDouble();
+    }
+
+    return 0.2126 * channel(color.red) +
+        0.7152 * channel(color.green) +
+        0.0722 * channel(color.blue);
+  }
+
+  final firstLuminance = luminance(first);
+  final secondLuminance = luminance(second);
+  final lighter = firstLuminance > secondLuminance
+      ? firstLuminance
+      : secondLuminance;
+  final darker = firstLuminance > secondLuminance
+      ? secondLuminance
+      : firstLuminance;
+  return (lighter + 0.05) / (darker + 0.05);
 }

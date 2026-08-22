@@ -15,9 +15,9 @@ import 'package:flutter/material.dart';
 /// along a 54-wide keyline. Note the mark's optical centre is y=238, not 256 —
 /// the same reason the app-icon SVG re-centres it before scaling.
 ///
-/// K2 · Bone draws it flat. The source SVG carries the old Indigo→Sky
-/// gradient; that brand pair is exactly what this direction dropped, so the
-/// mark takes a single [color] instead.
+/// K2 · Bone draws it flat, and so does the source SVG since the family was
+/// redrawn on 2026-08-18 — the direction spends no accent hue, so there is no
+/// gradient to transcribe and the mark takes a single [color].
 class VeritraMark extends StatelessWidget {
   const VeritraMark({
     required this.size,

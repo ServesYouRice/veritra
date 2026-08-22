@@ -143,6 +143,38 @@ void main() {
     expect(pending.map((item) => item.idempotencyKey).toSet(), hasLength(100));
   });
 
+  test('outbox capacity refuses the 101st item without eviction', () async {
+    final store = createStore();
+    for (var index = 0; index < maxPendingEnvelopes; index++) {
+      await store.enqueueEnvelope(_outboxEnvelope('queued_$index'));
+    }
+
+    await expectLater(
+      store.enqueueEnvelope(_outboxEnvelope('queued_101')),
+      throwsA(isA<OutboxFullException>()),
+    );
+    final pending = await store.pendingEnvelopes();
+    expect(pending, hasLength(maxPendingEnvelopes));
+    expect(
+      pending.map((item) => item.idempotencyKey),
+      contains('queued_0'),
+    );
+  });
+
+  test('queued draft survives a database restart', () async {
+    final first = createStore();
+    await first.enqueueEnvelope(
+      _outboxEnvelope('draft_1'),
+      draftText: 'local recovery draft',
+    );
+    await databases.last.close();
+    databases.removeLast();
+
+    final restarted = createStore();
+    final record = (await restarted.pendingEnvelopeRecords()).single;
+    expect(record.draftText, 'local recovery draft');
+  });
+
   test('crypto state and cursor roll back together', () async {
     final store = createStore();
     await store.saveCryptoState(
@@ -227,6 +259,51 @@ void main() {
           ?.map((item) => item.id),
       contains('msg_2'),
     );
+  });
+
+  test('sync event persists its ciphertext before the cursor and fences leases',
+      () async {
+    final first = createStore();
+    await first.saveSnapshot(
+      <Conversation>[Conversation(id: 'conv_1', kind: 'group')],
+      const <String, List<ReceivedMessageEnvelope>>{},
+      0,
+    );
+    final lease1 = const LocalSyncLease(
+      origin: 'https://example.test',
+      accountId: 'acct_1',
+      deviceId: 'dev_1',
+      generation: 1,
+    );
+    final lease2 = const LocalSyncLease(
+      origin: 'https://example.test',
+      accountId: 'acct_1',
+      deviceId: 'dev_1',
+      generation: 2,
+    );
+    await first.acquireSyncLease(lease1);
+    final second = createStore();
+    await second.acquireSyncLease(lease2);
+    await expectLater(
+      first.commitSyncEvent(SyncEventCommit(
+        eventKey: 'sync:1',
+        conversationId: 'conv_1',
+        expectedCursor: 0,
+        cursor: 1,
+        envelope: _receivedEnvelope(),
+      )),
+      throwsStateError,
+    );
+    await second.commitSyncEvent(SyncEventCommit(
+      eventKey: 'sync:1',
+      conversationId: 'conv_1',
+      expectedCursor: 0,
+      cursor: 1,
+      envelope: _receivedEnvelope(),
+    ));
+    expect(await second.loadSyncCursor(), 1);
+    expect((await second.loadSnapshot())?.messagesByConversation['conv_1'],
+        hasLength(1));
   });
 }
 

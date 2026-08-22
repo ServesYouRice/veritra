@@ -183,6 +183,19 @@ class ApiClient {
     await _jsonRequest('DELETE', '/api/v1/devices/$deviceId', token: token);
   }
 
+  /// Returns one bounded page of the versioned account export. The server
+  /// requires recent authentication and keeps message bodies as ciphertext.
+  Future<Map<String, Object?>> exportAccountPage(
+    String token, {
+    int limit = 250,
+    String? before,
+  }) async {
+    final boundedLimit = limit.clamp(1, 5000).toInt();
+    final path = '/api/v1/account/export?limit=$boundedLimit'
+        '${before == null ? '' : '&before=${Uri.encodeQueryComponent(before)}'}';
+    return _jsonRequest('GET', path, token: token);
+  }
+
   Future<Conversation> createConversation(String token, String kind) async {
     return createConversationDetailed(token, kind: kind);
   }
@@ -392,13 +405,25 @@ class ApiClient {
   }
 
   Future<Stream<List<int>>> recoverEncryptedBackup(
-      List<int> recoveryToken) async {
+      List<int> recoveryToken, {
+    int? startOffset,
+    int? endOffset,
+  }) async {
     if (recoveryToken.length != 32)
       throw ArgumentError.value(recoveryToken, 'recoveryToken');
+    if (startOffset != null &&
+        (startOffset < 0 || (endOffset != null && endOffset < startOffset))) {
+      throw ArgumentError('invalid recovery range');
+    }
     final encoded = base64Url.encode(recoveryToken).replaceAll('=', '');
     final request = await _httpClient
-        .getUrl(Uri.parse(baseUrl).resolve('/api/v1/recovery/$encoded'))
+        .getUrl(Uri.parse(baseUrl).resolve('/api/v1/recovery'))
         .timeout(_requestTimeout);
+    request.headers.set('X-Recovery-Token', encoded);
+    if (startOffset != null) {
+      final rangeEnd = endOffset == null ? '' : '$endOffset';
+      request.headers.set('Range', 'bytes=$startOffset-$rangeEnd');
+    }
     final response = await request.close().timeout(_requestTimeout);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final body = await utf8.decodeStream(response);
@@ -1118,6 +1143,17 @@ class ApiException implements Exception {
       case 'storage_error':
       case 'storage_unavailable':
         return 'The server had a storage problem. Try again shortly.';
+      case 'storage_quota_exceeded':
+        return 'The server is out of storage for this account. Delete older '
+            'attachments or ask the administrator for more space.';
+      case 'blob_integrity_failed':
+        return 'The encrypted attachment could not be verified. Discard it '
+            'and try again.';
+      case 'server_draining':
+        return 'The server is restarting. Try again shortly.';
+      case 'idempotency_conflict':
+        return 'This message was already submitted with different data. '
+            'Discard it and compose a new message.';
     }
     if (statusCode == 401) {
       return 'Your session is no longer valid. Sign in again.';

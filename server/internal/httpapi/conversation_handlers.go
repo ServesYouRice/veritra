@@ -438,7 +438,6 @@ func (a *API) createMessageEnvelope(w http.ResponseWriter, r *http.Request, prin
 	}
 	if !result.Duplicate {
 		a.publishCommittedEvent(result.Recipients, realtime.Event{Version: "v1", Type: "message.envelope.created", ID: result.EventID, ConversationID: result.Envelope.ConversationID, Payload: result.Envelope, CreatedAt: time.Now().UTC()})
-		a.notifyPush(r.Context(), result.Envelope.ConversationID, principal.AccountID)
 	}
 	status := http.StatusCreated
 	if result.Duplicate {

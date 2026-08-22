@@ -55,6 +55,9 @@ func TestInviteDeviceAndEncryptedEnvelopeFlow(t *testing.T) {
 	if err := store.AddConversationMember(ctx, conversation.ID, member.Account.ID, domain.RoleMember); err != nil {
 		t.Fatalf("add member: %v", err)
 	}
+	if _, err := store.CreatePushSubscription(ctx, member.Account.ID, member.Device.ID, "fcm", strings.Repeat("a", 32), "", ""); err != nil {
+		t.Fatalf("create push subscription: %v", err)
+	}
 	msg, duplicate, err := store.SaveMessageEnvelope(ctx, domain.MessageEnvelope{
 		ConversationID:  conversation.ID,
 		SenderAccountID: owner.Account.ID,
@@ -97,6 +100,86 @@ func TestInviteDeviceAndEncryptedEnvelopeFlow(t *testing.T) {
 	if len(messages) != 1 || !bytes.Equal(messages[0].Ciphertext, []byte("ciphertext bytes only")) {
 		t.Fatalf("unexpected messages: %#v", messages)
 	}
+	versioned, duplicate, eventID, recipients, err := store.SaveMessageEnvelopeWithSyncEventAndRecipients(
+		ctx, domain.MessageEnvelope{
+			ConversationID:  conversation.ID,
+			SenderAccountID: owner.Account.ID,
+			SenderDeviceID:  owner.Device.ID,
+			IdempotencyKey:  "sync-send-1",
+			Ciphertext:      []byte("versioned ciphertext"),
+			CryptoProtocol:  "mls-openmls-todo",
+		})
+	if err != nil || duplicate || versioned.ID == "" || eventID == 0 {
+		t.Fatalf("versioned message event: id=%s duplicate=%v event=%d err=%v", versioned.ID, duplicate, eventID, err)
+	}
+	recipientSet := map[string]bool{}
+	for _, recipient := range recipients {
+		recipientSet[recipient] = true
+	}
+	if len(recipients) != 2 || !recipientSet[member.Account.ID] || !recipientSet[owner.Account.ID] {
+		t.Fatalf("unexpected transactional recipients: %#v", recipients)
+	}
+	var queued int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM push_wake_jobs WHERE sync_event_id = ?`, eventID).Scan(&queued); err != nil {
+		t.Fatalf("count wake jobs: %v", err)
+	}
+	if queued != 1 {
+		t.Fatalf("wake job count=%d want 1", queued)
+	}
+	claimedAt := time.Now().UTC()
+	wakeJobs, abandoned, err := store.ClaimPushWakeJobs(ctx, "fcm", 10, claimedAt, time.Minute)
+	if err != nil || abandoned != 0 || len(wakeJobs) != 1 {
+		t.Fatalf("claim wake jobs: jobs=%d abandoned=%d err=%v", len(wakeJobs), abandoned, err)
+	}
+	if wakeJobs[0].EventID != eventID || wakeJobs[0].RecipientAccountID != member.Account.ID || wakeJobs[0].Endpoint != strings.Repeat("a", 32) || wakeJobs[0].Attempts != 1 {
+		t.Fatalf("unexpected claimed wake job: %#v", wakeJobs[0])
+	}
+	wakeJobs, _, err = store.ClaimPushWakeJobs(ctx, "fcm", 10, claimedAt.Add(2*time.Minute), time.Minute)
+	if err != nil || len(wakeJobs) != 1 || wakeJobs[0].Attempts != 2 {
+		t.Fatalf("reclaim wake job: jobs=%d err=%v", len(wakeJobs), err)
+	}
+	if err := store.RetryPushWakeJob(ctx, wakeJobs[0], time.Now().UTC().Add(-time.Second), time.Now().UTC()); err != nil {
+		t.Fatalf("retry wake job: %v", err)
+	}
+	wakeJobs, _, err = store.ClaimPushWakeJobs(ctx, "fcm", 10, time.Now().UTC(), time.Minute)
+	if err != nil || len(wakeJobs) != 1 || wakeJobs[0].Attempts != 3 {
+		t.Fatalf("retry wake job: jobs=%d err=%v", len(wakeJobs), err)
+	}
+	oldWakeJob := wakeJobs[0]
+	if _, err := store.db.ExecContext(ctx, `UPDATE push_subscriptions SET endpoint = ? WHERE id = ?`, strings.Repeat("b", 32), oldWakeJob.SubscriptionID); err != nil {
+		t.Fatalf("rotate push subscription: %v", err)
+	}
+	if err := store.RetirePushWakeSubscription(ctx, oldWakeJob); err != nil {
+		t.Fatalf("retire stale wake subscription: %v", err)
+	}
+	var disabledAt sql.NullString
+	if err := store.db.QueryRowContext(ctx, `SELECT disabled_at FROM push_subscriptions WHERE id = ?`, oldWakeJob.SubscriptionID).Scan(&disabledAt); err != nil {
+		t.Fatalf("read rotated subscription: %v", err)
+	}
+	if disabledAt.Valid {
+		t.Fatal("stale provider result disabled rotated subscription")
+	}
+	wakeJobs, _, err = store.ClaimPushWakeJobs(ctx, "fcm", 10, time.Now().UTC().Add(time.Second), time.Minute)
+	if err != nil || len(wakeJobs) != 1 || wakeJobs[0].Attempts != 4 || wakeJobs[0].Endpoint != strings.Repeat("b", 32) {
+		t.Fatalf("reclaim rotated wake job: jobs=%d err=%v job=%#v", len(wakeJobs), err, wakeJobs)
+	}
+	if err := store.CompletePushWakeJob(ctx, oldWakeJob); err != nil {
+		t.Fatalf("complete stale wake job: %v", err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM push_wake_jobs WHERE sync_event_id = ?`, eventID).Scan(&queued); err != nil || queued != 1 {
+		t.Fatalf("stale wake completion changed queue: queued=%d err=%v", queued, err)
+	}
+	if err := store.CompletePushWakeJob(ctx, wakeJobs[0]); err != nil {
+		t.Fatalf("complete wake job: %v", err)
+	}
+	var eventPayload string
+	if err := store.db.QueryRowContext(ctx, `SELECT payload_json FROM sync_events WHERE id = ?`, eventID).Scan(&eventPayload); err != nil {
+		t.Fatalf("read versioned event: %v", err)
+	}
+	if !bytes.Contains([]byte(eventPayload), []byte(`"envelope"`)) ||
+		!bytes.Contains([]byte(eventPayload), []byte(`"ciphertext"`)) {
+		t.Fatalf("versioned event omitted immutable envelope: %s", eventPayload)
+	}
 
 	plaintext := runtimeSentinel(t)
 	dbBytes, err := os.ReadFile(cfg.DatabasePath)
@@ -134,6 +217,61 @@ func TestEverySQLiteConnectionEnforcesSafetyPragmas(t *testing.T) {
 		if foreignKeys != 1 || busyTimeout != 5000 {
 			t.Fatalf("connection %d pragmas foreign_keys=%d busy_timeout=%d", i, foreignKeys, busyTimeout)
 		}
+	}
+}
+
+func TestRecoveryCapabilityExpiresAndConsumesAfterResumableTransfer(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	owner := createTestOwner(t, ctx, store)
+	firstToken := bytes.Repeat([]byte{1}, 32)
+	if err := store.CreateBackupBlob(ctx, owner.Account.ID, owner.Device.ID, "recovery-blob", strings.Repeat("a", 64), 6, json.RawMessage(`{"state_counter":1}`), firstToken); err != nil {
+		t.Fatalf("create backup: %v", err)
+	}
+	transfer, err := store.BeginRecoveryTransfer(ctx, firstToken, 0)
+	if err != nil {
+		t.Fatalf("begin first transfer: %v", err)
+	}
+	if _, err := store.BeginRecoveryTransfer(ctx, firstToken, 0); !errors.Is(err, ErrRecoveryBusy) {
+		t.Fatalf("concurrent transfer err=%v want %v", err, ErrRecoveryBusy)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE backup_blobs SET recovery_lease_expires_at = ? WHERE recovery_lease_id = ?`, formatTime(time.Now().UTC().Add(-time.Minute)), transfer.LeaseID); err != nil {
+		t.Fatalf("expire transfer lease: %v", err)
+	}
+	if err := store.CompleteRecoveryTransfer(ctx, transfer.LeaseID, transfer.StartOffset, 3, 6); !errors.Is(err, ErrRecoveryBusy) {
+		t.Fatalf("stale completion err=%v want %v", err, ErrRecoveryBusy)
+	}
+	transfer, err = store.BeginRecoveryTransfer(ctx, firstToken, 0)
+	if err != nil {
+		t.Fatalf("take over expired transfer lease: %v", err)
+	}
+	if err := store.CompleteRecoveryTransfer(ctx, transfer.LeaseID, transfer.StartOffset, 3, 6); err != nil {
+		t.Fatalf("complete interrupted transfer: %v", err)
+	}
+	transfer, err = store.BeginRecoveryTransfer(ctx, firstToken, 3)
+	if err != nil {
+		t.Fatalf("resume transfer: %v", err)
+	}
+	if err := store.CompleteRecoveryTransfer(ctx, transfer.LeaseID, transfer.StartOffset, 3, 3); err != nil {
+		t.Fatalf("complete final transfer: %v", err)
+	}
+	if _, err := store.BeginRecoveryTransfer(ctx, firstToken, 0); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("replayed capability err=%v want %v", err, ErrNotFound)
+	}
+
+	secondToken := bytes.Repeat([]byte{2}, 32)
+	if err := store.CreateBackupBlob(ctx, owner.Account.ID, owner.Device.ID, "recovery-blob-2", strings.Repeat("b", 64), 1, json.RawMessage(`{"state_counter":2}`), secondToken); err != nil {
+		t.Fatalf("create rotated backup: %v", err)
+	}
+	if _, err := store.BeginRecoveryTransfer(ctx, firstToken, 0); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("rotated capability err=%v want %v", err, ErrNotFound)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE backup_blobs SET recovery_expires_at = ? WHERE recovery_token_hash = ?`, formatTime(time.Now().UTC().Add(-time.Minute)), secondToken); err != nil {
+		t.Fatalf("expire capability: %v", err)
+	}
+	if _, err := store.BeginRecoveryTransfer(ctx, secondToken, 0); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expired capability err=%v want %v", err, ErrNotFound)
 	}
 }
 
@@ -433,12 +571,26 @@ func TestMessageMarkersSyncSearchExportAndMembershipGuards(t *testing.T) {
 	if err := store.CreateBackupBlob(ctx, owner.Account.ID, owner.Device.ID, "backup_blob", strings.Repeat("a", 64), 64, json.RawMessage(`{"state_counter":1}`), make([]byte, 32)); err != nil {
 		t.Fatalf("create backup blob: %v", err)
 	}
+	if _, err := store.CreatePushSubscription(ctx, owner.Account.ID, owner.Device.ID, "webpush", "https://push.example.test/owner", "owner-public-key", "owner-reusable-push-secret"); err != nil {
+		t.Fatalf("create owner push subscription: %v", err)
+	}
 	export, err := store.ExportAccount(ctx, owner.Account.ID, ExportAccountOptions{})
 	if err != nil {
 		t.Fatalf("export account: %v", err)
 	}
 	if export.Account.ID != owner.Account.ID || len(export.Messages) != 1 {
 		t.Fatalf("unexpected export: %#v", export)
+	}
+	if export.ManifestVersion != "v2" {
+		t.Fatalf("export manifest=%q want v2", export.ManifestVersion)
+	}
+	exported, err := json.Marshal(export)
+	if err != nil {
+		t.Fatalf("marshal export: %v", err)
+	}
+	if bytes.Contains(exported, []byte("owner-reusable-push-secret")) ||
+		bytes.Contains(exported, []byte(`"auth_secret"`)) {
+		t.Fatalf("export contains a reusable push credential: %s", exported)
 	}
 	if err := store.DeleteAccount(ctx, member.Account.ID); err != nil {
 		t.Fatalf("delete account: %v", err)
@@ -888,7 +1040,15 @@ func TestSyncEventFailureRollsBackDurableMutations(t *testing.T) {
 	if err := store.CreateReaction(ctx, message.ID, member.Account.ID, []byte("original reaction")); err != nil {
 		t.Fatalf("create initial reaction: %v", err)
 	}
-	call, err := store.CreateCallSession(ctx, conversation.ID, owner.Account.ID, nil)
+	callConversation, err := store.CreateConversation(ctx, CreateConversationInput{
+		Kind:             "dm",
+		CreatedBy:        owner.Account.ID,
+		MemberAccountIDs: []string{member.Account.ID},
+	})
+	if err != nil {
+		t.Fatalf("create call DM: %v", err)
+	}
+	call, err := store.CreateCallSession(ctx, callConversation.ID, owner.Account.ID, nil)
 	if err != nil {
 		t.Fatalf("create initial call: %v", err)
 	}
@@ -939,15 +1099,15 @@ func TestSyncEventFailureRollsBackDurableMutations(t *testing.T) {
 		t.Fatalf("retention mutation was not rolled back: %#v err=%v", storedConversation, err)
 	}
 
-	if _, eventID, err := store.CreateCallSessionWithSyncEvent(ctx, conversation.ID, owner.Account.ID, nil); err == nil || eventID != 0 {
+	if _, eventID, err := store.CreateCallSessionWithSyncEvent(ctx, callConversation.ID, owner.Account.ID, nil); err == nil || eventID != 0 {
 		t.Fatalf("call create err=%v event_id=%d want failure and zero", err, eventID)
 	}
-	if _, eventID, err := store.TransitionCallSessionWithSyncEvent(ctx, call.ID, owner.Account.ID, "active", nil); err == nil || eventID != 0 {
+	if _, eventID, err := store.TransitionCallSessionWithSyncEvent(ctx, call.ID, owner.Account.ID, 1, "ended", nil); err == nil || eventID != 0 {
 		t.Fatalf("call transition err=%v event_id=%d want failure and zero", err, eventID)
 	}
 	var callCount int
 	var callState string
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*), MIN(state) FROM call_sessions WHERE conversation_id = ?`, conversation.ID).Scan(&callCount, &callState); err != nil || callCount != 1 || callState != "ringing" {
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*), MIN(state) FROM call_sessions WHERE conversation_id = ?`, callConversation.ID).Scan(&callCount, &callState); err != nil || callCount != 1 || callState != "ringing" {
 		t.Fatalf("call mutation was not rolled back: count=%d state=%q err=%v", callCount, callState, err)
 	}
 
@@ -1093,6 +1253,40 @@ func registerTestMember(t *testing.T, ctx context.Context, store *Store, inviteC
 		t.Fatalf("register member %s: %v", username, err)
 	}
 	return member
+}
+
+func TestSessionIdleTouchKeepsAbsoluteLifetimeBounded(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	owner := createTestOwner(t, ctx, store)
+	_, tokenHash, err := auth.NewToken()
+	if err != nil {
+		t.Fatalf("session token: %v", err)
+	}
+	if err := store.CreateSession(ctx, tokenHash, owner.Account.ID, owner.Device.ID, time.Now().UTC().Add(SessionIdleLifetime)); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	var absoluteBefore string
+	if err := store.db.QueryRowContext(ctx, `SELECT absolute_expires_at FROM sessions WHERE token_hash = ?`, tokenHash).Scan(&absoluteBefore); err != nil {
+		t.Fatalf("read absolute expiry: %v", err)
+	}
+	if err := store.TouchSession(ctx, tokenHash); err != nil {
+		t.Fatalf("touch session: %v", err)
+	}
+	var absoluteAfter string
+	if err := store.db.QueryRowContext(ctx, `SELECT absolute_expires_at FROM sessions WHERE token_hash = ?`, tokenHash).Scan(&absoluteAfter); err != nil {
+		t.Fatalf("read touched absolute expiry: %v", err)
+	}
+	if absoluteBefore != absoluteAfter {
+		t.Fatalf("absolute expiry moved from %q to %q", absoluteBefore, absoluteAfter)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE sessions SET last_used_at = ? WHERE token_hash = ?`, formatTime(time.Now().UTC().Add(-SessionIdleLifetime-time.Second)), tokenHash); err != nil {
+		t.Fatalf("age session: %v", err)
+	}
+	if _, err := store.PrincipalByTokenHash(ctx, tokenHash); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("idle-expired session err=%v want %v", err, ErrUnauthorized)
+	}
 }
 
 func runtimeSentinel(t *testing.T) string {

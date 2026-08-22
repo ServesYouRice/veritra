@@ -4,12 +4,22 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 CRATE="$ROOT/crypto/rust"
 
-# OpenMLS 0.8.1 is the latest released coordinated stack. Its HPKE 0.6 lock
-# includes a libcrux backend that Veritra does not enable, plus SHAKE support
-# used only by experimental/PQ KEM branches. Fail if the unused AEAD crates
-# ever enter the normal build graph or if Veritra stops pinning the reviewed
-# classical suite. Re-review and remove these exceptions when OpenMLS releases
-# support for hpke-rs 0.7+; next mandatory review: 2026-08-29.
+# OpenMLS 0.8.1 is the latest released coordinated stack. The parseable policy
+# owns the six narrowly scoped exceptions, their rationale and the UTC review
+# deadline. Fail if the unused AEAD crates enter the normal build graph or if
+# Veritra stops pinning the reviewed classical suite.
+sh "$ROOT/scripts/check-rust-audit-expiry.sh" --self-test
+ignore_flags=$(sh "$ROOT/scripts/check-rust-audit-expiry.sh" --print-ignores)
+expected_audit_version=$(sh "$ROOT/scripts/check-rust-audit-expiry.sh" --print-cargo-audit-version)
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "Rust audit blocked: cargo is not installed" >&2
+  exit 1
+fi
+actual_audit_version=$(cargo audit --version | awk '{print $2}')
+if [ "$actual_audit_version" != "$expected_audit_version" ]; then
+  echo "cargo-audit version mismatch: expected $expected_audit_version, got $actual_audit_version" >&2
+  exit 1
+fi
 tree=$(cd "$CRATE" && cargo tree --locked --target all -e normal --prefix none)
 for package in libcrux-aesgcm libcrux-chacha20poly1305; do
   if printf '%s\n' "$tree" | grep -q "^${package} v"; then
@@ -25,10 +35,10 @@ if ! grep -Fqx "$suite" "$CRATE/src/mls.rs"; then
 fi
 
 cd "$CRATE"
-cargo audit \
-  --ignore RUSTSEC-2026-0209 \
-  --ignore RUSTSEC-2026-0211 \
-  --ignore RUSTSEC-2026-0124 \
-  --ignore RUSTSEC-2026-0212 \
-  --ignore RUSTSEC-2026-0207 \
-  --ignore RUSTSEC-2026-0208
+# Re-check immediately before the audit so a long dependency-graph scan cannot
+# carry an exception across its UTC deadline.
+sh "$ROOT/scripts/check-rust-audit-expiry.sh"
+# Policy IDs are validated before they reach this command. Split only the
+# checker-produced option list, then pass each option as a quoted argument.
+set -- $ignore_flags
+cargo audit "$@"

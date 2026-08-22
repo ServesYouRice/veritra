@@ -9,8 +9,9 @@ User=private-messenger
 Group=private-messenger
 Environment=PRIVATE_MESSENGER_ADDR=127.0.0.1:8080
 Environment=PRIVATE_MESSENGER_DATA_DIR=%S/private-messenger
-# Before first-owner setup, the environment file must supply a strong random
-# PRIVATE_MESSENGER_SETUP_TOKEN. Remove it after setup and restart the service.
+# Before first-owner setup, generate a 32-byte base64url token with
+# `messenger-server generate-setup-token`; supply it in the environment file.
+# Remove it after setup and restart the service.
 Environment=PRIVATE_MESSENGER_ENV=production
 EnvironmentFile=/etc/private-messenger/private-messenger.env
 StateDirectory=private-messenger

@@ -36,7 +36,8 @@ abstract class MobilePushService {
   Future<void> register({required String instance, required String vapid});
   Future<void> pickDistributor();
   Future<void> unregister(String instance);
-  Future<bool> takePendingWake();
+  Future<int> pendingWakeGeneration();
+  Future<bool> acknowledgeWake(int generation);
   void dispose();
 }
 
@@ -55,7 +56,10 @@ class DisabledMobilePushService implements MobilePushService {
   Future<void> unregister(String instance) async {}
 
   @override
-  Future<bool> takePendingWake() async => false;
+  Future<int> pendingWakeGeneration() async => 0;
+
+  @override
+  Future<bool> acknowledgeWake(int generation) async => false;
 
   @override
   void dispose() {}
@@ -128,8 +132,20 @@ class PlatformMobilePushService implements MobilePushService {
       );
 
   @override
-  Future<bool> takePendingWake() async =>
-      await _methods.invokeMethod<bool>('takeWake') ?? false;
+  Future<int> pendingWakeGeneration() async {
+    final value = await _methods.invokeMethod<Object?>('pendingWakeGeneration');
+    return value is num ? value.toInt() : 0;
+  }
+
+  @override
+  Future<bool> acknowledgeWake(int generation) async {
+    if (generation <= 0) return false;
+    return await _methods.invokeMethod<bool>(
+          'acknowledgeWake',
+          <String, int>{'generation': generation},
+        ) ??
+        false;
+  }
 
   @override
   void dispose() {

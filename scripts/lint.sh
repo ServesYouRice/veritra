@@ -2,6 +2,8 @@
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+sh "$ROOT/scripts/check-go-toolchain.sh"
+GO_VERSION="$(tr -d '[:space:]' < "$ROOT/.go-version")"
 
 # Keep gofmt and go vet as distinct checks so a formatting failure does not mask
 # vet output (and vice versa); each reports its own result.
@@ -9,7 +11,7 @@ go_lint='unformatted="$(gofmt -l .)"; if [ -n "$unformatted" ]; then echo "gofmt
 if command -v go >/dev/null 2>&1; then
   (cd "$ROOT/server" && sh -c "$go_lint")
 else
-  docker run --rm -v "$ROOT:/workspace" -w /workspace/server golang:1.25.12@sha256:9006890ecba0a168034d99516084099ae3114d9f2b7d6572c77f2dde57ebc980 sh -c "$go_lint"
+  docker run --rm -v "$ROOT:/workspace" -w /workspace/server "golang:${GO_VERSION}@sha256:9006890ecba0a168034d99516084099ae3114d9f2b7d6572c77f2dde57ebc980" sh -c "$go_lint"
 fi
 
 if command -v cargo >/dev/null 2>&1; then
