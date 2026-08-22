@@ -23,6 +23,14 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # flutter_secure_storage holds veritra.database_key.v1, the key to the
+      # local encrypted message database. v11 removed the shims that migrate
+      # data off the pre-v10 algorithms, so a major bump can leave that key
+      # unrecoverable. Major upgrades here need a deliberate migration; see
+      # the discussion on #40 before lifting this.
+      - dependency-name: flutter_secure_storage
+        update-types: ["version-update:semver-major"]
     groups:
       dart-dependencies:
         patterns:
