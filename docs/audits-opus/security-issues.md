@@ -54,7 +54,7 @@ high baseline:
 ### Setup token has no entropy floor despite documented promise
 
 **Severity:** High
-**Location:** [`server/internal/config/config.go:51`](../server/internal/config/config.go#L51), [`server/internal/app/app.go:61-64`](../server/internal/app/app.go#L61-L64), [`server/internal/httpapi/auth_handlers.go:188-196`](../server/internal/httpapi/auth_handlers.go#L188-L196)
+**Location:** [`server/internal/config/config.go:51`](../../server/internal/config/config.go#L51), [`server/internal/app/app.go:61-64`](../../server/internal/app/app.go#L61-L64), [`server/internal/httpapi/auth_handlers.go:188-196`](../../server/internal/httpapi/auth_handlers.go#L188-L196)
 
 **Problem**
 
@@ -151,7 +151,7 @@ guarding the highest-privilege operation on the server.
 ### Recovery capability token travels in the URL path
 
 **Severity:** High
-**Location:** [`server/internal/httpapi/api.go:58`](../server/internal/httpapi/api.go#L58), handler at [`server/internal/httpapi/content_handlers.go:190-203`](../server/internal/httpapi/content_handlers.go#L190-L203)
+**Location:** [`server/internal/httpapi/api.go:58`](../../server/internal/httpapi/api.go#L58), handler at [`server/internal/httpapi/content_handlers.go:190-203`](../../server/internal/httpapi/content_handlers.go#L190-L203)
 
 **Problem**
 
@@ -245,7 +245,7 @@ own logger, contradicting a stated privacy boundary.
 ### Login-backoff table can be flooded to disable per-username backoff
 
 **Severity:** Medium
-**Location:** [`server/internal/httpapi/login_backoff.go:55-84`](../server/internal/httpapi/login_backoff.go#L55-L84)
+**Location:** [`server/internal/httpapi/login_backoff.go:55-84`](../../server/internal/httpapi/login_backoff.go#L55-L84)
 
 **Problem**
 
@@ -322,7 +322,7 @@ opposite failure direction (fail-closed rather than fail-open).
 ### bcrypt at cost 10, no Argon2id, no cost migration path
 
 **Severity:** Medium
-**Location:** [`server/internal/auth/auth.go:29`](../server/internal/auth/auth.go#L29)
+**Location:** [`server/internal/auth/auth.go:29`](../../server/internal/auth/auth.go#L29)
 
 **Problem**
 
@@ -386,7 +386,7 @@ cracking. Users reuse passwords; the harm lands on their other accounts.
 ### Blob quota is enforced only after the body is written to disk
 
 **Severity:** Medium
-**Location:** [`server/internal/httpapi/content_handlers.go:47-73`](../server/internal/httpapi/content_handlers.go#L47-L73), quota at [`server/internal/storage/content_store.go:611-628`](../server/internal/storage/content_store.go#L611-L628)
+**Location:** [`server/internal/httpapi/content_handlers.go:47-73`](../../server/internal/httpapi/content_handlers.go#L47-L73), quota at [`server/internal/storage/content_store.go:611-628`](../../server/internal/storage/content_store.go#L611-L628)
 
 **Problem**
 
@@ -450,7 +450,7 @@ suggests.
 ### No per-account limits on conversation, community or channel creation
 
 **Severity:** Medium
-**Location:** [`server/internal/httpapi/conversation_handlers.go:17-32`](../server/internal/httpapi/conversation_handlers.go#L17-L32) (`createCommunity`), `:86-112` (channel creation), `:125-154` (`createConversation`)
+**Location:** [`server/internal/httpapi/conversation_handlers.go:17-32`](../../server/internal/httpapi/conversation_handlers.go#L17-L32) (`createCommunity`), `:86-112` (channel creation), `:125-154` (`createConversation`)
 
 **Problem**
 
@@ -510,7 +510,7 @@ creation by any authenticated user is a capacity risk regardless of intent.
 ### Hand-rolled WebSocket framing is an unauthenticated parse surface
 
 **Severity:** Medium (architectural)
-**Location:** [`server/internal/realtime/websocket.go`](../server/internal/realtime/websocket.go) — 313 lines implementing RFC 6455 directly
+**Location:** [`server/internal/realtime/websocket.go`](../../server/internal/realtime/websocket.go) — 313 lines implementing RFC 6455 directly
 
 **Problem**
 
@@ -576,7 +576,7 @@ posture is deliberate — but then the conformance evidence has to exist.
 ### No certificate-trust path for self-hosted LAN deployments
 
 **Severity:** Medium
-**Location:** [`mobile/lib/core/api_client.dart:9-13`](../mobile/lib/core/api_client.dart#L9-L13); `usesCleartextTraffic="false"` in `AndroidManifest.xml`; no ATS exception in `Info.plist`
+**Location:** [`mobile/lib/core/api_client.dart:9-13`](../../mobile/lib/core/api_client.dart#L9-L13); `usesCleartextTraffic="false"` in `AndroidManifest.xml`; no ATS exception in `Info.plist`
 
 **Problem**
 
@@ -632,7 +632,7 @@ failure is a raw socket error.
 ### Rate-limit table exhaustion refuses new clients
 
 **Severity:** Low
-**Location:** [`server/internal/app/app.go:560-571`](../server/internal/app/app.go#L560-L571)
+**Location:** [`server/internal/app/app.go:560-571`](../../server/internal/app/app.go#L560-L571)
 
 **Problem**
 
@@ -692,7 +692,7 @@ the opposite (open) direction. Both would benefit from the same eviction policy.
 ### Setup-token comparison leaks token length
 
 **Severity:** Low
-**Location:** [`server/internal/httpapi/auth_handlers.go:189-193`](../server/internal/httpapi/auth_handlers.go#L189-L193)
+**Location:** [`server/internal/httpapi/auth_handlers.go:189-193`](../../server/internal/httpapi/auth_handlers.go#L189-L193)
 
 **Problem**
 
@@ -740,7 +740,7 @@ internally consistent.
 ### 30-day sessions with no rotation or absolute cap
 
 **Severity:** Low
-**Location:** [`server/internal/httpapi/auth_handlers.go:241`](../server/internal/httpapi/auth_handlers.go#L241), `:170`, `:683`
+**Location:** [`server/internal/httpapi/auth_handlers.go:241`](../../server/internal/httpapi/auth_handlers.go#L241), `:170`, `:683`
 
 **Problem**
 
@@ -793,7 +793,7 @@ into a security signal.
 ### Missing `POST_NOTIFICATIONS` permission on Android 13+
 
 **Severity:** Low (functional impact, security-adjacent)
-**Location:** [`mobile/android/app/src/main/AndroidManifest.xml`](../mobile/android/app/src/main/AndroidManifest.xml)
+**Location:** [`mobile/android/app/src/main/AndroidManifest.xml`](../../mobile/android/app/src/main/AndroidManifest.xml)
 
 **Problem**
 

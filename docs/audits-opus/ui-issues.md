@@ -2,7 +2,7 @@
 
 Reviewed against the working tree including the uncommitted **K2 · Bone** visual
 rebuild (card I28), and against the per-screen spec in
-[`docs/design.md`](../docs/design.md).
+[`docs/design.md`](../../docs/design.md).
 
 **Context.** The rebuild is good work. The screens have real empty states, real
 error states with retry, real loading states, operation-scoped busy flags,
@@ -49,7 +49,7 @@ unavailable and are **not** reported as missing.
 ### Form and control boundaries fail WCAG 1.4.11 (≈1.4:1)
 
 **Severity:** High
-**Location:** [`mobile/lib/ui/tokens.dart:29`](../mobile/lib/ui/tokens.dart#L29) and `:42` (`darkBorder`, `lightBorder`); mapped to `outlineVariant` at [`mobile/lib/ui/theme.dart:46`](../mobile/lib/ui/theme.dart#L46) and `:82`; consumed as a control boundary at `theme.dart:168`, `:172`, `:196`, `:214`, `:220`, `:267`
+**Location:** [`mobile/lib/ui/tokens.dart:29`](../../mobile/lib/ui/tokens.dart#L29) and `:42` (`darkBorder`, `lightBorder`); mapped to `outlineVariant` at [`mobile/lib/ui/theme.dart:46`](../../mobile/lib/ui/theme.dart#L46) and `:82`; consumed as a control boundary at `theme.dart:168`, `:172`, `:196`, `:214`, `:220`, `:267`
 
 **Problem**
 
@@ -145,7 +145,7 @@ input surface, it contradicts a documented claim, and it is a one-token fix.
 ### Connect screen is prefilled with a URL that cannot work on a device
 
 **Severity:** High
-**Location:** [`mobile/lib/features/auth/connect_screen.dart:28`](../mobile/lib/features/auth/connect_screen.dart#L28); validator at `:369-386`; platform config at [`mobile/android/app/src/main/AndroidManifest.xml`](../mobile/android/app/src/main/AndroidManifest.xml) (`usesCleartextTraffic="false"`) and [`mobile/ios/Runner/Info.plist`](../mobile/ios/Runner/Info.plist) (no ATS exception)
+**Location:** [`mobile/lib/features/auth/connect_screen.dart:28`](../../mobile/lib/features/auth/connect_screen.dart#L28); validator at `:369-386`; platform config at [`mobile/android/app/src/main/AndroidManifest.xml`](../../mobile/android/app/src/main/AndroidManifest.xml) (`usesCleartextTraffic="false"`) and [`mobile/ios/Runner/Info.plist`](../../mobile/ios/Runner/Info.plist) (no ATS exception)
 
 **Problem**
 
@@ -214,7 +214,7 @@ the app.
 ### "Sign in" is the default mode but always fails on a fresh install
 
 **Severity:** High
-**Location:** [`mobile/lib/features/auth/connect_screen.dart:37`](../mobile/lib/features/auth/connect_screen.dart#L37); server precondition at [`server/internal/httpapi/auth_handlers.go:210-213`](../server/internal/httpapi/auth_handlers.go#L210-L213) and `:226`
+**Location:** [`mobile/lib/features/auth/connect_screen.dart:37`](../../mobile/lib/features/auth/connect_screen.dart#L37); server precondition at [`server/internal/httpapi/auth_handlers.go:210-213`](../../server/internal/httpapi/auth_handlers.go#L210-L213) and `:226`
 
 **Problem**
 
@@ -285,7 +285,7 @@ new user.
 ### No feedback when the server is unreachable
 
 **Severity:** Medium
-**Location:** [`mobile/lib/features/auth/connect_screen.dart:70-85`](../mobile/lib/features/auth/connect_screen.dart#L70-L85); `checkSetupRequired` at [`mobile/lib/core/app_state.dart:196-204`](../mobile/lib/core/app_state.dart#L196-L204)
+**Location:** [`mobile/lib/features/auth/connect_screen.dart:70-85`](../../mobile/lib/features/auth/connect_screen.dart#L70-L85); `checkSetupRequired` at [`mobile/lib/core/app_state.dart:196-204`](../../mobile/lib/core/app_state.dart#L196-L204)
 
 **Problem**
 
@@ -331,7 +331,7 @@ outcome is a blank screen followed by an unexplained failure.
 ### Chat-list timestamps are always a full date, never a time
 
 **Severity:** Medium
-**Location:** [`mobile/lib/features/chat/chat_list_screen.dart:256`](../mobile/lib/features/chat/chat_list_screen.dart#L256); helper at [`mobile/lib/ui/format.dart:11-13`](../mobile/lib/ui/format.dart#L11-L13)
+**Location:** [`mobile/lib/features/chat/chat_list_screen.dart:256`](../../mobile/lib/features/chat/chat_list_screen.dart#L256); helper at [`mobile/lib/ui/format.dart:11-13`](../../mobile/lib/ui/format.dart#L11-L13)
 
 **Problem**
 
@@ -381,7 +381,7 @@ first so this can be localised properly rather than hardcoded.
 ### Master-detail layout activates in phone landscape
 
 **Severity:** Medium
-**Location:** [`mobile/lib/ui/app_shell.dart:21`](../mobile/lib/ui/app_shell.dart#L21) and `:53`
+**Location:** [`mobile/lib/ui/app_shell.dart:21`](../../mobile/lib/ui/app_shell.dart#L21) and `:53`
 
 **Problem**
 
@@ -437,7 +437,7 @@ a bug, and it is the state in which the composer is least usable.
 ### No scroll-to-latest or "new messages" affordance
 
 **Severity:** Medium
-**Location:** [`mobile/lib/features/chat/chat_screen.dart:37-67`](../mobile/lib/features/chat/chat_screen.dart#L37-L67) and `:328-374`
+**Location:** [`mobile/lib/features/chat/chat_screen.dart:37-67`](../../mobile/lib/features/chat/chat_screen.dart#L37-L67) and `:328-374`
 
 **Problem**
 
@@ -483,7 +483,7 @@ confirmation is lost too.
 ### Disabled attachment button explains itself only via tooltip
 
 **Severity:** Medium
-**Location:** [`mobile/lib/features/chat/chat_screen.dart:732-738`](../mobile/lib/features/chat/chat_screen.dart#L732-L738)
+**Location:** [`mobile/lib/features/chat/chat_screen.dart:732-738`](../../mobile/lib/features/chat/chat_screen.dart#L732-L738)
 
 **Problem**
 
@@ -533,7 +533,7 @@ than the truth.
 ### Every state change rebuilds the whole app and both themes
 
 **Severity:** Medium
-**Location:** [`mobile/lib/main.dart:44-58`](../mobile/lib/main.dart#L44-L58)
+**Location:** [`mobile/lib/main.dart:44-58`](../../mobile/lib/main.dart#L44-L58)
 
 **Problem**
 
@@ -593,7 +593,7 @@ watching the app catch up.
 ### Switching tabs destroys page state
 
 **Severity:** Medium
-**Location:** [`mobile/lib/ui/app_shell.dart:57-63`](../mobile/lib/ui/app_shell.dart#L57-L63) and `:102`
+**Location:** [`mobile/lib/ui/app_shell.dart:57-63`](../../mobile/lib/ui/app_shell.dart#L57-L63) and `:102`
 
 **Problem**
 
@@ -631,7 +631,7 @@ set gives both.
 ### New-conversation sheet: toast-only validation, no scroll
 
 **Severity:** Medium
-**Location:** [`mobile/lib/features/chat/new_conversation_sheet.dart:49-104`](../mobile/lib/features/chat/new_conversation_sheet.dart#L49-L104) and `:107-129`
+**Location:** [`mobile/lib/features/chat/new_conversation_sheet.dart:49-104`](../../mobile/lib/features/chat/new_conversation_sheet.dart#L49-L104) and `:107-129`
 
 **Problem**
 
@@ -680,7 +680,7 @@ button at all.
 ### No localisation delegates; dates forced to en-US
 
 **Severity:** Medium
-**Location:** [`mobile/lib/main.dart:49-55`](../mobile/lib/main.dart#L49-L55)
+**Location:** [`mobile/lib/main.dart:49-55`](../../mobile/lib/main.dart#L49-L55)
 
 **Problem**
 
@@ -729,7 +729,7 @@ delegate exists to test with.
 ### No open-source licences screen
 
 **Severity:** Medium
-**Location:** [`mobile/lib/features/settings/settings_screen.dart`](../mobile/lib/features/settings/settings_screen.dart) — no `showLicensePage`, no About tile
+**Location:** [`mobile/lib/features/settings/settings_screen.dart`](../../mobile/lib/features/settings/settings_screen.dart) — no `showLicensePage`, no About tile
 
 **Problem**
 
@@ -775,7 +775,7 @@ Three separate reasons, all concrete:
 ### `veritra://` device-link URI has no handler
 
 **Severity:** Medium
-**Location:** generated at [`server/internal/httpapi/api.go:363`](../server/internal/httpapi/api.go#L363); no `intent-filter` in [`AndroidManifest.xml`](../mobile/android/app/src/main/AndroidManifest.xml); no `CFBundleURLTypes` in [`Info.plist`](../mobile/ios/Runner/Info.plist)
+**Location:** generated at [`server/internal/httpapi/api.go:363`](../../server/internal/httpapi/api.go#L363); no `intent-filter` in [`AndroidManifest.xml`](../../mobile/android/app/src/main/AndroidManifest.xml); no `CFBundleURLTypes` in [`Info.plist`](../../mobile/ios/Runner/Info.plist)
 
 **Problem**
 
@@ -822,7 +822,7 @@ Either is fine; the current half-state is not.
 ### Quota (507) has no user-facing message
 
 **Severity:** Low
-**Location:** [`mobile/lib/core/api_client.dart:1055-1106`](../mobile/lib/core/api_client.dart#L1055-L1106) (`ApiException.message`)
+**Location:** [`mobile/lib/core/api_client.dart:1055-1106`](../../mobile/lib/core/api_client.dart#L1055-L1106) (`ApiException.message`)
 
 **Problem**
 
@@ -871,7 +871,7 @@ permanent invariant rather than a list that drifts.
 ### Nav pill labels truncate at small widths and large text
 
 **Severity:** Low
-**Location:** [`mobile/lib/ui/app_shell.dart:154-166`](../mobile/lib/ui/app_shell.dart#L154-L166) and `:206-229`
+**Location:** [`mobile/lib/ui/app_shell.dart:154-166`](../../mobile/lib/ui/app_shell.dart#L154-L166) and `:206-229`
 
 **Problem**
 
@@ -909,7 +909,7 @@ the ones who most need the label.
 ### No in-app light/dark setting
 
 **Severity:** Low
-**Location:** [`mobile/lib/main.dart:53`](../mobile/lib/main.dart#L53) — `themeMode: ThemeMode.system`
+**Location:** [`mobile/lib/main.dart:53`](../../mobile/lib/main.dart#L53) — `themeMode: ThemeMode.system`
 
 **Problem**
 
@@ -940,7 +940,7 @@ will surface any remaining contrast issues from [U1](#u1).
 ### "Coming soon" section ships in Settings
 
 **Severity:** Low
-**Location:** [`mobile/lib/features/settings/settings_screen.dart:203-218`](../mobile/lib/features/settings/settings_screen.dart#L203-L218)
+**Location:** [`mobile/lib/features/settings/settings_screen.dart:203-218`](../../mobile/lib/features/settings/settings_screen.dart#L203-L218)
 
 **Problem**
 
@@ -979,7 +979,7 @@ screen users visit deliberately. It sets expectations you then have to meet.
 ### Composer has no keyboard send and no length feedback
 
 **Severity:** Low
-**Location:** [`mobile/lib/features/chat/chat_screen.dart:739-768`](../mobile/lib/features/chat/chat_screen.dart#L739-L768)
+**Location:** [`mobile/lib/features/chat/chat_screen.dart:739-768`](../../mobile/lib/features/chat/chat_screen.dart#L739-L768)
 
 **Problem**
 
@@ -1024,7 +1024,7 @@ all, is a gap that will be felt immediately on desktop.
 ### 10px `micro` type carries headers, labels and chips
 
 **Severity:** Low
-**Location:** [`mobile/lib/ui/tokens.dart:145-150`](../mobile/lib/ui/tokens.dart#L145-L150)
+**Location:** [`mobile/lib/ui/tokens.dart:145-150`](../../mobile/lib/ui/tokens.dart#L145-L150)
 
 **Problem**
 
@@ -1070,7 +1070,7 @@ compound on exactly the screens that need to work first.
 ### Sign out is the only destructive action without confirmation
 
 **Severity:** Low
-**Location:** [`mobile/lib/features/settings/settings_screen.dart:192`](../mobile/lib/features/settings/settings_screen.dart#L192)
+**Location:** [`mobile/lib/features/settings/settings_screen.dart:192`](../../mobile/lib/features/settings/settings_screen.dart#L192)
 
 **Problem**
 
@@ -1111,7 +1111,7 @@ out and back in costs a full re-sync.
 ### Terminally-failed messages cannot be recovered or copied
 
 **Severity:** Low
-**Location:** [`mobile/lib/features/chat/chat_screen.dart:214-234`](../mobile/lib/features/chat/chat_screen.dart#L214-L234) (`_send`) and `:407-467` (`_PendingMessageBubble`)
+**Location:** [`mobile/lib/features/chat/chat_screen.dart:214-234`](../../mobile/lib/features/chat/chat_screen.dart#L214-L234) (`_send`) and `:407-467` (`_PendingMessageBubble`)
 
 **Problem**
 
@@ -1151,7 +1151,7 @@ memorable in a way that shapes trust in the whole product.
 ### No chat-list row actions (mute, mark read, leave)
 
 **Severity:** Low
-**Location:** [`mobile/lib/features/chat/chat_list_screen.dart:128-286`](../mobile/lib/features/chat/chat_list_screen.dart#L128-L286)
+**Location:** [`mobile/lib/features/chat/chat_list_screen.dart:128-286`](../../mobile/lib/features/chat/chat_list_screen.dart#L128-L286)
 
 **Problem**
 
