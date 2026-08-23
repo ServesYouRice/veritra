@@ -14,6 +14,16 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # tls_codec must stay in lockstep with openmls. openmls 0.8.1 and its
+      # whole tree (openmls_traits, the credential and provider crates) still
+      # depend on tls_codec 0.4.x, so bumping it here only adds a second copy
+      # of the crate: the Serialize/Deserialize traits we import stop being the
+      # ones openmls types implement and crypto/rust/src/mls.rs no longer
+      # compiles. See #52, which was reverted for exactly this. Lift this only
+      # when openmls itself moves to tls_codec 0.5.
+      - dependency-name: tls_codec
+      - dependency-name: tls_codec_derive
     groups:
       rust-dependencies:
         patterns:
