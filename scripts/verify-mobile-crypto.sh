@@ -33,7 +33,7 @@ case "$PLATFORM" in
     test -f "$simulator"
     verify_symbols "$(nm -gU "$device")"
     verify_symbols "$(nm -gU "$simulator")"
-    lipo -verify_arch arm64 x86_64 "$simulator"
+    lipo "$simulator" -verify_arch arm64 x86_64
     ;;
   *) echo "usage: $0 android|ios" >&2; exit 2 ;;
 esac

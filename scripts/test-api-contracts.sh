@@ -40,6 +40,9 @@ if [ "$ready" -ne 1 ]; then
   exit 1
 fi
 
+# flutter test resolves the project from the current directory, not from the
+# path it is given, so it must run from the Flutter project root.
+cd "$ROOT/mobile"
 VERITRA_CONTRACT_BASE_URL="$BASE_URL" \
 VERITRA_CRYPTO_LIBRARY="$ROOT/crypto/rust/target/release/libprivate_messenger_crypto.so" \
-  flutter test "$ROOT/mobile/test/api_contract_test.dart"
+  flutter test test/api_contract_test.dart
