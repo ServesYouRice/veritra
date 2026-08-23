@@ -1232,7 +1232,7 @@ class AppState extends ChangeNotifier {
         var pageCount = 0;
         while (true) {
           if (pageCount >= 2000) {
-            throw const StateError('Account export has too many pages');
+            throw StateError('Account export has too many pages');
           }
           final page = await client.exportAccountPage(
             current.token,
@@ -1244,7 +1244,7 @@ class AppState extends ChangeNotifier {
           if (totalBytes + separatorBytes + encodedPage.length +
                   utf8.encode(footer).length >
               maxExportBytes) {
-            throw const StateError('Account export exceeds the size limit');
+            throw StateError('Account export exceeds the size limit');
           }
           if (!firstPage) {
             sink.add(const <int>[0x2c]);
@@ -1258,7 +1258,7 @@ class AppState extends ChangeNotifier {
             break;
           }
           if (next is! String || next.isEmpty || next == before) {
-            throw const StateError('Account export cursor did not advance');
+            throw StateError('Account export cursor did not advance');
           }
           before = next;
         }

@@ -697,7 +697,7 @@ class SecureLocalStore implements LocalStore {
   @override
   Future<void> releaseSyncLease(LocalSyncLease lease) async {
     final key = _syncLeaseKey;
-    if (key != lease.key) return;
+    if (key == null || key != lease.key) return;
     await (await _database()).releaseSyncLease(key);
     _syncLeaseKey = null;
   }

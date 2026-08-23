@@ -42,8 +42,16 @@ if [ ! -s "$WRAPPER" ] || ! grep -Eq '^distributionUrl=.*gradle-[0-9]+\.[0-9]+(\
   echo "mobile dependency check failed: Gradle wrapper is not pinned" >&2
   exit 1
 fi
-if grep -R -n -E 'https?://|jcenter\(\)|mavenLocal\(\)' "$ANDROID" --include='*.gradle' --include='*.gradle.kts' | grep -q .; then
+# Repository declarations are what matter here; a URL inside a comment is not
+# one. Strip the file:line prefix and skip lines that are entirely a comment.
+gradle_repo_hits="$(
+  find "$ANDROID" \( -name '*.gradle' -o -name '*.gradle.kts' \) -type f -print0 |
+    xargs -0 grep -n -H -E 'https?://|jcenter\(\)|mavenLocal\(\)' |
+    awk '{ body = $0; sub(/^[^:]*:[0-9]+:/, "", body); if (body !~ /^[[:space:]]*(\/\/|\/\*|\*|#)/) print }'
+)"
+if [ -n "$gradle_repo_hits" ]; then
   echo "mobile dependency check failed: unreviewed or insecure Gradle repository found" >&2
+  echo "$gradle_repo_hits" >&2
   exit 1
 fi
 if grep -R -n -E ':(latest|release|snapshot|[0-9]+\.[0-9]+\.[0-9]+\+)' "$ANDROID/app/build.gradle.kts"; then

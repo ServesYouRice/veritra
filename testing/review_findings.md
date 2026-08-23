@@ -1,6 +1,6 @@
 # Review of the testing-gap audit
 
-Reviewed against commit `0d0e544272e21276c38221bcc716e41efc0c2a54` on
+Reviewed against commit `3ee785db9083eb67f3b16c3f83050ac3b365eb19` on
 2026-08-23.
 
 ## Verdict
@@ -22,9 +22,9 @@ Docker executable is installed but its engine is not running.
 
 ### A1 - Authority conflict (high)
 
-`testing/README.md:3` called this directory authoritative. That conflicts with
-`docs/board.md` decisions D07/D08 and `AGENTS.md`, which make the board and
-consensus authoritative. The README has been corrected.
+Before this review, `testing/README.md` called this directory authoritative.
+That conflicts with `docs/board.md` decisions D07/D08 and `AGENTS.md`, which
+make the board and consensus authoritative. The README has been corrected.
 
 ### A2 - No reviewed revision or freshness check (high)
 
@@ -172,6 +172,23 @@ for invariant tests, but the current setup allows large untested services to
 land without any automated signal. Establish a measured baseline first, then
 fail only on justified regression from that baseline.
 
+### M7 - The protected iOS job no longer proves a release-device build
+
+Severity: **High release-evidence gap, currently contained by G24/G25**.
+
+`.github/workflows/ci.yml:137` now runs
+`flutter build ios --simulator --debug`. Commit `3ee785d` correctly records why
+an unsigned release-device build cannot satisfy the push entitlement without
+Apple credentials, but `check-release-evidence.py` still treats any
+`mobile-ios: success` result as the protected iOS job. The evidence schema does
+not distinguish a debug simulator compile from a signed release-device build.
+
+This does not currently open the production gate because G24/G25 approval is
+still absent. Before release, make the evidence type explicit: keep simulator
+CI as a fast compile check, and bind the external signed device artifact and
+test matrix to the candidate commit under G24. A debug simulator success must
+not be presented as release-build evidence.
+
 ## Valid themes to retain
 
 The following ideas remain useful after rewriting them against the current
@@ -191,8 +208,9 @@ tree and board status:
 
 1. Keep these reports non-authoritative and revision-bound.
 2. Wire the existing release-policy test scripts into CI.
-3. Add the call HTTP/live-client contract test before any T42B activation.
-4. Add attachment pipeline tests; take backup tests only when I45 is eligible.
-5. Add push worker/provider/platform-bridge tests under I41.
-6. Complete the already-recorded golden, real-device, and independent-review
+3. Separate simulator-compile evidence from signed iOS release evidence.
+4. Add the call HTTP/live-client contract test before any T42B activation.
+5. Add attachment pipeline tests; take backup tests only when I45 is eligible.
+6. Add push worker/provider/platform-bridge tests under I41.
+7. Complete the already-recorded golden, real-device, and independent-review
    evidence without weakening `PM_CRYPTO_UNAVAILABLE`.
