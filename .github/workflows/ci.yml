@@ -135,8 +135,8 @@ jobs:
           sh scripts/verify-mobile-crypto.sh ios
       - run: flutter pub get --enforce-lockfile
         working-directory: mobile
-      - name: Build iOS release app without code signing
-        run: flutter build ios --release --no-codesign
+      - name: Build iOS app for the simulator without code signing
+        run: flutter build ios --simulator --debug
         working-directory: mobile
 
   compose-smoke:

@@ -6,11 +6,13 @@ PLATFORM=${1:-}
 
 verify_symbols() {
   symbols=$1
-  echo "$symbols" | grep -q 'pm_crypto_abi_version'
-  echo "$symbols" | grep -q 'pm_crypto_available'
-  echo "$symbols" | grep -q 'pm_crypto_device_create'
-  echo "$symbols" | grep -q 'pm_crypto_device_link_transcript_hash'
-  echo "$symbols" | grep -q 'pm_crypto_buffer_free'
+  for symbol in pm_crypto_abi_version pm_crypto_available pm_crypto_device_create \
+    pm_crypto_device_link_transcript_hash pm_crypto_buffer_free; do
+    case "$symbols" in
+      *"$symbol"*) ;;
+      *) echo "missing exported symbol: $symbol" >&2; return 1 ;;
+    esac
+  done
 }
 
 case "$PLATFORM" in

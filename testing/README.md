@@ -1,6 +1,13 @@
 # Veritra Test Architecture Audit & Gap Remediation Plan
 
-This directory provides the authoritative audit of testing gaps across the Veritra codebase, coupled with an actionable, structured testing plan.
+> **Review status:** These files are proposals, not an authoritative backlog.
+> A source-level review found material stale claims, invalid commands, and
+> missed gaps. Read [`review_findings.md`](review_findings.md) before using
+> them. [`docs/board.md`](../docs/board.md) and
+> [`docs/audit-consensus.md`](../docs/audit-consensus.md) remain authoritative.
+
+This directory collects proposed testing-gap audits and remediation ideas for
+the Veritra codebase.
 
 The plan is designed strictly around the four Anthropic engineering and multi-agent coordination principles:
 1. **[Model Selection](https://claude.com/blog/claude-models-explained-choosing-the-best-model-for-your-use-case)**: Tiered model routing based on reasoning complexity (Strong / Balanced+Advisor / Balanced / Fast).
