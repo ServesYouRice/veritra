@@ -346,7 +346,8 @@ class _MessageList extends StatelessWidget {
           final envelope = pending[pending.length - 1 - index];
           final key = envelope.idempotencyKey;
           final record = state.outboxRecord(key);
-          final terminal = state.outboxState(key) == OutboxDeliveryState.terminal;
+          final terminal =
+              state.outboxState(key) == OutboxDeliveryState.terminal;
           return _PendingMessageBubble(
             state: state.outboxState(key),
             failureMessage: terminal ? state.outboxFailureMessage(key) : null,
@@ -457,71 +458,70 @@ class _PendingMessageBubble extends StatelessWidget {
               color: sending ? scheme.outlineVariant : scheme.error,
             ),
           ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: <Widget>[
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    if (sending)
-                      const SizedBox.square(
-                        dimension: 15,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    else
-                      Icon(
-                        Icons.error_outline,
-                        size: 18,
-                        color: scheme.onErrorContainer,
-                      ),
-                    const SizedBox(width: BoneSpacing.sm),
-                    Text(
-                      sending
-                          ? 'Sending encrypted message'
-                          : terminal
-                              ? 'Message needs attention'
-                              : 'Send failed',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: sending
-                            ? scheme.onSurface
-                            : scheme.onErrorContainer,
-                      ),
-                    ),
-                  ],
-                ),
-                if (failureMessage != null) ...<Widget>[
-                  const SizedBox(height: BoneSpacing.xs),
-                  Text(
-                    failureMessage!,
-                    textAlign: TextAlign.end,
-                    style: theme.textTheme.bodySmall?.copyWith(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: <Widget>[
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  if (sending)
+                    const SizedBox.square(
+                      dimension: 15,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  else
+                    Icon(
+                      Icons.error_outline,
+                      size: 18,
                       color: scheme.onErrorContainer,
+                    ),
+                  const SizedBox(width: BoneSpacing.sm),
+                  Text(
+                    sending
+                        ? 'Sending encrypted message'
+                        : terminal
+                            ? 'Message needs attention'
+                            : 'Send failed',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color:
+                          sending ? scheme.onSurface : scheme.onErrorContainer,
                     ),
                   ),
                 ],
-                if (!sending)
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      if (onRetry != null)
-                        TextButton(
-                          onPressed: onRetry,
-                          child: const Text('Retry'),
-                        ),
-                      if (onCopy != null)
-                        TextButton(
-                          onPressed: onCopy,
-                          child: const Text('Copy'),
-                        ),
-                      if (onDiscard != null)
-                        TextButton(
-                          onPressed: onDiscard,
-                          child: const Text('Discard'),
-                        ),
-                    ],
+              ),
+              if (failureMessage != null) ...<Widget>[
+                const SizedBox(height: BoneSpacing.xs),
+                Text(
+                  failureMessage!,
+                  textAlign: TextAlign.end,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: scheme.onErrorContainer,
                   ),
+                ),
               ],
-            ),
+              if (!sending)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    if (onRetry != null)
+                      TextButton(
+                        onPressed: onRetry,
+                        child: const Text('Retry'),
+                      ),
+                    if (onCopy != null)
+                      TextButton(
+                        onPressed: onCopy,
+                        child: const Text('Copy'),
+                      ),
+                    if (onDiscard != null)
+                      TextButton(
+                        onPressed: onDiscard,
+                        child: const Text('Discard'),
+                      ),
+                  ],
+                ),
+            ],
+          ),
         ),
       ),
     );

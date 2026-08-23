@@ -347,9 +347,7 @@ class _RecoveryState extends StatelessWidget {
                     child: const Text('Retry restore'),
                   ),
                   TextButton(
-                    onPressed: state.busy
-                        ? null
-                        : state.continueWithoutRestore,
+                    onPressed: state.busy ? null : state.continueWithoutRestore,
                     child: const Text('Continue to sign in'),
                   ),
                 ],

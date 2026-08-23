@@ -289,16 +289,16 @@ class AppState extends ChangeNotifier {
   void _setOutboxRecords(List<PendingEnvelopeRecord> records) {
     _outboxRecords
       ..clear()
-      ..addEntries(records.map((record) =>
-          MapEntry(record.envelope.idempotencyKey, record)));
-    pendingOutbox = records
-        .map((record) => record.envelope)
-        .toList(growable: false);
+      ..addEntries(records
+          .map((record) => MapEntry(record.envelope.idempotencyKey, record)));
+    pendingOutbox =
+        records.map((record) => record.envelope).toList(growable: false);
   }
 
   String outboxFailureMessage(String idempotencyKey) {
     final failure = _outboxRecords[idempotencyKey]?.failureClass ?? '';
-    if (failure.contains('storage_quota_exceeded') || failure.contains(':507:')) {
+    if (failure.contains('storage_quota_exceeded') ||
+        failure.contains(':507:')) {
       return 'The server is out of storage for this account. Delete older '
           'attachments or ask the administrator for more space.';
     }
@@ -667,7 +667,8 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<void> _fetchMessages(String conversationId, {bool persist = true}) async {
+  Future<void> _fetchMessages(String conversationId,
+      {bool persist = true}) async {
     final current = session;
     final client = api;
     if (current == null || client == null) {
@@ -1234,7 +1235,9 @@ class AppState extends ChangeNotifier {
           );
           final encodedPage = utf8.encode(jsonEncode(page));
           final separatorBytes = firstPage ? 0 : 1;
-          if (totalBytes + separatorBytes + encodedPage.length +
+          if (totalBytes +
+                  separatorBytes +
+                  encodedPage.length +
                   utf8.encode(footer).length >
               maxExportBytes) {
             throw StateError('Account export exceeds the size limit');
@@ -1307,7 +1310,8 @@ class AppState extends ChangeNotifier {
       final encrypted = await cryptoService.encrypt(conversation.id, plaintext);
       await localStore.enqueueEnvelope(encrypted, draftText: plaintext);
       final record = (await localStore.pendingEnvelopeRecords())
-          .where((item) => item.envelope.idempotencyKey == encrypted.idempotencyKey)
+          .where((item) =>
+              item.envelope.idempotencyKey == encrypted.idempotencyKey)
           .firstOrNull;
       if (record != null) {
         _outboxRecords[encrypted.idempotencyKey] = record;
@@ -1640,8 +1644,8 @@ class AppState extends ChangeNotifier {
     }
     _syncLease = lease;
     _syncOwner = AccountSyncEngine(
-      isOwner: () => ownerGeneration == _sessionGeneration &&
-          _sameSession(current),
+      isOwner: () =>
+          ownerGeneration == _sessionGeneration && _sameSession(current),
       work: () => _runOwnedCatchUp(current, ownerGeneration),
     );
     final previousSubscription = _syncSubscription;
@@ -1856,8 +1860,7 @@ class AppState extends ChangeNotifier {
     await _syncOwner?.request();
   }
 
-  Future<void> _runOwnedCatchUp(
-      Session current, int ownerGeneration) async {
+  Future<void> _runOwnedCatchUp(Session current, int ownerGeneration) async {
     if (!_isForeground ||
         ownerGeneration != _sessionGeneration ||
         !_sameSession(current)) {
@@ -1919,8 +1922,7 @@ class AppState extends ChangeNotifier {
         await _processMlsRevocations();
         if (!_syncOwnerActive(current, ownerGeneration)) return;
       }
-      await _acknowledgePendingWake(current,
-          ownerGeneration: ownerGeneration);
+      await _acknowledgePendingWake(current, ownerGeneration: ownerGeneration);
       lastSyncedAt = DateTime.now();
       syncError = null;
       deviceRecoveryRequired = false;
@@ -2023,8 +2025,7 @@ class AppState extends ChangeNotifier {
         if (envelope == null && event.type != 'message.envelope.created') {
           throw StateError('message sync event lacks an immutable envelope');
         }
-        final resolved =
-            envelope ?? await client.message(current.token, id);
+        final resolved = envelope ?? await client.message(current.token, id);
         await mls.processApplicationMessage(resolved, event.id);
         return resolved;
       case 'call.signaling':
@@ -2224,7 +2225,8 @@ class AppState extends ChangeNotifier {
     final terminal = apiError != null &&
         <int>{400, 403, 404, 409, 413, 422, 507}.contains(apiError.statusCode);
     final retryable = (apiError != null &&
-            <int>{408, 429, 500, 502, 503, 504}.contains(apiError.statusCode)) ||
+            <int>{408, 429, 500, 502, 503, 504}
+                .contains(apiError.statusCode)) ||
         error is SocketException ||
         error is TimeoutException ||
         error is HttpException;
@@ -2251,7 +2253,8 @@ class AppState extends ChangeNotifier {
                 ? OutboxDeliveryState.retrying
                 : OutboxDeliveryState.failed;
     final updated = (await localStore.pendingEnvelopeRecords())
-        .where((item) => item.envelope.idempotencyKey == envelope.idempotencyKey)
+        .where(
+            (item) => item.envelope.idempotencyKey == envelope.idempotencyKey)
         .firstOrNull;
     if (updated != null) {
       _outboxRecords[envelope.idempotencyKey] = updated;
@@ -2402,8 +2405,7 @@ class AppState extends ChangeNotifier {
     });
   }
 
-  Future<void> _enqueueSessionTransition(
-      Future<void> Function() action) {
+  Future<void> _enqueueSessionTransition(Future<void> Function() action) {
     final next = _sessionTransitionTail.then((_) => action());
     _sessionTransitionTail = next.then<void>(
       (_) {},

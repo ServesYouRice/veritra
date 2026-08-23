@@ -299,9 +299,10 @@ void main() {
     await state.sendMessageTo('conv_1', 'test-only plaintext');
 
     for (var attempt = 0;
-        attempt < 20 && state.outboxState(
-                state.pendingFor('conv_1').single.idempotencyKey) ==
-            OutboxDeliveryState.sending;
+        attempt < 20 &&
+            state.outboxState(
+                    state.pendingFor('conv_1').single.idempotencyKey) ==
+                OutboxDeliveryState.sending;
         attempt++) {
       await Future<void>.delayed(Duration.zero);
     }
@@ -319,7 +320,8 @@ void main() {
     expect(await localStore.pendingEnvelopes(), isEmpty);
   });
 
-  test('restore failure enters recovery without resetting the cursor', () async {
+  test('restore failure enters recovery without resetting the cursor',
+      () async {
     final localStore = _FailingRestoreStore();
     await localStore.saveSyncCursor(42);
     final state = AppState(
@@ -358,14 +360,15 @@ void main() {
         accountId: 'acct_owner',
         deviceId: 'dev_owner',
       )
-      ..conversations = <Conversation>[Conversation(id: 'conv_1', kind: 'group')];
+      ..conversations = <Conversation>[
+        Conversation(id: 'conv_1', kind: 'group')
+      ];
 
     expect(await state.sendMessageTo('conv_1', 'not accepted'), isFalse);
     expect(crypto.encryptCalls, 0);
     expect(await localStore.pendingEnvelopes(), hasLength(maxPendingEnvelopes));
     expect(
-      (await localStore.pendingEnvelopes())
-          .map((item) => item.idempotencyKey),
+      (await localStore.pendingEnvelopes()).map((item) => item.idempotencyKey),
       contains('queued_0'),
     );
     state.dispose();

@@ -37,8 +37,7 @@ class VeritraApp extends StatefulWidget {
   State<VeritraApp> createState() => _VeritraAppState();
 }
 
-class _VeritraAppState extends State<VeritraApp>
-    with WidgetsBindingObserver {
+class _VeritraAppState extends State<VeritraApp> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();

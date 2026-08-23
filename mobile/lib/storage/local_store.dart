@@ -349,7 +349,8 @@ class MemoryLocalStore implements LocalStore {
       {String? draftText}) async {
     final existing = _outboxRecords[envelope.idempotencyKey];
     if (existing != null) {
-      if (existing.envelope.toJson().toString() != envelope.toJson().toString() ||
+      if (existing.envelope.toJson().toString() !=
+              envelope.toJson().toString() ||
           (existing.draftText != null && existing.draftText != draftText)) {
         throw StateError('outbox idempotency key conflict');
       }
@@ -706,7 +707,8 @@ class SecureLocalStore implements LocalStore {
   Future<void> saveSession(Session session) async {
     final database = await _database();
     final previous = _sessionFromJson(await database.readSessionJson());
-    final changed = previous != null && _identity(previous) != _identity(session);
+    final changed =
+        previous != null && _identity(previous) != _identity(session);
     await database.writeSessionJson(
       jsonEncode(_sessionJson(session)),
       clearIdentityState: changed,

@@ -531,8 +531,7 @@ void main() {
       expect(sendButton.onPressed, isNotNull);
     });
 
-    testWidgets('the composer clears after durable acceptance',
-        (tester) async {
+    testWidgets('the composer clears after durable acceptance', (tester) async {
       final api = _FakeApi()..holdSend = Completer<void>();
       final state = _connectedState(api)
         ..conversations = <Conversation>[

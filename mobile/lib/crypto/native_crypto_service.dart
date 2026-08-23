@@ -191,7 +191,7 @@ class NativeCryptoService implements MlsConversationCryptoService {
             case 'commit':
               device.processCommit(message.conversationId, message.payload);
               break;
-          default:
+            default:
               throw StateError('unsupported MLS transport message');
           }
           final next = _sealNext(previous);

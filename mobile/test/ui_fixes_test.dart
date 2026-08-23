@@ -85,7 +85,8 @@ void main() {
     expect(state.messagesByConversation['conv_1'], isEmpty);
   });
 
-  test('setup probe preserves actionable states without global errors', () async {
+  test('setup probe preserves actionable states without global errors',
+      () async {
     final api = _FlakyMessagesApi();
     final state = _connectedState(api);
 

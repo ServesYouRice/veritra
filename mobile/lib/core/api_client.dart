@@ -405,7 +405,7 @@ class ApiClient {
   }
 
   Future<Stream<List<int>>> recoverEncryptedBackup(
-      List<int> recoveryToken, {
+    List<int> recoveryToken, {
     int? startOffset,
     int? endOffset,
   }) async {

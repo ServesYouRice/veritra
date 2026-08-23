@@ -190,8 +190,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           await delete(localMlsTransitions).go();
           await delete(localMlsOutboxEntries).go();
           await delete(localPeerVerifications).go();
-          await customStatement(
-              'DELETE FROM local_metadata WHERE name LIKE ?',
+          await customStatement('DELETE FROM local_metadata WHERE name LIKE ?',
               <Object?>['$outboxDraftPrefix%']);
           await (delete(localMetadata)
                 ..where((table) => table.name.equals(syncLeaseName)))
@@ -572,13 +571,13 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           ]))
         .get();
     return Future.wait(rows.map((row) async => (
-              payloadJson: row.payloadJson,
-              attemptCount: row.attemptCount,
-              nextAttemptAt: row.nextAttemptAt,
-              failureClass: row.failureClass,
-              terminal: row.terminal,
-              draftText: await readMetadata(_outboxDraftName(row.idempotencyKey))
-            )));
+          payloadJson: row.payloadJson,
+          attemptCount: row.attemptCount,
+          nextAttemptAt: row.nextAttemptAt,
+          failureClass: row.failureClass,
+          terminal: row.terminal,
+          draftText: await readMetadata(_outboxDraftName(row.idempotencyKey))
+        )));
   }
 
   Future<void> markOutboxFailure(
@@ -586,7 +585,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required String failureClass,
     required bool terminal,
     int? nextAttemptAt,
-  }) => transaction(() async {
+  }) =>
+      transaction(() async {
         await (update(localOutboxEntries)
               ..where((table) => table.idempotencyKey.equals(idempotencyKey)))
             .write(LocalOutboxEntriesCompanion(
@@ -606,7 +606,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               ..where((table) => table.idempotencyKey.equals(idempotencyKey)))
             .go();
         await (delete(localMetadata)
-              ..where((table) => table.name.equals(_outboxDraftName(idempotencyKey))))
+              ..where((table) =>
+                  table.name.equals(_outboxDraftName(idempotencyKey))))
             .go();
       });
 
@@ -880,8 +881,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           throw StateError('stale outgoing application MLS transition');
         }
         if (await (select(localOutboxEntries)
-                ..where((table) => table.idempotencyKey.equals(idempotencyKey)))
-            .getSingleOrNull() !=
+                  ..where(
+                      (table) => table.idempotencyKey.equals(idempotencyKey)))
+                .getSingleOrNull() !=
             null) {
           throw StateError('outbox idempotency key conflict');
         }
@@ -905,8 +907,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           ),
         );
         if (draftText != null) {
-          await _writeMetadataInTransaction(_outboxDraftName(idempotencyKey),
-              draftText);
+          await _writeMetadataInTransaction(
+              _outboxDraftName(idempotencyKey), draftText);
         }
       });
 
@@ -1016,8 +1018,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localConversations).go();
         if (!preserveOutbox) {
           await delete(localOutboxEntries).go();
-          await customStatement(
-              'DELETE FROM local_metadata WHERE name LIKE ?',
+          await customStatement('DELETE FROM local_metadata WHERE name LIKE ?',
               <Object?>['$outboxDraftPrefix%']);
         }
         await into(localSyncStates).insertOnConflictUpdate(
