@@ -233,7 +233,12 @@ class VeritraStateColors extends ThemeExtension<VeritraStateColors> {
 /// [background]. Keeping this here makes contrast tests exercise the same
 /// alpha compositing that a one-pixel Material border uses on screen.
 Color compositeColor(Color foreground, Color background) {
-  final alpha = foreground.alpha;
+  // Color's component accessors are doubles now; these surfaces are still
+  // specified as 8-bit channels, so round back to that domain and keep the
+  // integer compositing the contrast tests are calibrated against.
+  int channel(double value) => (value * 255.0).round().clamp(0, 255);
+
+  final alpha = channel(foreground.a);
   if (alpha == 0) {
     return background;
   }
@@ -246,25 +251,24 @@ Color compositeColor(Color foreground, Color background) {
 
   return Color.fromARGB(
     255,
-    blend(foreground.red, background.red),
-    blend(foreground.green, background.green),
-    blend(foreground.blue, background.blue),
+    blend(channel(foreground.r), channel(background.r)),
+    blend(channel(foreground.g), channel(background.g)),
+    blend(channel(foreground.b), channel(background.b)),
   );
 }
 
 /// WCAG relative luminance contrast ratio for two opaque colours.
 double contrastRatio(Color first, Color second) {
   double luminance(Color color) {
-    double channel(int value) {
-      final normalized = value / 255;
+    double channel(double normalized) {
       return normalized <= 0.04045
           ? normalized / 12.92
           : math.pow((normalized + 0.055) / 1.055, 2.4).toDouble();
     }
 
-    return 0.2126 * channel(color.red) +
-        0.7152 * channel(color.green) +
-        0.0722 * channel(color.blue);
+    return 0.2126 * channel(color.r) +
+        0.7152 * channel(color.g) +
+        0.0722 * channel(color.b);
   }
 
   final firstLuminance = luminance(first);

@@ -2242,7 +2242,7 @@ class AppState extends ChangeNotifier {
     final failureClass = auth
         ? 'auth'
         : terminal
-            ? 'terminal:${apiError?.statusCode ?? 0}:${apiError?.serverCode ?? 'rejected'}'
+            ? 'terminal:${apiError.statusCode}:${apiError.serverCode ?? 'rejected'}'
             : retryable
                 ? 'retryable:${apiError?.statusCode ?? 'network'}'
                 : 'failed';
