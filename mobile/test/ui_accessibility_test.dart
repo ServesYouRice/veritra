@@ -37,7 +37,7 @@ void main() {
 
   testWidgets('shared headings and pills expose stable semantic labels',
       (tester) async {
-    final semantics = SemanticsTester(tester);
+    final semantics = tester.ensureSemantics();
     await tester.pumpWidget(
       MaterialApp(
         theme: veritraLightTheme(),
@@ -53,14 +53,14 @@ void main() {
       ),
     );
 
-    expect(semantics, includesNodeWith(label: 'NOTIFICATIONS'));
-    expect(semantics, includesNodeWith(label: 'Expires after 1 day'));
+    expect(find.bySemanticsLabel('NOTIFICATIONS'), findsWidgets);
+    expect(find.bySemanticsLabel('Expires after 1 day'), findsWidgets);
     semantics.dispose();
   });
 
   testWidgets('connect fields expose labels independent of their hints',
       (tester) async {
-    final semantics = SemanticsTester(tester);
+    final semantics = tester.ensureSemantics();
     final state = AppState(
       apiClientFactory: (_) => ApiClient(baseUrl: 'https://chat.example.org'),
       cryptoService: TestOnlyCryptoService(),
@@ -74,8 +74,8 @@ void main() {
       ),
     );
 
-    expect(semantics, includesNodeWith(label: 'Username'));
-    expect(semantics, includesNodeWith(label: 'Password'));
+    expect(find.bySemanticsLabel('Username'), findsWidgets);
+    expect(find.bySemanticsLabel('Password'), findsWidgets);
     semantics.dispose();
     state.dispose();
   });

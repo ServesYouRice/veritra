@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/features/chat/chat_list_screen.dart';
 import 'package:private_messenger/features/chat/chat_screen.dart';
