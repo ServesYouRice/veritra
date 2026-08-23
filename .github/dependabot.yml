@@ -41,6 +41,20 @@ updates:
       # the discussion on #40 before lifting this.
       - dependency-name: flutter_secure_storage
         update-types: ["version-update:semver-major"]
+      # matcher, meta, test_api and vector_math are pinned by the Flutter SDK,
+      # not by us. Dependabot resolves with its own Dart SDK, so it floats them
+      # past what CI's pinned Flutter 3.44.0 ships and `flutter pub get
+      # --enforce-lockfile` then rejects the lockfile. Flutter owns these; they
+      # move when the pinned SDK moves.
+      - dependency-name: matcher
+      - dependency-name: meta
+      - dependency-name: test_api
+      - dependency-name: vector_math
+      # build_runner >=2.16.0 needs analyzer >=13.3.0, which needs meta ^1.18.3,
+      # above the SDK pin — and drift_dev 2.34.5 still wants analyzer ^13.0.0.
+      # See #42, reverted for exactly this. Lift when drift_dev and the pinned
+      # Flutter SDK have both caught up.
+      - dependency-name: build_runner
     groups:
       dart-dependencies:
         patterns:
