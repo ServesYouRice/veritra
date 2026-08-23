@@ -91,4 +91,3 @@ contract before editing any production file.
 
 Use the workflow handoff with `Task: QA08`. List event/method cases and confirm
 native platform files and `app_state.dart` were untouched.
-

@@ -80,8 +80,8 @@ void main() {
       ),
     );
 
-    expect(find.bySemanticsLabel('Username'), findsWidgets);
-    expect(find.bySemanticsLabel('Password'), findsWidgets);
+    expect(find.bySemanticsLabel(RegExp('Username')), findsWidgets);
+    expect(find.bySemanticsLabel(RegExp('Password')), findsWidgets);
     semantics.dispose();
     state.dispose();
   });

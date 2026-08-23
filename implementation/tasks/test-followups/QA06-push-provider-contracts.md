@@ -92,4 +92,3 @@ generic-payload, retry, and secret-handling boundaries.
 
 Use the workflow handoff with `Task: QA06`. List provider/status cases, confirm
 zero external requests, and state whether production code changed.
-

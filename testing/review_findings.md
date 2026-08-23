@@ -1,8 +1,9 @@
 # Testing-gap review outcome
 
 The source review was performed against commit
-`3ee785db9083eb67f3b16c3f83050ac3b365eb19` on 2026-08-23. Task routing was
-refreshed at `b728d32ade307ec1fac9bc51e135e010bf2fcec3`.
+`3ee785db9083eb67f3b16c3f83050ac3b365eb19` on 2026-08-23. The routing below
+was rechecked against the subsequent same-day tree before the contracts were
+added; every executor must still reconfirm its gap on current `HEAD`.
 
 ## Verdict
 

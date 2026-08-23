@@ -98,4 +98,3 @@ atomic destination rule, and cross-platform framing.
 
 Use the workflow handoff with `Task: QA04`. List every byte-size/tamper fixture
 and explicitly confirm the fail-closed UI was not changed.
-

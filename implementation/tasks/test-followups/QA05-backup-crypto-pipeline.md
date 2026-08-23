@@ -97,4 +97,3 @@ key ownership and rollback correctly rather than inventing a recovery design.
 
 Use the workflow handoff with `Task: QA05`. State dependency status first and
 list every failure fixture without printing any generated code/token/key.
-

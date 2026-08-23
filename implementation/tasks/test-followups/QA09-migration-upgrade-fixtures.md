@@ -92,4 +92,3 @@ upgrade and whether a production change belongs in a separate T45A task.
 
 Use the workflow handoff with `Task: QA09`. Name each migration cutoff and
 post-upgrade invariant; confirm all migration SQL files are unchanged.
-
