@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -164,7 +163,6 @@ class AppState extends ChangeNotifier {
   AccountSyncEngine? _syncOwner;
   LocalSyncLease? _syncLease;
   int _sessionGeneration = 0;
-  int _lastSyncEventId = 0;
   AppLifecycleState _lifecycleState = AppLifecycleState.resumed;
   int _pendingWakeGeneration = 0;
 
@@ -326,7 +324,7 @@ class AppState extends ChangeNotifier {
     ApiClient? client;
     try {
       client = apiClientFactory(origin);
-      final status = await client!.setupStatus();
+      final status = await client.setupStatus();
       final required = status['setup_required'];
       if (required is! bool) {
         return const SetupProbeResult(state: SetupProbeState.notVeritra);
@@ -460,14 +458,12 @@ class AppState extends ChangeNotifier {
       for (final envelope in pendingOutbox) {
         _outboxStates[envelope.idempotencyKey] = OutboxDeliveryState.failed;
       }
-      _lastSyncEventId = await localStore.loadSyncCursor();
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
       final cached = await localStore.loadSnapshot();
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
       if (cached != null) {
         conversations = cached.conversations;
         messagesByConversation = cached.messagesByConversation;
-        _lastSyncEventId = cached.cursor;
         conversationsLoaded = true;
         notifyListeners();
       }
@@ -535,7 +531,6 @@ class AppState extends ChangeNotifier {
       await localStore.saveSession(session!);
       await _mlsCrypto?.activateSession(session!);
       await _publishInitialMlsKeyPackages();
-      _lastSyncEventId = 0;
       await localStore.saveSyncCursor(0);
       await refreshConversations();
       await refreshDevices();
@@ -567,7 +562,6 @@ class AppState extends ChangeNotifier {
       );
       await localStore.saveSession(session!);
       await _mlsCrypto?.activateSession(session!);
-      _lastSyncEventId = 0;
       await localStore.saveSyncCursor(0);
       await refreshConversations();
       await refreshDevices();
@@ -860,7 +854,6 @@ class AppState extends ChangeNotifier {
       await localStore.saveSession(session!);
       await _mlsCrypto?.activateSession(session!);
       await _publishInitialMlsKeyPackages();
-      _lastSyncEventId = 0;
       await localStore.saveSyncCursor(0);
       await refreshConversations();
       await refreshDevices();
@@ -1504,7 +1497,6 @@ class AppState extends ChangeNotifier {
       await localStore.saveSession(session!);
       await _mlsCrypto?.activateSession(session!);
       await _publishInitialMlsKeyPackages();
-      _lastSyncEventId = 0;
       await localStore.saveSyncCursor(0);
       await refreshConversations();
       await refreshDevices();
@@ -1877,7 +1869,6 @@ class AppState extends ChangeNotifier {
     }
     try {
       var pageCursor = await localStore.loadSyncCursor();
-      _lastSyncEventId = pageCursor;
       const pageSize = 200;
       while (true) {
         if (!_isForeground || !_syncOwnerActive(current, ownerGeneration)) {
@@ -1919,7 +1910,6 @@ class AppState extends ChangeNotifier {
               cursor: event.id,
             ));
           }
-          _lastSyncEventId = await localStore.loadSyncCursor();
           notifyListeners();
         }
         pageCursor = await localStore.loadSyncCursor();
@@ -2151,7 +2141,6 @@ class AppState extends ChangeNotifier {
     connectionStatus = ConnectionStatus.connecting;
     lastSyncedAt = null;
     syncError = null;
-    _lastSyncEventId = 0;
     _pendingWakeGeneration = 0;
     deviceRecoveryRequired = false;
     lifecycle = SessionLifecycle.ready;

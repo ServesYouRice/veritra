@@ -71,7 +71,7 @@ class AccountSyncEngine {
       for (final waiter in waiters) {
         if (waiter.isCompleted) continue;
         if (failure != null) {
-          waiter.completeError(failure!, failureStack);
+          waiter.completeError(failure, failureStack);
         } else {
           waiter.complete();
         }
