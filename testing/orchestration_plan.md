@@ -1,5 +1,9 @@
 # Multiagent Testing Orchestration & Execution Plan
 
+> **Superseded input:** Do not use this plan to claim or assign work. Follow
+> `implementation/WORKFLOW.md` and the reviewed
+> [QA task pack](../implementation/tasks/test-followups/README.md).
+
 ## 1. Overview & Architectural Principles
 
 This document defines the complete operational orchestration plan to implement all remediation test suites identified in the testing gap audit.

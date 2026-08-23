@@ -61,6 +61,12 @@ void main() {
   testWidgets('connect fields expose labels independent of their hints',
       (tester) async {
     final semantics = tester.ensureSemantics();
+    // ConnectScreen's form is a lazy ListView. On the default 800x600 test
+    // surface the credential fields fall below the fold and are never built,
+    // so give the test enough height to lay the whole form out.
+    tester.view.physicalSize = const Size(1200, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
     final state = AppState(
       apiClientFactory: (_) => ApiClient(baseUrl: 'https://chat.example.org'),
       cryptoService: TestOnlyCryptoService(),

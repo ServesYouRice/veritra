@@ -1,5 +1,9 @@
 # Go Server Testing Gap Audit & Plan
 
+> **Superseded input:** Do not execute this report directly. Its inventory and
+> commands were not revision-bound. Use the reviewed
+> [QA task pack](../implementation/tasks/test-followups/README.md).
+
 ## 1. System Overview & Architecture
 
 The Veritra backend (`server/`) is a modular monolith written in Go (Go 1.25.12) backed by SQLite with WAL mode and single-writer mutual exclusion. It exposes HTTP REST APIs (`internal/httpapi/`), persistent WebSocket streams (`internal/realtime/`), WebRTC/TURN signaling (`internal/webrtc/`), APNs/FCM push dispatchers (`internal/push/`), and content/blob storage (`internal/uploads/`, `internal/storage/`).

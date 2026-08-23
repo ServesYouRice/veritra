@@ -1,5 +1,9 @@
 # Crypto Boundary Testing Gap Audit & Plan
 
+> **Superseded input:** Do not execute this report directly. Its inventory and
+> commands were not revision-bound. Use the reviewed
+> [QA task pack](../implementation/tasks/test-followups/README.md).
+
 ## 1. System Overview & Architecture
 
 The Veritra crypto boundary encapsulates all cryptographic primitives and MLS group messaging logic inside a Rust shared library (`crypto/rust/`) interfaced via a C-compatible FFI ABI (ABI v4 defined in `crypto/rust/include/veritra_crypto.h`) to the Dart Flutter application (`mobile/lib/crypto/native_crypto_bindings.dart` and `mobile/lib/crypto/native_crypto_service.dart`).

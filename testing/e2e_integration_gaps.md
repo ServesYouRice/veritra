@@ -1,5 +1,9 @@
 # End-to-End, Integration & Release Gate Testing Gap Audit & Plan
 
+> **Superseded input:** Do not execute this report directly. Its inventory and
+> commands were not revision-bound. Use the reviewed
+> [QA task pack](../implementation/tasks/test-followups/README.md).
+
 ## 1. System Overview & Architecture
 
 Veritra's end-to-end reliability requires synchronous harmony across three distinct technology stacks:

@@ -89,6 +89,14 @@ advisor at the task's checkpoints. See [`WORKFLOW.md`](WORKFLOW.md).
 | G25 | External | Independent reviewer | G24, G27, all blockers | [Independent review and activation](tasks/G25-independent-review.md) |
 | G27 | External/upstream | Strong+advisor | upstream stable release | [Crypto advisory closure](tasks/G27-crypto-advisories.md) |
 
+## Confirmed testing follow-ups
+
+The reviewed testing audit produced smaller child contracts in
+[`tasks/test-followups/`](tasks/test-followups/README.md). They inherit the
+canonical task and board status named in that index; their local `QA` IDs do not
+grant eligibility or create product decisions. A coordinator must claim the
+canonical owner before assigning one.
+
 ## Source-package coverage
 
 | Consensus package | Execution tasks |

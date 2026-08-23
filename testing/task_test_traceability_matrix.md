@@ -1,5 +1,9 @@
 # Task & Consensus Test Traceability Matrix
 
+> **Superseded input:** This matrix contains stale status, paths, and commands.
+> Use the reviewed [QA task pack](../implementation/tasks/test-followups/README.md)
+> and current `docs/board.md` instead.
+
 This document maps all 43 execution tasks (T29–T50, G24, G25, G27) and consensus packages (I29–I50) from [`docs/audit-consensus.md`](../docs/audit-consensus.md) and [`implementation/README.md`](../implementation/README.md) to their specific test gaps, required test types, executor model tiers, and advisor checkpoint gates.
 
 ---

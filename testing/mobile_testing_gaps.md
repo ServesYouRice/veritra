@@ -1,5 +1,9 @@
 # Flutter Mobile Testing Gap Audit & Plan
 
+> **Superseded input:** Do not execute this report directly. Its inventory and
+> commands were not revision-bound. Use the reviewed
+> [QA task pack](../implementation/tasks/test-followups/README.md).
+
 ## 1. System Overview & Architecture
 
 The Veritra mobile client (`mobile/`) is a cross-platform Flutter application (Flutter 3.44.0) targeting Android and iOS. It utilizes:
