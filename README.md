@@ -107,8 +107,10 @@ Authoritative project documentation lives in [`docs/`](docs/):
 | [`operations.md`](docs/operations.md) | Self-hosting: setup, secrets, upgrade, rollback, restore drill |
 | [`crypto.md`](docs/crypto.md) | The MLS/OpenMLS boundary and its C ABI |
 | [`branding/`](docs/branding/) | Marks, wordmarks, icons |
-| [`audits-codex/`](docs/audits-codex/) and [`audits-opus/`](docs/audits-opus/) | Read-only source audits; not implementation status |
-| [`archive/`](docs/archive/) | Read-only history. Do not load unless a card links a specific file |
+
+Superseded audits, plans, task contracts, testing reports, and brand
+explorations are intentionally kept out of the working tree. Git history is
+the recovery path when an authoritative card cites a specific old revision.
 
 Two documents are authoritative and should be read before changing anything:
 [`AGENTS.md`](AGENTS.md) for the non-negotiable boundaries, and

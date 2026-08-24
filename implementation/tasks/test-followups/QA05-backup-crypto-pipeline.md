@@ -4,7 +4,7 @@
 |---|---|
 | Confirmed source | `testing/review_findings.md` M2 at `3ee785d` |
 | Canonical owner | T45C mobile recovery; coordinate T45A atomicity |
-| Initial eligibility | Blocked by I29, I39, and T45A |
+| Routing snapshot (board wins) | Blocked by I29, I39, and T45A |
 | Risk | High recovery and key-ownership boundary |
 | Executor | Balanced+advisor for tests only |
 | Advisor | Required before production edits or recovery-code assertions |

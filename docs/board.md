@@ -2,9 +2,9 @@
 
 This is the single authoritative record for active implementation work,
 completed work, release evidence, and the independent-review handoff.
-Historical source material remains read-only under `archive/2026-07-26/`.
-The 2026-08-08 audit source snapshots are read-only under `audits-codex/` and
-`audits-opus/`; their decisions live in `audit-consensus.md`.
+Historical audits, plans, and superseded execution files are preserved in Git
+history through `bfb3922` and intentionally absent from the working tree.
+Their reconciled decisions live in `audit-consensus.md`.
 
 ## Current status
 
@@ -87,6 +87,11 @@ desktop, then evaluate embedding. See [Roadmap after release](#roadmap-after-rel
   execution contracts derived from the consensus. It may split a card into
   non-overlapping tasks but cannot change scope, severity, dependencies or
   status. This board and the consensus win on any conflict. Recorded 2026-08-13.
+- **D09:** Keep only current authoritative documents and live execution
+  contracts in the working tree. Completed contracts, raw audits, obsolete
+  testing reports, historical plans, and superseded brand assets remain
+  recoverable from Git history at `bfb3922` but are not executor context.
+  Recorded 2026-08-24.
 
 ## Remaining work
 
@@ -373,7 +378,7 @@ checksums, and GitHub provenance only after every gate passes.
 | I23 | Hardened WebSocket handshakes and frames with adversarial, fuzz, lifecycle, slow-client, trusted-proxy, and race coverage. |
 | I24 | Implemented native push, self-hosted TURN configuration, encrypted WebRTC signaling, and an Android debug build; external release checks remain. |
 | I26 | Added out-of-band group safety transcripts/numbers with local persistence and changed-state detection. |
-| I28 | Landed the K2 Bone visual system, all app screens, shared widgets, web setup and Android/iOS icons in `6083e3f`; automated Flutter/Go checks passed, while golden/manual/device evidence remains in I24/I43. Closed out on 2026-08-18 by redrawing the `concept-06` mark family on Bone — mark, wordmarks, favicon and every raster export — and re-rendering the Android/iOS launcher icons from the SVG; the old Indigo→Sky files moved to `docs/branding/concept-06/superseded/`. |
+| I28 | Landed the K2 Bone visual system, all app screens, shared widgets, web setup and Android/iOS icons in `6083e3f`; automated Flutter/Go checks passed, while golden/manual/device evidence remains in I24/I43. Closed out on 2026-08-18 by redrawing the `concept-06` mark family on Bone — mark, wordmarks, favicon and every raster export — and re-rendering the Android/iOS launcher icons from the SVG. The replaced Indigo→Sky assets are available only in Git history through `bfb3922`. |
 
 Completed non-crypto product UI also includes named DMs, canonical DM reuse,
 history pagination with preserved position, role-gated roster actions, blocked
@@ -411,9 +416,8 @@ behaviour against the single-writer data-dir lock. A self-hosted internal
 network deployment is the same server with a desktop client attached; it needs
 no server change.
 
-This supersedes the archived R09 card in
-`archive/2026-07-26/legacy-implementation/09-deferred-roadmap.md`, which set the
-same trigger.
+This preserves the same trigger as the historical R09 contract, available in
+Git history at `bfb3922` if provenance is needed.
 
 ### Phase 3 - Embedded chat (deferred, needs a decision first)
 

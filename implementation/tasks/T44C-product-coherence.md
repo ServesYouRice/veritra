@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | I44 product scope; UI-12/NTH-09; U12/U13/U14/U17/U21; R10/R11 |
-| Initial eligibility | Prepared; claim after release blockers |
+| Routing snapshot (board wins) | Prepared; claim after release blockers |
 | Risk | Medium/Low; some store-submission relevance |
 | Executor | Balanced |
 | Advisor | Required only for dependency/license or link trust changes |
@@ -50,4 +50,3 @@ deep links on both platforms or stop emitting them.
 cd mobile && flutter test test/platform_config_test.dart test/ui_remaining_test.dart test/ui_fixes_test.dart
 cd mobile && flutter analyze
 ```
-

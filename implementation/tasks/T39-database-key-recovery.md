@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | I39; SEC-05; L7 |
-| Initial eligibility | Blocked by T32 |
+| Routing snapshot (board wins) | Blocked by T32 |
 | Risk | High release blocker |
 | Executor | Strong |
 | Advisor | Required on recovery/reset state machine and final diff |
@@ -18,9 +18,7 @@ Preserve an encrypted database when its key is missing/wrong/corrupt, enter
 
 ## Read first
 
-- `docs/audit-consensus.md` I39.
-- `docs/audits-codex/security-issues.md` SEC-05.
-- `docs/audits-opus/logical-issues.md` L7.
+- `docs/audit-consensus.md` I39 and reconciled source IDs SEC-05/L7.
 - `mobile/lib/storage/encrypted_database.dart`, `local_store.dart`, T32 state,
   secure-storage initialization and encrypted-store tests.
 
@@ -49,4 +47,3 @@ Preserve an encrypted database when its key is missing/wrong/corrupt, enter
 ```sh
 cd mobile && flutter test test/encrypted_local_store_test.dart test/app_state_test.dart
 ```
-

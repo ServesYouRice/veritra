@@ -4,7 +4,7 @@
 |---|---|
 | Confirmed source | `testing/review_findings.md` M3 at `3ee785d` |
 | Canonical owner | T41 delivery verification; implemented T36B job store |
-| Initial eligibility | Blocked until I41 is eligible under D03 and I36 |
+| Routing snapshot (board wins) | Blocked until I41 is eligible under D03 and I36 |
 | Risk | High conditional durability/privacy boundary |
 | Executor | Balanced+advisor |
 | Advisor | Required before changing retry timing, leases, or store interfaces |

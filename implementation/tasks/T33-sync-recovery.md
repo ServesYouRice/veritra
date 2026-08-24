@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | I33; LOG-08/PERF-03; L2/L9 |
-| Initial eligibility | Blocked by T30B |
+| Routing snapshot (board wins) | Blocked by T30B |
 | Risk | High release blocker |
 | Executor | Strong |
 | Advisor | Required for tombstone/recovery policy and MLS fail-closed review |
@@ -50,4 +50,3 @@ batch repair amplification, and surface an explicit stale-device recovery path.
 cd mobile && flutter test test/app_state_test.dart test/api_contract_test.dart
 cd server && go test ./internal/httpapi ./internal/storage
 ```
-

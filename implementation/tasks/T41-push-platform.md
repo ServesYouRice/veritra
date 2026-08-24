@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | I41; LOG-09/UI-06/NTH-01/NTH-05; S12/H6 |
-| Initial eligibility | Blocked, conditional under D03 |
+| Routing snapshot (board wins) | Blocked, conditional under D03 |
 | Risk | High when push is in release scope |
 | Executor | Balanced+advisor |
 | Advisor | Review provider matrix and privacy-safe diagnostics |
@@ -51,4 +51,3 @@ add required Android permission and provide privacy-safe test-wake diagnostics.
 cd mobile && flutter test test/platform_config_test.dart test/ui_actionable_test.dart test/api_contract_test.dart
 cd server && go test ./internal/push ./internal/httpapi
 ```
-

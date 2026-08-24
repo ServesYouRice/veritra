@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | I44 API/state scope; LOG-13/SEC-10/UI-09/UI-10/NTH-08/NTH-11; L8/L11/L14/L15 |
-| Initial eligibility | Prepared; claim after release blockers |
+| Routing snapshot (board wins) | Prepared; claim after release blockers |
 | Risk | Mixed Medium/Low |
 | Executor | Balanced |
 | Advisor | Only if API-schema or security boundary changes |
@@ -48,4 +48,3 @@ and contain refresh/search failures without raw errors or global stale-state los
 cd mobile && flutter test test/api_contract_test.dart test/app_state_test.dart test/ui_actionable_test.dart
 ./scripts/test-api-contracts.sh
 ```
-

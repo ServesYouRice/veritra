@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | I48 lifecycle/privacy scope; LOG-12/SEC-06/SEC-09; L16/L17 |
-| Initial eligibility | Prepared |
+| Routing snapshot (board wins) | Prepared |
 | Risk | Medium feature/deployment conditional |
 | Executor | Balanced+advisor |
 | Advisor | Review teardown races and trusted-proxy threat model |
@@ -49,4 +49,3 @@ subroutes, log matched patterns only and reject unsafe trusted-proxy identity.
 cd server && go test ./internal/realtime ./internal/httpapi ./internal/app
 cd mobile && flutter test test/app_state_test.dart
 ```
-

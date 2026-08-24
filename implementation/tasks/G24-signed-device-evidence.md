@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | I24; DEP-02, TEST-04, TEST-05; R6, R12, R13, R14 |
-| Initial eligibility | External gate |
+| Routing snapshot (board wins) | External gate |
 | Risk | Release blocker |
 | Executor | Coordinator with platform specialists |
 | Advisor | Strong review of failures or waiver requests |
@@ -19,9 +19,8 @@ device, accessibility, push, call and restore evidence matrix to one commit.
 ## Read first
 
 - `docs/board.md` I24 and release evidence matrix.
-- `docs/audit-consensus.md` existing gate I24.
-- `docs/audits-codex/testing-gaps.md` TEST-04/TEST-05.
-- `docs/audits-opus/production-readiness.md` R6/R12/R13/R14.
+- `docs/audit-consensus.md` existing gate I24 and reconciled source IDs
+  TEST-04/TEST-05/R6/R12/R13/R14.
 - `.github/workflows/release.yml`, `docs/operations.md`.
 
 ## Invariants
@@ -55,4 +54,3 @@ complete while any release-required step is skipped or pending.
 
 Use `implementation/WORKFLOW.md`. Attach artifact digests and the matrix; list
 credentials/hardware that remain external without copying secrets.
-

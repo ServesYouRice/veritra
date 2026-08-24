@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | I42 platform scope; R13/R14 |
-| Initial eligibility | Ready for design, conditional under D03 |
+| Routing snapshot (board wins) | Design approval required; conditional under D03 |
 | Risk | High call-scope blocker |
 | Executor | Strong |
 | Advisor | Required before choosing native architecture and before entitlements/permissions |
@@ -18,8 +18,7 @@ background states and obeys current iOS/Android policy without contentful push.
 
 ## Read first
 
-- `docs/audit-consensus.md` I42 and official platform links there.
-- `docs/audits-opus/production-readiness.md` R13/R14.
+- `docs/audit-consensus.md` I42 and reconciled source IDs R13/R14.
 - `mobile/lib/calls/call_service.dart`, push service, Android manifest/native
   runner, iOS plist/Runner and platform tests.
 
@@ -47,4 +46,3 @@ background states and obeys current iOS/Android policy without contentful push.
 ```sh
 cd mobile && flutter test test/platform_config_test.dart test/ui_actionable_test.dart
 ```
-

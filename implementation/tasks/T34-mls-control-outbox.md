@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | I34; LOG-06, TEST-03 MLS scope; L3 |
-| Initial eligibility | Blocked until T31 worker pattern exists |
+| Routing snapshot (board wins) | Blocked until T31 worker pattern exists |
 | Risk | High release blocker |
 | Executor | Strong |
 | Advisor | Required on per-group ordering and terminal semantics |
@@ -48,4 +48,3 @@ its affected group/device closed while unrelated groups continue.
 cd mobile && flutter test test/app_state_test.dart test/encrypted_local_store_test.dart
 cd server && go test ./internal/httpapi ./internal/storage
 ```
-

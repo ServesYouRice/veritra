@@ -4,7 +4,7 @@
 |---|---|
 | Confirmed source | `testing/review_findings.md` M7 at `3ee785d` |
 | Canonical owner | T40C evidence schema; external G24 signed-device gate |
-| Initial eligibility | Design checkpoint ready; implementation blocked until approval |
+| Routing snapshot (board wins) | Design checkpoint ready; implementation blocked until approval |
 | Risk | High release-evidence boundary |
 | Executor | Balanced+advisor after approval |
 | Advisor | Mandatory before the first edit and after adversarial fixtures |
@@ -22,8 +22,7 @@ required by G24.
 
 - `docs/board.md` I24 and the release evidence matrix.
 - `docs/audit-consensus.md` I40 and I24/G24 boundaries.
-- `implementation/tasks/T40C-release-gate.md` and
-  `implementation/tasks/G24-signed-device-evidence.md`.
+- `implementation/tasks/G24-signed-device-evidence.md`.
 - `.github/workflows/ci.yml`, `.github/workflows/release.yml`,
   `release/release-policy.json`, and all four release-evidence Python scripts.
 
@@ -99,4 +98,3 @@ provenance bound?” Do not edit until the coordinator records the answer.
 
 Use the exact workflow handoff with `Task: QA02`. Separate “code contract
 passes” from “G24 external evidence still pending.”
-

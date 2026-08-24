@@ -423,10 +423,9 @@ The Android `mipmap-*/ic_launcher.png` set and the fifteen images in
 `mobile/ios/Runner/Assets.xcassets/AppIcon.appiconset/` are the chain-link mark
 on the Bone palette, replacing the stock Flutter icon.
 
-The source is `branding/concept-06/veritra-app-icon-bone.svg`. The old
-Indigo→Sky icon it replaced now lives in `branding/concept-06/superseded/`,
-which is where every file of that brand went — the directory itself is the
-warning, so there is no longer a same-directory file to export by mistake.
+The source is `branding/concept-06/veritra-app-icon-bone.svg`. The replaced
+Indigo→Sky family is intentionally absent from the working tree and remains
+available from Git history at `bfb3922`.
 
 Both sets were **re-rendered from the SVG on 2026-08-18** with macOS QuickLook
 (`qlmanage -t`), replacing the earlier PNGs that had been encoded analytically

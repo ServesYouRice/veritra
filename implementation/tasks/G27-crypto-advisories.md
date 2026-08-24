@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | I27; SEC-03 advisory scope; R3 exception scope |
-| Initial eligibility | Upstream/review blocked |
+| Routing snapshot (board wins) | Upstream/review blocked |
 | Risk | Release blocker |
 | Executor | Strong |
 | Advisor | Required before selecting any RC, Git dependency or private fork |
@@ -20,8 +20,7 @@ deadline while production remains fail-closed.
 ## Read first
 
 - `docs/board.md` I27.
-- `docs/audits-codex/security-issues.md` SEC-03.
-- `docs/audits-opus/production-readiness.md` R3.
+- `docs/audit-consensus.md` I27 and reconciled source IDs SEC-03/R3.
 - `scripts/audit-rust.sh`, `crypto/rust/Cargo.toml`, `Cargo.lock`, MLS suite pin.
 
 ## Invariants
@@ -50,4 +49,3 @@ deadline while production remains fail-closed.
 ./scripts/audit-rust.sh
 ./scripts/verify-mobile-crypto.sh
 ```
-

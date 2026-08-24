@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | I50; NTH-06, NTH-07, NTH-17, NTH-18, NTH-20; H2; rejected R16 and unnumbered ideas |
-| Initial eligibility | Deferred |
+| Routing snapshot (board wins) | Deferred |
 | Risk | Not a release blocker |
 | Executor | Strong only after a trigger is approved |
 | Advisor | Required for privacy/protocol/ecosystem boundary decisions |

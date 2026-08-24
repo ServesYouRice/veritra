@@ -7,9 +7,9 @@ right link passes over and the left link tucks under with a uniform keyline
 gap, its tip showing through the right link's loop.
 
 Every file here is on **K2 · Bone**, the direction decided 2026-08-07 and
-specified in [`../../design.md`](../../design.md) §K. The old Indigo→Sky
-gradient family is in [`superseded/`](superseded/README.md) and must not be
-used. Open `preview.html` in a browser to see the family on both grounds.
+specified in [`../../design.md`](../../design.md) §K. Open `preview.html` in a
+browser to see the family on both grounds. Replaced brand assets are available
+only from Git history at `bfb3922`.
 
 ## Files
 

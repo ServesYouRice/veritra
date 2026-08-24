@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | I45 operations scope; DEP-09/NTH-04; R8/H1 |
-| Initial eligibility | Blocked under D02 |
+| Routing snapshot (board wins) | Blocked under D02 |
 | Risk | High release blocker |
 | Executor | Strong |
 | Advisor | Review secret handling, retention and recovery objective |
@@ -46,4 +46,3 @@ retention and disposable clean-host restore drills.
 ```sh
 cd server && go test ./cmd/messenger-server ./internal/app ./internal/storage
 ```
-

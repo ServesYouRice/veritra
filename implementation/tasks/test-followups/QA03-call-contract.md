@@ -4,7 +4,7 @@
 |---|---|
 | Confirmed source | `testing/review_findings.md` M1 at `3ee785d` |
 | Canonical owner | T42A protocol verification; coordinate T42B without native work |
-| Initial eligibility | Ready only after the coordinator claims a T42A verification follow-up |
+| Routing snapshot (board wins) | Ready only after the coordinator claims a T42A verification follow-up |
 | Risk | High conditional call blocker |
 | Executor | Balanced+advisor |
 | Advisor | Required on client session/version ownership before service edits |
@@ -21,7 +21,7 @@ against the live Go server.
 ## Read first
 
 - `docs/audit-consensus.md` I42 and its T42A implementation note.
-- `implementation/tasks/T42A-call-authorization.md` and the unapproved T42B
+- `implementation/tasks/T42B-native-call-lifecycle.md` and its unapproved
   design status.
 - `server/internal/httpapi/call_sync_handlers.go`,
   `server/internal/storage/call_authorization_test.go`, and the call domain

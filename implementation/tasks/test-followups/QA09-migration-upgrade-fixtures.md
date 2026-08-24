@@ -4,7 +4,7 @@
 |---|---|
 | Confirmed source | `testing/review_findings.md` M5 at `3ee785d` |
 | Canonical owner | T45A migration/restore atomicity |
-| Initial eligibility | Blocked by I29 and I39 with T45A |
+| Routing snapshot (board wins) | Blocked by I29 and I39 with T45A |
 | Risk | High migration/recovery boundary, test-only scope |
 | Executor | Balanced+advisor |
 | Advisor | Required before any production migration/store edit |

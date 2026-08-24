@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | I45 engine scope; DEP-04/DEP-05/DEP-10/TEST-08; R5 |
-| Initial eligibility | Blocked under D02 |
+| Routing snapshot (board wins) | Blocked under D02 |
 | Risk | High release blocker |
 | Executor | Strong |
 | Advisor | Required before activation/rollback design and after fault tests |
@@ -47,4 +47,3 @@ original instance remains recoverable under every named failure.
 ```sh
 cd server && go test ./cmd/messenger-server ./internal/storage
 ```
-

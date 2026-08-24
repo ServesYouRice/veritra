@@ -4,7 +4,7 @@
 |---|---|
 | Confirmed source | `testing/review_findings.md` M3 at `3ee785d` |
 | Canonical owner | T41 mobile platform readiness |
-| Initial eligibility | Blocked until I41 is eligible under D03 and I36 |
+| Routing snapshot (board wins) | Blocked until I41 is eligible under D03 and I36 |
 | Risk | High conditional wake-contract gap; bounded Dart test scope |
 | Executor | Balanced |
 | Advisor | Only if the current provider interface or native protocol must change |

@@ -4,11 +4,10 @@ This is the authoritative disposition of the 2026-08-08 Codex and Opus
 production audits. It was reconciled against `main` at
 `194bd0cc660c1d9267ef973e6ab96f6db12589bb` on 2026-08-13.
 
-The source audits remain read-only evidence in [`audits-codex/`](audits-codex/)
-and [`audits-opus/`](audits-opus/). Detailed adjudication notes are in
-[`audit-critique.md`](audit-critique.md). Neither source audit is an
-implementation backlog. [`board.md`](board.md) owns status; this file owns the
-reasoning, scope, order and acceptance checks for audit-derived cards.
+The raw audits and detailed adjudication notes are preserved in Git history at
+`bfb3922` and intentionally absent from the working tree. They are evidence,
+not an implementation backlog. [`board.md`](board.md) owns status; this file
+owns the reasoning, scope, order and acceptance checks for audit-derived cards.
 Root [`implementation/`](../implementation/) derives claimable execution tasks
 from those cards. It may split work but cannot change a decision here.
 
@@ -697,8 +696,8 @@ over severity labels; approved product/privacy decisions win over roadmap
 ideas; measured behavior wins over speculative architecture.
 
 When implementation changes a card's truth, update [`board.md`](board.md) and
-this register in the same change. Do not edit the source audit snapshots to
-make them look current.
+this register in the same change. Do not restore historical source snapshots
+as live executor context or make them look current.
 
 ---
 
@@ -720,8 +719,8 @@ decisions below close the remaining disagreements.
 | SEC-01 severity | High is retained because the leaked capability yields encrypted backup ciphertext protected by a separate user-held key—not because wording was removed from a report. |
 
 The source trace remains complete: 96 Codex findings, 80 numbered Opus findings
-and six Opus bundles all have owners. [`audit-critique.md`](audit-critique.md)
-now states the correct Codex total.
+and six Opus bundles all have owners. The raw critique at `bfb3922` records the
+adjudication provenance; the table above is the live trace.
 
 ---
 
@@ -788,9 +787,9 @@ or an explicitly scoped split (SEC-03 review/advisory, TEST-03 message-outbox
 versus MLS-control). U15, PERF-03 and NTH-05 are single-owner. The duplicate
 ownership objection is fully closed.
 
-[`audit-critique.md`](audit-critique.md) had corrected its count at the top but
-still read "76 findings across 8 chapters" in its structural critique. Both now
-agree on 96.
+The historical critique at `bfb3922` had corrected its count at the top but
+still read "76 findings across 8 chapters" in its structural critique. Its
+final revision and this register agree on 96.
 
 ### Codex disposition
 

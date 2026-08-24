@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | I49 mobile scope; PERF-09/ARCH-02/NTH-15; P5/P6/P8/U9/U10 |
-| Initial eligibility | Measure after lifecycle/sync correctness |
+| Routing snapshot (board wins) | Measure after lifecycle/sync correctness |
 | Risk | Conditional on measured device limits |
 | Executor | Balanced |
 | Advisor | Before broad state decomposition or persistence migration |
@@ -48,4 +48,3 @@ tab-state loss on representative low-end devices before decomposing state.
 cd mobile && flutter test
 cd mobile && flutter analyze
 ```
-

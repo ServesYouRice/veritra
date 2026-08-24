@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | I44 interaction scope; UI-11; U5/U6/U7/U8/U11/U19/U23 |
-| Initial eligibility | Prepared; claim after release blockers |
+| Routing snapshot (board wins) | Prepared; claim after release blockers |
 | Risk | Medium/Low |
 | Executor | Balanced |
 | Advisor | Not required unless gated-crypto behavior changes |
@@ -50,4 +50,3 @@ keyboard send/length feedback and supported row actions.
 cd mobile && flutter test test/ui_features_test.dart test/ui_actionable_test.dart test/chat_visuals_test.dart
 cd mobile && flutter analyze
 ```
-

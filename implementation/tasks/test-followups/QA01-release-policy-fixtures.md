@@ -4,7 +4,7 @@
 |---|---|
 | Confirmed source | `testing/review_findings.md` M4 at `3ee785d` |
 | Canonical owner | T40C positive release gate; T40D verification policy |
-| Initial eligibility | Ready only after the coordinator claims an I40 checks follow-up |
+| Routing snapshot (board wins) | Ready only after the coordinator claims an I40 checks follow-up |
 | Risk | High release-gate regression |
 | Executor | Balanced+advisor |
 | Advisor | Required before changing required-check semantics or evidence fields |
@@ -20,9 +20,7 @@ manifest construction.
 
 ## Read first
 
-- `docs/audit-consensus.md` I40 and the T40C/T40D implementation notes.
-- `implementation/tasks/T40C-release-gate.md` and
-  `implementation/tasks/T40D-dependency-verification.md`.
+- `docs/audit-consensus.md` I40 and its T40C/T40D implementation notes.
 - `scripts/check-release-evidence*.py`, `scripts/check-dart-retractions*.py`,
   `scripts/check-ci-evidence.py`, `scripts/write-release-evidence.py`.
 - `.github/workflows/ci.yml`, `scripts/test.ps1`, `scripts/test.sh`, and
@@ -99,4 +97,3 @@ whether the change preserves commit-bound positive evidence.
 
 Use the exact handoff block in `implementation/WORKFLOW.md` with `Task: QA01`.
 Name all four automatic invocation points and every unavailable check.
-

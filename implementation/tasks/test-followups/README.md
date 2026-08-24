@@ -25,7 +25,7 @@ allowed write set against other work. Give an executor only `AGENTS.md`,
 ## Assignment rules
 
 - One executor owns one QA contract end to end.
-- `Initial eligibility` is a snapshot, not permission. The board wins.
+- A routing snapshot is not permission. The board wins.
 - A lower-tier executor never makes a release, crypto, recovery, migration, or
   platform-policy decision. It stops at the named advisor checkpoint.
 - No task may add a dependency, weaken `PM_CRYPTO_UNAVAILABLE`, enable
@@ -44,4 +44,3 @@ editing. Stay inside the allowed write set. Stop on every blocker or advisor
 checkpoint. Run every required check and return the contract handoff exactly;
 never call inspection a passing runtime check.
 ```
-

@@ -4,7 +4,7 @@
 |---|---|
 | Confirmed source | `testing/review_findings.md` M2 at `3ee785d` |
 | Canonical owner | Follow-up to completed I17; G24 activation evidence |
-| Initial eligibility | Prepared; coordinator must add/map a canonical board child before claim |
+| Routing snapshot (board wins) | Prepared; coordinator must add/map a canonical board child before claim |
 | Risk | High crypto-boundary verification |
 | Executor | Balanced+advisor |
 | Advisor | Required before changing framing, context, or destination semantics |

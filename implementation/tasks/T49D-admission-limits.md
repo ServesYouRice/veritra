@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | I49 admission/architecture scope; NTH-16; S6 |
-| Initial eligibility | Measure, then decide |
+| Routing snapshot (board wins) | Measure, then decide |
 | Risk | Security/availability conditional |
 | Executor | Strong |
 | Advisor | Required on abuse model, defaults and migration behavior |
@@ -18,8 +18,8 @@ conversation/community/channel limits without changing the storage architecture.
 
 ## Read first
 
-- `docs/audit-consensus.md` I49 decision rule.
-- `docs/audits-opus/security-issues.md` S6 and Codex NTH-16.
+- `docs/audit-consensus.md` I49 decision rule and reconciled source IDs
+  S6/NTH-16.
 - Conversation/community creation handlers/stores, config and T47 evidence.
 
 ## Invariants
@@ -46,4 +46,3 @@ conversation/community/channel limits without changing the storage architecture.
 ```sh
 cd server && go test ./internal/httpapi ./internal/storage
 ```
-

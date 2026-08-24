@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | IXX; source finding IDs |
-| Initial eligibility | Ready / Blocked / Prepared / Deferred / External |
+| Routing snapshot (board wins) | Ready / Blocked / Prepared / Deferred / External |
 | Risk | Severity and release effect |
 | Executor | Strong / Balanced+advisor / Balanced |
 | Advisor | Required checkpoint or “only if escalation trigger fires” |
@@ -18,7 +18,7 @@ One observable outcome. State why it matters.
 ## Read first
 
 - Exact section in `docs/audit-consensus.md`.
-- Exact finding sections in source audits.
+- Source finding IDs already reconciled in that consensus section.
 - Starting code and test paths. Verify before editing.
 
 ## Invariants
@@ -47,4 +47,3 @@ The precise question and when to ask it.
 
 Use the handoff block from `implementation/WORKFLOW.md` and identify every
 criterion, skipped check and residual blocker.
-

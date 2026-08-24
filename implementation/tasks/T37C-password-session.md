@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | I37 hardening scope; S4/S11 |
-| Initial eligibility | Ready, noncritical subtask |
+| Routing snapshot (board wins) | Partial; policy/toolchain deferred |
 | Risk | Medium |
 | Executor | Strong |
 | Advisor | Required before changing KDF/session policy |
@@ -18,8 +18,7 @@ sessions under explicit idle/absolute lifetime rules.
 
 ## Read first
 
-- `docs/audit-consensus.md` I37.
-- `docs/audits-opus/security-issues.md` S4/S11.
+- `docs/audit-consensus.md` I37 and reconciled source IDs S4/S11.
 - `server/internal/auth/`, auth handlers, session storage/migration and tests.
 
 ## Invariants
@@ -45,4 +44,3 @@ sessions under explicit idle/absolute lifetime rules.
 ```sh
 cd server && go test ./internal/auth ./internal/httpapi ./internal/storage
 ```
-

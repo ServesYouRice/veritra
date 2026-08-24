@@ -58,18 +58,20 @@ Each executor receives only:
 
 1. `AGENTS.md` and this workflow.
 2. One task file.
-3. The named consensus and source-audit sections.
+3. The named consensus section and its already-reconciled source IDs.
 4. The task's starting code paths and relevant test files.
 5. Any coordinator note about overlapping uncommitted work.
 
-Do not load all audits or `docs/archive/`. For a long-context handoff, place
-source material before the request and put the explicit assignment last.
+Raw audits and archived plans are intentionally absent from the working tree.
+Do not recover them from Git history unless the live contract cites a specific
+revision and path. For a long-context handoff, place source material before the
+request and put the explicit assignment last.
 
 Use this prompt shape when the harness benefits from structured instructions:
 
 ```xml
 <role>You are the executor for exactly one Veritra task.</role>
-<context>Read the attached task contract and named source sections.</context>
+<context>Read the attached task contract and named consensus sections.</context>
 <invariants>Preserve every privacy and fail-closed boundary in AGENTS.md.</invariants>
 <instructions>
 1. Confirm the finding against current code.
@@ -83,7 +85,7 @@ Use this prompt shape when the harness benefits from structured instructions:
 
 ## Claim and execution protocol
 
-1. Check `docs/board.md`; a task file's “initial eligibility” is historical.
+1. Check `docs/board.md`; a task file's routing snapshot is not permission.
 2. Verify every dependency is complete and no other active task owns an
    overlapping write set.
 3. Mark the source card claimed on the board before product edits.
@@ -102,11 +104,10 @@ Parallelize independent tasks across different surfaces; specialize agents by
 domain. Every agent has isolated conversational context even when sharing a
 filesystem, so assignments must be self-contained.
 
-- Safe example: T43A theme tokens and T42A server call authorization, after
-  confirming their tests do not share generated files.
-- Unsafe example: T30B and T32 both changing `mobile/lib/core/app_state.dart`.
-- Unsafe example: T36A and T36B concurrently changing message commit/fanout
-  interfaces.
+- Safe example: T44B mobile list quality and T46 deployment hardening, after
+  confirming their tests and generated files do not overlap.
+- Unsafe example: T45A and T45C both changing backup/recovery storage paths.
+- Unsafe example: T42B and QA03 both changing call lifecycle ownership.
 - One coordinator synthesizes reports and resolves integration failures.
 - Do not create nested agent teams. Escalate one bounded question to one
   advisor instead.
@@ -137,4 +138,3 @@ Stop before editing when the task requires a product/protocol choice not made
 in the consensus, a new dependency, schema-destructive migration, credential,
 external deployment, release publication, or weakened privacy/crypto boundary.
 Report the exact decision needed. Do not invent authority.
-

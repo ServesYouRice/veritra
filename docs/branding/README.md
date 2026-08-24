@@ -1,54 +1,9 @@
-# Veritra Branding
+# Veritra branding
 
-**Decided: concept 06, the Chain Link V**, expanded into a full mark family in
-[`concept-06/`](concept-06/README.md). That is the one the app, the setup page
-and the README use. Everything else on this page is the exploration that
-produced it — kept as a record, not as live options.
+The current identity is the K2 · Bone Chain Link V family in
+[`concept-06/`](concept-06/README.md). It is the only live brand direction and
+is used by the mobile apps, setup page, and repository README.
 
-⚠️ **The palette below is superseded.** These exploration marks were drawn on
-the Indigo→Sky gradient over an Ink ground. The app adopted **K2 · Bone** on
-2026-08-07, which drops that palette entirely — see
-[`../design.md`](../design.md) §K.
-
-The chosen family in [`concept-06/`](concept-06/README.md) **has been redrawn
-on Bone in full** — mark, wordmarks, favicon, app icon and every raster export.
-The old gradient versions of those files are in
-[`concept-06/superseded/`](concept-06/superseded/README.md) and must not be
-used. The other nine concepts on this page have not been redrawn; they are a
-record of the exploration, not live options.
-
-Open `preview.html` in a browser to see all concepts side by side on light and
-dark backgrounds.
-
-| File | Concept | Idea |
-| --- | --- | --- |
-| `concept-01-shield-v.svg` | Shield V | Shield with a negative-space V. Privacy-first, versatile, scales well. |
-| `concept-02-bubble-keyhole.svg` | Bubble + Keyhole | Chat bubble with a keyhole; the tail forms the V point. Most literal. |
-| `concept-03-verified-v.svg` | Verified V | The V's right arm doubles as a checkmark — "veritas", verified identity. |
-| `concept-04-sealed-envelope.svg` | Sealed Envelope | Envelope fold lines draw the V, sealed with a padlock: the server only stores sealed envelopes. |
-| `concept-05-app-icon.svg` | App Icon V | Bold geometric V on a dark squircle, ready as a mobile app icon. |
-| `concept-06-chainlink-v.svg` | Chain Link V | Two interlocked links form the V — an end-to-end connection. Expanded into a full mark family in [`concept-06/`](concept-06/README.md). |
-| `concept-07-fingerprint-v.svg` | Fingerprint V | Nested chevrons with ridge breaks: identity and key verification. |
-| `concept-08-key-v.svg` | Key V | A key whose bow carries the V — you hold the keys, not the server. |
-| `concept-09-paper-plane.svg` | Paper Plane | Flat-facet folded plane: light, fast, self-hosted delivery. |
-| `concept-10-hex-node.svg` | Hex Node V | Hexagon badge reading as a self-hosted node on the network. |
-| `wordmark.svg` | Wordmark lockup | Shield-V mark plus a lowercase "veritra" wordmark (system font placeholder). |
-| `wordmark-dark.svg` | Wordmark lockup (dark) | Same lockup with light text for dark backgrounds. |
-
-## Palette (superseded — historical)
-
-The palette these SVGs were drawn on. Superseded by K2 · Bone; see
-[`../design.md`](../design.md) §K for what the app actually uses.
-
-- Indigo `#6366F1` → Sky `#0EA5E9` gradient (trust, calm, technical)
-- Teal `#0D9488` (alternate accent)
-- Green `#22C55E` (verification)
-- Ink `#0B1220` (dark surfaces)
-
-## Notes
-
-- All marks are dependency-free SVGs; only `wordmark.svg` uses text (system
-  sans placeholder — replace with a brand typeface when one is chosen).
-- Use `wordmark.svg` on light backgrounds and `wordmark-dark.svg` on dark ones.
-- Concept 05 fits standard app-icon masks (iOS squircle, Android adaptive
-  icon safe zone).
+Use the SVG sources and generated exports documented in that directory.
+Earlier explorations and the replaced Indigo→Sky assets are intentionally kept
+out of the working tree; they remain recoverable from Git history at `bfb3922`.

@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | I46; DEP-03/DEP-07/DEP-08/DEP-11; R4/R9 |
-| Initial eligibility | Prepared |
+| Routing snapshot (board wins) | Prepared |
 | Risk | Medium; required for “supported deployment” claim |
 | Executor | Balanced+advisor |
 | Advisor | Review artifact trust, secret delivery and sandbox compatibility |
@@ -50,4 +50,3 @@ compatible least-privilege profile.
 cd server && go test ./cmd/messenger-server ./internal/app
 ./scripts/test.sh
 ```
-

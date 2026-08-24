@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | I45 client scope; NTH-04; U18/H1 |
-| Initial eligibility | Blocked under D02 |
+| Routing snapshot (board wins) | Blocked under D02 |
 | Risk | High release blocker |
 | Executor | Strong |
 | Advisor | Required on key ownership, recovery capability and destructive reset UX |
@@ -47,4 +47,3 @@ that clearly distinguishes recovery, relink and destructive reset.
 ```sh
 cd mobile && flutter test test/app_state_test.dart test/encrypted_local_store_test.dart test/ui_actionable_test.dart
 ```
-

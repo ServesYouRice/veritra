@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | I49 storage scope; PERF-06/PERF-07/NTH-16; P1/P3/P9/S5 |
-| Initial eligibility | Measure after correctness blockers |
+| Routing snapshot (board wins) | Measure after correctness blockers |
 | Risk | Conditional; S5 may require admission hardening |
 | Executor | Balanced+advisor |
 | Advisor | Required before changing integrity verification, quota accounting or blob layout |
@@ -47,4 +47,3 @@ disk use and directory reconciliation before selecting any optimization.
 ```sh
 cd server && go test -run '^$' -bench . -benchmem ./internal/storage ./internal/uploads
 ```
-

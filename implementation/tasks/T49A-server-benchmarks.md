@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | I49 server scope; PERF-01/PERF-04/ARCH-05; L13/P2/P4/P7 |
-| Initial eligibility | Measure after correctness blockers |
+| Routing snapshot (board wins) | Measure after correctness blockers |
 | Risk | Conditional on measured limits |
 | Executor | Balanced |
 | Advisor | Only before schema/read-model migration or architectural replacement |
@@ -48,4 +48,3 @@ named target is missed.
 ```sh
 cd server && go test -run '^$' -bench . -benchmem ./internal/storage ./internal/realtime
 ```
-

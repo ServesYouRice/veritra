@@ -4,7 +4,7 @@
 |---|---|
 | Confirmed source | `testing/review_findings.md` M6 at `3ee785d` |
 | Canonical owner | T40D verification policy; T47 measurement/targets |
-| Initial eligibility | Measurement may start; enforcement needs advisor approval |
+| Routing snapshot (board wins) | Measurement may start; enforcement needs advisor approval |
 | Risk | Medium signal quality; high if made release-required incorrectly |
 | Executor | Balanced+advisor; Fast may collect the read-only baseline only |
 | Advisor | Required to choose thresholds and before any Rust coverage tool |

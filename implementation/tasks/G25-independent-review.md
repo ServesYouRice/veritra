@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | I25; SEC-03 review scope, UI-01 |
-| Initial eligibility | External gate |
+| Routing snapshot (board wins) | External gate |
 | Risk | Final production crypto gate |
 | Executor | Independent reviewer; coordinator integrates remediation |
 | Advisor | Cannot substitute for independent human/security review |
@@ -49,4 +49,3 @@ critical/high issue, rerun evidence and only then authorize production MLS.
 
 Run the complete release matrix, native ABI/vector suites and
 `./scripts/release-readiness.sh` against the final candidate.
-

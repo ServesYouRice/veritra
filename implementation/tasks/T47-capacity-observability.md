@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | I47; DEP-12/TEST-07/PERF-10/ARCH-08/NTH-03; H4 |
-| Initial eligibility | Prepared; conditional for private alpha, required before GA/scale claim |
+| Routing snapshot (board wins) | Prepared; conditional for private alpha, required before GA/scale claim |
 | Risk | High for production capacity claims |
 | Executor | Balanced+advisor |
 | Advisor | Review metric privacy, workload model and target validity |
@@ -48,4 +48,3 @@ resource, backup and recovery limits under reproducible load/failure scenarios.
 ```sh
 cd server && go test ./internal/app ./internal/storage ./internal/push ./internal/realtime
 ```
-

@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | I48 assurance scope; S7/S8 |
-| Initial eligibility | Prepared |
+| Routing snapshot (board wins) | Prepared |
 | Risk | Medium security/deployment conditional |
 | Executor | Strong |
 | Advisor | Required before parser replacement or trust-model choice |
@@ -18,8 +18,7 @@ evidence, and provide a documented mobile TLS trust path for supported LAN insta
 
 ## Read first
 
-- `docs/audit-consensus.md` I48.
-- `docs/audits-opus/security-issues.md` S7/S8.
+- `docs/audit-consensus.md` I48 and reconciled source IDs S7/S8.
 - `server/internal/realtime/websocket.go` and tests, Caddy config, mobile
   networking/platform configuration and operations docs.
 
@@ -49,4 +48,3 @@ evidence, and provide a documented mobile TLS trust path for supported LAN insta
 cd server && go test ./internal/realtime ./internal/httpapi
 cd server && go test -fuzz=Fuzz -fuzztime=30s ./internal/realtime
 ```
-

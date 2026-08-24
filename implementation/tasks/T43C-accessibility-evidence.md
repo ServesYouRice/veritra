@@ -3,7 +3,7 @@
 | Field | Contract |
 |---|---|
 | Consensus source | I43 evidence scope; UI-04/UI-05/UI-07/TEST-04; U16/U20/R6/H5 |
-| Initial eligibility | Ready after affected UI tasks |
+| Routing snapshot (board wins) | Implementation present; checks/evidence pending |
 | Risk | High pre-release evidence |
 | Executor | Balanced+advisor |
 | Advisor | Review accessibility matrix and evidence completeness |
@@ -13,13 +13,13 @@
 
 ## Objective
 
-Create automated semantic, golden, viewport and text-scale coverage, fix the
-named responsive/a11y defects, and prepare the real-device matrix.
+Verify the implemented semantic, viewport, and text-scale coverage; add only
+the still-missing visual evidence and prepare the real-device matrix.
 
 ## Read first
 
 - `docs/audit-consensus.md` I43 and G24.
-- Named source findings.
+- Reconciled source IDs UI-04/UI-05/UI-07/TEST-04/U16/U20/R6/H5.
 - Auth labels, `mobile/lib/ui/app_shell.dart`, shared type/widgets,
   `server/websetup/index.html`, mobile UI tests and `docs/design.md`.
 
@@ -31,10 +31,11 @@ named responsive/a11y defects, and prepare the real-device matrix.
 
 ## Work
 
-1. Fix semantic labels, micro text misuse, nav truncation and narrow web setup.
-2. Add representative light/dark goldens and 320 px/landscape/tablet/200% tests.
-3. Add semantic traversal and reduced-motion checks.
-4. Bind automated evidence to the commit and prepare G24 manual checklist.
+1. Confirm the current tests cover semantic labels, 320 px, landscape/tablet,
+   200% text scale, traversal, and reduced motion; do not redo passing work.
+2. Run every required check and fix only failures within this contract.
+3. Add representative light/dark goldens if they are still absent.
+4. Bind automated evidence to the commit and prepare the G24 manual checklist.
 
 ## Acceptance
 
@@ -49,4 +50,3 @@ cd mobile && flutter test
 cd mobile && flutter analyze
 cd server && go test ./websetup
 ```
-

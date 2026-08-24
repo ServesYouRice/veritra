@@ -34,13 +34,14 @@ desktop or embedding work, or add server-side plaintext paths to serve them.
 1. Read `docs/board.md`.
 2. Read `implementation/KANBAN.md`, then its linked task index and workflow.
 3. Claim one eligible implementation task and read only that task plus its
-   named audit sections and files.
+   named consensus sections and files.
 4. Confirm the task is still true before editing.
 5. Make the smallest complete change and run the task's checks.
 6. Update the board and consensus. Report changed files, checks, and blockers briefly.
 
-Use judgment and match nearby code. Do not load `docs/archive/` unless a card
-links a specific archived reference. Prefer local, reversible actions. Ask
+Use judgment and match nearby code. Historical audits, plans, and superseded
+assets live only in Git history; do not recover them unless a current card
+links a specific revision and path. Prefer local, reversible actions. Ask
 before destructive, external, release, or dependency changes.
 
 Project documentation lives in `docs/`: `board.md` (status),

@@ -4,7 +4,7 @@
 |---|---|
 | Confirmed source | `testing/review_findings.md` M3 at `3ee785d` |
 | Canonical owner | T41 provider/platform readiness |
-| Initial eligibility | Blocked until I41 is eligible under D03 and I36 |
+| Routing snapshot (board wins) | Blocked until I41 is eligible under D03 and I36 |
 | Risk | High conditional push/privacy boundary |
 | Executor | Balanced+advisor |
 | Advisor | Required before adding a network seam or changing error classes |
