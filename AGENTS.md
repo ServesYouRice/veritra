@@ -32,8 +32,8 @@ desktop or embedding work, or add server-side plaintext paths to serve them.
 ## How to work
 
 1. Read `docs/board.md`.
-2. Read `implementation/KANBAN.md`, then its linked task index and workflow.
-3. Claim one eligible implementation task and read only that task plus its
+2. Read `implementation/REMAINING_WORK.md`, the single execution queue and workflow.
+3. Claim one eligible implementation task and read only its section plus the
    named consensus sections and files.
 4. Confirm the task is still true before editing.
 5. Make the smallest complete change and run the task's checks.

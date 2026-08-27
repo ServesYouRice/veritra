@@ -8,8 +8,9 @@ The raw audits and detailed adjudication notes are preserved in Git history at
 `bfb3922` and intentionally absent from the working tree. They are evidence,
 not an implementation backlog. [`board.md`](board.md) owns status; this file
 owns the reasoning, scope, order and acceptance checks for audit-derived cards.
-Root [`implementation/`](../implementation/) derives claimable execution tasks
-from those cards. It may split work but cannot change a decision here.
+[`implementation/REMAINING_WORK.md`](../implementation/REMAINING_WORK.md)
+derives claimable execution tasks from those cards. It may split work but
+cannot change a decision here.
 
 ## Outcome
 

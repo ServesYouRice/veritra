@@ -115,8 +115,9 @@ the recovery path when an authoritative card cites a specific old revision.
 Two documents are authoritative and should be read before changing anything:
 [`AGENTS.md`](AGENTS.md) for the non-negotiable boundaries, and
 [`docs/board.md`](docs/board.md) for what is actually being worked on.
-For audit-derived work, [`implementation/README.md`](implementation/README.md)
-then provides the claimable task contracts. It is derivative: the board and
+For audit-derived work,
+[`implementation/REMAINING_WORK.md`](implementation/REMAINING_WORK.md) then
+provides the claimable task contracts. It is derivative: the board and
 consensus win if they disagree.
 
 ## Important Caveat
