@@ -4,6 +4,20 @@ $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $GoVersion = (Get-Content -Raw (Join-Path $Root ".go-version")).Trim()
 $GoImage = "golang:${GoVersion}@sha256:9006890ecba0a168034d99516084099ae3114d9f2b7d6572c77f2dde57ebc980"
 
+$PythonCmd = if (Get-Command py -ErrorAction SilentlyContinue) { "py" } elseif (Get-Command python3 -ErrorAction SilentlyContinue) { "python3" } elseif (Get-Command python -ErrorAction SilentlyContinue) { "python" } else { $null }
+if ($PythonCmd) {
+  & $PythonCmd (Join-Path $Root "scripts/check-release-evidence_test.py")
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  & $PythonCmd (Join-Path $Root "scripts/check-dart-retractions_test.py")
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  & $PythonCmd (Join-Path $Root "scripts/check-ci-evidence_test.py")
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  & $PythonCmd (Join-Path $Root "scripts/write-release-evidence_test.py")
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  & $PythonCmd (Join-Path $Root "scripts/check-coverage_test.py")
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
 if (Get-Command go -ErrorAction SilentlyContinue) {
   Push-Location (Join-Path $Root "server")
   try {

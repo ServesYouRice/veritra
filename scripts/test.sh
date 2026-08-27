@@ -4,6 +4,20 @@ set -eu
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 sh "$ROOT/scripts/check-go-toolchain.sh"
 GO_VERSION="$(tr -d '[:space:]' < "$ROOT/.go-version")"
+ 
+if command -v python3 >/dev/null 2>&1; then
+  python3 "$ROOT/scripts/check-release-evidence_test.py"
+  python3 "$ROOT/scripts/check-dart-retractions_test.py"
+  python3 "$ROOT/scripts/check-ci-evidence_test.py"
+  python3 "$ROOT/scripts/write-release-evidence_test.py"
+  python3 "$ROOT/scripts/check-coverage_test.py"
+elif command -v python >/dev/null 2>&1; then
+  python "$ROOT/scripts/check-release-evidence_test.py"
+  python "$ROOT/scripts/check-dart-retractions_test.py"
+  python "$ROOT/scripts/check-ci-evidence_test.py"
+  python "$ROOT/scripts/write-release-evidence_test.py"
+  python "$ROOT/scripts/check-coverage_test.py"
+fi
 
 if command -v go >/dev/null 2>&1; then
   (cd "$ROOT/server" && go test ./...)

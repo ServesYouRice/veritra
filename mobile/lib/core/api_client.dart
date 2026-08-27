@@ -564,12 +564,14 @@ class ApiClient {
   }
 
   Future<CallSession> transitionCall(String token, String callId, String state,
-      {Map<String, Object?>? encryptedMetadata}) async {
+      {required int expectedVersion,
+      Map<String, Object?>? encryptedMetadata}) async {
     final json = await _jsonRequest(
         'POST', '/api/v1/calls/${Uri.encodeComponent(callId)}/state',
         token: token,
         body: <String, Object?>{
           'state': state,
+          'expected_version': expectedVersion,
           if (encryptedMetadata != null) 'metadata': encryptedMetadata
         });
     return CallSession.fromJson(json);
