@@ -7,6 +7,57 @@ import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 
 void main() {
+  test('CallSession model parsing requires version and invited_account_id', () {
+    final now = DateTime.now().toUtc();
+    final json = <String, Object?>{
+      'id': 'call_123',
+      'conversation_id': 'conv_456',
+      'created_by': 'acc_owner',
+      'invited_account_id': 'acc_member',
+      'state': 'ringing',
+      'version': 3,
+      'metadata': {'test': 'data'},
+      'created_at': now.toIso8601String(),
+      'ended_at': now.add(const Duration(minutes: 5)).toIso8601String(),
+      'expires_at': now.add(const Duration(minutes: 10)).toIso8601String(),
+    };
+    final session = CallSession.fromJson(json);
+    expect(session.id, 'call_123');
+    expect(session.conversationId, 'conv_456');
+    expect(session.createdBy, 'acc_owner');
+    expect(session.invitedAccountId, 'acc_member');
+    expect(session.state, 'ringing');
+    expect(session.version, 3);
+    expect(session.metadata, {'test': 'data'});
+    expect(session.endedAt, isNotNull);
+    expect(session.expiresAt, isNotNull);
+
+    final minimalJson = <String, Object?>{
+      'id': 'call_minimal',
+      'conversation_id': 'conv_minimal',
+      'created_by': 'acc_owner',
+      'invited_account_id': '',
+      'state': 'ringing',
+      'version': 1,
+      'metadata': <String, Object?>{},
+      'created_at': now.toIso8601String(),
+    };
+    final minimalSession = CallSession.fromJson(minimalJson);
+    expect(minimalSession.invitedAccountId, isEmpty);
+    expect(minimalSession.version, 1);
+    expect(minimalSession.endedAt, isNull);
+    expect(minimalSession.expiresAt, isNull);
+
+    // `version` is an optimistic-concurrency token and `invited_account_id`
+    // gates transition authorization: a payload missing either is a contract
+    // break and must fail loudly rather than default to a plausible value.
+    for (final missing in <String>['version', 'invited_account_id']) {
+      final broken = Map<String, Object?>.from(minimalJson)..remove(missing);
+      expect(() => CallSession.fromJson(broken), throwsA(isA<TypeError>()),
+          reason: 'missing $missing must not be silently defaulted');
+    }
+  });
+
   final baseUrl = Platform.environment['VERITRA_CONTRACT_BASE_URL'];
   final libraryPath = Platform.environment['VERITRA_CRYPTO_LIBRARY'];
 
@@ -265,6 +316,73 @@ void main() {
           .having((error) => error.statusCode, 'status', 404)
           .having((error) => error.serverCode, 'serverCode', 'not_found')),
     );
+    final dm = await client.createConversation(owner.token, 'dm');
+    await client.addConversationMember(owner.token, dm.id, member.accountId!);
+
+    final iceServers = await client.callIceServers(owner.token);
+    expect(iceServers, isA<List<Map<String, Object?>>>());
+
+    final createdCall = await client.createCall(
+      owner.token,
+      dm.id,
+      <String, Object?>{
+        'version': 1,
+        'ciphertext': base64Encode([1, 2, 3, 4]),
+        'protocol': 'mls10-openmls-v1',
+        'sender_device_id': owner.deviceId!,
+        'action_id': 'action_call_create_1',
+      },
+    );
+    expect(createdCall.conversationId, dm.id);
+    expect(createdCall.createdBy, owner.accountId);
+    expect(createdCall.invitedAccountId, member.accountId);
+    // The server creates sessions already ringing; there is no 'created' state.
+    expect(createdCall.state, 'ringing');
+    expect(createdCall.version, 1);
+
+    final callList = await client.calls(owner.token, dm.id);
+    expect(callList, isNotEmpty);
+    expect(callList.first.id, createdCall.id);
+
+    await expectLater(
+      client.transitionCall(
+        member.token,
+        createdCall.id,
+        'active',
+        expectedVersion: 999,
+      ),
+      throwsA(isA<ApiException>()),
+    );
+
+    // A same-state transition carrying no metadata is a no-op: the server
+    // short-circuits it and leaves the concurrency token untouched.
+    final noopCall = await client.transitionCall(
+      member.token,
+      createdCall.id,
+      'ringing',
+      expectedVersion: createdCall.version,
+    );
+    expect(noopCall.state, 'ringing');
+    expect(noopCall.version, createdCall.version);
+
+    final activeCall = await client.transitionCall(
+      member.token,
+      createdCall.id,
+      'active',
+      expectedVersion: noopCall.version,
+    );
+    expect(activeCall.state, 'active');
+    expect(activeCall.version, createdCall.version + 1);
+
+    final endedCall = await client.transitionCall(
+      owner.token,
+      createdCall.id,
+      'ended',
+      expectedVersion: activeCall.version,
+    );
+    expect(endedCall.state, 'ended');
+    expect(endedCall.endedAt, isNotNull);
+
     await client.deleteAccount(member.token);
   },
       skip: baseUrl == null || libraryPath == null
