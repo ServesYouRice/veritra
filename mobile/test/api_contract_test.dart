@@ -316,8 +316,15 @@ void main() {
           .having((error) => error.statusCode, 'status', 404)
           .having((error) => error.serverCode, 'serverCode', 'not_found')),
     );
-    final dm = await client.createConversation(owner.token, 'dm');
-    await client.addConversationMember(owner.token, dm.id, member.accountId!);
+    // A dm names its peer at creation: the store requires exactly one member
+    // account id and rejects anything else with invalid_input. Calls then
+    // require that conversation to hold exactly two members, so the peer
+    // cannot be added afterwards either.
+    final dm = await client.createConversationDetailed(
+      owner.token,
+      kind: 'dm',
+      memberAccountIds: <String>[member.accountId!],
+    );
 
     final iceServers = await client.callIceServers(owner.token);
     expect(iceServers, isA<List<Map<String, Object?>>>());
