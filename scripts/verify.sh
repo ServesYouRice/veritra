@@ -43,9 +43,14 @@ run_step go-race sh -c "cd '$ROOT/server' && go test -race -coverprofile=coverag
 run_step go-lint sh -c "cd '$ROOT/server' && test -z \"\$(gofmt -l .)\" && go vet ./..."
 run_step rust-release sh -c "cd '$ROOT/crypto/rust' && cargo test --release --locked && cargo fmt --check && cargo clippy --all-targets -- -D warnings"
 run_step dart-coverage sh -c "cd '$ROOT/mobile' && flutter test --coverage && flutter analyze && dart format --set-exit-if-changed ."
+# Floors stay at 0.0 until the QA10 advisor checkpoint sets values from
+# testing/evidence/coverage-baseline.md; the gate still fails on missing or
+# malformed coverage data.
+run_step coverage-floor sh -c "python3 '$ROOT/scripts/check-coverage.py' --go-profile '$ROOT/server/coverage.out' --go-floor 0.0 --flutter-lcov '$ROOT/mobile/coverage/lcov.info' --flutter-floor 0.0"
 run_step mobile-dependencies sh "$ROOT/scripts/check-mobile-dependencies.sh"
 run_step licenses sh "$ROOT/scripts/license-check.sh"
 run_step rust-audit sh "$ROOT/scripts/audit-rust.sh"
+run_step release-policy-fixtures sh -c "python3 '$ROOT/scripts/check-release-evidence_test.py' && python3 '$ROOT/scripts/check-dart-retractions_test.py' && python3 '$ROOT/scripts/check-ci-evidence_test.py' && python3 '$ROOT/scripts/write-release-evidence_test.py' && python3 '$ROOT/scripts/check-coverage_test.py'"
 run_step api-contracts sh "$ROOT/scripts/test-api-contracts.sh"
 
 printf '{"schema_version":1,"status":"%s","steps":[%s]}\n' "$status" "$steps" > "$SUMMARY"

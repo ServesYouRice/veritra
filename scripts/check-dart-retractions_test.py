@@ -14,10 +14,13 @@ CHECKER = Path(__file__).with_name("check-dart-retractions.py")
 
 
 def run(payload: object) -> int:
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", encoding="utf-8") as handle:
+    handle = tempfile.NamedTemporaryFile(mode="w", suffix=".json", encoding="utf-8", delete=False)
+    try:
         json.dump(payload, handle)
-        handle.flush()
+        handle.close()
         return subprocess.run([sys.executable, str(CHECKER), handle.name], check=False).returncode
+    finally:
+        Path(handle.name).unlink(missing_ok=True)
 
 
 assert run({"packages": [{"package": "safe", "isCurrentRetracted": False}]}) == 0

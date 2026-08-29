@@ -12,11 +12,27 @@ class ActiveCall {
       {required this.session,
       required this.peerConnection,
       required this.localStream,
-      required this.remoteStreams});
+      required this.remoteStreams,
+      required this.signalErrors});
   CallSession session;
   final RTCPeerConnection peerConnection;
   final MediaStream localStream;
   final StreamController<MediaStream> remoteStreams;
+
+  /// Outbound signalling failures. Trickle ICE is sent in the background, so
+  /// without this its errors would be unobservable unhandled async errors.
+  final StreamController<Object> signalErrors;
+
+  /// Serializes outbound transitions. Every send carries the optimistic
+  /// concurrency token [CallSession.version], so two in-flight sends would
+  /// read the same version and all but the first would be rejected as stale.
+  Future<void> _outbound = Future<void>.value();
+
+  Future<void> enqueueSend(Future<void> Function() send) {
+    final queued = _outbound.then((_) => send());
+    _outbound = queued.catchError((Object _) {});
+    return queued;
+  }
 }
 
 /// Native WebRTC transport. Signaling is always an MLS application payload;
@@ -36,6 +52,11 @@ class NativeCallService {
   final Map<String, ActiveCall> _calls = <String, ActiveCall>{};
   final Map<String, List<Map<String, Object?>>> _earlySignals =
       <String, List<Map<String, Object?>>>{};
+
+  /// Latest session seen for a call that has no [ActiveCall] yet. The caller
+  /// keeps signalling while the callee decides, so the session that arrived
+  /// with the offer is stale by the time answer/reject is sent.
+  final Map<String, CallSession> _pendingSessions = <String, CallSession>{};
   final StreamController<IncomingCallSignal> _incomingOffers =
       StreamController<IncomingCallSignal>.broadcast();
   Stream<IncomingCallSignal> get incomingOffers => _incomingOffers.stream;
@@ -59,7 +80,8 @@ class NativeCallService {
         session: call,
         peerConnection: connection.peerConnection,
         localStream: connection.localStream,
-        remoteStreams: StreamController<MediaStream>.broadcast());
+        remoteStreams: StreamController<MediaStream>.broadcast(),
+        signalErrors: StreamController<Object>.broadcast());
     _installCallbacks(active);
     _calls[call.id] = active;
     await _drainEarly(call.id);
@@ -85,26 +107,42 @@ class NativeCallService {
       'sdp': answer.sdp,
       'sdp_type': answer.type
     });
+    final current = _pendingSessions[call.id] ?? call;
     final updated = await api.transitionCall(token, call.id, 'active',
+        expectedVersion: current.version,
         encryptedMetadata: encrypted.metadata);
     final active = ActiveCall(
         session: updated,
         peerConnection: connection.peerConnection,
         localStream: connection.localStream,
-        remoteStreams: StreamController<MediaStream>.broadcast());
+        remoteStreams: StreamController<MediaStream>.broadcast(),
+        signalErrors: StreamController<Object>.broadcast());
     _installCallbacks(active);
     _calls[call.id] = active;
     await _drainEarly(call.id);
     return active;
   }
 
-  Future<void> reject(String callId) =>
-      api.transitionCall(token, callId, 'rejected');
+  Future<void> reject(CallSession call) async {
+    final current = _pendingSessions.remove(call.id) ?? call;
+    _earlySignals.remove(call.id);
+    await api.transitionCall(token, call.id, 'rejected',
+        expectedVersion: current.version);
+  }
 
-  Future<void> end(String callId) async {
+  Future<void> end(String callId, {int? expectedVersion}) async {
     final active = _calls.remove(callId);
+    final pending = _pendingSessions.remove(callId);
+    _earlySignals.remove(callId);
+    final version =
+        expectedVersion ?? active?.session.version ?? pending?.version;
+    if (version == null) {
+      throw StateError(
+          'Cannot end unknown call session $callId without an explicit expectedVersion');
+    }
     try {
-      await api.transitionCall(token, callId, 'ended');
+      await api.transitionCall(token, callId, 'ended',
+          expectedVersion: version);
     } finally {
       if (active != null) await _disposeCall(active);
     }
@@ -144,26 +182,40 @@ class NativeCallService {
     };
     active.peerConnection.onIceCandidate = (candidate) {
       if (candidate.candidate == null) return;
-      unawaited(_sendSignal(active, <String, Object?>{
+      _queueSignal(active, <String, Object?>{
         'kind': 'ice',
         'candidate': candidate.candidate,
         'sdp_mid': candidate.sdpMid,
         'sdp_mline_index': candidate.sdpMLineIndex,
-      }));
+      });
     };
+  }
+
+  /// Queues an outbound signal. ICE candidates arrive from the native layer in
+  /// bursts, so serializing keeps every send on a fresh version token instead
+  /// of racing and losing all but one candidate to a stale-version rejection.
+  void _queueSignal(ActiveCall active, Map<String, Object?> signal) {
+    final sent = active.enqueueSend(() => _sendSignal(active, signal));
+    unawaited(sent.catchError((Object error) {
+      if (!active.signalErrors.isClosed) active.signalErrors.add(error);
+    }));
   }
 
   Future<void> _sendSignal(
       ActiveCall active, Map<String, Object?> signal) async {
     final encrypted =
         await crypto.encryptCallSignal(active.session.conversationId, signal);
-    await api.transitionCall(token, active.session.id, active.session.state,
+    final updated = await api.transitionCall(
+        token, active.session.id, active.session.state,
+        expectedVersion: active.session.version,
         encryptedMetadata: encrypted.metadata);
+    active.session = updated;
   }
 
   Future<void> _handleIncoming(IncomingCallSignal incoming) async {
     final active = _calls[incoming.call.id];
     if (active == null) {
+      _pendingSessions[incoming.call.id] = incoming.call;
       (_earlySignals[incoming.call.id] ??= <Map<String, Object?>>[])
           .add(incoming.signal);
       if (incoming.signal['kind'] == 'offer') _incomingOffers.add(incoming);
@@ -174,6 +226,7 @@ class NativeCallService {
   }
 
   Future<void> _drainEarly(String callId) async {
+    _pendingSessions.remove(callId);
     final active = _calls[callId];
     if (active == null) return;
     for (final signal
@@ -211,6 +264,7 @@ class NativeCallService {
     await call.localStream.dispose();
     await call.peerConnection.close();
     await call.remoteStreams.close();
+    await call.signalErrors.close();
   }
 
   Future<void> dispose() async {
@@ -220,6 +274,7 @@ class NativeCallService {
     }
     _calls.clear();
     _earlySignals.clear();
+    _pendingSessions.clear();
     await _incomingOffers.close();
   }
 }

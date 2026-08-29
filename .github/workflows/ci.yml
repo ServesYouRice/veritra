@@ -38,6 +38,12 @@ jobs:
       - name: Summarize Go coverage
         run: go tool cover -func=coverage.out | tee coverage-summary.txt
         working-directory: server
+      # Floors stay at 0.0 until the QA10 advisor checkpoint sets values from
+      # testing/evidence/coverage-baseline.md; the gate still fails on missing
+      # or malformed coverage data.
+      - name: Check Go coverage floor
+        run: python3 ../scripts/check-coverage.py --go-profile coverage.out --go-floor 0.0
+        working-directory: server
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: go-coverage-${{ github.run_id }}
@@ -93,6 +99,12 @@ jobs:
       - run: flutter test --coverage
         env:
           VERITRA_CRYPTO_LIBRARY: ${{ github.workspace }}/crypto/rust/target/release/libprivate_messenger_crypto.so
+        working-directory: mobile
+      # Floors stay at 0.0 until the QA10 advisor checkpoint sets values from
+      # testing/evidence/coverage-baseline.md; the gate still fails on missing
+      # or malformed coverage data.
+      - name: Check Flutter coverage floor
+        run: python3 ../scripts/check-coverage.py --flutter-lcov coverage/lcov.info --flutter-floor 0.0
         working-directory: mobile
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -171,6 +183,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: ./scripts/license-check.sh
+      - name: Run release policy and evidence tests
+        run: |
+          python3 scripts/check-release-evidence_test.py
+          python3 scripts/check-dart-retractions_test.py
+          python3 scripts/check-ci-evidence_test.py
+          python3 scripts/write-release-evidence_test.py
+          python3 scripts/check-coverage_test.py
 
   vulnerabilities:
     runs-on: ubuntu-latest
