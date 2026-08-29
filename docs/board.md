@@ -83,10 +83,11 @@ desktop, then evaluate embedding. See [Roadmap after release](#roadmap-after-rel
   backlogs. [`audit-consensus.md`](audit-consensus.md) is their authoritative
   disposition and source-to-card trace. This board alone owns implementation
   status. Recorded 2026-08-13.
-- **D08:** Root [`implementation/`](../implementation/) contains claimable LLM
-  execution contracts derived from the consensus. It may split a card into
-  non-overlapping tasks but cannot change scope, severity, dependencies or
-  status. This board and the consensus win on any conflict. Recorded 2026-08-13.
+- **D08:** [`implementation/REMAINING_WORK.md`](../implementation/REMAINING_WORK.md)
+  contains claimable LLM execution contracts derived from the consensus. It
+  may split a card into non-overlapping tasks but cannot change scope,
+  severity, dependencies or status. This board and the consensus win on any
+  conflict. Recorded 2026-08-13.
 - **D09:** Keep only current authoritative documents and live execution
   contracts in the working tree. Completed contracts, raw audits, obsolete
   testing reports, historical plans, and superseded brand assets remain
@@ -98,7 +99,7 @@ desktop, then evaluate embedding. See [Roadmap after release](#roadmap-after-rel
 Ordered by production impact and dependency. Detailed scope, disputes and
 acceptance checks are in [`audit-consensus.md`](audit-consensus.md); claimable
 task boundaries and orchestration rules are in
-[`implementation/README.md`](../implementation/README.md).
+[`implementation/REMAINING_WORK.md`](../implementation/REMAINING_WORK.md).
 
 ### Audit-derived implementation queue
 

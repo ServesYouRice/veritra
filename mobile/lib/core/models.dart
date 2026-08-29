@@ -485,37 +485,50 @@ class AttachmentEnvelope {
 }
 
 class CallSession {
-  CallSession(
-      {required this.id,
-      required this.conversationId,
-      required this.createdBy,
-      required this.state,
-      required this.metadata,
-      required this.createdAt,
-      this.endedAt,
-      this.expiresAt});
+  CallSession({
+    required this.id,
+    required this.conversationId,
+    required this.createdBy,
+    required this.invitedAccountId,
+    required this.state,
+    required this.version,
+    required this.metadata,
+    required this.createdAt,
+    this.endedAt,
+    this.expiresAt,
+  });
+
   final String id;
   final String conversationId;
   final String createdBy;
+  final String invitedAccountId;
   final String state;
+  final int version;
   final Map<String, Object?> metadata;
   final DateTime createdAt;
   final DateTime? endedAt;
   final DateTime? expiresAt;
 
   factory CallSession.fromJson(Map<String, Object?> json) => CallSession(
-      id: json['id'] as String,
-      conversationId: json['conversation_id'] as String,
-      createdBy: json['created_by'] as String,
-      state: json['state'] as String,
-      metadata: Map<String, Object?>.from(json['metadata'] as Map? ?? const {}),
-      createdAt: DateTime.parse(json['created_at'] as String).toUtc(),
-      endedAt: json['ended_at'] == null
-          ? null
-          : DateTime.parse(json['ended_at'] as String).toUtc(),
-      expiresAt: json['expires_at'] == null
-          ? null
-          : DateTime.parse(json['expires_at'] as String).toUtc());
+        id: json['id'] as String,
+        conversationId: json['conversation_id'] as String,
+        createdBy: json['created_by'] as String,
+        invitedAccountId: json['invited_account_id'] as String,
+        state: json['state'] as String,
+        // Required: `version` is the optimistic-concurrency token for call
+        // transitions. Defaulting it would turn a contract break into silent
+        // stale-write rejections at signalling time.
+        version: (json['version'] as num).toInt(),
+        metadata:
+            Map<String, Object?>.from(json['metadata'] as Map? ?? const {}),
+        createdAt: DateTime.parse(json['created_at'] as String).toUtc(),
+        endedAt: json['ended_at'] == null
+            ? null
+            : DateTime.parse(json['ended_at'] as String).toUtc(),
+        expiresAt: json['expires_at'] == null
+            ? null
+            : DateTime.parse(json['expires_at'] as String).toUtc(),
+      );
 }
 
 class ReceivedMessageEnvelope {
