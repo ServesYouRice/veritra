@@ -51,7 +51,7 @@ jobs:
           PRIVATE_MESSENGER_DATA_DIR: ${{ runner.temp }}/veritra-release-version
         run: test "$(server=dist/messenger-server-linux-amd64; "$server" version)" = "veritra $GITHUB_REF_NAME ($GITHUB_SHA)"
       - name: Generate SPDX SBOM
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           path: .
           format: spdx-json
