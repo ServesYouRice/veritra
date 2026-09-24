@@ -1,6 +1,13 @@
 package org.veritra.private_messenger
 
+import android.Manifest
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.plugin.common.EventChannel
@@ -13,6 +20,43 @@ import org.unifiedpush.android.connector.UnifiedPush
 class MainActivity : FlutterActivity() {
     private var instance: String? = null
     private var vapid: String? = null
+    private var offeredProviders: List<String> = emptyList()
+    private var pendingPermissionResult: MethodChannel.Result? = null
+
+    override fun onResume() {
+        super.onResume()
+        PushEventBridge.foreground = true
+    }
+
+    override fun onPause() {
+        PushEventBridge.foreground = false
+        super.onPause()
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != NOTIFICATION_PERMISSION_REQUEST) return
+        pendingPermissionResult?.success(notificationPermissionState())
+        pendingPermissionResult = null
+    }
+
+    // "granted", "denied" or "not_determined"; Android 13+ asks at runtime.
+    private fun notificationPermissionState(): String {
+        if (Build.VERSION.SDK_INT >= 33) {
+            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED) return "granted"
+            val asked = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getBoolean(PERMISSION_ASKED, false)
+            return if (asked) "denied" else "not_determined"
+        }
+        if (Build.VERSION.SDK_INT < 24) return "granted"
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        return if (manager?.areNotificationsEnabled() != false) "granted" else "denied"
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -22,18 +66,46 @@ class MainActivity : FlutterActivity() {
             when (call.method) {
                 "register" -> {
                     val nextInstance = call.argument<String>("instance")
-                    val nextVapid = call.argument<String>("vapid")
-                    if (nextInstance.isNullOrBlank() || nextVapid.isNullOrBlank()) {
-                        result.error("invalid_arguments", "Push instance and VAPID key are required", null)
+                    // FCM needs no VAPID key; only UnifiedPush (Web Push) does (I41).
+                    val nextVapid = call.argument<String>("vapid")?.takeIf { it.isNotBlank() }
+                    val providers = call.argument<List<String>>("providers") ?: emptyList()
+                    if (nextInstance.isNullOrBlank()) {
+                        result.error("invalid_arguments", "Push instance is required", null)
                     } else {
                         instance = nextInstance
                         vapid = nextVapid
-                        if (!registerWithFCM()) registerWithDistributor(usePicker = false)
+                        offeredProviders = providers
+                        val usingFcm = "fcm" in providers && registerWithFCM()
+                        if (!usingFcm) {
+                            if ("webpush" in providers && nextVapid != null) {
+                                registerWithDistributor(usePicker = false)
+                            } else {
+                                PushEventBridge.emit(mapOf(
+                                    "type" to "registration_failed",
+                                    "instance" to nextInstance,
+                                    "provider" to "none"))
+                            }
+                        }
                         result.success(null)
                     }
                 }
+                "notificationPermission" -> result.success(notificationPermissionState())
+                "requestNotificationPermission" -> {
+                    if (Build.VERSION.SDK_INT >= 33 &&
+                        notificationPermissionState() == "not_determined" &&
+                        pendingPermissionResult == null) {
+                        getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                            .edit().putBoolean(PERMISSION_ASKED, true).apply()
+                        pendingPermissionResult = result
+                        requestPermissions(
+                            arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                            NOTIFICATION_PERMISSION_REQUEST)
+                    } else {
+                        result.success(notificationPermissionState())
+                    }
+                }
                 "pickDistributor" -> {
-                    if (instance == null || vapid == null) {
+                    if (instance == null || vapid == null || "webpush" !in offeredProviders) {
                         result.error("not_configured", "Push must be configured first", null)
                     } else {
                         registerWithDistributor(usePicker = true)
@@ -70,6 +142,11 @@ class MainActivity : FlutterActivity() {
         val callback: (Boolean) -> Unit = { success ->
             if (success) {
                 UnifiedPush.register(applicationContext, targetInstance, "Veritra", targetVapid)
+            } else {
+                PushEventBridge.emit(mapOf(
+                    "type" to "registration_failed",
+                    "instance" to targetInstance,
+                    "provider" to "webpush"))
             }
         }
         if (usePicker) {
@@ -100,18 +177,64 @@ class MainActivity : FlutterActivity() {
                 "type" to "endpoint", "provider" to "fcm",
                 "instance" to targetInstance, "endpoint" to token,
                 "publicKey" to "", "authSecret" to "")) }
-            .addOnFailureListener { registerWithDistributor(usePicker = false) }
+            .addOnFailureListener {
+                PushEventBridge.emit(mapOf(
+                    "type" to "registration_failed",
+                    "instance" to targetInstance,
+                    "provider" to "fcm"))
+                if ("webpush" in offeredProviders && vapid != null) {
+                    registerWithDistributor(usePicker = false)
+                }
+            }
         return true
     }
 
     companion object {
         private const val PUSH_METHODS = "org.veritra.private_messenger/push_methods"
         private const val PUSH_EVENTS = "org.veritra.private_messenger/push_events"
+        private const val PREFS = "veritra_push_state"
+        private const val PERMISSION_ASKED = "notification_permission_asked"
+        private const val NOTIFICATION_PERMISSION_REQUEST = 4101
+    }
+}
+
+// The one notification Veritra shows (I41): a fixed sentence, never message
+// text, a sender or a conversation. Shown only while the app is not in the
+// foreground and only when notifications are allowed.
+object GenericNotification {
+    private const val CHANNEL = "veritra_messages"
+    private const val ID = 4102
+
+    @Suppress("DEPRECATION")
+    fun show(context: Context) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED) return
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            ?: return
+        val builder = if (Build.VERSION.SDK_INT >= 26) {
+            manager.createNotificationChannel(NotificationChannel(
+                CHANNEL, "Messages", NotificationManager.IMPORTANCE_DEFAULT))
+            Notification.Builder(context, CHANNEL)
+        } else {
+            Notification.Builder(context)
+        }
+        builder.setSmallIcon(context.applicationInfo.icon)
+            .setContentTitle("Veritra")
+            .setContentText("New encrypted message")
+            .setAutoCancel(true)
+        context.packageManager.getLaunchIntentForPackage(context.packageName)?.let { launch ->
+            builder.setContentIntent(PendingIntent.getActivity(
+                context, 0, launch,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
+        }
+        manager.notify(ID, builder.build())
     }
 }
 
 object PushEventBridge : EventChannel.StreamHandler {
     private const val PREFS = "veritra_push_state"
+    @Volatile var foreground: Boolean = false
     private const val LEGACY_PENDING_WAKE = "pending_wake"
     private const val PENDING_WAKE_GENERATION = "pending_wake_generation"
     @Volatile private var sink: EventChannel.EventSink? = null
@@ -134,6 +257,7 @@ object PushEventBridge : EventChannel.StreamHandler {
         val next = migrateLegacyGeneration(preferences) + 1
         preferences.edit().putLong(PENDING_WAKE_GENERATION, next).commit()
         emit(mapOf("type" to "wake"))
+        if (!foreground) GenericNotification.show(context)
     }
 
     @Synchronized

@@ -868,6 +868,17 @@ class ApiClient {
     return json['subscription_id'] as String;
   }
 
+  /// Sends the generic wake to this device's own registrations and returns
+  /// one result class per registration (card I41).
+  Future<List<String>> sendTestPush(String token) async {
+    final json = await _jsonRequest('POST', '/api/v1/push/test',
+        token: token, body: const <String, Object?>{});
+    return (json['results'] as List<Object?>? ?? const <Object?>[])
+        .map((row) => (row as Map)['result'])
+        .whereType<String>()
+        .toList(growable: false);
+  }
+
   Future<Map<String, Object?>> pushConfig(String token) => _jsonRequest(
         'GET',
         '/api/v1/push/config',

@@ -122,6 +122,18 @@ after 64 batches or 10 seconds per class. Monitor
 above 1,200 rows or an oldest age above one sweep interval after two sweeps.
 The metrics contain aggregate counts and ages only.
 
+## Push providers
+
+Configure only the providers you can operate. Clients register with what
+`/api/v1/push/config` offers: Android prefers FCM when both the server and the
+app build carry FCM settings and falls back to UnifiedPush (Web Push, the only
+provider that needs VAPID keys); iOS uses APNs. APNs accepts Apple's `.p8`
+(PKCS #8) key. A device registered with one provider is retired from the
+others. In the app, Settings → Notifications → "Send a test notification"
+sends the ordinary generic wake to that device only (at most once a minute);
+use it for the G24 wake matrix. Notifications show one fixed sentence, never
+message text, sender or conversation.
+
 ## Push wake capacity
 
 Message acceptance queues only generic wake routing work; it never queues

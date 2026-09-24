@@ -495,10 +495,22 @@ class _WakePushService implements MobilePushService {
   Stream<PushEvent> get events => _events.stream;
 
   @override
-  Future<void> register({required String instance, required String vapid}) {
+  Future<void> register({
+    required String instance,
+    String vapid = '',
+    List<String> providers = const <String>[],
+  }) {
     if (!registered.isCompleted) registered.complete();
     return Future<void>.value();
   }
+
+  @override
+  Future<NotificationPermission> notificationPermission() async =>
+      NotificationPermission.granted;
+
+  @override
+  Future<NotificationPermission> requestNotificationPermission() async =>
+      NotificationPermission.granted;
 
   @override
   Future<void> pickDistributor() async {}
@@ -535,7 +547,11 @@ class _WakeApiClient extends FakeDeviceLinkApiClient {
 
   @override
   Future<Map<String, Object?>> pushConfig(String token) async =>
-      <String, Object?>{'enabled': true, 'vapid_public_key': 'test-vapid'};
+      <String, Object?>{
+        'enabled': true,
+        'providers': <String>['webpush'],
+        'vapid_public_key': 'test-vapid',
+      };
 
   @override
   Future<List<Conversation>> conversations(String token) async =>

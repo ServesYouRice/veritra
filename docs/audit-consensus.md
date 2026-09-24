@@ -499,6 +499,26 @@ No new dependency was added.
 register, rotate, revoke and wake on real devices; denied permissions and
 provider errors are visible without leaking sender or content.
 
+**Implementation note (Stage 5, 2026-09-24):** The server sends the VAPID key
+only with Web Push, refuses registrations for providers it does not offer, and
+retires a device's other provider when it registers one. Clients register with
+the providers the server offers: Android uses FCM when offered and built with
+FCM settings, otherwise UnifiedPush (the only path needing VAPID); iOS
+registers with APNs only when offered. Push state is typed (server disabled,
+registering, no distributor, registration failed, registered) and the settings
+copy follows it; the false "not available on iOS" copy is gone. Android 13+
+asks for `POST_NOTIFICATIONS`, iOS asks through `UNUserNotificationCenter`;
+a wake received in the background shows one fixed sentence ("New encrypted
+message") and nothing else. `POST /api/v1/push/test` sends the ordinary
+generic wake to the device's own registration (once a minute) and
+`GET /api/v1/push/subscriptions/me` lists registrations by ID, provider and
+time only. APNs now accepts Apple's PKCS #8 `.p8` keys. QA06 covers FCM,
+APNs and Web Push request contracts with generated keys and an injected
+transport; QA08's bridge test covers the new methods and events. Checks:
+`go test -race ./internal/push`, `go test ./...`, `flutter test`. Still
+required under G24: the FCM-only, UnifiedPush-only, APNs-only and mixed wake
+matrix on real devices, and the Android/iOS native builds (CI).
+
 ### I42 - Authorized calls and native call lifecycle
 
 **Decision:** Merge Codex LOG-10/ARCH-07 with Opus R13/R14. **High,

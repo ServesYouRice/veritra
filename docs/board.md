@@ -35,7 +35,13 @@ G25) wait until all three roadmap phases are done (D20). Work order:
    reconnect, and the sync socket catches up after every reconnect. The live
    test stops and restarts the server. Attachment caching waits for
    attachments.
-5. Remaining release-blocking cards (I33, I34, I51, I39, I45, I41).
+5. Remaining release-blocking cards — **done 2026-09-24:** I33 (poison
+   events and stale-device recovery), I34 (ordered MLS outbox), I51 (group
+   membership after creation and linked devices, D28, native ABI v6), I39
+   (database-key recovery), I45 (crash-safe backup/restore, scheduled
+   verified backups, mobile backup workflow) and I41 (provider-aware push,
+   notification permission, test wake). Device-only checks wait for G24
+   (D20).
 6. Phase 2 completion (macOS, packaging, desktop key storage).
 7. Phase 3 outline (client SDK).
 
@@ -220,7 +226,7 @@ task boundaries and orchestration rules are in
 | I38 | Implemented (T38); checks pending (Codex, 2026-08-14) | Safe account export | — |
 | I39 | Implemented and checked (Stage 5, 2026-09-24) | Fail-closed encrypted database key recovery | I32 |
 | I40 | T40A/T40B/T40C/T40D implemented; checks pending (Codex, 2026-08-14); due 2026-08-29 | Release evidence and toolchain integrity | — |
-| I41 | Blocked by I36, conditional D03 | Push registration and platform readiness | I36 |
+| I41 | Implemented and checked (Stage 5, 2026-09-24; QA06, QA08); real-device wake matrix waits for G24 (D20) | Push registration and platform readiness | I36 |
 | I42 | T42A implemented; T42B design claimed/proposed, approval pending; checks pending (Codex, 2026-08-14), conditional D03 | Authorized calls and native lifecycle | — |
 | I43 | T43A/T43B/T43C implemented; checks/evidence pending (Codex, 2026-08-14) | First-run and accessibility baseline | — |
 | I44 | Prepared, split before claim | Mobile and API quality | release blockers |

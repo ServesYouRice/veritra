@@ -107,8 +107,30 @@ class IncomingCallSignal {
 
 /// Operation keys for scoped busy/error state. A failure or in-flight request
 /// for one operation must not disable unrelated controls.
+/// Where push stands for this device (card I41).
+enum PushState {
+  /// Not started yet, or signed out.
+  unknown,
+
+  /// The server offers no push provider.
+  serverDisabled,
+
+  /// Waiting for the platform to hand over a token or endpoint.
+  registering,
+
+  /// No UnifiedPush distributor answered (Android without FCM).
+  noDistributor,
+
+  /// The platform or the server refused the registration.
+  registrationFailed,
+
+  /// The server accepted this device's registration.
+  registered,
+}
+
 class Ops {
   static const send = 'send';
+  static const pushTest = 'push_test';
   static const backup = 'backup';
   static const restore = 'restore';
   static const members = 'members';
@@ -1982,11 +2004,18 @@ class AppState extends ChangeNotifier {
       final config = await client.pushConfig(current.token);
       if (!_syncOwnerActive(current, ownerGeneration)) return;
       final vapid = config['vapid_public_key'] as String? ?? '';
-      if (config['enabled'] != true) {
+      final providers = (config['providers'] as List? ?? const <Object?>[])
+          .whereType<String>()
+          .toList(growable: false);
+      if (config['enabled'] != true || providers.isEmpty) {
         pushConfigured = false;
+        _setPushState(PushState.serverDisabled);
         return;
       }
       pushConfigured = true;
+      pushProviders = providers;
+      notificationPermission = await pushService.notificationPermission();
+      _setPushState(PushState.registering);
       _pushInstance = '${current.accountId}:${current.deviceId}';
       await _pushSubscription?.cancel();
       _pushSubscription = pushService.events.listen(_handlePushEvent);
@@ -1997,11 +2026,80 @@ class AppState extends ChangeNotifier {
         unawaited(_catchUpSyncEvents());
       }
       if (!_syncOwnerActive(current, ownerGeneration)) return;
-      await pushService.register(instance: _pushInstance!, vapid: vapid);
+      await pushService.register(
+          instance: _pushInstance!, vapid: vapid, providers: providers);
       notifyListeners();
     } catch (_) {
       // Push is optional; realtime and foreground catch-up remain available.
+      if (pushState == PushState.registering) {
+        _setPushState(PushState.registrationFailed);
+      }
     }
+  }
+
+  /// Where push stands for this device (card I41). Never claims more than
+  /// was observed: "registered" only after the server accepted the token.
+  PushState pushState = PushState.unknown;
+
+  /// The providers the server offers.
+  List<String> pushProviders = const <String>[];
+
+  /// The provider this device registered with, once registered.
+  String? pushProvider;
+  NotificationPermission notificationPermission =
+      NotificationPermission.unsupported;
+
+  void _setPushState(PushState next) {
+    if (pushState == next) return;
+    pushState = next;
+    notifyListeners();
+  }
+
+  /// Asks for notification permission (Android 13+, iOS).
+  Future<void> requestNotificationPermission() async {
+    try {
+      notificationPermission =
+          await pushService.requestNotificationPermission();
+    } catch (_) {
+      notificationPermission = NotificationPermission.unsupported;
+    }
+    notifyListeners();
+  }
+
+  /// Result of the last test wake, as a short sentence without identifiers.
+  String? pushTestResult;
+
+  /// Sends the generic wake to this device's own registration (card I41).
+  Future<void> sendTestPush() async {
+    await _runScoped(Ops.pushTest, () async {
+      final current = session;
+      final client = api;
+      if (current == null || client == null) return;
+      pushTestResult = null;
+      try {
+        final results = await client.sendTestPush(current.token);
+        pushTestResult = results.every((result) => result == 'delivered')
+            ? 'Test sent. A notification should arrive within a minute.'
+            : results.contains('gone')
+                ? 'The push provider no longer accepts this device. '
+                    'Registering again.'
+                : 'The push provider did not accept the test. Try again '
+                    'later.';
+        if (results.contains('gone')) {
+          _pushSubscriptionId = null;
+          pushProvider = null;
+          _setPushState(PushState.registering);
+          unawaited(_startPush());
+        }
+      } on ApiException catch (error) {
+        if (error.statusCode == 401) rethrow;
+        pushTestResult = error.serverCode == 'push_test_rate_limited'
+            ? 'Wait a minute before sending another test.'
+            : error.serverCode == 'no_push_subscription'
+                ? 'This device is not registered for push yet.'
+                : 'The test could not be sent.';
+      }
+    });
   }
 
   Future<void> _handlePushEvent(PushEvent event) async {
@@ -2025,14 +2123,26 @@ class AppState extends ChangeNotifier {
                 provider: event.provider, deviceToken: event.endpoint);
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         _pushSubscriptionId = subscriptionId;
+        pushProvider = event.provider;
+        _setPushState(PushState.registered);
         notifyListeners();
       } catch (_) {
         // Re-registration on the next startup retries endpoint delivery.
+        _setPushState(PushState.registrationFailed);
       }
+    } else if (event is PushRegistrationFailedEvent &&
+        event.instance == _pushInstance) {
+      // A UnifiedPush failure means no distributor answered; anything else
+      // is a provider refusal. Neither carries platform error text.
+      _setPushState(event.provider == 'webpush'
+          ? PushState.noDistributor
+          : PushState.registrationFailed);
     } else if (event is PushUnregisteredEvent &&
         event.instance == _pushInstance) {
       final id = _pushSubscriptionId;
       _pushSubscriptionId = null;
+      pushProvider = null;
+      _setPushState(PushState.noDistributor);
       if (id != null) {
         try {
           await client.disablePush(current.token, id);
@@ -2137,6 +2247,10 @@ class AppState extends ChangeNotifier {
     _pushSubscriptionId = null;
     _pushInstance = null;
     pushConfigured = false;
+    pushProvider = null;
+    pushProviders = const <String>[];
+    pushState = PushState.unknown;
+    pushTestResult = null;
   }
 
   Future<void> _catchUpSyncEvents() async {

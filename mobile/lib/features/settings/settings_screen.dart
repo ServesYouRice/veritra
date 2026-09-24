@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/app_state.dart';
+import '../../push/push_service.dart';
 import 'backup_screen.dart';
 import '../../core/models.dart';
 import '../../ui/avatar.dart';
@@ -186,14 +187,35 @@ class SettingsScreen extends StatelessWidget {
               const SizedBox(height: BoneSpacing.sm),
               TileGroup(
                 children: <Widget>[
+                  if (state.notificationPermission ==
+                      NotificationPermission.notDetermined)
+                    ListTile(
+                      leading: const Icon(Icons.notifications_outlined),
+                      title: const Text('Allow notifications'),
+                      subtitle: const Text(
+                          'Notifications say only that a message arrived.'),
+                      onTap: state.requestNotificationPermission,
+                    ),
+                  if (defaultTargetPlatform == TargetPlatform.android &&
+                      state.pushProviders.contains('webpush'))
+                    ListTile(
+                      enabled: state.pushConfigured && !state.busy,
+                      leading: const Icon(Icons.hub_outlined),
+                      title: const Text('Push provider'),
+                      subtitle:
+                          const Text('Choose an Android UnifiedPush provider'),
+                      onTap: state.choosePushDistributor,
+                    ),
                   ListTile(
-                    enabled: state.pushConfigured && !state.busy,
-                    leading: const Icon(Icons.notifications_outlined),
-                    title: const Text('Push provider'),
-                    subtitle: Text(state.pushConfigured
-                        ? 'Choose an Android UnifiedPush provider'
-                        : 'Not configured by this server'),
-                    onTap: state.choosePushDistributor,
+                    enabled: state.pushState == PushState.registered &&
+                        !state.isBusy(Ops.pushTest),
+                    leading: const Icon(Icons.send_outlined),
+                    title: const Text('Send a test notification'),
+                    subtitle: Text(state.pushTestResult ??
+                        (state.pushProvider == null
+                            ? 'Available once this device is registered'
+                            : 'Registered with ${_providerName(state.pushProvider!)}')),
+                    onTap: state.sendTestPush,
                   ),
                 ],
               ),
@@ -633,7 +655,6 @@ class _PushStatusRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final iOS = defaultTargetPlatform == TargetPlatform.iOS;
     final String title;
     final String detail;
     final IconData icon;
@@ -641,31 +662,49 @@ class _PushStatusRow extends StatelessWidget {
     final desktop = defaultTargetPlatform == TargetPlatform.windows ||
         defaultTargetPlatform == TargetPlatform.linux ||
         defaultTargetPlatform == TargetPlatform.macOS;
+    final denied =
+        state.notificationPermission == NotificationPermission.denied;
     if (desktop) {
       title = 'Desktop notifications are not available yet';
       detail = 'Messages arrive while the app is running, even in the '
           'background.';
       icon = Icons.notifications_off_outlined;
-    } else if (iOS) {
-      title = 'Push is not available on iOS yet';
-      detail = 'Messages arrive while the app is open. Apple push delivery '
-          'is still being integrated.';
-      icon = Icons.notifications_off_outlined;
-    } else if (!state.pushConfigured) {
-      title = 'This server has no push provider';
-      detail = 'The operator has not configured push keys. Messages arrive '
-          'while the app is open.';
-      icon = Icons.cloud_off_outlined;
-    } else if (!state.pushRegistered) {
-      title = 'No push distributor registered';
-      detail = 'Install a UnifiedPush distributor and pick it below, or '
-          'messages will only arrive while the app is open.';
-      icon = Icons.warning_amber_outlined;
     } else {
-      title = 'Push notifications are active';
-      detail = 'Notifications never contain message text or sender names.';
-      icon = Icons.notifications_active_outlined;
-      warn = false;
+      switch (state.pushState) {
+        case PushState.serverDisabled:
+          title = 'This server has no push provider';
+          detail = 'The operator has not configured push. Messages arrive '
+              'while the app is open.';
+          icon = Icons.cloud_off_outlined;
+        case PushState.unknown:
+        case PushState.registering:
+          title = 'Setting up push';
+          detail = 'Waiting for this device to register.';
+          icon = Icons.hourglass_empty;
+        case PushState.noDistributor:
+          title = 'No push distributor registered';
+          detail = 'Install a UnifiedPush distributor and pick it below, or '
+              'messages will only arrive while the app is open.';
+          icon = Icons.warning_amber_outlined;
+        case PushState.registrationFailed:
+          title = 'Push registration failed';
+          detail = 'This device could not register for push. It tries again '
+              'the next time the app starts.';
+          icon = Icons.warning_amber_outlined;
+        case PushState.registered:
+          if (denied) {
+            title = 'Notifications are turned off';
+            detail = 'The app still syncs when woken, but shows nothing. '
+                'Allow notifications for Veritra in the system settings.';
+            icon = Icons.notifications_off_outlined;
+          } else {
+            title = 'Push notifications are active';
+            detail = 'Notifications never contain message text or sender '
+                'names.';
+            icon = Icons.notifications_active_outlined;
+            warn = false;
+          }
+      }
     }
     final scheme = theme.colorScheme;
     final states = theme.extension<VeritraStateColors>() ??
@@ -688,6 +727,18 @@ class _PushStatusRow extends StatelessWidget {
       ],
     );
   }
+}
+
+String _providerName(String provider) {
+  switch (provider) {
+    case 'fcm':
+      return 'Firebase Cloud Messaging';
+    case 'apns':
+      return 'Apple Push Notification service';
+    case 'webpush':
+      return 'UnifiedPush';
+  }
+  return provider;
 }
 
 class _DeviceTile extends StatelessWidget {

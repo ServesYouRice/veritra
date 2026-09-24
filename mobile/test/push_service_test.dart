@@ -70,7 +70,42 @@ void main() {
       expect(methodCalls.first.arguments, {
         'instance': 'https://example.com',
         'vapid': 'vapid_key',
+        'providers': <String>[],
       });
+    });
+
+    test('an FCM-only registration needs no VAPID key', () async {
+      final service = PlatformMobilePushService();
+      addTearDown(service.dispose);
+
+      await service
+          .register(instance: 'acct:dev', providers: const <String>['fcm']);
+      expect(methodCalls.single.arguments, {
+        'instance': 'acct:dev',
+        'vapid': '',
+        'providers': <String>['fcm'],
+      });
+    });
+
+    test('notification permission is read and requested as a typed value',
+        () async {
+      final service = PlatformMobilePushService();
+      addTearDown(service.dispose);
+
+      methodResult = 'not_determined';
+      expect(await service.notificationPermission(),
+          NotificationPermission.notDetermined);
+      methodResult = 'granted';
+      expect(await service.requestNotificationPermission(),
+          NotificationPermission.granted);
+      methodResult = 'something else';
+      expect(await service.notificationPermission(),
+          NotificationPermission.unsupported);
+      expect(methodCalls.map((call) => call.method), <String>[
+        'notificationPermission',
+        'requestNotificationPermission',
+        'notificationPermission',
+      ]);
     });
 
     test('pickDistributor invokes method channel without arguments', () async {
@@ -168,8 +203,17 @@ void main() {
         'instance': 'https://node.example.com',
       });
 
+      await sendEvent({
+        'type': 'registration_failed',
+        'instance': 'https://node.example.com',
+        'provider': 'webpush',
+      });
+
       await Future<void>.delayed(Duration.zero);
-      expect(received, hasLength(3));
+      expect(received, hasLength(4));
+      final failed = received[3] as PushRegistrationFailedEvent;
+      expect(failed.instance, 'https://node.example.com');
+      expect(failed.provider, 'webpush');
 
       expect(received[0], isA<PushEndpointEvent>());
       final endpointEvent = received[0] as PushEndpointEvent;
