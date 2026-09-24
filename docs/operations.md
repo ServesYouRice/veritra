@@ -144,7 +144,11 @@ send has a 10-second deadline, a 30-second lease, jittered retry backoff and a
 `veritra_push_deliveries_total{provider,result}` and
 `veritra_push_backlog_jobs{provider}`; provider labels are limited to the
 supported provider names and contain no account, device, endpoint or event
-identifiers.
+identifiers. `delivered` means the provider accepted the wake; `abandoned`
+means the job was dropped for good (its subscription is gone or retired);
+`failed` means the job stays queued and is tried again. A job whose removal
+fails after delivery is sent again after its lease, which only makes the
+device sync once more.
 
 ## Scheduled backups
 

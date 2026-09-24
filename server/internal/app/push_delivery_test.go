@@ -337,6 +337,10 @@ func TestPushWakeCancellationLeavesJobForLeaseExpiry(t *testing.T) {
 	if counts.attempted != 1 || counts.failed != 0 || counts.delivered != 0 || counts.abandoned != 0 {
 		t.Fatalf("cancelled send counted as an outcome: %+v", counts)
 	}
+	// Shutdown is quiet: no store read runs, or fails, on the cancelled context.
+	if strings.Contains(h.logs.String(), "push_wake_") {
+		t.Fatalf("shutdown logged a push warning: %s", h.logs.String())
+	}
 	h.assertPrivate(t)
 
 	claimed, _, err := h.app.Store.ClaimPushWakeJobs(context.Background(), pushTestProvider, 10, time.Now().UTC(), pushWakeLease)
@@ -383,7 +387,7 @@ func TestPushWakeStoreWriteFailuresAreLoggedAndCounted(t *testing.T) {
 			name:    "completion",
 			trigger: `CREATE TRIGGER inject_failure BEFORE DELETE ON push_wake_jobs BEGIN SELECT RAISE(ABORT, 'injected'); END`,
 			event:   "push_wake_completion_failed",
-			want:    pushCounts{attempted: 1, failed: 1, backlog: 1},
+			want:    pushCounts{attempted: 1, delivered: 1, backlog: 1},
 		},
 		{
 			name:    "retry",
@@ -397,7 +401,7 @@ func TestPushWakeStoreWriteFailuresAreLoggedAndCounted(t *testing.T) {
 			trigger: `CREATE TRIGGER inject_failure BEFORE UPDATE ON push_subscriptions BEGIN SELECT RAISE(ABORT, 'injected'); END`,
 			sendErr: push.ErrSubscriptionGone,
 			event:   "push_wake_retire_failed",
-			want:    pushCounts{attempted: 1, abandoned: 1, backlog: 1},
+			want:    pushCounts{attempted: 1, failed: 1, backlog: 1},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
