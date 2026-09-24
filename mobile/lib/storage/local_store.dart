@@ -661,7 +661,10 @@ class SecureLocalStore implements LocalStore {
     Future<Directory> Function()? directoryProvider,
     LocalDatabaseFactory? databaseFactory,
     MlsCommitFailureInjector? mlsCommitFailureInjector,
-  })  : _storage = storage ??
+    String namespace = '',
+  })  : assert(RegExp(r'^[a-z0-9-]{0,40}$').hasMatch(namespace)),
+        _namespace = namespace,
+        _storage = storage ??
             const FlutterSecureStorage(
               aOptions: AndroidOptions(
                 resetOnError: true,
@@ -680,6 +683,17 @@ class SecureLocalStore implements LocalStore {
   static const _migrationMarker = 'legacy_secure_record_migrated';
   static const _maxCachedConversations = 20;
   static const _maxMessagesPerConversation = 200;
+
+  /// Separates independent local identities on one device: demo builds use
+  /// `demo`, and desktop profiles extend it. The empty default keeps the
+  /// release layout (database in the support directory, key
+  /// `veritra.database_key.v1`) byte for byte.
+  final String _namespace;
+  String get _databaseKeyName =>
+      _namespace.isEmpty ? _databaseKey : 'veritra.$_namespace.database_key.v1';
+  String get _legacyRecordKeyName => _namespace.isEmpty
+      ? _legacyRecordKey
+      : 'veritra.$_namespace.account_state.v2';
   final FlutterSecureStorage _storage;
   final Future<Directory> Function() _directoryProvider;
   final LocalDatabaseFactory _databaseFactory;
@@ -1146,7 +1160,7 @@ class SecureLocalStore implements LocalStore {
   @override
   Future<void> clear() async {
     await (await _database()).clearAll();
-    await _storage.delete(key: _legacyRecordKey);
+    await _storage.delete(key: _legacyRecordKeyName);
     _syncLeaseKey = null;
   }
 
@@ -1154,7 +1168,11 @@ class SecureLocalStore implements LocalStore {
       _openingDatabase ??= _openDatabase();
 
   Future<EncryptedLocalDatabase> _openDatabase() async {
-    final directory = await _directoryProvider();
+    final base = await _directoryProvider();
+    final directory = _namespace.isEmpty
+        ? base
+        : Directory('${base.path}${Platform.pathSeparator}profiles'
+            '${Platform.pathSeparator}$_namespace');
     await directory.create(recursive: true);
     final databaseFile =
         File('${directory.path}${Platform.pathSeparator}veritra-local.db');
@@ -1182,12 +1200,12 @@ class SecureLocalStore implements LocalStore {
     final lock = await lockFile.open(mode: FileMode.append);
     await lock.lock(FileLock.exclusive);
     try {
-      var keyHex = await _storage.read(key: _databaseKey);
+      var keyHex = await _storage.read(key: _databaseKeyName);
       if (keyHex == null) {
         keyHex = _randomHexKey();
-        await _storage.write(key: _databaseKey, value: keyHex);
+        await _storage.write(key: _databaseKeyName, value: keyHex);
       }
-      final storedKey = await _storage.read(key: _databaseKey);
+      final storedKey = await _storage.read(key: _databaseKeyName);
       if (storedKey != keyHex ||
           storedKey == null ||
           !RegExp(r'^[0-9a-f]{64}$').hasMatch(storedKey)) {
@@ -1204,9 +1222,9 @@ class SecureLocalStore implements LocalStore {
   }
 
   Future<void> _migrateLegacyRecord(EncryptedLocalDatabase database) async {
-    final raw = await _storage.read(key: _legacyRecordKey);
+    final raw = await _storage.read(key: _legacyRecordKeyName);
     if (await database.readMetadata(_migrationMarker) == '1') {
-      if (raw != null) await _storage.delete(key: _legacyRecordKey);
+      if (raw != null) await _storage.delete(key: _legacyRecordKeyName);
       return;
     }
     if (raw == null || raw.isEmpty) {
@@ -1225,7 +1243,7 @@ class SecureLocalStore implements LocalStore {
     );
     await _verifyLegacyMigration(database, legacy);
     await database.writeMetadata(_migrationMarker, '1');
-    await _storage.delete(key: _legacyRecordKey);
+    await _storage.delete(key: _legacyRecordKeyName);
   }
 
   Future<void> _verifyLegacyMigration(

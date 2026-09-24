@@ -222,11 +222,34 @@ class NativeCryptoBindings {
   final _AttachmentChunkDart _attachmentDecrypt;
   late final NativeFinalizer _deviceFinalizer;
 
+  /// Loads the library bundled with the app.
+  ///
+  /// Android loads the JNI `.so` by name. iOS and macOS link the static library
+  /// into the executable. Windows and Linux load the library from the app's
+  /// own directory by absolute path, never through the system search path.
   static NativeCryptoBindings load() {
-    final library = Platform.isAndroid
-        ? DynamicLibrary.open('libprivate_messenger_crypto.so')
-        : DynamicLibrary.process();
-    return NativeCryptoBindings._(library);
+    return NativeCryptoBindings._(_openBundledLibrary());
+  }
+
+  static DynamicLibrary _openBundledLibrary() {
+    if (Platform.isAndroid) {
+      return DynamicLibrary.open('libprivate_messenger_crypto.so');
+    }
+    if (Platform.isIOS || Platform.isMacOS) {
+      return DynamicLibrary.process();
+    }
+    final appDirectory = File(Platform.resolvedExecutable).parent.path;
+    final separator = Platform.pathSeparator;
+    if (Platform.isWindows) {
+      return DynamicLibrary.open(
+          '$appDirectory${separator}private_messenger_crypto.dll');
+    }
+    if (Platform.isLinux) {
+      return DynamicLibrary.open(
+          '$appDirectory${separator}lib${separator}libprivate_messenger_crypto.so');
+    }
+    throw UnsupportedError(
+        'No bundled Veritra crypto library for this platform');
   }
 
   static NativeCryptoBindings open(String path) =>

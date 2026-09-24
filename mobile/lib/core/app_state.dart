@@ -11,6 +11,7 @@ import '../push/push_service.dart';
 import '../storage/local_store.dart';
 import '../sync/sync_service.dart';
 import 'api_client.dart';
+import 'client_config.dart';
 import 'errors.dart';
 import 'models.dart';
 
@@ -115,9 +116,11 @@ class AppState extends ChangeNotifier {
     required this.localStore,
     required this.syncServiceFactory,
     MobilePushService? pushService,
+    this.config = ClientConfig.production,
   }) : pushService = pushService ?? DisabledMobilePushService();
 
   final ApiClientFactory apiClientFactory;
+  final ClientConfig config;
   final CryptoService cryptoService;
   final LocalStore localStore;
   final SyncServiceFactory syncServiceFactory;
@@ -315,7 +318,7 @@ class AppState extends ChangeNotifier {
     } on FormatException {
       return const SetupProbeResult(state: SetupProbeState.invalidOrigin);
     }
-    if (Uri.parse(origin).scheme != 'https') {
+    if (!config.transport.allows(origin)) {
       return const SetupProbeResult(
         state: SetupProbeState.insecureTransport,
       );
@@ -523,7 +526,7 @@ class AppState extends ChangeNotifier {
       session = await api!.createOwner(
         username: username,
         password: password,
-        deviceName: 'Mobile device',
+        deviceName: config.deviceName,
         enrollment: enrollment,
         credential: credential,
         setupToken: setupToken,
@@ -848,7 +851,7 @@ class AppState extends ChangeNotifier {
         inviteCode: inviteCode,
         username: username,
         password: password,
-        deviceName: 'Mobile device',
+        deviceName: config.deviceName,
         enrollment: enrollment,
         credential: credential,
       );
@@ -1451,7 +1454,7 @@ class AppState extends ChangeNotifier {
       );
       final claimed = await api!.claimDeviceLink(
         code: code,
-        deviceName: 'Linked mobile device',
+        deviceName: 'Linked ${config.deviceName.toLowerCase()}',
         enrollment: enrollment,
         credential: credential,
         verification: verification,
@@ -2354,6 +2357,12 @@ class AppState extends ChangeNotifier {
   }
 
   void _replaceApi(String baseUrl) {
+    // The UI validates too, but this is the one place every connection path
+    // (setup, registration, sign-in, device link, restore) goes through.
+    if (!config.transport.allows(baseUrl)) {
+      throw StateError('This build does not allow the server address '
+          '$baseUrl. Use an https:// server origin.');
+    }
     api?.close();
     api = apiClientFactory(baseUrl);
   }

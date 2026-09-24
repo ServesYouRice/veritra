@@ -44,7 +44,7 @@ void main() {
       () async {
     final localStore = MemoryLocalStore();
     await localStore.saveSession(const Session(
-      baseUrl: 'http://localhost:8080',
+      baseUrl: 'https://localhost:8080',
       token: 'owner-token',
       accountId: 'acct_owner',
       deviceId: 'dev_owner',
@@ -129,7 +129,7 @@ void main() {
       syncServiceFactory: (_, __) => FakeSyncService(),
     );
     await localStore.saveSession(
-        const Session(baseUrl: 'http://localhost:8080', token: 'token'));
+        const Session(baseUrl: 'https://localhost:8080', token: 'token'));
     expect((await state.localStore.loadSession())?.token, 'token');
   });
 
@@ -169,7 +169,7 @@ void main() {
       syncServiceFactory: (_, __) => FakeSyncService(),
     );
 
-    await state.claimDeviceLink('http://localhost:8080', 'PAIRCODE');
+    await state.claimDeviceLink('https://localhost:8080', 'PAIRCODE');
     expect(state.pendingDeviceLinkClaim?.deviceLink.verificationCode, '654321');
     expect(state.session, isNull);
 
@@ -188,7 +188,7 @@ void main() {
     )
       ..api = api
       ..session = const Session(
-        baseUrl: 'http://localhost:8080',
+        baseUrl: 'https://localhost:8080',
         token: 'owner-token',
       );
 
@@ -214,7 +214,7 @@ void main() {
     )
       ..api = api
       ..session = const Session(
-        baseUrl: 'http://localhost:8080',
+        baseUrl: 'https://localhost:8080',
         token: 'owner-token',
       );
     await state.createDeviceLink();
@@ -234,7 +234,7 @@ void main() {
     )
       ..api = api
       ..session = const Session(
-        baseUrl: 'http://localhost:8080',
+        baseUrl: 'https://localhost:8080',
         token: 'owner-token',
         accountId: 'acct_owner',
         deviceId: 'dev_owner',
@@ -261,7 +261,7 @@ void main() {
     )
       ..api = api
       ..session = const Session(
-        baseUrl: 'http://localhost:8080',
+        baseUrl: 'https://localhost:8080',
         token: 'owner-token',
         accountId: 'acct_owner',
         deviceId: 'dev_owner',
@@ -287,7 +287,7 @@ void main() {
     )
       ..api = api
       ..session = const Session(
-        baseUrl: 'http://localhost:8080',
+        baseUrl: 'https://localhost:8080',
         token: 'owner-token',
         accountId: 'acct_owner',
         deviceId: 'dev_owner',
@@ -355,7 +355,7 @@ void main() {
     )
       ..api = _OutboxApiClient()
       ..session = const Session(
-        baseUrl: 'http://localhost:8080',
+        baseUrl: 'https://localhost:8080',
         token: 'owner-token',
         accountId: 'acct_owner',
         deviceId: 'dev_owner',
@@ -389,7 +389,7 @@ void main() {
       createdAt: DateTime.parse('2026-05-29T12:01:00Z'),
     );
     await localStore.saveSession(const Session(
-      baseUrl: 'http://localhost:8080',
+      baseUrl: 'https://localhost:8080',
       token: 'owner-token',
       accountId: 'acct_owner',
       deviceId: 'dev_owner',
@@ -524,7 +524,7 @@ MessageEnvelope _outboxEnvelope(String key) => MessageEnvelope(
     );
 
 class _OutboxApiClient extends ApiClient {
-  _OutboxApiClient() : super(baseUrl: 'http://localhost:8080');
+  _OutboxApiClient() : super(baseUrl: 'https://localhost:8080');
 
   bool failSend = false;
   final List<String> sentKeys = <String>[];
@@ -549,7 +549,7 @@ class _OutboxApiClient extends ApiClient {
 
 class FakeDeviceLinkApiClient extends ApiClient {
   FakeDeviceLinkApiClient({this.transcriptByte = 7})
-      : super(baseUrl: 'http://localhost:8080');
+      : super(baseUrl: 'https://localhost:8080');
 
   final int transcriptByte;
 
@@ -678,7 +678,7 @@ class FakeDeviceLinkApiClient extends ApiClient {
   Future<Session?> completeDeviceLinkClaim(String linkId, String claimToken,
       List<int> expectedTranscriptHash) async {
     return const Session(
-      baseUrl: 'http://localhost:8080',
+      baseUrl: 'https://localhost:8080',
       token: 'linked-token',
       accountId: 'acct_owner',
       deviceId: 'dev_linked',

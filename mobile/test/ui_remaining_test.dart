@@ -593,7 +593,7 @@ AppState _connectedState(ApiClient api) {
   )
     ..api = api
     ..session = const Session(
-      baseUrl: 'http://localhost:8080',
+      baseUrl: 'https://localhost:8080',
       token: 'owner-token',
       accountId: 'acct_owner',
       deviceId: 'dev_owner',
@@ -602,7 +602,7 @@ AppState _connectedState(ApiClient api) {
 }
 
 class _FakeApi extends ApiClient {
-  _FakeApi() : super(baseUrl: 'http://localhost:8080');
+  _FakeApi() : super(baseUrl: 'https://localhost:8080');
 
   Map<String?, MessagePage> pages = <String?, MessagePage>{};
   Set<String?> failPages = <String?>{};

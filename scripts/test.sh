@@ -3,6 +3,7 @@ set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 sh "$ROOT/scripts/check-go-toolchain.sh"
+sh "$ROOT/scripts/check-demo-boundary.sh"
 GO_VERSION="$(tr -d '[:space:]' < "$ROOT/.go-version")"
  
 if command -v python3 >/dev/null 2>&1; then

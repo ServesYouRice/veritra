@@ -8,6 +8,7 @@ import '../features/communities/community_screen.dart';
 import '../features/settings/settings_screen.dart';
 import 'tokens.dart';
 import 'widgets/connection_banner.dart';
+import 'widgets/demo_banner.dart';
 import 'widgets/empty_state.dart';
 
 bool shouldShowFloatingNavLabels({
@@ -54,6 +55,17 @@ class _AppShellState extends State<AppShell> {
 
   @override
   Widget build(BuildContext context) {
+    final content = _buildContent(context);
+    if (!widget.state.config.demo) return content;
+    return Column(
+      children: <Widget>[
+        const DemoBanner(),
+        Expanded(child: content),
+      ],
+    );
+  }
+
+  Widget _buildContent(BuildContext context) {
     if (widget.state.lifecycle == SessionLifecycle.initializing) {
       return const _StartupState();
     }

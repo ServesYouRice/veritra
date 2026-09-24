@@ -108,7 +108,7 @@ void main() {
     );
 
     await state.registerWithInvite(
-      'http://localhost:8080',
+      'https://localhost:8080',
       'JOINCODE',
       'alice',
       'correct horse battery staple',
@@ -130,7 +130,7 @@ void main() {
     )
       ..api = api
       ..session = const Session(
-        baseUrl: 'http://localhost:8080',
+        baseUrl: 'https://localhost:8080',
         token: 'owner-token',
         accountId: 'acct_owner',
         deviceId: 'dev_owner',
@@ -153,7 +153,7 @@ AppState _connectedState(ApiClient api) {
   )
     ..api = api
     ..session = const Session(
-      baseUrl: 'http://localhost:8080',
+      baseUrl: 'https://localhost:8080',
       token: 'owner-token',
       accountId: 'acct_owner',
       deviceId: 'dev_owner',
@@ -161,7 +161,7 @@ AppState _connectedState(ApiClient api) {
 }
 
 class FakeFeatureApiClient extends ApiClient {
-  FakeFeatureApiClient() : super(baseUrl: 'http://localhost:8080');
+  FakeFeatureApiClient() : super(baseUrl: 'https://localhost:8080');
 
   Map<String, Object?>? lastConversationBody;
   var _conversationCounter = 0;
@@ -274,7 +274,7 @@ class FakeFeatureApiClient extends ApiClient {
     required EnrollmentCredential credential,
   }) async {
     return const Session(
-      baseUrl: 'http://localhost:8080',
+      baseUrl: 'https://localhost:8080',
       token: 'registered-token',
       accountId: 'acct_new',
       deviceId: 'dev_new',

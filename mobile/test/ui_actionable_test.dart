@@ -141,7 +141,7 @@ AppState _connectedState(ApiClient api) {
   )
     ..api = api
     ..session = const Session(
-      baseUrl: 'http://localhost:8080',
+      baseUrl: 'https://localhost:8080',
       token: 'owner-token',
       accountId: 'acct_owner',
       deviceId: 'dev_owner',
@@ -149,7 +149,7 @@ AppState _connectedState(ApiClient api) {
 }
 
 class _ReadApiClient extends ApiClient {
-  _ReadApiClient() : super(baseUrl: 'http://localhost:8080');
+  _ReadApiClient() : super(baseUrl: 'https://localhost:8080');
 
   String? lastReadMessageId;
 

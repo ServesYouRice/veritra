@@ -91,6 +91,8 @@ jobs:
           cargo build --manifest-path crypto/rust/Cargo.toml --locked --release
       - run: flutter pub get --enforce-lockfile
         working-directory: mobile
+      - name: Keep demo wiring out of the release entry point
+        run: sh scripts/check-demo-boundary.sh
       - name: Verify mobile dependency policy and retractions
         run: sh scripts/check-mobile-dependencies.sh
       - name: Verify Dart dependency license files

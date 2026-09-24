@@ -4,8 +4,10 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
+import 'package:private_messenger/core/client_config.dart';
 import 'package:private_messenger/core/errors.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/core/transport_policy.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
@@ -85,6 +87,41 @@ void main() {
     expect(state.messagesByConversation['conv_1'], isEmpty);
   });
 
+  test('demo config probes loopback HTTP but still rejects LAN HTTP', () async {
+    final api = _FlakyMessagesApi();
+    final state = AppState(
+      apiClientFactory: (_) => api,
+      cryptoService: TestOnlyCryptoService(),
+      localStore: MemoryLocalStore(),
+      syncServiceFactory: (_, __) => _FakeSyncService(),
+      config: const ClientConfig(demo: true, transport: TransportPolicy.demo),
+    );
+    api.setupRequired = true;
+    expect(
+      (await state.probeSetup('http://localhost:8080')).state,
+      SetupProbeState.reachable,
+    );
+    expect(
+      (await state.probeSetup('http://192.168.1.20:8080')).state,
+      SetupProbeState.insecureTransport,
+    );
+  });
+
+  test('release config refuses to connect a plain-HTTP origin', () async {
+    final api = _FlakyMessagesApi();
+    final state = AppState(
+      apiClientFactory: (_) => api,
+      cryptoService: TestOnlyCryptoService(),
+      localStore: MemoryLocalStore(),
+      syncServiceFactory: (_, __) => _FakeSyncService(),
+    );
+    await state.createOwner(
+        'http://localhost:8080', 'owner', 'owner-password-123', '');
+    expect(state.session, isNull);
+    expect(state.api, isNull);
+    expect(state.error, isNotNull);
+  });
+
   test('setup probe preserves actionable states without global errors',
       () async {
     final api = _FlakyMessagesApi();
@@ -129,7 +166,7 @@ void main() {
   test('session round-trips username through the local store', () async {
     final store = MemoryLocalStore();
     await store.saveSession(const Session(
-      baseUrl: 'http://localhost:8080',
+      baseUrl: 'https://localhost:8080',
       token: 't',
       accountId: 'acct_1',
       deviceId: 'dev_1',
@@ -149,7 +186,7 @@ AppState _connectedState(ApiClient api) {
   )
     ..api = api
     ..session = const Session(
-      baseUrl: 'http://localhost:8080',
+      baseUrl: 'https://localhost:8080',
       token: 'owner-token',
       accountId: 'acct_owner',
       deviceId: 'dev_owner',
@@ -158,7 +195,7 @@ AppState _connectedState(ApiClient api) {
 }
 
 class _FlakyMessagesApi extends ApiClient {
-  _FlakyMessagesApi() : super(baseUrl: 'http://localhost:8080');
+  _FlakyMessagesApi() : super(baseUrl: 'https://localhost:8080');
 
   bool failMessages = false;
   bool failSetupStatus = false;

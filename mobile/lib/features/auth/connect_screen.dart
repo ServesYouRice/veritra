@@ -47,6 +47,10 @@ class _ConnectScreenState extends State<ConnectScreen> {
   void initState() {
     super.initState();
     url.addListener(_scheduleSetupProbe);
+    final demoUrl = widget.state.config.defaultServerUrl;
+    if (demoUrl != null && url.text.isEmpty) {
+      url.text = demoUrl;
+    }
     unawaited(_loadStoredDeviceIdentity());
   }
 
@@ -444,13 +448,18 @@ class _ConnectScreenState extends State<ConnectScreen> {
     if (parsed == null) {
       return 'Enter a full URL, e.g. https://chat.example.org';
     }
-    if (parsed.scheme.toLowerCase() != 'https') {
-      return 'Veritra requires HTTPS. Use an https:// server origin.';
-    }
     try {
       canonicalizeServerOrigin(raw);
     } on FormatException {
-      return 'Enter only the server origin, e.g. https://chat.example.org';
+      return parsed.scheme.toLowerCase() == 'https'
+          ? 'Enter only the server origin, e.g. https://chat.example.org'
+          : 'Veritra requires HTTPS. Use an https:// server origin.';
+    }
+    if (!widget.state.config.transport.allows(raw)) {
+      return widget.state.config.transport.allowLoopbackHttp
+          ? 'Use https://, or http:// only for this computer '
+              '(localhost or 127.0.0.1).'
+          : 'Veritra requires HTTPS. Use an https:// server origin.';
     }
     return null;
   }
