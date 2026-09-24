@@ -14,6 +14,7 @@ import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/status_pill.dart';
 import '../../ui/widgets/tile_group.dart';
 import 'chat_list_screen.dart';
+import 'safety_number_screen.dart';
 
 /// Conversation metadata and management: who is in it, notification mute,
 /// safety actions, and disappearing-message retention.
@@ -216,6 +217,24 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
               const SectionHeader('Safety'),
               TileGroup(
                 children: <Widget>[
+                  if (state.safetyNumbersAvailable)
+                    ListTile(
+                      leading: const Icon(Icons.verified_user_outlined),
+                      title: const Text('Safety number'),
+                      subtitle: const Text(
+                        'Compare it with the other members to check that '
+                        'no one is intercepting this conversation.',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => SafetyNumberScreen(
+                            state: state,
+                            conversation: conversation,
+                          ),
+                        ),
+                      ),
+                    ),
                   if (isDm && conversation.peerAccountId != null)
                     _BlockTile(
                       state: state,

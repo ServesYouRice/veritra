@@ -357,6 +357,10 @@ class AppState extends ChangeNotifier {
   /// Reply, edit, delete and reactions need the MLS service (D22).
   bool get messageActionsAvailable => _mlsCrypto != null;
 
+  /// Safety numbers come from the MLS group, so only builds with the MLS
+  /// path (demo builds, D11) can show them.
+  bool get safetyNumbersAvailable => _mlsCrypto != null;
+
   /// Scoped busy/error state. Callers pass an [Ops] key so one slow or failed
   /// action leaves every unrelated control usable.
   bool isBusy(String op) => _busyOps.contains(op);
@@ -1907,6 +1911,14 @@ class AppState extends ChangeNotifier {
     return _constantTimeBytesEqual(saved, current.transcriptHash)
         ? PeerVerificationStatus.verified
         : PeerVerificationStatus.changed;
+  }
+
+  /// Whether a scanned safety code is exactly this device's code for the
+  /// conversation. Both devices must be at the same group epoch.
+  Future<bool> safetyCodeMatches(String conversationId, String scanned) async {
+    final current = await conversationSafetyNumber(conversationId);
+    return _constantTimeBytesEqual(
+        utf8.encode(scanned.trim()), utf8.encode(current.qrPayload));
   }
 
   void selectConversation(String id) {
