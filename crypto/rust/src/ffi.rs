@@ -1,4 +1,8 @@
-use crate::{attachment, mls::MlsDevice, PmByteSlice};
+use crate::{
+    attachment,
+    mls::{MlsDevice, MlsError},
+    PmByteSlice,
+};
 use core::ptr;
 use std::{
     panic::{catch_unwind, AssertUnwindSafe},
@@ -9,6 +13,9 @@ pub const PM_CRYPTO_OK: i32 = 0;
 pub const PM_CRYPTO_INVALID_ARGUMENT: i32 = -2;
 pub const PM_CRYPTO_ERROR: i32 = -3;
 pub const PM_CRYPTO_PANIC: i32 = -4;
+/// Decryption succeeded but the MLS sender is not the claimed account/device.
+/// The group ratchet has already advanced past the message.
+pub const PM_CRYPTO_SENDER_MISMATCH: i32 = -5;
 
 const MAX_ID_BYTES: usize = 128;
 const STATE_KEY_BYTES: usize = 32;
@@ -637,17 +644,24 @@ pub unsafe extern "C" fn pm_crypto_group_decrypt(
     handle: *mut PmCryptoHandle,
     group_id: PmByteSlice,
     ciphertext: PmByteSlice,
+    sender_account_id: PmByteSlice,
+    sender_device_id: PmByteSlice,
     out_plaintext: *mut PmOwnedBuffer,
 ) -> i32 {
     ffi_call(|| {
         let group_id = unsafe { borrowed(group_id, MAX_ID_BYTES)? };
         let ciphertext = unsafe { borrowed(ciphertext, MAX_MESSAGE_BYTES)? };
+        let sender_account_id = unsafe { borrowed(sender_account_id, MAX_ID_BYTES)? };
+        let sender_device_id = unsafe { borrowed(sender_device_id, MAX_ID_BYTES)? };
         let plaintext = unsafe {
             with_device(handle, |device| {
                 let mut group = device.load_group(group_id).map_err(|_| PM_CRYPTO_ERROR)?;
                 device
-                    .decrypt(&mut group, ciphertext)
-                    .map_err(|_| PM_CRYPTO_ERROR)
+                    .decrypt(&mut group, ciphertext, sender_account_id, sender_device_id)
+                    .map_err(|error| match error {
+                        MlsError::SenderMismatch => PM_CRYPTO_SENDER_MISMATCH,
+                        _ => PM_CRYPTO_ERROR,
+                    })
             })?
         };
         unsafe { output(out_plaintext, plaintext) }
@@ -882,6 +896,8 @@ mod tests {
                     bob,
                     slice(b"conv_test"),
                     slice(&ciphertext),
+                    slice(b"acct_alice"),
+                    slice(b"dev_alice"),
                     &mut plaintext,
                 )
             },

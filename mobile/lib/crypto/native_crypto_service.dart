@@ -325,9 +325,18 @@ class NativeCryptoService implements MlsConversationCryptoService {
           ));
           return null;
         }
+        // Calls are two-party DMs, so the sender is whichever party is not
+        // this account. Own-device signals were skipped above.
+        final senderAccountId = call.createdBy == _accountId
+            ? call.invitedAccountId
+            : call.createdBy;
         try {
-          final plaintext = _requiredDevice()
-              .decrypt(call.conversationId, base64Decode(encoded));
+          final plaintext = _requiredDevice().decrypt(
+            call.conversationId,
+            base64Decode(encoded),
+            senderAccountId: senderAccountId,
+            senderDeviceId: senderDeviceId,
+          );
           final payload = AppPayloadCodec().decode(plaintext,
               conversationId: call.conversationId,
               senderDeviceId: senderDeviceId,
@@ -424,8 +433,12 @@ class NativeCryptoService implements MlsConversationCryptoService {
           return null;
         }
         try {
-          final plaintext = _requiredDevice()
-              .decrypt(envelope.conversationId, envelope.ciphertext);
+          final plaintext = _requiredDevice().decrypt(
+            envelope.conversationId,
+            envelope.ciphertext,
+            senderAccountId: envelope.senderAccountId,
+            senderDeviceId: envelope.senderDeviceId,
+          );
           final payload = AppPayloadCodec().decode(
             plaintext,
             conversationId: envelope.conversationId,

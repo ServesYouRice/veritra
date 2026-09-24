@@ -3,7 +3,7 @@
 The selected production direction is MLS through OpenMLS. This Rust crate now
 pins OpenMLS 0.9.0 and contains a tested native core for signed key packages,
 group creation/join, and authenticated application messages. It also exposes a
-versioned C ABI and Rust-side credential/key-package boundary types. ABI v4 has
+versioned C ABI and Rust-side credential/key-package boundary types. ABI v5 has
 tested opaque device handles, zeroing owned buffers, credential public-key
 export, enrollment-challenge signing, key-package creation, state sealing, and
 rollback-checked restore, plus group create/join/add/remove/update, commit
@@ -16,12 +16,12 @@ The server now reserves final account/device IDs before key generation and
 atomically verifies and consumes a signed enrollment proof covering the server
 challenge, Ed25519 public key, and SHA-256 key-package commitment. The Flutter
 client models this preflight, and its low-level Dart FFI binding requires ABI
-version 4 exactly (`native_crypto_bindings.dart`) and uses the owned
+version 5 exactly (`native_crypto_bindings.dart`) and uses the owned
 device/buffer calls. Native libraries are packaged for Android/iOS, while the
 production service remains behind the release gate.
 
 The public header is `crypto/rust/include/veritra_crypto.h`, which pins
-`PM_CRYPTO_ABI_VERSION` at 4. That version defines:
+`PM_CRYPTO_ABI_VERSION` at 5. That version defines:
 
 - account/device-bound opaque handles with exactly-once destruction
 - library-owned, zero-on-free output buffers
@@ -29,6 +29,9 @@ The public header is `crypto/rust/include/veritra_crypto.h`, which pins
 - sealed provider-state export and rollback-checked restore
 - conversation-bound Welcome processing and credential-bound member addition
 - the versioned protocol identifier `mls10-openmls-v1`
+- sender binding (ABI 5): `pm_crypto_group_decrypt` takes the claimed sender
+  account and device and returns `PM_CRYPTO_SENDER_MISMATCH` (-5) when the
+  authenticated MLS credential differs (decision D25)
 
 Key-package size checks mirror the server transport boundary (64 bytes through
 48 KiB). Passing that check does **not** verify an MLS key package.

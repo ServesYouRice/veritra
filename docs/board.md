@@ -376,7 +376,7 @@ and file, remediation revision, reviewer retest, and residual-risk decision.
 - MLS 1.0 through OpenMLS 0.8.1 using
   `MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519`.
 - Application marker `mls10-openmls-v1`; the server rejects other markers.
-- Native ABI v4 in `crypto/rust/include/veritra_crypto.h`.
+- Native ABI v5 (sender binding, D25) in `crypto/rust/include/veritra_crypto.h`.
 - Credentials bind length-prefixed account/device identity and the MLS
   signature key. Key packages are checked against the expected account/device.
 - Local state uses SQLite3MC ChaCha20 with a random 256-bit key in platform

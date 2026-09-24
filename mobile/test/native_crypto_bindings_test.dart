@@ -5,7 +5,7 @@ import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 
 void main() {
   final libraryPath = Platform.environment['VERITRA_CRYPTO_LIBRARY'];
-  test('ABI v4 lifecycle owns outputs and handles safely', () {
+  test('ABI v5 lifecycle owns outputs and handles safely', () {
     final bindings = NativeCryptoBindings.open(libraryPath!);
     final alice = bindings.createDevice('acct_alice', 'dev_alice');
     final bob = bindings.createDevice('acct_bob', 'dev_bob');
@@ -54,11 +54,21 @@ void main() {
         alice.addMember('conv_test', bobPackage, 'acct_bob', 'dev_bob');
     bob.joinGroup('conv_test', added.welcome);
     final ciphertext = alice.encrypt('conv_test', [4, 5, 6]);
-    expect(bob.decrypt('conv_test', ciphertext), [4, 5, 6]);
+    expect(
+        bob.decrypt('conv_test', ciphertext,
+            senderAccountId: 'acct_alice', senderDeviceId: 'dev_alice'),
+        [4, 5, 6]);
+    final spoofed = alice.encrypt('conv_test', [7]);
+    expect(
+        () => bob.decrypt('conv_test', spoofed,
+            senderAccountId: 'acct_mallory', senderDeviceId: 'dev_mallory'),
+        throwsA(isA<NativeCryptoException>().having(
+            (error) => error.kind, 'kind', NativeCryptoError.senderMismatch)));
     final update = alice.selfUpdate('conv_test');
     bob.processCommit('conv_test', update);
     expect(
-        () => bob.decrypt('conv_test', [1]),
+        () => bob.decrypt('conv_test', [1],
+            senderAccountId: 'acct_alice', senderDeviceId: 'dev_alice'),
         throwsA(isA<NativeCryptoException>().having(
             (error) => error.kind, 'kind', NativeCryptoError.operationFailed)));
     final removal = alice.removeMember('conv_test', 'acct_bob', 'dev_bob');
