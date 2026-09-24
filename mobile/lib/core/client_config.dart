@@ -11,6 +11,7 @@ class ClientConfig {
     this.transport = TransportPolicy.production,
     this.deviceName = 'Mobile device',
     this.defaultServerUrl,
+    this.syncWhileUnfocused = false,
   });
 
   static const ClientConfig production = ClientConfig();
@@ -26,4 +27,8 @@ class ClientConfig {
 
   /// Prefilled on the connect screen in demo builds. Never set in release.
   final String? defaultServerUrl;
+
+  /// Desktop windows stay open while another window has focus, so sync keeps
+  /// running when the app is `inactive` or `hidden`, not only `resumed`.
+  final bool syncWhileUnfocused;
 }

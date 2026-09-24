@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
@@ -618,6 +620,35 @@ void main() {
           (widget.properties.label?.startsWith(prefix) ?? false));
       expect(bubbleLabelled('Message from'), findsOneWidget);
       expect(bubbleLabelled('Encrypted message from'), findsOneWidget);
+    });
+
+    testWidgets('Enter sends on desktop and Shift+Enter does not',
+        (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      final api = _FakeApi();
+      final state = _connectedState(api)
+        ..conversations = <Conversation>[
+          Conversation(id: 'conv_1', kind: 'group'),
+        ];
+      await tester.pumpWidget(_app(
+        ChatScreen(state: state, conversationId: 'conv_1'),
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'line one');
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pumpAndSettle();
+      String composerText() =>
+          tester.widget<TextField>(find.byType(TextField)).controller!.text;
+      expect(composerText(), startsWith('line one'));
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(composerText(), isEmpty);
+      debugDefaultTargetPlatformOverride = null;
     });
 
     testWidgets('the composer clears after durable acceptance', (tester) async {

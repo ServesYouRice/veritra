@@ -155,6 +155,70 @@ jobs:
         run: flutter build ios --simulator --debug
         working-directory: mobile
 
+  # Unsigned demo builds for the desktop apps (Stage 3, D10). Not release
+  # jobs: release/release-policy.json does not list them.
+  desktop-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: "3.44.0"
+          cache: true
+      - name: Install Linux desktop build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libsecret-1-dev liblzma-dev
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.91.0 --profile minimal
+      - name: Build the Linux crypto library
+        run: sh scripts/build-desktop-crypto.sh linux
+      - run: flutter pub get --enforce-lockfile
+        working-directory: mobile
+      - name: Build the Linux demo app
+        run: flutter build linux --release -t lib/main_demo.dart --dart-define=VERITRA_DEMO=true
+        working-directory: mobile
+      - name: Verify the crypto library is bundled
+        run: test -s mobile/build/linux/x64/release/bundle/lib/libprivate_messenger_crypto.so
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: veritra-demo-linux-x64-${{ github.run_id }}
+          path: mobile/build/linux/x64/release/bundle
+          if-no-files-found: error
+          retention-days: 14
+
+  desktop-windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: "3.44.0"
+          cache: true
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.91.0 --profile minimal
+      - name: Build the Windows crypto library
+        run: ./scripts/build-desktop-crypto.ps1
+        shell: pwsh
+      - run: flutter pub get --enforce-lockfile
+        working-directory: mobile
+      - name: Build the Windows demo app
+        run: flutter build windows --release -t lib/main_demo.dart --dart-define=VERITRA_DEMO=true
+        working-directory: mobile
+      - name: Verify the crypto library is bundled
+        run: if (-not (Test-Path mobile/build/windows/x64/runner/Release/private_messenger_crypto.dll)) { exit 1 }
+        shell: pwsh
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: veritra-demo-windows-x64-${{ github.run_id }}
+          path: mobile/build/windows/x64/runner/Release
+          if-no-files-found: error
+          retention-days: 14
+
   compose-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 20

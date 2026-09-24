@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -1122,6 +1123,11 @@ class _RedactedBars extends StatelessWidget {
 /// One rounded pill holding the attachment button, the field and send
 /// (`docs/design.md` §4), rather than a bordered row of three separate
 /// Material controls.
+bool get _enterSends =>
+    defaultTargetPlatform == TargetPlatform.windows ||
+    defaultTargetPlatform == TargetPlatform.linux ||
+    defaultTargetPlatform == TargetPlatform.macOS;
+
 class _Composer extends StatelessWidget {
   const _Composer({
     required this.enabled,
@@ -1166,31 +1172,40 @@ class _Composer extends StatelessWidget {
                 tooltip: 'Attachments require client crypto (coming soon)',
               ),
               Expanded(
-                child: TextField(
-                  controller: controller,
-                  enabled: enabled,
-                  minLines: 1,
-                  maxLines: 4,
-                  textInputAction: TextInputAction.newline,
-                  style: theme.textTheme.bodyMedium,
-                  // The field's own fill and border are cleared: the pill
-                  // around it is the input surface now, and the theme's
-                  // `inputDecorationTheme` would otherwise draw a rounded box
-                  // inside a rounded box.
-                  decoration: InputDecoration(
-                    hintText: 'Message',
-                    filled: false,
-                    isDense: true,
-                    border: InputBorder.none,
-                    enabledBorder: InputBorder.none,
-                    focusedBorder: InputBorder.none,
-                    disabledBorder: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: BoneSpacing.xs,
-                      vertical: 12,
-                    ),
-                    hintStyle: theme.textTheme.bodyMedium?.copyWith(
-                      color: scheme.onSurfaceVariant,
+                // On desktop, Enter sends and Shift+Enter starts a new line.
+                child: CallbackShortcuts(
+                  bindings: <ShortcutActivator, VoidCallback>{
+                    if (_enterSends)
+                      const SingleActivator(LogicalKeyboardKey.enter): () {
+                        if (enabled && !busy) onSend();
+                      },
+                  },
+                  child: TextField(
+                    controller: controller,
+                    enabled: enabled,
+                    minLines: 1,
+                    maxLines: 4,
+                    textInputAction: TextInputAction.newline,
+                    style: theme.textTheme.bodyMedium,
+                    // The field's own fill and border are cleared: the pill
+                    // around it is the input surface now, and the theme's
+                    // `inputDecorationTheme` would otherwise draw a rounded box
+                    // inside a rounded box.
+                    decoration: InputDecoration(
+                      hintText: 'Message',
+                      filled: false,
+                      isDense: true,
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      disabledBorder: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: BoneSpacing.xs,
+                        vertical: 12,
+                      ),
+                      hintStyle: theme.textTheme.bodyMedium?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
                   ),
                 ),

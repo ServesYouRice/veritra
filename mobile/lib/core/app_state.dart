@@ -216,13 +216,21 @@ class AppState extends ChangeNotifier {
 
   bool get connected => session != null;
 
-  bool get _isForeground => _lifecycleState == AppLifecycleState.resumed;
+  bool get _isForeground => _isForegroundState(_lifecycleState);
+
+  bool _isForegroundState(AppLifecycleState state) =>
+      state == AppLifecycleState.resumed ||
+      (config.syncWhileUnfocused &&
+          (state == AppLifecycleState.inactive ||
+              state == AppLifecycleState.hidden));
 
   /// The UI forwards lifecycle changes here so background push remains a
   /// durable wake marker and the foreground sync owner is the only consumer.
   void handleAppLifecycleState(AppLifecycleState state) {
+    final wasForeground = _isForeground;
     _lifecycleState = state;
-    if (state == AppLifecycleState.resumed) {
+    if (state == AppLifecycleState.resumed ||
+        (!wasForeground && _isForeground)) {
       unawaited(_resumeForegroundSync());
     }
   }

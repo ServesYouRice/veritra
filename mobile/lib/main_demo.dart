@@ -49,6 +49,8 @@ Future<void> main() async {
       transport: TransportPolicy.demo,
       deviceName: _deviceName(),
       defaultServerUrl: 'http://localhost:8080',
+      syncWhileUnfocused:
+          Platform.isWindows || Platform.isLinux || Platform.isMacOS,
     ),
   );
   runApp(VeritraApp(state: state));

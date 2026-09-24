@@ -618,7 +618,15 @@ class _PushStatusRow extends StatelessWidget {
     final String detail;
     final IconData icon;
     var warn = true;
-    if (iOS) {
+    final desktop = defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.linux ||
+        defaultTargetPlatform == TargetPlatform.macOS;
+    if (desktop) {
+      title = 'Desktop notifications are not available yet';
+      detail = 'Messages arrive while the app is running, even in the '
+          'background.';
+      icon = Icons.notifications_off_outlined;
+    } else if (iOS) {
       title = 'Push is not available on iOS yet';
       detail = 'Messages arrive while the app is open. Apple push delivery '
           'is still being integrated.';

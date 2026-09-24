@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 
 import '../../core/api_client.dart';
@@ -265,12 +266,16 @@ class _ConnectScreenState extends State<ConnectScreen> {
           ),
         ),
       ),
-      const SizedBox(height: BoneSpacing.md),
-      OutlinedButton.icon(
-        onPressed: widget.state.busy ? null : _scanLinkCode,
-        icon: const Icon(Icons.qr_code_scanner),
-        label: const Text('Scan QR code'),
-      ),
+      // The QR scanner plugin has no Windows or Linux camera support; the
+      // pasted code works everywhere.
+      if (_canScanQr) ...<Widget>[
+        const SizedBox(height: BoneSpacing.md),
+        OutlinedButton.icon(
+          onPressed: widget.state.busy ? null : _scanLinkCode,
+          icon: const Icon(Icons.qr_code_scanner),
+          label: const Text('Scan QR code'),
+        ),
+      ],
       if (pendingLink != null) ...<Widget>[
         const SizedBox(height: BoneSpacing.lg),
         _Callout(
@@ -590,6 +595,10 @@ class _ConnectScreenState extends State<ConnectScreen> {
   /// Opens the camera scanner and fills the link-code field from the result.
   /// The generating device encodes a `veritra://device-link?code=…` URI, but
   /// a bare code is accepted too.
+  bool get _canScanQr =>
+      defaultTargetPlatform != TargetPlatform.windows &&
+      defaultTargetPlatform != TargetPlatform.linux;
+
   Future<void> _scanLinkCode() async {
     final scanned = await Navigator.of(context).push<String>(
       MaterialPageRoute<String>(builder: (_) => const QrScanScreen()),
