@@ -117,6 +117,8 @@ jobs:
         working-directory: mobile
       - name: Test live Go/Dart API contracts
         run: sh scripts/test-api-contracts.sh
+      - name: Test the demo message flow with real clients
+        run: sh scripts/test-demo-e2e.sh
       - run: dart format --set-exit-if-changed .
         working-directory: mobile
       - name: Build Android release APK without signing
