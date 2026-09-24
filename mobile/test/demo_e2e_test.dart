@@ -47,8 +47,8 @@ void main() {
     final reply = await owner.waitFor(conv, (m) => m.body == 'hi owner');
     expect(reply.replyTo, hello.key);
 
-    expect(await owner.state.editMessage(conv, hello.key, 'hello, alice'),
-        isTrue);
+    expect(
+        await owner.state.editMessage(conv, hello.key, 'hello, alice'), isTrue);
     await alice.waitFor(
         conv, (m) => m.key == hello.key && m.body == 'hello, alice');
 
@@ -57,8 +57,7 @@ void main() {
         (await owner.store.loadReactions(conv)).any((r) => r.reaction == '👍'));
 
     expect(await owner.state.deleteMessage(conv, hello.key), isTrue);
-    await alice.waitFor(
-        conv, (m) => m.key == hello.key && m.deletedAt != null);
+    await alice.waitFor(conv, (m) => m.key == hello.key && m.deletedAt != null);
 
     // A group of three.
     final bob = await owner.invite('bob');
@@ -153,9 +152,8 @@ class _DemoClient {
   ) async {
     LocalMessage? found;
     await waitUntil(() async {
-      found = (await store.loadMessages(conversationId))
-          .where(matches)
-          .firstOrNull;
+      found =
+          (await store.loadMessages(conversationId)).where(matches).firstOrNull;
       return found != null;
     });
     return found!;
