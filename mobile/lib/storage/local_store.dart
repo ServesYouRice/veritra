@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:drift/drift.dart' show Value;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -75,6 +76,7 @@ class MlsStateTransition {
     required this.cursor,
     this.upsertedEnvelopes = const <ReceivedMessageEnvelope>[],
     this.deletedEnvelopeIds = const <String>[],
+    this.messageEffects = const <MessageEffect>[],
   });
 
   final String messageId;
@@ -85,6 +87,9 @@ class MlsStateTransition {
   final int cursor;
   final List<ReceivedMessageEnvelope> upsertedEnvelopes;
   final List<String> deletedEnvelopeIds;
+
+  /// Decrypted history changes, committed with [state] (D23).
+  final List<MessageEffect> messageEffects;
 }
 
 class PendingMlsMessage {
@@ -126,6 +131,7 @@ class OutgoingApplicationStateTransition {
     required this.state,
     required this.envelope,
     this.draftText,
+    this.messageEffects = const <MessageEffect>[],
   });
 
   final int expectedCounter;
@@ -133,6 +139,9 @@ class OutgoingApplicationStateTransition {
   final StoredCryptoState state;
   final MessageEnvelope envelope;
   final String? draftText;
+
+  /// This device's own copy of what it sent, committed with [state] (D23).
+  final List<MessageEffect> messageEffects;
 }
 
 class LocalBackupData {
@@ -179,6 +188,7 @@ class SyncEventCommit {
     required this.expectedCursor,
     required this.cursor,
     this.envelope,
+    this.ownMessageKey,
   });
 
   final String eventKey;
@@ -186,6 +196,10 @@ class SyncEventCommit {
   final int expectedCursor;
   final int cursor;
   final ReceivedMessageEnvelope? envelope;
+
+  /// Set when [envelope] is the server echo of a message this device sent:
+  /// the local history record with this key is linked to the envelope.
+  final String? ownMessageKey;
 }
 
 class LocalSyncLease {
@@ -254,6 +268,10 @@ abstract class LocalStore {
       String conversationId, String peerAccountId, List<int> transcriptHash);
   Future<List<int>?> loadPeerVerification(
       String conversationId, String peerAccountId);
+
+  /// Decrypted history for one conversation, oldest first (D23).
+  Future<List<LocalMessage>> loadMessages(String conversationId);
+  Future<List<LocalMessageReaction>> loadReactions(String conversationId);
   Future<void> clearCachedState({bool preserveOutbox = false});
   Future<void> clear();
 }
@@ -270,6 +288,7 @@ class MemoryLocalStore implements LocalStore {
   final Map<String, PendingMlsMessage> _mlsOutbox =
       <String, PendingMlsMessage>{};
   final Map<String, List<int>> _peerVerifications = <String, List<int>>{};
+  final _MemoryMessageHistory _history = _MemoryMessageHistory();
   String? _syncLeaseKey;
 
   @override
@@ -290,6 +309,7 @@ class MemoryLocalStore implements LocalStore {
       _processedMlsMessages.clear();
       _mlsOutbox.clear();
       _peerVerifications.clear();
+      _history.clear();
       _syncLeaseKey = null;
     }
     _session = session;
@@ -453,6 +473,7 @@ class MemoryLocalStore implements LocalStore {
       messages.removeWhere((message) => message.id == envelope.id);
       messages.add(envelope);
     }
+    _history.apply(transition.messageEffects);
     _cryptoState = _copyCryptoState(transition.state);
     _processedMlsMessages.add(transition.messageId);
     _syncCursor = transition.cursor;
@@ -481,6 +502,8 @@ class MemoryLocalStore implements LocalStore {
           nextMessages[envelope.conversationId] ??= <ReceivedMessageEnvelope>[];
       messages.removeWhere((item) => item.id == envelope.id);
       messages.add(envelope);
+      final ownKey = commit.ownMessageKey;
+      if (ownKey != null) _history.markSent(ownKey, envelope.id);
     }
     _processedMlsMessages.add(commit.eventKey);
     _syncCursor = commit.cursor;
@@ -538,6 +561,7 @@ class MemoryLocalStore implements LocalStore {
       throw const OutboxFullException();
     }
     _cryptoState = _copyCryptoState(transition.state);
+    _history.apply(transition.messageEffects);
     _outbox.add(transition.envelope);
     _outboxRecords[transition.envelope.idempotencyKey] = PendingEnvelopeRecord(
         envelope: transition.envelope,
@@ -608,6 +632,7 @@ class MemoryLocalStore implements LocalStore {
           backup.mlsOutbox.map((item) => MapEntry(item.idempotencyKey, item)));
     _cryptoState = _copyCryptoState(backup.cryptoState);
     _processedMlsMessages.clear();
+    _history.clear();
   }
 
   @override
@@ -642,9 +667,121 @@ class MemoryLocalStore implements LocalStore {
     _processedMlsMessages.clear();
     _mlsOutbox.clear();
     _peerVerifications.clear();
+    _history.clear();
     _syncLeaseKey = null;
     await clearCachedState();
   }
+
+  @override
+  Future<List<LocalMessage>> loadMessages(String conversationId) async =>
+      _history.messages(conversationId);
+
+  @override
+  Future<List<LocalMessageReaction>> loadReactions(
+          String conversationId) async =>
+      _history.reactions(conversationId);
+}
+
+/// In-memory twin of the database's decrypted history, with the same effect
+/// rules as `EncryptedLocalDatabase._applyMessageEffects`.
+class _MemoryMessageHistory {
+  final Map<String, LocalMessage> _messages = <String, LocalMessage>{};
+  final Map<String, LocalMessageReaction> _reactions =
+      <String, LocalMessageReaction>{};
+
+  void clear() {
+    _messages.clear();
+    _reactions.clear();
+  }
+
+  void apply(List<MessageEffect> effects) {
+    for (final effect in effects) {
+      switch (effect) {
+        case InsertMessageEffect():
+          if (_messages.containsKey(effect.key)) continue;
+          if (effect.serverMessageId != null &&
+              _messages.values.any(
+                  (item) => item.serverMessageId == effect.serverMessageId)) {
+            continue;
+          }
+          _messages[effect.key] = LocalMessage(
+            key: effect.key,
+            serverMessageId: effect.serverMessageId,
+            conversationId: effect.conversationId,
+            senderAccountId: effect.senderAccountId,
+            senderDeviceId: effect.senderDeviceId,
+            kind: effect.kind,
+            body: effect.body,
+            replyTo: effect.replyTo,
+            createdAt: effect.createdAt,
+            state: effect.state,
+          );
+        case EditMessageEffect():
+          final target = _messages[effect.targetKey];
+          if (target == null ||
+              target.senderAccountId != effect.editorAccountId ||
+              target.kind != LocalMessageKind.text ||
+              target.deletedAt != null) {
+            continue;
+          }
+          _messages[effect.targetKey] = target.copyWith(
+            body: Value(effect.body),
+            editedAt: Value(effect.at),
+          );
+        case DeleteMessageEffect():
+          final target = _messages[effect.targetKey];
+          if (target == null ||
+              target.senderAccountId != effect.deleterAccountId ||
+              target.kind != LocalMessageKind.text) {
+            continue;
+          }
+          _messages[effect.targetKey] = target.copyWith(
+            body: const Value(null),
+            deletedAt: Value(effect.at),
+          );
+          _reactions
+              .removeWhere((_, item) => item.targetKey == effect.targetKey);
+        case ReactionEffect():
+          final id = '${effect.targetKey}\u0000${effect.reactorAccountId}';
+          if (effect.reaction.isEmpty) {
+            _reactions.remove(id);
+          } else {
+            _reactions[id] = LocalMessageReaction(
+              targetKey: effect.targetKey,
+              reactorAccountId: effect.reactorAccountId,
+              reaction: effect.reaction,
+              updatedAt: effect.at,
+            );
+          }
+      }
+    }
+  }
+
+  void markSent(String key, String serverMessageId) {
+    final target = _messages[key];
+    if (target == null) return;
+    _messages[key] = target.copyWith(
+      serverMessageId: Value(serverMessageId),
+      state: LocalMessageState.sent,
+    );
+  }
+
+  List<LocalMessage> messages(String conversationId) {
+    final result = _messages.values
+        .where((item) => item.conversationId == conversationId)
+        .toList();
+    result.sort((a, b) {
+      final byTime = a.createdAt.compareTo(b.createdAt);
+      return byTime != 0 ? byTime : a.key.compareTo(b.key);
+    });
+    return result;
+  }
+
+  List<LocalMessageReaction> reactions(String conversationId) => _reactions
+      .values
+      .where(
+          (item) => _messages[item.targetKey]?.conversationId == conversationId)
+      .toList(growable: false);
 }
 
 typedef LocalDatabaseFactory = EncryptedLocalDatabase Function(
@@ -928,6 +1065,7 @@ class SecureLocalStore implements LocalStore {
               ))
           .toList(growable: false),
       deletedEnvelopeIds: transition.deletedEnvelopeIds,
+      messageEffects: transition.messageEffects,
       failureInjector: _mlsCommitFailureInjector,
       leaseKey: _syncLeaseKey,
     );
@@ -947,6 +1085,7 @@ class SecureLocalStore implements LocalStore {
               conversationId: commit.envelope!.conversationId,
               payloadJson: jsonEncode(commit.envelope!.toJson()),
             ),
+      ownMessageKey: commit.ownMessageKey,
       leaseKey: _syncLeaseKey,
     );
   }
@@ -1021,6 +1160,7 @@ class SecureLocalStore implements LocalStore {
         payloadJson: jsonEncode(transition.envelope.toJson()),
         maxEntries: maxPendingEnvelopes,
         draftText: transition.draftText,
+        messageEffects: transition.messageEffects,
         leaseKey: _syncLeaseKey,
       );
     } on StateError catch (error) {
@@ -1151,6 +1291,15 @@ class SecureLocalStore implements LocalStore {
           String conversationId, String peerAccountId) =>
       _database().then((database) =>
           database.readPeerVerification(conversationId, peerAccountId));
+
+  @override
+  Future<List<LocalMessage>> loadMessages(String conversationId) async =>
+      (await _database()).readMessages(conversationId);
+
+  @override
+  Future<List<LocalMessageReaction>> loadReactions(
+          String conversationId) async =>
+      (await _database()).readReactions(conversationId);
 
   @override
   Future<void> clearCachedState({bool preserveOutbox = false}) async {

@@ -373,7 +373,7 @@ and file, remediation revision, reviewer retest, and residual-risk decision.
 
 ### Frozen design surface
 
-- MLS 1.0 through OpenMLS 0.8.1 using
+- MLS 1.0 through OpenMLS 0.9.0 using
   `MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519`.
 - Application marker `mls10-openmls-v1`; the server rejects other markers.
 - Native ABI v5 (sender binding, D25) in `crypto/rust/include/veritra_crypto.h`.
@@ -381,7 +381,12 @@ and file, remediation revision, reviewer retest, and residual-risk decision.
   signature key. Key packages are checked against the expected account/device.
 - Local state uses SQLite3MC ChaCha20 with a random 256-bit key in platform
   secure storage. MLS state, rollback counter, affected ciphertext rows,
-  dedupe marker, and sync cursor commit atomically.
+  decrypted history, dedupe marker, and sync cursor commit atomically.
+- Decrypted history (schema v7, D22/D23) lives in `local_messages` and
+  `local_message_reactions`, keyed by the authenticated
+  `<sender_device_id>:<action_id>`. Edits and deletes apply only when the
+  authenticated sender account matches the original. Server-visible
+  `crypto_metadata` no longer names the payload type.
 - `VAP1` application payloads use versioned JSON padded to 256-byte classes.
   Authenticated context duplicates and verifies conversation, sender device,
   action ID, type, and version after decryption.

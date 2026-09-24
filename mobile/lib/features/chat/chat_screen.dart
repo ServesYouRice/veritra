@@ -5,7 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/app_state.dart';
+import '../../core/message_history.dart';
 import '../../core/models.dart';
+import '../../storage/encrypted_database.dart'
+    show LocalMessage, LocalMessageKind;
 import '../../ui/format.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
@@ -318,6 +321,14 @@ class _MessageList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final history = state.historyFor(conversationId);
+    final ownDeviceId = state.session?.deviceId;
+    // Edit, delete and reaction envelopes change other bubbles instead of
+    // drawing their own.
+    final messages = this
+        .messages
+        .where((message) => !history.hides(message))
+        .toList(growable: false);
     final hasMore = state.hasMoreHistory(conversationId);
     final loadingOlder = state.isLoadingOlder(conversationId);
     // Messages arrive newest-first; the list is reversed so index 0 renders
@@ -348,7 +359,14 @@ class _MessageList extends StatelessWidget {
           final record = state.outboxRecord(key);
           final terminal =
               state.outboxState(key) == OutboxDeliveryState.terminal;
+          final local = ownDeviceId == null
+              ? null
+              : history.forKey(ConversationHistory.keyOf(ownDeviceId, key));
+          if (local?.kind == LocalMessageKind.action) {
+            return const SizedBox.shrink();
+          }
           return _PendingMessageBubble(
+            text: local?.body ?? record?.draftText,
             state: state.outboxState(key),
             failureMessage: terminal ? state.outboxFailureMessage(key) : null,
             onRetry: terminal ? null : () => state.retryEnvelope(key),
@@ -362,7 +380,14 @@ class _MessageList extends StatelessWidget {
         }
         final messageIndex = index - pending.length;
         final message = messages[messageIndex];
-        final mine = message.senderAccountId == state.session?.accountId;
+        final local = history.forEnvelope(message);
+        // A decrypted record names its authenticated sender; the envelope's
+        // sender is only what the server says.
+        final senderAccountId =
+            local?.senderAccountId ?? message.senderAccountId;
+        final mine = senderAccountId == state.session?.accountId;
+        final replyTarget =
+            local?.replyTo == null ? null : history.forKey(local!.replyTo!);
         final older = messageIndex + 1 < messages.length
             ? messages[messageIndex + 1]
             : null;
@@ -375,8 +400,15 @@ class _MessageList extends StatelessWidget {
               _DaySeparator(label: formatDate(context, message.createdAt)),
             _MessageBubble(
               message: message,
+              local: local,
+              replyPreview:
+                  local?.replyTo == null ? null : _replyPreview(replyTarget),
+              reactions: local == null
+                  ? const <({String reaction, int count, bool mine})>[]
+                  : history.reactionsFor(local.key,
+                      ownAccountId: state.session?.accountId),
               mine: mine,
-              senderLabel: _senderLabel(message.senderAccountId),
+              senderLabel: _senderLabel(senderAccountId),
               // In a DM the app bar already says who the other person is;
               // only group and channel bubbles need a per-message sender.
               showSender: !mine && !_isDm,
@@ -386,6 +418,15 @@ class _MessageList extends StatelessWidget {
       },
     );
   }
+}
+
+String _replyPreview(LocalMessage? target) {
+  if (target == null) return 'Reply to an earlier message';
+  if (target.deletedAt != null || target.body == null) {
+    return 'Reply to a deleted message';
+  }
+  final text = target.body!.replaceAll(RegExp(r'\s+'), ' ').trim();
+  return text.length <= 80 ? text : '${text.substring(0, 80)}…';
 }
 
 /// Top-of-list affordance for older history: a spinner while a page is in
@@ -421,6 +462,7 @@ class _PendingMessageBubble extends StatelessWidget {
   const _PendingMessageBubble({
     required this.state,
     required this.onRetry,
+    this.text,
     this.failureMessage,
     this.onCopy,
     this.onDiscard,
@@ -428,6 +470,7 @@ class _PendingMessageBubble extends StatelessWidget {
 
   final OutboxDeliveryState state;
   final VoidCallback? onRetry;
+  final String? text;
   final String? failureMessage;
   final VoidCallback? onCopy;
   final VoidCallback? onDiscard;
@@ -461,6 +504,17 @@ class _PendingMessageBubble extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: <Widget>[
+              if (text != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: BoneSpacing.xs),
+                  child: Text(
+                    text!,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color:
+                          sending ? scheme.onSurface : scheme.onErrorContainer,
+                    ),
+                  ),
+                ),
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
@@ -592,9 +646,17 @@ class _MessageBubble extends StatelessWidget {
     required this.mine,
     required this.senderLabel,
     required this.showSender,
+    this.local,
+    this.replyPreview,
+    this.reactions = const <({String reaction, int count, bool mine})>[],
   });
 
   final ReceivedMessageEnvelope message;
+
+  /// The decrypted record, when this device could decrypt the envelope.
+  final LocalMessage? local;
+  final String? replyPreview;
+  final List<({String reaction, int count, bool mine})> reactions;
   final bool mine;
   final String senderLabel;
   final bool showSender;
@@ -607,7 +669,9 @@ class _MessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final deleted = message.deletedAt != null;
+    final deleted = message.deletedAt != null || local?.deletedAt != null;
+    final unverifiable = local?.kind == LocalMessageKind.unverifiable;
+    final text = deleted || unverifiable ? null : local?.body;
     // Bone keeps sent bubbles **on tone**: a near-white accent tiled down a
     // whole column would blow out the plum ground the direction is built on
     // (`docs/design.md` §K). Mine and theirs separate by one tonal step
@@ -620,8 +684,14 @@ class _MessageBubble extends StatelessWidget {
       excludeSemantics: true,
       label: deleted
           ? 'Deleted message from $sender'
-          : 'Encrypted message from $sender, '
-              '${formatTimeOfDay(context, message.createdAt)}',
+          : unverifiable
+              ? 'Message with an unverified sender, '
+                  '${formatTimeOfDay(context, message.createdAt)}'
+              : text != null
+                  ? 'Message from $sender, '
+                      '${formatTimeOfDay(context, message.createdAt)}: $text'
+                  : 'Encrypted message from $sender, '
+                      '${formatTimeOfDay(context, message.createdAt)}',
       child: LayoutBuilder(
         builder: (context, constraints) {
           // Taken from the layout rather than the window so the bubble is
@@ -653,6 +723,25 @@ class _MessageBubble extends StatelessWidget {
                           ),
                         ),
                       ),
+                    if (replyPreview != null && !deleted)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 6),
+                        padding: const EdgeInsets.only(left: 8),
+                        decoration: BoxDecoration(
+                          border: Border(
+                            left: BorderSide(
+                                color: scheme.outlineVariant, width: 3),
+                          ),
+                        ),
+                        child: Text(
+                          replyPreview!,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
                     if (deleted)
                       Text(
                         'Message deleted',
@@ -661,11 +750,61 @@ class _MessageBubble extends StatelessWidget {
                           fontStyle: FontStyle.italic,
                         ),
                       )
+                    else if (unverifiable)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          Icon(Icons.gpp_maybe_outlined,
+                              size: 16, color: scheme.error),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              'Sender could not be verified. Message hidden.',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: scheme.error,
+                              ),
+                            ),
+                          ),
+                        ],
+                      )
+                    else if (text != null)
+                      SelectableText(
+                        text,
+                        style: theme.textTheme.bodyMedium
+                            ?.copyWith(color: foreground),
+                      )
                     else
                       _RedactedBars(
                         byteLength: message.ciphertext.length,
                         contentWidth: maxWidth - _insetX,
                         color: foreground,
+                      ),
+                    if (reactions.isNotEmpty && !deleted)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Wrap(
+                          spacing: 4,
+                          runSpacing: 4,
+                          children: <Widget>[
+                            for (final item in reactions)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: item.mine
+                                      ? scheme.secondaryContainer
+                                      : scheme.surfaceContainerHighest,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Text(
+                                  item.count > 1
+                                      ? '${item.reaction} ${item.count}'
+                                      : item.reaction,
+                                  style: theme.textTheme.labelSmall,
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
                     const SizedBox(height: 6),
                     _metaLine(context, scheme),
@@ -687,12 +826,12 @@ class _MessageBubble extends StatelessWidget {
     final theme = Theme.of(context);
     final parts = <String>[
       formatTimeOfDay(context, message.createdAt),
-      if (message.editedAt != null) 'edited',
+      if (message.editedAt != null || local?.editedAt != null) 'edited',
     ];
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        if (message.deletedAt == null) ...<Widget>[
+        if (message.deletedAt == null && local?.deletedAt == null) ...<Widget>[
           Icon(
             Icons.lock_outline,
             size: 12,

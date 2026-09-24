@@ -13,6 +13,7 @@ import '../sync/sync_service.dart';
 import 'api_client.dart';
 import 'client_config.dart';
 import 'errors.dart';
+import 'message_history.dart';
 import 'models.dart';
 
 typedef ApiClientFactory = ApiClient Function(String baseUrl);
@@ -144,6 +145,8 @@ class AppState extends ChangeNotifier {
   Map<String, List<ReceivedMessageEnvelope>> messagesByConversation =
       <String, List<ReceivedMessageEnvelope>>{};
   List<MessageEnvelope> pendingOutbox = <MessageEnvelope>[];
+  final Map<String, ConversationHistory> _history =
+      <String, ConversationHistory>{};
   final Map<String, OutboxDeliveryState> _outboxStates =
       <String, OutboxDeliveryState>{};
   final Map<String, PendingEnvelopeRecord> _outboxRecords =
@@ -273,6 +276,22 @@ class AppState extends ChangeNotifier {
       return const <ReceivedMessageEnvelope>[];
     }
     return messagesByConversation[id] ?? const <ReceivedMessageEnvelope>[];
+  }
+
+  /// Decrypted text for the envelopes of [conversationId] (D23).
+  ConversationHistory historyFor(String conversationId) =>
+      _history[conversationId] ?? ConversationHistory.empty(conversationId);
+
+  /// Rereads decrypted history for one conversation from the local store.
+  Future<void> refreshHistory(String conversationId) async {
+    final messages = await localStore.loadMessages(conversationId);
+    final reactions = await localStore.loadReactions(conversationId);
+    _history[conversationId] = ConversationHistory(
+      conversationId: conversationId,
+      messages: messages,
+      reactions: reactions,
+    );
+    notifyListeners();
   }
 
   List<ReceivedMessageEnvelope> messagesFor(String conversationId) =>
@@ -499,6 +518,7 @@ class AppState extends ChangeNotifier {
       devices = <Device>[];
       conversationsLoaded = false;
       messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
+      _history.clear();
       lifecycle = SessionLifecycle.recoveryRequired;
       recoveryMessage =
           'This device could not restore its encrypted session. Retry or '
@@ -764,6 +784,7 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     try {
       await _fetchMessages(conversationId);
+      await refreshHistory(conversationId);
       unawaited(markNewestMessageRead(conversationId));
     } catch (err) {
       _messageLoadErrors[conversationId] = describeError(err);
@@ -1312,6 +1333,7 @@ class AppState extends ChangeNotifier {
       }
       final encrypted = await cryptoService.encrypt(conversation.id, plaintext);
       await localStore.enqueueEnvelope(encrypted, draftText: plaintext);
+      if (_mlsCrypto != null) await refreshHistory(conversation.id);
       final record = (await localStore.pendingEnvelopeRecords())
           .where((item) =>
               item.envelope.idempotencyKey == encrypted.idempotencyKey)
@@ -1905,7 +1927,10 @@ class AppState extends ChangeNotifier {
                   'deviceRecoveryRequired: MLS crypto is unavailable');
             }
             final envelope = await _processCryptoSyncEvent(event);
-            if (envelope != null) _mergeReceivedEnvelope(envelope);
+            if (envelope != null) {
+              _mergeReceivedEnvelope(envelope);
+              await refreshHistory(envelope.conversationId);
+            }
           } else {
             await _refreshProjectionForSyncEvent(event);
             final expectedCursor = await localStore.loadSyncCursor();
@@ -2120,6 +2145,7 @@ class AppState extends ChangeNotifier {
     devicesLoaded = false;
     devices = <Device>[];
     messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
+    _history.clear();
     pendingOutbox = <MessageEnvelope>[];
     _outboxStates.clear();
     _outboxRecords.clear();
