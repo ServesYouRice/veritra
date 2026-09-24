@@ -66,6 +66,38 @@ void main() {
     expect(deleted.deletedAt, isNotNull);
   }, skip: skip);
 
+  test('a service reloads MLS state that moved without it', () async {
+    final bindings = NativeCryptoBindings.open(libraryPath!);
+    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+    await _startConversation(alice, bob);
+
+    // A second service on the same store advances the committed state, as a
+    // backup restore or a second app instance would.
+    final other =
+        NativeCryptoService(bindings: bindings, localStore: alice.store);
+    await other.activateSession(const Session(
+      baseUrl: 'https://localhost:8443',
+      token: 'token',
+      accountId: 'acct_alice',
+      deviceId: 'dev_alice',
+    ));
+    final first = await other.encryptPayload(
+        'conv_1', AppPayloadType.text, <String, Object?>{'text': 'one'});
+    await alice.store.removePendingEnvelope(first.idempotencyKey);
+    await other.dispose();
+
+    // The original service must not reuse its stale in-memory ratchet.
+    final second =
+        await alice.send(AppPayloadType.text, <String, Object?>{'text': 'two'});
+    await bob.receive(alice, first);
+    await bob.receive(alice, second);
+    expect((await bob.history()).map((item) => item.body), <String?>[
+      'one',
+      'two',
+    ]);
+  }, skip: skip);
+
   test('a spoofed sender is kept as unverifiable and sync continues', () async {
     final bindings = NativeCryptoBindings.open(libraryPath!);
     final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');

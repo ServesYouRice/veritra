@@ -26,6 +26,9 @@ class NativeCryptoService implements MlsConversationCryptoService {
   final NativeCryptoBindings bindings;
   final LocalStore localStore;
   NativeCryptoDevice? _device;
+
+  /// The rollback counter of the state [_device] holds in memory.
+  int? _deviceCounter;
   String? _accountId;
   String? _deviceId;
   bool _pendingEnrollment = false;
@@ -72,6 +75,7 @@ class NativeCryptoService implements MlsConversationCryptoService {
             StoredCryptoState(counter: 1, stateKey: key, sealedState: sealed),
             await localStore.loadSyncCursor(),
           );
+          _deviceCounter = 1;
         } else {
           _device?.close();
           final restored = bindings.restoreDevice(
@@ -86,6 +90,7 @@ class NativeCryptoService implements MlsConversationCryptoService {
             throw StateError('MLS rollback counter mismatch');
           }
           _device = restored.device;
+          _deviceCounter = restored.counter;
         }
         _accountId = accountId;
         _deviceId = deviceId;
@@ -577,6 +582,12 @@ class NativeCryptoService implements MlsConversationCryptoService {
     _requiredDevice();
     final state = await localStore.loadCryptoState();
     if (state == null) throw StateError('protected MLS state is unavailable');
+    if (state.counter != _deviceCounter) {
+      // The stored state moved without this service (a backup restore, or a
+      // commit whose outcome was lost). Never build on the stale in-memory
+      // group state: reload the committed one.
+      await _restorePrevious(state);
+    }
     return state;
   }
 
@@ -590,11 +601,15 @@ class NativeCryptoService implements MlsConversationCryptoService {
 
   StoredCryptoState _sealNext(StoredCryptoState previous) {
     final nextCounter = previous.counter + 1;
-    return StoredCryptoState(
+    final next = StoredCryptoState(
       counter: nextCounter,
       stateKey: List<int>.from(previous.stateKey),
       sealedState: _requiredDevice().sealState(previous.stateKey, nextCounter),
     );
+    // The in-memory group now matches [next]. Callers that fail to commit it
+    // call [_restorePrevious], which resets this.
+    _deviceCounter = nextCounter;
+    return next;
   }
 
   Future<void> _commitLocalMutation(StoredCryptoState previous) async {
@@ -607,6 +622,7 @@ class NativeCryptoService implements MlsConversationCryptoService {
 
   Future<void> _restorePrevious(StoredCryptoState previous) async {
     _device?.close();
+    _deviceCounter = null;
     final restored = bindings.restoreDevice(
       _accountId!,
       _deviceId!,
@@ -620,6 +636,7 @@ class NativeCryptoService implements MlsConversationCryptoService {
       throw StateError('failed to restore the previous MLS state');
     }
     _device = restored.device;
+    _deviceCounter = restored.counter;
   }
 
   Future<T> _serial<T>(Future<T> Function() operation) async {
@@ -638,6 +655,7 @@ class NativeCryptoService implements MlsConversationCryptoService {
   Future<void> dispose() => _serial(() async {
         _device?.close();
         _device = null;
+        _deviceCounter = null;
         _accountId = null;
         _deviceId = null;
       });

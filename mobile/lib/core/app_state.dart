@@ -237,6 +237,11 @@ class AppState extends ChangeNotifier {
   /// answered.
   bool get pushRegistered => _pushSubscriptionId != null;
 
+  /// False in demo builds (D24): until card I51 lands, MLS groups keep the
+  /// members they were created with and each account has one device, so
+  /// adding members and linking devices are hidden rather than half-working.
+  bool get membershipChangesAvailable => !config.demo;
+
   /// Scoped busy/error state. Callers pass an [Ops] key so one slow or failed
   /// action leaves every unrelated control usable.
   bool isBusy(String op) => _busyOps.contains(op);
@@ -841,15 +846,7 @@ class AppState extends ChangeNotifier {
         retentionSeconds: retentionSeconds,
       );
       final conversation = created!;
-      final mls = _mlsCrypto;
-      if (mls != null) {
-        final packages = await client.claimConversationKeyPackages(
-          current.token,
-          conversation.id,
-        );
-        await mls.initializeConversation(conversation.id, packages);
-        await _flushMlsOutbox();
-      }
+      await _setUpConversationGroup(conversation.id);
       conversations = <Conversation>[conversation, ...conversations];
       selectedConversationId = conversation.id;
       messagesByConversation[conversation.id] = <ReceivedMessageEnvelope>[];
@@ -940,6 +937,7 @@ class AppState extends ChangeNotifier {
       }
       final creation =
           await client.createChannel(current.token, communityId, name);
+      await _setUpConversationGroup(creation.conversation.id);
       channelsByCommunity = <String, List<Channel>>{
         ...channelsByCommunity,
         communityId: <Channel>[
@@ -966,6 +964,9 @@ class AppState extends ChangeNotifier {
       final client = api;
       if (current == null || client == null) {
         return;
+      }
+      if (!membershipChangesAvailable) {
+        throw StateError('adding members is not available in this build');
       }
       await client.addConversationMember(
         current.token,
@@ -1376,6 +1377,9 @@ class AppState extends ChangeNotifier {
       final client = api;
       if (current == null || client == null) {
         return;
+      }
+      if (!membershipChangesAvailable) {
+        throw StateError('device linking is not available in this build');
       }
       activeDeviceLink = await client.createDeviceLink(current.token);
     });
@@ -1997,7 +2001,9 @@ class AppState extends ChangeNotifier {
       await _refreshConversations(notify: false, persist: false);
       return;
     }
-    if (type.startsWith('conversation.') || type.startsWith('membership.')) {
+    if (type.startsWith('conversation.') ||
+        type.startsWith('membership.') ||
+        type == 'retention.updated') {
       await _refreshConversations(notify: false, persist: false);
       return;
     }
@@ -2041,7 +2047,12 @@ class AppState extends ChangeNotifier {
         final id = _mlsMessageIdFromSyncEvent(event);
         if (id == null)
           throw StateError('MLS sync event is missing its message');
-        await mls.processMlsMessage(await client.mlsMessage(current.token, id));
+        final message = await client.mlsMessage(current.token, id);
+        await mls.processMlsMessage(message);
+        if (message.kind == 'welcome' &&
+            message.recipientDeviceId == current.deviceId) {
+          await _replenishKeyPackage();
+        }
         return null;
       case 'message.envelope.created':
       case 'message.envelope.edited':
@@ -2330,6 +2341,36 @@ class AppState extends ChangeNotifier {
       );
       if (!_syncOwnerActive(current, ownerGeneration)) return;
       await localStore.removePendingMlsMessage(message.idempotencyKey);
+    }
+  }
+
+  /// Creates the MLS group for a new conversation and sends each member's
+  /// Welcome, so the composer works as soon as the conversation opens.
+  Future<void> _setUpConversationGroup(String conversationId) async {
+    final current = session;
+    final client = api;
+    final mls = _mlsCrypto;
+    if (current == null || client == null || mls == null) return;
+    final packages = await client.claimConversationKeyPackages(
+        current.token, conversationId);
+    await mls.initializeConversation(conversationId, packages);
+    await _flushMlsOutbox();
+  }
+
+  /// Every Welcome consumes one of this device's published key packages.
+  /// Publishing one back keeps the supply steady, so the device can keep
+  /// being added to new conversations. A failure only delays the top-up to
+  /// the next Welcome; the Welcome itself is already committed.
+  Future<void> _replenishKeyPackage() async {
+    final current = session;
+    final client = api;
+    final mls = _mlsCrypto;
+    if (current == null || client == null || mls == null) return;
+    try {
+      final packages = await mls.createReplenishmentKeyPackages(count: 1);
+      await client.publishDeviceKeyPackages(current.token, packages);
+    } catch (_) {
+      // Retried on the next Welcome.
     }
   }
 

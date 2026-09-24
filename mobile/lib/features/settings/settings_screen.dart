@@ -111,19 +111,20 @@ class SettingsScreen extends StatelessWidget {
               const SectionHeader('Devices'),
               TileGroup(
                 children: <Widget>[
-                  ListTile(
-                    leading: const Icon(Icons.qr_code_2),
-                    title: const Text('Link a new device'),
-                    subtitle: const Text(
-                        'Generate a pairing code for another device'),
-                    onTap: () async {
-                      if (await _reauthenticate(context) && context.mounted) {
-                        Navigator.of(context).push(sharedAxisRoute<void>(
-                          (_) => DeviceLinkScreen(state: state),
-                        ));
-                      }
-                    },
-                  ),
+                  if (state.membershipChangesAvailable)
+                    ListTile(
+                      leading: const Icon(Icons.qr_code_2),
+                      title: const Text('Link a new device'),
+                      subtitle: const Text(
+                          'Generate a pairing code for another device'),
+                      onTap: () async {
+                        if (await _reauthenticate(context) && context.mounted) {
+                          Navigator.of(context).push(sharedAxisRoute<void>(
+                            (_) => DeviceLinkScreen(state: state),
+                          ));
+                        }
+                      },
+                    ),
                   if (state.devices.isEmpty && !state.devicesLoaded)
                     const ListTile(
                       leading: SizedBox.square(

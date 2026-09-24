@@ -374,6 +374,34 @@ void main() {
     state.dispose();
   });
 
+  test('a retention change refreshes conversations and sync moves on',
+      () async {
+    final localStore = MemoryLocalStore();
+    await localStore.saveSession(const Session(
+      baseUrl: 'https://localhost:8080',
+      token: 'owner-token',
+      accountId: 'acct_owner',
+      deviceId: 'dev_owner',
+    ));
+    final api = _RetentionApiClient();
+    final state = AppState(
+      apiClientFactory: (_) => api,
+      cryptoService: TestOnlyCryptoService(),
+      localStore: localStore,
+      syncServiceFactory: (_, __) => FakeSyncService(),
+    );
+
+    await state.tryRestoreSession();
+    for (var attempt = 0;
+        attempt < 50 && await localStore.loadSyncCursor() < 3;
+        attempt++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(await localStore.loadSyncCursor(), 3);
+    expect(state.deviceRecoveryRequired, isFalse);
+    expect(state.conversations.single.retentionSeconds, 3600);
+  });
+
   test('sync fails closed when an edited event lacks its immutable envelope',
       () async {
     final localStore = MemoryLocalStore();
@@ -775,6 +803,32 @@ class FakeDeviceLinkApiClient extends ApiClient {
       transcriptHash:
           state == 'pending' ? null : List<int>.filled(32, transcriptByte),
     );
+  }
+}
+
+class _RetentionApiClient extends FakeDeviceLinkApiClient {
+  @override
+  Future<List<Conversation>> conversations(String token) async =>
+      <Conversation>[
+        Conversation(id: 'conv_1', kind: 'group', retentionSeconds: 3600),
+      ];
+
+  @override
+  Future<List<SyncEvent>> syncEvents(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async {
+    if (after >= 3) return <SyncEvent>[];
+    return <SyncEvent>[
+      SyncEvent(
+        id: 3,
+        type: 'retention.updated',
+        conversationId: 'conv_1',
+        payload: <String, Object?>{'id': 'conv_1'},
+        createdAt: DateTime.parse('2026-09-24T12:00:00Z'),
+      ),
+    ];
   }
 }
 
