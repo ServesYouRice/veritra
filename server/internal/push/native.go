@@ -151,8 +151,17 @@ func NewAPNsProvider(config APNsConfig) (*APNsProvider, error) {
 	if block == nil {
 		return nil, errors.New("invalid APNs private key")
 	}
-	key, err := x509.ParseECPrivateKey(block.Bytes)
-	if err != nil {
+	// Apple issues .p8 keys in PKCS #8; SEC 1 EC keys are accepted too.
+	var key *ecdsa.PrivateKey
+	if parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
+		ecKey, ok := parsed.(*ecdsa.PrivateKey)
+		if !ok {
+			return nil, errors.New("APNs private key is not an EC key")
+		}
+		key = ecKey
+	} else if ecKey, err := x509.ParseECPrivateKey(block.Bytes); err == nil {
+		key = ecKey
+	} else {
 		return nil, fmt.Errorf("parse APNs private key: %w", err)
 	}
 	return &APNsProvider{config: config, key: key, client: nativeHTTPClient()}, nil

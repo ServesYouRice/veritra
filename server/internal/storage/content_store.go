@@ -342,10 +342,54 @@ func (s *Store) CreatePushSubscription(ctx context.Context, accountID, deviceID,
 	} else if _, err := tx.ExecContext(ctx, `UPDATE push_subscriptions SET endpoint = ?, public_key = ?, auth_secret = ?, created_at = ? WHERE id = ?`, endpoint, publicKey, authSecret, nowString(), activeID); err != nil {
 		return "", err
 	}
+	// One device uses one provider at a time: switching provider retires the
+	// old registration so the device is not woken twice (card I41).
+	if _, err := tx.ExecContext(ctx, `UPDATE push_subscriptions SET disabled_at = ?
+		WHERE account_id = ? AND device_id = ? AND provider <> ? AND disabled_at IS NULL`,
+		nowString(), accountID, deviceID, provider); err != nil {
+		return "", err
+	}
 	if err := tx.Commit(); err != nil {
 		return "", err
 	}
 	return activeID, nil
+}
+
+// DevicePushSubscription is one active registration of the caller's device.
+// Endpoint and keys stay server-side; only ID, provider and time leave it.
+type DevicePushSubscription struct {
+	ID        string    `json:"id"`
+	Provider  string    `json:"provider"`
+	CreatedAt time.Time `json:"created_at"`
+	target    PushTarget
+}
+
+// Target is the delivery target, for the self-test wake only.
+func (d DevicePushSubscription) Target() PushTarget { return d.target }
+
+func (s *Store) ListDevicePushSubscriptions(ctx context.Context, accountID, deviceID string) ([]DevicePushSubscription, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, provider, endpoint, COALESCE(public_key, ''), COALESCE(auth_secret, ''), created_at
+		FROM push_subscriptions
+		WHERE account_id = ? AND device_id = ? AND disabled_at IS NULL
+		ORDER BY created_at DESC LIMIT 10`, accountID, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]DevicePushSubscription, 0)
+	for rows.Next() {
+		var item DevicePushSubscription
+		var created string
+		if err := rows.Scan(&item.ID, &item.Provider, &item.target.Endpoint, &item.target.PublicKey, &item.target.AuthSecret, &created); err != nil {
+			return nil, err
+		}
+		item.target.ID = item.ID
+		item.target.Provider = item.Provider
+		item.CreatedAt = parseTime(created)
+		result = append(result, item)
+	}
+	return result, rows.Err()
 }
 
 func (s *Store) PushTargetsForConversation(ctx context.Context, conversationID, excludeAccountID string) ([]PushTarget, error) {

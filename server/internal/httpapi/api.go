@@ -36,6 +36,8 @@ type API struct {
 	Push                push.Provider
 	VAPIDPublicKey      string
 	PushProviders       []string
+	pushTestMu          sync.Mutex
+	pushTestLast        map[string]time.Time
 	TURNURLs            []string
 	TURNSharedSecret    string
 	ClientIdentities    *ClientIdentityResolver
@@ -100,6 +102,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/push/subscriptions", a.withAuth(a.createPushSubscription))
 	mux.HandleFunc("GET /api/v1/push/config", a.withAuth(a.pushConfig))
 	mux.HandleFunc("DELETE /api/v1/push/subscriptions/{id}", a.withAuth(a.deletePushSubscription))
+	mux.HandleFunc("GET /api/v1/push/subscriptions/me", a.withAuth(a.listDevicePushSubscriptions))
+	mux.HandleFunc("POST /api/v1/push/test", a.withAuth(a.sendTestPush))
 	mux.HandleFunc("POST /api/v1/calls", a.withAuth(a.createCall))
 	mux.HandleFunc("GET /api/v1/calls/config", a.withAuth(a.callConfig))
 	mux.HandleFunc("GET /api/v1/calls", a.withAuth(a.listCalls))
