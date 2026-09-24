@@ -178,14 +178,28 @@ void main() {
     expect(await client.searchMetadata(owner.token, 'contract-member'),
         isNotEmpty);
 
-    final pushId = await client.registerWebPush(
-      owner.token,
-      endpoint: 'https://push.example.test/contract',
-      publicKey: _p256PublicKey,
-      authSecret: _base64UrlNoPadding(List<int>.filled(16, 7)),
+    // The contract server runs without push, so it offers no provider and
+    // refuses registrations it could not deliver through (card I41).
+    final pushConfig = await client.pushConfig(owner.token);
+    expect(pushConfig['enabled'], isFalse);
+    expect(pushConfig['providers'], isEmpty);
+    expect(pushConfig.containsKey('vapid_public_key'), isFalse);
+    Matcher refusedWith(int status, String code) => isA<ApiException>()
+        .having((error) => error.statusCode, 'statusCode', status)
+        .having((error) => error.serverCode, 'serverCode', code);
+    await expectLater(
+      client.registerWebPush(
+        owner.token,
+        endpoint: 'https://push.example.test/contract',
+        publicKey: _p256PublicKey,
+        authSecret: _base64UrlNoPadding(List<int>.filled(16, 7)),
+      ),
+      throwsA(refusedWith(400, 'push_provider_unavailable')),
     );
-    expect((await client.pushConfig(owner.token))['enabled'], isFalse);
-    await client.disablePush(owner.token, pushId);
+    await expectLater(client.sendTestPush(owner.token),
+        throwsA(refusedWith(404, 'no_push_subscription')));
+    await expectLater(client.disablePush(owner.token, 'push_missing'),
+        throwsA(refusedWith(404, 'not_found')));
 
     final accountExport = await client.exportAccountPage(owner.token);
     expect(accountExport['manifest_version'], 'v2');
