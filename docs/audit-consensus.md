@@ -239,6 +239,26 @@ tests show ordered progress, no unhandled future and no duplicate state
 transition; the affected group enters a recoverable failed state while an
 unrelated group can continue.
 
+**Implementation note (Stage 5, 2026-09-24):** The MLS outbox has one
+coalescing worker that never throws. Messages of one conversation go strictly
+in queue order; a waiting or failed message holds back the rest of its
+conversation while other conversations continue. Network errors, 408, 429 and
+5xx retry with exponential backoff (1 s to 256 s) stored durably with the
+attempt count (local schema v8); other 4xx responses are terminal, keep the
+message queued, pause the conversation (`mlsConversationFailed`, a chat notice,
+and `ConversationPausedException` on send) and never delete it. The worker
+wakes on start, sync events, reconnect, resume and a timer for the next due
+attempt. Application messages wait while their conversation has queued MLS
+work, because they were encrypted in the following epoch. The revocation
+coordinator drains earlier MLS work for the conversation before creating a
+commit, so a commit queued before a restart is never made twice. Two defects
+found on the way are fixed: a transition's messages were ordered by random
+idempotency key instead of creation order, and revocation confirmation looked
+up the raw MLS message ID instead of the `mls:<event>:<id>` marker, so it
+never confirmed. Checks: `flutter test` (all, including
+`test/mls_outbox_test.dart` and the new store tests), the native crypto tests
+and the live demo e2e test pass.
+
 ### I35 - Retention and attachment-prune convergence
 
 **Decision:** Merge Codex LOG-05/PERF-05 with Opus L5/L6; correct both scopes.

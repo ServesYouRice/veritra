@@ -211,6 +211,10 @@ class AppState extends ChangeNotifier {
   bool _flushOutboxRequested = false;
   String? _manualRetryKey;
   Timer? _outboxRetryTimer;
+  bool _flushingMlsOutbox = false;
+  bool _flushMlsOutboxRequested = false;
+  Timer? _mlsOutboxRetryTimer;
+  final Set<String> _failedMlsConversations = <String>{};
   Future<void> _sessionTransitionTail = Future<void>.value();
   Stream<IncomingCallSignal> get callSignals => _callSignals.stream;
 
@@ -1430,6 +1434,9 @@ class AppState extends ChangeNotifier {
       if (!await localStore.hasOutboxCapacity()) {
         throw const OutboxFullException();
       }
+      if (mlsConversationFailed(conversation.id)) {
+        throw const ConversationPausedException();
+      }
       final mls = _mlsCrypto;
       final MessageEnvelope encrypted;
       if (type == AppPayloadType.text) {
@@ -1794,13 +1801,13 @@ class AppState extends ChangeNotifier {
     _syncSubscription = sync!.events.listen(
       (_) {
         unawaited(_catchUpSyncEvents());
-        unawaited(_flushOutbox());
+        unawaited(_flushMlsOutbox());
       },
       onError: (_) {
         // A dropped socket alone is not proof the server is unreachable; the
         // catch-up attempt that follows decides online vs. offline.
         unawaited(_catchUpSyncEvents());
-        unawaited(_flushOutbox());
+        unawaited(_flushMlsOutbox());
       },
     );
     unawaited(_catchUpSyncEvents());
@@ -1822,7 +1829,8 @@ class AppState extends ChangeNotifier {
     connectionStatus = status;
     notifyListeners();
     if (status == ConnectionStatus.online) {
-      unawaited(_flushOutbox());
+      // The MLS worker hands over to the application outbox when it ends.
+      unawaited(_flushMlsOutbox());
     }
   }
 
@@ -1898,7 +1906,7 @@ class AppState extends ChangeNotifier {
     if (session == null || api == null) return;
     await _observePendingWake();
     await _catchUpSyncEvents();
-    await _flushOutbox();
+    await _flushMlsOutbox();
   }
 
   Future<void> _observePendingWake() async {
@@ -2462,6 +2470,9 @@ class AppState extends ChangeNotifier {
     _outboxRecords.clear();
     _outboxRetryTimer?.cancel();
     _outboxRetryTimer = null;
+    _mlsOutboxRetryTimer?.cancel();
+    _mlsOutboxRetryTimer = null;
+    _failedMlsConversations.clear();
     _manualRetryKey = null;
     _loadingMessageConversations.clear();
     _messageLoadErrors.clear();
@@ -2522,12 +2533,25 @@ class AppState extends ChangeNotifier {
     final records = await localStore.pendingEnvelopeRecords();
     if (!_syncOwnerActive(current, ownerGeneration)) return;
     _setOutboxRecords(records);
+    // An application message was encrypted in the epoch after any MLS
+    // control message queued before it, so it waits until those are
+    // delivered (I34); the MLS worker starts this flush when it finishes.
+    final heldBack = _mlsCrypto == null
+        ? const <String>{}
+        : (await localStore.pendingMlsMessages())
+            .map((message) => message.conversationId)
+            .toSet();
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
     final now = DateTime.now().toUtc();
     for (final record in records) {
       if (!_syncOwnerActive(current, ownerGeneration)) return;
       final envelope = record.envelope;
       if (record.terminal) {
         _outboxStates[envelope.idempotencyKey] = OutboxDeliveryState.terminal;
+        continue;
+      }
+      if (heldBack.contains(envelope.conversationId)) {
+        _outboxStates[envelope.idempotencyKey] = OutboxDeliveryState.retrying;
         continue;
       }
       final manualRetry = _manualRetryKey == envelope.idempotencyKey;
@@ -2622,28 +2646,152 @@ class AppState extends ChangeNotifier {
     });
   }
 
+  /// Delivers MLS control messages (I34). One worker runs at a time; a call
+  /// while it runs asks for one more pass. It never throws, so callers may
+  /// leave its future unawaited.
   Future<void> _flushMlsOutbox() async {
+    if (_flushingMlsOutbox) {
+      _flushMlsOutboxRequested = true;
+      return;
+    }
+    _flushingMlsOutbox = true;
+    try {
+      do {
+        _flushMlsOutboxRequested = false;
+        try {
+          await _flushMlsOutboxOnce();
+        } catch (_) {
+          // A local storage failure leaves every item queued; the retry
+          // timer or the next wake tries again.
+        }
+      } while (_flushMlsOutboxRequested && !_disposed);
+    } finally {
+      _flushingMlsOutbox = false;
+      unawaited(_scheduleMlsOutboxRetry());
+      // Application messages held behind a control message may go now.
+      unawaited(_flushOutbox());
+    }
+  }
+
+  /// One pass over the MLS outbox. Messages of one conversation go strictly
+  /// in order, and a message that is waiting or failed holds back every
+  /// later one of its conversation, because an overtaking commit or Welcome
+  /// would fork the group. Other conversations carry on.
+  Future<void> _flushMlsOutboxOnce() async {
     final current = session;
     final client = api;
     if (current == null || client == null || _mlsCrypto == null) return;
     final ownerGeneration = _sessionGeneration;
     final messages = await localStore.pendingMlsMessages();
     if (!_syncOwnerActive(current, ownerGeneration)) return;
+    final byConversation = <String, List<PendingMlsMessage>>{};
     for (final message in messages) {
-      if (!_syncOwnerActive(current, ownerGeneration)) return;
-      await client.sendMlsMessage(
-        current.token,
-        message.conversationId,
-        kind: message.kind,
-        payload: message.payload,
-        idempotencyKey: message.idempotencyKey,
-        recipientDeviceId: message.recipientDeviceId,
-        revocationDeviceId: message.revocationDeviceId,
-      );
-      if (!_syncOwnerActive(current, ownerGeneration)) return;
-      await localStore.removePendingMlsMessage(message.idempotencyKey);
+      byConversation
+          .putIfAbsent(message.conversationId, () => <PendingMlsMessage>[])
+          .add(message);
+    }
+    final failed = <String>{};
+    final now = DateTime.now().toUtc();
+    for (final entry in byConversation.entries) {
+      for (final message in entry.value) {
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        if (message.terminal) {
+          failed.add(entry.key);
+          break;
+        }
+        if (message.nextAttemptAt?.isAfter(now) ?? false) break;
+        try {
+          await client.sendMlsMessage(
+            current.token,
+            message.conversationId,
+            kind: message.kind,
+            payload: message.payload,
+            idempotencyKey: message.idempotencyKey,
+            recipientDeviceId: message.recipientDeviceId,
+            revocationDeviceId: message.revocationDeviceId,
+          );
+        } catch (err) {
+          if (!_syncOwnerActive(current, ownerGeneration)) return;
+          if (err is ApiException && err.statusCode == 401) {
+            await _clearLocalSession(
+                preserveDeviceIdentity: true,
+                preserveOutbox: true,
+                drainSyncOwner: false);
+            return;
+          }
+          final terminal = await _recordMlsOutboxFailure(message, err);
+          if (terminal) failed.add(entry.key);
+          break;
+        }
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        await localStore.removePendingMlsMessage(message.idempotencyKey);
+      }
+    }
+    if (!_sameSetOf(failed, _failedMlsConversations)) {
+      _failedMlsConversations
+        ..clear()
+        ..addAll(failed);
+      notifyListeners();
     }
   }
+
+  /// Records one delivery failure and says whether it is terminal. Server
+  /// rejections are terminal; connection problems and busy servers retry
+  /// with bounded exponential backoff.
+  Future<bool> _recordMlsOutboxFailure(
+      PendingMlsMessage message, Object error) async {
+    final apiError = error is ApiException ? error : null;
+    final retryable =
+        (apiError != null && _isTransientSyncError(apiError)) ||
+            (apiError == null && _isTransientSyncError(error));
+    final terminal = apiError != null && !retryable;
+    final exponent = min(message.attemptCount, 8);
+    await localStore.recordMlsOutboxFailure(
+      message.idempotencyKey,
+      failureClass: terminal
+          ? 'terminal:${apiError.statusCode}:${apiError.serverCode ?? 'rejected'}'
+          : 'retryable:${apiError?.statusCode ?? 'network'}',
+      terminal: terminal,
+      nextAttemptAt: terminal
+          ? null
+          : DateTime.now().toUtc().add(Duration(seconds: 1 << exponent)),
+    );
+    return terminal;
+  }
+
+  Future<void> _scheduleMlsOutboxRetry() async {
+    _mlsOutboxRetryTimer?.cancel();
+    _mlsOutboxRetryTimer = null;
+    if (_disposed || session == null || api == null || _mlsCrypto == null) {
+      return;
+    }
+    final List<PendingMlsMessage> messages;
+    try {
+      messages = await localStore.pendingMlsMessages();
+    } catch (_) {
+      return;
+    }
+    final now = DateTime.now().toUtc();
+    DateTime? earliest;
+    for (final message in messages) {
+      final due = message.nextAttemptAt;
+      if (message.terminal || due == null || !due.isAfter(now)) continue;
+      if (earliest == null || due.isBefore(earliest)) earliest = due;
+    }
+    if (earliest == null || _disposed) return;
+    _mlsOutboxRetryTimer = Timer(earliest.difference(now), () {
+      _mlsOutboxRetryTimer = null;
+      unawaited(_flushMlsOutbox());
+    });
+  }
+
+  /// Conversations whose MLS control message the server rejected (I34).
+  /// They stay paused, with the message kept, until the device recovers.
+  bool mlsConversationFailed(String conversationId) =>
+      _failedMlsConversations.contains(conversationId);
+
+  static bool _sameSetOf(Set<String> left, Set<String> right) =>
+      left.length == right.length && left.containsAll(right);
 
   /// Creates the MLS group for a new conversation and sends each member's
   /// Welcome, so the composer works as soon as the conversation opens.
@@ -2692,6 +2840,14 @@ class AppState extends ChangeNotifier {
     for (final revocation in await client.mlsRevocations(current.token)) {
       if (revocation.state == 'pending' &&
           revocation.coordinatorDeviceId == current.deviceId) {
+        // Earlier MLS work for this group drains first (I34). In
+        // particular, a revocation commit queued before a restart is still
+        // "pending" on the server until it is delivered; making another one
+        // would fork the group.
+        if (await _hasPendingMlsWork(revocation.conversationId)) {
+          await _flushMlsOutbox();
+          if (await _hasPendingMlsWork(revocation.conversationId)) continue;
+        }
         await mls.createRevocationCommit(revocation);
         await _flushMlsOutbox();
         continue;
@@ -2699,7 +2855,7 @@ class AppState extends ChangeNotifier {
       final messageId = revocation.commitMessageId;
       if (revocation.state == 'commit_submitted' &&
           messageId != null &&
-          await localStore.hasProcessedMlsMessage(messageId)) {
+          await localStore.hasAppliedMlsControlMessage(messageId)) {
         await client.confirmMlsRevocation(
           current.token,
           revocation.conversationId,
@@ -2708,6 +2864,10 @@ class AppState extends ChangeNotifier {
       }
     }
   }
+
+  Future<bool> _hasPendingMlsWork(String conversationId) async =>
+      (await localStore.pendingMlsMessages())
+          .any((message) => message.conversationId == conversationId);
 
   Future<void> _removeFromOutbox(MessageEnvelope envelope) async {
     await _removeFromOutboxByKey(envelope.idempotencyKey);
@@ -2800,6 +2960,8 @@ class AppState extends ChangeNotifier {
     _syncOwner = null;
     _outboxRetryTimer?.cancel();
     _outboxRetryTimer = null;
+    _mlsOutboxRetryTimer?.cancel();
+    _mlsOutboxRetryTimer = null;
     unawaited(_syncSubscription?.cancel());
     sync?.dispose();
     unawaited(_pushSubscription?.cancel());

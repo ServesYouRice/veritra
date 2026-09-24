@@ -103,6 +103,10 @@ class PendingMlsMessage {
     required this.payload,
     this.recipientDeviceId,
     this.revocationDeviceId,
+    this.attemptCount = 0,
+    this.nextAttemptAt,
+    this.failureClass,
+    this.terminal = false,
   });
 
   final String idempotencyKey;
@@ -111,6 +115,31 @@ class PendingMlsMessage {
   final String? recipientDeviceId;
   final String? revocationDeviceId;
   final List<int> payload;
+
+  /// Delivery state (I34). A terminal item stays queued: it blocks its
+  /// conversation instead of letting later MLS messages overtake it.
+  final int attemptCount;
+  final DateTime? nextAttemptAt;
+  final String? failureClass;
+  final bool terminal;
+
+  PendingMlsMessage withFailure({
+    required String failureClass,
+    required bool terminal,
+    required DateTime? nextAttemptAt,
+  }) =>
+      PendingMlsMessage(
+        idempotencyKey: idempotencyKey,
+        conversationId: conversationId,
+        kind: kind,
+        payload: payload,
+        recipientDeviceId: recipientDeviceId,
+        revocationDeviceId: revocationDeviceId,
+        attemptCount: attemptCount + 1,
+        nextAttemptAt: nextAttemptAt,
+        failureClass: failureClass,
+        terminal: terminal,
+      );
 }
 
 class OutgoingMlsStateTransition {
@@ -259,9 +288,20 @@ abstract class LocalStore {
   Future<void> acquireSyncLease(LocalSyncLease lease);
   Future<void> releaseSyncLease(LocalSyncLease lease);
   Future<bool> hasProcessedMlsMessage(String messageId);
+
+  /// Whether the MLS control message with server ID [mlsMessageId] has been
+  /// applied, whatever sync event carried it.
+  Future<bool> hasAppliedMlsControlMessage(String mlsMessageId);
   Future<void> commitOutgoingMlsTransition(
       OutgoingMlsStateTransition transition);
+  /// Pending MLS control messages in the order they must be delivered.
   Future<List<PendingMlsMessage>> pendingMlsMessages();
+  Future<void> recordMlsOutboxFailure(
+    String idempotencyKey, {
+    required String failureClass,
+    required bool terminal,
+    DateTime? nextAttemptAt,
+  });
   Future<void> removePendingMlsMessage(String idempotencyKey);
   Future<void> commitOutgoingApplicationTransition(
       OutgoingApplicationStateTransition transition);
@@ -538,6 +578,11 @@ class MemoryLocalStore implements LocalStore {
       _processedMlsMessages.contains(messageId);
 
   @override
+  Future<bool> hasAppliedMlsControlMessage(String mlsMessageId) async =>
+      _processedMlsMessages.any((marker) =>
+          marker.startsWith('mls:') && marker.endsWith(':$mlsMessageId'));
+
+  @override
   Future<void> commitOutgoingMlsTransition(
       OutgoingMlsStateTransition transition) async {
     _validateOutgoingMlsTransition(
@@ -558,6 +603,22 @@ class MemoryLocalStore implements LocalStore {
   @override
   Future<List<PendingMlsMessage>> pendingMlsMessages() async =>
       _mlsOutbox.values.toList(growable: false);
+
+  @override
+  Future<void> recordMlsOutboxFailure(
+    String idempotencyKey, {
+    required String failureClass,
+    required bool terminal,
+    DateTime? nextAttemptAt,
+  }) async {
+    final existing = _mlsOutbox[idempotencyKey];
+    if (existing == null) return;
+    _mlsOutbox[idempotencyKey] = existing.withFailure(
+      failureClass: failureClass,
+      terminal: terminal,
+      nextAttemptAt: nextAttemptAt?.toUtc(),
+    );
+  }
 
   @override
   Future<void> removePendingMlsMessage(String idempotencyKey) async {
@@ -1134,6 +1195,10 @@ class SecureLocalStore implements LocalStore {
       (await _database()).hasProcessedMlsMessage(messageId);
 
   @override
+  Future<bool> hasAppliedMlsControlMessage(String mlsMessageId) async =>
+      (await _database()).hasAppliedMlsControlMessage(mlsMessageId);
+
+  @override
   Future<void> commitOutgoingMlsTransition(
       OutgoingMlsStateTransition transition) async {
     _validateOutgoingMlsTransition(
@@ -1171,8 +1236,31 @@ class SecureLocalStore implements LocalStore {
                 recipientDeviceId: message.recipientDeviceId,
                 revocationDeviceId: message.revocationDeviceId,
                 payload: message.payload,
+                attemptCount: message.attemptCount,
+                nextAttemptAt: message.nextAttemptAt == null
+                    ? null
+                    : DateTime.fromMillisecondsSinceEpoch(
+                        message.nextAttemptAt!,
+                        isUtc: true),
+                failureClass: message.failureClass,
+                terminal: message.terminal,
               ))
           .toList(growable: false);
+
+  @override
+  Future<void> recordMlsOutboxFailure(
+    String idempotencyKey, {
+    required String failureClass,
+    required bool terminal,
+    DateTime? nextAttemptAt,
+  }) async {
+    await (await _database()).recordMlsOutboxFailure(
+      idempotencyKey,
+      failureClass: failureClass,
+      terminal: terminal,
+      nextAttemptAt: nextAttemptAt?.toUtc().millisecondsSinceEpoch,
+    );
+  }
 
   @override
   Future<void> removePendingMlsMessage(String idempotencyKey) async {

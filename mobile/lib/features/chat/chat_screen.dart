@@ -152,6 +152,9 @@ class _ChatScreenState extends State<ChatScreen> {
                       )
                     : _messagesPane(conversation.id, messages, pending),
               ),
+              if (conversation != null &&
+                  widget.state.mlsConversationFailed(conversation.id))
+                const _PausedConversationNotice(),
               if (_replyingTo != null)
                 _ReplyBar(
                   preview: _replyPreview(_replyingTo),
@@ -1226,6 +1229,34 @@ class _Composer extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Shown when the server rejected an encryption update for this
+/// conversation (I34). The update stays queued so later messages cannot
+/// overtake it; sending here is paused until the device recovers.
+class _PausedConversationNotice extends StatelessWidget {
+  const _PausedConversationNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Semantics(
+      liveRegion: true,
+      child: Container(
+        width: double.infinity,
+        color: scheme.errorContainer,
+        padding: const EdgeInsets.symmetric(
+          horizontal: BoneSpacing.gutter,
+          vertical: BoneSpacing.sm,
+        ),
+        child: Text(
+          'Sending is paused here: the server rejected an encryption update '
+          'for this conversation. Other conversations still work.',
+          style: TextStyle(color: scheme.onErrorContainer),
         ),
       ),
     );

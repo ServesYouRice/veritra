@@ -266,6 +266,127 @@ void main() {
     expect(record.draftText, 'local recovery draft');
   });
 
+  Future<void> queueMls(SecureLocalStore store, List<String> keys) async {
+    final counter = (await store.loadCryptoState())?.counter ?? 0;
+    await store.commitOutgoingMlsTransition(OutgoingMlsStateTransition(
+      expectedCounter: counter,
+      expectedCursor: await store.loadSyncCursor(),
+      state: StoredCryptoState(
+        counter: counter + 1,
+        stateKey: List<int>.filled(32, 1),
+        sealedState: <int>[counter + 1],
+      ),
+      messages: <PendingMlsMessage>[
+        for (final key in keys)
+          PendingMlsMessage(
+            idempotencyKey: key,
+            conversationId: 'conv_1',
+            kind: 'commit',
+            payload: const <int>[1],
+          ),
+      ],
+    ));
+  }
+
+  test('MLS outbox keeps transition order and durable failures', () async {
+    final store = createStore();
+    await store.saveCryptoState(
+      StoredCryptoState(
+        counter: 1,
+        stateKey: List<int>.filled(32, 1),
+        sealedState: <int>[1],
+      ),
+      0,
+    );
+    // Keys sort opposite to their queue order on purpose.
+    await queueMls(store, <String>['zz_first', 'mm_second', 'aa_third']);
+    await queueMls(store, <String>['00_fourth']);
+    expect(
+      (await store.pendingMlsMessages()).map((item) => item.idempotencyKey),
+      <String>['zz_first', 'mm_second', 'aa_third', '00_fourth'],
+    );
+
+    final due = DateTime.utc(2030, 1, 1, 12);
+    await store.recordMlsOutboxFailure('zz_first',
+        failureClass: 'retryable:503', terminal: false, nextAttemptAt: due);
+    await store.recordMlsOutboxFailure('mm_second',
+        failureClass: 'terminal:403:forbidden', terminal: true);
+    await databases.last.close();
+    databases.removeLast();
+
+    final restarted = createStore();
+    final items = await restarted.pendingMlsMessages();
+    expect(items[0].attemptCount, 1);
+    expect(items[0].terminal, isFalse);
+    expect(items[0].nextAttemptAt, due);
+    expect(items[0].failureClass, 'retryable:503');
+    expect(items[1].terminal, isTrue);
+    expect(items[1].nextAttemptAt, isNull);
+    expect(items[2].attemptCount, 0);
+  });
+
+  test('an applied MLS control message is found by its server ID', () async {
+    final store = createStore();
+    await store.saveCryptoState(
+      StoredCryptoState(
+        counter: 1,
+        stateKey: List<int>.filled(32, 1),
+        sealedState: <int>[1],
+      ),
+      0,
+    );
+    await store.commitMlsTransition(MlsStateTransition(
+      messageId: 'mls:4:mls_commit_1',
+      conversationId: 'conv_1',
+      expectedCounter: 1,
+      expectedCursor: 0,
+      state: StoredCryptoState(
+        counter: 2,
+        stateKey: List<int>.filled(32, 1),
+        sealedState: <int>[2],
+      ),
+      cursor: 4,
+    ));
+    expect(await store.hasAppliedMlsControlMessage('mls_commit_1'), isTrue);
+    expect(await store.hasAppliedMlsControlMessage('commit_1'), isFalse);
+    expect(await store.hasAppliedMlsControlMessage('mls_commit_2'), isFalse);
+  });
+
+  test('a version 7 database gains MLS delivery state on upgrade', () async {
+    final store = createStore();
+    await store.saveCryptoState(
+      StoredCryptoState(
+        counter: 1,
+        stateKey: List<int>.filled(32, 1),
+        sealedState: <int>[1],
+      ),
+      0,
+    );
+    await queueMls(store, <String>['old_item']);
+    final database = databases.last;
+    for (final column in <String>[
+      'attempt_count',
+      'next_attempt_at',
+      'failure_class',
+      'terminal',
+    ]) {
+      await database.customStatement(
+          'ALTER TABLE local_mls_outbox_entries DROP COLUMN $column');
+    }
+    await database.customStatement('PRAGMA user_version = 7');
+    await database.close();
+    databases.removeLast();
+
+    final upgraded = createStore();
+    final item = (await upgraded.pendingMlsMessages()).single;
+    expect(item.idempotencyKey, 'old_item');
+    expect(item.attemptCount, 0);
+    expect(item.terminal, isFalse);
+    await upgraded.recordMlsOutboxFailure('old_item',
+        failureClass: 'retryable:network', terminal: false);
+    expect((await upgraded.pendingMlsMessages()).single.attemptCount, 1);
+  });
+
   test('crypto state and cursor roll back together', () async {
     final store = createStore();
     await store.saveCryptoState(

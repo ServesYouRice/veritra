@@ -204,6 +204,10 @@ class LocalMlsOutboxEntries extends Table {
   BlobColumn get payload => blob()();
   IntColumn get stateCounter => integer()();
   IntColumn get queuedAt => integer()();
+  IntColumn get attemptCount => integer().withDefault(const Constant(0))();
+  IntColumn get nextAttemptAt => integer().nullable()();
+  TextColumn get failureClass => text().nullable()();
+  BoolColumn get terminal => boolean().withDefault(const Constant(false))();
 
   @override
   Set<Column<Object>> get primaryKey => {idempotencyKey};
@@ -271,7 +275,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   static const syncRecoveryName = 'sync.recovery';
 
   @override
-  int get schemaVersion => 7;
+  int get schemaVersion => 8;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -310,6 +314,17 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           if (from < 7) {
             await migrator.createTable(localMessages);
             await migrator.createTable(localMessageReactions);
+          }
+          if (from < 8) {
+            // Durable delivery state for MLS control messages (I34).
+            await migrator.addColumn(
+                localMlsOutboxEntries, localMlsOutboxEntries.attemptCount);
+            await migrator.addColumn(
+                localMlsOutboxEntries, localMlsOutboxEntries.nextAttemptAt);
+            await migrator.addColumn(
+                localMlsOutboxEntries, localMlsOutboxEntries.failureClass);
+            await migrator.addColumn(
+                localMlsOutboxEntries, localMlsOutboxEntries.terminal);
           }
         },
         beforeOpen: (details) async {
@@ -524,7 +539,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             counter: cryptoState.counter,
             stateKey: Uint8List.fromList(cryptoState.stateKey),
             sealedState: Uint8List.fromList(cryptoState.sealedState)));
-        for (final item in mlsOutbox) {
+        for (final (index, item) in mlsOutbox.indexed) {
           await into(localMlsOutboxEntries).insert(
               LocalMlsOutboxEntriesCompanion.insert(
                   idempotencyKey: item.idempotencyKey,
@@ -534,7 +549,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
                   revocationDeviceId: Value(item.revocationDeviceId),
                   payload: Uint8List.fromList(item.payload),
                   stateCounter: cryptoState.counter,
-                  queuedAt: queuedAt));
+                  queuedAt: queuedAt + index));
         }
         await into(localSyncStates).insertOnConflictUpdate(
             LocalSyncStatesCompanion.insert(
@@ -958,6 +973,21 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     return row != null;
   }
 
+  /// Control message markers are `mls:<sync event id>:<message id>`.
+  Future<bool> hasAppliedMlsControlMessage(String mlsMessageId) async {
+    final suffix = ':$mlsMessageId';
+    final row = await customSelect(
+      'SELECT 1 FROM local_mls_transitions '
+      "WHERE substr(message_id, 1, 4) = 'mls:' "
+      'AND substr(message_id, -length(?1)) = ?1 LIMIT 1',
+      variables: <Variable<Object>>[Variable<String>(suffix)],
+      readsFrom: <ResultSetImplementation<dynamic, dynamic>>{
+        localMlsTransitions
+      },
+    ).getSingleOrNull();
+    return row != null;
+  }
+
   Future<void> commitOutgoingMlsTransition({
     required int expectedCounter,
     required int expectedCursor,
@@ -998,8 +1028,10 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             sealedState: Uint8List.fromList(sealedState),
           ),
         );
+        // One transition's messages keep their order: a commit sent after
+        // the one it follows would fork the group (I34).
         final queuedAt = DateTime.now().microsecondsSinceEpoch;
-        for (final message in messages) {
+        for (final (index, message) in messages.indexed) {
           await into(localMlsOutboxEntries).insert(
             LocalMlsOutboxEntriesCompanion.insert(
               idempotencyKey: message.idempotencyKey,
@@ -1009,7 +1041,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               revocationDeviceId: Value(message.revocationDeviceId),
               payload: Uint8List.fromList(message.payload),
               stateCounter: counter,
-              queuedAt: queuedAt,
+              queuedAt: queuedAt + index,
             ),
           );
         }
@@ -1115,6 +1147,10 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             String? recipientDeviceId,
             String? revocationDeviceId,
             List<int> payload,
+            int attemptCount,
+            int? nextAttemptAt,
+            String? failureClass,
+            bool terminal,
           })>> readMlsOutbox() async {
     final rows = await (select(localMlsOutboxEntries)
           ..orderBy([
@@ -1130,9 +1166,33 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               recipientDeviceId: row.recipientDeviceId,
               revocationDeviceId: row.revocationDeviceId,
               payload: List<int>.from(row.payload),
+              attemptCount: row.attemptCount,
+              nextAttemptAt: row.nextAttemptAt,
+              failureClass: row.failureClass,
+              terminal: row.terminal,
             ))
         .toList(growable: false);
   }
+
+  Future<void> recordMlsOutboxFailure(
+    String idempotencyKey, {
+    required String failureClass,
+    required bool terminal,
+    required int? nextAttemptAt,
+  }) =>
+      transaction(() async {
+        await (update(localMlsOutboxEntries)
+              ..where((table) => table.idempotencyKey.equals(idempotencyKey)))
+            .write(LocalMlsOutboxEntriesCompanion(
+          failureClass: Value(failureClass),
+          terminal: Value(terminal),
+          nextAttemptAt: Value(nextAttemptAt),
+        ));
+        await customStatement(
+            'UPDATE local_mls_outbox_entries '
+            'SET attempt_count = attempt_count + 1 WHERE idempotency_key = ?',
+            <Object?>[idempotencyKey]);
+      });
 
   Future<void> deleteMlsOutbox(String idempotencyKey) => transaction(() async {
         await (delete(localMlsOutboxEntries)

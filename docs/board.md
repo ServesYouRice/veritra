@@ -180,7 +180,8 @@ independent reviews until all three phases are done"):
   database file exists.
 - **D27:** Encrypted backups include decrypted history (implemented in I45).
 - The crypto surface (ABI v5, payload semantics, local schema v7) freezes after
-  Stage 1, with a change log kept for the eventual G25 reviewer.
+  Stage 1, with a change log kept for the eventual G25 reviewer (in
+  [`crypto.md`](crypto.md); local schema is v8 since I34).
 
 ## Remaining work
 
@@ -198,7 +199,7 @@ task boundaries and orchestration rules are in
 | I31 | Implemented (T31); checks pending (Codex, 2026-08-14) | Lossless message outbox | — |
 | I32 | Implemented (T32); checks pending (Codex, 2026-08-14) | Account-scoped session lifecycle | — |
 | I33 | Implemented and checked (Stage 5, 2026-09-24) | Poison-event and stale-device recovery | I30 |
-| I34 | Blocked by I31 | Reliable MLS control outbox | I31 pattern |
+| I34 | Implemented and checked (Stage 5, 2026-09-24) | Reliable MLS control outbox | I31 pattern |
 | I35 | Implemented (T35); checks pending (Codex, 2026-08-14) | Retention and attachment-prune convergence | — |
 | I36 | T36A/T36B implemented; checks pending (Codex, 2026-08-14) | Committed-message fanout and bounded push work | — |
 | I37 | T37A/T37B implemented; T37C safe migration/idle plumbing implemented; rotation and cost promotion deferred; checks pending (Codex, 2026-08-14) | Setup and authentication hardening | — |

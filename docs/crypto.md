@@ -51,3 +51,22 @@ Before production message sending:
   iOS Keychain (`ThisDeviceOnly`) storage
 - add MLS test vectors
 - obtain independent protocol and mobile-binding review
+
+## Change log since the Stage 1 freeze
+
+The crypto surface (ABI v5, payload semantics, local schema v7) froze after
+Stage 1. Every later change is listed here for the G25 reviewer.
+
+- **Stage 5, I33 (2026-09-24):** no ABI or payload change. Sync stops,
+  without advancing the cursor, at any MLS control message it cannot apply,
+  and at any application message it cannot decrypt unless the message has
+  provably expired. The expired-message tombstone commits only the cursor and
+  an `expired:<event>:<target>` marker. The durable recovery record lives in
+  local metadata (`sync.recovery`) and holds no content or key material.
+- **Stage 5, I34 (2026-09-24):** local schema v8 adds `attempt_count`,
+  `next_attempt_at`, `failure_class` and `terminal` to
+  `local_mls_outbox_entries` (additive migration). Messages from one MLS
+  transition are now queued with increasing `queued_at`, so they are delivered
+  in the order OpenMLS produced them; before, a transition's messages shared a
+  timestamp and were ordered by their random idempotency key. A rejected
+  control message is kept and pauses only its conversation.

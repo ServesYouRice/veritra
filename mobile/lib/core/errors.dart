@@ -4,6 +4,15 @@ import 'dart:io';
 import 'api_client.dart';
 import '../storage/local_store.dart';
 
+/// Sending is refused because the server rejected an MLS control message
+/// for the conversation and it stays queued (I34).
+class ConversationPausedException implements Exception {
+  const ConversationPausedException();
+
+  @override
+  String toString() => 'Sending is paused in this conversation.';
+}
+
 /// Maps any thrown error to a sentence safe to show to end users.
 ///
 /// AppState stores the result of this instead of `toString()`: raw exception
@@ -13,6 +22,10 @@ String describeError(Object error) {
   if (error is OutboxFullException) {
     return 'Your encrypted message queue is full. Send or discard a pending '
         'message before composing another.';
+  }
+  if (error is ConversationPausedException) {
+    return 'Sending is paused in this conversation because the server '
+        'rejected an encryption update. Other conversations still work.';
   }
   if (error is ApiException) {
     return error.message;
