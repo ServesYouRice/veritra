@@ -500,6 +500,13 @@ func restore(cfg config.Config, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// One restore at a time per database: a second one would share the
+	// journal path and could roll back the first one mid-activation.
+	lock, err := acquireRestoreLock(live)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
 	if _, err := os.Stat(journalPath(live)); err == nil {
 		return errors.New("an earlier restore is unfinished; run the command again after it is settled")
 	}
@@ -694,6 +701,13 @@ func recoverInterruptedRestore(cfg config.Config, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("read restore journal: %w", err)
 	}
+	// The journal may belong to a restore that is still running; settling
+	// it now would roll back live work.
+	lock, err := acquireRestoreLock(live)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
 	var journal restoreJournal
 	if err := json.Unmarshal(raw, &journal); err != nil || journal.Version != 1 {
 		return fmt.Errorf("restore journal %s is damaged; resolve it by hand before starting", path)

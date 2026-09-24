@@ -1,9 +1,13 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:private_messenger/calls/call_service.dart';
 import 'package:private_messenger/core/api_client.dart';
+import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 
 void main() {
@@ -56,6 +60,100 @@ void main() {
       expect(() => CallSession.fromJson(broken), throwsA(isA<TypeError>()),
           reason: 'missing $missing must not be silently defaulted');
     }
+  });
+
+  test('call API sends exact create and transition JSON', () async {
+    final harness = await _RequestHarness.start();
+    addTearDown(harness.close);
+    final client = ApiClient(baseUrl: harness.baseUrl);
+    addTearDown(client.close);
+
+    final createRequest = harness.nextRequest;
+    final createFuture = client.createCall(
+      'token_create',
+      'conversation_1',
+      const <String, Object?>{'ciphertext': 'AQID', 'version': 1},
+    );
+    final create = await createRequest;
+    expect(create.method, 'POST');
+    expect(create.uri.path, '/api/v1/calls');
+    expect(create.headers.value(HttpHeaders.authorizationHeader),
+        'Bearer token_create');
+    expect(await _requestJson(create), <String, Object?>{
+      'conversation_id': 'conversation_1',
+      'metadata': <String, Object?>{'ciphertext': 'AQID', 'version': 1},
+    });
+    await _respondWithCall(create, version: 1, state: 'ringing');
+    expect((await createFuture).version, 1);
+
+    final transitionRequest = harness.nextRequest;
+    final transitionFuture = client.transitionCall(
+      'token_transition',
+      'call_1',
+      'active',
+      expectedVersion: 7,
+      encryptedMetadata: const <String, Object?>{
+        'ciphertext': 'BAUG',
+        'version': 1,
+      },
+    );
+    final transition = await transitionRequest;
+    expect(transition.method, 'POST');
+    expect(transition.uri.path, '/api/v1/calls/call_1/state');
+    expect(transition.headers.value(HttpHeaders.authorizationHeader),
+        'Bearer token_transition');
+    expect(await _requestJson(transition), <String, Object?>{
+      'state': 'active',
+      'expected_version': 7,
+      'metadata': <String, Object?>{'ciphertext': 'BAUG', 'version': 1},
+    });
+    await _respondWithCall(transition, version: 8, state: 'active');
+    expect((await transitionFuture).version, 8);
+  });
+
+  test('NativeCallService rejects with the latest pending session version',
+      () async {
+    final harness = await _RequestHarness.start();
+    addTearDown(harness.close);
+    final client = ApiClient(baseUrl: harness.baseUrl);
+    addTearDown(client.close);
+    final incoming = StreamController<IncomingCallSignal>();
+    addTearDown(incoming.close);
+    final service = NativeCallService(
+      api: client,
+      token: 'call_token',
+      crypto: _UnusedMlsCrypto(),
+      incoming: incoming.stream,
+    );
+    addTearDown(service.dispose);
+
+    final first = _callSession(version: 1);
+    final firstOffer = service.incomingOffers.first;
+    incoming.add(IncomingCallSignal(first, const <String, Object?>{
+      'kind': 'offer',
+      'sdp': 'first',
+      'sdp_type': 'offer',
+    }));
+    await firstOffer;
+
+    final latest = _callSession(version: 2);
+    final latestOffer = service.incomingOffers.first;
+    incoming.add(IncomingCallSignal(latest, const <String, Object?>{
+      'kind': 'offer',
+      'sdp': 'latest',
+      'sdp_type': 'offer',
+    }));
+    await latestOffer;
+
+    final requestFuture = harness.nextRequest;
+    final rejectFuture = service.reject(first);
+    final request = await requestFuture;
+    expect(await _requestJson(request), <String, Object?>{
+      'state': 'rejected',
+      'expected_version': 2,
+    });
+    await _respondWithCall(request, version: 3, state: 'rejected');
+    await rejectFuture;
   });
 
   final baseUrl = Platform.environment['VERITRA_CONTRACT_BASE_URL'];
@@ -115,6 +213,25 @@ void main() {
       ),
     );
     expect(member.accountId, memberReservation.accountId);
+
+    final outsiderReservation = await client.reserveRegistrationEnrollment(
+      registrationInvite.code,
+    );
+    final outsiderNative = bindings.createDevice(
+      outsiderReservation.accountId,
+      outsiderReservation.deviceId,
+    );
+    addTearDown(outsiderNative.close);
+    final outsider = await client.register(
+      inviteCode: registrationInvite.code,
+      username: 'contract-outsider',
+      password: 'outsider-password-123',
+      deviceName: 'contract outsider device',
+      enrollment: outsiderReservation,
+      credential: outsiderNative.createEnrollmentCredential(
+        outsiderReservation.challenge,
+      ),
+    );
 
     final revokedInvite = await client.createInvite(owner.token);
     await client.revokeInvite(owner.token, revokedInvite.id);
@@ -343,16 +460,17 @@ void main() {
     final iceServers = await client.callIceServers(owner.token);
     expect(iceServers, isA<List<Map<String, Object?>>>());
 
+    final createCallMetadata = <String, Object?>{
+      'version': 1,
+      'ciphertext': base64Encode([1, 2, 3, 4]),
+      'protocol': 'mls10-openmls-v1',
+      'sender_device_id': owner.deviceId!,
+      'action_id': 'action_call_create_1',
+    };
     final createdCall = await client.createCall(
       owner.token,
       dm.id,
-      <String, Object?>{
-        'version': 1,
-        'ciphertext': base64Encode([1, 2, 3, 4]),
-        'protocol': 'mls10-openmls-v1',
-        'sender_device_id': owner.deviceId!,
-        'action_id': 'action_call_create_1',
-      },
+      createCallMetadata,
     );
     expect(createdCall.conversationId, dm.id);
     expect(createdCall.createdBy, owner.accountId);
@@ -360,6 +478,10 @@ void main() {
     // The server creates sessions already ringing; there is no 'created' state.
     expect(createdCall.state, 'ringing');
     expect(createdCall.version, 1);
+    final retriedCreate =
+        await client.createCall(owner.token, dm.id, createCallMetadata);
+    expect(retriedCreate.id, createdCall.id);
+    expect(retriedCreate.version, createdCall.version);
 
     final callList = await client.calls(owner.token, dm.id);
     expect(callList, isNotEmpty);
@@ -375,6 +497,20 @@ void main() {
       throwsA(isA<ApiException>()),
     );
 
+    await expectLater(
+      client.transitionCall(
+        outsider.token,
+        createdCall.id,
+        'ended',
+        expectedVersion: createdCall.version,
+      ),
+      throwsA(isA<ApiException>().having(
+        (error) => error.serverCode,
+        'serverCode',
+        'forbidden',
+      )),
+    );
+
     // A same-state transition carrying no metadata is a no-op: the server
     // short-circuits it and leaves the concurrency token untouched.
     final noopCall = await client.transitionCall(
@@ -386,14 +522,31 @@ void main() {
     expect(noopCall.state, 'ringing');
     expect(noopCall.version, createdCall.version);
 
+    final answerMetadata = <String, Object?>{
+      'version': 1,
+      'ciphertext': base64Encode([5, 6, 7, 8]),
+      'protocol': 'mls10-openmls-v1',
+      'sender_device_id': member.deviceId!,
+      'action_id': 'action_call_answer_1',
+    };
     final activeCall = await client.transitionCall(
       member.token,
       createdCall.id,
       'active',
       expectedVersion: noopCall.version,
+      encryptedMetadata: answerMetadata,
     );
     expect(activeCall.state, 'active');
     expect(activeCall.version, createdCall.version + 1);
+    final retriedAnswer = await client.transitionCall(
+      member.token,
+      createdCall.id,
+      'active',
+      expectedVersion: noopCall.version,
+      encryptedMetadata: answerMetadata,
+    );
+    expect(retriedAnswer.id, activeCall.id);
+    expect(retriedAnswer.version, activeCall.version);
 
     final endedCall = await client.transitionCall(
       owner.token,
@@ -404,12 +557,86 @@ void main() {
     expect(endedCall.state, 'ended');
     expect(endedCall.endedAt, isNotNull);
 
+    final finalCall = (await client.calls(owner.token, dm.id))
+        .singleWhere((call) => call.id == createdCall.id);
+    expect(finalCall.state, 'ended');
+    expect(finalCall.version, endedCall.version);
+    expect(finalCall.invitedAccountId, member.accountId);
+
+    await client.deleteAccount(outsider.token);
     await client.deleteAccount(member.token);
   },
       skip: baseUrl == null || libraryPath == null
           ? 'live contract server or native library not configured'
           : false,
       timeout: const Timeout(Duration(minutes: 2)));
+}
+
+class _RequestHarness {
+  _RequestHarness(this.server, this.requests, this.subscription);
+
+  final HttpServer server;
+  final StreamController<HttpRequest> requests;
+  final StreamSubscription<HttpRequest> subscription;
+
+  String get baseUrl => 'http://${server.address.address}:${server.port}';
+  Future<HttpRequest> get nextRequest => requests.stream.first;
+
+  static Future<_RequestHarness> start() async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requests = StreamController<HttpRequest>.broadcast();
+    final subscription = server.listen(requests.add);
+    return _RequestHarness(server, requests, subscription);
+  }
+
+  Future<void> close() async {
+    await subscription.cancel();
+    await server.close(force: true);
+    await requests.close();
+  }
+}
+
+Future<Map<String, Object?>> _requestJson(HttpRequest request) async =>
+    Map<String, Object?>.from(
+      jsonDecode(await utf8.decodeStream(request)) as Map,
+    );
+
+Future<void> _respondWithCall(
+  HttpRequest request, {
+  required int version,
+  required String state,
+}) async {
+  request.response.headers.contentType = ContentType.json;
+  request.response.write(jsonEncode(<String, Object?>{
+    'id': 'call_1',
+    'conversation_id': 'conversation_1',
+    'created_by': 'account_owner',
+    'invited_account_id': 'account_member',
+    'state': state,
+    'version': version,
+    'metadata': <String, Object?>{},
+    'created_at': '2026-08-30T00:00:00Z',
+    'ended_at':
+        state == 'ringing' || state == 'active' ? null : '2026-08-30T00:01:00Z',
+    'expires_at': '2026-08-30T00:10:00Z',
+  }));
+  await request.response.close();
+}
+
+CallSession _callSession({required int version}) => CallSession(
+      id: 'call_1',
+      conversationId: 'conversation_1',
+      createdBy: 'account_owner',
+      invitedAccountId: 'account_member',
+      state: 'ringing',
+      version: version,
+      metadata: const <String, Object?>{},
+      createdAt: DateTime.utc(2026, 8, 30),
+    );
+
+class _UnusedMlsCrypto implements MlsConversationCryptoService {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 Future<Map<String, Object?>> _getJson(String url, String token) async {

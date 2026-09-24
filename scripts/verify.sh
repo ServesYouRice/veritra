@@ -43,10 +43,16 @@ run_step go-race sh -c "cd '$ROOT/server' && go test -race -coverprofile=coverag
 run_step go-lint sh -c "cd '$ROOT/server' && test -z \"\$(gofmt -l .)\" && go vet ./..."
 run_step rust-release sh -c "cd '$ROOT/crypto/rust' && cargo test --release --locked && cargo fmt --check && cargo clippy --all-targets -- -D warnings"
 run_step dart-coverage sh -c "cd '$ROOT/mobile' && flutter test --coverage && flutter analyze && dart format --set-exit-if-changed ."
-# Floors stay at 0.0 until the QA10 advisor checkpoint sets values from
-# testing/evidence/coverage-baseline.md; the gate still fails on missing or
-# malformed coverage data.
-run_step coverage-floor sh -c "python3 '$ROOT/scripts/check-coverage.py' --go-profile '$ROOT/server/coverage.out' --go-floor 50.0 --flutter-lcov '$ROOT/mobile/coverage/lcov.info' --flutter-floor 43.0"
+run_step coverage-floor sh -c "python3 '$ROOT/scripts/check-coverage.py' \
+  --go-profile '$ROOT/server/coverage.out' --go-floor 50.0 \
+  --go-required-source internal/push/native.go \
+  --go-required-source internal/cryptoapi/cryptoapi.go \
+  --flutter-lcov '$ROOT/mobile/coverage/lcov.info' --flutter-floor 43.0 \
+  --flutter-required-source lib/core/app_state.dart \
+  --flutter-required-source lib/storage/local_store.dart \
+  --flutter-required-source lib/push/push_service.dart \
+  --flutter-required-source lib/crypto/attachment_crypto.dart \
+  --flutter-required-source lib/calls/call_service.dart"
 run_step mobile-dependencies sh "$ROOT/scripts/check-mobile-dependencies.sh"
 run_step licenses sh "$ROOT/scripts/license-check.sh"
 run_step rust-audit sh "$ROOT/scripts/audit-rust.sh"
