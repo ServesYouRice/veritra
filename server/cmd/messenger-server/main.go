@@ -2,9 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -83,6 +80,14 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 	ctx := context.Background()
 	switch command {
+	case "serve", "init", "migrate", "doctor", "backup", "restore", "reset-owner-password":
+		// A restore cut short by a crash is settled before anything opens the
+		// database (card I45).
+		if err := recoverInterruptedRestore(cfg, stdout); err != nil {
+			return err
+		}
+	}
+	switch command {
 	case "serve":
 		return serve(ctx, cfg)
 	case "init":
@@ -99,6 +104,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return backup(ctx, cfg, fs.Args(), stdout)
 	case "restore":
 		return restore(cfg, fs.Args(), stdout)
+	case "verify-backup":
+		return verifyBackup(ctx, fs.Args(), stdout)
 	case "reset-owner-password":
 		return resetOwnerPassword(ctx, cfg, recoveryAccount, passwordFile, stdout)
 	case "version":
@@ -288,320 +295,7 @@ func healthcheck(cfg config.Config) error {
 	return nil
 }
 
-func backup(ctx context.Context, cfg config.Config, args []string, stdout io.Writer) error {
-	out := filepath.Join(cfg.DataDir, "backups", "veritra-"+time.Now().UTC().Format("20060102T150405Z"))
-	if len(args) > 0 {
-		out = args[0]
-	}
-	if _, err := os.Stat(out); err == nil {
-		return errors.New("backup destination already exists")
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	stage := out + ".tmp"
-	if err := os.MkdirAll(filepath.Join(stage, "blobs"), 0o700); err != nil {
-		return err
-	}
-	defer os.RemoveAll(stage)
-	store, err := storage.Open(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	defer store.Close()
-	databasePath := filepath.Join(stage, "database.db")
-	if err := store.BackupTo(ctx, databasePath); err != nil {
-		return err
-	}
-	if err := os.Chmod(databasePath, 0o600); err != nil {
-		return err
-	}
-	references, migrations, err := storage.ListDatabaseBlobReferences(ctx, databasePath)
-	if err != nil {
-		return err
-	}
-	manifest := instanceBackupManifest{Version: "v1", CreatedAt: time.Now().UTC(), DatabaseFile: "database.db", Migrations: migrations, InstanceName: cfg.InstanceName}
-	manifest.DatabaseSHA256, _, err = fileSHA256(databasePath)
-	if err != nil {
-		return err
-	}
-	for _, reference := range references {
-		source := filepath.Join(cfg.StoragePath, filepath.Base(reference.StorageKey))
-		destination := filepath.Join(stage, "blobs", filepath.Base(reference.StorageKey))
-		if err := copyFile(source, destination, 0o600); err != nil {
-			return fmt.Errorf("copy encrypted blob %s: %w", reference.StorageKey, err)
-		}
-		actualSHA, actualSize, err := fileSHA256(destination)
-		if err != nil {
-			return err
-		}
-		if actualSize != reference.SizeBytes || (reference.SHA256 != "" && !strings.EqualFold(actualSHA, reference.SHA256)) {
-			return fmt.Errorf("encrypted blob %s failed size/checksum verification", reference.StorageKey)
-		}
-		manifest.Blobs = append(manifest.Blobs, backupManifestBlob{StorageKey: reference.StorageKey, SHA256: actualSHA, SizeBytes: actualSize})
-	}
-	manifestBytes, err := json.MarshalIndent(manifest, "", "  ")
-	if err != nil {
-		return err
-	}
-	manifestFile := filepath.Join(stage, "manifest.json")
-	if err := os.WriteFile(manifestFile, append(manifestBytes, '\n'), 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(stage, out); err != nil {
-		return err
-	}
-	fmt.Fprintf(stdout, "instance backup written: %s\n", out)
-	return nil
-}
-
-type instanceBackupManifest struct {
-	Version        string               `json:"version"`
-	CreatedAt      time.Time            `json:"created_at"`
-	InstanceName   string               `json:"instance_name"`
-	DatabaseFile   string               `json:"database_file"`
-	DatabaseSHA256 string               `json:"database_sha256"`
-	Migrations     []string             `json:"migrations"`
-	Blobs          []backupManifestBlob `json:"blobs"`
-}
-
-type backupManifestBlob struct {
-	StorageKey string `json:"storage_key"`
-	SHA256     string `json:"sha256"`
-	SizeBytes  int64  `json:"size_bytes"`
-}
-
-func fileSHA256(path string) (string, int64, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", 0, err
-	}
-	defer file.Close()
-	hash := sha256.New()
-	size, err := io.Copy(hash, file)
-	if err != nil {
-		return "", 0, err
-	}
-	return hex.EncodeToString(hash.Sum(nil)), size, nil
-}
-
-func restore(cfg config.Config, args []string, stdout io.Writer) error {
-	if len(args) != 1 {
-		return errors.New("restore requires path to an instance backup")
-	}
-	src := args[0]
-	info, err := os.Stat(src)
-	if err != nil {
-		return fmt.Errorf("backup not readable: %w", err)
-	}
-	var manifest *instanceBackupManifest
-	if info.IsDir() {
-		loaded, err := readAndValidateBackupManifest(src)
-		if err != nil {
-			return err
-		}
-		manifest = &loaded
-		src = filepath.Join(src, loaded.DatabaseFile)
-	}
-	srcAbs, err := filepath.Abs(src)
-	if err != nil {
-		return err
-	}
-	dstAbs, err := filepath.Abs(cfg.DatabasePath)
-	if err != nil {
-		return err
-	}
-	if srcAbs == dstAbs {
-		return errors.New("backup path must differ from the live database")
-	}
-	if err := os.MkdirAll(filepath.Dir(dstAbs), 0o700); err != nil {
-		return err
-	}
-	stageFile, err := os.CreateTemp(filepath.Dir(dstAbs), ".veritra-restore-*.db")
-	if err != nil {
-		return err
-	}
-	stage := stageFile.Name()
-	if err := stageFile.Close(); err != nil {
-		return err
-	}
-	_ = os.Remove(stage)
-	defer os.Remove(stage)
-	if err := copyFile(srcAbs, stage, 0o600); err != nil {
-		return fmt.Errorf("stage backup: %w", err)
-	}
-	if err := storage.ValidateDatabaseFile(context.Background(), stage); err != nil {
-		return fmt.Errorf("backup validation failed: %w", err)
-	}
-	var blobStage string
-	if manifest != nil {
-		databaseSHA, _, err := fileSHA256(stage)
-		if err != nil || !strings.EqualFold(databaseSHA, manifest.DatabaseSHA256) {
-			return errors.New("backup database checksum mismatch")
-		}
-		references, migrations, err := storage.ListDatabaseBlobReferences(context.Background(), stage)
-		if err != nil {
-			return err
-		}
-		if strings.Join(migrations, "\x00") != strings.Join(manifest.Migrations, "\x00") || len(references) != len(manifest.Blobs) {
-			return errors.New("backup manifest does not match database contents")
-		}
-		blobStage = cfg.StoragePath + ".restore-tmp"
-		if err := os.RemoveAll(blobStage); err != nil {
-			return err
-		}
-		if err := os.MkdirAll(blobStage, 0o700); err != nil {
-			return err
-		}
-		defer os.RemoveAll(blobStage)
-		manifestByKey := make(map[string]backupManifestBlob, len(manifest.Blobs))
-		for _, blob := range manifest.Blobs {
-			if blob.StorageKey == "" || filepath.Base(blob.StorageKey) != blob.StorageKey {
-				return errors.New("backup manifest contains an invalid blob key")
-			}
-			manifestByKey[blob.StorageKey] = blob
-		}
-		backupRoot := filepath.Dir(src)
-		for _, reference := range references {
-			blob, ok := manifestByKey[reference.StorageKey]
-			if !ok || blob.SizeBytes != reference.SizeBytes || (reference.SHA256 != "" && !strings.EqualFold(blob.SHA256, reference.SHA256)) {
-				return fmt.Errorf("backup manifest missing or mismatches blob %s", reference.StorageKey)
-			}
-			source := filepath.Join(backupRoot, "blobs", blob.StorageKey)
-			destination := filepath.Join(blobStage, blob.StorageKey)
-			if err := copyFile(source, destination, 0o600); err != nil {
-				return err
-			}
-			sha, size, err := fileSHA256(destination)
-			if err != nil || size != blob.SizeBytes || !strings.EqualFold(sha, blob.SHA256) {
-				return fmt.Errorf("backup blob %s failed checksum verification", blob.StorageKey)
-			}
-		}
-	}
-	if _, err := os.Stat(dstAbs); err == nil {
-		probeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
-		err := storage.ProbeDatabaseExclusive(probeCtx, dstAbs)
-		cancel()
-		if err != nil {
-			return fmt.Errorf("database appears in use; stop the server before restore: %w", err)
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	rollback := dstAbs + ".pre-restore-" + time.Now().UTC().Format("20060102T150405Z")
-	blobRollback := cfg.StoragePath + ".pre-restore-" + time.Now().UTC().Format("20060102T150405Z")
-	liveExists := false
-	blobsExist := false
-	if _, err := os.Stat(dstAbs); err == nil {
-		if err := os.Rename(dstAbs, rollback); err != nil {
-			return fmt.Errorf("preserve live database: %w", err)
-		}
-		liveExists = true
-	}
-	if manifest != nil {
-		if _, err := os.Stat(cfg.StoragePath); err == nil {
-			if err := os.Rename(cfg.StoragePath, blobRollback); err != nil {
-				if liveExists {
-					_ = os.Rename(rollback, dstAbs)
-				}
-				return fmt.Errorf("preserve live blob directory: %w", err)
-			}
-			blobsExist = true
-		} else if !os.IsNotExist(err) {
-			return err
-		}
-	}
-	restoreRollback := func(cause error) error {
-		_ = os.Remove(dstAbs)
-		if manifest != nil {
-			_ = os.RemoveAll(cfg.StoragePath)
-			if blobsExist {
-				if err := os.Rename(blobRollback, cfg.StoragePath); err != nil {
-					cause = errors.Join(cause, fmt.Errorf("rollback blob directory: %w", err))
-				}
-			}
-		}
-		if liveExists {
-			if err := os.Rename(rollback, dstAbs); err != nil {
-				return errors.Join(cause, fmt.Errorf("rollback live database: %w", err))
-			}
-		}
-		return cause
-	}
-	for _, companion := range []string{dstAbs + "-wal", dstAbs + "-shm"} {
-		if err := os.Remove(companion); err != nil && !os.IsNotExist(err) {
-			return restoreRollback(fmt.Errorf("remove stale SQLite companion %s: %w", companion, err))
-		}
-	}
-	if err := os.Rename(stage, dstAbs); err != nil {
-		return restoreRollback(fmt.Errorf("activate staged backup: %w", err))
-	}
-	if manifest != nil {
-		if err := os.Rename(blobStage, cfg.StoragePath); err != nil {
-			return restoreRollback(fmt.Errorf("activate staged blob directory: %w", err))
-		}
-	}
-	if err := storage.ValidateDatabaseFile(context.Background(), dstAbs); err != nil {
-		return restoreRollback(fmt.Errorf("restored database validation failed: %w", err))
-	}
-	fmt.Fprintf(stdout, "database restored to: %s\n", cfg.DatabasePath)
-	if liveExists {
-		fmt.Fprintf(stdout, "previous database preserved for rollback: %s\n", rollback)
-	}
-	if manifest == nil {
-		fmt.Fprintln(stdout, "warning: legacy database-only restore does not include encrypted blobs")
-	} else if blobsExist {
-		fmt.Fprintf(stdout, "previous blob directory preserved for rollback: %s\n", blobRollback)
-	}
-	return nil
-}
-
-func readAndValidateBackupManifest(root string) (instanceBackupManifest, error) {
-	raw, err := os.ReadFile(filepath.Join(root, "manifest.json"))
-	if err != nil {
-		return instanceBackupManifest{}, err
-	}
-	if len(raw) > 1<<20 {
-		return instanceBackupManifest{}, errors.New("backup manifest is too large")
-	}
-	var manifest instanceBackupManifest
-	if err := json.Unmarshal(raw, &manifest); err != nil {
-		return instanceBackupManifest{}, fmt.Errorf("invalid backup manifest: %w", err)
-	}
-	if manifest.Version != "v1" || manifest.DatabaseFile != filepath.Base(manifest.DatabaseFile) || manifest.DatabaseFile == "" || len(manifest.DatabaseSHA256) != 64 {
-		return instanceBackupManifest{}, errors.New("unsupported or invalid backup manifest")
-	}
-	return manifest, nil
-}
-
-func copyFile(src, dst string, mode os.FileMode) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	tmp := dst + ".tmp"
-	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := out.Sync(); err != nil {
-		_ = out.Close()
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := out.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return os.Rename(tmp, dst)
-}
-
 func usage(w io.Writer) {
 	fmt.Fprintln(w, "Veritra server")
-	fmt.Fprintln(w, "commands: serve, init, migrate, backup, restore, doctor, healthcheck, generate-setup-token, reset-owner-password, version")
+	fmt.Fprintln(w, "commands: serve, init, migrate, backup, restore, verify-backup, doctor, healthcheck, generate-setup-token, reset-owner-password, version")
 }
