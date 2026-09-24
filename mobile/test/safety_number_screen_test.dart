@@ -32,7 +32,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('1234 5678 9012'), findsOneWidget);
     expect(find.text('NOT VERIFIED'), findsOneWidget);
-    expect(find.textContaining('Compare this number with @sam'), findsOneWidget);
+    expect(
+        find.textContaining('Compare this number with @sam'), findsOneWidget);
 
     await tester.tap(find.text('Mark as verified'));
     await tester.pumpAndSettle();
