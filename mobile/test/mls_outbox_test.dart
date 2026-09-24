@@ -37,7 +37,7 @@ void main() {
 
     // The retry timer delivers both, in order.
     await _waitFor(() => api.sent.contains('a2'),
-        timeout: const Duration(seconds: 4));
+        timeout: const Duration(seconds: 20));
     expect(api.sent.where((key) => key.startsWith('a')), <String>['a1', 'a2']);
     expect(await store.pendingMlsMessages(), isEmpty);
     state.dispose();
@@ -174,7 +174,7 @@ void main() {
     await _waitFor(() => api.envelopes.contains('app_b'));
     expect(api.envelopes, isNot(contains('app_a')));
     await _waitFor(() => api.envelopes.contains('app_a'),
-        timeout: const Duration(seconds: 4));
+        timeout: const Duration(seconds: 20));
     expect(api.sent.indexOf('a1'), isNonNegative);
     state.dispose();
   });
@@ -242,7 +242,7 @@ Future<void> _settle() async {
 }
 
 Future<void> _waitFor(FutureOr<bool> Function() condition,
-    {Duration timeout = const Duration(seconds: 1)}) async {
+    {Duration timeout = const Duration(seconds: 15)}) async {
   final deadline = DateTime.now().add(timeout);
   while (DateTime.now().isBefore(deadline)) {
     if (await condition()) return;

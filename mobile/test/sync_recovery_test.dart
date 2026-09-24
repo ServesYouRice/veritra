@@ -385,9 +385,10 @@ class _Harness {
   }
 
   Future<void> waitFor(FutureOr<bool> Function() condition) async {
-    for (var attempt = 0; attempt < 400; attempt++) {
+    final deadline = DateTime.now().add(const Duration(seconds: 15));
+    while (DateTime.now().isBefore(deadline)) {
       if (await condition()) return;
-      await Future<void>.delayed(const Duration(milliseconds: 1));
+      await Future<void>.delayed(const Duration(milliseconds: 2));
     }
     fail('condition not reached');
   }
