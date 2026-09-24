@@ -225,9 +225,9 @@ task boundaries and orchestration rules are in
 | I37 | T37A/T37B implemented; T37C safe migration/idle plumbing implemented; rotation and cost promotion deferred; checks pending (Codex, 2026-08-14) | Setup and authentication hardening | — |
 | I38 | Implemented (T38); checks pending (Codex, 2026-08-14) | Safe account export | — |
 | I39 | Implemented and checked (Stage 5, 2026-09-24) | Fail-closed encrypted database key recovery | I32 |
-| I40 | T40A/T40B/T40C/T40D implemented; checks pending (Codex, 2026-08-14); due 2026-08-29 | Release evidence and toolchain integrity | — |
-| I41 | Implemented and checked (Stage 5, 2026-09-24; QA06, QA08); real-device wake matrix waits for G24 (D20) | Push registration and platform readiness | I36 |
-| I42 | T42A implemented; T42B design claimed/proposed, approval pending; checks pending (Codex, 2026-08-14), conditional D03 | Authorized calls and native lifecycle | — |
+| I40 | T40A/T40B/T40C/T40D implemented; checks pending (Codex, 2026-08-14); due 2026-08-29; QA10 coverage gate verified (2026-09-24) | Release evidence and toolchain integrity | — |
+| I41 | Implemented and checked (Stage 5, 2026-09-24; QA06, QA07, QA08); real-device wake matrix waits for G24 (D20) | Push registration and platform readiness | I36 |
+| I42 | T42A implemented and verified (QA03, 2026-09-24); T42B deferred by D16/D20, its design still needs approval then; conditional D03 | Authorized calls and native lifecycle | — |
 | I43 | T43A/T43B/T43C implemented; checks/evidence pending (Codex, 2026-08-14) | First-run and accessibility baseline | — |
 | I44 | Prepared, split before claim | Mobile and API quality | release blockers |
 | I45 | Implemented and checked (Stage 5, 2026-09-24: T45A, T45B, T45C, QA05, QA09) | Backup, restore and migration safety | I29, I39 |
@@ -243,7 +243,7 @@ table. Claim one eligible task under the Ready card, confirm its source paths
 still match current code, run its named checks, then update this board and the
 consensus register.
 
-### I27 - Close upstream HPKE/libcrux advisories (closed 2026-09-24, pending CI)
+### I27 - Close upstream HPKE/libcrux advisories (closed 2026-09-24, CI confirmed)
 
 OpenMLS 0.9.0 stable shipped on 2026-08-25 with hpke-rs 0.7, the upgrade this
 card named as the fix. The exceptions expired on 2026-08-29 and turned the
@@ -270,9 +270,9 @@ Done on 2026-09-24:
 - Notices and `docs/crypto.md` refreshed (205 third-party crates, all
   licensed compatibly).
 
-Still required before production crypto, as part of G25: rerun the
-Android/iOS native builds (CI) and include the upgrade in the independent
-review scope.
+CI on `d75c173` rebuilt the Android and iOS native libraries with the
+upgrade. Still required before production crypto, as part of G25: include the
+upgrade in the independent review scope.
 
 ### I24 - Signed builds and real-device verification (external)
 

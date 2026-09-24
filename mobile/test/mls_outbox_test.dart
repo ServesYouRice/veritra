@@ -178,6 +178,22 @@ void main() {
     expect(api.sent.indexOf('a1'), isNonNegative);
     state.dispose();
   });
+
+  test('a retry that falls due while it is being scheduled still goes out',
+      () async {
+    final store = _SlowAfterFailureStore();
+    await store.saveSession(_session);
+    await _queue(store, <PendingMlsMessage>[_commit('a1', 'conv_a')]);
+    final api = _OutboxApi()
+      ..failures['a1'] = <Object>[ApiException(503, ''), ApiException(503, '')];
+    final state = await _start(api, store);
+    // The first retry runs from its timer after startup has settled. When
+    // it fails, the scheduler reads the queue only after the next backoff
+    // has passed; that retry must still be timed, not left for a wake.
+    await _waitFor(() => api.sent.contains('a1'));
+    expect(await store.pendingMlsMessages(), isEmpty);
+    state.dispose();
+  });
 }
 
 const _session = Session(
@@ -364,4 +380,34 @@ class _QuietSync implements SyncService {
 
   @override
   void dispose() => _controller.close();
+}
+
+/// From the second recorded failure on, every queue read returns only once
+/// that retry is already due, the way a busy device can.
+class _SlowAfterFailureStore extends MemoryLocalStore {
+  int _failures = 0;
+
+  @override
+  Future<void> recordMlsOutboxFailure(
+    String idempotencyKey, {
+    required String failureClass,
+    required bool terminal,
+    DateTime? nextAttemptAt,
+  }) async {
+    await super.recordMlsOutboxFailure(idempotencyKey,
+        failureClass: failureClass,
+        terminal: terminal,
+        nextAttemptAt: nextAttemptAt);
+    _failures++;
+  }
+
+  @override
+  Future<List<PendingMlsMessage>> pendingMlsMessages() async {
+    if (_failures >= 2) {
+      final messages = await super.pendingMlsMessages();
+      await Future<void>.delayed(const Duration(milliseconds: 2500));
+      return messages;
+    }
+    return super.pendingMlsMessages();
+  }
 }

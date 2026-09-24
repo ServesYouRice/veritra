@@ -2904,16 +2904,30 @@ class AppState extends ChangeNotifier {
     _outboxRetryTimer = null;
     if (_disposed || session == null || api == null) return;
     final records = await localStore.pendingEnvelopeRecords();
+    // Held-back conversations wait for the MLS worker, which flushes when
+    // it finishes; scheduling them here would spin.
+    final heldBack = _mlsCrypto == null
+        ? const <String>{}
+        : (await localStore.pendingMlsMessages())
+            .map((message) => message.conversationId)
+            .toSet();
     final now = DateTime.now().toUtc();
     DateTime? earliest;
     for (final record in records) {
       final due = record.nextAttemptAt;
-      if (record.terminal || due == null || !due.isAfter(now)) continue;
+      if (record.terminal ||
+          due == null ||
+          heldBack.contains(record.envelope.conversationId)) {
+        continue;
+      }
+      // A retry that fell due since the flush looked is scheduled at
+      // once; skipping it would strand it until the next wake.
       if (earliest == null || due.isBefore(earliest)) earliest = due;
     }
-    if (earliest == null) return;
+    if (earliest == null || _disposed) return;
     final delay = earliest.difference(now);
-    _outboxRetryTimer = Timer(delay.isNegative ? Duration.zero : delay, () {
+    _outboxRetryTimer =
+        Timer(delay < _minimumRetryDelay ? _minimumRetryDelay : delay, () {
       _outboxRetryTimer = null;
       unawaited(_flushOutbox());
     });
@@ -3095,6 +3109,10 @@ class AppState extends ChangeNotifier {
 
   static const _reconcileFallback = Duration(minutes: 3);
 
+  /// A floor on retry timers, so an item a pass cannot send yet never
+  /// turns the retry timer into a busy loop.
+  static const _minimumRetryDelay = Duration(milliseconds: 100);
+
   static String _pendingChangeKey(MlsPendingChange change) => <String>[
         change.conversationId,
         '${change.epoch}',
@@ -3137,15 +3155,25 @@ class AppState extends ChangeNotifier {
     } catch (_) {
       return;
     }
+    // Only the head of each conversation can be sent next; a conversation
+    // with a terminal message stays paused. A head that fell due since the
+    // worker looked is scheduled at once, or it would wait for the next
+    // wake.
+    final heads = <String, PendingMlsMessage>{};
+    for (final message in messages) {
+      heads.putIfAbsent(message.conversationId, () => message);
+    }
     final now = DateTime.now().toUtc();
     DateTime? earliest;
-    for (final message in messages) {
-      final due = message.nextAttemptAt;
-      if (message.terminal || due == null || !due.isAfter(now)) continue;
+    for (final head in heads.values) {
+      final due = head.nextAttemptAt;
+      if (head.terminal || due == null) continue;
       if (earliest == null || due.isBefore(earliest)) earliest = due;
     }
     if (earliest == null || _disposed) return;
-    _mlsOutboxRetryTimer = Timer(earliest.difference(now), () {
+    final delay = earliest.difference(now);
+    _mlsOutboxRetryTimer =
+        Timer(delay < _minimumRetryDelay ? _minimumRetryDelay : delay, () {
       _mlsOutboxRetryTimer = null;
       unawaited(_flushMlsOutbox());
     });

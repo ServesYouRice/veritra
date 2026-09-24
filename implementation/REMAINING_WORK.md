@@ -87,7 +87,7 @@ Recheck the board before every claim. The model column replaces the repeated
 | T37C | Partial; policy/toolchain deferred | Strong | Approval and benchmark evidence |
 | T39 | Implemented and checked (Stage 5) | Strong | — |
 | T41 | Implemented and checked (Stage 5); device matrix under G24 | Balanced+advisor | G24 for devices |
-| T42B | Design claimed; native edits blocked pending approval | Strong | Explicit platform-design approval |
+| T42B | Deferred by D16/D20 until the demos and all three phases are done; design claimed, native edits need approval then | Strong | D20, then explicit platform-design approval |
 | T43C | Implementation present; automated/device evidence remains | Balanced+advisor | Toolchain and G24 environment |
 | T44A-C | Prepared after release blockers | Balanced | Release blockers |
 | T45A-C | Implemented and checked (Stage 5) | Strong | — |
@@ -98,7 +98,7 @@ Recheck the board before every claim. The model column replaces the repeated
 | T50 | Deferred | Strong after trigger | D10/D19, all demos, product trigger |
 | G24 | External | Coordinator/platform specialists | Code blockers, hardware, signing, providers, TURN |
 | G25 | External | Independent reviewer | G24, G27, all release blockers |
-| G27 | Closed 2026-09-24 by OpenMLS 0.9.0 (D13); CI confirmation pending | Strong | — |
+| G27 | Closed 2026-09-24 by OpenMLS 0.9.0 (D13); CI confirmed on `d75c173`, including the Android and iOS native builds | Strong | — |
 
 ### Reviewed QA follow-ups
 
@@ -110,14 +110,14 @@ are children of canonical cards and cannot bypass their dependencies.
 |---|---|---|
 | QA01 | I40/T40C/T40D | Working-tree implementation present on `gemini-implementation`; verify before recording |
 | QA02 | I40/G24 | Blocked until evidence-schema approval; QA01 first |
-| QA03 | I42/T42A | Working-tree implementation present on `gemini-implementation`; verify before recording |
-| QA04 | I17/G24 | Working-tree implementation present on `gemini-implementation`; verify native-library execution |
+| QA03 | I42/T42A | Done 2026-09-24 (PR #67): exact call JSON, latest-session reject, and the live two-account flow pass in CI |
+| QA04 | I17/G24 | Done 2026-09-24 (PR #67): `mobile/test/attachment_crypto_test.dart` passes against the real native library |
 | QA05 | T45C | Done in Stage 5 (`mobile/test/backup_service_test.dart`) |
 | QA06 | T41 | Done in Stage 5 (`server/internal/push/provider_contract_test.go`) |
-| QA07 | T41 | Blocked until I41 and QA06 are eligible |
+| QA07 | T41 | Done 2026-09-24 (`server/internal/app/push_delivery_test.go`); test-only, no retry, lease, store or schema change |
 | QA08 | T41 | Done in Stage 5 (`mobile/test/push_service_test.dart`) |
 | QA09 | T45A | Done in Stage 5 (`server/internal/storage/migration_history_test.go`) |
-| QA10 | I40/T47 | Working-tree implementation present on `gemini-implementation`; verify approved floors/tooling status |
+| QA10 | I40/T47 | Done 2026-09-24 (PR #67): D18 floors plus required security-relevant sources in CI and `verify.sh` |
 
 Do not run QA01, QA02, and QA10 concurrently because their CI/script write
 sets overlap. Do not run QA04 and QA05 concurrently.
@@ -691,9 +691,9 @@ Run the complete release matrix, native ABI/vector suites, and
 
 ### G27 — OpenMLS/HPKE advisory closure
 
-**Status 2026-09-24:** done by the OpenMLS 0.9.0 upgrade (D13): no advisory
-exceptions remain and `scripts/audit-rust.sh` passes with none. Close the card
-once CI confirms, including the Android/iOS native builds. The contract below
+**Status 2026-09-24:** closed. The OpenMLS 0.9.0 upgrade (D13) left no advisory
+exceptions and `scripts/audit-rust.sh` passes with none. CI on `d75c173`
+confirmed it, including the Android/iOS native builds. The contract below
 is kept for any future advisory.
 
 Recheck coordinated stable upstream versions before the 2026-08-29 exception
