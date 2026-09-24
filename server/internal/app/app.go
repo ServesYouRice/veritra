@@ -417,7 +417,9 @@ func (a *App) drainPushWakeBatch(ctx context.Context, provider string) bool {
 	jobs, abandoned, err := a.Store.ClaimPushWakeJobs(ctx, provider, pushWakeBatchSize, time.Now().UTC(), pushWakeLease)
 	metric := a.metrics.push[provider]
 	if err != nil {
-		a.Log.Warn("push_wake_claim_failed", "provider", provider, "err", err)
+		if ctx.Err() == nil {
+			a.Log.Warn("push_wake_claim_failed", "provider", provider, "err", err)
+		}
 		return false
 	}
 	if abandoned > 0 {
@@ -489,25 +491,31 @@ func (a *App) deliverPushWake(ctx context.Context, metric *pushDeliveryMetrics, 
 	})
 	cancel()
 	if err == nil {
+		// The provider accepted the wake, so it counts as delivered even if
+		// the job cannot be removed. The job then stays leased and is sent
+		// again after the lease; a repeated generic wake only makes the
+		// device sync once more.
+		metric.delivered.Add(1)
 		completionCtx, completionCancel := context.WithTimeout(ctx, 2*time.Second)
 		completeErr := a.Store.CompletePushWakeJob(completionCtx, job)
 		completionCancel()
-		if completeErr == nil {
-			metric.delivered.Add(1)
-			return
+		if completeErr != nil {
+			a.Log.Warn("push_wake_completion_failed", "provider", job.Provider, "err", completeErr)
 		}
-		metric.failed.Add(1)
-		a.Log.Warn("push_wake_completion_failed", "provider", job.Provider, "err", completeErr)
 		return
 	}
 	if errors.Is(err, push.ErrSubscriptionGone) || errors.Is(err, push.ErrInvalidTarget) {
 		retireCtx, retireCancel := context.WithTimeout(ctx, 2*time.Second)
 		retireErr := a.Store.RetirePushWakeSubscription(retireCtx, job)
 		retireCancel()
-		metric.abandoned.Add(1)
 		if retireErr != nil {
+			// The job stays leased and is tried again after the lease, so
+			// it is not abandoned yet; the retry retires it.
+			metric.failed.Add(1)
 			a.Log.Warn("push_wake_retire_failed", "provider", job.Provider, "err", retireErr)
+			return
 		}
+		metric.abandoned.Add(1)
 		return
 	}
 	if errors.Is(err, context.Canceled) && ctx.Err() != nil {
@@ -546,6 +554,10 @@ func pushWakeRetryDelay(attempts int) time.Duration {
 }
 
 func (a *App) updatePushWakeMetrics(ctx context.Context) {
+	// On shutdown the read would only fail; the gauge keeps its last value.
+	if ctx.Err() != nil {
+		return
+	}
 	backlog, err := a.Store.PushWakeBacklog(ctx, time.Now().UTC())
 	if err != nil {
 		a.Log.Warn("push_wake_backlog_read_failed", "err", err)
