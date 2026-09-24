@@ -5,6 +5,7 @@ import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/client_config.dart';
 import 'package:private_messenger/core/transport_policy.dart';
+import 'package:private_messenger/crypto/backup_service.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
@@ -146,6 +147,31 @@ void main() {
         timeout: const Duration(seconds: 90));
     await offline.waitUntil(() async => offline.state.pendingFor(conv).isEmpty,
         timeout: const Duration(seconds: 90));
+
+    // Encrypted backup (card I45): the owner backs up, a fresh device
+    // restores it and carries on with the owner's history and groups.
+    final code = await owner.state.createBackup();
+    owner.expectOk();
+    expect(owner.state.errorFor(Ops.backup), isNull,
+        reason: owner.state.errorFor(Ops.backup));
+    expect(code, isNotNull);
+    final ownerAccountId = owner.accountId;
+    owner.dispose();
+    await owner.state.logout();
+    final replacement = _DemoClient(bindings, baseUrl);
+    addTearDown(replacement.dispose);
+    expect(await replacement.state.restoreFromBackup(code!), isTrue,
+        reason: replacement.state.errorFor(Ops.restore));
+    expect(replacement.state.session?.accountId, ownerAccountId);
+    expect((await replacement.store.loadMessages(conv)).map((m) => m.body),
+        contains('hi owner'));
+    expect(await offline.state.sendMessageTo(conv, 'after restore'), isTrue);
+    await replacement.waitFor(conv, (m) => m.body == 'after restore',
+        timeout: const Duration(seconds: 60));
+    // The code is used up.
+    final again = _DemoClient(bindings, baseUrl);
+    addTearDown(again.dispose);
+    expect(await again.state.restoreFromBackup(code), isFalse);
   }, skip: skip, timeout: const Timeout(Duration(minutes: 6)));
 }
 
@@ -202,11 +228,17 @@ class _Server {
 class _DemoClient {
   _DemoClient(this.bindings, this.baseUrl, {MemoryLocalStore? store})
       : store = store ?? MemoryLocalStore() {
+    final backups = Directory.systemTemp.createTempSync('veritra-e2e-backup-');
     state = AppState(
       apiClientFactory: (url) => ApiClient(baseUrl: url),
       cryptoService:
           NativeCryptoService(bindings: bindings, localStore: this.store),
       localStore: this.store,
+      backupService: BackupService(
+        bindings: bindings,
+        localStore: this.store,
+        directoryProvider: () async => backups,
+      ),
       syncServiceFactory: (url, token) =>
           WebSocketSyncService(baseUrl: url, token: token),
       config: const ClientConfig(

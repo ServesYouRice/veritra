@@ -7,6 +7,7 @@ import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../crypto/app_payload.dart';
+import '../crypto/backup_service.dart';
 import '../crypto/mls_commit_bundle.dart';
 import '../crypto/crypto_service.dart';
 import '../push/push_service.dart';
@@ -108,6 +109,8 @@ class IncomingCallSignal {
 /// for one operation must not disable unrelated controls.
 class Ops {
   static const send = 'send';
+  static const backup = 'backup';
+  static const restore = 'restore';
   static const members = 'members';
   static const blocks = 'blocks';
   static const mute = 'mute';
@@ -121,8 +124,13 @@ class AppState extends ChangeNotifier {
     required this.localStore,
     required this.syncServiceFactory,
     MobilePushService? pushService,
+    this.backupService,
     this.config = ClientConfig.production,
   }) : pushService = pushService ?? DisabledMobilePushService();
+
+  /// Encrypted backup and restore (card I45). Null in builds without the
+  /// MLS service, where there is nothing to back up.
+  final BackupService? backupService;
 
   final ApiClientFactory apiClientFactory;
   final ClientConfig config;
@@ -262,6 +270,67 @@ class AppState extends ChangeNotifier {
   /// Adding members and linking devices work in every build since card I51:
   /// group devices add new member devices to the MLS group themselves.
   bool get membershipChangesAvailable => true;
+
+  /// Backups need the MLS service and a backup service (card I45).
+  bool get backupAvailable => backupService != null && _mlsCrypto != null;
+
+  /// When this device last made a backup, once loaded.
+  DateTime? lastBackupAt;
+
+  Future<void> refreshBackupStatus() async {
+    if (!backupAvailable || session == null) return;
+    lastBackupAt = await localStore.loadLastBackupAt();
+    notifyListeners();
+  }
+
+  /// Makes an encrypted backup of this device, uploads it, and returns the
+  /// recovery code, or null on failure (see [errorFor] with [Ops.backup]).
+  /// The code is shown once and never stored; a new backup replaces the
+  /// previous one and its code.
+  Future<String?> createBackup() async {
+    String? code;
+    await _runScoped(Ops.backup, () async {
+      final current = session;
+      final client = api;
+      final service = backupService;
+      if (current == null || client == null || service == null) return;
+      try {
+        code = await service.createAndUpload(client, current.token);
+      } on ApiException catch (error) {
+        if (error.statusCode == 401) rethrow;
+        throw BackupException(error.statusCode == 507
+            ? BackupFailureKind.tooLarge
+            : error.statusCode >= 500
+                ? BackupFailureKind.network
+                : BackupFailureKind.storage);
+      } on SocketException {
+        throw const BackupException(BackupFailureKind.network);
+      } on TimeoutException {
+        throw const BackupException(BackupFailureKind.network);
+      }
+      final now = DateTime.now().toUtc();
+      await localStore.saveLastBackupAt(now);
+      lastBackupAt = now;
+    });
+    return code;
+  }
+
+  /// Restores a backup onto this empty device and signs it in (card I45).
+  /// Returns false with a typed error under [Ops.restore]; an interrupted
+  /// download continues on the next attempt.
+  Future<bool> restoreFromBackup(String recoveryCode) {
+    return _runScoped(Ops.restore, () async {
+      final service = backupService;
+      if (service == null) {
+        throw const BackupException(BackupFailureKind.storage);
+      }
+      if (session != null) {
+        throw const BackupException(BackupFailureKind.deviceNotEmpty);
+      }
+      await service.recover(recoveryCode);
+      await _tryRestoreSession();
+    });
+  }
 
   /// Reply, edit, delete and reactions need the MLS service (D22).
   bool get messageActionsAvailable => _mlsCrypto != null;

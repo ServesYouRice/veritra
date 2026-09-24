@@ -87,3 +87,10 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   group. Application envelopes carry `mls_epoch` in `crypto_metadata` (the
   epoch is already visible in the MLS header), which the server uses to
   withhold older-epoch messages from devices that joined later.
+- **Stage 5, I45 (2026-09-24):** the mobile backup plaintext is format
+  version 2: it adds the decrypted history and reactions (D27) to the
+  identity, MLS state and queues it already carried; version 1 still
+  restores. Encryption is unchanged (chunked AES-256-GCM with a device-held
+  key; the server sees only ciphertext and a recovery-token hash). Recovery
+  downloads may resume from any offset the server has sent, and the
+  capability is still consumed only when a transfer reaches the end.

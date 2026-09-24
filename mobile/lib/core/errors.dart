@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'api_client.dart';
+import '../crypto/backup_service.dart';
 import '../storage/local_store.dart';
 
 /// Sending is refused because the server rejected an MLS control message
@@ -22,6 +23,9 @@ String describeError(Object error) {
   if (error is OutboxFullException) {
     return 'Your encrypted message queue is full. Send or discard a pending '
         'message before composing another.';
+  }
+  if (error is BackupException) {
+    return error.message;
   }
   if (error is ConversationPausedException) {
     return 'Sending is paused in this conversation because the server '

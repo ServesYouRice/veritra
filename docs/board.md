@@ -224,7 +224,7 @@ task boundaries and orchestration rules are in
 | I42 | T42A implemented; T42B design claimed/proposed, approval pending; checks pending (Codex, 2026-08-14), conditional D03 | Authorized calls and native lifecycle | — |
 | I43 | T43A/T43B/T43C implemented; checks/evidence pending (Codex, 2026-08-14) | First-run and accessibility baseline | — |
 | I44 | Prepared, split before claim | Mobile and API quality | release blockers |
-| I45 | Blocked by I29/I39, required by D02 | Backup, restore and migration safety | I29, I39 |
+| I45 | Implemented and checked (Stage 5, 2026-09-24: T45A, T45B, T45C, QA05, QA09) | Backup, restore and migration safety | I29, I39 |
 | I46 | Prepared | Supported deployment hardening | — |
 | I47 | Prepared, conditional | Operational visibility and capacity evidence | I35, I36 |
 | I48 | Prepared | Transport, realtime and logging hardening | I32 |

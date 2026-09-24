@@ -7,6 +7,7 @@ import 'core/api_client.dart';
 import 'core/app_state.dart';
 import 'core/client_config.dart';
 import 'core/transport_policy.dart';
+import 'crypto/backup_service.dart';
 import 'crypto/native_crypto_bindings.dart';
 import 'crypto/native_crypto_service.dart';
 import 'main.dart' show VeritraApp;
@@ -45,13 +46,26 @@ Future<void> main(List<String> args) async {
   }
   final localStore =
       SecureLocalStore(namespace: profile == null ? 'demo' : 'demo-$profile');
+  final bindings = NativeCryptoBindings.load();
   final state = AppState(
     apiClientFactory: (baseUrl) => ApiClient(baseUrl: baseUrl),
     cryptoService: NativeCryptoService(
-      bindings: NativeCryptoBindings.load(),
+      bindings: bindings,
       localStore: localStore,
     ),
     localStore: localStore,
+    backupService: BackupService(
+      bindings: bindings,
+      localStore: localStore,
+      clientFactory: (baseUrl) {
+        // A recovery code names its server; demo builds still accept only
+        // HTTPS or loopback (D12).
+        if (!TransportPolicy.demo.allows(baseUrl)) {
+          throw StateError('recovery code names a server this build refuses');
+        }
+        return ApiClient(baseUrl: baseUrl);
+      },
+    ),
     syncServiceFactory: (baseUrl, token) =>
         WebSocketSyncService(baseUrl: baseUrl, token: token),
     pushService: Platform.isAndroid || Platform.isIOS

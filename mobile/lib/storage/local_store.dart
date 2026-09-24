@@ -230,7 +230,13 @@ class LocalBackupData {
     required this.outbox,
     required this.mlsOutbox,
     required this.cryptoState,
+    this.history = const <LocalMessage>[],
+    this.reactions = const <LocalMessageReaction>[],
   });
+
+  /// Decrypted history (D27). Empty in a version 1 backup.
+  final List<LocalMessage> history;
+  final List<LocalMessageReaction> reactions;
 
   final Session session;
   final int cursor;
@@ -330,6 +336,10 @@ abstract class LocalStore {
   /// retried in a loop, and it is removed with the device identity.
   Future<void> saveSyncRecovery(SyncRecovery? recovery);
   Future<SyncRecovery?> loadSyncRecovery();
+
+  /// When this device last made an encrypted backup (card I45).
+  Future<void> saveLastBackupAt(DateTime at);
+  Future<DateTime?> loadLastBackupAt();
   Future<void> acquireSyncLease(LocalSyncLease lease);
   Future<void> releaseSyncLease(LocalSyncLease lease);
   Future<bool> hasProcessedMlsMessage(String messageId);
@@ -396,6 +406,14 @@ class MemoryLocalStore implements LocalStore {
   final _MemoryMessageHistory _history = _MemoryMessageHistory();
   String? _syncLeaseKey;
   SyncRecovery? _syncRecovery;
+  DateTime? _lastBackupAt;
+
+  @override
+  Future<void> saveLastBackupAt(DateTime at) async =>
+      _lastBackupAt = at.toUtc();
+
+  @override
+  Future<DateTime?> loadLastBackupAt() async => _lastBackupAt;
 
   @override
   Future<void> saveSyncRecovery(SyncRecovery? recovery) async {
@@ -426,6 +444,7 @@ class MemoryLocalStore implements LocalStore {
       _history.clear();
       _syncLeaseKey = null;
       _syncRecovery = null;
+      _lastBackupAt = null;
     }
     _session = session;
   }
@@ -741,6 +760,8 @@ class MemoryLocalStore implements LocalStore {
       outbox: List<MessageEnvelope>.from(_outbox),
       mlsOutbox: _mlsOutbox.values.toList(growable: false),
       cryptoState: _copyCryptoState(state),
+      history: _history.allMessages(),
+      reactions: _history.allReactions(),
     ));
   }
 
@@ -772,7 +793,7 @@ class MemoryLocalStore implements LocalStore {
           backup.mlsOutbox.map((item) => MapEntry(item.idempotencyKey, item)));
     _cryptoState = _copyCryptoState(backup.cryptoState);
     _processedMlsMessages.clear();
-    _history.clear();
+    _history.replace(backup.history, backup.reactions);
   }
 
   @override
@@ -810,6 +831,7 @@ class MemoryLocalStore implements LocalStore {
     _history.clear();
     _syncLeaseKey = null;
     _syncRecovery = null;
+    _lastBackupAt = null;
     await clearCachedState();
   }
 
@@ -837,6 +859,23 @@ class _MemoryMessageHistory {
   final Map<String, LocalMessage> _messages = <String, LocalMessage>{};
   final Map<String, LocalMessageReaction> _reactions =
       <String, LocalMessageReaction>{};
+
+  List<LocalMessage> allMessages() => _messages.values.toList(growable: false);
+
+  List<LocalMessageReaction> allReactions() =>
+      _reactions.values.toList(growable: false);
+
+  void replace(
+      List<LocalMessage> messages, List<LocalMessageReaction> reactions) {
+    clear();
+    for (final message in messages) {
+      _messages[message.key] = message;
+    }
+    for (final reaction in reactions) {
+      _reactions['${reaction.targetKey}\u0000${reaction.reactorAccountId}'] =
+          reaction;
+    }
+  }
 
   void clear() {
     _messages.clear();
@@ -1003,6 +1042,18 @@ class SecureLocalStore implements LocalStore {
           EncryptedLocalDatabase.syncRecoveryName, recovery.encode());
     }
   }
+
+  @override
+  Future<void> saveLastBackupAt(DateTime at) async =>
+      (await _database()).writeMetadata(
+          EncryptedLocalDatabase.lastBackupName, at.toUtc().toIso8601String());
+
+  @override
+  Future<DateTime?> loadLastBackupAt() async =>
+      DateTime.tryParse(await (await _database())
+                  .readMetadata(EncryptedLocalDatabase.lastBackupName) ??
+              '')
+          ?.toUtc();
 
   @override
   Future<SyncRecovery?> loadSyncRecovery() async =>
@@ -1419,6 +1470,8 @@ class SecureLocalStore implements LocalStore {
       outbox: await pendingEnvelopes(),
       mlsOutbox: await pendingMlsMessages(),
       cryptoState: state,
+      history: await (await _database()).readAllMessages(),
+      reactions: await (await _database()).readAllReactions(),
     ));
   }
 
@@ -1472,6 +1525,8 @@ class SecureLocalStore implements LocalStore {
         sealedState: backup.cryptoState.sealedState
       ),
       cursor: backup.cursor,
+      history: backup.history,
+      reactions: backup.reactions,
     );
   }
 
@@ -2027,7 +2082,11 @@ StoredCryptoState _copyCryptoState(StoredCryptoState state) =>
 
 List<int> _encodeBackup(LocalBackupData data) => utf8.encode(jsonEncode(
       <String, Object?>{
-        'version': 1,
+        'version': 2,
+        // Decrypted history (D27). Local only: the backup is encrypted with
+        // a key the server never sees.
+        'history': data.history.map((item) => item.toJson()).toList(),
+        'reactions': data.reactions.map((item) => item.toJson()).toList(),
         'account_id': data.session.accountId,
         'device_id': data.session.deviceId,
         'session': _sessionJson(data.session),
@@ -2066,8 +2125,22 @@ LocalBackupData _decodeBackup(List<int> encoded) {
   try {
     final root = Map<String, Object?>.from(
         jsonDecode(utf8.decode(encoded, allowMalformed: false)) as Map);
-    if (root['version'] != 1)
+    final version = root['version'];
+    if (version != 1 && version != 2) {
       throw const FormatException('unsupported backup version');
+    }
+    final history = version == 1
+        ? const <LocalMessage>[]
+        : (root['history'] as List)
+            .map((item) =>
+                LocalMessage.fromJson(Map<String, dynamic>.from(item as Map)))
+            .toList(growable: false);
+    final reactions = version == 1
+        ? const <LocalMessageReaction>[]
+        : (root['reactions'] as List)
+            .map((item) => LocalMessageReaction.fromJson(
+                Map<String, dynamic>.from(item as Map)))
+            .toList(growable: false);
     final session = _sessionFrom(root['session']);
     final crypto = _cryptoStateFrom(root['crypto_state']);
     if (session == null ||
@@ -2114,7 +2187,9 @@ LocalBackupData _decodeBackup(List<int> encoded) {
         messages: messages,
         outbox: outbox,
         mlsOutbox: mlsOutbox,
-        cryptoState: crypto);
+        cryptoState: crypto,
+        history: history,
+        reactions: reactions);
   } catch (error) {
     if (error is FormatException) rethrow;
     throw const FormatException('invalid backup encoding');

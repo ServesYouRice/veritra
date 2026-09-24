@@ -800,7 +800,10 @@ func (s *Store) BeginRecoveryTransfer(ctx context.Context, recoveryTokenHash []b
 	if lease.Valid && parseTime(leaseExpiresAt.String).After(now) {
 		return RecoveryTransfer{}, ErrRecoveryBusy
 	}
-	if start != nextOffset {
+	// A resume may start at or before the recorded offset: bytes the server
+	// wrote are not always bytes the client received (card I45). Only a
+	// transfer that reaches the end consumes the capability.
+	if start > nextOffset {
 		return RecoveryTransfer{}, ErrRecoveryRange
 	}
 	leaseDeadline := now.Add(RecoveryLeaseLifetime)
@@ -824,7 +827,7 @@ func (s *Store) BeginRecoveryTransfer(ctx context.Context, recoveryTokenHash []b
 		return RecoveryTransfer{}, err
 	}
 	transfer.LeaseID = leaseID
-	transfer.StartOffset = nextOffset
+	transfer.StartOffset = start
 	return transfer, nil
 }
 
@@ -844,30 +847,34 @@ func (s *Store) CompleteRecoveryTransfer(ctx context.Context, leaseID string, st
 	var nextOffset, sizeBytes int64
 	now := time.Now().UTC()
 	if err := tx.QueryRowContext(ctx, `SELECT id, recovery_next_offset, size_bytes
-		FROM backup_blobs WHERE recovery_lease_id = ? AND recovery_next_offset = ?
+		FROM backup_blobs WHERE recovery_lease_id = ? AND recovery_next_offset >= ?
 		AND recovery_lease_expires_at > ?`, leaseID, startOffset, formatTime(now)).Scan(&id, &nextOffset, &sizeBytes); errors.Is(err, sql.ErrNoRows) {
 		return ErrRecoveryBusy
 	} else if err != nil {
 		return err
 	}
-	if nextOffset > sizeBytes || bytesWritten > sizeBytes-nextOffset {
+	if nextOffset > sizeBytes || startOffset > sizeBytes || bytesWritten > sizeBytes-startOffset {
 		return ErrInvalidInput
 	}
-	newOffset := nextOffset + bytesWritten
+	reached := startOffset + bytesWritten
+	newOffset := nextOffset
+	if reached > newOffset {
+		newOffset = reached
+	}
 	var query string
 	var args []interface{}
-	if bytesWritten == expected && newOffset == sizeBytes {
+	if bytesWritten == expected && reached == sizeBytes {
 		query = `UPDATE backup_blobs SET recovery_token_hash = NULL,
 			recovery_next_offset = ?, recovery_lease_id = NULL,
 			recovery_lease_expires_at = NULL WHERE recovery_lease_id = ?
 			AND recovery_next_offset = ? AND recovery_lease_expires_at > ?`
-		args = []interface{}{newOffset, leaseID, startOffset, formatTime(now)}
+		args = []interface{}{newOffset, leaseID, nextOffset, formatTime(now)}
 	} else {
 		query = `UPDATE backup_blobs SET recovery_next_offset = ?,
 			recovery_lease_id = NULL, recovery_lease_expires_at = NULL
 			WHERE recovery_lease_id = ? AND recovery_next_offset = ?
 			AND recovery_lease_expires_at > ?`
-		args = []interface{}{newOffset, leaseID, startOffset, formatTime(now)}
+		args = []interface{}{newOffset, leaseID, nextOffset, formatTime(now)}
 	}
 	result, err := tx.ExecContext(ctx, query, args...)
 	if err != nil {

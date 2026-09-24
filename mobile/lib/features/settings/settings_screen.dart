@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/app_state.dart';
+import 'backup_screen.dart';
 import '../../core/models.dart';
 import '../../ui/avatar.dart';
 import '../../ui/format.dart';
@@ -213,16 +214,35 @@ class SettingsScreen extends StatelessWidget {
                   ),
                 ],
               ),
+              if (state.backupAvailable) ...<Widget>[
+                const SectionHeader('Recovery'),
+                TileGroup(
+                  children: <Widget>[
+                    ListTile(
+                      leading: const Icon(Icons.key_outlined),
+                      title: const Text('Encrypted backup'),
+                      subtitle: const Text('Backup & recovery code'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => BackupScreen(state: state),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               const SectionHeader('Coming soon'),
-              const TileGroup(
+              TileGroup(
                 children: <Widget>[
-                  ListTile(
-                    enabled: false,
-                    leading: Icon(Icons.key_outlined),
-                    title: Text('Recovery'),
-                    subtitle: Text('Encrypted backup & recovery key'),
-                  ),
-                  ListTile(
+                  if (!state.backupAvailable)
+                    const ListTile(
+                      enabled: false,
+                      leading: Icon(Icons.key_outlined),
+                      title: Text('Recovery'),
+                      subtitle: Text('Encrypted backup & recovery key'),
+                    ),
+                  const ListTile(
                     enabled: false,
                     leading: Icon(Icons.video_call_outlined),
                     title: Text('Calls'),

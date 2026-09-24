@@ -273,6 +273,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   static const outboxDraftPrefix = 'outbox.draft.';
   static const syncLeaseName = 'sync.owner.lease';
   static const syncRecoveryName = 'sync.recovery';
+  static const lastBackupName = 'backup.last_created_at';
 
   @override
   int get schemaVersion => 8;
@@ -350,8 +351,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           await customStatement('DELETE FROM local_metadata WHERE name LIKE ?',
               <Object?>['$outboxDraftPrefix%']);
           await (delete(localMetadata)
-                ..where((table) =>
-                    table.name.isIn(<String>[syncLeaseName, syncRecoveryName])))
+                ..where((table) => table.name.isIn(<String>[
+                      syncLeaseName,
+                      syncRecoveryName,
+                      lastBackupName,
+                    ])))
               .go();
           await delete(localCryptoStates).go();
           await into(localSyncStates).insertOnConflictUpdate(
@@ -493,15 +497,23 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
       List<int> sealedState
     }) cryptoState,
     required int cursor,
+    List<LocalMessage> history = const <LocalMessage>[],
+    List<LocalMessageReaction> reactions = const <LocalMessageReaction>[],
   }) =>
       transaction(() async {
         await delete(localMlsTransitions).go();
         await delete(localMlsOutboxEntries).go();
         await delete(localPeerVerifications).go();
-        // Backups do not carry decrypted history yet (D27, I45); the
-        // restored identity starts with an empty local history.
+        // Decrypted history travels in the backup (D27, I45); a version 1
+        // backup without it restores an empty history.
         await delete(localMessages).go();
         await delete(localMessageReactions).go();
+        for (final message in history) {
+          await into(localMessages).insert(message);
+        }
+        for (final reaction in reactions) {
+          await into(localMessageReactions).insert(reaction);
+        }
         await delete(localOutboxEntries).go();
         await delete(localCiphertextEnvelopes).go();
         await delete(localConversations).go();
@@ -1283,6 +1295,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   /// Decrypted history for one conversation, oldest first. Action rows
   /// (edits, deletes, reactions) are included so callers can hide their
   /// envelopes.
+  Future<List<LocalMessage>> readAllMessages() => select(localMessages).get();
+
+  Future<List<LocalMessageReaction>> readAllReactions() =>
+      select(localMessageReactions).get();
+
   Future<List<LocalMessage>> readMessages(String conversationId) =>
       (select(localMessages)
             ..where((table) => table.conversationId.equals(conversationId))

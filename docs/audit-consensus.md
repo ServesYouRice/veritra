@@ -606,6 +606,42 @@ backup/recovery UI instead of a dead “Coming soon” item.
 archive, missing blob, permission failure and process death leave the original
 instance recoverable; a clean-host restore and mobile recovery flow pass.
 
+**Implementation note (Stage 5, 2026-09-24):**
+- *T45A:* backup and restore stage in invocation-owned directories carrying a
+  `.veritra-staging` marker, and only marked directories are ever removed.
+  Files and directories are fsynced before renaming, and free space is checked
+  first. Restore writes `.veritra-restore-journal.json` before moving anything
+  live; every database-opening command settles an interrupted restore
+  (unfinished: rolled back; finished: kept) and refuses a damaged or foreign
+  journal. The live WAL/SHM files now move with the preserved database instead
+  of being deleted. Fault tests cover disk-full, permission and crash at every
+  step, corrupt/missing/path-escaping blobs, foreign pre-existing paths and
+  concurrent backups.
+- *QA09:* databases built through migrations 0020, 0023 and 0027 upgrade with
+  their rows and backfills intact, and a failing migration leaves neither its
+  schema change nor its record.
+- *T45B:* `scheduled-backup` runs backup, a disposable restore drill
+  (`verify-backup`), a verified off-host copy to a host-mounted directory
+  (credentials stay with the mount), and retention pruning. Success is
+  recorded only after the drill passes; content-free metrics report backup
+  age and consecutive failures. A daily systemd timer and a compose profile
+  are provided; RPO/RTO and alert thresholds are in `operations.md`.
+- *T45C:* the mobile backup has format v2 with decrypted history and
+  reactions (D27); v1 still restores. Restore fails with a typed
+  `BackupException` (network, not found, busy, wrong key, corrupt, device
+  not empty, too large, storage), touches the store only after the whole
+  backup decrypts and parses, and never overwrites a device that has an
+  account. An interrupted download is kept and resumed; the server now
+  accepts a resume from any offset up to what it sent, because bytes written
+  are not always bytes received, and still consumes the capability only when
+  a transfer reaches the end. Demo builds show a backup screen (status, make
+  a new backup, recovery code shown once) and "Restore from a backup" on the
+  connect screen; release builds keep the item unavailable.
+- Checks: `go test -race ./cmd/messenger-server ./internal/storage`,
+  `go test ./...`, `flutter test` with the native library (including
+  `backup_service_test.dart` and `backup_screen_test.dart`), and the live
+  demo e2e test, which backs up a client and restores it on a fresh device.
+
 ### I51 - MLS membership after creation and linked devices
 
 **Decision:** New card from the 2026-09-24 demo plan (D10, D24). **High,
