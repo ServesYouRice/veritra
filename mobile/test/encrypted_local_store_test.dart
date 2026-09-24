@@ -42,6 +42,52 @@ void main() {
         },
       );
 
+  test('a namespaced store keeps its own database and key', () async {
+    final release = createStore();
+    await release.saveSyncCursor(5);
+    final demo = SecureLocalStore(
+      storage: secureStorage,
+      directoryProvider: () async => directory,
+      namespace: 'demo',
+      databaseFactory: (file, keyHex) {
+        final database = openEncryptedLocalDatabase(file, keyHex);
+        databases.add(database);
+        return database;
+      },
+    );
+    expect(await demo.loadSyncCursor(), 0);
+    await demo.saveSyncCursor(9);
+    expect(await release.loadSyncCursor(), 5);
+    expect(
+      File('${directory.path}/profiles/demo/veritra-local.db').existsSync(),
+      isTrue,
+    );
+    final keys = await secureStorage.readAll();
+    expect(
+        keys.keys,
+        containsAll(<String>[
+          'veritra.database_key.v1',
+          'veritra.demo.database_key.v1'
+        ]));
+    expect(keys['veritra.database_key.v1'],
+        isNot(keys['veritra.demo.database_key.v1']));
+  });
+
+  test('a database whose key is gone fails closed instead of starting over',
+      () async {
+    final first = createStore();
+    await first.saveSyncCursor(4);
+    for (final database in databases) {
+      await database.close();
+    }
+    databases.clear();
+    await secureStorage.delete(key: 'veritra.database_key.v1');
+
+    final second = createStore();
+    await expectLater(second.loadSyncCursor(), throwsStateError);
+    expect(await secureStorage.read(key: 'veritra.database_key.v1'), isNull);
+  });
+
   test('migrates and verifies the legacy secure-storage record once', () async {
     final legacy = <String, Object?>{
       'version': 3,

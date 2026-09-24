@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:drift/drift.dart' show Value;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -11,6 +12,8 @@ import 'encrypted_database.dart';
 
 final Map<String, Future<void>> _databaseOpenTails = <String, Future<void>>{};
 final Map<String, Future<void>> _databaseWriteTails = <String, Future<void>>{};
+final Map<String, RandomAccessFile> _instanceLocks =
+    <String, RandomAccessFile>{};
 
 const int maxPendingEnvelopes = 100;
 
@@ -75,6 +78,7 @@ class MlsStateTransition {
     required this.cursor,
     this.upsertedEnvelopes = const <ReceivedMessageEnvelope>[],
     this.deletedEnvelopeIds = const <String>[],
+    this.messageEffects = const <MessageEffect>[],
   });
 
   final String messageId;
@@ -85,6 +89,9 @@ class MlsStateTransition {
   final int cursor;
   final List<ReceivedMessageEnvelope> upsertedEnvelopes;
   final List<String> deletedEnvelopeIds;
+
+  /// Decrypted history changes, committed with [state] (D23).
+  final List<MessageEffect> messageEffects;
 }
 
 class PendingMlsMessage {
@@ -126,6 +133,7 @@ class OutgoingApplicationStateTransition {
     required this.state,
     required this.envelope,
     this.draftText,
+    this.messageEffects = const <MessageEffect>[],
   });
 
   final int expectedCounter;
@@ -133,6 +141,9 @@ class OutgoingApplicationStateTransition {
   final StoredCryptoState state;
   final MessageEnvelope envelope;
   final String? draftText;
+
+  /// This device's own copy of what it sent, committed with [state] (D23).
+  final List<MessageEffect> messageEffects;
 }
 
 class LocalBackupData {
@@ -179,6 +190,7 @@ class SyncEventCommit {
     required this.expectedCursor,
     required this.cursor,
     this.envelope,
+    this.ownMessageKey,
   });
 
   final String eventKey;
@@ -186,6 +198,10 @@ class SyncEventCommit {
   final int expectedCursor;
   final int cursor;
   final ReceivedMessageEnvelope? envelope;
+
+  /// Set when [envelope] is the server echo of a message this device sent:
+  /// the local history record with this key is linked to the envelope.
+  final String? ownMessageKey;
 }
 
 class LocalSyncLease {
@@ -254,6 +270,10 @@ abstract class LocalStore {
       String conversationId, String peerAccountId, List<int> transcriptHash);
   Future<List<int>?> loadPeerVerification(
       String conversationId, String peerAccountId);
+
+  /// Decrypted history for one conversation, oldest first (D23).
+  Future<List<LocalMessage>> loadMessages(String conversationId);
+  Future<List<LocalMessageReaction>> loadReactions(String conversationId);
   Future<void> clearCachedState({bool preserveOutbox = false});
   Future<void> clear();
 }
@@ -270,6 +290,7 @@ class MemoryLocalStore implements LocalStore {
   final Map<String, PendingMlsMessage> _mlsOutbox =
       <String, PendingMlsMessage>{};
   final Map<String, List<int>> _peerVerifications = <String, List<int>>{};
+  final _MemoryMessageHistory _history = _MemoryMessageHistory();
   String? _syncLeaseKey;
 
   @override
@@ -290,6 +311,7 @@ class MemoryLocalStore implements LocalStore {
       _processedMlsMessages.clear();
       _mlsOutbox.clear();
       _peerVerifications.clear();
+      _history.clear();
       _syncLeaseKey = null;
     }
     _session = session;
@@ -453,6 +475,7 @@ class MemoryLocalStore implements LocalStore {
       messages.removeWhere((message) => message.id == envelope.id);
       messages.add(envelope);
     }
+    _history.apply(transition.messageEffects);
     _cryptoState = _copyCryptoState(transition.state);
     _processedMlsMessages.add(transition.messageId);
     _syncCursor = transition.cursor;
@@ -481,6 +504,8 @@ class MemoryLocalStore implements LocalStore {
           nextMessages[envelope.conversationId] ??= <ReceivedMessageEnvelope>[];
       messages.removeWhere((item) => item.id == envelope.id);
       messages.add(envelope);
+      final ownKey = commit.ownMessageKey;
+      if (ownKey != null) _history.markSent(ownKey, envelope.id);
     }
     _processedMlsMessages.add(commit.eventKey);
     _syncCursor = commit.cursor;
@@ -538,6 +563,7 @@ class MemoryLocalStore implements LocalStore {
       throw const OutboxFullException();
     }
     _cryptoState = _copyCryptoState(transition.state);
+    _history.apply(transition.messageEffects);
     _outbox.add(transition.envelope);
     _outboxRecords[transition.envelope.idempotencyKey] = PendingEnvelopeRecord(
         envelope: transition.envelope,
@@ -608,6 +634,7 @@ class MemoryLocalStore implements LocalStore {
           backup.mlsOutbox.map((item) => MapEntry(item.idempotencyKey, item)));
     _cryptoState = _copyCryptoState(backup.cryptoState);
     _processedMlsMessages.clear();
+    _history.clear();
   }
 
   @override
@@ -642,9 +669,121 @@ class MemoryLocalStore implements LocalStore {
     _processedMlsMessages.clear();
     _mlsOutbox.clear();
     _peerVerifications.clear();
+    _history.clear();
     _syncLeaseKey = null;
     await clearCachedState();
   }
+
+  @override
+  Future<List<LocalMessage>> loadMessages(String conversationId) async =>
+      _history.messages(conversationId);
+
+  @override
+  Future<List<LocalMessageReaction>> loadReactions(
+          String conversationId) async =>
+      _history.reactions(conversationId);
+}
+
+/// In-memory twin of the database's decrypted history, with the same effect
+/// rules as `EncryptedLocalDatabase._applyMessageEffects`.
+class _MemoryMessageHistory {
+  final Map<String, LocalMessage> _messages = <String, LocalMessage>{};
+  final Map<String, LocalMessageReaction> _reactions =
+      <String, LocalMessageReaction>{};
+
+  void clear() {
+    _messages.clear();
+    _reactions.clear();
+  }
+
+  void apply(List<MessageEffect> effects) {
+    for (final effect in effects) {
+      switch (effect) {
+        case InsertMessageEffect():
+          if (_messages.containsKey(effect.key)) continue;
+          if (effect.serverMessageId != null &&
+              _messages.values.any(
+                  (item) => item.serverMessageId == effect.serverMessageId)) {
+            continue;
+          }
+          _messages[effect.key] = LocalMessage(
+            key: effect.key,
+            serverMessageId: effect.serverMessageId,
+            conversationId: effect.conversationId,
+            senderAccountId: effect.senderAccountId,
+            senderDeviceId: effect.senderDeviceId,
+            kind: effect.kind,
+            body: effect.body,
+            replyTo: effect.replyTo,
+            createdAt: effect.createdAt,
+            state: effect.state,
+          );
+        case EditMessageEffect():
+          final target = _messages[effect.targetKey];
+          if (target == null ||
+              target.senderAccountId != effect.editorAccountId ||
+              target.kind != LocalMessageKind.text ||
+              target.deletedAt != null) {
+            continue;
+          }
+          _messages[effect.targetKey] = target.copyWith(
+            body: Value(effect.body),
+            editedAt: Value(effect.at),
+          );
+        case DeleteMessageEffect():
+          final target = _messages[effect.targetKey];
+          if (target == null ||
+              target.senderAccountId != effect.deleterAccountId ||
+              target.kind != LocalMessageKind.text) {
+            continue;
+          }
+          _messages[effect.targetKey] = target.copyWith(
+            body: const Value(null),
+            deletedAt: Value(effect.at),
+          );
+          _reactions
+              .removeWhere((_, item) => item.targetKey == effect.targetKey);
+        case ReactionEffect():
+          final id = '${effect.targetKey}\u0000${effect.reactorAccountId}';
+          if (effect.reaction.isEmpty) {
+            _reactions.remove(id);
+          } else {
+            _reactions[id] = LocalMessageReaction(
+              targetKey: effect.targetKey,
+              reactorAccountId: effect.reactorAccountId,
+              reaction: effect.reaction,
+              updatedAt: effect.at,
+            );
+          }
+      }
+    }
+  }
+
+  void markSent(String key, String serverMessageId) {
+    final target = _messages[key];
+    if (target == null) return;
+    _messages[key] = target.copyWith(
+      serverMessageId: Value(serverMessageId),
+      state: LocalMessageState.sent,
+    );
+  }
+
+  List<LocalMessage> messages(String conversationId) {
+    final result = _messages.values
+        .where((item) => item.conversationId == conversationId)
+        .toList();
+    result.sort((a, b) {
+      final byTime = a.createdAt.compareTo(b.createdAt);
+      return byTime != 0 ? byTime : a.key.compareTo(b.key);
+    });
+    return result;
+  }
+
+  List<LocalMessageReaction> reactions(String conversationId) => _reactions
+      .values
+      .where(
+          (item) => _messages[item.targetKey]?.conversationId == conversationId)
+      .toList(growable: false);
 }
 
 typedef LocalDatabaseFactory = EncryptedLocalDatabase Function(
@@ -661,7 +800,10 @@ class SecureLocalStore implements LocalStore {
     Future<Directory> Function()? directoryProvider,
     LocalDatabaseFactory? databaseFactory,
     MlsCommitFailureInjector? mlsCommitFailureInjector,
-  })  : _storage = storage ??
+    String namespace = '',
+  })  : assert(RegExp(r'^[a-z0-9-]{0,40}$').hasMatch(namespace)),
+        _namespace = namespace,
+        _storage = storage ??
             const FlutterSecureStorage(
               aOptions: AndroidOptions(
                 resetOnError: true,
@@ -678,8 +820,22 @@ class SecureLocalStore implements LocalStore {
   static const _legacyRecordKey = 'veritra.account_state.v2';
   static const _databaseKey = 'veritra.database_key.v1';
   static const _migrationMarker = 'legacy_secure_record_migrated';
-  static const _maxCachedConversations = 20;
+  // Every conversation is cached so the full chat list opens offline
+  // (Stage 4); the bound only stops a runaway server list. Envelopes stay
+  // capped: decrypted history lives in local_messages, which has no cap.
+  static const _maxCachedConversations = 1000;
   static const _maxMessagesPerConversation = 200;
+
+  /// Separates independent local identities on one device: demo builds use
+  /// `demo`, and desktop profiles extend it. The empty default keeps the
+  /// release layout (database in the support directory, key
+  /// `veritra.database_key.v1`) byte for byte.
+  final String _namespace;
+  String get _databaseKeyName =>
+      _namespace.isEmpty ? _databaseKey : 'veritra.$_namespace.database_key.v1';
+  String get _legacyRecordKeyName => _namespace.isEmpty
+      ? _legacyRecordKey
+      : 'veritra.$_namespace.account_state.v2';
   final FlutterSecureStorage _storage;
   final Future<Directory> Function() _directoryProvider;
   final LocalDatabaseFactory _databaseFactory;
@@ -914,6 +1070,7 @@ class SecureLocalStore implements LocalStore {
               ))
           .toList(growable: false),
       deletedEnvelopeIds: transition.deletedEnvelopeIds,
+      messageEffects: transition.messageEffects,
       failureInjector: _mlsCommitFailureInjector,
       leaseKey: _syncLeaseKey,
     );
@@ -933,6 +1090,7 @@ class SecureLocalStore implements LocalStore {
               conversationId: commit.envelope!.conversationId,
               payloadJson: jsonEncode(commit.envelope!.toJson()),
             ),
+      ownMessageKey: commit.ownMessageKey,
       leaseKey: _syncLeaseKey,
     );
   }
@@ -1007,6 +1165,7 @@ class SecureLocalStore implements LocalStore {
         payloadJson: jsonEncode(transition.envelope.toJson()),
         maxEntries: maxPendingEnvelopes,
         draftText: transition.draftText,
+        messageEffects: transition.messageEffects,
         leaseKey: _syncLeaseKey,
       );
     } on StateError catch (error) {
@@ -1139,6 +1298,15 @@ class SecureLocalStore implements LocalStore {
           database.readPeerVerification(conversationId, peerAccountId));
 
   @override
+  Future<List<LocalMessage>> loadMessages(String conversationId) async =>
+      (await _database()).readMessages(conversationId);
+
+  @override
+  Future<List<LocalMessageReaction>> loadReactions(
+          String conversationId) async =>
+      (await _database()).readReactions(conversationId);
+
+  @override
   Future<void> clearCachedState({bool preserveOutbox = false}) async {
     await (await _database()).clearCachedState(preserveOutbox: preserveOutbox);
   }
@@ -1146,7 +1314,7 @@ class SecureLocalStore implements LocalStore {
   @override
   Future<void> clear() async {
     await (await _database()).clearAll();
-    await _storage.delete(key: _legacyRecordKey);
+    await _storage.delete(key: _legacyRecordKeyName);
     _syncLeaseKey = null;
   }
 
@@ -1154,7 +1322,11 @@ class SecureLocalStore implements LocalStore {
       _openingDatabase ??= _openDatabase();
 
   Future<EncryptedLocalDatabase> _openDatabase() async {
-    final directory = await _directoryProvider();
+    final base = await _directoryProvider();
+    final directory = _namespace.isEmpty
+        ? base
+        : Directory('${base.path}${Platform.pathSeparator}profiles'
+            '${Platform.pathSeparator}$_namespace');
     await directory.create(recursive: true);
     final databaseFile =
         File('${directory.path}${Platform.pathSeparator}veritra-local.db');
@@ -1177,17 +1349,24 @@ class SecureLocalStore implements LocalStore {
 
   Future<EncryptedLocalDatabase> _openDatabaseLocked(
       Directory directory, File databaseFile) async {
+    await _holdInstanceLock(directory);
     final lockFile =
         File('${directory.path}${Platform.pathSeparator}veritra-local.lock');
     final lock = await lockFile.open(mode: FileMode.append);
     await lock.lock(FileLock.exclusive);
     try {
-      var keyHex = await _storage.read(key: _databaseKey);
+      var keyHex = await _storage.read(key: _databaseKeyName);
+      if (keyHex == null && await databaseFile.exists()) {
+        // A database without its key is unreadable. Writing a fresh key
+        // would hide that behind a new, empty identity (D26), so stop and
+        // let the recovery screen explain it.
+        throw StateError('encrypted database key is missing');
+      }
       if (keyHex == null) {
         keyHex = _randomHexKey();
-        await _storage.write(key: _databaseKey, value: keyHex);
+        await _storage.write(key: _databaseKeyName, value: keyHex);
       }
-      final storedKey = await _storage.read(key: _databaseKey);
+      final storedKey = await _storage.read(key: _databaseKeyName);
       if (storedKey != keyHex ||
           storedKey == null ||
           !RegExp(r'^[0-9a-f]{64}$').hasMatch(storedKey)) {
@@ -1203,10 +1382,27 @@ class SecureLocalStore implements LocalStore {
     }
   }
 
+  /// Holds an OS lock on the profile directory for the life of the process,
+  /// so a second window on the same profile fails at open instead of both
+  /// advancing the same MLS state.
+  static Future<void> _holdInstanceLock(Directory directory) async {
+    final path =
+        '${directory.path}${Platform.pathSeparator}veritra-instance.lock';
+    if (_instanceLocks.containsKey(path)) return;
+    final handle = await File(path).open(mode: FileMode.append);
+    try {
+      await handle.lock(FileLock.exclusive);
+    } on FileSystemException {
+      await handle.close();
+      throw StateError('another Veritra window is using this profile');
+    }
+    _instanceLocks[path] = handle;
+  }
+
   Future<void> _migrateLegacyRecord(EncryptedLocalDatabase database) async {
-    final raw = await _storage.read(key: _legacyRecordKey);
+    final raw = await _storage.read(key: _legacyRecordKeyName);
     if (await database.readMetadata(_migrationMarker) == '1') {
-      if (raw != null) await _storage.delete(key: _legacyRecordKey);
+      if (raw != null) await _storage.delete(key: _legacyRecordKeyName);
       return;
     }
     if (raw == null || raw.isEmpty) {
@@ -1225,7 +1421,7 @@ class SecureLocalStore implements LocalStore {
     );
     await _verifyLegacyMigration(database, legacy);
     await database.writeMetadata(_migrationMarker, '1');
-    await _storage.delete(key: _legacyRecordKey);
+    await _storage.delete(key: _legacyRecordKeyName);
   }
 
   Future<void> _verifyLegacyMigration(

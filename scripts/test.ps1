@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $GoVersion = (Get-Content -Raw (Join-Path $Root ".go-version")).Trim()
-$GoImage = "golang:${GoVersion}@sha256:9006890ecba0a168034d99516084099ae3114d9f2b7d6572c77f2dde57ebc980"
+$GoImage = "golang:${GoVersion}@sha256:6c2a5538f964f1c82f97ad14988bf05de100d922d159d0e398b54c7b0ca0c6c9"
 
 $PythonCmd = if (Get-Command py -ErrorAction SilentlyContinue) { "py" } elseif (Get-Command python3 -ErrorAction SilentlyContinue) { "python3" } elseif (Get-Command python -ErrorAction SilentlyContinue) { "python" } else { $null }
 if ($PythonCmd) {
@@ -36,7 +36,7 @@ if (Get-Command cargo -ErrorAction SilentlyContinue) {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   } finally { Pop-Location }
 } else {
-  docker run --rm -v "${Root}:/workspace" -w /workspace/crypto/rust rust:1.90@sha256:e227f20ec42af3ea9a3c9c1dd1b2012aa15f12279b5e9d5fb890ca1c2bb5726c cargo test
+  docker run --rm -v "${Root}:/workspace" -w /workspace/crypto/rust rust:1.91@sha256:867f1d1162913c401378a8504fb17fe2032c760dc316448766f150a130204aad cargo test
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 

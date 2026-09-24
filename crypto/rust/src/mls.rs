@@ -32,6 +32,9 @@ pub enum MlsError {
     UnexpectedMessage,
     InvalidState,
     Rollback,
+    /// The message decrypted, but its MLS sender credential is not the
+    /// account/device the transport claimed. The ratchet has already advanced.
+    SenderMismatch,
 }
 
 /// One MLS device identity and its private provider state.
@@ -343,7 +346,22 @@ impl MlsDevice {
             .map_err(|_| MlsError::GroupOperation)
     }
 
-    pub fn decrypt(&self, group: &mut MlsGroup, ciphertext: &[u8]) -> Result<Vec<u8>, MlsError> {
+    /// Decrypts one application message and binds it to its sender.
+    ///
+    /// The server labels every envelope with a sender account and device, but
+    /// the server is untrusted. The MLS credential inside the authenticated
+    /// message is the only trustworthy sender, so it must match the claimed
+    /// one; otherwise a group member (or the server) could present a message
+    /// as coming from someone else.
+    pub fn decrypt(
+        &self,
+        group: &mut MlsGroup,
+        ciphertext: &[u8],
+        expected_sender_account: &[u8],
+        expected_sender_device: &[u8],
+    ) -> Result<Vec<u8>, MlsError> {
+        let expected_identity =
+            encode_device_identity(expected_sender_account, expected_sender_device)?;
         let protocol_message = MlsMessageIn::tls_deserialize_exact(ciphertext)
             .map_err(|_| MlsError::InvalidMessage)?
             .try_into_protocol_message()
@@ -351,8 +369,12 @@ impl MlsDevice {
         let processed = group
             .process_message(&self.provider, protocol_message)
             .map_err(|_| MlsError::InvalidMessage)?;
+        let sender_matches = processed.credential().serialized_content() == expected_identity;
         match processed.into_content() {
-            ProcessedMessageContent::ApplicationMessage(message) => Ok(message.into_bytes()),
+            ProcessedMessageContent::ApplicationMessage(message) if sender_matches => {
+                Ok(message.into_bytes())
+            }
+            ProcessedMessageContent::ApplicationMessage(_) => Err(MlsError::SenderMismatch),
             _ => Err(MlsError::UnexpectedMessage),
         }
     }
@@ -466,15 +488,60 @@ mod tests {
         let alice_ciphertext = alice.encrypt(&mut alice_group, b"alice payload").unwrap();
         assert_ne!(alice_ciphertext, b"alice payload");
         assert_eq!(
-            bob.decrypt(&mut bob_group, &alice_ciphertext).unwrap(),
+            bob.decrypt(
+                &mut bob_group,
+                &alice_ciphertext,
+                b"acct_alice",
+                b"dev_alice"
+            )
+            .unwrap(),
             b"alice payload"
         );
 
         let bob_ciphertext = bob.encrypt(&mut bob_group, b"bob payload").unwrap();
         assert_ne!(bob_ciphertext, b"bob payload");
         assert_eq!(
-            alice.decrypt(&mut alice_group, &bob_ciphertext).unwrap(),
+            alice
+                .decrypt(&mut alice_group, &bob_ciphertext, b"acct_bob", b"dev_bob")
+                .unwrap(),
             b"bob payload"
+        );
+    }
+
+    #[test]
+    fn decrypt_rejects_a_spoofed_sender() {
+        let alice = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
+        let bob = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+        let mut alice_group = alice.create_group(b"conv_spoof").unwrap();
+        let add = alice
+            .add_member(
+                &mut alice_group,
+                &bob.create_key_package().unwrap(),
+                b"acct_bob",
+                b"dev_bob",
+            )
+            .unwrap();
+        alice.merge_pending_commit(&mut alice_group).unwrap();
+        let mut bob_group = bob.join_group(b"conv_spoof", &add.welcome).unwrap();
+
+        // The server claims the message came from someone else.
+        let first = alice.encrypt(&mut alice_group, b"from alice").unwrap();
+        assert_eq!(
+            bob.decrypt(&mut bob_group, &first, b"acct_mallory", b"dev_mallory"),
+            Err(MlsError::SenderMismatch)
+        );
+        // Same account, wrong device is also a mismatch.
+        let second = alice.encrypt(&mut alice_group, b"again").unwrap();
+        assert_eq!(
+            bob.decrypt(&mut bob_group, &second, b"acct_alice", b"dev_other"),
+            Err(MlsError::SenderMismatch)
+        );
+        // The group keeps working for correctly labelled messages.
+        let third = alice.encrypt(&mut alice_group, b"honest").unwrap();
+        assert_eq!(
+            bob.decrypt(&mut bob_group, &third, b"acct_alice", b"dev_alice")
+                .unwrap(),
+            b"honest"
         );
     }
 
@@ -486,12 +553,17 @@ mod tests {
         let mut bob_group = bob.create_group(b"conv_bob").unwrap();
 
         assert_eq!(
-            alice.decrypt(&mut alice_group, b"not an MLS message"),
+            alice.decrypt(
+                &mut alice_group,
+                b"not an MLS message",
+                b"acct_bob",
+                b"dev_bob"
+            ),
             Err(MlsError::InvalidMessage)
         );
         let foreign = bob.encrypt(&mut bob_group, b"foreign").unwrap();
         assert_eq!(
-            alice.decrypt(&mut alice_group, &foreign),
+            alice.decrypt(&mut alice_group, &foreign, b"acct_bob", b"dev_bob"),
             Err(MlsError::InvalidMessage)
         );
     }
@@ -513,7 +585,9 @@ mod tests {
         alice.process_commit(&mut alice_group, &update).unwrap();
         let after_update = bob.encrypt(&mut bob_group, b"after update").unwrap();
         assert_eq!(
-            alice.decrypt(&mut alice_group, &after_update).unwrap(),
+            alice
+                .decrypt(&mut alice_group, &after_update, b"acct_bob", b"dev_bob")
+                .unwrap(),
             b"after update"
         );
 

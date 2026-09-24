@@ -2850,6 +2850,901 @@ class LocalPeerVerificationsCompanion
   }
 }
 
+class $LocalMessagesTable extends LocalMessages
+    with TableInfo<$LocalMessagesTable, LocalMessage> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $LocalMessagesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _keyMeta = const VerificationMeta('key');
+  @override
+  late final GeneratedColumn<String> key = GeneratedColumn<String>(
+      'key', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _serverMessageIdMeta =
+      const VerificationMeta('serverMessageId');
+  @override
+  late final GeneratedColumn<String> serverMessageId = GeneratedColumn<String>(
+      'server_message_id', aliasedName, true,
+      type: DriftSqlType.string,
+      requiredDuringInsert: false,
+      defaultConstraints: GeneratedColumn.constraintIsAlways('UNIQUE'));
+  static const VerificationMeta _conversationIdMeta =
+      const VerificationMeta('conversationId');
+  @override
+  late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
+      'conversation_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _senderAccountIdMeta =
+      const VerificationMeta('senderAccountId');
+  @override
+  late final GeneratedColumn<String> senderAccountId = GeneratedColumn<String>(
+      'sender_account_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _senderDeviceIdMeta =
+      const VerificationMeta('senderDeviceId');
+  @override
+  late final GeneratedColumn<String> senderDeviceId = GeneratedColumn<String>(
+      'sender_device_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _kindMeta = const VerificationMeta('kind');
+  @override
+  late final GeneratedColumn<String> kind = GeneratedColumn<String>(
+      'kind', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _bodyMeta = const VerificationMeta('body');
+  @override
+  late final GeneratedColumn<String> body = GeneratedColumn<String>(
+      'body', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _replyToMeta =
+      const VerificationMeta('replyTo');
+  @override
+  late final GeneratedColumn<String> replyTo = GeneratedColumn<String>(
+      'reply_to', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _createdAtMeta =
+      const VerificationMeta('createdAt');
+  @override
+  late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
+      'created_at', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _editedAtMeta =
+      const VerificationMeta('editedAt');
+  @override
+  late final GeneratedColumn<int> editedAt = GeneratedColumn<int>(
+      'edited_at', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _deletedAtMeta =
+      const VerificationMeta('deletedAt');
+  @override
+  late final GeneratedColumn<int> deletedAt = GeneratedColumn<int>(
+      'deleted_at', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _stateMeta = const VerificationMeta('state');
+  @override
+  late final GeneratedColumn<String> state = GeneratedColumn<String>(
+      'state', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  @override
+  List<GeneratedColumn> get $columns => [
+        key,
+        serverMessageId,
+        conversationId,
+        senderAccountId,
+        senderDeviceId,
+        kind,
+        body,
+        replyTo,
+        createdAt,
+        editedAt,
+        deletedAt,
+        state
+      ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'local_messages';
+  @override
+  VerificationContext validateIntegrity(Insertable<LocalMessage> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('key')) {
+      context.handle(
+          _keyMeta, key.isAcceptableOrUnknown(data['key']!, _keyMeta));
+    } else if (isInserting) {
+      context.missing(_keyMeta);
+    }
+    if (data.containsKey('server_message_id')) {
+      context.handle(
+          _serverMessageIdMeta,
+          serverMessageId.isAcceptableOrUnknown(
+              data['server_message_id']!, _serverMessageIdMeta));
+    }
+    if (data.containsKey('conversation_id')) {
+      context.handle(
+          _conversationIdMeta,
+          conversationId.isAcceptableOrUnknown(
+              data['conversation_id']!, _conversationIdMeta));
+    } else if (isInserting) {
+      context.missing(_conversationIdMeta);
+    }
+    if (data.containsKey('sender_account_id')) {
+      context.handle(
+          _senderAccountIdMeta,
+          senderAccountId.isAcceptableOrUnknown(
+              data['sender_account_id']!, _senderAccountIdMeta));
+    } else if (isInserting) {
+      context.missing(_senderAccountIdMeta);
+    }
+    if (data.containsKey('sender_device_id')) {
+      context.handle(
+          _senderDeviceIdMeta,
+          senderDeviceId.isAcceptableOrUnknown(
+              data['sender_device_id']!, _senderDeviceIdMeta));
+    } else if (isInserting) {
+      context.missing(_senderDeviceIdMeta);
+    }
+    if (data.containsKey('kind')) {
+      context.handle(
+          _kindMeta, kind.isAcceptableOrUnknown(data['kind']!, _kindMeta));
+    } else if (isInserting) {
+      context.missing(_kindMeta);
+    }
+    if (data.containsKey('body')) {
+      context.handle(
+          _bodyMeta, body.isAcceptableOrUnknown(data['body']!, _bodyMeta));
+    }
+    if (data.containsKey('reply_to')) {
+      context.handle(_replyToMeta,
+          replyTo.isAcceptableOrUnknown(data['reply_to']!, _replyToMeta));
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(_createdAtMeta,
+          createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta));
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    if (data.containsKey('edited_at')) {
+      context.handle(_editedAtMeta,
+          editedAt.isAcceptableOrUnknown(data['edited_at']!, _editedAtMeta));
+    }
+    if (data.containsKey('deleted_at')) {
+      context.handle(_deletedAtMeta,
+          deletedAt.isAcceptableOrUnknown(data['deleted_at']!, _deletedAtMeta));
+    }
+    if (data.containsKey('state')) {
+      context.handle(
+          _stateMeta, state.isAcceptableOrUnknown(data['state']!, _stateMeta));
+    } else if (isInserting) {
+      context.missing(_stateMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {key};
+  @override
+  LocalMessage map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return LocalMessage(
+      key: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}key'])!,
+      serverMessageId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}server_message_id']),
+      conversationId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}conversation_id'])!,
+      senderAccountId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}sender_account_id'])!,
+      senderDeviceId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}sender_device_id'])!,
+      kind: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}kind'])!,
+      body: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}body']),
+      replyTo: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}reply_to']),
+      createdAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}created_at'])!,
+      editedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}edited_at']),
+      deletedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}deleted_at']),
+      state: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}state'])!,
+    );
+  }
+
+  @override
+  $LocalMessagesTable createAlias(String alias) {
+    return $LocalMessagesTable(attachedDatabase, alias);
+  }
+}
+
+class LocalMessage extends DataClass implements Insertable<LocalMessage> {
+  final String key;
+  final String? serverMessageId;
+  final String conversationId;
+  final String senderAccountId;
+  final String senderDeviceId;
+  final String kind;
+  final String? body;
+  final String? replyTo;
+  final int createdAt;
+  final int? editedAt;
+  final int? deletedAt;
+  final String state;
+  const LocalMessage(
+      {required this.key,
+      this.serverMessageId,
+      required this.conversationId,
+      required this.senderAccountId,
+      required this.senderDeviceId,
+      required this.kind,
+      this.body,
+      this.replyTo,
+      required this.createdAt,
+      this.editedAt,
+      this.deletedAt,
+      required this.state});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['key'] = Variable<String>(key);
+    if (!nullToAbsent || serverMessageId != null) {
+      map['server_message_id'] = Variable<String>(serverMessageId);
+    }
+    map['conversation_id'] = Variable<String>(conversationId);
+    map['sender_account_id'] = Variable<String>(senderAccountId);
+    map['sender_device_id'] = Variable<String>(senderDeviceId);
+    map['kind'] = Variable<String>(kind);
+    if (!nullToAbsent || body != null) {
+      map['body'] = Variable<String>(body);
+    }
+    if (!nullToAbsent || replyTo != null) {
+      map['reply_to'] = Variable<String>(replyTo);
+    }
+    map['created_at'] = Variable<int>(createdAt);
+    if (!nullToAbsent || editedAt != null) {
+      map['edited_at'] = Variable<int>(editedAt);
+    }
+    if (!nullToAbsent || deletedAt != null) {
+      map['deleted_at'] = Variable<int>(deletedAt);
+    }
+    map['state'] = Variable<String>(state);
+    return map;
+  }
+
+  LocalMessagesCompanion toCompanion(bool nullToAbsent) {
+    return LocalMessagesCompanion(
+      key: Value(key),
+      serverMessageId: serverMessageId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(serverMessageId),
+      conversationId: Value(conversationId),
+      senderAccountId: Value(senderAccountId),
+      senderDeviceId: Value(senderDeviceId),
+      kind: Value(kind),
+      body: body == null && nullToAbsent ? const Value.absent() : Value(body),
+      replyTo: replyTo == null && nullToAbsent
+          ? const Value.absent()
+          : Value(replyTo),
+      createdAt: Value(createdAt),
+      editedAt: editedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(editedAt),
+      deletedAt: deletedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(deletedAt),
+      state: Value(state),
+    );
+  }
+
+  factory LocalMessage.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return LocalMessage(
+      key: serializer.fromJson<String>(json['key']),
+      serverMessageId: serializer.fromJson<String?>(json['serverMessageId']),
+      conversationId: serializer.fromJson<String>(json['conversationId']),
+      senderAccountId: serializer.fromJson<String>(json['senderAccountId']),
+      senderDeviceId: serializer.fromJson<String>(json['senderDeviceId']),
+      kind: serializer.fromJson<String>(json['kind']),
+      body: serializer.fromJson<String?>(json['body']),
+      replyTo: serializer.fromJson<String?>(json['replyTo']),
+      createdAt: serializer.fromJson<int>(json['createdAt']),
+      editedAt: serializer.fromJson<int?>(json['editedAt']),
+      deletedAt: serializer.fromJson<int?>(json['deletedAt']),
+      state: serializer.fromJson<String>(json['state']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'key': serializer.toJson<String>(key),
+      'serverMessageId': serializer.toJson<String?>(serverMessageId),
+      'conversationId': serializer.toJson<String>(conversationId),
+      'senderAccountId': serializer.toJson<String>(senderAccountId),
+      'senderDeviceId': serializer.toJson<String>(senderDeviceId),
+      'kind': serializer.toJson<String>(kind),
+      'body': serializer.toJson<String?>(body),
+      'replyTo': serializer.toJson<String?>(replyTo),
+      'createdAt': serializer.toJson<int>(createdAt),
+      'editedAt': serializer.toJson<int?>(editedAt),
+      'deletedAt': serializer.toJson<int?>(deletedAt),
+      'state': serializer.toJson<String>(state),
+    };
+  }
+
+  LocalMessage copyWith(
+          {String? key,
+          Value<String?> serverMessageId = const Value.absent(),
+          String? conversationId,
+          String? senderAccountId,
+          String? senderDeviceId,
+          String? kind,
+          Value<String?> body = const Value.absent(),
+          Value<String?> replyTo = const Value.absent(),
+          int? createdAt,
+          Value<int?> editedAt = const Value.absent(),
+          Value<int?> deletedAt = const Value.absent(),
+          String? state}) =>
+      LocalMessage(
+        key: key ?? this.key,
+        serverMessageId: serverMessageId.present
+            ? serverMessageId.value
+            : this.serverMessageId,
+        conversationId: conversationId ?? this.conversationId,
+        senderAccountId: senderAccountId ?? this.senderAccountId,
+        senderDeviceId: senderDeviceId ?? this.senderDeviceId,
+        kind: kind ?? this.kind,
+        body: body.present ? body.value : this.body,
+        replyTo: replyTo.present ? replyTo.value : this.replyTo,
+        createdAt: createdAt ?? this.createdAt,
+        editedAt: editedAt.present ? editedAt.value : this.editedAt,
+        deletedAt: deletedAt.present ? deletedAt.value : this.deletedAt,
+        state: state ?? this.state,
+      );
+  LocalMessage copyWithCompanion(LocalMessagesCompanion data) {
+    return LocalMessage(
+      key: data.key.present ? data.key.value : this.key,
+      serverMessageId: data.serverMessageId.present
+          ? data.serverMessageId.value
+          : this.serverMessageId,
+      conversationId: data.conversationId.present
+          ? data.conversationId.value
+          : this.conversationId,
+      senderAccountId: data.senderAccountId.present
+          ? data.senderAccountId.value
+          : this.senderAccountId,
+      senderDeviceId: data.senderDeviceId.present
+          ? data.senderDeviceId.value
+          : this.senderDeviceId,
+      kind: data.kind.present ? data.kind.value : this.kind,
+      body: data.body.present ? data.body.value : this.body,
+      replyTo: data.replyTo.present ? data.replyTo.value : this.replyTo,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      editedAt: data.editedAt.present ? data.editedAt.value : this.editedAt,
+      deletedAt: data.deletedAt.present ? data.deletedAt.value : this.deletedAt,
+      state: data.state.present ? data.state.value : this.state,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalMessage(')
+          ..write('key: $key, ')
+          ..write('serverMessageId: $serverMessageId, ')
+          ..write('conversationId: $conversationId, ')
+          ..write('senderAccountId: $senderAccountId, ')
+          ..write('senderDeviceId: $senderDeviceId, ')
+          ..write('kind: $kind, ')
+          ..write('body: $body, ')
+          ..write('replyTo: $replyTo, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('editedAt: $editedAt, ')
+          ..write('deletedAt: $deletedAt, ')
+          ..write('state: $state')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+      key,
+      serverMessageId,
+      conversationId,
+      senderAccountId,
+      senderDeviceId,
+      kind,
+      body,
+      replyTo,
+      createdAt,
+      editedAt,
+      deletedAt,
+      state);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is LocalMessage &&
+          other.key == this.key &&
+          other.serverMessageId == this.serverMessageId &&
+          other.conversationId == this.conversationId &&
+          other.senderAccountId == this.senderAccountId &&
+          other.senderDeviceId == this.senderDeviceId &&
+          other.kind == this.kind &&
+          other.body == this.body &&
+          other.replyTo == this.replyTo &&
+          other.createdAt == this.createdAt &&
+          other.editedAt == this.editedAt &&
+          other.deletedAt == this.deletedAt &&
+          other.state == this.state);
+}
+
+class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
+  final Value<String> key;
+  final Value<String?> serverMessageId;
+  final Value<String> conversationId;
+  final Value<String> senderAccountId;
+  final Value<String> senderDeviceId;
+  final Value<String> kind;
+  final Value<String?> body;
+  final Value<String?> replyTo;
+  final Value<int> createdAt;
+  final Value<int?> editedAt;
+  final Value<int?> deletedAt;
+  final Value<String> state;
+  final Value<int> rowid;
+  const LocalMessagesCompanion({
+    this.key = const Value.absent(),
+    this.serverMessageId = const Value.absent(),
+    this.conversationId = const Value.absent(),
+    this.senderAccountId = const Value.absent(),
+    this.senderDeviceId = const Value.absent(),
+    this.kind = const Value.absent(),
+    this.body = const Value.absent(),
+    this.replyTo = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.editedAt = const Value.absent(),
+    this.deletedAt = const Value.absent(),
+    this.state = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  LocalMessagesCompanion.insert({
+    required String key,
+    this.serverMessageId = const Value.absent(),
+    required String conversationId,
+    required String senderAccountId,
+    required String senderDeviceId,
+    required String kind,
+    this.body = const Value.absent(),
+    this.replyTo = const Value.absent(),
+    required int createdAt,
+    this.editedAt = const Value.absent(),
+    this.deletedAt = const Value.absent(),
+    required String state,
+    this.rowid = const Value.absent(),
+  })  : key = Value(key),
+        conversationId = Value(conversationId),
+        senderAccountId = Value(senderAccountId),
+        senderDeviceId = Value(senderDeviceId),
+        kind = Value(kind),
+        createdAt = Value(createdAt),
+        state = Value(state);
+  static Insertable<LocalMessage> custom({
+    Expression<String>? key,
+    Expression<String>? serverMessageId,
+    Expression<String>? conversationId,
+    Expression<String>? senderAccountId,
+    Expression<String>? senderDeviceId,
+    Expression<String>? kind,
+    Expression<String>? body,
+    Expression<String>? replyTo,
+    Expression<int>? createdAt,
+    Expression<int>? editedAt,
+    Expression<int>? deletedAt,
+    Expression<String>? state,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (key != null) 'key': key,
+      if (serverMessageId != null) 'server_message_id': serverMessageId,
+      if (conversationId != null) 'conversation_id': conversationId,
+      if (senderAccountId != null) 'sender_account_id': senderAccountId,
+      if (senderDeviceId != null) 'sender_device_id': senderDeviceId,
+      if (kind != null) 'kind': kind,
+      if (body != null) 'body': body,
+      if (replyTo != null) 'reply_to': replyTo,
+      if (createdAt != null) 'created_at': createdAt,
+      if (editedAt != null) 'edited_at': editedAt,
+      if (deletedAt != null) 'deleted_at': deletedAt,
+      if (state != null) 'state': state,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  LocalMessagesCompanion copyWith(
+      {Value<String>? key,
+      Value<String?>? serverMessageId,
+      Value<String>? conversationId,
+      Value<String>? senderAccountId,
+      Value<String>? senderDeviceId,
+      Value<String>? kind,
+      Value<String?>? body,
+      Value<String?>? replyTo,
+      Value<int>? createdAt,
+      Value<int?>? editedAt,
+      Value<int?>? deletedAt,
+      Value<String>? state,
+      Value<int>? rowid}) {
+    return LocalMessagesCompanion(
+      key: key ?? this.key,
+      serverMessageId: serverMessageId ?? this.serverMessageId,
+      conversationId: conversationId ?? this.conversationId,
+      senderAccountId: senderAccountId ?? this.senderAccountId,
+      senderDeviceId: senderDeviceId ?? this.senderDeviceId,
+      kind: kind ?? this.kind,
+      body: body ?? this.body,
+      replyTo: replyTo ?? this.replyTo,
+      createdAt: createdAt ?? this.createdAt,
+      editedAt: editedAt ?? this.editedAt,
+      deletedAt: deletedAt ?? this.deletedAt,
+      state: state ?? this.state,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (key.present) {
+      map['key'] = Variable<String>(key.value);
+    }
+    if (serverMessageId.present) {
+      map['server_message_id'] = Variable<String>(serverMessageId.value);
+    }
+    if (conversationId.present) {
+      map['conversation_id'] = Variable<String>(conversationId.value);
+    }
+    if (senderAccountId.present) {
+      map['sender_account_id'] = Variable<String>(senderAccountId.value);
+    }
+    if (senderDeviceId.present) {
+      map['sender_device_id'] = Variable<String>(senderDeviceId.value);
+    }
+    if (kind.present) {
+      map['kind'] = Variable<String>(kind.value);
+    }
+    if (body.present) {
+      map['body'] = Variable<String>(body.value);
+    }
+    if (replyTo.present) {
+      map['reply_to'] = Variable<String>(replyTo.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<int>(createdAt.value);
+    }
+    if (editedAt.present) {
+      map['edited_at'] = Variable<int>(editedAt.value);
+    }
+    if (deletedAt.present) {
+      map['deleted_at'] = Variable<int>(deletedAt.value);
+    }
+    if (state.present) {
+      map['state'] = Variable<String>(state.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalMessagesCompanion(')
+          ..write('key: $key, ')
+          ..write('serverMessageId: $serverMessageId, ')
+          ..write('conversationId: $conversationId, ')
+          ..write('senderAccountId: $senderAccountId, ')
+          ..write('senderDeviceId: $senderDeviceId, ')
+          ..write('kind: $kind, ')
+          ..write('body: $body, ')
+          ..write('replyTo: $replyTo, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('editedAt: $editedAt, ')
+          ..write('deletedAt: $deletedAt, ')
+          ..write('state: $state, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $LocalMessageReactionsTable extends LocalMessageReactions
+    with TableInfo<$LocalMessageReactionsTable, LocalMessageReaction> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $LocalMessageReactionsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _targetKeyMeta =
+      const VerificationMeta('targetKey');
+  @override
+  late final GeneratedColumn<String> targetKey = GeneratedColumn<String>(
+      'target_key', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _reactorAccountIdMeta =
+      const VerificationMeta('reactorAccountId');
+  @override
+  late final GeneratedColumn<String> reactorAccountId = GeneratedColumn<String>(
+      'reactor_account_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _reactionMeta =
+      const VerificationMeta('reaction');
+  @override
+  late final GeneratedColumn<String> reaction = GeneratedColumn<String>(
+      'reaction', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _updatedAtMeta =
+      const VerificationMeta('updatedAt');
+  @override
+  late final GeneratedColumn<int> updatedAt = GeneratedColumn<int>(
+      'updated_at', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  @override
+  List<GeneratedColumn> get $columns =>
+      [targetKey, reactorAccountId, reaction, updatedAt];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'local_message_reactions';
+  @override
+  VerificationContext validateIntegrity(
+      Insertable<LocalMessageReaction> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('target_key')) {
+      context.handle(_targetKeyMeta,
+          targetKey.isAcceptableOrUnknown(data['target_key']!, _targetKeyMeta));
+    } else if (isInserting) {
+      context.missing(_targetKeyMeta);
+    }
+    if (data.containsKey('reactor_account_id')) {
+      context.handle(
+          _reactorAccountIdMeta,
+          reactorAccountId.isAcceptableOrUnknown(
+              data['reactor_account_id']!, _reactorAccountIdMeta));
+    } else if (isInserting) {
+      context.missing(_reactorAccountIdMeta);
+    }
+    if (data.containsKey('reaction')) {
+      context.handle(_reactionMeta,
+          reaction.isAcceptableOrUnknown(data['reaction']!, _reactionMeta));
+    } else if (isInserting) {
+      context.missing(_reactionMeta);
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(_updatedAtMeta,
+          updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta));
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {targetKey, reactorAccountId};
+  @override
+  LocalMessageReaction map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return LocalMessageReaction(
+      targetKey: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}target_key'])!,
+      reactorAccountId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}reactor_account_id'])!,
+      reaction: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}reaction'])!,
+      updatedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}updated_at'])!,
+    );
+  }
+
+  @override
+  $LocalMessageReactionsTable createAlias(String alias) {
+    return $LocalMessageReactionsTable(attachedDatabase, alias);
+  }
+}
+
+class LocalMessageReaction extends DataClass
+    implements Insertable<LocalMessageReaction> {
+  final String targetKey;
+  final String reactorAccountId;
+  final String reaction;
+  final int updatedAt;
+  const LocalMessageReaction(
+      {required this.targetKey,
+      required this.reactorAccountId,
+      required this.reaction,
+      required this.updatedAt});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['target_key'] = Variable<String>(targetKey);
+    map['reactor_account_id'] = Variable<String>(reactorAccountId);
+    map['reaction'] = Variable<String>(reaction);
+    map['updated_at'] = Variable<int>(updatedAt);
+    return map;
+  }
+
+  LocalMessageReactionsCompanion toCompanion(bool nullToAbsent) {
+    return LocalMessageReactionsCompanion(
+      targetKey: Value(targetKey),
+      reactorAccountId: Value(reactorAccountId),
+      reaction: Value(reaction),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory LocalMessageReaction.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return LocalMessageReaction(
+      targetKey: serializer.fromJson<String>(json['targetKey']),
+      reactorAccountId: serializer.fromJson<String>(json['reactorAccountId']),
+      reaction: serializer.fromJson<String>(json['reaction']),
+      updatedAt: serializer.fromJson<int>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'targetKey': serializer.toJson<String>(targetKey),
+      'reactorAccountId': serializer.toJson<String>(reactorAccountId),
+      'reaction': serializer.toJson<String>(reaction),
+      'updatedAt': serializer.toJson<int>(updatedAt),
+    };
+  }
+
+  LocalMessageReaction copyWith(
+          {String? targetKey,
+          String? reactorAccountId,
+          String? reaction,
+          int? updatedAt}) =>
+      LocalMessageReaction(
+        targetKey: targetKey ?? this.targetKey,
+        reactorAccountId: reactorAccountId ?? this.reactorAccountId,
+        reaction: reaction ?? this.reaction,
+        updatedAt: updatedAt ?? this.updatedAt,
+      );
+  LocalMessageReaction copyWithCompanion(LocalMessageReactionsCompanion data) {
+    return LocalMessageReaction(
+      targetKey: data.targetKey.present ? data.targetKey.value : this.targetKey,
+      reactorAccountId: data.reactorAccountId.present
+          ? data.reactorAccountId.value
+          : this.reactorAccountId,
+      reaction: data.reaction.present ? data.reaction.value : this.reaction,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalMessageReaction(')
+          ..write('targetKey: $targetKey, ')
+          ..write('reactorAccountId: $reactorAccountId, ')
+          ..write('reaction: $reaction, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(targetKey, reactorAccountId, reaction, updatedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is LocalMessageReaction &&
+          other.targetKey == this.targetKey &&
+          other.reactorAccountId == this.reactorAccountId &&
+          other.reaction == this.reaction &&
+          other.updatedAt == this.updatedAt);
+}
+
+class LocalMessageReactionsCompanion
+    extends UpdateCompanion<LocalMessageReaction> {
+  final Value<String> targetKey;
+  final Value<String> reactorAccountId;
+  final Value<String> reaction;
+  final Value<int> updatedAt;
+  final Value<int> rowid;
+  const LocalMessageReactionsCompanion({
+    this.targetKey = const Value.absent(),
+    this.reactorAccountId = const Value.absent(),
+    this.reaction = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  LocalMessageReactionsCompanion.insert({
+    required String targetKey,
+    required String reactorAccountId,
+    required String reaction,
+    required int updatedAt,
+    this.rowid = const Value.absent(),
+  })  : targetKey = Value(targetKey),
+        reactorAccountId = Value(reactorAccountId),
+        reaction = Value(reaction),
+        updatedAt = Value(updatedAt);
+  static Insertable<LocalMessageReaction> custom({
+    Expression<String>? targetKey,
+    Expression<String>? reactorAccountId,
+    Expression<String>? reaction,
+    Expression<int>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (targetKey != null) 'target_key': targetKey,
+      if (reactorAccountId != null) 'reactor_account_id': reactorAccountId,
+      if (reaction != null) 'reaction': reaction,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  LocalMessageReactionsCompanion copyWith(
+      {Value<String>? targetKey,
+      Value<String>? reactorAccountId,
+      Value<String>? reaction,
+      Value<int>? updatedAt,
+      Value<int>? rowid}) {
+    return LocalMessageReactionsCompanion(
+      targetKey: targetKey ?? this.targetKey,
+      reactorAccountId: reactorAccountId ?? this.reactorAccountId,
+      reaction: reaction ?? this.reaction,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (targetKey.present) {
+      map['target_key'] = Variable<String>(targetKey.value);
+    }
+    if (reactorAccountId.present) {
+      map['reactor_account_id'] = Variable<String>(reactorAccountId.value);
+    }
+    if (reaction.present) {
+      map['reaction'] = Variable<String>(reaction.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<int>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalMessageReactionsCompanion(')
+          ..write('targetKey: $targetKey, ')
+          ..write('reactorAccountId: $reactorAccountId, ')
+          ..write('reaction: $reaction, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$EncryptedLocalDatabase extends GeneratedDatabase {
   _$EncryptedLocalDatabase(QueryExecutor e) : super(e);
   $EncryptedLocalDatabaseManager get managers =>
@@ -2872,6 +3767,9 @@ abstract class _$EncryptedLocalDatabase extends GeneratedDatabase {
       $LocalMlsOutboxEntriesTable(this);
   late final $LocalPeerVerificationsTable localPeerVerifications =
       $LocalPeerVerificationsTable(this);
+  late final $LocalMessagesTable localMessages = $LocalMessagesTable(this);
+  late final $LocalMessageReactionsTable localMessageReactions =
+      $LocalMessageReactionsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -2886,7 +3784,9 @@ abstract class _$EncryptedLocalDatabase extends GeneratedDatabase {
         localMetadata,
         localMlsTransitions,
         localMlsOutboxEntries,
-        localPeerVerifications
+        localPeerVerifications,
+        localMessages,
+        localMessageReactions
       ];
 }
 
@@ -2993,7 +3893,11 @@ class $$LocalAccountsTableTableManager extends RootTableManager<
             sessionJson: sessionJson,
           ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map((e) => (
+                    e.readTable<$LocalAccountsTable, LocalAccount>(table),
+                    BaseReferences<_$EncryptedLocalDatabase,
+                        $LocalAccountsTable, LocalAccount>(db, table, e)
+                  ))
               .toList(),
           prefetchHooksCallback: null,
         ));
@@ -3140,7 +4044,14 @@ class $$LocalConversationsTableTableManager extends RootTableManager<
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map((e) => (
+                    e.readTable<$LocalConversationsTable, LocalConversation>(
+                        table),
+                    BaseReferences<
+                        _$EncryptedLocalDatabase,
+                        $LocalConversationsTable,
+                        LocalConversation>(db, table, e)
+                  ))
               .toList(),
           prefetchHooksCallback: null,
         ));
@@ -3306,7 +4217,14 @@ class $$LocalCiphertextEnvelopesTableTableManager extends RootTableManager<
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map((e) => (
+                    e.readTable<$LocalCiphertextEnvelopesTable,
+                        LocalCiphertextEnvelope>(table),
+                    BaseReferences<
+                        _$EncryptedLocalDatabase,
+                        $LocalCiphertextEnvelopesTable,
+                        LocalCiphertextEnvelope>(db, table, e)
+                  ))
               .toList(),
           prefetchHooksCallback: null,
         ));
@@ -3432,7 +4350,11 @@ class $$LocalSyncStatesTableTableManager extends RootTableManager<
             cursor: cursor,
           ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map((e) => (
+                    e.readTable<$LocalSyncStatesTable, LocalSyncState>(table),
+                    BaseReferences<_$EncryptedLocalDatabase,
+                        $LocalSyncStatesTable, LocalSyncState>(db, table, e)
+                  ))
               .toList(),
           prefetchHooksCallback: null,
         ));
@@ -3661,7 +4583,14 @@ class $$LocalOutboxEntriesTableTableManager extends RootTableManager<
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map((e) => (
+                    e.readTable<$LocalOutboxEntriesTable, LocalOutboxEntry>(
+                        table),
+                    BaseReferences<
+                        _$EncryptedLocalDatabase,
+                        $LocalOutboxEntriesTable,
+                        LocalOutboxEntry>(db, table, e)
+                  ))
               .toList(),
           prefetchHooksCallback: null,
         ));
@@ -3817,7 +4746,12 @@ class $$LocalCryptoStatesTableTableManager extends RootTableManager<
             sealedState: sealedState,
           ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map((e) => (
+                    e.readTable<$LocalCryptoStatesTable, LocalCryptoState>(
+                        table),
+                    BaseReferences<_$EncryptedLocalDatabase,
+                        $LocalCryptoStatesTable, LocalCryptoState>(db, table, e)
+                  ))
               .toList(),
           prefetchHooksCallback: null,
         ));
@@ -3948,7 +4882,11 @@ class $$LocalMetadataTableTableManager extends RootTableManager<
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map((e) => (
+                    e.readTable<$LocalMetadataTable, LocalMetadataData>(table),
+                    BaseReferences<_$EncryptedLocalDatabase,
+                        $LocalMetadataTable, LocalMetadataData>(db, table, e)
+                  ))
               .toList(),
           prefetchHooksCallback: null,
         ));
@@ -4113,7 +5051,14 @@ class $$LocalMlsTransitionsTableTableManager extends RootTableManager<
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map((e) => (
+                    e.readTable<$LocalMlsTransitionsTable, LocalMlsTransition>(
+                        table),
+                    BaseReferences<
+                        _$EncryptedLocalDatabase,
+                        $LocalMlsTransitionsTable,
+                        LocalMlsTransition>(db, table, e)
+                  ))
               .toList(),
           prefetchHooksCallback: null,
         ));
@@ -4346,7 +5291,14 @@ class $$LocalMlsOutboxEntriesTableTableManager extends RootTableManager<
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map((e) => (
+                    e.readTable<$LocalMlsOutboxEntriesTable,
+                        LocalMlsOutboxEntry>(table),
+                    BaseReferences<
+                        _$EncryptedLocalDatabase,
+                        $LocalMlsOutboxEntriesTable,
+                        LocalMlsOutboxEntry>(db, table, e)
+                  ))
               .toList(),
           prefetchHooksCallback: null,
         ));
@@ -4516,7 +5468,14 @@ class $$LocalPeerVerificationsTableTableManager extends RootTableManager<
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map((e) => (
+                    e.readTable<$LocalPeerVerificationsTable,
+                        LocalPeerVerification>(table),
+                    BaseReferences<
+                        _$EncryptedLocalDatabase,
+                        $LocalPeerVerificationsTable,
+                        LocalPeerVerification>(db, table, e)
+                  ))
               .toList(),
           prefetchHooksCallback: null,
         ));
@@ -4538,6 +5497,473 @@ typedef $$LocalPeerVerificationsTableProcessedTableManager
               LocalPeerVerification>
         ),
         LocalPeerVerification,
+        PrefetchHooks Function()>;
+typedef $$LocalMessagesTableCreateCompanionBuilder = LocalMessagesCompanion
+    Function({
+  required String key,
+  Value<String?> serverMessageId,
+  required String conversationId,
+  required String senderAccountId,
+  required String senderDeviceId,
+  required String kind,
+  Value<String?> body,
+  Value<String?> replyTo,
+  required int createdAt,
+  Value<int?> editedAt,
+  Value<int?> deletedAt,
+  required String state,
+  Value<int> rowid,
+});
+typedef $$LocalMessagesTableUpdateCompanionBuilder = LocalMessagesCompanion
+    Function({
+  Value<String> key,
+  Value<String?> serverMessageId,
+  Value<String> conversationId,
+  Value<String> senderAccountId,
+  Value<String> senderDeviceId,
+  Value<String> kind,
+  Value<String?> body,
+  Value<String?> replyTo,
+  Value<int> createdAt,
+  Value<int?> editedAt,
+  Value<int?> deletedAt,
+  Value<String> state,
+  Value<int> rowid,
+});
+
+class $$LocalMessagesTableFilterComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalMessagesTable> {
+  $$LocalMessagesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get key => $composableBuilder(
+      column: $table.key, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get serverMessageId => $composableBuilder(
+      column: $table.serverMessageId,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get conversationId => $composableBuilder(
+      column: $table.conversationId,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get senderAccountId => $composableBuilder(
+      column: $table.senderAccountId,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get senderDeviceId => $composableBuilder(
+      column: $table.senderDeviceId,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get kind => $composableBuilder(
+      column: $table.kind, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get body => $composableBuilder(
+      column: $table.body, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get replyTo => $composableBuilder(
+      column: $table.replyTo, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get createdAt => $composableBuilder(
+      column: $table.createdAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get editedAt => $composableBuilder(
+      column: $table.editedAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get deletedAt => $composableBuilder(
+      column: $table.deletedAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get state => $composableBuilder(
+      column: $table.state, builder: (column) => ColumnFilters(column));
+}
+
+class $$LocalMessagesTableOrderingComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalMessagesTable> {
+  $$LocalMessagesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get key => $composableBuilder(
+      column: $table.key, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get serverMessageId => $composableBuilder(
+      column: $table.serverMessageId,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get conversationId => $composableBuilder(
+      column: $table.conversationId,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get senderAccountId => $composableBuilder(
+      column: $table.senderAccountId,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get senderDeviceId => $composableBuilder(
+      column: $table.senderDeviceId,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get kind => $composableBuilder(
+      column: $table.kind, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get body => $composableBuilder(
+      column: $table.body, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get replyTo => $composableBuilder(
+      column: $table.replyTo, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get createdAt => $composableBuilder(
+      column: $table.createdAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get editedAt => $composableBuilder(
+      column: $table.editedAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get deletedAt => $composableBuilder(
+      column: $table.deletedAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get state => $composableBuilder(
+      column: $table.state, builder: (column) => ColumnOrderings(column));
+}
+
+class $$LocalMessagesTableAnnotationComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalMessagesTable> {
+  $$LocalMessagesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get key =>
+      $composableBuilder(column: $table.key, builder: (column) => column);
+
+  GeneratedColumn<String> get serverMessageId => $composableBuilder(
+      column: $table.serverMessageId, builder: (column) => column);
+
+  GeneratedColumn<String> get conversationId => $composableBuilder(
+      column: $table.conversationId, builder: (column) => column);
+
+  GeneratedColumn<String> get senderAccountId => $composableBuilder(
+      column: $table.senderAccountId, builder: (column) => column);
+
+  GeneratedColumn<String> get senderDeviceId => $composableBuilder(
+      column: $table.senderDeviceId, builder: (column) => column);
+
+  GeneratedColumn<String> get kind =>
+      $composableBuilder(column: $table.kind, builder: (column) => column);
+
+  GeneratedColumn<String> get body =>
+      $composableBuilder(column: $table.body, builder: (column) => column);
+
+  GeneratedColumn<String> get replyTo =>
+      $composableBuilder(column: $table.replyTo, builder: (column) => column);
+
+  GeneratedColumn<int> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<int> get editedAt =>
+      $composableBuilder(column: $table.editedAt, builder: (column) => column);
+
+  GeneratedColumn<int> get deletedAt =>
+      $composableBuilder(column: $table.deletedAt, builder: (column) => column);
+
+  GeneratedColumn<String> get state =>
+      $composableBuilder(column: $table.state, builder: (column) => column);
+}
+
+class $$LocalMessagesTableTableManager extends RootTableManager<
+    _$EncryptedLocalDatabase,
+    $LocalMessagesTable,
+    LocalMessage,
+    $$LocalMessagesTableFilterComposer,
+    $$LocalMessagesTableOrderingComposer,
+    $$LocalMessagesTableAnnotationComposer,
+    $$LocalMessagesTableCreateCompanionBuilder,
+    $$LocalMessagesTableUpdateCompanionBuilder,
+    (
+      LocalMessage,
+      BaseReferences<_$EncryptedLocalDatabase, $LocalMessagesTable,
+          LocalMessage>
+    ),
+    LocalMessage,
+    PrefetchHooks Function()> {
+  $$LocalMessagesTableTableManager(
+      _$EncryptedLocalDatabase db, $LocalMessagesTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$LocalMessagesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$LocalMessagesTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$LocalMessagesTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> key = const Value.absent(),
+            Value<String?> serverMessageId = const Value.absent(),
+            Value<String> conversationId = const Value.absent(),
+            Value<String> senderAccountId = const Value.absent(),
+            Value<String> senderDeviceId = const Value.absent(),
+            Value<String> kind = const Value.absent(),
+            Value<String?> body = const Value.absent(),
+            Value<String?> replyTo = const Value.absent(),
+            Value<int> createdAt = const Value.absent(),
+            Value<int?> editedAt = const Value.absent(),
+            Value<int?> deletedAt = const Value.absent(),
+            Value<String> state = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalMessagesCompanion(
+            key: key,
+            serverMessageId: serverMessageId,
+            conversationId: conversationId,
+            senderAccountId: senderAccountId,
+            senderDeviceId: senderDeviceId,
+            kind: kind,
+            body: body,
+            replyTo: replyTo,
+            createdAt: createdAt,
+            editedAt: editedAt,
+            deletedAt: deletedAt,
+            state: state,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String key,
+            Value<String?> serverMessageId = const Value.absent(),
+            required String conversationId,
+            required String senderAccountId,
+            required String senderDeviceId,
+            required String kind,
+            Value<String?> body = const Value.absent(),
+            Value<String?> replyTo = const Value.absent(),
+            required int createdAt,
+            Value<int?> editedAt = const Value.absent(),
+            Value<int?> deletedAt = const Value.absent(),
+            required String state,
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalMessagesCompanion.insert(
+            key: key,
+            serverMessageId: serverMessageId,
+            conversationId: conversationId,
+            senderAccountId: senderAccountId,
+            senderDeviceId: senderDeviceId,
+            kind: kind,
+            body: body,
+            replyTo: replyTo,
+            createdAt: createdAt,
+            editedAt: editedAt,
+            deletedAt: deletedAt,
+            state: state,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (
+                    e.readTable<$LocalMessagesTable, LocalMessage>(table),
+                    BaseReferences<_$EncryptedLocalDatabase,
+                        $LocalMessagesTable, LocalMessage>(db, table, e)
+                  ))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$LocalMessagesTableProcessedTableManager = ProcessedTableManager<
+    _$EncryptedLocalDatabase,
+    $LocalMessagesTable,
+    LocalMessage,
+    $$LocalMessagesTableFilterComposer,
+    $$LocalMessagesTableOrderingComposer,
+    $$LocalMessagesTableAnnotationComposer,
+    $$LocalMessagesTableCreateCompanionBuilder,
+    $$LocalMessagesTableUpdateCompanionBuilder,
+    (
+      LocalMessage,
+      BaseReferences<_$EncryptedLocalDatabase, $LocalMessagesTable,
+          LocalMessage>
+    ),
+    LocalMessage,
+    PrefetchHooks Function()>;
+typedef $$LocalMessageReactionsTableCreateCompanionBuilder
+    = LocalMessageReactionsCompanion Function({
+  required String targetKey,
+  required String reactorAccountId,
+  required String reaction,
+  required int updatedAt,
+  Value<int> rowid,
+});
+typedef $$LocalMessageReactionsTableUpdateCompanionBuilder
+    = LocalMessageReactionsCompanion Function({
+  Value<String> targetKey,
+  Value<String> reactorAccountId,
+  Value<String> reaction,
+  Value<int> updatedAt,
+  Value<int> rowid,
+});
+
+class $$LocalMessageReactionsTableFilterComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalMessageReactionsTable> {
+  $$LocalMessageReactionsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get targetKey => $composableBuilder(
+      column: $table.targetKey, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get reactorAccountId => $composableBuilder(
+      column: $table.reactorAccountId,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get reaction => $composableBuilder(
+      column: $table.reaction, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get updatedAt => $composableBuilder(
+      column: $table.updatedAt, builder: (column) => ColumnFilters(column));
+}
+
+class $$LocalMessageReactionsTableOrderingComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalMessageReactionsTable> {
+  $$LocalMessageReactionsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get targetKey => $composableBuilder(
+      column: $table.targetKey, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get reactorAccountId => $composableBuilder(
+      column: $table.reactorAccountId,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get reaction => $composableBuilder(
+      column: $table.reaction, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get updatedAt => $composableBuilder(
+      column: $table.updatedAt, builder: (column) => ColumnOrderings(column));
+}
+
+class $$LocalMessageReactionsTableAnnotationComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalMessageReactionsTable> {
+  $$LocalMessageReactionsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get targetKey =>
+      $composableBuilder(column: $table.targetKey, builder: (column) => column);
+
+  GeneratedColumn<String> get reactorAccountId => $composableBuilder(
+      column: $table.reactorAccountId, builder: (column) => column);
+
+  GeneratedColumn<String> get reaction =>
+      $composableBuilder(column: $table.reaction, builder: (column) => column);
+
+  GeneratedColumn<int> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$LocalMessageReactionsTableTableManager extends RootTableManager<
+    _$EncryptedLocalDatabase,
+    $LocalMessageReactionsTable,
+    LocalMessageReaction,
+    $$LocalMessageReactionsTableFilterComposer,
+    $$LocalMessageReactionsTableOrderingComposer,
+    $$LocalMessageReactionsTableAnnotationComposer,
+    $$LocalMessageReactionsTableCreateCompanionBuilder,
+    $$LocalMessageReactionsTableUpdateCompanionBuilder,
+    (
+      LocalMessageReaction,
+      BaseReferences<_$EncryptedLocalDatabase, $LocalMessageReactionsTable,
+          LocalMessageReaction>
+    ),
+    LocalMessageReaction,
+    PrefetchHooks Function()> {
+  $$LocalMessageReactionsTableTableManager(
+      _$EncryptedLocalDatabase db, $LocalMessageReactionsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$LocalMessageReactionsTableFilterComposer(
+                  $db: db, $table: table),
+          createOrderingComposer: () =>
+              $$LocalMessageReactionsTableOrderingComposer(
+                  $db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$LocalMessageReactionsTableAnnotationComposer(
+                  $db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> targetKey = const Value.absent(),
+            Value<String> reactorAccountId = const Value.absent(),
+            Value<String> reaction = const Value.absent(),
+            Value<int> updatedAt = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalMessageReactionsCompanion(
+            targetKey: targetKey,
+            reactorAccountId: reactorAccountId,
+            reaction: reaction,
+            updatedAt: updatedAt,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String targetKey,
+            required String reactorAccountId,
+            required String reaction,
+            required int updatedAt,
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalMessageReactionsCompanion.insert(
+            targetKey: targetKey,
+            reactorAccountId: reactorAccountId,
+            reaction: reaction,
+            updatedAt: updatedAt,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (
+                    e.readTable<$LocalMessageReactionsTable,
+                        LocalMessageReaction>(table),
+                    BaseReferences<
+                        _$EncryptedLocalDatabase,
+                        $LocalMessageReactionsTable,
+                        LocalMessageReaction>(db, table, e)
+                  ))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$LocalMessageReactionsTableProcessedTableManager
+    = ProcessedTableManager<
+        _$EncryptedLocalDatabase,
+        $LocalMessageReactionsTable,
+        LocalMessageReaction,
+        $$LocalMessageReactionsTableFilterComposer,
+        $$LocalMessageReactionsTableOrderingComposer,
+        $$LocalMessageReactionsTableAnnotationComposer,
+        $$LocalMessageReactionsTableCreateCompanionBuilder,
+        $$LocalMessageReactionsTableUpdateCompanionBuilder,
+        (
+          LocalMessageReaction,
+          BaseReferences<_$EncryptedLocalDatabase, $LocalMessageReactionsTable,
+              LocalMessageReaction>
+        ),
+        LocalMessageReaction,
         PrefetchHooks Function()>;
 
 class $EncryptedLocalDatabaseManager {
@@ -4565,4 +5991,8 @@ class $EncryptedLocalDatabaseManager {
   $$LocalPeerVerificationsTableTableManager get localPeerVerifications =>
       $$LocalPeerVerificationsTableTableManager(
           _db, _db.localPeerVerifications);
+  $$LocalMessagesTableTableManager get localMessages =>
+      $$LocalMessagesTableTableManager(_db, _db.localMessages);
+  $$LocalMessageReactionsTableTableManager get localMessageReactions =>
+      $$LocalMessageReactionsTableTableManager(_db, _db.localMessageReactions);
 }

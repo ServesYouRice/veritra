@@ -14,6 +14,8 @@ python3 "$ROOT/scripts/check-release-evidence.py" \
   --expected-commit "${RELEASE_COMMIT:-$(git rev-parse HEAD)}" \
   --preflight
 
+sh "$ROOT/scripts/check-demo-boundary.sh"
+
 if grep -q 'PM_CRYPTO_UNAVAILABLE' crypto/rust/src/lib.rs || \
    grep -q 'UnavailableCryptoService' mobile/lib/main.dart; then
   echo "release blocked: production MLS crypto is not wired" >&2

@@ -65,6 +65,15 @@ Advisor: <not required, or question + adopted/rejected advice>
 Inspection never substitutes for a required runtime, signed-device, or
 external check.
 
+## Demo-first order (D10, 2026-09-24)
+
+The board's "Current status" lists the stage order. Until the demos work,
+claim stage work from that list first; the audit cards below keep their scope
+and checks and are picked up in Stage 5. Stage plan and amendments:
+`docs/board.md` decisions D10–D27. Demo builds use `mobile/lib/main_demo.dart`
+only; never touch the release gate (`main.dart`, `lib.rs`,
+`scripts/release-readiness.sh`).
+
 ## Current routing snapshot
 
 Recheck the board before every claim. The model column replaces the repeated
@@ -85,10 +94,10 @@ Recheck the board before every claim. The model column replaces the repeated
 | T47 | Prepared; conditional for private alpha | Balanced+advisor | I35 and I36 verification |
 | T48A-B | Prepared | Balanced+advisor / Strong | I32, then T48A |
 | T49A-D | Measure after correctness work | Balanced / Strong for T49D | Correctness cards and T47 where named |
-| T50 | Deferred | Strong after trigger | D06, mobile release, product trigger |
+| T50 | Deferred | Strong after trigger | D10/D19, all demos, product trigger |
 | G24 | External | Coordinator/platform specialists | Code blockers, hardware, signing, providers, TURN |
 | G25 | External | Independent reviewer | G24, G27, all release blockers |
-| G27 | Upstream/review blocked | Strong | Stable coordinated release or approved exception review |
+| G27 | Closed 2026-09-24 by OpenMLS 0.9.0 (D13); CI confirmation pending | Strong | — |
 
 ### Reviewed QA follow-ups
 
@@ -681,6 +690,11 @@ Run the complete release matrix, native ABI/vector suites, and
 
 ### G27 — OpenMLS/HPKE advisory closure
 
+**Status 2026-09-24:** done by the OpenMLS 0.9.0 upgrade (D13): no advisory
+exceptions remain and `scripts/audit-rust.sh` passes with none. Close the card
+once CI confirms, including the Android/iOS native builds. The contract below
+is kept for any future advisory.
+
 Recheck coordinated stable upstream versions before the 2026-08-29 exception
 deadline. If stable fixes exist, update the compatible graph, notices, and
 SBOM, then rerun vectors, audits, ABI, and Android/iOS native builds. Do not use
@@ -698,7 +712,7 @@ set a new executable expiry, and keep release blocked.
 
 ### T50 — Product and ecosystem roadmap
 
-Nothing here is claimable before D06's mobile-release trigger and explicit
+Nothing here is claimable before the demos (D10) are done and explicit
 product approval. Retained themes are encrypted drafts/search, contacts,
 archive/pin and trust ceremonies; trust/admin/moderation tools; multi-account,
 passkeys, privacy/TLS indicators, and post-quantum readiness; privacy-safe

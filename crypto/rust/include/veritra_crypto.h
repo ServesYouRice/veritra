@@ -5,11 +5,13 @@
 #include <stdint.h>
 
 #define PM_CRYPTO_UNAVAILABLE (-1)
-#define PM_CRYPTO_ABI_VERSION (4u)
+#define PM_CRYPTO_ABI_VERSION (5u)
 #define PM_CRYPTO_OK (0)
 #define PM_CRYPTO_INVALID_ARGUMENT (-2)
 #define PM_CRYPTO_ERROR (-3)
 #define PM_CRYPTO_PANIC (-4)
+/* Decrypted, but the MLS sender is not the claimed account/device (ABI 5). */
+#define PM_CRYPTO_SENDER_MISMATCH (-5)
 
 typedef struct {
   const uint8_t *data;
@@ -105,6 +107,8 @@ int32_t pm_crypto_group_encrypt(PmCryptoHandle *handle, PmByteSlice group_id,
                                 PmOwnedBuffer *out_ciphertext);
 int32_t pm_crypto_group_decrypt(PmCryptoHandle *handle, PmByteSlice group_id,
                                 PmByteSlice ciphertext,
+                                PmByteSlice sender_account_id,
+                                PmByteSlice sender_device_id,
                                 PmOwnedBuffer *out_plaintext);
 int32_t pm_crypto_attachment_encrypt_chunk(
     PmByteSlice key, PmByteSlice nonce_prefix, uint32_t chunk_index,

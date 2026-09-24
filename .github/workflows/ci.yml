@@ -42,7 +42,7 @@ jobs:
       # testing/evidence/coverage-baseline.md; the gate still fails on missing
       # or malformed coverage data.
       - name: Check Go coverage floor
-        run: python3 ../scripts/check-coverage.py --go-profile coverage.out --go-floor 0.0
+        run: python3 ../scripts/check-coverage.py --go-profile coverage.out --go-floor 50.0
         working-directory: server
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -59,8 +59,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install pinned Rust toolchain
         run: |
-          rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
-          rustup default 1.90.0
+          rustup toolchain install 1.91.0 --profile minimal --component rustfmt,clippy
+          rustup default 1.91.0
       - run: cargo test --release --locked
         working-directory: crypto/rust
       - run: cargo fmt --check && cargo clippy --all-targets -- -D warnings
@@ -82,8 +82,8 @@ jobs:
           cache: true
       - name: Install pinned Rust Android targets
         run: |
-          rustup toolchain install 1.90.0 --profile minimal
-          rustup target add --toolchain 1.90.0 aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+          rustup toolchain install 1.91.0 --profile minimal
+          rustup target add --toolchain 1.91.0 aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
       - name: Build and verify Android crypto libraries
         run: |
           sh scripts/build-mobile-crypto.sh android
@@ -91,6 +91,8 @@ jobs:
           cargo build --manifest-path crypto/rust/Cargo.toml --locked --release
       - run: flutter pub get --enforce-lockfile
         working-directory: mobile
+      - name: Keep demo wiring out of the release entry point
+        run: sh scripts/check-demo-boundary.sh
       - name: Verify mobile dependency policy and retractions
         run: sh scripts/check-mobile-dependencies.sh
       - name: Verify Dart dependency license files
@@ -104,7 +106,7 @@ jobs:
       # testing/evidence/coverage-baseline.md; the gate still fails on missing
       # or malformed coverage data.
       - name: Check Flutter coverage floor
-        run: python3 ../scripts/check-coverage.py --flutter-lcov coverage/lcov.info --flutter-floor 0.0
+        run: python3 ../scripts/check-coverage.py --flutter-lcov coverage/lcov.info --flutter-floor 43.0
         working-directory: mobile
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -115,6 +117,8 @@ jobs:
         working-directory: mobile
       - name: Test live Go/Dart API contracts
         run: sh scripts/test-api-contracts.sh
+      - name: Test the demo message flow with real clients
+        run: sh scripts/test-demo-e2e.sh
       - run: dart format --set-exit-if-changed .
         working-directory: mobile
       - name: Build Android release APK without signing
@@ -139,8 +143,8 @@ jobs:
           cache: true
       - name: Install pinned Rust iOS targets
         run: |
-          rustup toolchain install 1.90.0 --profile minimal
-          rustup target add --toolchain 1.90.0 aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+          rustup toolchain install 1.91.0 --profile minimal
+          rustup target add --toolchain 1.91.0 aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
       - name: Build and verify iOS crypto XCFramework
         run: |
           sh scripts/build-mobile-crypto.sh ios
@@ -150,6 +154,70 @@ jobs:
       - name: Build iOS app for the simulator without code signing
         run: flutter build ios --simulator --debug
         working-directory: mobile
+
+  # Unsigned demo builds for the desktop apps (Stage 3, D10). Not release
+  # jobs: release/release-policy.json does not list them.
+  desktop-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: "3.44.0"
+          cache: true
+      - name: Install Linux desktop build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libsecret-1-dev liblzma-dev
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.91.0 --profile minimal
+      - name: Build the Linux crypto library
+        run: sh scripts/build-desktop-crypto.sh linux
+      - run: flutter pub get --enforce-lockfile
+        working-directory: mobile
+      - name: Build the Linux demo app
+        run: flutter build linux --release -t lib/main_demo.dart --dart-define=VERITRA_DEMO=true
+        working-directory: mobile
+      - name: Verify the crypto library is bundled
+        run: test -s mobile/build/linux/x64/release/bundle/lib/libprivate_messenger_crypto.so
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: veritra-demo-linux-x64-${{ github.run_id }}
+          path: mobile/build/linux/x64/release/bundle
+          if-no-files-found: error
+          retention-days: 14
+
+  desktop-windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: "3.44.0"
+          cache: true
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.91.0 --profile minimal
+      - name: Build the Windows crypto library
+        run: ./scripts/build-desktop-crypto.ps1
+        shell: pwsh
+      - run: flutter pub get --enforce-lockfile
+        working-directory: mobile
+      - name: Build the Windows demo app
+        run: flutter build windows --release -t lib/main_demo.dart --dart-define=VERITRA_DEMO=true
+        working-directory: mobile
+      - name: Verify the crypto library is bundled
+        run: if (-not (Test-Path mobile/build/windows/x64/runner/Release/private_messenger_crypto.dll)) { exit 1 }
+        shell: pwsh
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: veritra-demo-windows-x64-${{ github.run_id }}
+          path: mobile/build/windows/x64/runner/Release
+          if-no-files-found: error
+          retention-days: 14
 
   compose-smoke:
     runs-on: ubuntu-latest

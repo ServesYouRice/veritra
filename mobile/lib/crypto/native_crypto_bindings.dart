@@ -122,6 +122,10 @@ typedef _RemoveMemberNative = Int32 Function(Pointer<_PmCryptoHandle>,
     _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
 typedef _RemoveMemberDart = int Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
     _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _DecryptNative = Int32 Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
+    _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _DecryptDart = int Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
+    _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
 typedef _SealNative = Int32 Function(
     Pointer<_PmCryptoHandle>, _PmByteSlice, Uint64, Pointer<_PmOwnedBuffer>);
 typedef _SealDart = int Function(
@@ -182,13 +186,13 @@ class NativeCryptoBindings {
                 'pm_crypto_group_remove_member'),
         _groupEncrypt = library.lookupFunction<_HandleTwoSlicesOutputNative,
             _HandleTwoSlicesOutputDart>('pm_crypto_group_encrypt'),
-        _groupDecrypt = library.lookupFunction<_HandleTwoSlicesOutputNative,
-            _HandleTwoSlicesOutputDart>('pm_crypto_group_decrypt'),
+        _groupDecrypt = library.lookupFunction<_DecryptNative, _DecryptDart>(
+            'pm_crypto_group_decrypt'),
         _attachmentEncrypt = library.lookupFunction<_AttachmentChunkNative,
             _AttachmentChunkDart>('pm_crypto_attachment_encrypt_chunk'),
         _attachmentDecrypt = library.lookupFunction<_AttachmentChunkNative,
             _AttachmentChunkDart>('pm_crypto_attachment_decrypt_chunk') {
-    if (_abiVersion() != 4) {
+    if (_abiVersion() != 5) {
       throw const NativeCryptoException(NativeCryptoError.abiMismatch);
     }
     _deviceFinalizer = NativeFinalizer(library
@@ -217,16 +221,39 @@ class NativeCryptoBindings {
   final _HandleSliceTwoOutputsDart _groupSafety;
   final _RemoveMemberDart _groupRemove;
   final _HandleTwoSlicesOutputDart _groupEncrypt;
-  final _HandleTwoSlicesOutputDart _groupDecrypt;
+  final _DecryptDart _groupDecrypt;
   final _AttachmentChunkDart _attachmentEncrypt;
   final _AttachmentChunkDart _attachmentDecrypt;
   late final NativeFinalizer _deviceFinalizer;
 
+  /// Loads the library bundled with the app.
+  ///
+  /// Android loads the JNI `.so` by name. iOS and macOS link the static library
+  /// into the executable. Windows and Linux load the library from the app's
+  /// own directory by absolute path, never through the system search path.
   static NativeCryptoBindings load() {
-    final library = Platform.isAndroid
-        ? DynamicLibrary.open('libprivate_messenger_crypto.so')
-        : DynamicLibrary.process();
-    return NativeCryptoBindings._(library);
+    return NativeCryptoBindings._(_openBundledLibrary());
+  }
+
+  static DynamicLibrary _openBundledLibrary() {
+    if (Platform.isAndroid) {
+      return DynamicLibrary.open('libprivate_messenger_crypto.so');
+    }
+    if (Platform.isIOS || Platform.isMacOS) {
+      return DynamicLibrary.process();
+    }
+    final appDirectory = File(Platform.resolvedExecutable).parent.path;
+    final separator = Platform.pathSeparator;
+    if (Platform.isWindows) {
+      return DynamicLibrary.open(
+          '$appDirectory${separator}private_messenger_crypto.dll');
+    }
+    if (Platform.isLinux) {
+      return DynamicLibrary.open(
+          '$appDirectory${separator}lib${separator}libprivate_messenger_crypto.so');
+    }
+    throw UnsupportedError(
+        'No bundled Veritra crypto library for this platform');
   }
 
   static NativeCryptoBindings open(String path) =>
@@ -426,6 +453,7 @@ class NativeCryptoBindings {
       -2 => NativeCryptoError.invalidArgument,
       -3 => NativeCryptoError.operationFailed,
       -4 => NativeCryptoError.nativePanic,
+      -5 => NativeCryptoError.senderMismatch,
       _ => NativeCryptoError.unknown,
     });
   }
@@ -485,6 +513,10 @@ enum NativeCryptoError {
   invalidArgument,
   operationFailed,
   nativePanic,
+
+  /// The message decrypted, but its MLS sender is not the account/device the
+  /// server claimed (ABI 5). The group ratchet has already advanced.
+  senderMismatch,
   invalidOutput,
   unknown
 }
@@ -655,11 +687,28 @@ class NativeCryptoDevice implements Finalizable {
         groupId.codeUnits, plaintext, _bindings._groupEncrypt);
   }
 
-  List<int> decrypt(String groupId, List<int> ciphertext) {
+  /// Decrypts [ciphertext] and checks that its MLS sender is
+  /// [senderAccountId]/[senderDeviceId]. Throws
+  /// [NativeCryptoError.senderMismatch] when it is not.
+  List<int> decrypt(
+    String groupId,
+    List<int> ciphertext, {
+    required String senderAccountId,
+    required String senderDeviceId,
+  }) {
     _bindings._bounded(groupId.codeUnits, 128);
     _bindings._bounded(ciphertext, 1024 * 1024);
-    return _withTwoOutput(
-        groupId.codeUnits, ciphertext, _bindings._groupDecrypt);
+    _bindings._bounded(senderAccountId.codeUnits, 128);
+    _bindings._bounded(senderDeviceId.codeUnits, 128);
+    return _bindings._withByteLists(
+        [
+          groupId.codeUnits,
+          ciphertext,
+          senderAccountId.codeUnits,
+          senderDeviceId.codeUnits,
+        ],
+        (slices) => _bindings._output((out) => _bindings._groupDecrypt(
+            _liveHandle, slices[0], slices[1], slices[2], slices[3], out)));
   }
 
   void _withOne(

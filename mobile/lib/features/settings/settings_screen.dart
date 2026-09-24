@@ -111,19 +111,20 @@ class SettingsScreen extends StatelessWidget {
               const SectionHeader('Devices'),
               TileGroup(
                 children: <Widget>[
-                  ListTile(
-                    leading: const Icon(Icons.qr_code_2),
-                    title: const Text('Link a new device'),
-                    subtitle: const Text(
-                        'Generate a pairing code for another device'),
-                    onTap: () async {
-                      if (await _reauthenticate(context) && context.mounted) {
-                        Navigator.of(context).push(sharedAxisRoute<void>(
-                          (_) => DeviceLinkScreen(state: state),
-                        ));
-                      }
-                    },
-                  ),
+                  if (state.membershipChangesAvailable)
+                    ListTile(
+                      leading: const Icon(Icons.qr_code_2),
+                      title: const Text('Link a new device'),
+                      subtitle: const Text(
+                          'Generate a pairing code for another device'),
+                      onTap: () async {
+                        if (await _reauthenticate(context) && context.mounted) {
+                          Navigator.of(context).push(sharedAxisRoute<void>(
+                            (_) => DeviceLinkScreen(state: state),
+                          ));
+                        }
+                      },
+                    ),
                   if (state.devices.isEmpty && !state.devicesLoaded)
                     const ListTile(
                       leading: SizedBox.square(
@@ -617,7 +618,15 @@ class _PushStatusRow extends StatelessWidget {
     final String detail;
     final IconData icon;
     var warn = true;
-    if (iOS) {
+    final desktop = defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.linux ||
+        defaultTargetPlatform == TargetPlatform.macOS;
+    if (desktop) {
+      title = 'Desktop notifications are not available yet';
+      detail = 'Messages arrive while the app is running, even in the '
+          'background.';
+      icon = Icons.notifications_off_outlined;
+    } else if (iOS) {
       title = 'Push is not available on iOS yet';
       detail = 'Messages arrive while the app is open. Apple push delivery '
           'is still being integrated.';

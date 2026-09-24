@@ -15,16 +15,10 @@ UTC_TIMESTAMP = re.compile(
 )
 APPROVED_REVIEW_DEADLINE = "2026-08-29T00:00:00Z"
 APPROVED_CARGO_AUDIT_VERSION = "0.22.2"
-APPROVED_EXCEPTION_IDS = frozenset(
-    {
-        "RUSTSEC-2026-0209",
-        "RUSTSEC-2026-0211",
-        "RUSTSEC-2026-0124",
-        "RUSTSEC-2026-0212",
-        "RUSTSEC-2026-0207",
-        "RUSTSEC-2026-0208",
-    }
-)
+# OpenMLS 0.9.0 with hpke-rs 0.7 retired all six libcrux advisories, so no
+# exception is approved. Adding one again needs an explicit approval, a new
+# APPROVED_REVIEW_DEADLINE and the advisory ID listed here.
+APPROVED_EXCEPTION_IDS: frozenset = frozenset()
 POLICY_FIELDS = {
     "version",
     "timezone",
@@ -78,8 +72,8 @@ def load_policy(path: Path) -> dict:
         raise PolicyError("policy deadline does not match the approved UTC boundary")
     deadline = parse_timestamp(policy.get("review_deadline"))
     exceptions = policy.get("exceptions")
-    if not isinstance(exceptions, list) or not exceptions:
-        raise PolicyError("policy must contain at least one exception")
+    if not isinstance(exceptions, list):
+        raise PolicyError("policy exceptions must be a list")
     seen = set()
     for exception in exceptions:
         if not isinstance(exception, dict):
@@ -111,10 +105,16 @@ def evaluation_time(raw: Optional[str]) -> datetime:
     return parse_timestamp(value)
 
 
+def check_deadline(deadline: datetime, now: datetime) -> None:
+    if now >= deadline:
+        text = deadline.isoformat().replace("+00:00", "Z")
+        raise PolicyError(f"Rust advisory exception policy expired at {text}")
+
+
 def validate_deadline(policy: dict, now: datetime) -> None:
-    if now >= policy["deadline"]:
-        deadline = policy["deadline"].isoformat().replace("+00:00", "Z")
-        raise PolicyError(f"Rust advisory exception policy expired at {deadline}")
+    # The deadline bounds exceptions. With none, there is nothing to expire.
+    if policy["exceptions"]:
+        check_deadline(policy["deadline"], now)
 
 
 def cargo_audit_flags(policy: dict) -> str:
@@ -129,15 +129,15 @@ def cargo_audit_version(policy: dict) -> str:
 
 def self_test(policy: dict) -> None:
     deadline = policy["deadline"]
-    validate_deadline(policy, deadline - timedelta(microseconds=1))
+    check_deadline(deadline, deadline - timedelta(microseconds=1))
     try:
-        validate_deadline(policy, deadline)
+        check_deadline(deadline, deadline)
     except PolicyError:
         pass
     else:
         raise PolicyError("self-test did not reject the exact expiry boundary")
     try:
-        validate_deadline(policy, deadline + timedelta(microseconds=1))
+        check_deadline(deadline, deadline + timedelta(microseconds=1))
     except PolicyError:
         pass
     else:

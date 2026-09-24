@@ -10,6 +10,7 @@ import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/tile_group.dart';
 import '../chat/chat_screen.dart';
+import '../../ui/widgets/refresh_action.dart';
 
 /// Communities: create a community, add channels, and open channel
 /// conversations. Communities and channels are listed from the server
@@ -28,7 +29,10 @@ class CommunityScreen extends StatelessWidget {
         state.communities.isNotEmpty || channelConversations.isNotEmpty;
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
-      appBar: const LargeTitleBar(title: 'Communities'),
+      appBar: LargeTitleBar(
+        title: 'Communities',
+        actions: <Widget>[RefreshAction(onRefresh: state.refreshCommunities)],
+      ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: state.busy ? null : () => _createCommunity(context),
         backgroundColor: scheme.primary,

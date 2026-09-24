@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
@@ -9,6 +11,7 @@ import 'package:private_messenger/features/chat/chat_list_screen.dart';
 import 'package:private_messenger/features/chat/chat_screen.dart';
 import 'package:private_messenger/features/chat/conversation_details_screen.dart';
 import 'package:private_messenger/features/settings/blocked_accounts_screen.dart';
+import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 import 'package:private_messenger/ui/format.dart';
@@ -531,6 +534,123 @@ void main() {
       expect(sendButton.onPressed, isNotNull);
     });
 
+    testWidgets('decrypted history replaces the bars', (tester) async {
+      final api = _FakeApi();
+      final store = MemoryLocalStore();
+      final state = AppState(
+        apiClientFactory: (_) => api,
+        cryptoService: TestOnlyCryptoService(),
+        localStore: store,
+        syncServiceFactory: (_, __) => _FakeSyncService(),
+      )
+        ..api = api
+        ..session = const Session(
+          baseUrl: 'https://localhost:8080',
+          token: 'owner-token',
+          accountId: 'acct_owner',
+          deviceId: 'dev_owner',
+        )
+        ..conversations = <Conversation>[
+          Conversation(id: 'conv_1', kind: 'group'),
+        ]
+        ..messagesByConversation = <String, List<ReceivedMessageEnvelope>>{
+          'conv_1': <ReceivedMessageEnvelope>[
+            _message('m3', '2026-09-24T10:02:00Z'),
+            _message('m2', '2026-09-24T10:01:00Z'),
+            _message('m1', '2026-09-24T10:00:00Z'),
+          ],
+        };
+      await store.saveCryptoState(
+          StoredCryptoState(
+              counter: 1,
+              stateKey: List<int>.filled(32, 1),
+              sealedState: <int>[1]),
+          0);
+      await store.commitMlsTransition(MlsStateTransition(
+        messageId: 'event:1',
+        conversationId: 'conv_1',
+        expectedCounter: 1,
+        expectedCursor: 0,
+        state: StoredCryptoState(
+            counter: 2,
+            stateKey: List<int>.filled(32, 1),
+            sealedState: <int>[2]),
+        cursor: 1,
+        messageEffects: const <MessageEffect>[
+          InsertMessageEffect(
+            key: 'dev_other:m1',
+            conversationId: 'conv_1',
+            senderAccountId: 'acct_other',
+            senderDeviceId: 'dev_other',
+            kind: LocalMessageKind.text,
+            body: 'decrypted hello',
+            createdAt: 1,
+            state: LocalMessageState.received,
+          ),
+          InsertMessageEffect(
+            key: 'dev_other:m2',
+            conversationId: 'conv_1',
+            senderAccountId: 'acct_other',
+            senderDeviceId: 'dev_other',
+            kind: LocalMessageKind.action,
+            createdAt: 2,
+            state: LocalMessageState.received,
+          ),
+          ReactionEffect(
+            targetKey: 'dev_other:m1',
+            reactorAccountId: 'acct_owner',
+            reaction: '🎉',
+            at: 2,
+          ),
+        ],
+      ));
+      await state.refreshHistory('conv_1');
+
+      await tester.pumpWidget(_app(
+        ChatScreen(state: state, conversationId: 'conv_1'),
+      ));
+      await tester.pump();
+
+      expect(find.text('decrypted hello'), findsOneWidget);
+      expect(find.text('🎉'), findsOneWidget);
+      // m2 is an action and draws nothing; m3 has no local record and keeps
+      // its bars, so exactly two message bubbles remain.
+      Finder bubbleLabelled(String prefix) => find.byWidgetPredicate((widget) =>
+          widget is Semantics &&
+          (widget.properties.label?.startsWith(prefix) ?? false));
+      expect(bubbleLabelled('Message from'), findsOneWidget);
+      expect(bubbleLabelled('Encrypted message from'), findsOneWidget);
+    });
+
+    testWidgets('Enter sends on desktop and Shift+Enter does not',
+        (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      final api = _FakeApi();
+      final state = _connectedState(api)
+        ..conversations = <Conversation>[
+          Conversation(id: 'conv_1', kind: 'group'),
+        ];
+      await tester.pumpWidget(_app(
+        ChatScreen(state: state, conversationId: 'conv_1'),
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'line one');
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pumpAndSettle();
+      String composerText() =>
+          tester.widget<TextField>(find.byType(TextField)).controller!.text;
+      expect(composerText(), startsWith('line one'));
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(composerText(), isEmpty);
+      debugDefaultTargetPlatformOverride = null;
+    });
+
     testWidgets('the composer clears after durable acceptance', (tester) async {
       final api = _FakeApi()..holdSend = Completer<void>();
       final state = _connectedState(api)
@@ -547,11 +667,19 @@ void main() {
       await tester.tap(find.byIcon(Icons.send));
       await tester.pump();
 
-      expect(find.text('first'), findsNothing);
+      // The field is empty; the text now lives in the pending bubble.
+      String composerText() =>
+          tester.widget<TextField>(find.byType(TextField)).controller!.text;
+      expect(composerText(), isEmpty);
+      expect(
+        find.descendant(
+            of: find.byType(TextField), matching: find.text('first')),
+        findsNothing,
+      );
 
       api.holdSend!.complete();
       await tester.pumpAndSettle();
-      expect(find.text('first'), findsNothing);
+      expect(composerText(), isEmpty);
     });
   });
 
@@ -593,7 +721,7 @@ AppState _connectedState(ApiClient api) {
   )
     ..api = api
     ..session = const Session(
-      baseUrl: 'http://localhost:8080',
+      baseUrl: 'https://localhost:8080',
       token: 'owner-token',
       accountId: 'acct_owner',
       deviceId: 'dev_owner',
@@ -602,7 +730,7 @@ AppState _connectedState(ApiClient api) {
 }
 
 class _FakeApi extends ApiClient {
-  _FakeApi() : super(baseUrl: 'http://localhost:8080');
+  _FakeApi() : super(baseUrl: 'https://localhost:8080');
 
   Map<String?, MessagePage> pages = <String?, MessagePage>{};
   Set<String?> failPages = <String?>{};

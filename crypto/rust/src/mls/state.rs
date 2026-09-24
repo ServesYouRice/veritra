@@ -10,7 +10,9 @@ use openmls_traits::{random::OpenMlsRand, OpenMlsProvider};
 use std::collections::HashMap;
 
 const MAGIC: &[u8; 8] = b"PMMLSST1";
-const FORMAT_VERSION: u16 = 1;
+// Version 2: state sealed under OpenMLS 0.9. Version 1 blobs (OpenMLS 0.8.1)
+// fail closed instead of being restored into a newer storage layout.
+const FORMAT_VERSION: u16 = 2;
 const NONCE_BYTES: usize = 12;
 const KEY_BYTES: usize = 32;
 const MAX_STATE_BYTES: usize = 32 * 1024 * 1024;
@@ -294,6 +296,18 @@ mod tests {
         ));
         assert!(matches!(
             MlsDevice::restore_state(b"acct_alice", b"dev_alice", &[8; KEY_BYTES], 4, &sealed),
+            Err(MlsError::InvalidState)
+        ));
+    }
+
+    #[test]
+    fn older_format_version_fails_closed() {
+        let alice = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
+        let mut sealed = alice.seal_state(&KEY, 3).unwrap();
+        let version = MAGIC.len();
+        sealed[version..version + 2].copy_from_slice(&1u16.to_be_bytes());
+        assert!(matches!(
+            MlsDevice::restore_state(b"acct_alice", b"dev_alice", &KEY, 3, &sealed),
             Err(MlsError::InvalidState)
         ));
     }

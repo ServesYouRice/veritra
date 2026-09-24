@@ -191,7 +191,7 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
                         busy: state.isBusy(Ops.members),
                         onRemove: () => _confirmRemove(context, member),
                       ),
-                  if (!isDm)
+                  if (!isDm && state.membershipChangesAvailable)
                     ListTile(
                       leading: const Icon(Icons.person_add_outlined),
                       title: const Text('Add member'),

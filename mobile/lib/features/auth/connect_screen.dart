@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 
 import '../../core/api_client.dart';
@@ -47,6 +48,10 @@ class _ConnectScreenState extends State<ConnectScreen> {
   void initState() {
     super.initState();
     url.addListener(_scheduleSetupProbe);
+    final demoUrl = widget.state.config.defaultServerUrl;
+    if (demoUrl != null && url.text.isEmpty) {
+      url.text = demoUrl;
+    }
     unawaited(_loadStoredDeviceIdentity());
   }
 
@@ -261,12 +266,16 @@ class _ConnectScreenState extends State<ConnectScreen> {
           ),
         ),
       ),
-      const SizedBox(height: BoneSpacing.md),
-      OutlinedButton.icon(
-        onPressed: widget.state.busy ? null : _scanLinkCode,
-        icon: const Icon(Icons.qr_code_scanner),
-        label: const Text('Scan QR code'),
-      ),
+      // The QR scanner plugin has no Windows or Linux camera support; the
+      // pasted code works everywhere.
+      if (_canScanQr) ...<Widget>[
+        const SizedBox(height: BoneSpacing.md),
+        OutlinedButton.icon(
+          onPressed: widget.state.busy ? null : _scanLinkCode,
+          icon: const Icon(Icons.qr_code_scanner),
+          label: const Text('Scan QR code'),
+        ),
+      ],
       if (pendingLink != null) ...<Widget>[
         const SizedBox(height: BoneSpacing.lg),
         _Callout(
@@ -444,13 +453,18 @@ class _ConnectScreenState extends State<ConnectScreen> {
     if (parsed == null) {
       return 'Enter a full URL, e.g. https://chat.example.org';
     }
-    if (parsed.scheme.toLowerCase() != 'https') {
-      return 'Veritra requires HTTPS. Use an https:// server origin.';
-    }
     try {
       canonicalizeServerOrigin(raw);
     } on FormatException {
-      return 'Enter only the server origin, e.g. https://chat.example.org';
+      return parsed.scheme.toLowerCase() == 'https'
+          ? 'Enter only the server origin, e.g. https://chat.example.org'
+          : 'Veritra requires HTTPS. Use an https:// server origin.';
+    }
+    if (!widget.state.config.transport.allows(raw)) {
+      return widget.state.config.transport.allowLoopbackHttp
+          ? 'Use https://, or http:// only for this computer '
+              '(localhost or 127.0.0.1).'
+          : 'Veritra requires HTTPS. Use an https:// server origin.';
     }
     return null;
   }
@@ -581,6 +595,10 @@ class _ConnectScreenState extends State<ConnectScreen> {
   /// Opens the camera scanner and fills the link-code field from the result.
   /// The generating device encodes a `veritra://device-link?code=…` URI, but
   /// a bare code is accepted too.
+  bool get _canScanQr =>
+      defaultTargetPlatform != TargetPlatform.windows &&
+      defaultTargetPlatform != TargetPlatform.linux;
+
   Future<void> _scanLinkCode() async {
     final scanned = await Navigator.of(context).push<String>(
       MaterialPageRoute<String>(builder: (_) => const QrScanScreen()),

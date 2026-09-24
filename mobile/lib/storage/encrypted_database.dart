@@ -9,11 +9,114 @@ enum MlsCommitStage {
   afterValidation,
   afterState,
   afterEnvelopes,
+  afterMessageEffects,
   afterMarker,
   beforeCursor,
 }
 
 typedef MlsCommitFailureInjector = Future<void> Function(MlsCommitStage stage);
+
+/// How a decrypted or locally sent application message changes local history
+/// (decisions D22, D23). Effects are applied inside the same transaction as
+/// the MLS state they came from, because an MLS message can be decrypted only
+/// once: if the state commits without the text, the text is gone for good.
+///
+/// Messages are keyed by the authenticated `<sender_device_id>:<action_id>`,
+/// never by a server ID, so the server cannot redirect an edit, delete,
+/// reply or reaction to a different message.
+sealed class MessageEffect {
+  const MessageEffect();
+}
+
+/// Kinds stored in [LocalMessages.kind].
+abstract final class LocalMessageKind {
+  /// A visible message with [LocalMessages.body] text.
+  static const text = 'text';
+
+  /// An edit, delete or reaction envelope. It stays in history only so the
+  /// timeline can hide its envelope instead of drawing an empty bubble.
+  static const action = 'action';
+
+  /// Decrypted, but its MLS sender was not the sender the server claimed
+  /// (D25). Shown as a warning, never as the claimed sender's words.
+  static const unverifiable = 'unverifiable';
+}
+
+/// Delivery states stored in [LocalMessages.state].
+abstract final class LocalMessageState {
+  static const pending = 'pending';
+  static const sent = 'sent';
+  static const received = 'received';
+}
+
+final class InsertMessageEffect extends MessageEffect {
+  const InsertMessageEffect({
+    required this.key,
+    required this.conversationId,
+    required this.senderAccountId,
+    required this.senderDeviceId,
+    required this.kind,
+    required this.createdAt,
+    required this.state,
+    this.serverMessageId,
+    this.body,
+    this.replyTo,
+  });
+
+  final String key;
+  final String? serverMessageId;
+  final String conversationId;
+  final String senderAccountId;
+  final String senderDeviceId;
+  final String kind;
+  final String? body;
+  final String? replyTo;
+  final int createdAt;
+  final String state;
+}
+
+/// Replaces the text of [targetKey], only if [editorAccountId] sent it.
+final class EditMessageEffect extends MessageEffect {
+  const EditMessageEffect({
+    required this.targetKey,
+    required this.editorAccountId,
+    required this.body,
+    required this.at,
+  });
+
+  final String targetKey;
+  final String editorAccountId;
+  final String body;
+  final int at;
+}
+
+/// Deletes the text of [targetKey], only if [deleterAccountId] sent it.
+final class DeleteMessageEffect extends MessageEffect {
+  const DeleteMessageEffect({
+    required this.targetKey,
+    required this.deleterAccountId,
+    required this.at,
+  });
+
+  final String targetKey;
+  final String deleterAccountId;
+  final int at;
+}
+
+/// Sets or, with an empty [reaction], clears one account's reaction.
+final class ReactionEffect extends MessageEffect {
+  const ReactionEffect({
+    required this.targetKey,
+    required this.reactorAccountId,
+    required this.reaction,
+    required this.at,
+  });
+
+  final String targetKey;
+  final String reactorAccountId;
+  final String reaction;
+  final int at;
+}
 
 class LocalAccounts extends Table {
   IntColumn get singleton => integer().withDefault(const Constant(1))();
@@ -116,6 +219,36 @@ class LocalPeerVerifications extends Table {
   Set<Column<Object>> get primaryKey => {conversationId, peerAccountId};
 }
 
+/// Decrypted history. Encrypted at rest by the database cipher, never sent
+/// anywhere, and kept across cache refreshes (D23).
+class LocalMessages extends Table {
+  TextColumn get key => text()();
+  TextColumn get serverMessageId => text().nullable().unique()();
+  TextColumn get conversationId => text()();
+  TextColumn get senderAccountId => text()();
+  TextColumn get senderDeviceId => text()();
+  TextColumn get kind => text()();
+  TextColumn get body => text().nullable()();
+  TextColumn get replyTo => text().nullable()();
+  IntColumn get createdAt => integer()();
+  IntColumn get editedAt => integer().nullable()();
+  IntColumn get deletedAt => integer().nullable()();
+  TextColumn get state => text()();
+
+  @override
+  Set<Column<Object>> get primaryKey => {key};
+}
+
+class LocalMessageReactions extends Table {
+  TextColumn get targetKey => text()();
+  TextColumn get reactorAccountId => text()();
+  TextColumn get reaction => text()();
+  IntColumn get updatedAt => integer()();
+
+  @override
+  Set<Column<Object>> get primaryKey => {targetKey, reactorAccountId};
+}
+
 @DriftDatabase(tables: [
   LocalAccounts,
   LocalConversations,
@@ -127,6 +260,8 @@ class LocalPeerVerifications extends Table {
   LocalMlsTransitions,
   LocalMlsOutboxEntries,
   LocalPeerVerifications,
+  LocalMessages,
+  LocalMessageReactions,
 ])
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   EncryptedLocalDatabase(super.executor);
@@ -135,7 +270,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   static const syncLeaseName = 'sync.owner.lease';
 
   @override
-  int get schemaVersion => 6;
+  int get schemaVersion => 7;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -171,6 +306,10 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           if (from < 6) {
             await migrator.createTable(localPeerVerifications);
           }
+          if (from < 7) {
+            await migrator.createTable(localMessages);
+            await migrator.createTable(localMessageReactions);
+          }
         },
         beforeOpen: (details) async {
           await customStatement('PRAGMA foreign_keys = ON');
@@ -190,6 +329,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           await delete(localMlsTransitions).go();
           await delete(localMlsOutboxEntries).go();
           await delete(localPeerVerifications).go();
+          await delete(localMessages).go();
+          await delete(localMessageReactions).go();
           await customStatement('DELETE FROM local_metadata WHERE name LIKE ?',
               <Object?>['$outboxDraftPrefix%']);
           await (delete(localMetadata)
@@ -340,6 +481,10 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localMlsTransitions).go();
         await delete(localMlsOutboxEntries).go();
         await delete(localPeerVerifications).go();
+        // Backups do not carry decrypted history yet (D27, I45); the
+        // restored identity starts with an empty local history.
+        await delete(localMessages).go();
+        await delete(localMessageReactions).go();
         await delete(localOutboxEntries).go();
         await delete(localCiphertextEnvelopes).go();
         await delete(localConversations).go();
@@ -650,6 +795,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required List<({String id, String conversationId, String payloadJson})>
         upsertedEnvelopes,
     required List<String> deletedEnvelopeIds,
+    List<MessageEffect> messageEffects = const <MessageEffect>[],
     MlsCommitFailureInjector? failureInjector,
     String? leaseKey,
   }) =>
@@ -713,6 +859,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           );
         }
         await failureInjector?.call(MlsCommitStage.afterEnvelopes);
+        await _applyMessageEffects(messageEffects);
+        await failureInjector?.call(MlsCommitStage.afterMessageEffects);
         await into(localMlsTransitions).insert(
           LocalMlsTransitionsCompanion.insert(
             messageId: messageId,
@@ -735,6 +883,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required int expectedCursor,
     required int cursor,
     ({String id, String conversationId, String payloadJson})? envelope,
+    String? ownMessageKey,
     String? leaseKey,
   }) =>
       transaction(() async {
@@ -743,6 +892,16 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               ..where((table) => table.messageId.equals(eventKey)))
             .getSingleOrNull();
         if (processed != null) return;
+        if (ownMessageKey != null && envelope != null) {
+          // The server echoed a message this device sent: link the local
+          // record to its server ID and mark it delivered.
+          await (update(localMessages)
+                ..where((table) => table.key.equals(ownMessageKey)))
+              .write(LocalMessagesCompanion(
+            serverMessageId: Value(envelope.id),
+            state: const Value(LocalMessageState.sent),
+          ));
+        }
         final previousCursor = await (select(localSyncStates)
               ..where((table) => table.singleton.equals(1)))
             .getSingleOrNull();
@@ -865,6 +1024,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required String payloadJson,
     required String? draftText,
     required int maxEntries,
+    List<MessageEffect> messageEffects = const <MessageEffect>[],
     String? leaseKey,
   }) =>
       transaction(() async {
@@ -910,6 +1070,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           await _writeMetadataInTransaction(
               _outboxDraftName(idempotencyKey), draftText);
         }
+        await _applyMessageEffects(messageEffects);
       });
 
   Future<void> commitLocalMlsState({
@@ -1036,10 +1197,102 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localMlsTransitions).go();
         await delete(localMlsOutboxEntries).go();
         await delete(localPeerVerifications).go();
+        await delete(localMessages).go();
+        await delete(localMessageReactions).go();
         await into(localSyncStates).insertOnConflictUpdate(
           LocalSyncStatesCompanion.insert(singleton: const Value(1)),
         );
       });
+
+  /// Decrypted history for one conversation, oldest first. Action rows
+  /// (edits, deletes, reactions) are included so callers can hide their
+  /// envelopes.
+  Future<List<LocalMessage>> readMessages(String conversationId) =>
+      (select(localMessages)
+            ..where((table) => table.conversationId.equals(conversationId))
+            ..orderBy([
+              (table) => OrderingTerm.asc(table.createdAt),
+              (table) => OrderingTerm.asc(table.key),
+            ]))
+          .get();
+
+  Future<List<LocalMessageReaction>> readReactions(String conversationId) {
+    final query = select(localMessageReactions).join([
+      innerJoin(localMessages,
+          localMessages.key.equalsExp(localMessageReactions.targetKey)),
+    ])
+      ..where(localMessages.conversationId.equals(conversationId));
+    return query.map((row) => row.readTable(localMessageReactions)).get();
+  }
+
+  Future<void> applyMessageEffects(List<MessageEffect> effects) =>
+      transaction(() => _applyMessageEffects(effects));
+
+  Future<void> _applyMessageEffects(List<MessageEffect> effects) async {
+    for (final effect in effects) {
+      switch (effect) {
+        case InsertMessageEffect():
+          await into(localMessages).insert(
+            LocalMessagesCompanion.insert(
+              key: effect.key,
+              serverMessageId: Value(effect.serverMessageId),
+              conversationId: effect.conversationId,
+              senderAccountId: effect.senderAccountId,
+              senderDeviceId: effect.senderDeviceId,
+              kind: effect.kind,
+              body: Value(effect.body),
+              replyTo: Value(effect.replyTo),
+              createdAt: effect.createdAt,
+              state: effect.state,
+            ),
+            mode: InsertMode.insertOrIgnore,
+          );
+        case EditMessageEffect():
+          await (update(localMessages)
+                ..where((table) =>
+                    table.key.equals(effect.targetKey) &
+                    table.senderAccountId.equals(effect.editorAccountId) &
+                    table.kind.equals(LocalMessageKind.text) &
+                    table.deletedAt.isNull()))
+              .write(LocalMessagesCompanion(
+            body: Value(effect.body),
+            editedAt: Value(effect.at),
+          ));
+        case DeleteMessageEffect():
+          final deleted = await (update(localMessages)
+                ..where((table) =>
+                    table.key.equals(effect.targetKey) &
+                    table.senderAccountId.equals(effect.deleterAccountId) &
+                    table.kind.equals(LocalMessageKind.text)))
+              .write(LocalMessagesCompanion(
+            body: const Value(null),
+            deletedAt: Value(effect.at),
+          ));
+          if (deleted > 0) {
+            await (delete(localMessageReactions)
+                  ..where((table) => table.targetKey.equals(effect.targetKey)))
+                .go();
+          }
+        case ReactionEffect():
+          if (effect.reaction.isEmpty) {
+            await (delete(localMessageReactions)
+                  ..where((table) =>
+                      table.targetKey.equals(effect.targetKey) &
+                      table.reactorAccountId.equals(effect.reactorAccountId)))
+                .go();
+          } else {
+            await into(localMessageReactions).insertOnConflictUpdate(
+              LocalMessageReactionsCompanion.insert(
+                targetKey: effect.targetKey,
+                reactorAccountId: effect.reactorAccountId,
+                reaction: effect.reaction,
+                updatedAt: effect.at,
+              ),
+            );
+          }
+      }
+    }
+  }
 
   Future<String?> readMetadata(String name) async {
     final row = await (select(localMetadata)

@@ -1,11 +1,15 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/app_state.dart';
+import '../../core/message_history.dart';
 import '../../core/models.dart';
+import '../../storage/encrypted_database.dart'
+    show LocalMessage, LocalMessageKind;
 import '../../ui/format.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
@@ -38,6 +42,9 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final composer = TextEditingController();
   final scroll = ScrollController();
+
+  /// The message the next send replies to, if any.
+  LocalMessage? _replyingTo;
 
   @override
   void initState() {
@@ -76,7 +83,7 @@ class _ChatScreenState extends State<ChatScreen> {
         final conversation = widget.state.conversations
             .where((item) => item.id == widget.conversationId)
             .firstOrNull;
-        final messages = widget.state.messagesFor(widget.conversationId);
+        final messages = widget.state.timelineFor(widget.conversationId);
         final pending = widget.state.pendingFor(widget.conversationId);
         return Scaffold(
           appBar: AppBar(
@@ -145,6 +152,11 @@ class _ChatScreenState extends State<ChatScreen> {
                       )
                     : _messagesPane(conversation.id, messages, pending),
               ),
+              if (_replyingTo != null)
+                _ReplyBar(
+                  preview: _replyPreview(_replyingTo),
+                  onCancel: () => setState(() => _replyingTo = null),
+                ),
               _Composer(
                 enabled: conversation != null,
                 controller: composer,
@@ -206,10 +218,143 @@ class _ChatScreenState extends State<ChatScreen> {
             controller: scroll,
             messages: messages,
             pending: pending,
+            onMessageActions: widget.state.messageActionsAvailable
+                ? _showMessageActions
+                : null,
           ),
         ),
       ],
     );
+  }
+
+  /// Long-press on mobile, right-click on desktop.
+  Future<void> _showMessageActions(LocalMessage message, bool mine) async {
+    final state = widget.state;
+    final conversationId = widget.conversationId;
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: BoneSpacing.md),
+              child: Wrap(
+                spacing: BoneSpacing.xs,
+                children: <Widget>[
+                  for (final reaction in quickReactions)
+                    IconButton(
+                      tooltip: 'React $reaction',
+                      onPressed: () =>
+                          Navigator.of(sheetContext).pop('react:$reaction'),
+                      icon:
+                          Text(reaction, style: const TextStyle(fontSize: 24)),
+                    ),
+                ],
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.reply),
+              title: const Text('Reply'),
+              onTap: () => Navigator.of(sheetContext).pop('reply'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.copy),
+              title: const Text('Copy text'),
+              onTap: () => Navigator.of(sheetContext).pop('copy'),
+            ),
+            if (mine) ...<Widget>[
+              ListTile(
+                leading: const Icon(Icons.edit_outlined),
+                title: const Text('Edit'),
+                onTap: () => Navigator.of(sheetContext).pop('edit'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete_outline),
+                title: const Text('Delete for everyone'),
+                onTap: () => Navigator.of(sheetContext).pop('delete'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+    if (!mounted || action == null) return;
+    var sent = true;
+    if (action.startsWith('react:')) {
+      final reaction = action.substring('react:'.length);
+      final ownAccountId = state.session?.accountId;
+      final alreadyMine = state
+          .historyFor(conversationId)
+          .reactionsFor(message.key, ownAccountId: ownAccountId)
+          .any((item) => item.reaction == reaction && item.mine);
+      // Tapping your own reaction again takes it back.
+      sent = await state.react(
+          conversationId, message.key, alreadyMine ? '' : reaction);
+    } else if (action == 'reply') {
+      setState(() => _replyingTo = message);
+    } else if (action == 'copy') {
+      await Clipboard.setData(ClipboardData(text: message.body ?? ''));
+    } else if (action == 'edit') {
+      final text = await _editDialog(message.body ?? '');
+      if (text == null || text.trim().isEmpty || text == message.body) return;
+      sent = await state.editMessage(conversationId, message.key, text.trim());
+    } else if (action == 'delete') {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Delete for everyone?'),
+          content: const Text(
+              'Members\' devices remove the text. The server never had it.'),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+      sent = await state.deleteMessage(conversationId, message.key);
+    }
+    if (!sent && mounted) {
+      final error = state.errorFor(Ops.send);
+      if (error != null) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error)));
+      }
+    }
+  }
+
+  Future<String?> _editDialog(String current) {
+    final controller = TextEditingController(text: current);
+    return showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Edit message'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          minLines: 1,
+          maxLines: 6,
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    ).whenComplete(controller.dispose);
   }
 
   Future<void> _send() async {
@@ -217,11 +362,18 @@ class _ChatScreenState extends State<ChatScreen> {
     if (text.isEmpty) {
       return;
     }
-    final sent = await widget.state.sendMessageTo(widget.conversationId, text);
+    final replyingTo = _replyingTo;
+    final sent = replyingTo == null
+        ? await widget.state.sendMessageTo(widget.conversationId, text)
+        : await widget.state
+            .replyTo(widget.conversationId, replyingTo.key, text);
     if (!mounted) {
       return;
     }
     if (sent) {
+      if (identical(_replyingTo, replyingTo)) {
+        setState(() => _replyingTo = null);
+      }
       // Durable acceptance, rather than HTTP delivery, is the point at which
       // the submitted draft is safe to clear. Preserve newer edits.
       if (composer.text.trim() == text) composer.clear();
@@ -290,6 +442,7 @@ class _MessageList extends StatelessWidget {
     required this.controller,
     required this.messages,
     required this.pending,
+    this.onMessageActions,
   });
 
   final AppState state;
@@ -297,6 +450,7 @@ class _MessageList extends StatelessWidget {
   final ScrollController controller;
   final List<ReceivedMessageEnvelope> messages;
   final List<MessageEnvelope> pending;
+  final void Function(LocalMessage message, bool mine)? onMessageActions;
 
   bool get _isDm =>
       state.conversations
@@ -318,6 +472,14 @@ class _MessageList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final history = state.historyFor(conversationId);
+    final ownDeviceId = state.session?.deviceId;
+    // Edit, delete and reaction envelopes change other bubbles instead of
+    // drawing their own.
+    final messages = this
+        .messages
+        .where((message) => !history.hides(message))
+        .toList(growable: false);
     final hasMore = state.hasMoreHistory(conversationId);
     final loadingOlder = state.isLoadingOlder(conversationId);
     // Messages arrive newest-first; the list is reversed so index 0 renders
@@ -348,7 +510,14 @@ class _MessageList extends StatelessWidget {
           final record = state.outboxRecord(key);
           final terminal =
               state.outboxState(key) == OutboxDeliveryState.terminal;
+          final local = ownDeviceId == null
+              ? null
+              : history.forKey(ConversationHistory.keyOf(ownDeviceId, key));
+          if (local?.kind == LocalMessageKind.action) {
+            return const SizedBox.shrink();
+          }
           return _PendingMessageBubble(
+            text: local?.body ?? record?.draftText,
             state: state.outboxState(key),
             failureMessage: terminal ? state.outboxFailureMessage(key) : null,
             onRetry: terminal ? null : () => state.retryEnvelope(key),
@@ -362,7 +531,14 @@ class _MessageList extends StatelessWidget {
         }
         final messageIndex = index - pending.length;
         final message = messages[messageIndex];
-        final mine = message.senderAccountId == state.session?.accountId;
+        final local = history.forEnvelope(message);
+        // A decrypted record names its authenticated sender; the envelope's
+        // sender is only what the server says.
+        final senderAccountId =
+            local?.senderAccountId ?? message.senderAccountId;
+        final mine = senderAccountId == state.session?.accountId;
+        final replyTarget =
+            local?.replyTo == null ? null : history.forKey(local!.replyTo!);
         final older = messageIndex + 1 < messages.length
             ? messages[messageIndex + 1]
             : null;
@@ -375,8 +551,21 @@ class _MessageList extends StatelessWidget {
               _DaySeparator(label: formatDate(context, message.createdAt)),
             _MessageBubble(
               message: message,
+              local: local,
+              replyPreview:
+                  local?.replyTo == null ? null : _replyPreview(replyTarget),
+              reactions: local == null
+                  ? const <({String reaction, int count, bool mine})>[]
+                  : history.reactionsFor(local.key,
+                      ownAccountId: state.session?.accountId),
               mine: mine,
-              senderLabel: _senderLabel(message.senderAccountId),
+              onActions: onMessageActions == null ||
+                      local == null ||
+                      local.kind != LocalMessageKind.text ||
+                      local.deletedAt != null
+                  ? null
+                  : () => onMessageActions!(local, mine),
+              senderLabel: _senderLabel(senderAccountId),
               // In a DM the app bar already says who the other person is;
               // only group and channel bubbles need a per-message sender.
               showSender: !mine && !_isDm,
@@ -386,6 +575,15 @@ class _MessageList extends StatelessWidget {
       },
     );
   }
+}
+
+String _replyPreview(LocalMessage? target) {
+  if (target == null) return 'Reply to an earlier message';
+  if (target.deletedAt != null || target.body == null) {
+    return 'Reply to a deleted message';
+  }
+  final text = target.body!.replaceAll(RegExp(r'\s+'), ' ').trim();
+  return text.length <= 80 ? text : '${text.substring(0, 80)}…';
 }
 
 /// Top-of-list affordance for older history: a spinner while a page is in
@@ -421,6 +619,7 @@ class _PendingMessageBubble extends StatelessWidget {
   const _PendingMessageBubble({
     required this.state,
     required this.onRetry,
+    this.text,
     this.failureMessage,
     this.onCopy,
     this.onDiscard,
@@ -428,6 +627,7 @@ class _PendingMessageBubble extends StatelessWidget {
 
   final OutboxDeliveryState state;
   final VoidCallback? onRetry;
+  final String? text;
   final String? failureMessage;
   final VoidCallback? onCopy;
   final VoidCallback? onDiscard;
@@ -461,6 +661,17 @@ class _PendingMessageBubble extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: <Widget>[
+              if (text != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: BoneSpacing.xs),
+                  child: Text(
+                    text!,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color:
+                          sending ? scheme.onSurface : scheme.onErrorContainer,
+                    ),
+                  ),
+                ),
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
@@ -592,9 +803,21 @@ class _MessageBubble extends StatelessWidget {
     required this.mine,
     required this.senderLabel,
     required this.showSender,
+    this.local,
+    this.replyPreview,
+    this.reactions = const <({String reaction, int count, bool mine})>[],
+    this.onActions,
   });
 
+  /// Opens the reply/edit/delete/react menu; null when none apply.
+  final VoidCallback? onActions;
+
   final ReceivedMessageEnvelope message;
+
+  /// The decrypted record, when this device could decrypt the envelope.
+  final LocalMessage? local;
+  final String? replyPreview;
+  final List<({String reaction, int count, bool mine})> reactions;
   final bool mine;
   final String senderLabel;
   final bool showSender;
@@ -607,7 +830,9 @@ class _MessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final deleted = message.deletedAt != null;
+    final deleted = message.deletedAt != null || local?.deletedAt != null;
+    final unverifiable = local?.kind == LocalMessageKind.unverifiable;
+    final text = deleted || unverifiable ? null : local?.body;
     // Bone keeps sent bubbles **on tone**: a near-white accent tiled down a
     // whole column would blow out the plum ground the direction is built on
     // (`docs/design.md` §K). Mine and theirs separate by one tonal step
@@ -616,12 +841,39 @@ class _MessageBubble extends StatelessWidget {
         mine ? scheme.surfaceContainerHigh : scheme.surfaceContainerLow;
     final foreground = scheme.onSurface;
     final sender = mine ? 'you' : senderLabel;
+    return GestureDetector(
+      onLongPress: onActions,
+      onSecondaryTap: onActions,
+      child: _bubble(context, theme, scheme, background, foreground, sender,
+          deleted, unverifiable, text),
+    );
+  }
+
+  Widget _bubble(
+    BuildContext context,
+    ThemeData theme,
+    ColorScheme scheme,
+    Color background,
+    Color foreground,
+    String sender,
+    bool deleted,
+    bool unverifiable,
+    String? text,
+  ) {
     return Semantics(
       excludeSemantics: true,
+      onLongPress: onActions,
+      onLongPressHint: onActions == null ? null : 'Message actions',
       label: deleted
           ? 'Deleted message from $sender'
-          : 'Encrypted message from $sender, '
-              '${formatTimeOfDay(context, message.createdAt)}',
+          : unverifiable
+              ? 'Message with an unverified sender, '
+                  '${formatTimeOfDay(context, message.createdAt)}'
+              : text != null
+                  ? 'Message from $sender, '
+                      '${formatTimeOfDay(context, message.createdAt)}: $text'
+                  : 'Encrypted message from $sender, '
+                      '${formatTimeOfDay(context, message.createdAt)}',
       child: LayoutBuilder(
         builder: (context, constraints) {
           // Taken from the layout rather than the window so the bubble is
@@ -653,6 +905,25 @@ class _MessageBubble extends StatelessWidget {
                           ),
                         ),
                       ),
+                    if (replyPreview != null && !deleted)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 6),
+                        padding: const EdgeInsets.only(left: 8),
+                        decoration: BoxDecoration(
+                          border: Border(
+                            left: BorderSide(
+                                color: scheme.outlineVariant, width: 3),
+                          ),
+                        ),
+                        child: Text(
+                          replyPreview!,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
                     if (deleted)
                       Text(
                         'Message deleted',
@@ -661,11 +932,61 @@ class _MessageBubble extends StatelessWidget {
                           fontStyle: FontStyle.italic,
                         ),
                       )
+                    else if (unverifiable)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          Icon(Icons.gpp_maybe_outlined,
+                              size: 16, color: scheme.error),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              'Sender could not be verified. Message hidden.',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: scheme.error,
+                              ),
+                            ),
+                          ),
+                        ],
+                      )
+                    else if (text != null)
+                      SelectableText(
+                        text,
+                        style: theme.textTheme.bodyMedium
+                            ?.copyWith(color: foreground),
+                      )
                     else
                       _RedactedBars(
                         byteLength: message.ciphertext.length,
                         contentWidth: maxWidth - _insetX,
                         color: foreground,
+                      ),
+                    if (reactions.isNotEmpty && !deleted)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Wrap(
+                          spacing: 4,
+                          runSpacing: 4,
+                          children: <Widget>[
+                            for (final item in reactions)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: item.mine
+                                      ? scheme.secondaryContainer
+                                      : scheme.surfaceContainerHighest,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Text(
+                                  item.count > 1
+                                      ? '${item.reaction} ${item.count}'
+                                      : item.reaction,
+                                  style: theme.textTheme.labelSmall,
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
                     const SizedBox(height: 6),
                     _metaLine(context, scheme),
@@ -687,12 +1008,12 @@ class _MessageBubble extends StatelessWidget {
     final theme = Theme.of(context);
     final parts = <String>[
       formatTimeOfDay(context, message.createdAt),
-      if (message.editedAt != null) 'edited',
+      if (message.editedAt != null || local?.editedAt != null) 'edited',
     ];
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        if (message.deletedAt == null) ...<Widget>[
+        if (message.deletedAt == null && local?.deletedAt == null) ...<Widget>[
           Icon(
             Icons.lock_outline,
             size: 12,
@@ -702,6 +1023,53 @@ class _MessageBubble extends StatelessWidget {
         ],
         Text(parts.join(' · '), style: theme.textTheme.labelSmall),
       ],
+    );
+  }
+}
+
+/// Reactions offered in the message menu.
+const List<String> quickReactions = <String>[
+  '👍',
+  '❤️',
+  '😂',
+  '🎉',
+  '😮',
+  '😢'
+];
+
+/// Shown above the composer while a reply is being written.
+class _ReplyBar extends StatelessWidget {
+  const _ReplyBar({required this.preview, required this.onCancel});
+
+  final String preview;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+          BoneSpacing.lg, BoneSpacing.sm, BoneSpacing.sm, 0),
+      child: Row(
+        children: <Widget>[
+          Icon(Icons.reply,
+              size: 18, color: theme.colorScheme.onSurfaceVariant),
+          const SizedBox(width: BoneSpacing.sm),
+          Expanded(
+            child: Text(
+              'Replying to: $preview',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall,
+            ),
+          ),
+          IconButton(
+            tooltip: 'Cancel reply',
+            onPressed: onCancel,
+            icon: const Icon(Icons.close, size: 18),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -755,6 +1123,11 @@ class _RedactedBars extends StatelessWidget {
 /// One rounded pill holding the attachment button, the field and send
 /// (`docs/design.md` §4), rather than a bordered row of three separate
 /// Material controls.
+bool get _enterSends =>
+    defaultTargetPlatform == TargetPlatform.windows ||
+    defaultTargetPlatform == TargetPlatform.linux ||
+    defaultTargetPlatform == TargetPlatform.macOS;
+
 class _Composer extends StatelessWidget {
   const _Composer({
     required this.enabled,
@@ -799,31 +1172,40 @@ class _Composer extends StatelessWidget {
                 tooltip: 'Attachments require client crypto (coming soon)',
               ),
               Expanded(
-                child: TextField(
-                  controller: controller,
-                  enabled: enabled,
-                  minLines: 1,
-                  maxLines: 4,
-                  textInputAction: TextInputAction.newline,
-                  style: theme.textTheme.bodyMedium,
-                  // The field's own fill and border are cleared: the pill
-                  // around it is the input surface now, and the theme's
-                  // `inputDecorationTheme` would otherwise draw a rounded box
-                  // inside a rounded box.
-                  decoration: InputDecoration(
-                    hintText: 'Message',
-                    filled: false,
-                    isDense: true,
-                    border: InputBorder.none,
-                    enabledBorder: InputBorder.none,
-                    focusedBorder: InputBorder.none,
-                    disabledBorder: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: BoneSpacing.xs,
-                      vertical: 12,
-                    ),
-                    hintStyle: theme.textTheme.bodyMedium?.copyWith(
-                      color: scheme.onSurfaceVariant,
+                // On desktop, Enter sends and Shift+Enter starts a new line.
+                child: CallbackShortcuts(
+                  bindings: <ShortcutActivator, VoidCallback>{
+                    if (_enterSends)
+                      const SingleActivator(LogicalKeyboardKey.enter): () {
+                        if (enabled && !busy) onSend();
+                      },
+                  },
+                  child: TextField(
+                    controller: controller,
+                    enabled: enabled,
+                    minLines: 1,
+                    maxLines: 4,
+                    textInputAction: TextInputAction.newline,
+                    style: theme.textTheme.bodyMedium,
+                    // The field's own fill and border are cleared: the pill
+                    // around it is the input surface now, and the theme's
+                    // `inputDecorationTheme` would otherwise draw a rounded box
+                    // inside a rounded box.
+                    decoration: InputDecoration(
+                      hintText: 'Message',
+                      filled: false,
+                      isDense: true,
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      disabledBorder: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: BoneSpacing.xs,
+                        vertical: 12,
+                      ),
+                      hintStyle: theme.textTheme.bodyMedium?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
                   ),
                 ),

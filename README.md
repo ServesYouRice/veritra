@@ -17,11 +17,16 @@ This repository is an initial MVP foundation with fail-closed boundaries around 
 
 ## Roadmap
 
-One product, one repository, three phases — decided as **D06** on the board.
+One product, one repository, three phases — decided as **D06**, reordered by **D10** on the board.
 
-1. **Mobile** — Android and iOS. This is the entire first release, and the current work.
-2. **Desktop** — Windows and macOS, after that release. Additional Flutter targets in this repository reusing the same reviewed Rust crypto core, not a fork. A self-hosted internal-network deployment is this plus the same server.
-3. **Embedded chat** — deferred. If embedded conversations must stay end-to-end encrypted, the deliverable is a client SDK rather than a drop-in widget, because the server holds no key it could hand one. That question has to be answered before any work starts.
+1. **Mobile** — Android and iOS. The first release.
+2. **Desktop** — Windows and Linux, then macOS. Additional Flutter targets in this repository reusing the same Rust crypto core, not a fork. A self-hosted internal-network deployment is this plus the same server.
+3. **Embedded chat** — deferred. Embedded conversations stay end-to-end encrypted (D19), so the deliverable is a client SDK rather than a drop-in widget, because the server holds no key it could hand one.
+
+Since D10 (2026-09-24), working local demos of phases 1 and 2 come first: a
+locally started server plus the Android, iOS, Windows and Linux apps. Demo builds
+use real end-to-end encryption that has not yet been independently reviewed;
+release builds stay fail-closed until it has.
 
 Triggers and rationale are in [`docs/board.md`](docs/board.md#roadmap-after-release).
 

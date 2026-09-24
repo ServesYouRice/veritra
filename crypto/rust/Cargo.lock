@@ -752,7 +752,7 @@ dependencies = [
  "log",
  "serde",
  "subtle",
- "tls_codec 0.5.0",
+ "tls_codec",
  "zeroize",
 ]
 
@@ -956,7 +956,7 @@ dependencies = [
  "libcrux-curve25519",
  "libcrux-p256",
  "rand",
- "tls_codec 0.5.0",
+ "tls_codec",
 ]
 
 [[package]]
@@ -1039,7 +1039,7 @@ dependencies = [
  "libcrux-sha3",
  "libcrux-traits",
  "rand",
- "tls_codec 0.5.0",
+ "tls_codec",
 ]
 
 [[package]]
@@ -1248,7 +1248,7 @@ dependencies = [
  "serde",
  "serde_bytes",
  "thiserror",
- "tls_codec 0.5.0",
+ "tls_codec",
  "zeroize",
 ]
 
@@ -1265,7 +1265,7 @@ dependencies = [
  "p384",
  "rand_core 0.6.4",
  "serde",
- "tls_codec 0.5.0",
+ "tls_codec",
  "zeroize",
 ]
 
@@ -1306,7 +1306,7 @@ dependencies = [
  "rand_core 0.6.4",
  "sha2 0.11.0",
  "thiserror",
- "tls_codec 0.5.0",
+ "tls_codec",
 ]
 
 [[package]]
@@ -1328,7 +1328,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac13edad8698eb1917cbc1dab99591fa1594d84320904fe3fc5121854f95831c"
 dependencies = [
  "serde",
- "tls_codec 0.5.0",
+ "tls_codec",
 ]
 
 [[package]]
@@ -1474,7 +1474,7 @@ dependencies = [
  "openmls_rust_crypto",
  "openmls_traits",
  "sha2 0.11.0",
- "tls_codec 0.4.2",
+ "tls_codec",
 ]
 
 [[package]]
@@ -1879,35 +1879,14 @@ dependencies = [
 
 [[package]]
 name = "tls_codec"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0de2e01245e2bb89d6f05801c564fa27624dbd7b1846859876c7dad82e90bf6b"
-dependencies = [
- "tls_codec_derive 0.4.2",
- "zeroize",
-]
-
-[[package]]
-name = "tls_codec"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "18cc98286004cea38f717e2b03d990fc774fbfd38a82720de40e5c94365067c8"
 dependencies = [
  "serde",
  "serde_bytes",
- "tls_codec_derive 0.5.0",
+ "tls_codec_derive",
  "zeroize",
-]
-
-[[package]]
-name = "tls_codec_derive"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d2e76690929402faae40aebdda620a2c0e25dd6d3b9afe48867dfd95991f4bd"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]

@@ -6,12 +6,16 @@ import 'dart:math';
 import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../crypto/app_payload.dart';
 import '../crypto/crypto_service.dart';
 import '../push/push_service.dart';
 import '../storage/local_store.dart';
 import '../sync/sync_service.dart';
 import 'api_client.dart';
+import 'client_config.dart';
 import 'errors.dart';
+import 'message_history.dart';
+import '../storage/encrypted_database.dart' show LocalMessageKind;
 import 'models.dart';
 
 typedef ApiClientFactory = ApiClient Function(String baseUrl);
@@ -115,9 +119,11 @@ class AppState extends ChangeNotifier {
     required this.localStore,
     required this.syncServiceFactory,
     MobilePushService? pushService,
+    this.config = ClientConfig.production,
   }) : pushService = pushService ?? DisabledMobilePushService();
 
   final ApiClientFactory apiClientFactory;
+  final ClientConfig config;
   final CryptoService cryptoService;
   final LocalStore localStore;
   final SyncServiceFactory syncServiceFactory;
@@ -141,6 +147,8 @@ class AppState extends ChangeNotifier {
   Map<String, List<ReceivedMessageEnvelope>> messagesByConversation =
       <String, List<ReceivedMessageEnvelope>>{};
   List<MessageEnvelope> pendingOutbox = <MessageEnvelope>[];
+  final Map<String, ConversationHistory> _history =
+      <String, ConversationHistory>{};
   final Map<String, OutboxDeliveryState> _outboxStates =
       <String, OutboxDeliveryState>{};
   final Map<String, PendingEnvelopeRecord> _outboxRecords =
@@ -209,13 +217,21 @@ class AppState extends ChangeNotifier {
 
   bool get connected => session != null;
 
-  bool get _isForeground => _lifecycleState == AppLifecycleState.resumed;
+  bool get _isForeground => _isForegroundState(_lifecycleState);
+
+  bool _isForegroundState(AppLifecycleState state) =>
+      state == AppLifecycleState.resumed ||
+      (config.syncWhileUnfocused &&
+          (state == AppLifecycleState.inactive ||
+              state == AppLifecycleState.hidden));
 
   /// The UI forwards lifecycle changes here so background push remains a
   /// durable wake marker and the foreground sync owner is the only consumer.
   void handleAppLifecycleState(AppLifecycleState state) {
+    final wasForeground = _isForeground;
     _lifecycleState = state;
-    if (state == AppLifecycleState.resumed) {
+    if (state == AppLifecycleState.resumed ||
+        (!wasForeground && _isForeground)) {
       unawaited(_resumeForegroundSync());
     }
   }
@@ -230,6 +246,14 @@ class AppState extends ChangeNotifier {
   /// settings screen would claim notifications work when no distributor ever
   /// answered.
   bool get pushRegistered => _pushSubscriptionId != null;
+
+  /// False in demo builds (D24): until card I51 lands, MLS groups keep the
+  /// members they were created with and each account has one device, so
+  /// adding members and linking devices are hidden rather than half-working.
+  bool get membershipChangesAvailable => !config.demo;
+
+  /// Reply, edit, delete and reactions need the MLS service (D22).
+  bool get messageActionsAvailable => _mlsCrypto != null;
 
   /// Scoped busy/error state. Callers pass an [Ops] key so one slow or failed
   /// action leaves every unrelated control usable.
@@ -270,6 +294,68 @@ class AppState extends ChangeNotifier {
       return const <ReceivedMessageEnvelope>[];
     }
     return messagesByConversation[id] ?? const <ReceivedMessageEnvelope>[];
+  }
+
+  /// Decrypted text for the envelopes of [conversationId] (D23).
+  ConversationHistory historyFor(String conversationId) =>
+      _history[conversationId] ?? ConversationHistory.empty(conversationId);
+
+  /// Rereads decrypted history for one conversation from the local store.
+  Future<void> refreshHistory(String conversationId) async {
+    final messages = await localStore.loadMessages(conversationId);
+    final reactions = await localStore.loadReactions(conversationId);
+    _history[conversationId] = ConversationHistory(
+      conversationId: conversationId,
+      messages: messages,
+      reactions: reactions,
+    );
+    notifyListeners();
+  }
+
+  /// What the chat shows, newest first (Stage 4). With MLS, decrypted local
+  /// history is the source of truth, so every message this device has read
+  /// or sent is shown even when the server is unreachable or the envelope
+  /// left the local cache. Server envelopes without a local record (sent
+  /// before this device joined, say) still appear, as redacted bars.
+  List<ReceivedMessageEnvelope> timelineFor(String conversationId) {
+    final envelopes = messagesFor(conversationId);
+    if (_mlsCrypto == null) return envelopes;
+    final history = historyFor(conversationId);
+    final ownDeviceId = session?.deviceId;
+    final pendingKeys = <String>{
+      if (ownDeviceId != null)
+        for (final envelope in pendingOutbox)
+          if (envelope.conversationId == conversationId)
+            ConversationHistory.keyOf(ownDeviceId, envelope.idempotencyKey),
+    };
+    final byKey = <String, ReceivedMessageEnvelope>{};
+    for (final envelope in envelopes) {
+      byKey[ConversationHistory.keyOf(
+          envelope.senderDeviceId, envelope.idempotencyKey)] = envelope;
+    }
+    for (final local in history.messages) {
+      if (local.kind == LocalMessageKind.action ||
+          pendingKeys.contains(local.key) ||
+          byKey.containsKey(local.key)) {
+        continue;
+      }
+      byKey[local.key] = ReceivedMessageEnvelope(
+        id: local.serverMessageId ?? local.key,
+        conversationId: conversationId,
+        senderAccountId: local.senderAccountId,
+        senderDeviceId: local.senderDeviceId,
+        idempotencyKey: local.key.substring(local.senderDeviceId.length + 1),
+        ciphertext: const <int>[],
+        cryptoProtocol: 'local-history',
+        createdAt:
+            DateTime.fromMillisecondsSinceEpoch(local.createdAt, isUtc: true),
+      );
+    }
+    return byKey.values.toList()
+      ..sort((left, right) {
+        final byCreatedAt = right.createdAt.compareTo(left.createdAt);
+        return byCreatedAt != 0 ? byCreatedAt : right.id.compareTo(left.id);
+      });
   }
 
   List<ReceivedMessageEnvelope> messagesFor(String conversationId) =>
@@ -315,7 +401,7 @@ class AppState extends ChangeNotifier {
     } on FormatException {
       return const SetupProbeResult(state: SetupProbeState.invalidOrigin);
     }
-    if (Uri.parse(origin).scheme != 'https') {
+    if (!config.transport.allows(origin)) {
       return const SetupProbeResult(
         state: SetupProbeState.insecureTransport,
       );
@@ -484,7 +570,7 @@ class AppState extends ChangeNotifier {
       _startSync();
       lifecycle = SessionLifecycle.ready;
       notifyListeners();
-    } catch (_) {
+    } catch (error) {
       // Keep the encrypted database and cursor intact. Recovery is explicit so
       // a keystore/database failure cannot look like an ordinary logout.
       await _mlsCrypto?.dispose();
@@ -496,10 +582,14 @@ class AppState extends ChangeNotifier {
       devices = <Device>[];
       conversationsLoaded = false;
       messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
+      _history.clear();
       lifecycle = SessionLifecycle.recoveryRequired;
-      recoveryMessage =
-          'This device could not restore its encrypted session. Retry or '
-          'continue to sign in without clearing local data.';
+      recoveryMessage = error is StateError &&
+              error.message.contains('another Veritra window')
+          ? 'This profile is already open in another Veritra window. Close '
+              'that window, then retry.'
+          : 'This device could not restore its encrypted session. Retry or '
+              'continue to sign in without clearing local data.';
       notifyListeners();
     }
   }
@@ -523,7 +613,7 @@ class AppState extends ChangeNotifier {
       session = await api!.createOwner(
         username: username,
         password: password,
-        deviceName: 'Mobile device',
+        deviceName: config.deviceName,
         enrollment: enrollment,
         credential: credential,
         setupToken: setupToken,
@@ -760,7 +850,10 @@ class AppState extends ChangeNotifier {
     _messageLoadErrors.remove(conversationId);
     notifyListeners();
     try {
+      // Local history first: it needs no server, so chats open offline.
+      if (_mlsCrypto != null) await refreshHistory(conversationId);
       await _fetchMessages(conversationId);
+      if (_mlsCrypto != null) await refreshHistory(conversationId);
       unawaited(markNewestMessageRead(conversationId));
     } catch (err) {
       _messageLoadErrors[conversationId] = describeError(err);
@@ -817,15 +910,7 @@ class AppState extends ChangeNotifier {
         retentionSeconds: retentionSeconds,
       );
       final conversation = created!;
-      final mls = _mlsCrypto;
-      if (mls != null) {
-        final packages = await client.claimConversationKeyPackages(
-          current.token,
-          conversation.id,
-        );
-        await mls.initializeConversation(conversation.id, packages);
-        await _flushMlsOutbox();
-      }
+      await _setUpConversationGroup(conversation.id);
       conversations = <Conversation>[conversation, ...conversations];
       selectedConversationId = conversation.id;
       messagesByConversation[conversation.id] = <ReceivedMessageEnvelope>[];
@@ -848,7 +933,7 @@ class AppState extends ChangeNotifier {
         inviteCode: inviteCode,
         username: username,
         password: password,
-        deviceName: 'Mobile device',
+        deviceName: config.deviceName,
         enrollment: enrollment,
         credential: credential,
       );
@@ -916,6 +1001,7 @@ class AppState extends ChangeNotifier {
       }
       final creation =
           await client.createChannel(current.token, communityId, name);
+      await _setUpConversationGroup(creation.conversation.id);
       channelsByCommunity = <String, List<Channel>>{
         ...channelsByCommunity,
         communityId: <Channel>[
@@ -942,6 +1028,9 @@ class AppState extends ChangeNotifier {
       final client = api;
       if (current == null || client == null) {
         return;
+      }
+      if (!membershipChangesAvailable) {
+        throw StateError('adding members is not available in this build');
       }
       await client.addConversationMember(
         current.token,
@@ -1295,7 +1384,37 @@ class AppState extends ChangeNotifier {
   /// Encrypts, queues, and delivers one message. Scoped to [Ops.send] so a
   /// slow or failed send only affects the composer, and the queued envelope
   /// stays retryable from its pending bubble either way.
-  Future<bool> sendMessageTo(String conversationId, String plaintext) {
+  Future<bool> sendMessageTo(String conversationId, String plaintext) =>
+      _sendPayload(conversationId, AppPayloadType.text,
+          <String, Object?>{'text': plaintext});
+
+  /// Replies to the message with local history key [targetKey] (D22).
+  Future<bool> replyTo(String conversationId, String targetKey, String text) =>
+      _sendPayload(conversationId, AppPayloadType.reply,
+          <String, Object?>{'text': text, 'reply_to_id': targetKey});
+
+  /// Replaces the text of one of this account's own messages.
+  Future<bool> editMessage(
+          String conversationId, String targetKey, String text) =>
+      _sendPayload(conversationId, AppPayloadType.edit,
+          <String, Object?>{'message_id': targetKey, 'text': text});
+
+  /// Deletes one of this account's own messages for every member.
+  Future<bool> deleteMessage(String conversationId, String targetKey) =>
+      _sendPayload(conversationId, AppPayloadType.delete,
+          <String, Object?>{'message_id': targetKey});
+
+  /// Sets this account's reaction on a message; an empty [reaction] clears it.
+  Future<bool> react(
+          String conversationId, String targetKey, String reaction) =>
+      _sendPayload(conversationId, AppPayloadType.reaction,
+          <String, Object?>{'message_id': targetKey, 'reaction': reaction});
+
+  Future<bool> _sendPayload(
+    String conversationId,
+    AppPayloadType type,
+    Map<String, Object?> body,
+  ) {
     return _runScoped(Ops.send, () async {
       final current = session;
       final client = api;
@@ -1307,8 +1426,19 @@ class AppState extends ChangeNotifier {
       if (!await localStore.hasOutboxCapacity()) {
         throw const OutboxFullException();
       }
-      final encrypted = await cryptoService.encrypt(conversation.id, plaintext);
-      await localStore.enqueueEnvelope(encrypted, draftText: plaintext);
+      final mls = _mlsCrypto;
+      final MessageEnvelope encrypted;
+      if (type == AppPayloadType.text) {
+        encrypted = await cryptoService.encrypt(
+            conversation.id, body['text'] as String);
+      } else if (mls != null) {
+        encrypted = await mls.encryptPayload(conversation.id, type, body);
+      } else {
+        throw StateError('Production MLS/OpenMLS encryption is not integrated');
+      }
+      final draftText = body['text'] as String?;
+      await localStore.enqueueEnvelope(encrypted, draftText: draftText);
+      if (mls != null) await refreshHistory(conversation.id);
       final record = (await localStore.pendingEnvelopeRecords())
           .where((item) =>
               item.envelope.idempotencyKey == encrypted.idempotencyKey)
@@ -1351,6 +1481,9 @@ class AppState extends ChangeNotifier {
       final client = api;
       if (current == null || client == null) {
         return;
+      }
+      if (!membershipChangesAvailable) {
+        throw StateError('device linking is not available in this build');
       }
       activeDeviceLink = await client.createDeviceLink(current.token);
     });
@@ -1451,7 +1584,7 @@ class AppState extends ChangeNotifier {
       );
       final claimed = await api!.claimDeviceLink(
         code: code,
-        deviceName: 'Linked mobile device',
+        deviceName: 'Linked ${config.deviceName.toLowerCase()}',
         enrollment: enrollment,
         credential: credential,
         verification: verification,
@@ -1902,7 +2035,10 @@ class AppState extends ChangeNotifier {
                   'deviceRecoveryRequired: MLS crypto is unavailable');
             }
             final envelope = await _processCryptoSyncEvent(event);
-            if (envelope != null) _mergeReceivedEnvelope(envelope);
+            if (envelope != null) {
+              _mergeReceivedEnvelope(envelope);
+              await refreshHistory(envelope.conversationId);
+            }
           } else {
             await _refreshProjectionForSyncEvent(event);
             final expectedCursor = await localStore.loadSyncCursor();
@@ -1969,7 +2105,9 @@ class AppState extends ChangeNotifier {
       await _refreshConversations(notify: false, persist: false);
       return;
     }
-    if (type.startsWith('conversation.') || type.startsWith('membership.')) {
+    if (type.startsWith('conversation.') ||
+        type.startsWith('membership.') ||
+        type == 'retention.updated') {
       await _refreshConversations(notify: false, persist: false);
       return;
     }
@@ -2013,7 +2151,12 @@ class AppState extends ChangeNotifier {
         final id = _mlsMessageIdFromSyncEvent(event);
         if (id == null)
           throw StateError('MLS sync event is missing its message');
-        await mls.processMlsMessage(await client.mlsMessage(current.token, id));
+        final message = await client.mlsMessage(current.token, id);
+        await mls.processMlsMessage(message);
+        if (message.kind == 'welcome' &&
+            message.recipientDeviceId == current.deviceId) {
+          await _replenishKeyPackage();
+        }
         return null;
       case 'message.envelope.created':
       case 'message.envelope.edited':
@@ -2117,6 +2260,7 @@ class AppState extends ChangeNotifier {
     devicesLoaded = false;
     devices = <Device>[];
     messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
+    _history.clear();
     pendingOutbox = <MessageEnvelope>[];
     _outboxStates.clear();
     _outboxRecords.clear();
@@ -2304,6 +2448,36 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Creates the MLS group for a new conversation and sends each member's
+  /// Welcome, so the composer works as soon as the conversation opens.
+  Future<void> _setUpConversationGroup(String conversationId) async {
+    final current = session;
+    final client = api;
+    final mls = _mlsCrypto;
+    if (current == null || client == null || mls == null) return;
+    final packages = await client.claimConversationKeyPackages(
+        current.token, conversationId);
+    await mls.initializeConversation(conversationId, packages);
+    await _flushMlsOutbox();
+  }
+
+  /// Every Welcome consumes one of this device's published key packages.
+  /// Publishing one back keeps the supply steady, so the device can keep
+  /// being added to new conversations. A failure only delays the top-up to
+  /// the next Welcome; the Welcome itself is already committed.
+  Future<void> _replenishKeyPackage() async {
+    final current = session;
+    final client = api;
+    final mls = _mlsCrypto;
+    if (current == null || client == null || mls == null) return;
+    try {
+      final packages = await mls.createReplenishmentKeyPackages(count: 1);
+      await client.publishDeviceKeyPackages(current.token, packages);
+    } catch (_) {
+      // Retried on the next Welcome.
+    }
+  }
+
   Future<void> _publishInitialMlsKeyPackages() async {
     final current = session;
     final client = api;
@@ -2354,6 +2528,12 @@ class AppState extends ChangeNotifier {
   }
 
   void _replaceApi(String baseUrl) {
+    // The UI validates too, but this is the one place every connection path
+    // (setup, registration, sign-in, device link, restore) goes through.
+    if (!config.transport.allows(baseUrl)) {
+      throw StateError('This build does not allow the server address '
+          '$baseUrl. Use an https:// server origin.');
+    }
     api?.close();
     api = apiClientFactory(baseUrl);
   }

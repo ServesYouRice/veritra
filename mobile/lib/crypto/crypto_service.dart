@@ -1,4 +1,5 @@
 import '../core/models.dart';
+import 'app_payload.dart';
 
 class ConversationSafetyNumber {
   const ConversationSafetyNumber({
@@ -45,6 +46,11 @@ abstract class MlsConversationCryptoService implements CryptoService {
       String conversationId, Map<String, Object?> signal);
   Future<Map<String, Object?>?> processCallSignal(
       CallSession call, int syncEventId);
+  Future<MessageEnvelope> encryptPayload(
+    String conversationId,
+    AppPayloadType type,
+    Map<String, Object?> body,
+  );
   Future<List<int>?> processApplicationMessage(
     ReceivedMessageEnvelope envelope,
     int syncEventId,

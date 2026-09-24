@@ -10,6 +10,7 @@ import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/status_pill.dart';
 import '../../ui/widgets/tile_group.dart';
+import '../../ui/widgets/refresh_action.dart';
 
 /// Mint invite codes for the invite-only registration flow. Invites the
 /// account has created are listed from the server (`GET /invites`), so codes
@@ -34,7 +35,12 @@ class _InviteScreenState extends State<InviteScreen> {
       builder: (context, _) {
         final invites = widget.state.invites;
         return Scaffold(
-          appBar: const LargeTitleBar(title: 'Invites'),
+          appBar: LargeTitleBar(
+            title: 'Invites',
+            actions: <Widget>[
+              RefreshAction(onRefresh: widget.state.refreshInvites),
+            ],
+          ),
           body: RefreshIndicator(
             onRefresh: widget.state.refreshInvites,
             child: ListView(

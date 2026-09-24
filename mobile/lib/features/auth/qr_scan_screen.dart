@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../core/api_client.dart';
+import '../../core/transport_policy.dart';
 
 /// Pulls the `code` query parameter out of a scanned device-link URI
 /// (`veritra://device-link?code=…`), falling back to the raw scan when it is
@@ -28,7 +29,10 @@ String parseDeviceLinkCode(String scanned) {
 /// Reads an optional HTTPS origin from a future structured link. The caller
 /// must show it and obtain explicit confirmation before filling the URL field;
 /// this parser never trusts a QR payload by itself.
-String? parseDeviceLinkOrigin(String scanned) {
+String? parseDeviceLinkOrigin(
+  String scanned, {
+  TransportPolicy transport = TransportPolicy.production,
+}) {
   final uri = Uri.tryParse(scanned);
   if (uri == null ||
       uri.scheme.toLowerCase() != 'veritra' ||
@@ -41,7 +45,7 @@ String? parseDeviceLinkOrigin(String scanned) {
   }
   try {
     final origin = canonicalizeServerOrigin(raw);
-    return Uri.parse(origin).scheme == 'https' ? origin : null;
+    return transport.allows(origin) ? origin : null;
   } on FormatException {
     return null;
   }

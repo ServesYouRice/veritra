@@ -8,6 +8,7 @@ import '../../ui/format.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/empty_state.dart';
 import '../../ui/widgets/large_title_bar.dart';
+import '../../ui/widgets/refresh_action.dart';
 
 /// Review and undo blocks. Blocking is enforced by the server for delivery;
 /// it is not a claim about the other person's device, and the copy here says
@@ -43,7 +44,10 @@ class _BlockedAccountsScreenState extends State<BlockedAccountsScreen> {
         final blocks = state.blockedAccounts;
         final error = state.errorFor(Ops.blocks);
         return Scaffold(
-          appBar: const LargeTitleBar(title: 'Blocked accounts'),
+          appBar: LargeTitleBar(
+            title: 'Blocked accounts',
+            actions: <Widget>[RefreshAction(onRefresh: state.refreshBlocks)],
+          ),
           body: RefreshIndicator(
             onRefresh: state.refreshBlocks,
             child: blocks.isEmpty

@@ -11,6 +11,7 @@ import '../../ui/widgets/status_pill.dart';
 import '../search/search_screen.dart';
 import 'chat_screen.dart';
 import 'new_conversation_sheet.dart';
+import '../../ui/widgets/refresh_action.dart';
 
 class ChatListScreen extends StatelessWidget {
   const ChatListScreen({required this.state, this.embedded = false, super.key});
@@ -37,6 +38,7 @@ class ChatListScreen extends StatelessWidget {
         titleSpacing: BoneSpacing.gutter,
         title: Text('Chats', style: theme.textTheme.displaySmall),
         actions: <Widget>[
+          RefreshAction(onRefresh: state.refreshConversations),
           IconButton(
             tooltip: 'Search',
             onPressed: () => Navigator.of(context).push(

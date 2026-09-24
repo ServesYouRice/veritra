@@ -57,6 +57,13 @@ mode is the supported direction; install the corresponding CA certificate on
 the device. iOS also declares local-network usage so the OS can present its
 LAN permission prompt.
 
+**Demo builds only (D11, D12).** `mobile/lib/main_demo.dart`, built with
+`--dart-define=VERITRA_DEMO=true`, also accepts plain `http://` for loopback
+hosts (`localhost`, `127.0.0.0/8`, `::1`) so it can reach
+`scripts/demo.sh`. Every other host still needs HTTPS, QR origins stay
+HTTPS-only, and release builds (`main.dart`) never accept cleartext. See
+[demo.md](demo.md).
+
 ## Credential abuse controls
 
 The per-source limiter allows 240 general requests/minute, 10 credential
