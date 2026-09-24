@@ -2993,7 +2993,11 @@ class $$LocalAccountsTableTableManager extends RootTableManager<
             sessionJson: sessionJson,
           ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map((e) => (
+                    e.readTable<$LocalAccountsTable, LocalAccount>(table),
+                    BaseReferences<_$EncryptedLocalDatabase,
+                        $LocalAccountsTable, LocalAccount>(db, table, e)
+                  ))
               .toList(),
           prefetchHooksCallback: null,
         ));
@@ -3140,7 +3144,14 @@ class $$LocalConversationsTableTableManager extends RootTableManager<
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map((e) => (
+                    e.readTable<$LocalConversationsTable, LocalConversation>(
+                        table),
+                    BaseReferences<
+                        _$EncryptedLocalDatabase,
+                        $LocalConversationsTable,
+                        LocalConversation>(db, table, e)
+                  ))
               .toList(),
           prefetchHooksCallback: null,
         ));
@@ -3306,7 +3317,14 @@ class $$LocalCiphertextEnvelopesTableTableManager extends RootTableManager<
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map((e) => (
+                    e.readTable<$LocalCiphertextEnvelopesTable,
+                        LocalCiphertextEnvelope>(table),
+                    BaseReferences<
+                        _$EncryptedLocalDatabase,
+                        $LocalCiphertextEnvelopesTable,
+                        LocalCiphertextEnvelope>(db, table, e)
+                  ))
               .toList(),
           prefetchHooksCallback: null,
         ));
@@ -3432,7 +3450,11 @@ class $$LocalSyncStatesTableTableManager extends RootTableManager<
             cursor: cursor,
           ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map((e) => (
+                    e.readTable<$LocalSyncStatesTable, LocalSyncState>(table),
+                    BaseReferences<_$EncryptedLocalDatabase,
+                        $LocalSyncStatesTable, LocalSyncState>(db, table, e)
+                  ))
               .toList(),
           prefetchHooksCallback: null,
         ));
@@ -3661,7 +3683,14 @@ class $$LocalOutboxEntriesTableTableManager extends RootTableManager<
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map((e) => (
+                    e.readTable<$LocalOutboxEntriesTable, LocalOutboxEntry>(
+                        table),
+                    BaseReferences<
+                        _$EncryptedLocalDatabase,
+                        $LocalOutboxEntriesTable,
+                        LocalOutboxEntry>(db, table, e)
+                  ))
               .toList(),
           prefetchHooksCallback: null,
         ));
@@ -3817,7 +3846,12 @@ class $$LocalCryptoStatesTableTableManager extends RootTableManager<
             sealedState: sealedState,
           ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map((e) => (
+                    e.readTable<$LocalCryptoStatesTable, LocalCryptoState>(
+                        table),
+                    BaseReferences<_$EncryptedLocalDatabase,
+                        $LocalCryptoStatesTable, LocalCryptoState>(db, table, e)
+                  ))
               .toList(),
           prefetchHooksCallback: null,
         ));
@@ -3948,7 +3982,11 @@ class $$LocalMetadataTableTableManager extends RootTableManager<
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map((e) => (
+                    e.readTable<$LocalMetadataTable, LocalMetadataData>(table),
+                    BaseReferences<_$EncryptedLocalDatabase,
+                        $LocalMetadataTable, LocalMetadataData>(db, table, e)
+                  ))
               .toList(),
           prefetchHooksCallback: null,
         ));
@@ -4113,7 +4151,14 @@ class $$LocalMlsTransitionsTableTableManager extends RootTableManager<
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map((e) => (
+                    e.readTable<$LocalMlsTransitionsTable, LocalMlsTransition>(
+                        table),
+                    BaseReferences<
+                        _$EncryptedLocalDatabase,
+                        $LocalMlsTransitionsTable,
+                        LocalMlsTransition>(db, table, e)
+                  ))
               .toList(),
           prefetchHooksCallback: null,
         ));
@@ -4346,7 +4391,14 @@ class $$LocalMlsOutboxEntriesTableTableManager extends RootTableManager<
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map((e) => (
+                    e.readTable<$LocalMlsOutboxEntriesTable,
+                        LocalMlsOutboxEntry>(table),
+                    BaseReferences<
+                        _$EncryptedLocalDatabase,
+                        $LocalMlsOutboxEntriesTable,
+                        LocalMlsOutboxEntry>(db, table, e)
+                  ))
               .toList(),
           prefetchHooksCallback: null,
         ));
@@ -4516,7 +4568,14 @@ class $$LocalPeerVerificationsTableTableManager extends RootTableManager<
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map((e) => (
+                    e.readTable<$LocalPeerVerificationsTable,
+                        LocalPeerVerification>(table),
+                    BaseReferences<
+                        _$EncryptedLocalDatabase,
+                        $LocalPeerVerificationsTable,
+                        LocalPeerVerification>(db, table, e)
+                  ))
               .toList(),
           prefetchHooksCallback: null,
         ));

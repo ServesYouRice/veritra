@@ -215,18 +215,22 @@ document deliberately does not repeat them — the duplicate copy is what went
 stale last time. In shape: most cards are done, one is active and unblocked, and
 the rest wait on people, hardware or upstream.
 
-### Sequencing (decision D06)
+### Sequencing (decisions D06 and D10)
 
 ```mermaid
 flowchart LR
-    P1["📱 Phase 1 · Mobile<br/>Android + iOS<br/><b>current</b>"]
-    P2["🖥️ Phase 2 · Desktop<br/>Windows + macOS<br/>same repo, same crypto core"]
-    P3["🧩 Phase 3 · Embedded<br/>client SDK, not a widget<br/><i>deferred</i>"]
-    P1 -->|"release ships"| P2
-    P2 -->|"product trigger<br/>+ E2EE question answered"| P3
+    D["🧪 Local demos first<br/>Android + iOS + Windows + Linux<br/><b>current (D10)</b>"]
+    P1["📱 Phase 1 · Mobile release<br/>Android + iOS"]
+    P2["🖥️ Phase 2 · Desktop<br/>Windows + Linux, then macOS<br/>same repo, same crypto core"]
+    P3["🧩 Phase 3 · Embedded<br/>client SDK, stays E2EE (D19)<br/><i>deferred</i>"]
+    D --> P1
+    D --> P2
+    P2 -->|"product trigger"| P3
 ```
 
-Mobile is the entire first release. Desktop follows as **additional Flutter
+Since D10 (2026-09-24), working local demos of both mobile and desktop come
+first, and independent review, signing and device evidence wait until all three
+phases are done. Mobile is still the first release. Desktop follows as **additional Flutter
 targets in this repository**, reusing the reviewed Rust core — not a fork, which
 would owe a separate independent security review for a second copy of the same
 protocol. Embedding is deferred until someone answers whether embedded

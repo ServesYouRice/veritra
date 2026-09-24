@@ -11,13 +11,17 @@ Veritra is an AGPL-3.0-or-later, self-hosted, privacy-first messenger. The Go
 server is a modular monolith with SQLite. The mobile app is Flutter for Android
 and iOS. Rust/OpenMLS provides the crypto boundary.
 
-Production messaging is intentionally unavailable until the mobile MLS path and
-release evidence are complete.
+Production messaging stays unavailable in release builds (`mobile/lib/main.dart`)
+until the mobile MLS path, independent review and release evidence are complete.
 
-Sequencing is fixed by decision D06 on the board: mobile ships first, desktop
-(Windows and macOS) comes after that release as additional targets in this
-repository, and embedded chat is deferred behind a product trigger. Do not start
-desktop or embedding work, or add server-side plaintext paths to serve them.
+Sequencing is set by decision D10 on the board (it replaces D06's ordering):
+working local demos come first, on Android, iOS, Windows and Linux. Demo builds
+use the real MLS path only through `mobile/lib/main_demo.dart` (D11), with
+loopback-only HTTP (D12). Desktop is additional Flutter targets in this
+repository, never a fork. Independent review, signing and real-device evidence
+wait until all three roadmap phases are done. Embedded chat stays deferred and,
+when built, stays end-to-end encrypted (D19). Never add server-side plaintext
+paths for any of this, and never ship a demo build as a release.
 
 ## Non-negotiable boundaries
 

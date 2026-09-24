@@ -1,7 +1,7 @@
 # Crypto Boundary
 
 The selected production direction is MLS through OpenMLS. This Rust crate now
-pins OpenMLS 0.8.1 and contains a tested native core for signed key packages,
+pins OpenMLS 0.9.0 and contains a tested native core for signed key packages,
 group creation/join, and authenticated application messages. It also exposes a
 versioned C ABI and Rust-side credential/key-package boundary types. ABI v4 has
 tested opaque device handles, zeroing owned buffers, credential public-key
@@ -33,9 +33,11 @@ The public header is `crypto/rust/include/veritra_crypto.h`, which pins
 Key-package size checks mirror the server transport boundary (64 bytes through
 48 KiB). Passing that check does **not** verify an MLS key package.
 
-OpenMLS 0.8.1, `openmls_rust_crypto` 0.5.1, and their supporting crates are
-exactly pinned. All 151 locked third-party packages declare compatible license
-choices recorded in `THIRD_PARTY_NOTICES.md`. No debug feature that exposes
+OpenMLS 0.9.0, `openmls_rust_crypto` 0.6.0, and their supporting crates are
+exactly pinned (Rust 1.91 or newer). All 205 locked third-party packages declare
+compatible license choices recorded in `THIRD_PARTY_NOTICES.md`. Sealed state
+uses envelope format version 2; version 1 blobs written under OpenMLS 0.8.1 fail
+closed. No debug feature that exposes
 message content or cryptographic material is enabled.
 
 Before production message sending:

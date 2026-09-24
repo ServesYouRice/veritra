@@ -46,7 +46,7 @@ run_step dart-coverage sh -c "cd '$ROOT/mobile' && flutter test --coverage && fl
 # Floors stay at 0.0 until the QA10 advisor checkpoint sets values from
 # testing/evidence/coverage-baseline.md; the gate still fails on missing or
 # malformed coverage data.
-run_step coverage-floor sh -c "python3 '$ROOT/scripts/check-coverage.py' --go-profile '$ROOT/server/coverage.out' --go-floor 0.0 --flutter-lcov '$ROOT/mobile/coverage/lcov.info' --flutter-floor 0.0"
+run_step coverage-floor sh -c "python3 '$ROOT/scripts/check-coverage.py' --go-profile '$ROOT/server/coverage.out' --go-floor 50.0 --flutter-lcov '$ROOT/mobile/coverage/lcov.info' --flutter-floor 43.0"
 run_step mobile-dependencies sh "$ROOT/scripts/check-mobile-dependencies.sh"
 run_step licenses sh "$ROOT/scripts/license-check.sh"
 run_step rust-audit sh "$ROOT/scripts/audit-rust.sh"

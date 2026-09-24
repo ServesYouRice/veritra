@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $GoVersion = (Get-Content -Raw (Join-Path $Root ".go-version")).Trim()
-$GoImage = "golang:${GoVersion}@sha256:9006890ecba0a168034d99516084099ae3114d9f2b7d6572c77f2dde57ebc980"
+$GoImage = "golang:${GoVersion}@sha256:6c2a5538f964f1c82f97ad14988bf05de100d922d159d0e398b54c7b0ca0c6c9"
 
 if (Get-Command go -ErrorAction SilentlyContinue) {
   Push-Location (Join-Path $Root "server")

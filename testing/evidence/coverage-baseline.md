@@ -1,21 +1,29 @@
 # Coverage baseline (QA10)
 
-Provisional measurement supporting QA10. Floors in `scripts/check-coverage.py`
-call sites are still `0.0`: the gate enforces artifact presence and
-parseability only. Numeric floors remain an advisor decision.
+## Enforced floors (decision D18, 2026-09-24)
 
-## Provenance
+CI (`ci.yml`) and `scripts/verify.sh` now fail below these floors. They are the
+baseline measured on 2026-09-24, rounded down. Raise them as coverage grows;
+never lower them without recording why here.
+
+| Scope | Measured 2026-09-24 | Floor |
+|---|---|---|
+| Go, `go test -race ./...` | 50.5% | 50.0% |
+| Flutter, `flutter test --coverage` with the native library | 43.75% | 43.0% |
+
+Measured on the Stage 0 working tree (OpenMLS 0.9.0, Go 1.26.8, Flutter 3.44.0,
+Rust 1.91.0) with native tooling, not containers. The provisional 2026-08-27
+measurement below is kept for its per-package detail.
+
+## Provisional measurement (2026-08-27)
 
 | Field | Value |
 |---|---|
 | Base commit | `9dcb8774c2ea60ac91ecbd1f51904b4868fe792d` |
 | Working tree | **dirty** — measured with the call-session/optimistic-concurrency changes applied |
 | Measured | 2026-08-27 |
-| Go toolchain | `golang:1.25.13` container (matches `.go-version`) |
+| Go toolchain | `golang:1.25.13` container |
 | Flutter toolchain | `ghcr.io/cirruslabs/flutter:3.44.0` container, Dart 3.12.0 |
-
-This is **not yet a clean commit-bound baseline**. Re-measure on a frozen
-commit before any floor is enforced.
 
 ## Commands
 

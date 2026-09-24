@@ -22,13 +22,13 @@ fi
 if command -v go >/dev/null 2>&1; then
   (cd "$ROOT/server" && go test ./...)
 else
-  docker run --rm -v "$ROOT:/workspace" -w /workspace/server "golang:${GO_VERSION}@sha256:9006890ecba0a168034d99516084099ae3114d9f2b7d6572c77f2dde57ebc980" go test ./...
+  docker run --rm -v "$ROOT:/workspace" -w /workspace/server "golang:${GO_VERSION}@sha256:6c2a5538f964f1c82f97ad14988bf05de100d922d159d0e398b54c7b0ca0c6c9" go test ./...
 fi
 
 if command -v cargo >/dev/null 2>&1; then
   (cd "$ROOT/crypto/rust" && cargo test)
 else
-  docker run --rm -v "$ROOT:/workspace" -w /workspace/crypto/rust rust:1.90@sha256:e227f20ec42af3ea9a3c9c1dd1b2012aa15f12279b5e9d5fb890ca1c2bb5726c cargo test
+  docker run --rm -v "$ROOT:/workspace" -w /workspace/crypto/rust rust:1.91@sha256:867f1d1162913c401378a8504fb17fe2032c760dc316448766f150a130204aad cargo test
 fi
 
 if command -v flutter >/dev/null 2>&1; then

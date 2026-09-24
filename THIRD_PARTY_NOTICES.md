@@ -11,38 +11,42 @@ This project is licensed AGPL-3.0-or-later. Dependency licenses must be compatib
 | `github.com/SherClockHolmes/webpush-go` | RFC 8291 Web Push encryption and VAPID | MIT | Server-side optional generic wake delivery; pinned in `server/go.mod`. |
 | `org.unifiedpush.android:connector` 3.3.3 | Android push distributor registration and RFC 8291 decryption | Apache-2.0 | Official connector; receives only a fixed generic wake event. |
 | `com.google.firebase:firebase-messaging` 25.0.1 | Native Android FCM wake delivery | Apache-2.0 | Exact dependency; data is restricted to a fixed generic wake. Firebase/Google service terms apply when enabled. |
-| `flutter_webrtc` 1.5.2 | Native Android/iOS WebRTC audio/video and DTLS-SRTP media | MIT | Exact Flutter dependency from the verified flutter-webrtc.org publisher; bundles platform WebRTC components whose notices are included by release packaging. |
+| `flutter_webrtc` 1.6.2+hotfix.3 | Native Android/iOS WebRTC audio/video and DTLS-SRTP media | MIT | Exact Flutter dependency from the verified flutter-webrtc.org publisher; bundles platform WebRTC components whose notices are included by release packaging. |
 | `com.google.crypto.tink:tink-android` 1.21.0 | Android keystore-backed Web Push key handling | Apache-2.0 | Forced to one Android artifact to avoid duplicate classes across secure storage and UnifiedPush. |
 | `flutter_secure_storage` | Platform secure storage for mobile sessions | BSD-3-Clause | Direct Flutter dependency; platform packages are pulled transitively by `flutter pub get`. |
-| `drift` 2.34.3 | Typed transactional mobile persistence and schema migrations | MIT | Direct Flutter dependency; used only over the encrypted SQLite3MC connection. |
-| `sqlite3` 3.5.0 | Native SQLite bindings and verified build-hook artifacts | MIT | Configured with the `sqlite3mc` hook; system SQLite fallback is not used. |
-| SQLite3 Multiple Ciphers | ChaCha20-Poly1305 encryption for the mobile database | MIT | Bundled through `sqlite3` 3.5.0 build hooks; the cipher is selected and verified explicitly before schema access. |
+| `drift` 2.34.4 | Typed transactional mobile persistence and schema migrations | MIT | Direct Flutter dependency; used only over the encrypted SQLite3MC connection. |
+| `sqlite3` 3.5.2 | Native SQLite bindings and verified build-hook artifacts | MIT | Configured with the `sqlite3mc` hook; system SQLite fallback is not used. |
+| SQLite3 Multiple Ciphers | ChaCha20-Poly1305 encryption for the mobile database | MIT | Bundled through `sqlite3` 3.5.2 build hooks; the cipher is selected and verified explicitly before schema access. |
 | `path_provider` 2.1.6 | Private application-support database location | BSD-3-Clause | Direct Flutter dependency maintained by flutter.dev. |
 | `ffi` 2.2.0 | Dart bindings for the reviewed native MLS ABI | BSD-3-Clause | Direct Flutter dependency pinned in `mobile/pubspec.lock`. |
 | `qr_flutter` 4.1.0 | Device-link QR rendering | BSD-3-Clause | Direct Flutter dependency pinned in `mobile/pubspec.lock`. |
-| `mobile_scanner` 5.2.3 | Device-link QR scanning | BSD-3-Clause | Direct Flutter dependency. Android uses ML Kit, iOS uses the system Vision framework, and web uses ZXing; include their applicable notices/terms in release review. |
+| `mobile_scanner` 7.4.2 | Device-link QR scanning | BSD-3-Clause | Direct Flutter dependency. Android uses ML Kit, iOS uses the system Vision framework, and web uses ZXing; include their applicable notices/terms in release review. |
 | `web` 1.1.1 | Browser API bindings used by `mobile_scanner` | BSD-3-Clause | Transitive Flutter dependency pinned in `mobile/pubspec.lock`. |
-| `aes-gcm` 0.11.0 | Authenticated encryption for platform-wrapped MLS state, attachment, and backup chunks | Apache-2.0 OR MIT | Exact version pinned; does not replace MLS message protection. |
-| `openmls` 0.8.1 | MLS 1.0 group state and message processing | MIT | Exact version pinned in `crypto/rust/Cargo.lock`; sensitive debug features are disabled. |
-| `openmls_basic_credential` 0.5.0 | Basic MLS credential signing keys | MIT | Exact version pinned; used to bind the application device identity to MLS credentials. |
-| `openmls_rust_crypto` 0.5.1 | RustCrypto provider for OpenMLS | MIT | Exact version pinned; native provider core only, pending platform-secure persistence review. |
-| `openmls_traits` 0.5.0 | OpenMLS provider and storage traits | MIT | Exact version pinned. |
+| `aes-gcm` 0.11.1 | Authenticated encryption for platform-wrapped MLS state, attachment, and backup chunks | Apache-2.0 OR MIT | Exact version pinned; does not replace MLS message protection. |
+| `openmls` 0.9.0 | MLS 1.0 group state and message processing | MIT | Exact version pinned in `crypto/rust/Cargo.lock`; sensitive debug features are disabled. |
+| `openmls_basic_credential` 0.6.0 | Basic MLS credential signing keys | MIT | Exact version pinned; used to bind the application device identity to MLS credentials. |
+| `openmls_rust_crypto` 0.6.0 | RustCrypto provider for OpenMLS | MIT | Exact version pinned; native provider core only, pending platform-secure persistence review. |
+| `openmls_traits` 0.6.0 | OpenMLS provider and storage traits | MIT | Exact version pinned. |
 | `sha2` 0.11.0 | SHA-256 enrollment key-package commitment | Apache-2.0 OR MIT | Exact version pinned; used only to bind the public key package into the signed enrollment proof. |
-| `tls_codec` 0.4.2 | RFC 9420 TLS presentation-language encoding | MIT | Exact version pinned for MLS transport serialization. |
+| `tls_codec` 0.5.0 | RFC 9420 TLS presentation-language encoding | MIT | Exact version pinned for MLS transport serialization. |
 | Flutter SDK | Mobile client framework | BSD-3-Clause | Toolchain, not vendored. |
 
 ## Reference Projects Studied, Not Copied
 
 Signal/libsignal, OpenMLS, Matrix/Synapse/Element, SimpleX Chat, Mattermost, Zulip, Rocket.Chat, Stoat/Revolt, PocketBase, Pion, LiveKit, Caddy, UnifiedPush, ntfy, and MiroTalk were studied for architecture, deployment, crypto, licensing, and self-hosting lessons. No source code from these projects is copied into this repository.
 
-OpenMLS dependency review (2026-07-29): the locked graph contains 170
-third-party packages. Every package declares a license. The observed SPDX
-expressions are MIT, Apache-2.0, BSD-1-Clause, BSD-2-Clause, BSD-3-Clause,
-MPL-2.0, Unicode-3.0, LLVM-exception, LGPL-2.1-or-later, Unlicense, and
-dual-/multi-license alternatives that include MIT or Apache-2.0. No sensitive
-OpenMLS debug feature is enabled. Preserve the generated SPDX SBOM and upstream
-license texts with releases; Android/iOS artifact review remains required
-before enabling the mobile ABI.
+OpenMLS dependency review (2026-09-24, OpenMLS 0.9.0 / hpke-rs 0.7): the
+locked graph contains 205 third-party packages. Every package declares a
+license. The observed SPDX expressions are MIT, Apache-2.0, ISC, BSD-1-Clause,
+BSD-2-Clause, BSD-3-Clause, MPL-2.0, Unicode-3.0, LLVM-exception,
+LGPL-2.1-or-later, Unlicense, and dual-/multi-license alternatives that include
+MIT or Apache-2.0. `cargo audit` reports no vulnerabilities and needs no
+exceptions. The post-quantum crates (`ml-kem`, `ml-dsa`, `x-wing`) compile but
+stay unreachable while the classical suite is pinned, and `crabgrind` builds
+only under `cfg(valgrind_ct_test)`. No sensitive OpenMLS debug feature is
+enabled. Preserve the generated SPDX SBOM and upstream license texts with
+releases; Android/iOS artifact review remains required before enabling the
+mobile ABI.
 
 Go dependency review (2026-07-29): `go-licenses` reported MIT licenses for
 `webpush-go`, `go-humanize`, `golang-jwt/jwt`, and `modernc.org/libc`, and

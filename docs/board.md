@@ -8,7 +8,29 @@ Their reconciled decisions live in `audit-consensus.md`.
 
 ## Current status
 
-**NO-GO:** production crypto remains fail-closed.
+**NO-GO:** production crypto remains fail-closed in release builds.
+
+**Direction since 2026-09-24 (D10–D27): local demos first.** Working local demos
+on Android (emulator), iOS (simulator), Windows and Linux come before any
+release work. Demo builds run the real OpenMLS path through a separate entry
+point (`mobile/lib/main_demo.dart`, D11); `mobile/lib/main.dart` and the release
+gate are unchanged. Independent review, signing and real-device evidence (G24,
+G25) wait until all three roadmap phases are done (D20). Work order:
+
+0. Green CI and a clean PR queue — **in progress 2026-09-24:** OpenMLS 0.9.0
+   (closes I27/G27), Rust 1.91, Go 1.26.8, Dart dependency bumps, coverage
+   floors.
+1. Demo foundation: demo entry point, loopback-only HTTP for demo builds,
+   decrypted-message persistence, message actions, MLS sender binding, live
+   two-client test, one-command local server.
+2. Mobile demo (Android emulator, iOS simulator).
+3. Desktop demo (Windows, Linux).
+4. Offline use.
+5. Remaining release-blocking cards (I33, I34, I51, I39, I45, I41).
+6. Phase 2 completion (macOS, packaging, desktop key storage).
+7. Phase 3 outline (client SDK).
+
+The history below records earlier status and is kept for provenance.
 
 Audit reconciliation and Claude's second-round review have consensus with no
 open objections. T29 is implemented by Codex on 2026-08-14; its required
@@ -78,7 +100,8 @@ desktop, then evaluate embedding. See [Roadmap after release](#roadmap-after-rel
   Embedding Veritra chat in other products is deferred behind a product
   trigger and an explicit answer on whether embedded conversations stay
   end-to-end encrypted. Recorded 2026-08-07; rationale and triggers are in
-  [Roadmap after release](#roadmap-after-release).
+  [Roadmap after release](#roadmap-after-release). **Ordering superseded by
+  D10 on 2026-09-24**; the no-fork rule and the embedding question stand.
 - **D07:** The Codex and Opus audits are source evidence, not competing
   backlogs. [`audit-consensus.md`](audit-consensus.md) is their authoritative
   disposition and source-to-card trace. This board alone owns implementation
@@ -93,6 +116,62 @@ desktop, then evaluate embedding. See [Roadmap after release](#roadmap-after-rel
   testing reports, historical plans, and superseded brand assets remain
   recoverable from Git history at `bfb3922` but are not executor context.
   Recorded 2026-08-24.
+
+Recorded 2026-09-24 by the owner's direction ("decide what you can; skip
+independent reviews until all three phases are done"):
+
+- **D10:** Local demos first on Android, iOS, Windows and Linux, before any
+  release work. Desktop starts now instead of after the mobile release.
+  Embedding stays phase 3. No build is released before G24/G25 pass.
+- **D11:** Demo builds run the real `NativeCryptoService` through
+  `mobile/lib/main_demo.dart`, guarded by `--dart-define=VERITRA_DEMO=true`
+  and labelled "Demo · unreviewed crypto", with their own data namespace.
+  `main.dart` and `crypto/rust/src/lib.rs` stay unchanged, so
+  `scripts/release-readiness.sh` still blocks releases. The server never sees
+  plaintext.
+- **D12:** Demo builds accept `http://` only for loopback (`localhost`,
+  `127.0.0.0/8`, `::1`); the Android emulator reaches the host through
+  `adb reverse`. Every other host needs HTTPS. Release builds keep rejecting
+  cleartext. This narrows the "no development bypass" note in
+  `audit-consensus.md` (I43) to release builds.
+- **D13:** Close I27/G27 by upgrading to OpenMLS 0.9.0 (hpke-rs 0.7), which
+  needs Rust 1.91. Done 2026-09-24; see I27.
+- **D14:** The canonical Go toolchain is the latest 1.26 patch (1.26.8).
+- **D15:** Stay on Flutter 3.44.0 and hold `sqlite3` at 3.5.x until the Flutter
+  pin moves in Stage 6 (`sqlite3` 3.6.0 needs a newer `meta` than the SDK
+  ships). Amends D01's exact versions: `drift` 2.34.4, `sqlite3` 3.5.2.
+- **D16:** Demos use in-app, foreground calls only. T42B (CallKit, PushKit,
+  Android Telecom) waits until after the demos.
+- **D17:** T37C stays as it is (bcrypt cost 10, no token rotation) until
+  release prep.
+- **D18:** CI coverage floors are the measured baseline rounded down (Go 50%,
+  Flutter 43%) and only move up. See `testing/evidence/coverage-baseline.md`.
+- **D19:** Phase 3 answer: embedded conversations stay end-to-end encrypted,
+  so phase 3 ships a client SDK, never a server-plaintext widget.
+- **D20:** Deferred until all three phases are done: G24, G25, QA02, new
+  release-evidence work, I47/I49 evidence, T42B. Existing gates and their
+  tests stay green.
+- **D21:** The Flutter app stays in `mobile/` and becomes the app for every
+  platform.
+- **D22:** Reply, edit, delete and reaction are ordinary MLS application
+  messages that reference their target by the authenticated
+  `<sender_device_id>:<action_id>`. Edit and delete are honoured only from the
+  original sender's account. `payload_type` leaves server-visible metadata, and
+  the server's edit/delete/reaction routes go unused.
+- **D23:** Decrypted text is persisted at decrypt time in the same transaction
+  as the MLS state, in dedicated tables. It is removed only by identity change,
+  reset, delete or expiry, never by a cache refresh.
+- **D24:** Demo topology until I51 lands: one device per account and fixed
+  group membership; demo builds hide "Add member" and "Link device".
+- **D25:** Decryption binds the MLS sender credential to the envelope's sender
+  account and device (native ABI v5). A mismatch commits an "unverifiable"
+  tombstone instead of stalling sync.
+- **D26:** Demo desktop key storage uses Windows DPAPI and the Linux Secret
+  Service; reviewed in Stage 6. Never generate a new database key while the
+  database file exists.
+- **D27:** Encrypted backups include decrypted history (implemented in I45).
+- The crypto surface (ABI v5, payload semantics, local schema v7) freezes after
+  Stage 1, with a change log kept for the eventual G25 reviewer.
 
 ## Remaining work
 
@@ -127,38 +206,43 @@ task boundaries and orchestration rules are in
 | I48 | Prepared | Transport, realtime and logging hardening | I32 |
 | I49 | Measure, then split | Performance and architecture work | correctness cards |
 | I50 | Deferred | Product and ecosystem backlog | D06 / mobile release |
+| I51 | New 2026-09-24, prepared | MLS membership changes after creation, linked devices, per-device key-package claims, join cursor, epoch-ordered commits | I30, I34 |
 
 No audit-derived implementation is complete merely because it appears in this
 table. Claim one eligible task under the Ready card, confirm its source paths
 still match current code, run its named checks, then update this board and the
 consensus register.
 
-### I27 - Close upstream HPKE/libcrux advisories (upstream/review blocked)
+### I27 - Close upstream HPKE/libcrux advisories (closed 2026-09-24, pending CI)
 
-`cargo-audit` 0.22.2 reports six advisories in the OpenMLS 0.8.1 / hpke-rs 0.6
-locked graph. Three affect an optional libcrux AEAD backend that is not in the
-normal build graph. Three affect SHAKE/secrets code that compiles, but the
-affected XWing/ML-KEM branches are unreachable while Veritra pins the classical
-X25519 MLS ciphersuite. `scripts/audit-rust.sh` records narrow, time-bounded
-exceptions and fails if the optional AEAD crates become active or the fixed
-ciphersuite changes. Re-review is mandatory by 2026-08-29.
+OpenMLS 0.9.0 stable shipped on 2026-08-25 with hpke-rs 0.7, the upgrade this
+card named as the fix. The exceptions expired on 2026-08-29 and turned the
+`vulnerabilities` job and the nightly `Rust policy expiry` workflow red until
+the upgrade landed (D13).
 
-No released dependency-only fix exists. OpenMLS 0.8.1 is the latest published
-coordinated release and requires hpke-rs 0.6; hpke-rs 0.7 contains the libcrux
-updates but is not API-compatible with that release. Do not ship a private HPKE
-fork or unreleased Git dependency without independent review. Before enabling
-production crypto, upgrade the coordinated OpenMLS crates when published,
-refresh the lockfile/notices/SBOM, remove the exceptions, and rerun all vectors
-and Android/iOS native builds.
+Done on 2026-09-24:
 
-Upstream re-checked on 2026-08-07 against the crates.io index. OpenMLS 0.8.1
-(2026-02-13) is still `max_stable_version`; 0.9.0-rc.1 and 0.9.0-rc.2 were
-published on 2026-08-03 and 2026-08-06. hpke-rs 0.6.1 (2026-03-20) remains the
-end of the 0.6 line, with 0.7.0 published 2026-07-15. A coordinated 0.9.0 stable
-therefore looks close but has not shipped. Release candidates do not satisfy
-this card: adopting one is an unreleased crypto dependency and needs approval
-plus independent review. Re-check before the 2026-08-29 exception deadline; if
-0.9.0 stable lands first, that upgrade is the fix.
+- `openmls` 0.9.0, `openmls_basic_credential`/`openmls_rust_crypto`/
+  `openmls_traits` 0.6.0 and `tls_codec` 0.5.0, exactly pinned. OpenMLS 0.9
+  needs Rust 1.91, now the pinned toolchain. `mls.rs` compiled unchanged; all
+  Rust tests pass (20, including a new check that sealed state from the 0.8.1
+  format fails closed; `mls/state.rs` envelope format version is now 2).
+- `cargo audit` 0.22.2 over the 206-crate lockfile reports no vulnerabilities
+  with **no** ignores (one allowed "unmaintained" warning for
+  `proc-macro-error2`, a build-time macro crate). `crypto/rust/audit-policy.json`
+  now approves no exceptions, and `scripts/check-rust-audit-policy.py` accepts
+  an empty list; the deadline only bounds exceptions that exist.
+- `scripts/audit-rust.sh` still fails if an optional libcrux AEAD backend
+  (`libcrux-aes`, the renamed `libcrux-aesgcm`, or `libcrux-chacha20poly1305`)
+  enters the normal build graph, or if the classical ciphersuite changes. The
+  post-quantum crates now in the graph (`ml-kem`, `ml-dsa`, `x-wing`) stay
+  unreachable with that suite.
+- Notices and `docs/crypto.md` refreshed (205 third-party crates, all
+  licensed compatibly).
+
+Still required before production crypto, as part of G25: rerun the
+Android/iOS native builds (CI) and include the upgrade in the independent
+review scope.
 
 ### I24 - Signed builds and real-device verification (external)
 
@@ -197,8 +281,8 @@ The non-crypto identity and safety UI is complete: canonical named DMs, member
 rosters and authorized removal/leave, block/unblock, mute, pagination,
 connection state, operation-scoped failures, and corrected validation.
 
-The following user-visible paths must remain unavailable until the reviewed
-MLS service is activated and authenticated decrypted application payloads can
+In release builds (`mobile/lib/main.dart`), the following user-visible paths
+must remain unavailable until the reviewed MLS service is activated and authenticated decrypted application payloads can
 be rendered safely:
 
 - reply, edit, delete, and reaction controls;
@@ -206,6 +290,7 @@ be rendered safely:
 - conversation safety-number display and confirmation;
 - decrypted message rendering.
 
+Demo builds (`main_demo.dart`, D11) may show them, always with the demo label.
 Their manual accessibility pass is part of I24. Server-authored identity must
 never be presented as cryptographic verification.
 
@@ -248,14 +333,14 @@ evidence remains in I24/I43.
 | Evidence | Result | Toolchain / artifact / note |
 |---|---|---|
 | Go tests | Pass | Go 1.25.12; `go test ./...` in pinned container |
-| Rust tests and vectors | Pass | Rust 1.90; 17 tests |
+| Rust tests and vectors | Pass | Rust 1.91; 20 tests; OpenMLS 0.9.0 (2026-09-24) |
 | Flutter analyze/tests | Pass | Flutter 3.44.0; analyzer clean; 79 pass, 2 environment skips (`6083e3f`) |
 | Crypto-gated end-user flows | Pending | No activated production crypto toolchain; UI paths listed above remain unavailable |
 | Contract/integration tests | Pass | Go 1.25.12 and real host native library |
 | Direct license notices | Pass | Host tooling; full transitive scan remains required |
 | Dart package license files | Pass | Flutter 3.44.0; 157 fetched packages contain `LICENSE*` or `COPYING*` |
 | Go vulnerability scan | Pass | Go 1.25.12; zero reachable vulnerabilities |
-| Rust vulnerability scan | Conditional | Rust 1.90; guarded temporary exceptions for I27; production remains blocked |
+| Rust vulnerability scan | Pass | Rust 1.91; cargo-audit 0.22.2, no exceptions (2026-09-24, local; CI pending) |
 | Android debug build | Pass | Flutter 3.44.0; unsigned `app-debug.apk`; not release evidence |
 | Android unsigned release build | Pass | Flutter 3.44.0; 120,668,346-byte APK; three verified native ABIs; SHA-256 `B3569C9E9D5E097822CF18FF376E2275172474871B623656A46D282E28691717` |
 | Android signed release build | Pending | Flutter release toolchain; requires signing approval |
@@ -390,15 +475,16 @@ wide master-detail layout.
 
 ## Roadmap after release
 
-Decided 2026-08-07 as **D06**. One product, one repository, three phases. Each
-phase starts only when the phase before it has shipped.
+Decided 2026-08-07 as **D06**. One product, one repository, three phases.
+Since D10 (2026-09-24), working local demos of phases 1 and 2 come first; the
+release triggers below apply to shipping, not to building demos.
 
 ### Phase 1 - Mobile (current)
 
 Android and iOS are the entire first release. Nothing below may pull work,
 review attention, or dependencies forward into it.
 
-### Phase 2 - Windows and macOS
+### Phase 2 - Desktop (Windows, Linux, then macOS)
 
 Trigger: the mobile release has shipped and the native crypto core plus its
 packaging are stable and independently reviewed.
