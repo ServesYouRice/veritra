@@ -42,6 +42,9 @@ class _ChatScreenState extends State<ChatScreen> {
   final composer = TextEditingController();
   final scroll = ScrollController();
 
+  /// The message the next send replies to, if any.
+  LocalMessage? _replyingTo;
+
   @override
   void initState() {
     super.initState();
@@ -148,6 +151,11 @@ class _ChatScreenState extends State<ChatScreen> {
                       )
                     : _messagesPane(conversation.id, messages, pending),
               ),
+              if (_replyingTo != null)
+                _ReplyBar(
+                  preview: _replyPreview(_replyingTo),
+                  onCancel: () => setState(() => _replyingTo = null),
+                ),
               _Composer(
                 enabled: conversation != null,
                 controller: composer,
@@ -209,10 +217,143 @@ class _ChatScreenState extends State<ChatScreen> {
             controller: scroll,
             messages: messages,
             pending: pending,
+            onMessageActions: widget.state.messageActionsAvailable
+                ? _showMessageActions
+                : null,
           ),
         ),
       ],
     );
+  }
+
+  /// Long-press on mobile, right-click on desktop.
+  Future<void> _showMessageActions(LocalMessage message, bool mine) async {
+    final state = widget.state;
+    final conversationId = widget.conversationId;
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: BoneSpacing.md),
+              child: Wrap(
+                spacing: BoneSpacing.xs,
+                children: <Widget>[
+                  for (final reaction in quickReactions)
+                    IconButton(
+                      tooltip: 'React $reaction',
+                      onPressed: () =>
+                          Navigator.of(sheetContext).pop('react:$reaction'),
+                      icon:
+                          Text(reaction, style: const TextStyle(fontSize: 24)),
+                    ),
+                ],
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.reply),
+              title: const Text('Reply'),
+              onTap: () => Navigator.of(sheetContext).pop('reply'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.copy),
+              title: const Text('Copy text'),
+              onTap: () => Navigator.of(sheetContext).pop('copy'),
+            ),
+            if (mine) ...<Widget>[
+              ListTile(
+                leading: const Icon(Icons.edit_outlined),
+                title: const Text('Edit'),
+                onTap: () => Navigator.of(sheetContext).pop('edit'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete_outline),
+                title: const Text('Delete for everyone'),
+                onTap: () => Navigator.of(sheetContext).pop('delete'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+    if (!mounted || action == null) return;
+    var sent = true;
+    if (action.startsWith('react:')) {
+      final reaction = action.substring('react:'.length);
+      final ownAccountId = state.session?.accountId;
+      final alreadyMine = state
+          .historyFor(conversationId)
+          .reactionsFor(message.key, ownAccountId: ownAccountId)
+          .any((item) => item.reaction == reaction && item.mine);
+      // Tapping your own reaction again takes it back.
+      sent = await state.react(
+          conversationId, message.key, alreadyMine ? '' : reaction);
+    } else if (action == 'reply') {
+      setState(() => _replyingTo = message);
+    } else if (action == 'copy') {
+      await Clipboard.setData(ClipboardData(text: message.body ?? ''));
+    } else if (action == 'edit') {
+      final text = await _editDialog(message.body ?? '');
+      if (text == null || text.trim().isEmpty || text == message.body) return;
+      sent = await state.editMessage(conversationId, message.key, text.trim());
+    } else if (action == 'delete') {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Delete for everyone?'),
+          content: const Text(
+              'Members\' devices remove the text. The server never had it.'),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+      sent = await state.deleteMessage(conversationId, message.key);
+    }
+    if (!sent && mounted) {
+      final error = state.errorFor(Ops.send);
+      if (error != null) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error)));
+      }
+    }
+  }
+
+  Future<String?> _editDialog(String current) {
+    final controller = TextEditingController(text: current);
+    return showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Edit message'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          minLines: 1,
+          maxLines: 6,
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    ).whenComplete(controller.dispose);
   }
 
   Future<void> _send() async {
@@ -220,11 +361,18 @@ class _ChatScreenState extends State<ChatScreen> {
     if (text.isEmpty) {
       return;
     }
-    final sent = await widget.state.sendMessageTo(widget.conversationId, text);
+    final replyingTo = _replyingTo;
+    final sent = replyingTo == null
+        ? await widget.state.sendMessageTo(widget.conversationId, text)
+        : await widget.state
+            .replyTo(widget.conversationId, replyingTo.key, text);
     if (!mounted) {
       return;
     }
     if (sent) {
+      if (identical(_replyingTo, replyingTo)) {
+        setState(() => _replyingTo = null);
+      }
       // Durable acceptance, rather than HTTP delivery, is the point at which
       // the submitted draft is safe to clear. Preserve newer edits.
       if (composer.text.trim() == text) composer.clear();
@@ -293,6 +441,7 @@ class _MessageList extends StatelessWidget {
     required this.controller,
     required this.messages,
     required this.pending,
+    this.onMessageActions,
   });
 
   final AppState state;
@@ -300,6 +449,7 @@ class _MessageList extends StatelessWidget {
   final ScrollController controller;
   final List<ReceivedMessageEnvelope> messages;
   final List<MessageEnvelope> pending;
+  final void Function(LocalMessage message, bool mine)? onMessageActions;
 
   bool get _isDm =>
       state.conversations
@@ -408,6 +558,12 @@ class _MessageList extends StatelessWidget {
                   : history.reactionsFor(local.key,
                       ownAccountId: state.session?.accountId),
               mine: mine,
+              onActions: onMessageActions == null ||
+                      local == null ||
+                      local.kind != LocalMessageKind.text ||
+                      local.deletedAt != null
+                  ? null
+                  : () => onMessageActions!(local, mine),
               senderLabel: _senderLabel(senderAccountId),
               // In a DM the app bar already says who the other person is;
               // only group and channel bubbles need a per-message sender.
@@ -649,7 +805,11 @@ class _MessageBubble extends StatelessWidget {
     this.local,
     this.replyPreview,
     this.reactions = const <({String reaction, int count, bool mine})>[],
+    this.onActions,
   });
+
+  /// Opens the reply/edit/delete/react menu; null when none apply.
+  final VoidCallback? onActions;
 
   final ReceivedMessageEnvelope message;
 
@@ -680,8 +840,29 @@ class _MessageBubble extends StatelessWidget {
         mine ? scheme.surfaceContainerHigh : scheme.surfaceContainerLow;
     final foreground = scheme.onSurface;
     final sender = mine ? 'you' : senderLabel;
+    return GestureDetector(
+      onLongPress: onActions,
+      onSecondaryTap: onActions,
+      child: _bubble(context, theme, scheme, background, foreground, sender,
+          deleted, unverifiable, text),
+    );
+  }
+
+  Widget _bubble(
+    BuildContext context,
+    ThemeData theme,
+    ColorScheme scheme,
+    Color background,
+    Color foreground,
+    String sender,
+    bool deleted,
+    bool unverifiable,
+    String? text,
+  ) {
     return Semantics(
       excludeSemantics: true,
+      onLongPress: onActions,
+      onLongPressHint: onActions == null ? null : 'Message actions',
       label: deleted
           ? 'Deleted message from $sender'
           : unverifiable
@@ -841,6 +1022,53 @@ class _MessageBubble extends StatelessWidget {
         ],
         Text(parts.join(' · '), style: theme.textTheme.labelSmall),
       ],
+    );
+  }
+}
+
+/// Reactions offered in the message menu.
+const List<String> quickReactions = <String>[
+  '👍',
+  '❤️',
+  '😂',
+  '🎉',
+  '😮',
+  '😢'
+];
+
+/// Shown above the composer while a reply is being written.
+class _ReplyBar extends StatelessWidget {
+  const _ReplyBar({required this.preview, required this.onCancel});
+
+  final String preview;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+          BoneSpacing.lg, BoneSpacing.sm, BoneSpacing.sm, 0),
+      child: Row(
+        children: <Widget>[
+          Icon(Icons.reply,
+              size: 18, color: theme.colorScheme.onSurfaceVariant),
+          const SizedBox(width: BoneSpacing.sm),
+          Expanded(
+            child: Text(
+              'Replying to: $preview',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall,
+            ),
+          ),
+          IconButton(
+            tooltip: 'Cancel reply',
+            onPressed: onCancel,
+            icon: const Icon(Icons.close, size: 18),
+          ),
+        ],
+      ),
     );
   }
 }

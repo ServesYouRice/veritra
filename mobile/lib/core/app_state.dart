@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../crypto/app_payload.dart';
 import '../crypto/crypto_service.dart';
 import '../push/push_service.dart';
 import '../storage/local_store.dart';
@@ -241,6 +242,9 @@ class AppState extends ChangeNotifier {
   /// members they were created with and each account has one device, so
   /// adding members and linking devices are hidden rather than half-working.
   bool get membershipChangesAvailable => !config.demo;
+
+  /// Reply, edit, delete and reactions need the MLS service (D22).
+  bool get messageActionsAvailable => _mlsCrypto != null;
 
   /// Scoped busy/error state. Callers pass an [Ops] key so one slow or failed
   /// action leaves every unrelated control usable.
@@ -1320,7 +1324,37 @@ class AppState extends ChangeNotifier {
   /// Encrypts, queues, and delivers one message. Scoped to [Ops.send] so a
   /// slow or failed send only affects the composer, and the queued envelope
   /// stays retryable from its pending bubble either way.
-  Future<bool> sendMessageTo(String conversationId, String plaintext) {
+  Future<bool> sendMessageTo(String conversationId, String plaintext) =>
+      _sendPayload(conversationId, AppPayloadType.text,
+          <String, Object?>{'text': plaintext});
+
+  /// Replies to the message with local history key [targetKey] (D22).
+  Future<bool> replyTo(String conversationId, String targetKey, String text) =>
+      _sendPayload(conversationId, AppPayloadType.reply,
+          <String, Object?>{'text': text, 'reply_to_id': targetKey});
+
+  /// Replaces the text of one of this account's own messages.
+  Future<bool> editMessage(
+          String conversationId, String targetKey, String text) =>
+      _sendPayload(conversationId, AppPayloadType.edit,
+          <String, Object?>{'message_id': targetKey, 'text': text});
+
+  /// Deletes one of this account's own messages for every member.
+  Future<bool> deleteMessage(String conversationId, String targetKey) =>
+      _sendPayload(conversationId, AppPayloadType.delete,
+          <String, Object?>{'message_id': targetKey});
+
+  /// Sets this account's reaction on a message; an empty [reaction] clears it.
+  Future<bool> react(
+          String conversationId, String targetKey, String reaction) =>
+      _sendPayload(conversationId, AppPayloadType.reaction,
+          <String, Object?>{'message_id': targetKey, 'reaction': reaction});
+
+  Future<bool> _sendPayload(
+    String conversationId,
+    AppPayloadType type,
+    Map<String, Object?> body,
+  ) {
     return _runScoped(Ops.send, () async {
       final current = session;
       final client = api;
@@ -1332,9 +1366,19 @@ class AppState extends ChangeNotifier {
       if (!await localStore.hasOutboxCapacity()) {
         throw const OutboxFullException();
       }
-      final encrypted = await cryptoService.encrypt(conversation.id, plaintext);
-      await localStore.enqueueEnvelope(encrypted, draftText: plaintext);
-      if (_mlsCrypto != null) await refreshHistory(conversation.id);
+      final mls = _mlsCrypto;
+      final MessageEnvelope encrypted;
+      if (type == AppPayloadType.text) {
+        encrypted = await cryptoService.encrypt(
+            conversation.id, body['text'] as String);
+      } else if (mls != null) {
+        encrypted = await mls.encryptPayload(conversation.id, type, body);
+      } else {
+        throw StateError('Production MLS/OpenMLS encryption is not integrated');
+      }
+      final draftText = body['text'] as String?;
+      await localStore.enqueueEnvelope(encrypted, draftText: draftText);
+      if (mls != null) await refreshHistory(conversation.id);
       final record = (await localStore.pendingEnvelopeRecords())
           .where((item) =>
               item.envelope.idempotencyKey == encrypted.idempotencyKey)
