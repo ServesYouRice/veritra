@@ -154,7 +154,10 @@ func (a *API) syncEvents(w http.ResponseWriter, r *http.Request, principal domai
 				writeError(w, http.StatusInternalServerError, "sync_events_failed")
 				return
 			}
-			writeJSON(w, http.StatusConflict, map[string]interface{}{"error": "full_resync_required", "sync_epoch": epoch, "oldest_event_id": oldest, "latest_event_id": latest})
+			// The events after this cursor are gone, so an MLS device cannot
+			// catch up by jumping ahead: it must be linked again or restored
+			// from a backup (I33).
+			writeJSON(w, http.StatusConflict, map[string]interface{}{"error": "device_recovery_required", "sync_epoch": epoch, "oldest_event_id": oldest, "latest_event_id": latest})
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "sync_events_failed")

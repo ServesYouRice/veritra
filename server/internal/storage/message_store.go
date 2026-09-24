@@ -261,17 +261,23 @@ func (s *Store) MessageForAccount(ctx context.Context, messageID, accountID stri
 		       me.thread_root_id, me.created_at, me.edited_at, me.deleted_at, me.expires_at
 		FROM message_envelopes me
 		JOIN memberships m ON m.conversation_id = me.conversation_id AND m.account_id = ?
-		WHERE me.id = ? AND (me.expires_at IS NULL OR me.expires_at > ?)
+		WHERE me.id = ?
 		  AND NOT EXISTS (
 		    SELECT 1 FROM account_blocks b
 		    WHERE b.blocker_account_id = ? AND b.blocked_account_id = me.sender_account_id
-		  )`, accountID, messageID, nowString(), accountID)
+		  )`, accountID, messageID, accountID)
 	message, err := scanMessage(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.MessageEnvelope{}, ErrNotFound
 		}
 		return domain.MessageEnvelope{}, err
+	}
+	// An expired envelope that has not been pruned yet is reported as
+	// expired, never returned: clients may pass over an application message
+	// only with this proof (I33).
+	if message.ExpiresAt != nil && !message.ExpiresAt.After(time.Now().UTC()) {
+		return domain.MessageEnvelope{}, ErrMessageExpired
 	}
 	return message, nil
 }

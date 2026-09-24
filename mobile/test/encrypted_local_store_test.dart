@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
+import 'package:private_messenger/sync/sync_recovery.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -41,6 +42,50 @@ void main() {
           return database;
         },
       );
+
+  test('the sync recovery record persists and leaves with the identity',
+      () async {
+    final store = createStore();
+    const session = Session(
+      baseUrl: 'https://chat.example.org',
+      token: 'token',
+      accountId: 'acct_1',
+      deviceId: 'dev_1',
+    );
+    await store.saveSession(session);
+    expect(await store.loadSyncRecovery(), isNull);
+    await store.saveSyncRecovery(SyncRecovery(
+      kind: SyncFailureKind.mlsControlMissing,
+      recordedAt: DateTime.utc(2026, 9, 24),
+      eventId: 12,
+    ));
+    for (final database in databases) {
+      await database.close();
+    }
+    databases.clear();
+    final reopened = createStore();
+    final loaded = await reopened.loadSyncRecovery();
+    expect(loaded?.kind, SyncFailureKind.mlsControlMissing);
+    expect(loaded?.eventId, 12);
+
+    // Signing out keeps it: the MLS state it protects is still there.
+    await reopened.clearCachedState(preserveOutbox: true);
+    expect(await reopened.loadSyncRecovery(), isNotNull);
+    await reopened.saveSyncRecovery(null);
+    expect(await reopened.loadSyncRecovery(), isNull);
+
+    await reopened.saveSyncRecovery(SyncRecovery(
+      kind: SyncFailureKind.mlsState,
+      recordedAt: DateTime.utc(2026, 9, 24),
+    ));
+    await reopened.saveSession(const Session(
+      baseUrl: 'https://chat.example.org',
+      token: 'token',
+      accountId: 'acct_2',
+      deviceId: 'dev_2',
+    ));
+    expect(await reopened.loadSyncRecovery(), isNull);
+  });
 
   test('a namespaced store keeps its own database and key', () async {
     final release = createStore();

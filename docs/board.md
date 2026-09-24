@@ -197,7 +197,7 @@ task boundaries and orchestration rules are in
 | I30 | Implemented (T30A/T30B); checks pending (Codex, 2026-08-14) | One MLS-aware sync owner | — |
 | I31 | Implemented (T31); checks pending (Codex, 2026-08-14) | Lossless message outbox | — |
 | I32 | Implemented (T32); checks pending (Codex, 2026-08-14) | Account-scoped session lifecycle | — |
-| I33 | Blocked by I30 | Poison-event and stale-device recovery | I30 |
+| I33 | Implemented and checked (Stage 5, 2026-09-24) | Poison-event and stale-device recovery | I30 |
 | I34 | Blocked by I31 | Reliable MLS control outbox | I31 pattern |
 | I35 | Implemented (T35); checks pending (Codex, 2026-08-14) | Retention and attachment-prune convergence | — |
 | I36 | T36A/T36B implemented; checks pending (Codex, 2026-08-14) | Committed-message fanout and bounded push work | — |

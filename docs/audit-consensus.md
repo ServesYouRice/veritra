@@ -201,6 +201,27 @@ network failure, 401, duplicate page and expired cursor tests all reach the
 specified state without looping or skipping MLS work; a reconnect burst uses a
 bounded, deduplicated repair request instead of one request per event.
 
+**Implementation note (Stage 5, 2026-09-24):** Every sync event failure is
+typed (`SyncFailureKind` in `mobile/lib/sync/sync_recovery.dart`). Only
+network/5xx/408/429 failures are retried and 401 signs out; every other kind
+stops sync at that event without moving the cursor and is stored as a durable
+`SyncRecovery` record (local metadata `sync.recovery`), so later wakes do not
+refetch the event. Missing, malformed or rejected MLS control messages, and an
+MLS message whose sync event or conversation does not match, never advance.
+Tombstone policy: an application message or call signal that fails to apply may
+be passed over only when its own `expires_at` is past, or when the server
+answers `410 message_expired` for a legacy event without an inline envelope;
+the tombstone commits only the cursor and an `expired:` marker, never text.
+Each page's MLS control messages come from one `GET /api/v1/mls/messages`
+request (at most three), with a single-message fetch only for one the batch
+did not return; legacy envelopes are fetched at most once per page. An expired
+cursor now answers `409 device_recovery_required` (the client still accepts the
+old `full_resync_required`) and offers backup restore or relink, never retry or
+a cursor jump. Relinking deletes local identity and history and requires
+explicit confirmation. Checks: `flutter test` (all, including
+`test/sync_recovery_test.dart`), the live demo e2e test, and
+`go test ./internal/httpapi ./internal/storage` pass.
+
 ### I34 - Reliable MLS control outbox
 
 **Decision:** Merge Codex LOG-06 and TEST-03's MLS-control scope with Opus L3.

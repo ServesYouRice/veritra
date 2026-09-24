@@ -37,6 +37,7 @@ var (
 	ErrDeviceLinkNotReady  = errors.New("device link is not approved yet")
 	ErrStorageQuota        = errors.New("encrypted storage quota exceeded")
 	ErrSyncCursorExpired   = errors.New("sync cursor is older than retained history")
+	ErrMessageExpired      = errors.New("message envelope has expired")
 	ErrEnrollmentInvalid   = errors.New("enrollment reservation is invalid, expired, or already used")
 	ErrRecoveryBusy        = errors.New("recovery transfer is already in progress")
 	ErrRecoveryRange       = errors.New("recovery range is not the next approved range")

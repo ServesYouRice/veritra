@@ -1292,3 +1292,50 @@ func TestAuthenticatedAPIResponsesAreNotCacheable(t *testing.T) {
 		t.Fatalf("Cache-Control=%q", got)
 	}
 }
+
+// I33: a client may pass over an application message only with proof that it
+// expired, and an expired sync cursor asks for device recovery, never a jump.
+func TestSyncRecoveryResponses(t *testing.T) {
+	handler, token, dbPath := newTestHandlerWithOwner(t)
+	conversationID := createConversation(t, handler, token)
+	messageID := createMessage(t, handler, token, conversationID, "expiring", []byte("ciphertext"))
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open test database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	status, response := doJSON(t, handler, http.MethodGet, "/api/v1/messages/"+messageID, token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("live message status=%d body=%s", status, response)
+	}
+	if _, err := db.Exec(`UPDATE message_envelopes SET expires_at = '2000-01-01T00:00:00Z' WHERE id = ?`, messageID); err != nil {
+		t.Fatalf("expire message: %v", err)
+	}
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/messages/"+messageID, token, nil)
+	if status != http.StatusGone || !bytes.Contains(response, []byte(`"message_expired"`)) {
+		t.Fatalf("expired message status=%d body=%s", status, response)
+	}
+	if bytes.Contains(response, []byte("ciphertext")) {
+		t.Fatalf("expired message response carries the envelope: %s", response)
+	}
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/messages/msg_missing", token, nil)
+	if status != http.StatusNotFound {
+		t.Fatalf("missing message status=%d body=%s", status, response)
+	}
+
+	for i := 0; i < 3; i++ {
+		createMessage(t, handler, token, conversationID, "later-"+strconv.Itoa(i), []byte("ciphertext"))
+	}
+	var oldest int64
+	if err := db.QueryRow(`SELECT MAX(id) FROM sync_events`).Scan(&oldest); err != nil {
+		t.Fatalf("latest event: %v", err)
+	}
+	if _, err := db.Exec(`DELETE FROM sync_events WHERE id < ?`, oldest); err != nil {
+		t.Fatalf("prune events: %v", err)
+	}
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/sync/events?after=1", token, nil)
+	if status != http.StatusConflict || !bytes.Contains(response, []byte(`"device_recovery_required"`)) {
+		t.Fatalf("expired cursor status=%d body=%s", status, response)
+	}
+}

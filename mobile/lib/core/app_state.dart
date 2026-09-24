@@ -10,6 +10,7 @@ import '../crypto/app_payload.dart';
 import '../crypto/crypto_service.dart';
 import '../push/push_service.dart';
 import '../storage/local_store.dart';
+import '../sync/sync_recovery.dart';
 import '../sync/sync_service.dart';
 import 'api_client.dart';
 import 'client_config.dart';
@@ -195,6 +196,9 @@ class AppState extends ChangeNotifier {
   // connection problem is never reported as the result of a user action.
   String? syncError;
   bool deviceRecoveryRequired = false;
+
+  /// Why sync stopped, when it did (I33). Kept durably by the local store.
+  SyncRecovery? syncRecovery;
   SessionLifecycle lifecycle = SessionLifecycle.initializing;
   String? recoveryMessage;
 
@@ -2003,6 +2007,14 @@ class AppState extends ChangeNotifier {
     if (client == null) {
       return;
     }
+    // A stopped device stays stopped until the user picks a recovery choice
+    // (I33): retrying the same event on every wake would be a poison loop.
+    final stored = await localStore.loadSyncRecovery();
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
+    if (stored != null) {
+      _enterSyncRecovery(stored);
+      return;
+    }
     try {
       var pageCursor = await localStore.loadSyncCursor();
       const pageSize = 200;
@@ -2025,21 +2037,37 @@ class AppState extends ChangeNotifier {
             throw StateError('sync events are not strictly ordered');
           }
           returnedCursor = event.id;
+        }
+        final repair = _SyncPageRepair(
+          client: client,
+          token: current.token,
+          events: events,
+          processed: localStore.hasProcessedMlsMessage,
+        );
+        for (final event in events) {
           final committedCursor = await localStore.loadSyncCursor();
           if (event.id <= committedCursor) continue;
           if (!_syncOwnerActive(current, ownerGeneration)) return;
 
           if (_isCryptoSyncEvent(event.type)) {
             if (_mlsCrypto == null) {
-              throw StateError(
-                  'deviceRecoveryRequired: MLS crypto is unavailable');
+              throw SyncEventFailure(SyncFailureKind.cryptoUnavailable,
+                  eventId: event.id,
+                  eventType: event.type,
+                  conversationId: event.conversationId);
             }
-            final envelope = await _processCryptoSyncEvent(event);
+            final envelope = await _processCryptoSyncEvent(event, repair);
             if (envelope != null) {
               _mergeReceivedEnvelope(envelope);
               await refreshHistory(envelope.conversationId);
             }
           } else {
+            if (!_knownProjectionEvent(event.type)) {
+              throw SyncEventFailure(SyncFailureKind.unsupportedEvent,
+                  eventId: event.id,
+                  eventType: event.type,
+                  conversationId: event.conversationId);
+            }
             await _refreshProjectionForSyncEvent(event);
             final expectedCursor = await localStore.loadSyncCursor();
             await localStore.commitSyncEvent(SyncEventCommit(
@@ -2062,6 +2090,7 @@ class AppState extends ChangeNotifier {
       lastSyncedAt = DateTime.now();
       syncError = null;
       deviceRecoveryRequired = false;
+      syncRecovery = null;
       _setConnectionStatus(ConnectionStatus.online);
     } catch (err) {
       if (!_syncOwnerActive(current, ownerGeneration)) return;
@@ -2070,17 +2099,15 @@ class AppState extends ChangeNotifier {
             preserveDeviceIdentity: true,
             preserveOutbox: true,
             drainSyncOwner: false);
-      } else if (err is ApiException &&
-          err.serverCode == 'full_resync_required') {
-        deviceRecoveryRequired = true;
-        syncError =
-            'This device needs sync recovery before messages can continue.';
-        _setConnectionStatus(ConnectionStatus.offline);
-        notifyListeners();
         return;
-      } else if (err is StateError &&
-          err.message.toString().startsWith('deviceRecoveryRequired:')) {
-        deviceRecoveryRequired = true;
+      }
+      final failure = _recoveryFailureFor(err);
+      if (failure != null) {
+        final recovery = SyncRecovery.fromFailure(failure, DateTime.now());
+        await localStore.saveSyncRecovery(recovery);
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        _enterSyncRecovery(recovery);
+        return;
       }
       // Background sync failure is a connection fact, not the outcome of
       // whatever the user last tapped. Writing it to the shared [error] made
@@ -2092,11 +2119,101 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// The failure to record as a durable recovery, or null when [err] is a
+  /// connection problem that sync simply retries later.
+  SyncEventFailure? _recoveryFailureFor(Object err) {
+    if (err is SyncEventFailure) {
+      return err.kind == SyncFailureKind.transient ||
+              err.kind == SyncFailureKind.auth
+          ? null
+          : err;
+    }
+    if (err is ApiException &&
+        (err.serverCode == 'device_recovery_required' ||
+            err.serverCode == 'full_resync_required')) {
+      return const SyncEventFailure(SyncFailureKind.cursorExpired);
+    }
+    // Anything else happened outside one event's processing (a page or a
+    // projection refresh failed) and is retried on the next wake. Event
+    // processing failures arrive here already typed.
+    return null;
+  }
+
+  void _enterSyncRecovery(SyncRecovery recovery) {
+    syncRecovery = recovery;
+    deviceRecoveryRequired = true;
+    syncError = recovery.message;
+    _setConnectionStatus(ConnectionStatus.offline);
+    notifyListeners();
+  }
+
+  /// Clears the recovery record and applies the stopped event once more. If
+  /// the cause remains, the same record comes back; nothing is skipped.
+  Future<void> retrySyncRecovery() async {
+    final recovery = syncRecovery ?? await localStore.loadSyncRecovery();
+    if (recovery == null ||
+        !recovery.choices.contains(SyncRecoveryChoice.retry)) {
+      return;
+    }
+    await localStore.saveSyncRecovery(null);
+    syncRecovery = null;
+    deviceRecoveryRequired = false;
+    syncError = null;
+    _setConnectionStatus(ConnectionStatus.connecting);
+    notifyListeners();
+    await _catchUpSyncEvents();
+  }
+
+  /// The destructive recovery: signs out and removes this device's identity,
+  /// encryption state and local history, so it can be linked again from
+  /// another device. The UI must get explicit confirmation first.
+  Future<void> relinkAfterSyncRecovery({required bool confirmed}) async {
+    if (!confirmed) {
+      throw ArgumentError.value(confirmed, 'confirmed',
+          'relinking deletes local history and needs confirmation');
+    }
+    await _run(() async {
+      final current = session;
+      final client = api;
+      await _stopPush(current, client);
+      await _clearLocalSession();
+      if (current != null && client != null) {
+        try {
+          await client.logout(current.token);
+        } catch (_) {
+          // The local identity is already gone; the token expires normally.
+        }
+      }
+    });
+  }
+
+  static bool _isTransientSyncError(Object err) {
+    if (err is ApiException) {
+      return err.statusCode == 408 ||
+          err.statusCode == 429 ||
+          err.statusCode >= 500;
+    }
+    return err is SocketException ||
+        err is TimeoutException ||
+        err is HttpException ||
+        err is HandshakeException;
+  }
+
   bool _isCryptoSyncEvent(String type) =>
       type == 'mls.message.created' ||
       type.startsWith('message.envelope.') ||
       type == 'call.signaling' ||
       type == 'call.state';
+
+  bool _knownProjectionEvent(String type) =>
+      type.startsWith('device.') ||
+      type.startsWith('conversation.') ||
+      type.startsWith('membership.') ||
+      type == 'retention.updated' ||
+      type.startsWith('reaction.') ||
+      type == 'read_receipt.updated' ||
+      type == 'mls.revocation.pending' ||
+      type == 'mls.revocation.completed';
 
   Future<void> _refreshProjectionForSyncEvent(SyncEvent event) async {
     final type = event.type;
@@ -2121,7 +2238,8 @@ class AppState extends ChangeNotifier {
         type == 'mls.revocation.completed') {
       return;
     }
-    throw StateError('unsupported sync event type: $type');
+    throw SyncEventFailure(SyncFailureKind.unsupportedEvent,
+        eventId: event.id, eventType: type);
   }
 
   String? _messageIdFromSyncEvent(SyncEvent event) {
@@ -2133,26 +2251,37 @@ class AppState extends ChangeNotifier {
     return value is String && value.isNotEmpty ? value : null;
   }
 
-  String? _mlsMessageIdFromSyncEvent(SyncEvent event) {
-    final payload = event.payload;
-    if (payload is! Map) return null;
-    final value = payload['mls_message_id'];
-    return value is String && value.isNotEmpty ? value : null;
-  }
-
   Future<ReceivedMessageEnvelope?> _processCryptoSyncEvent(
-      SyncEvent event) async {
+      SyncEvent event, _SyncPageRepair repair) async {
     final current = session;
     final client = api;
     final mls = _mlsCrypto;
     if (current == null || client == null || mls == null) return null;
+    SyncEventFailure failure(SyncFailureKind kind) => SyncEventFailure(kind,
+        eventId: event.id,
+        eventType: event.type,
+        conversationId: event.conversationId);
     switch (event.type) {
       case 'mls.message.created':
-        final id = _mlsMessageIdFromSyncEvent(event);
-        if (id == null)
-          throw StateError('MLS sync event is missing its message');
-        final message = await client.mlsMessage(current.token, id);
-        await mls.processMlsMessage(message);
+        // Control messages are never skipped: missing, malformed or
+        // rejected ones stop sync at this event (I33).
+        final id = _mlsMessageIdFromPayload(event.payload);
+        if (id == null) throw failure(SyncFailureKind.mlsControlMalformed);
+        final message = await repair.mlsMessage(event, id);
+        if (message.id != id ||
+            message.syncEventId != event.id ||
+            (event.conversationId != null &&
+                message.conversationId != event.conversationId)) {
+          throw failure(SyncFailureKind.mlsControlMalformed);
+        }
+        try {
+          await mls.processMlsMessage(message);
+        } catch (err) {
+          if (_isTransientSyncError(err)) rethrow;
+          throw failure(err is FormatException
+              ? SyncFailureKind.mlsControlMalformed
+              : SyncFailureKind.mlsState);
+        }
         if (message.kind == 'welcome' &&
             message.recipientDeviceId == current.deviceId) {
           await _replenishKeyPackage();
@@ -2162,26 +2291,93 @@ class AppState extends ChangeNotifier {
       case 'message.envelope.edited':
       case 'message.envelope.deleted':
         final id = _messageIdFromSyncEvent(event);
-        if (id == null)
-          throw StateError('message sync event is missing its envelope');
-        final envelope = _envelopeFromSyncEvent(event);
-        if (envelope == null && event.type != 'message.envelope.created') {
-          throw StateError('message sync event lacks an immutable envelope');
+        if (id == null) throw failure(SyncFailureKind.applicationMissing);
+        final ReceivedMessageEnvelope? inline;
+        try {
+          inline = _envelopeFromSyncEvent(event);
+        } catch (_) {
+          throw failure(SyncFailureKind.applicationUndecryptable);
         }
-        final resolved = envelope ?? await client.message(current.token, id);
-        await mls.processApplicationMessage(resolved, event.id);
+        if (inline == null && event.type != 'message.envelope.created') {
+          throw failure(SyncFailureKind.applicationMissing);
+        }
+        final ReceivedMessageEnvelope resolved;
+        if (inline != null) {
+          resolved = inline;
+        } else {
+          final fetched = await repair.envelope(event, id);
+          if (fetched == null) {
+            // The server proved the envelope expired (410).
+            await _commitExpiredTombstone(event, id);
+            return null;
+          }
+          resolved = fetched;
+        }
+        if (resolved.id != id) {
+          throw failure(SyncFailureKind.applicationUndecryptable);
+        }
+        try {
+          await mls.processApplicationMessage(resolved, event.id);
+        } catch (err) {
+          if (_isTransientSyncError(err)) rethrow;
+          if (_provenExpired(resolved.expiresAt)) {
+            await _commitExpiredTombstone(event, id);
+            return null;
+          }
+          throw failure(SyncFailureKind.applicationUndecryptable);
+        }
         return resolved;
       case 'call.signaling':
       case 'call.state':
-        if (event.payload is! Map)
-          throw StateError('call sync event is malformed');
-        final call = CallSession.fromJson(
-            Map<String, Object?>.from(event.payload as Map));
-        final signal = await mls.processCallSignal(call, event.id);
+        final payload = event.payload;
+        if (payload is! Map) {
+          throw failure(SyncFailureKind.applicationUndecryptable);
+        }
+        final CallSession call;
+        try {
+          call = CallSession.fromJson(Map<String, Object?>.from(payload));
+        } catch (_) {
+          throw failure(SyncFailureKind.applicationUndecryptable);
+        }
+        final Map<String, Object?>? signal;
+        try {
+          signal = await mls.processCallSignal(call, event.id);
+        } catch (err) {
+          if (_isTransientSyncError(err)) rethrow;
+          if (_provenExpired(call.expiresAt)) {
+            await _commitExpiredTombstone(event, call.id);
+            return null;
+          }
+          throw failure(SyncFailureKind.applicationUndecryptable);
+        }
         if (signal != null) _callSignals.add(IncomingCallSignal(call, signal));
         return null;
     }
-    throw StateError('unsupported crypto sync event type: ${event.type}');
+    throw failure(SyncFailureKind.unsupportedEvent);
+  }
+
+  static String? _mlsMessageIdFromPayload(Object? payload) {
+    if (payload is! Map) return null;
+    final value = payload['mls_message_id'];
+    return value is String && value.isNotEmpty ? value : null;
+  }
+
+  static bool _provenExpired(DateTime? expiresAt) =>
+      expiresAt != null && !expiresAt.isAfter(DateTime.now().toUtc());
+
+  /// Tombstone policy (I33): an application message or call signal that
+  /// failed to apply may be passed over only when its own expiry proves it
+  /// would be gone anyway. The tombstone moves the cursor past the event and
+  /// stores nothing else: no text, no envelope. Control messages never get
+  /// one.
+  Future<void> _commitExpiredTombstone(SyncEvent event, String targetId) async {
+    final cursor = await localStore.loadSyncCursor();
+    await localStore.commitSyncEvent(SyncEventCommit(
+      eventKey: 'expired:${event.id}:$targetId',
+      conversationId: event.conversationId ?? '',
+      expectedCursor: cursor,
+      cursor: event.id,
+    ));
   }
 
   ReceivedMessageEnvelope? _envelopeFromSyncEvent(SyncEvent event) {
@@ -2288,6 +2484,7 @@ class AppState extends ChangeNotifier {
     syncError = null;
     _pendingWakeGeneration = 0;
     deviceRecoveryRequired = false;
+    syncRecovery = null;
     lifecycle = SessionLifecycle.ready;
     recoveryMessage = null;
   }
@@ -2643,6 +2840,131 @@ bool _constantTimeBytesEqual(List<int> left, List<int> right) {
     difference |= left[index] ^ right[index];
   }
   return difference == 0;
+}
+
+/// Fetches what one page of sync events needs in as few requests as
+/// possible (I33): every MLS control message of the page comes from one
+/// bounded list request, and each legacy envelope is fetched at most once.
+class _SyncPageRepair {
+  _SyncPageRepair({
+    required this.client,
+    required this.token,
+    required this.events,
+    required this.processed,
+  });
+
+  static const int _batchLimit = 200;
+  static const int _maxBatchRequests = 3;
+
+  final ApiClient client;
+  final String token;
+  final List<SyncEvent> events;
+  final Future<bool> Function(String marker) processed;
+  Future<Map<String, MlsMessage>>? _mlsBatch;
+  final Map<String, Future<ReceivedMessageEnvelope?>> _envelopes =
+      <String, Future<ReceivedMessageEnvelope?>>{};
+
+  /// Requests made so far, for tests of the batching bound.
+  int requests = 0;
+
+  Future<MlsMessage> mlsMessage(SyncEvent event, String id) async {
+    final batch = await (_mlsBatch ??= _loadMlsBatch());
+    final found = batch[id];
+    if (found != null) return found;
+    return _fetchMlsMessage(event, id);
+  }
+
+  /// The envelope for a legacy event without an inline copy, or null when
+  /// the server proves it expired.
+  Future<ReceivedMessageEnvelope?> envelope(SyncEvent event, String id) =>
+      _envelopes.putIfAbsent(id, () => _fetchEnvelope(event, id));
+
+  Future<Map<String, MlsMessage>> _loadMlsBatch() async {
+    final wanted = <String, int>{};
+    for (final event in events) {
+      if (event.type != 'mls.message.created') continue;
+      final id = AppState._mlsMessageIdFromPayload(event.payload);
+      if (id == null || await processed('mls:${event.id}:$id')) continue;
+      wanted[id] = event.id;
+    }
+    final found = <String, MlsMessage>{};
+    if (wanted.isEmpty) return found;
+    final lastEventId = wanted.values.reduce(max);
+    var after = wanted.values.reduce(min) - 1;
+    try {
+      for (var round = 0; round < _maxBatchRequests; round++) {
+        requests++;
+        final page =
+            await client.mlsMessages(token, after: after, limit: _batchLimit);
+        for (final message in page) {
+          if (wanted[message.id] == message.syncEventId) {
+            found[message.id] = message;
+          }
+        }
+        if (found.length == wanted.length ||
+            page.length < _batchLimit ||
+            page.last.syncEventId >= lastEventId ||
+            page.last.syncEventId <= after) {
+          break;
+        }
+        after = page.last.syncEventId;
+      }
+    } catch (err) {
+      if (AppState._isTransientSyncError(err) ||
+          (err is ApiException && err.statusCode == 401)) {
+        rethrow;
+      }
+      // Anything else falls back to one request per missing message, which
+      // classifies the failure for the event that needs it.
+    }
+    return found;
+  }
+
+  Future<MlsMessage> _fetchMlsMessage(SyncEvent event, String id) async {
+    requests++;
+    try {
+      return await client.mlsMessage(token, id);
+    } catch (err) {
+      throw _classifyFetch(err, event,
+          missing: SyncFailureKind.mlsControlMissing,
+          malformed: SyncFailureKind.mlsControlMalformed);
+    }
+  }
+
+  Future<ReceivedMessageEnvelope?> _fetchEnvelope(
+      SyncEvent event, String id) async {
+    requests++;
+    try {
+      return await client.message(token, id);
+    } catch (err) {
+      if (err is ApiException &&
+          err.statusCode == 410 &&
+          err.serverCode == 'message_expired') {
+        return null;
+      }
+      throw _classifyFetch(err, event,
+          missing: SyncFailureKind.applicationMissing,
+          malformed: SyncFailureKind.applicationUndecryptable);
+    }
+  }
+
+  Object _classifyFetch(
+    Object err,
+    SyncEvent event, {
+    required SyncFailureKind missing,
+    required SyncFailureKind malformed,
+  }) {
+    if (AppState._isTransientSyncError(err) ||
+        (err is ApiException && err.statusCode == 401)) {
+      return err;
+    }
+    return SyncEventFailure(
+      err is ApiException ? missing : malformed,
+      eventId: event.id,
+      eventType: event.type,
+      conversationId: event.conversationId,
+    );
+  }
 }
 
 extension FirstOrNull<T> on Iterable<T> {

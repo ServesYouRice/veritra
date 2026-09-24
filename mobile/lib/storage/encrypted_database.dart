@@ -268,6 +268,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
 
   static const outboxDraftPrefix = 'outbox.draft.';
   static const syncLeaseName = 'sync.owner.lease';
+  static const syncRecoveryName = 'sync.recovery';
 
   @override
   int get schemaVersion => 7;
@@ -334,7 +335,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           await customStatement('DELETE FROM local_metadata WHERE name LIKE ?',
               <Object?>['$outboxDraftPrefix%']);
           await (delete(localMetadata)
-                ..where((table) => table.name.equals(syncLeaseName)))
+                ..where((table) =>
+                    table.name.isIn(<String>[syncLeaseName, syncRecoveryName])))
               .go();
           await delete(localCryptoStates).go();
           await into(localSyncStates).insertOnConflictUpdate(
@@ -1334,6 +1336,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
       LocalMetadataCompanion.insert(name: name, value: value),
     );
   }
+
+  Future<void> deleteMetadata(String name) => transaction(() async {
+        await (delete(localMetadata)..where((table) => table.name.equals(name)))
+            .go();
+      });
 
   Future<void> writeMetadata(String name, String value) =>
       transaction(() async {

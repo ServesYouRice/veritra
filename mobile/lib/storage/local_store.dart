@@ -8,6 +8,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../core/models.dart';
+import '../sync/sync_recovery.dart';
 import 'encrypted_database.dart';
 
 final Map<String, Future<void>> _databaseOpenTails = <String, Future<void>>{};
@@ -249,6 +250,12 @@ abstract class LocalStore {
   Future<void> saveCryptoState(StoredCryptoState state, int syncCursor);
   Future<void> commitMlsTransition(MlsStateTransition transition);
   Future<void> commitSyncEvent(SyncEventCommit commit);
+
+  /// The durable recovery record (card I33), or null when sync may run.
+  /// Pass null to clear it. It survives restarts so a failing event is not
+  /// retried in a loop, and it is removed with the device identity.
+  Future<void> saveSyncRecovery(SyncRecovery? recovery);
+  Future<SyncRecovery?> loadSyncRecovery();
   Future<void> acquireSyncLease(LocalSyncLease lease);
   Future<void> releaseSyncLease(LocalSyncLease lease);
   Future<bool> hasProcessedMlsMessage(String messageId);
@@ -292,6 +299,15 @@ class MemoryLocalStore implements LocalStore {
   final Map<String, List<int>> _peerVerifications = <String, List<int>>{};
   final _MemoryMessageHistory _history = _MemoryMessageHistory();
   String? _syncLeaseKey;
+  SyncRecovery? _syncRecovery;
+
+  @override
+  Future<void> saveSyncRecovery(SyncRecovery? recovery) async {
+    _syncRecovery = recovery;
+  }
+
+  @override
+  Future<SyncRecovery?> loadSyncRecovery() async => _syncRecovery;
 
   @override
   Future<void> acquireSyncLease(LocalSyncLease lease) async {
@@ -313,6 +329,7 @@ class MemoryLocalStore implements LocalStore {
       _peerVerifications.clear();
       _history.clear();
       _syncLeaseKey = null;
+      _syncRecovery = null;
     }
     _session = session;
   }
@@ -671,6 +688,7 @@ class MemoryLocalStore implements LocalStore {
     _peerVerifications.clear();
     _history.clear();
     _syncLeaseKey = null;
+    _syncRecovery = null;
     await clearCachedState();
   }
 
@@ -843,6 +861,22 @@ class SecureLocalStore implements LocalStore {
   Future<EncryptedLocalDatabase>? _openingDatabase;
   String? _databasePath;
   String? _syncLeaseKey;
+
+  @override
+  Future<void> saveSyncRecovery(SyncRecovery? recovery) async {
+    final database = await _database();
+    if (recovery == null) {
+      await database.deleteMetadata(EncryptedLocalDatabase.syncRecoveryName);
+    } else {
+      await database.writeMetadata(
+          EncryptedLocalDatabase.syncRecoveryName, recovery.encode());
+    }
+  }
+
+  @override
+  Future<SyncRecovery?> loadSyncRecovery() async =>
+      SyncRecovery.decode(await (await _database())
+          .readMetadata(EncryptedLocalDatabase.syncRecoveryName));
 
   @override
   Future<void> acquireSyncLease(LocalSyncLease lease) async {
