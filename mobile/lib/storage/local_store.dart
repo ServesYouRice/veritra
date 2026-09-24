@@ -120,7 +120,12 @@ class MlsStateTransition {
     this.upsertedEnvelopes = const <ReceivedMessageEnvelope>[],
     this.deletedEnvelopeIds = const <String>[],
     this.messageEffects = const <MessageEffect>[],
+    this.resolvedMlsOutboxKey,
   });
+
+  /// An MLS outbox item that this transition settles, removed with it
+  /// (card I51: this device's commit, merged when its echo arrives).
+  final String? resolvedMlsOutboxKey;
 
   final String messageId;
   final String conversationId;
@@ -334,6 +339,7 @@ abstract class LocalStore {
   Future<bool> hasAppliedMlsControlMessage(String mlsMessageId);
   Future<void> commitOutgoingMlsTransition(
       OutgoingMlsStateTransition transition);
+
   /// Pending MLS control messages in the order they must be delivered.
   Future<List<PendingMlsMessage>> pendingMlsMessages();
   Future<void> recordMlsOutboxFailure(
@@ -345,10 +351,15 @@ abstract class LocalStore {
   Future<void> removePendingMlsMessage(String idempotencyKey);
   Future<void> commitOutgoingApplicationTransition(
       OutgoingApplicationStateTransition transition);
+
+  /// Stores a local MLS state change. [resolvedMlsOutboxKey] names an MLS
+  /// outbox item settled by the same change (a commit bundle the server
+  /// accepted or refused, card I51); it is removed atomically.
   Future<void> commitLocalMlsState({
     required int expectedCounter,
     required int expectedCursor,
     required StoredCryptoState state,
+    String? resolvedMlsOutboxKey,
   });
   Future<StoredCryptoState?> loadCryptoState();
   Future<List<int>> exportBackup();
@@ -580,6 +591,8 @@ class MemoryLocalStore implements LocalStore {
     _history.apply(transition.messageEffects);
     _cryptoState = _copyCryptoState(transition.state);
     _processedMlsMessages.add(transition.messageId);
+    final resolved = transition.resolvedMlsOutboxKey;
+    if (resolved != null) _mlsOutbox.remove(resolved);
     _syncCursor = transition.cursor;
     _snapshot = CachedSnapshot(
       cursor: transition.cursor,
@@ -700,10 +713,12 @@ class MemoryLocalStore implements LocalStore {
     required int expectedCounter,
     required int expectedCursor,
     required StoredCryptoState state,
+    String? resolvedMlsOutboxKey,
   }) async {
     _validateLocalMlsState(expectedCounter, expectedCursor, state,
         currentCounter: _cryptoState?.counter ?? 0, currentCursor: _syncCursor);
     _cryptoState = _copyCryptoState(state);
+    if (resolvedMlsOutboxKey != null) _mlsOutbox.remove(resolvedMlsOutboxKey);
   }
 
   @override
@@ -1223,6 +1238,7 @@ class SecureLocalStore implements LocalStore {
       messageEffects: transition.messageEffects,
       failureInjector: _mlsCommitFailureInjector,
       leaseKey: _syncLeaseKey,
+      resolvedMlsOutboxKey: transition.resolvedMlsOutboxKey,
     );
   }
 
@@ -1358,6 +1374,7 @@ class SecureLocalStore implements LocalStore {
     required int expectedCounter,
     required int expectedCursor,
     required StoredCryptoState state,
+    String? resolvedMlsOutboxKey,
   }) async {
     _validateLocalMlsState(expectedCounter, expectedCursor, state,
         currentCounter: expectedCounter, currentCursor: expectedCursor);
@@ -1368,6 +1385,7 @@ class SecureLocalStore implements LocalStore {
       stateKey: state.stateKey,
       sealedState: state.sealedState,
       leaseKey: _syncLeaseKey,
+      resolvedMlsOutboxKey: resolvedMlsOutboxKey,
     );
   }
 
@@ -1587,8 +1605,7 @@ class SecureLocalStore implements LocalStore {
     for (final name in _databaseFileNames) {
       final file = File('${directory.path}${Platform.pathSeparator}$name');
       if (await file.exists()) {
-        await file.rename(
-            '${quarantine.path}${Platform.pathSeparator}$name');
+        await file.rename('${quarantine.path}${Platform.pathSeparator}$name');
       }
     }
     await _storage.delete(key: _databaseKeyName);
@@ -2166,7 +2183,9 @@ void _validateOutgoingMlsTransition(
     if (message.idempotencyKey.isEmpty ||
         !keys.add(message.idempotencyKey) ||
         message.conversationId.isEmpty ||
-        (message.kind != 'welcome' && message.kind != 'commit') ||
+        (message.kind != 'welcome' &&
+            message.kind != 'commit' &&
+            message.kind != 'bundle') ||
         (message.kind == 'welcome' &&
             (message.recipientDeviceId?.isEmpty ?? true)) ||
         message.payload.isEmpty ||

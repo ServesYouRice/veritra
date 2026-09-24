@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define PM_CRYPTO_UNAVAILABLE (-1)
-#define PM_CRYPTO_ABI_VERSION (5u)
+#define PM_CRYPTO_ABI_VERSION (6u)
 #define PM_CRYPTO_OK (0)
 #define PM_CRYPTO_INVALID_ARGUMENT (-2)
 #define PM_CRYPTO_ERROR (-3)
@@ -89,6 +89,25 @@ int32_t pm_crypto_group_add_member(PmCryptoHandle *handle,
                                    PmByteSlice expected_device_id,
                                    PmOwnedBuffer *out_commit,
                                    PmOwnedBuffer *out_welcome);
+/*
+ * ABI 6 (card I51): one staged, unmerged commit adding and removing devices.
+ * changes: version:u8(=1) add_count:u16 {kp_len:u32 kp account_len:u16
+ * account device_len:u16 device}* remove_count:u16 {account_len:u16 account
+ * device_len:u16 device}*, big-endian. out_welcome is empty (NULL, 0) when
+ * nothing is added. Merge after the server accepts the commit; clear it
+ * after a refusal.
+ */
+int32_t pm_crypto_group_stage_commit(PmCryptoHandle *handle,
+                                     PmByteSlice group_id, PmByteSlice changes,
+                                     PmOwnedBuffer *out_commit,
+                                     PmOwnedBuffer *out_welcome,
+                                     uint64_t *out_epoch);
+int32_t pm_crypto_group_merge_pending_commit(PmCryptoHandle *handle,
+                                             PmByteSlice group_id);
+int32_t pm_crypto_group_clear_pending_commit(PmCryptoHandle *handle,
+                                             PmByteSlice group_id);
+int32_t pm_crypto_group_epoch(PmCryptoHandle *handle, PmByteSlice group_id,
+                              uint64_t *out_epoch, uint8_t *out_pending);
 int32_t pm_crypto_group_process_commit(PmCryptoHandle *handle,
                                        PmByteSlice group_id,
                                        PmByteSlice commit);

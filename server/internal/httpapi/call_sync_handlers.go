@@ -146,7 +146,7 @@ func validCallMetadata(raw json.RawMessage) bool {
 func (a *API) syncEvents(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
 	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	events, err := a.Store.ListSyncEvents(r.Context(), principal.AccountID, after, limit)
+	events, err := a.Store.ListSyncEvents(r.Context(), principal.AccountID, principal.DeviceID, after, limit)
 	if err != nil {
 		if errors.Is(err, storage.ErrSyncCursorExpired) {
 			epoch, oldest, latest, boundsErr := a.Store.SyncBounds(r.Context(), principal.AccountID)

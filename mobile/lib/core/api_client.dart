@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import '../crypto/mls_commit_bundle.dart';
 import 'models.dart';
 
 class ApiClient {
@@ -509,6 +510,55 @@ class ApiClient {
     return MlsMessage.fromJson(
       Map<String, Object?>.from(json['mls_message'] as Map),
     );
+  }
+
+  /// Sends one staged commit with its Welcomes and roster change (card
+  /// I51). Returns the group's epoch after it. A 409 `mls_epoch_conflict`
+  /// means another commit was accepted first.
+  Future<int> sendMlsCommitBundle(
+    String token,
+    String conversationId, {
+    required String idempotencyKey,
+    required MlsCommitBundle bundle,
+  }) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/conversations/${Uri.encodeComponent(conversationId)}'
+          '/mls/commits',
+      token: token,
+      body: bundle.toRequestJson(idempotencyKey),
+    );
+    return (json['epoch'] as num).toInt();
+  }
+
+  Future<List<MlsPendingChange>> mlsPendingChanges(String token) async {
+    final json =
+        await _jsonRequest('GET', '/api/v1/mls/pending-changes', token: token);
+    return (json['pending_changes'] as List<Object?>? ?? const <Object?>[])
+        .map((row) =>
+            MlsPendingChange.fromJson(Map<String, Object?>.from(row as Map)))
+        .toList(growable: false);
+  }
+
+  /// Claims one key package for each listed device, to add them to an
+  /// existing group. Devices with no package left are missing from the
+  /// result.
+  Future<List<DeviceKeyPackage>> claimDeviceKeyPackages(
+    String token,
+    String conversationId,
+    List<String> deviceIds,
+  ) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/conversations/${Uri.encodeComponent(conversationId)}'
+          '/key-packages/claim',
+      token: token,
+      body: <String, Object?>{'device_ids': deviceIds},
+    );
+    return (json['key_packages'] as List<Object?>? ?? const <Object?>[])
+        .map((row) =>
+            DeviceKeyPackage.fromJson(Map<String, Object?>.from(row as Map)))
+        .toList(growable: false);
   }
 
   Future<List<MlsMessage>> mlsMessages(

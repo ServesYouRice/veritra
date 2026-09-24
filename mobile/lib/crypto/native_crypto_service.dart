@@ -15,6 +15,7 @@ import '../storage/encrypted_database.dart'
 import '../storage/local_store.dart';
 import 'app_payload.dart';
 import 'crypto_service.dart';
+import 'mls_commit_bundle.dart';
 import 'native_crypto_bindings.dart';
 
 class NativeCryptoService implements MlsConversationCryptoService {
@@ -127,51 +128,161 @@ class NativeCryptoService implements MlsConversationCryptoService {
         try {
           final device = _requiredDevice();
           device.createGroup(conversationId);
-          final existingRecipients = <String>[];
-          final outbound = <PendingMlsMessage>[];
-          for (final package in claimedPackages) {
-            final added = device.addMember(
-              conversationId,
-              package.keyPackage,
-              package.accountId,
-              package.deviceId,
-            );
-            for (final recipient in existingRecipients) {
-              outbound.add(PendingMlsMessage(
-                idempotencyKey: _randomIdempotencyKey(),
-                conversationId: conversationId,
-                kind: 'commit',
-                recipientDeviceId: recipient,
-                payload: added.commit,
-              ));
-            }
-            outbound.add(PendingMlsMessage(
-              idempotencyKey: _randomIdempotencyKey(),
-              conversationId: conversationId,
-              kind: 'welcome',
-              recipientDeviceId: package.deviceId,
-              payload: added.welcome,
-            ));
-            existingRecipients.add(package.deviceId);
-          }
-          if (outbound.isEmpty) {
-            await _commitLocalMutation(previous);
-          } else {
-            final next = _sealNext(previous);
-            await localStore.commitOutgoingMlsTransition(
-              OutgoingMlsStateTransition(
-                expectedCounter: previous.counter,
-                expectedCursor: await localStore.loadSyncCursor(),
-                state: next,
-                messages: outbound,
-              ),
-            );
-          }
+          // One staged commit adds everyone (card I51). With nobody else to
+          // add, the bundle only records this device as the group's first
+          // member, so later devices can be added by reconcile.
+          final bundle = claimedPackages.isEmpty
+              ? const MlsCommitBundle(epoch: 0)
+              : _stage(device, conversationId, adds: claimedPackages);
+          await localStore.commitOutgoingMlsTransition(
+            OutgoingMlsStateTransition(
+              expectedCounter: previous.counter,
+              expectedCursor: await localStore.loadSyncCursor(),
+              state: _sealNext(previous),
+              messages: <PendingMlsMessage>[
+                _bundleItem(conversationId, bundle)
+              ],
+            ),
+          );
         } catch (_) {
           await _restorePrevious(previous);
           rethrow;
         }
       });
+
+  @override
+  Future<void> stageMembershipChange(
+    String conversationId, {
+    List<DeviceKeyPackage> adds = const <DeviceKeyPackage>[],
+    List<MlsDeviceRef> removes = const <MlsDeviceRef>[],
+  }) =>
+      _serial(() async {
+        if (adds.isEmpty && removes.isEmpty) {
+          throw ArgumentError('a membership change needs a device');
+        }
+        final previous = await _requiredState();
+        try {
+          final bundle = _stage(_requiredDevice(), conversationId,
+              adds: adds, removes: removes);
+          await localStore.commitOutgoingMlsTransition(
+            OutgoingMlsStateTransition(
+              expectedCounter: previous.counter,
+              expectedCursor: await localStore.loadSyncCursor(),
+              state: _sealNext(previous),
+              messages: <PendingMlsMessage>[
+                _bundleItem(conversationId, bundle)
+              ],
+            ),
+          );
+        } catch (_) {
+          await _restorePrevious(previous);
+          rethrow;
+        }
+      });
+
+  @override
+  Future<void> completeCommitBundle(PendingMlsMessage item) =>
+      _serial(() async {
+        final bundle = MlsCommitBundle.decode(item.payload);
+        final previous = await _requiredState();
+        try {
+          if (bundle.hasCommit) {
+            final device = _requiredDevice();
+            final before = device.groupEpoch(item.conversationId);
+            if (before.pending) device.mergePendingCommit(item.conversationId);
+            final after = device.groupEpoch(item.conversationId);
+            // Fail closed if the group is not where the accepted commit
+            // leads: that would mean a fork.
+            if (after.pending || after.epoch != bundle.epoch + 1) {
+              throw StateError('accepted MLS commit does not match the group');
+            }
+          }
+          await localStore.commitLocalMlsState(
+            expectedCounter: previous.counter,
+            expectedCursor: await localStore.loadSyncCursor(),
+            state: _sealNext(previous),
+            resolvedMlsOutboxKey: item.idempotencyKey,
+          );
+        } catch (_) {
+          await _restorePrevious(previous);
+          rethrow;
+        }
+      });
+
+  @override
+  Future<void> abandonCommitBundle(PendingMlsMessage item) => _serial(() async {
+        final bundle = MlsCommitBundle.decode(item.payload);
+        final previous = await _requiredState();
+        try {
+          if (bundle.hasCommit) {
+            final device = _requiredDevice();
+            final status = device.groupEpoch(item.conversationId);
+            if (status.pending) {
+              device.clearPendingCommit(item.conversationId);
+            }
+          }
+          await localStore.commitLocalMlsState(
+            expectedCounter: previous.counter,
+            expectedCursor: await localStore.loadSyncCursor(),
+            state: _sealNext(previous),
+            resolvedMlsOutboxKey: item.idempotencyKey,
+          );
+        } catch (_) {
+          await _restorePrevious(previous);
+          rethrow;
+        }
+      });
+
+  @override
+  Future<({int epoch, bool pending})?> groupEpoch(String conversationId) =>
+      _serial(() async {
+        try {
+          return _requiredDevice().groupEpoch(conversationId);
+        } on NativeCryptoException {
+          return null;
+        }
+      });
+
+  MlsCommitBundle _stage(
+    NativeCryptoDevice device,
+    String conversationId, {
+    List<DeviceKeyPackage> adds = const <DeviceKeyPackage>[],
+    List<MlsDeviceRef> removes = const <MlsDeviceRef>[],
+    String? revocationDeviceId,
+  }) {
+    final staged = device.stageCommit(
+      conversationId,
+      adds: <({List<int> keyPackage, String accountId, String deviceId})>[
+        for (final package in adds)
+          (
+            keyPackage: package.keyPackage,
+            accountId: package.accountId,
+            deviceId: package.deviceId,
+          ),
+      ],
+      removes: removes,
+    );
+    return MlsCommitBundle(
+      epoch: staged.epoch,
+      commit: staged.commit,
+      welcome: staged.welcome,
+      added: <MlsDeviceRef>[
+        for (final package in adds)
+          (accountId: package.accountId, deviceId: package.deviceId),
+      ],
+      removed: removes,
+      revocationDeviceId: revocationDeviceId,
+    );
+  }
+
+  PendingMlsMessage _bundleItem(
+          String conversationId, MlsCommitBundle bundle) =>
+      PendingMlsMessage(
+        idempotencyKey: _randomIdempotencyKey(),
+        conversationId: conversationId,
+        kind: MlsCommitBundle.kind,
+        payload: bundle.encode(),
+      );
 
   @override
   Future<void> processMlsMessage(MlsMessage message) => _serial(() async {
@@ -186,6 +297,36 @@ class NativeCryptoService implements MlsConversationCryptoService {
         }
         try {
           if (message.senderDeviceId == _deviceId) {
+            // This device's own commit is on the server, so it was
+            // accepted: merge it now if the worker has not yet (card I51).
+            final bundle = message.kind == 'commit'
+                ? (await localStore.pendingMlsMessages())
+                    .where((item) =>
+                        item.kind == MlsCommitBundle.kind &&
+                        item.idempotencyKey == message.idempotencyKey)
+                    .firstOrNull
+                : null;
+            if (bundle != null) {
+              final device = _requiredDevice();
+              final expected = MlsCommitBundle.decode(bundle.payload).epoch + 1;
+              if (device.groupEpoch(message.conversationId).pending) {
+                device.mergePendingCommit(message.conversationId);
+              }
+              final after = device.groupEpoch(message.conversationId);
+              if (after.pending || after.epoch != expected) {
+                throw StateError('own MLS commit does not match the group');
+              }
+              await localStore.commitMlsTransition(MlsStateTransition(
+                messageId: marker,
+                conversationId: message.conversationId,
+                expectedCounter: previous.counter,
+                expectedCursor: previousCursor,
+                state: _sealNext(previous),
+                cursor: message.syncEventId,
+                resolvedMlsOutboxKey: bundle.idempotencyKey,
+              ));
+              return;
+            }
             await localStore.commitSyncEvent(SyncEventCommit(
               eventKey: marker,
               conversationId: message.conversationId,
@@ -203,6 +344,12 @@ class NativeCryptoService implements MlsConversationCryptoService {
               device.joinGroup(message.conversationId, message.payload);
               break;
             case 'commit':
+              // Another device's commit won this epoch. Any commit this
+              // device staged on the same epoch was refused, so it is
+              // dropped before applying the winner (card I51).
+              if (device.groupEpoch(message.conversationId).pending) {
+                device.clearPendingCommit(message.conversationId);
+              }
               device.processCommit(message.conversationId, message.payload);
               break;
             default:
@@ -232,10 +379,16 @@ class NativeCryptoService implements MlsConversationCryptoService {
         }
         final previous = await _requiredState();
         try {
-          final commit = _requiredDevice().removeMember(
+          final bundle = _stage(
+            _requiredDevice(),
             revocation.conversationId,
-            revocation.revokedAccountId,
-            revocation.revokedDeviceId,
+            removes: <MlsDeviceRef>[
+              (
+                accountId: revocation.revokedAccountId,
+                deviceId: revocation.revokedDeviceId,
+              ),
+            ],
+            revocationDeviceId: revocation.revokedDeviceId,
           );
           await localStore.commitOutgoingMlsTransition(
             OutgoingMlsStateTransition(
@@ -243,13 +396,7 @@ class NativeCryptoService implements MlsConversationCryptoService {
               expectedCursor: await localStore.loadSyncCursor(),
               state: _sealNext(previous),
               messages: <PendingMlsMessage>[
-                PendingMlsMessage(
-                  idempotencyKey: _randomIdempotencyKey(),
-                  conversationId: revocation.conversationId,
-                  kind: 'commit',
-                  revocationDeviceId: revocation.revokedDeviceId,
-                  payload: commit,
-                ),
+                _bundleItem(revocation.conversationId, bundle),
               ],
             ),
           );
@@ -407,7 +554,9 @@ class NativeCryptoService implements MlsConversationCryptoService {
             actionId: idempotencyKey,
             body: body,
           );
-          final ciphertext = _requiredDevice().encrypt(conversationId, payload);
+          final device = _requiredDevice();
+          final epoch = device.groupEpoch(conversationId).epoch;
+          final ciphertext = device.encrypt(conversationId, payload);
           final envelope = MessageEnvelope(
             conversationId: conversationId,
             idempotencyKey: idempotencyKey,
@@ -418,6 +567,10 @@ class NativeCryptoService implements MlsConversationCryptoService {
               'group_id': conversationId,
               'content_type': 'application',
               'payload_version': appPayloadVersion,
+              // The epoch is already readable in the MLS message header. The
+              // server uses it to withhold a message from a device that
+              // joined after that epoch and cannot decrypt it (card I51).
+              'mls_epoch': epoch,
             },
           );
           await localStore.commitOutgoingApplicationTransition(

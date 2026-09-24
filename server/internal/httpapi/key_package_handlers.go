@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"bytes"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -64,7 +66,29 @@ func (a *API) claimConversationKeyPackages(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "invalid_conversation_id")
 		return
 	}
-	packages, err := a.Store.ClaimConversationKeyPackages(r.Context(), conversationID, principal.AccountID, principal.DeviceID)
+	// With a device list, claim only for those devices (adding devices to an
+	// existing group, card I51); without one, for every other member device
+	// (creating the group).
+	var request struct {
+		DeviceIDs []string `json:"device_ids"`
+	}
+	if r.ContentLength != 0 {
+		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_body")
+			return
+		}
+		if len(bytes.TrimSpace(raw)) > 0 && !decodeRawJSON(w, raw, &request) {
+			return
+		}
+	}
+	var packages []domain.DeviceKeyPackage
+	var err error
+	if len(request.DeviceIDs) > 0 {
+		packages, err = a.Store.ClaimDeviceKeyPackages(r.Context(), conversationID, principal.AccountID, principal.DeviceID, request.DeviceIDs)
+	} else {
+		packages, err = a.Store.ClaimConversationKeyPackages(r.Context(), conversationID, principal.AccountID, principal.DeviceID)
+	}
 	if errors.Is(err, storage.ErrKeyPackageUnavailable) {
 		writeError(w, http.StatusConflict, "key_package_unavailable")
 		return

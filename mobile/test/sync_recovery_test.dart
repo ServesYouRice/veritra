@@ -104,24 +104,24 @@ void main() {
 
     harness.crypto.rejectedMls.clear();
     await harness.state.retrySyncRecovery();
-    await harness.waitFor(() async => await harness.store.loadSyncCursor() == 2);
+    await harness
+        .waitFor(() async => await harness.store.loadSyncCursor() == 2);
     expect(harness.state.syncRecovery, isNull);
     expect(await harness.store.loadSyncRecovery(), isNull);
     expect(harness.state.deviceRecoveryRequired, isFalse);
     harness.dispose();
   });
 
-  test('an expired application message follows the tombstone policy',
-      () async {
+  test('an expired application message follows the tombstone policy', () async {
     final api = _ScriptedApi()
       ..events = <SyncEvent>[
         _envelopeEvent(4, 'msg_expired',
-            ciphertext: _undecryptable,
-            expiresAt: DateTime.utc(2000)),
+            ciphertext: _undecryptable, expiresAt: DateTime.utc(2000)),
         _envelopeEvent(5, 'msg_ok'),
       ];
     final harness = await _Harness.start(api);
-    await harness.waitFor(() async => await harness.store.loadSyncCursor() == 5);
+    await harness
+        .waitFor(() async => await harness.store.loadSyncCursor() == 5);
     expect(harness.state.syncRecovery, isNull);
     expect(await harness.store.hasProcessedMlsMessage('expired:4:msg_expired'),
         isTrue);
@@ -134,7 +134,8 @@ void main() {
       ..events = <SyncEvent>[_envelopeEvent(4, 'msg_old', inline: false)]
       ..expiredEnvelopes.add('msg_old');
     final harness = await _Harness.start(api);
-    await harness.waitFor(() async => await harness.store.loadSyncCursor() == 4);
+    await harness
+        .waitFor(() async => await harness.store.loadSyncCursor() == 4);
     expect(harness.state.syncRecovery, isNull);
     expect(harness.crypto.applied, isEmpty);
     harness.dispose();
@@ -182,7 +183,8 @@ void main() {
 
     api.networkDown = false;
     harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await harness.waitFor(() async => await harness.store.loadSyncCursor() == 5);
+    await harness
+        .waitFor(() async => await harness.store.loadSyncCursor() == 5);
     expect(harness.state.connectionStatus, ConnectionStatus.online);
     harness.dispose();
   });
@@ -245,7 +247,8 @@ void main() {
           if (id.isEven) _mlsEvent(id, 'mls_$id') else _projectionEvent(id),
       ];
     final harness = await _Harness.start(api);
-    await harness.waitFor(() async => await harness.store.loadSyncCursor() == 40);
+    await harness
+        .waitFor(() async => await harness.store.loadSyncCursor() == 40);
     expect(api.mlsListCalls, 1);
     expect(api.mlsMessageCalls, 0);
     expect(harness.crypto.processedMls, hasLength(20));
@@ -329,9 +332,9 @@ SyncEvent _envelopeEvent(
         'message_id': messageId,
         'conversation_id': 'conv_1',
         if (inline)
-          'envelope': _envelope(messageId,
-                  ciphertext: ciphertext, expiresAt: expiresAt)
-              .toJson(),
+          'envelope':
+              _envelope(messageId, ciphertext: ciphertext, expiresAt: expiresAt)
+                  .toJson(),
       },
       createdAt: DateTime.utc(2026, 9, 24),
     );

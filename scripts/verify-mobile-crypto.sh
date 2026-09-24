@@ -7,7 +7,9 @@ PLATFORM=${1:-}
 verify_symbols() {
   symbols=$1
   for symbol in pm_crypto_abi_version pm_crypto_available pm_crypto_device_create \
-    pm_crypto_device_link_transcript_hash pm_crypto_buffer_free; do
+    pm_crypto_device_link_transcript_hash pm_crypto_buffer_free \
+    pm_crypto_group_stage_commit pm_crypto_group_merge_pending_commit \
+    pm_crypto_group_clear_pending_commit pm_crypto_group_epoch; do
     case "$symbols" in
       *"$symbol"*) ;;
       *) echo "missing exported symbol: $symbol" >&2; return 1 ;;

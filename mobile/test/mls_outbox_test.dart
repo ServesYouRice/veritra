@@ -91,8 +91,7 @@ void main() {
     state.dispose();
   });
 
-  test('queued messages survive a restart and go out once, in order',
-      () async {
+  test('queued messages survive a restart and go out once, in order', () async {
     final store = await _storeWith(<PendingMlsMessage>[
       _commit('a1', 'conv_a'),
       _commit('a2', 'conv_a'),
@@ -278,8 +277,7 @@ class _OutboxApi extends ApiClient {
       const <SyncEvent>[];
 
   @override
-  Future<List<MlsRevocation>> mlsRevocations(String token) async =>
-      revocations;
+  Future<List<MlsRevocation>> mlsRevocations(String token) async => revocations;
 
   @override
   Future<Map<String, Object?>> pushConfig(String token) async =>

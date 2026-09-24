@@ -7,6 +7,7 @@ import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../crypto/app_payload.dart';
+import '../crypto/mls_commit_bundle.dart';
 import '../crypto/crypto_service.dart';
 import '../push/push_service.dart';
 import '../storage/local_store.dart';
@@ -215,6 +216,9 @@ class AppState extends ChangeNotifier {
   bool _flushMlsOutboxRequested = false;
   Timer? _mlsOutboxRetryTimer;
   final Set<String> _failedMlsConversations = <String>{};
+  final Map<String, DateTime> _mlsPendingSeen = <String, DateTime>{};
+  final Set<String> _mlsReconcileNow = <String>{};
+  bool _mlsReconcileRequested = true;
   Future<void> _sessionTransitionTail = Future<void>.value();
   Stream<IncomingCallSignal> get callSignals => _callSignals.stream;
 
@@ -255,10 +259,9 @@ class AppState extends ChangeNotifier {
   /// answered.
   bool get pushRegistered => _pushSubscriptionId != null;
 
-  /// False in demo builds (D24): until card I51 lands, MLS groups keep the
-  /// members they were created with and each account has one device, so
-  /// adding members and linking devices are hidden rather than half-working.
-  bool get membershipChangesAvailable => !config.demo;
+  /// Adding members and linking devices work in every build since card I51:
+  /// group devices add new member devices to the MLS group themselves.
+  bool get membershipChangesAvailable => true;
 
   /// Reply, edit, delete and reactions need the MLS service (D22).
   bool get messageActionsAvailable => _mlsCrypto != null;
@@ -1105,6 +1108,10 @@ class AppState extends ChangeNotifier {
         accountId,
         role: role,
       );
+      // Their devices join the MLS group through reconcile (card I51).
+      _mlsReconcileRequested = true;
+      _mlsReconcileNow.add(conversationId);
+      unawaited(_catchUpSyncEvents());
     });
   }
 
@@ -1142,6 +1149,10 @@ class AppState extends ChangeNotifier {
         conversationId,
         accountId,
       );
+      // Their devices leave the MLS group through reconcile (card I51).
+      _mlsReconcileRequested = true;
+      _mlsReconcileNow.add(conversationId);
+      unawaited(_catchUpSyncEvents());
       membersByConversation = <String, List<ConversationMember>>{
         ...membersByConversation,
         conversationId: membersFor(conversationId)
@@ -2152,6 +2163,18 @@ class AppState extends ChangeNotifier {
       if (_mlsCrypto != null) {
         await _processMlsRevocations();
         if (!_syncOwnerActive(current, ownerGeneration)) return;
+        if (_mlsReconcileRequested || _mlsPendingSeen.isNotEmpty) {
+          _mlsReconcileRequested = false;
+          try {
+            await _reconcileMlsMembership();
+          } catch (err) {
+            // Reconcile is retried after the next catch-up; it never blocks
+            // sync.
+            _mlsReconcileRequested = true;
+            if (err is ApiException && err.statusCode == 401) rethrow;
+          }
+          if (!_syncOwnerActive(current, ownerGeneration)) return;
+        }
       }
       await _acknowledgePendingWake(current, ownerGeneration: ownerGeneration);
       lastSyncedAt = DateTime.now();
@@ -2284,6 +2307,11 @@ class AppState extends ChangeNotifier {
 
   Future<void> _refreshProjectionForSyncEvent(SyncEvent event) async {
     final type = event.type;
+    if (type.startsWith('device.') ||
+        type.startsWith('membership.') ||
+        type.startsWith('conversation.')) {
+      _mlsReconcileRequested = true;
+    }
     if (type.startsWith('device.')) {
       await refreshDevices();
       await _refreshConversations(notify: false, persist: false);
@@ -2532,6 +2560,9 @@ class AppState extends ChangeNotifier {
     _mlsOutboxRetryTimer?.cancel();
     _mlsOutboxRetryTimer = null;
     _failedMlsConversations.clear();
+    _mlsPendingSeen.clear();
+    _mlsReconcileNow.clear();
+    _mlsReconcileRequested = true;
     _manualRetryKey = null;
     _loadingMessageConversations.clear();
     _messageLoadErrors.clear();
@@ -2759,16 +2790,26 @@ class AppState extends ChangeNotifier {
           break;
         }
         if (message.nextAttemptAt?.isAfter(now) ?? false) break;
+        final isBundle = message.kind == MlsCommitBundle.kind;
         try {
-          await client.sendMlsMessage(
-            current.token,
-            message.conversationId,
-            kind: message.kind,
-            payload: message.payload,
-            idempotencyKey: message.idempotencyKey,
-            recipientDeviceId: message.recipientDeviceId,
-            revocationDeviceId: message.revocationDeviceId,
-          );
+          if (isBundle) {
+            await client.sendMlsCommitBundle(
+              current.token,
+              message.conversationId,
+              idempotencyKey: message.idempotencyKey,
+              bundle: MlsCommitBundle.decode(message.payload),
+            );
+          } else {
+            await client.sendMlsMessage(
+              current.token,
+              message.conversationId,
+              kind: message.kind,
+              payload: message.payload,
+              idempotencyKey: message.idempotencyKey,
+              recipientDeviceId: message.recipientDeviceId,
+              revocationDeviceId: message.revocationDeviceId,
+            );
+          }
         } catch (err) {
           if (!_syncOwnerActive(current, ownerGeneration)) return;
           if (err is ApiException && err.statusCode == 401) {
@@ -2778,12 +2819,26 @@ class AppState extends ChangeNotifier {
                 drainSyncOwner: false);
             return;
           }
+          if (isBundle && err is ApiException && _refusedBundle(err)) {
+            // Another commit won this epoch, or the change is no longer
+            // valid. The staged commit was never merged, so dropping it
+            // leaves this device in step with the group (card I51). Catch
+            // up, then reconcile again.
+            await _mlsCrypto?.abandonCommitBundle(message);
+            _mlsReconcileRequested = true;
+            unawaited(_catchUpSyncEvents());
+            break;
+          }
           final terminal = await _recordMlsOutboxFailure(message, err);
           if (terminal) failed.add(entry.key);
           break;
         }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
-        await localStore.removePendingMlsMessage(message.idempotencyKey);
+        if (isBundle) {
+          await _mlsCrypto?.completeCommitBundle(message);
+        } else {
+          await localStore.removePendingMlsMessage(message.idempotencyKey);
+        }
       }
     }
     if (!_sameSetOf(failed, _failedMlsConversations)) {
@@ -2794,15 +2849,84 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// A commit bundle the server will never accept as sent: it is dropped
+  /// and the change is worked out again from the current group.
+  static bool _refusedBundle(ApiException err) =>
+      err.statusCode == 409 ||
+      err.statusCode == 403 ||
+      err.statusCode == 400 ||
+      err.statusCode == 422;
+
+  /// Brings every group this device is in up to date with the server's
+  /// membership (card I51): member devices not in the group are added and
+  /// devices of accounts that left are removed, in one staged commit per
+  /// group. Only the coordinator device acts at once; the others step in if
+  /// a change is still pending a few minutes later.
+  Future<void> _reconcileMlsMembership() async {
+    final current = session;
+    final client = api;
+    final mls = _mlsCrypto;
+    if (current == null || client == null || mls == null) return;
+    final ownerGeneration = _sessionGeneration;
+    final changes = await client.mlsPendingChanges(current.token);
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
+    final now = DateTime.now().toUtc();
+    final stillPending = <String>{};
+    var staged = false;
+    for (final change in changes) {
+      final key = _pendingChangeKey(change);
+      stillPending.add(key);
+      final firstSeen = _mlsPendingSeen.putIfAbsent(key, () => now);
+      // The device that made the change commits it too, without waiting.
+      final coordinator = change.coordinatorDeviceId == null ||
+          change.coordinatorDeviceId == current.deviceId ||
+          _mlsReconcileNow.contains(change.conversationId);
+      if (!coordinator && now.difference(firstSeen) < _reconcileFallback) {
+        continue;
+      }
+      if (await _hasPendingMlsWork(change.conversationId)) continue;
+      final local = await mls.groupEpoch(change.conversationId);
+      // Behind or ahead of the server means sync is not finished yet.
+      if (local == null || local.pending || local.epoch != change.epoch) {
+        continue;
+      }
+      final adds = change.add.isEmpty
+          ? const <DeviceKeyPackage>[]
+          : await client.claimDeviceKeyPackages(
+              current.token,
+              change.conversationId,
+              change.add.map((item) => item.deviceId).toList(growable: false),
+            );
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      if (adds.isEmpty && change.remove.isEmpty) continue;
+      await mls.stageMembershipChange(change.conversationId,
+          adds: adds, removes: change.remove);
+      _mlsReconcileNow.remove(change.conversationId);
+      staged = true;
+    }
+    _mlsPendingSeen.removeWhere((key, _) => !stillPending.contains(key));
+    _mlsReconcileNow.removeWhere((conversationId) =>
+        !changes.any((change) => change.conversationId == conversationId));
+    if (staged) await _flushMlsOutbox();
+  }
+
+  static const _reconcileFallback = Duration(minutes: 3);
+
+  static String _pendingChangeKey(MlsPendingChange change) => <String>[
+        change.conversationId,
+        '${change.epoch}',
+        ...change.add.map((item) => '+${item.deviceId}'),
+        ...change.remove.map((item) => '-${item.deviceId}'),
+      ].join('|');
+
   /// Records one delivery failure and says whether it is terminal. Server
   /// rejections are terminal; connection problems and busy servers retry
   /// with bounded exponential backoff.
   Future<bool> _recordMlsOutboxFailure(
       PendingMlsMessage message, Object error) async {
     final apiError = error is ApiException ? error : null;
-    final retryable =
-        (apiError != null && _isTransientSyncError(apiError)) ||
-            (apiError == null && _isTransientSyncError(error));
+    final retryable = (apiError != null && _isTransientSyncError(apiError)) ||
+        (apiError == null && _isTransientSyncError(error));
     final terminal = apiError != null && !retryable;
     final exponent = min(message.attemptCount, 8);
     await localStore.recordMlsOutboxFailure(

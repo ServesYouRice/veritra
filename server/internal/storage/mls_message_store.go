@@ -51,6 +51,12 @@ func (s *Store) CreateMLSMessage(ctx context.Context, input CreateMLSMessageInpu
 	if !member {
 		return domain.MLSMessage{}, false, ErrNotMember
 	}
+	// Rostered groups change only through commit bundles (card I51).
+	if _, rostered, err := mlsGroupEpoch(ctx, tx, input.ConversationID); err != nil {
+		return domain.MLSMessage{}, false, err
+	} else if rostered {
+		return domain.MLSMessage{}, false, ErrMLSBundleRequired
+	}
 
 	existing, err := scanMLSMessage(tx.QueryRowContext(ctx, `
 		SELECT id, conversation_id, sender_account_id, sender_device_id, recipient_device_id, revocation_device_id,
@@ -155,8 +161,8 @@ func (s *Store) MLSMessage(ctx context.Context, id, accountID, deviceID string) 
 		       mm.sync_event_id, mm.created_at
 		FROM conversation_mls_messages mm
 		JOIN memberships m ON m.conversation_id = mm.conversation_id AND m.account_id = ?
-		WHERE mm.id = ? AND (mm.recipient_device_id IS NULL OR mm.recipient_device_id = ?)`,
-		accountID, id, deviceID))
+		WHERE mm.id = ? AND (mm.recipient_device_id = ? OR (mm.recipient_device_id IS NULL AND `+mlsJoinFilterMessage+`))`,
+		accountID, id, deviceID, deviceID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.MLSMessage{}, ErrNotFound
 	}
@@ -173,8 +179,8 @@ func (s *Store) ListMLSMessages(ctx context.Context, accountID, deviceID string,
 		       mm.sync_event_id, mm.created_at
 		FROM conversation_mls_messages mm
 		JOIN memberships m ON m.conversation_id = mm.conversation_id AND m.account_id = ?
-		WHERE mm.sync_event_id > ? AND (mm.recipient_device_id IS NULL OR mm.recipient_device_id = ?)
-		ORDER BY mm.sync_event_id LIMIT ?`, accountID, afterEventID, deviceID, limit)
+		WHERE mm.sync_event_id > ? AND (mm.recipient_device_id = ? OR (mm.recipient_device_id IS NULL AND `+mlsJoinFilterMessage+`))
+		ORDER BY mm.sync_event_id LIMIT ?`, accountID, afterEventID, deviceID, deviceID, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -81,6 +81,37 @@ void main() {
     await owner.waitFor(group.id, (m) => m.body == 'bob here');
     await alice.waitFor(group.id, (m) => m.body == 'bob here');
 
+    // Membership after creation (card I51): Carol joins the group later and
+    // reads what is sent from then on; Bob leaves and stops receiving.
+    final carol = await owner.invite('carol');
+    addTearDown(carol.dispose);
+    await owner.state.addConversationMember(group.id, carol.accountId);
+    owner.expectOk();
+    await alice.waitUntil(() async => (await alice.epoch(group.id)) == 2,
+        timeout: const Duration(seconds: 60));
+    await carol.waitUntil(() async => (await carol.epoch(group.id)) == 2,
+        timeout: const Duration(seconds: 60));
+    expect(await alice.state.sendMessageTo(group.id, 'welcome carol'), isTrue);
+    await carol.waitFor(group.id, (m) => m.body == 'welcome carol');
+    await bob.waitFor(group.id, (m) => m.body == 'welcome carol');
+    expect(await carol.state.sendMessageTo(group.id, 'thanks'), isTrue);
+    await owner.waitFor(group.id, (m) => m.body == 'thanks');
+    // Carol sees nothing from before she joined.
+    expect((await carol.store.loadMessages(group.id)).map((m) => m.body),
+        isNot(contains('hello group')));
+
+    expect(await owner.state.removeConversationMember(group.id, bob.accountId),
+        isTrue);
+    await alice.waitUntil(() async => (await alice.epoch(group.id)) == 3,
+        timeout: const Duration(seconds: 60));
+    await carol.waitUntil(() async => (await carol.epoch(group.id)) == 3,
+        timeout: const Duration(seconds: 60));
+    expect(await alice.state.sendMessageTo(group.id, 'without bob'), isTrue);
+    await carol.waitFor(group.id, (m) => m.body == 'without bob');
+    await owner.waitFor(group.id, (m) => m.body == 'without bob');
+    expect((await bob.store.loadMessages(group.id)).map((m) => m.body),
+        isNot(contains('without bob')));
+
     // Restart: a new app instance on the same local data keeps history and
     // keeps decrypting.
     final restarted = await alice.restart();
@@ -242,6 +273,11 @@ class _DemoClient {
     }, timeout: timeout);
     return found!;
   }
+
+  Future<int?> epoch(String conversationId) async =>
+      (await (state.cryptoService as NativeCryptoService)
+              .groupEpoch(conversationId))
+          ?.epoch;
 
   void dispose() {
     state.sync?.dispose();

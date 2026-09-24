@@ -1339,3 +1339,86 @@ func TestSyncRecoveryResponses(t *testing.T) {
 		t.Fatalf("expired cursor status=%d body=%s", status, response)
 	}
 }
+
+// Card I51: commit bundles are ordered by epoch over HTTP, and group devices
+// learn which devices to add.
+func TestMLSCommitBundleRoutes(t *testing.T) {
+	handler, ownerToken, _ := newTestHandlerWithOwner(t)
+	memberToken, memberID := registerMemberWithID(t, handler, ownerToken, "bundlemember")
+	conversationID := createConversation(t, handler, ownerToken)
+	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+conversationID+"/members", ownerToken,
+		map[string]interface{}{"account_id": memberID})
+	if status != http.StatusCreated && status != http.StatusNoContent && status != http.StatusOK {
+		t.Fatalf("add member status=%d body=%s", status, response)
+	}
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/devices/me", memberToken, nil)
+	if status != http.StatusOK {
+		t.Fatalf("member devices status=%d body=%s", status, response)
+	}
+	var devices struct {
+		Devices []struct {
+			ID string `json:"id"`
+		} `json:"devices"`
+	}
+	if err := json.Unmarshal(response, &devices); err != nil || len(devices.Devices) != 1 {
+		t.Fatalf("decode devices: %v %s", err, response)
+	}
+	memberDevice := devices.Devices[0].ID
+
+	// The creator records the group with nobody added yet.
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+conversationID+"/mls/commits", ownerToken,
+		map[string]interface{}{"epoch": 0, "idempotency_key": "genesis"})
+	if status != http.StatusCreated || !bytes.Contains(response, []byte(`"epoch":0`)) {
+		t.Fatalf("genesis status=%d body=%s", status, response)
+	}
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/mls/pending-changes", ownerToken, nil)
+	if status != http.StatusOK || !bytes.Contains(response, []byte(memberDevice)) {
+		t.Fatalf("pending status=%d body=%s", status, response)
+	}
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+conversationID+"/key-packages/claim", ownerToken,
+		map[string]interface{}{"device_ids": []string{memberDevice}})
+	if status != http.StatusOK || !bytes.Contains(response, []byte(memberDevice)) {
+		t.Fatalf("claim status=%d body=%s", status, response)
+	}
+	bundle := map[string]interface{}{
+		"epoch": 0, "idempotency_key": "add-member",
+		"commit":  base64.StdEncoding.EncodeToString([]byte("commit")),
+		"welcome": base64.StdEncoding.EncodeToString([]byte("welcome")),
+		"added":   []map[string]string{{"account_id": memberID, "device_id": memberDevice}},
+	}
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+conversationID+"/mls/commits", ownerToken, bundle)
+	if status != http.StatusCreated || !bytes.Contains(response, []byte(`"epoch":1`)) {
+		t.Fatalf("commit status=%d body=%s", status, response)
+	}
+	status, _ = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+conversationID+"/mls/commits", ownerToken, bundle)
+	if status != http.StatusOK {
+		t.Fatalf("idempotent retry status=%d", status)
+	}
+	bundle["idempotency_key"] = "stale"
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+conversationID+"/mls/commits", memberToken, map[string]interface{}{
+		"epoch": 0, "idempotency_key": "stale", "commit": base64.StdEncoding.EncodeToString([]byte("c2")),
+		"removed": []map[string]string{{"account_id": memberID, "device_id": memberDevice}},
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("self-removal status=%d body=%s", status, response)
+	}
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+conversationID+"/mls/commits", ownerToken, map[string]interface{}{
+		"epoch": 0, "idempotency_key": "late", "commit": base64.StdEncoding.EncodeToString([]byte("c3")),
+		"removed": []map[string]string{{"account_id": memberID, "device_id": memberDevice}},
+	})
+	if status != http.StatusConflict || !bytes.Contains(response, []byte(`"mls_epoch_conflict"`)) || !bytes.Contains(response, []byte(`"epoch":1`)) {
+		t.Fatalf("stale commit status=%d body=%s", status, response)
+	}
+	// The single-message route no longer takes commits for this group.
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+conversationID+"/mls/messages", ownerToken, map[string]interface{}{
+		"kind": "commit", "idempotency_key": "old-route", "payload": base64.StdEncoding.EncodeToString([]byte("c")),
+	})
+	if status != http.StatusConflict || !bytes.Contains(response, []byte("mls_commit_bundle_required")) {
+		t.Fatalf("old route status=%d body=%s", status, response)
+	}
+	// The member device got its Welcome through sync.
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/sync/events?after=0&limit=100", memberToken, nil)
+	if status != http.StatusOK || !bytes.Contains(response, []byte(`"kind":"welcome"`)) {
+		t.Fatalf("member sync status=%d body=%s", status, response)
+	}
+}

@@ -217,6 +217,89 @@ impl MlsDevice {
         Ok(AddMemberMessages { commit, welcome })
     }
 
+    /// Stages one commit that adds and removes any number of devices (card
+    /// I51). The commit is not merged: the caller merges it only after the
+    /// server accepts it for this epoch, or clears it if another commit won,
+    /// so a rejected commit never forks local state.
+    pub fn stage_membership_commit(
+        &self,
+        group: &mut MlsGroup,
+        adds: &[MemberAdd<'_>],
+        removes: &[MemberIdentity<'_>],
+    ) -> Result<StagedCommitMessages, MlsError> {
+        if adds.is_empty() && removes.is_empty() {
+            return Err(MlsError::InvalidState);
+        }
+        if group.pending_commit().is_some() {
+            return Err(MlsError::InvalidState);
+        }
+        let mut key_packages = Vec::with_capacity(adds.len());
+        for add in adds {
+            let key_package = KeyPackageIn::tls_deserialize_exact(add.key_package)
+                .map_err(|_| MlsError::InvalidKeyPackage)?
+                .validate(self.provider.crypto(), ProtocolVersion::Mls10)
+                .map_err(|_| MlsError::InvalidKeyPackage)?;
+            let expected = encode_device_identity(add.account_id, add.device_id)?;
+            if key_package.leaf_node().credential().serialized_content() != expected {
+                return Err(MlsError::InvalidKeyPackage);
+            }
+            key_packages.push(key_package);
+        }
+        let mut removed = Vec::with_capacity(removes.len());
+        for member in removes {
+            removed.push(self.member_index(group, member.account_id, member.device_id)?);
+        }
+        let epoch = group.epoch().as_u64();
+        let bundle = group
+            .commit_builder()
+            .propose_adds(key_packages)
+            .propose_removals(removed)
+            .load_psks(self.provider.storage())
+            .map_err(|_| MlsError::GroupOperation)?
+            .build(
+                self.provider.rand(),
+                self.provider.crypto(),
+                &self.signer,
+                |_| true,
+            )
+            .map_err(|_| MlsError::GroupOperation)?
+            .stage_commit(&self.provider)
+            .map_err(|_| MlsError::GroupOperation)?;
+        let (commit, welcome, _) = bundle.into_messages();
+        let commit = commit
+            .tls_serialize_detached()
+            .map_err(|_| MlsError::GroupOperation)?;
+        let welcome = match welcome {
+            Some(welcome) => welcome
+                .tls_serialize_detached()
+                .map_err(|_| MlsError::GroupOperation)?,
+            None => Vec::new(),
+        };
+        if adds.is_empty() != welcome.is_empty() {
+            return Err(MlsError::GroupOperation);
+        }
+        Ok(StagedCommitMessages {
+            commit,
+            welcome,
+            epoch,
+        })
+    }
+
+    /// Drops a staged commit the server did not accept.
+    pub fn clear_pending_commit(&self, group: &mut MlsGroup) -> Result<(), MlsError> {
+        group
+            .clear_pending_commit(self.provider.storage())
+            .map_err(|_| MlsError::Storage)
+    }
+
+    pub fn has_pending_commit(&self, group: &MlsGroup) -> bool {
+        group.pending_commit().is_some()
+    }
+
+    pub fn group_epoch(&self, group: &MlsGroup) -> u64 {
+        group.epoch().as_u64()
+    }
+
     pub fn merge_pending_commit(&self, group: &mut MlsGroup) -> Result<(), MlsError> {
         group
             .merge_pending_commit(&self.provider)
@@ -436,6 +519,30 @@ pub struct AddMemberMessages {
     pub welcome: Vec<u8>,
 }
 
+/// One device to add in a staged membership commit.
+#[derive(Clone, Copy, Debug)]
+pub struct MemberAdd<'a> {
+    pub key_package: &'a [u8],
+    pub account_id: &'a [u8],
+    pub device_id: &'a [u8],
+}
+
+/// One device identity in the group.
+#[derive(Clone, Copy, Debug)]
+pub struct MemberIdentity<'a> {
+    pub account_id: &'a [u8],
+    pub device_id: &'a [u8],
+}
+
+/// A staged, unmerged commit. `welcome` is empty when nothing was added.
+/// `epoch` is the group epoch the commit was built on.
+#[derive(Debug, Eq, PartialEq)]
+pub struct StagedCommitMessages {
+    pub commit: Vec<u8>,
+    pub welcome: Vec<u8>,
+    pub epoch: u64,
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub struct EnrollmentCredential {
     pub key_package: Vec<u8>,
@@ -448,6 +555,10 @@ fn group_create_config() -> MlsGroupCreateConfig {
         .padding_size(PADDING_BYTES)
         .use_ratchet_tree_extension(true)
         .ciphersuite(CIPHERSUITE)
+        // After a membership change, a message sent in the previous epoch
+        // can still arrive after the commit (card I51). Two past epochs are
+        // kept for decryption only.
+        .max_past_epochs(2)
         .build()
 }
 
@@ -506,6 +617,205 @@ mod tests {
                 .unwrap(),
             b"bob payload"
         );
+    }
+
+    #[test]
+    fn staged_commit_adds_several_devices_with_one_welcome() {
+        let alice = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
+        let bob = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+        let bob_phone = MlsDevice::new(b"acct_bob", b"dev_bob_phone").unwrap();
+        let bob_kp = bob.create_key_package().unwrap();
+        let phone_kp = bob_phone.create_key_package().unwrap();
+        let mut alice_group = alice.create_group(b"conv_multi").unwrap();
+
+        let staged = alice
+            .stage_membership_commit(
+                &mut alice_group,
+                &[
+                    MemberAdd {
+                        key_package: &bob_kp,
+                        account_id: b"acct_bob",
+                        device_id: b"dev_bob",
+                    },
+                    MemberAdd {
+                        key_package: &phone_kp,
+                        account_id: b"acct_bob",
+                        device_id: b"dev_bob_phone",
+                    },
+                ],
+                &[],
+            )
+            .unwrap();
+        assert_eq!(staged.epoch, 0);
+        assert!(!staged.welcome.is_empty());
+        assert!(alice.has_pending_commit(&alice_group));
+        // Not merged yet: the epoch has not moved.
+        assert_eq!(alice.group_epoch(&alice_group), 0);
+        // A second change cannot be staged on top of the first.
+        assert_eq!(
+            alice.stage_membership_commit(
+                &mut alice_group,
+                &[],
+                &[MemberIdentity {
+                    account_id: b"acct_bob",
+                    device_id: b"dev_bob",
+                }],
+            ),
+            Err(MlsError::InvalidState)
+        );
+
+        alice.merge_pending_commit(&mut alice_group).unwrap();
+        assert_eq!(alice.group_epoch(&alice_group), 1);
+        let mut bob_group = bob.join_group(b"conv_multi", &staged.welcome).unwrap();
+        let mut phone_group = bob_phone
+            .join_group(b"conv_multi", &staged.welcome)
+            .unwrap();
+        let hello = alice.encrypt(&mut alice_group, b"hello both").unwrap();
+        assert_eq!(
+            bob.decrypt(&mut bob_group, &hello, b"acct_alice", b"dev_alice")
+                .unwrap(),
+            b"hello both"
+        );
+        assert_eq!(
+            bob_phone
+                .decrypt(&mut phone_group, &hello, b"acct_alice", b"dev_alice")
+                .unwrap(),
+            b"hello both"
+        );
+
+        // A removal is one more staged commit that the others process.
+        let removal = alice
+            .stage_membership_commit(
+                &mut alice_group,
+                &[],
+                &[MemberIdentity {
+                    account_id: b"acct_bob",
+                    device_id: b"dev_bob_phone",
+                }],
+            )
+            .unwrap();
+        assert!(removal.welcome.is_empty());
+        assert_eq!(removal.epoch, 1);
+        alice.merge_pending_commit(&mut alice_group).unwrap();
+        bob.process_commit(&mut bob_group, &removal.commit).unwrap();
+        let after = alice.encrypt(&mut alice_group, b"without phone").unwrap();
+        assert_eq!(
+            bob.decrypt(&mut bob_group, &after, b"acct_alice", b"dev_alice")
+                .unwrap(),
+            b"without phone"
+        );
+    }
+
+    #[test]
+    fn a_refused_staged_commit_is_cleared_without_forking() {
+        let alice = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
+        let bob = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+        let carol = MlsDevice::new(b"acct_carol", b"dev_carol").unwrap();
+        let dave = MlsDevice::new(b"acct_dave", b"dev_dave").unwrap();
+        let mut alice_group = alice.create_group(b"conv_race").unwrap();
+        let add = alice
+            .add_member(
+                &mut alice_group,
+                &bob.create_key_package().unwrap(),
+                b"acct_bob",
+                b"dev_bob",
+            )
+            .unwrap();
+        alice.merge_pending_commit(&mut alice_group).unwrap();
+        let mut bob_group = bob.join_group(b"conv_race", &add.welcome).unwrap();
+
+        // Both stage a commit on epoch 1; the server accepts Alice's.
+        let carol_kp = carol.create_key_package().unwrap();
+        let alice_commit = alice
+            .stage_membership_commit(
+                &mut alice_group,
+                &[MemberAdd {
+                    key_package: &carol_kp,
+                    account_id: b"acct_carol",
+                    device_id: b"dev_carol",
+                }],
+                &[],
+            )
+            .unwrap();
+        let dave_kp = dave.create_key_package().unwrap();
+        let bob_commit = bob
+            .stage_membership_commit(
+                &mut bob_group,
+                &[MemberAdd {
+                    key_package: &dave_kp,
+                    account_id: b"acct_dave",
+                    device_id: b"dev_dave",
+                }],
+                &[],
+            )
+            .unwrap();
+        assert_eq!(alice_commit.epoch, bob_commit.epoch);
+        alice.merge_pending_commit(&mut alice_group).unwrap();
+
+        // Bob's is refused: he clears it and applies Alice's commit.
+        bob.clear_pending_commit(&mut bob_group).unwrap();
+        assert!(!bob.has_pending_commit(&bob_group));
+        bob.process_commit(&mut bob_group, &alice_commit.commit)
+            .unwrap();
+        assert_eq!(bob.group_epoch(&bob_group), 2);
+        let mut carol_group = carol
+            .join_group(b"conv_race", &alice_commit.welcome)
+            .unwrap();
+        let message = bob.encrypt(&mut bob_group, b"still one group").unwrap();
+        assert_eq!(
+            alice
+                .decrypt(&mut alice_group, &message, b"acct_bob", b"dev_bob")
+                .unwrap(),
+            b"still one group"
+        );
+        let again = bob.encrypt(&mut bob_group, b"and carol").unwrap();
+        assert_eq!(
+            carol
+                .decrypt(&mut carol_group, &again, b"acct_bob", b"dev_bob")
+                .unwrap(),
+            b"and carol"
+        );
+    }
+
+    #[test]
+    fn a_message_from_the_previous_epoch_still_decrypts() {
+        let alice = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
+        let bob = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+        let carol = MlsDevice::new(b"acct_carol", b"dev_carol").unwrap();
+        let mut alice_group = alice.create_group(b"conv_past").unwrap();
+        let add = alice
+            .add_member(
+                &mut alice_group,
+                &bob.create_key_package().unwrap(),
+                b"acct_bob",
+                b"dev_bob",
+            )
+            .unwrap();
+        alice.merge_pending_commit(&mut alice_group).unwrap();
+        let mut bob_group = bob.join_group(b"conv_past", &add.welcome).unwrap();
+
+        // Bob sends before he has seen Alice's next commit.
+        let late = bob.encrypt(&mut bob_group, b"sent at epoch 1").unwrap();
+        let carol_kp = carol.create_key_package().unwrap();
+        let staged = alice
+            .stage_membership_commit(
+                &mut alice_group,
+                &[MemberAdd {
+                    key_package: &carol_kp,
+                    account_id: b"acct_carol",
+                    device_id: b"dev_carol",
+                }],
+                &[],
+            )
+            .unwrap();
+        alice.merge_pending_commit(&mut alice_group).unwrap();
+        assert_eq!(
+            alice
+                .decrypt(&mut alice_group, &late, b"acct_bob", b"dev_bob")
+                .unwrap(),
+            b"sent at epoch 1"
+        );
+        bob.process_commit(&mut bob_group, &staged.commit).unwrap();
     }
 
     #[test]

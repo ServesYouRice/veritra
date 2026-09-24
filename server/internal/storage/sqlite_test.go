@@ -554,7 +554,7 @@ func TestMessageMarkersSyncSearchExportAndMembershipGuards(t *testing.T) {
 	if err != nil {
 		t.Fatalf("save sync event: %v", err)
 	}
-	events, err := store.ListSyncEvents(ctx, member.Account.ID, 0, 10)
+	events, err := store.ListSyncEvents(ctx, member.Account.ID, member.Device.ID, 0, 10)
 	if err != nil {
 		t.Fatalf("list sync events: %v", err)
 	}

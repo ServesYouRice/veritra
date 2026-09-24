@@ -1,6 +1,6 @@
 use crate::{
     attachment,
-    mls::{MlsDevice, MlsError},
+    mls::{MemberAdd, MemberIdentity, MlsDevice, MlsError},
     PmByteSlice,
 };
 use core::ptr;
@@ -25,6 +25,8 @@ const MAX_KEY_PACKAGE_BYTES: usize = 48 * 1024;
 const MAX_HANDSHAKE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 const ATTACHMENT_KEY_BYTES: usize = 32;
+const MEMBERSHIP_CHANGES_VERSION: u8 = 1;
+const MAX_MEMBERSHIP_CHANGES: usize = 256;
 const ATTACHMENT_NONCE_PREFIX_BYTES: usize = 8;
 
 /// Opaque, library-owned device state. Callers receive only a pointer and must
@@ -491,6 +493,231 @@ pub unsafe extern "C" fn pm_crypto_group_add_member(
     })
 }
 
+/// Parsed form of the membership change list passed to
+/// [`pm_crypto_group_stage_commit`]:
+///
+/// ```text
+/// version:u8 (=1) add_count:u16 { kp_len:u32 kp account_len:u16 account
+///   device_len:u16 device }* remove_count:u16 { account_len:u16 account
+///   device_len:u16 device }*
+/// ```
+///
+/// All integers are big-endian. Trailing bytes are rejected.
+struct MembershipChanges<'a> {
+    adds: Vec<MemberAdd<'a>>,
+    removes: Vec<MemberIdentity<'a>>,
+}
+
+fn parse_membership_changes(input: &[u8]) -> Result<MembershipChanges<'_>, i32> {
+    struct Reader<'a> {
+        input: &'a [u8],
+        offset: usize,
+    }
+    impl<'a> Reader<'a> {
+        fn take(&mut self, len: usize) -> Result<&'a [u8], i32> {
+            let end = self
+                .offset
+                .checked_add(len)
+                .ok_or(PM_CRYPTO_INVALID_ARGUMENT)?;
+            let value = self
+                .input
+                .get(self.offset..end)
+                .ok_or(PM_CRYPTO_INVALID_ARGUMENT)?;
+            self.offset = end;
+            Ok(value)
+        }
+        fn u16(&mut self) -> Result<usize, i32> {
+            let bytes = self.take(2)?;
+            Ok(u16::from_be_bytes([bytes[0], bytes[1]]) as usize)
+        }
+        fn u32(&mut self) -> Result<usize, i32> {
+            let bytes = self.take(4)?;
+            Ok(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize)
+        }
+        fn id(&mut self) -> Result<&'a [u8], i32> {
+            let len = self.u16()?;
+            if len == 0 || len > MAX_ID_BYTES {
+                return Err(PM_CRYPTO_INVALID_ARGUMENT);
+            }
+            self.take(len)
+        }
+    }
+    let mut reader = Reader { input, offset: 0 };
+    if reader.take(1)?[0] != MEMBERSHIP_CHANGES_VERSION {
+        return Err(PM_CRYPTO_INVALID_ARGUMENT);
+    }
+    let add_count = reader.u16()?;
+    if add_count > MAX_MEMBERSHIP_CHANGES {
+        return Err(PM_CRYPTO_INVALID_ARGUMENT);
+    }
+    let mut adds = Vec::with_capacity(add_count);
+    for _ in 0..add_count {
+        let kp_len = reader.u32()?;
+        if kp_len == 0 || kp_len > MAX_KEY_PACKAGE_BYTES {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let key_package = reader.take(kp_len)?;
+        let account_id = reader.id()?;
+        let device_id = reader.id()?;
+        adds.push(MemberAdd {
+            key_package,
+            account_id,
+            device_id,
+        });
+    }
+    let remove_count = reader.u16()?;
+    if remove_count > MAX_MEMBERSHIP_CHANGES || add_count + remove_count == 0 {
+        return Err(PM_CRYPTO_INVALID_ARGUMENT);
+    }
+    let mut removes = Vec::with_capacity(remove_count);
+    for _ in 0..remove_count {
+        let account_id = reader.id()?;
+        let device_id = reader.id()?;
+        removes.push(MemberIdentity {
+            account_id,
+            device_id,
+        });
+    }
+    if reader.offset != input.len() {
+        return Err(PM_CRYPTO_INVALID_ARGUMENT);
+    }
+    Ok(MembershipChanges { adds, removes })
+}
+
+/// Stages one commit adding and removing devices, without merging it (ABI
+/// 6, card I51). `out_welcome` is empty (null, 0) when nothing is added.
+/// `out_epoch` receives the epoch the commit was built on. The caller merges
+/// with [`pm_crypto_group_merge_pending_commit`] once the server accepts the
+/// commit, or drops it with [`pm_crypto_group_clear_pending_commit`].
+///
+/// # Safety
+/// `handle` must be live, slices readable, and all outputs writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_group_stage_commit(
+    handle: *mut PmCryptoHandle,
+    group_id: PmByteSlice,
+    changes: PmByteSlice,
+    out_commit: *mut PmOwnedBuffer,
+    out_welcome: *mut PmOwnedBuffer,
+    out_epoch: *mut u64,
+) -> i32 {
+    ffi_call(|| {
+        if out_commit.is_null() || out_welcome.is_null() || out_epoch.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let group_id = unsafe { borrowed(group_id, MAX_ID_BYTES)? };
+        let changes = unsafe { borrowed(changes, MAX_HANDSHAKE_BYTES)? };
+        let changes = parse_membership_changes(changes)?;
+        let staged = unsafe {
+            with_device(handle, |device| {
+                let mut group = device.load_group(group_id).map_err(|_| PM_CRYPTO_ERROR)?;
+                device
+                    .stage_membership_commit(&mut group, &changes.adds, &changes.removes)
+                    .map_err(|_| PM_CRYPTO_ERROR)
+            })?
+        };
+        if staged.commit.is_empty() {
+            return Err(PM_CRYPTO_ERROR);
+        }
+        let welcome = if staged.welcome.is_empty() {
+            PmOwnedBuffer::default()
+        } else {
+            let boxed = staged.welcome.into_boxed_slice();
+            PmOwnedBuffer {
+                len: boxed.len(),
+                data: Box::into_raw(boxed).cast::<u8>(),
+            }
+        };
+        unsafe {
+            output(out_commit, staged.commit)?;
+            out_welcome.write(welcome);
+            out_epoch.write(staged.epoch);
+        }
+        Ok(())
+    })
+}
+
+/// Merges this device's staged commit after the server accepted it. A group
+/// without a staged commit is left as it is; the caller checks the epoch.
+///
+/// # Safety
+/// `handle` must be live and `group_id` readable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_group_merge_pending_commit(
+    handle: *mut PmCryptoHandle,
+    group_id: PmByteSlice,
+) -> i32 {
+    ffi_call(|| {
+        let group_id = unsafe { borrowed(group_id, MAX_ID_BYTES)? };
+        unsafe {
+            with_device(handle, |device| {
+                let mut group = device.load_group(group_id).map_err(|_| PM_CRYPTO_ERROR)?;
+                if !device.has_pending_commit(&group) {
+                    return Ok(());
+                }
+                device
+                    .merge_pending_commit(&mut group)
+                    .map_err(|_| PM_CRYPTO_ERROR)
+            })
+        }
+    })
+}
+
+/// Drops this device's staged commit after the server refused it.
+///
+/// # Safety
+/// `handle` must be live and `group_id` readable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_group_clear_pending_commit(
+    handle: *mut PmCryptoHandle,
+    group_id: PmByteSlice,
+) -> i32 {
+    ffi_call(|| {
+        let group_id = unsafe { borrowed(group_id, MAX_ID_BYTES)? };
+        unsafe {
+            with_device(handle, |device| {
+                let mut group = device.load_group(group_id).map_err(|_| PM_CRYPTO_ERROR)?;
+                device
+                    .clear_pending_commit(&mut group)
+                    .map_err(|_| PM_CRYPTO_ERROR)
+            })
+        }
+    })
+}
+
+/// Reports the group's current epoch and whether a staged commit waits.
+///
+/// # Safety
+/// `handle` must be live, `group_id` readable, and both outputs writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_group_epoch(
+    handle: *mut PmCryptoHandle,
+    group_id: PmByteSlice,
+    out_epoch: *mut u64,
+    out_pending: *mut u8,
+) -> i32 {
+    ffi_call(|| {
+        if out_epoch.is_null() || out_pending.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let group_id = unsafe { borrowed(group_id, MAX_ID_BYTES)? };
+        let (epoch, pending) = unsafe {
+            with_device(handle, |device| {
+                let group = device.load_group(group_id).map_err(|_| PM_CRYPTO_ERROR)?;
+                Ok((
+                    device.group_epoch(&group),
+                    device.has_pending_commit(&group),
+                ))
+            })?
+        };
+        unsafe {
+            out_epoch.write(epoch);
+            out_pending.write(u8::from(pending));
+        }
+        Ok(())
+    })
+}
+
 /// Applies and persists a remote MLS commit.
 ///
 /// # Safety
@@ -728,6 +955,36 @@ pub unsafe extern "C" fn pm_crypto_attachment_decrypt_chunk(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn membership_change_lists_are_bounded_and_exact() {
+        let mut valid = vec![1u8, 0, 1];
+        valid.extend_from_slice(&3u32.to_be_bytes());
+        valid.extend_from_slice(b"kp!");
+        valid.extend_from_slice(&[0, 1, b'a', 0, 1, b'd']);
+        valid.extend_from_slice(&[0, 1]);
+        valid.extend_from_slice(&[0, 1, b'b', 0, 1, b'e']);
+        let parsed = super::parse_membership_changes(&valid).unwrap();
+        assert_eq!(parsed.adds.len(), 1);
+        assert_eq!(parsed.adds[0].key_package, b"kp!");
+        assert_eq!(parsed.removes[0].device_id, b"e");
+
+        let mut trailing = valid.clone();
+        trailing.push(0);
+        assert!(super::parse_membership_changes(&trailing).is_err());
+        assert!(super::parse_membership_changes(&valid[..valid.len() - 1]).is_err());
+        assert!(super::parse_membership_changes(&[2, 0, 0, 0, 0]).is_err());
+        // Nothing to change.
+        assert!(super::parse_membership_changes(&[1, 0, 0, 0, 0]).is_err());
+        // Empty identity.
+        let mut empty_id = vec![1u8, 0, 0, 0, 1];
+        empty_id.extend_from_slice(&[0, 0, 0, 1, b'x']);
+        assert!(super::parse_membership_changes(&empty_id).is_err());
+        // A huge declared key package length cannot overflow.
+        let mut huge = vec![1u8, 0, 1];
+        huge.extend_from_slice(&u32::MAX.to_be_bytes());
+        assert!(super::parse_membership_changes(&huge).is_err());
+    }
+
     use super::*;
 
     fn slice(bytes: &[u8]) -> PmByteSlice {

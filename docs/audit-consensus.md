@@ -606,6 +606,40 @@ backup/recovery UI instead of a dead “Coming soon” item.
 archive, missing blob, permission failure and process death leave the original
 instance recoverable; a clean-host restore and mobile recovery flow pass.
 
+### I51 - MLS membership after creation and linked devices
+
+**Decision:** New card from the 2026-09-24 demo plan (D10, D24). **High,
+release blocker. Depends on I30 and I34.** Groups must accept new members and
+newly linked devices after creation and drop the devices of members who
+leave, without forking a group, stalling sync or delivering what a device
+cannot decrypt.
+
+**Accept when:** a member added after creation and a newly linked device join
+and read messages sent from then on; removed members stop receiving; two
+devices committing at once never fork the group; a joining device never
+receives events from before its join, and a Welcome reaches only its device.
+
+**Implementation note (Stage 5, 2026-09-24, D28):** Advisor review rejected a
+lease design because native add/remove merged commits before the server
+answered. Adopted instead: ABI v6 staged commits (merge after acceptance,
+clear after refusal), a server epoch compare-and-swap on atomic commit
+bundles (`POST /api/v1/conversations/{id}/mls/commits`, `409
+mls_epoch_conflict`), a per-group device roster with join cursor and joined
+epoch (migration 0029), device-scoped Welcome events, `GET
+/api/v1/mls/pending-changes` with a coordinator hint, and per-device key
+package claims (`device_ids`). Clients reconcile after each clean catch-up;
+an epoch conflict drops the staged commit and retries after catching up
+instead of pausing the conversation. Envelopes carry `mls_epoch` so late
+older-epoch messages are withheld from devices that joined after them.
+Revocation coordination and confirmation are limited to group devices. The
+old single-message route refuses commits and Welcomes for rostered groups;
+groups created earlier stay unfiltered and cannot change membership. Also
+fixed: MLS Welcome events were visible to every device of the recipient
+account. Checks: Rust tests (including a two-committer race), native service
+tests, `go test ./...` (store and HTTP bundle tests), `flutter test`, and the
+live demo e2e test, which now adds a member to an existing group and removes
+another.
+
 ## Prepared follow-up packages
 
 These are valid work, but the next implementation run should finish the Ready

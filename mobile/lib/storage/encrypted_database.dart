@@ -815,9 +815,16 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     List<MessageEffect> messageEffects = const <MessageEffect>[],
     MlsCommitFailureInjector? failureInjector,
     String? leaseKey,
+    String? resolvedMlsOutboxKey,
   }) =>
       transaction(() async {
         await _assertSyncLeaseInTransaction(leaseKey);
+        if (resolvedMlsOutboxKey != null) {
+          await (delete(localMlsOutboxEntries)
+                ..where((table) =>
+                    table.idempotencyKey.equals(resolvedMlsOutboxKey)))
+              .go();
+        }
         final processed = await (select(localMlsTransitions)
               ..where((table) => table.messageId.equals(messageId)))
             .getSingleOrNull();
@@ -1114,6 +1121,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required List<int> stateKey,
     required List<int> sealedState,
     String? leaseKey,
+    String? resolvedMlsOutboxKey,
   }) =>
       transaction(() async {
         await _assertSyncLeaseInTransaction(leaseKey);
@@ -1136,6 +1144,12 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             sealedState: Uint8List.fromList(sealedState),
           ),
         );
+        if (resolvedMlsOutboxKey != null) {
+          await (delete(localMlsOutboxEntries)
+                ..where((table) =>
+                    table.idempotencyKey.equals(resolvedMlsOutboxKey)))
+              .go();
+        }
       });
 
   Future<

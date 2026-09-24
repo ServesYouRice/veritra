@@ -172,6 +172,7 @@ independent reviews until all three phases are done"):
   reset, delete or expiry, never by a cache refresh.
 - **D24:** Demo topology until I51 lands: one device per account and fixed
   group membership; demo builds hide "Add member" and "Link device".
+  **Superseded by D28 on 2026-09-24**: both are shown again.
 - **D25:** Decryption binds the MLS sender credential to the envelope's sender
   account and device (native ABI v5). A mismatch commits an "unverifiable"
   tombstone instead of stalling sync.
@@ -179,6 +180,19 @@ independent reviews until all three phases are done"):
   Service; reviewed in Stage 6. Never generate a new database key while the
   database file exists.
 - **D27:** Encrypted backups include decrypted history (implemented in I45).
+- **D28 (Stage 5, 2026-09-24, after the required advisor review):** MLS
+  membership changes use staged, unmerged commits and server epoch ordering.
+  A commit, its Welcome and the roster change travel as one bundle that the
+  server accepts only on the group's current epoch; the sender merges after
+  acceptance and drops the staged commit after a refusal. The server tracks
+  each group's device roster with a join cursor (the add commit's event and
+  the first readable epoch) and delivers encrypted events only inside it.
+  Group devices add member devices that are missing (new members, linked
+  devices) and remove devices of accounts that left, one commit per group; a
+  coordinator device acts first and the others after three minutes. Native
+  ABI v6 adds the staged-commit functions; groups keep two past epochs.
+  Groups created before this change keep working but cannot change
+  membership (recreate them).
 - The crypto surface (ABI v5, payload semantics, local schema v7) freezes after
   Stage 1, with a change log kept for the eventual G25 reviewer (in
   [`crypto.md`](crypto.md); local schema is v8 since I34).
@@ -216,7 +230,7 @@ task boundaries and orchestration rules are in
 | I48 | Prepared | Transport, realtime and logging hardening | I32 |
 | I49 | Measure, then split | Performance and architecture work | correctness cards |
 | I50 | Deferred | Product and ecosystem backlog | D06 / mobile release |
-| I51 | New 2026-09-24, prepared | MLS membership changes after creation, linked devices, per-device key-package claims, join cursor, epoch-ordered commits | I30, I34 |
+| I51 | Implemented and checked (Stage 5, 2026-09-24, D28) | MLS membership changes after creation, linked devices, per-device key-package claims, join cursor, epoch-ordered commits | I30, I34 |
 
 No audit-derived implementation is complete merely because it appears in this
 table. Claim one eligible task under the Ready card, confirm its source paths
@@ -386,7 +400,8 @@ and file, remediation revision, reviewer retest, and residual-risk decision.
 - MLS 1.0 through OpenMLS 0.9.0 using
   `MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519`.
 - Application marker `mls10-openmls-v1`; the server rejects other markers.
-- Native ABI v5 (sender binding, D25) in `crypto/rust/include/veritra_crypto.h`.
+- Native ABI v6 (sender binding D25, staged membership commits D28) in
+  `crypto/rust/include/veritra_crypto.h`.
 - Credentials bind length-prefixed account/device identity and the MLS
   signature key. Key packages are checked against the expected account/device.
 - Local state uses SQLite3MC ChaCha20 with a random 256-bit key in platform

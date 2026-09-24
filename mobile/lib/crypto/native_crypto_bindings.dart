@@ -122,6 +122,24 @@ typedef _RemoveMemberNative = Int32 Function(Pointer<_PmCryptoHandle>,
     _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
 typedef _RemoveMemberDart = int Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
     _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _StageCommitNative = Int32 Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<Uint64>);
+typedef _StageCommitDart = int Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<Uint64>);
+typedef _GroupEpochNative = Int32 Function(
+    Pointer<_PmCryptoHandle>, _PmByteSlice, Pointer<Uint64>, Pointer<Uint8>);
+typedef _GroupEpochDart = int Function(
+    Pointer<_PmCryptoHandle>, _PmByteSlice, Pointer<Uint64>, Pointer<Uint8>);
 typedef _DecryptNative = Int32 Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
     _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
 typedef _DecryptDart = int Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
@@ -184,6 +202,18 @@ class NativeCryptoBindings {
         _groupRemove =
             library.lookupFunction<_RemoveMemberNative, _RemoveMemberDart>(
                 'pm_crypto_group_remove_member'),
+        _groupStageCommit =
+            library.lookupFunction<_StageCommitNative, _StageCommitDart>(
+                'pm_crypto_group_stage_commit'),
+        _groupMergePending =
+            library.lookupFunction<_HandleSliceNative, _HandleSliceDart>(
+                'pm_crypto_group_merge_pending_commit'),
+        _groupClearPending =
+            library.lookupFunction<_HandleSliceNative, _HandleSliceDart>(
+                'pm_crypto_group_clear_pending_commit'),
+        _groupEpoch =
+            library.lookupFunction<_GroupEpochNative, _GroupEpochDart>(
+                'pm_crypto_group_epoch'),
         _groupEncrypt = library.lookupFunction<_HandleTwoSlicesOutputNative,
             _HandleTwoSlicesOutputDart>('pm_crypto_group_encrypt'),
         _groupDecrypt = library.lookupFunction<_DecryptNative, _DecryptDart>(
@@ -192,7 +222,7 @@ class NativeCryptoBindings {
             _AttachmentChunkDart>('pm_crypto_attachment_encrypt_chunk'),
         _attachmentDecrypt = library.lookupFunction<_AttachmentChunkNative,
             _AttachmentChunkDart>('pm_crypto_attachment_decrypt_chunk') {
-    if (_abiVersion() != 5) {
+    if (_abiVersion() != 6) {
       throw const NativeCryptoException(NativeCryptoError.abiMismatch);
     }
     _deviceFinalizer = NativeFinalizer(library
@@ -220,6 +250,10 @@ class NativeCryptoBindings {
   final _HandleSliceOutputDart _groupUpdate;
   final _HandleSliceTwoOutputsDart _groupSafety;
   final _RemoveMemberDart _groupRemove;
+  final _StageCommitDart _groupStageCommit;
+  final _HandleSliceDart _groupMergePending;
+  final _HandleSliceDart _groupClearPending;
+  final _GroupEpochDart _groupEpoch;
   final _HandleTwoSlicesOutputDart _groupEncrypt;
   final _DecryptDart _groupDecrypt;
   final _AttachmentChunkDart _attachmentEncrypt;
@@ -642,6 +676,83 @@ class NativeCryptoDevice implements Finalizable {
     });
   }
 
+  /// Stages one unmerged commit adding [adds] and removing [removes]
+  /// (ABI 6). [welcome] is empty when nothing is added; [epoch] is the epoch
+  /// the commit was built on.
+  ({List<int> commit, List<int> welcome, int epoch}) stageCommit(
+    String groupId, {
+    List<({List<int> keyPackage, String accountId, String deviceId})> adds =
+        const [],
+    List<({String accountId, String deviceId})> removes = const [],
+  }) {
+    _bindings._bounded(groupId.codeUnits, 128);
+    final changes = encodeMembershipChanges(adds: adds, removes: removes);
+    return _bindings._withByteLists([groupId.codeUnits, changes], (slices) {
+      final commit = calloc<_PmOwnedBuffer>();
+      final welcome = calloc<_PmOwnedBuffer>();
+      final epoch = calloc<Uint64>();
+      try {
+        _bindings._check(_bindings._groupStageCommit(
+            _liveHandle, slices[0], slices[1], commit, welcome, epoch));
+        final commitBytes = _bindings._take(commit.ref);
+        commit.ref
+          ..data = nullptr
+          ..len = 0;
+        final List<int> welcomeBytes;
+        if (welcome.ref.data == nullptr) {
+          welcomeBytes = const <int>[];
+        } else {
+          welcomeBytes = _bindings._take(welcome.ref);
+          welcome.ref
+            ..data = nullptr
+            ..len = 0;
+        }
+        if (adds.isEmpty != welcomeBytes.isEmpty) {
+          throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+        }
+        return (commit: commitBytes, welcome: welcomeBytes, epoch: epoch.value);
+      } finally {
+        if (commit.ref.data != nullptr) _bindings._bufferFree(commit.ref);
+        if (welcome.ref.data != nullptr) _bindings._bufferFree(welcome.ref);
+        calloc.free(commit);
+        calloc.free(welcome);
+        calloc.free(epoch);
+      }
+    });
+  }
+
+  void mergePendingCommit(String groupId) {
+    _bindings._bounded(groupId.codeUnits, 128);
+    _bindings._withSlice(
+        Uint8List.fromList(groupId.codeUnits),
+        (group) =>
+            _bindings._check(_bindings._groupMergePending(_liveHandle, group)));
+  }
+
+  void clearPendingCommit(String groupId) {
+    _bindings._bounded(groupId.codeUnits, 128);
+    _bindings._withSlice(
+        Uint8List.fromList(groupId.codeUnits),
+        (group) =>
+            _bindings._check(_bindings._groupClearPending(_liveHandle, group)));
+  }
+
+  ({int epoch, bool pending}) groupEpoch(String groupId) {
+    _bindings._bounded(groupId.codeUnits, 128);
+    return _bindings._withSlice(Uint8List.fromList(groupId.codeUnits), (group) {
+      final epoch = calloc<Uint64>();
+      final pending = calloc<Uint8>();
+      try {
+        _bindings
+            ._check(_bindings._groupEpoch(_liveHandle, group, epoch, pending));
+        return (epoch: epoch.value, pending: pending.value != 0);
+      } finally {
+        calloc.free(epoch);
+        calloc.free(pending);
+      }
+    });
+  }
+
   void processCommit(String groupId, List<int> commit) {
     _bindings._bounded(groupId.codeUnits, 128);
     _bindings._bounded(commit, 4 * 1024 * 1024);
@@ -737,4 +848,51 @@ class NativeCryptoDevice implements Finalizable {
     _bindings._deviceDestroy(_handle);
     _handle = nullptr;
   }
+}
+
+/// Encodes the change list of `pm_crypto_group_stage_commit` (ABI 6).
+List<int> encodeMembershipChanges({
+  required List<({List<int> keyPackage, String accountId, String deviceId})>
+      adds,
+  required List<({String accountId, String deviceId})> removes,
+}) {
+  if (adds.isEmpty && removes.isEmpty) {
+    throw ArgumentError('a commit needs at least one change');
+  }
+  if (adds.length > 256 || removes.length > 256) {
+    throw ArgumentError('too many membership changes');
+  }
+  final out = BytesBuilder(copy: false)..addByte(1);
+  void u16(int value) => out.add(<int>[(value >> 8) & 0xff, value & 0xff]);
+  void id(String value) {
+    final bytes = utf8.encode(value);
+    if (bytes.isEmpty || bytes.length > 128) {
+      throw ArgumentError('invalid identity in membership change');
+    }
+    u16(bytes.length);
+    out.add(bytes);
+  }
+
+  u16(adds.length);
+  for (final add in adds) {
+    final length = add.keyPackage.length;
+    if (length == 0 || length > 48 * 1024) {
+      throw ArgumentError('invalid key package in membership change');
+    }
+    out.add(<int>[
+      (length >> 24) & 0xff,
+      (length >> 16) & 0xff,
+      (length >> 8) & 0xff,
+      length & 0xff,
+    ]);
+    out.add(add.keyPackage);
+    id(add.accountId);
+    id(add.deviceId);
+  }
+  u16(removes.length);
+  for (final remove in removes) {
+    id(remove.accountId);
+    id(remove.deviceId);
+  }
+  return out.takeBytes();
 }

@@ -88,6 +88,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/conversations", a.withAuth(a.listConversations))
 	mux.HandleFunc("POST /api/v1/conversations/{id}/key-packages/claim", a.withAuth(a.claimConversationKeyPackages))
 	mux.HandleFunc("POST /api/v1/conversations/{id}/mls/messages", a.withAuth(a.createMLSMessage))
+	mux.HandleFunc("POST /api/v1/conversations/{id}/mls/commits", a.withAuth(a.createMLSCommitBundle))
+	mux.HandleFunc("GET /api/v1/mls/pending-changes", a.withAuth(a.listMLSPendingChanges))
 	mux.HandleFunc("GET /api/v1/mls/messages", a.withAuth(a.listMLSMessages))
 	mux.HandleFunc("GET /api/v1/mls/messages/{id}", a.withAuth(a.getMLSMessage))
 	mux.HandleFunc("GET /api/v1/mls/revocations", a.withAuth(a.listMLSRevocations))
@@ -405,6 +407,14 @@ func handleStorageError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not_found")
 	case errors.Is(err, storage.ErrMessageExpired):
 		writeError(w, http.StatusGone, "message_expired")
+	case errors.Is(err, storage.ErrMLSEpochConflict):
+		writeError(w, http.StatusConflict, "mls_epoch_conflict")
+	case errors.Is(err, storage.ErrMLSGroupLegacy):
+		writeError(w, http.StatusConflict, "mls_group_legacy")
+	case errors.Is(err, storage.ErrMLSBundleRequired):
+		writeError(w, http.StatusConflict, "mls_commit_bundle_required")
+	case errors.Is(err, storage.ErrMLSNotInGroup):
+		writeError(w, http.StatusForbidden, "mls_not_in_group")
 	case errors.Is(err, storage.ErrInvalidInput):
 		writeError(w, http.StatusBadRequest, "invalid_input")
 	case errors.Is(err, storage.ErrLastOwner):
