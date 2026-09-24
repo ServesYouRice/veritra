@@ -204,6 +204,10 @@ class LocalMlsOutboxEntries extends Table {
   BlobColumn get payload => blob()();
   IntColumn get stateCounter => integer()();
   IntColumn get queuedAt => integer()();
+  IntColumn get attemptCount => integer().withDefault(const Constant(0))();
+  IntColumn get nextAttemptAt => integer().nullable()();
+  TextColumn get failureClass => text().nullable()();
+  BoolColumn get terminal => boolean().withDefault(const Constant(false))();
 
   @override
   Set<Column<Object>> get primaryKey => {idempotencyKey};
@@ -268,9 +272,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
 
   static const outboxDraftPrefix = 'outbox.draft.';
   static const syncLeaseName = 'sync.owner.lease';
+  static const syncRecoveryName = 'sync.recovery';
+  static const lastBackupName = 'backup.last_created_at';
 
   @override
-  int get schemaVersion => 7;
+  int get schemaVersion => 8;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -310,6 +316,17 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             await migrator.createTable(localMessages);
             await migrator.createTable(localMessageReactions);
           }
+          if (from < 8) {
+            // Durable delivery state for MLS control messages (I34).
+            await migrator.addColumn(
+                localMlsOutboxEntries, localMlsOutboxEntries.attemptCount);
+            await migrator.addColumn(
+                localMlsOutboxEntries, localMlsOutboxEntries.nextAttemptAt);
+            await migrator.addColumn(
+                localMlsOutboxEntries, localMlsOutboxEntries.failureClass);
+            await migrator.addColumn(
+                localMlsOutboxEntries, localMlsOutboxEntries.terminal);
+          }
         },
         beforeOpen: (details) async {
           await customStatement('PRAGMA foreign_keys = ON');
@@ -334,7 +351,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           await customStatement('DELETE FROM local_metadata WHERE name LIKE ?',
               <Object?>['$outboxDraftPrefix%']);
           await (delete(localMetadata)
-                ..where((table) => table.name.equals(syncLeaseName)))
+                ..where((table) => table.name.isIn(<String>[
+                      syncLeaseName,
+                      syncRecoveryName,
+                      lastBackupName,
+                    ])))
               .go();
           await delete(localCryptoStates).go();
           await into(localSyncStates).insertOnConflictUpdate(
@@ -476,15 +497,23 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
       List<int> sealedState
     }) cryptoState,
     required int cursor,
+    List<LocalMessage> history = const <LocalMessage>[],
+    List<LocalMessageReaction> reactions = const <LocalMessageReaction>[],
   }) =>
       transaction(() async {
         await delete(localMlsTransitions).go();
         await delete(localMlsOutboxEntries).go();
         await delete(localPeerVerifications).go();
-        // Backups do not carry decrypted history yet (D27, I45); the
-        // restored identity starts with an empty local history.
+        // Decrypted history travels in the backup (D27, I45); a version 1
+        // backup without it restores an empty history.
         await delete(localMessages).go();
         await delete(localMessageReactions).go();
+        for (final message in history) {
+          await into(localMessages).insert(message);
+        }
+        for (final reaction in reactions) {
+          await into(localMessageReactions).insert(reaction);
+        }
         await delete(localOutboxEntries).go();
         await delete(localCiphertextEnvelopes).go();
         await delete(localConversations).go();
@@ -522,7 +551,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             counter: cryptoState.counter,
             stateKey: Uint8List.fromList(cryptoState.stateKey),
             sealedState: Uint8List.fromList(cryptoState.sealedState)));
-        for (final item in mlsOutbox) {
+        for (final (index, item) in mlsOutbox.indexed) {
           await into(localMlsOutboxEntries).insert(
               LocalMlsOutboxEntriesCompanion.insert(
                   idempotencyKey: item.idempotencyKey,
@@ -532,7 +561,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
                   revocationDeviceId: Value(item.revocationDeviceId),
                   payload: Uint8List.fromList(item.payload),
                   stateCounter: cryptoState.counter,
-                  queuedAt: queuedAt));
+                  queuedAt: queuedAt + index));
         }
         await into(localSyncStates).insertOnConflictUpdate(
             LocalSyncStatesCompanion.insert(
@@ -798,9 +827,16 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     List<MessageEffect> messageEffects = const <MessageEffect>[],
     MlsCommitFailureInjector? failureInjector,
     String? leaseKey,
+    String? resolvedMlsOutboxKey,
   }) =>
       transaction(() async {
         await _assertSyncLeaseInTransaction(leaseKey);
+        if (resolvedMlsOutboxKey != null) {
+          await (delete(localMlsOutboxEntries)
+                ..where((table) =>
+                    table.idempotencyKey.equals(resolvedMlsOutboxKey)))
+              .go();
+        }
         final processed = await (select(localMlsTransitions)
               ..where((table) => table.messageId.equals(messageId)))
             .getSingleOrNull();
@@ -956,6 +992,21 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     return row != null;
   }
 
+  /// Control message markers are `mls:<sync event id>:<message id>`.
+  Future<bool> hasAppliedMlsControlMessage(String mlsMessageId) async {
+    final suffix = ':$mlsMessageId';
+    final row = await customSelect(
+      'SELECT 1 FROM local_mls_transitions '
+      "WHERE substr(message_id, 1, 4) = 'mls:' "
+      'AND substr(message_id, -length(?1)) = ?1 LIMIT 1',
+      variables: <Variable<Object>>[Variable<String>(suffix)],
+      readsFrom: <ResultSetImplementation<dynamic, dynamic>>{
+        localMlsTransitions
+      },
+    ).getSingleOrNull();
+    return row != null;
+  }
+
   Future<void> commitOutgoingMlsTransition({
     required int expectedCounter,
     required int expectedCursor,
@@ -996,8 +1047,10 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             sealedState: Uint8List.fromList(sealedState),
           ),
         );
+        // One transition's messages keep their order: a commit sent after
+        // the one it follows would fork the group (I34).
         final queuedAt = DateTime.now().microsecondsSinceEpoch;
-        for (final message in messages) {
+        for (final (index, message) in messages.indexed) {
           await into(localMlsOutboxEntries).insert(
             LocalMlsOutboxEntriesCompanion.insert(
               idempotencyKey: message.idempotencyKey,
@@ -1007,7 +1060,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               revocationDeviceId: Value(message.revocationDeviceId),
               payload: Uint8List.fromList(message.payload),
               stateCounter: counter,
-              queuedAt: queuedAt,
+              queuedAt: queuedAt + index,
             ),
           );
         }
@@ -1080,6 +1133,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required List<int> stateKey,
     required List<int> sealedState,
     String? leaseKey,
+    String? resolvedMlsOutboxKey,
   }) =>
       transaction(() async {
         await _assertSyncLeaseInTransaction(leaseKey);
@@ -1102,6 +1156,12 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             sealedState: Uint8List.fromList(sealedState),
           ),
         );
+        if (resolvedMlsOutboxKey != null) {
+          await (delete(localMlsOutboxEntries)
+                ..where((table) =>
+                    table.idempotencyKey.equals(resolvedMlsOutboxKey)))
+              .go();
+        }
       });
 
   Future<
@@ -1113,6 +1173,10 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             String? recipientDeviceId,
             String? revocationDeviceId,
             List<int> payload,
+            int attemptCount,
+            int? nextAttemptAt,
+            String? failureClass,
+            bool terminal,
           })>> readMlsOutbox() async {
     final rows = await (select(localMlsOutboxEntries)
           ..orderBy([
@@ -1128,9 +1192,33 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               recipientDeviceId: row.recipientDeviceId,
               revocationDeviceId: row.revocationDeviceId,
               payload: List<int>.from(row.payload),
+              attemptCount: row.attemptCount,
+              nextAttemptAt: row.nextAttemptAt,
+              failureClass: row.failureClass,
+              terminal: row.terminal,
             ))
         .toList(growable: false);
   }
+
+  Future<void> recordMlsOutboxFailure(
+    String idempotencyKey, {
+    required String failureClass,
+    required bool terminal,
+    required int? nextAttemptAt,
+  }) =>
+      transaction(() async {
+        await (update(localMlsOutboxEntries)
+              ..where((table) => table.idempotencyKey.equals(idempotencyKey)))
+            .write(LocalMlsOutboxEntriesCompanion(
+          failureClass: Value(failureClass),
+          terminal: Value(terminal),
+          nextAttemptAt: Value(nextAttemptAt),
+        ));
+        await customStatement(
+            'UPDATE local_mls_outbox_entries '
+            'SET attempt_count = attempt_count + 1 WHERE idempotency_key = ?',
+            <Object?>[idempotencyKey]);
+      });
 
   Future<void> deleteMlsOutbox(String idempotencyKey) => transaction(() async {
         await (delete(localMlsOutboxEntries)
@@ -1207,6 +1295,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   /// Decrypted history for one conversation, oldest first. Action rows
   /// (edits, deletes, reactions) are included so callers can hide their
   /// envelopes.
+  Future<List<LocalMessage>> readAllMessages() => select(localMessages).get();
+
+  Future<List<LocalMessageReaction>> readAllReactions() =>
+      select(localMessageReactions).get();
+
   Future<List<LocalMessage>> readMessages(String conversationId) =>
       (select(localMessages)
             ..where((table) => table.conversationId.equals(conversationId))
@@ -1334,6 +1427,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
       LocalMetadataCompanion.insert(name: name, value: value),
     );
   }
+
+  Future<void> deleteMetadata(String name) => transaction(() async {
+        await (delete(localMetadata)..where((table) => table.name.equals(name)))
+            .go();
+      });
 
   Future<void> writeMetadata(String name, String value) =>
       transaction(() async {

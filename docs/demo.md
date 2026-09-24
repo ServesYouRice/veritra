@@ -96,8 +96,10 @@ it missed.
 
 ## Limits of the demo
 
-- One device per account, and group members are fixed when the group is
-  created (D24). "Add member" and "Link device" are hidden.
+- Members can be added to and removed from groups, and devices linked, since
+  Stage 5 (D28). A device sees messages from the moment it joined, not
+  earlier ones. Groups created before Stage 5 cannot change members; start a
+  new group.
 - Attachments and calls are not in the demo yet.
 - Cross-machine demos need HTTPS and are not covered yet.
 
@@ -105,6 +107,7 @@ it missed.
 
 `scripts/test-demo-e2e.sh` starts a throwaway server and runs three real
 clients through the same flow: direct message, reply, edit, reaction,
-delete, a group of three, and an app restart. It then stops the server,
+delete, a group of three, adding a member to that group and removing
+another, and an app restart. It then stops the server,
 restarts an app offline, checks its history, queues a message, starts the
 server again and checks the message arrives. CI runs it on every push.

@@ -35,7 +35,13 @@ G25) wait until all three roadmap phases are done (D20). Work order:
    reconnect, and the sync socket catches up after every reconnect. The live
    test stops and restarts the server. Attachment caching waits for
    attachments.
-5. Remaining release-blocking cards (I33, I34, I51, I39, I45, I41).
+5. Remaining release-blocking cards — **done 2026-09-24:** I33 (poison
+   events and stale-device recovery), I34 (ordered MLS outbox), I51 (group
+   membership after creation and linked devices, D28, native ABI v6), I39
+   (database-key recovery), I45 (crash-safe backup/restore, scheduled
+   verified backups, mobile backup workflow) and I41 (provider-aware push,
+   notification permission, test wake). Device-only checks wait for G24
+   (D20).
 6. Phase 2 completion (macOS, packaging, desktop key storage).
 7. Phase 3 outline (client SDK).
 
@@ -172,6 +178,7 @@ independent reviews until all three phases are done"):
   reset, delete or expiry, never by a cache refresh.
 - **D24:** Demo topology until I51 lands: one device per account and fixed
   group membership; demo builds hide "Add member" and "Link device".
+  **Superseded by D28 on 2026-09-24**: both are shown again.
 - **D25:** Decryption binds the MLS sender credential to the envelope's sender
   account and device (native ABI v5). A mismatch commits an "unverifiable"
   tombstone instead of stalling sync.
@@ -179,8 +186,22 @@ independent reviews until all three phases are done"):
   Service; reviewed in Stage 6. Never generate a new database key while the
   database file exists.
 - **D27:** Encrypted backups include decrypted history (implemented in I45).
+- **D28 (Stage 5, 2026-09-24, after the required advisor review):** MLS
+  membership changes use staged, unmerged commits and server epoch ordering.
+  A commit, its Welcome and the roster change travel as one bundle that the
+  server accepts only on the group's current epoch; the sender merges after
+  acceptance and drops the staged commit after a refusal. The server tracks
+  each group's device roster with a join cursor (the add commit's event and
+  the first readable epoch) and delivers encrypted events only inside it.
+  Group devices add member devices that are missing (new members, linked
+  devices) and remove devices of accounts that left, one commit per group; a
+  coordinator device acts first and the others after three minutes. Native
+  ABI v6 adds the staged-commit functions; groups keep two past epochs.
+  Groups created before this change keep working but cannot change
+  membership (recreate them).
 - The crypto surface (ABI v5, payload semantics, local schema v7) freezes after
-  Stage 1, with a change log kept for the eventual G25 reviewer.
+  Stage 1, with a change log kept for the eventual G25 reviewer (in
+  [`crypto.md`](crypto.md); local schema is v8 since I34).
 
 ## Remaining work
 
@@ -197,25 +218,25 @@ task boundaries and orchestration rules are in
 | I30 | Implemented (T30A/T30B); checks pending (Codex, 2026-08-14) | One MLS-aware sync owner | — |
 | I31 | Implemented (T31); checks pending (Codex, 2026-08-14) | Lossless message outbox | — |
 | I32 | Implemented (T32); checks pending (Codex, 2026-08-14) | Account-scoped session lifecycle | — |
-| I33 | Blocked by I30 | Poison-event and stale-device recovery | I30 |
-| I34 | Blocked by I31 | Reliable MLS control outbox | I31 pattern |
+| I33 | Implemented and checked (Stage 5, 2026-09-24) | Poison-event and stale-device recovery | I30 |
+| I34 | Implemented and checked (Stage 5, 2026-09-24) | Reliable MLS control outbox | I31 pattern |
 | I35 | Implemented (T35); checks pending (Codex, 2026-08-14) | Retention and attachment-prune convergence | — |
 | I36 | T36A/T36B implemented; checks pending (Codex, 2026-08-14) | Committed-message fanout and bounded push work | — |
 | I37 | T37A/T37B implemented; T37C safe migration/idle plumbing implemented; rotation and cost promotion deferred; checks pending (Codex, 2026-08-14) | Setup and authentication hardening | — |
 | I38 | Implemented (T38); checks pending (Codex, 2026-08-14) | Safe account export | — |
-| I39 | Blocked by I32 | Fail-closed encrypted database key recovery | I32 |
+| I39 | Implemented and checked (Stage 5, 2026-09-24) | Fail-closed encrypted database key recovery | I32 |
 | I40 | T40A/T40B/T40C/T40D implemented; checks pending (Codex, 2026-08-14); due 2026-08-29 | Release evidence and toolchain integrity | — |
-| I41 | Blocked by I36, conditional D03 | Push registration and platform readiness | I36 |
+| I41 | Implemented and checked (Stage 5, 2026-09-24; QA06, QA08); real-device wake matrix waits for G24 (D20) | Push registration and platform readiness | I36 |
 | I42 | T42A implemented; T42B design claimed/proposed, approval pending; checks pending (Codex, 2026-08-14), conditional D03 | Authorized calls and native lifecycle | — |
 | I43 | T43A/T43B/T43C implemented; checks/evidence pending (Codex, 2026-08-14) | First-run and accessibility baseline | — |
 | I44 | Prepared, split before claim | Mobile and API quality | release blockers |
-| I45 | Blocked by I29/I39, required by D02 | Backup, restore and migration safety | I29, I39 |
+| I45 | Implemented and checked (Stage 5, 2026-09-24: T45A, T45B, T45C, QA05, QA09) | Backup, restore and migration safety | I29, I39 |
 | I46 | Prepared | Supported deployment hardening | — |
 | I47 | Prepared, conditional | Operational visibility and capacity evidence | I35, I36 |
 | I48 | Prepared | Transport, realtime and logging hardening | I32 |
 | I49 | Measure, then split | Performance and architecture work | correctness cards |
 | I50 | Deferred | Product and ecosystem backlog | D06 / mobile release |
-| I51 | New 2026-09-24, prepared | MLS membership changes after creation, linked devices, per-device key-package claims, join cursor, epoch-ordered commits | I30, I34 |
+| I51 | Implemented and checked (Stage 5, 2026-09-24, D28) | MLS membership changes after creation, linked devices, per-device key-package claims, join cursor, epoch-ordered commits | I30, I34 |
 
 No audit-derived implementation is complete merely because it appears in this
 table. Claim one eligible task under the Ready card, confirm its source paths
@@ -385,7 +406,8 @@ and file, remediation revision, reviewer retest, and residual-risk decision.
 - MLS 1.0 through OpenMLS 0.9.0 using
   `MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519`.
 - Application marker `mls10-openmls-v1`; the server rejects other markers.
-- Native ABI v5 (sender binding, D25) in `crypto/rust/include/veritra_crypto.h`.
+- Native ABI v6 (sender binding D25, staged membership commits D28) in
+  `crypto/rust/include/veritra_crypto.h`.
 - Credentials bind length-prefixed account/device identity and the MLS
   signature key. Key packages are checked against the expected account/device.
 - Local state uses SQLite3MC ChaCha20 with a random 256-bit key in platform

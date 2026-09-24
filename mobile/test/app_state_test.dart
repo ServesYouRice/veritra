@@ -341,6 +341,36 @@ void main() {
     state.dispose();
   });
 
+  test('an unreadable database offers retry or a confirmed reset only',
+      () async {
+    final localStore = _UnreadableStore();
+    final state = AppState(
+      apiClientFactory: (_) => throw UnimplementedError(),
+      cryptoService: TestOnlyCryptoService(),
+      localStore: localStore,
+      syncServiceFactory: (_, __) => FakeSyncService(),
+    );
+
+    await state.tryRestoreSession();
+    expect(state.lifecycle, SessionLifecycle.recoveryRequired);
+    expect(state.localStoreFailure, LocalStoreFailureKind.keyMissing);
+    expect(state.canContinueWithoutRestore, isFalse);
+    expect(state.recoveryMessage, contains('Nothing has been deleted'));
+
+    // Continuing to sign in is not offered and does nothing.
+    state.continueWithoutRestore();
+    expect(state.lifecycle, SessionLifecycle.recoveryRequired);
+    expect(() => state.resetUnreadableLocalData(confirmed: false),
+        throwsArgumentError);
+    expect(localStore.quarantined, isFalse);
+
+    await state.resetUnreadableLocalData(confirmed: true);
+    expect(localStore.quarantined, isTrue);
+    expect(state.lifecycle, SessionLifecycle.ready);
+    expect(state.localStoreFailure, isNull);
+    state.dispose();
+  });
+
   test('full outbox refuses before encryption and keeps all entries', () async {
     final localStore = MemoryLocalStore();
     for (var index = 0; index < maxPendingEnvelopes; index++) {
@@ -465,10 +495,22 @@ class _WakePushService implements MobilePushService {
   Stream<PushEvent> get events => _events.stream;
 
   @override
-  Future<void> register({required String instance, required String vapid}) {
+  Future<void> register({
+    required String instance,
+    String vapid = '',
+    List<String> providers = const <String>[],
+  }) {
     if (!registered.isCompleted) registered.complete();
     return Future<void>.value();
   }
+
+  @override
+  Future<NotificationPermission> notificationPermission() async =>
+      NotificationPermission.granted;
+
+  @override
+  Future<NotificationPermission> requestNotificationPermission() async =>
+      NotificationPermission.granted;
 
   @override
   Future<void> pickDistributor() async {}
@@ -505,7 +547,11 @@ class _WakeApiClient extends FakeDeviceLinkApiClient {
 
   @override
   Future<Map<String, Object?>> pushConfig(String token) async =>
-      <String, Object?>{'enabled': true, 'vapid_public_key': 'test-vapid'};
+      <String, Object?>{
+        'enabled': true,
+        'providers': <String>['webpush'],
+        'vapid_public_key': 'test-vapid',
+      };
 
   @override
   Future<List<Conversation>> conversations(String token) async =>
@@ -893,6 +939,22 @@ class _RepairApiClient extends FakeDeviceLinkApiClient {
   }) async {
     listMessagesCalls++;
     return const MessagePage(messages: <ReceivedMessageEnvelope>[]);
+  }
+}
+
+class _UnreadableStore extends MemoryLocalStore {
+  bool quarantined = false;
+
+  @override
+  Future<Session?> loadSession() async {
+    if (quarantined) return null;
+    throw const LocalStoreUnavailableException(
+        LocalStoreFailureKind.keyMissing);
+  }
+
+  @override
+  Future<void> quarantineUnreadableDatabase({required bool confirmed}) async {
+    quarantined = true;
   }
 }
 

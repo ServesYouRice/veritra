@@ -8,6 +8,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../core/models.dart';
+import '../sync/sync_recovery.dart';
 import 'encrypted_database.dart';
 
 final Map<String, Future<void>> _databaseOpenTails = <String, Future<void>>{};
@@ -23,6 +24,46 @@ class OutboxFullException implements Exception {
   @override
   String toString() =>
       'The encrypted message queue is full. Send or discard a pending message first.';
+}
+
+/// Why the encrypted local database could not be opened (card I39).
+enum LocalStoreFailureKind {
+  /// Another window holds this profile.
+  profileLocked,
+
+  /// Secure storage could not be read (for example, the device is locked or
+  /// the keystore refused). Retrying later may work.
+  keyUnavailable,
+
+  /// The database exists but its key is gone.
+  keyMissing,
+
+  /// The stored key is not a well-formed key.
+  keyMalformed,
+
+  /// The key did not open the database: it is the wrong key, or the file
+  /// is damaged.
+  keyRejected,
+
+  /// Writing a new key could not be confirmed.
+  keyWriteFailed,
+}
+
+/// The local database stays closed and untouched. Nothing is reset without
+/// an explicit, confirmed [LocalStore.quarantineUnreadableDatabase].
+class LocalStoreUnavailableException implements Exception {
+  const LocalStoreUnavailableException(this.kind);
+
+  final LocalStoreFailureKind kind;
+
+  /// Only these may succeed on a plain retry.
+  bool get retryable =>
+      kind == LocalStoreFailureKind.profileLocked ||
+      kind == LocalStoreFailureKind.keyUnavailable ||
+      kind == LocalStoreFailureKind.keyWriteFailed;
+
+  @override
+  String toString() => 'LocalStoreUnavailableException(${kind.name})';
 }
 
 Future<T> _serializeDatabaseWrite<T>(
@@ -79,7 +120,12 @@ class MlsStateTransition {
     this.upsertedEnvelopes = const <ReceivedMessageEnvelope>[],
     this.deletedEnvelopeIds = const <String>[],
     this.messageEffects = const <MessageEffect>[],
+    this.resolvedMlsOutboxKey,
   });
+
+  /// An MLS outbox item that this transition settles, removed with it
+  /// (card I51: this device's commit, merged when its echo arrives).
+  final String? resolvedMlsOutboxKey;
 
   final String messageId;
   final String conversationId;
@@ -102,6 +148,10 @@ class PendingMlsMessage {
     required this.payload,
     this.recipientDeviceId,
     this.revocationDeviceId,
+    this.attemptCount = 0,
+    this.nextAttemptAt,
+    this.failureClass,
+    this.terminal = false,
   });
 
   final String idempotencyKey;
@@ -110,6 +160,31 @@ class PendingMlsMessage {
   final String? recipientDeviceId;
   final String? revocationDeviceId;
   final List<int> payload;
+
+  /// Delivery state (I34). A terminal item stays queued: it blocks its
+  /// conversation instead of letting later MLS messages overtake it.
+  final int attemptCount;
+  final DateTime? nextAttemptAt;
+  final String? failureClass;
+  final bool terminal;
+
+  PendingMlsMessage withFailure({
+    required String failureClass,
+    required bool terminal,
+    required DateTime? nextAttemptAt,
+  }) =>
+      PendingMlsMessage(
+        idempotencyKey: idempotencyKey,
+        conversationId: conversationId,
+        kind: kind,
+        payload: payload,
+        recipientDeviceId: recipientDeviceId,
+        revocationDeviceId: revocationDeviceId,
+        attemptCount: attemptCount + 1,
+        nextAttemptAt: nextAttemptAt,
+        failureClass: failureClass,
+        terminal: terminal,
+      );
 }
 
 class OutgoingMlsStateTransition {
@@ -155,7 +230,13 @@ class LocalBackupData {
     required this.outbox,
     required this.mlsOutbox,
     required this.cryptoState,
+    this.history = const <LocalMessage>[],
+    this.reactions = const <LocalMessageReaction>[],
   });
+
+  /// Decrypted history (D27). Empty in a version 1 backup.
+  final List<LocalMessage> history;
+  final List<LocalMessageReaction> reactions;
 
   final Session session;
   final int cursor;
@@ -249,19 +330,46 @@ abstract class LocalStore {
   Future<void> saveCryptoState(StoredCryptoState state, int syncCursor);
   Future<void> commitMlsTransition(MlsStateTransition transition);
   Future<void> commitSyncEvent(SyncEventCommit commit);
+
+  /// The durable recovery record (card I33), or null when sync may run.
+  /// Pass null to clear it. It survives restarts so a failing event is not
+  /// retried in a loop, and it is removed with the device identity.
+  Future<void> saveSyncRecovery(SyncRecovery? recovery);
+  Future<SyncRecovery?> loadSyncRecovery();
+
+  /// When this device last made an encrypted backup (card I45).
+  Future<void> saveLastBackupAt(DateTime at);
+  Future<DateTime?> loadLastBackupAt();
   Future<void> acquireSyncLease(LocalSyncLease lease);
   Future<void> releaseSyncLease(LocalSyncLease lease);
   Future<bool> hasProcessedMlsMessage(String messageId);
+
+  /// Whether the MLS control message with server ID [mlsMessageId] has been
+  /// applied, whatever sync event carried it.
+  Future<bool> hasAppliedMlsControlMessage(String mlsMessageId);
   Future<void> commitOutgoingMlsTransition(
       OutgoingMlsStateTransition transition);
+
+  /// Pending MLS control messages in the order they must be delivered.
   Future<List<PendingMlsMessage>> pendingMlsMessages();
+  Future<void> recordMlsOutboxFailure(
+    String idempotencyKey, {
+    required String failureClass,
+    required bool terminal,
+    DateTime? nextAttemptAt,
+  });
   Future<void> removePendingMlsMessage(String idempotencyKey);
   Future<void> commitOutgoingApplicationTransition(
       OutgoingApplicationStateTransition transition);
+
+  /// Stores a local MLS state change. [resolvedMlsOutboxKey] names an MLS
+  /// outbox item settled by the same change (a commit bundle the server
+  /// accepted or refused, card I51); it is removed atomically.
   Future<void> commitLocalMlsState({
     required int expectedCounter,
     required int expectedCursor,
     required StoredCryptoState state,
+    String? resolvedMlsOutboxKey,
   });
   Future<StoredCryptoState?> loadCryptoState();
   Future<List<int>> exportBackup();
@@ -276,6 +384,11 @@ abstract class LocalStore {
   Future<List<LocalMessageReaction>> loadReactions(String conversationId);
   Future<void> clearCachedState({bool preserveOutbox = false});
   Future<void> clear();
+
+  /// The confirmed destructive reset for a database that cannot be opened
+  /// (I39). The unreadable database is moved aside with its key, never
+  /// deleted, and the next open starts a new, empty identity.
+  Future<void> quarantineUnreadableDatabase({required bool confirmed});
 }
 
 class MemoryLocalStore implements LocalStore {
@@ -292,6 +405,23 @@ class MemoryLocalStore implements LocalStore {
   final Map<String, List<int>> _peerVerifications = <String, List<int>>{};
   final _MemoryMessageHistory _history = _MemoryMessageHistory();
   String? _syncLeaseKey;
+  SyncRecovery? _syncRecovery;
+  DateTime? _lastBackupAt;
+
+  @override
+  Future<void> saveLastBackupAt(DateTime at) async =>
+      _lastBackupAt = at.toUtc();
+
+  @override
+  Future<DateTime?> loadLastBackupAt() async => _lastBackupAt;
+
+  @override
+  Future<void> saveSyncRecovery(SyncRecovery? recovery) async {
+    _syncRecovery = recovery;
+  }
+
+  @override
+  Future<SyncRecovery?> loadSyncRecovery() async => _syncRecovery;
 
   @override
   Future<void> acquireSyncLease(LocalSyncLease lease) async {
@@ -313,6 +443,8 @@ class MemoryLocalStore implements LocalStore {
       _peerVerifications.clear();
       _history.clear();
       _syncLeaseKey = null;
+      _syncRecovery = null;
+      _lastBackupAt = null;
     }
     _session = session;
   }
@@ -478,6 +610,8 @@ class MemoryLocalStore implements LocalStore {
     _history.apply(transition.messageEffects);
     _cryptoState = _copyCryptoState(transition.state);
     _processedMlsMessages.add(transition.messageId);
+    final resolved = transition.resolvedMlsOutboxKey;
+    if (resolved != null) _mlsOutbox.remove(resolved);
     _syncCursor = transition.cursor;
     _snapshot = CachedSnapshot(
       cursor: transition.cursor,
@@ -521,6 +655,11 @@ class MemoryLocalStore implements LocalStore {
       _processedMlsMessages.contains(messageId);
 
   @override
+  Future<bool> hasAppliedMlsControlMessage(String mlsMessageId) async =>
+      _processedMlsMessages.any((marker) =>
+          marker.startsWith('mls:') && marker.endsWith(':$mlsMessageId'));
+
+  @override
   Future<void> commitOutgoingMlsTransition(
       OutgoingMlsStateTransition transition) async {
     _validateOutgoingMlsTransition(
@@ -541,6 +680,22 @@ class MemoryLocalStore implements LocalStore {
   @override
   Future<List<PendingMlsMessage>> pendingMlsMessages() async =>
       _mlsOutbox.values.toList(growable: false);
+
+  @override
+  Future<void> recordMlsOutboxFailure(
+    String idempotencyKey, {
+    required String failureClass,
+    required bool terminal,
+    DateTime? nextAttemptAt,
+  }) async {
+    final existing = _mlsOutbox[idempotencyKey];
+    if (existing == null) return;
+    _mlsOutbox[idempotencyKey] = existing.withFailure(
+      failureClass: failureClass,
+      terminal: terminal,
+      nextAttemptAt: nextAttemptAt?.toUtc(),
+    );
+  }
 
   @override
   Future<void> removePendingMlsMessage(String idempotencyKey) async {
@@ -577,10 +732,12 @@ class MemoryLocalStore implements LocalStore {
     required int expectedCounter,
     required int expectedCursor,
     required StoredCryptoState state,
+    String? resolvedMlsOutboxKey,
   }) async {
     _validateLocalMlsState(expectedCounter, expectedCursor, state,
         currentCounter: _cryptoState?.counter ?? 0, currentCursor: _syncCursor);
     _cryptoState = _copyCryptoState(state);
+    if (resolvedMlsOutboxKey != null) _mlsOutbox.remove(resolvedMlsOutboxKey);
   }
 
   @override
@@ -603,6 +760,8 @@ class MemoryLocalStore implements LocalStore {
       outbox: List<MessageEnvelope>.from(_outbox),
       mlsOutbox: _mlsOutbox.values.toList(growable: false),
       cryptoState: _copyCryptoState(state),
+      history: _history.allMessages(),
+      reactions: _history.allReactions(),
     ));
   }
 
@@ -634,7 +793,7 @@ class MemoryLocalStore implements LocalStore {
           backup.mlsOutbox.map((item) => MapEntry(item.idempotencyKey, item)));
     _cryptoState = _copyCryptoState(backup.cryptoState);
     _processedMlsMessages.clear();
-    _history.clear();
+    _history.replace(backup.history, backup.reactions);
   }
 
   @override
@@ -671,7 +830,17 @@ class MemoryLocalStore implements LocalStore {
     _peerVerifications.clear();
     _history.clear();
     _syncLeaseKey = null;
+    _syncRecovery = null;
+    _lastBackupAt = null;
     await clearCachedState();
+  }
+
+  @override
+  Future<void> quarantineUnreadableDatabase({required bool confirmed}) async {
+    if (!confirmed) {
+      throw ArgumentError.value(confirmed, 'confirmed');
+    }
+    await clear();
   }
 
   @override
@@ -690,6 +859,23 @@ class _MemoryMessageHistory {
   final Map<String, LocalMessage> _messages = <String, LocalMessage>{};
   final Map<String, LocalMessageReaction> _reactions =
       <String, LocalMessageReaction>{};
+
+  List<LocalMessage> allMessages() => _messages.values.toList(growable: false);
+
+  List<LocalMessageReaction> allReactions() =>
+      _reactions.values.toList(growable: false);
+
+  void replace(
+      List<LocalMessage> messages, List<LocalMessageReaction> reactions) {
+    clear();
+    for (final message in messages) {
+      _messages[message.key] = message;
+    }
+    for (final reaction in reactions) {
+      _reactions['${reaction.targetKey}\u0000${reaction.reactorAccountId}'] =
+          reaction;
+    }
+  }
 
   void clear() {
     _messages.clear();
@@ -805,8 +991,10 @@ class SecureLocalStore implements LocalStore {
         _namespace = namespace,
         _storage = storage ??
             const FlutterSecureStorage(
+              // Fail closed (I39): resetting on a keystore error would wipe
+              // the database key and with it every message on the device.
               aOptions: AndroidOptions(
-                resetOnError: true,
+                resetOnError: false,
               ),
               iOptions: IOSOptions(
                 accessibility: KeychainAccessibility.first_unlock_this_device,
@@ -843,6 +1031,34 @@ class SecureLocalStore implements LocalStore {
   Future<EncryptedLocalDatabase>? _openingDatabase;
   String? _databasePath;
   String? _syncLeaseKey;
+
+  @override
+  Future<void> saveSyncRecovery(SyncRecovery? recovery) async {
+    final database = await _database();
+    if (recovery == null) {
+      await database.deleteMetadata(EncryptedLocalDatabase.syncRecoveryName);
+    } else {
+      await database.writeMetadata(
+          EncryptedLocalDatabase.syncRecoveryName, recovery.encode());
+    }
+  }
+
+  @override
+  Future<void> saveLastBackupAt(DateTime at) async =>
+      (await _database()).writeMetadata(
+          EncryptedLocalDatabase.lastBackupName, at.toUtc().toIso8601String());
+
+  @override
+  Future<DateTime?> loadLastBackupAt() async =>
+      DateTime.tryParse(await (await _database())
+                  .readMetadata(EncryptedLocalDatabase.lastBackupName) ??
+              '')
+          ?.toUtc();
+
+  @override
+  Future<SyncRecovery?> loadSyncRecovery() async =>
+      SyncRecovery.decode(await (await _database())
+          .readMetadata(EncryptedLocalDatabase.syncRecoveryName));
 
   @override
   Future<void> acquireSyncLease(LocalSyncLease lease) async {
@@ -1073,6 +1289,7 @@ class SecureLocalStore implements LocalStore {
       messageEffects: transition.messageEffects,
       failureInjector: _mlsCommitFailureInjector,
       leaseKey: _syncLeaseKey,
+      resolvedMlsOutboxKey: transition.resolvedMlsOutboxKey,
     );
   }
 
@@ -1098,6 +1315,10 @@ class SecureLocalStore implements LocalStore {
   @override
   Future<bool> hasProcessedMlsMessage(String messageId) async =>
       (await _database()).hasProcessedMlsMessage(messageId);
+
+  @override
+  Future<bool> hasAppliedMlsControlMessage(String mlsMessageId) async =>
+      (await _database()).hasAppliedMlsControlMessage(mlsMessageId);
 
   @override
   Future<void> commitOutgoingMlsTransition(
@@ -1137,8 +1358,31 @@ class SecureLocalStore implements LocalStore {
                 recipientDeviceId: message.recipientDeviceId,
                 revocationDeviceId: message.revocationDeviceId,
                 payload: message.payload,
+                attemptCount: message.attemptCount,
+                nextAttemptAt: message.nextAttemptAt == null
+                    ? null
+                    : DateTime.fromMillisecondsSinceEpoch(
+                        message.nextAttemptAt!,
+                        isUtc: true),
+                failureClass: message.failureClass,
+                terminal: message.terminal,
               ))
           .toList(growable: false);
+
+  @override
+  Future<void> recordMlsOutboxFailure(
+    String idempotencyKey, {
+    required String failureClass,
+    required bool terminal,
+    DateTime? nextAttemptAt,
+  }) async {
+    await (await _database()).recordMlsOutboxFailure(
+      idempotencyKey,
+      failureClass: failureClass,
+      terminal: terminal,
+      nextAttemptAt: nextAttemptAt?.toUtc().millisecondsSinceEpoch,
+    );
+  }
 
   @override
   Future<void> removePendingMlsMessage(String idempotencyKey) async {
@@ -1181,6 +1425,7 @@ class SecureLocalStore implements LocalStore {
     required int expectedCounter,
     required int expectedCursor,
     required StoredCryptoState state,
+    String? resolvedMlsOutboxKey,
   }) async {
     _validateLocalMlsState(expectedCounter, expectedCursor, state,
         currentCounter: expectedCounter, currentCursor: expectedCursor);
@@ -1191,6 +1436,7 @@ class SecureLocalStore implements LocalStore {
       stateKey: state.stateKey,
       sealedState: state.sealedState,
       leaseKey: _syncLeaseKey,
+      resolvedMlsOutboxKey: resolvedMlsOutboxKey,
     );
   }
 
@@ -1224,6 +1470,8 @@ class SecureLocalStore implements LocalStore {
       outbox: await pendingEnvelopes(),
       mlsOutbox: await pendingMlsMessages(),
       cryptoState: state,
+      history: await (await _database()).readAllMessages(),
+      reactions: await (await _database()).readAllReactions(),
     ));
   }
 
@@ -1277,6 +1525,8 @@ class SecureLocalStore implements LocalStore {
         sealedState: backup.cryptoState.sealedState
       ),
       cursor: backup.cursor,
+      history: backup.history,
+      reactions: backup.reactions,
     );
   }
 
@@ -1318,16 +1568,108 @@ class SecureLocalStore implements LocalStore {
     _syncLeaseKey = null;
   }
 
-  Future<EncryptedLocalDatabase> _database() =>
-      _openingDatabase ??= _openDatabase();
+  @override
+  Future<void> quarantineUnreadableDatabase({required bool confirmed}) async {
+    if (!confirmed) {
+      throw ArgumentError.value(confirmed, 'confirmed',
+          'resetting the local database needs explicit confirmation');
+    }
+    final opening = _openingDatabase;
+    _openingDatabase = null;
+    if (opening != null) {
+      try {
+        await (await opening).close();
+      } catch (_) {
+        // It never opened; there is nothing to close.
+      }
+    }
+    final directory = await _profileDirectory();
+    await _writeResetIntent(directory);
+    await _completeReset(directory);
+    _syncLeaseKey = null;
+  }
 
-  Future<EncryptedLocalDatabase> _openDatabase() async {
+  /// A failed open is not cached: the next call opens again, so a key that
+  /// becomes readable later (after unlock, say) is picked up by a retry.
+  Future<EncryptedLocalDatabase> _database() {
+    final existing = _openingDatabase;
+    if (existing != null) return existing;
+    final opening = _openDatabase();
+    _openingDatabase = opening;
+    unawaited(opening.then<void>((_) {}, onError: (Object error) {
+      if (identical(_openingDatabase, opening)) _openingDatabase = null;
+    }));
+    return opening;
+  }
+
+  Future<Directory> _profileDirectory() async {
     final base = await _directoryProvider();
     final directory = _namespace.isEmpty
         ? base
         : Directory('${base.path}${Platform.pathSeparator}profiles'
             '${Platform.pathSeparator}$_namespace');
     await directory.create(recursive: true);
+    return directory;
+  }
+
+  static const _resetIntentName = 'veritra-local.reset-intent';
+  static const _databaseFileNames = <String>[
+    'veritra-local.db-wal',
+    'veritra-local.db-shm',
+    'veritra-local.db',
+  ];
+
+  String get _quarantinedKeyPrefix => '$_databaseKeyName.quarantined.';
+
+  /// The reset is journaled so that a crash part-way leaves either the
+  /// original database in place or a complete quarantined copy with its
+  /// key, never a database separated from its WAL or its key.
+  Future<void> _writeResetIntent(Directory directory) async {
+    final intent = File('${directory.path}${Platform.pathSeparator}'
+        '$_resetIntentName');
+    if (await intent.exists()) return;
+    final stamp = DateTime.now().toUtc().microsecondsSinceEpoch.toString();
+    final temporary = File('${intent.path}.tmp');
+    await temporary.writeAsString(stamp, flush: true);
+    await temporary.rename(intent.path);
+  }
+
+  Future<void> _completeReset(Directory directory) async {
+    final intent = File('${directory.path}${Platform.pathSeparator}'
+        '$_resetIntentName');
+    if (!await intent.exists()) return;
+    final stamp = (await intent.readAsString()).trim();
+    if (!RegExp(r'^[0-9]{1,20}$').hasMatch(stamp)) {
+      throw const LocalStoreUnavailableException(
+          LocalStoreFailureKind.keyRejected);
+    }
+    final quarantine = Directory('${directory.path}${Platform.pathSeparator}'
+        'unreadable-$stamp');
+    await quarantine.create(recursive: true);
+    // Keep the key with the files so the copy stays readable if the key was
+    // only temporarily unreadable. Copy before moving any file.
+    String? key;
+    try {
+      key = await _storage.read(key: _databaseKeyName);
+    } catch (_) {
+      key = null;
+    }
+    if (key != null) {
+      await _storage.write(key: '$_quarantinedKeyPrefix$stamp', value: key);
+    }
+    for (final name in _databaseFileNames) {
+      final file = File('${directory.path}${Platform.pathSeparator}$name');
+      if (await file.exists()) {
+        await file.rename('${quarantine.path}${Platform.pathSeparator}$name');
+      }
+    }
+    await _storage.delete(key: _databaseKeyName);
+    await _storage.delete(key: _legacyRecordKeyName);
+    await intent.delete();
+  }
+
+  Future<EncryptedLocalDatabase> _openDatabase() async {
+    final directory = await _profileDirectory();
     final databaseFile =
         File('${directory.path}${Platform.pathSeparator}veritra-local.db');
     final path = databaseFile.absolute.path;
@@ -1349,37 +1691,72 @@ class SecureLocalStore implements LocalStore {
 
   Future<EncryptedLocalDatabase> _openDatabaseLocked(
       Directory directory, File databaseFile) async {
-    await _holdInstanceLock(directory);
+    try {
+      await _holdInstanceLock(directory);
+    } on StateError {
+      throw const LocalStoreUnavailableException(
+          LocalStoreFailureKind.profileLocked);
+    }
     final lockFile =
         File('${directory.path}${Platform.pathSeparator}veritra-local.lock');
     final lock = await lockFile.open(mode: FileMode.append);
     await lock.lock(FileLock.exclusive);
     try {
-      var keyHex = await _storage.read(key: _databaseKeyName);
-      if (keyHex == null && await databaseFile.exists()) {
+      // A reset interrupted by a crash is finished before anything else.
+      await _completeReset(directory);
+      final String? keyHex;
+      try {
+        keyHex = await _storage.read(key: _databaseKeyName);
+      } catch (_) {
+        throw const LocalStoreUnavailableException(
+            LocalStoreFailureKind.keyUnavailable);
+      }
+      final databaseExists = await databaseFile.exists();
+      if (keyHex == null && databaseExists) {
         // A database without its key is unreadable. Writing a fresh key
         // would hide that behind a new, empty identity (D26), so stop and
         // let the recovery screen explain it.
-        throw StateError('encrypted database key is missing');
+        throw const LocalStoreUnavailableException(
+            LocalStoreFailureKind.keyMissing);
       }
-      if (keyHex == null) {
-        keyHex = _randomHexKey();
-        await _storage.write(key: _databaseKeyName, value: keyHex);
+      if (keyHex != null && !RegExp(r'^[0-9a-f]{64}$').hasMatch(keyHex)) {
+        throw const LocalStoreUnavailableException(
+            LocalStoreFailureKind.keyMalformed);
       }
-      final storedKey = await _storage.read(key: _databaseKeyName);
-      if (storedKey != keyHex ||
-          storedKey == null ||
-          !RegExp(r'^[0-9a-f]{64}$').hasMatch(storedKey)) {
-        throw StateError('encrypted database key verification failed');
+      final key = keyHex ?? await _createKey();
+      final EncryptedLocalDatabase database;
+      try {
+        database = _databaseFactory(databaseFile, key);
+        await database.readCursor();
+      } catch (_) {
+        if (!databaseExists) rethrow;
+        // SQLite cannot tell a wrong key from a damaged file. Either way the
+        // file is left exactly as it is.
+        throw const LocalStoreUnavailableException(
+            LocalStoreFailureKind.keyRejected);
       }
-      final database = _databaseFactory(databaseFile, storedKey);
-      await database.readCursor();
       await _migrateLegacyRecord(database);
       return database;
     } finally {
       await lock.unlock();
       await lock.close();
     }
+  }
+
+  /// Writes a new key for a profile that has no database yet and reads it
+  /// back; the database is created only after the key is confirmed stored.
+  Future<String> _createKey() async {
+    final keyHex = _randomHexKey();
+    try {
+      await _storage.write(key: _databaseKeyName, value: keyHex);
+      if (await _storage.read(key: _databaseKeyName) != keyHex) {
+        throw StateError('key write not confirmed');
+      }
+    } catch (_) {
+      throw const LocalStoreUnavailableException(
+          LocalStoreFailureKind.keyWriteFailed);
+    }
+    return keyHex;
   }
 
   /// Holds an OS lock on the profile directory for the life of the process,
@@ -1705,7 +2082,11 @@ StoredCryptoState _copyCryptoState(StoredCryptoState state) =>
 
 List<int> _encodeBackup(LocalBackupData data) => utf8.encode(jsonEncode(
       <String, Object?>{
-        'version': 1,
+        'version': 2,
+        // Decrypted history (D27). Local only: the backup is encrypted with
+        // a key the server never sees.
+        'history': data.history.map((item) => item.toJson()).toList(),
+        'reactions': data.reactions.map((item) => item.toJson()).toList(),
         'account_id': data.session.accountId,
         'device_id': data.session.deviceId,
         'session': _sessionJson(data.session),
@@ -1744,8 +2125,22 @@ LocalBackupData _decodeBackup(List<int> encoded) {
   try {
     final root = Map<String, Object?>.from(
         jsonDecode(utf8.decode(encoded, allowMalformed: false)) as Map);
-    if (root['version'] != 1)
+    final version = root['version'];
+    if (version != 1 && version != 2) {
       throw const FormatException('unsupported backup version');
+    }
+    final history = version == 1
+        ? const <LocalMessage>[]
+        : (root['history'] as List)
+            .map((item) =>
+                LocalMessage.fromJson(Map<String, dynamic>.from(item as Map)))
+            .toList(growable: false);
+    final reactions = version == 1
+        ? const <LocalMessageReaction>[]
+        : (root['reactions'] as List)
+            .map((item) => LocalMessageReaction.fromJson(
+                Map<String, dynamic>.from(item as Map)))
+            .toList(growable: false);
     final session = _sessionFrom(root['session']);
     final crypto = _cryptoStateFrom(root['crypto_state']);
     if (session == null ||
@@ -1792,7 +2187,9 @@ LocalBackupData _decodeBackup(List<int> encoded) {
         messages: messages,
         outbox: outbox,
         mlsOutbox: mlsOutbox,
-        cryptoState: crypto);
+        cryptoState: crypto,
+        history: history,
+        reactions: reactions);
   } catch (error) {
     if (error is FormatException) rethrow;
     throw const FormatException('invalid backup encoding');
@@ -1861,7 +2258,9 @@ void _validateOutgoingMlsTransition(
     if (message.idempotencyKey.isEmpty ||
         !keys.add(message.idempotencyKey) ||
         message.conversationId.isEmpty ||
-        (message.kind != 'welcome' && message.kind != 'commit') ||
+        (message.kind != 'welcome' &&
+            message.kind != 'commit' &&
+            message.kind != 'bundle') ||
         (message.kind == 'welcome' &&
             (message.recipientDeviceId?.isEmpty ?? true)) ||
         message.payload.isEmpty ||

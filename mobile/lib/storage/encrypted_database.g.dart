@@ -2139,6 +2139,36 @@ class $LocalMlsOutboxEntriesTable extends LocalMlsOutboxEntries
   late final GeneratedColumn<int> queuedAt = GeneratedColumn<int>(
       'queued_at', aliasedName, false,
       type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _attemptCountMeta =
+      const VerificationMeta('attemptCount');
+  @override
+  late final GeneratedColumn<int> attemptCount = GeneratedColumn<int>(
+      'attempt_count', aliasedName, false,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(0));
+  static const VerificationMeta _nextAttemptAtMeta =
+      const VerificationMeta('nextAttemptAt');
+  @override
+  late final GeneratedColumn<int> nextAttemptAt = GeneratedColumn<int>(
+      'next_attempt_at', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _failureClassMeta =
+      const VerificationMeta('failureClass');
+  @override
+  late final GeneratedColumn<String> failureClass = GeneratedColumn<String>(
+      'failure_class', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _terminalMeta =
+      const VerificationMeta('terminal');
+  @override
+  late final GeneratedColumn<bool> terminal = GeneratedColumn<bool>(
+      'terminal', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("terminal" IN (0, 1))'),
+      defaultValue: const Constant(false));
   @override
   List<GeneratedColumn> get $columns => [
         idempotencyKey,
@@ -2148,7 +2178,11 @@ class $LocalMlsOutboxEntriesTable extends LocalMlsOutboxEntries
         revocationDeviceId,
         payload,
         stateCounter,
-        queuedAt
+        queuedAt,
+        attemptCount,
+        nextAttemptAt,
+        failureClass,
+        terminal
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -2215,6 +2249,28 @@ class $LocalMlsOutboxEntriesTable extends LocalMlsOutboxEntries
     } else if (isInserting) {
       context.missing(_queuedAtMeta);
     }
+    if (data.containsKey('attempt_count')) {
+      context.handle(
+          _attemptCountMeta,
+          attemptCount.isAcceptableOrUnknown(
+              data['attempt_count']!, _attemptCountMeta));
+    }
+    if (data.containsKey('next_attempt_at')) {
+      context.handle(
+          _nextAttemptAtMeta,
+          nextAttemptAt.isAcceptableOrUnknown(
+              data['next_attempt_at']!, _nextAttemptAtMeta));
+    }
+    if (data.containsKey('failure_class')) {
+      context.handle(
+          _failureClassMeta,
+          failureClass.isAcceptableOrUnknown(
+              data['failure_class']!, _failureClassMeta));
+    }
+    if (data.containsKey('terminal')) {
+      context.handle(_terminalMeta,
+          terminal.isAcceptableOrUnknown(data['terminal']!, _terminalMeta));
+    }
     return context;
   }
 
@@ -2240,6 +2296,14 @@ class $LocalMlsOutboxEntriesTable extends LocalMlsOutboxEntries
           .read(DriftSqlType.int, data['${effectivePrefix}state_counter'])!,
       queuedAt: attachedDatabase.typeMapping
           .read(DriftSqlType.int, data['${effectivePrefix}queued_at'])!,
+      attemptCount: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}attempt_count'])!,
+      nextAttemptAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}next_attempt_at']),
+      failureClass: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}failure_class']),
+      terminal: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}terminal'])!,
     );
   }
 
@@ -2259,6 +2323,10 @@ class LocalMlsOutboxEntry extends DataClass
   final Uint8List payload;
   final int stateCounter;
   final int queuedAt;
+  final int attemptCount;
+  final int? nextAttemptAt;
+  final String? failureClass;
+  final bool terminal;
   const LocalMlsOutboxEntry(
       {required this.idempotencyKey,
       required this.conversationId,
@@ -2267,7 +2335,11 @@ class LocalMlsOutboxEntry extends DataClass
       this.revocationDeviceId,
       required this.payload,
       required this.stateCounter,
-      required this.queuedAt});
+      required this.queuedAt,
+      required this.attemptCount,
+      this.nextAttemptAt,
+      this.failureClass,
+      required this.terminal});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -2283,6 +2355,14 @@ class LocalMlsOutboxEntry extends DataClass
     map['payload'] = Variable<Uint8List>(payload);
     map['state_counter'] = Variable<int>(stateCounter);
     map['queued_at'] = Variable<int>(queuedAt);
+    map['attempt_count'] = Variable<int>(attemptCount);
+    if (!nullToAbsent || nextAttemptAt != null) {
+      map['next_attempt_at'] = Variable<int>(nextAttemptAt);
+    }
+    if (!nullToAbsent || failureClass != null) {
+      map['failure_class'] = Variable<String>(failureClass);
+    }
+    map['terminal'] = Variable<bool>(terminal);
     return map;
   }
 
@@ -2300,6 +2380,14 @@ class LocalMlsOutboxEntry extends DataClass
       payload: Value(payload),
       stateCounter: Value(stateCounter),
       queuedAt: Value(queuedAt),
+      attemptCount: Value(attemptCount),
+      nextAttemptAt: nextAttemptAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(nextAttemptAt),
+      failureClass: failureClass == null && nullToAbsent
+          ? const Value.absent()
+          : Value(failureClass),
+      terminal: Value(terminal),
     );
   }
 
@@ -2317,6 +2405,10 @@ class LocalMlsOutboxEntry extends DataClass
       payload: serializer.fromJson<Uint8List>(json['payload']),
       stateCounter: serializer.fromJson<int>(json['stateCounter']),
       queuedAt: serializer.fromJson<int>(json['queuedAt']),
+      attemptCount: serializer.fromJson<int>(json['attemptCount']),
+      nextAttemptAt: serializer.fromJson<int?>(json['nextAttemptAt']),
+      failureClass: serializer.fromJson<String?>(json['failureClass']),
+      terminal: serializer.fromJson<bool>(json['terminal']),
     );
   }
   @override
@@ -2331,6 +2423,10 @@ class LocalMlsOutboxEntry extends DataClass
       'payload': serializer.toJson<Uint8List>(payload),
       'stateCounter': serializer.toJson<int>(stateCounter),
       'queuedAt': serializer.toJson<int>(queuedAt),
+      'attemptCount': serializer.toJson<int>(attemptCount),
+      'nextAttemptAt': serializer.toJson<int?>(nextAttemptAt),
+      'failureClass': serializer.toJson<String?>(failureClass),
+      'terminal': serializer.toJson<bool>(terminal),
     };
   }
 
@@ -2342,7 +2438,11 @@ class LocalMlsOutboxEntry extends DataClass
           Value<String?> revocationDeviceId = const Value.absent(),
           Uint8List? payload,
           int? stateCounter,
-          int? queuedAt}) =>
+          int? queuedAt,
+          int? attemptCount,
+          Value<int?> nextAttemptAt = const Value.absent(),
+          Value<String?> failureClass = const Value.absent(),
+          bool? terminal}) =>
       LocalMlsOutboxEntry(
         idempotencyKey: idempotencyKey ?? this.idempotencyKey,
         conversationId: conversationId ?? this.conversationId,
@@ -2356,6 +2456,12 @@ class LocalMlsOutboxEntry extends DataClass
         payload: payload ?? this.payload,
         stateCounter: stateCounter ?? this.stateCounter,
         queuedAt: queuedAt ?? this.queuedAt,
+        attemptCount: attemptCount ?? this.attemptCount,
+        nextAttemptAt:
+            nextAttemptAt.present ? nextAttemptAt.value : this.nextAttemptAt,
+        failureClass:
+            failureClass.present ? failureClass.value : this.failureClass,
+        terminal: terminal ?? this.terminal,
       );
   LocalMlsOutboxEntry copyWithCompanion(LocalMlsOutboxEntriesCompanion data) {
     return LocalMlsOutboxEntry(
@@ -2377,6 +2483,16 @@ class LocalMlsOutboxEntry extends DataClass
           ? data.stateCounter.value
           : this.stateCounter,
       queuedAt: data.queuedAt.present ? data.queuedAt.value : this.queuedAt,
+      attemptCount: data.attemptCount.present
+          ? data.attemptCount.value
+          : this.attemptCount,
+      nextAttemptAt: data.nextAttemptAt.present
+          ? data.nextAttemptAt.value
+          : this.nextAttemptAt,
+      failureClass: data.failureClass.present
+          ? data.failureClass.value
+          : this.failureClass,
+      terminal: data.terminal.present ? data.terminal.value : this.terminal,
     );
   }
 
@@ -2390,7 +2506,11 @@ class LocalMlsOutboxEntry extends DataClass
           ..write('revocationDeviceId: $revocationDeviceId, ')
           ..write('payload: $payload, ')
           ..write('stateCounter: $stateCounter, ')
-          ..write('queuedAt: $queuedAt')
+          ..write('queuedAt: $queuedAt, ')
+          ..write('attemptCount: $attemptCount, ')
+          ..write('nextAttemptAt: $nextAttemptAt, ')
+          ..write('failureClass: $failureClass, ')
+          ..write('terminal: $terminal')
           ..write(')'))
         .toString();
   }
@@ -2404,7 +2524,11 @@ class LocalMlsOutboxEntry extends DataClass
       revocationDeviceId,
       $driftBlobEquality.hash(payload),
       stateCounter,
-      queuedAt);
+      queuedAt,
+      attemptCount,
+      nextAttemptAt,
+      failureClass,
+      terminal);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -2416,7 +2540,11 @@ class LocalMlsOutboxEntry extends DataClass
           other.revocationDeviceId == this.revocationDeviceId &&
           $driftBlobEquality.equals(other.payload, this.payload) &&
           other.stateCounter == this.stateCounter &&
-          other.queuedAt == this.queuedAt);
+          other.queuedAt == this.queuedAt &&
+          other.attemptCount == this.attemptCount &&
+          other.nextAttemptAt == this.nextAttemptAt &&
+          other.failureClass == this.failureClass &&
+          other.terminal == this.terminal);
 }
 
 class LocalMlsOutboxEntriesCompanion
@@ -2429,6 +2557,10 @@ class LocalMlsOutboxEntriesCompanion
   final Value<Uint8List> payload;
   final Value<int> stateCounter;
   final Value<int> queuedAt;
+  final Value<int> attemptCount;
+  final Value<int?> nextAttemptAt;
+  final Value<String?> failureClass;
+  final Value<bool> terminal;
   final Value<int> rowid;
   const LocalMlsOutboxEntriesCompanion({
     this.idempotencyKey = const Value.absent(),
@@ -2439,6 +2571,10 @@ class LocalMlsOutboxEntriesCompanion
     this.payload = const Value.absent(),
     this.stateCounter = const Value.absent(),
     this.queuedAt = const Value.absent(),
+    this.attemptCount = const Value.absent(),
+    this.nextAttemptAt = const Value.absent(),
+    this.failureClass = const Value.absent(),
+    this.terminal = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   LocalMlsOutboxEntriesCompanion.insert({
@@ -2450,6 +2586,10 @@ class LocalMlsOutboxEntriesCompanion
     required Uint8List payload,
     required int stateCounter,
     required int queuedAt,
+    this.attemptCount = const Value.absent(),
+    this.nextAttemptAt = const Value.absent(),
+    this.failureClass = const Value.absent(),
+    this.terminal = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : idempotencyKey = Value(idempotencyKey),
         conversationId = Value(conversationId),
@@ -2466,6 +2606,10 @@ class LocalMlsOutboxEntriesCompanion
     Expression<Uint8List>? payload,
     Expression<int>? stateCounter,
     Expression<int>? queuedAt,
+    Expression<int>? attemptCount,
+    Expression<int>? nextAttemptAt,
+    Expression<String>? failureClass,
+    Expression<bool>? terminal,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -2478,6 +2622,10 @@ class LocalMlsOutboxEntriesCompanion
       if (payload != null) 'payload': payload,
       if (stateCounter != null) 'state_counter': stateCounter,
       if (queuedAt != null) 'queued_at': queuedAt,
+      if (attemptCount != null) 'attempt_count': attemptCount,
+      if (nextAttemptAt != null) 'next_attempt_at': nextAttemptAt,
+      if (failureClass != null) 'failure_class': failureClass,
+      if (terminal != null) 'terminal': terminal,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -2491,6 +2639,10 @@ class LocalMlsOutboxEntriesCompanion
       Value<Uint8List>? payload,
       Value<int>? stateCounter,
       Value<int>? queuedAt,
+      Value<int>? attemptCount,
+      Value<int?>? nextAttemptAt,
+      Value<String?>? failureClass,
+      Value<bool>? terminal,
       Value<int>? rowid}) {
     return LocalMlsOutboxEntriesCompanion(
       idempotencyKey: idempotencyKey ?? this.idempotencyKey,
@@ -2501,6 +2653,10 @@ class LocalMlsOutboxEntriesCompanion
       payload: payload ?? this.payload,
       stateCounter: stateCounter ?? this.stateCounter,
       queuedAt: queuedAt ?? this.queuedAt,
+      attemptCount: attemptCount ?? this.attemptCount,
+      nextAttemptAt: nextAttemptAt ?? this.nextAttemptAt,
+      failureClass: failureClass ?? this.failureClass,
+      terminal: terminal ?? this.terminal,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -2532,6 +2688,18 @@ class LocalMlsOutboxEntriesCompanion
     if (queuedAt.present) {
       map['queued_at'] = Variable<int>(queuedAt.value);
     }
+    if (attemptCount.present) {
+      map['attempt_count'] = Variable<int>(attemptCount.value);
+    }
+    if (nextAttemptAt.present) {
+      map['next_attempt_at'] = Variable<int>(nextAttemptAt.value);
+    }
+    if (failureClass.present) {
+      map['failure_class'] = Variable<String>(failureClass.value);
+    }
+    if (terminal.present) {
+      map['terminal'] = Variable<bool>(terminal.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -2549,6 +2717,10 @@ class LocalMlsOutboxEntriesCompanion
           ..write('payload: $payload, ')
           ..write('stateCounter: $stateCounter, ')
           ..write('queuedAt: $queuedAt, ')
+          ..write('attemptCount: $attemptCount, ')
+          ..write('nextAttemptAt: $nextAttemptAt, ')
+          ..write('failureClass: $failureClass, ')
+          ..write('terminal: $terminal, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -5090,6 +5262,10 @@ typedef $$LocalMlsOutboxEntriesTableCreateCompanionBuilder
   required Uint8List payload,
   required int stateCounter,
   required int queuedAt,
+  Value<int> attemptCount,
+  Value<int?> nextAttemptAt,
+  Value<String?> failureClass,
+  Value<bool> terminal,
   Value<int> rowid,
 });
 typedef $$LocalMlsOutboxEntriesTableUpdateCompanionBuilder
@@ -5102,6 +5278,10 @@ typedef $$LocalMlsOutboxEntriesTableUpdateCompanionBuilder
   Value<Uint8List> payload,
   Value<int> stateCounter,
   Value<int> queuedAt,
+  Value<int> attemptCount,
+  Value<int?> nextAttemptAt,
+  Value<String?> failureClass,
+  Value<bool> terminal,
   Value<int> rowid,
 });
 
@@ -5141,6 +5321,18 @@ class $$LocalMlsOutboxEntriesTableFilterComposer
 
   ColumnFilters<int> get queuedAt => $composableBuilder(
       column: $table.queuedAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get attemptCount => $composableBuilder(
+      column: $table.attemptCount, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get nextAttemptAt => $composableBuilder(
+      column: $table.nextAttemptAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get failureClass => $composableBuilder(
+      column: $table.failureClass, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get terminal => $composableBuilder(
+      column: $table.terminal, builder: (column) => ColumnFilters(column));
 }
 
 class $$LocalMlsOutboxEntriesTableOrderingComposer
@@ -5180,6 +5372,21 @@ class $$LocalMlsOutboxEntriesTableOrderingComposer
 
   ColumnOrderings<int> get queuedAt => $composableBuilder(
       column: $table.queuedAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get attemptCount => $composableBuilder(
+      column: $table.attemptCount,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get nextAttemptAt => $composableBuilder(
+      column: $table.nextAttemptAt,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get failureClass => $composableBuilder(
+      column: $table.failureClass,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get terminal => $composableBuilder(
+      column: $table.terminal, builder: (column) => ColumnOrderings(column));
 }
 
 class $$LocalMlsOutboxEntriesTableAnnotationComposer
@@ -5214,6 +5421,18 @@ class $$LocalMlsOutboxEntriesTableAnnotationComposer
 
   GeneratedColumn<int> get queuedAt =>
       $composableBuilder(column: $table.queuedAt, builder: (column) => column);
+
+  GeneratedColumn<int> get attemptCount => $composableBuilder(
+      column: $table.attemptCount, builder: (column) => column);
+
+  GeneratedColumn<int> get nextAttemptAt => $composableBuilder(
+      column: $table.nextAttemptAt, builder: (column) => column);
+
+  GeneratedColumn<String> get failureClass => $composableBuilder(
+      column: $table.failureClass, builder: (column) => column);
+
+  GeneratedColumn<bool> get terminal =>
+      $composableBuilder(column: $table.terminal, builder: (column) => column);
 }
 
 class $$LocalMlsOutboxEntriesTableTableManager extends RootTableManager<
@@ -5255,6 +5474,10 @@ class $$LocalMlsOutboxEntriesTableTableManager extends RootTableManager<
             Value<Uint8List> payload = const Value.absent(),
             Value<int> stateCounter = const Value.absent(),
             Value<int> queuedAt = const Value.absent(),
+            Value<int> attemptCount = const Value.absent(),
+            Value<int?> nextAttemptAt = const Value.absent(),
+            Value<String?> failureClass = const Value.absent(),
+            Value<bool> terminal = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               LocalMlsOutboxEntriesCompanion(
@@ -5266,6 +5489,10 @@ class $$LocalMlsOutboxEntriesTableTableManager extends RootTableManager<
             payload: payload,
             stateCounter: stateCounter,
             queuedAt: queuedAt,
+            attemptCount: attemptCount,
+            nextAttemptAt: nextAttemptAt,
+            failureClass: failureClass,
+            terminal: terminal,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -5277,6 +5504,10 @@ class $$LocalMlsOutboxEntriesTableTableManager extends RootTableManager<
             required Uint8List payload,
             required int stateCounter,
             required int queuedAt,
+            Value<int> attemptCount = const Value.absent(),
+            Value<int?> nextAttemptAt = const Value.absent(),
+            Value<String?> failureClass = const Value.absent(),
+            Value<bool> terminal = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               LocalMlsOutboxEntriesCompanion.insert(
@@ -5288,6 +5519,10 @@ class $$LocalMlsOutboxEntriesTableTableManager extends RootTableManager<
             payload: payload,
             stateCounter: stateCounter,
             queuedAt: queuedAt,
+            attemptCount: attemptCount,
+            nextAttemptAt: nextAttemptAt,
+            failureClass: failureClass,
+            terminal: terminal,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0

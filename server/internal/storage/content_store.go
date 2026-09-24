@@ -342,10 +342,54 @@ func (s *Store) CreatePushSubscription(ctx context.Context, accountID, deviceID,
 	} else if _, err := tx.ExecContext(ctx, `UPDATE push_subscriptions SET endpoint = ?, public_key = ?, auth_secret = ?, created_at = ? WHERE id = ?`, endpoint, publicKey, authSecret, nowString(), activeID); err != nil {
 		return "", err
 	}
+	// One device uses one provider at a time: switching provider retires the
+	// old registration so the device is not woken twice (card I41).
+	if _, err := tx.ExecContext(ctx, `UPDATE push_subscriptions SET disabled_at = ?
+		WHERE account_id = ? AND device_id = ? AND provider <> ? AND disabled_at IS NULL`,
+		nowString(), accountID, deviceID, provider); err != nil {
+		return "", err
+	}
 	if err := tx.Commit(); err != nil {
 		return "", err
 	}
 	return activeID, nil
+}
+
+// DevicePushSubscription is one active registration of the caller's device.
+// Endpoint and keys stay server-side; only ID, provider and time leave it.
+type DevicePushSubscription struct {
+	ID        string    `json:"id"`
+	Provider  string    `json:"provider"`
+	CreatedAt time.Time `json:"created_at"`
+	target    PushTarget
+}
+
+// Target is the delivery target, for the self-test wake only.
+func (d DevicePushSubscription) Target() PushTarget { return d.target }
+
+func (s *Store) ListDevicePushSubscriptions(ctx context.Context, accountID, deviceID string) ([]DevicePushSubscription, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, provider, endpoint, COALESCE(public_key, ''), COALESCE(auth_secret, ''), created_at
+		FROM push_subscriptions
+		WHERE account_id = ? AND device_id = ? AND disabled_at IS NULL
+		ORDER BY created_at DESC LIMIT 10`, accountID, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]DevicePushSubscription, 0)
+	for rows.Next() {
+		var item DevicePushSubscription
+		var created string
+		if err := rows.Scan(&item.ID, &item.Provider, &item.target.Endpoint, &item.target.PublicKey, &item.target.AuthSecret, &created); err != nil {
+			return nil, err
+		}
+		item.target.ID = item.ID
+		item.target.Provider = item.Provider
+		item.CreatedAt = parseTime(created)
+		result = append(result, item)
+	}
+	return result, rows.Err()
 }
 
 func (s *Store) PushTargetsForConversation(ctx context.Context, conversationID, excludeAccountID string) ([]PushTarget, error) {
@@ -800,7 +844,10 @@ func (s *Store) BeginRecoveryTransfer(ctx context.Context, recoveryTokenHash []b
 	if lease.Valid && parseTime(leaseExpiresAt.String).After(now) {
 		return RecoveryTransfer{}, ErrRecoveryBusy
 	}
-	if start != nextOffset {
+	// A resume may start at or before the recorded offset: bytes the server
+	// wrote are not always bytes the client received (card I45). Only a
+	// transfer that reaches the end consumes the capability.
+	if start > nextOffset {
 		return RecoveryTransfer{}, ErrRecoveryRange
 	}
 	leaseDeadline := now.Add(RecoveryLeaseLifetime)
@@ -824,7 +871,7 @@ func (s *Store) BeginRecoveryTransfer(ctx context.Context, recoveryTokenHash []b
 		return RecoveryTransfer{}, err
 	}
 	transfer.LeaseID = leaseID
-	transfer.StartOffset = nextOffset
+	transfer.StartOffset = start
 	return transfer, nil
 }
 
@@ -844,30 +891,34 @@ func (s *Store) CompleteRecoveryTransfer(ctx context.Context, leaseID string, st
 	var nextOffset, sizeBytes int64
 	now := time.Now().UTC()
 	if err := tx.QueryRowContext(ctx, `SELECT id, recovery_next_offset, size_bytes
-		FROM backup_blobs WHERE recovery_lease_id = ? AND recovery_next_offset = ?
+		FROM backup_blobs WHERE recovery_lease_id = ? AND recovery_next_offset >= ?
 		AND recovery_lease_expires_at > ?`, leaseID, startOffset, formatTime(now)).Scan(&id, &nextOffset, &sizeBytes); errors.Is(err, sql.ErrNoRows) {
 		return ErrRecoveryBusy
 	} else if err != nil {
 		return err
 	}
-	if nextOffset > sizeBytes || bytesWritten > sizeBytes-nextOffset {
+	if nextOffset > sizeBytes || startOffset > sizeBytes || bytesWritten > sizeBytes-startOffset {
 		return ErrInvalidInput
 	}
-	newOffset := nextOffset + bytesWritten
+	reached := startOffset + bytesWritten
+	newOffset := nextOffset
+	if reached > newOffset {
+		newOffset = reached
+	}
 	var query string
 	var args []interface{}
-	if bytesWritten == expected && newOffset == sizeBytes {
+	if bytesWritten == expected && reached == sizeBytes {
 		query = `UPDATE backup_blobs SET recovery_token_hash = NULL,
 			recovery_next_offset = ?, recovery_lease_id = NULL,
 			recovery_lease_expires_at = NULL WHERE recovery_lease_id = ?
 			AND recovery_next_offset = ? AND recovery_lease_expires_at > ?`
-		args = []interface{}{newOffset, leaseID, startOffset, formatTime(now)}
+		args = []interface{}{newOffset, leaseID, nextOffset, formatTime(now)}
 	} else {
 		query = `UPDATE backup_blobs SET recovery_next_offset = ?,
 			recovery_lease_id = NULL, recovery_lease_expires_at = NULL
 			WHERE recovery_lease_id = ? AND recovery_next_offset = ?
 			AND recovery_lease_expires_at > ?`
-		args = []interface{}{newOffset, leaseID, startOffset, formatTime(now)}
+		args = []interface{}{newOffset, leaseID, nextOffset, formatTime(now)}
 	}
 	result, err := tx.ExecContext(ctx, query, args...)
 	if err != nil {

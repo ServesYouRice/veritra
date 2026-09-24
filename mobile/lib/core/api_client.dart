@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import '../crypto/mls_commit_bundle.dart';
 import 'models.dart';
 
 class ApiClient {
@@ -511,6 +512,55 @@ class ApiClient {
     );
   }
 
+  /// Sends one staged commit with its Welcomes and roster change (card
+  /// I51). Returns the group's epoch after it. A 409 `mls_epoch_conflict`
+  /// means another commit was accepted first.
+  Future<int> sendMlsCommitBundle(
+    String token,
+    String conversationId, {
+    required String idempotencyKey,
+    required MlsCommitBundle bundle,
+  }) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/conversations/${Uri.encodeComponent(conversationId)}'
+          '/mls/commits',
+      token: token,
+      body: bundle.toRequestJson(idempotencyKey),
+    );
+    return (json['epoch'] as num).toInt();
+  }
+
+  Future<List<MlsPendingChange>> mlsPendingChanges(String token) async {
+    final json =
+        await _jsonRequest('GET', '/api/v1/mls/pending-changes', token: token);
+    return (json['pending_changes'] as List<Object?>? ?? const <Object?>[])
+        .map((row) =>
+            MlsPendingChange.fromJson(Map<String, Object?>.from(row as Map)))
+        .toList(growable: false);
+  }
+
+  /// Claims one key package for each listed device, to add them to an
+  /// existing group. Devices with no package left are missing from the
+  /// result.
+  Future<List<DeviceKeyPackage>> claimDeviceKeyPackages(
+    String token,
+    String conversationId,
+    List<String> deviceIds,
+  ) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/conversations/${Uri.encodeComponent(conversationId)}'
+          '/key-packages/claim',
+      token: token,
+      body: <String, Object?>{'device_ids': deviceIds},
+    );
+    return (json['key_packages'] as List<Object?>? ?? const <Object?>[])
+        .map((row) =>
+            DeviceKeyPackage.fromJson(Map<String, Object?>.from(row as Map)))
+        .toList(growable: false);
+  }
+
   Future<List<MlsMessage>> mlsMessages(
     String token, {
     int after = 0,
@@ -816,6 +866,17 @@ class ApiClient {
           'auth_secret': '',
         });
     return json['subscription_id'] as String;
+  }
+
+  /// Sends the generic wake to this device's own registrations and returns
+  /// one result class per registration (card I41).
+  Future<List<String>> sendTestPush(String token) async {
+    final json = await _jsonRequest('POST', '/api/v1/push/test',
+        token: token, body: const <String, Object?>{});
+    return (json['results'] as List<Object?>? ?? const <Object?>[])
+        .map((row) => (row as Map)['result'])
+        .whereType<String>()
+        .toList(growable: false);
   }
 
   Future<Map<String, Object?>> pushConfig(String token) => _jsonRequest(

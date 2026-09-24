@@ -399,13 +399,24 @@ func (s *Store) revokeDevice(ctx context.Context, accountID, deviceID, eventType
 		return 0, err
 	}
 	if eventType != "" {
+		// Rostered groups (card I51) need a revocation only when the device is
+		// in the group, and only group devices can coordinate or confirm it.
 		rows, err := tx.QueryContext(ctx, `
 			SELECT m.conversation_id, MIN(d.id)
 			FROM memberships m
 			JOIN memberships participants ON participants.conversation_id = m.conversation_id
 			JOIN devices d ON d.account_id = participants.account_id
 			WHERE m.account_id = ? AND d.revoked_at IS NULL AND d.id <> ?
-			GROUP BY m.conversation_id`, accountID, deviceID)
+			  AND NOT EXISTS (SELECT 1 FROM conversation_mls_groups g WHERE g.conversation_id = m.conversation_id)
+			GROUP BY m.conversation_id
+			UNION ALL
+			SELECT r.conversation_id, MIN(r.device_id)
+			FROM conversation_mls_devices target
+			JOIN conversation_mls_devices r ON r.conversation_id = target.conversation_id
+				AND r.removed_after_event_id IS NULL AND r.device_id <> target.device_id
+			JOIN devices d ON d.id = r.device_id AND d.revoked_at IS NULL
+			WHERE target.device_id = ? AND target.removed_after_event_id IS NULL
+			GROUP BY r.conversation_id`, accountID, deviceID, deviceID)
 		if err != nil {
 			return 0, err
 		}
@@ -436,7 +447,10 @@ func (s *Store) revokeDevice(ctx context.Context, accountID, deviceID, eventType
 					conversation_id, revoked_device_id, device_id)
 				SELECT ?, ?, d.id FROM memberships m
 				JOIN devices d ON d.account_id = m.account_id
-				WHERE m.conversation_id = ? AND d.revoked_at IS NULL AND d.id <> ?`,
+				WHERE m.conversation_id = ? AND d.revoked_at IS NULL AND d.id <> ?
+				  AND (NOT EXISTS (SELECT 1 FROM conversation_mls_groups g WHERE g.conversation_id = m.conversation_id)
+				       OR EXISTS (SELECT 1 FROM conversation_mls_devices r WHERE r.conversation_id = m.conversation_id
+				                  AND r.device_id = d.id AND r.removed_after_event_id IS NULL))`,
 				item.conversationID, deviceID, item.conversationID, deviceID); err != nil {
 				return 0, err
 			}

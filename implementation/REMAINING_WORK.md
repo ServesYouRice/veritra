@@ -69,7 +69,8 @@ external check.
 
 The board's "Current status" lists the stage order. Until the demos work,
 claim stage work from that list first; the audit cards below keep their scope
-and checks and are picked up in Stage 5. Stage plan and amendments:
+and checks. Stage 5 closed I33, I34, I51, I39, I45 and I41 (2026-09-24);
+QA07 remains open. Stage plan and amendments:
 `docs/board.md` decisions D10–D27. Demo builds use `mobile/lib/main_demo.dart`
 only; never touch the release gate (`main.dart`, `lib.rs`,
 `scripts/release-readiness.sh`).
@@ -81,15 +82,15 @@ Recheck the board before every claim. The model column replaces the repeated
 
 | Card | Routing | Model | Depends on |
 |---|---|---|---|
-| T33 | Blocked | Strong | I30 verification |
-| T34 | Blocked | Strong | I31 pattern verification |
+| T33 | Implemented and checked (Stage 5) | Strong | — |
+| T34 | Implemented and checked (Stage 5) | Strong | — |
 | T37C | Partial; policy/toolchain deferred | Strong | Approval and benchmark evidence |
-| T39 | Blocked | Strong | I32 verification |
-| T41 | Blocked; conditional under D03 | Balanced+advisor | I36 verification |
+| T39 | Implemented and checked (Stage 5) | Strong | — |
+| T41 | Implemented and checked (Stage 5); device matrix under G24 | Balanced+advisor | G24 for devices |
 | T42B | Design claimed; native edits blocked pending approval | Strong | Explicit platform-design approval |
 | T43C | Implementation present; automated/device evidence remains | Balanced+advisor | Toolchain and G24 environment |
 | T44A-C | Prepared after release blockers | Balanced | Release blockers |
-| T45A-C | Blocked under D02 | Strong | I29, I39, then T45A ordering |
+| T45A-C | Implemented and checked (Stage 5) | Strong | — |
 | T46 | Prepared after release blockers | Balanced+advisor | Release blockers; coordinate I40/T45B |
 | T47 | Prepared; conditional for private alpha | Balanced+advisor | I35 and I36 verification |
 | T48A-B | Prepared | Balanced+advisor / Strong | I32, then T48A |
@@ -111,11 +112,11 @@ are children of canonical cards and cannot bypass their dependencies.
 | QA02 | I40/G24 | Blocked until evidence-schema approval; QA01 first |
 | QA03 | I42/T42A | Working-tree implementation present on `gemini-implementation`; verify before recording |
 | QA04 | I17/G24 | Working-tree implementation present on `gemini-implementation`; verify native-library execution |
-| QA05 | T45C | Blocked by I29, I39, and T45A |
-| QA06 | T41 | Blocked until I41 is eligible |
+| QA05 | T45C | Done in Stage 5 (`mobile/test/backup_service_test.dart`) |
+| QA06 | T41 | Done in Stage 5 (`server/internal/push/provider_contract_test.go`) |
 | QA07 | T41 | Blocked until I41 and QA06 are eligible |
-| QA08 | T41 | Working-tree implementation present on `gemini-implementation`; parent remains blocked |
-| QA09 | T45A | Blocked by I29 and I39 |
+| QA08 | T41 | Done in Stage 5 (`mobile/test/push_service_test.dart`) |
+| QA09 | T45A | Done in Stage 5 (`server/internal/storage/migration_history_test.go`) |
 | QA10 | I40/T47 | Working-tree implementation present on `gemini-implementation`; verify approved floors/tooling status |
 
 Do not run QA01, QA02, and QA10 concurrently because their CI/script write

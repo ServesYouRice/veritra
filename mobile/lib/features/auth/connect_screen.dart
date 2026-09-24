@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/api_client.dart';
 import '../../core/app_state.dart';
+import '../settings/backup_screen.dart';
 import '../../core/models.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/section_header.dart';
@@ -239,6 +240,14 @@ class _ConnectScreenState extends State<ConnectScreen> {
                       child: const Text('Other ways to connect'),
                     ),
                   ),
+                  if (widget.state.backupAvailable)
+                    Center(
+                      child: TextButton(
+                        onPressed: () =>
+                            showRestoreBackupDialog(context, widget.state),
+                        child: const Text('Restore from a backup'),
+                      ),
+                    ),
                 ],
               ),
             ),

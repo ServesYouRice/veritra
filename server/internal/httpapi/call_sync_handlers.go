@@ -146,7 +146,7 @@ func validCallMetadata(raw json.RawMessage) bool {
 func (a *API) syncEvents(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
 	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	events, err := a.Store.ListSyncEvents(r.Context(), principal.AccountID, after, limit)
+	events, err := a.Store.ListSyncEvents(r.Context(), principal.AccountID, principal.DeviceID, after, limit)
 	if err != nil {
 		if errors.Is(err, storage.ErrSyncCursorExpired) {
 			epoch, oldest, latest, boundsErr := a.Store.SyncBounds(r.Context(), principal.AccountID)
@@ -154,7 +154,10 @@ func (a *API) syncEvents(w http.ResponseWriter, r *http.Request, principal domai
 				writeError(w, http.StatusInternalServerError, "sync_events_failed")
 				return
 			}
-			writeJSON(w, http.StatusConflict, map[string]interface{}{"error": "full_resync_required", "sync_epoch": epoch, "oldest_event_id": oldest, "latest_event_id": latest})
+			// The events after this cursor are gone, so an MLS device cannot
+			// catch up by jumping ahead: it must be linked again or restored
+			// from a backup (I33).
+			writeJSON(w, http.StatusConflict, map[string]interface{}{"error": "device_recovery_required", "sync_epoch": epoch, "oldest_event_id": oldest, "latest_event_id": latest})
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "sync_events_failed")

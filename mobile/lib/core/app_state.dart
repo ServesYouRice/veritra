@@ -7,9 +7,12 @@ import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../crypto/app_payload.dart';
+import '../crypto/backup_service.dart';
+import '../crypto/mls_commit_bundle.dart';
 import '../crypto/crypto_service.dart';
 import '../push/push_service.dart';
 import '../storage/local_store.dart';
+import '../sync/sync_recovery.dart';
 import '../sync/sync_service.dart';
 import 'api_client.dart';
 import 'client_config.dart';
@@ -104,8 +107,32 @@ class IncomingCallSignal {
 
 /// Operation keys for scoped busy/error state. A failure or in-flight request
 /// for one operation must not disable unrelated controls.
+/// Where push stands for this device (card I41).
+enum PushState {
+  /// Not started yet, or signed out.
+  unknown,
+
+  /// The server offers no push provider.
+  serverDisabled,
+
+  /// Waiting for the platform to hand over a token or endpoint.
+  registering,
+
+  /// No UnifiedPush distributor answered (Android without FCM).
+  noDistributor,
+
+  /// The platform or the server refused the registration.
+  registrationFailed,
+
+  /// The server accepted this device's registration.
+  registered,
+}
+
 class Ops {
   static const send = 'send';
+  static const pushTest = 'push_test';
+  static const backup = 'backup';
+  static const restore = 'restore';
   static const members = 'members';
   static const blocks = 'blocks';
   static const mute = 'mute';
@@ -119,8 +146,13 @@ class AppState extends ChangeNotifier {
     required this.localStore,
     required this.syncServiceFactory,
     MobilePushService? pushService,
+    this.backupService,
     this.config = ClientConfig.production,
   }) : pushService = pushService ?? DisabledMobilePushService();
+
+  /// Encrypted backup and restore (card I45). Null in builds without the
+  /// MLS service, where there is nothing to back up.
+  final BackupService? backupService;
 
   final ApiClientFactory apiClientFactory;
   final ClientConfig config;
@@ -195,6 +227,9 @@ class AppState extends ChangeNotifier {
   // connection problem is never reported as the result of a user action.
   String? syncError;
   bool deviceRecoveryRequired = false;
+
+  /// Why sync stopped, when it did (I33). Kept durably by the local store.
+  SyncRecovery? syncRecovery;
   SessionLifecycle lifecycle = SessionLifecycle.initializing;
   String? recoveryMessage;
 
@@ -207,6 +242,13 @@ class AppState extends ChangeNotifier {
   bool _flushOutboxRequested = false;
   String? _manualRetryKey;
   Timer? _outboxRetryTimer;
+  bool _flushingMlsOutbox = false;
+  bool _flushMlsOutboxRequested = false;
+  Timer? _mlsOutboxRetryTimer;
+  final Set<String> _failedMlsConversations = <String>{};
+  final Map<String, DateTime> _mlsPendingSeen = <String, DateTime>{};
+  final Set<String> _mlsReconcileNow = <String>{};
+  bool _mlsReconcileRequested = true;
   Future<void> _sessionTransitionTail = Future<void>.value();
   Stream<IncomingCallSignal> get callSignals => _callSignals.stream;
 
@@ -247,10 +289,70 @@ class AppState extends ChangeNotifier {
   /// answered.
   bool get pushRegistered => _pushSubscriptionId != null;
 
-  /// False in demo builds (D24): until card I51 lands, MLS groups keep the
-  /// members they were created with and each account has one device, so
-  /// adding members and linking devices are hidden rather than half-working.
-  bool get membershipChangesAvailable => !config.demo;
+  /// Adding members and linking devices work in every build since card I51:
+  /// group devices add new member devices to the MLS group themselves.
+  bool get membershipChangesAvailable => true;
+
+  /// Backups need the MLS service and a backup service (card I45).
+  bool get backupAvailable => backupService != null && _mlsCrypto != null;
+
+  /// When this device last made a backup, once loaded.
+  DateTime? lastBackupAt;
+
+  Future<void> refreshBackupStatus() async {
+    if (!backupAvailable || session == null) return;
+    lastBackupAt = await localStore.loadLastBackupAt();
+    notifyListeners();
+  }
+
+  /// Makes an encrypted backup of this device, uploads it, and returns the
+  /// recovery code, or null on failure (see [errorFor] with [Ops.backup]).
+  /// The code is shown once and never stored; a new backup replaces the
+  /// previous one and its code.
+  Future<String?> createBackup() async {
+    String? code;
+    await _runScoped(Ops.backup, () async {
+      final current = session;
+      final client = api;
+      final service = backupService;
+      if (current == null || client == null || service == null) return;
+      try {
+        code = await service.createAndUpload(client, current.token);
+      } on ApiException catch (error) {
+        if (error.statusCode == 401) rethrow;
+        throw BackupException(error.statusCode == 507
+            ? BackupFailureKind.tooLarge
+            : error.statusCode >= 500
+                ? BackupFailureKind.network
+                : BackupFailureKind.storage);
+      } on SocketException {
+        throw const BackupException(BackupFailureKind.network);
+      } on TimeoutException {
+        throw const BackupException(BackupFailureKind.network);
+      }
+      final now = DateTime.now().toUtc();
+      await localStore.saveLastBackupAt(now);
+      lastBackupAt = now;
+    });
+    return code;
+  }
+
+  /// Restores a backup onto this empty device and signs it in (card I45).
+  /// Returns false with a typed error under [Ops.restore]; an interrupted
+  /// download continues on the next attempt.
+  Future<bool> restoreFromBackup(String recoveryCode) {
+    return _runScoped(Ops.restore, () async {
+      final service = backupService;
+      if (service == null) {
+        throw const BackupException(BackupFailureKind.storage);
+      }
+      if (session != null) {
+        throw const BackupException(BackupFailureKind.deviceNotEmpty);
+      }
+      await service.recover(recoveryCode);
+      await _tryRestoreSession();
+    });
+  }
 
   /// Reply, edit, delete and reactions need the MLS service (D22).
   bool get messageActionsAvailable => _mlsCrypto != null;
@@ -511,6 +613,7 @@ class AppState extends ChangeNotifier {
     final transitionGeneration = ++_sessionGeneration;
     lifecycle = SessionLifecycle.initializing;
     recoveryMessage = null;
+    localStoreFailure = null;
     notifyListeners();
     try {
       final stored = await localStore.loadSession();
@@ -584,21 +687,79 @@ class AppState extends ChangeNotifier {
       messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
       _history.clear();
       lifecycle = SessionLifecycle.recoveryRequired;
-      recoveryMessage = error is StateError &&
-              error.message.contains('another Veritra window')
-          ? 'This profile is already open in another Veritra window. Close '
-              'that window, then retry.'
+      localStoreFailure =
+          error is LocalStoreUnavailableException ? error.kind : null;
+      recoveryMessage = error is LocalStoreUnavailableException
+          ? _localStoreFailureMessage(error.kind)
           : 'This device could not restore its encrypted session. Retry or '
               'continue to sign in without clearing local data.';
       notifyListeners();
     }
   }
 
+  static String _localStoreFailureMessage(LocalStoreFailureKind kind) {
+    switch (kind) {
+      case LocalStoreFailureKind.profileLocked:
+        return 'This profile is already open in another Veritra window. '
+            'Close that window, then retry.';
+      case LocalStoreFailureKind.keyUnavailable:
+      case LocalStoreFailureKind.keyWriteFailed:
+        return 'This device could not read its secure storage. Unlock the '
+            'device and retry. Your messages are kept.';
+      case LocalStoreFailureKind.keyMissing:
+      case LocalStoreFailureKind.keyMalformed:
+      case LocalStoreFailureKind.keyRejected:
+        return 'The key that protects this device\'s messages is missing or '
+            'does not match. Nothing has been deleted. You can retry, or '
+            'reset this device and link it again.';
+    }
+  }
+
+  /// Why the encrypted local database could not be opened (I39), or null.
+  LocalStoreFailureKind? localStoreFailure;
+
+  /// Signing in cannot work while the local database is unreadable, so the
+  /// recovery screen offers it only for other restore failures.
+  bool get canContinueWithoutRestore => localStoreFailure == null;
+
   void continueWithoutRestore() {
-    if (lifecycle != SessionLifecycle.recoveryRequired) return;
+    if (lifecycle != SessionLifecycle.recoveryRequired ||
+        !canContinueWithoutRestore) {
+      return;
+    }
     lifecycle = SessionLifecycle.ready;
     recoveryMessage = null;
     notifyListeners();
+  }
+
+  /// The confirmed destructive reset for an unreadable local database (I39).
+  /// The old database and its key are moved aside, not deleted; this device
+  /// then starts empty and must be linked again.
+  Future<void> resetUnreadableLocalData({required bool confirmed}) async {
+    if (!confirmed) {
+      throw ArgumentError.value(confirmed, 'confirmed',
+          'resetting local data needs explicit confirmation');
+    }
+    if (lifecycle != SessionLifecycle.recoveryRequired ||
+        localStoreFailure == null) {
+      return;
+    }
+    await _enqueueSessionTransition(() async {
+      busy = true;
+      notifyListeners();
+      try {
+        await localStore.quarantineUnreadableDatabase(confirmed: true);
+        localStoreFailure = null;
+        recoveryMessage = null;
+        lifecycle = SessionLifecycle.ready;
+      } catch (err) {
+        recoveryMessage = 'The reset did not finish. Nothing was deleted. '
+            'Retry.';
+      } finally {
+        busy = false;
+        notifyListeners();
+      }
+    });
   }
 
   Future<void> createOwner(String baseUrl, String username, String password,
@@ -1038,6 +1199,10 @@ class AppState extends ChangeNotifier {
         accountId,
         role: role,
       );
+      // Their devices join the MLS group through reconcile (card I51).
+      _mlsReconcileRequested = true;
+      _mlsReconcileNow.add(conversationId);
+      unawaited(_catchUpSyncEvents());
     });
   }
 
@@ -1075,6 +1240,10 @@ class AppState extends ChangeNotifier {
         conversationId,
         accountId,
       );
+      // Their devices leave the MLS group through reconcile (card I51).
+      _mlsReconcileRequested = true;
+      _mlsReconcileNow.add(conversationId);
+      unawaited(_catchUpSyncEvents());
       membersByConversation = <String, List<ConversationMember>>{
         ...membersByConversation,
         conversationId: membersFor(conversationId)
@@ -1425,6 +1594,9 @@ class AppState extends ChangeNotifier {
       }
       if (!await localStore.hasOutboxCapacity()) {
         throw const OutboxFullException();
+      }
+      if (mlsConversationFailed(conversation.id)) {
+        throw const ConversationPausedException();
       }
       final mls = _mlsCrypto;
       final MessageEnvelope encrypted;
@@ -1790,13 +1962,13 @@ class AppState extends ChangeNotifier {
     _syncSubscription = sync!.events.listen(
       (_) {
         unawaited(_catchUpSyncEvents());
-        unawaited(_flushOutbox());
+        unawaited(_flushMlsOutbox());
       },
       onError: (_) {
         // A dropped socket alone is not proof the server is unreachable; the
         // catch-up attempt that follows decides online vs. offline.
         unawaited(_catchUpSyncEvents());
-        unawaited(_flushOutbox());
+        unawaited(_flushMlsOutbox());
       },
     );
     unawaited(_catchUpSyncEvents());
@@ -1818,7 +1990,8 @@ class AppState extends ChangeNotifier {
     connectionStatus = status;
     notifyListeners();
     if (status == ConnectionStatus.online) {
-      unawaited(_flushOutbox());
+      // The MLS worker hands over to the application outbox when it ends.
+      unawaited(_flushMlsOutbox());
     }
   }
 
@@ -1831,11 +2004,18 @@ class AppState extends ChangeNotifier {
       final config = await client.pushConfig(current.token);
       if (!_syncOwnerActive(current, ownerGeneration)) return;
       final vapid = config['vapid_public_key'] as String? ?? '';
-      if (config['enabled'] != true) {
+      final providers = (config['providers'] as List? ?? const <Object?>[])
+          .whereType<String>()
+          .toList(growable: false);
+      if (config['enabled'] != true || providers.isEmpty) {
         pushConfigured = false;
+        _setPushState(PushState.serverDisabled);
         return;
       }
       pushConfigured = true;
+      pushProviders = providers;
+      notificationPermission = await pushService.notificationPermission();
+      _setPushState(PushState.registering);
       _pushInstance = '${current.accountId}:${current.deviceId}';
       await _pushSubscription?.cancel();
       _pushSubscription = pushService.events.listen(_handlePushEvent);
@@ -1846,11 +2026,80 @@ class AppState extends ChangeNotifier {
         unawaited(_catchUpSyncEvents());
       }
       if (!_syncOwnerActive(current, ownerGeneration)) return;
-      await pushService.register(instance: _pushInstance!, vapid: vapid);
+      await pushService.register(
+          instance: _pushInstance!, vapid: vapid, providers: providers);
       notifyListeners();
     } catch (_) {
       // Push is optional; realtime and foreground catch-up remain available.
+      if (pushState == PushState.registering) {
+        _setPushState(PushState.registrationFailed);
+      }
     }
+  }
+
+  /// Where push stands for this device (card I41). Never claims more than
+  /// was observed: "registered" only after the server accepted the token.
+  PushState pushState = PushState.unknown;
+
+  /// The providers the server offers.
+  List<String> pushProviders = const <String>[];
+
+  /// The provider this device registered with, once registered.
+  String? pushProvider;
+  NotificationPermission notificationPermission =
+      NotificationPermission.unsupported;
+
+  void _setPushState(PushState next) {
+    if (pushState == next) return;
+    pushState = next;
+    notifyListeners();
+  }
+
+  /// Asks for notification permission (Android 13+, iOS).
+  Future<void> requestNotificationPermission() async {
+    try {
+      notificationPermission =
+          await pushService.requestNotificationPermission();
+    } catch (_) {
+      notificationPermission = NotificationPermission.unsupported;
+    }
+    notifyListeners();
+  }
+
+  /// Result of the last test wake, as a short sentence without identifiers.
+  String? pushTestResult;
+
+  /// Sends the generic wake to this device's own registration (card I41).
+  Future<void> sendTestPush() async {
+    await _runScoped(Ops.pushTest, () async {
+      final current = session;
+      final client = api;
+      if (current == null || client == null) return;
+      pushTestResult = null;
+      try {
+        final results = await client.sendTestPush(current.token);
+        pushTestResult = results.every((result) => result == 'delivered')
+            ? 'Test sent. A notification should arrive within a minute.'
+            : results.contains('gone')
+                ? 'The push provider no longer accepts this device. '
+                    'Registering again.'
+                : 'The push provider did not accept the test. Try again '
+                    'later.';
+        if (results.contains('gone')) {
+          _pushSubscriptionId = null;
+          pushProvider = null;
+          _setPushState(PushState.registering);
+          unawaited(_startPush());
+        }
+      } on ApiException catch (error) {
+        if (error.statusCode == 401) rethrow;
+        pushTestResult = error.serverCode == 'push_test_rate_limited'
+            ? 'Wait a minute before sending another test.'
+            : error.serverCode == 'no_push_subscription'
+                ? 'This device is not registered for push yet.'
+                : 'The test could not be sent.';
+      }
+    });
   }
 
   Future<void> _handlePushEvent(PushEvent event) async {
@@ -1874,14 +2123,26 @@ class AppState extends ChangeNotifier {
                 provider: event.provider, deviceToken: event.endpoint);
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         _pushSubscriptionId = subscriptionId;
+        pushProvider = event.provider;
+        _setPushState(PushState.registered);
         notifyListeners();
       } catch (_) {
         // Re-registration on the next startup retries endpoint delivery.
+        _setPushState(PushState.registrationFailed);
       }
+    } else if (event is PushRegistrationFailedEvent &&
+        event.instance == _pushInstance) {
+      // A UnifiedPush failure means no distributor answered; anything else
+      // is a provider refusal. Neither carries platform error text.
+      _setPushState(event.provider == 'webpush'
+          ? PushState.noDistributor
+          : PushState.registrationFailed);
     } else if (event is PushUnregisteredEvent &&
         event.instance == _pushInstance) {
       final id = _pushSubscriptionId;
       _pushSubscriptionId = null;
+      pushProvider = null;
+      _setPushState(PushState.noDistributor);
       if (id != null) {
         try {
           await client.disablePush(current.token, id);
@@ -1894,7 +2155,7 @@ class AppState extends ChangeNotifier {
     if (session == null || api == null) return;
     await _observePendingWake();
     await _catchUpSyncEvents();
-    await _flushOutbox();
+    await _flushMlsOutbox();
   }
 
   Future<void> _observePendingWake() async {
@@ -1986,6 +2247,10 @@ class AppState extends ChangeNotifier {
     _pushSubscriptionId = null;
     _pushInstance = null;
     pushConfigured = false;
+    pushProvider = null;
+    pushProviders = const <String>[];
+    pushState = PushState.unknown;
+    pushTestResult = null;
   }
 
   Future<void> _catchUpSyncEvents() async {
@@ -2001,6 +2266,14 @@ class AppState extends ChangeNotifier {
     }
     final client = api;
     if (client == null) {
+      return;
+    }
+    // A stopped device stays stopped until the user picks a recovery choice
+    // (I33): retrying the same event on every wake would be a poison loop.
+    final stored = await localStore.loadSyncRecovery();
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
+    if (stored != null) {
+      _enterSyncRecovery(stored);
       return;
     }
     try {
@@ -2025,21 +2298,37 @@ class AppState extends ChangeNotifier {
             throw StateError('sync events are not strictly ordered');
           }
           returnedCursor = event.id;
+        }
+        final repair = _SyncPageRepair(
+          client: client,
+          token: current.token,
+          events: events,
+          processed: localStore.hasProcessedMlsMessage,
+        );
+        for (final event in events) {
           final committedCursor = await localStore.loadSyncCursor();
           if (event.id <= committedCursor) continue;
           if (!_syncOwnerActive(current, ownerGeneration)) return;
 
           if (_isCryptoSyncEvent(event.type)) {
             if (_mlsCrypto == null) {
-              throw StateError(
-                  'deviceRecoveryRequired: MLS crypto is unavailable');
+              throw SyncEventFailure(SyncFailureKind.cryptoUnavailable,
+                  eventId: event.id,
+                  eventType: event.type,
+                  conversationId: event.conversationId);
             }
-            final envelope = await _processCryptoSyncEvent(event);
+            final envelope = await _processCryptoSyncEvent(event, repair);
             if (envelope != null) {
               _mergeReceivedEnvelope(envelope);
               await refreshHistory(envelope.conversationId);
             }
           } else {
+            if (!_knownProjectionEvent(event.type)) {
+              throw SyncEventFailure(SyncFailureKind.unsupportedEvent,
+                  eventId: event.id,
+                  eventType: event.type,
+                  conversationId: event.conversationId);
+            }
             await _refreshProjectionForSyncEvent(event);
             final expectedCursor = await localStore.loadSyncCursor();
             await localStore.commitSyncEvent(SyncEventCommit(
@@ -2057,11 +2346,24 @@ class AppState extends ChangeNotifier {
       if (_mlsCrypto != null) {
         await _processMlsRevocations();
         if (!_syncOwnerActive(current, ownerGeneration)) return;
+        if (_mlsReconcileRequested || _mlsPendingSeen.isNotEmpty) {
+          _mlsReconcileRequested = false;
+          try {
+            await _reconcileMlsMembership();
+          } catch (err) {
+            // Reconcile is retried after the next catch-up; it never blocks
+            // sync.
+            _mlsReconcileRequested = true;
+            if (err is ApiException && err.statusCode == 401) rethrow;
+          }
+          if (!_syncOwnerActive(current, ownerGeneration)) return;
+        }
       }
       await _acknowledgePendingWake(current, ownerGeneration: ownerGeneration);
       lastSyncedAt = DateTime.now();
       syncError = null;
       deviceRecoveryRequired = false;
+      syncRecovery = null;
       _setConnectionStatus(ConnectionStatus.online);
     } catch (err) {
       if (!_syncOwnerActive(current, ownerGeneration)) return;
@@ -2070,17 +2372,15 @@ class AppState extends ChangeNotifier {
             preserveDeviceIdentity: true,
             preserveOutbox: true,
             drainSyncOwner: false);
-      } else if (err is ApiException &&
-          err.serverCode == 'full_resync_required') {
-        deviceRecoveryRequired = true;
-        syncError =
-            'This device needs sync recovery before messages can continue.';
-        _setConnectionStatus(ConnectionStatus.offline);
-        notifyListeners();
         return;
-      } else if (err is StateError &&
-          err.message.toString().startsWith('deviceRecoveryRequired:')) {
-        deviceRecoveryRequired = true;
+      }
+      final failure = _recoveryFailureFor(err);
+      if (failure != null) {
+        final recovery = SyncRecovery.fromFailure(failure, DateTime.now());
+        await localStore.saveSyncRecovery(recovery);
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        _enterSyncRecovery(recovery);
+        return;
       }
       // Background sync failure is a connection fact, not the outcome of
       // whatever the user last tapped. Writing it to the shared [error] made
@@ -2092,14 +2392,109 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// The failure to record as a durable recovery, or null when [err] is a
+  /// connection problem that sync simply retries later.
+  SyncEventFailure? _recoveryFailureFor(Object err) {
+    if (err is SyncEventFailure) {
+      return err.kind == SyncFailureKind.transient ||
+              err.kind == SyncFailureKind.auth
+          ? null
+          : err;
+    }
+    if (err is ApiException &&
+        (err.serverCode == 'device_recovery_required' ||
+            err.serverCode == 'full_resync_required')) {
+      return const SyncEventFailure(SyncFailureKind.cursorExpired);
+    }
+    // Anything else happened outside one event's processing (a page or a
+    // projection refresh failed) and is retried on the next wake. Event
+    // processing failures arrive here already typed.
+    return null;
+  }
+
+  void _enterSyncRecovery(SyncRecovery recovery) {
+    syncRecovery = recovery;
+    deviceRecoveryRequired = true;
+    syncError = recovery.message;
+    _setConnectionStatus(ConnectionStatus.offline);
+    notifyListeners();
+  }
+
+  /// Clears the recovery record and applies the stopped event once more. If
+  /// the cause remains, the same record comes back; nothing is skipped.
+  Future<void> retrySyncRecovery() async {
+    final recovery = syncRecovery ?? await localStore.loadSyncRecovery();
+    if (recovery == null ||
+        !recovery.choices.contains(SyncRecoveryChoice.retry)) {
+      return;
+    }
+    await localStore.saveSyncRecovery(null);
+    syncRecovery = null;
+    deviceRecoveryRequired = false;
+    syncError = null;
+    _setConnectionStatus(ConnectionStatus.connecting);
+    notifyListeners();
+    await _catchUpSyncEvents();
+  }
+
+  /// The destructive recovery: signs out and removes this device's identity,
+  /// encryption state and local history, so it can be linked again from
+  /// another device. The UI must get explicit confirmation first.
+  Future<void> relinkAfterSyncRecovery({required bool confirmed}) async {
+    if (!confirmed) {
+      throw ArgumentError.value(confirmed, 'confirmed',
+          'relinking deletes local history and needs confirmation');
+    }
+    await _run(() async {
+      final current = session;
+      final client = api;
+      await _stopPush(current, client);
+      await _clearLocalSession();
+      if (current != null && client != null) {
+        try {
+          await client.logout(current.token);
+        } catch (_) {
+          // The local identity is already gone; the token expires normally.
+        }
+      }
+    });
+  }
+
+  static bool _isTransientSyncError(Object err) {
+    if (err is ApiException) {
+      return err.statusCode == 408 ||
+          err.statusCode == 429 ||
+          err.statusCode >= 500;
+    }
+    return err is SocketException ||
+        err is TimeoutException ||
+        err is HttpException ||
+        err is HandshakeException;
+  }
+
   bool _isCryptoSyncEvent(String type) =>
       type == 'mls.message.created' ||
       type.startsWith('message.envelope.') ||
       type == 'call.signaling' ||
       type == 'call.state';
 
+  bool _knownProjectionEvent(String type) =>
+      type.startsWith('device.') ||
+      type.startsWith('conversation.') ||
+      type.startsWith('membership.') ||
+      type == 'retention.updated' ||
+      type.startsWith('reaction.') ||
+      type == 'read_receipt.updated' ||
+      type == 'mls.revocation.pending' ||
+      type == 'mls.revocation.completed';
+
   Future<void> _refreshProjectionForSyncEvent(SyncEvent event) async {
     final type = event.type;
+    if (type.startsWith('device.') ||
+        type.startsWith('membership.') ||
+        type.startsWith('conversation.')) {
+      _mlsReconcileRequested = true;
+    }
     if (type.startsWith('device.')) {
       await refreshDevices();
       await _refreshConversations(notify: false, persist: false);
@@ -2121,7 +2516,8 @@ class AppState extends ChangeNotifier {
         type == 'mls.revocation.completed') {
       return;
     }
-    throw StateError('unsupported sync event type: $type');
+    throw SyncEventFailure(SyncFailureKind.unsupportedEvent,
+        eventId: event.id, eventType: type);
   }
 
   String? _messageIdFromSyncEvent(SyncEvent event) {
@@ -2133,26 +2529,37 @@ class AppState extends ChangeNotifier {
     return value is String && value.isNotEmpty ? value : null;
   }
 
-  String? _mlsMessageIdFromSyncEvent(SyncEvent event) {
-    final payload = event.payload;
-    if (payload is! Map) return null;
-    final value = payload['mls_message_id'];
-    return value is String && value.isNotEmpty ? value : null;
-  }
-
   Future<ReceivedMessageEnvelope?> _processCryptoSyncEvent(
-      SyncEvent event) async {
+      SyncEvent event, _SyncPageRepair repair) async {
     final current = session;
     final client = api;
     final mls = _mlsCrypto;
     if (current == null || client == null || mls == null) return null;
+    SyncEventFailure failure(SyncFailureKind kind) => SyncEventFailure(kind,
+        eventId: event.id,
+        eventType: event.type,
+        conversationId: event.conversationId);
     switch (event.type) {
       case 'mls.message.created':
-        final id = _mlsMessageIdFromSyncEvent(event);
-        if (id == null)
-          throw StateError('MLS sync event is missing its message');
-        final message = await client.mlsMessage(current.token, id);
-        await mls.processMlsMessage(message);
+        // Control messages are never skipped: missing, malformed or
+        // rejected ones stop sync at this event (I33).
+        final id = _mlsMessageIdFromPayload(event.payload);
+        if (id == null) throw failure(SyncFailureKind.mlsControlMalformed);
+        final message = await repair.mlsMessage(event, id);
+        if (message.id != id ||
+            message.syncEventId != event.id ||
+            (event.conversationId != null &&
+                message.conversationId != event.conversationId)) {
+          throw failure(SyncFailureKind.mlsControlMalformed);
+        }
+        try {
+          await mls.processMlsMessage(message);
+        } catch (err) {
+          if (_isTransientSyncError(err)) rethrow;
+          throw failure(err is FormatException
+              ? SyncFailureKind.mlsControlMalformed
+              : SyncFailureKind.mlsState);
+        }
         if (message.kind == 'welcome' &&
             message.recipientDeviceId == current.deviceId) {
           await _replenishKeyPackage();
@@ -2162,26 +2569,93 @@ class AppState extends ChangeNotifier {
       case 'message.envelope.edited':
       case 'message.envelope.deleted':
         final id = _messageIdFromSyncEvent(event);
-        if (id == null)
-          throw StateError('message sync event is missing its envelope');
-        final envelope = _envelopeFromSyncEvent(event);
-        if (envelope == null && event.type != 'message.envelope.created') {
-          throw StateError('message sync event lacks an immutable envelope');
+        if (id == null) throw failure(SyncFailureKind.applicationMissing);
+        final ReceivedMessageEnvelope? inline;
+        try {
+          inline = _envelopeFromSyncEvent(event);
+        } catch (_) {
+          throw failure(SyncFailureKind.applicationUndecryptable);
         }
-        final resolved = envelope ?? await client.message(current.token, id);
-        await mls.processApplicationMessage(resolved, event.id);
+        if (inline == null && event.type != 'message.envelope.created') {
+          throw failure(SyncFailureKind.applicationMissing);
+        }
+        final ReceivedMessageEnvelope resolved;
+        if (inline != null) {
+          resolved = inline;
+        } else {
+          final fetched = await repair.envelope(event, id);
+          if (fetched == null) {
+            // The server proved the envelope expired (410).
+            await _commitExpiredTombstone(event, id);
+            return null;
+          }
+          resolved = fetched;
+        }
+        if (resolved.id != id) {
+          throw failure(SyncFailureKind.applicationUndecryptable);
+        }
+        try {
+          await mls.processApplicationMessage(resolved, event.id);
+        } catch (err) {
+          if (_isTransientSyncError(err)) rethrow;
+          if (_provenExpired(resolved.expiresAt)) {
+            await _commitExpiredTombstone(event, id);
+            return null;
+          }
+          throw failure(SyncFailureKind.applicationUndecryptable);
+        }
         return resolved;
       case 'call.signaling':
       case 'call.state':
-        if (event.payload is! Map)
-          throw StateError('call sync event is malformed');
-        final call = CallSession.fromJson(
-            Map<String, Object?>.from(event.payload as Map));
-        final signal = await mls.processCallSignal(call, event.id);
+        final payload = event.payload;
+        if (payload is! Map) {
+          throw failure(SyncFailureKind.applicationUndecryptable);
+        }
+        final CallSession call;
+        try {
+          call = CallSession.fromJson(Map<String, Object?>.from(payload));
+        } catch (_) {
+          throw failure(SyncFailureKind.applicationUndecryptable);
+        }
+        final Map<String, Object?>? signal;
+        try {
+          signal = await mls.processCallSignal(call, event.id);
+        } catch (err) {
+          if (_isTransientSyncError(err)) rethrow;
+          if (_provenExpired(call.expiresAt)) {
+            await _commitExpiredTombstone(event, call.id);
+            return null;
+          }
+          throw failure(SyncFailureKind.applicationUndecryptable);
+        }
         if (signal != null) _callSignals.add(IncomingCallSignal(call, signal));
         return null;
     }
-    throw StateError('unsupported crypto sync event type: ${event.type}');
+    throw failure(SyncFailureKind.unsupportedEvent);
+  }
+
+  static String? _mlsMessageIdFromPayload(Object? payload) {
+    if (payload is! Map) return null;
+    final value = payload['mls_message_id'];
+    return value is String && value.isNotEmpty ? value : null;
+  }
+
+  static bool _provenExpired(DateTime? expiresAt) =>
+      expiresAt != null && !expiresAt.isAfter(DateTime.now().toUtc());
+
+  /// Tombstone policy (I33): an application message or call signal that
+  /// failed to apply may be passed over only when its own expiry proves it
+  /// would be gone anyway. The tombstone moves the cursor past the event and
+  /// stores nothing else: no text, no envelope. Control messages never get
+  /// one.
+  Future<void> _commitExpiredTombstone(SyncEvent event, String targetId) async {
+    final cursor = await localStore.loadSyncCursor();
+    await localStore.commitSyncEvent(SyncEventCommit(
+      eventKey: 'expired:${event.id}:$targetId',
+      conversationId: event.conversationId ?? '',
+      expectedCursor: cursor,
+      cursor: event.id,
+    ));
   }
 
   ReceivedMessageEnvelope? _envelopeFromSyncEvent(SyncEvent event) {
@@ -2266,6 +2740,12 @@ class AppState extends ChangeNotifier {
     _outboxRecords.clear();
     _outboxRetryTimer?.cancel();
     _outboxRetryTimer = null;
+    _mlsOutboxRetryTimer?.cancel();
+    _mlsOutboxRetryTimer = null;
+    _failedMlsConversations.clear();
+    _mlsPendingSeen.clear();
+    _mlsReconcileNow.clear();
+    _mlsReconcileRequested = true;
     _manualRetryKey = null;
     _loadingMessageConversations.clear();
     _messageLoadErrors.clear();
@@ -2288,6 +2768,7 @@ class AppState extends ChangeNotifier {
     syncError = null;
     _pendingWakeGeneration = 0;
     deviceRecoveryRequired = false;
+    syncRecovery = null;
     lifecycle = SessionLifecycle.ready;
     recoveryMessage = null;
   }
@@ -2325,12 +2806,25 @@ class AppState extends ChangeNotifier {
     final records = await localStore.pendingEnvelopeRecords();
     if (!_syncOwnerActive(current, ownerGeneration)) return;
     _setOutboxRecords(records);
+    // An application message was encrypted in the epoch after any MLS
+    // control message queued before it, so it waits until those are
+    // delivered (I34); the MLS worker starts this flush when it finishes.
+    final heldBack = _mlsCrypto == null
+        ? const <String>{}
+        : (await localStore.pendingMlsMessages())
+            .map((message) => message.conversationId)
+            .toSet();
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
     final now = DateTime.now().toUtc();
     for (final record in records) {
       if (!_syncOwnerActive(current, ownerGeneration)) return;
       final envelope = record.envelope;
       if (record.terminal) {
         _outboxStates[envelope.idempotencyKey] = OutboxDeliveryState.terminal;
+        continue;
+      }
+      if (heldBack.contains(envelope.conversationId)) {
+        _outboxStates[envelope.idempotencyKey] = OutboxDeliveryState.retrying;
         continue;
       }
       final manualRetry = _manualRetryKey == envelope.idempotencyKey;
@@ -2425,28 +2919,245 @@ class AppState extends ChangeNotifier {
     });
   }
 
+  /// Delivers MLS control messages (I34). One worker runs at a time; a call
+  /// while it runs asks for one more pass. It never throws, so callers may
+  /// leave its future unawaited.
   Future<void> _flushMlsOutbox() async {
+    if (_flushingMlsOutbox) {
+      _flushMlsOutboxRequested = true;
+      return;
+    }
+    _flushingMlsOutbox = true;
+    try {
+      do {
+        _flushMlsOutboxRequested = false;
+        try {
+          await _flushMlsOutboxOnce();
+        } catch (_) {
+          // A local storage failure leaves every item queued; the retry
+          // timer or the next wake tries again.
+        }
+      } while (_flushMlsOutboxRequested && !_disposed);
+    } finally {
+      _flushingMlsOutbox = false;
+      unawaited(_scheduleMlsOutboxRetry());
+      // Application messages held behind a control message may go now.
+      unawaited(_flushOutbox());
+    }
+  }
+
+  /// One pass over the MLS outbox. Messages of one conversation go strictly
+  /// in order, and a message that is waiting or failed holds back every
+  /// later one of its conversation, because an overtaking commit or Welcome
+  /// would fork the group. Other conversations carry on.
+  Future<void> _flushMlsOutboxOnce() async {
     final current = session;
     final client = api;
     if (current == null || client == null || _mlsCrypto == null) return;
     final ownerGeneration = _sessionGeneration;
     final messages = await localStore.pendingMlsMessages();
     if (!_syncOwnerActive(current, ownerGeneration)) return;
+    final byConversation = <String, List<PendingMlsMessage>>{};
     for (final message in messages) {
-      if (!_syncOwnerActive(current, ownerGeneration)) return;
-      await client.sendMlsMessage(
-        current.token,
-        message.conversationId,
-        kind: message.kind,
-        payload: message.payload,
-        idempotencyKey: message.idempotencyKey,
-        recipientDeviceId: message.recipientDeviceId,
-        revocationDeviceId: message.revocationDeviceId,
-      );
-      if (!_syncOwnerActive(current, ownerGeneration)) return;
-      await localStore.removePendingMlsMessage(message.idempotencyKey);
+      byConversation
+          .putIfAbsent(message.conversationId, () => <PendingMlsMessage>[])
+          .add(message);
+    }
+    final failed = <String>{};
+    final now = DateTime.now().toUtc();
+    for (final entry in byConversation.entries) {
+      for (final message in entry.value) {
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        if (message.terminal) {
+          failed.add(entry.key);
+          break;
+        }
+        if (message.nextAttemptAt?.isAfter(now) ?? false) break;
+        final isBundle = message.kind == MlsCommitBundle.kind;
+        try {
+          if (isBundle) {
+            await client.sendMlsCommitBundle(
+              current.token,
+              message.conversationId,
+              idempotencyKey: message.idempotencyKey,
+              bundle: MlsCommitBundle.decode(message.payload),
+            );
+          } else {
+            await client.sendMlsMessage(
+              current.token,
+              message.conversationId,
+              kind: message.kind,
+              payload: message.payload,
+              idempotencyKey: message.idempotencyKey,
+              recipientDeviceId: message.recipientDeviceId,
+              revocationDeviceId: message.revocationDeviceId,
+            );
+          }
+        } catch (err) {
+          if (!_syncOwnerActive(current, ownerGeneration)) return;
+          if (err is ApiException && err.statusCode == 401) {
+            await _clearLocalSession(
+                preserveDeviceIdentity: true,
+                preserveOutbox: true,
+                drainSyncOwner: false);
+            return;
+          }
+          if (isBundle && err is ApiException && _refusedBundle(err)) {
+            // Another commit won this epoch, or the change is no longer
+            // valid. The staged commit was never merged, so dropping it
+            // leaves this device in step with the group (card I51). Catch
+            // up, then reconcile again.
+            await _mlsCrypto?.abandonCommitBundle(message);
+            _mlsReconcileRequested = true;
+            unawaited(_catchUpSyncEvents());
+            break;
+          }
+          final terminal = await _recordMlsOutboxFailure(message, err);
+          if (terminal) failed.add(entry.key);
+          break;
+        }
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        if (isBundle) {
+          await _mlsCrypto?.completeCommitBundle(message);
+        } else {
+          await localStore.removePendingMlsMessage(message.idempotencyKey);
+        }
+      }
+    }
+    if (!_sameSetOf(failed, _failedMlsConversations)) {
+      _failedMlsConversations
+        ..clear()
+        ..addAll(failed);
+      notifyListeners();
     }
   }
+
+  /// A commit bundle the server will never accept as sent: it is dropped
+  /// and the change is worked out again from the current group.
+  static bool _refusedBundle(ApiException err) =>
+      err.statusCode == 409 ||
+      err.statusCode == 403 ||
+      err.statusCode == 400 ||
+      err.statusCode == 422;
+
+  /// Brings every group this device is in up to date with the server's
+  /// membership (card I51): member devices not in the group are added and
+  /// devices of accounts that left are removed, in one staged commit per
+  /// group. Only the coordinator device acts at once; the others step in if
+  /// a change is still pending a few minutes later.
+  Future<void> _reconcileMlsMembership() async {
+    final current = session;
+    final client = api;
+    final mls = _mlsCrypto;
+    if (current == null || client == null || mls == null) return;
+    final ownerGeneration = _sessionGeneration;
+    final changes = await client.mlsPendingChanges(current.token);
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
+    final now = DateTime.now().toUtc();
+    final stillPending = <String>{};
+    var staged = false;
+    for (final change in changes) {
+      final key = _pendingChangeKey(change);
+      stillPending.add(key);
+      final firstSeen = _mlsPendingSeen.putIfAbsent(key, () => now);
+      // The device that made the change commits it too, without waiting.
+      final coordinator = change.coordinatorDeviceId == null ||
+          change.coordinatorDeviceId == current.deviceId ||
+          _mlsReconcileNow.contains(change.conversationId);
+      if (!coordinator && now.difference(firstSeen) < _reconcileFallback) {
+        continue;
+      }
+      if (await _hasPendingMlsWork(change.conversationId)) continue;
+      final local = await mls.groupEpoch(change.conversationId);
+      // Behind or ahead of the server means sync is not finished yet.
+      if (local == null || local.pending || local.epoch != change.epoch) {
+        continue;
+      }
+      final adds = change.add.isEmpty
+          ? const <DeviceKeyPackage>[]
+          : await client.claimDeviceKeyPackages(
+              current.token,
+              change.conversationId,
+              change.add.map((item) => item.deviceId).toList(growable: false),
+            );
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      if (adds.isEmpty && change.remove.isEmpty) continue;
+      await mls.stageMembershipChange(change.conversationId,
+          adds: adds, removes: change.remove);
+      _mlsReconcileNow.remove(change.conversationId);
+      staged = true;
+    }
+    _mlsPendingSeen.removeWhere((key, _) => !stillPending.contains(key));
+    _mlsReconcileNow.removeWhere((conversationId) =>
+        !changes.any((change) => change.conversationId == conversationId));
+    if (staged) await _flushMlsOutbox();
+  }
+
+  static const _reconcileFallback = Duration(minutes: 3);
+
+  static String _pendingChangeKey(MlsPendingChange change) => <String>[
+        change.conversationId,
+        '${change.epoch}',
+        ...change.add.map((item) => '+${item.deviceId}'),
+        ...change.remove.map((item) => '-${item.deviceId}'),
+      ].join('|');
+
+  /// Records one delivery failure and says whether it is terminal. Server
+  /// rejections are terminal; connection problems and busy servers retry
+  /// with bounded exponential backoff.
+  Future<bool> _recordMlsOutboxFailure(
+      PendingMlsMessage message, Object error) async {
+    final apiError = error is ApiException ? error : null;
+    final retryable = (apiError != null && _isTransientSyncError(apiError)) ||
+        (apiError == null && _isTransientSyncError(error));
+    final terminal = apiError != null && !retryable;
+    final exponent = min(message.attemptCount, 8);
+    await localStore.recordMlsOutboxFailure(
+      message.idempotencyKey,
+      failureClass: terminal
+          ? 'terminal:${apiError.statusCode}:${apiError.serverCode ?? 'rejected'}'
+          : 'retryable:${apiError?.statusCode ?? 'network'}',
+      terminal: terminal,
+      nextAttemptAt: terminal
+          ? null
+          : DateTime.now().toUtc().add(Duration(seconds: 1 << exponent)),
+    );
+    return terminal;
+  }
+
+  Future<void> _scheduleMlsOutboxRetry() async {
+    _mlsOutboxRetryTimer?.cancel();
+    _mlsOutboxRetryTimer = null;
+    if (_disposed || session == null || api == null || _mlsCrypto == null) {
+      return;
+    }
+    final List<PendingMlsMessage> messages;
+    try {
+      messages = await localStore.pendingMlsMessages();
+    } catch (_) {
+      return;
+    }
+    final now = DateTime.now().toUtc();
+    DateTime? earliest;
+    for (final message in messages) {
+      final due = message.nextAttemptAt;
+      if (message.terminal || due == null || !due.isAfter(now)) continue;
+      if (earliest == null || due.isBefore(earliest)) earliest = due;
+    }
+    if (earliest == null || _disposed) return;
+    _mlsOutboxRetryTimer = Timer(earliest.difference(now), () {
+      _mlsOutboxRetryTimer = null;
+      unawaited(_flushMlsOutbox());
+    });
+  }
+
+  /// Conversations whose MLS control message the server rejected (I34).
+  /// They stay paused, with the message kept, until the device recovers.
+  bool mlsConversationFailed(String conversationId) =>
+      _failedMlsConversations.contains(conversationId);
+
+  static bool _sameSetOf(Set<String> left, Set<String> right) =>
+      left.length == right.length && left.containsAll(right);
 
   /// Creates the MLS group for a new conversation and sends each member's
   /// Welcome, so the composer works as soon as the conversation opens.
@@ -2495,6 +3206,14 @@ class AppState extends ChangeNotifier {
     for (final revocation in await client.mlsRevocations(current.token)) {
       if (revocation.state == 'pending' &&
           revocation.coordinatorDeviceId == current.deviceId) {
+        // Earlier MLS work for this group drains first (I34). In
+        // particular, a revocation commit queued before a restart is still
+        // "pending" on the server until it is delivered; making another one
+        // would fork the group.
+        if (await _hasPendingMlsWork(revocation.conversationId)) {
+          await _flushMlsOutbox();
+          if (await _hasPendingMlsWork(revocation.conversationId)) continue;
+        }
         await mls.createRevocationCommit(revocation);
         await _flushMlsOutbox();
         continue;
@@ -2502,7 +3221,7 @@ class AppState extends ChangeNotifier {
       final messageId = revocation.commitMessageId;
       if (revocation.state == 'commit_submitted' &&
           messageId != null &&
-          await localStore.hasProcessedMlsMessage(messageId)) {
+          await localStore.hasAppliedMlsControlMessage(messageId)) {
         await client.confirmMlsRevocation(
           current.token,
           revocation.conversationId,
@@ -2511,6 +3230,10 @@ class AppState extends ChangeNotifier {
       }
     }
   }
+
+  Future<bool> _hasPendingMlsWork(String conversationId) async =>
+      (await localStore.pendingMlsMessages())
+          .any((message) => message.conversationId == conversationId);
 
   Future<void> _removeFromOutbox(MessageEnvelope envelope) async {
     await _removeFromOutboxByKey(envelope.idempotencyKey);
@@ -2603,6 +3326,8 @@ class AppState extends ChangeNotifier {
     _syncOwner = null;
     _outboxRetryTimer?.cancel();
     _outboxRetryTimer = null;
+    _mlsOutboxRetryTimer?.cancel();
+    _mlsOutboxRetryTimer = null;
     unawaited(_syncSubscription?.cancel());
     sync?.dispose();
     unawaited(_pushSubscription?.cancel());
@@ -2643,6 +3368,131 @@ bool _constantTimeBytesEqual(List<int> left, List<int> right) {
     difference |= left[index] ^ right[index];
   }
   return difference == 0;
+}
+
+/// Fetches what one page of sync events needs in as few requests as
+/// possible (I33): every MLS control message of the page comes from one
+/// bounded list request, and each legacy envelope is fetched at most once.
+class _SyncPageRepair {
+  _SyncPageRepair({
+    required this.client,
+    required this.token,
+    required this.events,
+    required this.processed,
+  });
+
+  static const int _batchLimit = 200;
+  static const int _maxBatchRequests = 3;
+
+  final ApiClient client;
+  final String token;
+  final List<SyncEvent> events;
+  final Future<bool> Function(String marker) processed;
+  Future<Map<String, MlsMessage>>? _mlsBatch;
+  final Map<String, Future<ReceivedMessageEnvelope?>> _envelopes =
+      <String, Future<ReceivedMessageEnvelope?>>{};
+
+  /// Requests made so far, for tests of the batching bound.
+  int requests = 0;
+
+  Future<MlsMessage> mlsMessage(SyncEvent event, String id) async {
+    final batch = await (_mlsBatch ??= _loadMlsBatch());
+    final found = batch[id];
+    if (found != null) return found;
+    return _fetchMlsMessage(event, id);
+  }
+
+  /// The envelope for a legacy event without an inline copy, or null when
+  /// the server proves it expired.
+  Future<ReceivedMessageEnvelope?> envelope(SyncEvent event, String id) =>
+      _envelopes.putIfAbsent(id, () => _fetchEnvelope(event, id));
+
+  Future<Map<String, MlsMessage>> _loadMlsBatch() async {
+    final wanted = <String, int>{};
+    for (final event in events) {
+      if (event.type != 'mls.message.created') continue;
+      final id = AppState._mlsMessageIdFromPayload(event.payload);
+      if (id == null || await processed('mls:${event.id}:$id')) continue;
+      wanted[id] = event.id;
+    }
+    final found = <String, MlsMessage>{};
+    if (wanted.isEmpty) return found;
+    final lastEventId = wanted.values.reduce(max);
+    var after = wanted.values.reduce(min) - 1;
+    try {
+      for (var round = 0; round < _maxBatchRequests; round++) {
+        requests++;
+        final page =
+            await client.mlsMessages(token, after: after, limit: _batchLimit);
+        for (final message in page) {
+          if (wanted[message.id] == message.syncEventId) {
+            found[message.id] = message;
+          }
+        }
+        if (found.length == wanted.length ||
+            page.length < _batchLimit ||
+            page.last.syncEventId >= lastEventId ||
+            page.last.syncEventId <= after) {
+          break;
+        }
+        after = page.last.syncEventId;
+      }
+    } catch (err) {
+      if (AppState._isTransientSyncError(err) ||
+          (err is ApiException && err.statusCode == 401)) {
+        rethrow;
+      }
+      // Anything else falls back to one request per missing message, which
+      // classifies the failure for the event that needs it.
+    }
+    return found;
+  }
+
+  Future<MlsMessage> _fetchMlsMessage(SyncEvent event, String id) async {
+    requests++;
+    try {
+      return await client.mlsMessage(token, id);
+    } catch (err) {
+      throw _classifyFetch(err, event,
+          missing: SyncFailureKind.mlsControlMissing,
+          malformed: SyncFailureKind.mlsControlMalformed);
+    }
+  }
+
+  Future<ReceivedMessageEnvelope?> _fetchEnvelope(
+      SyncEvent event, String id) async {
+    requests++;
+    try {
+      return await client.message(token, id);
+    } catch (err) {
+      if (err is ApiException &&
+          err.statusCode == 410 &&
+          err.serverCode == 'message_expired') {
+        return null;
+      }
+      throw _classifyFetch(err, event,
+          missing: SyncFailureKind.applicationMissing,
+          malformed: SyncFailureKind.applicationUndecryptable);
+    }
+  }
+
+  Object _classifyFetch(
+    Object err,
+    SyncEvent event, {
+    required SyncFailureKind missing,
+    required SyncFailureKind malformed,
+  }) {
+    if (AppState._isTransientSyncError(err) ||
+        (err is ApiException && err.statusCode == 401)) {
+      return err;
+    }
+    return SyncEventFailure(
+      err is ApiException ? missing : malformed,
+      eventId: event.id,
+      eventType: event.type,
+      conversationId: event.conversationId,
+    );
+  }
 }
 
 extension FirstOrNull<T> on Iterable<T> {

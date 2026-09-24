@@ -1,5 +1,6 @@
 import Flutter
 import UIKit
+import UserNotifications
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, FlutterStreamHandler {
@@ -36,8 +37,31 @@ import UIKit
           result(FlutterError(code: "invalid_arguments", message: "Push instance is required", details: nil)); return
         }
         self.pushInstance = instance
-        DispatchQueue.main.async { UIApplication.shared.registerForRemoteNotifications() }
+        // Only APNs can wake an iOS app; register only when the server
+        // offers it (card I41).
+        let providers = arguments["providers"] as? [String] ?? []
+        if providers.contains("apns") {
+          DispatchQueue.main.async { UIApplication.shared.registerForRemoteNotifications() }
+        } else {
+          self.pushEvents?(["type": "registration_failed", "instance": instance, "provider": "apns"])
+        }
         result(nil)
+      case "notificationPermission":
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+          let state: String
+          switch settings.authorizationStatus {
+          case .authorized, .provisional: state = "granted"
+          case .denied: state = "denied"
+          case .notDetermined: state = "not_determined"
+          // .ephemeral (App Clips, iOS 14+) and future cases.
+          @unknown default: state = "granted"
+          }
+          DispatchQueue.main.async { result(state) }
+        }
+      case "requestNotificationPermission":
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+          DispatchQueue.main.async { result(granted ? "granted" : "denied") }
+        }
       case "pickDistributor":
         result(nil)
       case "unregister":
@@ -91,6 +115,8 @@ import UIKit
       didFailToRegisterForRemoteNotificationsWithError error: Error) {
     // Registration is retried on the next authenticated startup. Do not emit
     // error descriptions because platform diagnostics can contain identifiers.
+    guard let instance = pushInstance else { return }
+    pushEvents?(["type": "registration_failed", "instance": instance, "provider": "apns"])
   }
 
   override func application(_ application: UIApplication,
@@ -103,6 +129,16 @@ import UIKit
     let next = UserDefaults.standard.integer(forKey: wakeGenerationKey) + 1
     UserDefaults.standard.set(next, forKey: wakeGenerationKey)
     pushEvents?(["type": "wake"])
+    if application.applicationState != .active {
+      // The one notification Veritra shows: a fixed sentence, never message
+      // text, a sender or a conversation (card I41).
+      let content = UNMutableNotificationContent()
+      content.title = "Veritra"
+      content.body = "New encrypted message"
+      content.sound = .default
+      UNUserNotificationCenter.current().add(
+        UNNotificationRequest(identifier: "veritra-new-message", content: content, trigger: nil))
+    }
     completionHandler(.newData)
   }
 }

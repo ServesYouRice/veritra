@@ -201,6 +201,27 @@ network failure, 401, duplicate page and expired cursor tests all reach the
 specified state without looping or skipping MLS work; a reconnect burst uses a
 bounded, deduplicated repair request instead of one request per event.
 
+**Implementation note (Stage 5, 2026-09-24):** Every sync event failure is
+typed (`SyncFailureKind` in `mobile/lib/sync/sync_recovery.dart`). Only
+network/5xx/408/429 failures are retried and 401 signs out; every other kind
+stops sync at that event without moving the cursor and is stored as a durable
+`SyncRecovery` record (local metadata `sync.recovery`), so later wakes do not
+refetch the event. Missing, malformed or rejected MLS control messages, and an
+MLS message whose sync event or conversation does not match, never advance.
+Tombstone policy: an application message or call signal that fails to apply may
+be passed over only when its own `expires_at` is past, or when the server
+answers `410 message_expired` for a legacy event without an inline envelope;
+the tombstone commits only the cursor and an `expired:` marker, never text.
+Each page's MLS control messages come from one `GET /api/v1/mls/messages`
+request (at most three), with a single-message fetch only for one the batch
+did not return; legacy envelopes are fetched at most once per page. An expired
+cursor now answers `409 device_recovery_required` (the client still accepts the
+old `full_resync_required`) and offers backup restore or relink, never retry or
+a cursor jump. Relinking deletes local identity and history and requires
+explicit confirmation. Checks: `flutter test` (all, including
+`test/sync_recovery_test.dart`), the live demo e2e test, and
+`go test ./internal/httpapi ./internal/storage` pass.
+
 ### I34 - Reliable MLS control outbox
 
 **Decision:** Merge Codex LOG-06 and TEST-03's MLS-control scope with Opus L3.
@@ -217,6 +238,26 @@ bounded, deduplicated repair request instead of one request per event.
 tests show ordered progress, no unhandled future and no duplicate state
 transition; the affected group enters a recoverable failed state while an
 unrelated group can continue.
+
+**Implementation note (Stage 5, 2026-09-24):** The MLS outbox has one
+coalescing worker that never throws. Messages of one conversation go strictly
+in queue order; a waiting or failed message holds back the rest of its
+conversation while other conversations continue. Network errors, 408, 429 and
+5xx retry with exponential backoff (1 s to 256 s) stored durably with the
+attempt count (local schema v8); other 4xx responses are terminal, keep the
+message queued, pause the conversation (`mlsConversationFailed`, a chat notice,
+and `ConversationPausedException` on send) and never delete it. The worker
+wakes on start, sync events, reconnect, resume and a timer for the next due
+attempt. Application messages wait while their conversation has queued MLS
+work, because they were encrypted in the following epoch. The revocation
+coordinator drains earlier MLS work for the conversation before creating a
+commit, so a commit queued before a restart is never made twice. Two defects
+found on the way are fixed: a transition's messages were ordered by random
+idempotency key instead of creation order, and revocation confirmation looked
+up the raw MLS message ID instead of the `mls:<event>:<id>` marker, so it
+never confirmed. Checks: `flutter test` (all, including
+`test/mls_outbox_test.dart` and the new store tests), the native crypto tests
+and the live demo e2e test pass.
 
 ### I35 - Retention and attachment-prune convergence
 
@@ -361,6 +402,23 @@ on I32's recovery state.**
 **Accept when:** wrong/missing/corrupt key tests preserve the database, enter
 `recoveryRequired`, and require explicit confirmation before any reset.
 
+**Implementation note (Stage 5, 2026-09-24):** Android secure storage no
+longer uses `resetOnError`, which silently deleted the database key on a
+keystore error. Opening the local database now fails with a typed
+`LocalStoreUnavailableException` (`profileLocked`, `keyUnavailable`,
+`keyMissing`, `keyMalformed`, `keyRejected` for a wrong key or damaged file,
+`keyWriteFailed`) and never writes a key while a database exists. A failed
+open is no longer cached, so a retry after unlocking reopens. Restore enters
+`recoveryRequired` with a kind-specific message; "continue to sign in" is not
+offered for these failures. The only reset is the explicitly confirmed
+`quarantineUnreadableDatabase`: it journals an intent file, keeps the current
+key under `<key name>.quarantined.<stamp>`, moves the database and its WAL/SHM
+companions into `unreadable-<stamp>/`, and only then removes the key; an
+interrupted reset is completed on the next open. Nothing is deleted. Tests
+cover wrong, missing, malformed and unreadable keys, the confirmation, the
+readable quarantined copy and an interrupted reset. Relink is the recovery
+path; restoring a backup onto the fresh store arrives with I45.
+
 ### I40 - Release evidence and toolchain integrity
 
 **Decision:** Merge Codex DEP-01/DEP-06/TEST-06/TEST-09/TEST-10/TEST-11/
@@ -440,6 +498,26 @@ No new dependency was added.
 **Accept when:** FCM-only, UnifiedPush/WebPush-only, APNs-only and mixed setups
 register, rotate, revoke and wake on real devices; denied permissions and
 provider errors are visible without leaking sender or content.
+
+**Implementation note (Stage 5, 2026-09-24):** The server sends the VAPID key
+only with Web Push, refuses registrations for providers it does not offer, and
+retires a device's other provider when it registers one. Clients register with
+the providers the server offers: Android uses FCM when offered and built with
+FCM settings, otherwise UnifiedPush (the only path needing VAPID); iOS
+registers with APNs only when offered. Push state is typed (server disabled,
+registering, no distributor, registration failed, registered) and the settings
+copy follows it; the false "not available on iOS" copy is gone. Android 13+
+asks for `POST_NOTIFICATIONS`, iOS asks through `UNUserNotificationCenter`;
+a wake received in the background shows one fixed sentence ("New encrypted
+message") and nothing else. `POST /api/v1/push/test` sends the ordinary
+generic wake to the device's own registration (once a minute) and
+`GET /api/v1/push/subscriptions/me` lists registrations by ID, provider and
+time only. APNs now accepts Apple's PKCS #8 `.p8` keys. QA06 covers FCM,
+APNs and Web Push request contracts with generated keys and an injected
+transport; QA08's bridge test covers the new methods and events. Checks:
+`go test -race ./internal/push`, `go test ./...`, `flutter test`. Still
+required under G24: the FCM-only, UnifiedPush-only, APNs-only and mixed wake
+matrix on real devices, and the Android/iOS native builds (CI).
 
 ### I42 - Authorized calls and native call lifecycle
 
@@ -547,6 +625,76 @@ backup/recovery UI instead of a dead “Coming soon” item.
 **Accept when:** concurrent invocation, pre-existing paths, disk full, corrupt
 archive, missing blob, permission failure and process death leave the original
 instance recoverable; a clean-host restore and mobile recovery flow pass.
+
+**Implementation note (Stage 5, 2026-09-24):**
+- *T45A:* backup and restore stage in invocation-owned directories carrying a
+  `.veritra-staging` marker, and only marked directories are ever removed.
+  Files and directories are fsynced before renaming, and free space is checked
+  first. Restore writes `.veritra-restore-journal.json` before moving anything
+  live; every database-opening command settles an interrupted restore
+  (unfinished: rolled back; finished: kept) and refuses a damaged or foreign
+  journal. The live WAL/SHM files now move with the preserved database instead
+  of being deleted. Fault tests cover disk-full, permission and crash at every
+  step, corrupt/missing/path-escaping blobs, foreign pre-existing paths and
+  concurrent backups.
+- *QA09:* databases built through migrations 0020, 0023 and 0027 upgrade with
+  their rows and backfills intact, and a failing migration leaves neither its
+  schema change nor its record.
+- *T45B:* `scheduled-backup` runs backup, a disposable restore drill
+  (`verify-backup`), a verified off-host copy to a host-mounted directory
+  (credentials stay with the mount), and retention pruning. Success is
+  recorded only after the drill passes; content-free metrics report backup
+  age and consecutive failures. A daily systemd timer and a compose profile
+  are provided; RPO/RTO and alert thresholds are in `operations.md`.
+- *T45C:* the mobile backup has format v2 with decrypted history and
+  reactions (D27); v1 still restores. Restore fails with a typed
+  `BackupException` (network, not found, busy, wrong key, corrupt, device
+  not empty, too large, storage), touches the store only after the whole
+  backup decrypts and parses, and never overwrites a device that has an
+  account. An interrupted download is kept and resumed; the server now
+  accepts a resume from any offset up to what it sent, because bytes written
+  are not always bytes received, and still consumes the capability only when
+  a transfer reaches the end. Demo builds show a backup screen (status, make
+  a new backup, recovery code shown once) and "Restore from a backup" on the
+  connect screen; release builds keep the item unavailable.
+- Checks: `go test -race ./cmd/messenger-server ./internal/storage`,
+  `go test ./...`, `flutter test` with the native library (including
+  `backup_service_test.dart` and `backup_screen_test.dart`), and the live
+  demo e2e test, which backs up a client and restores it on a fresh device.
+
+### I51 - MLS membership after creation and linked devices
+
+**Decision:** New card from the 2026-09-24 demo plan (D10, D24). **High,
+release blocker. Depends on I30 and I34.** Groups must accept new members and
+newly linked devices after creation and drop the devices of members who
+leave, without forking a group, stalling sync or delivering what a device
+cannot decrypt.
+
+**Accept when:** a member added after creation and a newly linked device join
+and read messages sent from then on; removed members stop receiving; two
+devices committing at once never fork the group; a joining device never
+receives events from before its join, and a Welcome reaches only its device.
+
+**Implementation note (Stage 5, 2026-09-24, D28):** Advisor review rejected a
+lease design because native add/remove merged commits before the server
+answered. Adopted instead: ABI v6 staged commits (merge after acceptance,
+clear after refusal), a server epoch compare-and-swap on atomic commit
+bundles (`POST /api/v1/conversations/{id}/mls/commits`, `409
+mls_epoch_conflict`), a per-group device roster with join cursor and joined
+epoch (migration 0029), device-scoped Welcome events, `GET
+/api/v1/mls/pending-changes` with a coordinator hint, and per-device key
+package claims (`device_ids`). Clients reconcile after each clean catch-up;
+an epoch conflict drops the staged commit and retries after catching up
+instead of pausing the conversation. Envelopes carry `mls_epoch` so late
+older-epoch messages are withheld from devices that joined after them.
+Revocation coordination and confirmation are limited to group devices. The
+old single-message route refuses commits and Welcomes for rostered groups;
+groups created earlier stay unfiltered and cannot change membership. Also
+fixed: MLS Welcome events were visible to every device of the recipient
+account. Checks: Rust tests (including a two-committer race), native service
+tests, `go test ./...` (store and HTTP bundle tests), `flutter test`, and the
+live demo e2e test, which now adds a member to an existing group and removes
+another.
 
 ## Prepared follow-up packages
 

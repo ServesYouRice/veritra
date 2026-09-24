@@ -261,17 +261,23 @@ func (s *Store) MessageForAccount(ctx context.Context, messageID, accountID stri
 		       me.thread_root_id, me.created_at, me.edited_at, me.deleted_at, me.expires_at
 		FROM message_envelopes me
 		JOIN memberships m ON m.conversation_id = me.conversation_id AND m.account_id = ?
-		WHERE me.id = ? AND (me.expires_at IS NULL OR me.expires_at > ?)
+		WHERE me.id = ?
 		  AND NOT EXISTS (
 		    SELECT 1 FROM account_blocks b
 		    WHERE b.blocker_account_id = ? AND b.blocked_account_id = me.sender_account_id
-		  )`, accountID, messageID, nowString(), accountID)
+		  )`, accountID, messageID, accountID)
 	message, err := scanMessage(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.MessageEnvelope{}, ErrNotFound
 		}
 		return domain.MessageEnvelope{}, err
+	}
+	// An expired envelope that has not been pruned yet is reported as
+	// expired, never returned: clients may pass over an application message
+	// only with this proof (I33).
+	if message.ExpiresAt != nil && !message.ExpiresAt.After(time.Now().UTC()) {
+		return domain.MessageEnvelope{}, ErrMessageExpired
 	}
 	return message, nil
 }
@@ -725,7 +731,11 @@ func insertSyncEvent(ctx context.Context, execer syncEventExecer, eventType stri
 	return result.LastInsertId()
 }
 
-func (s *Store) ListSyncEvents(ctx context.Context, accountID string, afterID int64, limit int) ([]domain.SyncEvent, error) {
+// ListSyncEvents returns the events after afterID that the account's
+// device may see: account events (a Welcome only for its own device) and
+// events of its conversations, where encrypted ones follow the device's MLS
+// join cursor (card I51).
+func (s *Store) ListSyncEvents(ctx context.Context, accountID, deviceID string, afterID int64, limit int) ([]domain.SyncEvent, error) {
 	_, oldest, _, err := s.SyncBounds(ctx, accountID)
 	if err != nil {
 		return nil, err
@@ -741,12 +751,15 @@ func (s *Store) ListSyncEvents(ctx context.Context, accountID string, afterID in
 		FROM (
 			SELECT id, event_type, account_id, conversation_id, payload_json, created_at
 			FROM sync_events
-			WHERE id > ? AND account_id = ?
+			WHERE id > ? AND account_id = ? AND (device_id IS NULL OR device_id = ?)
 			UNION ALL
 			SELECT se.id, se.event_type, se.account_id, se.conversation_id, se.payload_json, se.created_at
 			FROM sync_events se
 			JOIN memberships m ON m.conversation_id = se.conversation_id
 			WHERE se.id > ? AND se.account_id IS NULL AND m.account_id = ?
+			  AND (NOT (se.event_type = 'mls.message.created' OR se.event_type LIKE 'message.envelope.%'
+			            OR se.event_type LIKE 'call.%')
+			       OR `+mlsJoinFilterEvent+`)
 			  AND NOT EXISTS (
 			    SELECT 1 FROM account_blocks b
 			    WHERE b.blocker_account_id = m.account_id
@@ -759,7 +772,7 @@ func (s *Store) ListSyncEvents(ctx context.Context, accountID string, afterID in
 			  )
 		) visible_events
 		ORDER BY id ASC
-		LIMIT ?`, afterID, accountID, afterID, accountID, limit)
+		LIMIT ?`, afterID, accountID, deviceID, afterID, accountID, deviceID, limit)
 	if err != nil {
 		return nil, err
 	}

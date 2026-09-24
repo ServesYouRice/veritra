@@ -456,6 +456,11 @@ func (a *API) createPushSubscription(w http.ResponseWriter, r *http.Request, pri
 		writeError(w, http.StatusBadRequest, "invalid_push_subscription")
 		return
 	}
+	// Only providers this server can deliver through (card I41).
+	if !a.pushProviderOffered(req.Provider) {
+		writeError(w, http.StatusBadRequest, "push_provider_unavailable")
+		return
+	}
 	subscriptionID, err := a.Store.CreatePushSubscription(r.Context(), principal.AccountID, principal.DeviceID, req.Provider, req.Endpoint, req.PublicKey, req.AuthSecret)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "push_subscription_failed")
@@ -464,12 +469,117 @@ func (a *API) createPushSubscription(w http.ResponseWriter, r *http.Request, pri
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "ok", "subscription_id": subscriptionID, "payload_policy": "generic_encrypted_event_only"})
 }
 
+// pushConfig tells the client which providers this server delivers
+// through. The VAPID key is sent only with Web Push: FCM and APNs never need
+// it (card I41).
 func (a *API) pushConfig(w http.ResponseWriter, _ *http.Request, _ domain.Principal) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"enabled":          len(a.PushProviders) > 0,
-		"providers":        a.PushProviders,
-		"vapid_public_key": a.VAPIDPublicKey,
-	})
+	response := map[string]any{
+		"enabled":        len(a.PushProviders) > 0,
+		"providers":      a.PushProviders,
+		"payload_policy": "generic_encrypted_event_only",
+	}
+	if a.pushProviderOffered("webpush") {
+		response["vapid_public_key"] = a.VAPIDPublicKey
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (a *API) pushProviderOffered(provider string) bool {
+	for _, offered := range a.PushProviders {
+		if offered == provider {
+			return true
+		}
+	}
+	return false
+}
+
+// listDevicePushSubscriptions is the privacy-safe diagnostics view: which
+// provider this device is registered with and since when. No endpoint,
+// token or key is returned.
+func (a *API) listDevicePushSubscriptions(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	if principal.DeviceID == "" {
+		writeError(w, http.StatusBadRequest, "device_session_required")
+		return
+	}
+	subscriptions, err := a.Store.ListDevicePushSubscriptions(r.Context(), principal.AccountID, principal.DeviceID)
+	if err != nil {
+		handleStorageError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"subscriptions": subscriptions})
+}
+
+const pushTestInterval = time.Minute
+
+// sendTestPush sends the ordinary generic wake to this device's own
+// registrations, so the user can check notifications end to end. The wake
+// carries nothing but the generic event; results are coarse classes.
+func (a *API) sendTestPush(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	if principal.DeviceID == "" {
+		writeError(w, http.StatusBadRequest, "device_session_required")
+		return
+	}
+	if !a.allowPushTest(principal.DeviceID, time.Now()) {
+		writeError(w, http.StatusTooManyRequests, "push_test_rate_limited")
+		return
+	}
+	subscriptions, err := a.Store.ListDevicePushSubscriptions(r.Context(), principal.AccountID, principal.DeviceID)
+	if err != nil {
+		handleStorageError(w, err)
+		return
+	}
+	if len(subscriptions) == 0 {
+		writeError(w, http.StatusNotFound, "no_push_subscription")
+		return
+	}
+	type outcome struct {
+		ID       string `json:"id"`
+		Provider string `json:"provider"`
+		Result   string `json:"result"`
+	}
+	results := make([]outcome, 0, len(subscriptions))
+	for _, subscription := range subscriptions {
+		target := subscription.Target()
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		err := a.Push.SendEncryptedEventAvailable(ctx, push.Notification{
+			Provider: target.Provider, Endpoint: target.Endpoint,
+			PublicKey: target.PublicKey, AuthSecret: target.AuthSecret,
+		})
+		cancel()
+		result := "delivered"
+		switch {
+		case err == nil:
+		case errors.Is(err, push.ErrSubscriptionGone):
+			result = "gone"
+			_ = a.Store.DisablePushTarget(r.Context(), subscription.ID)
+		case errors.Is(err, push.ErrNoProvider):
+			result = "provider_unavailable"
+		default:
+			result = "failed"
+		}
+		results = append(results, outcome{ID: subscription.ID, Provider: subscription.Provider, Result: result})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"results": results})
+}
+
+func (a *API) allowPushTest(deviceID string, now time.Time) bool {
+	a.pushTestMu.Lock()
+	defer a.pushTestMu.Unlock()
+	if a.pushTestLast == nil {
+		a.pushTestLast = map[string]time.Time{}
+	}
+	if last, ok := a.pushTestLast[deviceID]; ok && now.Sub(last) < pushTestInterval {
+		return false
+	}
+	if len(a.pushTestLast) > 10000 {
+		for id, last := range a.pushTestLast {
+			if now.Sub(last) >= pushTestInterval {
+				delete(a.pushTestLast, id)
+			}
+		}
+	}
+	a.pushTestLast[deviceID] = now
+	return true
 }
 
 func (a *API) deletePushSubscription(w http.ResponseWriter, r *http.Request, principal domain.Principal) {

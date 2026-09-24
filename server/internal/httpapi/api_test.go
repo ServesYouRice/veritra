@@ -1292,3 +1292,188 @@ func TestAuthenticatedAPIResponsesAreNotCacheable(t *testing.T) {
 		t.Fatalf("Cache-Control=%q", got)
 	}
 }
+
+// I33: a client may pass over an application message only with proof that it
+// expired, and an expired sync cursor asks for device recovery, never a jump.
+func TestSyncRecoveryResponses(t *testing.T) {
+	handler, token, dbPath := newTestHandlerWithOwner(t)
+	conversationID := createConversation(t, handler, token)
+	messageID := createMessage(t, handler, token, conversationID, "expiring", []byte("ciphertext"))
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open test database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	status, response := doJSON(t, handler, http.MethodGet, "/api/v1/messages/"+messageID, token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("live message status=%d body=%s", status, response)
+	}
+	if _, err := db.Exec(`UPDATE message_envelopes SET expires_at = '2000-01-01T00:00:00Z' WHERE id = ?`, messageID); err != nil {
+		t.Fatalf("expire message: %v", err)
+	}
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/messages/"+messageID, token, nil)
+	if status != http.StatusGone || !bytes.Contains(response, []byte(`"message_expired"`)) {
+		t.Fatalf("expired message status=%d body=%s", status, response)
+	}
+	if bytes.Contains(response, []byte("ciphertext")) {
+		t.Fatalf("expired message response carries the envelope: %s", response)
+	}
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/messages/msg_missing", token, nil)
+	if status != http.StatusNotFound {
+		t.Fatalf("missing message status=%d body=%s", status, response)
+	}
+
+	for i := 0; i < 3; i++ {
+		createMessage(t, handler, token, conversationID, "later-"+strconv.Itoa(i), []byte("ciphertext"))
+	}
+	var oldest int64
+	if err := db.QueryRow(`SELECT MAX(id) FROM sync_events`).Scan(&oldest); err != nil {
+		t.Fatalf("latest event: %v", err)
+	}
+	if _, err := db.Exec(`DELETE FROM sync_events WHERE id < ?`, oldest); err != nil {
+		t.Fatalf("prune events: %v", err)
+	}
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/sync/events?after=1", token, nil)
+	if status != http.StatusConflict || !bytes.Contains(response, []byte(`"device_recovery_required"`)) {
+		t.Fatalf("expired cursor status=%d body=%s", status, response)
+	}
+}
+
+// Card I51: commit bundles are ordered by epoch over HTTP, and group devices
+// learn which devices to add.
+func TestMLSCommitBundleRoutes(t *testing.T) {
+	handler, ownerToken, _ := newTestHandlerWithOwner(t)
+	memberToken, memberID := registerMemberWithID(t, handler, ownerToken, "bundlemember")
+	conversationID := createConversation(t, handler, ownerToken)
+	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+conversationID+"/members", ownerToken,
+		map[string]interface{}{"account_id": memberID})
+	if status != http.StatusCreated && status != http.StatusNoContent && status != http.StatusOK {
+		t.Fatalf("add member status=%d body=%s", status, response)
+	}
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/devices/me", memberToken, nil)
+	if status != http.StatusOK {
+		t.Fatalf("member devices status=%d body=%s", status, response)
+	}
+	var devices struct {
+		Devices []struct {
+			ID string `json:"id"`
+		} `json:"devices"`
+	}
+	if err := json.Unmarshal(response, &devices); err != nil || len(devices.Devices) != 1 {
+		t.Fatalf("decode devices: %v %s", err, response)
+	}
+	memberDevice := devices.Devices[0].ID
+
+	// The creator records the group with nobody added yet.
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+conversationID+"/mls/commits", ownerToken,
+		map[string]interface{}{"epoch": 0, "idempotency_key": "genesis"})
+	if status != http.StatusCreated || !bytes.Contains(response, []byte(`"epoch":0`)) {
+		t.Fatalf("genesis status=%d body=%s", status, response)
+	}
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/mls/pending-changes", ownerToken, nil)
+	if status != http.StatusOK || !bytes.Contains(response, []byte(memberDevice)) {
+		t.Fatalf("pending status=%d body=%s", status, response)
+	}
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+conversationID+"/key-packages/claim", ownerToken,
+		map[string]interface{}{"device_ids": []string{memberDevice}})
+	if status != http.StatusOK || !bytes.Contains(response, []byte(memberDevice)) {
+		t.Fatalf("claim status=%d body=%s", status, response)
+	}
+	bundle := map[string]interface{}{
+		"epoch": 0, "idempotency_key": "add-member",
+		"commit":  base64.StdEncoding.EncodeToString([]byte("commit")),
+		"welcome": base64.StdEncoding.EncodeToString([]byte("welcome")),
+		"added":   []map[string]string{{"account_id": memberID, "device_id": memberDevice}},
+	}
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+conversationID+"/mls/commits", ownerToken, bundle)
+	if status != http.StatusCreated || !bytes.Contains(response, []byte(`"epoch":1`)) {
+		t.Fatalf("commit status=%d body=%s", status, response)
+	}
+	status, _ = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+conversationID+"/mls/commits", ownerToken, bundle)
+	if status != http.StatusOK {
+		t.Fatalf("idempotent retry status=%d", status)
+	}
+	bundle["idempotency_key"] = "stale"
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+conversationID+"/mls/commits", memberToken, map[string]interface{}{
+		"epoch": 0, "idempotency_key": "stale", "commit": base64.StdEncoding.EncodeToString([]byte("c2")),
+		"removed": []map[string]string{{"account_id": memberID, "device_id": memberDevice}},
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("self-removal status=%d body=%s", status, response)
+	}
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+conversationID+"/mls/commits", ownerToken, map[string]interface{}{
+		"epoch": 0, "idempotency_key": "late", "commit": base64.StdEncoding.EncodeToString([]byte("c3")),
+		"removed": []map[string]string{{"account_id": memberID, "device_id": memberDevice}},
+	})
+	if status != http.StatusConflict || !bytes.Contains(response, []byte(`"mls_epoch_conflict"`)) || !bytes.Contains(response, []byte(`"epoch":1`)) {
+		t.Fatalf("stale commit status=%d body=%s", status, response)
+	}
+	// The single-message route no longer takes commits for this group.
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+conversationID+"/mls/messages", ownerToken, map[string]interface{}{
+		"kind": "commit", "idempotency_key": "old-route", "payload": base64.StdEncoding.EncodeToString([]byte("c")),
+	})
+	if status != http.StatusConflict || !bytes.Contains(response, []byte("mls_commit_bundle_required")) {
+		t.Fatalf("old route status=%d body=%s", status, response)
+	}
+	// The member device got its Welcome through sync.
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/sync/events?after=0&limit=100", memberToken, nil)
+	if status != http.StatusOK || !bytes.Contains(response, []byte(`"kind":"welcome"`)) {
+		t.Fatalf("member sync status=%d body=%s", status, response)
+	}
+}
+
+// I45: a recovery download can resume from what the client actually has,
+// even when the server sent more before the connection dropped; only a
+// transfer that reaches the end consumes the capability.
+func TestRecoveryResumesFromTheClientsOffset(t *testing.T) {
+	handler, token, _ := newTestHandlerWithOwner(t)
+	payload := []byte("0123456789abcdefghijklmnopqrstuvwxyz")
+	recoveryToken := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
+	status, response := doRaw(t, handler, http.MethodPost, "/api/v1/backups", token, payload, map[string]string{
+		"X-Private-Messenger-Encrypted": "1",
+		"X-Key-Derivation-Metadata":     `{"version":1,"algorithm":"AES-256-GCM-chunked","chunk_size":1048576,"state_counter":1}`,
+		"X-Recovery-Token":              recoveryToken,
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("backup status=%d body=%s", status, response)
+	}
+	get := func(rangeHeader string) (int, []byte) {
+		headers := map[string]string{"X-Recovery-Token": recoveryToken}
+		if rangeHeader != "" {
+			headers["Range"] = rangeHeader
+		}
+		return doRaw(t, handler, http.MethodGet, "/api/v1/recovery", "", nil, headers)
+	}
+	// The server delivers the first 20 bytes...
+	status, response = get("bytes=0-19")
+	if status != http.StatusPartialContent || !bytes.Equal(response, payload[:20]) {
+		t.Fatalf("first part status=%d body=%q", status, response)
+	}
+	// ...but the client only kept 12 and resumes there.
+	status, response = get("bytes=12-")
+	if status != http.StatusPartialContent || !bytes.Equal(response, payload[12:]) {
+		t.Fatalf("resume status=%d body=%q", status, response)
+	}
+	// Reaching the end consumed the capability.
+	status, _ = get("")
+	if status != http.StatusNotFound {
+		t.Fatalf("replay after completion status=%d", status)
+	}
+	// Skipping ahead of what was ever sent is refused.
+	second := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{8}, 32))
+	status, _ = doRaw(t, handler, http.MethodPost, "/api/v1/backups", token, payload, map[string]string{
+		"X-Private-Messenger-Encrypted": "1",
+		"X-Key-Derivation-Metadata":     `{"version":1,"algorithm":"AES-256-GCM-chunked","chunk_size":1048576,"state_counter":2}`,
+		"X-Recovery-Token":              second,
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("second backup status=%d", status)
+	}
+	status, _ = doRaw(t, handler, http.MethodGet, "/api/v1/recovery", "", nil, map[string]string{
+		"X-Recovery-Token": second, "Range": "bytes=10-",
+	})
+	if status != http.StatusRequestedRangeNotSatisfiable {
+		t.Fatalf("skip-ahead status=%d", status)
+	}
+}

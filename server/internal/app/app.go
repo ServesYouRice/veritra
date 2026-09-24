@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"private-messenger/server/internal/backupstatus"
 	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/httpapi"
 	"private-messenger/server/internal/messaging"
@@ -123,6 +124,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	hub := realtime.NewHub()
 	metrics := newHTTPMetrics()
 	metrics.realtimeConnections = hub.ConnectionCount
+	dataDir := cfg.DataDir
+	metrics.backupStatus = func() (backupstatus.Status, bool) { return backupstatus.Read(dataDir) }
 	metrics.rateLimiter = limiter
 	metrics.loginBackoff = loginBackoff
 	application := &App{
@@ -652,6 +655,7 @@ type httpMetrics struct {
 	statusClass         [6]atomic.Int64
 	routes              sync.Map
 	realtimeConnections func() int
+	backupStatus        func() (backupstatus.Status, bool)
 	retentionBacklog    atomic.Int64
 	retentionOldestAge  atomic.Int64
 	push                map[string]*pushDeliveryMetrics
@@ -741,6 +745,21 @@ func (m *httpMetrics) handle(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprintf(w, "veritra_http_request_duration_seconds_count{route=%q} %d\n", pattern, route.total.Load())
 		return true
 	})
+	if m.backupStatus != nil {
+		// Times and counts only: no path, destination or error text.
+		status, recorded := m.backupStatus()
+		var lastSuccess, age int64 = 0, -1
+		if recorded && status.LastSuccessAt != nil {
+			lastSuccess = status.LastSuccessAt.Unix()
+			age = int64(time.Since(*status.LastSuccessAt).Seconds())
+		}
+		_, _ = fmt.Fprint(w, "# TYPE veritra_backup_last_success_timestamp_seconds gauge\n")
+		_, _ = fmt.Fprintf(w, "veritra_backup_last_success_timestamp_seconds %d\n", lastSuccess)
+		_, _ = fmt.Fprint(w, "# TYPE veritra_backup_last_success_age_seconds gauge\n")
+		_, _ = fmt.Fprintf(w, "veritra_backup_last_success_age_seconds %d\n", age)
+		_, _ = fmt.Fprint(w, "# TYPE veritra_backup_consecutive_failures gauge\n")
+		_, _ = fmt.Fprintf(w, "veritra_backup_consecutive_failures %d\n", status.ConsecutiveFailures)
+	}
 	if m.realtimeConnections != nil {
 		_, _ = fmt.Fprint(w, "# TYPE veritra_realtime_connections gauge\n")
 		_, _ = fmt.Fprintf(w, "veritra_realtime_connections %d\n", m.realtimeConnections())

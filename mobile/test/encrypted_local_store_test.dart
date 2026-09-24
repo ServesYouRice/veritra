@@ -6,6 +6,31 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
+import 'package:private_messenger/sync/sync_recovery.dart';
+
+Matcher _storeFailure(LocalStoreFailureKind kind) =>
+    isA<LocalStoreUnavailableException>()
+        .having((error) => error.kind, 'kind', kind);
+
+class _FlakyStorage extends FlutterSecureStorage {
+  _FlakyStorage();
+
+  bool failing = false;
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) {
+    if (failing) throw StateError('keystore locked');
+    return super.read(key: key);
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -41,6 +66,50 @@ void main() {
           return database;
         },
       );
+
+  test('the sync recovery record persists and leaves with the identity',
+      () async {
+    final store = createStore();
+    const session = Session(
+      baseUrl: 'https://chat.example.org',
+      token: 'token',
+      accountId: 'acct_1',
+      deviceId: 'dev_1',
+    );
+    await store.saveSession(session);
+    expect(await store.loadSyncRecovery(), isNull);
+    await store.saveSyncRecovery(SyncRecovery(
+      kind: SyncFailureKind.mlsControlMissing,
+      recordedAt: DateTime.utc(2026, 9, 24),
+      eventId: 12,
+    ));
+    for (final database in databases) {
+      await database.close();
+    }
+    databases.clear();
+    final reopened = createStore();
+    final loaded = await reopened.loadSyncRecovery();
+    expect(loaded?.kind, SyncFailureKind.mlsControlMissing);
+    expect(loaded?.eventId, 12);
+
+    // Signing out keeps it: the MLS state it protects is still there.
+    await reopened.clearCachedState(preserveOutbox: true);
+    expect(await reopened.loadSyncRecovery(), isNotNull);
+    await reopened.saveSyncRecovery(null);
+    expect(await reopened.loadSyncRecovery(), isNull);
+
+    await reopened.saveSyncRecovery(SyncRecovery(
+      kind: SyncFailureKind.mlsState,
+      recordedAt: DateTime.utc(2026, 9, 24),
+    ));
+    await reopened.saveSession(const Session(
+      baseUrl: 'https://chat.example.org',
+      token: 'token',
+      accountId: 'acct_2',
+      deviceId: 'dev_2',
+    ));
+    expect(await reopened.loadSyncRecovery(), isNull);
+  });
 
   test('a namespaced store keeps its own database and key', () async {
     final release = createStore();
@@ -84,8 +153,132 @@ void main() {
     await secureStorage.delete(key: 'veritra.database_key.v1');
 
     final second = createStore();
-    await expectLater(second.loadSyncCursor(), throwsStateError);
+    await expectLater(second.loadSyncCursor(),
+        throwsA(_storeFailure(LocalStoreFailureKind.keyMissing)));
     expect(await secureStorage.read(key: 'veritra.database_key.v1'), isNull);
+  });
+
+  Future<List<int>> seedAndClose() async {
+    final seed = createStore();
+    await seed.saveSyncCursor(4);
+    for (final database in databases) {
+      await database.close();
+    }
+    databases.clear();
+    return File('${directory.path}/veritra-local.db').readAsBytes();
+  }
+
+  Future<void> expectDatabaseUnchanged(List<int> original) async {
+    final file = File('${directory.path}/veritra-local.db');
+    expect(await file.exists(), isTrue);
+    expect(await file.readAsBytes(), original);
+  }
+
+  test('a wrong key is rejected and the database is left untouched', () async {
+    final original = await seedAndClose();
+    await secureStorage.write(key: 'veritra.database_key.v1', value: 'ab' * 32);
+    final store = createStore();
+    await expectLater(store.loadSyncCursor(),
+        throwsA(_storeFailure(LocalStoreFailureKind.keyRejected)));
+    await expectDatabaseUnchanged(original);
+    expect(await secureStorage.read(key: 'veritra.database_key.v1'), 'ab' * 32);
+  });
+
+  test('a malformed key is reported without touching the database', () async {
+    final original = await seedAndClose();
+    await secureStorage.write(
+        key: 'veritra.database_key.v1', value: 'not-a-key');
+    final store = createStore();
+    await expectLater(store.loadSyncCursor(),
+        throwsA(_storeFailure(LocalStoreFailureKind.keyMalformed)));
+    await expectDatabaseUnchanged(original);
+  });
+
+  test('unreadable secure storage is retryable and a retry reopens', () async {
+    await seedAndClose();
+    final flaky = _FlakyStorage();
+    final store = SecureLocalStore(
+      storage: flaky,
+      directoryProvider: () async => directory,
+      databaseFactory: (file, keyHex) {
+        final database = openEncryptedLocalDatabase(file, keyHex);
+        databases.add(database);
+        return database;
+      },
+    );
+    flaky.failing = true;
+    await expectLater(store.loadSyncCursor(),
+        throwsA(_storeFailure(LocalStoreFailureKind.keyUnavailable)));
+    flaky.failing = false;
+    expect(await store.loadSyncCursor(), 4);
+  });
+
+  test('a reset needs confirmation and moves the database aside with its key',
+      () async {
+    final original = await seedAndClose();
+    final key = await secureStorage.read(key: 'veritra.database_key.v1');
+    await secureStorage.delete(key: 'veritra.database_key.v1');
+    final store = createStore();
+    await expectLater(store.loadSyncCursor(),
+        throwsA(_storeFailure(LocalStoreFailureKind.keyMissing)));
+
+    await expectLater(store.quarantineUnreadableDatabase(confirmed: false),
+        throwsArgumentError);
+    await expectDatabaseUnchanged(original);
+
+    // The key comes back just before the reset: it is kept with the copy.
+    await secureStorage.write(key: 'veritra.database_key.v1', value: key!);
+    await store.quarantineUnreadableDatabase(confirmed: true);
+    expect(File('${directory.path}/veritra-local.db').existsSync(), isFalse);
+    final quarantined = directory
+        .listSync()
+        .whereType<Directory>()
+        .where((item) => item.path.contains('unreadable-'))
+        .single;
+    final stamp = quarantined.path.split('unreadable-').last;
+    expect(File('${quarantined.path}/veritra-local.db').readAsBytesSync(),
+        original);
+    expect(
+        await secureStorage.read(
+            key: 'veritra.database_key.v1.quarantined.$stamp'),
+        key);
+    expect(await secureStorage.read(key: 'veritra.database_key.v1'), isNull);
+
+    // The store now starts empty with a new key.
+    expect(await store.loadSyncCursor(), 0);
+    final newKey = await secureStorage.read(key: 'veritra.database_key.v1');
+    expect(newKey, isNot(key));
+
+    // The moved copy is still readable with its kept key.
+    final copy = openEncryptedLocalDatabase(
+        File('${quarantined.path}/veritra-local.db'), key);
+    databases.add(copy);
+    expect(await copy.readCursor(), 4);
+  });
+
+  test('an interrupted reset is finished on the next open', () async {
+    final original = await seedAndClose();
+    final key = await secureStorage.read(key: 'veritra.database_key.v1');
+    // A crash after the intent was written and the WAL companion moved.
+    const stamp = '1700000000000000';
+    File('${directory.path}/veritra-local.reset-intent')
+        .writeAsStringSync(stamp);
+    final quarantine = Directory('${directory.path}/unreadable-$stamp')
+      ..createSync();
+    final wal = File('${directory.path}/veritra-local.db-wal');
+    if (wal.existsSync())
+      wal.renameSync('${quarantine.path}/veritra-local.db-wal');
+
+    final store = createStore();
+    expect(await store.loadSyncCursor(), 0);
+    expect(File('${directory.path}/veritra-local.reset-intent').existsSync(),
+        isFalse);
+    expect(File('${quarantine.path}/veritra-local.db').readAsBytesSync(),
+        original);
+    expect(
+        await secureStorage.read(
+            key: 'veritra.database_key.v1.quarantined.$stamp'),
+        key);
   });
 
   test('migrates and verifies the legacy secure-storage record once', () async {
@@ -219,6 +412,127 @@ void main() {
     final restarted = createStore();
     final record = (await restarted.pendingEnvelopeRecords()).single;
     expect(record.draftText, 'local recovery draft');
+  });
+
+  Future<void> queueMls(SecureLocalStore store, List<String> keys) async {
+    final counter = (await store.loadCryptoState())?.counter ?? 0;
+    await store.commitOutgoingMlsTransition(OutgoingMlsStateTransition(
+      expectedCounter: counter,
+      expectedCursor: await store.loadSyncCursor(),
+      state: StoredCryptoState(
+        counter: counter + 1,
+        stateKey: List<int>.filled(32, 1),
+        sealedState: <int>[counter + 1],
+      ),
+      messages: <PendingMlsMessage>[
+        for (final key in keys)
+          PendingMlsMessage(
+            idempotencyKey: key,
+            conversationId: 'conv_1',
+            kind: 'commit',
+            payload: const <int>[1],
+          ),
+      ],
+    ));
+  }
+
+  test('MLS outbox keeps transition order and durable failures', () async {
+    final store = createStore();
+    await store.saveCryptoState(
+      StoredCryptoState(
+        counter: 1,
+        stateKey: List<int>.filled(32, 1),
+        sealedState: <int>[1],
+      ),
+      0,
+    );
+    // Keys sort opposite to their queue order on purpose.
+    await queueMls(store, <String>['zz_first', 'mm_second', 'aa_third']);
+    await queueMls(store, <String>['00_fourth']);
+    expect(
+      (await store.pendingMlsMessages()).map((item) => item.idempotencyKey),
+      <String>['zz_first', 'mm_second', 'aa_third', '00_fourth'],
+    );
+
+    final due = DateTime.utc(2030, 1, 1, 12);
+    await store.recordMlsOutboxFailure('zz_first',
+        failureClass: 'retryable:503', terminal: false, nextAttemptAt: due);
+    await store.recordMlsOutboxFailure('mm_second',
+        failureClass: 'terminal:403:forbidden', terminal: true);
+    await databases.last.close();
+    databases.removeLast();
+
+    final restarted = createStore();
+    final items = await restarted.pendingMlsMessages();
+    expect(items[0].attemptCount, 1);
+    expect(items[0].terminal, isFalse);
+    expect(items[0].nextAttemptAt, due);
+    expect(items[0].failureClass, 'retryable:503');
+    expect(items[1].terminal, isTrue);
+    expect(items[1].nextAttemptAt, isNull);
+    expect(items[2].attemptCount, 0);
+  });
+
+  test('an applied MLS control message is found by its server ID', () async {
+    final store = createStore();
+    await store.saveCryptoState(
+      StoredCryptoState(
+        counter: 1,
+        stateKey: List<int>.filled(32, 1),
+        sealedState: <int>[1],
+      ),
+      0,
+    );
+    await store.commitMlsTransition(MlsStateTransition(
+      messageId: 'mls:4:mls_commit_1',
+      conversationId: 'conv_1',
+      expectedCounter: 1,
+      expectedCursor: 0,
+      state: StoredCryptoState(
+        counter: 2,
+        stateKey: List<int>.filled(32, 1),
+        sealedState: <int>[2],
+      ),
+      cursor: 4,
+    ));
+    expect(await store.hasAppliedMlsControlMessage('mls_commit_1'), isTrue);
+    expect(await store.hasAppliedMlsControlMessage('commit_1'), isFalse);
+    expect(await store.hasAppliedMlsControlMessage('mls_commit_2'), isFalse);
+  });
+
+  test('a version 7 database gains MLS delivery state on upgrade', () async {
+    final store = createStore();
+    await store.saveCryptoState(
+      StoredCryptoState(
+        counter: 1,
+        stateKey: List<int>.filled(32, 1),
+        sealedState: <int>[1],
+      ),
+      0,
+    );
+    await queueMls(store, <String>['old_item']);
+    final database = databases.last;
+    for (final column in <String>[
+      'attempt_count',
+      'next_attempt_at',
+      'failure_class',
+      'terminal',
+    ]) {
+      await database.customStatement(
+          'ALTER TABLE local_mls_outbox_entries DROP COLUMN $column');
+    }
+    await database.customStatement('PRAGMA user_version = 7');
+    await database.close();
+    databases.removeLast();
+
+    final upgraded = createStore();
+    final item = (await upgraded.pendingMlsMessages()).single;
+    expect(item.idempotencyKey, 'old_item');
+    expect(item.attemptCount, 0);
+    expect(item.terminal, isFalse);
+    await upgraded.recordMlsOutboxFailure('old_item',
+        failureClass: 'retryable:network', terminal: false);
+    expect((await upgraded.pendingMlsMessages()).single.attemptCount, 1);
   });
 
   test('crypto state and cursor roll back together', () async {

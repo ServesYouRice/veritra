@@ -5,10 +5,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"private-messenger/server/internal/backupstatus"
 	"private-messenger/server/internal/httpapi"
 )
 
@@ -55,6 +57,10 @@ func TestHTTPMetricsExposeBoundedOperationalSignals(t *testing.T) {
 	metrics.loginBackoff = backoff
 	backoff.Failed("aggregate-only-test", time.Now())
 	metrics.realtimeConnections = func() int { return 3 }
+	lastBackup := time.Now().Add(-2 * time.Hour)
+	metrics.backupStatus = func() (backupstatus.Status, bool) {
+		return backupstatus.Status{LastSuccessAt: &lastBackup, ConsecutiveFailures: 1, LastFailureStep: "offsite"}, true
+	}
 	metrics.retentionBacklog.Store(12)
 	metrics.retentionOldestAge.Store(3600)
 	metrics.push["fcm"].attempted.Store(4)
@@ -64,6 +70,9 @@ func TestHTTPMetricsExposeBoundedOperationalSignals(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	metrics.handle(recorder, httptest.NewRequest("GET", "/metrics", nil))
 	body := recorder.Body.String()
+	if strings.Contains(body, "offsite") {
+		t.Fatal("metrics expose the backup failure step")
+	}
 	for _, want := range []string{
 		`veritra_http_responses_total{status_class="5xx"} 1`,
 		`veritra_http_route_requests_total{route="GET /api/v1/conversations/{id}"} 1`,
@@ -76,6 +85,8 @@ func TestHTTPMetricsExposeBoundedOperationalSignals(t *testing.T) {
 		`veritra_rate_limit_buckets 0`,
 		`veritra_rate_limit_evictions_total 0`,
 		`veritra_login_backoff_entries 1`,
+		`veritra_backup_last_success_timestamp_seconds ` + strconv.FormatInt(lastBackup.Unix(), 10),
+		`veritra_backup_consecutive_failures 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("metrics output missing %q:\n%s", want, body)

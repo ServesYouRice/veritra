@@ -31,9 +31,58 @@ class PushUnregisteredEvent extends PushEvent {
   final String instance;
 }
 
+/// The platform could not register (card I41): no UnifiedPush distributor,
+/// or a provider token request failed. It carries no platform error text,
+/// which can contain identifiers.
+class PushRegistrationFailedEvent extends PushEvent {
+  const PushRegistrationFailedEvent(this.instance, {this.provider});
+  final String instance;
+  final String? provider;
+}
+
+/// Whether this app may show notifications (card I41).
+enum NotificationPermission {
+  /// Allowed.
+  granted,
+
+  /// Refused; only the system settings can change it.
+  denied,
+
+  /// Not asked yet (Android 13+, iOS).
+  notDetermined,
+
+  /// This platform shows no notifications.
+  unsupported,
+}
+
+NotificationPermission _permissionFrom(Object? value) {
+  switch (value) {
+    case 'granted':
+      return NotificationPermission.granted;
+    case 'denied':
+      return NotificationPermission.denied;
+    case 'not_determined':
+      return NotificationPermission.notDetermined;
+    default:
+      return NotificationPermission.unsupported;
+  }
+}
+
 abstract class MobilePushService {
   Stream<PushEvent> get events;
-  Future<void> register({required String instance, required String vapid});
+
+  /// Registers with the first platform provider in [providers] (the ones
+  /// the server offers) that this build supports. [vapid] is needed only
+  /// for Web Push (UnifiedPush); FCM and APNs never use it.
+  Future<void> register({
+    required String instance,
+    String vapid = '',
+    List<String> providers = const <String>[],
+  });
+  Future<NotificationPermission> notificationPermission();
+
+  /// Asks the user once; returns the resulting permission.
+  Future<NotificationPermission> requestNotificationPermission();
   Future<void> pickDistributor();
   Future<void> unregister(String instance);
   Future<int> pendingWakeGeneration();
@@ -46,8 +95,19 @@ class DisabledMobilePushService implements MobilePushService {
   Stream<PushEvent> get events => const Stream<PushEvent>.empty();
 
   @override
-  Future<void> register(
-      {required String instance, required String vapid}) async {}
+  Future<void> register({
+    required String instance,
+    String vapid = '',
+    List<String> providers = const <String>[],
+  }) async {}
+
+  @override
+  Future<NotificationPermission> notificationPermission() async =>
+      NotificationPermission.unsupported;
+
+  @override
+  Future<NotificationPermission> requestNotificationPermission() async =>
+      NotificationPermission.unsupported;
 
   @override
   Future<void> pickDistributor() async {}
@@ -111,15 +171,37 @@ class PlatformMobilePushService implements MobilePushService {
       case 'unregistered':
         final instance = event['instance'];
         if (instance is String) _events.add(PushUnregisteredEvent(instance));
+      case 'registration_failed':
+        final instance = event['instance'];
+        final provider = event['provider'];
+        if (instance is String) {
+          _events.add(PushRegistrationFailedEvent(instance,
+              provider: provider is String ? provider : null));
+        }
     }
   }
 
   @override
-  Future<void> register({required String instance, required String vapid}) =>
-      _methods.invokeMethod<void>('register', <String, String>{
+  Future<void> register({
+    required String instance,
+    String vapid = '',
+    List<String> providers = const <String>[],
+  }) =>
+      _methods.invokeMethod<void>('register', <String, Object>{
         'instance': instance,
         'vapid': vapid,
+        'providers': providers,
       });
+
+  @override
+  Future<NotificationPermission> notificationPermission() async =>
+      _permissionFrom(
+          await _methods.invokeMethod<Object?>('notificationPermission'));
+
+  @override
+  Future<NotificationPermission> requestNotificationPermission() async =>
+      _permissionFrom(await _methods
+          .invokeMethod<Object?>('requestNotificationPermission'));
 
   @override
   Future<void> pickDistributor() =>
