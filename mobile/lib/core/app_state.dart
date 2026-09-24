@@ -523,7 +523,7 @@ class AppState extends ChangeNotifier {
       _startSync();
       lifecycle = SessionLifecycle.ready;
       notifyListeners();
-    } catch (_) {
+    } catch (error) {
       // Keep the encrypted database and cursor intact. Recovery is explicit so
       // a keystore/database failure cannot look like an ordinary logout.
       await _mlsCrypto?.dispose();
@@ -537,9 +537,12 @@ class AppState extends ChangeNotifier {
       messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
       _history.clear();
       lifecycle = SessionLifecycle.recoveryRequired;
-      recoveryMessage =
-          'This device could not restore its encrypted session. Retry or '
-          'continue to sign in without clearing local data.';
+      recoveryMessage = error is StateError &&
+              error.message.contains('another Veritra window')
+          ? 'This profile is already open in another Veritra window. Close '
+              'that window, then retry.'
+          : 'This device could not restore its encrypted session. Retry or '
+              'continue to sign in without clearing local data.';
       notifyListeners();
     }
   }

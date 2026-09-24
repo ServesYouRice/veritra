@@ -58,6 +58,19 @@ The connect screen fills in the URL for you.
 - On Windows you can run the Linux app in WSL2 (WSLg). It reaches a server
   started on Windows at `http://localhost:8080`.
 
+### Two accounts on one computer
+
+Each desktop window needs its own profile, with its own data and keys:
+
+```sh
+flutter run -d linux -t lib/main_demo.dart --dart-define=VERITRA_DEMO=true \
+  --dart-entrypoint-args=--profile=alice
+```
+
+A built app takes `--profile alice` directly. Names are 1-20 lowercase
+letters or digits. Opening the same profile twice shows a message instead
+of a second copy.
+
 On desktop, Enter sends and Shift+Enter starts a new line. Messages keep
 syncing while the window is in the background.
 

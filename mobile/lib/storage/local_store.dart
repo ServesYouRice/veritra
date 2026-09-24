@@ -12,6 +12,8 @@ import 'encrypted_database.dart';
 
 final Map<String, Future<void>> _databaseOpenTails = <String, Future<void>>{};
 final Map<String, Future<void>> _databaseWriteTails = <String, Future<void>>{};
+final Map<String, RandomAccessFile> _instanceLocks =
+    <String, RandomAccessFile>{};
 
 const int maxPendingEnvelopes = 100;
 
@@ -1344,12 +1346,19 @@ class SecureLocalStore implements LocalStore {
 
   Future<EncryptedLocalDatabase> _openDatabaseLocked(
       Directory directory, File databaseFile) async {
+    await _holdInstanceLock(directory);
     final lockFile =
         File('${directory.path}${Platform.pathSeparator}veritra-local.lock');
     final lock = await lockFile.open(mode: FileMode.append);
     await lock.lock(FileLock.exclusive);
     try {
       var keyHex = await _storage.read(key: _databaseKeyName);
+      if (keyHex == null && await databaseFile.exists()) {
+        // A database without its key is unreadable. Writing a fresh key
+        // would hide that behind a new, empty identity (D26), so stop and
+        // let the recovery screen explain it.
+        throw StateError('encrypted database key is missing');
+      }
       if (keyHex == null) {
         keyHex = _randomHexKey();
         await _storage.write(key: _databaseKeyName, value: keyHex);
@@ -1368,6 +1377,23 @@ class SecureLocalStore implements LocalStore {
       await lock.unlock();
       await lock.close();
     }
+  }
+
+  /// Holds an OS lock on the profile directory for the life of the process,
+  /// so a second window on the same profile fails at open instead of both
+  /// advancing the same MLS state.
+  static Future<void> _holdInstanceLock(Directory directory) async {
+    final path =
+        '${directory.path}${Platform.pathSeparator}veritra-instance.lock';
+    if (_instanceLocks.containsKey(path)) return;
+    final handle = await File(path).open(mode: FileMode.append);
+    try {
+      await handle.lock(FileLock.exclusive);
+    } on FileSystemException {
+      await handle.close();
+      throw StateError('another Veritra window is using this profile');
+    }
+    _instanceLocks[path] = handle;
   }
 
   Future<void> _migrateLegacyRecord(EncryptedLocalDatabase database) async {

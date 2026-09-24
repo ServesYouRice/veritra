@@ -23,15 +23,28 @@ import 'sync/sync_service.dart';
 ///
 /// Run with:
 /// `flutter run -t lib/main_demo.dart --dart-define=VERITRA_DEMO=true`
+///
+/// Desktop builds accept `--profile <name>` (with `flutter run`, pass
+/// `--dart-entrypoint-args=--profile=<name>`), so two accounts can run side
+/// by side on one machine, each with its own data and keys.
 const bool _demoBuild = bool.fromEnvironment('VERITRA_DEMO');
 
-Future<void> main() async {
+Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   if (!_demoBuild) {
-    runApp(const _NotADemoBuild());
+    runApp(const _Message('This is the demo entry point. Build it with '
+        '--dart-define=VERITRA_DEMO=true, or use lib/main.dart.'));
     return;
   }
-  final localStore = SecureLocalStore(namespace: 'demo');
+  final String? profile;
+  try {
+    profile = demoProfileFromArgs(args);
+  } on FormatException catch (error) {
+    runApp(_Message(error.message));
+    return;
+  }
+  final localStore =
+      SecureLocalStore(namespace: profile == null ? 'demo' : 'demo-$profile');
   final state = AppState(
     apiClientFactory: (baseUrl) => ApiClient(baseUrl: baseUrl),
     cryptoService: NativeCryptoService(
@@ -47,7 +60,8 @@ Future<void> main() async {
     config: ClientConfig(
       demo: true,
       transport: TransportPolicy.demo,
-      deviceName: _deviceName(),
+      deviceName:
+          profile == null ? _deviceName() : '${_deviceName()} ($profile)',
       defaultServerUrl: 'http://localhost:8080',
       syncWhileUnfocused:
           Platform.isWindows || Platform.isLinux || Platform.isMacOS,
@@ -66,23 +80,44 @@ String _deviceName() {
   return 'Demo device';
 }
 
-/// Shown when `main_demo.dart` is built without `--dart-define=VERITRA_DEMO=true`,
-/// so the demo wiring cannot end up in a build by accident.
-class _NotADemoBuild extends StatelessWidget {
-  const _NotADemoBuild();
+/// Reads `--profile <name>` or `--profile=<name>`. Names are 1-20 lowercase
+/// letters or digits, because they become part of file and key names.
+String? demoProfileFromArgs(List<String> args) {
+  String? value;
+  for (var index = 0; index < args.length; index++) {
+    final arg = args[index];
+    if (arg == '--profile' && index + 1 < args.length) {
+      value = args[++index];
+    } else if (arg.startsWith('--profile=')) {
+      value = arg.substring('--profile='.length);
+    } else if (arg == '--profile') {
+      throw const FormatException('--profile needs a name.');
+    }
+  }
+  if (value == null) return null;
+  if (!RegExp(r'^[a-z0-9]{1,20}$').hasMatch(value)) {
+    throw const FormatException(
+        'Profile names are 1-20 lowercase letters or digits.');
+  }
+  return value;
+}
+
+/// A single message instead of the app: shown when `main_demo.dart` is built
+/// without `--dart-define=VERITRA_DEMO=true`, so the demo wiring cannot end
+/// up in a build by accident, or when the arguments are invalid.
+class _Message extends StatelessWidget {
+  const _Message(this.text);
+
+  final String text;
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp(
       home: Scaffold(
         body: Center(
           child: Padding(
-            padding: EdgeInsets.all(24),
-            child: Text(
-              'This is the demo entry point. Build it with '
-              '--dart-define=VERITRA_DEMO=true, or use lib/main.dart.',
-              textAlign: TextAlign.center,
-            ),
+            padding: const EdgeInsets.all(24),
+            child: Text(text, textAlign: TextAlign.center),
           ),
         ),
       ),

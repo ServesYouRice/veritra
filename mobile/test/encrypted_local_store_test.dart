@@ -73,6 +73,21 @@ void main() {
         isNot(keys['veritra.demo.database_key.v1']));
   });
 
+  test('a database whose key is gone fails closed instead of starting over',
+      () async {
+    final first = createStore();
+    await first.saveSyncCursor(4);
+    for (final database in databases) {
+      await database.close();
+    }
+    databases.clear();
+    await secureStorage.delete(key: 'veritra.database_key.v1');
+
+    final second = createStore();
+    await expectLater(second.loadSyncCursor(), throwsStateError);
+    expect(await secureStorage.read(key: 'veritra.database_key.v1'), isNull);
+  });
+
   test('migrates and verifies the legacy secure-storage record once', () async {
     final legacy = <String, Object?>{
       'version': 3,
