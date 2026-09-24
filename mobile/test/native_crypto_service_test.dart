@@ -92,10 +92,9 @@ void main() {
         await alice.send(AppPayloadType.text, <String, Object?>{'text': 'two'});
     await bob.receive(alice, first);
     await bob.receive(alice, second);
-    expect((await bob.history()).map((item) => item.body), <String?>[
-      'one',
-      'two',
-    ]);
+    // Both received in the same test tick, so compare without order.
+    expect((await bob.history()).map((item) => item.body),
+        unorderedEquals(<String?>['one', 'two']));
   }, skip: skip);
 
   test('a spoofed sender is kept as unverifiable and sync continues', () async {
