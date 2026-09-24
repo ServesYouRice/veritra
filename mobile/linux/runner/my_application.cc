@@ -52,6 +52,14 @@ static void my_application_activate(GApplication* application) {
     gtk_window_set_title(window, "Veritra");
   }
 
+  // The window icon ships in the bundle's data directory.
+  g_autofree gchar* exe_path = g_file_read_link("/proc/self/exe", nullptr);
+  if (exe_path != nullptr) {
+    g_autofree gchar* exe_dir = g_path_get_dirname(exe_path);
+    g_autofree gchar* icon_path =
+        g_build_filename(exe_dir, "data", "veritra-icon.png", nullptr);
+    gtk_window_set_icon_from_file(window, icon_path, nullptr);
+  }
   gtk_window_set_default_size(window, 1100, 760);
   // Below this the chat list and composer stop fitting.
   gtk_widget_set_size_request(GTK_WIDGET(window), 360, 560);
