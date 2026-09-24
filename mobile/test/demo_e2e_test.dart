@@ -12,17 +12,24 @@ import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
 /// Real clients, real OpenMLS, real server: the demo's message flow end to
-/// end. Run through `scripts/test-demo-e2e.sh`, which starts the server.
+/// end, including offline use. Run through `scripts/test-demo-e2e.sh`, which
+/// builds the server this test starts, stops and restarts.
 void main() {
-  final baseUrl = Platform.environment['VERITRA_DEMO_E2E_BASE_URL'];
+  final serverPath = Platform.environment['VERITRA_DEMO_E2E_SERVER'];
+  final dataDir = Platform.environment['VERITRA_DEMO_E2E_DATA'];
+  final port = Platform.environment['VERITRA_DEMO_E2E_PORT'] ?? '18082';
   final libraryPath = Platform.environment['VERITRA_CRYPTO_LIBRARY'];
-  final skip = baseUrl == null || libraryPath == null
+  final skip = serverPath == null || dataDir == null || libraryPath == null
       ? 'run scripts/test-demo-e2e.sh'
       : false;
 
-  test('two and three demo clients exchange every message type', () async {
+  test('demo clients exchange every message type and work offline', () async {
+    final server = _Server(serverPath!, dataDir!, port);
+    addTearDown(server.stop);
+    await server.start();
+    final baseUrl = server.baseUrl;
     final bindings = NativeCryptoBindings.open(libraryPath!);
-    final owner = _DemoClient(bindings, baseUrl!);
+    final owner = _DemoClient(bindings, baseUrl);
     addTearDown(owner.dispose);
     await owner.state.createOwner(
         baseUrl, 'owner', 'owner-password-123', 'demo-e2e-setup-token');
@@ -84,7 +91,81 @@ void main() {
     );
     expect(await owner.state.sendMessageTo(conv, 'after restart'), isTrue);
     await restarted.waitFor(conv, (m) => m.body == 'after restart');
-  }, skip: skip, timeout: const Timeout(Duration(minutes: 3)));
+
+    // Offline (Stage 4): with the server down, an app that starts from
+    // scratch still opens its chats and history, and queues what it sends.
+    await server.stop();
+    final offline = await restarted.restart();
+    addTearDown(offline.dispose);
+    expect(offline.state.session, isNotNull);
+    expect(offline.state.conversations.map((c) => c.id), contains(conv));
+    await offline.state.loadMessages(conv);
+    final shown = offline.state
+        .timelineFor(conv)
+        .map((envelope) =>
+            offline.state.historyFor(conv).forEnvelope(envelope)?.body)
+        .toList();
+    expect(shown, containsAll(<String>['hi owner', 'after restart']));
+    expect(await offline.state.sendMessageTo(conv, 'sent offline'), isTrue);
+    expect(offline.state.pendingFor(conv), hasLength(1));
+
+    // Back online: the queued message goes out and arrives.
+    await server.start();
+    await owner.waitFor(conv, (m) => m.body == 'sent offline',
+        timeout: const Duration(seconds: 90));
+    await offline.waitUntil(() async => offline.state.pendingFor(conv).isEmpty,
+        timeout: const Duration(seconds: 90));
+  }, skip: skip, timeout: const Timeout(Duration(minutes: 6)));
+}
+
+class _Server {
+  _Server(this.path, this.dataDir, this.port);
+
+  final String path;
+  final String dataDir;
+  final String port;
+  Process? _process;
+
+  String get baseUrl => 'http://127.0.0.1:$port';
+
+  Future<void> start() async {
+    _process = await Process.start(
+      path,
+      <String>['serve', '--addr', '127.0.0.1:$port', '--data-dir', dataDir],
+      environment: <String, String>{
+        'PRIVATE_MESSENGER_SETUP_TOKEN': 'demo-e2e-setup-token',
+        'PRIVATE_MESSENGER_LOG_LEVEL': 'error',
+      },
+    );
+    // Drain output so the server never blocks on a full pipe.
+    _process!.stdout.drain<void>();
+    _process!.stderr.drain<void>();
+    final client = HttpClient();
+    try {
+      for (var attempt = 0; attempt < 120; attempt++) {
+        try {
+          final request = await client.getUrl(Uri.parse('$baseUrl/healthz'));
+          final response = await request.close();
+          await response.drain<void>();
+          if (response.statusCode == 200) return;
+        } on SocketException {
+          // Not listening yet.
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+      }
+      fail('demo server did not become ready');
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<void> stop() async {
+    final process = _process;
+    _process = null;
+    if (process == null) return;
+    process.kill();
+    await process.exitCode;
+  }
 }
 
 class _DemoClient {
@@ -132,8 +213,11 @@ class _DemoClient {
     return client;
   }
 
-  Future<void> waitUntil(Future<bool> Function() condition) async {
-    final deadline = DateTime.now().add(const Duration(seconds: 30));
+  Future<void> waitUntil(
+    Future<bool> Function() condition, {
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
     while (!await condition()) {
       if (state.deviceRecoveryRequired) {
         fail('sync stopped: ${state.error}');
@@ -147,14 +231,15 @@ class _DemoClient {
 
   Future<LocalMessage> waitFor(
     String conversationId,
-    bool Function(LocalMessage message) matches,
-  ) async {
+    bool Function(LocalMessage message) matches, {
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
     LocalMessage? found;
     await waitUntil(() async {
       found =
           (await store.loadMessages(conversationId)).where(matches).firstOrNull;
       return found != null;
-    });
+    }, timeout: timeout);
     return found!;
   }
 

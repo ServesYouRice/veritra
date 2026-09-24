@@ -41,6 +41,9 @@ class ConversationHistory {
 
   LocalMessage? forKey(String key) => _byKey[key];
 
+  /// Every local record, in no particular order.
+  Iterable<LocalMessage> get messages => _byKey.values;
+
   LocalMessage? forEnvelope(ReceivedMessageEnvelope envelope) {
     if (envelope.conversationId != conversationId) return null;
     return _byKey[keyOf(envelope.senderDeviceId, envelope.idempotencyKey)];

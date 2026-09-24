@@ -17,15 +17,24 @@ point (`mobile/lib/main_demo.dart`, D11); `mobile/lib/main.dart` and the release
 gate are unchanged. Independent review, signing and real-device evidence (G24,
 G25) wait until all three roadmap phases are done (D20). Work order:
 
-0. Green CI and a clean PR queue — **in progress 2026-09-24:** OpenMLS 0.9.0
+0. Green CI and a clean PR queue — **done 2026-09-24:** OpenMLS 0.9.0
    (closes I27/G27), Rust 1.91, Go 1.26.8, Dart dependency bumps, coverage
    floors.
-1. Demo foundation: demo entry point, loopback-only HTTP for demo builds,
-   decrypted-message persistence, message actions, MLS sender binding, live
-   two-client test, one-command local server.
-2. Mobile demo (Android emulator, iOS simulator).
-3. Desktop demo (Windows, Linux).
-4. Offline use.
+1. Demo foundation — **done 2026-09-24:** demo entry point, loopback-only
+   HTTP for demo builds, decrypted-message persistence (schema v7), message
+   actions, MLS sender binding (ABI v5), live multi-client test
+   (`scripts/test-demo-e2e.sh`), one-command local server (`scripts/demo.sh`).
+   Attachments and safety-number UI are still open.
+2. Mobile demo (Android emulator, iOS simulator) — **needs a machine with
+   emulators;** CI builds both apps.
+3. Desktop demo (Windows, Linux) — **built 2026-09-24:** Linux bundle run
+   locally against the demo server; Windows built in CI only. Profiles
+   (`--profile`) allow two accounts on one computer.
+4. Offline use — **done 2026-09-24:** chats render from decrypted local
+   history, the app opens with the server down, sends queue and deliver on
+   reconnect, and the sync socket catches up after every reconnect. The live
+   test stops and restarts the server. Attachment caching waits for
+   attachments.
 5. Remaining release-blocking cards (I33, I34, I51, I39, I45, I41).
 6. Phase 2 completion (macOS, packaging, desktop key storage).
 7. Phase 3 outline (client SDK).

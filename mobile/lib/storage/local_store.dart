@@ -820,7 +820,10 @@ class SecureLocalStore implements LocalStore {
   static const _legacyRecordKey = 'veritra.account_state.v2';
   static const _databaseKey = 'veritra.database_key.v1';
   static const _migrationMarker = 'legacy_secure_record_migrated';
-  static const _maxCachedConversations = 20;
+  // Every conversation is cached so the full chat list opens offline
+  // (Stage 4); the bound only stops a runaway server list. Envelopes stay
+  // capped: decrypted history lives in local_messages, which has no cap.
+  static const _maxCachedConversations = 1000;
   static const _maxMessagesPerConversation = 200;
 
   /// Separates independent local identities on one device: demo builds use

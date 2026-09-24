@@ -86,17 +86,25 @@ syncing while the window is in the background.
    for your own messages, edit or delete.
 6. Add a third account the same way and create a group with all three.
 
+## Offline
+
+Stop the server (Ctrl+C) and the apps keep working from what is on the
+device: the chat list, every message this device has read or sent, and
+reactions and edits. New messages queue with a "Sending" bubble. Start the
+server again and they go out on their own, and each app catches up on what
+it missed.
+
 ## Limits of the demo
 
 - One device per account, and group members are fixed when the group is
   created (D24). "Add member" and "Link device" are hidden.
 - Attachments and calls are not in the demo yet.
-- Offline use (reading history and queueing messages with the server down)
-  arrives in Stage 4.
 - Cross-machine demos need HTTPS and are not covered yet.
 
 ## Automated check
 
 `scripts/test-demo-e2e.sh` starts a throwaway server and runs three real
 clients through the same flow: direct message, reply, edit, reaction,
-delete, a group of three, and an app restart. CI runs it on every push.
+delete, a group of three, and an app restart. It then stops the server,
+restarts an app offline, checks its history, queues a message, starts the
+server again and checks the message arrives. CI runs it on every push.

@@ -15,6 +15,7 @@ import 'api_client.dart';
 import 'client_config.dart';
 import 'errors.dart';
 import 'message_history.dart';
+import '../storage/encrypted_database.dart' show LocalMessageKind;
 import 'models.dart';
 
 typedef ApiClientFactory = ApiClient Function(String baseUrl);
@@ -309,6 +310,52 @@ class AppState extends ChangeNotifier {
       reactions: reactions,
     );
     notifyListeners();
+  }
+
+  /// What the chat shows, newest first (Stage 4). With MLS, decrypted local
+  /// history is the source of truth, so every message this device has read
+  /// or sent is shown even when the server is unreachable or the envelope
+  /// left the local cache. Server envelopes without a local record (sent
+  /// before this device joined, say) still appear, as redacted bars.
+  List<ReceivedMessageEnvelope> timelineFor(String conversationId) {
+    final envelopes = messagesFor(conversationId);
+    if (_mlsCrypto == null) return envelopes;
+    final history = historyFor(conversationId);
+    final ownDeviceId = session?.deviceId;
+    final pendingKeys = <String>{
+      if (ownDeviceId != null)
+        for (final envelope in pendingOutbox)
+          if (envelope.conversationId == conversationId)
+            ConversationHistory.keyOf(ownDeviceId, envelope.idempotencyKey),
+    };
+    final byKey = <String, ReceivedMessageEnvelope>{};
+    for (final envelope in envelopes) {
+      byKey[ConversationHistory.keyOf(
+          envelope.senderDeviceId, envelope.idempotencyKey)] = envelope;
+    }
+    for (final local in history.messages) {
+      if (local.kind == LocalMessageKind.action ||
+          pendingKeys.contains(local.key) ||
+          byKey.containsKey(local.key)) {
+        continue;
+      }
+      byKey[local.key] = ReceivedMessageEnvelope(
+        id: local.serverMessageId ?? local.key,
+        conversationId: conversationId,
+        senderAccountId: local.senderAccountId,
+        senderDeviceId: local.senderDeviceId,
+        idempotencyKey: local.key.substring(local.senderDeviceId.length + 1),
+        ciphertext: const <int>[],
+        cryptoProtocol: 'local-history',
+        createdAt:
+            DateTime.fromMillisecondsSinceEpoch(local.createdAt, isUtc: true),
+      );
+    }
+    return byKey.values.toList()
+      ..sort((left, right) {
+        final byCreatedAt = right.createdAt.compareTo(left.createdAt);
+        return byCreatedAt != 0 ? byCreatedAt : right.id.compareTo(left.id);
+      });
   }
 
   List<ReceivedMessageEnvelope> messagesFor(String conversationId) =>
@@ -803,8 +850,10 @@ class AppState extends ChangeNotifier {
     _messageLoadErrors.remove(conversationId);
     notifyListeners();
     try {
+      // Local history first: it needs no server, so chats open offline.
+      if (_mlsCrypto != null) await refreshHistory(conversationId);
       await _fetchMessages(conversationId);
-      await refreshHistory(conversationId);
+      if (_mlsCrypto != null) await refreshHistory(conversationId);
       unawaited(markNewestMessageRead(conversationId));
     } catch (err) {
       _messageLoadErrors[conversationId] = describeError(err);

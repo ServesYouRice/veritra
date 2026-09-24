@@ -83,7 +83,7 @@ class _ChatScreenState extends State<ChatScreen> {
         final conversation = widget.state.conversations
             .where((item) => item.id == widget.conversationId)
             .firstOrNull;
-        final messages = widget.state.messagesFor(widget.conversationId);
+        final messages = widget.state.timelineFor(widget.conversationId);
         final pending = widget.state.pendingFor(widget.conversationId);
         return Scaffold(
           appBar: AppBar(

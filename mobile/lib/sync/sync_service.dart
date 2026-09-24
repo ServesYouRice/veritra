@@ -153,6 +153,11 @@ class WebSocketSyncService implements SyncService {
     ).timeout(const Duration(seconds: 15));
     _socket = socket;
     final connectedAt = DateTime.now();
+    // Events sent while the socket was down are not replayed over it. Tell
+    // listeners a (re)connect happened so they catch up from their cursor.
+    if (!_disposed && !_controller.isClosed) {
+      _controller.add(const <String, Object?>{'type': 'sync.connected'});
+    }
     final done = Completer<void>();
     socket.listen((data) {
       if (!_disposed && !_controller.isClosed && data is String) {
