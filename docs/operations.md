@@ -134,6 +134,53 @@ send has a 10-second deadline, a 30-second lease, jittered retry backoff and a
 supported provider names and contain no account, device, endpoint or event
 identifiers.
 
+## Scheduled backups
+
+`messenger-server scheduled-backup` is the supported backup job. One run:
+
+1. writes a backup to `<data dir>/backups/veritra-<UTC time>`;
+2. proves it with a disposable restore drill (restore into a scratch
+   directory, migrate, check); a backup is not a success until this passes;
+3. copies it to `PRIVATE_MESSENGER_BACKUP_OFFSITE_DIR`, verifies every file
+   there against the manifest, and only then publishes it under its name;
+4. keeps the newest `PRIVATE_MESSENGER_BACKUP_KEEP` (default 7) scheduled
+   backups in each place. Nothing else in those directories is removed.
+
+The off-host directory is a mount from separately controlled storage (NFS,
+SMB, an rclone or restic mount). Its credentials live in that mount's own
+configuration, so none pass through the server's environment or logs. Run the
+job daily with `deploy/systemd/private-messenger-backup.timer`, or with
+`docker compose --profile backup run --rm backup` from the host scheduler.
+
+Recovery objectives: with the daily timer the recovery point is at most 24
+hours (plus the timer's 15-minute jitter); the recovery time is the restore
+below plus a server start, usually minutes for a single node. Alert when
+`veritra_backup_last_success_age_seconds` is above 90,000 (25 hours) or `-1`
+(no verified backup yet), or when `veritra_backup_consecutive_failures` is
+above zero. The metrics and `<data dir>/backup-status.json` hold times, a
+failure step and a count only.
+
+`messenger-server verify-backup <path>` runs the same restore drill on any
+backup, for example on the off-host copy from a clean host.
+
+## Restore safety
+
+`restore` copies and verifies the backup into a private staging directory
+before it touches anything live, checks free space first, and refuses to run
+while the server holds the database. It then writes
+`.veritra-restore-journal.json` next to the database and moves the live
+database (with its `-wal`/`-shm` files) and blob directory aside under
+`.pre-restore-<time>-<random>` names. If the process dies part-way, the next
+`serve`, `migrate`, `backup`, `restore` or `doctor` settles it: an unfinished
+restore is rolled back to the previous instance, a finished one is kept. A
+damaged journal, or one naming other paths, stops startup until an operator
+resolves it. Staging directories are removed only when they carry the
+`.veritra-staging` marker that this tool writes, so no other path is ever
+cleaned. A migration applies its SQL and its `schema_migrations` record in one
+transaction; a failing migration leaves the database as it was. Rolling back
+across an incompatible migration means restoring the matching backup, never a
+hand-written down migration.
+
 ## Off-host restore drill
 
 Run `messenger-server backup /secure-staging/veritra-YYYYMMDD`, then copy the

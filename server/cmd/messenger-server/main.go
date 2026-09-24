@@ -80,7 +80,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 	ctx := context.Background()
 	switch command {
-	case "serve", "init", "migrate", "doctor", "backup", "restore", "reset-owner-password":
+	case "serve", "init", "migrate", "doctor", "backup", "scheduled-backup", "restore", "reset-owner-password":
 		// A restore cut short by a crash is settled before anything opens the
 		// database (card I45).
 		if err := recoverInterruptedRestore(cfg, stdout); err != nil {
@@ -106,6 +106,12 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return restore(cfg, fs.Args(), stdout)
 	case "verify-backup":
 		return verifyBackup(ctx, fs.Args(), stdout)
+	case "scheduled-backup":
+		options, err := scheduledBackupOptionsFromEnv(cfg)
+		if err != nil {
+			return err
+		}
+		return scheduledBackup(ctx, cfg, options, stdout)
 	case "reset-owner-password":
 		return resetOwnerPassword(ctx, cfg, recoveryAccount, passwordFile, stdout)
 	case "version":
@@ -297,5 +303,5 @@ func healthcheck(cfg config.Config) error {
 
 func usage(w io.Writer) {
 	fmt.Fprintln(w, "Veritra server")
-	fmt.Fprintln(w, "commands: serve, init, migrate, backup, restore, verify-backup, doctor, healthcheck, generate-setup-token, reset-owner-password, version")
+	fmt.Fprintln(w, "commands: serve, init, migrate, backup, restore, verify-backup, scheduled-backup, doctor, healthcheck, generate-setup-token, reset-owner-password, version")
 }

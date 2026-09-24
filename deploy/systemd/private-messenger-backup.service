@@ -1,0 +1,24 @@
+[Unit]
+Description=Veritra scheduled backup (backup, restore drill, off-host copy)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=private-messenger
+Group=private-messenger
+Environment=PRIVATE_MESSENGER_DATA_DIR=%S/private-messenger
+Environment=PRIVATE_MESSENGER_ENV=production
+# PRIVATE_MESSENGER_BACKUP_OFFSITE_DIR names a directory the host mounts from
+# separately controlled storage (NFS, SMB, an rclone or restic mount). Its
+# credentials stay in the mount's own configuration, not here.
+# PRIVATE_MESSENGER_BACKUP_KEEP sets how many backups each place keeps (7).
+EnvironmentFile=/etc/private-messenger/backup.env
+UMask=0077
+ExecStart=/usr/local/bin/messenger-server scheduled-backup
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=%S/private-messenger
+# Add the off-host mount point here, for example:
+# ReadWritePaths=/mnt/veritra-offsite

@@ -52,6 +52,31 @@ services:
     networks:
       - messenger-net
 
+  # Scheduled backup (card I45). Run it from the host scheduler, for example
+  # a daily cron entry: `docker compose --profile backup run --rm backup`.
+  # Mount separately controlled storage at /offsite; its credentials belong
+  # to that mount, never to this service.
+  backup:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    profiles: ["backup"]
+    command: ["scheduled-backup"]
+    environment:
+      PRIVATE_MESSENGER_DATA_DIR: /data
+      PRIVATE_MESSENGER_ENV: production
+      PRIVATE_MESSENGER_BACKUP_OFFSITE_DIR: /offsite
+      PRIVATE_MESSENGER_BACKUP_KEEP: "${PRIVATE_MESSENGER_BACKUP_KEEP:-7}"
+    volumes:
+      - messenger-data:/data
+      - "${PRIVATE_MESSENGER_BACKUP_OFFSITE_PATH:-./offsite-backups}:/offsite"
+    restart: "no"
+    mem_limit: 512m
+    pids_limit: 64
+    security_opt:
+      - no-new-privileges:true
+    network_mode: none
+
   caddy:
     image: caddy:2.11.4@sha256:af5fdcd76f2db5e4e974ee92f96ee8c0fc3edb55bd4ba5032547cbf3f65e486d
     profiles: ["caddy"]
