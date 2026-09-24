@@ -402,6 +402,23 @@ on I32's recovery state.**
 **Accept when:** wrong/missing/corrupt key tests preserve the database, enter
 `recoveryRequired`, and require explicit confirmation before any reset.
 
+**Implementation note (Stage 5, 2026-09-24):** Android secure storage no
+longer uses `resetOnError`, which silently deleted the database key on a
+keystore error. Opening the local database now fails with a typed
+`LocalStoreUnavailableException` (`profileLocked`, `keyUnavailable`,
+`keyMissing`, `keyMalformed`, `keyRejected` for a wrong key or damaged file,
+`keyWriteFailed`) and never writes a key while a database exists. A failed
+open is no longer cached, so a retry after unlocking reopens. Restore enters
+`recoveryRequired` with a kind-specific message; "continue to sign in" is not
+offered for these failures. The only reset is the explicitly confirmed
+`quarantineUnreadableDatabase`: it journals an intent file, keeps the current
+key under `<key name>.quarantined.<stamp>`, moves the database and its WAL/SHM
+companions into `unreadable-<stamp>/`, and only then removes the key; an
+interrupted reset is completed on the next open. Nothing is deleted. Tests
+cover wrong, missing, malformed and unreadable keys, the confirmation, the
+readable quarantined copy and an interrupted reset. Relink is the recovery
+path; restoring a backup onto the fresh store arrives with I45.
+
 ### I40 - Release evidence and toolchain integrity
 
 **Decision:** Merge Codex DEP-01/DEP-06/TEST-06/TEST-09/TEST-10/TEST-11/

@@ -327,6 +327,33 @@ class _RecoveryState extends StatelessWidget {
 
   final AppState state;
 
+  Future<void> _confirmReset(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Reset this device?'),
+        content: const Text(
+          'This device starts empty and must be linked again. Its current '
+          'messages stay unreadable here; they are moved aside, not deleted, '
+          'in case the key comes back.',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Reset'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await state.resetUnreadableLocalData(confirmed: true);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -358,10 +385,18 @@ class _RecoveryState extends StatelessWidget {
                     onPressed: state.busy ? null : state.tryRestoreSession,
                     child: const Text('Retry restore'),
                   ),
-                  TextButton(
-                    onPressed: state.busy ? null : state.continueWithoutRestore,
-                    child: const Text('Continue to sign in'),
-                  ),
+                  if (state.canContinueWithoutRestore)
+                    TextButton(
+                      onPressed:
+                          state.busy ? null : state.continueWithoutRestore,
+                      child: const Text('Continue to sign in'),
+                    )
+                  else
+                    TextButton(
+                      onPressed:
+                          state.busy ? null : () => _confirmReset(context),
+                      child: const Text('Reset this device'),
+                    ),
                 ],
               ),
             ),

@@ -8,6 +8,30 @@ import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_recovery.dart';
 
+Matcher _storeFailure(LocalStoreFailureKind kind) =>
+    isA<LocalStoreUnavailableException>()
+        .having((error) => error.kind, 'kind', kind);
+
+class _FlakyStorage extends FlutterSecureStorage {
+  _FlakyStorage();
+
+  bool failing = false;
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) {
+    if (failing) throw StateError('keystore locked');
+    return super.read(key: key);
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -129,8 +153,132 @@ void main() {
     await secureStorage.delete(key: 'veritra.database_key.v1');
 
     final second = createStore();
-    await expectLater(second.loadSyncCursor(), throwsStateError);
+    await expectLater(second.loadSyncCursor(),
+        throwsA(_storeFailure(LocalStoreFailureKind.keyMissing)));
     expect(await secureStorage.read(key: 'veritra.database_key.v1'), isNull);
+  });
+
+  Future<List<int>> seedAndClose() async {
+    final seed = createStore();
+    await seed.saveSyncCursor(4);
+    for (final database in databases) {
+      await database.close();
+    }
+    databases.clear();
+    return File('${directory.path}/veritra-local.db').readAsBytes();
+  }
+
+  Future<void> expectDatabaseUnchanged(List<int> original) async {
+    final file = File('${directory.path}/veritra-local.db');
+    expect(await file.exists(), isTrue);
+    expect(await file.readAsBytes(), original);
+  }
+
+  test('a wrong key is rejected and the database is left untouched', () async {
+    final original = await seedAndClose();
+    await secureStorage.write(key: 'veritra.database_key.v1', value: 'ab' * 32);
+    final store = createStore();
+    await expectLater(store.loadSyncCursor(),
+        throwsA(_storeFailure(LocalStoreFailureKind.keyRejected)));
+    await expectDatabaseUnchanged(original);
+    expect(await secureStorage.read(key: 'veritra.database_key.v1'), 'ab' * 32);
+  });
+
+  test('a malformed key is reported without touching the database', () async {
+    final original = await seedAndClose();
+    await secureStorage.write(
+        key: 'veritra.database_key.v1', value: 'not-a-key');
+    final store = createStore();
+    await expectLater(store.loadSyncCursor(),
+        throwsA(_storeFailure(LocalStoreFailureKind.keyMalformed)));
+    await expectDatabaseUnchanged(original);
+  });
+
+  test('unreadable secure storage is retryable and a retry reopens', () async {
+    await seedAndClose();
+    final flaky = _FlakyStorage();
+    final store = SecureLocalStore(
+      storage: flaky,
+      directoryProvider: () async => directory,
+      databaseFactory: (file, keyHex) {
+        final database = openEncryptedLocalDatabase(file, keyHex);
+        databases.add(database);
+        return database;
+      },
+    );
+    flaky.failing = true;
+    await expectLater(store.loadSyncCursor(),
+        throwsA(_storeFailure(LocalStoreFailureKind.keyUnavailable)));
+    flaky.failing = false;
+    expect(await store.loadSyncCursor(), 4);
+  });
+
+  test('a reset needs confirmation and moves the database aside with its key',
+      () async {
+    final original = await seedAndClose();
+    final key = await secureStorage.read(key: 'veritra.database_key.v1');
+    await secureStorage.delete(key: 'veritra.database_key.v1');
+    final store = createStore();
+    await expectLater(store.loadSyncCursor(),
+        throwsA(_storeFailure(LocalStoreFailureKind.keyMissing)));
+
+    await expectLater(store.quarantineUnreadableDatabase(confirmed: false),
+        throwsArgumentError);
+    await expectDatabaseUnchanged(original);
+
+    // The key comes back just before the reset: it is kept with the copy.
+    await secureStorage.write(key: 'veritra.database_key.v1', value: key!);
+    await store.quarantineUnreadableDatabase(confirmed: true);
+    expect(File('${directory.path}/veritra-local.db').existsSync(), isFalse);
+    final quarantined = directory
+        .listSync()
+        .whereType<Directory>()
+        .where((item) => item.path.contains('unreadable-'))
+        .single;
+    final stamp = quarantined.path.split('unreadable-').last;
+    expect(File('${quarantined.path}/veritra-local.db').readAsBytesSync(),
+        original);
+    expect(
+        await secureStorage.read(
+            key: 'veritra.database_key.v1.quarantined.$stamp'),
+        key);
+    expect(await secureStorage.read(key: 'veritra.database_key.v1'), isNull);
+
+    // The store now starts empty with a new key.
+    expect(await store.loadSyncCursor(), 0);
+    final newKey = await secureStorage.read(key: 'veritra.database_key.v1');
+    expect(newKey, isNot(key));
+
+    // The moved copy is still readable with its kept key.
+    final copy = openEncryptedLocalDatabase(
+        File('${quarantined.path}/veritra-local.db'), key);
+    databases.add(copy);
+    expect(await copy.readCursor(), 4);
+  });
+
+  test('an interrupted reset is finished on the next open', () async {
+    final original = await seedAndClose();
+    final key = await secureStorage.read(key: 'veritra.database_key.v1');
+    // A crash after the intent was written and the WAL companion moved.
+    const stamp = '1700000000000000';
+    File('${directory.path}/veritra-local.reset-intent')
+        .writeAsStringSync(stamp);
+    final quarantine = Directory('${directory.path}/unreadable-$stamp')
+      ..createSync();
+    final wal = File('${directory.path}/veritra-local.db-wal');
+    if (wal.existsSync())
+      wal.renameSync('${quarantine.path}/veritra-local.db-wal');
+
+    final store = createStore();
+    expect(await store.loadSyncCursor(), 0);
+    expect(File('${directory.path}/veritra-local.reset-intent').existsSync(),
+        isFalse);
+    expect(File('${quarantine.path}/veritra-local.db').readAsBytesSync(),
+        original);
+    expect(
+        await secureStorage.read(
+            key: 'veritra.database_key.v1.quarantined.$stamp'),
+        key);
   });
 
   test('migrates and verifies the legacy secure-storage record once', () async {

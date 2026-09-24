@@ -204,7 +204,7 @@ task boundaries and orchestration rules are in
 | I36 | T36A/T36B implemented; checks pending (Codex, 2026-08-14) | Committed-message fanout and bounded push work | — |
 | I37 | T37A/T37B implemented; T37C safe migration/idle plumbing implemented; rotation and cost promotion deferred; checks pending (Codex, 2026-08-14) | Setup and authentication hardening | — |
 | I38 | Implemented (T38); checks pending (Codex, 2026-08-14) | Safe account export | — |
-| I39 | Blocked by I32 | Fail-closed encrypted database key recovery | I32 |
+| I39 | Implemented and checked (Stage 5, 2026-09-24) | Fail-closed encrypted database key recovery | I32 |
 | I40 | T40A/T40B/T40C/T40D implemented; checks pending (Codex, 2026-08-14); due 2026-08-29 | Release evidence and toolchain integrity | — |
 | I41 | Blocked by I36, conditional D03 | Push registration and platform readiness | I36 |
 | I42 | T42A implemented; T42B design claimed/proposed, approval pending; checks pending (Codex, 2026-08-14), conditional D03 | Authorized calls and native lifecycle | — |

@@ -26,6 +26,46 @@ class OutboxFullException implements Exception {
       'The encrypted message queue is full. Send or discard a pending message first.';
 }
 
+/// Why the encrypted local database could not be opened (card I39).
+enum LocalStoreFailureKind {
+  /// Another window holds this profile.
+  profileLocked,
+
+  /// Secure storage could not be read (for example, the device is locked or
+  /// the keystore refused). Retrying later may work.
+  keyUnavailable,
+
+  /// The database exists but its key is gone.
+  keyMissing,
+
+  /// The stored key is not a well-formed key.
+  keyMalformed,
+
+  /// The key did not open the database: it is the wrong key, or the file
+  /// is damaged.
+  keyRejected,
+
+  /// Writing a new key could not be confirmed.
+  keyWriteFailed,
+}
+
+/// The local database stays closed and untouched. Nothing is reset without
+/// an explicit, confirmed [LocalStore.quarantineUnreadableDatabase].
+class LocalStoreUnavailableException implements Exception {
+  const LocalStoreUnavailableException(this.kind);
+
+  final LocalStoreFailureKind kind;
+
+  /// Only these may succeed on a plain retry.
+  bool get retryable =>
+      kind == LocalStoreFailureKind.profileLocked ||
+      kind == LocalStoreFailureKind.keyUnavailable ||
+      kind == LocalStoreFailureKind.keyWriteFailed;
+
+  @override
+  String toString() => 'LocalStoreUnavailableException(${kind.name})';
+}
+
 Future<T> _serializeDatabaseWrite<T>(
   String path,
   Future<T> Function() action,
@@ -323,6 +363,11 @@ abstract class LocalStore {
   Future<List<LocalMessageReaction>> loadReactions(String conversationId);
   Future<void> clearCachedState({bool preserveOutbox = false});
   Future<void> clear();
+
+  /// The confirmed destructive reset for a database that cannot be opened
+  /// (I39). The unreadable database is moved aside with its key, never
+  /// deleted, and the next open starts a new, empty identity.
+  Future<void> quarantineUnreadableDatabase({required bool confirmed});
 }
 
 class MemoryLocalStore implements LocalStore {
@@ -754,6 +799,14 @@ class MemoryLocalStore implements LocalStore {
   }
 
   @override
+  Future<void> quarantineUnreadableDatabase({required bool confirmed}) async {
+    if (!confirmed) {
+      throw ArgumentError.value(confirmed, 'confirmed');
+    }
+    await clear();
+  }
+
+  @override
   Future<List<LocalMessage>> loadMessages(String conversationId) async =>
       _history.messages(conversationId);
 
@@ -884,8 +937,10 @@ class SecureLocalStore implements LocalStore {
         _namespace = namespace,
         _storage = storage ??
             const FlutterSecureStorage(
+              // Fail closed (I39): resetting on a keystore error would wipe
+              // the database key and with it every message on the device.
               aOptions: AndroidOptions(
-                resetOnError: true,
+                resetOnError: false,
               ),
               iOptions: IOSOptions(
                 accessibility: KeychainAccessibility.first_unlock_this_device,
@@ -1440,16 +1495,109 @@ class SecureLocalStore implements LocalStore {
     _syncLeaseKey = null;
   }
 
-  Future<EncryptedLocalDatabase> _database() =>
-      _openingDatabase ??= _openDatabase();
+  @override
+  Future<void> quarantineUnreadableDatabase({required bool confirmed}) async {
+    if (!confirmed) {
+      throw ArgumentError.value(confirmed, 'confirmed',
+          'resetting the local database needs explicit confirmation');
+    }
+    final opening = _openingDatabase;
+    _openingDatabase = null;
+    if (opening != null) {
+      try {
+        await (await opening).close();
+      } catch (_) {
+        // It never opened; there is nothing to close.
+      }
+    }
+    final directory = await _profileDirectory();
+    await _writeResetIntent(directory);
+    await _completeReset(directory);
+    _syncLeaseKey = null;
+  }
 
-  Future<EncryptedLocalDatabase> _openDatabase() async {
+  /// A failed open is not cached: the next call opens again, so a key that
+  /// becomes readable later (after unlock, say) is picked up by a retry.
+  Future<EncryptedLocalDatabase> _database() {
+    final existing = _openingDatabase;
+    if (existing != null) return existing;
+    final opening = _openDatabase();
+    _openingDatabase = opening;
+    unawaited(opening.then<void>((_) {}, onError: (Object error) {
+      if (identical(_openingDatabase, opening)) _openingDatabase = null;
+    }));
+    return opening;
+  }
+
+  Future<Directory> _profileDirectory() async {
     final base = await _directoryProvider();
     final directory = _namespace.isEmpty
         ? base
         : Directory('${base.path}${Platform.pathSeparator}profiles'
             '${Platform.pathSeparator}$_namespace');
     await directory.create(recursive: true);
+    return directory;
+  }
+
+  static const _resetIntentName = 'veritra-local.reset-intent';
+  static const _databaseFileNames = <String>[
+    'veritra-local.db-wal',
+    'veritra-local.db-shm',
+    'veritra-local.db',
+  ];
+
+  String get _quarantinedKeyPrefix => '$_databaseKeyName.quarantined.';
+
+  /// The reset is journaled so that a crash part-way leaves either the
+  /// original database in place or a complete quarantined copy with its
+  /// key, never a database separated from its WAL or its key.
+  Future<void> _writeResetIntent(Directory directory) async {
+    final intent = File('${directory.path}${Platform.pathSeparator}'
+        '$_resetIntentName');
+    if (await intent.exists()) return;
+    final stamp = DateTime.now().toUtc().microsecondsSinceEpoch.toString();
+    final temporary = File('${intent.path}.tmp');
+    await temporary.writeAsString(stamp, flush: true);
+    await temporary.rename(intent.path);
+  }
+
+  Future<void> _completeReset(Directory directory) async {
+    final intent = File('${directory.path}${Platform.pathSeparator}'
+        '$_resetIntentName');
+    if (!await intent.exists()) return;
+    final stamp = (await intent.readAsString()).trim();
+    if (!RegExp(r'^[0-9]{1,20}$').hasMatch(stamp)) {
+      throw const LocalStoreUnavailableException(
+          LocalStoreFailureKind.keyRejected);
+    }
+    final quarantine = Directory('${directory.path}${Platform.pathSeparator}'
+        'unreadable-$stamp');
+    await quarantine.create(recursive: true);
+    // Keep the key with the files so the copy stays readable if the key was
+    // only temporarily unreadable. Copy before moving any file.
+    String? key;
+    try {
+      key = await _storage.read(key: _databaseKeyName);
+    } catch (_) {
+      key = null;
+    }
+    if (key != null) {
+      await _storage.write(key: '$_quarantinedKeyPrefix$stamp', value: key);
+    }
+    for (final name in _databaseFileNames) {
+      final file = File('${directory.path}${Platform.pathSeparator}$name');
+      if (await file.exists()) {
+        await file.rename(
+            '${quarantine.path}${Platform.pathSeparator}$name');
+      }
+    }
+    await _storage.delete(key: _databaseKeyName);
+    await _storage.delete(key: _legacyRecordKeyName);
+    await intent.delete();
+  }
+
+  Future<EncryptedLocalDatabase> _openDatabase() async {
+    final directory = await _profileDirectory();
     final databaseFile =
         File('${directory.path}${Platform.pathSeparator}veritra-local.db');
     final path = databaseFile.absolute.path;
@@ -1471,37 +1619,72 @@ class SecureLocalStore implements LocalStore {
 
   Future<EncryptedLocalDatabase> _openDatabaseLocked(
       Directory directory, File databaseFile) async {
-    await _holdInstanceLock(directory);
+    try {
+      await _holdInstanceLock(directory);
+    } on StateError {
+      throw const LocalStoreUnavailableException(
+          LocalStoreFailureKind.profileLocked);
+    }
     final lockFile =
         File('${directory.path}${Platform.pathSeparator}veritra-local.lock');
     final lock = await lockFile.open(mode: FileMode.append);
     await lock.lock(FileLock.exclusive);
     try {
-      var keyHex = await _storage.read(key: _databaseKeyName);
-      if (keyHex == null && await databaseFile.exists()) {
+      // A reset interrupted by a crash is finished before anything else.
+      await _completeReset(directory);
+      final String? keyHex;
+      try {
+        keyHex = await _storage.read(key: _databaseKeyName);
+      } catch (_) {
+        throw const LocalStoreUnavailableException(
+            LocalStoreFailureKind.keyUnavailable);
+      }
+      final databaseExists = await databaseFile.exists();
+      if (keyHex == null && databaseExists) {
         // A database without its key is unreadable. Writing a fresh key
         // would hide that behind a new, empty identity (D26), so stop and
         // let the recovery screen explain it.
-        throw StateError('encrypted database key is missing');
+        throw const LocalStoreUnavailableException(
+            LocalStoreFailureKind.keyMissing);
       }
-      if (keyHex == null) {
-        keyHex = _randomHexKey();
-        await _storage.write(key: _databaseKeyName, value: keyHex);
+      if (keyHex != null && !RegExp(r'^[0-9a-f]{64}$').hasMatch(keyHex)) {
+        throw const LocalStoreUnavailableException(
+            LocalStoreFailureKind.keyMalformed);
       }
-      final storedKey = await _storage.read(key: _databaseKeyName);
-      if (storedKey != keyHex ||
-          storedKey == null ||
-          !RegExp(r'^[0-9a-f]{64}$').hasMatch(storedKey)) {
-        throw StateError('encrypted database key verification failed');
+      final key = keyHex ?? await _createKey();
+      final EncryptedLocalDatabase database;
+      try {
+        database = _databaseFactory(databaseFile, key);
+        await database.readCursor();
+      } catch (_) {
+        if (!databaseExists) rethrow;
+        // SQLite cannot tell a wrong key from a damaged file. Either way the
+        // file is left exactly as it is.
+        throw const LocalStoreUnavailableException(
+            LocalStoreFailureKind.keyRejected);
       }
-      final database = _databaseFactory(databaseFile, storedKey);
-      await database.readCursor();
       await _migrateLegacyRecord(database);
       return database;
     } finally {
       await lock.unlock();
       await lock.close();
     }
+  }
+
+  /// Writes a new key for a profile that has no database yet and reads it
+  /// back; the database is created only after the key is confirmed stored.
+  Future<String> _createKey() async {
+    final keyHex = _randomHexKey();
+    try {
+      await _storage.write(key: _databaseKeyName, value: keyHex);
+      if (await _storage.read(key: _databaseKeyName) != keyHex) {
+        throw StateError('key write not confirmed');
+      }
+    } catch (_) {
+      throw const LocalStoreUnavailableException(
+          LocalStoreFailureKind.keyWriteFailed);
+    }
+    return keyHex;
   }
 
   /// Holds an OS lock on the profile directory for the life of the process,

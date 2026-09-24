@@ -519,6 +519,7 @@ class AppState extends ChangeNotifier {
     final transitionGeneration = ++_sessionGeneration;
     lifecycle = SessionLifecycle.initializing;
     recoveryMessage = null;
+    localStoreFailure = null;
     notifyListeners();
     try {
       final stored = await localStore.loadSession();
@@ -592,21 +593,79 @@ class AppState extends ChangeNotifier {
       messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
       _history.clear();
       lifecycle = SessionLifecycle.recoveryRequired;
-      recoveryMessage = error is StateError &&
-              error.message.contains('another Veritra window')
-          ? 'This profile is already open in another Veritra window. Close '
-              'that window, then retry.'
+      localStoreFailure =
+          error is LocalStoreUnavailableException ? error.kind : null;
+      recoveryMessage = error is LocalStoreUnavailableException
+          ? _localStoreFailureMessage(error.kind)
           : 'This device could not restore its encrypted session. Retry or '
               'continue to sign in without clearing local data.';
       notifyListeners();
     }
   }
 
+  static String _localStoreFailureMessage(LocalStoreFailureKind kind) {
+    switch (kind) {
+      case LocalStoreFailureKind.profileLocked:
+        return 'This profile is already open in another Veritra window. '
+            'Close that window, then retry.';
+      case LocalStoreFailureKind.keyUnavailable:
+      case LocalStoreFailureKind.keyWriteFailed:
+        return 'This device could not read its secure storage. Unlock the '
+            'device and retry. Your messages are kept.';
+      case LocalStoreFailureKind.keyMissing:
+      case LocalStoreFailureKind.keyMalformed:
+      case LocalStoreFailureKind.keyRejected:
+        return 'The key that protects this device\'s messages is missing or '
+            'does not match. Nothing has been deleted. You can retry, or '
+            'reset this device and link it again.';
+    }
+  }
+
+  /// Why the encrypted local database could not be opened (I39), or null.
+  LocalStoreFailureKind? localStoreFailure;
+
+  /// Signing in cannot work while the local database is unreadable, so the
+  /// recovery screen offers it only for other restore failures.
+  bool get canContinueWithoutRestore => localStoreFailure == null;
+
   void continueWithoutRestore() {
-    if (lifecycle != SessionLifecycle.recoveryRequired) return;
+    if (lifecycle != SessionLifecycle.recoveryRequired ||
+        !canContinueWithoutRestore) {
+      return;
+    }
     lifecycle = SessionLifecycle.ready;
     recoveryMessage = null;
     notifyListeners();
+  }
+
+  /// The confirmed destructive reset for an unreadable local database (I39).
+  /// The old database and its key are moved aside, not deleted; this device
+  /// then starts empty and must be linked again.
+  Future<void> resetUnreadableLocalData({required bool confirmed}) async {
+    if (!confirmed) {
+      throw ArgumentError.value(confirmed, 'confirmed',
+          'resetting local data needs explicit confirmation');
+    }
+    if (lifecycle != SessionLifecycle.recoveryRequired ||
+        localStoreFailure == null) {
+      return;
+    }
+    await _enqueueSessionTransition(() async {
+      busy = true;
+      notifyListeners();
+      try {
+        await localStore.quarantineUnreadableDatabase(confirmed: true);
+        localStoreFailure = null;
+        recoveryMessage = null;
+        lifecycle = SessionLifecycle.ready;
+      } catch (err) {
+        recoveryMessage = 'The reset did not finish. Nothing was deleted. '
+            'Retry.';
+      } finally {
+        busy = false;
+        notifyListeners();
+      }
+    });
   }
 
   Future<void> createOwner(String baseUrl, String username, String password,
