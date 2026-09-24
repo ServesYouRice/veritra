@@ -391,3 +391,36 @@ func TestBackupFailuresLeaveNoPartialBackup(t *testing.T) {
 		})
 	}
 }
+
+func TestASecondRestoreOrRecoveryWaitsForTheRunningRestore(t *testing.T) {
+	archive := makeBackup(t, seedInstance(t, "backup"))
+	live := seedInstance(t, "original")
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	previous := faultHook
+	faultHook = func(step string) error {
+		if step == "restore:preserve-database" {
+			close(entered)
+			<-release
+		}
+		return nil
+	}
+	t.Cleanup(func() { faultHook = previous })
+	first := make(chan error, 1)
+	go func() { first <- restore(live, []string{archive}, &bytes.Buffer{}) }()
+	<-entered
+	// The journal is on disk now; neither a second restore nor recovery may
+	// touch it while the first restore holds the lock.
+	if err := restore(live, []string{archive}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "another restore is active") {
+		t.Fatalf("second restore err=%v", err)
+	}
+	if err := recoverInterruptedRestore(live, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "another restore is active") {
+		t.Fatalf("recovery err=%v", err)
+	}
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatalf("first restore: %v", err)
+	}
+	expectLive(t, live, "backup")
+	expectNoStaging(t, live.DataDir)
+}
