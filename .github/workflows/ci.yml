@@ -251,6 +251,13 @@ jobs:
         run: |
           binary=mobile/build/macos/Build/Products/Release/Veritra.app/Contents/MacOS/Veritra
           lipo -info "$binary"
+          # TEMP diagnostics
+          nm -arch arm64 "$binary" | grep -c pm_crypto || true
+          nm -arch arm64 "$binary" | grep pm_crypto_abi || true
+          nm -gU -arch arm64 "$binary" | wc -l
+          dyld_info -exports -arch arm64 "$binary" | grep -c pm_crypto || true
+          (cd mobile/macos && xcodebuild -showBuildSettings -workspace Runner.xcworkspace -scheme Runner -configuration Release 2>/dev/null | grep -E " (OTHER_LDFLAGS|STRIP_STYLE|STRIP_INSTALLED_PRODUCT|DEAD_CODE_STRIPPING|DEPLOYMENT_POSTPROCESSING|VERITRA_CRYPTO_LIBRARY|COPY_PHASE_STRIP) =") || true
+          ls -la mobile/macos/crypto
           for arch in arm64 x86_64; do
             nm -gU -arch "$arch" "$binary" > "symbols-$arch.txt"
             grep -q ' _pm_crypto_abi_version$' "symbols-$arch.txt"
