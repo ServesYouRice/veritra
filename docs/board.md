@@ -24,7 +24,7 @@ G25) wait until all three roadmap phases are done (D20). Work order:
    HTTP for demo builds, decrypted-message persistence (schema v7), message
    actions, MLS sender binding (ABI v5), live multi-client test
    (`scripts/test-demo-e2e.sh`), one-command local server (`scripts/demo.sh`).
-   Attachments and safety-number UI are still open.
+   Safety-number screen done (2026-09-24); attachments are still open.
 2. Mobile demo (Android emulator, iOS simulator) — **needs a machine with
    emulators;** CI builds both apps.
 3. Desktop demo (Windows, Linux) — **built 2026-09-24:** Linux bundle run

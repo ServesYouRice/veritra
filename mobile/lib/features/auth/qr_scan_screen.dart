@@ -51,12 +51,14 @@ String? parseDeviceLinkOrigin(
   }
 }
 
-/// Full-screen camera scanner for device-link QR codes. Pops with the raw
+/// Full-screen camera scanner for QR codes (device links, safety numbers). Pops with the raw
 /// scanned string (a `veritra://device-link?code=…` URI or a bare code), or
 /// null if the user backs out. Parsing is left to the caller so this screen
 /// stays a thin camera surface.
 class QrScanScreen extends StatefulWidget {
-  const QrScanScreen({super.key});
+  const QrScanScreen({this.title = 'Scan link QR', super.key});
+
+  final String title;
 
   @override
   State<QrScanScreen> createState() => _QrScanScreenState();
@@ -96,7 +98,7 @@ class _QrScanScreenState extends State<QrScanScreen> {
     final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Scan link QR'),
+        title: Text(widget.title),
         actions: <Widget>[
           IconButton(
             tooltip: 'Toggle torch',
