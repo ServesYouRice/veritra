@@ -46,7 +46,7 @@ G25) wait until all three roadmap phases are done (D20). Work order:
    notification permission, test wake). Device-only checks wait for G24
    (D20).
 6. Phase 2 completion (macOS, packaging, desktop key storage).
-7. Phase 3 outline (client SDK).
+7. Phase 3 outline (client SDK) — **written 2026-09-25:** [`sdk.md`](sdk.md).
 
 The history below records earlier status and is kept for provenance.
 
