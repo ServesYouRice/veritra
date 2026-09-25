@@ -46,6 +46,17 @@ Run a desktop app with `flutter run -d linux` or `flutter run -d windows`
 plus the demo arguments above. CI also builds unsigned demo bundles for both
 (`desktop-linux` and `desktop-windows` artifacts).
 
+### Ready-made builds from CI
+
+Every CI run keeps demo builds for 14 days (Actions → the run → Artifacts),
+so a phone or tablet needs no toolchain:
+
+| Artifact | Install |
+|---|---|
+| `veritra-demo-android-…` | `app-debug.apk` for arm64 phones and x86_64 emulators: `adb install app-debug.apk`, or open it on the phone after allowing installs from that source. Then `adb reverse tcp:8080 tcp:8080` so the app reaches the demo server. |
+| `veritra-demo-ios-simulator-…` | Unzip, boot a simulator, then `xcrun simctl install booted Runner.app`. The simulator reaches the demo server on `localhost` directly. A real iPhone needs a signed build from Xcode (your own Apple ID is enough for a development build). |
+| `veritra-demo-linux-x64-…`, `veritra-demo-windows-x64-…` | Unzip and run the app in the folder. |
+
 The connect screen fills in the URL for you.
 
 ### Linux notes
