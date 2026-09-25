@@ -108,3 +108,16 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   afterwards. Received manifests are stored in local history (kind
   `attachment`, same encrypted database as decrypted text) with no schema
   change.
+- **Safety numbers v2 (2026-09-25):** no ABI change;
+  `pm_crypto_group_safety_number` returns a new value. The transcript
+  (`veritra-conversation-safety-v2`) binds the group id, the member count and
+  every member device's credential and signature key, sorted, with repeated
+  members refused. The epoch is no longer bound, so routine commits keep the
+  number; a device that joins, leaves or changes its signing key changes it.
+  The number grows from 12 to 60 digits (SHA-512 over the transcript hash,
+  twelve groups of five, about 199 bits): 12 digits was about 40 bits, short
+  enough to grind a device key against. Stored DM verifications now carry a
+  version byte; version 1 records read as not verified rather than as a false
+  "changed". Groups show the number for a live comparison and store nothing.
+  Residual: first contact is still trust-on-first-use (no key transparency),
+  and a change to one's own devices also changes a DM's number.

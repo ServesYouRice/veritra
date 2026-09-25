@@ -558,7 +558,11 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
     final linked = await widget.state.hasStoredDeviceIdentityForOrigin(raw);
     if (!mounted) return;
-    if (!_modeManuallySelected && result.setupRequired == true) {
+    // Switch to owner setup and let the user fill it in, but only when the
+    // form is not already there; otherwise "Create owner" could never submit.
+    if (!_modeManuallySelected &&
+        result.setupRequired == true &&
+        mode != AuthMode.owner) {
       setState(() {
         _probeResult = result;
         setupRequired = true;

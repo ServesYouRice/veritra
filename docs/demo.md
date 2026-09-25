@@ -40,7 +40,7 @@ start.
 | Android emulator | `scripts/build-mobile-crypto.sh android`, start the emulator, then `adb reverse tcp:8080 tcp:8080` (the demo script does this if the emulator is already running) | `http://localhost:8080` |
 | iOS simulator (macOS) | `scripts/build-mobile-crypto.sh ios` | `http://localhost:8080` |
 | Linux desktop | `scripts/build-desktop-crypto.sh linux`; needs GTK 3 and libsecret dev packages and a running keyring (see below) | `http://localhost:8080` |
-| Windows desktop | `scripts\build-desktop-crypto.ps1`; needs Visual Studio with "Desktop development with C++" | `http://localhost:8080` |
+| Windows desktop | `scripts\build-desktop-crypto.ps1`; needs Visual Studio (Build Tools is enough) with "Desktop development with C++" plus the "C++ ATL" component, Rust, Python 3, and Windows Developer Mode (Settings → System → For developers) so Flutter can link plugins | `http://localhost:8080` |
 | macOS desktop | `scripts/build-desktop-crypto.sh macos`; needs Xcode and the `aarch64-apple-darwin` and `x86_64-apple-darwin` Rust targets | `http://localhost:8080` |
 
 Run a desktop app with `flutter run -d linux`, `flutter run -d windows` or
@@ -60,6 +60,17 @@ demo bundles for all three (`desktop-linux`, `desktop-windows` and
 - Unsigned builds cannot use the data protection keychain, so the app keeps
   its database key in the login keychain. macOS may ask for your login
   password after each rebuild.
+
+### Ready-made builds from CI
+
+Every CI run keeps demo builds for 14 days (Actions → the run → Artifacts),
+so a phone or tablet needs no toolchain:
+
+| Artifact | Install |
+|---|---|
+| `veritra-demo-android-…` | `app-debug.apk` for arm64 phones and x86_64 emulators: `adb install app-debug.apk`, or open it on the phone after allowing installs from that source. Then `adb reverse tcp:8080 tcp:8080` so the app reaches the demo server. |
+| `veritra-demo-ios-simulator-…` | Unzip, boot a simulator, then `xcrun simctl install booted Runner.app`. The simulator reaches the demo server on `localhost` directly. A real iPhone needs a signed build from Xcode (your own Apple ID is enough for a development build). |
+| `veritra-demo-linux-x64-…`, `veritra-demo-windows-x64-…`, `veritra-demo-macos-…` | Unzip and run the app in the folder (macOS: see the notes above for the first open). |
 
 The connect screen fills in the URL for you.
 
