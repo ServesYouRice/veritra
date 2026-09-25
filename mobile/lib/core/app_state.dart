@@ -2039,26 +2039,35 @@ class AppState extends ChangeNotifier {
     return mls.conversationSafetyNumber(conversationId);
   }
 
+  /// Stored verifications start with the safety-number version they were
+  /// made under. Version 1 hashed the group epoch, so every one of them
+  /// would now read as a false "changed"; they count as not verified.
+  static const _safetyNumberVersion = 2;
+
   Future<void> markPeerVerified(
       String conversationId, String peerAccountId) async {
     final safety = await conversationSafetyNumber(conversationId);
-    await localStore.savePeerVerification(
-        conversationId, peerAccountId, safety.transcriptHash);
+    await localStore.savePeerVerification(conversationId, peerAccountId,
+        <int>[_safetyNumberVersion, ...safety.transcriptHash]);
   }
 
   Future<PeerVerificationStatus> peerVerificationStatus(
       String conversationId, String peerAccountId) async {
     final saved =
         await localStore.loadPeerVerification(conversationId, peerAccountId);
-    if (saved == null) return PeerVerificationStatus.unverified;
+    if (saved == null ||
+        saved.length != 33 ||
+        saved.first != _safetyNumberVersion) {
+      return PeerVerificationStatus.unverified;
+    }
     final current = await conversationSafetyNumber(conversationId);
-    return _constantTimeBytesEqual(saved, current.transcriptHash)
+    return _constantTimeBytesEqual(saved.sublist(1), current.transcriptHash)
         ? PeerVerificationStatus.verified
         : PeerVerificationStatus.changed;
   }
 
   /// Whether a scanned safety code is exactly this device's code for the
-  /// conversation. Both devices must be at the same group epoch.
+  /// conversation. Both devices must see the same member devices.
   Future<bool> safetyCodeMatches(String conversationId, String scanned) async {
     final current = await conversationSafetyNumber(conversationId);
     return _constantTimeBytesEqual(

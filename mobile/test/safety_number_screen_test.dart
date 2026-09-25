@@ -21,6 +21,7 @@ void main() {
 
   testWidgets('a DM number is shown grouped and can be marked verified',
       (tester) async {
+    _phoneSizedView(tester);
     final mls = _FakeMls();
     final store = MemoryLocalStore();
     final state = _state(store, mls);
@@ -30,7 +31,7 @@ void main() {
       home: SafetyNumberScreen(state: state, conversation: dm),
     ));
     await tester.pumpAndSettle();
-    expect(find.text('1234 5678 9012'), findsOneWidget);
+    expect(find.text(_shown), findsOneWidget);
     expect(find.text('NOT VERIFIED'), findsOneWidget);
     expect(
         find.textContaining('Compare this number with @sam'), findsOneWidget);
@@ -41,11 +42,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('VERIFIED'), findsOneWidget);
     expect(find.text('Mark as verified'), findsNothing);
-    expect(await store.loadPeerVerification('conv_dm', 'acct_peer'), mls.hash);
+    expect(await store.loadPeerVerification('conv_dm', 'acct_peer'),
+        <int>[2, ...mls.hash]);
   });
 
   testWidgets('cancelling the confirmation leaves the DM unverified',
       (tester) async {
+    _phoneSizedView(tester);
     final store = MemoryLocalStore();
     final state = _state(store, _FakeMls());
     await tester.pumpWidget(MaterialApp(
@@ -62,21 +65,39 @@ void main() {
 
   testWidgets('a number that changed after verification says so',
       (tester) async {
+    _phoneSizedView(tester);
     final mls = _FakeMls();
     final store = MemoryLocalStore();
     await store.savePeerVerification(
-        'conv_dm', 'acct_peer', List<int>.filled(32, 9));
+        'conv_dm', 'acct_peer', <int>[2, ...List<int>.filled(32, 9)]);
     await tester.pumpWidget(MaterialApp(
       home: SafetyNumberScreen(state: _state(store, mls), conversation: dm),
     ));
     await tester.pumpAndSettle();
     expect(find.text('CHANGED'), findsOneWidget);
-    expect(find.textContaining('changed since you verified'), findsOneWidget);
+    expect(find.textContaining('replaced since you verified'), findsOneWidget);
     expect(find.text('Mark as verified'), findsOneWidget);
+  });
+
+  testWidgets('a verification made under another version is not trusted',
+      (tester) async {
+    _phoneSizedView(tester);
+    final mls = _FakeMls();
+    final store = MemoryLocalStore();
+    // Same hash, but tagged with the epoch-bound version 1 derivation.
+    await store
+        .savePeerVerification('conv_dm', 'acct_peer', <int>[1, ...mls.hash]);
+    await tester.pumpWidget(MaterialApp(
+      home: SafetyNumberScreen(state: _state(store, mls), conversation: dm),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('NOT VERIFIED'), findsOneWidget);
+    expect(find.text('CHANGED'), findsNothing);
   });
 
   testWidgets('a group shows the shared number without a per-peer status',
       (tester) async {
+    _phoneSizedView(tester);
     await tester.pumpWidget(MaterialApp(
       home: SafetyNumberScreen(
         state: _state(MemoryLocalStore(), _FakeMls()),
@@ -84,7 +105,7 @@ void main() {
       ),
     ));
     await tester.pumpAndSettle();
-    expect(find.text('1234 5678 9012'), findsOneWidget);
+    expect(find.text(_shown), findsOneWidget);
     expect(find.textContaining('Every member of this group'), findsOneWidget);
     expect(find.text('Mark as verified'), findsNothing);
     expect(find.text('NOT VERIFIED'), findsNothing);
@@ -92,6 +113,7 @@ void main() {
 
   testWidgets('a group state that cannot be read offers a retry',
       (tester) async {
+    _phoneSizedView(tester);
     final mls = _FakeMls()..fail = true;
     await tester.pumpWidget(MaterialApp(
       home: SafetyNumberScreen(
@@ -103,7 +125,7 @@ void main() {
     mls.fail = false;
     await tester.tap(find.text('Retry'));
     await tester.pumpAndSettle();
-    expect(find.text('1234 5678 9012'), findsOneWidget);
+    expect(find.text(_shown), findsOneWidget);
   });
 
   test('only the exact safety code of this conversation matches', () async {
@@ -136,9 +158,9 @@ class _FakeMls implements MlsConversationCryptoService {
       String conversationId) async {
     if (fail) throw StateError('group missing');
     return ConversationSafetyNumber(
-      digits: '123456789012',
+      digits: '0123456789' * 6,
       transcriptHash: hash,
-      qrPayload: 'veritra-safety:v1:$conversationId:AAECAwQ',
+      qrPayload: 'veritra-safety:v2:$conversationId:AAECAwQ',
     );
   }
 
@@ -161,4 +183,16 @@ class _QuietSync implements SyncService {
 
   @override
   void dispose() => _controller.close();
+}
+
+/// How the fake's sixty digits appear: twelve groups of five, four a line.
+const _shown = '01234 56789 01234 56789\n'
+    '01234 56789 01234 56789\n'
+    '01234 56789 01234 56789';
+
+/// A tall phone-width view, so the whole screen is built without scrolling.
+void _phoneSizedView(WidgetTester tester) {
+  tester.view.physicalSize = const Size(1080, 4200);
+  tester.view.devicePixelRatio = 3;
+  addTearDown(tester.view.reset);
 }

@@ -412,13 +412,13 @@ class NativeCryptoService implements MlsConversationCryptoService {
       _serial(() async {
         final value =
             _requiredDevice().conversationSafetyNumber(conversationId);
-        if (value.transcriptHash.length != 32 || value.digits.length != 12) {
+        if (value.transcriptHash.length != 32 || value.digits.length != 60) {
           throw StateError('native safety number output is invalid');
         }
         return ConversationSafetyNumber(
           digits: value.digits,
           transcriptHash: value.transcriptHash,
-          qrPayload: 'veritra-safety:v1:$conversationId:'
+          qrPayload: 'veritra-safety:v2:$conversationId:'
               '${base64Url.encode(value.transcriptHash).replaceAll('=', '')}',
         );
       });
