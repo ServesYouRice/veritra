@@ -27,9 +27,12 @@ $Rustc = rustc -Vv
   Set-Content -Path (Join-Path $Metadata "build-info.txt")
 Push-Location $Crate
 try {
-  cargo metadata --locked --format-version 1 |
-    python (Join-Path $Root "scripts\cargo-license-metadata.py") |
-    Set-Content -Path (Join-Path $Metadata "cargo-metadata.json")
+  # cmd pipes bytes unchanged. Windows PowerShell 5.1 re-encodes text piped
+  # between programs and adds a byte-order mark that Python's JSON rejects.
+  $LicenseScript = Join-Path $Root "scripts\cargo-license-metadata.py"
+  $LicenseOutput = Join-Path $Metadata "cargo-metadata.json"
+  cmd /c "cargo metadata --locked --format-version 1 | python `"$LicenseScript`" > `"$LicenseOutput`""
+  if ($LASTEXITCODE -ne 0) { throw "license metadata failed" }
 } finally {
   Pop-Location
 }
