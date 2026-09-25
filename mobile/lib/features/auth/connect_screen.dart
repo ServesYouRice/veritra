@@ -610,7 +610,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
   /// a bare code is accepted too.
   bool get _canScanQr =>
       defaultTargetPlatform != TargetPlatform.windows &&
-      defaultTargetPlatform != TargetPlatform.linux;
+      defaultTargetPlatform != TargetPlatform.linux &&
+      defaultTargetPlatform != TargetPlatform.macOS;
 
   Future<void> _scanLinkCode() async {
     final scanned = await Navigator.of(context).push<String>(

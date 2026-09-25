@@ -45,7 +45,8 @@ G25) wait until all three roadmap phases are done (D20). Work order:
    verified backups, mobile backup workflow) and I41 (provider-aware push,
    notification permission, test wake). Device-only checks wait for G24
    (D20).
-6. Phase 2 completion (macOS, packaging, desktop key storage).
+6. Phase 2 completion (macOS, packaging, desktop key storage). macOS target
+   added and built in CI (2026-09-25); needs a Mac to run.
 7. Phase 3 outline (client SDK) — **written 2026-09-25:** [`sdk.md`](sdk.md).
 
 The history below records earlier status and is kept for provenance.

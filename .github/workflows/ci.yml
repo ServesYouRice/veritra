@@ -252,6 +252,45 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  desktop-macos:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: "3.44.0"
+          cache: true
+      - name: Install pinned Rust macOS targets
+        run: |
+          rustup toolchain install 1.91.0 --profile minimal
+          rustup target add --toolchain 1.91.0 aarch64-apple-darwin x86_64-apple-darwin
+      - name: Build the macOS crypto library
+        run: sh scripts/build-desktop-crypto.sh macos
+      - run: flutter pub get --enforce-lockfile
+        working-directory: mobile
+      - name: Build the macOS demo app
+        run: flutter build macos --release -t lib/main_demo.dart --dart-define=VERITRA_DEMO=true
+        working-directory: mobile
+      - name: Verify the crypto library is linked into the app
+        run: |
+          binary=mobile/build/macos/Build/Products/Release/Veritra.app/Contents/MacOS/Veritra
+          lipo -info "$binary"
+          for arch in arm64 x86_64; do
+            nm -gU -arch "$arch" "$binary" > "symbols-$arch.txt"
+            grep -q ' _pm_crypto_abi_version$' "symbols-$arch.txt"
+            grep -q ' _pm_crypto_device_create$' "symbols-$arch.txt"
+          done
+      - name: Package the unsigned app
+        run: ditto -c -k --keepParent mobile/build/macos/Build/Products/Release/Veritra.app veritra-demo-macos.zip
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: veritra-demo-macos-${{ github.run_id }}
+          path: veritra-demo-macos.zip
+          if-no-files-found: error
+          retention-days: 14
+
   compose-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 20

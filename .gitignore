@@ -26,6 +26,7 @@ mobile/android/app/src/main/jniLibs/
 mobile/android/app/src/main/assets/veritra-crypto/
 mobile/ios/Frameworks/
 mobile/linux/crypto/
+mobile/macos/crypto/
 mobile/windows/crypto/
 
 # Rust
