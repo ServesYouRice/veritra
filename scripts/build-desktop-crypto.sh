@@ -3,7 +3,10 @@
 # it where the Flutter CMake build bundles it (Stage 3, decision D10).
 #
 #   scripts/build-desktop-crypto.sh linux     -> mobile/linux/crypto/
+#   scripts/build-desktop-crypto.sh macos     -> mobile/macos/crypto/
 #
+# macOS links the static library into the app binary
+# (mobile/macos/Flutter/Crypto.xcconfig), like iOS.
 # Windows uses scripts/build-desktop-crypto.ps1 on a Windows machine.
 set -eu
 
@@ -41,8 +44,29 @@ case "$PLATFORM" in
     write_metadata "$output/metadata"
     echo "Linux crypto library ready in $output"
     ;;
+  macos)
+    if [ "$(uname -s)" != "Darwin" ]; then
+      echo "build the macOS library on a Mac" >&2
+      exit 2
+    fi
+    # Match the Runner's deployment target so the linker does not warn.
+    export MACOSX_DEPLOYMENT_TARGET=10.15
+    for target in aarch64-apple-darwin x86_64-apple-darwin; do
+      cargo build --manifest-path "$CRATE/Cargo.toml" --locked --release --target "$target"
+    done
+    output="$ROOT/mobile/macos/crypto"
+    rm -rf "$output"
+    mkdir -p "$output"
+    # One universal static library; Xcode force-loads it into the app binary.
+    lipo -create \
+      "$CRATE/target/aarch64-apple-darwin/release/libprivate_messenger_crypto.a" \
+      "$CRATE/target/x86_64-apple-darwin/release/libprivate_messenger_crypto.a" \
+      -output "$output/libprivate_messenger_crypto.a"
+    write_metadata "$output/metadata"
+    echo "macOS crypto library ready in $output"
+    ;;
   *)
-    echo "usage: $0 linux (use build-desktop-crypto.ps1 on Windows)" >&2
+    echo "usage: $0 linux|macos (use build-desktop-crypto.ps1 on Windows)" >&2
     exit 2
     ;;
 esac
