@@ -1,0 +1,8 @@
+// Links the Rust crypto library into the app binary, as on iOS. The Dart
+// bindings find its symbols with DynamicLibrary.process(), so every object is
+// force-loaded and global symbols survive stripping.
+// Build it first: scripts/build-desktop-crypto.sh macos
+HEADER_SEARCH_PATHS = $(inherited) $(SRCROOT)/../../crypto/rust/include
+VERITRA_CRYPTO_LIBRARY = $(SRCROOT)/crypto/libprivate_messenger_crypto.a
+OTHER_LDFLAGS = $(inherited) -Wl,-force_load,$(VERITRA_CRYPTO_LIBRARY)
+STRIP_STYLE = non-global
