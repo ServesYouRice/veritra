@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/app_state.dart';
+import '../../core/attachments.dart';
 import '../../core/message_history.dart';
 import '../../core/models.dart';
 import '../../storage/encrypted_database.dart'
@@ -15,6 +16,7 @@ import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/empty_state.dart';
 import '../../ui/widgets/status_pill.dart';
+import 'attachment_views.dart';
 import 'chat_list_screen.dart';
 import 'conversation_details_screen.dart';
 
@@ -167,6 +169,11 @@ class _ChatScreenState extends State<ChatScreen> {
                 // no longer disables the composer.
                 busy: widget.state.isBusy(Ops.send),
                 onSend: _send,
+                attaching: widget.state.isBusy(Ops.attachment),
+                onAttach: widget.state.attachmentsAvailable
+                    ? () => pickAndSendAttachment(
+                        context, widget.state, widget.conversationId)
+                    : null,
               ),
             ],
           ),
@@ -520,7 +527,9 @@ class _MessageList extends StatelessWidget {
             return const SizedBox.shrink();
           }
           return _PendingMessageBubble(
-            text: local?.body ?? record?.draftText,
+            text: local?.kind == LocalMessageKind.attachment
+                ? _attachmentSummary(local!, conversationId)
+                : local?.body ?? record?.draftText,
             state: state.outboxState(key),
             failureMessage: terminal ? state.outboxFailureMessage(key) : null,
             onRetry: terminal ? null : () => state.retryEnvelope(key),
@@ -569,6 +578,9 @@ class _MessageList extends StatelessWidget {
                   ? null
                   : () => onMessageActions!(local, mine),
               senderLabel: _senderLabel(senderAccountId),
+              onOpenAttachment: state.attachmentsAvailable
+                  ? (entry) => openAttachment(context, state, entry)
+                  : null,
               // In a DM the app bar already says who the other person is;
               // only group and channel bubbles need a per-message sender.
               showSender: !mine && !_isDm,
@@ -584,6 +596,9 @@ String _replyPreview(LocalMessage? target) {
   if (target == null) return 'Reply to an earlier message';
   if (target.deletedAt != null || target.body == null) {
     return 'Reply to a deleted message';
+  }
+  if (target.kind == LocalMessageKind.attachment) {
+    return _attachmentSummary(target, target.conversationId);
   }
   final text = target.body!.replaceAll(RegExp(r'\s+'), ' ').trim();
   return text.length <= 80 ? text : '${text.substring(0, 80)}…';
@@ -810,10 +825,14 @@ class _MessageBubble extends StatelessWidget {
     this.replyPreview,
     this.reactions = const <({String reaction, int count, bool mine})>[],
     this.onActions,
+    this.onOpenAttachment,
   });
 
   /// Opens the reply/edit/delete/react menu; null when none apply.
   final VoidCallback? onActions;
+
+  /// Opens one attachment of an attachment message.
+  final void Function(AttachmentEntry entry)? onOpenAttachment;
 
   final ReceivedMessageEnvelope message;
 
@@ -835,7 +854,9 @@ class _MessageBubble extends StatelessWidget {
     final scheme = theme.colorScheme;
     final deleted = message.deletedAt != null || local?.deletedAt != null;
     final unverifiable = local?.kind == LocalMessageKind.unverifiable;
-    final text = deleted || unverifiable ? null : local?.body;
+    final isAttachment = local?.kind == LocalMessageKind.attachment;
+    // An attachment row's body is its manifest list, never text to show.
+    final text = deleted || unverifiable || isAttachment ? null : local?.body;
     // Bone keeps sent bubbles **on tone**: a near-white accent tiled down a
     // whole column would blow out the plum ground the direction is built on
     // (`docs/design.md` §K). Mine and theirs separate by one tonal step
@@ -850,6 +871,31 @@ class _MessageBubble extends StatelessWidget {
       child: _bubble(context, theme, scheme, background, foreground, sender,
           deleted, unverifiable, text),
     );
+  }
+
+  /// The attachments of an attachment message. Entries that fail to parse,
+  /// or name another conversation, are left out rather than shown.
+  List<Widget> _attachmentTiles(BuildContext context) {
+    final entries = AttachmentEntry.listFromBody(local?.body,
+        conversationId: message.conversationId);
+    if (entries.isEmpty) {
+      return <Widget>[
+        Text(
+          'This attachment cannot be opened.',
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+        ),
+      ];
+    }
+    return <Widget>[
+      for (final entry in entries)
+        AttachmentTile(
+          entry: entry,
+          onOpen:
+              onOpenAttachment == null ? null : () => onOpenAttachment!(entry),
+        ),
+    ];
   }
 
   Widget _bubble(
@@ -875,8 +921,11 @@ class _MessageBubble extends StatelessWidget {
               : text != null
                   ? 'Message from $sender, '
                       '${formatTimeOfDay(context, message.createdAt)}: $text'
-                  : 'Encrypted message from $sender, '
-                      '${formatTimeOfDay(context, message.createdAt)}',
+                  : local?.kind == LocalMessageKind.attachment
+                      ? 'Attachment from $sender, '
+                          '${formatTimeOfDay(context, message.createdAt)}'
+                      : 'Encrypted message from $sender, '
+                          '${formatTimeOfDay(context, message.createdAt)}',
       child: LayoutBuilder(
         builder: (context, constraints) {
           // Taken from the layout rather than the window so the bubble is
@@ -952,6 +1001,8 @@ class _MessageBubble extends StatelessWidget {
                           ),
                         ],
                       )
+                    else if (local?.kind == LocalMessageKind.attachment)
+                      ..._attachmentTiles(context)
                     else if (text != null)
                       SelectableText(
                         text,
@@ -1137,12 +1188,18 @@ class _Composer extends StatelessWidget {
     required this.controller,
     required this.busy,
     required this.onSend,
+    this.onAttach,
+    this.attaching = false,
   });
 
   final bool enabled;
   final TextEditingController controller;
   final bool busy;
   final Future<void> Function() onSend;
+
+  /// Picks and sends a file; null where attachments are unavailable.
+  final VoidCallback? onAttach;
+  final bool attaching;
 
   @override
   Widget build(BuildContext context) {
@@ -1168,11 +1225,20 @@ class _Composer extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: <Widget>[
               IconButton(
-                // Attachment upload requires client-side encryption, which is
-                // not integrated yet; the control stays visible but disabled.
-                onPressed: null,
-                icon: const Icon(Icons.attach_file),
-                tooltip: 'Attachments require client crypto (coming soon)',
+                // Attachments need the MLS path (demo builds); elsewhere the
+                // control stays visible but disabled.
+                onPressed: enabled && !attaching ? onAttach : null,
+                icon: attaching
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.attach_file),
+                tooltip: onAttach == null
+                    ? 'Attachments need the reviewed encryption engine'
+                    : attaching
+                        ? 'Sending file'
+                        : 'Attach a file',
               ),
               Expanded(
                 // On desktop, Enter sends and Shift+Enter starts a new line.
@@ -1261,4 +1327,16 @@ class _PausedConversationNotice extends StatelessWidget {
       ),
     );
   }
+}
+
+/// One line naming an attachment message's files, for previews and pending
+/// bubbles.
+String _attachmentSummary(LocalMessage message, String conversationId) {
+  final entries = AttachmentEntry.listFromBody(message.body,
+      conversationId: conversationId);
+  if (entries.isEmpty) return 'Attachment';
+  final first = entries.first.fileName;
+  return entries.length == 1
+      ? 'Attachment: $first'
+      : 'Attachments: $first and ${entries.length - 1} more';
 }

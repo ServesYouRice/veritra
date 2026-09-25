@@ -22,6 +22,8 @@ This project is licensed AGPL-3.0-or-later. Dependency licenses must be compatib
 | `qr_flutter` 4.1.0 | Device-link QR rendering | BSD-3-Clause | Direct Flutter dependency pinned in `mobile/pubspec.lock`. |
 | `mobile_scanner` 7.4.2 | Device-link QR scanning | BSD-3-Clause | Direct Flutter dependency. Android uses ML Kit, iOS uses the system Vision framework, and web uses ZXing; include their applicable notices/terms in release review. |
 | `web` 1.1.1 | Browser API bindings used by `mobile_scanner` | BSD-3-Clause | Transitive Flutter dependency pinned in `mobile/pubspec.lock`. |
+| `file_selector` 1.1.0 | Picking a file to send as an encrypted attachment, and choosing where to save one on desktop | BSD-3-Clause | Direct Flutter dependency maintained by flutter.dev; its platform packages (`file_selector_android`, `_ios`, `_linux`, `_macos`, `_windows`, `_web`, `_platform_interface`) and `cross_file` 0.3.5+5 come with it. The file is encrypted on the device before upload. |
+| `http` 1.6.0 | HTTP client pulled in by the `file_selector` packages | BSD-3-Clause | Transitive Flutter dependency pinned in `mobile/pubspec.lock`; the app does not use it. |
 | `aes-gcm` 0.11.1 | Authenticated encryption for platform-wrapped MLS state, attachment, and backup chunks | Apache-2.0 OR MIT | Exact version pinned; does not replace MLS message protection. |
 | `openmls` 0.9.0 | MLS 1.0 group state and message processing | MIT | Exact version pinned in `crypto/rust/Cargo.lock`; sensitive debug features are disabled. |
 | `openmls_basic_credential` 0.6.0 | Basic MLS credential signing keys | MIT | Exact version pinned; used to bind the application device identity to MLS credentials. |

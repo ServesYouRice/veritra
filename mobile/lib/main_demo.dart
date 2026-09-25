@@ -7,6 +7,7 @@ import 'core/api_client.dart';
 import 'core/app_state.dart';
 import 'core/client_config.dart';
 import 'core/transport_policy.dart';
+import 'crypto/attachment_crypto.dart';
 import 'crypto/backup_service.dart';
 import 'crypto/native_crypto_bindings.dart';
 import 'crypto/native_crypto_service.dart';
@@ -66,6 +67,7 @@ Future<void> main(List<String> args) async {
         return ApiClient(baseUrl: baseUrl);
       },
     ),
+    attachmentService: AttachmentCryptoService(bindings),
     syncServiceFactory: (baseUrl, token) =>
         WebSocketSyncService(baseUrl: baseUrl, token: token),
     pushService: Platform.isAndroid || Platform.isIOS

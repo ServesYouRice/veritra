@@ -24,7 +24,8 @@ G25) wait until all three roadmap phases are done (D20). Work order:
    HTTP for demo builds, decrypted-message persistence (schema v7), message
    actions, MLS sender binding (ABI v5), live multi-client test
    (`scripts/test-demo-e2e.sh`), one-command local server (`scripts/demo.sh`).
-   Safety-number screen done (2026-09-24); attachments are still open.
+   Safety-number screen (2026-09-24) and encrypted attachments (2026-09-25)
+   done; images preview in the app, other files save on desktop only.
 2. Mobile demo (Android emulator, iOS simulator) — **needs a machine with
    emulators;** CI builds both apps.
 3. Desktop demo (Windows, Linux) — **built 2026-09-24:** Linux bundle run
@@ -32,9 +33,11 @@ G25) wait until all three roadmap phases are done (D20). Work order:
    (`--profile`) allow two accounts on one computer.
 4. Offline use — **done 2026-09-24:** chats render from decrypted local
    history, the app opens with the server down, sends queue and deliver on
-   reconnect, and the sync socket catches up after every reconnect. The live
-   test stops and restarts the server. Attachment caching waits for
-   attachments.
+   reconnect, and the sync socket catches up after every reconnect. A
+   failed catch-up (no connection, rate limit) is retried with backoff up to
+   a minute instead of waiting for the next event (2026-09-25). The live
+   test stops and restarts the server. Attachments are not cached; they
+   download when opened, so they need the server.
 5. Remaining release-blocking cards — **done 2026-09-24:** I33 (poison
    events and stale-device recovery), I34 (ordered MLS outbox), I51 (group
    membership after creation and linked devices, D28, native ABI v6), I39

@@ -94,3 +94,17 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   key; the server sees only ciphertext and a recovery-token hash). Recovery
   downloads may resume from any offset the server has sent, and the
   capability is still consumed only when a transfer reaches the end.
+- **Stage 1 follow-up, attachments (2026-09-25):** no ABI change. Demo
+  builds now send and receive the existing `attachment_manifest` payload.
+  Each entry is the attachment crypto manifest (random per-file key, nonce
+  prefix, chunking, `conversation_id` and `action_id` context, file name,
+  media type, plaintext size) plus the server attachment `id` and
+  `ciphertext_size`. The key travels only inside the MLS message; the upload
+  carries only `{version, algorithm, chunk_size}` and the envelope's
+  `attachment_refs` names the blob so it expires with the message. A
+  receiver drops entries whose `conversation_id` is not the message's
+  conversation, checks the downloaded size before decrypting, and decrypts
+  into memory; temporary ciphertext and plaintext files are deleted
+  afterwards. Received manifests are stored in local history (kind
+  `attachment`, same encrypted database as decrypted text) with no schema
+  change.

@@ -533,8 +533,9 @@ class NativeCryptoService implements MlsConversationCryptoService {
   Future<MessageEnvelope> encryptPayload(
     String conversationId,
     AppPayloadType type,
-    Map<String, Object?> body,
-  ) =>
+    Map<String, Object?> body, {
+    List<String> attachmentRefs = const <String>[],
+  }) =>
       _serial(() async {
         if (!_messageTypes.contains(type)) {
           throw ArgumentError.value(type, 'type', 'not a message payload');
@@ -572,6 +573,7 @@ class NativeCryptoService implements MlsConversationCryptoService {
               // joined after that epoch and cannot decrypt it (card I51).
               'mls_epoch': epoch,
             },
+            attachmentRefs: attachmentRefs,
           );
           await localStore.commitOutgoingApplicationTransition(
             OutgoingApplicationStateTransition(
@@ -825,6 +827,7 @@ const Set<AppPayloadType> _messageTypes = <AppPayloadType>{
   AppPayloadType.edit,
   AppPayloadType.delete,
   AppPayloadType.reaction,
+  AppPayloadType.attachmentManifest,
 };
 
 /// The local history key of a message: its authenticated sender device and
@@ -893,10 +896,8 @@ List<MessageEffect> messageEffectsFor(
           at: createdAt,
         ),
       ],
-    // Attachments arrive in a later milestone; until then the manifest is
-    // kept out of the timeline rather than shown as an empty bubble.
     AppPayloadType.attachmentManifest => <MessageEffect>[
-        row(LocalMessageKind.action),
+        row(LocalMessageKind.attachment, text: jsonEncode(body['attachments'])),
       ],
     AppPayloadType.callSignal =>
       throw const FormatException('call signals are not messages'),

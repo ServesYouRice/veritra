@@ -3,8 +3,10 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
+import 'package:private_messenger/core/attachments.dart';
 import 'package:private_messenger/core/client_config.dart';
 import 'package:private_messenger/core/transport_policy.dart';
+import 'package:private_messenger/crypto/attachment_crypto.dart';
 import 'package:private_messenger/crypto/backup_service.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
@@ -65,6 +67,26 @@ void main() {
 
     expect(await owner.state.deleteMessage(conv, hello.key), isTrue);
     await alice.waitFor(conv, (m) => m.key == hello.key && m.deletedAt != null);
+
+    // Attachment: encrypted on the device, only ciphertext uploaded; the
+    // key reaches alice inside the MLS message. Three chunks and a tail.
+    final photo =
+        File('${Directory.systemTemp.createTempSync('veritra-e2e-photo-').path}'
+            '/photo.png')
+          ..writeAsBytesSync(
+              List<int>.generate(3 * 1024 * 1024 + 17, (index) => index % 251));
+    expect(
+        await owner.state.sendAttachment(conv,
+            path: photo.path, fileName: 'photo.png', mediaType: 'image/png'),
+        isTrue,
+        reason: owner.state.errorFor(Ops.attachment));
+    final attachment =
+        await alice.waitFor(conv, (m) => m.kind == LocalMessageKind.attachment);
+    final entry =
+        AttachmentEntry.listFromBody(attachment.body, conversationId: conv)
+            .single;
+    expect(entry.fileName, 'photo.png');
+    expect(await alice.state.loadAttachment(entry), photo.readAsBytesSync());
 
     // A group of three.
     final bob = await owner.invite('bob');
@@ -229,6 +251,8 @@ class _DemoClient {
   _DemoClient(this.bindings, this.baseUrl, {MemoryLocalStore? store})
       : store = store ?? MemoryLocalStore() {
     final backups = Directory.systemTemp.createTempSync('veritra-e2e-backup-');
+    final attachments =
+        Directory.systemTemp.createTempSync('veritra-e2e-attachments-');
     state = AppState(
       apiClientFactory: (url) => ApiClient(baseUrl: url),
       cryptoService:
@@ -238,6 +262,10 @@ class _DemoClient {
         bindings: bindings,
         localStore: this.store,
         directoryProvider: () async => backups,
+      ),
+      attachmentService: AttachmentCryptoService(
+        bindings,
+        directoryProvider: () async => attachments,
       ),
       syncServiceFactory: (url, token) =>
           WebSocketSyncService(baseUrl: url, token: token),
@@ -276,9 +304,12 @@ class _DemoClient {
     return client;
   }
 
+  /// Every client in this test shares one address, so the server's
+  /// per-address rate limit (240 requests a minute) can refuse a catch-up;
+  /// the app retries after the window resets, which can take up to a minute.
   Future<void> waitUntil(
     Future<bool> Function() condition, {
-    Duration timeout = const Duration(seconds: 30),
+    Duration timeout = const Duration(seconds: 90),
   }) async {
     final deadline = DateTime.now().add(timeout);
     while (!await condition()) {
@@ -295,7 +326,7 @@ class _DemoClient {
   Future<LocalMessage> waitFor(
     String conversationId,
     bool Function(LocalMessage message) matches, {
-    Duration timeout = const Duration(seconds: 30),
+    Duration timeout = const Duration(seconds: 90),
   }) async {
     LocalMessage? found;
     await waitUntil(() async {
