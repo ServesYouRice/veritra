@@ -189,6 +189,27 @@ void main() {
     harness.dispose();
   });
 
+  test('a rate-limited catch-up is retried without waiting for a wake',
+      () async {
+    final api = _ScriptedApi()
+      ..events = <SyncEvent>[_mlsEvent(5, 'mls_1')]
+      ..syncStatus = 429;
+    final harness = await _Harness.start(api);
+    await harness.waitFor(
+        () => harness.state.connectionStatus == ConnectionStatus.offline);
+    expect(harness.state.syncRecovery, isNull);
+    final callsWhileLimited = api.syncCalls;
+
+    // No socket event, resume or push arrives: the backoff timer alone
+    // must fetch again once the limit has passed.
+    api.syncStatus = null;
+    await harness
+        .waitFor(() async => await harness.store.loadSyncCursor() == 5);
+    expect(api.syncCalls, greaterThan(callsWhileLimited));
+    expect(harness.state.connectionStatus, ConnectionStatus.online);
+    harness.dispose();
+  });
+
   test('a network failure while fetching MLS messages is not recorded',
       () async {
     final api = _ScriptedApi()
@@ -447,6 +468,7 @@ class _ScriptedApi extends ApiClient {
     if (networkDown) throw const SocketException('offline');
     final status = syncStatus;
     if (status == 401) throw ApiException(401, '{"error":"unauthorized"}');
+    if (status == 429) throw ApiException(429, 'rate limited');
     if (status == 409) {
       throw ApiException(409, '{"error":"device_recovery_required"}');
     }

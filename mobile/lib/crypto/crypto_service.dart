@@ -69,11 +69,15 @@ abstract class MlsConversationCryptoService implements CryptoService {
       String conversationId, Map<String, Object?> signal);
   Future<Map<String, Object?>?> processCallSignal(
       CallSession call, int syncEventId);
+
+  /// [attachmentRefs] names the uploaded ciphertext blobs the message
+  /// refers to, so the server expires them with it.
   Future<MessageEnvelope> encryptPayload(
     String conversationId,
     AppPayloadType type,
-    Map<String, Object?> body,
-  );
+    Map<String, Object?> body, {
+    List<String> attachmentRefs = const <String>[],
+  });
   Future<List<int>?> processApplicationMessage(
     ReceivedMessageEnvelope envelope,
     int syncEventId,

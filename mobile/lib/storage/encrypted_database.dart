@@ -40,6 +40,10 @@ abstract final class LocalMessageKind {
   /// Decrypted, but its MLS sender was not the sender the server claimed
   /// (D25). Shown as a warning, never as the claimed sender's words.
   static const unverifiable = 'unverifiable';
+
+  /// An attachment manifest. [LocalMessages.body] holds the JSON list of
+  /// attachment entries, including their keys, never text to show.
+  static const attachment = 'attachment';
 }
 
 /// Delivery states stored in [LocalMessages.state].

@@ -39,9 +39,17 @@ class PreparedEncryptedAttachment {
 }
 
 class AttachmentCryptoService {
-  AttachmentCryptoService(this.bindings);
+  AttachmentCryptoService(this.bindings,
+      {Future<Directory> Function()? directoryProvider})
+      : _directoryProvider =
+            directoryProvider ?? getApplicationSupportDirectory;
 
   final NativeCryptoBindings bindings;
+  final Future<Directory> Function() _directoryProvider;
+
+  /// The private directory that holds temporary ciphertext and plaintext
+  /// files while an attachment is encrypted, uploaded or opened.
+  Future<Directory> workingDirectory() => _directoryProvider();
 
   Future<PreparedEncryptedAttachment> encryptFile({
     required String sourcePath,
@@ -71,7 +79,7 @@ class AttachmentCryptoService {
       final expectedChunks = _expectedChunkCount(size);
       key = _randomBytes(32);
       final nonce = _randomBytes(8);
-      final directory = await getApplicationSupportDirectory();
+      final directory = await workingDirectory();
       output = File('${directory.path}${Platform.pathSeparator}'
           '.attachment-${_randomHex(16)}.ciphertext');
       await output.create(exclusive: true);

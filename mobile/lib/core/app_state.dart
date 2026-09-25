@@ -2,11 +2,13 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../crypto/app_payload.dart';
+import '../crypto/attachment_crypto.dart';
 import '../crypto/backup_service.dart';
 import '../crypto/mls_commit_bundle.dart';
 import '../crypto/crypto_service.dart';
@@ -15,6 +17,7 @@ import '../storage/local_store.dart';
 import '../sync/sync_recovery.dart';
 import '../sync/sync_service.dart';
 import 'api_client.dart';
+import 'attachments.dart';
 import 'client_config.dart';
 import 'errors.dart';
 import 'message_history.dart';
@@ -130,6 +133,7 @@ enum PushState {
 
 class Ops {
   static const send = 'send';
+  static const attachment = 'attachment';
   static const pushTest = 'push_test';
   static const backup = 'backup';
   static const restore = 'restore';
@@ -147,12 +151,16 @@ class AppState extends ChangeNotifier {
     required this.syncServiceFactory,
     MobilePushService? pushService,
     this.backupService,
+    this.attachmentService,
     this.config = ClientConfig.production,
   }) : pushService = pushService ?? DisabledMobilePushService();
 
   /// Encrypted backup and restore (card I45). Null in builds without the
   /// MLS service, where there is nothing to back up.
   final BackupService? backupService;
+
+  /// Encrypts and decrypts attachment files; only demo builds have it.
+  final AttachmentCryptoService? attachmentService;
 
   final ApiClientFactory apiClientFactory;
   final ClientConfig config;
@@ -245,6 +253,8 @@ class AppState extends ChangeNotifier {
   bool _flushingMlsOutbox = false;
   bool _flushMlsOutboxRequested = false;
   Timer? _mlsOutboxRetryTimer;
+  Timer? _catchUpRetryTimer;
+  int _catchUpRetryAttempt = 0;
   final Set<String> _failedMlsConversations = <String>{};
   final Map<String, DateTime> _mlsPendingSeen = <String, DateTime>{};
   final Set<String> _mlsReconcileNow = <String>{};
@@ -360,6 +370,11 @@ class AppState extends ChangeNotifier {
   /// Safety numbers come from the MLS group, so only builds with the MLS
   /// path (demo builds, D11) can show them.
   bool get safetyNumbersAvailable => _mlsCrypto != null;
+
+  /// Attachments travel as MLS manifest messages, so they need the MLS
+  /// path and the native attachment crypto (demo builds, D11).
+  bool get attachmentsAvailable =>
+      attachmentService != null && _mlsCrypto != null;
 
   /// Scoped busy/error state. Callers pass an [Ops] key so one slow or failed
   /// action leaves every unrelated control usable.
@@ -1583,11 +1598,139 @@ class AppState extends ChangeNotifier {
       _sendPayload(conversationId, AppPayloadType.reaction,
           <String, Object?>{'message_id': targetKey, 'reaction': reaction});
 
+  /// Encrypts the file at [path] on this device, uploads only its
+  /// ciphertext, then sends the key and name inside an MLS manifest message.
+  /// Encryption and upload run outside the session queue so a large file
+  /// never holds up other sends; only the manifest joins the outbox.
+  Future<bool> sendAttachment(
+    String conversationId, {
+    required String path,
+    required String fileName,
+    String? mediaType,
+    AttachmentCancellationToken? cancellation,
+  }) async {
+    final service = attachmentService;
+    final current = session;
+    final client = api;
+    if (service == null || _mlsCrypto == null) return false;
+    if (current == null || client == null) return false;
+    final ownerGeneration = _sessionGeneration;
+    _busyOps.add(Ops.attachment);
+    _opErrors.remove(Ops.attachment);
+    notifyListeners();
+    PreparedEncryptedAttachment? prepared;
+    try {
+      final name = safeAttachmentName(fileName);
+      prepared = await service.encryptFile(
+        sourcePath: path,
+        conversationId: conversationId,
+        attachmentActionId: _randomHexId(),
+        fileName: name,
+        mediaType: attachmentMediaType(name, mediaType),
+        cancellation: cancellation,
+      );
+      final uploaded = await client.uploadEncryptedAttachment(
+        current.token,
+        conversationId,
+        prepared.openRead(),
+        ciphertextLength: prepared.ciphertextLength,
+        cryptoMetadata: attachmentUploadMetadata,
+      );
+      if (!_syncOwnerActive(current, ownerGeneration)) return false;
+      final sent = await _sendPayload(
+        conversationId,
+        AppPayloadType.attachmentManifest,
+        <String, Object?>{
+          'attachments': <Object?>[
+            <String, Object?>{
+              ...prepared.manifest,
+              'id': uploaded.id,
+              'ciphertext_size': prepared.ciphertextLength,
+            },
+          ],
+        },
+        attachmentRefs: <String>[uploaded.id],
+      );
+      if (!sent) {
+        _opErrors[Ops.attachment] =
+            _opErrors[Ops.send] ?? 'The attachment could not be sent.';
+      }
+      return sent;
+    } catch (err) {
+      _opErrors[Ops.attachment] = describeError(err);
+      return false;
+    } finally {
+      await prepared?.cleanup();
+      _busyOps.remove(Ops.attachment);
+      notifyListeners();
+    }
+  }
+
+  /// Downloads one attachment's ciphertext and decrypts it in memory. The
+  /// ciphertext and plaintext only touch disk as temporary files, which are
+  /// removed before this returns.
+  Future<Uint8List> loadAttachment(AttachmentEntry entry) async {
+    final service = attachmentService;
+    final current = session;
+    final client = api;
+    if (service == null || current == null || client == null) {
+      throw StateError('attachments are unavailable');
+    }
+    final directory = await service.workingDirectory();
+    final base = '${directory.path}${Platform.pathSeparator}'
+        '.veritra-attachment-${_randomHexId()}';
+    final ciphertext = File('$base.ciphertext');
+    final plaintext = File('$base.plaintext');
+    try {
+      final stream =
+          await client.downloadEncryptedAttachment(current.token, entry.id);
+      final sink = ciphertext.openWrite();
+      var received = 0;
+      try {
+        await for (final chunk in stream) {
+          received += chunk.length;
+          if (received > entry.ciphertextSize) {
+            throw const FormatException('attachment is larger than announced');
+          }
+          sink.add(chunk);
+        }
+      } finally {
+        await sink.close();
+      }
+      if (received != entry.ciphertextSize) {
+        throw const FormatException('attachment is smaller than announced');
+      }
+      await service.decryptFile(
+        ciphertextPath: ciphertext.path,
+        destinationPath: plaintext.path,
+        manifest: entry.manifest,
+      );
+      return await plaintext.readAsBytes();
+    } finally {
+      for (final file in <File>[ciphertext, plaintext]) {
+        try {
+          if (await file.exists()) await file.delete();
+        } on FileSystemException {
+          // Best effort: the temporary directory is cleared by the system.
+        }
+      }
+    }
+  }
+
+  /// Decrypts one attachment into [destinationPath], a location the user
+  /// chose.
+  Future<void> saveAttachment(
+      AttachmentEntry entry, String destinationPath) async {
+    final bytes = await loadAttachment(entry);
+    await File(destinationPath).writeAsBytes(bytes, flush: true);
+  }
+
   Future<bool> _sendPayload(
     String conversationId,
     AppPayloadType type,
-    Map<String, Object?> body,
-  ) {
+    Map<String, Object?> body, {
+    List<String> attachmentRefs = const <String>[],
+  }) {
     return _runScoped(Ops.send, () async {
       final current = session;
       final client = api;
@@ -1608,7 +1751,8 @@ class AppState extends ChangeNotifier {
         encrypted = await cryptoService.encrypt(
             conversation.id, body['text'] as String);
       } else if (mls != null) {
-        encrypted = await mls.encryptPayload(conversation.id, type, body);
+        encrypted = await mls.encryptPayload(conversation.id, type, body,
+            attachmentRefs: attachmentRefs);
       } else {
         throw StateError('Production MLS/OpenMLS encryption is not integrated');
       }
@@ -2377,6 +2521,7 @@ class AppState extends ChangeNotifier {
       deviceRecoveryRequired = false;
       syncRecovery = null;
       _setConnectionStatus(ConnectionStatus.online);
+      _cancelCatchUpRetry();
     } catch (err) {
       if (!_syncOwnerActive(current, ownerGeneration)) return;
       if (err is ApiException && err.statusCode == 401) {
@@ -2401,7 +2546,28 @@ class AppState extends ChangeNotifier {
       syncError = describeError(err);
       _setConnectionStatus(ConnectionStatus.offline);
       notifyListeners();
+      _scheduleCatchUpRetry();
     }
+  }
+
+  /// A catch-up that failed for a reason that passes (no connection, a
+  /// rate limit, a server error) is tried again with backoff, so the device
+  /// does not stay behind until the next socket event or wake.
+  void _scheduleCatchUpRetry() {
+    if (_disposed) return;
+    _catchUpRetryTimer?.cancel();
+    final seconds = min(60, 2 << min(_catchUpRetryAttempt, 5));
+    _catchUpRetryAttempt++;
+    _catchUpRetryTimer = Timer(Duration(seconds: seconds), () {
+      _catchUpRetryTimer = null;
+      unawaited(_catchUpSyncEvents());
+    });
+  }
+
+  void _cancelCatchUpRetry() {
+    _catchUpRetryTimer?.cancel();
+    _catchUpRetryTimer = null;
+    _catchUpRetryAttempt = 0;
   }
 
   /// The failure to record as a durable recovery, or null when [err] is a
@@ -2754,6 +2920,7 @@ class AppState extends ChangeNotifier {
     _outboxRetryTimer = null;
     _mlsOutboxRetryTimer?.cancel();
     _mlsOutboxRetryTimer = null;
+    _cancelCatchUpRetry();
     _failedMlsConversations.clear();
     _mlsPendingSeen.clear();
     _mlsReconcileNow.clear();
@@ -3368,6 +3535,7 @@ class AppState extends ChangeNotifier {
     _outboxRetryTimer = null;
     _mlsOutboxRetryTimer?.cancel();
     _mlsOutboxRetryTimer = null;
+    _cancelCatchUpRetry();
     unawaited(_syncSubscription?.cancel());
     sync?.dispose();
     unawaited(_pushSubscription?.cancel());
@@ -3543,4 +3711,11 @@ extension FirstOrNull<T> on Iterable<T> {
     }
     return iterator.current;
   }
+}
+
+/// A random 128-bit id in hex, for attachment actions and temporary files.
+String _randomHexId() {
+  final random = Random.secure();
+  return List<String>.generate(
+      16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
 }

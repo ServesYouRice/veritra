@@ -44,7 +44,7 @@ if grep -Eq '^[[:space:]]+mobile_scanner:' "$ROOT/mobile/pubspec.yaml"; then
   check_notice "mobile_scanner"
 fi
 
-for dependency in drift sqlite3 path_provider flutter_webrtc; do
+for dependency in drift sqlite3 path_provider flutter_webrtc file_selector; do
   if grep -Eq "^[[:space:]]+${dependency}:" "$ROOT/mobile/pubspec.yaml"; then
     check_notice "$dependency"
   fi
