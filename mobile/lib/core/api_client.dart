@@ -1212,6 +1212,10 @@ class ApiException implements Exception {
       case 'blob_integrity_failed':
         return 'The encrypted attachment could not be verified. Discard it '
             'and try again.';
+      case 'setup_authorization_required':
+        return 'The setup token is missing or wrong. Use the one the server '
+            'printed when it started (the demo keeps it in '
+            'data/demo/setup-token).';
       case 'server_draining':
         return 'The server is restarting. Try again shortly.';
       case 'idempotency_conflict':
