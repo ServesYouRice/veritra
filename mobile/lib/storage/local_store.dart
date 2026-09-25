@@ -2211,7 +2211,8 @@ void _validatePeerVerification(
       peerAccountId.isEmpty ||
       conversationId.length > 128 ||
       peerAccountId.length > 128 ||
-      transcriptHash.length != 32) {
+      // A safety-number version byte, then the SHA-256 transcript hash.
+      transcriptHash.length != 33) {
     throw const FormatException('invalid peer verification state');
   }
 }

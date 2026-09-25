@@ -9,7 +9,7 @@ use openmls::treesync::LeafNodeParameters;
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
 use openmls_traits::{signatures::Signer, OpenMlsProvider};
-use sha2::{Digest, Sha256};
+use sha2::{Digest, Sha256, Sha512};
 use tls_codec::{Deserialize as TlsDeserializeTrait, Serialize as TlsSerializeTrait};
 
 mod state;
@@ -360,37 +360,24 @@ impl MlsDevice {
             .ok_or(MlsError::InvalidIdentity)
     }
 
+    /// The conversation's safety number (v2): the group id and every member
+    /// device's credential and signature key. The epoch and encryption keys
+    /// are left out, so routine commits keep the number; a device that joins,
+    /// leaves or changes its signing key changes it.
     pub fn conversation_safety_number(
         &self,
         group: &MlsGroup,
     ) -> Result<DeviceLinkVerification, MlsError> {
-        let mut members = group
+        let members = group
             .members()
             .map(|member| {
-                let mut value = Vec::new();
-                append_transcript_field(&mut value, member.credential.serialized_content())?;
-                append_transcript_field(&mut value, member.signature_key.as_slice())?;
-                Ok(value)
+                (
+                    member.credential.serialized_content().to_vec(),
+                    member.signature_key.clone(),
+                )
             })
-            .collect::<Result<Vec<_>, MlsError>>()?;
-        members.sort();
-        let mut transcript = Vec::new();
-        append_transcript_field(&mut transcript, b"veritra-conversation-safety-v1")?;
-        append_transcript_field(&mut transcript, group.group_id().as_slice())?;
-        append_transcript_field(&mut transcript, &group.epoch().as_u64().to_be_bytes())?;
-        for member in members {
-            append_transcript_field(&mut transcript, &member)?;
-        }
-        let transcript_hash = Sha256::digest(&transcript).to_vec();
-        let sas_value = u64::from_be_bytes(
-            transcript_hash[..8]
-                .try_into()
-                .map_err(|_| MlsError::InvalidState)?,
-        ) % 1_000_000_000_000;
-        Ok(DeviceLinkVerification {
-            transcript_hash,
-            sas: format!("{sas_value:012}"),
-        })
+            .collect::<Vec<_>>();
+        conversation_safety_number_v2(group.group_id().as_slice(), &members)
     }
 
     pub fn join_group(
@@ -503,6 +490,56 @@ pub fn derive_device_link_verification(
     Ok(DeviceLinkVerification {
         transcript_hash,
         sas: format!("{sas_value:08}"),
+    })
+}
+
+/// Number of digits in a conversation safety number: twelve groups of five,
+/// about 199 bits, so a device key cannot be ground to match it.
+pub const CONVERSATION_SAFETY_DIGITS: usize = 60;
+
+/// Safety number v2 from the group id and (credential, signature key) pairs.
+/// Members are sorted so every device derives the same value; a repeated
+/// member is refused rather than hashed.
+fn conversation_safety_number_v2(
+    group_id: &[u8],
+    members: &[(Vec<u8>, Vec<u8>)],
+) -> Result<DeviceLinkVerification, MlsError> {
+    let mut entries = members
+        .iter()
+        .map(|(credential, signature_key)| {
+            let mut value = Vec::new();
+            append_transcript_field(&mut value, credential)?;
+            append_transcript_field(&mut value, signature_key)?;
+            Ok(value)
+        })
+        .collect::<Result<Vec<_>, MlsError>>()?;
+    entries.sort();
+    if entries.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(MlsError::InvalidState);
+    }
+    let count = u32::try_from(entries.len()).map_err(|_| MlsError::InvalidState)?;
+    let mut transcript = Vec::new();
+    append_transcript_field(&mut transcript, b"veritra-conversation-safety-v2")?;
+    append_transcript_field(&mut transcript, group_id)?;
+    transcript.extend_from_slice(&count.to_be_bytes());
+    for entry in entries {
+        append_transcript_field(&mut transcript, &entry)?;
+    }
+    let transcript_hash = Sha256::digest(&transcript).to_vec();
+    let mut digit_input = b"veritra-safety-digits-v2".to_vec();
+    digit_input.extend_from_slice(&transcript_hash);
+    let digit_bytes = Sha512::digest(&digit_input);
+    let mut sas = String::with_capacity(CONVERSATION_SAFETY_DIGITS);
+    for chunk in digit_bytes[..60].chunks_exact(5) {
+        let mut value = 0u64;
+        for byte in chunk {
+            value = (value << 8) | u64::from(*byte);
+        }
+        sas.push_str(&format!("{:05}", value % 100_000));
+    }
+    Ok(DeviceLinkVerification {
+        transcript_hash,
+        sas,
     })
 }
 
@@ -1018,6 +1055,82 @@ mod tests {
             ),
             Err(MlsError::InvalidIdentity)
         );
+    }
+
+    const SAFETY_V2_VECTOR_HASH: [u8; 32] = [
+        199, 97, 106, 126, 125, 100, 152, 75, 31, 62, 200, 8, 86, 156, 164, 244, 18, 235, 179, 91,
+        174, 229, 24, 52, 183, 179, 180, 38, 66, 118, 82, 204,
+    ];
+    const SAFETY_V2_VECTOR_DIGITS: &str =
+        "019092511060372463067519010870521113969160651898535434359873";
+
+    #[test]
+    fn safety_number_ignores_epochs_but_not_devices() {
+        let alice = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
+        let bob = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+        let bob_key_package = bob.create_key_package().unwrap();
+        let mut alice_group = alice.create_group(b"conv_safety").unwrap();
+        let add = alice
+            .add_member(&mut alice_group, &bob_key_package, b"acct_bob", b"dev_bob")
+            .unwrap();
+        alice.merge_pending_commit(&mut alice_group).unwrap();
+        let mut bob_group = bob.join_group(b"conv_safety", &add.welcome).unwrap();
+
+        let first = alice.conversation_safety_number(&alice_group).unwrap();
+        assert_eq!(first, bob.conversation_safety_number(&bob_group).unwrap());
+        assert_eq!(first.sas.len(), CONVERSATION_SAFETY_DIGITS);
+        assert!(first.sas.bytes().all(|byte| byte.is_ascii_digit()));
+
+        // A routine commit moves the epoch but keeps every device's keys.
+        let update = bob.self_update(&mut bob_group).unwrap();
+        bob.merge_pending_commit(&mut bob_group).unwrap();
+        alice.process_commit(&mut alice_group, &update).unwrap();
+        assert_ne!(alice_group.epoch(), GroupEpoch::from(1));
+        assert_eq!(
+            first,
+            alice.conversation_safety_number(&alice_group).unwrap()
+        );
+        assert_eq!(first, bob.conversation_safety_number(&bob_group).unwrap());
+
+        // A new device is a new reader, so the number changes.
+        let tablet = MlsDevice::new(b"acct_bob", b"dev_bob_tablet").unwrap();
+        let tablet_key_package = tablet.create_key_package().unwrap();
+        let link = alice
+            .add_member(
+                &mut alice_group,
+                &tablet_key_package,
+                b"acct_bob",
+                b"dev_bob_tablet",
+            )
+            .unwrap();
+        alice.merge_pending_commit(&mut alice_group).unwrap();
+        bob.process_commit(&mut bob_group, &link.commit).unwrap();
+        let second = alice.conversation_safety_number(&alice_group).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(second, bob.conversation_safety_number(&bob_group).unwrap());
+    }
+
+    #[test]
+    fn safety_number_v2_has_a_stable_vector_and_refuses_duplicates() {
+        let members = vec![
+            (b"cred-b".to_vec(), vec![0x22; 32]),
+            (b"cred-a".to_vec(), vec![0x11; 32]),
+        ];
+        let reversed: Vec<_> = members.iter().rev().cloned().collect();
+        let value = conversation_safety_number_v2(b"conv_vector", &members).unwrap();
+        assert_eq!(
+            value,
+            conversation_safety_number_v2(b"conv_vector", &reversed).unwrap()
+        );
+        assert_ne!(
+            value,
+            conversation_safety_number_v2(b"conv_other", &members).unwrap()
+        );
+        assert_eq!(value.transcript_hash, SAFETY_V2_VECTOR_HASH.to_vec());
+        assert_eq!(value.sas, SAFETY_V2_VECTOR_DIGITS);
+
+        let duplicated = vec![members[0].clone(), members[0].clone()];
+        assert!(conversation_safety_number_v2(b"conv_vector", &duplicated).is_err());
     }
 
     #[test]

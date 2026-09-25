@@ -16,10 +16,11 @@ import '../auth/qr_scan_screen.dart';
 /// Shows the conversation's safety number so members can compare it in
 /// person or by scanning each other's code.
 ///
-/// The number is derived from the MLS group itself (its id, epoch and every
-/// member's credential and signature key), never from server-provided
-/// identity. It changes whenever the group's keys or members change, so a
-/// stored verification turns into "changed" after any such update.
+/// The number (v2) is derived from the MLS group itself: its id and every
+/// member device's credential and signature key, never server-provided
+/// identity. Routine commits keep it; a device that joins, leaves or changes
+/// its signing key changes it, so a stored verification reads "changed".
+/// Groups show the number for a live comparison only; only DMs store it.
 class SafetyNumberScreen extends StatefulWidget {
   const SafetyNumberScreen({
     required this.state,
@@ -79,7 +80,7 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
         content: const Text(
           'Only do this after comparing the number with the other person '
           'in person or over a call you trust. Both of you must see exactly '
-          'the same twelve digits.',
+          'the same sixty digits.',
         ),
         actions: <Widget>[
           TextButton(
@@ -214,15 +215,16 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
                   child: Column(
                     children: <Widget>[
                       Semantics(
-                        label:
-                            'Safety number ${safety.digits.split('').join(' ')}',
+                        label: 'Safety number, twelve groups of five: '
+                            '${_digitGroups(safety.digits).join(', ')}',
                         excludeSemantics: true,
                         child: SelectableText(
-                          _groupDigits(safety.digits),
+                          _digitLines(safety.digits),
                           textAlign: TextAlign.center,
                           style: BoneType.mono.copyWith(
-                            fontSize: 28,
-                            letterSpacing: 2,
+                            fontSize: 22,
+                            height: 1.5,
+                            letterSpacing: 1,
                             color: theme.colorScheme.onSurface,
                           ),
                         ),
@@ -262,8 +264,9 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
                       PeerVerificationStatus.verified =>
                         'You verified this number.',
                       PeerVerificationStatus.changed =>
-                        'The group\'s keys or members changed since you '
-                            'verified. Compare the new number again.',
+                        'A device in this conversation was added, removed '
+                            'or replaced since you verified. Compare the new '
+                            'number again.',
                       PeerVerificationStatus.unverified => 'Not verified yet.',
                     }),
                     trailing: StatusPill(
@@ -304,12 +307,20 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
   }
 }
 
-/// Groups the twelve digits in fours so they are easier to read aloud.
-String _groupDigits(String digits) {
-  final groups = <String>[];
-  for (var start = 0; start < digits.length; start += 4) {
-    final end = start + 4 < digits.length ? start + 4 : digits.length;
-    groups.add(digits.substring(start, end));
-  }
-  return groups.join(' ');
+/// The digits in groups of five, the size people read aloud and compare.
+List<String> _digitGroups(String digits) => <String>[
+      for (var start = 0; start < digits.length; start += 5)
+        digits.substring(
+            start, start + 5 < digits.length ? start + 5 : digits.length),
+    ];
+
+/// Four groups per line, so sixty digits fit a phone in three lines.
+String _digitLines(String digits) {
+  final groups = _digitGroups(digits);
+  return <String>[
+    for (var start = 0; start < groups.length; start += 4)
+      groups
+          .sublist(start, start + 4 < groups.length ? start + 4 : groups.length)
+          .join(' '),
+  ].join('\n');
 }
