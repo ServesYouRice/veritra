@@ -999,6 +999,11 @@ class SecureLocalStore implements LocalStore {
               iOptions: IOSOptions(
                 accessibility: KeychainAccessibility.first_unlock_this_device,
               ),
+              // The data protection keychain needs a keychain-access-groups
+              // entitlement, which only a team-signed build can carry. macOS
+              // builds are unsigned demos for now, so they use the login
+              // keychain. Revisit when macOS builds are signed.
+              mOptions: MacOsOptions(usesDataProtectionKeychain: false),
             ),
         _directoryProvider =
             directoryProvider ?? getApplicationSupportDirectory,
