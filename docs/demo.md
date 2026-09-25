@@ -41,10 +41,25 @@ start.
 | iOS simulator (macOS) | `scripts/build-mobile-crypto.sh ios` | `http://localhost:8080` |
 | Linux desktop | `scripts/build-desktop-crypto.sh linux`; needs GTK 3 and libsecret dev packages and a running keyring (see below) | `http://localhost:8080` |
 | Windows desktop | `scripts\build-desktop-crypto.ps1`; needs Visual Studio with "Desktop development with C++" | `http://localhost:8080` |
+| macOS desktop | `scripts/build-desktop-crypto.sh macos`; needs Xcode and the `aarch64-apple-darwin` and `x86_64-apple-darwin` Rust targets | `http://localhost:8080` |
 
-Run a desktop app with `flutter run -d linux` or `flutter run -d windows`
-plus the demo arguments above. CI also builds unsigned demo bundles for both
-(`desktop-linux` and `desktop-windows` artifacts).
+Run a desktop app with `flutter run -d linux`, `flutter run -d windows` or
+`flutter run -d macos` plus the demo arguments above. CI also builds unsigned
+demo bundles for all three (`desktop-linux`, `desktop-windows` and
+`desktop-macos` artifacts).
+
+### macOS notes
+
+- Run locally: `scripts/build-desktop-crypto.sh macos`, then from `mobile/`
+  `flutter run -d macos -t lib/main_demo.dart --dart-define=VERITRA_DEMO=true`.
+- The CI build is unsigned (ad-hoc). Unzip it, then open it the first time
+  with right-click → **Open**, or run
+  `xattr -dr com.apple.quarantine Veritra.app`.
+- The app is sandboxed. It may talk to servers and open files you pick,
+  nothing else.
+- Unsigned builds cannot use the data protection keychain, so the app keeps
+  its database key in the login keychain. macOS may ask for your login
+  password after each rebuild.
 
 The connect screen fills in the URL for you.
 
