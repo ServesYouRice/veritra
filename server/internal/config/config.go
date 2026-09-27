@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -208,6 +209,28 @@ func getenv(key, fallback string) string {
 	return fallback
 }
 
+// Public trusted-proxy networks may be no broader than these prefixes. They
+// still fit the ranges large CDNs publish (IPv4 /13, IPv6 /29) while
+// rejecting ranges wide enough to trust arbitrary clients' forwarding headers.
+const (
+	minPublicProxyBitsIPv4 = 12
+	minPublicProxyBitsIPv6 = 29
+)
+
+// Networks that never route to the public internet. A trusted-proxy range
+// wholly inside one of these may be as broad as the range itself.
+var nonPublicProxyRanges = []netip.Prefix{
+	netip.MustParsePrefix("127.0.0.0/8"),
+	netip.MustParsePrefix("10.0.0.0/8"),
+	netip.MustParsePrefix("172.16.0.0/12"),
+	netip.MustParsePrefix("192.168.0.0/16"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("169.254.0.0/16"),
+	netip.MustParsePrefix("::1/128"),
+	netip.MustParsePrefix("fc00::/7"),
+	netip.MustParsePrefix("fe80::/10"),
+}
+
 func parseCIDRs(raw string) ([]*net.IPNet, error) {
 	if strings.TrimSpace(raw) == "" {
 		return nil, nil
@@ -218,18 +241,63 @@ func parseCIDRs(raw string) ([]*net.IPNet, error) {
 		if part == "" {
 			continue
 		}
-		if !strings.Contains(part, "/") {
-			if strings.Contains(part, ":") {
-				part += "/128"
-			} else {
-				part += "/32"
-			}
-		}
-		_, cidr, err := net.ParseCIDR(part)
+		prefix, err := parseTrustedProxy(part)
 		if err != nil {
-			return nil, fmt.Errorf("invalid PRIVATE_MESSENGER_TRUSTED_PROXIES CIDR %q: %w", part, err)
+			return nil, fmt.Errorf("invalid PRIVATE_MESSENGER_TRUSTED_PROXIES entry %q: %w", part, err)
 		}
-		result = append(result, cidr)
+		result = append(result, &net.IPNet{
+			IP:   net.IP(prefix.Addr().AsSlice()),
+			Mask: net.CIDRMask(prefix.Bits(), prefix.Addr().BitLen()),
+		})
 	}
 	return result, nil
+}
+
+// parseTrustedProxy accepts one address or CIDR and refuses ranges that
+// would let arbitrary clients choose their own rate-limit identity.
+func parseTrustedProxy(value string) (netip.Prefix, error) {
+	var prefix netip.Prefix
+	if strings.Contains(value, "/") {
+		parsed, err := netip.ParsePrefix(value)
+		if err != nil {
+			return netip.Prefix{}, err
+		}
+		prefix = parsed
+	} else {
+		addr, err := netip.ParseAddr(value)
+		if err != nil {
+			return netip.Prefix{}, err
+		}
+		if addr.Zone() != "" {
+			return netip.Prefix{}, fmt.Errorf("zoned addresses are not supported")
+		}
+		prefix = netip.PrefixFrom(addr, addr.BitLen())
+	}
+	// net.IPNet.Contains matches IPv4 clients against the low 32 bits of an
+	// IPv4-mapped IPv6 network, so ::ffff:0:0/96 would trust every IPv4
+	// address. Store such entries as the IPv4 network they denote.
+	if prefix.Addr().Is4In6() {
+		if prefix.Bits() < 96 {
+			return netip.Prefix{}, fmt.Errorf("IPv4-mapped ranges must be /96 or narrower")
+		}
+		prefix = netip.PrefixFrom(prefix.Addr().Unmap(), prefix.Bits()-96)
+	}
+	prefix = prefix.Masked()
+	addr := prefix.Addr()
+	if addr.IsUnspecified() || addr.IsMulticast() || netip.MustParsePrefix("0.0.0.0/8").Contains(addr) {
+		return netip.Prefix{}, fmt.Errorf("unspecified, multicast and 0.0.0.0/8 ranges cannot be proxies")
+	}
+	for _, private := range nonPublicProxyRanges {
+		if private.Contains(addr) && prefix.Bits() >= private.Bits() {
+			return prefix, nil
+		}
+	}
+	floor := minPublicProxyBitsIPv6
+	if addr.Is4() {
+		floor = minPublicProxyBitsIPv4
+	}
+	if prefix.Bits() < floor {
+		return netip.Prefix{}, fmt.Errorf("public proxy ranges must be /%d or narrower", floor)
+	}
+	return prefix, nil
 }

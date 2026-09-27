@@ -975,7 +975,7 @@ class FakeSyncService implements SyncService {
   Future<void> connect() async {}
 
   @override
-  void dispose() {
+  Future<void> dispose() async {
     _controller.close();
   }
 }

@@ -761,6 +761,29 @@ malformed frames stay bounded, logs contain no dynamic identifier/capability,
 proxy spoof tests fail closed and a real mobile client can establish the
 documented TLS path.
 
+**Implementation note (T48A, 2026-09-27, after the required advisor review):**
+The mobile sync socket's `dispose()` is now awaitable. It aborts a handshake
+still in flight (each attempt uses its own `HttpClient`, also aborted on the
+15-second timeout), wakes the reconnect backoff, and closes an open socket
+with a 1000 close frame; a handshake that completes after dispose is closed
+at once. The app awaits the old socket's close before opening a new one.
+`PRIVATE_MESSENGER_TRUSTED_PROXIES` now refuses `/0`, unspecified, multicast
+and `0.0.0.0/8` ranges, zoned addresses, public ranges wider than IPv4 /12 or
+IPv6 /29, and IPv4-mapped ranges wider than /96 (`::ffff:0:0/96` would
+otherwise trust every IPv4 client); private, CGNAT, loopback and link-local
+ranges may be as wide as their block. `X-Forwarded-For` lines are joined in
+order and walked from the right for at most 16 hops; a malformed or zoned
+hop, a longer chain or an all-trusted chain resolves to the direct peer, and
+`X-Real-IP` counts only when no `X-Forwarded-For` is present. `ip:port`
+entries are accepted; RFC 7239 `Forwarded` is ignored. Request logs already
+used the matched pattern with the constant `unmatched` fallback. Rejected
+advice: refusing a trusted range that contains the server's own listener,
+since a same-host proxy may legitimately reach it that way. Checks:
+`go test -race ./internal/config ./internal/httpapi ./internal/realtime
+./internal/app ./cmd/...`, `flutter analyze`, `flutter test` (new
+`test/sync_service_test.dart`). T48B (parser fuzzing/Autobahn evidence and
+the LAN TLS path) remains.
+
 ### I49 - Measured performance and architecture work
 
 **Decision:** Merge Codex PERF-01/PERF-04/PERF-06/PERF-07/PERF-09/

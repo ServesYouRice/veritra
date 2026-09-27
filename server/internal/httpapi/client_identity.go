@@ -18,27 +18,56 @@ func NewClientIdentityResolver(trustedProxies []*net.IPNet) *ClientIdentityResol
 	return &ClientIdentityResolver{trustedProxies: append([]*net.IPNet(nil), trustedProxies...)}
 }
 
+// maxForwardedHops bounds how many X-Forwarded-For entries are examined,
+// counting from the entry the nearest proxy appended.
+const maxForwardedHops = 16
+
+// ClientIP walks X-Forwarded-For from the right, skipping trusted proxies, and
+// returns the first untrusted hop. Anything it cannot vouch for — a malformed
+// or zoned entry, a chain longer than maxForwardedHops, or a chain made only
+// of trusted proxies — resolves to the direct peer. That fails closed: every
+// such client shares the proxy's identity rather than choosing its own.
+// X-Real-IP is used only when X-Forwarded-For is absent, so the proxy must
+// overwrite it. The RFC 7239 Forwarded header is deliberately ignored.
 func (resolver *ClientIdentityResolver) ClientIP(r *http.Request) string {
-	direct := remoteHost(r.RemoteAddr)
+	direct := canonicalIP(remoteHost(r.RemoteAddr))
 	directIP := net.ParseIP(direct)
 	if resolver == nil || directIP == nil || !ipInNetworks(directIP, resolver.trustedProxies) {
-		return canonicalIP(direct)
+		return direct
 	}
-	forwarded := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
-	for index := len(forwarded) - 1; index >= 0; index-- {
-		candidate := canonicalIP(strings.TrimSpace(forwarded[index]))
-		ip := net.ParseIP(candidate)
-		if ip == nil {
-			continue
+	joined := strings.Join(r.Header.Values("X-Forwarded-For"), ",")
+	if strings.Trim(joined, ", \t") == "" {
+		if realIP, ok := forwardedIP(r.Header.Get("X-Real-IP")); ok {
+			return realIP.String()
+		}
+		return direct
+	}
+	forwarded := strings.Split(joined, ",")
+	for hops := 0; hops < maxForwardedHops && hops < len(forwarded); hops++ {
+		ip, ok := forwardedIP(forwarded[len(forwarded)-1-hops])
+		if !ok {
+			return direct
 		}
 		if !ipInNetworks(ip, resolver.trustedProxies) {
-			return candidate
+			return ip.String()
 		}
 	}
-	if realIP := canonicalIP(strings.TrimSpace(r.Header.Get("X-Real-IP"))); net.ParseIP(realIP) != nil {
-		return realIP
+	return direct
+}
+
+// forwardedIP parses one forwarding-header entry. Some load balancers append
+// "ip:port", so a port is accepted; zoned addresses are not.
+func forwardedIP(value string) (net.IP, bool) {
+	value = strings.TrimSpace(value)
+	if host, _, err := net.SplitHostPort(value); err == nil {
+		value = host
 	}
-	return canonicalIP(direct)
+	value = strings.Trim(value, "[]")
+	if strings.Contains(value, "%") {
+		return nil, false
+	}
+	ip := net.ParseIP(value)
+	return ip, ip != nil
 }
 
 func remoteHost(remoteAddr string) string {

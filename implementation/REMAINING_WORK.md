@@ -93,7 +93,8 @@ Recheck the board before every claim. The model column replaces the repeated
 | T45A-C | Implemented and checked (Stage 5) | Strong | — |
 | T46 | Prepared after release blockers | Balanced+advisor | Release blockers; coordinate I40/T45B |
 | T47 | Prepared; conditional for private alpha | Balanced+advisor | I35 and I36 verification |
-| T48A-B | Prepared | Balanced+advisor / Strong | I32, then T48A |
+| T48A | Implemented and checked (2026-09-27) | Balanced+advisor | — |
+| T48B | Prepared | Strong | T48A done; approval before parser replacement or trust-model choice |
 | T49A-D | Measure after correctness work | Balanced / Strong for T49D | Correctness cards and T47 where named |
 | T50 | Deferred | Strong after trigger | D10/D19, all demos, product trigger |
 | G24 | External | Coordinator/platform specialists | Code blockers, hardware, signing, providers, TURN |

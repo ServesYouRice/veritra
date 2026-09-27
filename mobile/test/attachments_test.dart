@@ -361,5 +361,5 @@ class _QuietSync implements SyncService {
   Future<void> connect() async {}
 
   @override
-  void dispose() => _controller.close();
+  Future<void> dispose() => _controller.close();
 }

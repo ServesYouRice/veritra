@@ -71,5 +71,5 @@ class _FakeSyncService implements SyncService {
   Future<void> connect() async {}
 
   @override
-  void dispose() => _events.close();
+  Future<void> dispose() => _events.close();
 }

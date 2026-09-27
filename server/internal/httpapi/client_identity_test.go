@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"private-messenger/server/internal/realtime"
@@ -21,6 +22,7 @@ func TestClientIdentityResolverProxyTopologies(t *testing.T) {
 		name       string
 		remoteAddr string
 		xff        string
+		xffLines   []string
 		realIP     string
 		want       string
 	}{
@@ -29,12 +31,28 @@ func TestClientIdentityResolverProxyTopologies(t *testing.T) {
 		{name: "rightmost untrusted hop defeats forged left entry", remoteAddr: "172.28.250.2:8080", xff: "127.0.0.1, 203.0.113.9, 172.28.250.3", want: "203.0.113.9"},
 		{name: "trusted proxy real ip fallback", remoteAddr: "172.28.250.2:8080", realIP: "203.0.113.10", want: "203.0.113.10"},
 		{name: "malformed real ip falls back to peer", remoteAddr: "172.28.250.2:8080", realIP: "not-an-ip", want: "172.28.250.2"},
+		{name: "malformed hop fails closed instead of skipping to forged entry", remoteAddr: "172.28.250.2:8080", xff: "203.0.113.66, garbage, 172.28.250.3", want: "172.28.250.2"},
+		{name: "zoned hop fails closed", remoteAddr: "172.28.250.2:8080", xff: "203.0.113.66, fe80::1%eth0", want: "172.28.250.2"},
+		{name: "forged trusted and loopback entries left of the client are ignored", remoteAddr: "172.28.250.2:8080", xff: "172.28.250.9, 127.0.0.1, 203.0.113.11", want: "203.0.113.11"},
+		{name: "all-trusted chain resolves to peer, not a forged real ip", remoteAddr: "172.28.250.2:8080", xff: "172.28.250.4, 172.28.250.3", realIP: "203.0.113.12", want: "172.28.250.2"},
+		{name: "real ip ignored when forwarded chain exists", remoteAddr: "172.28.250.2:8080", xff: "203.0.113.13", realIP: "198.51.100.99", want: "203.0.113.13"},
+		{name: "ip and port entries are accepted", remoteAddr: "172.28.250.2:8080", xff: "203.0.113.14:50123, [2001:db8::7]:443", want: "2001:db8::7"},
+		{name: "ipv4-mapped hop is canonical", remoteAddr: "172.28.250.2:8080", xff: "::ffff:203.0.113.15", want: "203.0.113.15"},
+		{name: "chain beyond the hop bound fails closed", remoteAddr: "172.28.250.2:8080", xff: "203.0.113.16" + strings.Repeat(", 172.28.250.3", maxForwardedHops), want: "172.28.250.2"},
+		{name: "client within the hop bound is found", remoteAddr: "172.28.250.2:8080", xff: "203.0.113.17" + strings.Repeat(", 172.28.250.3", maxForwardedHops-1), want: "203.0.113.17"},
+		{name: "split header lines are read in order", remoteAddr: "172.28.250.2:8080", xffLines: []string{"198.51.100.1, 203.0.113.18", "172.28.250.3"}, want: "203.0.113.18"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest("GET", "https://messenger.example.test/api/v1/health", nil)
 			request.RemoteAddr = test.remoteAddr
 			request.Header.Set("X-Forwarded-For", test.xff)
+			if test.xffLines != nil {
+				request.Header.Del("X-Forwarded-For")
+				for _, line := range test.xffLines {
+					request.Header.Add("X-Forwarded-For", line)
+				}
+			}
 			request.Header.Set("X-Real-IP", test.realIP)
 			if got := resolver.ClientIP(request); got != test.want {
 				t.Fatalf("ClientIP()=%q want %q", got, test.want)
