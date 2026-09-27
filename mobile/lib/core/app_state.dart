@@ -699,8 +699,9 @@ class AppState extends ChangeNotifier {
       api?.close();
       session = null;
       api = null;
-      sync?.dispose();
+      final previousSync = sync;
       sync = null;
+      await previousSync?.dispose();
       devices = <Device>[];
       conversationsLoaded = false;
       messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
@@ -2121,7 +2122,14 @@ class AppState extends ChangeNotifier {
     final previousSubscription = _syncSubscription;
     _syncSubscription = null;
     await previousSubscription?.cancel();
-    sync?.dispose();
+    final previousSync = sync;
+    sync = null;
+    // Close the old socket before opening one for this session so two
+    // authenticated sockets never overlap.
+    await previousSync?.dispose();
+    if (ownerGeneration != _sessionGeneration || !_sameSession(current)) {
+      return;
+    }
     sync = syncServiceFactory(current.baseUrl, current.token);
     _setConnectionStatus(ConnectionStatus.connecting);
     _syncSubscription = sync!.events.listen(
@@ -2892,8 +2900,9 @@ class AppState extends ChangeNotifier {
     final previousSubscription = _syncSubscription;
     _syncSubscription = null;
     await previousSubscription?.cancel();
-    sync?.dispose();
+    final previousSync = sync;
     sync = null;
+    await previousSync?.dispose();
     if (preserveDeviceIdentity &&
         current != null &&
         current.deviceId != null &&
@@ -3546,7 +3555,7 @@ class AppState extends ChangeNotifier {
     _mlsOutboxRetryTimer = null;
     _cancelCatchUpRetry();
     unawaited(_syncSubscription?.cancel());
-    sync?.dispose();
+    unawaited(sync?.dispose());
     unawaited(_pushSubscription?.cancel());
     pushService.dispose();
     unawaited(_mlsCrypto?.dispose());

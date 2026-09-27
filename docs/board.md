@@ -237,7 +237,7 @@ task boundaries and orchestration rules are in
 | I45 | Implemented and checked (Stage 5, 2026-09-24: T45A, T45B, T45C, QA05, QA09) | Backup, restore and migration safety | I29, I39 |
 | I46 | Prepared | Supported deployment hardening | — |
 | I47 | Prepared, conditional | Operational visibility and capacity evidence | I35, I36 |
-| I48 | Prepared | Transport, realtime and logging hardening | I32 |
+| I48 | T48A implemented and checked (2026-09-27); T48B prepared | Transport, realtime and logging hardening | I32 |
 | I49 | Measure, then split | Performance and architecture work | correctness cards |
 | I50 | Deferred | Product and ecosystem backlog | D06 / mobile release |
 | I51 | Implemented and checked (Stage 5, 2026-09-24, D28) | MLS membership changes after creation, linked devices, per-device key-package claims, join cursor, epoch-ordered commits | I30, I34 |

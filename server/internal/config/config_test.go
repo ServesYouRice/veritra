@@ -101,3 +101,60 @@ func TestLoadRejectsInvalidOperationalSettings(t *testing.T) {
 		t.Fatal("expected invalid log format to fail")
 	}
 }
+
+func TestTrustedProxyRangesRejectUnsafeNetworks(t *testing.T) {
+	for _, entry := range []string{
+		"0.0.0.0/0",
+		"::/0",
+		"::ffff:0:0/96",
+		"::ffff:0:0/80",
+		"0.0.0.0",
+		"0.1.2.3/32",
+		"224.0.0.1",
+		"ff02::1",
+		"10.0.0.0/7",
+		"8.0.0.0/8",
+		"104.16.0.0/11",
+		"2001::/16",
+		"2400:cb00::/28",
+		"fe80::1%eth0",
+		"not-a-network",
+	} {
+		if _, err := parseCIDRs(entry); err == nil {
+			t.Errorf("parseCIDRs(%q) accepted an unsafe trusted-proxy range", entry)
+		}
+	}
+}
+
+func TestTrustedProxyRangesAcceptOperatorNetworks(t *testing.T) {
+	cases := map[string]string{
+		"127.0.0.1":           "127.0.0.1/32",
+		"10.0.0.0/8":          "10.0.0.0/8",
+		"172.28.250.7/24":     "172.28.250.0/24",
+		"100.64.0.0/10":       "100.64.0.0/10",
+		"fc00::/7":            "fc00::/7",
+		"::1":                 "::1/128",
+		"104.16.0.0/13":       "104.16.0.0/13",
+		"2400:cb00::/32":      "2400:cb00::/32",
+		"2a06:98c0::/29":      "2a06:98c0::/29",
+		"::ffff:10.1.2.0/120": "10.1.2.0/24",
+		"198.51.100.4":        "198.51.100.4/32",
+	}
+	for entry, want := range cases {
+		networks, err := parseCIDRs(entry)
+		if err != nil {
+			t.Errorf("parseCIDRs(%q) rejected an operator network: %v", entry, err)
+			continue
+		}
+		if len(networks) != 1 || networks[0].String() != want {
+			t.Errorf("parseCIDRs(%q)=%v want %s", entry, networks, want)
+		}
+	}
+	mapped, err := parseCIDRs("::ffff:10.1.2.0/120")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mapped[0].Contains(net.ParseIP("203.0.113.1")) || !mapped[0].Contains(net.ParseIP("10.1.2.3")) {
+		t.Fatal("IPv4-mapped trusted range did not narrow to its IPv4 network")
+	}
+}

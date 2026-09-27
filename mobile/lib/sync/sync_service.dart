@@ -6,7 +6,11 @@ import 'dart:math';
 abstract class SyncService {
   Stream<Map<String, Object?>> get events;
   Future<void> connect();
-  void dispose();
+
+  /// Stops reconnecting and closes the socket. Completes once no
+  /// authenticated socket remains open, including one whose handshake was
+  /// still in flight.
+  Future<void> dispose();
 }
 
 typedef SyncOwnerWork = Future<void> Function();
@@ -102,16 +106,21 @@ class WebSocketSyncService implements SyncService {
   final String baseUrl;
   final String token;
   final _controller = StreamController<Map<String, Object?>>.broadcast();
+  final _stopped = Completer<void>();
   WebSocket? _socket;
+  HttpClient? _handshakeClient;
   bool _disposed = false;
   Future<void>? _connectLoop;
+  Future<void>? _disposal;
 
   @override
   Stream<Map<String, Object?>> get events => _controller.stream;
 
+  /// Starts the reconnect loop and returns without waiting for a socket;
+  /// connection progress is reported on [events].
   @override
   Future<void> connect() {
-    _connectLoop ??= _runConnectLoop();
+    if (!_disposed) _connectLoop ??= _runConnectLoop();
     return Future<void>.value();
   }
 
@@ -131,7 +140,11 @@ class WebSocketSyncService implements SyncService {
       }
       if (!_disposed) {
         final jitter = Duration(milliseconds: random.nextInt(750));
-        await Future<void>.delayed(delay + jitter);
+        // Wake early on dispose so teardown never waits out a backoff.
+        await Future.any(<Future<void>>[
+          Future<void>.delayed(delay + jitter),
+          _stopped.future,
+        ]);
         final nextSeconds = delay.inSeconds * 2;
         delay = Duration(seconds: nextSeconds > 30 ? 30 : nextSeconds);
       }
@@ -145,12 +158,32 @@ class WebSocketSyncService implements SyncService {
           query: null,
           fragment: null,
         );
-    // Send the token via the Authorization header so it never lands in URLs,
-    // server access logs, or reverse-proxy logs.
-    final socket = await WebSocket.connect(
-      uri.toString(),
-      headers: <String, dynamic>{'Authorization': 'Bearer $token'},
-    ).timeout(const Duration(seconds: 15));
+    // A dedicated client lets dispose and the handshake timeout abort a
+    // connect that is still in flight, so it cannot finish later and leave an
+    // authenticated socket nobody listens to.
+    final client = HttpClient();
+    _handshakeClient = client;
+    final WebSocket socket;
+    try {
+      // Send the token via the Authorization header so it never lands in
+      // URLs, server access logs, or reverse-proxy logs.
+      socket = await WebSocket.connect(
+        uri.toString(),
+        headers: <String, dynamic>{'Authorization': 'Bearer $token'},
+        customClient: client,
+      ).timeout(const Duration(seconds: 15));
+    } catch (_) {
+      client.close(force: true);
+      rethrow;
+    } finally {
+      if (identical(_handshakeClient, client)) _handshakeClient = null;
+    }
+    // The upgraded socket is detached from the client; this only releases it.
+    client.close();
+    if (_disposed) {
+      await _closeSocket(socket);
+      return Duration.zero;
+    }
     _socket = socket;
     final connectedAt = DateTime.now();
     // Events sent while the socket was down are not replayed over it. Tell
@@ -185,9 +218,32 @@ class WebSocketSyncService implements SyncService {
   }
 
   @override
-  void dispose() {
+  Future<void> dispose() => _disposal ??= _dispose();
+
+  Future<void> _dispose() async {
     _disposed = true;
-    _socket?.close();
-    _controller.close();
+    if (!_stopped.isCompleted) _stopped.complete();
+    _handshakeClient?.close(force: true);
+    final socket = _socket;
+    _socket = null;
+    if (socket != null) await _closeSocket(socket);
+    try {
+      await _connectLoop;
+    } catch (_) {
+      // The loop reports failures on [events]; nothing is left to clean up.
+    }
+    await _controller.close();
+  }
+
+  /// Sends a normal-closure frame. dart:io destroys the connection itself if
+  /// the server never answers; the timeout only bounds how long we wait.
+  static Future<void> _closeSocket(WebSocket socket) async {
+    try {
+      await socket
+          .close(WebSocketStatus.normalClosure)
+          .timeout(const Duration(seconds: 6));
+    } catch (_) {
+      // Already closed or the peer vanished; either way it is no longer open.
+    }
   }
 }
