@@ -46,7 +46,7 @@ jobs:
           --go-required-source internal/push/native.go
           --go-required-source internal/cryptoapi/cryptoapi.go
         working-directory: server
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: go-coverage-${{ github.run_id }}
           path: |
@@ -115,7 +115,7 @@ jobs:
           --flutter-required-source lib/crypto/attachment_crypto.dart
           --flutter-required-source lib/calls/call_service.dart
         working-directory: mobile
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: flutter-coverage-${{ github.run_id }}
           path: mobile/coverage/lcov.info
@@ -142,7 +142,7 @@ jobs:
       - name: Build the Android demo APK
         run: flutter build apk --debug --target-platform android-arm64,android-x64 -t lib/main_demo.dart --dart-define=VERITRA_DEMO=true
         working-directory: mobile
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: veritra-demo-android-${{ github.run_id }}
           path: mobile/build/app/outputs/flutter-apk/app-debug.apk
@@ -181,7 +181,7 @@ jobs:
         run: nm -gU mobile/build/ios/iphonesimulator/Runner.app/Runner* 2>/dev/null | grep -q '_pm_crypto_abi_version'
       - name: Package the simulator demo app
         run: ditto -c -k --keepParent mobile/build/ios/iphonesimulator/Runner.app veritra-demo-ios-simulator.zip
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: veritra-demo-ios-simulator-${{ github.run_id }}
           path: veritra-demo-ios-simulator.zip
@@ -215,7 +215,7 @@ jobs:
         working-directory: mobile
       - name: Verify the crypto library is bundled
         run: test -s mobile/build/linux/x64/release/bundle/lib/libprivate_messenger_crypto.so
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: veritra-demo-linux-x64-${{ github.run_id }}
           path: mobile/build/linux/x64/release/bundle
@@ -245,7 +245,7 @@ jobs:
       - name: Verify the crypto library is bundled
         run: if (-not (Test-Path mobile/build/windows/x64/runner/Release/private_messenger_crypto.dll)) { exit 1 }
         shell: pwsh
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: veritra-demo-windows-x64-${{ github.run_id }}
           path: mobile/build/windows/x64/runner/Release
@@ -284,7 +284,7 @@ jobs:
           done
       - name: Package the unsigned app
         run: ditto -c -k --keepParent mobile/build/macos/Build/Products/Release/Veritra.app veritra-demo-macos.zip
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: veritra-demo-macos-${{ github.run_id }}
           path: veritra-demo-macos.zip
