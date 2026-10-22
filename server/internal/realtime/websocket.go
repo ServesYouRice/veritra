@@ -16,6 +16,26 @@ import (
 	"unicode/utf8"
 )
 
+// Inbound frame bounds. drainClientFrames is the only reader of client bytes
+// and closes the connection (without a close frame) on the first violation:
+//
+//   - Each frame is at most maxFrameSize payload bytes; a fragmented message
+//     is at most maxFrameSize in total. At most one frame payload plus one
+//     reassembly buffer is held, so a connection pins about 2 MiB at worst.
+//   - Lengths must use the minimal encoding (16-bit form for 126-65535,
+//     64-bit form above that with the top bit clear).
+//   - Control frames (close, ping, pong) are unfragmented and at most 125
+//     bytes; they may interleave with a fragmented data message.
+//   - RSV bits must be zero (no extensions are negotiated), opcodes 3-7 and
+//     11-15 are rejected, and every client frame must be masked.
+//   - Continuation frames need an open message, and a new text/binary frame
+//     cannot start inside one. Complete text messages must be valid UTF-8.
+//   - A close frame, valid or not, ends the reader; the server does not echo it.
+//   - Pings are answered with a pong carrying the same payload; a client that
+//     queues more pings than the pong buffer (4) holds is disconnected.
+//   - A complete frame must arrive within pongWait of the previous one.
+//
+// ws_fuzz_test.go pins these bounds with table tests and differential fuzzing.
 const (
 	websocketGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 	maxFrameSize  = 1 << 20 // 1 MiB per inbound client frame
