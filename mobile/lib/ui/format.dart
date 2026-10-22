@@ -15,6 +15,35 @@ String formatDate(BuildContext context, DateTime time) {
 String formatDateTime(BuildContext context, DateTime time) =>
     '${formatDate(context, time)} · ${formatTimeOfDay(context, time)}';
 
+/// Compact, locale-aware timestamp for a list row: the time of day for today,
+/// `Yesterday`, the month and day within the current year, otherwise a short
+/// date. [now] exists for tests; it defaults to the device clock.
+///
+/// Everything except `Yesterday` comes from [MaterialLocalizations], so the
+/// order and month names follow the device locale without a new dependency.
+String formatListTime(BuildContext context, DateTime time, {DateTime? now}) {
+  final local = time.toLocal();
+  final today = (now ?? DateTime.now()).toLocal();
+  final day = DateTime(local.year, local.month, local.day);
+  final todayStart = DateTime(today.year, today.month, today.day);
+  // Rounded rather than truncated so a 23- or 25-hour DST day still counts
+  // as one day.
+  final daysAgo = (todayStart.difference(day).inHours / 24).round();
+  // A timestamp slightly ahead of this clock (server skew) on the same
+  // calendar day is still today.
+  if (daysAgo == 0) {
+    return formatTimeOfDay(context, local);
+  }
+  if (daysAgo == 1) {
+    return 'Yesterday';
+  }
+  final localizations = MaterialLocalizations.of(context);
+  if (daysAgo > 0 && local.year == today.year) {
+    return localizations.formatShortMonthDay(local);
+  }
+  return localizations.formatShortDate(local);
+}
+
 /// Compact identifier preview, e.g. `acct_9f2…c41`.
 String shortId(String id) {
   if (id.length <= 14) {

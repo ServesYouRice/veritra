@@ -9,12 +9,14 @@ import '../../core/app_state.dart';
 import '../../core/attachments.dart';
 import '../../core/message_history.dart';
 import '../../core/models.dart';
+import '../../crypto/app_payload.dart' show maxAppTextLength;
 import '../../storage/encrypted_database.dart'
     show LocalMessage, LocalMessageKind;
 import '../../ui/format.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/empty_state.dart';
+import '../../ui/widgets/gated_explanation.dart';
 import '../../ui/widgets/status_pill.dart';
 import 'attachment_views.dart';
 import 'chat_list_screen.dart';
@@ -48,14 +50,24 @@ class _ChatScreenState extends State<ChatScreen> {
   /// The message the next send replies to, if any.
   LocalMessage? _replyingTo;
 
+  /// True once the reader has scrolled far enough back that the newest
+  /// messages are off screen.
+  bool _awayFromLatest = false;
+
+  /// Scroll distance from the newest message beyond which "Jump to latest"
+  /// appears.
+  static const double _awayThreshold = 480;
+
   @override
   void initState() {
     super.initState();
     scroll.addListener(_maybeLoadOlder);
+    scroll.addListener(_trackLatest);
   }
 
   @override
   void dispose() {
+    scroll.removeListener(_trackLatest);
     scroll.removeListener(_maybeLoadOlder);
     scroll.dispose();
     composer.dispose();
@@ -74,6 +86,28 @@ class _ChatScreenState extends State<ChatScreen> {
     if (remaining < 400) {
       unawaited(widget.state.loadOlderMessages(widget.conversationId));
     }
+  }
+
+  void _trackLatest() {
+    if (!scroll.hasClients) return;
+    final away = scroll.position.pixels > _awayThreshold;
+    if (away != _awayFromLatest) setState(() => _awayFromLatest = away);
+  }
+
+  /// Returns to the newest message. The list is reversed, so that is offset
+  /// zero. Only the scroll position moves: the pages of older history already
+  /// loaded stay in memory, so scrolling back up again does not refetch them.
+  Future<void> _jumpToLatest() async {
+    if (!scroll.hasClients) return;
+    if (MediaQuery.disableAnimationsOf(context)) {
+      scroll.jumpTo(0);
+      return;
+    }
+    await scroll.animateTo(
+      0,
+      duration: BoneDurations.standard,
+      curve: BoneDurations.curve,
+    );
   }
 
   @override
@@ -222,15 +256,37 @@ class _ChatScreenState extends State<ChatScreen> {
             ],
           ),
         Expanded(
-          child: _MessageList(
-            state: widget.state,
-            conversationId: conversationId,
-            controller: scroll,
-            messages: messages,
-            pending: pending,
-            onMessageActions: widget.state.messageActionsAvailable
-                ? _showMessageActions
-                : null,
+          child: Stack(
+            children: <Widget>[
+              Positioned.fill(
+                child: _MessageList(
+                  state: widget.state,
+                  conversationId: conversationId,
+                  controller: scroll,
+                  messages: messages,
+                  pending: pending,
+                  onMessageActions: widget.state.messageActionsAvailable
+                      ? _showMessageActions
+                      : null,
+                ),
+              ),
+              if (_awayFromLatest)
+                Positioned(
+                  right: BoneSpacing.gutter,
+                  bottom: BoneSpacing.md,
+                  child: FloatingActionButton.small(
+                    // The wide layout also shows the chat list's FAB; two
+                    // default hero tags on one route is an assertion.
+                    heroTag: null,
+                    tooltip: 'Jump to latest',
+                    onPressed: _jumpToLatest,
+                    backgroundColor:
+                        Theme.of(context).colorScheme.surfaceContainerHigh,
+                    foregroundColor: Theme.of(context).colorScheme.onSurface,
+                    child: const Icon(Icons.arrow_downward),
+                  ),
+                ),
+            ],
           ),
         ),
       ],
@@ -345,24 +401,40 @@ class _ChatScreenState extends State<ChatScreen> {
     final controller = TextEditingController(text: current);
     return showDialog<String>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Edit message'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          minLines: 1,
-          maxLines: 6,
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(controller.text),
-            child: const Text('Save'),
-          ),
-        ],
+      builder: (dialogContext) => ValueListenableBuilder<TextEditingValue>(
+        valueListenable: controller,
+        builder: (context, value, _) {
+          final trimmed = value.text.trim();
+          final error = trimmed.isEmpty
+              ? 'Enter the new text, or delete the message instead.'
+              : trimmed.length > maxAppTextLength
+                  ? messageTooLongText
+                  : null;
+          return AlertDialog(
+            title: const Text('Edit message'),
+            content: TextField(
+              controller: controller,
+              autofocus: true,
+              minLines: 1,
+              maxLines: 6,
+              keyboardType: TextInputType.multiline,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: InputDecoration(errorText: error),
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: error == null
+                    ? () => Navigator.of(dialogContext).pop(controller.text)
+                    : null,
+                child: const Text('Save'),
+              ),
+            ],
+          );
+        },
       ),
     ).whenComplete(controller.dispose);
   }
@@ -502,6 +574,9 @@ class _MessageList extends StatelessWidget {
     return ListView.builder(
       controller: controller,
       reverse: true,
+      // Dragging the thread puts the keyboard away so the history it hid is
+      // readable; the draft stays in the composer.
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.symmetric(
         horizontal: BoneSpacing.gutter,
         vertical: BoneSpacing.lg,
@@ -1177,6 +1252,14 @@ class _RedactedBars extends StatelessWidget {
 /// One rounded pill holding the attachment button, the field and send
 /// (`docs/design.md` §4), rather than a bordered row of three separate
 /// Material controls.
+/// Why the composer's attachment control is disabled outside demo builds.
+const String attachmentsUnavailableReason =
+    'Attachments need the reviewed encryption engine';
+
+/// Inline composer and edit-dialog error past [maxAppTextLength].
+const String messageTooLongText =
+    'Too long to send. Shorten it or split it into several messages.';
+
 bool get _enterSends =>
     defaultTargetPlatform == TargetPlatform.windows ||
     defaultTargetPlatform == TargetPlatform.linux ||
@@ -1203,8 +1286,19 @@ class _Composer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return ValueListenableBuilder<TextEditingValue>(
+      valueListenable: controller,
+      builder: (context, value, _) => _build(context, value.text),
+    );
+  }
+
+  Widget _build(BuildContext context, String text) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final length = text.trim().length;
+    final nearLimit = length > maxAppTextLength * 0.9;
+    final overLimit = length > maxAppTextLength;
+    final canSend = enabled && !busy && !overLimit;
     return SafeArea(
       top: false,
       child: Padding(
@@ -1224,29 +1318,35 @@ class _Composer extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: <Widget>[
-              IconButton(
+              if (onAttach == null)
                 // Attachments need the MLS path (demo builds); elsewhere the
-                // control stays visible but disabled.
-                onPressed: enabled && !attaching ? onAttach : null,
-                icon: attaching
-                    ? const SizedBox.square(
-                        dimension: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.attach_file),
-                tooltip: onAttach == null
-                    ? 'Attachments need the reviewed encryption engine'
-                    : attaching
-                        ? 'Sending file'
-                        : 'Attach a file',
-              ),
+                // control stays visible but disabled, and the reason is
+                // reachable by focus, tap and screen reader.
+                const GatedExplanation(
+                  message: attachmentsUnavailableReason,
+                  child: IconButton(
+                    onPressed: null,
+                    icon: Icon(Icons.attach_file),
+                  ),
+                )
+              else
+                IconButton(
+                  onPressed: enabled && !attaching ? onAttach : null,
+                  icon: attaching
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.attach_file),
+                  tooltip: attaching ? 'Sending file' : 'Attach a file',
+                ),
               Expanded(
                 // On desktop, Enter sends and Shift+Enter starts a new line.
                 child: CallbackShortcuts(
                   bindings: <ShortcutActivator, VoidCallback>{
                     if (_enterSends)
                       const SingleActivator(LogicalKeyboardKey.enter): () {
-                        if (enabled && !busy) onSend();
+                        if (canSend) onSend();
                       },
                   },
                   child: TextField(
@@ -1254,7 +1354,9 @@ class _Composer extends StatelessWidget {
                     enabled: enabled,
                     minLines: 1,
                     maxLines: 4,
+                    keyboardType: TextInputType.multiline,
                     textInputAction: TextInputAction.newline,
+                    textCapitalization: TextCapitalization.sentences,
                     style: theme.textTheme.bodyMedium,
                     // The field's own fill and border are cleared: the pill
                     // around it is the input surface now, and the theme's
@@ -1268,6 +1370,8 @@ class _Composer extends StatelessWidget {
                       enabledBorder: InputBorder.none,
                       focusedBorder: InputBorder.none,
                       disabledBorder: InputBorder.none,
+                      errorBorder: InputBorder.none,
+                      focusedErrorBorder: InputBorder.none,
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: BoneSpacing.xs,
                         vertical: 12,
@@ -1275,13 +1379,23 @@ class _Composer extends StatelessWidget {
                       hintStyle: theme.textTheme.bodyMedium?.copyWith(
                         color: scheme.onSurfaceVariant,
                       ),
+                      // Silent only until the draft nears the limit; past it
+                      // the count turns into an error and Send disables.
+                      // Nothing is truncated, so a long paste is never lost.
+                      counterText:
+                          nearLimit ? '$length / $maxAppTextLength' : null,
+                      counterStyle: overLimit
+                          ? theme.textTheme.bodySmall
+                              ?.copyWith(color: scheme.error)
+                          : theme.textTheme.bodySmall,
+                      errorText: overLimit ? messageTooLongText : null,
                     ),
                   ),
                 ),
               ),
               const SizedBox(width: BoneSpacing.xs),
               IconButton.filled(
-                onPressed: enabled && !busy ? () => onSend() : null,
+                onPressed: canSend ? () => onSend() : null,
                 icon: busy
                     ? SizedBox.square(
                         dimension: 18,

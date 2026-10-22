@@ -5,6 +5,7 @@ import '../../core/models.dart';
 import '../../ui/avatar.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
+import '../../ui/validation.dart';
 import '../../ui/widgets/empty_state.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
@@ -177,23 +178,44 @@ class CommunityScreen extends StatelessWidget {
     try {
       final confirmed = await showDialog<bool>(
         context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: Text(title),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            decoration: InputDecoration(labelText: label),
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text('Create'),
-            ),
-          ],
+        builder: (dialogContext) => ValueListenableBuilder<TextEditingValue>(
+          valueListenable: controller,
+          builder: (context, value, _) {
+            // Checked here so the reason sits under the field; an empty name
+            // used to close the dialog and do nothing.
+            final error = displayNameError(value.text);
+            // An untouched field reads as a prompt, not an error; Create
+            // still stays disabled until the name is valid.
+            final shown = value.text.isEmpty ? null : error;
+            void submit() {
+              if (error == null) Navigator.of(dialogContext).pop(true);
+            }
+
+            return AlertDialog(
+              title: Text(title),
+              content: TextField(
+                controller: controller,
+                autofocus: true,
+                textInputAction: TextInputAction.done,
+                textCapitalization: TextCapitalization.words,
+                onSubmitted: (_) => submit(),
+                decoration: InputDecoration(
+                  labelText: label,
+                  errorText: shown,
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: error == null ? submit : null,
+                  child: const Text('Create'),
+                ),
+              ],
+            );
+          },
         ),
       );
       if (confirmed != true) {
