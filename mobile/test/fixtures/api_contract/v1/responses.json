@@ -1,0 +1,136 @@
+{
+  "contract": "veritra-api-responses",
+  "version": 1,
+  "description": "Response bodies the v1 API returns and the client must decode, plus malformed bodies it must reject as ApiResponseException without leaking their content (card T44A). Ciphertext values are opaque test bytes.",
+  "valid": {
+    "conversations_page": {
+      "conversations": [
+        {
+          "id": "conv_b",
+          "kind": "dm",
+          "created_at": "2026-09-01T10:00:00Z",
+          "last_message_at": "2026-09-02T12:30:00.123456789+02:00",
+          "unread_count": 2,
+          "current_role": "member",
+          "peer_account_id": "acct_peer",
+          "peer_username": "peer"
+        },
+        {
+          "id": "conv_a",
+          "kind": "group",
+          "title": "Family",
+          "retention_seconds": 3600,
+          "created_at": "2026-08-01T10:00:00Z",
+          "unread_count": 0
+        }
+      ]
+    },
+    "message_page": {
+      "messages": [
+        {
+          "id": "msg_2",
+          "conversation_id": "conv_a",
+          "sender_account_id": "acct_peer",
+          "sender_device_id": "dev_peer",
+          "idempotency_key": "k2",
+          "ciphertext": "gIGCg4SFhoeIiYqLjI2Ojw==",
+          "crypto_protocol": "mls10-openmls-v1",
+          "crypto_metadata": {"format": "contract-v1"},
+          "attachment_refs": [],
+          "created_at": "2026-09-02T12:30:00Z"
+        }
+      ],
+      "next_before": "msg_2"
+    },
+    "sync_events": {
+      "events": [
+        {
+          "id": 41,
+          "type": "conversation.updated",
+          "account_id": "acct_owner",
+          "conversation_id": "conv_a",
+          "payload": {"conversation_id": "conv_a"},
+          "created_at": "2026-09-02T12:30:00Z"
+        }
+      ]
+    },
+    "mls_message": {
+      "mls_message": {
+        "id": "mls_1",
+        "conversation_id": "conv_a",
+        "sender_account_id": "acct_peer",
+        "sender_device_id": "dev_peer",
+        "kind": "application",
+        "payload": "AQIDBA==",
+        "idempotency_key": "mk1",
+        "sync_event_id": 41,
+        "created_at": "2026-09-02T12:30:00Z"
+      }
+    }
+  },
+  "malformed": {
+    "conversation_wrong_type": {
+      "conversations": [{"id": 5, "kind": "dm"}]
+    },
+    "conversation_row_not_object": {
+      "conversations": ["conv_a"]
+    },
+    "conversations_not_list": {
+      "conversations": {"id": "conv_a"}
+    },
+    "mls_bad_timestamp": {
+      "mls_message": {
+        "id": "mls_1",
+        "conversation_id": "conv_a",
+        "sender_account_id": "acct_peer",
+        "sender_device_id": "dev_peer",
+        "kind": "application",
+        "payload": "AQIDBA==",
+        "idempotency_key": "mk1",
+        "sync_event_id": 41,
+        "created_at": "yesterday-ish-ciphertext-AAAA"
+      }
+    },
+    "mls_overlong_timestamp": {
+      "mls_message": {
+        "id": "mls_1",
+        "conversation_id": "conv_a",
+        "sender_account_id": "acct_peer",
+        "sender_device_id": "dev_peer",
+        "kind": "application",
+        "payload": "AQIDBA==",
+        "idempotency_key": "mk1",
+        "sync_event_id": 41,
+        "created_at": "2026-09-02T12:30:00.000000000000000000000000000000000Z"
+      }
+    },
+    "mls_fractional_event_id": {
+      "mls_message": {
+        "id": "mls_1",
+        "conversation_id": "conv_a",
+        "sender_account_id": "acct_peer",
+        "sender_device_id": "dev_peer",
+        "kind": "application",
+        "payload": "AQIDBA==",
+        "idempotency_key": "mk1",
+        "sync_event_id": 41.5,
+        "created_at": "2026-09-02T12:30:00Z"
+      }
+    },
+    "message_bad_base64": {
+      "messages": [
+        {
+          "id": "msg_2",
+          "conversation_id": "conv_a",
+          "sender_account_id": "acct_peer",
+          "sender_device_id": "dev_peer",
+          "idempotency_key": "k2",
+          "ciphertext": "not*base64*ciphertext",
+          "crypto_protocol": "mls10-openmls-v1",
+          "created_at": "2026-09-02T12:30:00Z"
+        }
+      ]
+    },
+    "top_level_array": [{"error": "not_an_object"}]
+  }
+}

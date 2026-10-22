@@ -152,7 +152,7 @@ class NativeCallService {
       _createConnection({required bool video}) async {
     final iceServers = await api.callIceServers(token);
     if (iceServers.isEmpty) {
-      throw StateError('A self-hosted TURN service is required for calls');
+      throw StateError('A self-hosted TURN service is required for calls.');
     }
     final peer = await createPeerConnection(<String, Object?>{
       'iceServers': iceServers,

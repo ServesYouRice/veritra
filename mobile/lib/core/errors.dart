@@ -40,20 +40,34 @@ String describeError(Object error) {
       return 'This build does not include the production encryption engine '
           'yet, so this action is unavailable.';
     }
-    // Other StateErrors in the app are already written as user-facing
-    // sentences (e.g. "Password login requires this device to be linked
-    // first."), so surface them without the "Bad state:" prefix.
-    return message;
+    // StateErrors the app writes for users are full sentences (e.g.
+    // "Password login requires this device to be linked first."). Internal
+    // invariants ("stale sync event commit") and Dart's own ("No element")
+    // are not, and stay out of the UI.
+    if (_isUserSentence(message)) return message;
+    return _generic;
   }
   if (error is TimeoutException) {
     return 'The server took too long to respond. Try again.';
+  }
+  if (error is HandshakeException) {
+    return 'A secure connection to the server could not be made.';
   }
   if (error is SocketException || error is HttpException) {
     return 'Could not reach the server. Check the instance URL and your '
         'connection.';
   }
+  if (error is ApiResponseException && error.tooLarge) {
+    return 'The server sent more data than this app accepts.';
+  }
   if (error is FormatException) {
     return 'The server returned an unexpected response.';
   }
-  return 'Something went wrong. Please try again.';
+  return _generic;
 }
+
+const _generic = 'Something went wrong. Please try again.';
+
+final _userSentence = RegExp(r'^[A-Z][^\n]{0,298}[.!?]$');
+
+bool _isUserSentence(String message) => _userSentence.hasMatch(message);

@@ -140,6 +140,11 @@ class Ops {
   static const members = 'members';
   static const blocks = 'blocks';
   static const mute = 'mute';
+
+  /// Loading the conversation list (card I44): its error keeps the list
+  /// already shown and offers a retry.
+  static const conversations = 'conversations';
+  static const devices = 'devices';
   static String conversation(String id) => 'conversation:$id';
 }
 
@@ -675,19 +680,28 @@ class AppState extends ChangeNotifier {
         conversationsLoaded = true;
         notifyListeners();
       }
+      // A failed refresh keeps the encrypted cache available while
+      // offline, and the list shows the failure with a retry.
+      Object? refreshFailure;
       try {
-        await refreshConversations();
-        await refreshDevices();
-        if (!_lifecycleGenerationActive(transitionGeneration)) return;
-      } on ApiException catch (err) {
-        if (err.statusCode == 401) {
-          await _clearLocalSession(
-              preserveDeviceIdentity: true, preserveOutbox: true);
-          return;
+        await _refreshConversations(notify: true);
+      } catch (err) {
+        refreshFailure = err;
+        _opErrors[Ops.conversations] = describeError(err);
+      }
+      if (refreshFailure == null) {
+        try {
+          await _refreshDevices();
+        } catch (err) {
+          refreshFailure = err;
+          _opErrors[Ops.devices] = describeError(err);
         }
-        // Keep the encrypted cache available while offline.
-      } catch (_) {
-        // Keep the encrypted cache available while offline.
+      }
+      if (!_lifecycleGenerationActive(transitionGeneration)) return;
+      if (refreshFailure is ApiException && refreshFailure.statusCode == 401) {
+        await _clearLocalSession(
+            preserveDeviceIdentity: true, preserveOutbox: true);
+        return;
       }
       _startSync();
       lifecycle = SessionLifecycle.ready;
@@ -803,8 +817,8 @@ class AppState extends ChangeNotifier {
       await _mlsCrypto?.activateSession(session!);
       await _publishInitialMlsKeyPackages();
       await localStore.saveSyncCursor(0);
-      await refreshConversations();
-      await refreshDevices();
+      await _refreshConversations(notify: true);
+      await _refreshDevices();
       _startSync();
     });
   }
@@ -834,17 +848,31 @@ class AppState extends ChangeNotifier {
       await localStore.saveSession(session!);
       await _mlsCrypto?.activateSession(session!);
       await localStore.saveSyncCursor(0);
-      await refreshConversations();
-      await refreshDevices();
+      await _refreshConversations(notify: true);
+      await _refreshDevices();
       _startSync();
     });
   }
 
+  /// Refreshes the conversation list for the UI and never throws. A
+  /// failure keeps the list already shown (the encrypted cache or the last
+  /// good fetch) and records a user-safe message under
+  /// [Ops.conversations], so the list can offer a retry instead of an
+  /// endless spinner or an empty list.
   Future<void> refreshConversations() async {
-    await _refreshConversations(notify: true);
+    await _runScoped(
+      Ops.conversations,
+      () => _refreshConversations(notify: false),
+    );
   }
 
+  /// Refreshes this account's devices for the UI and never throws; a
+  /// failure keeps the last list and is reported under [Ops.devices].
   Future<void> refreshDevices() async {
+    await _runScoped(Ops.devices, _refreshDevices);
+  }
+
+  Future<void> _refreshDevices() async {
     final current = session;
     final client = api;
     if (current == null || client == null) {
@@ -852,6 +880,7 @@ class AppState extends ChangeNotifier {
     }
     try {
       devices = await client.devices(current.token);
+      _opErrors.remove(Ops.devices);
     } finally {
       devicesLoaded = true;
     }
@@ -918,6 +947,7 @@ class AppState extends ChangeNotifier {
     }
     conversations = await client.conversations(current.token);
     conversationsLoaded = true;
+    _opErrors.remove(Ops.conversations);
     if (persist) await _persistSnapshot();
     if (notify) {
       notifyListeners();
@@ -1122,8 +1152,8 @@ class AppState extends ChangeNotifier {
       await _mlsCrypto?.activateSession(session!);
       await _publishInitialMlsKeyPackages();
       await localStore.saveSyncCursor(0);
-      await refreshConversations();
-      await refreshDevices();
+      await _refreshConversations(notify: true);
+      await _refreshDevices();
       _startSync();
     });
   }
@@ -1875,7 +1905,8 @@ class AppState extends ChangeNotifier {
         if (refreshed.transcriptHash != null &&
             !_constantTimeBytesEqual(
                 verification.transcriptHash, refreshed.transcriptHash!)) {
-          throw StateError('Device-link transcript was substituted');
+          throw StateError('Device-link transcript was substituted. Generate a '
+              'new link and compare both devices again.');
         }
         merged = _deviceLinkWithVerification(merged, verification);
       }
@@ -1913,7 +1944,8 @@ class AppState extends ChangeNotifier {
       if (claimed.deviceLink.transcriptHash != null &&
           !_constantTimeBytesEqual(claimed.deviceLink.transcriptHash!,
               verification.transcriptHash)) {
-        throw StateError('Device-link transcript was substituted');
+        throw StateError('Device-link transcript was substituted. Generate a '
+            'new link and compare both devices again.');
       }
       pendingDeviceLinkClaim = DeviceLinkClaim(
         deviceLink:
@@ -1956,8 +1988,8 @@ class AppState extends ChangeNotifier {
       await _mlsCrypto?.activateSession(session!);
       await _publishInitialMlsKeyPackages();
       await localStore.saveSyncCursor(0);
-      await refreshConversations();
-      await refreshDevices();
+      await _refreshConversations(notify: true);
+      await _refreshDevices();
       _startSync();
     });
   }
@@ -1987,7 +2019,7 @@ class AppState extends ChangeNotifier {
         return;
       }
       await client.logoutAll(current.token);
-      await refreshDevices();
+      await _refreshDevices();
     });
   }
 
@@ -2028,7 +2060,7 @@ class AppState extends ChangeNotifier {
       if (deviceId == current.deviceId) {
         await _clearLocalSession();
       } else {
-        await refreshDevices();
+        await _refreshDevices();
       }
     });
   }
@@ -2691,7 +2723,7 @@ class AppState extends ChangeNotifier {
       _mlsReconcileRequested = true;
     }
     if (type.startsWith('device.')) {
-      await refreshDevices();
+      await _refreshDevices();
       await _refreshConversations(notify: false, persist: false);
       return;
     }
