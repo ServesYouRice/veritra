@@ -106,6 +106,14 @@ func expectNoStaging(t *testing.T, dirs ...string) {
 	for _, dir := range dirs {
 		entries, _ := os.ReadDir(dir)
 		for _, entry := range entries {
+			if entry.Name() == drillDirName {
+				// The drill area itself persists; it must hold no leftovers.
+				expectNoStaging(t, filepath.Join(dir, drillDirName))
+				if leftovers, _ := os.ReadDir(filepath.Join(dir, drillDirName)); len(leftovers) != 0 {
+					t.Fatalf("restore drill left %d entries in %s", len(leftovers), filepath.Join(dir, drillDirName))
+				}
+				continue
+			}
 			if strings.HasPrefix(entry.Name(), ".veritra-") && entry.Name() != restoreJournalName {
 				t.Fatalf("staging left behind: %s", filepath.Join(dir, entry.Name()))
 			}
@@ -271,7 +279,7 @@ func TestRestoreRejectsCorruptOrIncompleteBackups(t *testing.T) {
 			}
 			expectLive(t, live, "original")
 			expectNoStaging(t, live.DataDir)
-			if err := verifyBackup(context.Background(), []string{archive}, &bytes.Buffer{}); err == nil {
+			if err := verifyBackup(context.Background(), live, []string{archive}, &bytes.Buffer{}); err == nil {
 				t.Fatal("damaged backup passed the restore drill")
 			}
 		})
@@ -368,7 +376,7 @@ func TestConcurrentBackupsDoNotCollide(t *testing.T) {
 	}
 	expectNoStaging(t, parent)
 	for _, name := range []string{"shared", "own-b", "own-d", "own-f"} {
-		if err := verifyBackup(context.Background(), []string{filepath.Join(parent, name)}, &bytes.Buffer{}); err != nil {
+		if err := verifyBackup(context.Background(), source, []string{filepath.Join(parent, name)}, &bytes.Buffer{}); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
 	}
@@ -423,4 +431,76 @@ func TestASecondRestoreOrRecoveryWaitsForTheRunningRestore(t *testing.T) {
 	}
 	expectLive(t, live, "backup")
 	expectNoStaging(t, live.DataDir)
+}
+
+// The image is FROM scratch and may run with a read-only root filesystem, so
+// the restore drill must not need os.TempDir().
+func TestRestoreDrillUsesDataDirScratchWithoutTempDir(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "no-such-tmp")
+	t.Setenv("TMPDIR", missing)
+	t.Setenv("TMP", missing)
+	t.Setenv("TEMP", missing)
+	live := seedInstance(t, "live")
+	archive := makeBackup(t, live)
+	if err := verifyBackup(context.Background(), live, []string{archive}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("restore drill without temp dir: %v", err)
+	}
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Fatalf("drill used the temp dir: %v", err)
+	}
+	drillBase := filepath.Join(live.DataDir, drillDirName)
+	if info, err := os.Stat(drillBase); err != nil || !info.IsDir() {
+		t.Fatalf("drill scratch area missing: %v", err)
+	}
+	expectNoStaging(t, live.DataDir)
+	expectLive(t, live, "live")
+
+	// A failed drill cleans up too.
+	damaged := makeBackup(t, seedInstance(t, "damaged"))
+	if err := os.WriteFile(filepath.Join(damaged, "database.db"), []byte("not sqlite"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyBackup(context.Background(), live, []string{damaged}, &bytes.Buffer{}); err == nil {
+		t.Fatal("damaged backup passed the drill")
+	}
+	expectNoStaging(t, live.DataDir)
+
+	// The scratch area is never pruned as, or copied into, a backup.
+	backupsDir := filepath.Join(live.DataDir, "backups")
+	if err := pruneBackups(live.DataDir, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(drillBase); err != nil {
+		t.Fatalf("prune removed the drill area: %v", err)
+	}
+	out := filepath.Join(backupsDir, "veritra-20260101T000000Z")
+	if err := backup(context.Background(), live, []string{out}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		switch entry.Name() {
+		case "database.db", "blobs", "manifest.json":
+		default:
+			t.Fatalf("backup holds unexpected entry %s", entry.Name())
+		}
+	}
+}
+
+func TestRestoreDrillRefusesNonDirectoryScratchArea(t *testing.T) {
+	live := seedInstance(t, "live")
+	archive := makeBackup(t, live)
+	target := t.TempDir()
+	if err := os.Symlink(target, filepath.Join(live.DataDir, drillDirName)); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := verifyBackup(context.Background(), live, []string{archive}, &bytes.Buffer{}); err == nil {
+		t.Fatal("drill followed a symlinked scratch area")
+	}
+	if entries, _ := os.ReadDir(target); len(entries) != 0 {
+		t.Fatalf("drill wrote through the symlink: %d entries", len(entries))
+	}
 }

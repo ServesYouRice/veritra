@@ -105,7 +105,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	case "restore":
 		return restore(cfg, fs.Args(), stdout)
 	case "verify-backup":
-		return verifyBackup(ctx, fs.Args(), stdout)
+		return verifyBackup(ctx, cfg, fs.Args(), stdout)
 	case "scheduled-backup":
 		options, err := scheduledBackupOptionsFromEnv(cfg)
 		if err != nil {

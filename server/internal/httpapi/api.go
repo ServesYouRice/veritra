@@ -142,20 +142,33 @@ func bearerToken(r *http.Request) string {
 // logout revokes the caller's current session token.
 func (a *API) withAuth(next authedHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		principal, err := a.principalFromRequest(r)
+		tokenHash, ok := bearerTokenHash(r)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		// The read validates expiry, idle expiry, account status and device
+		// revocation on every request. Activity writes are skipped while the
+		// stored timestamps are fresh so most requests never take the writer.
+		principal, activity, err := a.Store.SessionPrincipal(r.Context(), tokenHash)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		if err := a.Store.MarkDeviceSeen(r.Context(), principal.DeviceID); err != nil {
-			a.warn("device_last_seen_update_failed", "err", err)
-		}
-		if err := a.Store.TouchSession(r.Context(), auth.HashToken(bearerToken(r))); err != nil {
-			if !errors.Is(err, storage.ErrUnauthorized) {
-				a.warn("session_touch_failed", "err", err)
+		now := time.Now().UTC()
+		if principal.DeviceID != "" && activity.DeviceSeenDue(now) {
+			if err := a.Store.MarkDeviceSeen(r.Context(), principal.DeviceID); err != nil {
+				a.warn("device_last_seen_update_failed", "err", err)
 			}
-			writeError(w, http.StatusUnauthorized, "unauthorized")
-			return
+		}
+		if activity.SessionTouchDue(now) {
+			if err := a.Store.TouchSession(r.Context(), tokenHash); err != nil {
+				if !errors.Is(err, storage.ErrUnauthorized) {
+					a.warn("session_touch_failed", "err", err)
+				}
+				writeError(w, http.StatusUnauthorized, "unauthorized")
+				return
+			}
 		}
 		next(w, r, principal)
 	}
@@ -176,16 +189,21 @@ func recentlyAuthenticated(principal domain.Principal) bool {
 }
 
 func (a *API) principalFromRequest(r *http.Request) (domain.Principal, error) {
-	authz := r.Header.Get("Authorization")
-	const scheme = "Bearer "
-	if len(authz) < len(scheme) || !strings.EqualFold(authz[:len(scheme)], scheme) {
+	tokenHash, ok := bearerTokenHash(r)
+	if !ok {
 		return domain.Principal{}, storage.ErrUnauthorized
 	}
-	token := strings.TrimSpace(authz[len(scheme):])
+	return a.Store.PrincipalByTokenHash(r.Context(), tokenHash)
+}
+
+// bearerTokenHash returns the hash of a well-formed bearer token. The raw
+// token never leaves this function.
+func bearerTokenHash(r *http.Request) (string, bool) {
+	token := bearerToken(r)
 	if token == "" {
-		return domain.Principal{}, storage.ErrUnauthorized
+		return "", false
 	}
-	return a.Store.PrincipalByTokenHash(r.Context(), auth.HashToken(token))
+	return auth.HashToken(token), true
 }
 
 func (a *API) effectiveConversationRole(ctx context.Context, conversationID string, principal domain.Principal) (string, error) {
