@@ -3,6 +3,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
@@ -396,6 +397,40 @@ void boundedDecodingTests() {
       () => client.recoverEncryptedBackup(List<int>.filled(5, 0x41)),
       throwsA(isA<ArgumentError>()
           .having((e) => e.toString(), 'text', isNot(contains('65')))),
+    );
+  });
+
+  test('ciphertext pages over the cap are re-requested smaller', () async {
+    // A 5 MB MLS payload is legal (the server allows 4 MiB raw), so a
+    // single item must fit and a page of several must shrink, not loop.
+    final payload = base64Encode(List<int>.filled(4 * 1024 * 1024, 1));
+    final server = await _ScriptedServer.start((request, index) {
+      final limit = int.parse(request.uri.queryParameters['limit']!);
+      _respondJson(request, <String, Object?>{
+        'mls_messages': <Object?>[
+          // Three items already exceed the cap; more would only slow the test.
+          for (var i = 0; i < min(limit, 3); i++)
+            <String, Object?>{
+              'id': 'mls_$i',
+              'conversation_id': 'conv_1',
+              'sender_account_id': 'acct_1',
+              'sender_device_id': 'dev_1',
+              'kind': 'commit',
+              'payload': payload,
+              'idempotency_key': 'idem_$i',
+              'sync_event_id': i + 1,
+              'created_at': '2026-10-22T00:00:00Z',
+            },
+        ],
+      });
+    });
+    final client = await _clientFor(server);
+    final page = await client.mlsMessages('token', limit: 200);
+    expect(page, hasLength(1));
+    expect(page.single.payload, hasLength(4 * 1024 * 1024));
+    expect(
+      server.requests.map((uri) => uri.queryParameters['limit']),
+      <String>['200', '100', '50', '25', '12', '6', '3', '1'],
     );
   });
 }

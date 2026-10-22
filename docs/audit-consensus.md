@@ -731,7 +731,21 @@ System), and confirms sign-out, invite revoke and backup replacement. The
 platform registers the scheme; the QR code is built locally from the link
 code. Open: localization needs `flutter_localizations` (dependency
 approval); the server still returns the unused `link_uri`; bundle IDs keep
-`private_messenger`. T44A remains.
+`private_messenger`.
+
+**Implementation note (T44A, 2026-10-22):** `mobile/lib/core/api_errors.dart`
+maps all 112 server error codes to typed kinds; a test greps the server and
+fails on drift, and `test/fixtures/api/v1` pins the list. Error bodies are read
+to at most 4 KB and keep only the code and a few integer fields. JSON replies
+are capped at 2 MB, or 16 MiB for replies that carry ciphertext (sync events,
+MLS messages, message envelopes); one item always fits under that cap, and
+paged ciphertext lists that exceed it are re-requested with half the limit, so
+large legal MLS payloads never become a retry loop. Attachment downloads stop
+at 50 MB and backup recovery at 100 MB. Timestamps are bounded (1970-9999,
+UTC). List paging stops at 100 pages, rejects a cursor that does not move, and
+never asks for more than 200. A failed refresh keeps the last good lists with
+a safe message. Tests use sentinels to prove bodies, ciphertext, recovery
+tokens and hostile codes never reach error text or `describeError`.
 
 ### I46 - Supported deployment hardening
 

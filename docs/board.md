@@ -233,7 +233,7 @@ task boundaries and orchestration rules are in
 | I41 | Implemented and checked (Stage 5, 2026-09-24; QA06, QA07, QA08); real-device wake matrix waits for G24 (D20) | Push registration and platform readiness | I36 |
 | I42 | T42A implemented and verified (QA03, 2026-09-24); T42B deferred by D16/D20, its design still needs approval then; conditional D03 | Authorized calls and native lifecycle | — |
 | I43 | T43A/T43B/T43C implemented; checks/evidence pending (Codex, 2026-08-14) | First-run and accessibility baseline | — |
-| I44 | T44B and T44C implemented and checked (2026-10-22); T44A in progress; localization needs dependency approval | Mobile and API quality | release blockers |
+| I44 | T44A, T44B and T44C implemented and checked (2026-10-22); localization needs dependency approval | Mobile and API quality | release blockers |
 | I45 | Implemented and checked (Stage 5, 2026-09-24: T45A, T45B, T45C, QA05, QA09) | Backup, restore and migration safety | I29, I39 |
 | I46 | T46 implemented and unit-checked (2026-10-22); hardened upload/backup/restore/push/TURN smoke still pending | Supported deployment hardening | — |
 | I47 | Prepared, conditional | Operational visibility and capacity evidence | I35, I36 |

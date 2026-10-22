@@ -22,6 +22,13 @@ class ApiClient {
   static const _requestTimeout = Duration(seconds: 30);
   static const _maxJsonResponseBytes = 2 * 1024 * 1024;
 
+  /// Cap for replies that carry ciphertext. One item always fits: an MLS
+  /// payload is at most 4 MiB (about 5.6 MB as base64) and a message
+  /// envelope at most 1 MiB. Paged ciphertext lists that exceed it are
+  /// re-requested with a smaller limit, so a page of large items never
+  /// turns into a retry loop.
+  static const _maxCiphertextResponseBytes = 16 * 1024 * 1024;
+
   /// The largest page the server serves; it replaces a larger limit with its
   /// default of 100, which would make a "short page" look like the end.
   static const _maxServerPageSize = 200;
@@ -40,6 +47,24 @@ class ApiClient {
 
   static int _pageLimit(int limit) =>
       limit.clamp(1, _maxServerPageSize).toInt();
+
+  /// Runs [request] with [limit], halving it while the reply is over
+  /// [_maxCiphertextResponseBytes]. A single item that is still too large
+  /// rethrows.
+  static Future<T> _shrinkingPage<T>(
+    int limit,
+    Future<T> Function(int limit) request,
+  ) async {
+    var current = _pageLimit(limit);
+    while (true) {
+      try {
+        return await request(current);
+      } on ApiResponseTooLargeException {
+        if (current <= 1) rethrow;
+        current = current ~/ 2;
+      }
+    }
+  }
 
   Future<Map<String, Object?>> setupStatus() async {
     return _jsonRequest('GET', '/api/v1/setup/status');
@@ -556,6 +581,7 @@ class ApiClient {
       'GET',
       '/api/v1/mls/messages/${Uri.encodeComponent(messageId)}',
       token: token,
+      maxResponseBytes: _maxCiphertextResponseBytes,
     );
     return _decode(() => MlsMessage.fromJson(_object(json, 'mls_message')));
   }
@@ -619,16 +645,20 @@ class ApiClient {
     int after = 0,
     int limit = 100,
   }) async {
-    final json = await _jsonRequest(
-      'GET',
-      Uri(
-        path: '/api/v1/mls/messages',
-        queryParameters: <String, String>{
-          'after': after.toString(),
-          'limit': _pageLimit(limit).toString(),
-        },
-      ).toString(),
-      token: token,
+    final json = await _shrinkingPage(
+      limit,
+      (pageLimit) => _jsonRequest(
+        'GET',
+        Uri(
+          path: '/api/v1/mls/messages',
+          queryParameters: <String, String>{
+            'after': after.toString(),
+            'limit': pageLimit.toString(),
+          },
+        ).toString(),
+        token: token,
+        maxResponseBytes: _maxCiphertextResponseBytes,
+      ),
     );
     return _rows(
       json,
@@ -728,16 +758,18 @@ class ApiClient {
     String? before,
     String? after,
   }) async {
-    final queryParameters = <String, String>{
-      'limit': _pageLimit(limit).toString(),
-      if (before != null && before.isNotEmpty) 'before': before,
-      if (after != null && after.isNotEmpty) 'after': after,
-    };
-    final path = Uri(
-      path: '/api/v1/conversations/$conversationId/messages',
-      queryParameters: queryParameters,
-    ).toString();
-    final json = await _jsonRequest('GET', path, token: token);
+    final json = await _shrinkingPage(limit, (pageLimit) {
+      final path = Uri(
+        path: '/api/v1/conversations/$conversationId/messages',
+        queryParameters: <String, String>{
+          'limit': pageLimit.toString(),
+          if (before != null && before.isNotEmpty) 'before': before,
+          if (after != null && after.isNotEmpty) 'after': after,
+        },
+      ).toString();
+      return _jsonRequest('GET', path,
+          token: token, maxResponseBytes: _maxCiphertextResponseBytes);
+    });
     return _rows(json, 'messages', ReceivedMessageEnvelope.fromJson);
   }
 
@@ -750,14 +782,17 @@ class ApiClient {
     int limit = 50,
     String? before,
   }) async {
-    final path = Uri(
-      path: '/api/v1/conversations/$conversationId/messages',
-      queryParameters: <String, String>{
-        'limit': _pageLimit(limit).toString(),
-        if (before != null && before.isNotEmpty) 'before': before,
-      },
-    ).toString();
-    final json = await _jsonRequest('GET', path, token: token);
+    final json = await _shrinkingPage(limit, (pageLimit) {
+      final path = Uri(
+        path: '/api/v1/conversations/$conversationId/messages',
+        queryParameters: <String, String>{
+          'limit': pageLimit.toString(),
+          if (before != null && before.isNotEmpty) 'before': before,
+        },
+      ).toString();
+      return _jsonRequest('GET', path,
+          token: token, maxResponseBytes: _maxCiphertextResponseBytes);
+    });
     final nextBefore = json['next_before'];
     return MessagePage(
       messages: _rows(json, 'messages', ReceivedMessageEnvelope.fromJson),
@@ -853,6 +888,7 @@ class ApiClient {
       'GET',
       '/api/v1/messages/${Uri.encodeComponent(messageId)}',
       token: token,
+      maxResponseBytes: _maxCiphertextResponseBytes,
     );
     return _decode(() => ReceivedMessageEnvelope.fromJson(json));
   }
@@ -862,14 +898,17 @@ class ApiClient {
     int after = 0,
     int limit = 100,
   }) async {
-    final path = Uri(
-      path: '/api/v1/sync/events',
-      queryParameters: <String, String>{
-        'after': after.toString(),
-        'limit': _pageLimit(limit).toString(),
-      },
-    ).toString();
-    final json = await _jsonRequest('GET', path, token: token);
+    final json = await _shrinkingPage(limit, (pageLimit) {
+      final path = Uri(
+        path: '/api/v1/sync/events',
+        queryParameters: <String, String>{
+          'after': after.toString(),
+          'limit': pageLimit.toString(),
+        },
+      ).toString();
+      return _jsonRequest('GET', path,
+          token: token, maxResponseBytes: _maxCiphertextResponseBytes);
+    });
     return _rows(json, 'events', SyncEvent.fromJson);
   }
 
@@ -1129,6 +1168,7 @@ class ApiClient {
     String? token,
     Map<String, Object?>? body,
     Map<String, String> extraHeaders = const <String, String>{},
+    int maxResponseBytes = _maxJsonResponseBytes,
   }) async {
     final uri = Uri.parse(baseUrl).resolve(path);
     final request =
@@ -1142,20 +1182,21 @@ class ApiClient {
       request.write(jsonEncode(body));
     }
     final response = await request.close().timeout(_requestTimeout);
-    return _readJsonResponse(response);
+    return _readJsonResponse(response, maxResponseBytes);
   }
 
   /// Reads a JSON object response. A non-2xx status becomes an
   /// [ApiException] built from at most [ApiException.maxErrorBodyBytes];
-  /// a 2xx body is capped at [_maxJsonResponseBytes] and must be a UTF-8
+  /// a 2xx body is capped at [maxBytes] and must be a UTF-8
   /// JSON object (or empty). No body text is kept in a thrown error.
   Future<Map<String, Object?>> _readJsonResponse(
-    HttpClientResponse response,
-  ) async {
+    HttpClientResponse response, [
+    int maxBytes = _maxJsonResponseBytes,
+  ]) async {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw await _apiError(response);
     }
-    final bytes = await _readBounded(response, _maxJsonResponseBytes);
+    final bytes = await _readBounded(response, maxBytes);
     if (bytes.isEmpty) {
       return <String, Object?>{};
     }
