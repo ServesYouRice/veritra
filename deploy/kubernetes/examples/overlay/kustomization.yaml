@@ -1,0 +1,46 @@
+# Example infra-repository overlay for Veritra. In infra, point `resources`
+# at a copy of deploy/kubernetes/base, or at this repository through a Flux
+# GitRepository pinned to a release commit.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+images:
+  # scripts/release-image.sh --infra-dir <this folder> rewrites the digest
+  # line below.
+  - name: ghcr.io/servesyourice/veritra
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+configMapGenerator:
+  - name: veritra-config
+    namespace: veritra
+    literals:
+      - PRIVATE_MESSENGER_INSTANCE_NAME=Veritra
+      # - PRIVATE_MESSENGER_VAPID_SUBSCRIBER=mailto:owner@example.com
+      # - PRIVATE_MESSENGER_VAPID_PUBLIC_KEY=...
+      # - PRIVATE_MESSENGER_TURN_URLS=turns://turn.example.com:5349
+patches:
+  - target:
+      kind: IngressRoute
+      name: veritra
+    patch: |-
+      - op: replace
+        path: /spec/routes/0/match
+        value: Host(`chat.example.org`)
+  - target:
+      kind: Certificate
+      name: veritra
+    patch: |-
+      - op: replace
+        path: /spec/dnsNames/0
+        value: chat.example.org
+  # Secret files from the SOPS-encrypted veritra-secrets Secret. Add one
+  # variable per key present; remove the setup token after owner setup.
+  - target:
+      kind: Deployment
+      name: veritra
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: PRIVATE_MESSENGER_SETUP_TOKEN_FILE
+          value: /run/secrets/veritra/setup-token

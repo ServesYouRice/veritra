@@ -1,0 +1,36 @@
+# k3s configures its bundled Traefik through a HelmChartConfig in
+# kube-system. This belongs in the infra repository, not in Veritra's
+# namespace. Values follow the Traefik Helm chart that ships with Traefik v3;
+# check them against the chart version your k3s release bundles.
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    ports:
+      web:
+        redirections:
+          entryPoint:
+            to: websecure
+            scheme: https
+            permanent: true
+      websecure:
+        transport:
+          respondingTimeouts:
+            # Traefik v3 defaults to 60s, which cuts uploads short. Veritra's
+            # transfer deadline is 15 minutes; leave a minute of slack.
+            readTimeout: 16m
+            writeTimeout: 0s
+            idleTimeout: 180s
+    service:
+      spec:
+        # Keep the real client address. With the default (Cluster) the node
+        # rewrites it, Traefik sees one address for everybody, and all
+        # Veritra users share one rate limit.
+        externalTrafficPolicy: Local
+    logs:
+      access:
+        # Off by default. If enabled, drop URIs and X-Recovery-Token.
+        enabled: false

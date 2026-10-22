@@ -5,6 +5,13 @@ rejects a second writer with `.veritra-server.lock`. If startup reports a stale
 lock after a hard crash, verify that no Veritra process uses the directory
 before removing it.
 
+`serve` also locks the real database file and blob directory (symlinks and
+relative paths resolved), so two servers whose `PRIVATE_MESSENGER_DB_PATH` or
+`PRIVATE_MESSENGER_STORAGE_PATH` overrides meet in one place cannot both
+start. A blob directory that contains the database or the data directory is
+rejected. These locks are released by the operating system when the process
+exits.
+
 ## First setup and secret rotation
 
 Set `PRIVATE_MESSENGER_ENV=production` and generate a 32-byte base64url
@@ -40,6 +47,19 @@ wake events. Calls require a self-hosted coturn-compatible shared secret via
 `PRIVATE_MESSENGER_TURN_URLS` and `PRIVATE_MESSENGER_TURN_SHARED_SECRET`; TURN
 relays see DTLS-SRTP ciphertext, not call media plaintext.
 
+## Secrets from files
+
+Each secret can be read from a file instead of the environment: set the
+variable with a `_FILE` suffix to the file's path and leave the plain one
+unset. This works for `PRIVATE_MESSENGER_SETUP_TOKEN`,
+`PRIVATE_MESSENGER_VAPID_PRIVATE_KEY`, `PRIVATE_MESSENGER_FCM_PRIVATE_KEY`,
+`PRIVATE_MESSENGER_APNS_PRIVATE_KEY` and
+`PRIVATE_MESSENGER_TURN_SHARED_SECRET`. Setting both forms, or naming a
+missing, empty or larger-than-64-KiB file, stops startup; errors name the
+variable, never the value. Use Docker or Kubernetes secrets, or systemd
+`LoadCredential=` (see `deploy/systemd/private-messenger.service`), so
+secrets stay out of `docker inspect`, process environments and env files.
+
 ## Mobile first-run connection
 
 The mobile connect flow starts with an empty server origin and accepts HTTPS
@@ -54,7 +74,9 @@ QR/deep-link origin without explicit confirmation and a successful probe.
 For a public server, use the Compose+Caddy profile or another reverse proxy
 with a trusted certificate. For a private LAN server, Caddy's `tls internal`
 mode is the supported direction; install the corresponding CA certificate on
-the device. iOS also declares local-network usage so the OS can present its
+the device. If you own a domain, a DNS-01 certificate (Caddy's DNS plugins,
+or cert-manager on Kubernetes) gives a LAN-only hostname a publicly trusted
+certificate with no inbound port and no device CA install. iOS also declares local-network usage so the OS can present its
 LAN permission prompt.
 
 **Demo builds only (D11, D12).** `mobile/lib/main_demo.dart`, built with
@@ -108,9 +130,99 @@ and scope metadata. The mobile client writes the bounded pages to a local
    matching pre-upgrade backup, and reinstall its matching binary.
 
 Shutdown marks `/readyz` unavailable first, closes realtime connections, lets
-active HTTP uploads finish within the server's 25-second shutdown deadline,
-and then closes storage. Clients recover missed realtime events through durable
-sync.
+active HTTP requests and background workers finish within
+`PRIVATE_MESSENGER_SHUTDOWN_TIMEOUT` (default 25s, 5s to 15m), and then
+closes storage. Clients recover missed realtime events through durable sync.
+Uploads and downloads may run up to 15 minutes, so a transfer still running
+at the deadline is cut and must be retried. The supervisor must wait longer
+than the timeout: the shipped Compose (`stop_grace_period: 40s`), systemd
+(`TimeoutStopSec=40`) and Kubernetes (`terminationGracePeriodSeconds: 40`)
+files fit the default. To never cut a transfer, set the timeout to `15m` and
+each grace to about `15m15s`; a deploy then waits for the longest transfer.
+
+## Release image
+
+`scripts/release-image.sh` is the one local release command (no hosted CI).
+It refuses a dirty tree; runs gofmt, go vet, the server tests, govulncheck
+and `scripts/audit-rust.sh`; builds `server/Dockerfile` from `git archive
+HEAD` (only committed files reach the build); scans the image with Trivy and
+stops on any HIGH or CRITICAL finding or embedded secret; pushes
+`ghcr.io/servesyourice/veritra:<commit>`; and prints the digest. With
+`--infra-dir <folder>` it also writes that digest into the folder's
+`kustomization.yaml` and commits it there; push the infra repository to
+deploy. Log in first with `docker login ghcr.io`. It needs bash, git, Go,
+cargo-audit, Docker with buildx and Trivy; on Windows run it from WSL (or Git
+Bash with Docker Desktop). `--no-push` builds and scans only.
+
+## Docker Compose
+
+`deploy/docker-compose.yml` runs a released image by digest: set
+`VERITRA_IMAGE=ghcr.io/servesyourice/veritra@sha256:<digest>` (for
+example in `deploy/.env`); it refuses to start without it. The containers run
+as UID 65532 with a read-only root filesystem, no capabilities and
+`no-new-privileges`; only `/data` (and a small `/tmp`) is writable. To build
+from a checkout for development, add the override:
+`VERITRA_IMAGE=veritra-server:dev docker compose -f docker-compose.yml -f
+docker-compose.build.yml up --build`. That path is never a supported
+deployment.
+
+## Kubernetes (k3s)
+
+`deploy/kubernetes/base` is a kustomize base for a single-node k3s cluster
+managed by Flux from a separate infra repository; `examples/overlay` shows
+the overlay that sets the image digest, hostname, settings and secret files.
+The base holds:
+
+- namespace `veritra` with Pod Security `restricted` enforced, and a service
+  account with no token mounted;
+- one `veritra-data` volume (ReadWriteOnce, node-local; SQLite must not sit
+  on NFS) sized for the data plus seven backups;
+- one Deployment replica with `strategy: Recreate`, so the old pod stops
+  before the new one starts (expect a short outage per deploy; clients
+  reconnect); `/livez`, `/readyz` probes; non-root, read-only root, all
+  capabilities dropped, seccomp `RuntimeDefault`;
+- a Traefik `IngressRoute` with an HSTS headers middleware and a cert-manager
+  `Certificate` (Cloudflare DNS-01, so the DNS-only hostname works);
+- default-deny network policies that admit only Traefik to the server, DNS,
+  HTTPS to public addresses for push providers, and HTTPS for the R2 jobs;
+- the backup and restore-drill CronJobs described below.
+
+Cluster-wide pieces live in infra; `examples/` has one of each:
+`traefik-helmchartconfig.yaml` raises the websecure read timeout to 16
+minutes (Traefik v3 defaults to 60s, which cuts uploads), redirects HTTP to
+HTTPS and sets `externalTrafficPolicy: Local` so Traefik sees real client
+addresses; `cluster-issuer.yaml`; `secrets.example.yaml` (encrypt with SOPS).
+Traefik streams bodies without a size limit and keeps the `Host` header; the
+server enforces its own 100 MiB cap.
+
+`PRIVATE_MESSENGER_TRUSTED_PROXIES` is `10.42.0.0/16`, k3s's default pod
+network; change it if the cluster uses another `--cluster-cidr`. If it, or
+the client address reaching Traefik, is wrong, all users share one rate
+limit. After the first deploy, check that two clients on different networks
+are limited separately.
+
+## Off-host backups in R2
+
+The `veritra-backup` CronJob runs daily at 03:15 UTC on the server's node.
+Its first container runs `scheduled-backup` (backup, restore drill, keep 7)
+next to the live server; that is safe because the copy uses SQLite's
+`VACUUM INTO` and takes no server lock. A second container, rclone pinned by
+digest, then copies completed `veritra-*` backups to R2 with `--checksum`
+(MD5 verified on upload) and `--immutable`. Veritra itself has no S3 code or
+R2 credentials; only rclone reads the `veritra-r2` secret, and it mounts the
+data volume read-only. rclone copies and never deletes, so set an R2
+lifecycle rule to expire old copies and a bucket lock shorter than that rule.
+Use an R2 token limited to that one bucket's objects.
+
+The `veritra-restore-drill` CronJob runs monthly (or on demand with
+`kubectl -n veritra create job --from=cronjob/veritra-restore-drill drill-1`):
+it downloads the newest R2 backup into scratch space and runs
+`verify-backup` on it. A failed Job is a failed drill; alert on it, and on a
+failed backup Job. Run the drill once before the server holds real
+conversations. For a real restore, use `examples/restore-job.yaml`: suspend
+Flux, scale the server to zero, restore a named backup into the volume, then
+scale back up.
+
 
 ## Retention capacity
 

@@ -1,0 +1,17 @@
+# Development only: build the server image from this checkout instead of
+# pulling a released digest. Never use this for a supported deployment.
+#
+#   cd deploy
+#   VERITRA_IMAGE=veritra-server:dev docker compose \
+#     -f docker-compose.yml -f docker-compose.build.yml up --build
+services:
+  messenger:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    pull_policy: build
+  backup:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    pull_policy: build

@@ -1,0 +1,46 @@
+# Traefik (bundled with k3s) terminates TLS for the DNS-only hostname.
+#
+# - Bodies: no Buffering middleware on purpose. Traefik streams request
+#   bodies and sets no size limit by default; the server enforces its own caps
+#   (100 MiB for backups, 50 MiB for attachments). Buffering would spool each
+#   upload in Traefik first.
+# - Transfers: Traefik v3's websecure read timeout defaults to 60s, which cuts
+#   uploads short. Raise it above the server's 15-minute transfer deadline in
+#   k3s's HelmChartConfig (../examples/traefik-helmchartconfig.yaml).
+# - Host header: passed through unchanged (passHostHeader defaults to true).
+# - Client address: Traefik drops X-Forwarded-For from untrusted clients and
+#   sets its own; the server trusts only the pod network (deployment.yaml).
+# - Keep Traefik access logs off for this route, or drop request URIs and the
+#   X-Recovery-Token header from them.
+#
+# The overlay replaces veritra.example.com with the real hostname. Pick it
+# once: clients bind device identity to the exact server address.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: veritra
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`veritra.example.com`)
+      middlewares:
+        - name: veritra-headers
+      services:
+        - name: veritra
+          port: 8080
+  tls:
+    secretName: veritra-tls
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: veritra-headers
+spec:
+  headers:
+    # The server sends HSTS only when it terminates TLS itself.
+    stsSeconds: 63072000
+    stsIncludeSubdomains: true
+    contentTypeNosniff: true
+    referrerPolicy: no-referrer

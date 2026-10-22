@@ -191,6 +191,11 @@ func serve(ctx context.Context, cfg config.Config) error {
 		return err
 	}
 	defer lock.Release()
+	resources, err := acquireResourceLocks(cfg)
+	if err != nil {
+		return err
+	}
+	defer resources.Release()
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	level := slog.LevelInfo

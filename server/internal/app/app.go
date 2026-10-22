@@ -182,13 +182,21 @@ func (a *App) Serve(ctx context.Context) error {
 			IdleTimeout:       30 * time.Second,
 		}
 	}
+	// One budget covers in-flight requests and background workers; they drain
+	// concurrently. The supervisor's stop grace (Compose stop_grace_period,
+	// systemd TimeoutStopSec, Kubernetes terminationGracePeriodSeconds) must
+	// exceed it.
+	shutdownTimeout := a.Config.ShutdownTimeout
+	if shutdownTimeout <= 0 {
+		shutdownTimeout = config.DefaultShutdownTimeout
+	}
 	serveCtx, cancelServe := context.WithCancel(ctx)
 	defer cancelServe()
 	go func() {
 		<-serveCtx.Done()
 		a.ready.Store(false)
 		a.Hub.Drain()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
 		if managementServer != nil {
@@ -212,7 +220,7 @@ func (a *App) Serve(ctx context.Context) error {
 	}
 	err := <-errCh
 	cancelServe()
-	workerWait := time.NewTimer(25 * time.Second)
+	workerWait := time.NewTimer(shutdownTimeout)
 	select {
 	case <-wakeWorkersDone:
 		if !workerWait.Stop() {
