@@ -247,9 +247,9 @@ task boundaries and orchestration rules are in
 | I43 | T43A/T43B/T43C implemented; checks/evidence pending (Codex, 2026-08-14) | First-run and accessibility baseline | — |
 | I44 | T44A, T44B and T44C implemented and checked (2026-10-22); English localization scaffolding in place (D30), most screens still to move | Mobile and API quality | release blockers |
 | I45 | Implemented and checked (Stage 5, 2026-09-24: T45A, T45B, T45C, QA05, QA09) | Backup, restore and migration safety | I29, I39 |
-| I46 | T46 implemented and unit-checked (2026-10-22); hardened upload/backup/restore/push/TURN smoke still pending | Supported deployment hardening | — |
+| I46 | T46 implemented and unit-checked (2026-10-22); instance lock released on crash, session writes throttled, Kubernetes base, R2 backups and local release command added; hardened upload/backup/restore/push/TURN smoke still pending | Supported deployment hardening | — |
 | I47 | Prepared, conditional | Operational visibility and capacity evidence | I35, I36 |
-| I48 | T48A implemented and checked (2026-09-27); T48B fuzz evidence done (2026-10-22), Autobahn, parser decision and LAN TLS pending | Transport, realtime and logging hardening | I32 |
+| I48 | T48A implemented and checked (2026-09-27); T48B implemented and checked (2026-10-22): parser kept and bounded, Autobahn run, LAN TLS path documented; real-device TLS check waits for G24 | Transport, realtime and logging hardening | I32 |
 | I49 | T49A/T49B measured (2026-10-22, `testing/evidence/benchmarks-t49.md`); six misses proposed as child cards; T49C/T49D open | Performance and architecture work | correctness cards |
 | I50 | Deferred | Product and ecosystem backlog | D06 / mobile release |
 | I51 | Implemented and checked (Stage 5, 2026-09-24, D28) | MLS membership changes after creation, linked devices, per-device key-package claims, join cursor, epoch-ordered commits | I30, I34 |

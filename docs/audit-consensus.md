@@ -777,6 +777,18 @@ workers. CI compose-smoke uses the build override and asserts the hardened
 profile. Open: hardened upload, backup, restore, push and TURN smoke on a
 real host; Caddy under read-only has not been run.
 
+**Follow-up (hosting handbook, 2026-10-22):** the instance lock is an OS lock
+released on crash (no restart loop after SIGKILL or OOM); the restore drill
+stages under the data directory, so no `/tmp` is needed; authenticated
+requests write the session at most once a minute and device last-seen at most
+every five minutes, with validation as strict as before.
+`deploy/kubernetes/` adds a kustomize base for single-node k3s (Recreate, PSA
+restricted, default-deny network policies, Traefik timeouts, cert-manager, a
+backup CronJob that copies to R2 with rclone, and a monthly restore drill from
+R2), validated with kustomize and kubeconform. `scripts/release-image.sh` is
+the local release command (checks, govulncheck, cargo audit, Trivy, digest
+into the infra repo). Open: a run on a real k3s host.
+
 ### I47 - Operational visibility and capacity evidence
 
 **Decision:** Merge Codex DEP-12/TEST-07/PERF-10/ARCH-08/NTH-03 with Opus H4.
@@ -808,17 +820,18 @@ malformed frames stay bounded, logs contain no dynamic identifier/capability,
 proxy spoof tests fail closed and a real mobile client can establish the
 documented TLS path.
 
-**Implementation note (T48B evidence, 2026-10-22):** The parser's inbound
-bounds are documented in `server/internal/realtime/websocket.go` (1 MiB frame
-and message, minimal lengths, control frames of 125 bytes or less and
-unfragmented, zero reserved bits, masking, UTF-8 text, 4 queued pings, 60 s
-frame deadline). `ws_fuzz_test.go` adds a differential fuzz target against an
-independent RFC 6455 reference reader, a structured fragment/control target,
-writer and handshake targets, and edge-of-limit table tests. About 4.1M execs
-across five targets found nothing; a deliberately loosened limit was caught.
-Open: Autobahn (no Docker daemon here), the keep/replace decision, and the LAN
-TLS trust path. Autobahn will likely flag that protocol errors close without a
-1002/1007/1009 close frame and that client close frames are not echoed.
+**Implementation note (T48B, 2026-10-22):** the in-house parser is kept.
+It now closes with a status code instead of dropping TCP (1002 protocol,
+1007 bad UTF-8, 1009 too big, 1001/1008 on shutdown or session expiry),
+echoes client close codes, caps inbound messages at 64 KiB (the app sends no
+data frames), checks fragmented text as it arrives, queues up to 16 pings
+(oldest dropped) and reads bytes buffered with the handshake. Fuzz targets
+cover frames, fragmentation against a reference model, control frames,
+UTF-8, server frame writers and handshake headers; 100 RFC 6455 cases run
+over TCP. Autobahn: sections 1-7 and 10 pass; the only failures are 9.x
+messages over the deliberate 64 KiB cap (`testing/evidence/T48B-websocket-parser.md`).
+LAN TLS: no custom trust or TOFU; DNS-01 certificates are the supported path
+(`operations.md`). The real-device TLS check stays under G24.
 
 **Implementation note (T48A, 2026-09-27, after the required advisor review):**
 The mobile sync socket's `dispose()` is now awaitable. It aborts a handshake

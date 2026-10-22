@@ -1,0 +1,18 @@
+# Issued by cert-manager through Cloudflare DNS-01, so it works even though
+# the hostname is DNS-only. The ClusterIssuer lives in the infra repository;
+# ../examples/cluster-issuer.yaml shows one.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: veritra
+spec:
+  secretName: veritra-tls
+  dnsNames:
+    - veritra.example.com
+  issuerRef:
+    kind: ClusterIssuer
+    name: letsencrypt-cloudflare
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always

@@ -1,0 +1,14 @@
+# The whole data directory: SQLite database, encrypted blobs, and the
+# scheduled backups (seven full copies by default), so size it for about
+# eight times the live data plus growth. Use a node-local class (k3s
+# local-path is the default); SQLite needs a local filesystem, never NFS.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: veritra-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 40Gi

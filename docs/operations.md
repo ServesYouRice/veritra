@@ -1,9 +1,13 @@
 # Production operations
 
 Veritra supports one server process and one local data directory. The server
-rejects a second writer with `.veritra-server.lock`. If startup reports a stale
-lock after a hard crash, verify that no Veritra process uses the directory
-before removing it.
+rejects a second writer with an OS lock on `.veritra-server.lock`. The kernel
+releases it if the process dies (SIGKILL, OOM, node loss), so a leftover file
+never blocks a restart; do not delete it by hand. Keep the data directory on
+local disk or a block volume (flock is unreliable on NFS/SMB). Backup
+verification stages its restore drill under `.veritra-restore-drill/` in the
+data directory, so no `/tmp` is needed; leave room for one extra restored
+copy and keep that folder out of external backups.
 
 ## First setup and secret rotation
 
@@ -132,8 +136,8 @@ against `SHA256SUMS` and its attestation.
 **Hardening.** The Compose services run as uid 65532 with a read-only root
 filesystem, all capabilities dropped, `no-new-privileges` and a small
 in-memory `/tmp`. The data volume is the only writable application path. The
-backup service keeps its restore-drill scratch on that volume
-(`TMPDIR=/data/.tmp`) and has no network; its `/offsite` mount must be
+backup service keeps its restore-drill scratch on that volume and has no
+network; its `/offsite` mount must be
 writable by uid 65532. Caddy keeps only `NET_BIND_SERVICE`. The systemd units
 use `ProtectSystem=strict` with the state directory as the only
 `ReadWritePaths`, an empty capability set, private `/tmp` and devices, and a
@@ -162,6 +166,89 @@ directory, `serve` holds OS locks on `<database>.veritra-server.lock` and
 `<blob dir>/.veritra-server.lock`, so two data directories cannot share one
 database or blob directory. These two locks are released by the OS when the
 process exits and never go stale.
+
+## Release image
+
+`scripts/release-image.sh` is the one local release command (no hosted CI).
+It refuses a dirty tree; runs gofmt, go vet, the server tests, govulncheck
+and `scripts/audit-rust.sh`; builds `server/Dockerfile` from `git archive
+HEAD` (only committed files reach the build); scans the image with Trivy and
+stops on any HIGH or CRITICAL finding or embedded secret; pushes
+`ghcr.io/servesyourice/veritra:<commit>`; and prints the digest. With
+`--infra-dir <folder>` it also writes that digest into the folder's
+`kustomization.yaml` and commits it there; push the infra repository to
+deploy. Log in first with `docker login ghcr.io`. It needs bash, git, Go,
+cargo-audit, Docker with buildx and Trivy; on Windows run it from WSL (or Git
+Bash with Docker Desktop). `--no-push` builds and scans only.
+
+
+## Kubernetes (k3s)
+
+`deploy/kubernetes/base` is a kustomize base for a single-node k3s cluster
+managed by Flux from a separate infra repository; `examples/overlay` shows
+the overlay that sets the image digest, hostname, settings and secret files.
+The base holds:
+
+- namespace `veritra` with Pod Security `restricted` enforced, and a service
+  account with no token mounted;
+- one `veritra-data` volume (ReadWriteOnce, node-local; SQLite must not sit
+  on NFS) sized for the data plus seven backups;
+- one Deployment replica with `strategy: Recreate`, so the old pod stops
+  before the new one starts (expect a short outage per deploy; clients
+  reconnect); `/livez`, `/readyz` probes; non-root, read-only root, all
+  capabilities dropped, seccomp `RuntimeDefault`;
+- a Traefik `IngressRoute` with an HSTS headers middleware and a cert-manager
+  `Certificate` (Cloudflare DNS-01, so the DNS-only hostname works);
+- default-deny network policies that admit only Traefik to the server, DNS,
+  HTTPS to public addresses for push providers, and HTTPS for the R2 jobs;
+- the backup and restore-drill CronJobs described below.
+
+Cluster-wide pieces live in infra; `examples/` has one of each:
+`traefik-helmchartconfig.yaml` raises the websecure read timeout to 16
+minutes (Traefik v3 defaults to 60s, which cuts uploads), redirects HTTP to
+HTTPS and sets `externalTrafficPolicy: Local` so Traefik sees real client
+addresses; `cluster-issuer.yaml`; `secrets.example.yaml` (encrypt with SOPS).
+Traefik streams bodies without a size limit and keeps the `Host` header; the
+server enforces its own 100 MiB cap.
+
+`PRIVATE_MESSENGER_TRUSTED_PROXIES` is `10.42.0.0/16`, k3s's default pod
+network; change it if the cluster uses another `--cluster-cidr`. If it, or
+the client address reaching Traefik, is wrong, all users share one rate
+limit. After the first deploy, check that two clients on different networks
+are limited separately.
+
+
+## TLS on a LAN install
+
+The app has no custom trust, no trust-on-first-use and no way to skip TLS checks, so a LAN server needs a certificate the phone already trusts.
+
+1. **Recommended: a real certificate through DNS-01.** Use a hostname in a domain you own (for example `chat.home.example.com`), point it at the server's LAN address in local DNS (or a public record to the private IP), and get a public CA certificate with a DNS-01 challenge: Caddy with a DNS provider plugin, or a cert-manager `ClusterIssuer` with a DNS-01 solver. The server does not need to be reachable from the internet. Raw IP addresses and `.local` names are not supported.
+2. **Your own CA in the OS trust store.** Issue the server certificate from a private CA (`step-ca`, `mkcert`); the device owner installs the CA. iOS: install the profile, then enable full trust in Certificate Trust Settings. Android 7+ does not trust user-added CAs for apps, so use option 1 on Android unless the CA is installed as a system CA by device management.
+
+Never use self-signed leaf certificates, or plain HTTP outside loopback demo builds.
+
+
+## Off-host backups in R2
+
+The `veritra-backup` CronJob runs daily at 03:15 UTC on the server's node.
+Its first container runs `scheduled-backup` (backup, restore drill, keep 7)
+next to the live server; that is safe because the copy uses SQLite's
+`VACUUM INTO` and takes no server lock. A second container, rclone pinned by
+digest, then copies completed `veritra-*` backups to R2 with `--checksum`
+(MD5 verified on upload) and `--immutable`. Veritra itself has no S3 code or
+R2 credentials; only rclone reads the `veritra-r2` secret, and it mounts the
+data volume read-only. rclone copies and never deletes, so set an R2
+lifecycle rule to expire old copies and a bucket lock shorter than that rule.
+Use an R2 token limited to that one bucket's objects.
+
+The `veritra-restore-drill` CronJob runs monthly (or on demand with
+`kubectl -n veritra create job --from=cronjob/veritra-restore-drill drill-1`):
+it downloads the newest R2 backup into scratch space and runs
+`verify-backup` on it. A failed Job is a failed drill; alert on it, and on a
+failed backup Job. Run the drill once before the server holds real
+conversations. For a real restore, use `examples/restore-job.yaml`: suspend
+Flux, scale the server to zero, restore a named backup into the volume, then
+scale back up.
 
 ## Retention capacity
 
