@@ -1,9 +1,13 @@
 # Production operations
 
 Veritra supports one server process and one local data directory. The server
-rejects a second writer with `.veritra-server.lock`. If startup reports a stale
-lock after a hard crash, verify that no Veritra process uses the directory
-before removing it.
+rejects a second writer with an OS lock on `.veritra-server.lock`. The kernel
+releases it if the process dies (SIGKILL, OOM, node loss), so a leftover file
+never blocks a restart; do not delete it by hand. Keep the data directory on
+local disk or a block volume (flock is unreliable on NFS/SMB). Backup
+verification stages its restore drill under `.veritra-restore-drill/` in the
+data directory, so no `/tmp` is needed; leave room for one extra restored
+copy and keep that folder out of external backups.
 
 `serve` also locks the real database file and blob directory (symlinks and
 relative paths resolved), so two servers whose `PRIVATE_MESSENGER_DB_PATH` or
@@ -200,6 +204,15 @@ network; change it if the cluster uses another `--cluster-cidr`. If it, or
 the client address reaching Traefik, is wrong, all users share one rate
 limit. After the first deploy, check that two clients on different networks
 are limited separately.
+
+## TLS on a LAN install
+
+The app has no custom trust, no trust-on-first-use and no way to skip TLS checks, so a LAN server needs a certificate the phone already trusts.
+
+1. **Recommended: a real certificate through DNS-01.** Use a hostname in a domain you own (for example `chat.home.example.com`), point it at the server's LAN address in local DNS (or a public record to the private IP), and get a public CA certificate with a DNS-01 challenge: Caddy with a DNS provider plugin, or a cert-manager `ClusterIssuer` with a DNS-01 solver. The server does not need to be reachable from the internet. Raw IP addresses and `.local` names are not supported.
+2. **Your own CA in the OS trust store.** Issue the server certificate from a private CA (`step-ca`, `mkcert`); the device owner installs the CA. iOS: install the profile, then enable full trust in Certificate Trust Settings. Android 7+ does not trust user-added CAs for apps, so use option 1 on Android unless the CA is installed as a system CA by device management.
+
+Never use self-signed leaf certificates, or plain HTTP outside loopback demo builds.
 
 ## Off-host backups in R2
 
