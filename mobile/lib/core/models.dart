@@ -28,7 +28,7 @@ class EnrollmentReservation {
         id: json['id'] as String,
         accountId: json['account_id'] as String,
         deviceId: json['device_id'] as String,
-        challenge: base64Decode(json['challenge'] as String),
+        challenge: _base64(json['challenge'] as String),
         protocolVersion: json['protocol_version'] as String?,
         linkNonce: _decodeOptionalBytes(json['link_nonce']),
         existingDeviceId: json['existing_device_id'] as String?,
@@ -36,8 +36,18 @@ class EnrollmentReservation {
       );
 }
 
+/// base64 decode whose failure does not carry the input: the dart:convert
+/// [FormatException] keeps the whole source string, which may be ciphertext.
+List<int> _base64(String value) {
+  try {
+    return base64Decode(value);
+  } on FormatException {
+    throw const FormatException('invalid binary field');
+  }
+}
+
 List<int>? _decodeOptionalBytes(Object? value) =>
-    value is String && value.isNotEmpty ? base64Decode(value) : null;
+    value is String && value.isNotEmpty ? _base64(value) : null;
 
 class EnrollmentCredential {
   const EnrollmentCredential({
@@ -369,7 +379,7 @@ class DeviceKeyPackage {
         accountId: json['account_id'] as String? ?? '',
         keyPackage: _decodeModelBytes(json['key_package']),
         ciphersuite: json['ciphersuite'] as String,
-        expiresAt: DateTime.parse(json['expires_at'] as String).toUtc(),
+        expiresAt: _parseStrictTime(json['expires_at']),
       );
 }
 
@@ -411,7 +421,7 @@ class MlsMessage {
         payload: _decodeModelBytes(json['payload']),
         idempotencyKey: json['idempotency_key'] as String,
         syncEventId: (json['sync_event_id'] as num).toInt(),
-        createdAt: DateTime.parse(json['created_at'] as String).toUtc(),
+        createdAt: _parseStrictTime(json['created_at']),
       );
 }
 
@@ -443,10 +453,8 @@ class MlsRevocation {
         coordinatorDeviceId: json['coordinator_device_id'] as String,
         state: json['state'] as String,
         commitMessageId: json['commit_message_id'] as String?,
-        requestedAt: DateTime.parse(json['requested_at'] as String).toUtc(),
-        completedAt: json['completed_at'] == null
-            ? null
-            : DateTime.parse(json['completed_at'] as String).toUtc(),
+        requestedAt: _parseStrictTime(json['requested_at']),
+        completedAt: _parseStrictOptionalTime(json['completed_at']),
       );
 }
 
@@ -480,7 +488,7 @@ class AttachmentEnvelope {
         ciphertextSha256: json['ciphertext_sha256'] as String,
         sizeBytes: (json['size_bytes'] as num).toInt(),
         cryptoMetadata: json['crypto_metadata'],
-        createdAt: DateTime.parse(json['created_at'] as String).toUtc(),
+        createdAt: _parseStrictTime(json['created_at']),
       );
 }
 
@@ -521,13 +529,9 @@ class CallSession {
         version: (json['version'] as num).toInt(),
         metadata:
             Map<String, Object?>.from(json['metadata'] as Map? ?? const {}),
-        createdAt: DateTime.parse(json['created_at'] as String).toUtc(),
-        endedAt: json['ended_at'] == null
-            ? null
-            : DateTime.parse(json['ended_at'] as String).toUtc(),
-        expiresAt: json['expires_at'] == null
-            ? null
-            : DateTime.parse(json['expires_at'] as String).toUtc(),
+        createdAt: _parseStrictTime(json['created_at']),
+        endedAt: _parseStrictOptionalTime(json['ended_at']),
+        expiresAt: _parseStrictOptionalTime(json['expires_at']),
       );
 }
 
@@ -608,7 +612,7 @@ class ReceivedMessageEnvelope {
 
   static List<int> _decodeBytes(Object? value) {
     if (value is String) {
-      return base64Decode(value);
+      return _base64(value);
     }
     if (value is List) {
       return value.whereType<int>().toList();
@@ -776,15 +780,36 @@ String? _nonEmpty(Object? value) {
   return null;
 }
 
-DateTime? _parseOptionalTime(Object? value) {
-  if (value is String && value.isNotEmpty) {
-    return DateTime.tryParse(value);
+/// Longest timestamp text accepted; RFC 3339 with nanoseconds and an offset
+/// fits in 35 characters.
+const int _maxTimestampLength = 40;
+
+/// Parses a server timestamp into UTC, or null when it is absent, not a
+/// string, too long, or outside years 1970-9999 (card T44A).
+DateTime? _boundedTime(Object? value) {
+  if (value is! String || value.isEmpty || value.length > _maxTimestampLength) {
+    return null;
   }
-  return null;
+  final parsed = DateTime.tryParse(value)?.toUtc();
+  if (parsed == null || parsed.year < 1970 || parsed.year > 9999) {
+    return null;
+  }
+  return parsed;
 }
 
+DateTime? _parseOptionalTime(Object? value) => _boundedTime(value);
+
+/// A timestamp the protocol requires; a missing or malformed one fails the
+/// row with a [FormatException] that does not echo the value.
+DateTime _parseStrictTime(Object? value) =>
+    _boundedTime(value) ?? (throw const FormatException('invalid timestamp'));
+
+/// Optional, but when present it must be valid.
+DateTime? _parseStrictOptionalTime(Object? value) =>
+    value == null ? null : _parseStrictTime(value);
+
 List<int> _decodeModelBytes(Object? value) {
-  if (value is String) return base64Decode(value);
+  if (value is String) return _base64(value);
   if (value is List) return value.whereType<int>().toList(growable: false);
   throw const FormatException('invalid binary field');
 }
@@ -793,15 +818,8 @@ List<int> _decodeModelBytes(Object? value) {
 /// malformed row from the server must not throw during model construction
 /// and blank an entire list; fall back to the Unix epoch as an obviously
 /// wrong sentinel instead.
-DateTime _parseRequiredTime(Object? value) {
-  if (value is String && value.isNotEmpty) {
-    final parsed = DateTime.tryParse(value);
-    if (parsed != null) {
-      return parsed;
-    }
-  }
-  return DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
-}
+DateTime _parseRequiredTime(Object? value) =>
+    _boundedTime(value) ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
 
 class Session {
   const Session({

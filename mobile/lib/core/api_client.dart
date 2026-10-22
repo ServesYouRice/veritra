@@ -1,10 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' show max;
 import 'dart:typed_data';
 
 import '../crypto/mls_commit_bundle.dart';
+import 'api_errors.dart';
 import 'models.dart';
+
+export 'api_errors.dart';
 
 class ApiClient {
   ApiClient({required String baseUrl, HttpClient? httpClient})
@@ -18,14 +22,32 @@ class ApiClient {
   static const _requestTimeout = Duration(seconds: 30);
   static const _maxJsonResponseBytes = 2 * 1024 * 1024;
 
+  /// The largest page the server serves; it replaces a larger limit with its
+  /// default of 100, which would make a "short page" look like the end.
+  static const _maxServerPageSize = 200;
+  static const _maxSearchPageSize = 50;
+  static const _listPageSize = 100;
+
+  /// Upper bound on pages one list refresh follows (card T44A).
+  static const maxListPages = 100;
+
+  /// Ciphertext caps the server enforces on upload; downloads above them
+  /// are refused while streaming.
+  static const maxAttachmentCiphertextBytes = 50 * 1024 * 1024;
+  static const maxBackupCiphertextBytes = 100 * 1024 * 1024;
+
   void close() => _httpClient.close(force: true);
+
+  static int _pageLimit(int limit) =>
+      limit.clamp(1, _maxServerPageSize).toInt();
 
   Future<Map<String, Object?>> setupStatus() async {
     return _jsonRequest('GET', '/api/v1/setup/status');
   }
 
-  Future<EnrollmentReservation> reserveOwnerEnrollment(
-      {String setupToken = ''}) async {
+  Future<EnrollmentReservation> reserveOwnerEnrollment({
+    String setupToken = '',
+  }) async {
     final json = await _jsonRequest(
       'POST',
       '/api/v1/setup/owner/enrollment',
@@ -34,17 +56,18 @@ class ApiClient {
           ? const <String, String>{}
           : <String, String>{'X-Veritra-Setup-Token': setupToken},
     );
-    return EnrollmentReservation.fromJson(json);
+    return _decode(() => EnrollmentReservation.fromJson(json));
   }
 
   Future<EnrollmentReservation> reserveRegistrationEnrollment(
-      String inviteCode) async {
+    String inviteCode,
+  ) async {
     final json = await _jsonRequest(
       'POST',
       '/api/v1/register/enrollment',
       body: <String, Object?>{'invite_code': inviteCode},
     );
-    return EnrollmentReservation.fromJson(json);
+    return _decode(() => EnrollmentReservation.fromJson(json));
   }
 
   Future<Session> createOwner({
@@ -56,21 +79,24 @@ class ApiClient {
     String setupToken = '',
     String? instanceName,
   }) async {
-    final json = await _jsonRequest('POST', '/api/v1/setup/owner',
-        body: <String, Object?>{
-          if (instanceName != null && instanceName.trim().isNotEmpty)
-            'instance_name': instanceName.trim(),
-          'username': username,
-          'password': password,
-          'device_name': deviceName,
-          'enrollment_reservation_id': enrollment.id,
-          'device_key_package': base64Encode(credential.deviceKeyPackage),
-          'signing_key': base64Encode(credential.signingKey),
-          'challenge_signature': base64Encode(credential.challengeSignature),
-        },
-        extraHeaders: setupToken.isEmpty
-            ? const <String, String>{}
-            : <String, String>{'X-Veritra-Setup-Token': setupToken});
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/setup/owner',
+      body: <String, Object?>{
+        if (instanceName != null && instanceName.trim().isNotEmpty)
+          'instance_name': instanceName.trim(),
+        'username': username,
+        'password': password,
+        'device_name': deviceName,
+        'enrollment_reservation_id': enrollment.id,
+        'device_key_package': base64Encode(credential.deviceKeyPackage),
+        'signing_key': base64Encode(credential.signingKey),
+        'challenge_signature': base64Encode(credential.challengeSignature),
+      },
+      extraHeaders: setupToken.isEmpty
+          ? const <String, String>{}
+          : <String, String>{'X-Veritra-Setup-Token': setupToken},
+    );
     return _sessionFromAuthJson(json, fallbackUsername: username);
   }
 
@@ -82,77 +108,90 @@ class ApiClient {
     required EnrollmentReservation enrollment,
     required EnrollmentCredential credential,
   }) async {
-    final json =
-        await _jsonRequest('POST', '/api/v1/register', body: <String, Object?>{
-      'invite_code': inviteCode,
-      'username': username,
-      'password': password,
-      'device_name': deviceName,
-      'enrollment_reservation_id': enrollment.id,
-      'device_key_package': base64Encode(credential.deviceKeyPackage),
-      'signing_key': base64Encode(credential.signingKey),
-      'challenge_signature': base64Encode(credential.challengeSignature),
-    });
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/register',
+      body: <String, Object?>{
+        'invite_code': inviteCode,
+        'username': username,
+        'password': password,
+        'device_name': deviceName,
+        'enrollment_reservation_id': enrollment.id,
+        'device_key_package': base64Encode(credential.deviceKeyPackage),
+        'signing_key': base64Encode(credential.signingKey),
+        'challenge_signature': base64Encode(credential.challengeSignature),
+      },
+    );
     return _sessionFromAuthJson(json, fallbackUsername: username);
   }
 
-  Future<Session> login(
-      {required String username,
-      required String password,
-      required String deviceId,
-      required String deviceSecret}) async {
-    final json = await _jsonRequest('POST', '/api/v1/auth/login',
-        body: <String, Object?>{
-          'username': username,
-          'password': password,
-          'device_id': deviceId,
-          'device_secret': deviceSecret,
-        });
-    return _sessionFromAuthJson(json,
-        fallbackUsername: username, fallbackDeviceSecret: deviceSecret);
+  Future<Session> login({
+    required String username,
+    required String password,
+    required String deviceId,
+    required String deviceSecret,
+  }) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/auth/login',
+      body: <String, Object?>{
+        'username': username,
+        'password': password,
+        'device_id': deviceId,
+        'device_secret': deviceSecret,
+      },
+    );
+    return _sessionFromAuthJson(
+      json,
+      fallbackUsername: username,
+      fallbackDeviceSecret: deviceSecret,
+    );
   }
 
-  Future<List<Conversation>> conversations(String token) async {
-    const pageSize = 100;
-    final result = <Conversation>[];
-    String? before;
-    while (true) {
-      final path = '/api/v1/conversations?limit=$pageSize'
-          '${before == null ? '' : '&before=${Uri.encodeQueryComponent(before)}'}';
-      final json = await _jsonRequest('GET', path, token: token);
-      final page =
-          (json['conversations'] as List<Object?>? ?? const <Object?>[])
-              .map((row) => Conversation.fromJson(
-                    Map<String, Object?>.from(row as Map),
-                  ))
-              .toList();
-      result.addAll(page);
-      if (page.length < pageSize) {
-        return result;
-      }
-      before = page.last.id;
-    }
+  Future<List<Conversation>> conversations(String token) {
+    return _collectPages(
+      (before) => '/api/v1/conversations?limit=$_listPageSize'
+          '${before == null ? '' : '&before=${Uri.encodeQueryComponent(before)}'}',
+      token: token,
+      key: 'conversations',
+      fromJson: Conversation.fromJson,
+      cursorOf: (conversation) => conversation.id,
+    );
   }
 
-  Future<List<Device>> devices(String token) async {
-    const pageSize = 100;
-    final result = <Device>[];
-    String? after;
-    while (true) {
-      final path = '/api/v1/devices/me?limit=$pageSize'
-          '${after == null ? '' : '&after=${Uri.encodeQueryComponent(after)}'}';
-      final json = await _jsonRequest('GET', path, token: token);
-      final page = (json['devices'] as List<Object?>? ?? const <Object?>[])
-          .map((row) => Device.fromJson(
-                Map<String, Object?>.from(row as Map),
-              ))
-          .toList();
-      result.addAll(page);
-      if (page.length < pageSize) {
-        return result;
-      }
-      after = page.last.id;
+  Future<List<Device>> devices(String token) {
+    return _collectPages(
+      (after) => '/api/v1/devices/me?limit=$_listPageSize'
+          '${after == null ? '' : '&after=${Uri.encodeQueryComponent(after)}'}',
+      token: token,
+      key: 'devices',
+      fromJson: Device.fromJson,
+      cursorOf: (device) => device.id,
+    );
+  }
+
+  /// Follows a cursor-paged list to its end, with a page cap (card T44A).
+  /// A cursor that does not advance is a server contract break, so it fails
+  /// instead of looping; reaching the cap returns what was read so far.
+  Future<List<T>> _collectPages<T>(
+    String Function(String? cursor) pathFor, {
+    required String token,
+    required String key,
+    required T Function(Map<String, Object?>) fromJson,
+    required String Function(T row) cursorOf,
+  }) async {
+    final result = <T>[];
+    final seen = <String>{};
+    String? cursor;
+    for (var page = 0; page < maxListPages; page++) {
+      final json = await _jsonRequest('GET', pathFor(cursor), token: token);
+      final rows = _rows(json, key, fromJson);
+      result.addAll(rows);
+      if (rows.length < _listPageSize) return result;
+      cursor = cursorOf(rows.last);
+      if (!seen.add(cursor)) throw const ApiResponseException();
     }
+    return result;
   }
 
   Future<void> logout(String token) async {
@@ -168,16 +207,21 @@ class ApiClient {
     String password,
     String deviceSecret,
   ) async {
-    await _jsonRequest('POST', '/api/v1/auth/reauth', token: token, body: {
-      'password': password,
-      'device_secret': deviceSecret,
-    });
+    await _jsonRequest(
+      'POST',
+      '/api/v1/auth/reauth',
+      token: token,
+      body: {'password': password, 'device_secret': deviceSecret},
+    );
   }
 
   Future<void> changePassword(String token, String newPassword) async {
-    await _jsonRequest('POST', '/api/v1/account/password', token: token, body: {
-      'new_password': newPassword,
-    });
+    await _jsonRequest(
+      'POST',
+      '/api/v1/account/password',
+      token: token,
+      body: {'new_password': newPassword},
+    );
   }
 
   Future<void> revokeDevice(String token, String deviceId) async {
@@ -211,19 +255,21 @@ class ApiClient {
     int? retentionSeconds,
   }) async {
     final trimmedTitle = title?.trim();
-    final json = await _jsonRequest('POST', '/api/v1/conversations',
-        token: token,
-        body: <String, Object?>{
-          'kind': kind,
-          if (trimmedTitle != null && trimmedTitle.isNotEmpty)
-            'title': trimmedTitle,
-          if (communityId != null) 'community_id': communityId,
-          if (channelId != null) 'channel_id': channelId,
-          if (memberAccountIds.isNotEmpty)
-            'member_account_ids': memberAccountIds,
-          if (retentionSeconds != null) 'retention_seconds': retentionSeconds,
-        });
-    return Conversation.fromJson(json);
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/conversations',
+      token: token,
+      body: <String, Object?>{
+        'kind': kind,
+        if (trimmedTitle != null && trimmedTitle.isNotEmpty)
+          'title': trimmedTitle,
+        if (communityId != null) 'community_id': communityId,
+        if (channelId != null) 'channel_id': channelId,
+        if (memberAccountIds.isNotEmpty) 'member_account_ids': memberAccountIds,
+        if (retentionSeconds != null) 'retention_seconds': retentionSeconds,
+      },
+    );
+    return _decode(() => Conversation.fromJson(json));
   }
 
   Future<Invite> createInvite(
@@ -231,21 +277,22 @@ class ApiClient {
     int maxUses = 1,
     DateTime? expiresAt,
   }) async {
-    final json = await _jsonRequest('POST', '/api/v1/invites',
-        token: token,
-        body: <String, Object?>{
-          'max_uses': maxUses,
-          if (expiresAt != null)
-            'expires_at': expiresAt.toUtc().toIso8601String(),
-        });
-    return Invite.fromJson(json);
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/invites',
+      token: token,
+      body: <String, Object?>{
+        'max_uses': maxUses,
+        if (expiresAt != null)
+          'expires_at': expiresAt.toUtc().toIso8601String(),
+      },
+    );
+    return _decode(() => Invite.fromJson(json));
   }
 
   Future<List<Invite>> listInvites(String token) async {
     final json = await _jsonRequest('GET', '/api/v1/invites', token: token);
-    final rows = (json['invites'] as List<Object?>? ?? const <Object?>[])
-        .map((row) => Map<String, Object?>.from(row as Map));
-    return rows.map(Invite.fromJson).toList();
+    return _rows(json, 'invites', Invite.fromJson);
   }
 
   Future<void> revokeInvite(String token, String inviteId) async {
@@ -254,27 +301,26 @@ class ApiClient {
 
   Future<List<Community>> listCommunities(String token) async {
     final json = await _jsonRequest('GET', '/api/v1/communities', token: token);
-    final rows = (json['communities'] as List<Object?>? ?? const <Object?>[])
-        .map((row) => Map<String, Object?>.from(row as Map));
-    return rows.map(Community.fromJson).toList();
+    return _rows(json, 'communities', Community.fromJson);
   }
 
   Future<List<Channel>> listChannels(String token, String communityId) async {
     final json = await _jsonRequest(
-        'GET', '/api/v1/communities/$communityId/channels',
-        token: token);
-    final rows = (json['channels'] as List<Object?>? ?? const <Object?>[])
-        .map((row) => Map<String, Object?>.from(row as Map));
-    return rows.map(Channel.fromJson).toList();
+      'GET',
+      '/api/v1/communities/$communityId/channels',
+      token: token,
+    );
+    return _rows(json, 'channels', Channel.fromJson);
   }
 
   Future<Community> createCommunity(String token, String name) async {
-    final json = await _jsonRequest('POST', '/api/v1/communities',
-        token: token,
-        body: <String, Object?>{
-          'name': name,
-        });
-    return Community.fromJson(json);
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/communities',
+      token: token,
+      body: <String, Object?>{'name': name},
+    );
+    return _decode(() => Community.fromJson(json));
   }
 
   Future<ChannelCreation> createChannel(
@@ -284,13 +330,12 @@ class ApiClient {
     String kind = 'private',
   }) async {
     final json = await _jsonRequest(
-        'POST', '/api/v1/communities/$communityId/channels',
-        token: token,
-        body: <String, Object?>{
-          'name': name,
-          'kind': kind,
-        });
-    return ChannelCreation.fromJson(json);
+      'POST',
+      '/api/v1/communities/$communityId/channels',
+      token: token,
+      body: <String, Object?>{'name': name, 'kind': kind},
+    );
+    return _decode(() => ChannelCreation.fromJson(json));
   }
 
   Future<void> addConversationMember(
@@ -299,12 +344,12 @@ class ApiClient {
     String accountId, {
     String role = 'member',
   }) async {
-    await _jsonRequest('POST', '/api/v1/conversations/$conversationId/members',
-        token: token,
-        body: <String, Object?>{
-          'account_id': accountId,
-          'role': role,
-        });
+    await _jsonRequest(
+      'POST',
+      '/api/v1/conversations/$conversationId/members',
+      token: token,
+      body: <String, Object?>{'account_id': accountId, 'role': role},
+    );
   }
 
   Future<Conversation> updateRetention(
@@ -313,12 +358,12 @@ class ApiClient {
     int? retentionSeconds,
   ) async {
     final json = await _jsonRequest(
-        'PUT', '/api/v1/conversations/$conversationId/retention',
-        token: token,
-        body: <String, Object?>{
-          'retention_seconds': retentionSeconds,
-        });
-    return Conversation.fromJson(json);
+      'PUT',
+      '/api/v1/conversations/$conversationId/retention',
+      token: token,
+      body: <String, Object?>{'retention_seconds': retentionSeconds},
+    );
+    return _decode(() => Conversation.fromJson(json));
   }
 
   Future<void> deleteAccount(String token) async {
@@ -326,8 +371,12 @@ class ApiClient {
   }
 
   Future<void> sendEnvelope(String token, MessageEnvelope envelope) async {
-    await _jsonRequest('POST', '/api/v1/messages/envelopes',
-        token: token, body: envelope.toJson());
+    await _jsonRequest(
+      'POST',
+      '/api/v1/messages/envelopes',
+      token: token,
+      body: envelope.toJson(),
+    );
   }
 
   Future<AttachmentEnvelope> uploadEncryptedAttachment(
@@ -340,10 +389,12 @@ class ApiClient {
     if (ciphertextLength <= 0 || ciphertextLength > 50 * 1024 * 1024) {
       throw ArgumentError.value(ciphertextLength, 'ciphertextLength');
     }
-    final uri = Uri.parse(baseUrl).resolve(Uri(
-      path: '/api/v1/attachments',
-      queryParameters: <String, String>{'conversation_id': conversationId},
-    ).toString());
+    final uri = Uri.parse(baseUrl).resolve(
+      Uri(
+        path: '/api/v1/attachments',
+        queryParameters: <String, String>{'conversation_id': conversationId},
+      ).toString(),
+    );
     final request = await _httpClient.postUrl(uri).timeout(_requestTimeout);
     request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
     request.headers.set('X-Private-Messenger-Encrypted', '1');
@@ -351,28 +402,24 @@ class ApiClient {
     request.contentLength = ciphertextLength;
     await request.addStream(ciphertext).timeout(_requestTimeout);
     final response = await request.close().timeout(_requestTimeout);
-    final bytes = await response.fold<BytesBuilder>(
-        BytesBuilder(copy: false), (builder, chunk) => builder..add(chunk));
-    final text = utf8.decode(bytes.takeBytes());
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw ApiException(response.statusCode, text);
-    }
-    return AttachmentEnvelope.fromJson(
-        Map<String, Object?>.from(jsonDecode(text) as Map));
+    final json = await _readJsonResponse(response);
+    return _decode(() => AttachmentEnvelope.fromJson(json));
   }
 
   Future<Stream<List<int>>> downloadEncryptedAttachment(
-      String token, String attachmentId) async {
-    final uri = Uri.parse(baseUrl)
-        .resolve('/api/v1/attachments/${Uri.encodeComponent(attachmentId)}');
+    String token,
+    String attachmentId,
+  ) async {
+    final uri = Uri.parse(
+      baseUrl,
+    ).resolve('/api/v1/attachments/${Uri.encodeComponent(attachmentId)}');
     final request = await _httpClient.getUrl(uri).timeout(_requestTimeout);
     request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
     final response = await request.close().timeout(_requestTimeout);
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      final body = await utf8.decodeStream(response);
-      throw ApiException(response.statusCode, body);
+      throw await _apiError(response);
     }
-    return response;
+    return _boundedStream(response, maxAttachmentCiphertextBytes);
   }
 
   Future<void> uploadEncryptedBackup(
@@ -392,17 +439,18 @@ class ApiClient {
         .timeout(_requestTimeout);
     request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
     request.headers.set('X-Private-Messenger-Encrypted', '1');
-    request.headers.set('X-Recovery-Token',
-        base64Url.encode(recoveryToken).replaceAll('=', ''));
-    request.headers
-        .set('X-Key-Derivation-Metadata', jsonEncode(cryptoMetadata));
+    request.headers.set(
+      'X-Recovery-Token',
+      base64Url.encode(recoveryToken).replaceAll('=', ''),
+    );
+    request.headers.set(
+      'X-Key-Derivation-Metadata',
+      jsonEncode(cryptoMetadata),
+    );
     request.contentLength = ciphertextLength;
     await request.addStream(ciphertext).timeout(_requestTimeout);
     final response = await request.close().timeout(_requestTimeout);
-    final body = await utf8.decodeStream(response);
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw ApiException(response.statusCode, body);
-    }
+    await _readJsonResponse(response);
   }
 
   Future<Stream<List<int>>> recoverEncryptedBackup(
@@ -410,8 +458,10 @@ class ApiClient {
     int? startOffset,
     int? endOffset,
   }) async {
-    if (recoveryToken.length != 32)
-      throw ArgumentError.value(recoveryToken, 'recoveryToken');
+    if (recoveryToken.length != 32) {
+      // Never echo the token: ArgumentError.value would print its bytes.
+      throw ArgumentError('invalid recovery token');
+    }
     if (startOffset != null &&
         (startOffset < 0 || (endOffset != null && endOffset < startOffset))) {
       throw ArgumentError('invalid recovery range');
@@ -427,10 +477,12 @@ class ApiClient {
     }
     final response = await request.close().timeout(_requestTimeout);
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      final body = await utf8.decodeStream(response);
-      throw ApiException(response.statusCode, body);
+      throw await _apiError(response);
     }
-    return response;
+    return _boundedStream(
+      response,
+      maxBackupCiphertextBytes - (startOffset ?? 0),
+    );
   }
 
   Future<void> publishDeviceKeyPackages(
@@ -466,11 +518,11 @@ class ApiClient {
           '/key-packages/claim',
       token: token,
     );
-    final rows = json['key_packages'] as List<Object?>? ?? const <Object?>[];
-    return rows
-        .map((row) =>
-            DeviceKeyPackage.fromJson(Map<String, Object?>.from(row as Map)))
-        .toList(growable: false);
+    return _rows(
+      json,
+      'key_packages',
+      DeviceKeyPackage.fromJson,
+    ).toList(growable: false);
   }
 
   Future<MlsMessage> sendMlsMessage(
@@ -496,9 +548,7 @@ class ApiClient {
           'revocation_device_id': revocationDeviceId,
       },
     );
-    return MlsMessage.fromJson(
-      Map<String, Object?>.from(json['mls_message'] as Map),
-    );
+    return _decode(() => MlsMessage.fromJson(_object(json, 'mls_message')));
   }
 
   Future<MlsMessage> mlsMessage(String token, String messageId) async {
@@ -507,9 +557,7 @@ class ApiClient {
       '/api/v1/mls/messages/${Uri.encodeComponent(messageId)}',
       token: token,
     );
-    return MlsMessage.fromJson(
-      Map<String, Object?>.from(json['mls_message'] as Map),
-    );
+    return _decode(() => MlsMessage.fromJson(_object(json, 'mls_message')));
   }
 
   /// Sends one staged commit with its Welcomes and roster change (card
@@ -528,16 +576,20 @@ class ApiClient {
       token: token,
       body: bundle.toRequestJson(idempotencyKey),
     );
-    return (json['epoch'] as num).toInt();
+    return _decode(() => (json['epoch'] as num).toInt());
   }
 
   Future<List<MlsPendingChange>> mlsPendingChanges(String token) async {
-    final json =
-        await _jsonRequest('GET', '/api/v1/mls/pending-changes', token: token);
-    return (json['pending_changes'] as List<Object?>? ?? const <Object?>[])
-        .map((row) =>
-            MlsPendingChange.fromJson(Map<String, Object?>.from(row as Map)))
-        .toList(growable: false);
+    final json = await _jsonRequest(
+      'GET',
+      '/api/v1/mls/pending-changes',
+      token: token,
+    );
+    return _rows(
+      json,
+      'pending_changes',
+      MlsPendingChange.fromJson,
+    ).toList(growable: false);
   }
 
   /// Claims one key package for each listed device, to add them to an
@@ -555,10 +607,11 @@ class ApiClient {
       token: token,
       body: <String, Object?>{'device_ids': deviceIds},
     );
-    return (json['key_packages'] as List<Object?>? ?? const <Object?>[])
-        .map((row) =>
-            DeviceKeyPackage.fromJson(Map<String, Object?>.from(row as Map)))
-        .toList(growable: false);
+    return _rows(
+      json,
+      'key_packages',
+      DeviceKeyPackage.fromJson,
+    ).toList(growable: false);
   }
 
   Future<List<MlsMessage>> mlsMessages(
@@ -572,72 +625,87 @@ class ApiClient {
         path: '/api/v1/mls/messages',
         queryParameters: <String, String>{
           'after': after.toString(),
-          'limit': limit.toString(),
+          'limit': _pageLimit(limit).toString(),
         },
       ).toString(),
       token: token,
     );
-    final rows = json['mls_messages'] as List<Object?>? ?? const <Object?>[];
-    return rows
-        .map(
-            (row) => MlsMessage.fromJson(Map<String, Object?>.from(row as Map)))
-        .toList(growable: false);
+    return _rows(
+      json,
+      'mls_messages',
+      MlsMessage.fromJson,
+    ).toList(growable: false);
   }
 
   Future<List<MlsRevocation>> mlsRevocations(String token) async {
-    final json =
-        await _jsonRequest('GET', '/api/v1/mls/revocations', token: token);
-    final rows = json['mls_revocations'] as List<Object?>? ?? const <Object?>[];
-    return rows
-        .map((row) =>
-            MlsRevocation.fromJson(Map<String, Object?>.from(row as Map)))
-        .toList(growable: false);
+    final json = await _jsonRequest(
+      'GET',
+      '/api/v1/mls/revocations',
+      token: token,
+    );
+    return _rows(
+      json,
+      'mls_revocations',
+      MlsRevocation.fromJson,
+    ).toList(growable: false);
   }
 
   Future<List<Map<String, Object?>>> callIceServers(String token) async {
-    final json =
-        await _jsonRequest('GET', '/api/v1/calls/config', token: token);
-    return (json['ice_servers'] as List<Object?>? ?? const <Object?>[])
-        .map((item) => Map<String, Object?>.from(item as Map))
-        .toList(growable: false);
-  }
-
-  Future<CallSession> createCall(String token, String conversationId,
-      Map<String, Object?> encryptedMetadata) async {
-    final json = await _jsonRequest('POST', '/api/v1/calls',
-        token: token,
-        body: <String, Object?>{
-          'conversation_id': conversationId,
-          'metadata': encryptedMetadata
-        });
-    return CallSession.fromJson(json);
-  }
-
-  Future<CallSession> transitionCall(String token, String callId, String state,
-      {required int expectedVersion,
-      Map<String, Object?>? encryptedMetadata}) async {
     final json = await _jsonRequest(
-        'POST', '/api/v1/calls/${Uri.encodeComponent(callId)}/state',
-        token: token,
-        body: <String, Object?>{
-          'state': state,
-          'expected_version': expectedVersion,
-          if (encryptedMetadata != null) 'metadata': encryptedMetadata
-        });
-    return CallSession.fromJson(json);
+      'GET',
+      '/api/v1/calls/config',
+      token: token,
+    );
+    return _rows(json, 'ice_servers', (item) => item).toList(growable: false);
+  }
+
+  Future<CallSession> createCall(
+    String token,
+    String conversationId,
+    Map<String, Object?> encryptedMetadata,
+  ) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/calls',
+      token: token,
+      body: <String, Object?>{
+        'conversation_id': conversationId,
+        'metadata': encryptedMetadata,
+      },
+    );
+    return _decode(() => CallSession.fromJson(json));
+  }
+
+  Future<CallSession> transitionCall(
+    String token,
+    String callId,
+    String state, {
+    required int expectedVersion,
+    Map<String, Object?>? encryptedMetadata,
+  }) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/calls/${Uri.encodeComponent(callId)}/state',
+      token: token,
+      body: <String, Object?>{
+        'state': state,
+        'expected_version': expectedVersion,
+        if (encryptedMetadata != null) 'metadata': encryptedMetadata,
+      },
+    );
+    return _decode(() => CallSession.fromJson(json));
   }
 
   Future<List<CallSession>> calls(String token, String conversationId) async {
     final json = await _jsonRequest(
-        'GET',
-        Uri(path: '/api/v1/calls', queryParameters: <String, String>{
-          'conversation_id': conversationId
-        }).toString(),
-        token: token);
-    return (json['calls'] as List<Object?>? ?? const <Object?>[])
-        .map((item) =>
-            CallSession.fromJson(Map<String, Object?>.from(item as Map)))
-        .toList(growable: false);
+      'GET',
+      Uri(
+        path: '/api/v1/calls',
+        queryParameters: <String, String>{'conversation_id': conversationId},
+      ).toString(),
+      token: token,
+    );
+    return _rows(json, 'calls', CallSession.fromJson).toList(growable: false);
   }
 
   Future<void> confirmMlsRevocation(
@@ -661,7 +729,7 @@ class ApiClient {
     String? after,
   }) async {
     final queryParameters = <String, String>{
-      'limit': limit.toString(),
+      'limit': _pageLimit(limit).toString(),
       if (before != null && before.isNotEmpty) 'before': before,
       if (after != null && after.isNotEmpty) 'after': after,
     };
@@ -670,9 +738,7 @@ class ApiClient {
       queryParameters: queryParameters,
     ).toString();
     final json = await _jsonRequest('GET', path, token: token);
-    final rows = (json['messages'] as List<Object?>? ?? const <Object?>[])
-        .map((row) => Map<String, Object?>.from(row as Map));
-    return rows.map(ReceivedMessageEnvelope.fromJson).toList();
+    return _rows(json, 'messages', ReceivedMessageEnvelope.fromJson);
   }
 
   /// Backward page of message history. Unlike [listMessages] this preserves
@@ -687,16 +753,14 @@ class ApiClient {
     final path = Uri(
       path: '/api/v1/conversations/$conversationId/messages',
       queryParameters: <String, String>{
-        'limit': limit.toString(),
+        'limit': _pageLimit(limit).toString(),
         if (before != null && before.isNotEmpty) 'before': before,
       },
     ).toString();
     final json = await _jsonRequest('GET', path, token: token);
-    final rows = (json['messages'] as List<Object?>? ?? const <Object?>[])
-        .map((row) => Map<String, Object?>.from(row as Map));
     final nextBefore = json['next_before'];
     return MessagePage(
-      messages: rows.map(ReceivedMessageEnvelope.fromJson).toList(),
+      messages: _rows(json, 'messages', ReceivedMessageEnvelope.fromJson),
       nextBefore:
           nextBefore is String && nextBefore.isNotEmpty ? nextBefore : null,
     );
@@ -711,9 +775,7 @@ class ApiClient {
       '/api/v1/conversations/${Uri.encodeComponent(conversationId)}/members',
       token: token,
     );
-    final rows = (json['members'] as List<Object?>? ?? const <Object?>[])
-        .map((row) => Map<String, Object?>.from(row as Map));
-    return rows.map(ConversationMember.fromJson).toList();
+    return _rows(json, 'members', ConversationMember.fromJson);
   }
 
   /// Removes a member, or leaves the conversation when [accountId] is `me`.
@@ -758,11 +820,12 @@ class ApiClient {
   }
 
   Future<List<BlockedAccount>> listBlocks(String token) async {
-    final json =
-        await _jsonRequest('GET', '/api/v1/account/blocks', token: token);
-    final rows = (json['blocks'] as List<Object?>? ?? const <Object?>[])
-        .map((row) => Map<String, Object?>.from(row as Map));
-    return rows.map(BlockedAccount.fromJson).toList();
+    final json = await _jsonRequest(
+      'GET',
+      '/api/v1/account/blocks',
+      token: token,
+    );
+    return _rows(json, 'blocks', BlockedAccount.fromJson);
   }
 
   Future<BlockedAccount> blockAccount(String token, String accountId) async {
@@ -771,7 +834,7 @@ class ApiClient {
       '/api/v1/account/blocks/${Uri.encodeComponent(accountId)}',
       token: token,
     );
-    return BlockedAccount.fromJson(json);
+    return _decode(() => BlockedAccount.fromJson(json));
   }
 
   Future<void> unblockAccount(String token, String accountId) async {
@@ -791,7 +854,7 @@ class ApiClient {
       '/api/v1/messages/${Uri.encodeComponent(messageId)}',
       token: token,
     );
-    return ReceivedMessageEnvelope.fromJson(json);
+    return _decode(() => ReceivedMessageEnvelope.fromJson(json));
   }
 
   Future<List<SyncEvent>> syncEvents(
@@ -803,33 +866,40 @@ class ApiClient {
       path: '/api/v1/sync/events',
       queryParameters: <String, String>{
         'after': after.toString(),
-        'limit': limit.toString(),
+        'limit': _pageLimit(limit).toString(),
       },
     ).toString();
     final json = await _jsonRequest('GET', path, token: token);
-    final rows = (json['events'] as List<Object?>? ?? const <Object?>[])
-        .map((row) => Map<String, Object?>.from(row as Map));
-    return rows.map(SyncEvent.fromJson).toList();
+    return _rows(json, 'events', SyncEvent.fromJson);
   }
 
   Future<void> sendReaction(
-      String token, String messageId, List<int> reactionCiphertext) async {
-    await _jsonRequest('POST', '/api/v1/messages/$messageId/reactions',
-        token: token,
-        body: <String, Object?>{
-          'reaction_ciphertext': base64Encode(reactionCiphertext),
-          'crypto_protocol': 'mls10-openmls-v1',
-        });
+    String token,
+    String messageId,
+    List<int> reactionCiphertext,
+  ) async {
+    await _jsonRequest(
+      'POST',
+      '/api/v1/messages/$messageId/reactions',
+      token: token,
+      body: <String, Object?>{
+        'reaction_ciphertext': base64Encode(reactionCiphertext),
+        'crypto_protocol': 'mls10-openmls-v1',
+      },
+    );
   }
 
   Future<void> markRead(
-      String token, String conversationId, String messageId) async {
+    String token,
+    String conversationId,
+    String messageId,
+  ) async {
     await _jsonRequest(
-        'POST', '/api/v1/conversations/$conversationId/read-receipts',
-        token: token,
-        body: <String, Object?>{
-          'message_id': messageId,
-        });
+      'POST',
+      '/api/v1/conversations/$conversationId/read-receipts',
+      token: token,
+      body: <String, Object?>{'message_id': messageId},
+    );
   }
 
   Future<String> registerWebPush(
@@ -849,7 +919,7 @@ class ApiClient {
         'auth_secret': authSecret,
       },
     );
-    return json['subscription_id'] as String;
+    return _decode(() => json['subscription_id'] as String);
   }
 
   Future<String> registerNativePush(
@@ -857,33 +927,38 @@ class ApiClient {
     required String provider,
     required String deviceToken,
   }) async {
-    final json = await _jsonRequest('POST', '/api/v1/push/subscriptions',
-        token: token,
-        body: <String, Object?>{
-          'provider': provider,
-          'endpoint': deviceToken,
-          'public_key': '',
-          'auth_secret': '',
-        });
-    return json['subscription_id'] as String;
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/push/subscriptions',
+      token: token,
+      body: <String, Object?>{
+        'provider': provider,
+        'endpoint': deviceToken,
+        'public_key': '',
+        'auth_secret': '',
+      },
+    );
+    return _decode(() => json['subscription_id'] as String);
   }
 
   /// Sends the generic wake to this device's own registrations and returns
   /// one result class per registration (card I41).
   Future<List<String>> sendTestPush(String token) async {
-    final json = await _jsonRequest('POST', '/api/v1/push/test',
-        token: token, body: const <String, Object?>{});
-    return (json['results'] as List<Object?>? ?? const <Object?>[])
-        .map((row) => (row as Map)['result'])
-        .whereType<String>()
-        .toList(growable: false);
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/push/test',
+      token: token,
+      body: const <String, Object?>{},
+    );
+    return _rows(
+      json,
+      'results',
+      (row) => row['result'],
+    ).whereType<String>().toList(growable: false);
   }
 
-  Future<Map<String, Object?>> pushConfig(String token) => _jsonRequest(
-        'GET',
-        '/api/v1/push/config',
-        token: token,
-      );
+  Future<Map<String, Object?>> pushConfig(String token) =>
+      _jsonRequest('GET', '/api/v1/push/config', token: token);
 
   Future<void> disablePush(String token, String subscriptionId) async {
     await _jsonRequest(
@@ -901,16 +976,15 @@ class ApiClient {
   }) async {
     final queryParameters = <String, String>{
       'q': query,
-      'limit': limit.toString(),
-      'offset': offset.toString(),
+      'limit': limit.clamp(1, _maxSearchPageSize).toString(),
+      'offset': max(0, offset).toString(),
     };
-    final path =
-        Uri(path: '/api/v1/search/metadata', queryParameters: queryParameters)
-            .toString();
+    final path = Uri(
+      path: '/api/v1/search/metadata',
+      queryParameters: queryParameters,
+    ).toString();
     final json = await _jsonRequest('GET', path, token: token);
-    final rows = (json['results'] as List<Object?>? ?? const <Object?>[])
-        .map((row) => Map<String, Object?>.from(row as Map));
-    return rows.map(MetadataSearchResult.fromJson).toList();
+    return _rows(json, 'results', MetadataSearchResult.fromJson);
   }
 
   Future<DeviceLink> createDeviceLink(String token) async {
@@ -920,8 +994,7 @@ class ApiClient {
       token: token,
       body: <String, Object?>{},
     );
-    return DeviceLink.fromJson(
-        Map<String, Object?>.from(json['device_link'] as Map));
+    return _decode(() => DeviceLink.fromJson(_object(json, 'device_link')));
   }
 
   Future<DeviceLink> deviceLink(String token, String linkId) async {
@@ -930,8 +1003,7 @@ class ApiClient {
       '/api/v1/device-links/$linkId',
       token: token,
     );
-    return DeviceLink.fromJson(
-        Map<String, Object?>.from(json['device_link'] as Map));
+    return _decode(() => DeviceLink.fromJson(_object(json, 'device_link')));
   }
 
   Future<EnrollmentReservation> reserveDeviceLinkEnrollment(String code) async {
@@ -940,7 +1012,7 @@ class ApiClient {
       '/api/v1/device-links/claim-enrollment',
       body: <String, Object?>{'code': code},
     );
-    return EnrollmentReservation.fromJson(json);
+    return _decode(() => EnrollmentReservation.fromJson(json));
   }
 
   Future<DeviceLinkClaim> claimDeviceLink({
@@ -963,11 +1035,12 @@ class ApiClient {
         'transcript_hash': base64Encode(verification.transcriptHash),
       },
     );
-    return DeviceLinkClaim(
-      deviceLink: DeviceLink.fromJson(
-          Map<String, Object?>.from(json['device_link'] as Map)),
-      claimToken: json['claim_token'] as String,
-      deviceSecret: json['device_secret'] as String,
+    return _decode(
+      () => DeviceLinkClaim(
+        deviceLink: DeviceLink.fromJson(_object(json, 'device_link')),
+        claimToken: json['claim_token'] as String,
+        deviceSecret: json['device_secret'] as String,
+      ),
     );
   }
 
@@ -982,18 +1055,20 @@ class ApiClient {
       token: token,
       body: <String, Object?>{'transcript_hash': base64Encode(transcriptHash)},
     );
-    return DeviceLink.fromJson(
-        Map<String, Object?>.from(json['device_link'] as Map));
+    return _decode(() => DeviceLink.fromJson(_object(json, 'device_link')));
   }
 
-  Future<Session?> completeDeviceLinkClaim(String linkId, String claimToken,
-      List<int> expectedTranscriptHash) async {
+  Future<Session?> completeDeviceLinkClaim(
+    String linkId,
+    String claimToken,
+    List<int> expectedTranscriptHash,
+  ) async {
     final json = await _jsonRequest(
       'GET',
       '/api/v1/device-links/$linkId/claim-status',
       extraHeaders: <String, String>{'X-Veritra-Claim-Token': claimToken},
     );
-    final token = json['token'] as String?;
+    final token = _decode(() => json['token'] as String?);
     if (token == null) {
       return null;
     }
@@ -1005,14 +1080,8 @@ class ApiClient {
   }
 
   List<int> _decodeRequiredBytes(Object? value) {
-    if (value is! String) {
-      throw ApiException(502, 'Invalid binary API field');
-    }
-    try {
-      return base64Decode(value);
-    } on FormatException {
-      throw ApiException(502, 'Invalid binary API field');
-    }
+    if (value is! String) throw const ApiResponseException();
+    return _decode(() => base64Decode(value));
   }
 
   bool _bytesEqual(List<int> left, List<int> right) {
@@ -1029,14 +1098,16 @@ class ApiClient {
     String? fallbackUsername,
     String? fallbackDeviceSecret,
   }) {
-    return Session(
-      baseUrl: baseUrl,
-      token: json['token'] as String,
-      accountId: json['account_id'] as String? ?? _nestedId(json['account']),
-      deviceId: json['device_id'] as String? ?? _nestedId(json['device']),
-      username: _nestedField(json['account'], 'username') ?? fallbackUsername,
-      deviceSecret: json['device_secret'] as String? ?? fallbackDeviceSecret,
-      role: json['role'] as String? ?? _nestedField(json['account'], 'role'),
+    return _decode(
+      () => Session(
+        baseUrl: baseUrl,
+        token: json['token'] as String,
+        accountId: json['account_id'] as String? ?? _nestedId(json['account']),
+        deviceId: json['device_id'] as String? ?? _nestedId(json['device']),
+        username: _nestedField(json['account'], 'username') ?? fallbackUsername,
+        deviceSecret: json['device_secret'] as String? ?? fallbackDeviceSecret,
+        role: json['role'] as String? ?? _nestedField(json['account'], 'role'),
+      ),
     );
   }
 
@@ -1071,22 +1142,135 @@ class ApiClient {
       request.write(jsonEncode(body));
     }
     final response = await request.close().timeout(_requestTimeout);
+    return _readJsonResponse(response);
+  }
+
+  /// Reads a JSON object response. A non-2xx status becomes an
+  /// [ApiException] built from at most [ApiException.maxErrorBodyBytes];
+  /// a 2xx body is capped at [_maxJsonResponseBytes] and must be a UTF-8
+  /// JSON object (or empty). No body text is kept in a thrown error.
+  Future<Map<String, Object?>> _readJsonResponse(
+    HttpClientResponse response,
+  ) async {
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw await _apiError(response);
+    }
+    final bytes = await _readBounded(response, _maxJsonResponseBytes);
+    if (bytes.isEmpty) {
+      return <String, Object?>{};
+    }
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(utf8.decode(bytes));
+    } on FormatException {
+      throw const ApiResponseException();
+    }
+    if (decoded is! Map) throw const ApiResponseException();
+    return _decode(() => Map<String, Object?>.from(decoded as Map));
+  }
+
+  /// Builds an [ApiException] from the start of an error body and stops
+  /// reading there, so a large or binary error page costs at most a few KB.
+  static Future<ApiException> _apiError(HttpClientResponse response) async {
+    final bytes = await _readBounded(
+      response,
+      ApiException.maxErrorBodyBytes,
+      truncate: true,
+    );
+    final text = utf8.decode(bytes, allowMalformed: true);
+    return ApiException(response.statusCode, text);
+  }
+
+  static Future<Uint8List> _readBounded(
+    Stream<List<int>> source,
+    int maxBytes, {
+    bool truncate = false,
+  }) async {
     final bytes = BytesBuilder(copy: false);
-    await for (final chunk in response.timeout(_requestTimeout)) {
-      if (bytes.length + chunk.length > _maxJsonResponseBytes) {
-        throw const HttpException('JSON response exceeded the size limit');
+    await for (final chunk in source.timeout(_requestTimeout)) {
+      final room = maxBytes - bytes.length;
+      if (chunk.length > room) {
+        if (!truncate) throw const ApiResponseTooLargeException();
+        // Leaving the loop cancels the subscription and the rest of the
+        // body is never read.
+        bytes.add(chunk.sublist(0, room));
+        break;
       }
       bytes.add(chunk);
     }
-    final text = utf8.decode(bytes.takeBytes());
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw ApiException(response.statusCode, text);
-    }
-    if (text.isEmpty) {
-      return <String, Object?>{};
-    }
-    return Map<String, Object?>.from(jsonDecode(text) as Map);
+    return bytes.takeBytes();
   }
+
+  /// Passes a download through while counting bytes; more than [maxBytes]
+  /// (or an announced length above it) fails instead of filling the disk.
+  static Future<Stream<List<int>>> _boundedStream(
+    HttpClientResponse response,
+    int maxBytes,
+  ) async {
+    if (maxBytes < 0 || response.contentLength > maxBytes) {
+      await response.listen(null).cancel();
+      throw const ApiResponseTooLargeException();
+    }
+    return _countBytes(response, maxBytes);
+  }
+
+  static Stream<List<int>> _countBytes(
+    Stream<List<int>> source,
+    int maxBytes,
+  ) async* {
+    var received = 0;
+    await for (final chunk in source) {
+      received += chunk.length;
+      if (received > maxBytes) throw const ApiResponseTooLargeException();
+      yield chunk;
+    }
+  }
+}
+
+/// Runs a model decoder and turns any shape or type mismatch into an
+/// [ApiResponseException], so a malformed response is one typed failure
+/// instead of a `TypeError` with the offending value in its text.
+T _decode<T>(T Function() build) {
+  try {
+    return build();
+  } on ApiResponseException {
+    rethrow;
+  } on FormatException {
+    throw const ApiResponseException();
+  } on TypeError {
+    throw const ApiResponseException();
+  } on ArgumentError {
+    throw const ApiResponseException();
+  }
+}
+
+/// The JSON object under [key]; anything else is a malformed response.
+Map<String, Object?> _object(Map<String, Object?> json, String key) {
+  final value = json[key];
+  if (value is! Map) throw const ApiResponseException();
+  return _decode(() => Map<String, Object?>.from(value));
+}
+
+/// Decodes the list under [key]. An absent list is empty; a list that is
+/// not a list of objects, or any row that fails [fromJson], fails the whole
+/// response so a partial page is never mistaken for the server's answer.
+List<T> _rows<T>(
+  Map<String, Object?> json,
+  String key,
+  T Function(Map<String, Object?>) fromJson,
+) {
+  final value = json[key];
+  if (value == null) return <T>[];
+  if (value is! List) throw const ApiResponseException();
+  return _decode(
+    () => <T>[
+      for (final row in value)
+        if (row is Map)
+          fromJson(Map<String, Object?>.from(row))
+        else
+          throw const ApiResponseException(),
+    ],
+  );
 }
 
 String canonicalizeServerOrigin(String raw) {
@@ -1100,7 +1284,8 @@ String canonicalizeServerOrigin(String raw) {
       uri.hasQuery ||
       uri.hasFragment) {
     throw const FormatException(
-        'Server URL must not contain credentials, a path, query, or fragment');
+      'Server URL must not contain credentials, a path, query, or fragment',
+    );
   }
   final defaultPort = scheme == 'https' ? 443 : 80;
   final origin = Uri(
@@ -1109,137 +1294,4 @@ String canonicalizeServerOrigin(String raw) {
     port: uri.hasPort && uri.port != defaultPort ? uri.port : null,
   );
   return origin.toString().replaceFirst(RegExp(r'/$'), '');
-}
-
-class ApiException implements Exception {
-  ApiException(this.statusCode, this.body);
-
-  final int statusCode;
-  final String body;
-
-  String? get serverCode {
-    try {
-      final decoded = jsonDecode(body);
-      if (decoded is Map) {
-        final error = decoded['error'];
-        if (error is String) {
-          return error;
-        }
-      }
-    } catch (_) {
-      return null;
-    }
-    return null;
-  }
-
-  int? intField(String name) {
-    try {
-      final decoded = jsonDecode(body);
-      if (decoded is Map && decoded[name] is num) {
-        return (decoded[name] as num).toInt();
-      }
-    } catch (_) {
-      return null;
-    }
-    return null;
-  }
-
-  String get message {
-    switch (serverCode) {
-      case 'unauthorized':
-        return 'Your session is no longer valid. Sign in again.';
-      case 'invalid_credentials':
-        return 'Sign-in failed. Check your username and password.';
-      case 'recent_auth_required':
-        return 'Confirm your password before this sensitive action.';
-      case 'device_id_required':
-      case 'device_session_required':
-        return 'This device must be linked before password sign-in.';
-      case 'forbidden':
-        return 'You do not have permission to do that.';
-      case 'not_found':
-        return 'That item was not found. It may have been removed.';
-      case 'already_setup':
-        return 'This server already has an owner. Sign in or join with an '
-            'invite instead.';
-      case 'last_owner_required':
-        return 'Transfer ownership before disabling the last owner account.';
-      case 'weak_password':
-        return 'Password must be 12–72 characters.';
-      case 'invalid_invite':
-        return 'That invite code is not valid, has expired, or has already '
-            'been used up.';
-      case 'invalid_device_link':
-        return 'That link code is not valid or has expired. Generate a new '
-            'one on your linked device.';
-      case 'transcript_hash_required':
-      case 'transcript_mismatch':
-        return 'The locally verified device credentials changed. Generate a '
-            'new link and compare both devices again.';
-      case 'invalid_device_name':
-        return 'That device name is not valid.';
-      case 'invalid_name':
-        return 'That name is not valid.';
-      case 'invalid_max_uses':
-        return 'The invite use limit is not valid.';
-      case 'invalid_expires_at':
-      case 'expires_at_too_far':
-        return 'That expiry time is not valid.';
-      case 'invalid_conversation_kind':
-        return 'The server rejected this conversation type.';
-      case 'invalid_retention_seconds':
-        return 'That disappearing-message duration is not supported.';
-      case 'invalid_role':
-        return 'That member role is not valid.';
-      case 'cannot_grant_higher_role':
-        return 'You cannot grant a role higher than your own.';
-      case 'account_id_required':
-        return 'Choose an account to add.';
-      case 'upload_too_large':
-        return 'That file is too large to upload.';
-      case 'device_key_package_required':
-      case 'invalid_device_key_package':
-      case 'non_production_device_key_package':
-      case 'invalid_enrollment':
-        return 'The server refused this build’s encryption keys. A '
-            'client with production encryption support is required.';
-      case 'storage_error':
-      case 'storage_unavailable':
-        return 'The server had a storage problem. Try again shortly.';
-      case 'storage_quota_exceeded':
-        return 'The server is out of storage for this account. Delete older '
-            'attachments or ask the administrator for more space.';
-      case 'blob_integrity_failed':
-        return 'The encrypted attachment could not be verified. Discard it '
-            'and try again.';
-      case 'setup_authorization_required':
-        return 'The setup token is missing or wrong. Use the one the server '
-            'printed when it started (the demo keeps it in '
-            'data/demo/setup-token).';
-      case 'server_draining':
-        return 'The server is restarting. Try again shortly.';
-      case 'idempotency_conflict':
-        return 'This message was already submitted with different data. '
-            'Discard it and compose a new message.';
-    }
-    if (statusCode == 401) {
-      return 'Your session is no longer valid. Sign in again.';
-    }
-    if (statusCode == 403) {
-      return 'You do not have permission to do that.';
-    }
-    if (statusCode == 404) {
-      return 'That item was not found. It may have been removed.';
-    }
-    if (statusCode == 429) {
-      return 'Too many attempts. Wait a moment and try again.';
-    }
-    if (statusCode >= 500) {
-      return 'The server had a problem. Try again shortly.';
-    }
-    return 'The server rejected the request. Check your input and try again.';
-  }
-
-  @override
-  String toString() => message;
 }

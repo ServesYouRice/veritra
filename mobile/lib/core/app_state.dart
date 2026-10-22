@@ -140,6 +140,11 @@ class Ops {
   static const members = 'members';
   static const blocks = 'blocks';
   static const mute = 'mute';
+
+  /// Refresh failures of the conversation and device lists. The lists keep
+  /// their last good contents while this holds an error (card T44A).
+  static const conversations = 'conversations';
+  static const devices = 'devices';
   static String conversation(String id) => 'conversation:$id';
 }
 
@@ -676,8 +681,8 @@ class AppState extends ChangeNotifier {
         notifyListeners();
       }
       try {
-        await refreshConversations();
-        await refreshDevices();
+        await _refreshConversations(notify: true);
+        await _refreshDevices();
         if (!_lifecycleGenerationActive(transitionGeneration)) return;
       } on ApiException catch (err) {
         if (err.statusCode == 401) {
@@ -803,8 +808,8 @@ class AppState extends ChangeNotifier {
       await _mlsCrypto?.activateSession(session!);
       await _publishInitialMlsKeyPackages();
       await localStore.saveSyncCursor(0);
-      await refreshConversations();
-      await refreshDevices();
+      await _refreshConversations(notify: true);
+      await _refreshDevices();
       _startSync();
     });
   }
@@ -834,17 +839,46 @@ class AppState extends ChangeNotifier {
       await localStore.saveSession(session!);
       await _mlsCrypto?.activateSession(session!);
       await localStore.saveSyncCursor(0);
-      await refreshConversations();
-      await refreshDevices();
+      await _refreshConversations(notify: true);
+      await _refreshDevices();
       _startSync();
     });
   }
 
-  Future<void> refreshConversations() async {
-    await _refreshConversations(notify: true);
+  /// User-initiated refresh (pull-to-refresh, refresh buttons). It never
+  /// throws: a failure keeps the last good list and records a safe message
+  /// under [Ops.conversations]; calling it again is the retry.
+  Future<void> refreshConversations() => _refreshContained(
+      Ops.conversations, () => _refreshConversations(notify: true));
+
+  /// Like [refreshConversations], for the device list ([Ops.devices]).
+  Future<void> refreshDevices() =>
+      _refreshContained(Ops.devices, _refreshDevices);
+
+  Future<void> _refreshContained(
+    String op,
+    Future<void> Function() load,
+  ) async {
+    final current = session;
+    try {
+      await load();
+      if (_opErrors.remove(op) != null) notifyListeners();
+    } catch (err) {
+      if (err is ApiException &&
+          err.statusCode == 401 &&
+          identical(session, current)) {
+        await _enqueueSessionTransition(() async {
+          if (!identical(session, current)) return;
+          await _clearLocalSession(
+              preserveDeviceIdentity: true, preserveOutbox: true);
+        });
+      }
+      _opErrors[op] = describeError(err);
+      notifyListeners();
+    }
   }
 
-  Future<void> refreshDevices() async {
+  Future<void> _refreshDevices() async {
     final current = session;
     final client = api;
     if (current == null || client == null) {
@@ -852,6 +886,7 @@ class AppState extends ChangeNotifier {
     }
     try {
       devices = await client.devices(current.token);
+      _opErrors.remove(Ops.devices);
     } finally {
       devicesLoaded = true;
     }
@@ -918,6 +953,7 @@ class AppState extends ChangeNotifier {
     }
     conversations = await client.conversations(current.token);
     conversationsLoaded = true;
+    _opErrors.remove(Ops.conversations);
     if (persist) await _persistSnapshot();
     if (notify) {
       notifyListeners();
@@ -1122,8 +1158,8 @@ class AppState extends ChangeNotifier {
       await _mlsCrypto?.activateSession(session!);
       await _publishInitialMlsKeyPackages();
       await localStore.saveSyncCursor(0);
-      await refreshConversations();
-      await refreshDevices();
+      await _refreshConversations(notify: true);
+      await _refreshDevices();
       _startSync();
     });
   }
@@ -1420,7 +1456,13 @@ class AppState extends ChangeNotifier {
     if (current == null || client == null || query.trim().isEmpty) {
       return const <MetadataSearchResult>[];
     }
-    return client.searchMetadata(current.token, query.trim());
+    try {
+      return await client.searchMetadata(current.token, query.trim());
+    } catch (err) {
+      // The search screen shows the thrown error's text, so hand it only
+      // the mapped sentence (card T44A).
+      throw UserFacingException(describeError(err));
+    }
   }
 
   /// Best-effort read receipt for the newest visible message. Failures are
@@ -1956,8 +1998,8 @@ class AppState extends ChangeNotifier {
       await _mlsCrypto?.activateSession(session!);
       await _publishInitialMlsKeyPackages();
       await localStore.saveSyncCursor(0);
-      await refreshConversations();
-      await refreshDevices();
+      await _refreshConversations(notify: true);
+      await _refreshDevices();
       _startSync();
     });
   }
@@ -1987,7 +2029,7 @@ class AppState extends ChangeNotifier {
         return;
       }
       await client.logoutAll(current.token);
-      await refreshDevices();
+      await _refreshDevices();
     });
   }
 
@@ -2028,7 +2070,7 @@ class AppState extends ChangeNotifier {
       if (deviceId == current.deviceId) {
         await _clearLocalSession();
       } else {
-        await refreshDevices();
+        await _refreshDevices();
       }
     });
   }
@@ -2691,7 +2733,7 @@ class AppState extends ChangeNotifier {
       _mlsReconcileRequested = true;
     }
     if (type.startsWith('device.')) {
-      await refreshDevices();
+      await _refreshDevices();
       await _refreshConversations(notify: false, persist: false);
       return;
     }
