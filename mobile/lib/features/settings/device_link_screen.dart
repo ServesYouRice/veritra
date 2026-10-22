@@ -9,6 +9,23 @@ import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/status_pill.dart';
 import '../../ui/widgets/tile_group.dart';
 
+/// The QR payload for a link code, built here rather than taken from the
+/// server's `link_uri`, so a server cannot place anything else (such as an
+/// origin) into the code another device scans.
+///
+/// Neither Android nor iOS registers the `veritra:` scheme, so the URI is
+/// only meaningful to the app's own scanner (`parseDeviceLinkCode`). It is
+/// never shown or offered for copying as a link that could be opened.
+String? deviceLinkQrPayload(String? code) {
+  final trimmed = code?.trim() ?? '';
+  if (trimmed.isEmpty) return null;
+  return Uri(
+    scheme: 'veritra',
+    host: 'device-link',
+    queryParameters: <String, String>{'code': trimmed},
+  ).toString();
+}
+
 class DeviceLinkScreen extends StatelessWidget {
   const DeviceLinkScreen({required this.state, super.key});
 
@@ -21,6 +38,7 @@ class DeviceLinkScreen extends StatelessWidget {
       builder: (context, _) {
         final theme = Theme.of(context);
         final link = state.activeDeviceLink;
+        final qrPayload = deviceLinkQrPayload(link?.code);
         return Scaffold(
           appBar: const LargeTitleBar(title: 'Link a device'),
           body: ListView(
@@ -46,8 +64,7 @@ class DeviceLinkScreen extends StatelessWidget {
                 label: Text(link == null ? 'Create link' : 'Create new link'),
               ),
               if (link != null) ...<Widget>[
-                if (link.linkUri != null &&
-                    link.state == 'pending') ...<Widget>[
+                if (qrPayload != null && link.state == 'pending') ...<Widget>[
                   const SizedBox(height: BoneSpacing.lg),
                   TileGroup(
                     children: <Widget>[
@@ -64,11 +81,13 @@ class DeviceLinkScreen extends StatelessWidget {
                                 padding: const EdgeInsets.all(BoneSpacing.md),
                                 decoration: BoxDecoration(
                                   color: Colors.white,
-                                  borderRadius:
-                                      BorderRadius.circular(BoneRadii.md),
+                                  borderRadius: BorderRadius.circular(
+                                    BoneRadii.md,
+                                  ),
                                 ),
                                 child: QrImageView(
-                                  data: link.linkUri!,
+                                  key: ValueKey<String>(qrPayload),
+                                  data: qrPayload,
                                   version: QrVersions.auto,
                                   size: 220,
                                 ),
@@ -76,8 +95,8 @@ class DeviceLinkScreen extends StatelessWidget {
                             ),
                             const SizedBox(height: BoneSpacing.md),
                             Text(
-                              'Scan with the new device, or type the link '
-                              'code below.',
+                              'Scan it with the Veritra app on the new '
+                              'device, or type the link code below.',
                               style: theme.textTheme.bodySmall?.copyWith(
                                 color: theme.colorScheme.onSurfaceVariant,
                               ),
@@ -94,10 +113,7 @@ class DeviceLinkScreen extends StatelessWidget {
                   children: <Widget>[
                     ListTile(
                       leading: const Icon(Icons.info_outline),
-                      title: Text(
-                        'STATUS',
-                        style: theme.textTheme.labelSmall,
-                      ),
+                      title: Text('STATUS', style: theme.textTheme.labelSmall),
                       trailing: StatusPill(
                         label: link.state,
                         tone: switch (link.state) {
@@ -118,13 +134,6 @@ class DeviceLinkScreen extends StatelessWidget {
                       title: 'Verification code',
                       value: link.verificationCode,
                     ),
-                    if (link.linkUri != null)
-                      _LinkValueTile(
-                        icon: Icons.link_outlined,
-                        title: 'Link URI',
-                        value: link.linkUri!,
-                        copyable: true,
-                      ),
                     _LinkValueTile(
                       icon: Icons.timer_outlined,
                       title: 'Expires',
@@ -240,9 +249,9 @@ class _LinkValueTile extends StatelessWidget {
               icon: const Icon(Icons.copy_outlined),
               onPressed: () {
                 Clipboard.setData(ClipboardData(text: value));
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('$title copied.')),
-                );
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text('$title copied.')));
               },
             )
           : null,
