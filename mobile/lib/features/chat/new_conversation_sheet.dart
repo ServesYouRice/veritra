@@ -37,6 +37,12 @@ class _NewConversationFormState extends State<_NewConversationForm> {
   String kind = 'dm';
   bool submitting = false;
 
+  /// Set by the first submit. Problems are then shown inline under the
+  /// field they concern and re-checked as the form changes, instead of in a
+  /// snack bar that the sheet itself covers.
+  bool attempted = false;
+  String? submitError;
+
   @override
   void dispose() {
     title.dispose();
@@ -46,7 +52,9 @@ class _NewConversationFormState extends State<_NewConversationForm> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Padding(
+    // Scrolls when the keyboard and a large text scale leave the sheet less
+    // height than the form needs, instead of overflowing it.
+    return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -70,6 +78,8 @@ class _NewConversationFormState extends State<_NewConversationForm> {
             selected: <String>{kind},
             onSelectionChanged: (value) => setState(() {
               kind = value.first;
+              attempted = false;
+              submitError = null;
               // The picker below is re-created per kind (different selection
               // limits), so drop any members carried over from the old mode.
               members = <SelectedAccount>[];
@@ -79,9 +89,14 @@ class _NewConversationFormState extends State<_NewConversationForm> {
           if (kind == 'group') ...<Widget>[
             TextField(
               controller: title,
-              decoration: const InputDecoration(
+              textInputAction: TextInputAction.next,
+              onChanged: (_) {
+                if (attempted) setState(() {});
+              },
+              decoration: InputDecoration(
                 labelText: 'Group name',
-                prefixIcon: Icon(Icons.badge_outlined),
+                prefixIcon: const Icon(Icons.badge_outlined),
+                errorText: attempted ? _titleProblem() : null,
               ),
             ),
             const SizedBox(height: 12),
@@ -93,6 +108,9 @@ class _NewConversationFormState extends State<_NewConversationForm> {
             maxSelection: kind == 'dm' ? 1 : null,
             onChanged: (value) => setState(() => members = value),
           ),
+          if (attempted && _membersProblem() != null)
+            _InlineProblem(message: _membersProblem()!),
+          if (submitError != null) _InlineProblem(message: submitError!),
           const SizedBox(height: 20),
           FilledButton.icon(
             onPressed: submitting ? null : _submit,
@@ -104,27 +122,25 @@ class _NewConversationFormState extends State<_NewConversationForm> {
     );
   }
 
-  String? _validate() {
-    if (kind == 'dm') {
-      return members.isEmpty ? 'Pick the person to message first.' : null;
-    }
-    if (title.text.trim().isEmpty) {
-      return 'Give the group a name.';
-    }
-    if (members.isEmpty) {
-      return 'Add at least one other member.';
-    }
-    return null;
+  String? _titleProblem() => kind == 'group' && title.text.trim().isEmpty
+      ? 'Give the group a name.'
+      : null;
+
+  String? _membersProblem() {
+    if (members.isNotEmpty) return null;
+    return kind == 'dm'
+        ? 'Pick the person to message first.'
+        : 'Add at least one other member.';
   }
 
   Future<void> _submit() async {
     // An empty, unnamed group is almost always a mis-tap, and once created it
     // sits in the chat list indistinguishable from the others.
-    final problem = _validate();
-    if (problem != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(problem)),
-      );
+    setState(() {
+      attempted = true;
+      submitError = null;
+    });
+    if (_titleProblem() != null || _membersProblem() != null) {
       return;
     }
     setState(() => submitting = true);
@@ -141,9 +157,32 @@ class _NewConversationFormState extends State<_NewConversationForm> {
     if (created != null) {
       Navigator.of(context).pop();
     } else if (widget.state.error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(widget.state.error!)),
-      );
+      setState(() => submitError = widget.state.error);
     }
+  }
+}
+
+/// A form problem shown under the control it concerns, announced when it
+/// appears.
+class _InlineProblem extends StatelessWidget {
+  const _InlineProblem({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Semantics(
+      liveRegion: true,
+      child: Padding(
+        padding: const EdgeInsets.only(top: 8, left: 12),
+        child: Text(
+          message,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.error,
+          ),
+        ),
+      ),
+    );
   }
 }

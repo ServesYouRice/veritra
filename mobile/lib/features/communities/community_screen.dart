@@ -8,6 +8,7 @@ import '../../ui/tokens.dart';
 import '../../ui/widgets/empty_state.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
+import '../../ui/widgets/text_prompt_dialog.dart';
 import '../../ui/widgets/tile_group.dart';
 import '../chat/chat_screen.dart';
 import '../../ui/widgets/refresh_action.dart';
@@ -172,39 +173,20 @@ class CommunityScreen extends StatelessWidget {
     BuildContext context, {
     required String title,
     required String label,
-  }) async {
-    final controller = TextEditingController();
-    try {
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: Text(title),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            decoration: InputDecoration(labelText: label),
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text('Create'),
-            ),
-          ],
-        ),
-      );
-      if (confirmed != true) {
-        return null;
-      }
-      return controller.text.trim();
-    } finally {
-      controller.dispose();
-    }
+  }) {
+    return showTextPromptDialog(
+      context,
+      title: title,
+      label: label,
+      confirmLabel: 'Create',
+      validator: (value) => _validateName(value, label),
+    );
   }
 }
+
+/// Inline check for a community or channel name: it is required.
+String? _validateName(String value, String label) =>
+    value.isEmpty ? 'Enter a ${label.toLowerCase()}.' : null;
 
 class _CommunityCard extends StatelessWidget {
   const _CommunityCard({

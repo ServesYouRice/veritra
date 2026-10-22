@@ -15,7 +15,9 @@ import '../../ui/tokens.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/status_pill.dart';
+import '../../ui/widgets/text_prompt_dialog.dart';
 import '../../ui/widgets/tile_group.dart';
+import '../../ui/widgets/unavailable_reason.dart';
 import 'blocked_accounts_screen.dart';
 import 'device_link_screen.dart';
 import 'invite_screen.dart';
@@ -257,18 +259,28 @@ class SettingsScreen extends StatelessWidget {
               const SectionHeader('Coming soon'),
               TileGroup(
                 children: <Widget>[
+                  // Disabled rows leave keyboard traversal, so the reason is
+                  // carried by a focusable wrapper rather than left implied.
                   if (!state.backupAvailable)
-                    const ListTile(
-                      enabled: false,
-                      leading: Icon(Icons.key_outlined),
-                      title: Text('Recovery'),
-                      subtitle: Text('Encrypted backup & recovery key'),
+                    const UnavailableReason(
+                      message: 'Needs the reviewed encryption engine.',
+                      borderRadius: BorderRadius.zero,
+                      child: ListTile(
+                        enabled: false,
+                        leading: Icon(Icons.key_outlined),
+                        title: Text('Recovery'),
+                        subtitle: Text('Encrypted backup & recovery key'),
+                      ),
                     ),
-                  const ListTile(
-                    enabled: false,
-                    leading: Icon(Icons.video_call_outlined),
-                    title: Text('Calls'),
-                    subtitle: Text('1:1 audio/video'),
+                  const UnavailableReason(
+                    message: 'Not available in this build yet.',
+                    borderRadius: BorderRadius.zero,
+                    child: ListTile(
+                      enabled: false,
+                      leading: Icon(Icons.video_call_outlined),
+                      title: Text('Calls'),
+                      subtitle: Text('1:1 audio/video'),
+                    ),
                   ),
                 ],
               ),
@@ -360,43 +372,27 @@ class SettingsScreen extends StatelessWidget {
   }
 
   Future<bool> _reauthenticate(BuildContext context) async {
-    final controller = TextEditingController();
-    try {
-      final password = await showDialog<String>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('Confirm your password'),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            obscureText: true,
-            autofillHints: const <String>[AutofillHints.password],
-            decoration: const InputDecoration(labelText: 'Current password'),
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(controller.text),
-              child: const Text('Continue'),
-            ),
-          ],
-        ),
-      );
-      if (password == null || password.isEmpty) {
-        return false;
-      }
-      final ok = await state.reauthenticate(password);
-      if (!ok && context.mounted && state.error != null) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(state.error!)));
-      }
-      return ok;
-    } finally {
-      controller.dispose();
+    final password = await showTextPromptDialog(
+      context,
+      title: 'Confirm your password',
+      label: 'Current password',
+      confirmLabel: 'Continue',
+      obscureText: true,
+      // A password is checked as typed: surrounding spaces may be part of it.
+      trim: false,
+      autofillHints: const <String>[AutofillHints.password],
+      validator: (value) =>
+          value.isEmpty ? 'Enter your current password.' : null,
+    );
+    if (password == null || password.isEmpty || !context.mounted) {
+      return false;
     }
+    final ok = await state.reauthenticate(password);
+    if (!ok && context.mounted && state.error != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(state.error!)));
+    }
+    return ok;
   }
 
   Future<void> _changePassword(BuildContext context) async {
