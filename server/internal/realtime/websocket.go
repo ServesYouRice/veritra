@@ -2,6 +2,7 @@ package realtime
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
@@ -16,101 +17,236 @@ import (
 	"unicode/utf8"
 )
 
+// Inbound parser bounds (RFC 6455). The sync socket is server->client push;
+// clients send only control frames, so inbound data messages are read,
+// validated and discarded. The bounds below are deliberately tight.
 const (
 	websocketGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-	maxFrameSize  = 1 << 20 // 1 MiB per inbound client frame
 
-	// Keepalive parameters. We ping the client every pingPeriod and require any
-	// frame (a pong or other data) within pongWait, so a half-open TCP peer is
-	// reaped instead of pinning a goroutine and subscription indefinitely.
+	// maxClientMessageSize bounds one inbound data frame payload and the sum
+	// of a fragmented message's payloads. Larger input closes with 1009.
+	maxClientMessageSize = 64 << 10
+	// maxControlPayload is the RFC 6455 §5.5 control-frame payload limit.
+	maxControlPayload = 125
+	// maxQueuedPongs bounds pending pong replies. When full, the oldest
+	// pending ping is dropped (RFC 6455 §5.5.3 allows answering only the
+	// most recent ping), so a ping flood cannot grow memory.
+	maxQueuedPongs = 16
+
+	// Keepalive parameters. We ping the client every pingPeriod and require a
+	// complete frame (a pong or anything else) within pongWait, so a half-open
+	// or slow-drip peer is reaped instead of pinning a goroutine and
+	// subscription indefinitely. writeWait bounds every write.
 	writeWait  = 10 * time.Second
 	pongWait   = 60 * time.Second
 	pingPeriod = (pongWait * 9) / 10
+	// closeWait bounds how long the server lingers for the peer's close
+	// after sending its own close frame.
+	closeWait = time.Second
 )
+
+// RFC 6455 §7.4.1 close status codes sent by the server.
+const (
+	closeGoingAway       uint16 = 1001
+	closeProtocolError   uint16 = 1002
+	closeInvalidPayload  uint16 = 1007
+	closePolicyViolation uint16 = 1008
+	closeMessageTooBig   uint16 = 1009
+)
+
+const (
+	opContinuation byte = 0x0
+	opText         byte = 0x1
+	opBinary       byte = 0x2
+	opClose        byte = 0x8
+	opPing         byte = 0x9
+	opPong         byte = 0xa
+)
+
+// closeReply is the close frame the server sends after the reader stops.
+// send=false means the transport failed (EOF, timeout) and no frame is sent.
+// code==0 with send=true echoes an empty close body.
+type closeReply struct {
+	send bool
+	code uint16
+}
+
+// inboundMessage is a complete, validated data message. It is only produced
+// when a message sink is configured (the protocol test harness); production
+// discards inbound data.
+type inboundMessage struct {
+	opcode  byte
+	payload []byte
+}
 
 func ServeWebSocket(w http.ResponseWriter, r *http.Request, client *Client, sessionExpiresAt time.Time, unregister func()) error {
 	defer unregister()
+	conn, rw, err := upgradeWebSocket(w, r)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	return serveConn(r.Context(), conn, rw, client.Send(), sessionExpiresAt, false)
+}
+
+// upgradeWebSocket validates the RFC 6455 §4.2.1 handshake, hijacks the
+// connection and writes the 101 response.
+func upgradeWebSocket(w http.ResponseWriter, r *http.Request) (net.Conn, *bufio.ReadWriter, error) {
 	if !isWebSocketUpgrade(r) {
 		http.Error(w, "websocket upgrade required", http.StatusUpgradeRequired)
-		return errors.New("websocket upgrade required")
+		return nil, nil, errors.New("websocket upgrade required")
 	}
 	if !originAllowed(r) {
 		http.Error(w, "origin not allowed", http.StatusForbidden)
-		return errors.New("origin not allowed")
+		return nil, nil, errors.New("origin not allowed")
 	}
 	key := strings.TrimSpace(r.Header.Get("Sec-WebSocket-Key"))
 	decodedKey, err := base64.StdEncoding.DecodeString(key)
 	if err != nil || len(decodedKey) != 16 {
 		http.Error(w, "missing websocket key", http.StatusBadRequest)
-		return errors.New("missing websocket key")
+		return nil, nil, errors.New("missing websocket key")
 	}
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
 		http.Error(w, "hijacking unsupported", http.StatusInternalServerError)
-		return errors.New("hijacking unsupported")
+		return nil, nil, errors.New("hijacking unsupported")
 	}
 	conn, rw, err := hijacker.Hijack()
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	defer conn.Close()
 	// After hijack the http.Server no longer manages this connection. Set an
 	// explicit write deadline for the handshake (and refresh it before every
 	// subsequent write) rather than leaving the server's timeouts in place
 	// (which would kill the long-lived socket) or clearing them entirely
 	// (which would let a dead peer pin this goroutine forever).
 	_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
-
 	accept := websocketAccept(key)
 	if _, err := fmt.Fprintf(rw, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n", accept); err != nil {
-		return err
+		conn.Close()
+		return nil, nil, err
 	}
 	if err := rw.Flush(); err != nil {
-		return err
+		conn.Close()
+		return nil, nil, err
 	}
+	return conn, rw, nil
+}
 
+// serveConn runs the single writer loop and the frame reader. echo is only
+// set by the protocol test harness; it writes inbound data messages back.
+func serveConn(ctx context.Context, conn net.Conn, rw *bufio.ReadWriter, outbound <-chan []byte, sessionExpiresAt time.Time, echo bool) error {
 	done := make(chan struct{})
-	pongs := make(chan []byte, 4)
-	go drainClientFrames(conn, done, pongs)
+	stop := make(chan struct{})
+	defer close(stop)
+	pongs := make(chan []byte, maxQueuedPongs)
+	var inbound chan inboundMessage
+	if echo {
+		inbound = make(chan inboundMessage)
+	}
+	reader := &frameReader{
+		// The hijacked bufio.Reader may already hold client bytes that
+		// arrived with the handshake; read through it, never conn directly.
+		r:           rw.Reader,
+		setDeadline: conn.SetReadDeadline,
+		pongs:       pongs,
+		messages:    inbound,
+		stop:        stop,
+	}
+	var reply closeReply
+	go func() {
+		defer close(done)
+		reply = reader.run()
+	}()
 	ticker := time.NewTicker(pingPeriod)
 	defer ticker.Stop()
 	expiryTimer := time.NewTimer(time.Until(sessionExpiresAt))
 	defer expiryTimer.Stop()
-	for {
-		select {
-		case payload, ok := <-client.Send():
-			if !ok {
+	write := func(frame func(io.Writer) error) error {
+		_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
+		if err := frame(rw); err != nil {
+			return err
+		}
+		return rw.Flush()
+	}
+	flushPongs := func() error {
+		for {
+			select {
+			case payload := <-pongs:
+				if err := write(func(w io.Writer) error { return writePongFrame(w, payload) }); err != nil {
+					return err
+				}
+			default:
 				return nil
 			}
-			_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
-			if err := writeTextFrame(rw, payload); err != nil {
+		}
+	}
+	readerDone := false
+	// closeHandshake sends a close frame, half-closes the TCP stream and
+	// briefly lingers for the peer's close or EOF (bounded by closeWait and
+	// maxClientMessageSize) so unread client bytes do not turn the close into
+	// a TCP reset that discards our close frame.
+	closeHandshake := func(code uint16) {
+		if err := write(func(w io.Writer) error { return writeCloseFrame(w, code) }); err != nil {
+			return
+		}
+		if halfCloser, ok := conn.(interface{ CloseWrite() error }); ok {
+			_ = halfCloser.CloseWrite()
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(closeWait))
+		if readerDone {
+			_, _ = io.Copy(io.Discard, io.LimitReader(rw.Reader, maxClientMessageSize))
+			return
+		}
+		timer := time.NewTimer(closeWait)
+		defer timer.Stop()
+		select {
+		case <-done:
+		case <-timer.C:
+		}
+	}
+	for {
+		select {
+		case payload, ok := <-outbound:
+			if !ok {
+				closeHandshake(closeGoingAway)
+				return nil
+			}
+			if err := write(func(w io.Writer) error { return writeFrame(w, opText, payload) }); err != nil {
 				return err
 			}
-			if err := rw.Flush(); err != nil {
+		case message := <-inbound:
+			// Keep wire order: pings read before this message are answered first.
+			if err := flushPongs(); err != nil {
+				return err
+			}
+			if err := write(func(w io.Writer) error { return writeFrame(w, message.opcode, message.payload) }); err != nil {
 				return err
 			}
 		case <-ticker.C:
-			_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
-			if err := writePingFrame(rw); err != nil {
-				return err
-			}
-			if err := rw.Flush(); err != nil {
+			if err := write(writePingFrame); err != nil {
 				return err
 			}
 		case payload := <-pongs:
-			_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
-			if err := writePongFrame(rw, payload); err != nil {
-				return err
-			}
-			if err := rw.Flush(); err != nil {
+			if err := write(func(w io.Writer) error { return writePongFrame(w, payload) }); err != nil {
 				return err
 			}
 		case <-expiryTimer.C:
+			closeHandshake(closePolicyViolation)
 			return nil
 		case <-done:
+			readerDone = true
+			// Answer pings that arrived before the peer's close.
+			if err := flushPongs(); err != nil {
+				return err
+			}
+			if reply.send {
+				closeHandshake(reply.code)
+			}
 			return nil
-		case <-r.Context().Done():
-			return r.Context().Err()
+		case <-ctx.Done():
+			closeHandshake(closeGoingAway)
+			return ctx.Err()
 		}
 	}
 }
@@ -126,24 +262,6 @@ func isWebSocketUpgrade(r *http.Request) bool {
 		}
 	}
 	return false
-}
-
-func writePingFrame(w io.Writer) error {
-	// FIN bit set, opcode 0x9 (ping), zero-length payload. Server->client frames
-	// are never masked (RFC 6455 §5.1).
-	_, err := w.Write([]byte{0x89, 0x00})
-	return err
-}
-
-func writePongFrame(w io.Writer, payload []byte) error {
-	if len(payload) > 125 {
-		return errors.New("control frame payload too large")
-	}
-	if _, err := w.Write([]byte{0x8a, byte(len(payload))}); err != nil {
-		return err
-	}
-	_, err := w.Write(payload)
-	return err
 }
 
 func originAllowed(r *http.Request) bool {
@@ -166,8 +284,13 @@ func websocketAccept(key string) string {
 	return base64.StdEncoding.EncodeToString(sum[:])
 }
 
-func writeTextFrame(w io.Writer, payload []byte) error {
-	header := []byte{0x81}
+// writeFrame writes one unfragmented, unmasked server frame (RFC 6455 §5.1:
+// server frames are never masked).
+func writeFrame(w io.Writer, opcode byte, payload []byte) error {
+	if opcode >= opClose && len(payload) > maxControlPayload {
+		return errors.New("control frame payload too large")
+	}
+	header := []byte{0x80 | opcode}
 	switch {
 	case len(payload) <= 125:
 		header = append(header, byte(len(payload)))
@@ -185,129 +308,266 @@ func writeTextFrame(w io.Writer, payload []byte) error {
 	return err
 }
 
-func drainClientFrames(conn net.Conn, done chan<- struct{}, pongs chan<- []byte) {
-	defer close(done)
-	reader := bufio.NewReader(conn)
-	_ = conn.SetReadDeadline(time.Now().Add(pongWait))
+func writeTextFrame(w io.Writer, payload []byte) error {
+	return writeFrame(w, opText, payload)
+}
+
+func writePingFrame(w io.Writer) error {
+	return writeFrame(w, opPing, nil)
+}
+
+func writePongFrame(w io.Writer, payload []byte) error {
+	return writeFrame(w, opPong, payload)
+}
+
+// writeCloseFrame writes a close frame with status code, or an empty body
+// when code is 0. No reason text is sent, so nothing dynamic leaves the server.
+func writeCloseFrame(w io.Writer, code uint16) error {
+	if code == 0 {
+		return writeFrame(w, opClose, nil)
+	}
+	var body [2]byte
+	binary.BigEndian.PutUint16(body[:], code)
+	return writeFrame(w, opClose, body[:])
+}
+
+// frameReader parses masked client frames until the peer closes, the
+// transport fails, or the input violates a bound. It never logs or retains
+// payloads beyond the current message.
+type frameReader struct {
+	r           *bufio.Reader
+	setDeadline func(time.Time) error
+	// pongs receives ping payloads to answer; sends never block.
+	pongs chan []byte
+	// messages, when non-nil, receives complete data messages (test harness
+	// echo only). Sends abort when stop is closed.
+	messages chan<- inboundMessage
+	stop     <-chan struct{}
+}
+
+func (f *frameReader) run() closeReply {
+	_ = f.setDeadline(time.Now().Add(pongWait))
 	var fragmentedOpcode byte
 	var fragmentedPayload []byte
+	utf8Checked := 0
 	for {
-		first, err := reader.ReadByte()
-		if err != nil {
-			return
+		var head [2]byte
+		if _, err := io.ReadFull(f.r, head[:]); err != nil {
+			return closeReply{}
 		}
-		second, err := reader.ReadByte()
-		if err != nil {
-			return
-		}
+		first, second := head[0], head[1]
 		opcode := first & 0x0f
 		fin := first&0x80 != 0
-		if first&0x70 != 0 || !validOpcode(opcode) || (!fin && opcode >= 0x8) {
-			return
+		// RSV1-3 must be zero: no extensions are negotiated (§5.2).
+		if first&0x70 != 0 || !validOpcode(opcode) {
+			return closeReply{send: true, code: closeProtocolError}
 		}
-		if opcode == 0 && fragmentedOpcode == 0 || opcode >= 1 && opcode <= 2 && fragmentedOpcode != 0 {
-			return
+		isControl := opcode >= opClose
+		// Control frames must not be fragmented (§5.5); continuation needs an
+		// open message and a new data frame needs none (§5.4).
+		if isControl && !fin ||
+			opcode == opContinuation && fragmentedOpcode == 0 ||
+			(opcode == opText || opcode == opBinary) && fragmentedOpcode != 0 {
+			return closeReply{send: true, code: closeProtocolError}
 		}
-		masked := second&0x80 != 0
-		// RFC 6455 §5.1: client frames MUST be masked. Close on violation.
-		if !masked {
-			return
+		// Client frames must be masked (§5.1).
+		if second&0x80 == 0 {
+			return closeReply{send: true, code: closeProtocolError}
 		}
-		length := int64(second & 0x7f)
+		length := uint64(second & 0x7f)
 		switch length {
 		case 126:
 			var buf [2]byte
-			if _, err := io.ReadFull(reader, buf[:]); err != nil {
-				return
+			if _, err := io.ReadFull(f.r, buf[:]); err != nil {
+				return closeReply{}
 			}
-			length = int64(binary.BigEndian.Uint16(buf[:]))
-			if length < 126 {
-				return
+			length = uint64(binary.BigEndian.Uint16(buf[:]))
+			if length < 126 { // minimal encoding (§5.2)
+				return closeReply{send: true, code: closeProtocolError}
 			}
 		case 127:
 			var buf [8]byte
-			if _, err := io.ReadFull(reader, buf[:]); err != nil {
-				return
+			if _, err := io.ReadFull(f.r, buf[:]); err != nil {
+				return closeReply{}
 			}
-			unsignedLength := binary.BigEndian.Uint64(buf[:])
-			if unsignedLength>>63 != 0 || unsignedLength <= 65535 {
-				return
+			length = binary.BigEndian.Uint64(buf[:])
+			if length>>63 != 0 || length <= 65535 {
+				return closeReply{send: true, code: closeProtocolError}
 			}
-			length = int64(unsignedLength)
 		}
-		if length < 0 || length > maxFrameSize {
-			return
+		if isControl && length > maxControlPayload {
+			return closeReply{send: true, code: closeProtocolError}
 		}
-		if opcode >= 0x8 && length > 125 {
-			return
+		if length > maxClientMessageSize ||
+			opcode == opContinuation && uint64(len(fragmentedPayload))+length > maxClientMessageSize {
+			return closeReply{send: true, code: closeMessageTooBig}
 		}
 		var mask [4]byte
-		if _, err := io.ReadFull(reader, mask[:]); err != nil {
-			return
+		if _, err := io.ReadFull(f.r, mask[:]); err != nil {
+			return closeReply{}
 		}
 		payload := make([]byte, length)
-		if _, err := io.ReadFull(reader, payload); err != nil {
-			return
+		if _, err := io.ReadFull(f.r, payload); err != nil {
+			return closeReply{}
 		}
 		for i := range payload {
 			payload[i] ^= mask[i%4]
 		}
-		if opcode == 0x8 {
-			if !validClosePayload(payload) {
-				return
+
+		switch opcode {
+		case opClose:
+			code, ok := parseClosePayload(payload)
+			if !ok {
+				if len(payload) > 2 && !utf8.Valid(payload[2:]) {
+					return closeReply{send: true, code: closeInvalidPayload}
+				}
+				return closeReply{send: true, code: closeProtocolError}
 			}
-			return
-		}
-		if opcode == 0x9 {
-			select {
-			case pongs <- payload:
-			default:
-				return
-			}
-		}
-		if opcode == 0x1 || opcode == 0x2 {
+			return closeReply{send: true, code: code}
+		case opPing:
+			f.queuePong(payload)
+		case opPong:
+			// Unsolicited or matching pongs only refresh the deadline.
+		case opText, opBinary:
 			if fin {
-				if opcode == 0x1 && !utf8.Valid(payload) {
-					return
+				if opcode == opText && !utf8.Valid(payload) {
+					return closeReply{send: true, code: closeInvalidPayload}
+				}
+				if !f.deliver(opcode, payload) {
+					return closeReply{}
 				}
 			} else {
 				fragmentedOpcode = opcode
 				fragmentedPayload = append(fragmentedPayload[:0], payload...)
+				utf8Checked = 0
 			}
-		} else if opcode == 0 {
-			if len(fragmentedPayload)+len(payload) > maxFrameSize {
-				return
-			}
+		case opContinuation:
 			fragmentedPayload = append(fragmentedPayload, payload...)
-			if fin {
-				if fragmentedOpcode == 0x1 && !utf8.Valid(fragmentedPayload) {
-					return
-				}
-				fragmentedOpcode = 0
-				fragmentedPayload = fragmentedPayload[:0]
+		}
+		if fragmentedOpcode == opText && (opcode == opText || opcode == opContinuation) {
+			// Fail fast on invalid UTF-8 at fragment boundaries (§8.1),
+			// validating each byte once.
+			var ok bool
+			utf8Checked, ok = checkUTF8Prefix(fragmentedPayload, utf8Checked)
+			if !ok || fin && utf8Checked != len(fragmentedPayload) {
+				return closeReply{send: true, code: closeInvalidPayload}
 			}
+		}
+		if opcode == opContinuation && fin {
+			message := append([]byte(nil), fragmentedPayload...)
+			if !f.deliver(fragmentedOpcode, message) {
+				return closeReply{}
+			}
+			fragmentedOpcode = 0
+			fragmentedPayload = fragmentedPayload[:0]
+			utf8Checked = 0
 		}
 		// A complete frame (data, ping, or pong) proves the peer is alive, so
 		// extend the read deadline. Compliant WebSocket clients answer our pings
 		// with pongs automatically, which keeps this refreshed on idle links.
-		_ = conn.SetReadDeadline(time.Now().Add(pongWait))
+		_ = f.setDeadline(time.Now().Add(pongWait))
+	}
+}
+
+// queuePong queues a pong reply without blocking, dropping the oldest
+// pending one when the queue is full.
+func (f *frameReader) queuePong(payload []byte) {
+	for {
+		select {
+		case f.pongs <- payload:
+			return
+		default:
+		}
+		select {
+		case <-f.pongs:
+		default:
+		}
+	}
+}
+
+// deliver hands a complete data message to the sink, if any. It reports
+// false when the connection is stopping.
+func (f *frameReader) deliver(opcode byte, payload []byte) bool {
+	if f.messages == nil {
+		return true
+	}
+	select {
+	case f.messages <- inboundMessage{opcode: opcode, payload: payload}:
+		return true
+	case <-f.stop:
+		return false
 	}
 }
 
 func validOpcode(opcode byte) bool {
-	return opcode <= 2 || opcode >= 8 && opcode <= 10
+	return opcode <= opBinary || opcode >= opClose && opcode <= opPong
 }
 
-func validClosePayload(payload []byte) bool {
+// parseClosePayload validates a received close body (§5.5.1, §7.4). It
+// returns the code to echo (0 for an empty body).
+func parseClosePayload(payload []byte) (uint16, bool) {
 	if len(payload) == 0 {
-		return true
+		return 0, true
 	}
 	if len(payload) == 1 {
-		return false
+		return 0, false
 	}
 	code := binary.BigEndian.Uint16(payload[:2])
-	validCode := code >= 3000 && code <= 4999 ||
-		code == 1000 || code == 1001 || code == 1002 || code == 1003 ||
+	if !validCloseCode(code) || !utf8.Valid(payload[2:]) {
+		return 0, false
+	}
+	return code, true
+}
+
+// validCloseCode accepts codes an endpoint may send on the wire: the RFC 6455
+// defined codes, the IANA-registered 1012-1014, and the 3000-4999
+// registered/private range. 1004-1006, 1015 and all others are rejected.
+func validCloseCode(code uint16) bool {
+	return code >= 3000 && code <= 4999 ||
+		code >= 1000 && code <= 1003 ||
 		code >= 1007 && code <= 1014
-	return validCode && utf8.Valid(payload[2:])
+}
+
+// checkUTF8Prefix validates b[from:] as UTF-8 that may end inside a code
+// point. It returns the offset of the first unconsumed byte (the start of a
+// trailing incomplete sequence, or len(b)) and whether the input could still
+// be completed into valid UTF-8.
+func checkUTF8Prefix(b []byte, from int) (int, bool) {
+	i := from
+	for i < len(b) {
+		if b[i] < utf8.RuneSelf {
+			i++
+			continue
+		}
+		if !utf8.FullRune(b[i:]) {
+			return i, validUTF8Start(b[i:])
+		}
+		r, size := utf8.DecodeRune(b[i:])
+		if r == utf8.RuneError && size == 1 {
+			return i, false
+		}
+		i += size
+	}
+	return i, true
+}
+
+// validUTF8Start reports whether an incomplete multi-byte sequence can be
+// completed into a valid code point. Only the second byte has
+// lead-dependent ranges; later bytes are always 0x80-0xBF.
+func validUTF8Start(tail []byte) bool {
+	candidates := [][]byte{tail}
+	if len(tail) == 1 {
+		candidates = [][]byte{{tail[0], 0x80}, {tail[0], 0x90}, {tail[0], 0xa0}}
+	}
+	for _, candidate := range candidates {
+		probe := append([]byte(nil), candidate...)
+		for len(probe) < utf8.UTFMax && !utf8.FullRune(probe) {
+			probe = append(probe, 0x80)
+		}
+		r, size := utf8.DecodeRune(probe)
+		if !(r == utf8.RuneError && size == 1) && size == len(probe) {
+			return true
+		}
+	}
+	return false
 }

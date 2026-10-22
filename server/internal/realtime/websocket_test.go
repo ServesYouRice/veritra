@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestWebSocketHandshakeAndServerFrames(t *testing.T) {
@@ -36,113 +37,217 @@ func TestWebSocketHandshakeAndServerFrames(t *testing.T) {
 	}
 }
 
-func TestDrainClientFramesAnswersMaskedPingAndRejectsUnmasked(t *testing.T) {
-	server, client := net.Pipe()
-	done := make(chan struct{})
-	pongs := make(chan []byte, 1)
-	go drainClientFrames(server, done, pongs)
-
-	payload := []byte("alive")
-	if _, err := client.Write(maskedClientFrame(0x9, payload)); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case got := <-pongs:
-		if !bytes.Equal(got, payload) {
-			t.Fatalf("pong payload=%q", got)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("masked ping was not surfaced")
-	}
-	_ = client.Close()
-	<-done
-
-	server, client = net.Pipe()
-	done = make(chan struct{})
-	go drainClientFrames(server, done, make(chan []byte, 1))
-	if _, err := client.Write([]byte{0x89, 0x00}); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("unmasked client frame was not rejected")
-	}
-	_ = client.Close()
+// readResult is what a frameReader produced for a fixed input stream.
+type readResult struct {
+	reply    closeReply
+	pongs    [][]byte
+	messages []inboundMessage
 }
 
-func TestDrainClientFramesRejectsMalformedSequences(t *testing.T) {
+// readFrames runs a frameReader over an in-memory client byte stream.
+func readFrames(input []byte) readResult {
+	messages := make(chan inboundMessage)
+	stop := make(chan struct{})
+	reader := &frameReader{
+		r:           bufio.NewReader(bytes.NewReader(input)),
+		setDeadline: func(time.Time) error { return nil },
+		pongs:       make(chan []byte, maxQueuedPongs),
+		messages:    messages,
+		stop:        stop,
+	}
+	var result readResult
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		result.reply = reader.run()
+	}()
+	collecting := true
+	for collecting {
+		select {
+		case message := <-messages:
+			result.messages = append(result.messages, message)
+		case <-finished:
+			collecting = false
+		}
+	}
+	close(stop)
+	close(reader.pongs)
+	for payload := range reader.pongs {
+		result.pongs = append(result.pongs, payload)
+	}
+	return result
+}
+
+func concatFrames(frames ...[]byte) []byte {
+	return bytes.Join(frames, nil)
+}
+
+func TestFrameReaderAnswersMaskedPingAndRejectsUnmasked(t *testing.T) {
+	result := readFrames(maskedClientFrame(opPing, []byte("alive")))
+	if len(result.pongs) != 1 || string(result.pongs[0]) != "alive" {
+		t.Fatalf("pongs=%q", result.pongs)
+	}
+	if result.reply.send {
+		t.Fatalf("EOF must not send a close frame: %+v", result.reply)
+	}
+	result = readFrames([]byte{0x89, 0x00})
+	if result.reply != (closeReply{send: true, code: closeProtocolError}) || len(result.pongs) != 0 {
+		t.Fatalf("unmasked frame result=%+v", result)
+	}
+}
+
+func TestFrameReaderRejectsMalformedSequences(t *testing.T) {
+	big := bytes.Repeat([]byte{'a'}, maxClientMessageSize/2+1)
 	tests := []struct {
 		name   string
 		frames [][]byte
+		code   uint16
 	}{
-		{name: "reserved bit", frames: [][]byte{clientFrame(0xc1, []byte("x"))}},
-		{name: "reserved opcode", frames: [][]byte{clientFrame(0x83, nil)}},
-		{name: "fragmented control", frames: [][]byte{clientFrame(0x09, nil)}},
-		{name: "continuation without start", frames: [][]byte{clientFrame(0x80, nil)}},
-		{name: "new data during fragment", frames: [][]byte{clientFrame(0x01, []byte("a")), clientFrame(0x82, nil)}},
-		{name: "invalid text", frames: [][]byte{clientFrame(0x81, []byte{0xff})}},
-		{name: "invalid fragmented text", frames: [][]byte{clientFrame(0x01, []byte{0xc3}), clientFrame(0x80, []byte{0x28})}},
-		{name: "one byte close", frames: [][]byte{clientFrame(0x88, []byte{1})}},
-		{name: "invalid close code", frames: [][]byte{clientFrame(0x88, []byte{0x03, 0xed})}},
-		{name: "invalid close reason", frames: [][]byte{clientFrame(0x88, []byte{0x03, 0xe8, 0xff})}},
-		{name: "noncanonical short length", frames: [][]byte{{0x81, 0xfe, 0, 1, 1, 2, 3, 4, 'y'}}},
-		{name: "oversized control", frames: [][]byte{{0x89, 0xfe, 0, 126}}},
-		{name: "oversized frame", frames: [][]byte{{0x82, 0xff, 0, 0, 0, 0, 0, 0x10, 0, 1}}},
+		{name: "reserved bit", frames: [][]byte{clientFrame(0xc1, []byte("x"))}, code: closeProtocolError},
+		{name: "reserved data opcode", frames: [][]byte{clientFrame(0x83, nil)}, code: closeProtocolError},
+		{name: "reserved control opcode", frames: [][]byte{clientFrame(0x8b, nil)}, code: closeProtocolError},
+		{name: "fragmented control", frames: [][]byte{clientFrame(0x09, nil)}, code: closeProtocolError},
+		{name: "continuation without start", frames: [][]byte{clientFrame(0x80, nil)}, code: closeProtocolError},
+		{name: "new data during fragment", frames: [][]byte{clientFrame(0x01, []byte("a")), clientFrame(0x82, nil)}, code: closeProtocolError},
+		{name: "invalid text", frames: [][]byte{clientFrame(0x81, []byte{0xff})}, code: closeInvalidPayload},
+		{name: "invalid fragmented text", frames: [][]byte{clientFrame(0x01, []byte{0xc3}), clientFrame(0x80, []byte{0x28})}, code: closeInvalidPayload},
+		{name: "truncated fragmented text then EOF", frames: [][]byte{clientFrame(0x01, []byte{0xe2, 0x82})}, code: 0},
+		{name: "truncated final text", frames: [][]byte{clientFrame(0x01, []byte{0xe2, 0x82}), clientFrame(0x80, nil)}, code: closeInvalidPayload},
+		{name: "invalid text fails fast", frames: [][]byte{clientFrame(0x01, []byte{0xce, 0xba, 0xf5})}, code: closeInvalidPayload},
+		{name: "one byte close", frames: [][]byte{clientFrame(0x88, []byte{1})}, code: closeProtocolError},
+		{name: "invalid close code", frames: [][]byte{clientFrame(0x88, []byte{0x03, 0xed})}, code: closeProtocolError},
+		{name: "reserved close code 1015", frames: [][]byte{clientFrame(0x88, []byte{0x03, 0xf7})}, code: closeProtocolError},
+		{name: "invalid close reason", frames: [][]byte{clientFrame(0x88, []byte{0x03, 0xe8, 0xff})}, code: closeInvalidPayload},
+		{name: "oversized close", frames: [][]byte{clientFrame(0x88, append([]byte{0x03, 0xe8}, bytes.Repeat([]byte{'a'}, 124)...))}, code: closeProtocolError},
+		{name: "noncanonical short length", frames: [][]byte{{0x81, 0xfe, 0, 1, 1, 2, 3, 4, 'y'}}, code: closeProtocolError},
+		{name: "noncanonical long length", frames: [][]byte{{0x82, 0xff, 0, 0, 0, 0, 0, 0, 0xff, 0xff}}, code: closeProtocolError},
+		{name: "length high bit", frames: [][]byte{{0x82, 0xff, 0x80, 0, 0, 0, 0, 0, 0, 0}}, code: closeProtocolError},
+		{name: "oversized control", frames: [][]byte{{0x89, 0xfe, 0, 126}}, code: closeProtocolError},
+		{name: "oversized frame", frames: [][]byte{{0x82, 0xff, 0, 0, 0, 0, 0, 0x10, 0, 1}}, code: closeMessageTooBig},
+		{name: "frame one over bound", frames: [][]byte{clientFrame(0x82, make([]byte, maxClientMessageSize+1))}, code: closeMessageTooBig},
+		{name: "oversized fragmented message", frames: [][]byte{clientFrame(0x02, big), clientFrame(0x80, big)}, code: closeMessageTooBig},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			server, client := net.Pipe()
-			done := make(chan struct{})
-			go drainClientFrames(server, done, make(chan []byte, 1))
-			go func() {
-				defer client.Close()
-				for _, frame := range test.frames {
-					if _, err := client.Write(frame); err != nil {
-						return
-					}
-				}
-			}()
-			select {
-			case <-done:
-			case <-time.After(time.Second):
-				t.Fatal("malformed frame sequence was not closed")
+			result := readFrames(concatFrames(test.frames...))
+			want := closeReply{send: test.code != 0, code: test.code}
+			if result.reply != want || len(result.messages) != 0 {
+				t.Fatalf("reply=%+v messages=%d want=%+v", result.reply, len(result.messages), want)
 			}
 		})
 	}
 }
 
-func TestDrainClientFramesAcceptsFragmentationAndControlInterleaving(t *testing.T) {
-	server, client := net.Pipe()
-	done := make(chan struct{})
-	pongs := make(chan []byte, 1)
-	go drainClientFrames(server, done, pongs)
+func TestFrameReaderAcceptsBoundsFragmentationAndControlInterleaving(t *testing.T) {
+	limit := bytes.Repeat([]byte{'b'}, maxClientMessageSize)
+	half := limit[:maxClientMessageSize/2]
+	result := readFrames(concatFrames(
+		clientFrame(0x01, []byte("hel")),
+		clientFrame(0x89, []byte("alive")),
+		clientFrame(0x00, []byte{0xe2, 0x82}), // split U+20AC across fragments
+		clientFrame(0x8a, []byte("unsolicited")),
+		clientFrame(0x80, []byte{0xac, 'o'}),
+		clientFrame(0x82, limit),
+		clientFrame(0x02, half),
+		clientFrame(0x80, half),
+		clientFrame(0x89, bytes.Repeat([]byte{'p'}, maxControlPayload)),
+		clientFrame(0x88, []byte{0x0f, 0xa0, 'b', 'y', 'e'}),
+	))
+	if result.reply != (closeReply{send: true, code: 4000}) {
+		t.Fatalf("reply=%+v", result.reply)
+	}
+	if len(result.messages) != 3 ||
+		result.messages[0].opcode != opText || string(result.messages[0].payload) != "hel€o" ||
+		result.messages[1].opcode != opBinary || len(result.messages[1].payload) != maxClientMessageSize ||
+		result.messages[2].opcode != opBinary || len(result.messages[2].payload) != maxClientMessageSize {
+		t.Fatalf("messages=%d", len(result.messages))
+	}
+	if len(result.pongs) != 2 || string(result.pongs[0]) != "alive" || len(result.pongs[1]) != maxControlPayload {
+		t.Fatalf("pongs=%d", len(result.pongs))
+	}
+	if empty := readFrames(clientFrame(0x88, nil)); empty.reply != (closeReply{send: true}) {
+		t.Fatalf("empty close reply=%+v", empty.reply)
+	}
+}
+
+func TestFrameReaderBoundsPingFlood(t *testing.T) {
+	var frames [][]byte
+	for i := 0; i < 1000; i++ {
+		frames = append(frames, clientFrame(0x89, []byte{byte(i), byte(i >> 8)}))
+	}
+	result := readFrames(concatFrames(frames...))
+	if len(result.pongs) != maxQueuedPongs {
+		t.Fatalf("queued pongs=%d", len(result.pongs))
+	}
+	last := result.pongs[len(result.pongs)-1]
+	if last[0] != byte(999&0xff) || last[1] != byte(999>>8) {
+		t.Fatal("most recent ping was not kept")
+	}
+}
+
+func TestServeWebSocketReadsBytesBufferedDuringHandshake(t *testing.T) {
+	writer, peer := newHijackResponseWriter()
+	defer peer.Close()
+	// Simulate the server's bufio.Reader having consumed a client frame that
+	// arrived in the same packet as the upgrade request.
+	buffered := io.MultiReader(bytes.NewReader(clientFrame(0x88, []byte{0x03, 0xe8})), writer.conn)
+	writer.rw = bufio.NewReadWriter(bufio.NewReader(buffered), bufio.NewWriter(writer.conn))
+	received := make(chan []byte, 1)
 	go func() {
-		defer client.Close()
-		frames := [][]byte{
-			clientFrame(0x01, []byte("hel")),
-			clientFrame(0x89, []byte("alive")),
-			clientFrame(0x80, []byte("lo")),
-			clientFrame(0x88, []byte{0x03, 0xe8}),
-		}
-		for _, frame := range frames {
-			if _, err := client.Write(frame); err != nil {
-				return
+		reader := bufio.NewReader(peer)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil || line == "\r\n" {
+				break
 			}
 		}
+		head := make([]byte, 4)
+		_, _ = io.ReadFull(reader, head)
+		received <- head
+		_, _ = io.Copy(io.Discard, reader)
 	}()
-	select {
-	case payload := <-pongs:
-		if string(payload) != "alive" {
-			t.Fatalf("pong payload=%q", payload)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("interleaved ping was not handled")
+	client := &Client{send: make(chan []byte, 1)}
+	if err := ServeWebSocket(writer, validUpgradeRequest(context.Background()), client, time.Now().Add(time.Hour), func() {}); err != nil {
+		t.Fatal(err)
 	}
 	select {
-	case <-done:
+	case head := <-received:
+		if !bytes.Equal(head, []byte{0x88, 0x02, 0x03, 0xe8}) {
+			t.Fatalf("close echo=%x", head)
+		}
 	case <-time.After(time.Second):
-		t.Fatal("valid close did not finish the reader")
+		t.Fatal("buffered close frame was not processed")
+	}
+}
+
+func TestCheckUTF8PrefixMatchesStdlib(t *testing.T) {
+	inputs := [][]byte{
+		[]byte("plain"), []byte("κόσμε"), {0xf0, 0x90, 0x80, 0x80}, {0xf4, 0x8f, 0xbf, 0xbf},
+		{0xf4, 0x90, 0x80, 0x80}, {0xed, 0xa0, 0x80}, {0xe0, 0x80, 0xaf}, {0xc0, 0xaf}, {0xff}, {0xe0, 0xa0},
+		{0xce, 0xba, 0xe1, 0xbd, 0xb9, 0xcf, 0x83, 0xce, 0xbc, 0xce, 0xb5, 0xed, 0xa0, 0x80, 0x65, 0x64, 0x69, 0x74, 0x65, 0x64},
+	}
+	for _, input := range inputs {
+		assertUTF8Split(t, input)
+	}
+}
+
+// assertUTF8Split checks that incremental validation split at every point
+// agrees with utf8.Valid on the whole input, and that a rejected prefix can
+// never be completed into valid UTF-8 (fail-fast is sound).
+func assertUTF8Split(t testing.TB, input []byte) {
+	t.Helper()
+	want := utf8.Valid(input)
+	for split := 0; split <= len(input); split++ {
+		offset, ok := checkUTF8Prefix(input[:split], 0)
+		if !ok && want {
+			t.Fatalf("input=%x split=%d: valid input rejected early", input, split)
+		}
+		if ok {
+			offset, ok = checkUTF8Prefix(input, offset)
+		}
+		if got := ok && offset == len(input); got != want {
+			t.Fatalf("input=%x split=%d got=%v want=%v", input, split, got, want)
+		}
 	}
 }
 
@@ -255,30 +360,6 @@ func TestHubBoundsSlowClientsAndDrains(t *testing.T) {
 	if _, err := hub.Register("other", "device", "203.0.113.11"); !errors.Is(err, ErrHubDraining) {
 		t.Fatalf("registration after drain error=%v", err)
 	}
-}
-
-func FuzzDrainClientFrames(f *testing.F) {
-	f.Add(maskedClientFrame(0x9, []byte("alive")))
-	f.Add(clientFrame(0x88, []byte{0x03, 0xe8}))
-	f.Add([]byte{0x81, 0x00})
-	f.Fuzz(func(t *testing.T, data []byte) {
-		if len(data) > maxFrameSize+32 {
-			t.Skip()
-		}
-		server, client := net.Pipe()
-		done := make(chan struct{})
-		go drainClientFrames(server, done, make(chan []byte, 4))
-		go func() {
-			_, _ = client.Write(data)
-			_ = client.Close()
-		}()
-		select {
-		case <-done:
-		case <-time.After(time.Second):
-			_ = client.Close()
-			t.Fatal("parser did not terminate after peer close")
-		}
-	})
 }
 
 func maskedClientFrame(opcode byte, payload []byte) []byte {
