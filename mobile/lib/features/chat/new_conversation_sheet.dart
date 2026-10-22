@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
+import '../../ui/validation.dart';
 import '../../ui/widgets/account_picker.dart';
 
 /// Bottom sheet for starting a DM or a private group. Members are picked by
@@ -37,6 +38,14 @@ class _NewConversationFormState extends State<_NewConversationForm> {
   String kind = 'dm';
   bool submitting = false;
 
+  /// Errors show next to their field only after the first submit attempt,
+  /// then follow every edit, so an untouched form does not open in red.
+  bool attempted = false;
+
+  /// The server's answer to the last attempt. Shown inside the sheet: a
+  /// snackbar would sit behind the modal barrier.
+  String? submitError;
+
   @override
   void dispose() {
     title.dispose();
@@ -46,7 +55,12 @@ class _NewConversationFormState extends State<_NewConversationForm> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Padding(
+    final titleError = attempted && kind == 'group' ? _titleError() : null;
+    final membersError = attempted ? _membersError() : null;
+    final footerError = membersError ?? submitError;
+    // Scrolls so the form stays usable with the keyboard up or at a large
+    // text scale, instead of overflowing the sheet.
+    return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -73,15 +87,21 @@ class _NewConversationFormState extends State<_NewConversationForm> {
               // The picker below is re-created per kind (different selection
               // limits), so drop any members carried over from the old mode.
               members = <SelectedAccount>[];
+              attempted = false;
+              submitError = null;
             }),
           ),
           const SizedBox(height: 16),
           if (kind == 'group') ...<Widget>[
             TextField(
               controller: title,
-              decoration: const InputDecoration(
+              textInputAction: TextInputAction.next,
+              textCapitalization: TextCapitalization.words,
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
                 labelText: 'Group name',
-                prefixIcon: Icon(Icons.badge_outlined),
+                prefixIcon: const Icon(Icons.badge_outlined),
+                errorText: titleError,
               ),
             ),
             const SizedBox(height: 12),
@@ -93,6 +113,19 @@ class _NewConversationFormState extends State<_NewConversationForm> {
             maxSelection: kind == 'dm' ? 1 : null,
             onChanged: (value) => setState(() => members = value),
           ),
+          if (footerError != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Semantics(
+                liveRegion: true,
+                child: Text(
+                  footerError,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.error,
+                  ),
+                ),
+              ),
+            ),
           const SizedBox(height: 20),
           FilledButton.icon(
             onPressed: submitting ? null : _submit,
@@ -104,27 +137,27 @@ class _NewConversationFormState extends State<_NewConversationForm> {
     );
   }
 
-  String? _validate() {
-    if (kind == 'dm') {
-      return members.isEmpty ? 'Pick the person to message first.' : null;
+  String? _titleError() => displayNameError(title.text, noun: 'group name');
+
+  String? _membersError() {
+    if (members.isNotEmpty) {
+      return null;
     }
-    if (title.text.trim().isEmpty) {
-      return 'Give the group a name.';
-    }
-    if (members.isEmpty) {
-      return 'Add at least one other member.';
-    }
-    return null;
+    return kind == 'dm'
+        ? 'Pick the person to message first.'
+        : 'Add at least one other member.';
   }
 
   Future<void> _submit() async {
     // An empty, unnamed group is almost always a mis-tap, and once created it
     // sits in the chat list indistinguishable from the others.
-    final problem = _validate();
-    if (problem != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(problem)),
-      );
+    final invalid =
+        _membersError() != null || (kind == 'group' && _titleError() != null);
+    setState(() {
+      attempted = true;
+      submitError = null;
+    });
+    if (invalid) {
       return;
     }
     setState(() => submitting = true);
@@ -137,13 +170,14 @@ class _NewConversationFormState extends State<_NewConversationForm> {
     if (!mounted) {
       return;
     }
-    setState(() => submitting = false);
+    setState(() {
+      submitting = false;
+      if (created == null) {
+        submitError = widget.state.error;
+      }
+    });
     if (created != null) {
       Navigator.of(context).pop();
-    } else if (widget.state.error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(widget.state.error!)),
-      );
     }
   }
 }
