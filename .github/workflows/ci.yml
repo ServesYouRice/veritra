@@ -294,28 +294,38 @@ jobs:
   compose-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # Supported Compose runs a released image by digest; CI builds a local
+      # stand-in through the development-only build override (card I46).
+      VERITRA_IMAGE: veritra-ci:${{ github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
       - name: Verify Go toolchain alignment
         run: sh scripts/check-go-toolchain.sh
       - name: Build a fresh deployment image
-        run: docker compose -f deploy/docker-compose.yml build --build-arg "GO_VERSION=$(tr -d '[:space:]' < .go-version)" --build-arg "COMMIT=$GITHUB_SHA"
+        run: docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.build.yml build --build-arg "GO_VERSION=$(tr -d '[:space:]' < .go-version)" --build-arg "COMMIT=$GITHUB_SHA"
       - name: Start a fresh-volume deployment
         env:
           PRIVATE_MESSENGER_SETUP_TOKEN: AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA
-        run: docker compose -f deploy/docker-compose.yml up --wait --wait-timeout 120
+        run: docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.build.yml up --wait --wait-timeout 120
       - name: Verify health over the published loopback port
         run: curl --fail --silent --show-error http://127.0.0.1:8080/healthz
+      - name: Verify the hardened container profile
+        run: |
+          container="$(docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.build.yml ps -q messenger)"
+          test "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' "$container")" = "true"
+          test "$(docker inspect --format '{{json .HostConfig.CapDrop}}' "$container")" = '["ALL"]'
+          test "$(docker inspect --format '{{.Config.User}}' "$container")" = "65532:65532"
       - name: Verify packaged container toolchain
         run: |
-          image="$(docker compose -f deploy/docker-compose.yml images -q messenger)"
+          image="$(docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.build.yml images -q messenger)"
           test -n "$image"
           test "$(docker image inspect --format '{{index .Config.Labels "org.veritra.go-toolchain"}}' "$image")" = "$(tr -d '[:space:]' < .go-version)"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$GITHUB_SHA"
           docker run --rm --entrypoint /usr/local/bin/messenger-server "$image" version
       - name: Stop deployment
         if: always()
-        run: docker compose -f deploy/docker-compose.yml down --volumes
+        run: docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.build.yml down --volumes
 
   licenses:
     runs-on: ubuntu-latest

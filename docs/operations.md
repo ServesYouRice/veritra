@@ -107,10 +107,61 @@ and scope metadata. The mobile client writes the bounded pages to a local
 5. If rollback crosses an incompatible migration, stop the server, restore the
    matching pre-upgrade backup, and reinstall its matching binary.
 
-Shutdown marks `/readyz` unavailable first, closes realtime connections, lets
-active HTTP uploads finish within the server's 25-second shutdown deadline,
-and then closes storage. Clients recover missed realtime events through durable
+Shutdown fits a 25-second budget, below the 30-second stop grace of the
+supported Compose service (`stop_grace_period`) and systemd unit
+(`TimeoutStopSec`); keep both above 25 seconds if you change them. It marks
+`/readyz` unavailable, closes realtime connections, and gives in-flight HTTP
+requests, uploads included, 18 seconds to finish. Connections still busy are
+then closed, their handlers get the rest of the budget to clean up partial
+blobs, and only then is storage closed. Transfers keep their 15-minute route
+deadline while the server runs; one cut off by shutdown is retried by the
+client after restart. Clients recover missed realtime events through durable
 sync.
+
+## Supported deployment profile
+
+**Artifact.** `deploy/docker-compose.yml` runs only the released image, by
+digest. Download the release's `container-image-digest.txt`, verify it with
+`gh attestation verify container-image-digest.txt --repo <owner>/<repo>`, and
+set `VERITRA_IMAGE` to its line (`ghcr.io/<owner>/<repo>:<tag>@sha256:<digest>`).
+Compose refuses to start without it. A tag without `@sha256:` is mutable and
+unsupported. `deploy/docker-compose.build.yml` builds from a checkout for
+development and CI only. For systemd, install the release binary checked
+against `SHA256SUMS` and its attestation.
+
+**Hardening.** The Compose services run as uid 65532 with a read-only root
+filesystem, all capabilities dropped, `no-new-privileges` and a small
+in-memory `/tmp`. The data volume is the only writable application path. The
+backup service keeps its restore-drill scratch on that volume
+(`TMPDIR=/data/.tmp`) and has no network; its `/offsite` mount must be
+writable by uid 65532. Caddy keeps only `NET_BIND_SERVICE`. The systemd units
+use `ProtectSystem=strict` with the state directory as the only
+`ReadWritePaths`, an empty capability set, private `/tmp` and devices, and a
+`@system-service` syscall filter. Add a `ReadWritePaths=` line for an
+off-host backup mount or an overridden database or blob directory.
+
+**Secrets.** `PRIVATE_MESSENGER_SETUP_TOKEN`, `_VAPID_PRIVATE_KEY`,
+`_FCM_PRIVATE_KEY`, `_APNS_PRIVATE_KEY` and `_TURN_SHARED_SECRET` each accept
+a `_FILE` variant naming a file that holds the value (at most 64 KiB; one
+trailing newline is ignored). Setting both forms is an error. Errors name the
+setting and path, never the value, and the server's config output redacts
+secrets. Compose forwards only the `_FILE` variables (plus the one-time setup
+token): put each secret in its own file in `VERITRA_SECRETS_DIR` (default
+`deploy/secrets`, mounted read-only at `/run/secrets`), owned by uid 65532
+with mode 0400, and set for example
+`PRIVATE_MESSENGER_TURN_SHARED_SECRET_FILE=/run/secrets/turn_shared_secret`.
+Under systemd, prefer `LoadCredential=` with `..._FILE=%d/<name>`, as shown in
+the unit.
+
+**Storage ownership.** Storage commands resolve the data directory,
+`PRIVATE_MESSENGER_DB_PATH` and `PRIVATE_MESSENGER_STORAGE_PATH` to absolute
+paths with symlinks resolved. They refuse layouts where the blob directory is,
+or contains, the data directory or the database, or where either overlaps the
+data directory's `backups/`. Besides `.veritra-server.lock` in the data
+directory, `serve` holds OS locks on `<database>.veritra-server.lock` and
+`<blob dir>/.veritra-server.lock`, so two data directories cannot share one
+database or blob directory. These two locks are released by the OS when the
+process exits and never go stale.
 
 ## Retention capacity
 
