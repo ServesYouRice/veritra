@@ -9,9 +9,7 @@ services:
     build:
       context: ..
       dockerfile: server/Dockerfile
-    pull_policy: build
   backup:
     build:
       context: ..
       dockerfile: server/Dockerfile
-    pull_policy: build
