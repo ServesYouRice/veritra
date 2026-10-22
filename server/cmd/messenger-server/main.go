@@ -81,6 +81,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 	ctx := context.Background()
 	switch command {
 	case "serve", "init", "migrate", "doctor", "backup", "scheduled-backup", "restore", "reset-owner-password":
+		// Every storage command works on canonical paths, so overlapping or
+		// symlinked overrides are rejected and locked as one resource (I46).
+		if cfg, err = cfg.ResolvePaths(); err != nil {
+			return err
+		}
 		// A restore cut short by a crash is settled before anything opens the
 		// database (card I45).
 		if err := recoverInterruptedRestore(cfg, stdout); err != nil {
@@ -191,6 +196,11 @@ func serve(ctx context.Context, cfg config.Config) error {
 		return err
 	}
 	defer lock.Release()
+	resources, err := acquireResourceLocks(cfg)
+	if err != nil {
+		return err
+	}
+	defer resources.Release()
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	level := slog.LevelInfo

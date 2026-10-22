@@ -14,11 +14,41 @@ Environment=PRIVATE_MESSENGER_ENV=production
 # credentials stay in the mount's own configuration, not here.
 # PRIVATE_MESSENGER_BACKUP_KEEP sets how many backups each place keeps (7).
 EnvironmentFile=/etc/private-messenger/backup.env
+StateDirectory=private-messenger
+StateDirectoryMode=0700
 UMask=0077
 ExecStart=/usr/local/bin/messenger-server scheduled-backup
+
+# Least privilege (card I46). The restore drill uses the private /tmp, so it
+# needs disk space there for one copy of the instance.
 NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=full
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
 ReadWritePaths=%S/private-messenger
 # Add the off-host mount point here, for example:
 # ReadWritePaths=/mnt/veritra-offsite
+# A mount under /home also needs ProtectHome=false.
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+PrivateNetwork=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RemoveIPC=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+SystemCallErrorNumber=EPERM

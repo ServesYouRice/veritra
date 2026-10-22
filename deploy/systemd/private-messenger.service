@@ -7,6 +7,8 @@ Wants=network-online.target
 Type=simple
 User=private-messenger
 Group=private-messenger
+# Install the release binary verified against the release's SHA256SUMS and
+# attestation; never point ExecStart at a binary built from a checkout.
 Environment=PRIVATE_MESSENGER_ADDR=127.0.0.1:8080
 Environment=PRIVATE_MESSENGER_DATA_DIR=%S/private-messenger
 # Before first-owner setup, generate a 32-byte base64url token with
@@ -14,17 +16,49 @@ Environment=PRIVATE_MESSENGER_DATA_DIR=%S/private-messenger
 # Remove it after setup and restart the service.
 Environment=PRIVATE_MESSENGER_ENV=production
 EnvironmentFile=/etc/private-messenger/private-messenger.env
+# Secrets may come from systemd credentials instead of the environment file,
+# so they never appear in the unit's environment. For example:
+# LoadCredential=turn_shared_secret:/etc/private-messenger/credentials/turn_shared_secret
+# Environment=PRIVATE_MESSENGER_TURN_SHARED_SECRET_FILE=%d/turn_shared_secret
 StateDirectory=private-messenger
 StateDirectoryMode=0700
 UMask=0077
 ExecStart=/usr/local/bin/messenger-server serve
 Restart=on-failure
 RestartSec=5
+# Must stay above the server's 25-second shutdown budget.
 TimeoutStopSec=30
+
+# Least privilege (card I46). The state directory is the only writable path.
+# If PRIVATE_MESSENGER_DB_PATH or PRIVATE_MESSENGER_STORAGE_PATH point
+# elsewhere, add each directory with its own ReadWritePaths= line.
 NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=full
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
 ReadWritePaths=%S/private-messenger
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RemoveIPC=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+SystemCallErrorNumber=EPERM
 
 [Install]
 WantedBy=multi-user.target
