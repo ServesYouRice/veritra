@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
+
 /// Asks before an action that cannot be undone. Resolves to true only when
 /// the confirm button is pressed; dismissing or cancelling resolves to false.
 Future<bool> confirmAction(
@@ -18,7 +20,7 @@ Future<bool> confirmAction(
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(dialogContext).pop(false),
-          child: const Text('Cancel'),
+          child: Text(dialogContext.l10n.confirmCancel),
         ),
         FilledButton(
           style: destructive

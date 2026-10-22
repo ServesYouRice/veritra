@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
+import '../../l10n/l10n.dart';
 import '../../ui/validation.dart';
 import '../../ui/widgets/account_picker.dart';
 
@@ -137,7 +138,11 @@ class _NewConversationFormState extends State<_NewConversationForm> {
     );
   }
 
-  String? _titleError() => displayNameError(title.text, noun: 'group name');
+  String? _titleError() => displayNameError(
+        title.text,
+        groupName: true,
+        l10n: context.l10n,
+      );
 
   String? _membersError() {
     if (members.isNotEmpty) {

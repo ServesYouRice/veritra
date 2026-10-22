@@ -12,6 +12,7 @@ import '../../core/models.dart';
 import '../../crypto/app_payload.dart' show maxAppTextLength;
 import '../../storage/encrypted_database.dart'
     show LocalMessage, LocalMessageKind;
+import '../../l10n/l10n.dart';
 import '../../ui/format.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
@@ -408,7 +409,7 @@ class _ChatScreenState extends State<ChatScreen> {
           final error = trimmed.isEmpty
               ? 'Enter the new text, or delete the message instead.'
               : trimmed.length > maxAppTextLength
-                  ? messageTooLongText
+                  ? context.l10n.validationMessageTooLong
                   : null;
           return AlertDialog(
             title: const Text('Edit message'),
@@ -1252,13 +1253,6 @@ class _RedactedBars extends StatelessWidget {
 /// One rounded pill holding the attachment button, the field and send
 /// (`docs/design.md` §4), rather than a bordered row of three separate
 /// Material controls.
-/// Why the composer's attachment control is disabled outside demo builds.
-const String attachmentsUnavailableReason =
-    'Attachments need the reviewed encryption engine';
-
-/// Inline composer and edit-dialog error past [maxAppTextLength].
-const String messageTooLongText =
-    'Too long to send. Shorten it or split it into several messages.';
 
 bool get _enterSends =>
     defaultTargetPlatform == TargetPlatform.windows ||
@@ -1322,9 +1316,9 @@ class _Composer extends StatelessWidget {
                 // Attachments need the MLS path (demo builds); elsewhere the
                 // control stays visible but disabled, and the reason is
                 // reachable by focus, tap and screen reader.
-                const GatedExplanation(
-                  message: attachmentsUnavailableReason,
-                  child: IconButton(
+                GatedExplanation(
+                  message: context.l10n.gatedAttachmentsUnavailable,
+                  child: const IconButton(
                     onPressed: null,
                     icon: Icon(Icons.attach_file),
                   ),
@@ -1388,7 +1382,9 @@ class _Composer extends StatelessWidget {
                           ? theme.textTheme.bodySmall
                               ?.copyWith(color: scheme.error)
                           : theme.textTheme.bodySmall,
-                      errorText: overLimit ? messageTooLongText : null,
+                      errorText: overLimit
+                          ? context.l10n.validationMessageTooLong
+                          : null,
                     ),
                   ),
                 ),
