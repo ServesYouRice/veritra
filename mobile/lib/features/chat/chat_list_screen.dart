@@ -72,7 +72,18 @@ class ChatListScreen extends StatelessWidget {
                   const SizedBox(height: 120),
                   // An empty list can mean "still loading"; showing the empty
                   // state too early reads as "your data is gone".
-                  if (!state.conversationsLoaded)
+                  if (state.errorFor(Ops.conversations) case final error?)
+                    EmptyState(
+                      icon: Icons.cloud_off_outlined,
+                      title: 'Couldn’t load conversations',
+                      message: error,
+                      action: FilledButton.icon(
+                        onPressed: state.refreshConversations,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Retry'),
+                      ),
+                    )
+                  else if (!state.conversationsLoaded)
                     const Center(child: CircularProgressIndicator())
                   else
                     const EmptyState(

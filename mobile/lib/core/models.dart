@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 
 enum OutboxDeliveryState { sending, failed, retrying, terminal }
 
@@ -111,10 +112,10 @@ class Conversation {
       title: json['title'] as String?,
       communityId: json['community_id'] as String?,
       channelId: json['channel_id'] as String?,
-      retentionSeconds: (json['retention_seconds'] as num?)?.toInt(),
+      retentionSeconds: _optionalInt(json['retention_seconds']),
       createdAt: _parseOptionalTime(json['created_at']),
       lastMessageAt: _parseOptionalTime(json['last_message_at']),
-      unreadCount: (json['unread_count'] as num?)?.toInt() ?? 0,
+      unreadCount: max(0, _optionalInt(json['unread_count']) ?? 0),
       currentRole: json['current_role'] as String?,
       peerAccountId: _nonEmpty(json['peer_account_id']),
       peerUsername: _nonEmpty(json['peer_username']),
@@ -286,8 +287,8 @@ class Invite {
     return Invite(
       id: json['id'] as String,
       code: json['code'] as String,
-      maxUses: (json['max_uses'] as num?)?.toInt() ?? 0,
-      uses: (json['uses'] as num?)?.toInt() ?? 0,
+      maxUses: _optionalInt(json['max_uses']) ?? 0,
+      uses: _optionalInt(json['uses']) ?? 0,
       expiresAt: _parseOptionalTime(json['expires_at']),
       createdAt: _parseOptionalTime(json['created_at']),
     );
@@ -369,7 +370,7 @@ class DeviceKeyPackage {
         accountId: json['account_id'] as String? ?? '',
         keyPackage: _decodeModelBytes(json['key_package']),
         ciphersuite: json['ciphersuite'] as String,
-        expiresAt: DateTime.parse(json['expires_at'] as String).toUtc(),
+        expiresAt: _parseStrictTime(json['expires_at']),
       );
 }
 
@@ -410,8 +411,8 @@ class MlsMessage {
         kind: json['kind'] as String,
         payload: _decodeModelBytes(json['payload']),
         idempotencyKey: json['idempotency_key'] as String,
-        syncEventId: (json['sync_event_id'] as num).toInt(),
-        createdAt: DateTime.parse(json['created_at'] as String).toUtc(),
+        syncEventId: requiredApiInt(json['sync_event_id']),
+        createdAt: _parseStrictTime(json['created_at']),
       );
 }
 
@@ -443,10 +444,10 @@ class MlsRevocation {
         coordinatorDeviceId: json['coordinator_device_id'] as String,
         state: json['state'] as String,
         commitMessageId: json['commit_message_id'] as String?,
-        requestedAt: DateTime.parse(json['requested_at'] as String).toUtc(),
+        requestedAt: _parseStrictTime(json['requested_at']),
         completedAt: json['completed_at'] == null
             ? null
-            : DateTime.parse(json['completed_at'] as String).toUtc(),
+            : _parseStrictTime(json['completed_at']),
       );
 }
 
@@ -478,9 +479,9 @@ class AttachmentEnvelope {
         conversationId: json['conversation_id'] as String?,
         storageKey: json['storage_key'] as String,
         ciphertextSha256: json['ciphertext_sha256'] as String,
-        sizeBytes: (json['size_bytes'] as num).toInt(),
+        sizeBytes: requiredApiInt(json['size_bytes']),
         cryptoMetadata: json['crypto_metadata'],
-        createdAt: DateTime.parse(json['created_at'] as String).toUtc(),
+        createdAt: _parseStrictTime(json['created_at']),
       );
 }
 
@@ -518,16 +519,16 @@ class CallSession {
         // Required: `version` is the optimistic-concurrency token for call
         // transitions. Defaulting it would turn a contract break into silent
         // stale-write rejections at signalling time.
-        version: (json['version'] as num).toInt(),
+        version: requiredApiInt(json['version']),
         metadata:
             Map<String, Object?>.from(json['metadata'] as Map? ?? const {}),
-        createdAt: DateTime.parse(json['created_at'] as String).toUtc(),
+        createdAt: _parseStrictTime(json['created_at']),
         endedAt: json['ended_at'] == null
             ? null
-            : DateTime.parse(json['ended_at'] as String).toUtc(),
+            : _parseStrictTime(json['ended_at']),
         expiresAt: json['expires_at'] == null
             ? null
-            : DateTime.parse(json['expires_at'] as String).toUtc(),
+            : _parseStrictTime(json['expires_at']),
       );
 }
 
@@ -656,7 +657,7 @@ class SyncEvent {
 
   factory SyncEvent.fromJson(Map<String, Object?> json) {
     return SyncEvent(
-      id: (json['id'] as num).toInt(),
+      id: requiredApiInt(json['id']),
       type: json['type'] as String,
       accountId: json['account_id'] as String?,
       conversationId: json['conversation_id'] as String?,
@@ -776,9 +777,52 @@ String? _nonEmpty(Object? value) {
   return null;
 }
 
+/// Longest timestamp text the client parses; RFC 3339 with nanoseconds
+/// and an offset fits well inside it.
+const _maxTimestampChars = 40;
+
 DateTime? _parseOptionalTime(Object? value) {
-  if (value is String && value.isNotEmpty) {
-    return DateTime.tryParse(value);
+  if (value is String &&
+      value.isNotEmpty &&
+      value.length <= _maxTimestampChars) {
+    return DateTime.tryParse(value)?.toUtc();
+  }
+  return null;
+}
+
+/// Parses a timestamp the model cannot work without (MLS, key packages,
+/// calls, attachments). Fails with a [FormatException] rather than
+/// guessing, which the API layer reports as a malformed response.
+DateTime _parseStrictTime(Object? value) {
+  final parsed = _parseOptionalTime(value);
+  if (parsed == null) {
+    throw const FormatException('invalid timestamp');
+  }
+  return parsed;
+}
+
+/// A JSON integer field. Accepts whole numbers within the exactly
+/// representable range only, so a fractional, infinite, or huge value is a
+/// [FormatException] instead of an `UnsupportedError` or a silent rounding.
+int requiredApiInt(Object? value) {
+  final parsed = _optionalInt(value);
+  if (parsed == null) {
+    throw const FormatException('invalid integer field');
+  }
+  return parsed;
+}
+
+const _maxSafeInteger = 9007199254740991;
+
+int? _optionalInt(Object? value) {
+  if (value is int) {
+    return value.abs() <= _maxSafeInteger ? value : null;
+  }
+  if (value is double &&
+      value.isFinite &&
+      value == value.truncateToDouble() &&
+      value.abs() <= _maxSafeInteger) {
+    return value.toInt();
   }
   return null;
 }
@@ -794,13 +838,8 @@ List<int> _decodeModelBytes(Object? value) {
 /// and blank an entire list; fall back to the Unix epoch as an obviously
 /// wrong sentinel instead.
 DateTime _parseRequiredTime(Object? value) {
-  if (value is String && value.isNotEmpty) {
-    final parsed = DateTime.tryParse(value);
-    if (parsed != null) {
-      return parsed;
-    }
-  }
-  return DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+  return _parseOptionalTime(value) ??
+      DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
 }
 
 class Session {

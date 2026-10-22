@@ -564,6 +564,34 @@ void main() {
       handle.dispose();
     });
   });
+
+  testWidgets('chat list shows a typed load error with retry, not a spinner',
+      (tester) async {
+    final api = _ReadApiClient()
+      ..conversationFailure = ApiException(503, 'upstream $_leakedDetail');
+    final state = _connectedState(api);
+    await tester.runAsync(state.refreshConversations);
+
+    await tester.pumpWidget(MaterialApp(
+      home: AnimatedBuilder(
+        animation: state,
+        builder: (context, _) => ChatListScreen(state: state),
+      ),
+    ));
+    expect(find.text('Couldn’t load conversations'), findsOneWidget);
+    expect(find.text('The server had a problem. Try again shortly.'),
+        findsOneWidget);
+    expect(find.textContaining(_leakedDetail), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Retry'));
+      await state.refreshConversations();
+    });
+    await tester.pump();
+    expect(find.text('Couldn’t load conversations'), findsNothing);
+    expect(find.text('No conversations yet'), findsOneWidget);
+  });
 }
 
 ReceivedMessageEnvelope _message(String id) {
@@ -578,6 +606,8 @@ ReceivedMessageEnvelope _message(String id) {
     'created_at': '2026-06-02T12:30:00Z',
   });
 }
+
+const _leakedDetail = 'raw-server-body-detail';
 
 AppState _connectedState(ApiClient api) {
   return AppState(
@@ -599,6 +629,15 @@ class _ReadApiClient extends ApiClient {
   _ReadApiClient() : super(baseUrl: 'https://localhost:8080');
 
   String? lastReadMessageId;
+  Object? conversationFailure;
+
+  @override
+  Future<List<Conversation>> conversations(String token) async {
+    final failure = conversationFailure;
+    conversationFailure = null;
+    if (failure != null) throw failure;
+    return <Conversation>[];
+  }
 
   @override
   Future<void> markRead(

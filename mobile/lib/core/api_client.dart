@@ -4,7 +4,10 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import '../crypto/mls_commit_bundle.dart';
+import 'api_errors.dart';
 import 'models.dart';
+
+export 'api_errors.dart';
 
 class ApiClient {
   ApiClient({required String baseUrl, HttpClient? httpClient})
@@ -17,6 +20,23 @@ class ApiClient {
   final HttpClient _httpClient;
   static const _requestTimeout = Duration(seconds: 30);
   static const _maxJsonResponseBytes = 2 * 1024 * 1024;
+
+  /// Rows requested per page for full-list reads.
+  static const listPageSize = 100;
+
+  /// Pages a full-list read follows before it stops (card I44).
+  static const maxListPages = 50;
+
+  /// The server's largest page for messages, sync and MLS reads.
+  static const maxPageSize = 200;
+  static const maxSearchPageSize = 50;
+
+  /// Rows accepted in a list response that has no paging contract.
+  static const maxUnpagedRows = 5000;
+
+  /// Largest ciphertext the server accepts, and so serves, per blob.
+  static const maxAttachmentBytes = 50 * 1024 * 1024;
+  static const maxBackupBytes = 100 * 1024 * 1024;
 
   void close() => _httpClient.close(force: true);
 
@@ -34,7 +54,7 @@ class ApiClient {
           ? const <String, String>{}
           : <String, String>{'X-Veritra-Setup-Token': setupToken},
     );
-    return EnrollmentReservation.fromJson(json);
+    return _model(json, EnrollmentReservation.fromJson);
   }
 
   Future<EnrollmentReservation> reserveRegistrationEnrollment(
@@ -44,7 +64,7 @@ class ApiClient {
       '/api/v1/register/enrollment',
       body: <String, Object?>{'invite_code': inviteCode},
     );
-    return EnrollmentReservation.fromJson(json);
+    return _model(json, EnrollmentReservation.fromJson);
   }
 
   Future<Session> createOwner({
@@ -71,7 +91,8 @@ class ApiClient {
         extraHeaders: setupToken.isEmpty
             ? const <String, String>{}
             : <String, String>{'X-Veritra-Setup-Token': setupToken});
-    return _sessionFromAuthJson(json, fallbackUsername: username);
+    return _decode(
+        () => _sessionFromAuthJson(json, fallbackUsername: username));
   }
 
   Future<Session> register({
@@ -93,7 +114,8 @@ class ApiClient {
       'signing_key': base64Encode(credential.signingKey),
       'challenge_signature': base64Encode(credential.challengeSignature),
     });
-    return _sessionFromAuthJson(json, fallbackUsername: username);
+    return _decode(
+        () => _sessionFromAuthJson(json, fallbackUsername: username));
   }
 
   Future<Session> login(
@@ -108,51 +130,35 @@ class ApiClient {
           'device_id': deviceId,
           'device_secret': deviceSecret,
         });
-    return _sessionFromAuthJson(json,
-        fallbackUsername: username, fallbackDeviceSecret: deviceSecret);
+    return _decode(() => _sessionFromAuthJson(json,
+        fallbackUsername: username, fallbackDeviceSecret: deviceSecret));
   }
 
-  Future<List<Conversation>> conversations(String token) async {
-    const pageSize = 100;
-    final result = <Conversation>[];
-    String? before;
-    while (true) {
-      final path = '/api/v1/conversations?limit=$pageSize'
-          '${before == null ? '' : '&before=${Uri.encodeQueryComponent(before)}'}';
-      final json = await _jsonRequest('GET', path, token: token);
-      final page =
-          (json['conversations'] as List<Object?>? ?? const <Object?>[])
-              .map((row) => Conversation.fromJson(
-                    Map<String, Object?>.from(row as Map),
-                  ))
-              .toList();
-      result.addAll(page);
-      if (page.length < pageSize) {
-        return result;
-      }
-      before = page.last.id;
-    }
+  /// Every conversation, read in pages of [listPageSize]. Paging stops at
+  /// [maxListPages] pages, and a page that is oversized or repeats its
+  /// cursor is a contract break, so a faulty server cannot loop the client
+  /// or grow the list without bound.
+  Future<List<Conversation>> conversations(String token) {
+    return _collectPages(
+      key: 'conversations',
+      fromJson: Conversation.fromJson,
+      idOf: (conversation) => conversation.id,
+      path: (cursor) => '/api/v1/conversations?limit=$listPageSize'
+          '${cursor == null ? '' : '&before=${Uri.encodeQueryComponent(cursor)}'}',
+      token: token,
+    );
   }
 
-  Future<List<Device>> devices(String token) async {
-    const pageSize = 100;
-    final result = <Device>[];
-    String? after;
-    while (true) {
-      final path = '/api/v1/devices/me?limit=$pageSize'
-          '${after == null ? '' : '&after=${Uri.encodeQueryComponent(after)}'}';
-      final json = await _jsonRequest('GET', path, token: token);
-      final page = (json['devices'] as List<Object?>? ?? const <Object?>[])
-          .map((row) => Device.fromJson(
-                Map<String, Object?>.from(row as Map),
-              ))
-          .toList();
-      result.addAll(page);
-      if (page.length < pageSize) {
-        return result;
-      }
-      after = page.last.id;
-    }
+  /// Every device of this account, paged and bounded like [conversations].
+  Future<List<Device>> devices(String token) {
+    return _collectPages(
+      key: 'devices',
+      fromJson: Device.fromJson,
+      idOf: (device) => device.id,
+      path: (cursor) => '/api/v1/devices/me?limit=$listPageSize'
+          '${cursor == null ? '' : '&after=${Uri.encodeQueryComponent(cursor)}'}',
+      token: token,
+    );
   }
 
   Future<void> logout(String token) async {
@@ -223,7 +229,7 @@ class ApiClient {
             'member_account_ids': memberAccountIds,
           if (retentionSeconds != null) 'retention_seconds': retentionSeconds,
         });
-    return Conversation.fromJson(json);
+    return _model(json, Conversation.fromJson);
   }
 
   Future<Invite> createInvite(
@@ -238,14 +244,12 @@ class ApiClient {
           if (expiresAt != null)
             'expires_at': expiresAt.toUtc().toIso8601String(),
         });
-    return Invite.fromJson(json);
+    return _model(json, Invite.fromJson);
   }
 
   Future<List<Invite>> listInvites(String token) async {
     final json = await _jsonRequest('GET', '/api/v1/invites', token: token);
-    final rows = (json['invites'] as List<Object?>? ?? const <Object?>[])
-        .map((row) => Map<String, Object?>.from(row as Map));
-    return rows.map(Invite.fromJson).toList();
+    return _rows(json, 'invites', Invite.fromJson);
   }
 
   Future<void> revokeInvite(String token, String inviteId) async {
@@ -254,18 +258,14 @@ class ApiClient {
 
   Future<List<Community>> listCommunities(String token) async {
     final json = await _jsonRequest('GET', '/api/v1/communities', token: token);
-    final rows = (json['communities'] as List<Object?>? ?? const <Object?>[])
-        .map((row) => Map<String, Object?>.from(row as Map));
-    return rows.map(Community.fromJson).toList();
+    return _rows(json, 'communities', Community.fromJson);
   }
 
   Future<List<Channel>> listChannels(String token, String communityId) async {
     final json = await _jsonRequest(
         'GET', '/api/v1/communities/$communityId/channels',
         token: token);
-    final rows = (json['channels'] as List<Object?>? ?? const <Object?>[])
-        .map((row) => Map<String, Object?>.from(row as Map));
-    return rows.map(Channel.fromJson).toList();
+    return _rows(json, 'channels', Channel.fromJson);
   }
 
   Future<Community> createCommunity(String token, String name) async {
@@ -274,7 +274,7 @@ class ApiClient {
         body: <String, Object?>{
           'name': name,
         });
-    return Community.fromJson(json);
+    return _model(json, Community.fromJson);
   }
 
   Future<ChannelCreation> createChannel(
@@ -290,7 +290,7 @@ class ApiClient {
           'name': name,
           'kind': kind,
         });
-    return ChannelCreation.fromJson(json);
+    return _model(json, ChannelCreation.fromJson);
   }
 
   Future<void> addConversationMember(
@@ -318,7 +318,7 @@ class ApiClient {
         body: <String, Object?>{
           'retention_seconds': retentionSeconds,
         });
-    return Conversation.fromJson(json);
+    return _model(json, Conversation.fromJson);
   }
 
   Future<void> deleteAccount(String token) async {
@@ -351,16 +351,12 @@ class ApiClient {
     request.contentLength = ciphertextLength;
     await request.addStream(ciphertext).timeout(_requestTimeout);
     final response = await request.close().timeout(_requestTimeout);
-    final bytes = await response.fold<BytesBuilder>(
-        BytesBuilder(copy: false), (builder, chunk) => builder..add(chunk));
-    final text = utf8.decode(bytes.takeBytes());
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw ApiException(response.statusCode, text);
-    }
-    return AttachmentEnvelope.fromJson(
-        Map<String, Object?>.from(jsonDecode(text) as Map));
+    return _model(await _readJson(response), AttachmentEnvelope.fromJson);
   }
 
+  /// Streams one attachment's ciphertext. The stream fails with
+  /// [ApiResponseException] once it passes [maxAttachmentBytes] (or the server
+  /// announces more), and with a [TimeoutException] when it stalls.
   Future<Stream<List<int>>> downloadEncryptedAttachment(
       String token, String attachmentId) async {
     final uri = Uri.parse(baseUrl)
@@ -368,11 +364,7 @@ class ApiClient {
     final request = await _httpClient.getUrl(uri).timeout(_requestTimeout);
     request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
     final response = await request.close().timeout(_requestTimeout);
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      final body = await utf8.decodeStream(response);
-      throw ApiException(response.statusCode, body);
-    }
-    return response;
+    return _boundedDownload(response, maxAttachmentBytes);
   }
 
   Future<void> uploadEncryptedBackup(
@@ -399,10 +391,7 @@ class ApiClient {
     request.contentLength = ciphertextLength;
     await request.addStream(ciphertext).timeout(_requestTimeout);
     final response = await request.close().timeout(_requestTimeout);
-    final body = await utf8.decodeStream(response);
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw ApiException(response.statusCode, body);
-    }
+    await _readJson(response);
   }
 
   Future<Stream<List<int>>> recoverEncryptedBackup(
@@ -426,11 +415,10 @@ class ApiClient {
       request.headers.set('Range', 'bytes=$startOffset-$rangeEnd');
     }
     final response = await request.close().timeout(_requestTimeout);
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      final body = await utf8.decodeStream(response);
-      throw ApiException(response.statusCode, body);
-    }
-    return response;
+    // A backup is at most [maxBackupBytes]; a resumed download only has
+    // the rest of it to send.
+    final remaining = maxBackupBytes - (startOffset ?? 0);
+    return _boundedDownload(response, remaining < 0 ? 0 : remaining);
   }
 
   Future<void> publishDeviceKeyPackages(
@@ -466,11 +454,7 @@ class ApiClient {
           '/key-packages/claim',
       token: token,
     );
-    final rows = json['key_packages'] as List<Object?>? ?? const <Object?>[];
-    return rows
-        .map((row) =>
-            DeviceKeyPackage.fromJson(Map<String, Object?>.from(row as Map)))
-        .toList(growable: false);
+    return _rows(json, 'key_packages', DeviceKeyPackage.fromJson);
   }
 
   Future<MlsMessage> sendMlsMessage(
@@ -496,9 +480,7 @@ class ApiClient {
           'revocation_device_id': revocationDeviceId,
       },
     );
-    return MlsMessage.fromJson(
-      Map<String, Object?>.from(json['mls_message'] as Map),
-    );
+    return _model(json['mls_message'], MlsMessage.fromJson);
   }
 
   Future<MlsMessage> mlsMessage(String token, String messageId) async {
@@ -507,9 +489,7 @@ class ApiClient {
       '/api/v1/mls/messages/${Uri.encodeComponent(messageId)}',
       token: token,
     );
-    return MlsMessage.fromJson(
-      Map<String, Object?>.from(json['mls_message'] as Map),
-    );
+    return _model(json['mls_message'], MlsMessage.fromJson);
   }
 
   /// Sends one staged commit with its Welcomes and roster change (card
@@ -528,16 +508,13 @@ class ApiClient {
       token: token,
       body: bundle.toRequestJson(idempotencyKey),
     );
-    return (json['epoch'] as num).toInt();
+    return _decode(() => requiredApiInt(json['epoch']));
   }
 
   Future<List<MlsPendingChange>> mlsPendingChanges(String token) async {
     final json =
         await _jsonRequest('GET', '/api/v1/mls/pending-changes', token: token);
-    return (json['pending_changes'] as List<Object?>? ?? const <Object?>[])
-        .map((row) =>
-            MlsPendingChange.fromJson(Map<String, Object?>.from(row as Map)))
-        .toList(growable: false);
+    return _rows(json, 'pending_changes', MlsPendingChange.fromJson);
   }
 
   /// Claims one key package for each listed device, to add them to an
@@ -555,10 +532,7 @@ class ApiClient {
       token: token,
       body: <String, Object?>{'device_ids': deviceIds},
     );
-    return (json['key_packages'] as List<Object?>? ?? const <Object?>[])
-        .map((row) =>
-            DeviceKeyPackage.fromJson(Map<String, Object?>.from(row as Map)))
-        .toList(growable: false);
+    return _rows(json, 'key_packages', DeviceKeyPackage.fromJson);
   }
 
   Future<List<MlsMessage>> mlsMessages(
@@ -566,40 +540,32 @@ class ApiClient {
     int after = 0,
     int limit = 100,
   }) async {
+    final boundedLimit = _pageLimit(limit);
     final json = await _jsonRequest(
       'GET',
       Uri(
         path: '/api/v1/mls/messages',
         queryParameters: <String, String>{
           'after': after.toString(),
-          'limit': limit.toString(),
+          'limit': '$boundedLimit',
         },
       ).toString(),
       token: token,
     );
-    final rows = json['mls_messages'] as List<Object?>? ?? const <Object?>[];
-    return rows
-        .map(
-            (row) => MlsMessage.fromJson(Map<String, Object?>.from(row as Map)))
-        .toList(growable: false);
+    return _rows(json, 'mls_messages', MlsMessage.fromJson,
+        maxRows: boundedLimit);
   }
 
   Future<List<MlsRevocation>> mlsRevocations(String token) async {
     final json =
         await _jsonRequest('GET', '/api/v1/mls/revocations', token: token);
-    final rows = json['mls_revocations'] as List<Object?>? ?? const <Object?>[];
-    return rows
-        .map((row) =>
-            MlsRevocation.fromJson(Map<String, Object?>.from(row as Map)))
-        .toList(growable: false);
+    return _rows(json, 'mls_revocations', MlsRevocation.fromJson);
   }
 
   Future<List<Map<String, Object?>>> callIceServers(String token) async {
     final json =
         await _jsonRequest('GET', '/api/v1/calls/config', token: token);
-    return (json['ice_servers'] as List<Object?>? ?? const <Object?>[])
-        .map((item) => Map<String, Object?>.from(item as Map))
-        .toList(growable: false);
+    return _rows(json, 'ice_servers', (item) => item);
   }
 
   Future<CallSession> createCall(String token, String conversationId,
@@ -610,7 +576,7 @@ class ApiClient {
           'conversation_id': conversationId,
           'metadata': encryptedMetadata
         });
-    return CallSession.fromJson(json);
+    return _model(json, CallSession.fromJson);
   }
 
   Future<CallSession> transitionCall(String token, String callId, String state,
@@ -624,7 +590,7 @@ class ApiClient {
           'expected_version': expectedVersion,
           if (encryptedMetadata != null) 'metadata': encryptedMetadata
         });
-    return CallSession.fromJson(json);
+    return _model(json, CallSession.fromJson);
   }
 
   Future<List<CallSession>> calls(String token, String conversationId) async {
@@ -634,10 +600,7 @@ class ApiClient {
           'conversation_id': conversationId
         }).toString(),
         token: token);
-    return (json['calls'] as List<Object?>? ?? const <Object?>[])
-        .map((item) =>
-            CallSession.fromJson(Map<String, Object?>.from(item as Map)))
-        .toList(growable: false);
+    return _rows(json, 'calls', CallSession.fromJson);
   }
 
   Future<void> confirmMlsRevocation(
@@ -660,8 +623,9 @@ class ApiClient {
     String? before,
     String? after,
   }) async {
+    final boundedLimit = _pageLimit(limit);
     final queryParameters = <String, String>{
-      'limit': limit.toString(),
+      'limit': '$boundedLimit',
       if (before != null && before.isNotEmpty) 'before': before,
       if (after != null && after.isNotEmpty) 'after': after,
     };
@@ -670,9 +634,8 @@ class ApiClient {
       queryParameters: queryParameters,
     ).toString();
     final json = await _jsonRequest('GET', path, token: token);
-    final rows = (json['messages'] as List<Object?>? ?? const <Object?>[])
-        .map((row) => Map<String, Object?>.from(row as Map));
-    return rows.map(ReceivedMessageEnvelope.fromJson).toList();
+    return _rows(json, 'messages', ReceivedMessageEnvelope.fromJson,
+        maxRows: boundedLimit);
   }
 
   /// Backward page of message history. Unlike [listMessages] this preserves
@@ -684,19 +647,20 @@ class ApiClient {
     int limit = 50,
     String? before,
   }) async {
+    final boundedLimit = _pageLimit(limit);
     final path = Uri(
       path: '/api/v1/conversations/$conversationId/messages',
       queryParameters: <String, String>{
-        'limit': limit.toString(),
+        'limit': '$boundedLimit',
         if (before != null && before.isNotEmpty) 'before': before,
       },
     ).toString();
     final json = await _jsonRequest('GET', path, token: token);
-    final rows = (json['messages'] as List<Object?>? ?? const <Object?>[])
-        .map((row) => Map<String, Object?>.from(row as Map));
+    final messages = _rows(json, 'messages', ReceivedMessageEnvelope.fromJson,
+        maxRows: boundedLimit);
     final nextBefore = json['next_before'];
     return MessagePage(
-      messages: rows.map(ReceivedMessageEnvelope.fromJson).toList(),
+      messages: messages,
       nextBefore:
           nextBefore is String && nextBefore.isNotEmpty ? nextBefore : null,
     );
@@ -711,9 +675,7 @@ class ApiClient {
       '/api/v1/conversations/${Uri.encodeComponent(conversationId)}/members',
       token: token,
     );
-    final rows = (json['members'] as List<Object?>? ?? const <Object?>[])
-        .map((row) => Map<String, Object?>.from(row as Map));
-    return rows.map(ConversationMember.fromJson).toList();
+    return _rows(json, 'members', ConversationMember.fromJson);
   }
 
   /// Removes a member, or leaves the conversation when [accountId] is `me`.
@@ -760,9 +722,7 @@ class ApiClient {
   Future<List<BlockedAccount>> listBlocks(String token) async {
     final json =
         await _jsonRequest('GET', '/api/v1/account/blocks', token: token);
-    final rows = (json['blocks'] as List<Object?>? ?? const <Object?>[])
-        .map((row) => Map<String, Object?>.from(row as Map));
-    return rows.map(BlockedAccount.fromJson).toList();
+    return _rows(json, 'blocks', BlockedAccount.fromJson);
   }
 
   Future<BlockedAccount> blockAccount(String token, String accountId) async {
@@ -771,7 +731,7 @@ class ApiClient {
       '/api/v1/account/blocks/${Uri.encodeComponent(accountId)}',
       token: token,
     );
-    return BlockedAccount.fromJson(json);
+    return _model(json, BlockedAccount.fromJson);
   }
 
   Future<void> unblockAccount(String token, String accountId) async {
@@ -791,7 +751,7 @@ class ApiClient {
       '/api/v1/messages/${Uri.encodeComponent(messageId)}',
       token: token,
     );
-    return ReceivedMessageEnvelope.fromJson(json);
+    return _model(json, ReceivedMessageEnvelope.fromJson);
   }
 
   Future<List<SyncEvent>> syncEvents(
@@ -799,17 +759,16 @@ class ApiClient {
     int after = 0,
     int limit = 100,
   }) async {
+    final boundedLimit = _pageLimit(limit);
     final path = Uri(
       path: '/api/v1/sync/events',
       queryParameters: <String, String>{
         'after': after.toString(),
-        'limit': limit.toString(),
+        'limit': '$boundedLimit',
       },
     ).toString();
     final json = await _jsonRequest('GET', path, token: token);
-    final rows = (json['events'] as List<Object?>? ?? const <Object?>[])
-        .map((row) => Map<String, Object?>.from(row as Map));
-    return rows.map(SyncEvent.fromJson).toList();
+    return _rows(json, 'events', SyncEvent.fromJson, maxRows: boundedLimit);
   }
 
   Future<void> sendReaction(
@@ -849,7 +808,7 @@ class ApiClient {
         'auth_secret': authSecret,
       },
     );
-    return json['subscription_id'] as String;
+    return _decode(() => json['subscription_id'] as String);
   }
 
   Future<String> registerNativePush(
@@ -865,7 +824,7 @@ class ApiClient {
           'public_key': '',
           'auth_secret': '',
         });
-    return json['subscription_id'] as String;
+    return _decode(() => json['subscription_id'] as String);
   }
 
   /// Sends the generic wake to this device's own registrations and returns
@@ -873,8 +832,7 @@ class ApiClient {
   Future<List<String>> sendTestPush(String token) async {
     final json = await _jsonRequest('POST', '/api/v1/push/test',
         token: token, body: const <String, Object?>{});
-    return (json['results'] as List<Object?>? ?? const <Object?>[])
-        .map((row) => (row as Map)['result'])
+    return _rows(json, 'results', (row) => row['result'])
         .whereType<String>()
         .toList(growable: false);
   }
@@ -899,18 +857,18 @@ class ApiClient {
     int limit = 20,
     int offset = 0,
   }) async {
+    final boundedLimit = limit.clamp(1, maxSearchPageSize).toInt();
     final queryParameters = <String, String>{
       'q': query,
-      'limit': limit.toString(),
-      'offset': offset.toString(),
+      'limit': '$boundedLimit',
+      'offset': '${offset < 0 ? 0 : offset}',
     };
     final path =
         Uri(path: '/api/v1/search/metadata', queryParameters: queryParameters)
             .toString();
     final json = await _jsonRequest('GET', path, token: token);
-    final rows = (json['results'] as List<Object?>? ?? const <Object?>[])
-        .map((row) => Map<String, Object?>.from(row as Map));
-    return rows.map(MetadataSearchResult.fromJson).toList();
+    return _rows(json, 'results', MetadataSearchResult.fromJson,
+        maxRows: boundedLimit);
   }
 
   Future<DeviceLink> createDeviceLink(String token) async {
@@ -920,8 +878,7 @@ class ApiClient {
       token: token,
       body: <String, Object?>{},
     );
-    return DeviceLink.fromJson(
-        Map<String, Object?>.from(json['device_link'] as Map));
+    return _model(json['device_link'], DeviceLink.fromJson);
   }
 
   Future<DeviceLink> deviceLink(String token, String linkId) async {
@@ -930,8 +887,7 @@ class ApiClient {
       '/api/v1/device-links/$linkId',
       token: token,
     );
-    return DeviceLink.fromJson(
-        Map<String, Object?>.from(json['device_link'] as Map));
+    return _model(json['device_link'], DeviceLink.fromJson);
   }
 
   Future<EnrollmentReservation> reserveDeviceLinkEnrollment(String code) async {
@@ -940,7 +896,7 @@ class ApiClient {
       '/api/v1/device-links/claim-enrollment',
       body: <String, Object?>{'code': code},
     );
-    return EnrollmentReservation.fromJson(json);
+    return _model(json, EnrollmentReservation.fromJson);
   }
 
   Future<DeviceLinkClaim> claimDeviceLink({
@@ -964,10 +920,9 @@ class ApiClient {
       },
     );
     return DeviceLinkClaim(
-      deviceLink: DeviceLink.fromJson(
-          Map<String, Object?>.from(json['device_link'] as Map)),
-      claimToken: json['claim_token'] as String,
-      deviceSecret: json['device_secret'] as String,
+      deviceLink: _model(json['device_link'], DeviceLink.fromJson),
+      claimToken: _decode(() => json['claim_token'] as String),
+      deviceSecret: _decode(() => json['device_secret'] as String),
     );
   }
 
@@ -982,8 +937,7 @@ class ApiClient {
       token: token,
       body: <String, Object?>{'transcript_hash': base64Encode(transcriptHash)},
     );
-    return DeviceLink.fromJson(
-        Map<String, Object?>.from(json['device_link'] as Map));
+    return _model(json['device_link'], DeviceLink.fromJson);
   }
 
   Future<Session?> completeDeviceLinkClaim(String linkId, String claimToken,
@@ -1001,18 +955,14 @@ class ApiClient {
     if (!_bytesEqual(transcriptHash, expectedTranscriptHash)) {
       throw ApiException(409, '{"error":"transcript_mismatch"}');
     }
-    return _sessionFromAuthJson(json);
+    return _decode(() => _sessionFromAuthJson(json));
   }
 
   List<int> _decodeRequiredBytes(Object? value) {
     if (value is! String) {
-      throw ApiException(502, 'Invalid binary API field');
+      throw const ApiResponseException.malformed();
     }
-    try {
-      return base64Decode(value);
-    } on FormatException {
-      throw ApiException(502, 'Invalid binary API field');
-    }
+    return _decode(() => base64Decode(value));
   }
 
   bool _bytesEqual(List<int> left, List<int> right) {
@@ -1071,22 +1021,149 @@ class ApiClient {
       request.write(jsonEncode(body));
     }
     final response = await request.close().timeout(_requestTimeout);
-    final bytes = BytesBuilder(copy: false);
-    await for (final chunk in response.timeout(_requestTimeout)) {
-      if (bytes.length + chunk.length > _maxJsonResponseBytes) {
-        throw const HttpException('JSON response exceeded the size limit');
-      }
-      bytes.add(chunk);
-    }
-    final text = utf8.decode(bytes.takeBytes());
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw ApiException(response.statusCode, text);
-    }
-    if (text.isEmpty) {
-      return <String, Object?>{};
-    }
-    return Map<String, Object?>.from(jsonDecode(text) as Map);
+    return _readJson(response);
   }
+
+  /// Reads a JSON object response. Errors become an [ApiException] built
+  /// from at most [ApiException.maxErrorBodyChars] bytes of the body; a
+  /// success body over [_maxJsonResponseBytes], or one that is not UTF-8
+  /// JSON object text, is an [ApiResponseException]. No path keeps or
+  /// reports the raw body.
+  Future<Map<String, Object?>> _readJson(HttpClientResponse response) async {
+    if (!_isSuccess(response.statusCode)) {
+      throw await _errorFrom(response);
+    }
+    final bytes = await _readBounded(response, _maxJsonResponseBytes);
+    if (bytes == null) throw const ApiResponseException.tooLarge();
+    if (bytes.isEmpty) return <String, Object?>{};
+    try {
+      final decoded = jsonDecode(utf8.decode(bytes));
+      if (decoded is Map<String, Object?>) return decoded;
+    } on FormatException {
+      // Reported below without the offending text.
+    }
+    throw const ApiResponseException.malformed();
+  }
+
+  static bool _isSuccess(int statusCode) =>
+      statusCode >= 200 && statusCode < 300;
+
+  static Future<ApiException> _errorFrom(HttpClientResponse response) async {
+    final bytes = await _readBounded(response, ApiException.maxErrorBodyChars);
+    return ApiException(
+      response.statusCode,
+      bytes == null ? '' : utf8.decode(bytes, allowMalformed: true),
+    );
+  }
+
+  /// Reads the whole body if it fits in [maxBytes], or returns null and
+  /// stops reading (closing the connection) once it cannot.
+  static Future<Uint8List?> _readBounded(
+      HttpClientResponse response, int maxBytes) async {
+    if (response.contentLength > maxBytes) {
+      await response.listen(null).cancel();
+      return null;
+    }
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in response.timeout(_requestTimeout)) {
+      if (builder.length + chunk.length > maxBytes) return null;
+      builder.add(chunk);
+    }
+    return builder.takeBytes();
+  }
+
+  /// Checks the status and announced size before handing out a binary
+  /// stream, and enforces both the size limit and an idle timeout while it
+  /// is read.
+  static Future<Stream<List<int>>> _boundedDownload(
+      HttpClientResponse response, int maxBytes) async {
+    if (!_isSuccess(response.statusCode)) {
+      throw await _errorFrom(response);
+    }
+    if (response.contentLength > maxBytes) {
+      await response.listen(null).cancel();
+      throw const ApiResponseException.tooLarge();
+    }
+    return _limitStream(response, maxBytes);
+  }
+
+  static Stream<List<int>> _limitStream(
+      Stream<List<int>> source, int maxBytes) async* {
+    var received = 0;
+    await for (final chunk in source.timeout(_requestTimeout)) {
+      received += chunk.length;
+      if (received > maxBytes) throw const ApiResponseException.tooLarge();
+      yield chunk;
+    }
+  }
+
+  /// Reads every page of a cursor-paged list. Bounded by [maxListPages];
+  /// rows repeated across pages are kept once.
+  Future<List<T>> _collectPages<T>({
+    required String key,
+    required T Function(Map<String, Object?>) fromJson,
+    required String Function(T) idOf,
+    required String Function(String? cursor) path,
+    required String token,
+  }) async {
+    final result = <T>[];
+    final seen = <String>{};
+    String? cursor;
+    for (var page = 0; page < maxListPages; page++) {
+      final json = await _jsonRequest('GET', path(cursor), token: token);
+      final rows = _rows(json, key, fromJson, maxRows: listPageSize);
+      for (final row in rows) {
+        if (seen.add(idOf(row))) result.add(row);
+      }
+      if (rows.length < listPageSize) return result;
+      final next = idOf(rows.last);
+      if (next == cursor) throw const ApiResponseException.malformed();
+      cursor = next;
+    }
+    return result;
+  }
+
+  static int _pageLimit(int limit) => limit.clamp(1, maxPageSize).toInt();
+}
+
+/// Builds a model from an API response, turning any type, format or range
+/// failure into an [ApiResponseException] so implementation error text
+/// never travels further than this layer.
+T _decode<T>(T Function() build) {
+  try {
+    return build();
+  } on ApiResponseException {
+    rethrow;
+  } on FormatException {
+    throw const ApiResponseException.malformed();
+  } on TypeError {
+    throw const ApiResponseException.malformed();
+  } on ArgumentError {
+    throw const ApiResponseException.malformed();
+  } on UnsupportedError {
+    throw const ApiResponseException.malformed();
+  }
+}
+
+T _model<T>(Object? raw, T Function(Map<String, Object?>) fromJson) {
+  if (raw is! Map) throw const ApiResponseException.malformed();
+  return _decode(() => fromJson(Map<String, Object?>.from(raw)));
+}
+
+/// Decodes the list under [key]. An absent or null list is empty; any
+/// other non-list, or more than [maxRows] rows, breaks the contract.
+List<T> _rows<T>(
+  Map<String, Object?> json,
+  String key,
+  T Function(Map<String, Object?>) fromJson, {
+  int maxRows = ApiClient.maxUnpagedRows,
+}) {
+  final raw = json[key];
+  if (raw == null) return <T>[];
+  if (raw is! List || raw.length > maxRows) {
+    throw const ApiResponseException.malformed();
+  }
+  return <T>[for (final row in raw) _model(row, fromJson)];
 }
 
 String canonicalizeServerOrigin(String raw) {
@@ -1109,137 +1186,4 @@ String canonicalizeServerOrigin(String raw) {
     port: uri.hasPort && uri.port != defaultPort ? uri.port : null,
   );
   return origin.toString().replaceFirst(RegExp(r'/$'), '');
-}
-
-class ApiException implements Exception {
-  ApiException(this.statusCode, this.body);
-
-  final int statusCode;
-  final String body;
-
-  String? get serverCode {
-    try {
-      final decoded = jsonDecode(body);
-      if (decoded is Map) {
-        final error = decoded['error'];
-        if (error is String) {
-          return error;
-        }
-      }
-    } catch (_) {
-      return null;
-    }
-    return null;
-  }
-
-  int? intField(String name) {
-    try {
-      final decoded = jsonDecode(body);
-      if (decoded is Map && decoded[name] is num) {
-        return (decoded[name] as num).toInt();
-      }
-    } catch (_) {
-      return null;
-    }
-    return null;
-  }
-
-  String get message {
-    switch (serverCode) {
-      case 'unauthorized':
-        return 'Your session is no longer valid. Sign in again.';
-      case 'invalid_credentials':
-        return 'Sign-in failed. Check your username and password.';
-      case 'recent_auth_required':
-        return 'Confirm your password before this sensitive action.';
-      case 'device_id_required':
-      case 'device_session_required':
-        return 'This device must be linked before password sign-in.';
-      case 'forbidden':
-        return 'You do not have permission to do that.';
-      case 'not_found':
-        return 'That item was not found. It may have been removed.';
-      case 'already_setup':
-        return 'This server already has an owner. Sign in or join with an '
-            'invite instead.';
-      case 'last_owner_required':
-        return 'Transfer ownership before disabling the last owner account.';
-      case 'weak_password':
-        return 'Password must be 12–72 characters.';
-      case 'invalid_invite':
-        return 'That invite code is not valid, has expired, or has already '
-            'been used up.';
-      case 'invalid_device_link':
-        return 'That link code is not valid or has expired. Generate a new '
-            'one on your linked device.';
-      case 'transcript_hash_required':
-      case 'transcript_mismatch':
-        return 'The locally verified device credentials changed. Generate a '
-            'new link and compare both devices again.';
-      case 'invalid_device_name':
-        return 'That device name is not valid.';
-      case 'invalid_name':
-        return 'That name is not valid.';
-      case 'invalid_max_uses':
-        return 'The invite use limit is not valid.';
-      case 'invalid_expires_at':
-      case 'expires_at_too_far':
-        return 'That expiry time is not valid.';
-      case 'invalid_conversation_kind':
-        return 'The server rejected this conversation type.';
-      case 'invalid_retention_seconds':
-        return 'That disappearing-message duration is not supported.';
-      case 'invalid_role':
-        return 'That member role is not valid.';
-      case 'cannot_grant_higher_role':
-        return 'You cannot grant a role higher than your own.';
-      case 'account_id_required':
-        return 'Choose an account to add.';
-      case 'upload_too_large':
-        return 'That file is too large to upload.';
-      case 'device_key_package_required':
-      case 'invalid_device_key_package':
-      case 'non_production_device_key_package':
-      case 'invalid_enrollment':
-        return 'The server refused this build’s encryption keys. A '
-            'client with production encryption support is required.';
-      case 'storage_error':
-      case 'storage_unavailable':
-        return 'The server had a storage problem. Try again shortly.';
-      case 'storage_quota_exceeded':
-        return 'The server is out of storage for this account. Delete older '
-            'attachments or ask the administrator for more space.';
-      case 'blob_integrity_failed':
-        return 'The encrypted attachment could not be verified. Discard it '
-            'and try again.';
-      case 'setup_authorization_required':
-        return 'The setup token is missing or wrong. Use the one the server '
-            'printed when it started (the demo keeps it in '
-            'data/demo/setup-token).';
-      case 'server_draining':
-        return 'The server is restarting. Try again shortly.';
-      case 'idempotency_conflict':
-        return 'This message was already submitted with different data. '
-            'Discard it and compose a new message.';
-    }
-    if (statusCode == 401) {
-      return 'Your session is no longer valid. Sign in again.';
-    }
-    if (statusCode == 403) {
-      return 'You do not have permission to do that.';
-    }
-    if (statusCode == 404) {
-      return 'That item was not found. It may have been removed.';
-    }
-    if (statusCode == 429) {
-      return 'Too many attempts. Wait a moment and try again.';
-    }
-    if (statusCode >= 500) {
-      return 'The server had a problem. Try again shortly.';
-    }
-    return 'The server rejected the request. Check your input and try again.';
-  }
-
-  @override
-  String toString() => message;
 }
