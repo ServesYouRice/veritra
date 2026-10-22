@@ -7,6 +7,7 @@ import '../../ui/format.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/status_pill.dart';
+import '../../ui/widgets/text_prompt_dialog.dart';
 import '../../ui/widgets/tile_group.dart';
 
 class DeviceLinkScreen extends StatelessWidget {
@@ -168,41 +169,30 @@ class DeviceLinkScreen extends StatelessWidget {
   }
 
   Future<void> _approve(BuildContext context) async {
-    final controller = TextEditingController();
-    try {
-      final code = await showDialog<String>(
-        context: context,
-        builder: (context) {
-          return AlertDialog(
-            title: const Text('Verification code'),
-            content: TextField(
-              controller: controller,
-              autofocus: true,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(hintText: '000000'),
-            ),
-            actions: <Widget>[
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.of(context).pop(controller.text),
-                child: const Text('Approve'),
-              ),
-            ],
-          );
-        },
-      );
-      final trimmed = code?.trim();
-      if (trimmed == null || trimmed.isEmpty) {
-        return;
-      }
-      await state.approveActiveDeviceLink(trimmed);
-    } finally {
-      controller.dispose();
+    final code = await showTextPromptDialog(
+      context,
+      title: 'Verification code',
+      label: 'Code shown on the new device',
+      confirmLabel: 'Approve',
+      keyboardType: TextInputType.number,
+      style: BoneType.mono,
+      validator: validateVerificationCode,
+    );
+    if (code == null || code.isEmpty) {
+      return;
     }
+    await state.approveActiveDeviceLink(code);
   }
+}
+
+/// Inline check for the device-link verification code: digits only. The
+/// match itself is checked against the link, not here.
+String? validateVerificationCode(String value) {
+  if (value.isEmpty) return 'Enter the code shown on the new device.';
+  if (!RegExp(r'^[0-9]+$').hasMatch(value)) {
+    return 'The code is digits only.';
+  }
+  return null;
 }
 
 /// One link fact: a `micro` label over the value. Codes and URIs render in

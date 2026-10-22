@@ -15,6 +15,64 @@ String formatDate(BuildContext context, DateTime time) {
 String formatDateTime(BuildContext context, DateTime time) =>
     '${formatDate(context, time)} · ${formatTimeOfDay(context, time)}';
 
+/// Whole calendar days from [time]'s local date to [now]'s local date:
+/// 0 for the same day, 1 for yesterday, negative for a future date. Counted
+/// on UTC dates so a daylight-saving change cannot turn a day into 23 hours.
+int calendarDaysBefore(DateTime time, DateTime now) {
+  final a = time.toLocal();
+  final b = now.toLocal();
+  return DateTime.utc(b.year, b.month, b.day)
+      .difference(DateTime.utc(a.year, a.month, a.day))
+      .inDays;
+}
+
+/// The chat-list timestamp: the time for today, `Yesterday`, a short
+/// month-day earlier this year, and a date with its year before that.
+///
+/// Every form except `Yesterday` comes from [MaterialLocalizations] and the
+/// platform's 24-hour setting, so it follows the device locale; the word
+/// itself joins the string catalogue with the rest of the copy (T44C).
+String formatListTimestamp(
+  BuildContext context,
+  DateTime time, {
+  DateTime? now,
+}) {
+  final local = time.toLocal();
+  final current = (now ?? DateTime.now()).toLocal();
+  final days = calendarDaysBefore(local, current);
+  if (days == 0) {
+    return formatTimeOfDay(context, local);
+  }
+  if (days == 1) {
+    return 'Yesterday';
+  }
+  final localizations = MaterialLocalizations.of(context);
+  if (local.year == current.year) {
+    return localizations.formatShortMonthDay(local);
+  }
+  return localizations.formatShortDate(local);
+}
+
+/// The day separator in a conversation: `Today`, `Yesterday`, the weekday
+/// and date this year, and a date with its year before that, so a thread
+/// that spans a new year never shows two identical-looking days.
+String formatDayLabel(BuildContext context, DateTime time, {DateTime? now}) {
+  final local = time.toLocal();
+  final current = (now ?? DateTime.now()).toLocal();
+  final days = calendarDaysBefore(local, current);
+  if (days == 0) {
+    return 'Today';
+  }
+  if (days == 1) {
+    return 'Yesterday';
+  }
+  final localizations = MaterialLocalizations.of(context);
+  if (local.year == current.year) {
+    return localizations.formatMediumDate(local);
+  }
+  return localizations.formatShortDate(local);
+}
+
 /// Compact identifier preview, e.g. `acct_9f2…c41`.
 String shortId(String id) {
   if (id.length <= 14) {

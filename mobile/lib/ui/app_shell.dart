@@ -11,6 +11,16 @@ import 'widgets/connection_banner.dart';
 import 'widgets/demo_banner.dart';
 import 'widgets/empty_state.dart';
 
+/// Material 3 window size classes: compact below 600dp, medium from 600dp,
+/// expanded from 840dp.
+///
+/// Navigation moves to a rail at medium width, but the chat list and the
+/// conversation only sit side by side at expanded width. Splitting earlier
+/// left the conversation pane under 300dp at 720dp once the rail and the
+/// 360dp list were taken out, narrower than a phone.
+const double navigationRailBreakpoint = 600;
+const double twoPaneBreakpoint = 840;
+
 bool shouldShowFloatingNavLabels({
   required double width,
   required double textScale,
@@ -18,15 +28,14 @@ bool shouldShowFloatingNavLabels({
   return width >= 440 && textScale < 1.1;
 }
 
-/// Root scaffold. Navigation adapts to a rail on wide layouts per Material 3
-/// guidance, and at that width the chat list and the selected conversation
-/// sit side by side instead of the conversation covering the list.
+/// Root scaffold. Navigation adapts to a rail from medium width per Material 3
+/// guidance, and at expanded width the chat list and the selected
+/// conversation sit side by side instead of the conversation covering the
+/// list.
 class AppShell extends StatefulWidget {
   const AppShell({required this.state, super.key});
 
   final AppState state;
-
-  static const double _railBreakpoint = 720;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -75,12 +84,14 @@ class _AppShellState extends State<AppShell> {
     if (!widget.state.connected) {
       return ConnectScreen(state: widget.state);
     }
-    final wide = MediaQuery.sizeOf(context).width >= AppShell._railBreakpoint;
-    // At rail width the chat list keeps its own pane and opening a
+    final width = MediaQuery.sizeOf(context).width;
+    final wide = width >= navigationRailBreakpoint;
+    final twoPane = width >= twoPaneBreakpoint;
+    // At expanded width the chat list keeps its own pane and opening a
     // conversation fills the detail pane, so selection survives navigating
-    // between destinations. Narrow layouts keep pushing a full-screen route.
+    // between destinations. Narrower layouts keep pushing a full-screen route.
     final pages = <Widget>[
-      wide
+      twoPane
           ? _ChatWorkspace(state: widget.state)
           : ChatListScreen(state: widget.state),
       CommunityScreen(state: widget.state),
