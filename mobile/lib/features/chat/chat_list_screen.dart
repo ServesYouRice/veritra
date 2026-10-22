@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/semantics.dart';
 
 import '../../core/app_state.dart';
 import '../../core/models.dart';
@@ -72,18 +71,7 @@ class ChatListScreen extends StatelessWidget {
                   const SizedBox(height: 120),
                   // An empty list can mean "still loading"; showing the empty
                   // state too early reads as "your data is gone".
-                  if (state.errorFor(Ops.conversations) case final error?)
-                    EmptyState(
-                      icon: Icons.cloud_off_outlined,
-                      title: 'Couldn’t load conversations',
-                      message: error,
-                      action: FilledButton.icon(
-                        onPressed: state.refreshConversations,
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('Retry'),
-                      ),
-                    )
-                  else if (!state.conversationsLoaded)
+                  if (!state.conversationsLoaded)
                     const Center(child: CircularProgressIndicator())
                   else
                     const EmptyState(
@@ -140,11 +128,8 @@ class ChatListScreen extends StatelessWidget {
     );
   }
 
-  /// Long-press, right-click, or the screen-reader action on a row.
-  ///
-  /// Offers only what the app already supports for a conversation: muting
-  /// push and opening its details. No pin, archive or delete, because
-  /// neither the client nor the API has them.
+  /// Long-press or right-click on a row. Offers only what the app already
+  /// does elsewhere for a conversation; nothing here needs message content.
   Future<void> _showRowActions(
     BuildContext context,
     Conversation conversation,
@@ -154,32 +139,32 @@ class ChatListScreen extends StatelessWidget {
       context: context,
       showDragHandle: true,
       builder: (sheetContext) => SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              ListTile(
-                leading: Icon(
-                  muted
-                      ? Icons.notifications_active_outlined
-                      : Icons.notifications_off_outlined,
-                ),
-                title: Text(
-                  muted ? 'Unmute notifications' : 'Mute notifications',
-                ),
-                onTap: () => Navigator.of(sheetContext).pop('mute'),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            ListTile(
+              leading: Icon(
+                muted
+                    ? Icons.notifications_active_outlined
+                    : Icons.notifications_off_outlined,
               ),
-              ListTile(
-                leading: const Icon(Icons.info_outline),
-                title: const Text('Conversation details'),
-                onTap: () => Navigator.of(sheetContext).pop('details'),
+              title: Text(
+                muted ? 'Unmute notifications' : 'Mute notifications',
               ),
-            ],
-          ),
+              onTap: () => Navigator.of(sheetContext).pop('mute'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.info_outline),
+              title: const Text('Conversation details'),
+              onTap: () => Navigator.of(sheetContext).pop('details'),
+            ),
+          ],
         ),
       ),
     );
-    if (!context.mounted || action == null) return;
+    if (!context.mounted || action == null) {
+      return;
+    }
     if (action == 'details') {
       await Navigator.of(context).push(
         sharedAxisRoute<void>(
@@ -206,7 +191,7 @@ class _ConversationTile extends StatelessWidget {
   const _ConversationTile({
     required this.conversation,
     required this.onTap,
-    this.onActions,
+    required this.onActions,
     this.muted = false,
     this.selected = false,
     this.hero = false,
@@ -215,8 +200,8 @@ class _ConversationTile extends StatelessWidget {
   final Conversation conversation;
   final VoidCallback onTap;
 
-  /// Opens the row's action sheet.
-  final VoidCallback? onActions;
+  /// Opens the row's mute/details menu.
+  final VoidCallback onActions;
   final bool muted;
   final bool selected;
   final bool hero;
@@ -233,141 +218,131 @@ class _ConversationTile extends StatelessWidget {
     // MergeSemantics folds the title, activity time, and unread badge into a
     // single tappable node so a screen reader announces the row once.
     return MergeSemantics(
-      child: Semantics(
-        customSemanticsActions: onActions == null
-            ? null
-            : <CustomSemanticsAction, VoidCallback>{
-                const CustomSemanticsAction(label: 'Conversation actions'):
-                    onActions!,
-              },
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 1),
-          child: Material(
-            color: selected ? scheme.surfaceContainerHigh : Colors.transparent,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 1),
+        child: Material(
+          color: selected ? scheme.surfaceContainerHigh : Colors.transparent,
+          borderRadius: BorderRadius.circular(BoneRadii.md),
+          child: InkWell(
+            onTap: onTap,
+            onLongPress: onActions,
+            onSecondaryTap: onActions,
             borderRadius: BorderRadius.circular(BoneRadii.md),
-            child: InkWell(
-              onTap: onTap,
-              onLongPress: onActions,
-              onSecondaryTap: onActions,
-              borderRadius: BorderRadius.circular(BoneRadii.md),
-              child: ConstrainedBox(
-                // 62dp is the direction's row height; the constraint is a
-                // minimum so the row still grows at large text scales instead
-                // of clipping.
-                constraints: const BoxConstraints(
-                  minHeight: BoneSpacing.rowHeight,
+            child: ConstrainedBox(
+              // 62dp is the direction's row height; the constraint is a
+              // minimum so the row still grows at large text scales instead
+              // of clipping.
+              constraints: const BoxConstraints(
+                minHeight: BoneSpacing.rowHeight,
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: BoneSpacing.sm,
+                  vertical: BoneSpacing.sm,
                 ),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: BoneSpacing.sm,
-                    vertical: BoneSpacing.sm,
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: <Widget>[
-                      conversationAvatar(
-                        context,
-                        conversation,
-                        radius: 22,
-                        hero: hero,
-                      ),
-                      const SizedBox(width: BoneSpacing.md),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: <Widget>[
-                            Row(
-                              children: <Widget>[
-                                Flexible(
-                                  child: Text(
-                                    title,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style:
-                                        theme.textTheme.titleMedium?.copyWith(
-                                      fontWeight:
-                                          hasUnread ? FontWeight.w700 : null,
-                                    ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: <Widget>[
+                    conversationAvatar(
+                      context,
+                      conversation,
+                      radius: 22,
+                      hero: hero,
+                    ),
+                    const SizedBox(width: BoneSpacing.md),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          Row(
+                            children: <Widget>[
+                              Flexible(
+                                child: Text(
+                                  title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight:
+                                        hasUnread ? FontWeight.w700 : null,
                                   ),
-                                ),
-                                if (muted) ...<Widget>[
-                                  const SizedBox(width: BoneSpacing.xs + 2),
-                                  Semantics(
-                                    label: 'Muted',
-                                    child: Icon(
-                                      Icons.notifications_off_outlined,
-                                      size: 15,
-                                      color: scheme.onSurfaceVariant,
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                            const SizedBox(height: 2),
-                            Row(
-                              children: <Widget>[
-                                Flexible(
-                                  child: Text(
-                                    conversationRowSubtitle(conversation),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: theme.textTheme.bodySmall,
-                                  ),
-                                ),
-                                if (retention != null &&
-                                    retention > 0) ...<Widget>[
-                                  const SizedBox(width: BoneSpacing.sm),
-                                  // Compact on screen, spoken in full: `1d`
-                                  // should not be read out as "one dee".
-                                  StatusPill(
-                                    label: retentionChipLabel(retention),
-                                    uppercase: false,
-                                    semanticsLabel: 'Disappearing after '
-                                        '${retentionLabel(retention)}',
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: BoneSpacing.sm),
-                      // Bounded so a long localised date, or a large text
-                      // scale, truncates instead of overflowing the row. The
-                      // ListTile this row replaced used to do this for free.
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 112),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: <Widget>[
-                            if (activityAt != null)
-                              Text(
-                                formatListTimestamp(context, activityAt),
-                                maxLines: 1,
-                                softWrap: false,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  // Unread rows lift the timestamp to full
-                                  // text colour rather than to the accent: the
-                                  // accent is already spent on the count
-                                  // beneath it, and two accents in one 62dp
-                                  // row is one too many.
-                                  color: hasUnread ? scheme.onSurface : null,
-                                  fontWeight:
-                                      hasUnread ? FontWeight.w600 : null,
                                 ),
                               ),
-                            if (hasUnread) ...<Widget>[
-                              const SizedBox(height: BoneSpacing.xs + 2),
-                              _unreadIndicator(unread),
+                              if (muted) ...<Widget>[
+                                const SizedBox(width: BoneSpacing.xs + 2),
+                                Semantics(
+                                  label: 'Muted',
+                                  child: Icon(
+                                    Icons.notifications_off_outlined,
+                                    size: 15,
+                                    color: scheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
                             ],
-                          ],
-                        ),
+                          ),
+                          const SizedBox(height: 2),
+                          Row(
+                            children: <Widget>[
+                              Flexible(
+                                child: Text(
+                                  conversationRowSubtitle(conversation),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.bodySmall,
+                                ),
+                              ),
+                              if (retention != null &&
+                                  retention > 0) ...<Widget>[
+                                const SizedBox(width: BoneSpacing.sm),
+                                // Compact on screen, spoken in full: `1d`
+                                // should not be read out as "one dee".
+                                StatusPill(
+                                  label: retentionChipLabel(retention),
+                                  uppercase: false,
+                                  semanticsLabel: 'Disappearing after '
+                                      '${retentionLabel(retention)}',
+                                ),
+                              ],
+                            ],
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(width: BoneSpacing.sm),
+                    // Bounded so a long localised date, or a large text
+                    // scale, truncates instead of overflowing the row. The
+                    // ListTile this row replaced used to do this for free.
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 112),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: <Widget>[
+                          if (activityAt != null)
+                            Text(
+                              formatListTime(context, activityAt),
+                              maxLines: 1,
+                              softWrap: false,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                // Unread rows lift the timestamp to full
+                                // text colour rather than to the accent: the
+                                // accent is already spent on the count
+                                // beneath it, and two accents in one 62dp
+                                // row is one too many.
+                                color: hasUnread ? scheme.onSurface : null,
+                                fontWeight: hasUnread ? FontWeight.w600 : null,
+                              ),
+                            ),
+                          if (hasUnread) ...<Widget>[
+                            const SizedBox(height: BoneSpacing.xs + 2),
+                            _unreadIndicator(unread),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),

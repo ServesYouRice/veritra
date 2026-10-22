@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
+import '../../l10n/l10n.dart';
+import '../../ui/validation.dart';
 import '../../ui/widgets/account_picker.dart';
 
 /// Bottom sheet for starting a DM or a private group. Members are picked by
@@ -37,10 +39,12 @@ class _NewConversationFormState extends State<_NewConversationForm> {
   String kind = 'dm';
   bool submitting = false;
 
-  /// Set by the first submit. Problems are then shown inline under the
-  /// field they concern and re-checked as the form changes, instead of in a
-  /// snack bar that the sheet itself covers.
+  /// Errors show next to their field only after the first submit attempt,
+  /// then follow every edit, so an untouched form does not open in red.
   bool attempted = false;
+
+  /// The server's answer to the last attempt. Shown inside the sheet: a
+  /// snackbar would sit behind the modal barrier.
   String? submitError;
 
   @override
@@ -52,8 +56,11 @@ class _NewConversationFormState extends State<_NewConversationForm> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    // Scrolls when the keyboard and a large text scale leave the sheet less
-    // height than the form needs, instead of overflowing it.
+    final titleError = attempted && kind == 'group' ? _titleError() : null;
+    final membersError = attempted ? _membersError() : null;
+    final footerError = membersError ?? submitError;
+    // Scrolls so the form stays usable with the keyboard up or at a large
+    // text scale, instead of overflowing the sheet.
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
       child: Column(
@@ -78,11 +85,11 @@ class _NewConversationFormState extends State<_NewConversationForm> {
             selected: <String>{kind},
             onSelectionChanged: (value) => setState(() {
               kind = value.first;
-              attempted = false;
-              submitError = null;
               // The picker below is re-created per kind (different selection
               // limits), so drop any members carried over from the old mode.
               members = <SelectedAccount>[];
+              attempted = false;
+              submitError = null;
             }),
           ),
           const SizedBox(height: 16),
@@ -90,13 +97,12 @@ class _NewConversationFormState extends State<_NewConversationForm> {
             TextField(
               controller: title,
               textInputAction: TextInputAction.next,
-              onChanged: (_) {
-                if (attempted) setState(() {});
-              },
+              textCapitalization: TextCapitalization.words,
+              onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
                 labelText: 'Group name',
                 prefixIcon: const Icon(Icons.badge_outlined),
-                errorText: attempted ? _titleProblem() : null,
+                errorText: titleError,
               ),
             ),
             const SizedBox(height: 12),
@@ -108,9 +114,19 @@ class _NewConversationFormState extends State<_NewConversationForm> {
             maxSelection: kind == 'dm' ? 1 : null,
             onChanged: (value) => setState(() => members = value),
           ),
-          if (attempted && _membersProblem() != null)
-            _InlineProblem(message: _membersProblem()!),
-          if (submitError != null) _InlineProblem(message: submitError!),
+          if (footerError != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Semantics(
+                liveRegion: true,
+                child: Text(
+                  footerError,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.error,
+                  ),
+                ),
+              ),
+            ),
           const SizedBox(height: 20),
           FilledButton.icon(
             onPressed: submitting ? null : _submit,
@@ -122,12 +138,16 @@ class _NewConversationFormState extends State<_NewConversationForm> {
     );
   }
 
-  String? _titleProblem() => kind == 'group' && title.text.trim().isEmpty
-      ? 'Give the group a name.'
-      : null;
+  String? _titleError() => displayNameError(
+        title.text,
+        groupName: true,
+        l10n: context.l10n,
+      );
 
-  String? _membersProblem() {
-    if (members.isNotEmpty) return null;
+  String? _membersError() {
+    if (members.isNotEmpty) {
+      return null;
+    }
     return kind == 'dm'
         ? 'Pick the person to message first.'
         : 'Add at least one other member.';
@@ -136,11 +156,13 @@ class _NewConversationFormState extends State<_NewConversationForm> {
   Future<void> _submit() async {
     // An empty, unnamed group is almost always a mis-tap, and once created it
     // sits in the chat list indistinguishable from the others.
+    final invalid =
+        _membersError() != null || (kind == 'group' && _titleError() != null);
     setState(() {
       attempted = true;
       submitError = null;
     });
-    if (_titleProblem() != null || _membersProblem() != null) {
+    if (invalid) {
       return;
     }
     setState(() => submitting = true);
@@ -153,36 +175,14 @@ class _NewConversationFormState extends State<_NewConversationForm> {
     if (!mounted) {
       return;
     }
-    setState(() => submitting = false);
+    setState(() {
+      submitting = false;
+      if (created == null) {
+        submitError = widget.state.error;
+      }
+    });
     if (created != null) {
       Navigator.of(context).pop();
-    } else if (widget.state.error != null) {
-      setState(() => submitError = widget.state.error);
     }
-  }
-}
-
-/// A form problem shown under the control it concerns, announced when it
-/// appears.
-class _InlineProblem extends StatelessWidget {
-  const _InlineProblem({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Semantics(
-      liveRegion: true,
-      child: Padding(
-        padding: const EdgeInsets.only(top: 8, left: 12),
-        child: Text(
-          message,
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: theme.colorScheme.error,
-          ),
-        ),
-      ),
-    );
   }
 }

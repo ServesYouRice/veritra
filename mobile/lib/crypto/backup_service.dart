@@ -268,9 +268,6 @@ class BackupService {
         throw const BackupException(BackupFailureKind.network);
       }
       throw const BackupException(BackupFailureKind.notFound);
-    } on ApiResponseException {
-      // More bytes than any backup can hold: never a valid backup.
-      throw const BackupException(BackupFailureKind.corrupt);
     } on SocketException {
       throw const BackupException(BackupFailureKind.network);
     } on HttpException {

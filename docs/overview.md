@@ -191,15 +191,12 @@ flowchart LR
 | Option | Command | TLS | Best for |
 | --- | --- | --- | --- |
 | **Binary + systemd** | `deploy/systemd/` | your own proxy | bare metal / VPS |
-| **Docker Compose** | `docker compose up` (with `VERITRA_IMAGE` digest) | your own proxy | existing proxy setup |
+| **Docker Compose** | `docker compose up` | your own proxy | existing proxy setup |
 | **Compose + Caddy** ⭐ | `docker compose --profile caddy up` | automatic Let's Encrypt | most self-hosters |
-| **Kubernetes (k3s)** | `deploy/kubernetes/` kustomize base | Traefik + cert-manager | GitOps clusters |
-| **Container image** | `ghcr.io/servesyourice/veritra` | — | published on `v*` tag or by `scripts/release-image.sh` |
+| **Container image** | `ghcr.io/servesyourice/veritra` | — | published on `v*` tag |
 
 **Hardening already in place:** scratch base image (no shell), non-root UID
-65532, read-only root filesystem, no capabilities, `no-new-privileges`,
-memory/PID limits, image pinned by digest, file-based secrets, loopback-only
-HTTP binding,
+65532, `no-new-privileges`, memory/PID limits, loopback-only HTTP binding,
 single-writer lock, `/readyz` drain on shutdown.
 
 **Supported design:** exactly one node, SQLite, local blobs.

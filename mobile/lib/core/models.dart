@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:math';
 
 enum OutboxDeliveryState { sending, failed, retrying, terminal }
 
@@ -29,7 +28,7 @@ class EnrollmentReservation {
         id: json['id'] as String,
         accountId: json['account_id'] as String,
         deviceId: json['device_id'] as String,
-        challenge: base64Decode(json['challenge'] as String),
+        challenge: _base64(json['challenge'] as String),
         protocolVersion: json['protocol_version'] as String?,
         linkNonce: _decodeOptionalBytes(json['link_nonce']),
         existingDeviceId: json['existing_device_id'] as String?,
@@ -37,8 +36,18 @@ class EnrollmentReservation {
       );
 }
 
+/// base64 decode whose failure does not carry the input: the dart:convert
+/// [FormatException] keeps the whole source string, which may be ciphertext.
+List<int> _base64(String value) {
+  try {
+    return base64Decode(value);
+  } on FormatException {
+    throw const FormatException('invalid binary field');
+  }
+}
+
 List<int>? _decodeOptionalBytes(Object? value) =>
-    value is String && value.isNotEmpty ? base64Decode(value) : null;
+    value is String && value.isNotEmpty ? _base64(value) : null;
 
 class EnrollmentCredential {
   const EnrollmentCredential({
@@ -112,10 +121,10 @@ class Conversation {
       title: json['title'] as String?,
       communityId: json['community_id'] as String?,
       channelId: json['channel_id'] as String?,
-      retentionSeconds: _optionalInt(json['retention_seconds']),
+      retentionSeconds: (json['retention_seconds'] as num?)?.toInt(),
       createdAt: _parseOptionalTime(json['created_at']),
       lastMessageAt: _parseOptionalTime(json['last_message_at']),
-      unreadCount: max(0, _optionalInt(json['unread_count']) ?? 0),
+      unreadCount: (json['unread_count'] as num?)?.toInt() ?? 0,
       currentRole: json['current_role'] as String?,
       peerAccountId: _nonEmpty(json['peer_account_id']),
       peerUsername: _nonEmpty(json['peer_username']),
@@ -287,8 +296,8 @@ class Invite {
     return Invite(
       id: json['id'] as String,
       code: json['code'] as String,
-      maxUses: _optionalInt(json['max_uses']) ?? 0,
-      uses: _optionalInt(json['uses']) ?? 0,
+      maxUses: (json['max_uses'] as num?)?.toInt() ?? 0,
+      uses: (json['uses'] as num?)?.toInt() ?? 0,
       expiresAt: _parseOptionalTime(json['expires_at']),
       createdAt: _parseOptionalTime(json['created_at']),
     );
@@ -411,7 +420,7 @@ class MlsMessage {
         kind: json['kind'] as String,
         payload: _decodeModelBytes(json['payload']),
         idempotencyKey: json['idempotency_key'] as String,
-        syncEventId: requiredApiInt(json['sync_event_id']),
+        syncEventId: (json['sync_event_id'] as num).toInt(),
         createdAt: _parseStrictTime(json['created_at']),
       );
 }
@@ -445,9 +454,7 @@ class MlsRevocation {
         state: json['state'] as String,
         commitMessageId: json['commit_message_id'] as String?,
         requestedAt: _parseStrictTime(json['requested_at']),
-        completedAt: json['completed_at'] == null
-            ? null
-            : _parseStrictTime(json['completed_at']),
+        completedAt: _parseStrictOptionalTime(json['completed_at']),
       );
 }
 
@@ -479,7 +486,7 @@ class AttachmentEnvelope {
         conversationId: json['conversation_id'] as String?,
         storageKey: json['storage_key'] as String,
         ciphertextSha256: json['ciphertext_sha256'] as String,
-        sizeBytes: requiredApiInt(json['size_bytes']),
+        sizeBytes: (json['size_bytes'] as num).toInt(),
         cryptoMetadata: json['crypto_metadata'],
         createdAt: _parseStrictTime(json['created_at']),
       );
@@ -519,16 +526,12 @@ class CallSession {
         // Required: `version` is the optimistic-concurrency token for call
         // transitions. Defaulting it would turn a contract break into silent
         // stale-write rejections at signalling time.
-        version: requiredApiInt(json['version']),
+        version: (json['version'] as num).toInt(),
         metadata:
             Map<String, Object?>.from(json['metadata'] as Map? ?? const {}),
         createdAt: _parseStrictTime(json['created_at']),
-        endedAt: json['ended_at'] == null
-            ? null
-            : _parseStrictTime(json['ended_at']),
-        expiresAt: json['expires_at'] == null
-            ? null
-            : _parseStrictTime(json['expires_at']),
+        endedAt: _parseStrictOptionalTime(json['ended_at']),
+        expiresAt: _parseStrictOptionalTime(json['expires_at']),
       );
 }
 
@@ -609,7 +612,7 @@ class ReceivedMessageEnvelope {
 
   static List<int> _decodeBytes(Object? value) {
     if (value is String) {
-      return base64Decode(value);
+      return _base64(value);
     }
     if (value is List) {
       return value.whereType<int>().toList();
@@ -657,7 +660,7 @@ class SyncEvent {
 
   factory SyncEvent.fromJson(Map<String, Object?> json) {
     return SyncEvent(
-      id: requiredApiInt(json['id']),
+      id: (json['id'] as num).toInt(),
       type: json['type'] as String,
       accountId: json['account_id'] as String?,
       conversationId: json['conversation_id'] as String?,
@@ -777,58 +780,36 @@ String? _nonEmpty(Object? value) {
   return null;
 }
 
-/// Longest timestamp text the client parses; RFC 3339 with nanoseconds
-/// and an offset fits well inside it.
-const _maxTimestampChars = 40;
+/// Longest timestamp text accepted; RFC 3339 with nanoseconds and an offset
+/// fits in 35 characters.
+const int _maxTimestampLength = 40;
 
-DateTime? _parseOptionalTime(Object? value) {
-  if (value is String &&
-      value.isNotEmpty &&
-      value.length <= _maxTimestampChars) {
-    return DateTime.tryParse(value)?.toUtc();
+/// Parses a server timestamp into UTC, or null when it is absent, not a
+/// string, too long, or outside years 1970-9999 (card T44A).
+DateTime? _boundedTime(Object? value) {
+  if (value is! String || value.isEmpty || value.length > _maxTimestampLength) {
+    return null;
   }
-  return null;
-}
-
-/// Parses a timestamp the model cannot work without (MLS, key packages,
-/// calls, attachments). Fails with a [FormatException] rather than
-/// guessing, which the API layer reports as a malformed response.
-DateTime _parseStrictTime(Object? value) {
-  final parsed = _parseOptionalTime(value);
-  if (parsed == null) {
-    throw const FormatException('invalid timestamp');
+  final parsed = DateTime.tryParse(value)?.toUtc();
+  if (parsed == null || parsed.year < 1970 || parsed.year > 9999) {
+    return null;
   }
   return parsed;
 }
 
-/// A JSON integer field. Accepts whole numbers within the exactly
-/// representable range only, so a fractional, infinite, or huge value is a
-/// [FormatException] instead of an `UnsupportedError` or a silent rounding.
-int requiredApiInt(Object? value) {
-  final parsed = _optionalInt(value);
-  if (parsed == null) {
-    throw const FormatException('invalid integer field');
-  }
-  return parsed;
-}
+DateTime? _parseOptionalTime(Object? value) => _boundedTime(value);
 
-const _maxSafeInteger = 9007199254740991;
+/// A timestamp the protocol requires; a missing or malformed one fails the
+/// row with a [FormatException] that does not echo the value.
+DateTime _parseStrictTime(Object? value) =>
+    _boundedTime(value) ?? (throw const FormatException('invalid timestamp'));
 
-int? _optionalInt(Object? value) {
-  if (value is int) {
-    return value.abs() <= _maxSafeInteger ? value : null;
-  }
-  if (value is double &&
-      value.isFinite &&
-      value == value.truncateToDouble() &&
-      value.abs() <= _maxSafeInteger) {
-    return value.toInt();
-  }
-  return null;
-}
+/// Optional, but when present it must be valid.
+DateTime? _parseStrictOptionalTime(Object? value) =>
+    value == null ? null : _parseStrictTime(value);
 
 List<int> _decodeModelBytes(Object? value) {
-  if (value is String) return base64Decode(value);
+  if (value is String) return _base64(value);
   if (value is List) return value.whereType<int>().toList(growable: false);
   throw const FormatException('invalid binary field');
 }
@@ -837,10 +818,8 @@ List<int> _decodeModelBytes(Object? value) {
 /// malformed row from the server must not throw during model construction
 /// and blank an entire list; fall back to the Unix epoch as an obviously
 /// wrong sentinel instead.
-DateTime _parseRequiredTime(Object? value) {
-  return _parseOptionalTime(value) ??
-      DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
-}
+DateTime _parseRequiredTime(Object? value) =>
+    _boundedTime(value) ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
 
 class Session {
   const Session({

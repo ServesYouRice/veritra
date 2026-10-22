@@ -2,13 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
 import '../../core/models.dart';
+import '../../l10n/l10n.dart';
 import '../../ui/avatar.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
+import '../../ui/validation.dart';
 import '../../ui/widgets/empty_state.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
-import '../../ui/widgets/text_prompt_dialog.dart';
 import '../../ui/widgets/tile_group.dart';
 import '../chat/chat_screen.dart';
 import '../../ui/widgets/refresh_action.dart';
@@ -173,20 +174,60 @@ class CommunityScreen extends StatelessWidget {
     BuildContext context, {
     required String title,
     required String label,
-  }) {
-    return showTextPromptDialog(
-      context,
-      title: title,
-      label: label,
-      confirmLabel: 'Create',
-      validator: (value) => _validateName(value, label),
-    );
+  }) async {
+    final controller = TextEditingController();
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => ValueListenableBuilder<TextEditingValue>(
+          valueListenable: controller,
+          builder: (context, value, _) {
+            // Checked here so the reason sits under the field; an empty name
+            // used to close the dialog and do nothing.
+            final error = displayNameError(value.text, l10n: context.l10n);
+            // An untouched field reads as a prompt, not an error; Create
+            // still stays disabled until the name is valid.
+            final shown = value.text.isEmpty ? null : error;
+            void submit() {
+              if (error == null) Navigator.of(dialogContext).pop(true);
+            }
+
+            return AlertDialog(
+              title: Text(title),
+              content: TextField(
+                controller: controller,
+                autofocus: true,
+                textInputAction: TextInputAction.done,
+                textCapitalization: TextCapitalization.words,
+                onSubmitted: (_) => submit(),
+                decoration: InputDecoration(
+                  labelText: label,
+                  errorText: shown,
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  child: Text(context.l10n.commonCancel),
+                ),
+                FilledButton(
+                  onPressed: error == null ? submit : null,
+                  child: Text(context.l10n.commonCreate),
+                ),
+              ],
+            );
+          },
+        ),
+      );
+      if (confirmed != true) {
+        return null;
+      }
+      return controller.text.trim();
+    } finally {
+      controller.dispose();
+    }
   }
 }
-
-/// Inline check for a community or channel name: it is required.
-String? _validateName(String value, String label) =>
-    value.isEmpty ? 'Enter a ${label.toLowerCase()}.' : null;
 
 class _CommunityCard extends StatelessWidget {
   const _CommunityCard({

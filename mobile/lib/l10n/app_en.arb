@@ -1,0 +1,193 @@
+{
+  "@@locale": "en",
+
+  "commonCancel": "Cancel",
+  "@commonCancel": {"description": "Dismisses a dialog without doing anything."},
+  "commonContinue": "Continue",
+  "@commonContinue": {"description": "Proceeds from a dialog step."},
+  "commonCreate": "Create",
+  "@commonCreate": {"description": "Confirms creating a new item from a dialog."},
+  "commonRefresh": "Refresh",
+  "@commonRefresh": {"description": "Tooltip for a button that reloads the current screen."},
+  "commonRevoke": "Revoke",
+  "@commonRevoke": {"description": "Button or tooltip that revokes a device or invite."},
+
+  "listTimeYesterday": "Yesterday",
+  "@listTimeYesterday": {"description": "Chat list timestamp for activity on the previous calendar day."},
+
+  "validationNameRequired": "Enter a name.",
+  "@validationNameRequired": {"description": "Inline error under an empty community or channel name field."},
+  "validationNameTooLong": "That name is too long.",
+  "@validationNameTooLong": {"description": "Inline error when a community or channel name exceeds the server limit."},
+  "validationGroupNameRequired": "Enter a group name.",
+  "@validationGroupNameRequired": {"description": "Inline error under an empty group name field."},
+  "validationGroupNameTooLong": "That group name is too long.",
+  "@validationGroupNameTooLong": {"description": "Inline error when a group name exceeds the server limit."},
+  "validationMessageTooLong": "Too long to send. Shorten it or split it into several messages.",
+  "@validationMessageTooLong": {"description": "Inline composer error when a message exceeds the maximum length."},
+  "gatedAttachmentsUnavailable": "Attachments need the reviewed encryption engine",
+  "@gatedAttachmentsUnavailable": {"description": "Explains why the attachment button is disabled outside demo builds."},
+
+  "confirmCancel": "Cancel",
+  "@confirmCancel": {"description": "Cancel button of a confirmation dialog."},
+
+  "appearanceSystem": "System",
+  "@appearanceSystem": {"description": "Appearance option: follow the device light/dark setting."},
+  "appearanceLight": "Light",
+  "@appearanceLight": {"description": "Appearance option: always light."},
+  "appearanceDark": "Dark",
+  "@appearanceDark": {"description": "Appearance option: always dark."},
+
+  "aboutLegalese": "Free software under the GNU Affero General Public License, version 3 or later ({license}). Source code: {url}",
+  "@aboutLegalese": {
+    "description": "Legal line in the About dialog and license page.",
+    "placeholders": {
+      "license": {"type": "String", "example": "AGPL-3.0-or-later"},
+      "url": {"type": "String", "example": "https://github.com/ServesYouRice/Veritra"}
+    }
+  },
+  "aboutTitle": "About {productName}",
+  "@aboutTitle": {
+    "description": "Settings row that opens the About dialog.",
+    "placeholders": {"productName": {"type": "String", "example": "Veritra"}}
+  },
+  "aboutVersion": "Version {version} · {license}",
+  "@aboutVersion": {
+    "description": "Subtitle of the About row.",
+    "placeholders": {
+      "version": {"type": "String", "example": "0.1.0"},
+      "license": {"type": "String", "example": "AGPL-3.0-or-later"}
+    }
+  },
+  "aboutLicenses": "Open-source licenses",
+  "@aboutLicenses": {"description": "Settings row that opens the license page."},
+  "aboutLicensesDetail": "Notices for Veritra and its components",
+  "@aboutLicensesDetail": {"description": "Subtitle of the open-source licenses row."},
+
+  "settingsTitle": "Settings",
+  "@settingsTitle": {"description": "Title of the settings screen."},
+  "settingsSectionAccount": "Account",
+  "settingsSectionDevices": "Devices",
+  "settingsSectionSafety": "Safety",
+  "settingsSectionYourData": "Your data",
+  "settingsSectionNotifications": "Notifications",
+  "settingsSectionSession": "Session",
+  "settingsSectionRecovery": "Recovery",
+  "settingsSectionComingSoon": "Coming soon",
+  "settingsSectionAppearance": "Appearance",
+  "settingsSectionAbout": "About",
+  "settingsSectionDangerZone": "Danger zone",
+  "settingsAccountId": "Account ID",
+  "settingsAccountIdUnknown": "Unknown",
+  "settingsCopyAccountId": "Copy account ID",
+  "settingsCopied": "{label} copied.",
+  "@settingsCopied": {
+    "description": "Snackbar after copying a value.",
+    "placeholders": {"label": {"type": "String", "example": "Account ID"}}
+  },
+  "settingsChangePassword": "Change password",
+  "settingsChangePasswordDetail": "Ends sessions on your other devices",
+  "settingsInvites": "Invites",
+  "settingsInvitesDetail": "Create codes so others can join",
+  "settingsLinkDevice": "Link a new device",
+  "settingsLinkDeviceDetail": "Generate a pairing code for another device",
+  "settingsLoadingDevices": "Loading devices…",
+  "settingsBlockedAccounts": "Blocked accounts",
+  "settingsBlockedNone": "No one is blocked",
+  "settingsBlockedCount": "{count} blocked",
+  "@settingsBlockedCount": {
+    "description": "How many accounts are blocked.",
+    "placeholders": {"count": {"type": "int"}}
+  },
+  "settingsBlockedReview": "Review and undo blocks",
+  "settingsExport": "Export account data",
+  "settingsExportDetail": "Save encrypted messages and account metadata locally",
+  "settingsExportFailed": "Account export failed.",
+  "settingsExportSaved": "Account export saved locally.",
+  "settingsAllowNotifications": "Allow notifications",
+  "settingsAllowNotificationsDetail": "Notifications say only that a message arrived.",
+  "settingsPushProvider": "Push provider",
+  "settingsPushProviderDetail": "Choose an Android UnifiedPush provider",
+  "settingsTestPush": "Send a test notification",
+  "settingsTestPushUnavailable": "Available once this device is registered",
+  "settingsTestPushRegistered": "Registered with {provider}",
+  "@settingsTestPushRegistered": {
+    "description": "Which push service this device registered with.",
+    "placeholders": {"provider": {"type": "String", "example": "UnifiedPush"}}
+  },
+  "settingsSignOut": "Sign out",
+  "settingsSignOutOthers": "Sign out other devices",
+  "settingsSignOutOthersDetail": "Ends every session except this one",
+  "settingsBackup": "Encrypted backup",
+  "settingsBackupDetail": "Backup & recovery code",
+  "settingsRecoveryComingSoon": "Recovery",
+  "settingsRecoveryComingSoonDetail": "Encrypted backup & recovery key",
+  "settingsCallsComingSoon": "Calls",
+  "settingsCallsComingSoonDetail": "1:1 audio/video",
+  "settingsDeleteAccount": "Delete account",
+  "settingsDeleteAccountDetail": "Disables sign-in and revokes your devices. Some encrypted records may remain under server retention rules.",
+  "settingsSignedIn": "Signed in",
+  "@settingsSignedIn": {"description": "Identity header when the server gave no username."},
+
+  "settingsRevokeDeviceTitle": "Revoke device?",
+  "settingsRevokeDeviceMessage": "\"{deviceName}\" will lose access immediately.",
+  "@settingsRevokeDeviceMessage": {
+    "placeholders": {"deviceName": {"type": "String", "example": "Pixel 8"}}
+  },
+  "settingsSignOutTitle": "Sign out?",
+  "settingsSignOutMessage": "This device stops receiving messages until you sign in again with your password.",
+  "settingsSignOutOthersTitle": "Sign out other devices?",
+  "settingsSignOutOthersMessage": "Every session except this one will be ended.",
+  "settingsSignOutOthersConfirm": "Sign out others",
+  "settingsDeleteAccountTitle": "Delete account?",
+  "settingsDeleteAccountMessage": "This disables your account, ends its sessions, and revokes its devices. Encrypted messages and other records may remain according to the server retention policy.",
+  "settingsDeleteAccountConfirm": "Disable account",
+
+  "settingsReauthTitle": "Confirm your password",
+  "settingsReauthField": "Current password",
+  "settingsNewPassword": "New password",
+  "settingsNewPasswordHelper": "At least 12 characters.",
+  "settingsConfirmNewPassword": "Confirm new password",
+  "settingsPasswordsMismatch": "Passwords do not match.",
+  "settingsChangePasswordConfirm": "Change",
+  "settingsPasswordChanged": "Password changed. Your other devices were signed out.",
+  "settingsPasswordRequired": "Enter a new password.",
+  "settingsPasswordTooShort": "Use at least 12 characters.",
+  "settingsPasswordTooLong": "That password is too long. Use a shorter one.",
+
+  "settingsPushDesktopTitle": "Desktop notifications are not available yet",
+  "settingsPushDesktopDetail": "Messages arrive while the app is running, even in the background.",
+  "settingsPushServerDisabledTitle": "This server has no push provider",
+  "settingsPushServerDisabledDetail": "The operator has not configured push. Messages arrive while the app is open.",
+  "settingsPushRegisteringTitle": "Setting up push",
+  "settingsPushRegisteringDetail": "Waiting for this device to register.",
+  "settingsPushNoDistributorTitle": "No push distributor registered",
+  "settingsPushNoDistributorDetail": "Install a UnifiedPush distributor and pick it below, or messages will only arrive while the app is open.",
+  "settingsPushFailedTitle": "Push registration failed",
+  "settingsPushFailedDetail": "This device could not register for push. It tries again the next time the app starts.",
+  "settingsPushDeniedTitle": "Notifications are turned off",
+  "settingsPushDeniedDetail": "The app still syncs when woken, but shows nothing. Allow notifications for Veritra in the system settings.",
+  "settingsPushActiveTitle": "Push notifications are active",
+  "settingsPushActiveDetail": "Notifications never contain message text or sender names.",
+
+  "settingsDeviceLastSeen": "Last seen {time}",
+  "@settingsDeviceLastSeen": {
+    "placeholders": {"time": {"type": "String", "example": "Oct 22, 2026 · 3:30 PM"}}
+  },
+  "settingsDeviceAdded": "Added {date}",
+  "@settingsDeviceAdded": {
+    "placeholders": {"date": {"type": "String", "example": "Oct 22, 2026"}}
+  },
+  "settingsDeviceRevoked": "Revoked",
+  "settingsDeviceCurrent": "This device",
+
+  "backupReplaceTitle": "Replace your backup?",
+  "backupReplaceMessage": "The previous backup and its recovery code will stop working. Keep the new code somewhere safe.",
+  "backupReplaceConfirm": "Replace backup",
+
+  "inviteRevokeTitle": "Revoke invite?",
+  "inviteRevokeMessage": "Code {code} stops working immediately. People who already joined with it keep their accounts.",
+  "@inviteRevokeMessage": {
+    "placeholders": {"code": {"type": "String", "example": "ABCD-1234"}}
+  }
+}

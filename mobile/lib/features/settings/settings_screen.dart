@@ -5,19 +5,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/app_state.dart';
+import '../../l10n/l10n.dart';
 import '../../push/push_service.dart';
 import 'backup_screen.dart';
 import '../../core/models.dart';
+import '../../ui/about.dart';
+import '../../ui/appearance.dart';
 import '../../ui/avatar.dart';
+import '../../ui/confirm.dart';
 import '../../ui/format.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/status_pill.dart';
-import '../../ui/widgets/text_prompt_dialog.dart';
 import '../../ui/widgets/tile_group.dart';
-import '../../ui/widgets/unavailable_reason.dart';
 import 'blocked_accounts_screen.dart';
 import 'device_link_screen.dart';
 import 'invite_screen.dart';
@@ -36,12 +38,14 @@ class SettingsScreen extends StatelessWidget {
         final theme = Theme.of(context);
         final session = state.session;
         final isAdmin = session?.role == 'owner' || session?.role == 'admin';
+        final appearance = AppearanceScope.maybeOf(context);
+        final l10n = context.l10n;
         return Scaffold(
           appBar: LargeTitleBar(
-            title: 'Settings',
+            title: l10n.settingsTitle,
             actions: <Widget>[
               IconButton(
-                tooltip: 'Refresh',
+                tooltip: l10n.commonRefresh,
                 onPressed: state.busy ? null : state.refreshDevices,
                 icon: const Icon(Icons.refresh),
               ),
@@ -65,15 +69,15 @@ class SettingsScreen extends StatelessWidget {
                           ),
                         ),
               ),
-              const SectionHeader('Account'),
+              SectionHeader(l10n.settingsSectionAccount),
               TileGroup(
                 children: <Widget>[
                   ListTile(
                     leading: const Icon(Icons.person_outline),
-                    title: const Text('Account ID'),
+                    title: Text(l10n.settingsAccountId),
                     subtitle: Text(
                       session?.accountId == null
-                          ? 'Unknown'
+                          ? l10n.settingsAccountIdUnknown
                           : shortId(session!.accountId!),
                       style: BoneType.mono.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
@@ -82,56 +86,59 @@ class SettingsScreen extends StatelessWidget {
                     trailing: session?.accountId == null
                         ? null
                         : IconButton(
-                            tooltip: 'Copy account ID',
+                            tooltip: l10n.settingsCopyAccountId,
                             icon: const Icon(Icons.copy_outlined),
                             onPressed: () => _copy(
                               context,
                               session!.accountId!,
-                              'Account ID',
+                              l10n.settingsAccountId,
                             ),
                           ),
                   ),
                   ListTile(
                     leading: const Icon(Icons.password_outlined),
-                    title: const Text('Change password'),
-                    subtitle: const Text('Ends sessions on your other devices'),
+                    title: Text(l10n.settingsChangePassword),
+                    subtitle: Text(l10n.settingsChangePasswordDetail),
                     onTap: state.busy ? null : () => _changePassword(context),
                   ),
                   if (isAdmin)
                     ListTile(
                       leading: const Icon(Icons.card_giftcard_outlined),
-                      title: const Text('Invites'),
-                      subtitle: const Text('Create codes so others can join'),
+                      title: Text(l10n.settingsInvites),
+                      subtitle: Text(l10n.settingsInvitesDetail),
                       onTap: () async {
                         if (await _reauthenticate(context) && context.mounted) {
-                          Navigator.of(context).push(sharedAxisRoute<void>(
-                            (_) => InviteScreen(state: state),
-                          ));
+                          Navigator.of(context).push(
+                            sharedAxisRoute<void>(
+                              (_) => InviteScreen(state: state),
+                            ),
+                          );
                         }
                       },
                     ),
                 ],
               ),
-              const SectionHeader('Devices'),
+              SectionHeader(l10n.settingsSectionDevices),
               TileGroup(
                 children: <Widget>[
                   if (state.membershipChangesAvailable)
                     ListTile(
                       leading: const Icon(Icons.qr_code_2),
-                      title: const Text('Link a new device'),
-                      subtitle: const Text(
-                          'Generate a pairing code for another device'),
+                      title: Text(l10n.settingsLinkDevice),
+                      subtitle: Text(l10n.settingsLinkDeviceDetail),
                       onTap: () async {
                         if (await _reauthenticate(context) && context.mounted) {
-                          Navigator.of(context).push(sharedAxisRoute<void>(
-                            (_) => DeviceLinkScreen(state: state),
-                          ));
+                          Navigator.of(context).push(
+                            sharedAxisRoute<void>(
+                              (_) => DeviceLinkScreen(state: state),
+                            ),
+                          );
                         }
                       },
                     ),
                   if (state.devices.isEmpty && !state.devicesLoaded)
-                    const ListTile(
-                      leading: SizedBox.square(
+                    ListTile(
+                      leading: const SizedBox.square(
                         dimension: 24,
                         child: Center(
                           child: SizedBox.square(
@@ -140,7 +147,7 @@ class SettingsScreen extends StatelessWidget {
                           ),
                         ),
                       ),
-                      title: Text('Loading devices…'),
+                      title: Text(l10n.settingsLoadingDevices),
                     ),
                   for (final device in state.devices)
                     _DeviceTile(
@@ -151,18 +158,20 @@ class SettingsScreen extends StatelessWidget {
                     ),
                 ],
               ),
-              const SectionHeader('Safety'),
+              SectionHeader(l10n.settingsSectionSafety),
               TileGroup(
                 children: <Widget>[
                   ListTile(
                     leading: const Icon(Icons.block_outlined),
-                    title: const Text('Blocked accounts'),
+                    title: Text(l10n.settingsBlockedAccounts),
                     subtitle: Text(
                       state.blocksLoaded
                           ? (state.blockedAccounts.isEmpty
-                              ? 'No one is blocked'
-                              : '${state.blockedAccounts.length} blocked')
-                          : 'Review and undo blocks',
+                              ? l10n.settingsBlockedNone
+                              : l10n.settingsBlockedCount(
+                                  state.blockedAccounts.length,
+                                ))
+                          : l10n.settingsBlockedReview,
                     ),
                     onTap: () => Navigator.of(context).push(
                       sharedAxisRoute<void>(
@@ -172,19 +181,18 @@ class SettingsScreen extends StatelessWidget {
                   ),
                 ],
               ),
-              const SectionHeader('Your data'),
+              SectionHeader(l10n.settingsSectionYourData),
               TileGroup(
                 children: <Widget>[
                   ListTile(
                     leading: const Icon(Icons.download_outlined),
-                    title: const Text('Export account data'),
-                    subtitle: const Text(
-                        'Save encrypted messages and account metadata locally'),
+                    title: Text(l10n.settingsExport),
+                    subtitle: Text(l10n.settingsExportDetail),
                     onTap: state.busy ? null : () => _exportAccount(context),
                   ),
                 ],
               ),
-              const SectionHeader('Notifications'),
+              SectionHeader(l10n.settingsSectionNotifications),
               _PushStatusRow(state: state),
               const SizedBox(height: BoneSpacing.sm),
               TileGroup(
@@ -193,9 +201,8 @@ class SettingsScreen extends StatelessWidget {
                       NotificationPermission.notDetermined)
                     ListTile(
                       leading: const Icon(Icons.notifications_outlined),
-                      title: const Text('Allow notifications'),
-                      subtitle: const Text(
-                          'Notifications say only that a message arrived.'),
+                      title: Text(l10n.settingsAllowNotifications),
+                      subtitle: Text(l10n.settingsAllowNotificationsDetail),
                       onTap: state.requestNotificationPermission,
                     ),
                   if (defaultTargetPlatform == TargetPlatform.android &&
@@ -203,49 +210,52 @@ class SettingsScreen extends StatelessWidget {
                     ListTile(
                       enabled: state.pushConfigured && !state.busy,
                       leading: const Icon(Icons.hub_outlined),
-                      title: const Text('Push provider'),
-                      subtitle:
-                          const Text('Choose an Android UnifiedPush provider'),
+                      title: Text(l10n.settingsPushProvider),
+                      subtitle: Text(l10n.settingsPushProviderDetail),
                       onTap: state.choosePushDistributor,
                     ),
                   ListTile(
                     enabled: state.pushState == PushState.registered &&
                         !state.isBusy(Ops.pushTest),
                     leading: const Icon(Icons.send_outlined),
-                    title: const Text('Send a test notification'),
-                    subtitle: Text(state.pushTestResult ??
-                        (state.pushProvider == null
-                            ? 'Available once this device is registered'
-                            : 'Registered with ${_providerName(state.pushProvider!)}')),
+                    title: Text(l10n.settingsTestPush),
+                    subtitle: Text(
+                      state.pushTestResult ??
+                          (state.pushProvider == null
+                              ? l10n.settingsTestPushUnavailable
+                              : l10n.settingsTestPushRegistered(
+                                  _providerName(state.pushProvider!),
+                                )),
+                    ),
                     onTap: state.sendTestPush,
                   ),
                 ],
               ),
-              const SectionHeader('Session'),
+              SectionHeader(l10n.settingsSectionSession),
               TileGroup(
                 children: <Widget>[
                   ListTile(
                     leading: const Icon(Icons.logout),
-                    title: const Text('Sign out'),
-                    onTap: state.busy ? null : state.logout,
+                    title: Text(l10n.settingsSignOut),
+                    onTap: state.busy ? null : () => _confirmLogout(context),
                   ),
                   ListTile(
                     leading: const Icon(Icons.phonelink_erase_outlined),
-                    title: const Text('Sign out other devices'),
-                    subtitle: const Text('Ends every session except this one'),
+                    title: Text(l10n.settingsSignOutOthers),
+                    subtitle: Text(l10n.settingsSignOutOthersDetail),
                     onTap:
                         state.busy ? null : () => _confirmLogoutOthers(context),
                   ),
                 ],
               ),
               if (state.backupAvailable) ...<Widget>[
-                const SectionHeader('Recovery'),
+                SectionHeader(l10n.settingsSectionRecovery),
                 TileGroup(
                   children: <Widget>[
                     ListTile(
                       leading: const Icon(Icons.key_outlined),
-                      title: const Text('Encrypted backup'),
-                      subtitle: const Text('Backup & recovery code'),
+                      title: Text(l10n.settingsBackup),
+                      subtitle: Text(l10n.settingsBackupDetail),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () => Navigator.of(context).push(
                         MaterialPageRoute<void>(
@@ -256,42 +266,57 @@ class SettingsScreen extends StatelessWidget {
                   ],
                 ),
               ],
-              const SectionHeader('Coming soon'),
+              SectionHeader(l10n.settingsSectionComingSoon),
               TileGroup(
                 children: <Widget>[
-                  // Disabled rows leave keyboard traversal, so the reason is
-                  // carried by a focusable wrapper rather than left implied.
                   if (!state.backupAvailable)
-                    const UnavailableReason(
-                      message: 'Needs the reviewed encryption engine.',
-                      borderRadius: BorderRadius.zero,
-                      child: ListTile(
-                        enabled: false,
-                        leading: Icon(Icons.key_outlined),
-                        title: Text('Recovery'),
-                        subtitle: Text('Encrypted backup & recovery key'),
-                      ),
-                    ),
-                  const UnavailableReason(
-                    message: 'Not available in this build yet.',
-                    borderRadius: BorderRadius.zero,
-                    child: ListTile(
+                    ListTile(
                       enabled: false,
-                      leading: Icon(Icons.video_call_outlined),
-                      title: Text('Calls'),
-                      subtitle: Text('1:1 audio/video'),
+                      leading: const Icon(Icons.key_outlined),
+                      title: Text(l10n.settingsRecoveryComingSoon),
+                      subtitle: Text(l10n.settingsRecoveryComingSoonDetail),
                     ),
+                  ListTile(
+                    enabled: false,
+                    leading: const Icon(Icons.video_call_outlined),
+                    title: Text(l10n.settingsCallsComingSoon),
+                    subtitle: Text(l10n.settingsCallsComingSoonDetail),
                   ),
                 ],
               ),
-              const SectionHeader('Danger zone'),
+              if (appearance != null) ...<Widget>[
+                SectionHeader(l10n.settingsSectionAppearance),
+                _AppearanceRow(controller: appearance),
+              ],
+              SectionHeader(l10n.settingsSectionAbout),
+              TileGroup(
+                children: <Widget>[
+                  ListTile(
+                    leading: const Icon(Icons.info_outline),
+                    title: Text(l10n.aboutTitle(veritraProductName)),
+                    subtitle: Text(
+                      l10n.aboutVersion(veritraVersion, veritraLicenseName),
+                    ),
+                    onTap: () => showVeritraAbout(context),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.description_outlined),
+                    title: Text(l10n.aboutLicenses),
+                    subtitle: Text(l10n.aboutLicensesDetail),
+                    onTap: () => showVeritraLicenses(context),
+                  ),
+                ],
+              ),
+              SectionHeader(l10n.settingsSectionDangerZone),
               // The one filled surface left in this direction. It is doing
               // real work — it is the only row on the screen you cannot undo.
-              Container(
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.errorContainer,
+              // A Material, not a decorated Container, so the row's ink
+              // splash paints on the filled surface instead of under it.
+              Material(
+                color: theme.colorScheme.errorContainer,
+                shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(BoneRadii.lg),
-                  border: Border.all(color: theme.colorScheme.error),
+                  side: BorderSide(color: theme.colorScheme.error),
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: ListTile(
@@ -300,12 +325,11 @@ class SettingsScreen extends StatelessWidget {
                     color: theme.colorScheme.onErrorContainer,
                   ),
                   title: Text(
-                    'Delete account',
+                    l10n.settingsDeleteAccount,
                     style: TextStyle(color: theme.colorScheme.onErrorContainer),
                   ),
                   subtitle: Text(
-                    'Disables sign-in and revokes your devices. Some encrypted '
-                    'records may remain under server retention rules.',
+                    l10n.settingsDeleteAccountDetail,
                     style: TextStyle(color: theme.colorScheme.onErrorContainer),
                   ),
                   onTap:
@@ -321,17 +345,17 @@ class SettingsScreen extends StatelessWidget {
 
   void _copy(BuildContext context, String value, String label) {
     Clipboard.setData(ClipboardData(text: value));
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$label copied.')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(context.l10n.settingsCopied(label))));
   }
 
   Future<void> _confirmRevoke(BuildContext context, Device device) async {
     final confirmed = await _confirm(
       context,
-      title: 'Revoke device?',
-      message: '"${device.name}" will lose access immediately.',
-      confirmLabel: 'Revoke',
+      title: context.l10n.settingsRevokeDeviceTitle,
+      message: context.l10n.settingsRevokeDeviceMessage(device.name),
+      confirmLabel: context.l10n.commonRevoke,
     );
     if (confirmed) {
       if (await _reauthenticate(context)) {
@@ -340,12 +364,24 @@ class SettingsScreen extends StatelessWidget {
     }
   }
 
+  Future<void> _confirmLogout(BuildContext context) async {
+    final confirmed = await _confirm(
+      context,
+      title: context.l10n.settingsSignOutTitle,
+      message: context.l10n.settingsSignOutMessage,
+      confirmLabel: context.l10n.settingsSignOut,
+    );
+    if (confirmed) {
+      await state.logout();
+    }
+  }
+
   Future<void> _confirmLogoutOthers(BuildContext context) async {
     final confirmed = await _confirm(
       context,
-      title: 'Sign out other devices?',
-      message: 'Every session except this one will be ended.',
-      confirmLabel: 'Sign out others',
+      title: context.l10n.settingsSignOutOthersTitle,
+      message: context.l10n.settingsSignOutOthersMessage,
+      confirmLabel: context.l10n.settingsSignOutOthersConfirm,
     );
     if (confirmed) {
       if (await _reauthenticate(context)) {
@@ -357,11 +393,9 @@ class SettingsScreen extends StatelessWidget {
   Future<void> _confirmDeleteAccount(BuildContext context) async {
     final confirmed = await _confirm(
       context,
-      title: 'Delete account?',
-      message: 'This disables your account, ends its sessions, and revokes its '
-          'devices. Encrypted messages and other records may remain according '
-          'to the server retention policy.',
-      confirmLabel: 'Disable account',
+      title: context.l10n.settingsDeleteAccountTitle,
+      message: context.l10n.settingsDeleteAccountMessage,
+      confirmLabel: context.l10n.settingsDeleteAccountConfirm,
       destructive: true,
     );
     if (confirmed) {
@@ -372,27 +406,46 @@ class SettingsScreen extends StatelessWidget {
   }
 
   Future<bool> _reauthenticate(BuildContext context) async {
-    final password = await showTextPromptDialog(
-      context,
-      title: 'Confirm your password',
-      label: 'Current password',
-      confirmLabel: 'Continue',
-      obscureText: true,
-      // A password is checked as typed: surrounding spaces may be part of it.
-      trim: false,
-      autofillHints: const <String>[AutofillHints.password],
-      validator: (value) =>
-          value.isEmpty ? 'Enter your current password.' : null,
-    );
-    if (password == null || password.isEmpty || !context.mounted) {
-      return false;
+    final controller = TextEditingController();
+    try {
+      final password = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(dialogContext.l10n.settingsReauthTitle),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            obscureText: true,
+            autofillHints: const <String>[AutofillHints.password],
+            decoration: InputDecoration(
+              labelText: dialogContext.l10n.settingsReauthField,
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(dialogContext.l10n.commonCancel),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+              child: Text(dialogContext.l10n.commonContinue),
+            ),
+          ],
+        ),
+      );
+      if (password == null || password.isEmpty) {
+        return false;
+      }
+      final ok = await state.reauthenticate(password);
+      if (!ok && context.mounted && state.error != null) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(state.error!)));
+      }
+      return ok;
+    } finally {
+      controller.dispose();
     }
-    final ok = await state.reauthenticate(password);
-    if (!ok && context.mounted && state.error != null) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(state.error!)));
-    }
-    return ok;
   }
 
   Future<void> _changePassword(BuildContext context) async {
@@ -409,7 +462,7 @@ class SettingsScreen extends StatelessWidget {
       final accepted = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
-          title: const Text('Change password'),
+          title: Text(dialogContext.l10n.settingsChangePassword),
           content: Form(
             key: formKey,
             autovalidateMode: AutovalidateMode.onUserInteraction,
@@ -419,11 +472,12 @@ class SettingsScreen extends StatelessWidget {
                 TextFormField(
                   controller: password,
                   obscureText: true,
-                  decoration: const InputDecoration(
-                    labelText: 'New password',
-                    helperText: 'At least 12 characters.',
+                  decoration: InputDecoration(
+                    labelText: dialogContext.l10n.settingsNewPassword,
+                    helperText: dialogContext.l10n.settingsNewPasswordHelper,
                   ),
-                  validator: _validateNewPassword,
+                  validator: (value) =>
+                      _validateNewPassword(value, dialogContext.l10n),
                   // Re-run the confirmation check when the first field
                   // changes, so an already-typed confirmation is not left
                   // showing a stale "matches" state.
@@ -432,10 +486,11 @@ class SettingsScreen extends StatelessWidget {
                 TextFormField(
                   controller: confirmation,
                   obscureText: true,
-                  decoration:
-                      const InputDecoration(labelText: 'Confirm new password'),
+                  decoration: InputDecoration(
+                    labelText: dialogContext.l10n.settingsConfirmNewPassword,
+                  ),
                   validator: (value) => (value ?? '') != password.text
-                      ? 'Passwords do not match.'
+                      ? dialogContext.l10n.settingsPasswordsMismatch
                       : null,
                 ),
               ],
@@ -443,15 +498,17 @@ class SettingsScreen extends StatelessWidget {
           ),
           actions: <Widget>[
             TextButton(
-                onPressed: () => Navigator.of(dialogContext).pop(false),
-                child: const Text('Cancel')),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: Text(dialogContext.l10n.commonCancel),
+            ),
             FilledButton(
-                onPressed: () {
-                  if (formKey.currentState?.validate() ?? false) {
-                    Navigator.of(dialogContext).pop(true);
-                  }
-                },
-                child: const Text('Change')),
+              onPressed: () {
+                if (formKey.currentState?.validate() ?? false) {
+                  Navigator.of(dialogContext).pop(true);
+                }
+              },
+              child: Text(dialogContext.l10n.settingsChangePasswordConfirm),
+            ),
           ],
         ),
       );
@@ -464,8 +521,9 @@ class SettingsScreen extends StatelessWidget {
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(state.error ??
-              'Password changed. Your other devices were signed out.'),
+          content: Text(
+            state.error ?? context.l10n.settingsPasswordChanged,
+          ),
         ),
       );
     } finally {
@@ -483,27 +541,26 @@ class SettingsScreen extends StatelessWidget {
       return;
     }
     final message = path == null
-        ? (state.error ?? 'Account export failed.')
-        : 'Account export saved locally.';
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(message),
-      duration: const Duration(seconds: 4),
-    ));
+        ? (state.error ?? context.l10n.settingsExportFailed)
+        : context.l10n.settingsExportSaved;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 4)),
+    );
   }
 
   /// Length is checked in UTF-8 bytes to match the server's bcrypt limit, but
   /// the message stays in user language.
-  static String? _validateNewPassword(String? value) {
+  static String? _validateNewPassword(String? value, AppLocalizations l10n) {
     final raw = value ?? '';
     if (raw.isEmpty) {
-      return 'Enter a new password.';
+      return l10n.settingsPasswordRequired;
     }
     final bytes = utf8.encode(raw).length;
     if (bytes < 12) {
-      return 'Use at least 12 characters.';
+      return l10n.settingsPasswordTooShort;
     }
     if (bytes > 72) {
-      return 'That password is too long. Use a shorter one.';
+      return l10n.settingsPasswordTooLong;
     }
     return null;
   }
@@ -514,32 +571,57 @@ class SettingsScreen extends StatelessWidget {
     required String message,
     required String confirmLabel,
     bool destructive = false,
-  }) async {
-    final theme = Theme.of(context);
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
+  }) =>
+      confirmAction(
+        context,
+        title: title,
+        message: message,
+        confirmLabel: confirmLabel,
+        destructive: destructive,
+      );
+}
+
+/// System/Light/Dark. Saved on this device and applied immediately.
+class _AppearanceRow extends StatelessWidget {
+  const _AppearanceRow({required this.controller});
+
+  final AppearanceController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return TileGroup(
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.all(BoneSpacing.md),
+          child: SizedBox(
+            width: double.infinity,
+            child: SegmentedButton<ThemeMode>(
+              showSelectedIcon: false,
+              segments: <ButtonSegment<ThemeMode>>[
+                ButtonSegment<ThemeMode>(
+                  value: ThemeMode.system,
+                  icon: const Icon(Icons.brightness_auto_outlined),
+                  label: Text(context.l10n.appearanceSystem),
+                ),
+                ButtonSegment<ThemeMode>(
+                  value: ThemeMode.light,
+                  icon: const Icon(Icons.light_mode_outlined),
+                  label: Text(context.l10n.appearanceLight),
+                ),
+                ButtonSegment<ThemeMode>(
+                  value: ThemeMode.dark,
+                  icon: const Icon(Icons.dark_mode_outlined),
+                  label: Text(context.l10n.appearanceDark),
+                ),
+              ],
+              selected: <ThemeMode>{controller.mode},
+              onSelectionChanged: (selection) =>
+                  controller.setMode(selection.single),
+            ),
           ),
-          FilledButton(
-            style: destructive
-                ? FilledButton.styleFrom(
-                    backgroundColor: theme.colorScheme.error,
-                    foregroundColor: theme.colorScheme.onError,
-                  )
-                : null,
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text(confirmLabel),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
-    return result ?? false;
   }
 }
 
@@ -605,7 +687,9 @@ class _IdentityHeader extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: <Widget>[
                       Text(
-                        username == null ? 'Signed in' : '@$username',
+                        username == null
+                            ? context.l10n.settingsSignedIn
+                            : '@$username',
                         style: theme.textTheme.titleLarge,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -651,6 +735,7 @@ class _PushStatusRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final String title;
     final String detail;
     final IconData icon;
@@ -661,42 +746,36 @@ class _PushStatusRow extends StatelessWidget {
     final denied =
         state.notificationPermission == NotificationPermission.denied;
     if (desktop) {
-      title = 'Desktop notifications are not available yet';
-      detail = 'Messages arrive while the app is running, even in the '
-          'background.';
+      title = l10n.settingsPushDesktopTitle;
+      detail = l10n.settingsPushDesktopDetail;
       icon = Icons.notifications_off_outlined;
     } else {
       switch (state.pushState) {
         case PushState.serverDisabled:
-          title = 'This server has no push provider';
-          detail = 'The operator has not configured push. Messages arrive '
-              'while the app is open.';
+          title = l10n.settingsPushServerDisabledTitle;
+          detail = l10n.settingsPushServerDisabledDetail;
           icon = Icons.cloud_off_outlined;
         case PushState.unknown:
         case PushState.registering:
-          title = 'Setting up push';
-          detail = 'Waiting for this device to register.';
+          title = l10n.settingsPushRegisteringTitle;
+          detail = l10n.settingsPushRegisteringDetail;
           icon = Icons.hourglass_empty;
         case PushState.noDistributor:
-          title = 'No push distributor registered';
-          detail = 'Install a UnifiedPush distributor and pick it below, or '
-              'messages will only arrive while the app is open.';
+          title = l10n.settingsPushNoDistributorTitle;
+          detail = l10n.settingsPushNoDistributorDetail;
           icon = Icons.warning_amber_outlined;
         case PushState.registrationFailed:
-          title = 'Push registration failed';
-          detail = 'This device could not register for push. It tries again '
-              'the next time the app starts.';
+          title = l10n.settingsPushFailedTitle;
+          detail = l10n.settingsPushFailedDetail;
           icon = Icons.warning_amber_outlined;
         case PushState.registered:
           if (denied) {
-            title = 'Notifications are turned off';
-            detail = 'The app still syncs when woken, but shows nothing. '
-                'Allow notifications for Veritra in the system settings.';
+            title = l10n.settingsPushDeniedTitle;
+            detail = l10n.settingsPushDeniedDetail;
             icon = Icons.notifications_off_outlined;
           } else {
-            title = 'Push notifications are active';
-            detail = 'Notifications never contain message text or sender '
-                'names.';
+            title = l10n.settingsPushActiveTitle;
+            detail = l10n.settingsPushActiveDetail;
             icon = Icons.notifications_active_outlined;
             warn = false;
           }
@@ -759,8 +838,10 @@ class _DeviceTile extends StatelessWidget {
     // clause of a ' · '-joined sentence.
     final details = <String>[
       if (device.lastSeenAt != null)
-        'Last seen ${formatDateTime(context, device.lastSeenAt!)}',
-      'Added ${formatDate(context, device.createdAt)}',
+        context.l10n.settingsDeviceLastSeen(
+          formatDateTime(context, device.lastSeenAt!),
+        ),
+      context.l10n.settingsDeviceAdded(formatDate(context, device.createdAt)),
     ];
     return ListTile(
       leading: Icon(
@@ -784,10 +865,13 @@ class _DeviceTile extends StatelessWidget {
           ),
           if (revoked) ...<Widget>[
             const SizedBox(width: BoneSpacing.sm),
-            const StatusPill(label: 'Revoked', tone: StatusTone.error),
+            StatusPill(
+              label: context.l10n.settingsDeviceRevoked,
+              tone: StatusTone.error,
+            ),
           ] else if (isCurrent) ...<Widget>[
             const SizedBox(width: BoneSpacing.sm),
-            const StatusPill(label: 'This device'),
+            StatusPill(label: context.l10n.settingsDeviceCurrent),
           ],
         ],
       ),
@@ -800,7 +884,7 @@ class _DeviceTile extends StatelessWidget {
       trailing: revoked
           ? null
           : IconButton(
-              tooltip: 'Revoke',
+              tooltip: context.l10n.commonRevoke,
               onPressed: busy ? null : onRevoke,
               icon: const Icon(Icons.block),
             ),

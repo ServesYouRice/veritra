@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/app_state.dart';
+import '../../l10n/l10n.dart';
+import '../../ui/confirm.dart';
 import '../../ui/format.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/large_title_bar.dart';
@@ -58,11 +60,14 @@ class _BackupScreenState extends State<BackupScreen> {
                 children: <Widget>[
                   ListTile(
                     leading: const Icon(Icons.cloud_done_outlined),
-                    title: Text(last == null
-                        ? 'No backup from this device yet'
-                        : 'Last backup ${formatDateTime(context, last.toLocal())}'),
+                    title: Text(
+                      last == null
+                          ? 'No backup from this device yet'
+                          : 'Last backup ${formatDateTime(context, last.toLocal())}',
+                    ),
                     subtitle: const Text(
-                        'A new backup replaces the previous one and its code.'),
+                      'A new backup replaces the previous one and its code.',
+                    ),
                   ),
                 ],
               ),
@@ -75,8 +80,9 @@ class _BackupScreenState extends State<BackupScreen> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.backup_outlined),
-                label:
-                    Text(last == null ? 'Make a backup' : 'Make a new backup'),
+                label: Text(
+                  last == null ? 'Make a backup' : 'Make a new backup',
+                ),
               ),
               if (error != null) ...<Widget>[
                 const SizedBox(height: BoneSpacing.md),
@@ -93,6 +99,18 @@ class _BackupScreenState extends State<BackupScreen> {
   }
 
   Future<void> _create(BuildContext context) async {
+    // A new backup replaces the previous one and its recovery code stops
+    // working, so replacing an existing backup is confirmed first.
+    if (widget.state.lastBackupAt != null) {
+      final confirmed = await confirmAction(
+        context,
+        title: context.l10n.backupReplaceTitle,
+        message: context.l10n.backupReplaceMessage,
+        confirmLabel: context.l10n.backupReplaceConfirm,
+        destructive: true,
+      );
+      if (!confirmed || !context.mounted) return;
+    }
     final code = await widget.state.createBackup();
     if (code == null || !context.mounted) return;
     await showDialog<void>(

@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
-import '../../core/errors.dart';
 import '../../core/models.dart';
 import '../../ui/avatar.dart';
 import '../../ui/motion.dart';
@@ -82,7 +81,7 @@ class _SearchScreenState extends State<SearchScreen> {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(describeError(err))),
+        SnackBar(content: Text(err.toString())),
       );
     } finally {
       if (mounted && generation == _generation) {

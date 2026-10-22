@@ -717,6 +717,38 @@ claiming it.
 has a cap; malformed/binary responses are bounded; forms survive keyboard and
 large text; URI handling works on both platforms or the URI is not emitted.
 
+**Implementation note (T44B/T44C, 2026-10-22):** T44B adds locale-aware
+relative list time (MaterialLocalizations only), 600/840 dp shell
+breakpoints, a jump-to-latest control that keeps loaded history, a focusable
+explanation on the still-disabled attach control, inline validation in the
+new-conversation sheet and community/channel dialog, and a composer/edit
+length limit that shares `maxAppTextLength` (16384) and never truncates the
+draft. Chat rows offer only Mute/Unmute and Conversation details. T44C sets
+the product name and AGPL copyright strings, adds About and Licenses from
+Settings, persists System/Light/Dark in existing secure storage (falls back to
+System), and confirms sign-out, invite revoke and backup replacement. The
+`veritra://` device-link URI is no longer shown or copied, because neither
+platform registers the scheme; the QR code is built locally from the link
+code. Localization (D30) uses gen-l10n with an English ARB in
+`mobile/lib/l10n`; list time, About, Appearance, confirmations, Settings,
+validation and gated messages are moved, other screens and `core/errors.dart`
+are not yet. Open: the server still returns the unused `link_uri`; bundle IDs
+keep `private_messenger`.
+
+**Implementation note (T44A, 2026-10-22):** `mobile/lib/core/api_errors.dart`
+maps all 112 server error codes to typed kinds; a test greps the server and
+fails on drift, and `test/fixtures/api/v1` pins the list. Error bodies are read
+to at most 4 KB and keep only the code and a few integer fields. JSON replies
+are capped at 2 MB, or 16 MiB for replies that carry ciphertext (sync events,
+MLS messages, message envelopes); one item always fits under that cap, and
+paged ciphertext lists that exceed it are re-requested with half the limit, so
+large legal MLS payloads never become a retry loop. Attachment downloads stop
+at 50 MB and backup recovery at 100 MB. Timestamps are bounded (1970-9999,
+UTC). List paging stops at 100 pages, rejects a cursor that does not move, and
+never asks for more than 200. A failed refresh keeps the last good lists with
+a safe message. Tests use sentinels to prove bodies, ciphertext, recovery
+tokens and hostile codes never reach error text or `describeError`.
+
 ### I46 - Supported deployment hardening
 
 **Decision:** Merge Codex DEP-03/DEP-07/DEP-08/DEP-11 with Opus R4/R9.
@@ -730,21 +762,32 @@ drain and upload deadlines; add compatible container/systemd restrictions.
 reject overlapping ownership, expose no secret in logs/config dumps and pass
 startup, upload, backup, restore, push and TURN smoke under the hardened profile.
 
-**Implementation note (T46, 2026-10-22):** supported Compose runs a released
-image by digest (`deploy/docker-compose.build.yml` is the separate dev build);
-secret settings accept `*_FILE` variants and errors never contain values;
-`serve` flock-locks the canonical database file and blob directory, and the
-instance lock is now an OS lock released on crash; the restore drill stages
-under the data directory; `PRIVATE_MESSENGER_SHUTDOWN_TIMEOUT` (default 25 s)
-matches a 40 s stop grace in Compose, systemd and Kubernetes; authenticated
-requests write the session at most once a minute. `deploy/kubernetes/` holds a
-kustomize base for single-node k3s (Recreate, PSA restricted, default-deny
-network policy, Traefik timeouts, cert-manager, backup CronJob with rclone to
-R2 and a restore drill) and `scripts/release-image.sh` is the local release
-command (checks, govulncheck, cargo audit, Trivy, digest output). Hardened
-Compose startup, backup with restore drill, second-writer refusal and file
-secrets passed locally; k3s, systemd, upload, push and TURN smoke still need a
-real host.
+**Implementation note (T46, 2026-10-22):** Supported Compose requires
+`VERITRA_IMAGE` (a digest-pinned release reference) and no longer builds from
+source; `deploy/docker-compose.build.yml` is the dev/CI build override. The
+server runs read-only, `cap_drop: ALL`, `no-new-privileges`, uid 65532, with
+secrets passed only as `*_FILE` mounts. systemd units add
+`ProtectSystem=strict`, an empty capability set and a syscall filter. The
+server reads `KEY_FILE` secrets (regular file, 64 KiB cap, newline trimmed,
+value never in errors) and redacts them in `Config` output. DB and blob paths
+are made absolute with symlinks resolved, overlaps are rejected, and `serve`
+holds flock locks on the real DB and blob paths. Shutdown now waits: 18 s
+graceful drain, then force-close, inside one 25 s budget shared with push
+workers. CI compose-smoke uses the build override and asserts the hardened
+profile. Open: hardened upload, backup, restore, push and TURN smoke on a
+real host; Caddy under read-only has not been run.
+
+**Follow-up (hosting handbook, 2026-10-22):** the instance lock is an OS lock
+released on crash (no restart loop after SIGKILL or OOM); the restore drill
+stages under the data directory, so no `/tmp` is needed; authenticated
+requests write the session at most once a minute and device last-seen at most
+every five minutes, with validation as strict as before.
+`deploy/kubernetes/` adds a kustomize base for single-node k3s (Recreate, PSA
+restricted, default-deny network policies, Traefik timeouts, cert-manager, a
+backup CronJob that copies to R2 with rclone, and a monthly restore drill from
+R2), validated with kustomize and kubeconform. `scripts/release-image.sh` is
+the local release command (checks, govulncheck, cargo audit, Trivy, digest
+into the infra repo). Open: a run on a real k3s host.
 
 ### I47 - Operational visibility and capacity evidence
 
@@ -777,14 +820,18 @@ malformed frames stay bounded, logs contain no dynamic identifier/capability,
 proxy spoof tests fail closed and a real mobile client can establish the
 documented TLS path.
 
-**Implementation note (T48B, 2026-10-22):** the in-house parser is kept,
-bounded (64 KiB inbound message, close codes 1002/1007/1009, close replies,
-16-ping queue, buffered handshake bytes read) and covered by four fuzz targets
-and 100 RFC 6455 cases. Autobahn: sections 1–7 and 10 pass; the only failures
-are 9.x messages over the deliberate 64 KiB cap (see
-`testing/evidence/T48B-websocket-parser.md`). LAN TLS: no custom trust or
-TOFU; DNS-01 certificates are the supported path (`operations.md`). The
-real-device TLS check remains under G24.
+**Implementation note (T48B, 2026-10-22):** the in-house parser is kept.
+It now closes with a status code instead of dropping TCP (1002 protocol,
+1007 bad UTF-8, 1009 too big, 1001/1008 on shutdown or session expiry),
+echoes client close codes, caps inbound messages at 64 KiB (the app sends no
+data frames), checks fragmented text as it arrives, queues up to 16 pings
+(oldest dropped) and reads bytes buffered with the handshake. Fuzz targets
+cover frames, fragmentation against a reference model, control frames,
+UTF-8, server frame writers and handshake headers; 100 RFC 6455 cases run
+over TCP. Autobahn: sections 1-7 and 10 pass; the only failures are 9.x
+messages over the deliberate 64 KiB cap (`testing/evidence/T48B-websocket-parser.md`).
+LAN TLS: no custom trust or TOFU; DNS-01 certificates are the supported path
+(`operations.md`). The real-device TLS check stays under G24.
 
 **Implementation note (T48A, 2026-09-27, after the required advisor review):**
 The mobile sync socket's `dispose()` is now awaitable. It aborts a handshake
@@ -824,6 +871,15 @@ SQLite and local blobs.
 **Accept when:** each child card names a dataset, target, before/after profile,
 correctness invariant, migration/reconciliation path and rollback. No stack
 replacement is accepted merely to improve an unmeasured path.
+
+**Measurement note (T49A/T49B, 2026-10-22):** Baseline in
+[`testing/evidence/benchmarks-t49.md`](../testing/evidence/benchmarks-t49.md).
+Six measured misses are proposed as separate children, none implemented:
+sync bounds (about 0.9 s per page at 100k messages), conversation list
+(355 ms), instance-wide quota SUM inside the writer transaction (88 ms at
+100k attachments), hub registration scanning all sockets under the lock,
+the typing map sweep past 10,000 entries, and whole-blob hashing before a
+range read. Each needs a target and Strong review before work starts.
 
 ### I50 - Deferred product and ecosystem backlog
 

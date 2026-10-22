@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
+
 String formatTimeOfDay(BuildContext context, DateTime time) {
   final local = time.toLocal();
   return MaterialLocalizations.of(context).formatTimeOfDay(
@@ -15,60 +17,31 @@ String formatDate(BuildContext context, DateTime time) {
 String formatDateTime(BuildContext context, DateTime time) =>
     '${formatDate(context, time)} · ${formatTimeOfDay(context, time)}';
 
-/// Whole calendar days from [time]'s local date to [now]'s local date:
-/// 0 for the same day, 1 for yesterday, negative for a future date. Counted
-/// on UTC dates so a daylight-saving change cannot turn a day into 23 hours.
-int calendarDaysBefore(DateTime time, DateTime now) {
-  final a = time.toLocal();
-  final b = now.toLocal();
-  return DateTime.utc(b.year, b.month, b.day)
-      .difference(DateTime.utc(a.year, a.month, a.day))
-      .inDays;
-}
-
-/// The chat-list timestamp: the time for today, `Yesterday`, a short
-/// month-day earlier this year, and a date with its year before that.
+/// Compact, locale-aware timestamp for a list row: the time of day for today,
+/// `Yesterday`, the month and day within the current year, otherwise a short
+/// date. [now] exists for tests; it defaults to the device clock.
 ///
-/// Every form except `Yesterday` comes from [MaterialLocalizations] and the
-/// platform's 24-hour setting, so it follows the device locale; the word
-/// itself joins the string catalogue with the rest of the copy (T44C).
-String formatListTimestamp(
-  BuildContext context,
-  DateTime time, {
-  DateTime? now,
-}) {
+/// `Yesterday` comes from the app's ARB strings and everything else from
+/// [MaterialLocalizations], so the order and month names follow the locale.
+String formatListTime(BuildContext context, DateTime time, {DateTime? now}) {
   final local = time.toLocal();
-  final current = (now ?? DateTime.now()).toLocal();
-  final days = calendarDaysBefore(local, current);
-  if (days == 0) {
+  final today = (now ?? DateTime.now()).toLocal();
+  final day = DateTime(local.year, local.month, local.day);
+  final todayStart = DateTime(today.year, today.month, today.day);
+  // Rounded rather than truncated so a 23- or 25-hour DST day still counts
+  // as one day.
+  final daysAgo = (todayStart.difference(day).inHours / 24).round();
+  // A timestamp slightly ahead of this clock (server skew) on the same
+  // calendar day is still today.
+  if (daysAgo == 0) {
     return formatTimeOfDay(context, local);
   }
-  if (days == 1) {
-    return 'Yesterday';
+  if (daysAgo == 1) {
+    return context.l10n.listTimeYesterday;
   }
   final localizations = MaterialLocalizations.of(context);
-  if (local.year == current.year) {
+  if (daysAgo > 0 && local.year == today.year) {
     return localizations.formatShortMonthDay(local);
-  }
-  return localizations.formatShortDate(local);
-}
-
-/// The day separator in a conversation: `Today`, `Yesterday`, the weekday
-/// and date this year, and a date with its year before that, so a thread
-/// that spans a new year never shows two identical-looking days.
-String formatDayLabel(BuildContext context, DateTime time, {DateTime? now}) {
-  final local = time.toLocal();
-  final current = (now ?? DateTime.now()).toLocal();
-  final days = calendarDaysBefore(local, current);
-  if (days == 0) {
-    return 'Today';
-  }
-  if (days == 1) {
-    return 'Yesterday';
-  }
-  final localizations = MaterialLocalizations.of(context);
-  if (local.year == current.year) {
-    return localizations.formatMediumDate(local);
   }
   return localizations.formatShortDate(local);
 }

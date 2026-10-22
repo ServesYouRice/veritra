@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/widgets.dart';
@@ -15,7 +14,6 @@ import 'test_crypto_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  _staleStateContainmentTests();
 
   test('account sync owner coalesces overlapping requests', () async {
     final gate = Completer<void>();
@@ -483,6 +481,129 @@ void main() {
         <String>['msg_newest']);
     state.dispose();
   });
+
+  test('a failed list refresh keeps stale lists, reports safely, and retries',
+      () async {
+    final api = _FlakyListApiClient();
+    final state = _signedInState(api);
+    await state.refreshConversations();
+    await state.refreshDevices();
+    expect(state.conversations.map((c) => c.id), <String>['conv_1']);
+    expect(state.devices.map((d) => d.id), <String>['dev_owner']);
+    expect(state.errorFor(Ops.conversations), isNull);
+
+    api.failure = ApiException(503, '{"error":"server_draining"}');
+    await state.refreshConversations();
+    await state.refreshDevices();
+    expect(state.conversations.map((c) => c.id), <String>['conv_1'],
+        reason: 'the last good list survives a failed refresh');
+    expect(state.devices.map((d) => d.id), <String>['dev_owner']);
+    expect(state.errorFor(Ops.conversations),
+        'The server is restarting. Try again shortly.');
+    expect(state.errorFor(Ops.devices),
+        'The server is restarting. Try again shortly.');
+    expect(state.session, isNotNull);
+
+    api.failure = const ApiResponseException();
+    await state.refreshConversations();
+    expect(state.errorFor(Ops.conversations),
+        'The server returned an unexpected response.');
+
+    api.failure = null;
+    await state.refreshConversations();
+    await state.refreshDevices();
+    expect(state.errorFor(Ops.conversations), isNull);
+    expect(state.errorFor(Ops.devices), isNull);
+    state.dispose();
+  });
+
+  test('a 401 list refresh signs out instead of surfacing raw errors',
+      () async {
+    final api = _FlakyListApiClient()
+      ..failure = ApiException(401, '{"error":"unauthorized"}');
+    final state = _signedInState(api);
+    await state.refreshConversations();
+    expect(state.session, isNull);
+    expect(state.errorFor(Ops.conversations),
+        'Your session is no longer valid. Sign in again.');
+    state.dispose();
+  });
+
+  test('search failures reach the UI only as mapped sentences', () async {
+    final api = _FlakyListApiClient()
+      ..failure = ApiException(500, 'SENTINEL_BODY');
+    final state = _signedInState(api);
+    await expectLater(
+      state.searchMetadata('alice'),
+      throwsA(isA<UserFacingException>().having((e) => e.toString(), 'text',
+          'The server had a problem. Try again shortly.')),
+    );
+    api.failure = StateError('internal invariant broke');
+    await expectLater(
+      state.searchMetadata('alice'),
+      throwsA(isA<UserFacingException>()
+          .having((e) => e.toString(), 'text', isNot(contains('invariant')))),
+    );
+    state.dispose();
+  });
+}
+
+AppState _signedInState(ApiClient api) => AppState(
+      apiClientFactory: (_) => api,
+      cryptoService: TestOnlyCryptoService(),
+      localStore: MemoryLocalStore(),
+      syncServiceFactory: (_, __) => FakeSyncService(),
+    )
+      ..api = api
+      ..session = const Session(
+        baseUrl: 'https://localhost:8080',
+        token: 'owner-token',
+        accountId: 'acct_owner',
+        deviceId: 'dev_owner',
+      );
+
+class _FlakyListApiClient extends ApiClient {
+  _FlakyListApiClient() : super(baseUrl: 'https://localhost:8080');
+
+  Object? failure;
+
+  void _maybeFail() {
+    final error = failure;
+    if (error != null) throw error;
+  }
+
+  @override
+  Future<List<Conversation>> conversations(String token) async {
+    _maybeFail();
+    return <Conversation>[Conversation(id: 'conv_1', kind: 'dm')];
+  }
+
+  @override
+  Future<List<Device>> devices(String token) async {
+    _maybeFail();
+    return <Device>[
+      Device(
+        id: 'dev_owner',
+        accountId: 'acct_owner',
+        name: 'Phone',
+        createdAt: DateTime.utc(2026),
+      ),
+    ];
+  }
+
+  @override
+  Future<List<MetadataSearchResult>> searchMetadata(
+    String token,
+    String query, {
+    int limit = 20,
+    int offset = 0,
+  }) async {
+    _maybeFail();
+    return const <MetadataSearchResult>[];
+  }
+
+  @override
+  Future<void> logout(String token) async {}
 }
 
 class _WakePushService implements MobilePushService {
@@ -981,145 +1102,4 @@ class FakeSyncService implements SyncService {
   Future<void> dispose() async {
     _controller.close();
   }
-}
-
-// ---------------------------------------------------------------------------
-// Card T44A: transient errors keep safe stale state and offer a retry.
-
-class _FlakyListApiClient extends FakeDeviceLinkApiClient {
-  final List<Object> conversationFailures = <Object>[];
-  final List<Object> deviceFailures = <Object>[];
-  int conversationCalls = 0;
-  List<Conversation> served = <Conversation>[
-    Conversation(id: 'conv_fresh', kind: 'group'),
-  ];
-
-  @override
-  Future<List<Conversation>> conversations(String token) async {
-    conversationCalls++;
-    if (conversationFailures.isNotEmpty) throw conversationFailures.removeAt(0);
-    return served;
-  }
-
-  @override
-  Future<List<Device>> devices(String token) async {
-    if (deviceFailures.isNotEmpty) throw deviceFailures.removeAt(0);
-    return <Device>[];
-  }
-}
-
-void _staleStateContainmentTests() {
-  const leaked = 'stack-trace-or-ciphertext-detail';
-
-  AppState connected(ApiClient api) => AppState(
-        apiClientFactory: (_) => api,
-        cryptoService: TestOnlyCryptoService(),
-        localStore: MemoryLocalStore(),
-        syncServiceFactory: (_, __) => FakeSyncService(),
-      )
-        ..api = api
-        ..session = const Session(
-          baseUrl: 'https://localhost:8080',
-          token: 'owner-token',
-          accountId: 'acct_owner',
-          deviceId: 'dev_owner',
-        );
-
-  test('a failed conversation refresh keeps the shown list and offers retry',
-      () async {
-    final api = _FlakyListApiClient();
-    final state = connected(api);
-    final cached = Conversation(id: 'conv_cached', kind: 'dm');
-    state.conversations = <Conversation>[cached];
-    state.conversationsLoaded = true;
-
-    api.conversationFailures.add(ApiException(503, '{"note":"$leaked"}'));
-    await state.refreshConversations();
-    expect(state.conversations, <Conversation>[cached]);
-    expect(state.errorFor(Ops.conversations),
-        'The server had a problem. Try again shortly.');
-    expect(state.session, isNotNull);
-
-    api.conversationFailures.add(const ApiResponseException.malformed());
-    await state.refreshConversations();
-    expect(state.conversations, <Conversation>[cached]);
-    expect(state.errorFor(Ops.conversations),
-        'The server returned an unexpected response.');
-
-    api.conversationFailures.add(StateError(leaked));
-    await state.refreshConversations();
-    expect(state.errorFor(Ops.conversations),
-        'Something went wrong. Please try again.');
-
-    await state.refreshConversations();
-    expect(state.errorFor(Ops.conversations), isNull);
-    expect(state.conversations.single.id, 'conv_fresh');
-  });
-
-  test('a rejected session still signs out instead of showing stale data',
-      () async {
-    final api = _FlakyListApiClient()
-      ..conversationFailures.add(ApiException(401, '{"error":"unauthorized"}'));
-    final state = connected(api);
-    await state.refreshConversations();
-    expect(state.session, isNull);
-  });
-
-  test('device refresh failures are contained and keep the last list',
-      () async {
-    final api = _FlakyListApiClient()
-      ..deviceFailures.add(const SocketException('refused $leaked'));
-    final state = connected(api);
-    await state.refreshDevices();
-    expect(state.errorFor(Ops.devices), contains('Could not reach'));
-    expect(state.errorFor(Ops.devices), isNot(contains(leaked)));
-    await state.refreshDevices();
-    expect(state.errorFor(Ops.devices), isNull);
-  });
-
-  test('restore without a cache shows a load error, not an endless spinner',
-      () async {
-    final localStore = MemoryLocalStore();
-    await localStore.saveSession(const Session(
-      baseUrl: 'https://localhost:8080',
-      token: 'owner-token',
-      accountId: 'acct_owner',
-      deviceId: 'dev_owner',
-    ));
-    final api = _FlakyListApiClient()
-      ..conversationFailures.add(const SocketException('refused'));
-    final state = AppState(
-      apiClientFactory: (_) => api,
-      cryptoService: TestOnlyCryptoService(),
-      localStore: localStore,
-      syncServiceFactory: (_, __) => FakeSyncService(),
-    );
-    addTearDown(state.dispose);
-
-    await state.tryRestoreSession();
-    expect(state.lifecycle, SessionLifecycle.ready);
-    expect(state.session, isNotNull);
-    expect(state.conversationsLoaded, isFalse);
-    expect(state.errorFor(Ops.conversations), contains('Could not reach'));
-
-    await state.refreshConversations();
-    expect(state.errorFor(Ops.conversations), isNull);
-    expect(state.conversationsLoaded, isTrue);
-  });
-
-  test('describeError keeps internal and Dart error text out of the UI', () {
-    expect(describeError(StateError('stale sync event commit')),
-        'Something went wrong. Please try again.');
-    expect(describeError(StateError('No element')),
-        'Something went wrong. Please try again.');
-    expect(
-        describeError(StateError(
-            'Password login requires this device to be linked first.')),
-        'Password login requires this device to be linked first.');
-    expect(describeError(const ApiResponseException.tooLarge()),
-        'The server sent more data than this app accepts.');
-    expect(describeError(const FormatException('bad $leaked')),
-        isNot(contains(leaked)));
-    expect(describeError(TypeError()), isNot(contains('subtype')));
-  });
 }

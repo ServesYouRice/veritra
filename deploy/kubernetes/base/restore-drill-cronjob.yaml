@@ -82,7 +82,8 @@ spec:
               image: ghcr.io/servesyourice/veritra@sha256:0000000000000000000000000000000000000000000000000000000000000000
               args: ["verify-backup", "/scratch/latest"]
               env:
-                - name: TMPDIR
+                # verify-backup stages its drill under <data dir>/.veritra-restore-drill.
+                - name: PRIVATE_MESSENGER_DATA_DIR
                   value: /scratch/drill
               volumeMounts:
                 - name: scratch

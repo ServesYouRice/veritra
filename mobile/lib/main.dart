@@ -5,10 +5,13 @@ import 'package:flutter/material.dart';
 import 'core/app_state.dart';
 import 'core/api_client.dart';
 import 'crypto/crypto_service.dart';
+import 'l10n/app_localizations.dart';
 import 'push/push_service.dart';
 import 'storage/local_store.dart';
 import 'sync/sync_service.dart';
+import 'ui/about.dart';
 import 'ui/app_shell.dart';
+import 'ui/appearance.dart';
 import 'ui/theme.dart';
 
 Future<void> main() async {
@@ -29,18 +32,25 @@ Future<void> main() async {
 }
 
 class VeritraApp extends StatefulWidget {
-  const VeritraApp({required this.state, super.key});
+  const VeritraApp({required this.state, this.appearance, super.key});
 
   final AppState state;
+
+  /// The System/Light/Dark choice. Defaults to one kept in the keystore.
+  final AppearanceController? appearance;
 
   @override
   State<VeritraApp> createState() => _VeritraAppState();
 }
 
 class _VeritraAppState extends State<VeritraApp> with WidgetsBindingObserver {
+  late final AppearanceController _appearance =
+      widget.appearance ?? AppearanceController(SecureAppearanceStore());
+
   @override
   void initState() {
     super.initState();
+    unawaited(_appearance.load());
     WidgetsBinding.instance.addObserver(this);
     widget.state.handleAppLifecycleState(
       WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed,
@@ -55,20 +65,26 @@ class _VeritraAppState extends State<VeritraApp> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    if (widget.appearance == null) _appearance.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: widget.state,
+      animation: Listenable.merge(<Listenable>[widget.state, _appearance]),
       builder: (context, _) {
-        return MaterialApp(
-          title: 'Veritra',
-          theme: veritraLightTheme(),
-          darkTheme: veritraDarkTheme(),
-          themeMode: ThemeMode.system,
-          home: AppShell(state: widget.state),
+        return AppearanceScope(
+          controller: _appearance,
+          child: MaterialApp(
+            title: veritraProductName,
+            theme: veritraLightTheme(),
+            darkTheme: veritraDarkTheme(),
+            themeMode: _appearance.mode,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: AppShell(state: widget.state),
+          ),
         );
       },
     );

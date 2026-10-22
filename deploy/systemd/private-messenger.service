@@ -7,35 +7,39 @@ Wants=network-online.target
 Type=simple
 User=private-messenger
 Group=private-messenger
+# Install the release binary verified against the release's SHA256SUMS and
+# attestation; never point ExecStart at a binary built from a checkout.
 Environment=PRIVATE_MESSENGER_ADDR=127.0.0.1:8080
 Environment=PRIVATE_MESSENGER_DATA_DIR=%S/private-messenger
+# Before first-owner setup, generate a 32-byte base64url token with
+# `messenger-server generate-setup-token`; supply it in the environment file.
+# Remove it after setup and restart the service.
 Environment=PRIVATE_MESSENGER_ENV=production
 EnvironmentFile=/etc/private-messenger/private-messenger.env
-# Secrets are best passed as systemd credentials: root-owned files that only
-# this service can read, never in the environment file. Before first-owner
-# setup, write a token from `messenger-server generate-setup-token` to
-# /etc/private-messenger/setup-token (mode 0600), uncomment these two lines,
-# and remove them again after setup. The same pattern works for
-# VAPID_PRIVATE_KEY, FCM_PRIVATE_KEY, APNS_PRIVATE_KEY and TURN_SHARED_SECRET.
-#LoadCredential=setup-token:/etc/private-messenger/setup-token
-#Environment=PRIVATE_MESSENGER_SETUP_TOKEN_FILE=%d/setup-token
+# Secrets may come from systemd credentials instead of the environment file,
+# so they never appear in the unit's environment. For example:
+# LoadCredential=turn_shared_secret:/etc/private-messenger/credentials/turn_shared_secret
+# Environment=PRIVATE_MESSENGER_TURN_SHARED_SECRET_FILE=%d/turn_shared_secret
 StateDirectory=private-messenger
 StateDirectoryMode=0700
 UMask=0077
 ExecStart=/usr/local/bin/messenger-server serve
 Restart=on-failure
 RestartSec=5
-# Longer than the server's shutdown budget
-# (PRIVATE_MESSENGER_SHUTDOWN_TIMEOUT, 25s by default) plus closing storage.
-TimeoutStopSec=40
+# Must stay above the server's 25-second shutdown budget.
+TimeoutStopSec=30
 
-# Sandbox. The server writes only to its state directory.
+# Least privilege (card I46). The state directory is the only writable path.
+# If PRIVATE_MESSENGER_DB_PATH or PRIVATE_MESSENGER_STORAGE_PATH point
+# elsewhere, add each directory with its own ReadWritePaths= line.
 NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ReadWritePaths=%S/private-messenger
+ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=%S/private-messenger
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true
@@ -44,15 +48,13 @@ ProtectClock=true
 ProtectHostname=true
 ProtectProc=invisible
 ProcSubset=pid
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictNamespaces=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
 RemoveIPC=true
-CapabilityBoundingSet=
-AmbientCapabilities=
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged

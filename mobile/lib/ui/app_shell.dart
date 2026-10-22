@@ -11,16 +11,6 @@ import 'widgets/connection_banner.dart';
 import 'widgets/demo_banner.dart';
 import 'widgets/empty_state.dart';
 
-/// Material 3 window size classes: compact below 600dp, medium from 600dp,
-/// expanded from 840dp.
-///
-/// Navigation moves to a rail at medium width, but the chat list and the
-/// conversation only sit side by side at expanded width. Splitting earlier
-/// left the conversation pane under 300dp at 720dp once the rail and the
-/// 360dp list were taken out, narrower than a phone.
-const double navigationRailBreakpoint = 600;
-const double twoPaneBreakpoint = 840;
-
 bool shouldShowFloatingNavLabels({
   required double width,
   required double textScale,
@@ -28,10 +18,33 @@ bool shouldShowFloatingNavLabels({
   return width >= 440 && textScale < 1.1;
 }
 
-/// Root scaffold. Navigation adapts to a rail from medium width per Material 3
-/// guidance, and at expanded width the chat list and the selected
-/// conversation sit side by side instead of the conversation covering the
-/// list.
+/// How the root scaffold arranges itself at a given window width.
+enum ShellLayout {
+  /// Phones: the floating bottom nav, and a conversation is a pushed route.
+  compact,
+
+  /// Small tablets, foldables and landscape phones: a navigation rail, but a
+  /// conversation still opens full width. Two panes here would leave the
+  /// thread narrower than a phone.
+  rail,
+
+  /// Tablets and desktop windows: the rail plus the chat list and the open
+  /// conversation side by side.
+  workspace,
+}
+
+/// Material 3 window size classes: compact below 600dp, medium below 840dp,
+/// expanded from 840dp.
+ShellLayout shellLayoutFor(double width) {
+  if (width >= 840) return ShellLayout.workspace;
+  if (width >= 600) return ShellLayout.rail;
+  return ShellLayout.compact;
+}
+
+/// Root scaffold. Navigation adapts to a rail from the medium width class per
+/// Material 3 guidance, and from the expanded class the chat list and the
+/// selected conversation sit side by side instead of the conversation
+/// covering the list.
 class AppShell extends StatefulWidget {
   const AppShell({required this.state, super.key});
 
@@ -84,14 +97,13 @@ class _AppShellState extends State<AppShell> {
     if (!widget.state.connected) {
       return ConnectScreen(state: widget.state);
     }
-    final width = MediaQuery.sizeOf(context).width;
-    final wide = width >= navigationRailBreakpoint;
-    final twoPane = width >= twoPaneBreakpoint;
-    // At expanded width the chat list keeps its own pane and opening a
+    final layout = shellLayoutFor(MediaQuery.sizeOf(context).width);
+    final wide = layout != ShellLayout.compact;
+    // At workspace width the chat list keeps its own pane and opening a
     // conversation fills the detail pane, so selection survives navigating
     // between destinations. Narrower layouts keep pushing a full-screen route.
     final pages = <Widget>[
-      twoPane
+      layout == ShellLayout.workspace
           ? _ChatWorkspace(state: widget.state)
           : ChatListScreen(state: widget.state),
       CommunityScreen(state: widget.state),

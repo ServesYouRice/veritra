@@ -30,24 +30,6 @@ class EmptyState extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    // In a bounded pane (a conversation above a tall composer, at a large
-    // text scale on a short phone) the state scrolls instead of overflowing.
-    // Inside a list it already scrolls with the list.
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final content = _content(theme, scheme);
-        if (!constraints.hasBoundedHeight) return content;
-        return SingleChildScrollView(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: constraints.maxHeight),
-            child: content,
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _content(ThemeData theme, ColorScheme scheme) {
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 340),

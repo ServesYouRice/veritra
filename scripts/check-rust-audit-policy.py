@@ -13,12 +13,16 @@ ADVISORY_ID = re.compile(r"^RUSTSEC-[0-9]{4}-[0-9]{4}$")
 UTC_TIMESTAMP = re.compile(
     r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z$"
 )
-APPROVED_REVIEW_DEADLINE = "2026-08-29T00:00:00Z"
+APPROVED_REVIEW_DEADLINE = "2026-12-31T00:00:00Z"
 APPROVED_CARGO_AUDIT_VERSION = "0.22.2"
-# OpenMLS 0.9.0 with hpke-rs 0.7 retired all six libcrux advisories, so no
-# exception is approved. Adding one again needs an explicit approval, a new
-# APPROVED_REVIEW_DEADLINE and the advisory ID listed here.
-APPROVED_EXCEPTION_IDS: frozenset = frozenset()
+# Owner-approved on 2026-10-22 (G27 reopened): libcrux-kem 0.0.9 is locked
+# only because hpke-rs 0.7's `std` feature names the optional
+# hpke-rs-libcrux backend; it is never built (audit-rust.sh fails if it
+# enters the build graph). The fix needs hpke-rs 0.8, which no released
+# openmls_rust_crypto accepts yet. Remove both IDs when one does.
+APPROVED_EXCEPTION_IDS: frozenset = frozenset(
+    {"RUSTSEC-2026-0330", "RUSTSEC-2026-0331"}
+)
 POLICY_FIELDS = {
     "version",
     "timezone",

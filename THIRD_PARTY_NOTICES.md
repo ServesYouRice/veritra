@@ -33,6 +33,15 @@ This project is licensed AGPL-3.0-or-later. Dependency licenses must be compatib
 | `tls_codec` 0.5.0 | RFC 9420 TLS presentation-language encoding | MIT | Exact version pinned for MLS transport serialization. |
 | Flutter SDK | Mobile client framework | BSD-3-Clause | Toolchain, not vendored. |
 
+## Mobile Localization Dependencies
+
+Added for T44C (localization scaffolding, English template only).
+
+| Component | Use | License | Notes |
+| --- | --- | --- | --- |
+| `flutter_localizations` (Flutter SDK 3.44.0) | Material/Cupertino/Widgets localizations and locale-aware date formatting | BSD-3-Clause | Part of the Flutter SDK (`sdk: flutter`); not fetched from pub.dev. |
+| `intl` 0.20.2 | Message lookup and plural/date formatting used by the generated `mobile/lib/l10n` code | BSD-3-Clause | Direct Flutter dependency pinned to the exact version `flutter_localizations` requires in Flutter 3.44.0; maintained by dart.dev. Its `path` dependency was already in the lock. |
+
 ## Reference Projects Studied, Not Copied
 
 Signal/libsignal, OpenMLS, Matrix/Synapse/Element, SimpleX Chat, Mattermost, Zulip, Rocket.Chat, Stoat/Revolt, PocketBase, Pion, LiveKit, Caddy, UnifiedPush, ntfy, and MiroTalk were studied for architecture, deployment, crypto, licensing, and self-hosting lessons. No source code from these projects is copied into this repository.

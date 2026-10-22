@@ -95,7 +95,7 @@ Default data lives under `./data` unless `PRIVATE_MESSENGER_DATA_DIR` is set.
 server/     Go server, migrations, setup notice
 mobile/     Flutter client for Android and iOS
 crypto/     Rust crypto boundary
-deploy/     Docker Compose, Caddy, systemd, Kubernetes
+deploy/     Docker Compose, Caddy, systemd
 scripts/    Dockerized development commands
 docs/       Authoritative project documentation (see below)
 implementation/  LLM-ready execution contracts derived from the audit consensus

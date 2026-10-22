@@ -67,10 +67,6 @@ spec:
                   value: /data
                 - name: PRIVATE_MESSENGER_BACKUP_KEEP
                   value: "7"
-                # Restore-drill scratch space on the data volume, not in
-                # memory or the read-only root filesystem.
-                - name: TMPDIR
-                  value: /data/backups/.scratch
               volumeMounts:
                 - name: data
                   mountPath: /data

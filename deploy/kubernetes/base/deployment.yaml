@@ -25,9 +25,9 @@ spec:
       serviceAccountName: veritra
       automountServiceAccountToken: false
       enableServiceLinks: false
-      # Longer than PRIVATE_MESSENGER_SHUTDOWN_TIMEOUT plus closing storage.
-      # Raise both together (up to 15m and 15m15s) to let every in-flight
-      # upload finish during a deploy.
+      # Longer than the server's fixed 25 s shutdown budget plus closing
+      # storage. Uploads still running after the 18 s drain are cut off and
+      # the client resumes them.
       terminationGracePeriodSeconds: 40
       securityContext:
         runAsNonRoot: true
@@ -61,8 +61,6 @@ spec:
               value: 10.42.0.0/16
             - name: PRIVATE_MESSENGER_LOG_FORMAT
               value: json
-            - name: PRIVATE_MESSENGER_SHUTDOWN_TIMEOUT
-              value: 25s
           # Optional non-secret settings (instance name, VAPID public key and
           # subscriber, FCM project and client email, APNs team/key/bundle IDs,
           # TURN URLs). Secrets come from files, see the overlay example.

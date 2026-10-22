@@ -9,13 +9,6 @@ verification stages its restore drill under `.veritra-restore-drill/` in the
 data directory, so no `/tmp` is needed; leave room for one extra restored
 copy and keep that folder out of external backups.
 
-`serve` also locks the real database file and blob directory (symlinks and
-relative paths resolved), so two servers whose `PRIVATE_MESSENGER_DB_PATH` or
-`PRIVATE_MESSENGER_STORAGE_PATH` overrides meet in one place cannot both
-start. A blob directory that contains the database or the data directory is
-rejected. These locks are released by the operating system when the process
-exits.
-
 ## First setup and secret rotation
 
 Set `PRIVATE_MESSENGER_ENV=production` and generate a 32-byte base64url
@@ -51,19 +44,6 @@ wake events. Calls require a self-hosted coturn-compatible shared secret via
 `PRIVATE_MESSENGER_TURN_URLS` and `PRIVATE_MESSENGER_TURN_SHARED_SECRET`; TURN
 relays see DTLS-SRTP ciphertext, not call media plaintext.
 
-## Secrets from files
-
-Each secret can be read from a file instead of the environment: set the
-variable with a `_FILE` suffix to the file's path and leave the plain one
-unset. This works for `PRIVATE_MESSENGER_SETUP_TOKEN`,
-`PRIVATE_MESSENGER_VAPID_PRIVATE_KEY`, `PRIVATE_MESSENGER_FCM_PRIVATE_KEY`,
-`PRIVATE_MESSENGER_APNS_PRIVATE_KEY` and
-`PRIVATE_MESSENGER_TURN_SHARED_SECRET`. Setting both forms, or naming a
-missing, empty or larger-than-64-KiB file, stops startup; errors name the
-variable, never the value. Use Docker or Kubernetes secrets, or systemd
-`LoadCredential=` (see `deploy/systemd/private-messenger.service`), so
-secrets stay out of `docker inspect`, process environments and env files.
-
 ## Mobile first-run connection
 
 The mobile connect flow starts with an empty server origin and accepts HTTPS
@@ -78,9 +58,7 @@ QR/deep-link origin without explicit confirmation and a successful probe.
 For a public server, use the Compose+Caddy profile or another reverse proxy
 with a trusted certificate. For a private LAN server, Caddy's `tls internal`
 mode is the supported direction; install the corresponding CA certificate on
-the device. If you own a domain, a DNS-01 certificate (Caddy's DNS plugins,
-or cert-manager on Kubernetes) gives a LAN-only hostname a publicly trusted
-certificate with no inbound port and no device CA install. iOS also declares local-network usage so the OS can present its
+the device. iOS also declares local-network usage so the OS can present its
 LAN permission prompt.
 
 **Demo builds only (D11, D12).** `mobile/lib/main_demo.dart`, built with
@@ -133,16 +111,61 @@ and scope metadata. The mobile client writes the bounded pages to a local
 5. If rollback crosses an incompatible migration, stop the server, restore the
    matching pre-upgrade backup, and reinstall its matching binary.
 
-Shutdown marks `/readyz` unavailable first, closes realtime connections, lets
-active HTTP requests and background workers finish within
-`PRIVATE_MESSENGER_SHUTDOWN_TIMEOUT` (default 25s, 5s to 15m), and then
-closes storage. Clients recover missed realtime events through durable sync.
-Uploads and downloads may run up to 15 minutes, so a transfer still running
-at the deadline is cut and must be retried. The supervisor must wait longer
-than the timeout: the shipped Compose (`stop_grace_period: 40s`), systemd
-(`TimeoutStopSec=40`) and Kubernetes (`terminationGracePeriodSeconds: 40`)
-files fit the default. To never cut a transfer, set the timeout to `15m` and
-each grace to about `15m15s`; a deploy then waits for the longest transfer.
+Shutdown fits a 25-second budget, below the 30-second stop grace of the
+supported Compose service (`stop_grace_period`) and systemd unit
+(`TimeoutStopSec`); keep both above 25 seconds if you change them. It marks
+`/readyz` unavailable, closes realtime connections, and gives in-flight HTTP
+requests, uploads included, 18 seconds to finish. Connections still busy are
+then closed, their handlers get the rest of the budget to clean up partial
+blobs, and only then is storage closed. Transfers keep their 15-minute route
+deadline while the server runs; one cut off by shutdown is retried by the
+client after restart. Clients recover missed realtime events through durable
+sync.
+
+## Supported deployment profile
+
+**Artifact.** `deploy/docker-compose.yml` runs only the released image, by
+digest. Download the release's `container-image-digest.txt`, verify it with
+`gh attestation verify container-image-digest.txt --repo <owner>/<repo>`, and
+set `VERITRA_IMAGE` to its line (`ghcr.io/<owner>/<repo>:<tag>@sha256:<digest>`).
+Compose refuses to start without it. A tag without `@sha256:` is mutable and
+unsupported. `deploy/docker-compose.build.yml` builds from a checkout for
+development and CI only. For systemd, install the release binary checked
+against `SHA256SUMS` and its attestation.
+
+**Hardening.** The Compose services run as uid 65532 with a read-only root
+filesystem, all capabilities dropped, `no-new-privileges` and a small
+in-memory `/tmp`. The data volume is the only writable application path. The
+backup service keeps its restore-drill scratch on that volume and has no
+network; its `/offsite` mount must be
+writable by uid 65532. Caddy keeps only `NET_BIND_SERVICE`. The systemd units
+use `ProtectSystem=strict` with the state directory as the only
+`ReadWritePaths`, an empty capability set, private `/tmp` and devices, and a
+`@system-service` syscall filter. Add a `ReadWritePaths=` line for an
+off-host backup mount or an overridden database or blob directory.
+
+**Secrets.** `PRIVATE_MESSENGER_SETUP_TOKEN`, `_VAPID_PRIVATE_KEY`,
+`_FCM_PRIVATE_KEY`, `_APNS_PRIVATE_KEY` and `_TURN_SHARED_SECRET` each accept
+a `_FILE` variant naming a file that holds the value (at most 64 KiB; one
+trailing newline is ignored). Setting both forms is an error. Errors name the
+setting and path, never the value, and the server's config output redacts
+secrets. Compose forwards only the `_FILE` variables (plus the one-time setup
+token): put each secret in its own file in `VERITRA_SECRETS_DIR` (default
+`deploy/secrets`, mounted read-only at `/run/secrets`), owned by uid 65532
+with mode 0400, and set for example
+`PRIVATE_MESSENGER_TURN_SHARED_SECRET_FILE=/run/secrets/turn_shared_secret`.
+Under systemd, prefer `LoadCredential=` with `..._FILE=%d/<name>`, as shown in
+the unit.
+
+**Storage ownership.** Storage commands resolve the data directory,
+`PRIVATE_MESSENGER_DB_PATH` and `PRIVATE_MESSENGER_STORAGE_PATH` to absolute
+paths with symlinks resolved. They refuse layouts where the blob directory is,
+or contains, the data directory or the database, or where either overlaps the
+data directory's `backups/`. Besides `.veritra-server.lock` in the data
+directory, `serve` holds OS locks on `<database>.veritra-server.lock` and
+`<blob dir>/.veritra-server.lock`, so two data directories cannot share one
+database or blob directory. These two locks are released by the OS when the
+process exits and never go stale.
 
 ## Release image
 
@@ -158,17 +181,6 @@ deploy. Log in first with `docker login ghcr.io`. It needs bash, git, Go,
 cargo-audit, Docker with buildx and Trivy; on Windows run it from WSL (or Git
 Bash with Docker Desktop). `--no-push` builds and scans only.
 
-## Docker Compose
-
-`deploy/docker-compose.yml` runs a released image by digest: set
-`VERITRA_IMAGE=ghcr.io/servesyourice/veritra@sha256:<digest>` (for
-example in `deploy/.env`); it refuses to start without it. The containers run
-as UID 65532 with a read-only root filesystem, no capabilities and
-`no-new-privileges`; only `/data` (and a small `/tmp`) is writable. To build
-from a checkout for development, add the override:
-`VERITRA_IMAGE=veritra-server:dev docker compose -f docker-compose.yml -f
-docker-compose.build.yml up --build`. That path is never a supported
-deployment.
 
 ## Kubernetes (k3s)
 
@@ -205,6 +217,7 @@ the client address reaching Traefik, is wrong, all users share one rate
 limit. After the first deploy, check that two clients on different networks
 are limited separately.
 
+
 ## TLS on a LAN install
 
 The app has no custom trust, no trust-on-first-use and no way to skip TLS checks, so a LAN server needs a certificate the phone already trusts.
@@ -213,6 +226,7 @@ The app has no custom trust, no trust-on-first-use and no way to skip TLS checks
 2. **Your own CA in the OS trust store.** Issue the server certificate from a private CA (`step-ca`, `mkcert`); the device owner installs the CA. iOS: install the profile, then enable full trust in Certificate Trust Settings. Android 7+ does not trust user-added CAs for apps, so use option 1 on Android unless the CA is installed as a system CA by device management.
 
 Never use self-signed leaf certificates, or plain HTTP outside loopback demo builds.
+
 
 ## Off-host backups in R2
 
@@ -235,7 +249,6 @@ failed backup Job. Run the drill once before the server holds real
 conversations. For a real restore, use `examples/restore-job.yaml`: suspend
 Flux, scale the server to zero, restore a named backup into the volume, then
 scale back up.
-
 
 ## Retention capacity
 

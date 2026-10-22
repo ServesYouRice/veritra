@@ -141,8 +141,8 @@ class Ops {
   static const blocks = 'blocks';
   static const mute = 'mute';
 
-  /// Loading the conversation list (card I44): its error keeps the list
-  /// already shown and offers a retry.
+  /// Refresh failures of the conversation and device lists. The lists keep
+  /// their last good contents while this holds an error (card T44A).
   static const conversations = 'conversations';
   static const devices = 'devices';
   static String conversation(String id) => 'conversation:$id';
@@ -680,28 +680,19 @@ class AppState extends ChangeNotifier {
         conversationsLoaded = true;
         notifyListeners();
       }
-      // A failed refresh keeps the encrypted cache available while
-      // offline, and the list shows the failure with a retry.
-      Object? refreshFailure;
       try {
         await _refreshConversations(notify: true);
-      } catch (err) {
-        refreshFailure = err;
-        _opErrors[Ops.conversations] = describeError(err);
-      }
-      if (refreshFailure == null) {
-        try {
-          await _refreshDevices();
-        } catch (err) {
-          refreshFailure = err;
-          _opErrors[Ops.devices] = describeError(err);
+        await _refreshDevices();
+        if (!_lifecycleGenerationActive(transitionGeneration)) return;
+      } on ApiException catch (err) {
+        if (err.statusCode == 401) {
+          await _clearLocalSession(
+              preserveDeviceIdentity: true, preserveOutbox: true);
+          return;
         }
-      }
-      if (!_lifecycleGenerationActive(transitionGeneration)) return;
-      if (refreshFailure is ApiException && refreshFailure.statusCode == 401) {
-        await _clearLocalSession(
-            preserveDeviceIdentity: true, preserveOutbox: true);
-        return;
+        // Keep the encrypted cache available while offline.
+      } catch (_) {
+        // Keep the encrypted cache available while offline.
       }
       _startSync();
       lifecycle = SessionLifecycle.ready;
@@ -854,22 +845,37 @@ class AppState extends ChangeNotifier {
     });
   }
 
-  /// Refreshes the conversation list for the UI and never throws. A
-  /// failure keeps the list already shown (the encrypted cache or the last
-  /// good fetch) and records a user-safe message under
-  /// [Ops.conversations], so the list can offer a retry instead of an
-  /// endless spinner or an empty list.
-  Future<void> refreshConversations() async {
-    await _runScoped(
-      Ops.conversations,
-      () => _refreshConversations(notify: false),
-    );
-  }
+  /// User-initiated refresh (pull-to-refresh, refresh buttons). It never
+  /// throws: a failure keeps the last good list and records a safe message
+  /// under [Ops.conversations]; calling it again is the retry.
+  Future<void> refreshConversations() => _refreshContained(
+      Ops.conversations, () => _refreshConversations(notify: true));
 
-  /// Refreshes this account's devices for the UI and never throws; a
-  /// failure keeps the last list and is reported under [Ops.devices].
-  Future<void> refreshDevices() async {
-    await _runScoped(Ops.devices, _refreshDevices);
+  /// Like [refreshConversations], for the device list ([Ops.devices]).
+  Future<void> refreshDevices() =>
+      _refreshContained(Ops.devices, _refreshDevices);
+
+  Future<void> _refreshContained(
+    String op,
+    Future<void> Function() load,
+  ) async {
+    final current = session;
+    try {
+      await load();
+      if (_opErrors.remove(op) != null) notifyListeners();
+    } catch (err) {
+      if (err is ApiException &&
+          err.statusCode == 401 &&
+          identical(session, current)) {
+        await _enqueueSessionTransition(() async {
+          if (!identical(session, current)) return;
+          await _clearLocalSession(
+              preserveDeviceIdentity: true, preserveOutbox: true);
+        });
+      }
+      _opErrors[op] = describeError(err);
+      notifyListeners();
+    }
   }
 
   Future<void> _refreshDevices() async {
@@ -1450,7 +1456,13 @@ class AppState extends ChangeNotifier {
     if (current == null || client == null || query.trim().isEmpty) {
       return const <MetadataSearchResult>[];
     }
-    return client.searchMetadata(current.token, query.trim());
+    try {
+      return await client.searchMetadata(current.token, query.trim());
+    } catch (err) {
+      // The search screen shows the thrown error's text, so hand it only
+      // the mapped sentence (card T44A).
+      throw UserFacingException(describeError(err));
+    }
   }
 
   /// Best-effort read receipt for the newest visible message. Failures are
@@ -1905,8 +1917,7 @@ class AppState extends ChangeNotifier {
         if (refreshed.transcriptHash != null &&
             !_constantTimeBytesEqual(
                 verification.transcriptHash, refreshed.transcriptHash!)) {
-          throw StateError('Device-link transcript was substituted. Generate a '
-              'new link and compare both devices again.');
+          throw StateError('Device-link transcript was substituted');
         }
         merged = _deviceLinkWithVerification(merged, verification);
       }
@@ -1944,8 +1955,7 @@ class AppState extends ChangeNotifier {
       if (claimed.deviceLink.transcriptHash != null &&
           !_constantTimeBytesEqual(claimed.deviceLink.transcriptHash!,
               verification.transcriptHash)) {
-        throw StateError('Device-link transcript was substituted. Generate a '
-            'new link and compare both devices again.');
+        throw StateError('Device-link transcript was substituted');
       }
       pendingDeviceLinkClaim = DeviceLinkClaim(
         deviceLink:
