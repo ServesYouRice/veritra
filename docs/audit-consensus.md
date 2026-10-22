@@ -717,6 +717,22 @@ claiming it.
 has a cap; malformed/binary responses are bounded; forms survive keyboard and
 large text; URI handling works on both platforms or the URI is not emitted.
 
+**Implementation note (T44B/T44C, 2026-10-22):** T44B adds locale-aware
+relative list time (MaterialLocalizations only), 600/840 dp shell
+breakpoints, a jump-to-latest control that keeps loaded history, a focusable
+explanation on the still-disabled attach control, inline validation in the
+new-conversation sheet and community/channel dialog, and a composer/edit
+length limit that shares `maxAppTextLength` (16384) and never truncates the
+draft. Chat rows offer only Mute/Unmute and Conversation details. T44C sets
+the product name and AGPL copyright strings, adds About and Licenses from
+Settings, persists System/Light/Dark in existing secure storage (falls back to
+System), and confirms sign-out, invite revoke and backup replacement. The
+`veritra://` device-link URI is no longer shown or copied, because neither
+platform registers the scheme; the QR code is built locally from the link
+code. Open: localization needs `flutter_localizations` (dependency
+approval); the server still returns the unused `link_uri`; bundle IDs keep
+`private_messenger`. T44A remains.
+
 ### I46 - Supported deployment hardening
 
 **Decision:** Merge Codex DEP-03/DEP-07/DEP-08/DEP-11 with Opus R4/R9.
@@ -729,6 +745,21 @@ drain and upload deadlines; add compatible container/systemd restrictions.
 **Accept when:** the supported Compose/systemd paths use the tested artifact,
 reject overlapping ownership, expose no secret in logs/config dumps and pass
 startup, upload, backup, restore, push and TURN smoke under the hardened profile.
+
+**Implementation note (T46, 2026-10-22):** Supported Compose requires
+`VERITRA_IMAGE` (a digest-pinned release reference) and no longer builds from
+source; `deploy/docker-compose.build.yml` is the dev/CI build override. The
+server runs read-only, `cap_drop: ALL`, `no-new-privileges`, uid 65532, with
+secrets passed only as `*_FILE` mounts. systemd units add
+`ProtectSystem=strict`, an empty capability set and a syscall filter. The
+server reads `KEY_FILE` secrets (regular file, 64 KiB cap, newline trimmed,
+value never in errors) and redacts them in `Config` output. DB and blob paths
+are made absolute with symlinks resolved, overlaps are rejected, and `serve`
+holds flock locks on the real DB and blob paths. Shutdown now waits: 18 s
+graceful drain, then force-close, inside one 25 s budget shared with push
+workers. CI compose-smoke uses the build override and asserts the hardened
+profile. Open: hardened upload, backup, restore, push and TURN smoke on a
+real host; Caddy under read-only has not been run.
 
 ### I47 - Operational visibility and capacity evidence
 
@@ -760,6 +791,18 @@ replacement dependency requires review and notices.
 malformed frames stay bounded, logs contain no dynamic identifier/capability,
 proxy spoof tests fail closed and a real mobile client can establish the
 documented TLS path.
+
+**Implementation note (T48B evidence, 2026-10-22):** The parser's inbound
+bounds are documented in `server/internal/realtime/websocket.go` (1 MiB frame
+and message, minimal lengths, control frames of 125 bytes or less and
+unfragmented, zero reserved bits, masking, UTF-8 text, 4 queued pings, 60 s
+frame deadline). `ws_fuzz_test.go` adds a differential fuzz target against an
+independent RFC 6455 reference reader, a structured fragment/control target,
+writer and handshake targets, and edge-of-limit table tests. About 4.1M execs
+across five targets found nothing; a deliberately loosened limit was caught.
+Open: Autobahn (no Docker daemon here), the keep/replace decision, and the LAN
+TLS trust path. Autobahn will likely flag that protocol errors close without a
+1002/1007/1009 close frame and that client close frames are not echoed.
 
 **Implementation note (T48A, 2026-09-27, after the required advisor review):**
 The mobile sync socket's `dispose()` is now awaitable. It aborts a handshake
@@ -799,6 +842,15 @@ SQLite and local blobs.
 **Accept when:** each child card names a dataset, target, before/after profile,
 correctness invariant, migration/reconciliation path and rollback. No stack
 replacement is accepted merely to improve an unmeasured path.
+
+**Measurement note (T49A/T49B, 2026-10-22):** Baseline in
+[`testing/evidence/benchmarks-t49.md`](../testing/evidence/benchmarks-t49.md).
+Six measured misses are proposed as separate children, none implemented:
+sync bounds (about 0.9 s per page at 100k messages), conversation list
+(355 ms), instance-wide quota SUM inside the writer transaction (88 ms at
+100k attachments), hub registration scanning all sockets under the lock,
+the typing map sweep past 10,000 entries, and whole-blob hashing before a
+range read. Each needs a target and Strong review before work starts.
 
 ### I50 - Deferred product and ecosystem backlog
 

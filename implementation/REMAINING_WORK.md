@@ -89,13 +89,16 @@ Recheck the board before every claim. The model column replaces the repeated
 | T41 | Implemented and checked (Stage 5); device matrix under G24 | Balanced+advisor | G24 for devices |
 | T42B | Deferred by D16/D20 until the demos and all three phases are done; design claimed, native edits need approval then | Strong | D20, then explicit platform-design approval |
 | T43C | Implementation present; automated/device evidence remains | Balanced+advisor | Toolchain and G24 environment |
-| T44A-C | Prepared after release blockers | Balanced | Release blockers |
+| T44A | In progress (2026-10-22) | Balanced | — |
+| T44B | Implemented and checked (2026-10-22) | Balanced | — |
+| T44C | Implemented and checked (2026-10-22); localization blocked on dependency approval | Balanced | Approval for `flutter_localizations` |
 | T45A-C | Implemented and checked (Stage 5) | Strong | — |
-| T46 | Prepared after release blockers | Balanced+advisor | Release blockers; coordinate I40/T45B |
+| T46 | Implemented and unit-checked (2026-10-22); hardened host smoke pending | Balanced+advisor | Docker/systemd host for smoke |
 | T47 | Prepared; conditional for private alpha | Balanced+advisor | I35 and I36 verification |
 | T48A | Implemented and checked (2026-09-27) | Balanced+advisor | — |
-| T48B | Prepared | Strong | T48A done; approval before parser replacement or trust-model choice |
-| T49A-D | Measure after correctness work | Balanced / Strong for T49D | Correctness cards and T47 where named |
+| T48B | Fuzz evidence done (2026-10-22); Autobahn, parser decision, LAN TLS remain | Strong | Docker daemon for Autobahn; approval before parser replacement or trust-model choice |
+| T49A-B | Measured (2026-10-22, `testing/evidence/benchmarks-t49.md`); six misses await child cards | Balanced | — |
+| T49C-D | Measure after correctness work | Balanced / Strong for T49D | Correctness cards and T47 where named |
 | T50 | Deferred | Strong after trigger | D10/D19, all demos, product trigger |
 | G24 | External | Coordinator/platform specialists | Code blockers, hardware, signing, providers, TURN |
 | G25 | External | Independent reviewer | G24, G27, all release blockers |
