@@ -8,7 +8,10 @@ import '../../core/app_state.dart';
 import '../../push/push_service.dart';
 import 'backup_screen.dart';
 import '../../core/models.dart';
+import '../../ui/about.dart';
+import '../../ui/appearance.dart';
 import '../../ui/avatar.dart';
+import '../../ui/confirm.dart';
 import '../../ui/format.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
@@ -34,6 +37,7 @@ class SettingsScreen extends StatelessWidget {
         final theme = Theme.of(context);
         final session = state.session;
         final isAdmin = session?.role == 'owner' || session?.role == 'admin';
+        final appearance = AppearanceScope.maybeOf(context);
         return Scaffold(
           appBar: LargeTitleBar(
             title: 'Settings',
@@ -102,9 +106,11 @@ class SettingsScreen extends StatelessWidget {
                       subtitle: const Text('Create codes so others can join'),
                       onTap: () async {
                         if (await _reauthenticate(context) && context.mounted) {
-                          Navigator.of(context).push(sharedAxisRoute<void>(
-                            (_) => InviteScreen(state: state),
-                          ));
+                          Navigator.of(context).push(
+                            sharedAxisRoute<void>(
+                              (_) => InviteScreen(state: state),
+                            ),
+                          );
                         }
                       },
                     ),
@@ -118,12 +124,15 @@ class SettingsScreen extends StatelessWidget {
                       leading: const Icon(Icons.qr_code_2),
                       title: const Text('Link a new device'),
                       subtitle: const Text(
-                          'Generate a pairing code for another device'),
+                        'Generate a pairing code for another device',
+                      ),
                       onTap: () async {
                         if (await _reauthenticate(context) && context.mounted) {
-                          Navigator.of(context).push(sharedAxisRoute<void>(
-                            (_) => DeviceLinkScreen(state: state),
-                          ));
+                          Navigator.of(context).push(
+                            sharedAxisRoute<void>(
+                              (_) => DeviceLinkScreen(state: state),
+                            ),
+                          );
                         }
                       },
                     ),
@@ -177,7 +186,8 @@ class SettingsScreen extends StatelessWidget {
                     leading: const Icon(Icons.download_outlined),
                     title: const Text('Export account data'),
                     subtitle: const Text(
-                        'Save encrypted messages and account metadata locally'),
+                      'Save encrypted messages and account metadata locally',
+                    ),
                     onTap: state.busy ? null : () => _exportAccount(context),
                   ),
                 ],
@@ -193,7 +203,8 @@ class SettingsScreen extends StatelessWidget {
                       leading: const Icon(Icons.notifications_outlined),
                       title: const Text('Allow notifications'),
                       subtitle: const Text(
-                          'Notifications say only that a message arrived.'),
+                        'Notifications say only that a message arrived.',
+                      ),
                       onTap: state.requestNotificationPermission,
                     ),
                   if (defaultTargetPlatform == TargetPlatform.android &&
@@ -202,8 +213,9 @@ class SettingsScreen extends StatelessWidget {
                       enabled: state.pushConfigured && !state.busy,
                       leading: const Icon(Icons.hub_outlined),
                       title: const Text('Push provider'),
-                      subtitle:
-                          const Text('Choose an Android UnifiedPush provider'),
+                      subtitle: const Text(
+                        'Choose an Android UnifiedPush provider',
+                      ),
                       onTap: state.choosePushDistributor,
                     ),
                   ListTile(
@@ -211,10 +223,12 @@ class SettingsScreen extends StatelessWidget {
                         !state.isBusy(Ops.pushTest),
                     leading: const Icon(Icons.send_outlined),
                     title: const Text('Send a test notification'),
-                    subtitle: Text(state.pushTestResult ??
-                        (state.pushProvider == null
-                            ? 'Available once this device is registered'
-                            : 'Registered with ${_providerName(state.pushProvider!)}')),
+                    subtitle: Text(
+                      state.pushTestResult ??
+                          (state.pushProvider == null
+                              ? 'Available once this device is registered'
+                              : 'Registered with ${_providerName(state.pushProvider!)}'),
+                    ),
                     onTap: state.sendTestPush,
                   ),
                 ],
@@ -225,7 +239,7 @@ class SettingsScreen extends StatelessWidget {
                   ListTile(
                     leading: const Icon(Icons.logout),
                     title: const Text('Sign out'),
-                    onTap: state.busy ? null : state.logout,
+                    onTap: state.busy ? null : () => _confirmLogout(context),
                   ),
                   ListTile(
                     leading: const Icon(Icons.phonelink_erase_outlined),
@@ -272,14 +286,41 @@ class SettingsScreen extends StatelessWidget {
                   ),
                 ],
               ),
+              if (appearance != null) ...<Widget>[
+                const SectionHeader('Appearance'),
+                _AppearanceRow(controller: appearance),
+              ],
+              const SectionHeader('About'),
+              TileGroup(
+                children: <Widget>[
+                  ListTile(
+                    leading: const Icon(Icons.info_outline),
+                    title: const Text('About $veritraProductName'),
+                    subtitle: const Text(
+                      'Version $veritraVersion · $veritraLicenseName',
+                    ),
+                    onTap: () => showVeritraAbout(context),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.description_outlined),
+                    title: const Text('Open-source licenses'),
+                    subtitle: const Text(
+                      'Notices for Veritra and its components',
+                    ),
+                    onTap: () => showVeritraLicenses(context),
+                  ),
+                ],
+              ),
               const SectionHeader('Danger zone'),
               // The one filled surface left in this direction. It is doing
               // real work — it is the only row on the screen you cannot undo.
-              Container(
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.errorContainer,
+              // A Material, not a decorated Container, so the row's ink
+              // splash paints on the filled surface instead of under it.
+              Material(
+                color: theme.colorScheme.errorContainer,
+                shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(BoneRadii.lg),
-                  border: Border.all(color: theme.colorScheme.error),
+                  side: BorderSide(color: theme.colorScheme.error),
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: ListTile(
@@ -309,9 +350,9 @@ class SettingsScreen extends StatelessWidget {
 
   void _copy(BuildContext context, String value, String label) {
     Clipboard.setData(ClipboardData(text: value));
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$label copied.')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('$label copied.')));
   }
 
   Future<void> _confirmRevoke(BuildContext context, Device device) async {
@@ -325,6 +366,19 @@ class SettingsScreen extends StatelessWidget {
       if (await _reauthenticate(context)) {
         await state.revokeDevice(device.id);
       }
+    }
+  }
+
+  Future<void> _confirmLogout(BuildContext context) async {
+    final confirmed = await _confirm(
+      context,
+      title: 'Sign out?',
+      message: 'This device stops receiving messages until you sign in '
+          'again with your password.',
+      confirmLabel: 'Sign out',
+    );
+    if (confirmed) {
+      await state.logout();
     }
   }
 
@@ -390,8 +444,9 @@ class SettingsScreen extends StatelessWidget {
       }
       final ok = await state.reauthenticate(password);
       if (!ok && context.mounted && state.error != null) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(state.error!)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(state.error!)));
       }
       return ok;
     } finally {
@@ -436,8 +491,9 @@ class SettingsScreen extends StatelessWidget {
                 TextFormField(
                   controller: confirmation,
                   obscureText: true,
-                  decoration:
-                      const InputDecoration(labelText: 'Confirm new password'),
+                  decoration: const InputDecoration(
+                    labelText: 'Confirm new password',
+                  ),
                   validator: (value) => (value ?? '') != password.text
                       ? 'Passwords do not match.'
                       : null,
@@ -447,15 +503,17 @@ class SettingsScreen extends StatelessWidget {
           ),
           actions: <Widget>[
             TextButton(
-                onPressed: () => Navigator.of(dialogContext).pop(false),
-                child: const Text('Cancel')),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
             FilledButton(
-                onPressed: () {
-                  if (formKey.currentState?.validate() ?? false) {
-                    Navigator.of(dialogContext).pop(true);
-                  }
-                },
-                child: const Text('Change')),
+              onPressed: () {
+                if (formKey.currentState?.validate() ?? false) {
+                  Navigator.of(dialogContext).pop(true);
+                }
+              },
+              child: const Text('Change'),
+            ),
           ],
         ),
       );
@@ -468,8 +526,10 @@ class SettingsScreen extends StatelessWidget {
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(state.error ??
-              'Password changed. Your other devices were signed out.'),
+          content: Text(
+            state.error ??
+                'Password changed. Your other devices were signed out.',
+          ),
         ),
       );
     } finally {
@@ -489,10 +549,9 @@ class SettingsScreen extends StatelessWidget {
     final message = path == null
         ? (state.error ?? 'Account export failed.')
         : 'Account export saved locally.';
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(message),
-      duration: const Duration(seconds: 4),
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 4)),
+    );
   }
 
   /// Length is checked in UTF-8 bytes to match the server's bcrypt limit, but
@@ -518,32 +577,57 @@ class SettingsScreen extends StatelessWidget {
     required String message,
     required String confirmLabel,
     bool destructive = false,
-  }) async {
-    final theme = Theme.of(context);
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
+  }) =>
+      confirmAction(
+        context,
+        title: title,
+        message: message,
+        confirmLabel: confirmLabel,
+        destructive: destructive,
+      );
+}
+
+/// System/Light/Dark. Saved on this device and applied immediately.
+class _AppearanceRow extends StatelessWidget {
+  const _AppearanceRow({required this.controller});
+
+  final AppearanceController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return TileGroup(
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.all(BoneSpacing.md),
+          child: SizedBox(
+            width: double.infinity,
+            child: SegmentedButton<ThemeMode>(
+              showSelectedIcon: false,
+              segments: const <ButtonSegment<ThemeMode>>[
+                ButtonSegment<ThemeMode>(
+                  value: ThemeMode.system,
+                  icon: Icon(Icons.brightness_auto_outlined),
+                  label: Text('System'),
+                ),
+                ButtonSegment<ThemeMode>(
+                  value: ThemeMode.light,
+                  icon: Icon(Icons.light_mode_outlined),
+                  label: Text('Light'),
+                ),
+                ButtonSegment<ThemeMode>(
+                  value: ThemeMode.dark,
+                  icon: Icon(Icons.dark_mode_outlined),
+                  label: Text('Dark'),
+                ),
+              ],
+              selected: <ThemeMode>{controller.mode},
+              onSelectionChanged: (selection) =>
+                  controller.setMode(selection.single),
+            ),
           ),
-          FilledButton(
-            style: destructive
-                ? FilledButton.styleFrom(
-                    backgroundColor: theme.colorScheme.error,
-                    foregroundColor: theme.colorScheme.onError,
-                  )
-                : null,
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text(confirmLabel),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
-    return result ?? false;
   }
 }
 

@@ -1,5 +1,5 @@
 name: private_messenger
-description: Mobile-first client shell for Private Messenger.
+description: Veritra, a self-hosted, privacy-first messenger (Android, iOS and desktop).
 publish_to: "none"
 version: 0.1.0+1
 
