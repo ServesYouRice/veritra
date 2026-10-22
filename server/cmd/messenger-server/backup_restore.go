@@ -31,6 +31,14 @@ const (
 	stagingMarkerName  = ".veritra-staging"
 	restoreJournalName = ".veritra-restore-journal.json"
 	backupFormat       = "v1"
+	// drillDirName is the restore drill's scratch area inside the data dir.
+	// The data dir is always writable (the database lives there) and is
+	// where a real restore stages, so the drill needs no /tmp (the image is
+	// FROM scratch and may run with a read-only root filesystem). The name
+	// is hidden and does not match backupNamePrefix, so pruning and backup
+	// listings never treat it as a backup, and backup only copies the
+	// database and referenced blobs, so the scratch is never backed up.
+	drillDirName = ".veritra-restore-drill"
 )
 
 // faultHook lets tests stop an operation at a named step, as a crash, a full
@@ -757,16 +765,37 @@ func journalMatches(journal restoreJournal, live, liveBlobs string) bool {
 	return staging
 }
 
+// makeDrillDir creates an invocation-owned, marked scratch directory under
+// <data dir>/.veritra-restore-drill. Concurrent drills get separate
+// directories, and cleanup goes through removeStagingDir, which only deletes
+// a directory that carries this invocation's staging marker.
+func makeDrillDir(cfg config.Config) (string, error) {
+	if strings.TrimSpace(cfg.DataDir) == "" {
+		return "", errors.New("data directory is not configured")
+	}
+	dataDir, err := filepath.Abs(cfg.DataDir)
+	if err != nil {
+		return "", err
+	}
+	base := filepath.Join(dataDir, drillDirName)
+	if info, err := os.Lstat(base); err == nil && !info.IsDir() {
+		return "", fmt.Errorf("%s exists and is not a directory", base)
+	} else if err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	return makeStagingDir(base, "drill-")
+}
+
 // verifyBackup is a disposable restore drill: the backup is restored into a
 // throwaway directory, migrated and checked, and the directory removed. A
 // backup counts as good only after this passes.
-func verifyBackup(ctx context.Context, args []string, stdout io.Writer) error {
+func verifyBackup(ctx context.Context, cfg config.Config, args []string, stdout io.Writer) error {
 	if len(args) != 1 {
 		return errors.New("verify-backup requires path to an instance backup")
 	}
-	scratch, err := makeStagingDir(os.TempDir(), "veritra-restore-drill-")
+	scratch, err := makeDrillDir(cfg)
 	if err != nil {
-		return err
+		return fmt.Errorf("restore drill scratch: %w", err)
 	}
 	defer removeStagingDir(scratch)
 	drill := config.Config{

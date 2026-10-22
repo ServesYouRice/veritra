@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,6 +29,40 @@ func TestInstanceLockRejectsSecondWriter(t *testing.T) {
 	}
 	if err := second.Release(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestInstanceLockIgnoresStaleLockFileWithoutHolder(t *testing.T) {
+	dir := t.TempDir()
+	// A hard crash (SIGKILL, OOM, node loss) leaves the file behind but the
+	// kernel has already dropped the advisory lock.
+	stale := "pid=999999\nstarted_at=2000-01-01T00:00:00Z\nleftover-padding-from-older-format\n"
+	path := filepath.Join(dir, instanceLockName)
+	if err := os.WriteFile(path, []byte(stale), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := acquireInstanceLock(dir)
+	if err != nil {
+		t.Fatalf("stale lock file blocked startup: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "999999") || strings.Contains(string(raw), "leftover") || !strings.Contains(string(raw), "pid=") {
+		t.Fatalf("lock file not rewritten: %q", raw)
+	}
+	if _, err := acquireInstanceLock(dir); err == nil || !strings.Contains(err.Error(), "multiple writers") {
+		t.Fatalf("second lock while held error=%v", err)
+	}
+	if err := lock.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("lock file should be kept after release: %v", err)
+	}
+	if err := lock.Release(); err != nil {
+		t.Fatalf("double release: %v", err)
 	}
 }
 
