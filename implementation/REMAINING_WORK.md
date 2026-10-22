@@ -91,7 +91,7 @@ Recheck the board before every claim. The model column replaces the repeated
 | T43C | Implementation present; automated/device evidence remains | Balanced+advisor | Toolchain and G24 environment |
 | T44A | Implemented and checked (2026-10-22) | Balanced | — |
 | T44B | Implemented and checked (2026-10-22) | Balanced | — |
-| T44C | Implemented and checked (2026-10-22); localization blocked on dependency approval | Balanced | Approval for `flutter_localizations` |
+| T44C | Implemented and checked (2026-10-22); localization scaffolding added (D30); remaining screens and a second locale open | Balanced | — |
 | T45A-C | Implemented and checked (Stage 5) | Strong | — |
 | T46 | Implemented and unit-checked (2026-10-22); hardened host smoke pending | Balanced+advisor | Docker/systemd host for smoke |
 | T47 | Prepared; conditional for private alpha | Balanced+advisor | I35 and I36 verification |

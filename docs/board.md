@@ -212,7 +212,9 @@ independent reviews until all three phases are done"):
   are excepted until 2026-12-31 in `crypto/rust/audit-policy.json`; remove them
   when a stable release takes hpke-rs 0.8. Release stays blocked as before.
 - **D30 (2026-10-22, owner-approved):** Add `flutter_localizations` (Flutter
-  SDK, BSD-3-Clause) for T44C localization.
+  SDK) and `intl` 0.20.2 (the version it pins), both BSD-3-Clause, for T44C
+  localization. English-only ARB; generated code is committed in
+  `mobile/lib/l10n`.
 - The crypto surface (ABI v5, payload semantics, local schema v7) freezes after
   Stage 1, with a change log kept for the eventual G25 reviewer (in
   [`crypto.md`](crypto.md); local schema is v8 since I34).
@@ -243,7 +245,7 @@ task boundaries and orchestration rules are in
 | I41 | Implemented and checked (Stage 5, 2026-09-24; QA06, QA07, QA08); real-device wake matrix waits for G24 (D20) | Push registration and platform readiness | I36 |
 | I42 | T42A implemented and verified (QA03, 2026-09-24); T42B deferred by D16/D20, its design still needs approval then; conditional D03 | Authorized calls and native lifecycle | — |
 | I43 | T43A/T43B/T43C implemented; checks/evidence pending (Codex, 2026-08-14) | First-run and accessibility baseline | — |
-| I44 | T44A, T44B and T44C implemented and checked (2026-10-22); localization needs dependency approval | Mobile and API quality | release blockers |
+| I44 | T44A, T44B and T44C implemented and checked (2026-10-22); English localization scaffolding in place (D30), most screens still to move | Mobile and API quality | release blockers |
 | I45 | Implemented and checked (Stage 5, 2026-09-24: T45A, T45B, T45C, QA05, QA09) | Backup, restore and migration safety | I29, I39 |
 | I46 | T46 implemented and unit-checked (2026-10-22); hardened upload/backup/restore/push/TURN smoke still pending | Supported deployment hardening | — |
 | I47 | Prepared, conditional | Operational visibility and capacity evidence | I35, I36 |

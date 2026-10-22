@@ -729,9 +729,11 @@ Settings, persists System/Light/Dark in existing secure storage (falls back to
 System), and confirms sign-out, invite revoke and backup replacement. The
 `veritra://` device-link URI is no longer shown or copied, because neither
 platform registers the scheme; the QR code is built locally from the link
-code. Open: localization needs `flutter_localizations` (dependency
-approval); the server still returns the unused `link_uri`; bundle IDs keep
-`private_messenger`.
+code. Localization (D30) uses gen-l10n with an English ARB in
+`mobile/lib/l10n`; list time, About, Appearance, confirmations, Settings,
+validation and gated messages are moved, other screens and `core/errors.dart`
+are not yet. Open: the server still returns the unused `link_uri`; bundle IDs
+keep `private_messenger`.
 
 **Implementation note (T44A, 2026-10-22):** `mobile/lib/core/api_errors.dart`
 maps all 112 server error codes to typed kinds; a test greps the server and
