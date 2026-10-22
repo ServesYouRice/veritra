@@ -155,7 +155,7 @@ independent reviews until all three phases are done"):
   `audit-consensus.md` (I43) to release builds.
 - **D13:** Close I27/G27 by upgrading to OpenMLS 0.9.0 (hpke-rs 0.7), which
   needs Rust 1.91. Done 2026-09-24; see I27.
-- **D14:** The canonical Go toolchain is the latest 1.26 patch (1.26.8).
+- **D14:** The canonical Go toolchain is the latest 1.26 patch (1.26.10 since 2026-10-22, for standard-library security fixes).
 - **D15:** Stay on Flutter 3.44.0 and hold `sqlite3` at 3.5.x until the Flutter
   pin moves in Stage 6 (`sqlite3` 3.6.0 needs a newer `meta` than the SDK
   ships). Amends D01's exact versions: `drift` 2.34.4, `sqlite3` 3.5.2.
