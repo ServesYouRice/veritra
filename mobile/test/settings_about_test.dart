@@ -2,17 +2,22 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/features/auth/qr_scan_screen.dart';
 import 'package:private_messenger/features/settings/device_link_screen.dart';
 import 'package:private_messenger/features/settings/settings_screen.dart';
+import 'package:private_messenger/l10n/l10n.dart';
+import 'package:private_messenger/main.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 import 'package:private_messenger/ui/about.dart';
 import 'package:private_messenger/ui/appearance.dart';
 import 'package:private_messenger/ui/confirm.dart';
+import 'package:private_messenger/ui/format.dart';
+import 'package:private_messenger/ui/validation.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import 'test_crypto_service.dart';
@@ -148,6 +153,55 @@ void main() {
       await tester.tapAt(const Offset(4, 4));
       await tester.pumpAndSettle();
       expect(result, isFalse);
+    });
+  });
+
+  group('localization', () {
+    testWidgets('the app provides its strings and Material localizations', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        VeritraApp(
+          state: _state(),
+          appearance: AppearanceController(MemoryAppearanceStore()),
+        ),
+      );
+      final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
+      expect(app.localizationsDelegates, contains(AppLocalizations.delegate));
+      expect(
+        app.localizationsDelegates,
+        contains(GlobalMaterialLocalizations.delegate),
+      );
+      expect(app.supportedLocales, contains(const Locale('en')));
+      final context = tester.element(find.byType(Scaffold).first);
+      expect(AppLocalizations.of(context), isNotNull);
+      expect(
+        formatListTime(
+          context,
+          DateTime(2026, 10, 21, 12),
+          now: DateTime(2026, 10, 22, 12),
+        ),
+        AppLocalizations.of(context)!.listTimeYesterday,
+      );
+    });
+
+    testWidgets('widgets outside the app fall back to English', (
+      tester,
+    ) async {
+      late BuildContext context;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (value) {
+              context = value;
+              return const SizedBox();
+            },
+          ),
+        ),
+      );
+      expect(AppLocalizations.of(context), isNull);
+      expect(context.l10n.listTimeYesterday, 'Yesterday');
+      expect(displayNameError('', groupName: true), 'Enter a group name.');
     });
   });
 

@@ -1,0 +1,7 @@
+arb-dir: lib/l10n
+template-arb-file: app_en.arb
+output-localization-file: app_localizations.dart
+output-class: AppLocalizations
+# English is the only locale for now; untranslated messages would fall back
+# to it anyway.
+nullable-getter: true

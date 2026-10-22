@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
 import '../../core/models.dart';
+import '../../l10n/l10n.dart';
 import '../../ui/avatar.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
@@ -183,7 +184,7 @@ class CommunityScreen extends StatelessWidget {
           builder: (context, value, _) {
             // Checked here so the reason sits under the field; an empty name
             // used to close the dialog and do nothing.
-            final error = displayNameError(value.text);
+            final error = displayNameError(value.text, l10n: context.l10n);
             // An untouched field reads as a prompt, not an error; Create
             // still stays disabled until the name is valid.
             final shown = value.text.isEmpty ? null : error;
@@ -207,11 +208,11 @@ class CommunityScreen extends StatelessWidget {
               actions: <Widget>[
                 TextButton(
                   onPressed: () => Navigator.of(dialogContext).pop(false),
-                  child: const Text('Cancel'),
+                  child: Text(context.l10n.commonCancel),
                 ),
                 FilledButton(
                   onPressed: error == null ? submit : null,
-                  child: const Text('Create'),
+                  child: Text(context.l10n.commonCreate),
                 ),
               ],
             );

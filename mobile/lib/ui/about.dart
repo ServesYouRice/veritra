@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import 'widgets/veritra_mark.dart';
 
 /// The one product name every surface uses.
@@ -12,9 +13,8 @@ const String veritraVersion = '0.1.0';
 const String veritraLicenseName = 'AGPL-3.0-or-later';
 const String veritraSourceUrl = 'https://github.com/ServesYouRice/Veritra';
 
-const String veritraLegalese =
-    'Free software under the GNU Affero General Public License, version 3 '
-    'or later ($veritraLicenseName). Source code: $veritraSourceUrl';
+String veritraLegalese(BuildContext context) =>
+    context.l10n.aboutLegalese(veritraLicenseName, veritraSourceUrl);
 
 bool _licenseRegistered = false;
 
@@ -51,7 +51,7 @@ void showVeritraAbout(BuildContext context) {
     applicationName: veritraProductName,
     applicationVersion: veritraVersion,
     applicationIcon: _icon(context),
-    applicationLegalese: veritraLegalese,
+    applicationLegalese: veritraLegalese(context),
   );
 }
 
@@ -62,6 +62,6 @@ void showVeritraLicenses(BuildContext context) {
     applicationName: veritraProductName,
     applicationVersion: veritraVersion,
     applicationIcon: _icon(context),
-    applicationLegalese: veritraLegalese,
+    applicationLegalese: veritraLegalese(context),
   );
 }

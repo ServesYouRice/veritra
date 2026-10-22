@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'core/app_state.dart';
 import 'core/api_client.dart';
 import 'crypto/crypto_service.dart';
+import 'l10n/app_localizations.dart';
 import 'push/push_service.dart';
 import 'storage/local_store.dart';
 import 'sync/sync_service.dart';
@@ -80,6 +81,8 @@ class _VeritraAppState extends State<VeritraApp> with WidgetsBindingObserver {
             theme: veritraLightTheme(),
             darkTheme: veritraDarkTheme(),
             themeMode: _appearance.mode,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
             home: AppShell(state: widget.state),
           ),
         );

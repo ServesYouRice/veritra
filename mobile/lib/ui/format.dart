@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
+
 String formatTimeOfDay(BuildContext context, DateTime time) {
   final local = time.toLocal();
   return MaterialLocalizations.of(context).formatTimeOfDay(
@@ -19,8 +21,8 @@ String formatDateTime(BuildContext context, DateTime time) =>
 /// `Yesterday`, the month and day within the current year, otherwise a short
 /// date. [now] exists for tests; it defaults to the device clock.
 ///
-/// Everything except `Yesterday` comes from [MaterialLocalizations], so the
-/// order and month names follow the device locale without a new dependency.
+/// `Yesterday` comes from the app's ARB strings and everything else from
+/// [MaterialLocalizations], so the order and month names follow the locale.
 String formatListTime(BuildContext context, DateTime time, {DateTime? now}) {
   final local = time.toLocal();
   final today = (now ?? DateTime.now()).toLocal();
@@ -35,7 +37,7 @@ String formatListTime(BuildContext context, DateTime time, {DateTime? now}) {
     return formatTimeOfDay(context, local);
   }
   if (daysAgo == 1) {
-    return 'Yesterday';
+    return context.l10n.listTimeYesterday;
   }
   final localizations = MaterialLocalizations.of(context);
   if (daysAgo > 0 && local.year == today.year) {

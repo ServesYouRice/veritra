@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../core/app_state.dart';
 import '../../core/models.dart';
+import '../../l10n/l10n.dart';
 import '../../ui/confirm.dart';
 import '../../ui/format.dart';
 import '../../ui/tokens.dart';
@@ -173,10 +174,9 @@ class _InviteScreenState extends State<InviteScreen> {
   Future<void> _confirmRevoke(BuildContext context, Invite invite) async {
     final confirmed = await confirmAction(
       context,
-      title: 'Revoke invite?',
-      message: 'Code ${invite.code} stops working immediately. People who '
-          'already joined with it keep their accounts.',
-      confirmLabel: 'Revoke',
+      title: context.l10n.inviteRevokeTitle,
+      message: context.l10n.inviteRevokeMessage(invite.code),
+      confirmLabel: context.l10n.commonRevoke,
       destructive: true,
     );
     if (confirmed) {

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/app_state.dart';
+import '../../l10n/l10n.dart';
 import '../../ui/confirm.dart';
 import '../../ui/format.dart';
 import '../../ui/tokens.dart';
@@ -103,10 +104,9 @@ class _BackupScreenState extends State<BackupScreen> {
     if (widget.state.lastBackupAt != null) {
       final confirmed = await confirmAction(
         context,
-        title: 'Replace your backup?',
-        message: 'The previous backup and its recovery code will stop '
-            'working. Keep the new code somewhere safe.',
-        confirmLabel: 'Replace backup',
+        title: context.l10n.backupReplaceTitle,
+        message: context.l10n.backupReplaceMessage,
+        confirmLabel: context.l10n.backupReplaceConfirm,
         destructive: true,
       );
       if (!confirmed || !context.mounted) return;

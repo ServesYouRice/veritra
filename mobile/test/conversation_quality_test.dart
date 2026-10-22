@@ -10,6 +10,7 @@ import 'package:private_messenger/features/chat/chat_list_screen.dart';
 import 'package:private_messenger/features/chat/chat_screen.dart';
 import 'package:private_messenger/features/chat/new_conversation_sheet.dart';
 import 'package:private_messenger/features/communities/community_screen.dart';
+import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 import 'package:private_messenger/ui/app_shell.dart';
@@ -93,7 +94,7 @@ void main() {
       await tester.enterText(find.byType(TextField), draft);
       await tester.pump();
 
-      expect(find.text(messageTooLongText), findsOneWidget);
+      expect(find.text(englishL10n.validationMessageTooLong), findsOneWidget);
       expect(
         find.text('${maxAppTextLength + 1} / $maxAppTextLength'),
         findsOneWidget,
@@ -106,7 +107,7 @@ void main() {
 
       await tester.enterText(find.byType(TextField), 'short');
       await tester.pump();
-      expect(find.text(messageTooLongText), findsNothing);
+      expect(find.text(englishL10n.validationMessageTooLong), findsNothing);
       expect(_sendButton(tester).onPressed, isNotNull);
     });
 
@@ -124,7 +125,7 @@ void main() {
         matching: find.byType(IconButton),
       ));
       expect(attach.onPressed, isNull, reason: 'the control stays disabled');
-      expect(find.text(attachmentsUnavailableReason), findsNothing);
+      expect(find.text(englishL10n.gatedAttachmentsUnavailable), findsNothing);
 
       final gate = find.byType(GatedExplanation);
       expect(gate, findsOneWidget);
@@ -136,7 +137,8 @@ void main() {
       focus.requestFocus();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 200));
-      expect(find.text(attachmentsUnavailableReason), findsOneWidget);
+      expect(
+          find.text(englishL10n.gatedAttachmentsUnavailable), findsOneWidget);
       await tester.pumpAndSettle(const Duration(seconds: 2));
     });
   });
