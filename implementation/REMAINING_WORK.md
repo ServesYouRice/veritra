@@ -102,7 +102,7 @@ Recheck the board before every claim. The model column replaces the repeated
 | T50 | Deferred | Strong after trigger | D10/D19, all demos, product trigger |
 | G24 | External | Coordinator/platform specialists | Code blockers, hardware, signing, providers, TURN |
 | G25 | External | Independent reviewer | G24, G27, all release blockers |
-| G27 | Closed 2026-09-24 by OpenMLS 0.9.0 (D13); CI confirmed on `d75c173`, including the Android and iOS native builds | Strong | — |
+| G27 | Reopened 2026-10-22 (D29): RUSTSEC-2026-0330/0331 excepted until 2026-12-31 (lockfile-only, never built) | Strong | A released openmls_rust_crypto on hpke-rs 0.8 |
 
 ### Reviewed QA follow-ups
 
@@ -694,6 +694,11 @@ Run the complete release matrix, native ABI/vector suites, and
 `./scripts/release-readiness.sh` against the final candidate.
 
 ### G27 — OpenMLS/HPKE advisory closure
+
+**Status 2026-10-22:** reopened by D29. RUSTSEC-2026-0330/0331 in
+libcrux-kem 0.0.9 are excepted until 2026-12-31 because the crate is locked
+but never built; remove the exceptions once a released openmls_rust_crypto
+accepts hpke-rs 0.8.
 
 **Status 2026-09-24:** closed. The OpenMLS 0.9.0 upgrade (D13) left no advisory
 exceptions and `scripts/audit-rust.sh` passes with none. CI on `d75c173`

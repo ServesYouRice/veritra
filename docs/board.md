@@ -203,6 +203,16 @@ independent reviews until all three phases are done"):
   ABI v6 adds the staged-commit functions; groups keep two past epochs.
   Groups created before this change keep working but cannot change
   membership (recreate them).
+- **D29 (2026-10-22, owner-approved):** G27 reopened. RUSTSEC-2026-0330/0331
+  (libcrux-kem 0.0.9) sit in `Cargo.lock` only because hpke-rs 0.7's `std`
+  feature names the optional hpke-rs-libcrux backend; it is never built, and
+  `scripts/audit-rust.sh` now fails if it or libcrux-kem enters the build
+  graph. The fix needs hpke-rs 0.8, which no released openmls_rust_crypto
+  accepts yet (0.6.0 requires ^0.7; openmls 0.9.1/0.9.2 do not help). Both IDs
+  are excepted until 2026-12-31 in `crypto/rust/audit-policy.json`; remove them
+  when a stable release takes hpke-rs 0.8. Release stays blocked as before.
+- **D30 (2026-10-22, owner-approved):** Add `flutter_localizations` (Flutter
+  SDK, BSD-3-Clause) for T44C localization.
 - The crypto surface (ABI v5, payload semantics, local schema v7) freezes after
   Stage 1, with a change log kept for the eventual G25 reviewer (in
   [`crypto.md`](crypto.md); local schema is v8 since I34).
