@@ -1,0 +1,129 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: veritra
+  labels:
+    app.kubernetes.io/name: veritra
+    app.kubernetes.io/component: server
+spec:
+  # Exactly one copy: the server refuses a second writer on the data
+  # directory, so the old pod must stop before the new one starts.
+  replicas: 1
+  strategy:
+    type: Recreate
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: veritra
+      app.kubernetes.io/component: server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: veritra
+        app.kubernetes.io/component: server
+    spec:
+      serviceAccountName: veritra
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      # Longer than PRIVATE_MESSENGER_SHUTDOWN_TIMEOUT plus closing storage.
+      # Raise both together (up to 15m and 15m15s) to let every in-flight
+      # upload finish during a deploy.
+      terminationGracePeriodSeconds: 40
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: server
+          # Placeholder that cannot be pulled: the overlay sets the released
+          # digest (scripts/release-image.sh prints it).
+          image: ghcr.io/servesyourice/veritra@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          args: ["serve"]
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PRIVATE_MESSENGER_ENV
+              value: production
+            - name: PRIVATE_MESSENGER_ADDR
+              value: ":8080"
+            - name: PRIVATE_MESSENGER_DATA_DIR
+              value: /data
+            # k3s's default pod network. Only Traefik may reach this pod (see
+            # networkpolicy.yaml), so this trusts Traefik's X-Forwarded-For
+            # and nothing else. Change it if the cluster uses another
+            # --cluster-cidr; if it is wrong, every user shares one rate limit.
+            - name: PRIVATE_MESSENGER_TRUSTED_PROXIES
+              value: 10.42.0.0/16
+            - name: PRIVATE_MESSENGER_LOG_FORMAT
+              value: json
+            - name: PRIVATE_MESSENGER_SHUTDOWN_TIMEOUT
+              value: 25s
+          # Optional non-secret settings (instance name, VAPID public key and
+          # subscriber, FCM project and client email, APNs team/key/bundle IDs,
+          # TURN URLs). Secrets come from files, see the overlay example.
+          envFrom:
+            - configMapRef:
+                name: veritra-config
+                optional: true
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+            - name: secrets
+              mountPath: /run/secrets/veritra
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          startupProbe:
+            # Migrations run before the listener opens.
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 2
+            failureThreshold: 150
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            # /readyz checks storage and turns unavailable while draining.
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+              ephemeral-storage: 64Mi
+            limits:
+              memory: 1Gi
+              ephemeral-storage: 256Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: veritra-data
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+        - name: secrets
+          secret:
+            secretName: veritra-secrets
+            optional: true
+            defaultMode: 0440

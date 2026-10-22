@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/base64"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -156,5 +158,96 @@ func TestTrustedProxyRangesAcceptOperatorNetworks(t *testing.T) {
 	}
 	if mapped[0].Contains(net.ParseIP("203.0.113.1")) || !mapped[0].Contains(net.ParseIP("10.1.2.3")) {
 		t.Fatal("IPv4-mapped trusted range did not narrow to its IPv4 network")
+	}
+}
+
+func TestLoadSecretsFromFiles(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, value string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	decoded := make([]byte, 32)
+	for i := range decoded {
+		decoded[i] = byte(i + 1)
+	}
+	token := base64.RawURLEncoding.EncodeToString(decoded)
+	t.Setenv("PRIVATE_MESSENGER_ENV", "production")
+	t.Setenv("PRIVATE_MESSENGER_SETUP_TOKEN", "")
+	t.Setenv("PRIVATE_MESSENGER_SETUP_TOKEN_FILE", write("setup", token+"\n"))
+	t.Setenv("PRIVATE_MESSENGER_VAPID_PRIVATE_KEY_FILE", write("vapid", "vapid-secret\n"))
+	t.Setenv("PRIVATE_MESSENGER_FCM_PRIVATE_KEY_FILE", write("fcm", "-----BEGIN PRIVATE KEY-----\nfcm\n-----END PRIVATE KEY-----\n"))
+	t.Setenv("PRIVATE_MESSENGER_APNS_PRIVATE_KEY_FILE", write("apns", "apns-secret"))
+	t.Setenv("PRIVATE_MESSENGER_TURN_URLS", "turns://turn.example.com:5349")
+	t.Setenv("PRIVATE_MESSENGER_TURN_SHARED_SECRET_FILE", write("turn", "turn-secret\r\n"))
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SetupToken != token || cfg.VAPIDPrivateKey != "vapid-secret" || cfg.APNsPrivateKey != "apns-secret" || cfg.TURNSharedSecret != "turn-secret" {
+		t.Fatalf("file secrets were not loaded and trimmed")
+	}
+	if cfg.FCMPrivateKey != "-----BEGIN PRIVATE KEY-----\nfcm\n-----END PRIVATE KEY-----" {
+		t.Fatalf("multi-line FCM key was not preserved")
+	}
+}
+
+func TestLoadSecretFileErrorsNeverEchoValues(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "turn")
+	if err := os.WriteFile(path, []byte("sentinel-file-secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	empty := filepath.Join(dir, "empty")
+	if err := os.WriteFile(empty, []byte(" \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	large := filepath.Join(dir, "large")
+	if err := os.WriteFile(large, bytes.Repeat([]byte("a"), maxSecretFileBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name, direct, file string
+	}{
+		{"both set", "sentinel-inline-secret", path},
+		{"missing file", "", filepath.Join(dir, "missing")},
+		{"directory", "", dir},
+		{"empty file", "", empty},
+		{"oversized file", "", large},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("PRIVATE_MESSENGER_TURN_URLS", "turns://turn.example.com:5349")
+			t.Setenv("PRIVATE_MESSENGER_TURN_SHARED_SECRET", tc.direct)
+			t.Setenv("PRIVATE_MESSENGER_TURN_SHARED_SECRET_FILE", tc.file)
+			_, err := Load()
+			if err == nil {
+				t.Fatal("invalid secret file configuration accepted")
+			}
+			if strings.Contains(err.Error(), "sentinel") {
+				t.Fatalf("error leaked a secret value: %v", err)
+			}
+		})
+	}
+}
+
+func TestLoadShutdownTimeout(t *testing.T) {
+	cfg, err := Load()
+	if err != nil || cfg.ShutdownTimeout != DefaultShutdownTimeout {
+		t.Fatalf("default shutdown timeout=%s err=%v", cfg.ShutdownTimeout, err)
+	}
+	t.Setenv("PRIVATE_MESSENGER_SHUTDOWN_TIMEOUT", "2m")
+	if cfg, err = Load(); err != nil || cfg.ShutdownTimeout != 2*time.Minute {
+		t.Fatalf("configured shutdown timeout=%s err=%v", cfg.ShutdownTimeout, err)
+	}
+	for _, raw := range []string{"1s", "16m", "soon"} {
+		t.Setenv("PRIVATE_MESSENGER_SHUTDOWN_TIMEOUT", raw)
+		if _, err := Load(); err == nil {
+			t.Fatalf("invalid shutdown timeout accepted: %q", raw)
+		}
 	}
 }

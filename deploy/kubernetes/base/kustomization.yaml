@@ -1,0 +1,27 @@
+# Veritra on a single-node k3s cluster (Traefik, cert-manager, kube-router
+# network policies). Reference or copy this base from the infra repository
+# and set the image digest, hostname and secrets in an overlay; see
+# ../examples/overlay and docs/operations.md.
+#
+# Veritra is single-instance by design: one Deployment replica with the
+# Recreate strategy, one ReadWriteOnce volume, and backup pods that join the
+# server's node to read the same volume.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: veritra
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: veritra
+    includeSelectors: false
+    includeTemplates: true
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - pvc.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingressroute.yaml
+  - certificate.yaml
+  - networkpolicy.yaml
+  - backup-cronjob.yaml
+  - restore-drill-cronjob.yaml

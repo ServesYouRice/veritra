@@ -40,13 +40,35 @@ type Config struct {
 	LogFormat        string
 	PasswordCost     int
 	SyncRetention    time.Duration
+	// ShutdownTimeout bounds how long a stopping server waits for in-flight
+	// HTTP requests (uploads included) and background workers.
+	ShutdownTimeout time.Duration
 }
 
 const (
 	DefaultPasswordCost = 10
 	MinPasswordCost     = 10
 	MaxPasswordCost     = 15
+
+	DefaultShutdownTimeout = 25 * time.Second
+	MinShutdownTimeout     = 5 * time.Second
+	// MaxShutdownTimeout matches the longest transfer deadline (15 minutes)
+	// so an operator can choose never to cut an upload short.
+	MaxShutdownTimeout = 15 * time.Minute
+
+	maxSecretFileBytes = 64 << 10
 )
+
+// secretVariables may be supplied directly or, preferably, as a file named by
+// the same variable with a _FILE suffix (Docker/Kubernetes secrets, systemd
+// credentials). Values are never echoed in errors.
+var secretVariables = []string{
+	"PRIVATE_MESSENGER_SETUP_TOKEN",
+	"PRIVATE_MESSENGER_VAPID_PRIVATE_KEY",
+	"PRIVATE_MESSENGER_FCM_PRIVATE_KEY",
+	"PRIVATE_MESSENGER_APNS_PRIVATE_KEY",
+	"PRIVATE_MESSENGER_TURN_SHARED_SECRET",
+}
 
 func Load() (Config, error) {
 	trustedProxies, err := parseCIDRs(getenv("PRIVATE_MESSENGER_TRUSTED_PROXIES", ""))
@@ -57,31 +79,44 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	shutdownTimeout, err := parseShutdownTimeout(os.Getenv("PRIVATE_MESSENGER_SHUTDOWN_TIMEOUT"))
+	if err != nil {
+		return Config{}, err
+	}
+	secrets := make(map[string]string, len(secretVariables))
+	for _, key := range secretVariables {
+		value, err := secretEnv(key)
+		if err != nil {
+			return Config{}, err
+		}
+		secrets[key] = value
+	}
 	cfg := Config{
 		Addr:             getenv("PRIVATE_MESSENGER_ADDR", ":8080"),
 		DataDir:          getenv("PRIVATE_MESSENGER_DATA_DIR", "./data"),
 		InstanceName:     getenv("PRIVATE_MESSENGER_INSTANCE_NAME", "Veritra"),
-		SetupToken:       strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_SETUP_TOKEN")),
+		SetupToken:       secrets["PRIVATE_MESSENGER_SETUP_TOKEN"],
 		EnableMetrics:    getenv("PRIVATE_MESSENGER_ENABLE_METRICS", "") == "1",
 		ManagementAddr:   getenv("PRIVATE_MESSENGER_MANAGEMENT_ADDR", "127.0.0.1:9090"),
 		TrustedProxies:   trustedProxies,
 		VAPIDSubscriber:  strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_VAPID_SUBSCRIBER")),
 		VAPIDPublicKey:   strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_VAPID_PUBLIC_KEY")),
-		VAPIDPrivateKey:  strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_VAPID_PRIVATE_KEY")),
+		VAPIDPrivateKey:  secrets["PRIVATE_MESSENGER_VAPID_PRIVATE_KEY"],
 		FCMProjectID:     strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_FCM_PROJECT_ID")),
 		FCMClientEmail:   strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_FCM_CLIENT_EMAIL")),
-		FCMPrivateKey:    strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_FCM_PRIVATE_KEY")),
+		FCMPrivateKey:    secrets["PRIVATE_MESSENGER_FCM_PRIVATE_KEY"],
 		APNsTeamID:       strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_APNS_TEAM_ID")),
 		APNsKeyID:        strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_APNS_KEY_ID")),
 		APNsBundleID:     strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_APNS_BUNDLE_ID")),
-		APNsPrivateKey:   strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_APNS_PRIVATE_KEY")),
+		APNsPrivateKey:   secrets["PRIVATE_MESSENGER_APNS_PRIVATE_KEY"],
 		TURNURLs:         splitNonEmpty(os.Getenv("PRIVATE_MESSENGER_TURN_URLS")),
-		TURNSharedSecret: strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_TURN_SHARED_SECRET")),
+		TURNSharedSecret: secrets["PRIVATE_MESSENGER_TURN_SHARED_SECRET"],
 		Environment:      strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_ENV", "development"))),
 		LogLevel:         strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_LOG_LEVEL", "info"))),
 		LogFormat:        strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_LOG_FORMAT", "text"))),
 		PasswordCost:     passwordCost,
 		SyncRetention:    30 * 24 * time.Hour,
+		ShutdownTimeout:  shutdownTimeout,
 	}
 	if cfg.Environment != "development" && cfg.Environment != "production" {
 		return Config{}, fmt.Errorf("PRIVATE_MESSENGER_ENV must be development or production")
@@ -127,6 +162,51 @@ func parsePasswordCost(raw string) (int, error) {
 		return 0, fmt.Errorf("PRIVATE_MESSENGER_BCRYPT_COST must be between %d and %d", MinPasswordCost, MaxPasswordCost)
 	}
 	return cost, nil
+}
+
+func parseShutdownTimeout(raw string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return DefaultShutdownTimeout, nil
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil || value < MinShutdownTimeout || value > MaxShutdownTimeout {
+		return 0, fmt.Errorf("PRIVATE_MESSENGER_SHUTDOWN_TIMEOUT must be a duration from %s to %s", MinShutdownTimeout, MaxShutdownTimeout)
+	}
+	return value, nil
+}
+
+// secretEnv returns the value of key, or the trimmed contents of the regular
+// file named by key_FILE. Setting both is an error so a stale inline value
+// can never silently win over a mounted secret.
+func secretEnv(key string) (string, error) {
+	direct := strings.TrimSpace(os.Getenv(key))
+	path := strings.TrimSpace(os.Getenv(key + "_FILE"))
+	if path == "" {
+		return direct, nil
+	}
+	if direct != "" {
+		return "", fmt.Errorf("set only one of %s and %s_FILE", key, key)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("%s_FILE: %w", key, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%s_FILE must name a regular file", key)
+	}
+	if info.Size() > maxSecretFileBytes {
+		return "", fmt.Errorf("%s_FILE is larger than %d bytes", key, maxSecretFileBytes)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("%s_FILE: %w", key, err)
+	}
+	value := strings.TrimSpace(string(raw))
+	if value == "" {
+		return "", fmt.Errorf("%s_FILE names an empty file", key)
+	}
+	return value, nil
 }
 
 // ValidateSetupToken accepts the one supported operator encoding: unpadded

@@ -1,0 +1,112 @@
+# Monthly restore drill from R2: download the newest off-host backup into
+# scratch space and prove it with `messenger-server verify-backup` (restore
+# into a throwaway directory, migrate, check). It never touches the live
+# volume. Run it on demand with:
+#   kubectl -n veritra create job --from=cronjob/veritra-restore-drill drill-$(date +%Y%m%d)
+# A failed Job is a failed drill. The scratch volume must hold two copies of
+# one backup (the download and the drill's restore).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: veritra-restore-drill
+  labels:
+    app.kubernetes.io/name: veritra
+    app.kubernetes.io/component: restore-drill
+spec:
+  schedule: "45 4 1 * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 86400
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 10800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: veritra
+            app.kubernetes.io/component: restore-drill
+        spec:
+          restartPolicy: Never
+          serviceAccountName: veritra
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: fetch-from-r2
+              image: rclone/rclone:1.75.1@sha256:45401ad7410db1d67ffdb58e19059ad20b0d8e0285a60e38bbec55cc1019c7a5
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  latest=$(rclone lsf --dirs-only offsite:backups | grep '^veritra-' | sort | tail -n 1)
+                  if [ -z "$latest" ]; then echo "no off-host backup found" >&2; exit 1; fi
+                  echo "restore drill source: ${latest%/}"
+                  rclone copy "offsite:backups/${latest%/}" /scratch/latest --checksum --s3-no-check-bucket --transfers=4 --retries=5
+              env:
+                - name: RCLONE_CONFIG
+                  value: /run/secrets/r2/rclone.conf
+                - name: RCLONE_CACHE_DIR
+                  value: /tmp/rclone
+                - name: HOME
+                  value: /tmp
+              volumeMounts:
+                - name: scratch
+                  mountPath: /scratch
+                - name: r2
+                  mountPath: /run/secrets/r2
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  memory: 256Mi
+          containers:
+            - name: verify-backup
+              image: ghcr.io/servesyourice/veritra@sha256:0000000000000000000000000000000000000000000000000000000000000000
+              args: ["verify-backup", "/scratch/latest"]
+              env:
+                - name: TMPDIR
+                  value: /scratch/drill
+              volumeMounts:
+                - name: scratch
+                  mountPath: /scratch
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  memory: 512Mi
+          volumes:
+            - name: scratch
+              emptyDir:
+                sizeLimit: 20Gi
+            - name: r2
+              secret:
+                secretName: veritra-r2
+                defaultMode: 0440
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi

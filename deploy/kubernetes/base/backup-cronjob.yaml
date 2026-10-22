@@ -1,0 +1,147 @@
+# Daily backup with an off-host copy in Cloudflare R2.
+#
+# 1. scheduled-backup (the Veritra image) writes a backup into
+#    /data/backups, proves it with a disposable restore drill and keeps the
+#    newest seven. It runs safely next to the live server: it copies the
+#    database with SQLite's VACUUM INTO under WAL and takes no server lock.
+# 2. rclone then copies completed backups to R2. Veritra itself has no S3
+#    code or credentials; only this container reads the veritra-r2 secret,
+#    and it mounts the data volume read-only.
+#
+# The pod must run on the server's node to share its ReadWriteOnce volume,
+# hence the pod affinity. R2 keeps every copy (copy, never sync); expire old
+# ones with an R2 lifecycle rule and protect them with a bucket lock shorter
+# than that rule.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: veritra-backup
+  labels:
+    app.kubernetes.io/name: veritra
+    app.kubernetes.io/component: backup
+spec:
+  schedule: "15 3 * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 10800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: veritra
+            app.kubernetes.io/component: backup
+        spec:
+          restartPolicy: Never
+          serviceAccountName: veritra
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            fsGroupChangePolicy: OnRootMismatch
+            seccompProfile:
+              type: RuntimeDefault
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - topologyKey: kubernetes.io/hostname
+                  labelSelector:
+                    matchLabels:
+                      app.kubernetes.io/name: veritra
+                      app.kubernetes.io/component: server
+          initContainers:
+            - name: scheduled-backup
+              image: ghcr.io/servesyourice/veritra@sha256:0000000000000000000000000000000000000000000000000000000000000000
+              args: ["scheduled-backup"]
+              env:
+                - name: PRIVATE_MESSENGER_ENV
+                  value: production
+                - name: PRIVATE_MESSENGER_DATA_DIR
+                  value: /data
+                - name: PRIVATE_MESSENGER_BACKUP_KEEP
+                  value: "7"
+                # Restore-drill scratch space on the data volume, not in
+                # memory or the read-only root filesystem.
+                - name: TMPDIR
+                  value: /data/backups/.scratch
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  memory: 512Mi
+          containers:
+            - name: copy-to-r2
+              image: rclone/rclone:1.75.1@sha256:45401ad7410db1d67ffdb58e19059ad20b0d8e0285a60e38bbec55cc1019c7a5
+              args:
+                - copy
+                - /data/backups
+                - offsite:backups
+                # Completed backups only: skips staging and scratch dirs.
+                - --include=/veritra-*/**
+                # Compare and verify by hash (MD5), not by size and time.
+                - --checksum
+                # A published backup never changes; refuse to overwrite one.
+                - --immutable
+                # The R2 token may write objects but not manage buckets.
+                - --s3-no-check-bucket
+                - --transfers=4
+                - --retries=5
+                - --stats=1m
+                - --stats-one-line
+                - --stats-log-level=NOTICE
+              env:
+                - name: RCLONE_CONFIG
+                  value: /run/secrets/r2/rclone.conf
+                - name: RCLONE_CACHE_DIR
+                  value: /tmp/rclone
+                - name: HOME
+                  value: /tmp
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                  readOnly: true
+                - name: r2
+                  mountPath: /run/secrets/r2
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  memory: 256Mi
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: veritra-data
+            - name: r2
+              secret:
+                secretName: veritra-r2
+                defaultMode: 0440
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi

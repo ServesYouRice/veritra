@@ -9,6 +9,9 @@ User=private-messenger
 Group=private-messenger
 Environment=PRIVATE_MESSENGER_DATA_DIR=%S/private-messenger
 Environment=PRIVATE_MESSENGER_ENV=production
+# The restore drill needs scratch space as large as one backup; keep it on the
+# data disk rather than in a size-limited /tmp.
+Environment=TMPDIR=%S/private-messenger/backups/.scratch
 # PRIVATE_MESSENGER_BACKUP_OFFSITE_DIR names a directory the host mounts from
 # separately controlled storage (NFS, SMB, an rclone or restic mount). Its
 # credentials stay in the mount's own configuration, not here.
@@ -16,9 +19,35 @@ Environment=PRIVATE_MESSENGER_ENV=production
 EnvironmentFile=/etc/private-messenger/backup.env
 UMask=0077
 ExecStart=/usr/local/bin/messenger-server scheduled-backup
+
+# Sandbox. The job needs no network of its own; an off-host mount is handled
+# by the kernel, not by this process.
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=full
+PrivateDevices=true
+PrivateNetwork=true
+ProtectSystem=strict
+ProtectHome=true
 ReadWritePaths=%S/private-messenger
 # Add the off-host mount point here, for example:
 # ReadWritePaths=/mnt/veritra-offsite
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+SystemCallErrorNumber=EPERM
