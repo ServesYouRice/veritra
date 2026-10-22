@@ -730,6 +730,22 @@ drain and upload deadlines; add compatible container/systemd restrictions.
 reject overlapping ownership, expose no secret in logs/config dumps and pass
 startup, upload, backup, restore, push and TURN smoke under the hardened profile.
 
+**Implementation note (T46, 2026-10-22):** supported Compose runs a released
+image by digest (`deploy/docker-compose.build.yml` is the separate dev build);
+secret settings accept `*_FILE` variants and errors never contain values;
+`serve` flock-locks the canonical database file and blob directory, and the
+instance lock is now an OS lock released on crash; the restore drill stages
+under the data directory; `PRIVATE_MESSENGER_SHUTDOWN_TIMEOUT` (default 25 s)
+matches a 40 s stop grace in Compose, systemd and Kubernetes; authenticated
+requests write the session at most once a minute. `deploy/kubernetes/` holds a
+kustomize base for single-node k3s (Recreate, PSA restricted, default-deny
+network policy, Traefik timeouts, cert-manager, backup CronJob with rclone to
+R2 and a restore drill) and `scripts/release-image.sh` is the local release
+command (checks, govulncheck, cargo audit, Trivy, digest output). Hardened
+Compose startup, backup with restore drill, second-writer refusal and file
+secrets passed locally; k3s, systemd, upload, push and TURN smoke still need a
+real host.
+
 ### I47 - Operational visibility and capacity evidence
 
 **Decision:** Merge Codex DEP-12/TEST-07/PERF-10/ARCH-08/NTH-03 with Opus H4.
@@ -760,6 +776,15 @@ replacement dependency requires review and notices.
 malformed frames stay bounded, logs contain no dynamic identifier/capability,
 proxy spoof tests fail closed and a real mobile client can establish the
 documented TLS path.
+
+**Implementation note (T48B, 2026-10-22):** the in-house parser is kept,
+bounded (64 KiB inbound message, close codes 1002/1007/1009, close replies,
+16-ping queue, buffered handshake bytes read) and covered by four fuzz targets
+and 100 RFC 6455 cases. Autobahn: sections 1–7 and 10 pass; the only failures
+are 9.x messages over the deliberate 64 KiB cap (see
+`testing/evidence/T48B-websocket-parser.md`). LAN TLS: no custom trust or
+TOFU; DNS-01 certificates are the supported path (`operations.md`). The
+real-device TLS check remains under G24.
 
 **Implementation note (T48A, 2026-09-27, after the required advisor review):**
 The mobile sync socket's `dispose()` is now awaitable. It aborts a handshake

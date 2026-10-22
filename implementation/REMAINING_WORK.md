@@ -91,10 +91,10 @@ Recheck the board before every claim. The model column replaces the repeated
 | T43C | Implementation present; automated/device evidence remains | Balanced+advisor | Toolchain and G24 environment |
 | T44A-C | Prepared after release blockers | Balanced | Release blockers |
 | T45A-C | Implemented and checked (Stage 5) | Strong | — |
-| T46 | Prepared after release blockers | Balanced+advisor | Release blockers; coordinate I40/T45B |
+| T46 | Implemented and checked (2026-10-22); host smoke (k3s, systemd, push, TURN) pending | Balanced+advisor | — |
 | T47 | Prepared; conditional for private alpha | Balanced+advisor | I35 and I36 verification |
 | T48A | Implemented and checked (2026-09-27) | Balanced+advisor | — |
-| T48B | Prepared | Strong | T48A done; approval before parser replacement or trust-model choice |
+| T48B | Implemented and checked (2026-10-22); real-device TLS check under G24 | Strong | — |
 | T49A-D | Measure after correctness work | Balanced / Strong for T49D | Correctness cards and T47 where named |
 | T50 | Deferred | Strong after trigger | D10/D19, all demos, product trigger |
 | G24 | External | Coordinator/platform specialists | Code blockers, hardware, signing, providers, TURN |
