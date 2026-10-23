@@ -546,6 +546,8 @@
   "recoveryKeyMissing": "Ključ koji štiti poruke ovog uređaja nedostaje ili se ne podudara. Ništa nije obrisano. Možete pokušati ponovo ili resetovati ovaj uređaj i ponovo ga povezati.",
   "recoveryResetFailed": "Resetovanje nije završeno. Ništa nije obrisano. Pokušajte ponovo.",
   "recoveryUpgradeFailed": "Ovaj uređaj nije mogao da ažurira skladište poruka za ovu verziju aplikacije Veritra, na primer zato što je uređaj pun. Ništa nije promenjeno niti obrisano. Oslobodite malo prostora, pa pokušajte ponovo.",
+  "recoveryUpgradeStillFull": "Ovaj uređaj ni sada nije mogao da ažurira skladište poruka. Ništa nije promenjeno niti obrisano. Oslobodite još prostora i pokušajte ponovo ili resetujte ovaj uređaj i ponovo ga povežite.",
+  "recoveryUpgradeError": "Ovaj uređaj nije mogao da ažurira skladište poruka za ovu verziju aplikacije Veritra. Ništa nije promenjeno niti obrisano. Pokušajte ponovo. Ako i dalje ne uspeva, možete da resetujete ovaj uređaj i ponovo ga povežete.",
   "errorPasswordLoginNeedsLink": "Za prijavu lozinkom ovaj uređaj prvo mora biti povezan.",
   "attachmentSendFailedState": "Prilog nije mogao da se pošalje.",
   "errorRelinkRequired": "Ovaj uređaj mora ponovo da se poveže.",

@@ -2078,6 +2078,14 @@ class AppLocalizationsSr extends AppLocalizations {
       'Овај уређај није могао да ажурира складиште порука за ову верзију апликације Veritra, на пример зато што је уређај пун. Ништа није промењено нити обрисано. Ослободите мало простора, па покушајте поново.';
 
   @override
+  String get recoveryUpgradeStillFull =>
+      'Овај уређај ни сада није могао да ажурира складиште порука. Ништа није промењено нити обрисано. Ослободите још простора и покушајте поново или ресетујте овај уређај и поново га повежите.';
+
+  @override
+  String get recoveryUpgradeError =>
+      'Овај уређај није могао да ажурира складиште порука за ову верзију апликације Veritra. Ништа није промењено нити обрисано. Покушајте поново. Ако и даље не успева, можете да ресетујете овај уређај и поново га повежете.';
+
+  @override
   String get errorPasswordLoginNeedsLink =>
       'За пријаву лозинком овај уређај прво мора бити повезан.';
 
@@ -4190,6 +4198,14 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get recoveryUpgradeFailed =>
       'Ovaj uređaj nije mogao da ažurira skladište poruka za ovu verziju aplikacije Veritra, na primer zato što je uređaj pun. Ništa nije promenjeno niti obrisano. Oslobodite malo prostora, pa pokušajte ponovo.';
+
+  @override
+  String get recoveryUpgradeStillFull =>
+      'Ovaj uređaj ni sada nije mogao da ažurira skladište poruka. Ništa nije promenjeno niti obrisano. Oslobodite još prostora i pokušajte ponovo ili resetujte ovaj uređaj i ponovo ga povežite.';
+
+  @override
+  String get recoveryUpgradeError =>
+      'Ovaj uređaj nije mogao da ažurira skladište poruka za ovu verziju aplikacije Veritra. Ništa nije promenjeno niti obrisano. Pokušajte ponovo. Ako i dalje ne uspeva, možete da resetujete ovaj uređaj i ponovo ga povežete.';
 
   @override
   String get errorPasswordLoginNeedsLink =>
