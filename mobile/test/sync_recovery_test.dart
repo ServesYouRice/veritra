@@ -157,6 +157,27 @@ void main() {
     harness.dispose();
   });
 
+  test('messages committed before a failure in the same page are shown',
+      () async {
+    // Received messages reach the UI in batches (T49C); a failure later in
+    // the page must not hide the ones already committed.
+    final api = _ScriptedApi()
+      ..events = <SyncEvent>[
+        _envelopeEvent(4, 'msg_one'),
+        _envelopeEvent(5, 'msg_two'),
+        _envelopeEvent(6, 'msg_bad', ciphertext: _undecryptable),
+      ];
+    final harness = await _Harness.start(api);
+    await harness.waitFor(() => harness.state.syncRecovery != null);
+    expect(harness.state.syncRecovery!.eventId, 6);
+    expect(await harness.store.loadSyncCursor(), 5);
+    expect(
+      harness.state.messagesFor('conv_1').map((message) => message.id),
+      unorderedEquals(<String>['msg_one', 'msg_two']),
+    );
+    harness.dispose();
+  });
+
   test('a missing legacy envelope without proof of expiry stops sync',
       () async {
     final api = _ScriptedApi()

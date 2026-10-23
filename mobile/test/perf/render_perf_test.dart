@@ -290,9 +290,12 @@ void main() {
       'build_pair_us': buildMicros,
       'equality_us': equalityMicros,
     });
-    // Equal themes never animate or notify Theme dependents; recreating
-    // them costs only the build and the comparison above.
+    // Equal themes never animate or notify Theme dependents, so the cost of
+    // recreating them was the build and the comparison above. The themes
+    // are now built once (T49C fix).
     expect(equal, isTrue);
+    expect(identical(light, app().theme), isTrue);
+    expect(identical(dark, app().darkTheme), isTrue);
     bench.state.dispose();
   });
 

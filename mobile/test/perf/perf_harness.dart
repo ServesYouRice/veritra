@@ -224,6 +224,9 @@ class BenchMlsCrypto implements MlsConversationCryptoService {
   final LocalStore store;
   int applied = 0;
 
+  /// Wall time spent applying messages, store commits included.
+  int applyMicros = 0;
+
   @override
   Future<void> activateSession(Session session) async {}
 
@@ -234,6 +237,18 @@ class BenchMlsCrypto implements MlsConversationCryptoService {
 
   @override
   Future<List<int>?> processApplicationMessage(
+    ReceivedMessageEnvelope envelope,
+    int syncEventId,
+  ) async {
+    final watch = Stopwatch()..start();
+    try {
+      return await _apply(envelope, syncEventId);
+    } finally {
+      applyMicros += watch.elapsedMicroseconds;
+    }
+  }
+
+  Future<List<int>?> _apply(
     ReceivedMessageEnvelope envelope,
     int syncEventId,
   ) async {
