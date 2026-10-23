@@ -105,10 +105,11 @@ jobs:
             ${{ steps.image.outputs.image }}:build-${{ github.sha }}
       - name: Record immutable container digest
         run: printf '%s@%s\n' '${{ steps.image.outputs.image }}:build-${{ github.sha }}' '${{ steps.container.outputs.digest }}' > dist/container-image-digest.txt
-      # QA02: signed iOS evidence is separate from the mobile-ios simulator CI
-      # job. The G24 signed build must stage mobile-artifacts.json and its .ipa
-      # in this directory (kept out of dist/, so nothing here is published).
-      # Nothing stages them yet, so the release stays blocked until G24.
+      # QA02: signed iOS and Android evidence is separate from the debug CI
+      # builds (mobile-ios simulator, mobile emulator APK). The G24 signed
+      # builds must stage mobile-artifacts.json, the .ipa and the .apk in this
+      # directory (kept out of dist/, so nothing here is published). Nothing
+      # stages them yet, so the release stays blocked until G24.
       - name: Write release evidence manifest
         env:
           RELEASE_COMMIT: ${{ github.sha }}
@@ -126,8 +127,9 @@ jobs:
           MOBILE_ARTIFACTS_DIR: ${{ runner.temp }}/mobile-artifacts
         run: sh scripts/release-readiness.sh
       # The offline gate checks structure and digests only. Here the signed
-      # build's GitHub attestation must prove which workflow and commit made
-      # each signed .ipa. Zero signed records fails, never passes vacuously.
+      # builds' GitHub attestations must prove which workflow and commit made
+      # each signed .ipa and .apk. Zero signed records fails, never passes
+      # vacuously.
       - name: Verify signed mobile artifact attestations
         env:
           GH_TOKEN: ${{ github.token }}

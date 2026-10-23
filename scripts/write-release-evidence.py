@@ -2,8 +2,10 @@
 """Build the ephemeral release evidence manifest after artifact packaging.
 
 With ``--ios-simulator-record FILE`` it instead prints the simulator-debug
-record that the ``mobile-ios`` CI job publishes next to its simulator build.
-That record type can never satisfy the signed-release requirement.
+record that the ``mobile-ios`` CI job publishes next to its simulator build,
+and with ``--android-emulator-record FILE`` the emulator-debug record the
+``mobile`` job publishes next to its demo APK. Neither record type can ever
+satisfy the signed-release requirement.
 """
 
 from __future__ import annotations
@@ -103,8 +105,14 @@ def git_approval_loader(approvals_commit: str, root: Path = ROOT) -> Callable[[s
     return load_approval
 
 
-def simulator_record(commit: str, run_id: str, artifact: Path, entry_point: str = "lib/main_demo.dart") -> dict[str, object]:
-    """Describe the hosted CI simulator build; it is unsigned debug output."""
+def debug_record(
+    platform: str, commit: str, run_id: str, artifact: Path, entry_point: str
+) -> dict[str, object]:
+    """Describe a hosted CI debug build. It is never release evidence."""
+    artifact_type, sdk, signing, job = {
+        "ios": ("simulator-debug", "iphonesimulator", "unsigned", "mobile-ios"),
+        "android": ("emulator-debug", "android", "debug", "mobile"),
+    }[platform]
     validate_commit(commit, "GITHUB_SHA")
     if not run_id or len(run_id) > 20 or any(char not in "0123456789" for char in run_id):
         raise ValueError("GITHUB_RUN_ID must be ASCII digits")
@@ -115,31 +123,46 @@ def simulator_record(commit: str, run_id: str, artifact: Path, entry_point: str 
     digest = hasher.hexdigest()
     return {
         "schema": MOBILE_RECORD_SCHEMA,
-        "platform": "ios",
-        "artifact_type": "simulator-debug",
+        "platform": platform,
+        "artifact_type": artifact_type,
         "commit": commit,
         "file": artifact.name,
         "digest": f"sha256:{digest}",
-        "build": {"sdk": "iphonesimulator", "configuration": "debug", "entry_point": entry_point},
-        "signing": {"status": "unsigned"},
+        "build": {"sdk": sdk, "configuration": "debug", "entry_point": entry_point},
+        "signing": {"status": signing},
         "provenance": {
             "builder": "github-actions",
             "workflow": ".github/workflows/ci.yml",
-            "job": "mobile-ios",
+            "job": job,
             "run_id": run_id,
             "source_commit": commit,
         },
     }
 
 
+def simulator_record(commit: str, run_id: str, artifact: Path, entry_point: str = "lib/main_demo.dart") -> dict[str, object]:
+    """The mobile-ios job's simulator build: unsigned debug output."""
+    return debug_record("ios", commit, run_id, artifact, entry_point)
+
+
+def emulator_record(commit: str, run_id: str, artifact: Path, entry_point: str = "lib/main_demo.dart") -> dict[str, object]:
+    """The mobile job's demo APK: debug-signed, for emulators and test devices."""
+    return debug_record("android", commit, run_id, artifact, entry_point)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ios-simulator-record", type=Path, metavar="FILE")
+    debug = parser.add_mutually_exclusive_group()
+    debug.add_argument("--ios-simulator-record", type=Path, metavar="FILE")
+    debug.add_argument("--android-emulator-record", type=Path, metavar="FILE")
     args = parser.parse_args()
-    if args.ios_simulator_record:
+    if args.ios_simulator_record or args.android_emulator_record:
+        make = simulator_record if args.ios_simulator_record else emulator_record
         try:
-            record = simulator_record(
-                os.environ.get("GITHUB_SHA", ""), os.environ.get("GITHUB_RUN_ID", ""), args.ios_simulator_record
+            record = make(
+                os.environ.get("GITHUB_SHA", ""),
+                os.environ.get("GITHUB_RUN_ID", ""),
+                args.ios_simulator_record or args.android_emulator_record,
             )
         except (ValueError, OSError) as exc:
             print(str(exc), file=sys.stderr)

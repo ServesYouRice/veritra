@@ -105,6 +105,27 @@ identifiers or signing material.
 | LAN TLS with a private CA (T48B) | Pending hardware | Pending hardware |
 | TalkBack/VoiceOver/large text/reduced motion | Pending hardware | Pending hardware |
 
+### Signed artifact evidence
+
+The release needs exactly one `signed-release` record per platform
+(`veritra-mobile-artifact/1`, decision D37), built from the candidate by a
+workflow other than CI, staged with its file for `release.yml`, and attested
+there with `gh attestation verify`. The debug builds hosted CI makes are
+recorded and checked, but never count: iOS `simulator-debug` (job
+`mobile-ios`) and Android `emulator-debug` (the demo APK, job `mobile`).
+
+| Platform | Signed file | Structural checks in `check-release-evidence.py` |
+|---|---|---|
+| iOS | `.ipa` | One `Payload/*.app`, iphoneos plist, arm64 iOS Mach-O with a code signature, distribution profile (`get-task-allow=false`) |
+| Android | `.apk` (not `.aab`) | `org.veritra.private_messenger`, not debuggable, arm64 crypto library, an APK Signature Scheme v2/v3 block with exactly one signer whose certificate SHA-256 equals the record's `signing.certificate_sha256` and is not the Android debug certificate |
+
+Both bind the platform, type, candidate commit, the file's sha256 and the
+provenance (workflow, job, run, source commit). A signed file with the same
+digest as a debug build blocks. The checks are structural; the signed build
+runs `codesign --verify` or `apksigner verify`, and the attestation proves
+which workflow and commit made the file. Signing-key rotation (several
+certificates) is not accepted yet.
+
 ## Recording an approval
 
 An approval file cannot sit in the commit it approves: it would have to

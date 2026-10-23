@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import plistlib
@@ -50,11 +51,16 @@ JOBS = {
 }
 MOBILE_POLICY = {
     "record_schema": "veritra-mobile-artifact/1",
-    "required": [{"platform": "ios", "artifact_type": "signed-release"}],
-    "simulator_ci_jobs": {"ios": "mobile-ios"},
+    "required": [
+        {"platform": "ios", "artifact_type": "signed-release"},
+        {"platform": "android", "artifact_type": "signed-release"},
+    ],
+    "debug_ci_jobs": {"ios": "mobile-ios", "android": "mobile"},
 }
 SIGNED_IPA = "Veritra-ios.ipa"
 SIMULATOR_ZIP = "veritra-demo-ios-simulator.zip"
+SIGNED_APK = "Veritra-android.apk"
+EMULATOR_APK = "app-debug.apk"
 
 spec = importlib.util.spec_from_file_location("write_release_evidence", ROOT / "scripts/write-release-evidence.py")
 assert spec and spec.loader
@@ -159,6 +165,144 @@ def signed_record(file_name: str, digest: str) -> dict[str, object]:
             "workflow": ".github/workflows/ios-signed.yml",
             "job": "ios-signed-release",
             "run_id": "456",
+            "source_commit": COMMIT,
+        },
+    }
+
+
+# --- Synthetic Android artifacts. No signing material: the "certificates"
+# are placeholder bytes, laid out as APK Signature Scheme v2/v3 blocks.
+
+APK_V2, APK_V3 = 0x7109871A, 0xF05368C0
+RELEASE_CERT = b"0\x82synthetic-placeholder CN=Veritra Release"
+OTHER_CERT = b"0\x82synthetic-placeholder CN=Someone Else"
+DEBUG_CERT = b"0\x82synthetic-placeholder C=US, O=Android, CN=Android Debug"
+APP_ID = "org.veritra.private_messenger"
+
+
+def fingerprint(cert: bytes) -> str:
+    return hashlib.sha256(cert).hexdigest()
+
+
+def lp(data: bytes) -> bytes:
+    return struct.pack("<I", len(data)) + data
+
+
+def axml(package: str = APP_ID, debuggable: object = None) -> bytes:
+    """A compiled AndroidManifest.xml: <manifest package><application debuggable?>."""
+    strings = ["debuggable", "package", "manifest", "application", "android",
+               "http://schemas.android.com/apk/res/android", package]
+    index = {value: position for position, value in enumerate(strings)}
+    offsets, data = b"", b""
+    for value in strings:
+        offsets += struct.pack("<I", len(data))
+        encoded = value.encode("utf-16-le")
+        data += struct.pack("<H", len(value)) + encoded + b"\0\0"
+    data = data.ljust((len(data) + 3) // 4 * 4, b"\0")
+    header = 28
+    pool = struct.pack("<IIIII", len(strings), 0, 0, header + len(offsets), 0) + offsets + data
+    pool = struct.pack("<HHI", 0x0001, header, 8 + len(pool)) + pool
+    resource_map = struct.pack("<HHII", 0x0180, 8, 12, 0x0101000F)
+    none = 0xFFFFFFFF
+
+    def element(name: str, attributes: list[bytes]) -> bytes:
+        body = struct.pack("<IIIIHHHHHH", 1, none, none, index[name], 20, 20, len(attributes), 0, 0, 0)
+        body += b"".join(attributes)
+        return struct.pack("<HHI", 0x0102, 16, 8 + len(body)) + body
+
+    def end(name: str) -> bytes:
+        return struct.pack("<HHIIIII", 0x0103, 16, 24, 1, none, none, index[name])
+
+    package_attr = struct.pack("<IIIHBBI", none, index["package"], index[package], 8, 0, 0x03, index[package])
+    application_attrs = []
+    if debuggable is not None:
+        value_type, value = debuggable if isinstance(debuggable, tuple) else (0x12, none if debuggable else 0)
+        ns = index["http://schemas.android.com/apk/res/android"]
+        application_attrs.append(struct.pack("<IIIHBBI", ns, index["debuggable"], none, 8, 0, value_type, value))
+    namespace = struct.pack("<HHIIIII", 0x0100, 16, 24, 1, none, index["android"],
+                            index["http://schemas.android.com/apk/res/android"])
+    body = (pool + resource_map + namespace + element("manifest", [package_attr])
+            + element("application", application_attrs) + end("application") + end("manifest"))
+    return struct.pack("<HHI", 0x0003, 8, 8 + len(body)) + body
+
+
+def apk_signer(cert: bytes, scheme: int) -> bytes:
+    digests = lp(lp(struct.pack("<I", 0x0103) + lp(b"\0" * 32)))
+    certificates = lp(lp(cert))
+    sdks = struct.pack("<II", 24, 0x7FFFFFFF)
+    if scheme == APK_V2:
+        signed_data = digests + certificates + lp(b"")
+        return lp(signed_data) + lp(lp(struct.pack("<I", 0x0103) + lp(b"sig"))) + lp(b"public key")
+    signed_data = digests + certificates + sdks + lp(b"")
+    return lp(signed_data) + sdks + lp(lp(struct.pack("<I", 0x0103) + lp(b"sig"))) + lp(b"public key")
+
+
+def apk_signing_block(pairs: list[tuple[int, bytes]]) -> bytes:
+    body = b"".join(struct.pack("<QI", len(value) + 4, pair_id) + value for pair_id, value in pairs)
+    size = len(body) + 8 + 16
+    return struct.pack("<Q", size) + body + struct.pack("<Q", size) + b"APK Sig Block 42"
+
+
+def build_apk(
+    path: Path,
+    *,
+    manifest: bytes | None = None,
+    dex: bool = True,
+    crypto: bool = True,
+    signers: dict[int, list[bytes]] | None = None,
+    block: bytes | None = None,
+    v1_only: bool = False,
+) -> str:
+    """Build an APK; by default signed (v2 and v3) with RELEASE_CERT."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("AndroidManifest.xml", axml() if manifest is None else manifest)
+        if dex:
+            archive.writestr("classes.dex", b"dex\n035\0synthetic")
+        if crypto:
+            archive.writestr("lib/arm64-v8a/libprivate_messenger_crypto.so", b"\x7fELF synthetic")
+        archive.writestr("resources.arsc", b"synthetic")
+        if v1_only:
+            archive.writestr("META-INF/CERT.RSA", RELEASE_CERT)
+    data = buffer.getvalue()
+    if signers is None and block is None and not v1_only:
+        signers = {APK_V2: [RELEASE_CERT], APK_V3: [RELEASE_CERT]}
+    if block is None and signers:
+        pairs = [(0x42726577, b"\0" * 8)]  # verity padding, ignored by the checker
+        for scheme, certs in signers.items():
+            pairs.append((scheme, lp(b"".join(lp(apk_signer(cert, scheme)) for cert in certs))))
+        block = apk_signing_block(pairs)
+    if block:
+        eocd = data.rfind(b"PK\x05\x06")
+        cd_size, cd_offset = struct.unpack_from("<II", data, eocd + 12)
+        data = (data[:cd_offset] + block + data[cd_offset:eocd + 16]
+                + struct.pack("<I", cd_offset + len(block)) + data[eocd + 20:])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def android_signed_record(file_name: str, digest: str, cert: bytes = RELEASE_CERT) -> dict[str, object]:
+    return {
+        "schema": "veritra-mobile-artifact/1",
+        "platform": "android",
+        "artifact_type": "signed-release",
+        "commit": COMMIT,
+        "file": file_name,
+        "digest": digest,
+        "build": {"sdk": "android", "configuration": "release", "entry_point": "lib/main.dart"},
+        "signing": {
+            "status": "signed",
+            "identity": "release",
+            "verifier": "apksigner",
+            "verification": "pass",
+            "certificate_sha256": fingerprint(cert),
+        },
+        "provenance": {
+            "builder": "github-actions",
+            "workflow": ".github/workflows/android-signed.yml",
+            "job": "android-signed-release",
+            "run_id": "457",
             "source_commit": COMMIT,
         },
     }
@@ -303,7 +447,10 @@ def fixture() -> tuple[Path, dict[str, object]]:
             "commit": COMMIT,
             "toolchain": "1.25.12",
         },
-        "mobile_artifacts": [signed_record(SIGNED_IPA, signed_digest)],
+        "mobile_artifacts": [
+            signed_record(SIGNED_IPA, signed_digest),
+            android_signed_record(SIGNED_APK, build_apk(temp / "dist" / SIGNED_APK)),
+        ],
     }
     write_json(temp / "dist/release-evidence.json", manifest)
     return temp, manifest
@@ -561,8 +708,11 @@ def qa02_cases(root: Path, valid: dict[str, object]) -> None:
         mutate(manifest)
         return manifest
 
+    android = valid["mobile_artifacts"][1]
+
     def with_record(record: dict[str, object]) -> dict[str, object]:
-        return variant(lambda m: m.__setitem__("mobile_artifacts", [record]))
+        # The iOS record under test, next to the valid Android one.
+        return variant(lambda m: m.__setitem__("mobile_artifacts", [record, android]))
 
     def record(**changes: object) -> dict[str, object]:
         value = copy.deepcopy(signed)
@@ -588,7 +738,7 @@ def qa02_cases(root: Path, valid: dict[str, object]) -> None:
     simulator = writer.simulator_record(COMMIT, "789", dist / SIMULATOR_ZIP)
     expect_blocked(root, with_record_list([simulator], valid), no_signed, absent=("simulator-debug artifact",))
     # Simulator record next to a valid signed one is fine (informational only).
-    expect_valid(root, with_record_list([simulator, signed], valid))
+    expect_valid(root, with_record_list([simulator, signed, android], valid))
 
     # Simulator evidence relabelled as signed-release.
     relabelled = copy.deepcopy(simulator)
@@ -627,7 +777,7 @@ def qa02_cases(root: Path, valid: dict[str, object]) -> None:
     # Same digest as a simulator build cannot be both.
     twin = copy.deepcopy(simulator)
     twin["digest"] = signed["digest"]
-    expect_blocked(root, with_record_list([twin, signed], valid), "ios signed-release artifact has the same digest as a simulator build")
+    expect_blocked(root, with_record_list([twin, signed], valid), "ios signed-release artifact has the same digest as a debug build")
 
     # Skipped or missing simulator CI: a signed artifact never replaces it.
     expect_blocked(root, variant(lambda m: m["ci_jobs"].__setitem__("mobile-ios", "skipped")), "required CI job 'mobile-ios' is missing or not successful")
@@ -656,8 +806,17 @@ def qa02_cases(root: Path, valid: dict[str, object]) -> None:
     expect_blocked(root, with_record(record(provenance={"source_commit": OTHER_COMMIT})), f"{label} provenance is not bound to the candidate commit", no_signed)
 
     # Wrong platform.
-    for platform in ("android", "iOS", "macos", None):
+    for platform in ("iOS", "Android", "macos", None):
         expect_blocked(root, with_record(record(platform=platform)), "mobile artifact 0 has an unsupported platform or artifact type", no_signed)
+    # An iOS record relabelled as Android is checked as Android, and fails.
+    expect_blocked(
+        root,
+        with_record_list([record(platform="android")], valid),
+        "android signed-release artifact file name is not a plain .apk name",
+        "android signed-release artifact build is not android/release",
+        "android signed-release artifact has no valid signing certificate SHA-256 fingerprint",
+        no_signed,
+    )
 
     # Wrong type.
     expect_blocked(root, with_record(record(artifact_type="simulator-debug")), "ios simulator-debug artifact", no_signed)
@@ -683,6 +842,7 @@ def qa02_cases(root: Path, valid: dict[str, object]) -> None:
     elsewhere = root / "staged-artifacts"
     elsewhere.mkdir()
     shutil.copy(dist / SIGNED_IPA, elsewhere / SIGNED_IPA)
+    shutil.copy(dist / SIGNED_APK, elsewhere / SIGNED_APK)
     expect_valid(root, valid, env={"MOBILE_ARTIFACTS_DIR": str(elsewhere)})
     not_zip = dist / "not-a-zip.ipa"
     not_zip.write_bytes(b"synthetic, not an archive")
@@ -728,7 +888,10 @@ def qa02_cases(root: Path, valid: dict[str, object]) -> None:
     for tampered in (
         dict(MOBILE_POLICY, required=[]),
         dict(MOBILE_POLICY, required=[{"platform": "ios", "artifact_type": "simulator-debug"}]),
-        dict(MOBILE_POLICY, simulator_ci_jobs={}),
+        dict(MOBILE_POLICY, debug_ci_jobs={}),
+        dict(MOBILE_POLICY, debug_ci_jobs={"ios": "mobile-ios"}),
+        dict(MOBILE_POLICY, required=MOBILE_POLICY["required"][:1]),
+        dict(MOBILE_POLICY, required=[MOBILE_POLICY["required"][0], {"platform": "android", "artifact_type": "emulator-debug"}]),
     ):
         policy = json.loads(original_policy)
         policy["mobile_artifacts"] = tampered
@@ -749,13 +912,192 @@ def qa02_cases(root: Path, valid: dict[str, object]) -> None:
         valid["container"]["digest"],
         "1.25.12\n",
         writer.git_approval_loader(APPROVALS_COMMIT, root),
-        [simulator, signed],
+        [simulator, signed, android],
         APPROVALS_COMMIT,
     )
     expect_valid(root, written)
 
     # One valid synthetic signed artifact passes.
     expect_valid(root, valid)
+
+
+def android_cases(root: Path, valid: dict[str, object]) -> None:
+    dist = root / "dist"
+    ios, signed = valid["mobile_artifacts"]
+    no_signed = "release evidence has no valid android signed-release artifact"
+    label = "android signed-release artifact"
+
+    def with_android(*records: object) -> dict[str, object]:
+        return with_record_list([ios, *records], valid)
+
+    def record(**changes: object) -> dict[str, object]:
+        value = copy.deepcopy(signed)
+        for key, change in changes.items():
+            if isinstance(change, dict) and isinstance(value.get(key), dict):
+                value[key].update(change)
+            else:
+                value[key] = change
+        return value
+
+    def apk(name: str, cert: bytes = RELEASE_CERT, **options: object) -> dict[str, object]:
+        value = android_signed_record(name, build_apk(dist / name, **options), cert)  # type: ignore[arg-type]
+        return value
+
+    # Valid: v2 + v3 (the fixture), v2 only, v3 only, and the emulator-debug
+    # record the mobile CI job writes, next to the signed one.
+    expect_valid(root, with_android(signed))
+    expect_valid(root, with_android(apk("v2.apk", signers={APK_V2: [RELEASE_CERT]})))
+    expect_valid(root, with_android(apk("v3.apk", signers={APK_V3: [RELEASE_CERT]})))
+    expect_valid(root, with_android(apk("debuggable-false.apk", manifest=axml(debuggable=False))))
+    emulator_digest = build_apk(dist / EMULATOR_APK, manifest=axml(debuggable=True), signers={APK_V2: [DEBUG_CERT]})
+    emulator = writer.emulator_record(COMMIT, "790", dist / EMULATOR_APK)
+    assert emulator["digest"] == emulator_digest
+    expect_valid(root, with_android(emulator, signed))
+
+    # Emulator-only: the CI demo APK alone never releases, and is itself valid.
+    expect_blocked(root, with_android(emulator), no_signed, absent=("emulator-debug artifact",))
+    expect_blocked(root, with_android(), no_signed)
+    # The emulator record relabelled as signed-release.
+    relabelled = copy.deepcopy(emulator)
+    relabelled["artifact_type"] = "signed-release"
+    expect_blocked(
+        root,
+        with_android(relabelled),
+        f"{label} build is not android/release from an allowed entry point",
+        f"{label} signing status is not 'signed'",
+        f"{label} signature was not verified as a release signature",
+        f"{label} has no valid signing certificate SHA-256 fingerprint",
+        f"{label} provenance is the debug emulator CI build",
+        no_signed,
+    )
+    # The demo APK's bytes behind an otherwise perfect signed record.
+    expect_blocked(
+        root,
+        with_android(record(file=EMULATOR_APK, digest=emulator_digest, signing={"certificate_sha256": fingerprint(DEBUG_CERT)})),
+        "signed android artifact is debuggable",
+        "signed android artifact is signed with the Android debug certificate",
+        no_signed,
+    )
+    expect_blocked(root, with_android(apk("debug-key.apk", DEBUG_CERT, signers={APK_V2: [DEBUG_CERT]})),
+                   "signed with the Android debug certificate")
+    expect_blocked(root, with_android(apk("debuggable.apk", manifest=axml(debuggable=True))), "signed android artifact is debuggable")
+    # A debuggable value the checker cannot read as false fails closed.
+    expect_blocked(root, with_android(apk("debuggable-ref.apk", manifest=axml(debuggable=(0x01, 0x7F010000)))), "is debuggable")
+    expect_blocked(root, with_android(apk("debuggable-int.apk", manifest=axml(debuggable=(0x10, 0)))), "is debuggable")
+    # Same digest as the emulator build.
+    twin = copy.deepcopy(emulator)
+    twin["digest"] = signed["digest"]
+    expect_blocked(root, with_android(twin, signed), "android signed-release artifact has the same digest as a debug build")
+
+    # Unsigned: the CI release APK has no signing block; v1-only is not enough.
+    expect_blocked(root, with_android(apk("unsigned.apk", signers={})), "has no APK Signature Scheme v2 or v3 signature", no_signed)
+    expect_blocked(root, with_android(apk("v1-only.apk", v1_only=True)), "has no APK Signature Scheme v2 or v3 signature")
+    expect_blocked(root, with_android(apk("other-block.apk", block=apk_signing_block([(0x42726577, b"\0" * 8)]))),
+                   "has no APK Signature Scheme v2 or v3 signature")
+    expect_blocked(root, with_android(record(signing={"status": "unsigned"})), f"{label} signing status is not 'signed'", no_signed)
+    for signing in ({"identity": "debug"}, {"identity": "distribution"}, {"verification": "fail"}, {"verifier": ""}):
+        expect_blocked(root, with_android(record(signing=signing)), f"{label} signature was not verified as a release signature")
+
+    # Signing certificate fingerprint: bound to the record, one signer only.
+    expect_blocked(root, with_android(apk("other-cert.apk", OTHER_CERT, signers={APK_V2: [RELEASE_CERT]})),
+                   "signer certificate does not match the recorded fingerprint", no_signed)
+    expect_blocked(root, with_android(apk("mixed.apk", signers={APK_V2: [RELEASE_CERT], APK_V3: [OTHER_CERT]})),
+                   "signer certificate does not match the recorded fingerprint")
+    expect_blocked(root, with_android(apk("two-signers.apk", signers={APK_V2: [RELEASE_CERT, OTHER_CERT]})),
+                   "signed android artifact must have exactly one signer")
+    expect_blocked(root, with_android(apk("no-signer.apk", signers={APK_V2: []})), "must have exactly one signer")
+    for bad in (fingerprint(RELEASE_CERT).upper(), fingerprint(RELEASE_CERT)[:63], "sha256:" + fingerprint(RELEASE_CERT), "", None, 7):
+        expect_blocked(root, with_android(record(signing={"certificate_sha256": bad})),
+                       f"{label} has no valid signing certificate SHA-256 fingerprint", no_signed)
+    without = record()
+    without["signing"].pop("certificate_sha256")
+    expect_blocked(root, with_android(without), f"{label} has no valid signing certificate SHA-256 fingerprint")
+
+    # Malformed signing blocks fail closed.
+    good_block = apk_signing_block([(APK_V2, lp(lp(apk_signer(RELEASE_CERT, APK_V2))))])
+    for name, block in (
+        ("size-mismatch.apk", struct.pack("<Q", 999) + good_block[8:]),
+        ("short-pair.apk", apk_signing_block([(APK_V2, b"")])[:8] + struct.pack("<Q", 2) + apk_signing_block([(APK_V2, b"")])[16:]),
+        ("dup-pair.apk", apk_signing_block([(APK_V2, lp(lp(apk_signer(RELEASE_CERT, APK_V2))))] * 2)),
+        ("bad-signer.apk", apk_signing_block([(APK_V2, lp(lp(b"\xff\xff\xff\xff")))])),
+        ("no-cert.apk", apk_signing_block([(APK_V2, lp(lp(lp(lp(b"") + lp(b"") + lp(b"")))))])),
+        ("trailing.apk", apk_signing_block([(APK_V2, lp(lp(apk_signer(RELEASE_CERT, APK_V2))) + b"x")])),
+    ):
+        expect_blocked(root, with_android(apk(name, block=block)), "signed android artifact has a malformed APK signing block", no_signed)
+    # An empty certificate, even when the record names its fingerprint.
+    expect_blocked(root, with_android(apk("empty-cert.apk", b"", signers={APK_V2: [b""]})), "malformed APK signing block")
+    # The signing block must sit right before the central directory the end
+    # record names; bytes prepended to the archive (zip readers tolerate
+    # them) break that.
+    shifted = dist / "shifted-directory.apk"
+    data = b"PREFIX" + (dist / SIGNED_APK).read_bytes()
+    shifted.write_bytes(data)
+    expect_blocked(root, with_android(record(file=shifted.name, digest="sha256:" + hashlib.sha256(data).hexdigest())),
+                   "malformed APK signing block")
+
+    # Wrong app, missing parts, not an APK.
+    expect_blocked(root, with_android(apk("other-app.apk", manifest=axml(package="org.example.other"))),
+                   "signed android artifact is not the org.veritra.private_messenger app")
+    expect_blocked(root, with_android(apk("no-crypto.apk", crypto=False)), "does not ship the arm64-v8a crypto library")
+    expect_blocked(root, with_android(apk("no-dex.apk", dex=False)), "signed android artifact is not an Android app package")
+    expect_blocked(root, with_android(apk("text-manifest.apk", manifest=b"<manifest package='org.veritra.private_messenger'/>")),
+                   "signed android artifact is not a readable APK")
+    expect_blocked(root, with_android(apk("cut-manifest.apk", manifest=axml()[:60])), "signed android artifact is not a readable APK")
+    not_zip = dist / "not-a-zip.apk"
+    not_zip.write_bytes(b"synthetic, not an archive")
+    expect_blocked(root, with_android(record(file=not_zip.name, digest="sha256:" + hashlib.sha256(not_zip.read_bytes()).hexdigest())),
+                   "signed android artifact is not a readable APK")
+    ipa_as_apk = dist / "ipa-as.apk"
+    shutil.copy(dist / SIGNED_IPA, ipa_as_apk)
+    expect_blocked(root, with_android(record(file=ipa_as_apk.name, digest="sha256:" + hashlib.sha256(ipa_as_apk.read_bytes()).hexdigest())),
+                   "signed android artifact is not an Android app package")
+
+    # Record binding: file, digest, commit, build, type.
+    for name in ("Veritra-android.aab", "../Veritra-android.apk", "Veritra-android.zip", ""):
+        expect_blocked(root, with_android(record(file=name)), f"{label} file name is not a plain .apk name", no_signed)
+    expect_blocked(root, with_android(record(file="absent.apk")), f"{label} file is missing from the artifact directory")
+    expect_blocked(root, with_android(record(digest="sha256:" + "b" * 64)), f"{label} file does not match its recorded digest")
+    expect_blocked(root, with_android(record(digest="sha256:" + "B" * 64)), f"{label} digest is not an immutable sha256 digest")
+    expect_blocked(root, with_android(record(commit=OTHER_COMMIT)), f"{label} is not bound to the candidate commit", no_signed)
+    expect_blocked(root, with_android(record(provenance={"source_commit": OTHER_COMMIT})), f"{label} provenance is not bound to the candidate commit")
+    for build in ({"configuration": "debug"}, {"entry_point": "lib/main_demo.dart"}, {"sdk": "iphoneos"}):
+        expect_blocked(root, with_android(record(build=build)), f"{label} build is not android/release from an allowed entry point")
+    expect_blocked(root, with_android(record(artifact_type="emulator-debug")), "android emulator-debug artifact", no_signed)
+    expect_blocked(root, with_android(signed, copy.deepcopy(signed)), "release evidence has more than one android signed-release artifact")
+
+    # Provenance must be a separate workflow, never the mobile CI job.
+    for provenance in ({"workflow": ".github/workflows/ci.yml"}, {"job": "mobile"}, {"run_id": str(CI_RUN_ID)}, {"run_id": "00" + str(CI_RUN_ID)}):
+        expect_blocked(root, with_android(record(provenance=provenance)), f"{label} provenance is the debug emulator CI build")
+    for provenance in ({"builder": "local"}, {"workflow": "android.yml"}, {"run_id": 457}, {"run_id": "４５７"}):
+        expect_blocked(root, with_android(record(provenance=provenance)), f"{label} provenance does not name a GitHub Actions workflow, job and run")
+
+    # Emulator-debug records are checked, and a bad one blocks the release.
+    for changes, reason in (
+        ({"digest": "sha256:" + "e" * 63}, "android emulator-debug artifact digest is not an immutable sha256 digest"),
+        ({"provenance": dict(emulator["provenance"], job="mobile-ios")}, "android emulator-debug artifact provenance is not the mobile CI job"),
+        ({"provenance": dict(emulator["provenance"], workflow=".github/workflows/android-signed.yml")}, "provenance is not the mobile CI job"),
+        ({"build": dict(emulator["build"], configuration="release")}, "android emulator-debug artifact build is not android/debug"),
+        ({"signing": {"status": "signed"}}, "android emulator-debug artifact signing status is not 'debug'"),
+        ({"file": "app-debug.zip"}, "android emulator-debug artifact file name is not a plain .apk name"),
+        ({"commit": OTHER_COMMIT}, "android emulator-debug artifact is not bound to the candidate commit"),
+    ):
+        broken = copy.deepcopy(emulator)
+        broken.update(changes)
+        expect_blocked(root, with_android(broken, signed), reason)
+
+    # Skipped mobile CI: the emulator build job stays required.
+    expect_blocked(root, variant_ci(valid, "mobile", "skipped"), "required CI job 'mobile' is missing or not successful")
+    expect_blocked(root, variant_ci(valid, "mobile", None), "required CI job 'mobile' is missing or not successful")
+    expect_valid(root, valid)
+
+
+def variant_ci(valid: dict[str, object], job: str, conclusion: str | None) -> dict[str, object]:
+    manifest = copy.deepcopy(valid)
+    if conclusion is None:
+        manifest["ci_jobs"].pop(job)
+    else:
+        manifest["ci_jobs"][job] = conclusion
+    return manifest
 
 
 def with_record_list(records: list[object], valid: dict[str, object]) -> dict[str, object]:
@@ -771,6 +1113,7 @@ def main() -> int:
         qa01_cases(root, manifest)
         approval_cases(root, manifest)
         qa02_cases(root, manifest)
+        android_cases(root, manifest)
         # The repository policy must equal the protected rules the fixtures use.
         repo_policy = json.loads((ROOT / "release/release-policy.json").read_text(encoding="utf-8"))
         assert repo_policy["mobile_artifacts"] == MOBILE_POLICY, "repository policy drifted from the fixture"

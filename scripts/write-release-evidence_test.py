@@ -184,6 +184,40 @@ def test_simulator_record() -> None:
         shutil.rmtree(temp)
 
 
+def test_emulator_record() -> None:
+    temp = Path(tempfile.mkdtemp(prefix="veritra-emu-record-"))
+    try:
+        artifact = temp / "app-debug.apk"
+        artifact.write_bytes(b"synthetic debug apk")
+        record = writer.emulator_record(COMMIT, "4243", artifact)
+        assert record["platform"] == "android"
+        assert record["artifact_type"] == "emulator-debug"
+        assert record["file"] == "app-debug.apk"
+        assert record["signing"] == {"status": "debug"}
+        assert record["build"] == {"sdk": "android", "configuration": "debug", "entry_point": "lib/main_demo.dart"}
+        assert record["provenance"]["job"] == "mobile"
+        assert record["provenance"]["workflow"] == ".github/workflows/ci.yml"
+        assert record["commit"] == record["provenance"]["source_commit"] == COMMIT
+        assert record["digest"] == "sha256:" + hashlib.sha256(b"synthetic debug apk").hexdigest()
+        for bad_run in ["", "x", "１２３"]:
+            try:
+                writer.emulator_record(COMMIT, bad_run, artifact)
+                raise AssertionError(f"expected emulator run id {bad_run!r} to fail")
+            except ValueError:
+                pass
+
+        env = dict(os.environ, GITHUB_SHA=COMMIT, GITHUB_RUN_ID="4243")
+        command = [sys.executable, str(MODULE_PATH), "--android-emulator-record", str(artifact)]
+        result = subprocess.run(command, text=True, capture_output=True, check=False, env=env)
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == record
+        # One debug record per call: both flags together are refused.
+        result = subprocess.run(command + ["--ios-simulator-record", str(artifact)], text=True, capture_output=True, check=False, env=env)
+        assert result.returncode != 0 and not result.stdout
+    finally:
+        shutil.rmtree(temp)
+
+
 def test_missing_mobile_evidence_fails_closed() -> None:
     temp = Path(tempfile.mkdtemp(prefix="veritra-writer-"))
     try:
@@ -240,6 +274,7 @@ def test_approvals_commit_is_required() -> None:
 if __name__ == "__main__":
     test_build_manifest()
     test_simulator_record()
+    test_emulator_record()
     test_missing_mobile_evidence_fails_closed()
     test_approvals_commit_is_required()
     print("Release evidence manifest construction tests passed")

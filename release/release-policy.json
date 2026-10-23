@@ -15,10 +15,15 @@
       {
         "platform": "ios",
         "artifact_type": "signed-release"
+      },
+      {
+        "platform": "android",
+        "artifact_type": "signed-release"
       }
     ],
-    "simulator_ci_jobs": {
-      "ios": "mobile-ios"
+    "debug_ci_jobs": {
+      "ios": "mobile-ios",
+      "android": "mobile"
     }
   },
   "approvals": {
