@@ -1,13 +1,20 @@
 package auth
 
 import (
+	"context"
+	"errors"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
 
-func TestHashPasswordRejectsBcryptTruncationRange(t *testing.T) {
+const testPassword = "owner-password-123"
+
+func TestHashPasswordPolicyKeepsLegacyByteRange(t *testing.T) {
 	if _, err := HashPassword("short"); err != ErrWeakPassword {
 		t.Fatalf("short password err=%v want %v", err, ErrWeakPassword)
 	}
@@ -19,53 +26,299 @@ func TestHashPasswordRejectsBcryptTruncationRange(t *testing.T) {
 	}
 }
 
-func TestVerifyPasswordOrDummyAlwaysRejectsMissingHash(t *testing.T) {
-	if VerifyPasswordOrDummy("", "owner-password-123") {
-		t.Fatal("missing hash should not authenticate")
-	}
-}
-
-func TestLegacyBcryptHashNeedsMigration(t *testing.T) {
-	legacy, err := bcrypt.GenerateFromPassword([]byte("owner-password-123"), 10)
+func TestNewHashesAreSelfDescribingArgon2id(t *testing.T) {
+	hash, err := HashPassword(testPassword)
 	if err != nil {
-		t.Fatalf("legacy hash: %v", err)
+		t.Fatalf("hash: %v", err)
 	}
-	if !NeedsPasswordRehash(string(legacy), 12) {
-		t.Fatal("cost-10 hash was not marked for migration")
+	if !strings.HasPrefix(hash, "$argon2id$v=19$m=65536,t=2,p=1$") || strings.Count(hash, "$") != 5 {
+		t.Fatalf("hash is not a PHC Argon2id string: %q", hash)
 	}
-	updated, changed, err := RehashPasswordIfNeeded(string(legacy), "owner-password-123", 12)
-	if err != nil || !changed || !VerifyPassword(updated, "owner-password-123") {
-		t.Fatalf("rehash changed=%v err=%v valid=%v", changed, err, VerifyPassword(updated, "owner-password-123"))
+	if strings.Contains(hash, testPassword) {
+		t.Fatal("hash contains the password")
+	}
+	other, err := HashPassword(testPassword)
+	if err != nil || other == hash {
+		t.Fatalf("hashes must use a fresh salt: err=%v equal=%v", err, other == hash)
+	}
+	ctx := context.Background()
+	check, err := VerifyPassword(ctx, hash, testPassword, VerifyOptions{})
+	if err != nil || !check.OK || check.Rehash || check.Legacy {
+		t.Fatalf("verify current hash: %+v err=%v", check, err)
+	}
+	if check, _ := VerifyPassword(ctx, hash, "wrong-password-123", VerifyOptions{}); check.OK || check.Rehash {
+		t.Fatalf("wrong password accepted: %+v", check)
 	}
 }
 
-func BenchmarkPasswordVerificationCosts(b *testing.B) {
-	for _, cost := range []int{DefaultBcryptCost, 12} {
-		hash, err := bcrypt.GenerateFromPassword([]byte("owner-password-123"), cost)
-		if err != nil {
-			b.Fatalf("hash cost %d: %v", cost, err)
-		}
-		b.Run("cost-"+itoa(cost), func(b *testing.B) {
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				if !VerifyPassword(string(hash), "owner-password-123") {
-					b.Fatal("verification failed")
-				}
+func TestVerifyPasswordRejectsUnknownAndMalformedHashes(t *testing.T) {
+	valid, err := HashPassword(testPassword)
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+	parts := strings.Split(valid, "$")
+	for name, stored := range map[string]string{
+		"unknown_account": "",
+		"deleted_marker":  "!",
+		"argon2i":         strings.Replace(valid, "$argon2id$", "$argon2i$", 1),
+		"old_version":     strings.Replace(valid, "$v=19$", "$v=16$", 1),
+		"huge_memory":     strings.Replace(valid, "m=65536", "m=4194304", 1),
+		"zero_passes":     strings.Replace(valid, "t=2", "t=0", 1),
+		"extra_field":     valid + "$x",
+		"padded_salt":     strings.Join([]string{"", parts[1], parts[2], parts[3], parts[4] + "==", parts[5]}, "$"),
+		"short_key":       strings.Join([]string{"", parts[1], parts[2], parts[3], parts[4], "AAAA"}, "$"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			check, err := VerifyPassword(context.Background(), stored, testPassword, VerifyOptions{LegacyHashesPresent: true})
+			if err != nil || check.OK || check.Rehash {
+				t.Fatalf("stored %q: %+v err=%v", stored, check, err)
 			}
 		})
 	}
 }
 
-func itoa(value int) string {
-	if value == 0 {
-		return "0"
+func TestLegacyBcryptVerifiesAndAsksForRehash(t *testing.T) {
+	legacy, err := bcrypt.GenerateFromPassword([]byte(testPassword), DefaultBcryptCost)
+	if err != nil {
+		t.Fatalf("legacy hash: %v", err)
 	}
-	var digits [20]byte
-	index := len(digits)
-	for value > 0 {
-		index--
-		digits[index] = byte('0' + value%10)
-		value /= 10
+	ctx := context.Background()
+	check, err := VerifyPassword(ctx, string(legacy), testPassword, VerifyOptions{LegacyHashesPresent: true})
+	if err != nil || !check.OK || !check.Rehash || !check.Legacy {
+		t.Fatalf("legacy verify: %+v err=%v", check, err)
 	}
-	return string(digits[index:])
+	check, err = VerifyPassword(ctx, string(legacy), "wrong-password-123", VerifyOptions{LegacyHashesPresent: true})
+	if err != nil || check.OK || check.Rehash || !check.Legacy {
+		t.Fatalf("legacy wrong password: %+v err=%v", check, err)
+	}
+	if !IsLegacyPasswordHash(string(legacy)) {
+		t.Fatal("bcrypt hash not reported as legacy")
+	}
+}
+
+func TestOlderArgon2idParametersAskForRehash(t *testing.T) {
+	salt := make([]byte, argon2idSaltBytes)
+	old := argon2idParams{memoryKiB: 19 * 1024, iterations: 2, parallelism: 1}
+	stored := encodeArgon2id(old, salt, argon2idKey([]byte(testPassword), salt, old.iterations, old.memoryKiB, old.parallelism, argon2idKeyBytes))
+	check, err := VerifyPassword(context.Background(), stored, testPassword, VerifyOptions{})
+	if err != nil || !check.OK || !check.Rehash || check.Legacy {
+		t.Fatalf("older parameters: %+v err=%v", check, err)
+	}
+}
+
+// countPrimitives counts the hash primitives VerifyPassword runs, so the
+// constant-work property is checked without timing.
+func countPrimitives(t *testing.T) (argonCalls, bcryptCalls *atomic.Int64) {
+	t.Helper()
+	argonCalls, bcryptCalls = new(atomic.Int64), new(atomic.Int64)
+	realArgon, realBcrypt := argon2idKey, bcryptCompare
+	argon2idKey = func(password, salt []byte, time, memory uint32, threads uint8, keyLen uint32) []byte {
+		argonCalls.Add(1)
+		return realArgon(password, salt, time, memory, threads, keyLen)
+	}
+	bcryptCompare = func(hash, password []byte) error {
+		bcryptCalls.Add(1)
+		return realBcrypt(hash, password)
+	}
+	t.Cleanup(func() { argon2idKey, bcryptCompare = realArgon, realBcrypt })
+	return argonCalls, bcryptCalls
+}
+
+func TestVerificationWorkDoesNotDependOnAccountOrOutcome(t *testing.T) {
+	legacy, err := bcrypt.GenerateFromPassword([]byte(testPassword), DefaultBcryptCost)
+	if err != nil {
+		t.Fatalf("legacy hash: %v", err)
+	}
+	migrated, err := HashPassword(testPassword)
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+	cases := map[string]string{"unknown": "", "legacy": string(legacy), "migrated": migrated}
+	for _, legacyPresent := range []bool{true, false} {
+		for name, stored := range cases {
+			if name == "legacy" && !legacyPresent {
+				continue // a bcrypt hash means legacy hashes are present
+			}
+			for _, password := range []string{testPassword, "wrong-password-123"} {
+				argonCalls, bcryptCalls := countPrimitives(t)
+				if _, err := VerifyPassword(context.Background(), stored, password, VerifyOptions{LegacyHashesPresent: legacyPresent}); err != nil {
+					t.Fatalf("%s verify: %v", name, err)
+				}
+				wantBcrypt := int64(0)
+				if legacyPresent {
+					wantBcrypt = 1
+				}
+				if argonCalls.Load() != 1 || bcryptCalls.Load() != wantBcrypt {
+					t.Fatalf("legacyPresent=%v %s: argon2id=%d bcrypt=%d want 1/%d", legacyPresent, name, argonCalls.Load(), bcryptCalls.Load(), wantBcrypt)
+				}
+			}
+		}
+	}
+}
+
+func shortContext(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	t.Cleanup(cancel)
+	return ctx
+}
+
+func TestPasswordHashingConcurrencyIsBounded(t *testing.T) {
+	// An anonymous flood holding every shared slot blocks only anonymous work.
+	for i := 0; i < cap(sharedPasswordSlots); i++ {
+		sharedPasswordSlots <- struct{}{}
+	}
+	_, verifyErr := VerifyPassword(shortContext(t), "", testPassword, VerifyOptions{Caller: Anonymous})
+	_, hashErr := HashPasswordContext(shortContext(t), Anonymous, testPassword)
+	_, signedInErr := VerifyPassword(shortContext(t), "", testPassword, VerifyOptions{Caller: SignedIn})
+	_, signedInHashErr := HashPasswordContext(shortContext(t), SignedIn, testPassword)
+	signedInPasswordSlots <- struct{}{}
+	_, exhaustedErr := VerifyPassword(shortContext(t), "", testPassword, VerifyOptions{Caller: SignedIn})
+	<-signedInPasswordSlots
+	for i := 0; i < cap(sharedPasswordSlots); i++ {
+		<-sharedPasswordSlots
+	}
+	if !errors.Is(verifyErr, context.DeadlineExceeded) || !errors.Is(hashErr, context.DeadlineExceeded) {
+		t.Fatalf("full shared slots: anonymous verify err=%v hash err=%v", verifyErr, hashErr)
+	}
+	if signedInErr != nil || signedInHashErr != nil {
+		t.Fatalf("reserved slot unavailable to signed-in callers: verify err=%v hash err=%v", signedInErr, signedInHashErr)
+	}
+	if !errors.Is(exhaustedErr, context.DeadlineExceeded) {
+		t.Fatalf("all slots full: signed-in verify err=%v", exhaustedErr)
+	}
+	if cap(sharedPasswordSlots)+cap(signedInPasswordSlots) != MaxConcurrentPasswordHashes {
+		t.Fatalf("slot pools %d+%d do not add up to %d", cap(sharedPasswordSlots), cap(signedInPasswordSlots), MaxConcurrentPasswordHashes)
+	}
+
+	var active, peak atomic.Int64
+	realArgon := argon2idKey
+	argon2idKey = func(password, salt []byte, time, memory uint32, threads uint8, keyLen uint32) []byte {
+		now := active.Add(1)
+		for {
+			old := peak.Load()
+			if now <= old || peak.CompareAndSwap(old, now) {
+				break
+			}
+		}
+		defer active.Add(-1)
+		return realArgon(password, salt, time, memory, threads, keyLen)
+	}
+	t.Cleanup(func() { argon2idKey = realArgon })
+	var wg sync.WaitGroup
+	for i := 0; i < 12; i++ {
+		wg.Add(1)
+		go func(caller Caller) {
+			defer wg.Done()
+			if _, err := VerifyPassword(context.Background(), "", testPassword, VerifyOptions{Caller: caller}); err != nil {
+				t.Errorf("burst verify: %v", err)
+			}
+		}(Caller(i % 2))
+	}
+	wg.Wait()
+	if peak.Load() > MaxConcurrentPasswordHashes {
+		t.Fatalf("peak concurrent Argon2id=%d want <= %d", peak.Load(), MaxConcurrentPasswordHashes)
+	}
+}
+
+type fakePasswordStore struct {
+	mu      sync.Mutex
+	hash    string
+	legacy  bool
+	probes  int
+	updates int
+}
+
+func (s *fakePasswordStore) UpgradePasswordHash(_ context.Context, _, currentHash, updatedHash string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.hash != currentHash {
+		return false, nil
+	}
+	s.hash = updatedHash
+	s.legacy = IsLegacyPasswordHash(updatedHash)
+	s.updates++
+	return true, nil
+}
+
+func (s *fakePasswordStore) HasLegacyPasswordHashes(context.Context) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.probes++
+	return s.legacy, nil
+}
+
+func TestPasswordsMigrateLegacyHashOnlyThroughUpgrade(t *testing.T) {
+	legacy, err := bcrypt.GenerateFromPassword([]byte(testPassword), DefaultBcryptCost)
+	if err != nil {
+		t.Fatalf("legacy hash: %v", err)
+	}
+	store := &fakePasswordStore{hash: string(legacy), legacy: true}
+	passwords := NewPasswords(store, DefaultBcryptCost, nil)
+	ctx := context.Background()
+
+	wrong, err := passwords.Verify(ctx, Anonymous, store.hash, "wrong-password-123")
+	if err != nil || wrong.OK {
+		t.Fatalf("wrong password: %+v err=%v", wrong, err)
+	}
+	passwords.Upgrade(ctx, "acct", store.hash, "wrong-password-123", wrong)
+	check, err := passwords.Verify(ctx, Anonymous, store.hash, testPassword)
+	if err != nil || !check.OK || !check.Rehash {
+		t.Fatalf("legacy verify: %+v err=%v", check, err)
+	}
+	if store.updates != 0 {
+		t.Fatal("Verify wrote a hash before the caller finished its checks")
+	}
+	passwords.Upgrade(ctx, "acct", string(legacy), testPassword, check)
+	if store.updates != 1 || !strings.HasPrefix(store.hash, "$argon2id$") {
+		t.Fatalf("legacy hash not migrated: updates=%d", store.updates)
+	}
+	if store.probes != 2 {
+		t.Fatalf("legacy probes=%d want 2 (startup and after the last bcrypt hash migrated)", store.probes)
+	}
+
+	argonCalls, bcryptCalls := countPrimitives(t)
+	check, err = passwords.Verify(ctx, SignedIn, store.hash, testPassword)
+	if err != nil || !check.OK || check.Rehash {
+		t.Fatalf("migrated verify: %+v err=%v", check, err)
+	}
+	if argonCalls.Load() != 1 || bcryptCalls.Load() != 0 {
+		t.Fatalf("after migration argon2id=%d bcrypt=%d want 1/0", argonCalls.Load(), bcryptCalls.Load())
+	}
+	// A concurrent change wins over a stale upgrade.
+	passwords.Upgrade(ctx, "acct", string(legacy), testPassword, PasswordCheck{OK: true, Rehash: true, Legacy: true})
+	if store.updates != 1 {
+		t.Fatal("stale upgrade replaced a newer hash")
+	}
+}
+
+func BenchmarkPasswordVerification(b *testing.B) {
+	ctx := context.Background()
+	current, err := HashPassword(testPassword)
+	if err != nil {
+		b.Fatalf("hash: %v", err)
+	}
+	legacy10, err := bcrypt.GenerateFromPassword([]byte(testPassword), 10)
+	if err != nil {
+		b.Fatalf("legacy hash: %v", err)
+	}
+	for _, bench := range []struct {
+		name   string
+		stored string
+		legacy bool
+	}{
+		{"argon2id", current, false},
+		{"argon2id-while-legacy-present", current, true},
+		{"unknown-account", "", false},
+		{"unknown-account-while-legacy-present", "", true},
+		{"bcrypt-10-legacy", string(legacy10), true},
+	} {
+		b.Run(bench.name, func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				if _, err := VerifyPassword(ctx, bench.stored, testPassword, VerifyOptions{LegacyHashesPresent: bench.legacy}); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
 }

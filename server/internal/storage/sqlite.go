@@ -48,7 +48,8 @@ var (
 )
 
 type Store struct {
-	db *dbRouter
+	db       *dbRouter
+	sessions sessionPolicy
 }
 
 type dbRouter struct {
@@ -117,7 +118,7 @@ func Open(ctx context.Context, cfg config.Config) (*Store, error) {
 	// Query calls use their own pool. SQLite's WAL mode gives those reads
 	// deferred transactions by default, while writes stay serialized through
 	// the single writer connection.
-	store := &Store{db: &dbRouter{reader: reader, writer: writer}}
+	store := &Store{db: &dbRouter{reader: reader, writer: writer}, sessions: newSessionPolicy(cfg)}
 	return store, nil
 }
 

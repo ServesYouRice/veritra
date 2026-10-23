@@ -2037,7 +2037,31 @@ class AppState extends ChangeNotifier {
       if (current == null || client == null || deviceSecret == null) {
         throw StateError(l10n.errorRelinkRequired);
       }
-      await client.reauthenticate(current.token, password, deviceSecret);
+      final rotated =
+          await client.reauthenticate(current.token, password, deviceSecret);
+      if (rotated != null && !identical(session, current)) {
+        // The session ended or changed while the request was in flight; the
+        // caller must not run a sensitive action on its behalf.
+        return;
+      }
+      if (rotated != null) {
+        // The server rotated the token (card T37C): persist it before use so
+        // a restart never reloads the old one, then reconnect sync with it.
+        // A failure here leaves the old token, which the server still accepts
+        // for a short grace, so the user can simply retry.
+        final next = Session(
+          baseUrl: current.baseUrl,
+          token: rotated,
+          accountId: current.accountId,
+          deviceId: current.deviceId,
+          username: current.username,
+          deviceSecret: current.deviceSecret,
+          role: current.role,
+        );
+        await localStore.saveSession(next);
+        session = next;
+        unawaited(_startSync());
+      }
       succeeded = true;
     });
     return succeeded;

@@ -66,6 +66,53 @@ void main() {
     }
   });
 
+  test('reauthentication asks for token rotation and returns the new token',
+      () async {
+    final harness = await _RequestHarness.start();
+    addTearDown(harness.close);
+    final client = ApiClient(baseUrl: harness.baseUrl);
+    addTearDown(client.close);
+
+    final rotatingRequest = harness.nextRequest;
+    final rotating =
+        client.reauthenticate('token_old', 'owner-password-123', 'secret_1');
+    final rotate = await rotatingRequest;
+    expect(rotate.method, 'POST');
+    expect(rotate.uri.path, '/api/v1/auth/reauth');
+    expect(rotate.headers.value(HttpHeaders.authorizationHeader),
+        'Bearer token_old');
+    expect(rotate.headers.value(ApiClient.sessionRotationHeader), '1');
+    expect(await _requestJson(rotate), <String, Object?>{
+      'password': 'owner-password-123',
+      'device_secret': 'secret_1',
+    });
+    rotate.response.headers.contentType = ContentType.json;
+    rotate.response.write(jsonEncode(<String, Object?>{'token': 'token_new'}));
+    await rotate.response.close();
+    expect(await rotating, 'token_new');
+
+    // An older server answers 204 and the caller keeps its token.
+    final legacyRequest = harness.nextRequest;
+    final legacy =
+        client.reauthenticate('token_old', 'owner-password-123', 'secret_1');
+    final noRotation = await legacyRequest;
+    await utf8.decodeStream(noRotation);
+    noRotation.response.statusCode = HttpStatus.noContent;
+    await noRotation.response.close();
+    expect(await legacy, isNull);
+
+    // A malformed token is a contract break, never a silent keep.
+    final badRequest = harness.nextRequest;
+    final bad =
+        client.reauthenticate('token_old', 'owner-password-123', 'secret_1');
+    final malformed = await badRequest;
+    await utf8.decodeStream(malformed);
+    malformed.response.headers.contentType = ContentType.json;
+    malformed.response.write(jsonEncode(<String, Object?>{'token': 7}));
+    await malformed.response.close();
+    await expectLater(bad, throwsA(isA<ApiResponseException>()));
+  });
+
   test('call API sends exact create and transition JSON', () async {
     final harness = await _RequestHarness.start();
     addTearDown(harness.close);
@@ -416,12 +463,35 @@ void main() {
       deviceId: owner.deviceId!,
       deviceSecret: owner.deviceSecret!,
     );
-    await client.reauthenticate(
+    // Reauthentication rotates the session token (card T37C). The old token
+    // keeps working for in-flight requests during a short grace, but it can
+    // no longer use recent authentication.
+    final rotated = await client.reauthenticate(
       owner.token,
       'owner-password-123',
       owner.deviceSecret!,
     );
-    await client.logoutAll(owner.token);
+    expect(rotated, isNotNull);
+    var ownerToken = rotated!;
+    expect(ownerToken, isNot(owner.token));
+    expect(await client.devices(owner.token), isNotEmpty);
+    await expectLater(
+      client.logoutAll(owner.token),
+      throwsA(isA<ApiException>().having(
+        (error) => error.serverCode,
+        'serverCode',
+        'recent_auth_required',
+      )),
+    );
+    await client.logoutAll(ownerToken);
+    await expectLater(
+      client.devices(owner.token),
+      throwsA(isA<ApiException>().having(
+        (error) => error.serverCode,
+        'serverCode',
+        'unauthorized',
+      )),
+    );
     await expectLater(
       client.conversations(login.token),
       throwsA(isA<ApiException>().having(
@@ -430,7 +500,7 @@ void main() {
         'unauthorized',
       )),
     );
-    await client.changePassword(owner.token, 'owner-password-456');
+    await client.changePassword(ownerToken, 'owner-password-456');
     final relogin = await client.login(
       username: 'contract-owner',
       password: 'owner-password-456',
@@ -439,14 +509,16 @@ void main() {
     );
     await client.logout(relogin.token);
 
-    await client.reauthenticate(
-      owner.token,
+    final rotatedAgain = await client.reauthenticate(
+      ownerToken,
       'owner-password-456',
       owner.deviceSecret!,
     );
-    await client.revokeDevice(owner.token, linkReservation.deviceId);
+    expect(rotatedAgain, isNotNull);
+    ownerToken = rotatedAgain!;
+    await client.revokeDevice(ownerToken, linkReservation.deviceId);
     await expectLater(
-      client.message(owner.token, 'msg_missing'),
+      client.message(ownerToken, 'msg_missing'),
       throwsA(isA<ApiException>()
           .having((error) => error.statusCode, 'status', 404)
           .having((error) => error.serverCode, 'serverCode', 'not_found')),
@@ -456,12 +528,12 @@ void main() {
     // require that conversation to hold exactly two members, so the peer
     // cannot be added afterwards either.
     final dm = await client.createConversationDetailed(
-      owner.token,
+      ownerToken,
       kind: 'dm',
       memberAccountIds: <String>[member.accountId!],
     );
 
-    final iceServers = await client.callIceServers(owner.token);
+    final iceServers = await client.callIceServers(ownerToken);
     expect(iceServers, isA<List<Map<String, Object?>>>());
 
     final createCallMetadata = <String, Object?>{
@@ -472,7 +544,7 @@ void main() {
       'action_id': 'action_call_create_1',
     };
     final createdCall = await client.createCall(
-      owner.token,
+      ownerToken,
       dm.id,
       createCallMetadata,
     );
@@ -483,11 +555,11 @@ void main() {
     expect(createdCall.state, 'ringing');
     expect(createdCall.version, 1);
     final retriedCreate =
-        await client.createCall(owner.token, dm.id, createCallMetadata);
+        await client.createCall(ownerToken, dm.id, createCallMetadata);
     expect(retriedCreate.id, createdCall.id);
     expect(retriedCreate.version, createdCall.version);
 
-    final callList = await client.calls(owner.token, dm.id);
+    final callList = await client.calls(ownerToken, dm.id);
     expect(callList, isNotEmpty);
     expect(callList.first.id, createdCall.id);
 
@@ -553,7 +625,7 @@ void main() {
     expect(retriedAnswer.version, activeCall.version);
 
     final endedCall = await client.transitionCall(
-      owner.token,
+      ownerToken,
       createdCall.id,
       'ended',
       expectedVersion: activeCall.version,
@@ -561,7 +633,7 @@ void main() {
     expect(endedCall.state, 'ended');
     expect(endedCall.endedAt, isNotNull);
 
-    final finalCall = (await client.calls(owner.token, dm.id))
+    final finalCall = (await client.calls(ownerToken, dm.id))
         .singleWhere((call) => call.id == createdCall.id);
     expect(finalCall.state, 'ended');
     expect(finalCall.version, endedCall.version);

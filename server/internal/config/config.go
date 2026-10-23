@@ -40,12 +40,24 @@ type Config struct {
 	LogFormat        string
 	PasswordCost     int
 	SyncRetention    time.Duration
+	// Session lifetimes (card T37C). A session ends SessionIdleLifetime after
+	// its last use or SessionAbsoluteLifetime after its last password and
+	// device-secret authentication, whichever comes first. Zero means default.
+	SessionIdleLifetime     time.Duration
+	SessionAbsoluteLifetime time.Duration
 }
 
 const (
+	// DefaultPasswordCost is the legacy bcrypt cost. New hashes are Argon2id;
+	// the cost only sizes the timing-equalisation dummy while bcrypt hashes
+	// remain.
 	DefaultPasswordCost = 10
 	MinPasswordCost     = 10
 	MaxPasswordCost     = 15
+
+	DefaultSessionIdleLifetime     = 14 * 24 * time.Hour
+	DefaultSessionAbsoluteLifetime = 30 * 24 * time.Hour
+	maxSessionLifetimeDays         = 365
 )
 
 // SecretEnvKeys are the settings that may also be supplied as a file named
@@ -100,6 +112,9 @@ func Load() (Config, error) {
 		LogFormat:        strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_LOG_FORMAT", "text"))),
 		PasswordCost:     passwordCost,
 		SyncRetention:    30 * 24 * time.Hour,
+
+		SessionIdleLifetime:     DefaultSessionIdleLifetime,
+		SessionAbsoluteLifetime: DefaultSessionAbsoluteLifetime,
 	}
 	if cfg.Environment != "development" && cfg.Environment != "production" {
 		return Config{}, fmt.Errorf("PRIVATE_MESSENGER_ENV must be development or production")
@@ -124,12 +139,11 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("invalid PRIVATE_MESSENGER_TURN_URLS entry")
 		}
 	}
-	if raw := strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_SYNC_EVENT_RETENTION_DAYS")); raw != "" {
-		days, err := strconv.Atoi(raw)
-		if err != nil || days <= 0 || days > 3650 {
-			return Config{}, fmt.Errorf("PRIVATE_MESSENGER_SYNC_EVENT_RETENTION_DAYS must be between 1 and 3650")
-		}
-		cfg.SyncRetention = time.Duration(days) * 24 * time.Hour
+	if _, err := daysEnv("PRIVATE_MESSENGER_SYNC_EVENT_RETENTION_DAYS", 3650, &cfg.SyncRetention); err != nil {
+		return Config{}, err
+	}
+	if err := loadSessionLifetimes(&cfg); err != nil {
+		return Config{}, err
 	}
 	cfg.DatabasePath = getenv("PRIVATE_MESSENGER_DB_PATH", filepath.Join(cfg.DataDir, "private-messenger.db"))
 	cfg.StoragePath = getenv("PRIVATE_MESSENGER_STORAGE_PATH", filepath.Join(cfg.DataDir, "blobs"))
@@ -145,6 +159,40 @@ func parsePasswordCost(raw string) (int, error) {
 		return 0, fmt.Errorf("PRIVATE_MESSENGER_BCRYPT_COST must be between %d and %d", MinPasswordCost, MaxPasswordCost)
 	}
 	return cost, nil
+}
+
+// daysEnv stores a whole number of days from key (1..max) into dest and
+// reports whether key was set. An unset key leaves dest unchanged.
+func daysEnv(key string, max int, dest *time.Duration) (bool, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return false, nil
+	}
+	days, err := strconv.Atoi(raw)
+	if err != nil || days <= 0 || days > max {
+		return false, fmt.Errorf("%s must be between 1 and %d", key, max)
+	}
+	*dest = time.Duration(days) * 24 * time.Hour
+	return true, nil
+}
+
+func loadSessionLifetimes(cfg *Config) error {
+	idleSet, err := daysEnv("PRIVATE_MESSENGER_SESSION_IDLE_DAYS", maxSessionLifetimeDays, &cfg.SessionIdleLifetime)
+	if err != nil {
+		return err
+	}
+	if _, err := daysEnv("PRIVATE_MESSENGER_SESSION_ABSOLUTE_DAYS", maxSessionLifetimeDays, &cfg.SessionAbsoluteLifetime); err != nil {
+		return err
+	}
+	if cfg.SessionIdleLifetime > cfg.SessionAbsoluteLifetime {
+		if idleSet {
+			return fmt.Errorf("PRIVATE_MESSENGER_SESSION_IDLE_DAYS must not exceed PRIVATE_MESSENGER_SESSION_ABSOLUTE_DAYS")
+		}
+		// Only the absolute lifetime was shortened; the default idle
+		// lifetime follows it.
+		cfg.SessionIdleLifetime = cfg.SessionAbsoluteLifetime
+	}
+	return nil
 }
 
 // ValidateSetupToken accepts the one supported operator encoding: unpadded

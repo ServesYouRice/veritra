@@ -23,11 +23,24 @@ recovery, stop the server and use `reset-owner-password --account ...
 requires clients to register new push subscriptions; never place private keys
 in command arguments or logs.
 
-New password hashes retain the current bcrypt cost 10 by default. Operators
-may set `PRIVATE_MESSENGER_BCRYPT_COST` from 10 through 15; successful login
-and reauthentication rehash older bcrypt records without retaining plaintext.
-Promoting the default to cost 12 is deferred until the auth benchmark is run
-on supported deployment hardware and its p50/p95/p99 CPU results are recorded.
+New password hashes are Argon2id (64 MiB, 2 passes, 1 lane), stored as
+self-describing PHC strings. Existing bcrypt hashes keep working, and each one
+is replaced by an Argon2id hash after that account's next fully successful
+sign-in or reauthentication; plaintext is never stored or logged. At most three
+hashes run at once (one reserved for signed-in users), so a sign-in burst holds
+about 192 MiB of hash buffers; set `GOMEMLIMIT` (for example 768MiB in a 1 GiB
+container) so the Go runtime reclaims them promptly.
+`PRIVATE_MESSENGER_BCRYPT_COST` (10 through 15) now only sets the cost of the
+timing-equalising bcrypt comparison while bcrypt hashes remain; match it to
+the cost your existing hashes use. Measurements:
+`testing/evidence/T37C-password-sessions.md`.
+
+Sessions end after `PRIVATE_MESSENGER_SESSION_IDLE_DAYS` (default 14) without
+use, or `PRIVATE_MESSENGER_SESSION_ABSOLUTE_DAYS` (default 30) after the last
+password and device-secret check, whichever comes first. Reauthenticating
+rotates the session token; the old token works for two more minutes so
+requests in flight finish, without recent-auth rights. Sign-out, password
+change, sign-out of other devices and device removal revoke both tokens.
 
 Recovery download capabilities are sent only in the `X-Recovery-Token` request
 header to `GET /api/v1/recovery`; they are never URL credentials. Each new

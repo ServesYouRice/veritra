@@ -405,7 +405,7 @@ func (s *Store) ConsumeApprovedDeviceLink(ctx context.Context, linkID, claimToke
 		return AccountDevice{}, err
 	}
 	createdAt := nowString()
-	sessionExpiry, absoluteExpiry := sessionLifetime(parseTime(createdAt), sessionExpiresAt)
+	sessionExpiry, absoluteExpiry := s.sessionLifetime(parseTime(createdAt), sessionExpiresAt)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO sessions(token_hash, account_id, device_id, expires_at, created_at, recent_auth_at, last_used_at, absolute_expires_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, sessionTokenHash, linked.Account.ID, linked.Device.ID, sessionExpiry, createdAt, createdAt, createdAt, absoluteExpiry); err != nil {
 		return AccountDevice{}, err
 	}
