@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Local release command for the Veritra server image (no hosted CI).
 #
-#   scripts/release-image.sh [--image REPO] [--infra-dir DIR] [--no-push]
+#   scripts/release-image.sh [--image REPO] [--infra-dir DIR] [--no-push] [--skip-smoke]
 #
 # 1. Refuses a dirty tree, so the image always matches a commit.
 # 2. Runs the server checks and dependency scans: gofmt, go vet, go test,
@@ -10,8 +10,11 @@
 #    the build context (no local .env, keys or data), tagged with the commit.
 # 4. Scans the image with Trivy (vulnerabilities and secrets); a HIGH or
 #    CRITICAL finding stops the release.
-# 5. Pushes to the registry, verifies and prints the digest.
-# 6. With --infra-dir, writes the digest into DIR/kustomization.yaml (the
+# 5. Runs scripts/smoke-deploy.sh on that exact image (hardened Compose
+#    stack: setup, uploads, backup, restore, push, TURN, log privacy).
+#    --skip-smoke skips it; say so in the release record.
+# 6. Pushes to the registry, verifies and prints the digest.
+# 7. With --infra-dir, writes the digest into DIR/kustomization.yaml (the
 #    `digest:` line under the image's `name:`) and commits that file in the
 #    infra repository. Push that repository yourself; Flux applies it.
 #
@@ -26,10 +29,11 @@ ROOT="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
 IMAGE="${VERITRA_IMAGE_REPO:-ghcr.io/servesyourice/veritra}"
 INFRA_DIR=""
 PUSH=1
+SMOKE=1
 GOVULNCHECK="golang.org/x/vuln/cmd/govulncheck@v1.1.4"
 
 usage() {
-  sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [ $# -gt 0 ]; do
@@ -37,6 +41,7 @@ while [ $# -gt 0 ]; do
     --image) IMAGE="${2:?--image needs a value}"; shift 2 ;;
     --infra-dir) INFRA_DIR="${2:?--infra-dir needs a value}"; shift 2 ;;
     --no-push) PUSH=0; shift ;;
+    --skip-smoke) SMOKE=0; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -105,6 +110,13 @@ git archive --format=tar HEAD | docker build \
 step "image scan (trivy)"
 trivy image --image-src docker --scanners vuln,secret --severity HIGH,CRITICAL \
   --exit-code 1 --no-progress "$IMAGE:$TAG"
+
+if [ "$SMOKE" -eq 1 ]; then
+  step "hardened deployment smoke"
+  scripts/smoke-deploy.sh --image "$IMAGE:$TAG"
+else
+  echo "warning: --skip-smoke: this image was not smoke-tested" >&2
+fi
 
 if [ "$PUSH" -eq 0 ]; then
   step "done (not pushed)"

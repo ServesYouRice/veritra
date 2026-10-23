@@ -67,6 +67,9 @@ spec:
                   value: /data
                 - name: PRIVATE_MESSENGER_BACKUP_KEEP
                   value: "7"
+                # About 75% of limits.memory.
+                - name: GOMEMLIMIT
+                  value: 384MiB
               volumeMounts:
                 - name: data
                   mountPath: /data

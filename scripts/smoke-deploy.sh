@@ -213,6 +213,7 @@ check_hardening() {
   docker inspect --format '{{json .HostConfig.SecurityOpt}}' "$server" | grep -q 'no-new-privileges:true' || fail "server lacks no-new-privileges"
   [ "$(docker inspect --format '{{.HostConfig.Memory}}' "$server")" -gt 0 ] || fail "server has no memory limit"
   [ "$(docker inspect --format '{{.HostConfig.PidsLimit}}' "$server")" -gt 0 ] || fail "server has no pids limit"
+  docker inspect --format '{{json .Config.Env}}' "$server" | grep -q '"GOMEMLIMIT=[0-9]*MiB"' || fail "server has no GOMEMLIMIT"
   [ "$(docker inspect --format '{{.State.Health.Status}}' "$server")" = "healthy" ] || fail "server healthcheck is not healthy"
   [ "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' "$caddy")" = "true" ] || fail "caddy root filesystem is writable"
   [ "$(docker inspect --format '{{json .HostConfig.CapDrop}}' "$caddy")" = '["ALL"]' ] || fail "caddy keeps capabilities"
@@ -221,7 +222,7 @@ check_hardening() {
   leak_check "$TMP/inspect.json" || fail "a secret value appears in docker inspect"
 }
 check_hardening "${COMPOSE[@]}"
-pass "read-only root, no capabilities (caddy: NET_BIND_SERVICE), uid 65532, no-new-privileges, limits; no secret in docker inspect"
+pass "read-only root, no capabilities (caddy: NET_BIND_SERVICE), uid 65532, no-new-privileges, memory/pids limits and GOMEMLIMIT; no secret in docker inspect"
 
 caddy_ca() {
   local project=("${@:2}")

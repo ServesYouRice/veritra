@@ -2,6 +2,10 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: veritra
+  annotations:
+    # Deleting the namespace deletes the data volume. Flux must never do
+    # that because a file vanished from infra; remove it by hand if meant.
+    kustomize.toolkit.fluxcd.io/prune: disabled
   labels:
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest

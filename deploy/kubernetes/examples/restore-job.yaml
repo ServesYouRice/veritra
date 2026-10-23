@@ -75,6 +75,12 @@ spec:
             runAsNonRoot: true
             capabilities:
               drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
       containers:
         - name: restore
           # Use the digest the server runs (or the backup's matching release).
@@ -85,6 +91,9 @@ spec:
               value: production
             - name: PRIVATE_MESSENGER_DATA_DIR
               value: /data
+            # About 75% of limits.memory.
+            - name: GOMEMLIMIT
+              value: 384MiB
           volumeMounts:
             - name: data
               mountPath: /data
@@ -96,6 +105,12 @@ spec:
             runAsNonRoot: true
             capabilities:
               drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 512Mi
       volumes:
         - name: data
           persistentVolumeClaim:

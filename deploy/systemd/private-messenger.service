@@ -28,6 +28,11 @@ Restart=on-failure
 RestartSec=5
 # Must stay above the server's 25-second shutdown budget.
 TimeoutStopSec=30
+# Same limits as the Compose service: GOMEMLIMIT at about 75% of MemoryMax
+# lets the Go runtime collect before the kernel kills it (each Argon2id
+# login hash takes 64 MiB, up to 3 at once). Change both together.
+MemoryMax=1G
+Environment=GOMEMLIMIT=768MiB
 
 # Least privilege (card I46). The state directory is the only writable path.
 # If PRIVATE_MESSENGER_DB_PATH or PRIVATE_MESSENGER_STORAGE_PATH point

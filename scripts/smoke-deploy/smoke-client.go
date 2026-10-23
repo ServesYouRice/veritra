@@ -16,7 +16,8 @@
 //	vapid-keys -private-out FILE          new VAPID key pair; prints the public key
 //	wait -base URL [-ca FILE]              wait until /readyz answers 200
 //	run -base URL -state FILE ...          first-run smoke (see runSmoke)
-//	verify -base URL -state FILE [-ca F]   checks against a restored instance
+//	verify -base URL -state FILE [-ca F]   checks against a restored or upgraded instance
+//	slow-upload -base URL -state FILE ...  an attachment upload that lasts -seconds
 package main
 
 import (
@@ -62,6 +63,8 @@ func main() {
 		err = runSmoke(os.Args[2:])
 	case "verify":
 		err = verifyRestored(os.Args[2:])
+	case "slow-upload":
+		err = slowUpload(os.Args[2:])
 	default:
 		err = fmt.Errorf("unknown command %q", os.Args[1])
 	}
@@ -366,7 +369,7 @@ func verifyRestored(args []string) error {
 	if err := c.login(&st); err != nil {
 		return fmt.Errorf("login on the restored instance: %w", err)
 	}
-	pass("restored instance: owner login")
+	pass("kept data: owner login")
 	if err := c.download("/api/v1/attachments/"+st.AttachmentID, nil, st.AttachmentSHA256, st.AttachmentSize); err != nil {
 		return fmt.Errorf("restored attachment: %w", err)
 	}
@@ -391,7 +394,7 @@ func verifyRestored(args []string) error {
 	if err := c.download("/api/v1/backups/"+backupID, nil, st.BackupSHA256, st.BackupSize); err != nil {
 		return fmt.Errorf("restored encrypted backup: %w", err)
 	}
-	pass("restored instance: attachment and encrypted backup blobs intact")
+	pass("kept data: attachment and encrypted backup blobs intact")
 	fresh, err := c.uploadAttachment(st.ConversationID, 1<<20)
 	if err != nil {
 		return fmt.Errorf("write on the restored instance: %w", err)
@@ -399,7 +402,7 @@ func verifyRestored(args []string) error {
 	if err := c.download("/api/v1/attachments/"+fresh.ID, nil, fresh.SHA256, fresh.Size); err != nil {
 		return err
 	}
-	pass("restored instance: new SQLite and blob writes")
+	pass("kept data: new SQLite and blob writes work")
 	var subscriptions struct {
 		Subscriptions []struct {
 			Provider string `json:"provider"`
@@ -411,7 +414,50 @@ func verifyRestored(args []string) error {
 	if len(subscriptions.Subscriptions) != 1 || subscriptions.Subscriptions[0].Provider != "webpush" {
 		return errors.New("restored instance lost the push registration")
 	}
-	pass("restored instance: push registration kept")
+	pass("kept data: push registration")
+	return nil
+}
+
+// slowUpload proves the proxy lets a transfer run past its default read
+// timeout (Traefik v3: 60 s): one attachment upload paced to last -seconds.
+func slowUpload(args []string) error {
+	fs := flag.NewFlagSet("slow-upload", flag.ContinueOnError)
+	base := fs.String("base", "", "server base URL")
+	ca := fs.String("ca", "", "PEM CA file for an HTTPS base URL")
+	statePath := fs.String("state", "", "state file written by run")
+	mib := fs.Int("mib", 4, "attachment size in MiB")
+	seconds := fs.Int("seconds", 90, "how long the upload should take")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	raw, err := os.ReadFile(*statePath)
+	if err != nil {
+		return err
+	}
+	var st state
+	if err := json.Unmarshal(raw, &st); err != nil {
+		return fmt.Errorf("state file: %w", err)
+	}
+	c, err := newClient(*base, *ca)
+	if err != nil {
+		return err
+	}
+	if err := c.login(&st); err != nil {
+		return err
+	}
+	size := int64(*mib) << 20
+	c.rate = float64(size) / float64(*seconds)
+	started := time.Now()
+	upload, err := c.uploadAttachment(st.ConversationID, size)
+	elapsed := time.Since(started).Round(time.Second)
+	if err != nil {
+		return fmt.Errorf("upload cut off after %s: %w", elapsed, err)
+	}
+	c.rate = 0
+	if err := c.download("/api/v1/attachments/"+upload.ID, nil, upload.SHA256, upload.Size); err != nil {
+		return err
+	}
+	pass(fmt.Sprintf("slow upload of %d MiB took %s and completed intact", *mib, elapsed))
 	return nil
 }
 
@@ -625,6 +671,7 @@ type client struct {
 	http  *http.Client
 	ws    *http.Client
 	token string
+	rate  float64 // upload bytes per second; 0 means unthrottled
 }
 
 func newClient(base, caFile string) (*client, error) {
@@ -747,7 +794,11 @@ func (c *client) uploadBlob(path string, size int64, headers map[string]string) 
 		return uploaded{}, err
 	}
 	hash := sha256.New()
-	body := &sizedReader{r: io.TeeReader(io.MultiReader(bytes.NewReader(prefix), io.LimitReader(rand.Reader, size-int64(len(prefix)))), hash), n: size}
+	var source io.Reader = io.TeeReader(io.MultiReader(bytes.NewReader(prefix), io.LimitReader(rand.Reader, size-int64(len(prefix)))), hash)
+	if c.rate > 0 {
+		source = &throttled{r: source, rate: c.rate, start: time.Now()}
+	}
+	body := &sizedReader{r: source, n: size}
 	all := map[string]string{"Content-Type": "application/octet-stream"}
 	for key, value := range headers {
 		all[key] = value
@@ -835,6 +886,26 @@ func syntheticKeyPackage() []byte {
 			return value
 		}
 	}
+}
+
+// throttled paces reads to rate bytes per second, like a slow uplink.
+type throttled struct {
+	r     io.Reader
+	rate  float64
+	start time.Time
+	sent  int64
+}
+
+func (t *throttled) Read(p []byte) (int, error) {
+	if len(p) > 16<<10 {
+		p = p[:16<<10]
+	}
+	n, err := t.r.Read(p)
+	t.sent += int64(n)
+	if wait := time.Duration(float64(t.sent)/t.rate*float64(time.Second)) - time.Since(t.start); wait > 0 {
+		time.Sleep(wait)
+	}
+	return n, err
 }
 
 type sizedReader struct {

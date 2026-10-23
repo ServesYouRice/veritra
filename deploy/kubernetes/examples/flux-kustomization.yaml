@@ -1,0 +1,43 @@
+# Flux object that deploys Veritra from the infra repository. Put it in the
+# cluster folder Flux bootstraps from (for example clusters/vps/veritra.yaml);
+# `flux bootstrap` creates the GitRepository named flux-system with a
+# read-only deploy key. Layout in infra:
+#
+#   apps/veritra/base/        copy of deploy/kubernetes/base at the release
+#                             commit (infra holds exactly what is applied)
+#   apps/veritra/production/  copy of examples/overlay; resources: [../base];
+#                             scripts/release-image.sh --infra-dir points here
+#   apps/veritra/production/secrets.sops.yaml
+#                             veritra-secrets and veritra-r2, SOPS/age encrypted
+#
+# No migration Job. The handbook's pattern (a Job with the new image that
+# runs before the app) does not fit Veritra: the server applies migrations
+# itself at startup while holding the single-writer lock, and a Job would
+# meet the old pod still holding that lock (Recreate stops it only once the
+# Deployment changes). Each migration and its record commit in one
+# transaction, and the startup probe allows 300 s for them.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: veritra
+  namespace: flux-system
+spec:
+  # The Traefik HelmChartConfig, cert-manager and the ClusterIssuer.
+  dependsOn:
+    - name: infrastructure
+  interval: 10m
+  retryInterval: 2m
+  # Recreate stops the old pod (up to 40 s) before the new one starts and
+  # migrates (startup probe up to 300 s).
+  timeout: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./apps/veritra/production
+  prune: true
+  # Ready only when the Deployment is available and the Certificate issued.
+  wait: true
+  decryption:
+    provider: sops
+    secretRef:
+      name: sops-age
