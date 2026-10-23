@@ -1350,6 +1350,11 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
         expect_blocked(root, with_android(smuggled), f"signed android artifact {reason}", no_signed,
                        absent=("is debuggable", "debug certificate"))
     expect_blocked(root, with_android(apk("comment.apk", comment=b"release notes")), "has a zip comment")
+    # An end record at the very end that claims a comment past the end of
+    # the file: zipfile accepts it, apksig finds no end record.
+    claimed = (dist / SIGNED_APK).read_bytes()[:-2] + struct.pack("<H", 5)
+    expect_blocked(root, with_android(raw("claimed-comment.apk", claimed)),
+                   "signed android artifact has a zip comment or does not end with its end of central directory record")
     good = (dist / SIGNED_APK).read_bytes()
     end = len(good) - 22
     entries = struct.unpack_from("<H", good, end + 10)[0]
