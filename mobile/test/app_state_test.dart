@@ -277,6 +277,92 @@ void main() {
     expect(stored?.deviceId, 'dev_owner');
   });
 
+  group('reauthentication token rotation (T37C)', () {
+    late MemoryLocalStore localStore;
+    late _ReauthApiClient api;
+    late List<String> syncTokens;
+    late AppState state;
+
+    setUp(() async {
+      localStore = MemoryLocalStore();
+      api = _ReauthApiClient();
+      syncTokens = <String>[];
+      state = AppState(
+        apiClientFactory: (_) => api,
+        cryptoService: TestOnlyCryptoService(),
+        localStore: localStore,
+        syncServiceFactory: (_, token) {
+          syncTokens.add(token);
+          return FakeSyncService();
+        },
+      )
+        ..api = api
+        ..session = const Session(
+          baseUrl: 'https://localhost:8080',
+          token: 'owner-token',
+          accountId: 'acct_owner',
+          deviceId: 'dev_owner',
+          username: 'owner',
+          deviceSecret: 'device-secret',
+          role: 'owner',
+        );
+      await localStore.saveSession(state.session!);
+    });
+
+    tearDown(() => state.dispose());
+
+    test('adopts, persists and reconnects with a rotated token', () async {
+      api.rotatedToken = 'rotated-token';
+      expect(await state.reauthenticate('owner-password-123'), isTrue);
+      expect(api.reauthTokens, <String>['owner-token']);
+      final current = state.session!;
+      expect(current.token, 'rotated-token');
+      expect(current.accountId, 'acct_owner');
+      expect(current.deviceId, 'dev_owner');
+      expect(current.deviceSecret, 'device-secret');
+      expect(current.role, 'owner');
+      expect((await localStore.loadSession())?.token, 'rotated-token');
+      await pumpEventQueue();
+      expect(syncTokens, contains('rotated-token'));
+      expect(syncTokens, isNot(contains('owner-token')));
+
+      // The next sensitive action uses the new token, never the old one.
+      api.rotatedToken = 'rotated-again';
+      expect(await state.reauthenticate('owner-password-123'), isTrue);
+      expect(api.reauthTokens, <String>['owner-token', 'rotated-token']);
+      expect(state.session?.token, 'rotated-again');
+    });
+
+    test('keeps the token when the server does not rotate', () async {
+      api.rotatedToken = null;
+      expect(await state.reauthenticate('owner-password-123'), isTrue);
+      expect(state.session?.token, 'owner-token');
+      expect((await localStore.loadSession())?.token, 'owner-token');
+      expect(syncTokens, isEmpty);
+    });
+
+    test('a refused reauthentication keeps the session and token', () async {
+      api.failure = ApiException(429, '{"error":"reauth_backoff"}');
+      expect(await state.reauthenticate('owner-password-123'), isFalse);
+      expect(state.session?.token, 'owner-token');
+      expect((await localStore.loadSession())?.token, 'owner-token');
+    });
+
+    test('a wrong reauthentication password does not sign out', () async {
+      api.failure = ApiException(401, '{"error":"invalid_credentials"}');
+      expect(await state.reauthenticate('wrong-password'), isFalse);
+      expect(state.session?.token, 'owner-token');
+      expect((await localStore.loadSession())?.token, 'owner-token');
+      expect(state.error, isNotNull);
+    });
+
+    test('a rejected session token still signs out', () async {
+      api.failure = ApiException(401, '{"error":"unauthorized"}');
+      expect(await state.reauthenticate('owner-password-123'), isFalse);
+      expect(state.session, isNull);
+    });
+  });
+
   test('failed encrypted envelope persists and retry reuses its key', () async {
     final localStore = MemoryLocalStore();
     final api = _OutboxApiClient()..failSend = true;
@@ -1086,6 +1172,24 @@ class _FailingRestoreStore extends MemoryLocalStore {
   @override
   Future<Session?> loadSession() async {
     throw StateError('database key unavailable');
+  }
+}
+
+class _ReauthApiClient extends FakeDeviceLinkApiClient {
+  String? rotatedToken;
+  Object? failure;
+  final List<String> reauthTokens = <String>[];
+
+  @override
+  Future<String?> reauthenticate(
+    String token,
+    String password,
+    String deviceSecret,
+  ) async {
+    final error = failure;
+    if (error != null) throw error;
+    reauthTokens.add(token);
+    return rotatedToken;
   }
 }
 

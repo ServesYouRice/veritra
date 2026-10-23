@@ -23,11 +23,24 @@ recovery, stop the server and use `reset-owner-password --account ...
 requires clients to register new push subscriptions; never place private keys
 in command arguments or logs.
 
-New password hashes retain the current bcrypt cost 10 by default. Operators
-may set `PRIVATE_MESSENGER_BCRYPT_COST` from 10 through 15; successful login
-and reauthentication rehash older bcrypt records without retaining plaintext.
-Promoting the default to cost 12 is deferred until the auth benchmark is run
-on supported deployment hardware and its p50/p95/p99 CPU results are recorded.
+New password hashes are Argon2id (64 MiB, 2 passes, 1 lane), stored as
+self-describing PHC strings. Existing bcrypt hashes keep working, and each one
+is replaced by an Argon2id hash after that account's next fully successful
+sign-in or reauthentication; plaintext is never stored or logged. At most three
+hashes run at once (one reserved for signed-in users), so a sign-in burst holds
+about 192 MiB of hash buffers; set `GOMEMLIMIT` (for example 768MiB in a 1 GiB
+container) so the Go runtime reclaims them promptly.
+`PRIVATE_MESSENGER_BCRYPT_COST` (10 through 15) now only sets the cost of the
+timing-equalising bcrypt comparison while bcrypt hashes remain; match it to
+the cost your existing hashes use. Measurements:
+`testing/evidence/T37C-password-sessions.md`.
+
+Sessions end after `PRIVATE_MESSENGER_SESSION_IDLE_DAYS` (default 14) without
+use, or `PRIVATE_MESSENGER_SESSION_ABSOLUTE_DAYS` (default 30) after the last
+password and device-secret check, whichever comes first. Reauthenticating
+rotates the session token; the old token works for two more minutes so
+requests in flight finish, without recent-auth rights. Sign-out, password
+change, sign-out of other devices and device removal revoke both tokens.
 
 Recovery download capabilities are sent only in the `X-Recovery-Token` request
 header to `GET /api/v1/recovery`; they are never URL credentials. Each new
@@ -138,9 +151,9 @@ filesystem, all capabilities dropped, `no-new-privileges` and a small
 in-memory `/tmp`. The data volume is the only writable application path. The
 backup service keeps its restore-drill scratch on that volume and has no
 network; its `/offsite` mount must be
-writable by uid 65532. Caddy keeps only `NET_BIND_SERVICE` and writes no
-access log (a `log` directive would record client addresses and the one-time
-setup header; the Caddyfile shows a safe filter if you need one). The systemd units
+writable by uid 65532. Caddy keeps only `NET_BIND_SERVICE`; its access and
+error logs drop the request URI and every credential header, and it sends
+each security header once. The systemd units
 use `ProtectSystem=strict` with the state directory as the only
 `ReadWritePaths`, an empty capability set, private `/tmp` and devices, and a
 `@system-service` syscall filter. Add a `ReadWritePaths=` line for an
@@ -509,6 +522,11 @@ failure step and a count only.
 
 `messenger-server verify-backup <path>` runs the same restore drill on any
 backup, for example on the off-host copy from a clean host.
+
+Downloads verify each 64 KiB chunk of an encrypted blob before sending it,
+so damage in a part nobody requests is not noticed by downloads. The backup
+job hashes every blob in full and fails on a mismatch: a passing daily backup
+is also the full blob check. A damaged blob logs `blob_integrity_failed`.
 
 ## Restore safety
 

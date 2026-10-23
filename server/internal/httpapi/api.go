@@ -44,13 +44,17 @@ type API struct {
 	LoginBackoff        *LoginBackoff
 	Ready               func() bool
 	typing              typingLimiter
+	passwordsOnce       sync.Once
+	passwords           *auth.Passwords
 }
 
-func (a *API) passwordCost() int {
-	if a.PasswordCost >= auth.MinBcryptCost && a.PasswordCost <= auth.MaxBcryptCost {
-		return a.PasswordCost
-	}
-	return auth.DefaultBcryptCost
+// passwordService returns the account password verifier. PasswordCost is the
+// legacy bcrypt cost it uses for timing equalisation; new hashes are Argon2id.
+func (a *API) passwordService() *auth.Passwords {
+	a.passwordsOnce.Do(func() {
+		a.passwords = auth.NewPasswords(a.Store, a.PasswordCost, a.Log)
+	})
+	return a.passwords
 }
 
 func (a *API) clientIP(r *http.Request) string {

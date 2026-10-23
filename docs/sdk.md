@@ -6,7 +6,7 @@ client SDK from this repository, never a server-plaintext widget. Everything
 below marked **Proposal** is a design choice for the team to confirm; every
 other statement describes code as it is today.
 
-Prerequisites, from the board:
+Prerequisites, from [`STATE.md`](../STATE.md):
 
 - Phase 3 work starts after phases 1 and 2 reach working demos (D10). G24 and
   G25 wait until all three phases are done (D20).
@@ -79,7 +79,7 @@ ABI, as Dart does now.
 
 - For: no new Rust crate; the C ABI stays the only native surface.
 - Against: N copies of the most failure-prone code (the I33/I34/D28 paths), each
-  needing its own review. That is the fork the board rejects for desktop,
+  needing its own review. That is the fork D06 rejects for desktop,
   moved one layer up.
 
 ### Option B: one Rust orchestration crate (**Proposal: recommended**)
@@ -118,7 +118,8 @@ Shown as Rust; UniFFI maps it to Kotlin and Swift. All names are provisional.
 
 The host supplies storage *capabilities*, not storage *logic*. The atomicity
 rules (MLS state, rollback counter, cursor, dedupe marker and decrypted history
-in one transaction; see the board's frozen design surface) are security
+in one transaction; see the frozen design surface in
+[`security-review.md`](security-review.md)) are security
 properties and stay inside the SDK.
 
 ```rust

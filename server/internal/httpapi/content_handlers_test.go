@@ -15,9 +15,9 @@ import (
 func TestServeEncryptedBlobStopsAfterInterruptedDownload(t *testing.T) {
 	payload := bytes.Repeat([]byte("x"), 1<<20)
 	reader := &countingReadSeekCloser{Reader: bytes.NewReader(payload)}
-	blobs := &downloadTestStore{reader: reader}
+	api := &API{Blobs: &downloadTestStore{reader: reader}}
 	w := &interruptingResponseWriter{header: make(http.Header), remaining: 1024}
-	serveEncryptedBlob(w, httptest.NewRequest(http.MethodGet, "/download", nil), blobs, "blob_test", "digest", int64(len(payload)))
+	api.serveEncryptedBlob(w, httptest.NewRequest(http.MethodGet, "/download", nil), uploads.BlobRef{StorageKey: "blob_test", SHA256: "digest", Size: int64(len(payload))})
 	if reader.bytesRead >= int64(len(payload)) {
 		t.Fatalf("read entire blob after client interruption: %d bytes", reader.bytesRead)
 	}
@@ -60,14 +60,14 @@ func TestRecoveryRangeRequiresSingleContiguousRange(t *testing.T) {
 }
 
 type downloadTestStore struct {
-	reader uploads.ReadSeekCloser
+	reader *countingReadSeekCloser
 }
 
 func (s *downloadTestStore) Check(context.Context) error { return nil }
-func (s *downloadTestStore) PutEncryptedBlob(context.Context, io.Reader) (string, string, int64, error) {
-	return "", "", 0, errors.New("not implemented")
+func (s *downloadTestStore) PutEncryptedBlob(context.Context, io.Reader) (uploads.BlobRef, error) {
+	return uploads.BlobRef{}, errors.New("not implemented")
 }
-func (s *downloadTestStore) Open(context.Context, string, string, int64) (uploads.ReadSeekCloser, error) {
+func (s *downloadTestStore) Open(context.Context, uploads.BlobRef) (uploads.Blob, error) {
 	return s.reader, nil
 }
 func (s *downloadTestStore) Delete(context.Context, string) error { return nil }
@@ -83,7 +83,10 @@ func (r *countingReadSeekCloser) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (r *countingReadSeekCloser) Close() error { return nil }
+func (r *countingReadSeekCloser) Close() error                   { return nil }
+func (r *countingReadSeekCloser) VerifyCurrent() error           { return nil }
+func (r *countingReadSeekCloser) Err() error                     { return nil }
+func (r *countingReadSeekCloser) RecomputedChunkDigests() []byte { return nil }
 
 type interruptingResponseWriter struct {
 	header      http.Header

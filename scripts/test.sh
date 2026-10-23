@@ -18,6 +18,9 @@ elif command -v python >/dev/null 2>&1; then
   python "$ROOT/scripts/check-ci-evidence_test.py"
   python "$ROOT/scripts/write-release-evidence_test.py"
   python "$ROOT/scripts/check-coverage_test.py"
+else
+  echo "release-policy fixtures need python3 or python; none found" >&2
+  exit 1
 fi
 
 if command -v go >/dev/null 2>&1; then

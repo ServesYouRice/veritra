@@ -5,8 +5,8 @@ how it landed in Flutter.
 
 **Direction decided 2026-08-07: K2 · Bone.** All eight build steps are written
 and were verified on 2026-08-08 against the pinned Docker toolchains. Card
-status, the verification run and what it did *not* cover live on the board
-([`board.md`](board.md), card I28) — this document is the specification, not the
+status, the verification run and what it did *not* cover live in Git history
+(the former `docs/board.md`, card I28; current state in [`STATE.md`](../STATE.md)) — this document is the specification, not the
 status.
 
 Scope is the Flutter app in `mobile/lib/` plus `server/websetup/index.html`, the

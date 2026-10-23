@@ -48,7 +48,8 @@ var (
 )
 
 type Store struct {
-	db *dbRouter
+	db       *dbRouter
+	sessions sessionPolicy
 }
 
 type dbRouter struct {
@@ -117,7 +118,7 @@ func Open(ctx context.Context, cfg config.Config) (*Store, error) {
 	// Query calls use their own pool. SQLite's WAL mode gives those reads
 	// deferred transactions by default, while writes stay serialized through
 	// the single writer connection.
-	store := &Store{db: &dbRouter{reader: reader, writer: writer}}
+	store := &Store{db: &dbRouter{reader: reader, writer: writer}, sessions: newSessionPolicy(cfg)}
 	return store, nil
 }
 
@@ -601,11 +602,13 @@ func scanMessage(rows scanner) (domain.MessageEnvelope, error) {
 	return msg, nil
 }
 
-func scanAttachment(rows scanner) (domain.AttachmentEnvelope, error) {
+// scanAttachment reads the standard attachment columns, then any extra
+// columns into extra.
+func scanAttachment(rows scanner, extra ...any) (domain.AttachmentEnvelope, error) {
 	var attachment domain.AttachmentEnvelope
 	var conversationID sql.NullString
 	var metadata, created string
-	if err := rows.Scan(&attachment.ID, &attachment.OwnerAccountID, &conversationID, &attachment.StorageKey, &attachment.CiphertextSHA256, &attachment.SizeBytes, &metadata, &created); err != nil {
+	if err := rows.Scan(append([]any{&attachment.ID, &attachment.OwnerAccountID, &conversationID, &attachment.StorageKey, &attachment.CiphertextSHA256, &attachment.SizeBytes, &metadata, &created}, extra...)...); err != nil {
 		return domain.AttachmentEnvelope{}, err
 	}
 	attachment.ConversationID = stringPtr(conversationID)
@@ -614,11 +617,13 @@ func scanAttachment(rows scanner) (domain.AttachmentEnvelope, error) {
 	return attachment, nil
 }
 
-func scanBackup(rows scanner) (domain.BackupBlob, error) {
+// scanBackup reads the standard backup columns, then any extra columns
+// into extra.
+func scanBackup(rows scanner, extra ...any) (domain.BackupBlob, error) {
 	var backup domain.BackupBlob
 	var deviceID sql.NullString
 	var metadata, created string
-	if err := rows.Scan(&backup.ID, &backup.AccountID, &deviceID, &backup.StorageKey, &backup.CiphertextSHA256, &backup.SizeBytes, &metadata, &created); err != nil {
+	if err := rows.Scan(append([]any{&backup.ID, &backup.AccountID, &deviceID, &backup.StorageKey, &backup.CiphertextSHA256, &backup.SizeBytes, &metadata, &created}, extra...)...); err != nil {
 		return domain.BackupBlob{}, err
 	}
 	backup.DeviceID = stringPtr(deviceID)

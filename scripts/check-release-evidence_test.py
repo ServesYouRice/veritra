@@ -109,40 +109,57 @@ def run(root: Path, *extra: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def expect_valid(root: Path, manifest: dict[str, object]) -> None:
+    write_json(root / "dist/release-evidence.json", manifest)
+    result = run(root)
+    if result.returncode != 0:
+        raise AssertionError(f"expected valid evidence to pass: {result.stderr.strip()}")
+
+
+def expect_blocked(root: Path, manifest: dict[str, object], reason: str) -> None:
+    # Each negative case must fail for its own reason, not a leftover one.
+    write_json(root / "dist/release-evidence.json", manifest)
+    result = run(root)
+    if result.returncode == 0 or reason not in result.stderr:
+        raise AssertionError(f"expected {reason!r}, got rc={result.returncode}: {result.stderr.strip()}")
+
+
 def main() -> int:
     root, manifest = fixture()
     try:
-        assert run(root).returncode == 0
+        expect_valid(root, manifest)
 
         # A renamed/moved placeholder cannot satisfy positive approval evidence.
-        manifest.pop("production_crypto")
-        write_json(root / "dist/release-evidence.json", manifest)
-        assert run(root).returncode != 0
-        manifest["production_crypto"] = {
-            "status": "approved",
-            "behavior_test": "pass",
-            "reviewed_commit": COMMIT,
-            "reviewer": "crypto-reviewer",
-        }
+        crypto = manifest.pop("production_crypto")
+        expect_blocked(root, manifest, "has no production_crypto approval")
+        manifest["production_crypto"] = crypto
+        expect_valid(root, manifest)
 
         manifest["ci_jobs"]["mobile-ios"] = "skipped"
-        write_json(root / "dist/release-evidence.json", manifest)
-        assert run(root).returncode != 0
+        expect_blocked(root, manifest, "required CI job 'mobile-ios' is missing or not successful")
         manifest["ci_jobs"]["mobile-ios"] = "success"
 
         manifest["independent_review"]["status"] = "pending"
-        write_json(root / "dist/release-evidence.json", manifest)
-        assert run(root).returncode != 0
+        expect_blocked(root, manifest, "independent_review approval is not approved")
         manifest["independent_review"]["status"] = "approved"
 
         manifest["independent_review"]["reviewer_is_author"] = True
-        write_json(root / "dist/release-evidence.json", manifest)
-        assert run(root).returncode != 0
+        expect_blocked(root, manifest, "independent_review reviewer is not independent")
         manifest["independent_review"]["reviewer_is_author"] = False
 
+        manifest["binary_commit"] = "fedcba9876543210fedcba9876543210fedcba98"
+        expect_blocked(root, manifest, "packaged binary commit evidence does not match candidate")
+        manifest["binary_commit"] = COMMIT
+
+        manifest["container"]["digest"] = "sha256:" + "a" * 63
+        expect_blocked(root, manifest, "container digest is not an immutable sha256 digest")
+        manifest["container"]["digest"] = "sha256:" + "a" * 64
+
         manifest["container"]["commit"] = "fedcba9876543210fedcba9876543210fedcba98"
-        write_json(root / "dist/release-evidence.json", manifest)
-        assert run(root).returncode != 0
+        expect_blocked(root, manifest, "container commit label does not match candidate")
+        manifest["container"]["commit"] = COMMIT
+
+        expect_valid(root, manifest)
     finally:
         import shutil
 

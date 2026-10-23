@@ -224,6 +224,9 @@ type AttachmentEnvelope struct {
 	SizeBytes        int64           `json:"size_bytes"`
 	CryptoMetadata   json.RawMessage `json:"crypto_metadata"`
 	CreatedAt        time.Time       `json:"created_at"`
+	// ChunkDigests is the blob store's per-chunk integrity record. Server
+	// side only; nil for blobs stored before migration 0034.
+	ChunkDigests []byte `json:"-"`
 }
 
 type BackupBlob struct {
@@ -235,6 +238,8 @@ type BackupBlob struct {
 	SizeBytes             int64           `json:"size_bytes"`
 	KeyDerivationMetadata json.RawMessage `json:"key_derivation_metadata"`
 	CreatedAt             time.Time       `json:"created_at"`
+	// ChunkDigests: see AttachmentEnvelope.ChunkDigests.
+	ChunkDigests []byte `json:"-"`
 }
 
 type Reaction struct {

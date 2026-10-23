@@ -53,10 +53,12 @@ containers, volumes or temp files left). About 3 minutes per run.
    Only `turn://host` passed, which WebRTC reads as host `//host`. Fixed in
    `server/internal/config`: RFC 7065 form accepted and canonical; `turn://`
    rewritten; table test.
-2. **Caddy logged the setup token.** The supported Caddyfile's `log` block
-   turned access logging on and kept `X-Veritra-Setup-Token`, client
-   addresses and user agents. Now no access log; a safe filter is in a
-   comment. Its security headers were also sent twice (app and Caddy); now
+2. **Caddy logged the setup token.** The supported Caddyfile's access-log
+   filter kept `X-Veritra-Setup-Token`. Found the same day by the I29 test
+   work on the main branch, whose fix (access and error logs drop the URI and
+   every credential header, `TestCaddyLogsDropURIsAndCredentialHeaders`) is
+   the one kept after merging; this branch's first fix (no access log) was
+   dropped. Its security headers were also sent twice (app and Caddy); now
    deferred, sent once.
 3. **VAPID `sub` claim was `mailto:mailto:…`.** webpush-go prefixes `mailto:`
    to anything not starting with `https:`. Found reading the push path for the

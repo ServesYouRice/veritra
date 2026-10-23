@@ -431,14 +431,18 @@ class AppState extends ChangeNotifier {
 
   /// Rereads decrypted history for one conversation from the local store.
   Future<void> refreshHistory(String conversationId) async {
+    _history[conversationId] = await _loadHistory(conversationId);
+    notifyListeners();
+  }
+
+  Future<ConversationHistory> _loadHistory(String conversationId) async {
     final messages = await localStore.loadMessages(conversationId);
     final reactions = await localStore.loadReactions(conversationId);
-    _history[conversationId] = ConversationHistory(
+    return ConversationHistory(
       conversationId: conversationId,
       messages: messages,
       reactions: reactions,
     );
-    notifyListeners();
   }
 
   /// What the chat shows, newest first (Stage 4). With MLS, decrypted local
@@ -2037,7 +2041,31 @@ class AppState extends ChangeNotifier {
       if (current == null || client == null || deviceSecret == null) {
         throw StateError(l10n.errorRelinkRequired);
       }
-      await client.reauthenticate(current.token, password, deviceSecret);
+      final rotated =
+          await client.reauthenticate(current.token, password, deviceSecret);
+      if (rotated != null && !identical(session, current)) {
+        // The session ended or changed while the request was in flight; the
+        // caller must not run a sensitive action on its behalf.
+        return;
+      }
+      if (rotated != null) {
+        // The server rotated the token (card T37C): persist it before use so
+        // a restart never reloads the old one, then reconnect sync with it.
+        // A failure here leaves the old token, which the server still accepts
+        // for a short grace, so the user can simply retry.
+        final next = Session(
+          baseUrl: current.baseUrl,
+          token: rotated,
+          accountId: current.accountId,
+          deviceId: current.deviceId,
+          username: current.username,
+          deviceSecret: current.deviceSecret,
+          role: current.role,
+        );
+        await localStore.saveSession(next);
+        session = next;
+        unawaited(_startSync());
+      }
       succeeded = true;
     });
     return succeeded;
@@ -2513,41 +2541,59 @@ class AppState extends ChangeNotifier {
           events: events,
           processed: localStore.hasProcessedMlsMessage,
         );
-        for (final event in events) {
-          final committedCursor = await localStore.loadSyncCursor();
-          if (event.id <= committedCursor) continue;
-          if (!_syncOwnerActive(current, ownerGeneration)) return;
+        // Each event still commits on its own, but received messages reach
+        // the UI in batches, together with their decrypted history. Reloading
+        // a conversation's whole history after every message made a burst
+        // quadratic (T49C).
+        final received = <ReceivedMessageEnvelope>[];
+        try {
+          for (final event in events) {
+            final committedCursor = await localStore.loadSyncCursor();
+            if (event.id <= committedCursor) continue;
+            if (!_syncOwnerActive(current, ownerGeneration)) return;
 
-          if (_isCryptoSyncEvent(event.type)) {
-            if (_mlsCrypto == null) {
-              throw SyncEventFailure(SyncFailureKind.cryptoUnavailable,
-                  eventId: event.id,
-                  eventType: event.type,
-                  conversationId: event.conversationId);
+            if (_isCryptoSyncEvent(event.type)) {
+              if (_mlsCrypto == null) {
+                throw SyncEventFailure(SyncFailureKind.cryptoUnavailable,
+                    eventId: event.id,
+                    eventType: event.type,
+                    conversationId: event.conversationId);
+              }
+              final envelope = await _processCryptoSyncEvent(event, repair);
+              if (envelope != null) {
+                received.add(envelope);
+                if (received.length >= _receivedBatchLimit) {
+                  await _publishReceived(received, current, ownerGeneration);
+                }
+                continue;
+              }
+            } else {
+              if (!_knownProjectionEvent(event.type)) {
+                throw SyncEventFailure(SyncFailureKind.unsupportedEvent,
+                    eventId: event.id,
+                    eventType: event.type,
+                    conversationId: event.conversationId);
+              }
+              await _refreshProjectionForSyncEvent(event);
+              final expectedCursor = await localStore.loadSyncCursor();
+              await localStore.commitSyncEvent(SyncEventCommit(
+                eventKey: 'sync:${event.id}',
+                conversationId: event.conversationId ?? '',
+                expectedCursor: expectedCursor,
+                cursor: event.id,
+              ));
             }
-            final envelope = await _processCryptoSyncEvent(event, repair);
-            if (envelope != null) {
-              _mergeReceivedEnvelope(envelope);
-              await refreshHistory(envelope.conversationId);
-            }
-          } else {
-            if (!_knownProjectionEvent(event.type)) {
-              throw SyncEventFailure(SyncFailureKind.unsupportedEvent,
-                  eventId: event.id,
-                  eventType: event.type,
-                  conversationId: event.conversationId);
-            }
-            await _refreshProjectionForSyncEvent(event);
-            final expectedCursor = await localStore.loadSyncCursor();
-            await localStore.commitSyncEvent(SyncEventCommit(
-              eventKey: 'sync:${event.id}',
-              conversationId: event.conversationId ?? '',
-              expectedCursor: expectedCursor,
-              cursor: event.id,
-            ));
+            notifyListeners();
           }
-          notifyListeners();
+        } catch (_) {
+          // Messages committed before the failure still reach the UI; the
+          // failure itself is what the caller handles.
+          try {
+            await _publishReceived(received, current, ownerGeneration);
+          } catch (_) {}
+          rethrow;
         }
+        await _publishReceived(received, current, ownerGeneration);
         pageCursor = await localStore.loadSyncCursor();
         if (events.length < pageSize) break;
       }
@@ -2598,19 +2644,25 @@ class AppState extends ChangeNotifier {
       syncError = describeError(err, l10n);
       _setConnectionStatus(ConnectionStatus.offline);
       notifyListeners();
-      _scheduleCatchUpRetry();
+      _scheduleCatchUpRetry(
+          retryAfter: err is ApiException ? err.retryAfter : null);
     }
   }
 
   /// A catch-up that failed for a reason that passes (no connection, a
   /// rate limit, a server error) is tried again with backoff, so the device
-  /// does not stay behind until the next socket event or wake.
-  void _scheduleCatchUpRetry() {
+  /// does not stay behind until the next socket event or wake. A rate limit
+  /// names when its window resets; waiting exactly that long, plus a second
+  /// for clock rounding, keeps a late backoff step (up to a minute) from
+  /// missing the reset by a few seconds and doubling the wait.
+  void _scheduleCatchUpRetry({Duration? retryAfter}) {
     if (_disposed) return;
     _catchUpRetryTimer?.cancel();
-    final seconds = min(60, 2 << min(_catchUpRetryAttempt, 5));
+    final delay = retryAfter != null
+        ? retryAfter + const Duration(seconds: 1)
+        : Duration(seconds: min(60, 2 << min(_catchUpRetryAttempt, 5)));
     _catchUpRetryAttempt++;
-    _catchUpRetryTimer = Timer(Duration(seconds: seconds), () {
+    _catchUpRetryTimer = Timer(delay, () {
       _catchUpRetryTimer = null;
       unawaited(_catchUpSyncEvents());
     });
@@ -2896,19 +2948,56 @@ class AppState extends ChangeNotifier {
     return ReceivedMessageEnvelope.fromJson(Map<String, Object?>.from(raw));
   }
 
-  void _mergeReceivedEnvelope(ReceivedMessageEnvelope envelope) {
-    final existing = messagesByConversation[envelope.conversationId] ??
-        const <ReceivedMessageEnvelope>[];
-    final updated = <ReceivedMessageEnvelope>[
-      envelope,
-      ...existing.where((item) => item.id != envelope.id),
-    ]..sort((left, right) {
-        final byCreatedAt = right.createdAt.compareTo(left.createdAt);
-        return byCreatedAt != 0 ? byCreatedAt : right.id.compareTo(left.id);
-      });
+  /// Most received envelopes [_runOwnedCatchUp] holds back before showing
+  /// them; the rest of a sync page is shown when the page ends.
+  static const _receivedBatchLimit = 50;
+
+  /// Shows [received] (already committed) with the decrypted history of
+  /// their conversations in one notification, then empties the list. The
+  /// history is read first, so no frame draws a decrypted message as
+  /// ciphertext; if that read fails the list is kept for the caller's
+  /// retry. Nothing is applied once another session owns sync.
+  Future<void> _publishReceived(
+    List<ReceivedMessageEnvelope> received,
+    Session owner,
+    int ownerGeneration,
+  ) async {
+    if (received.isEmpty) return;
+    final histories = <String, ConversationHistory>{};
+    for (final id in received.map((item) => item.conversationId).toSet()) {
+      histories[id] = await _loadHistory(id);
+    }
+    if (_syncOwnerActive(owner, ownerGeneration)) {
+      _mergeReceivedEnvelopes(received);
+      _history.addAll(histories);
+      notifyListeners();
+    }
+    received.clear();
+  }
+
+  /// Merges [envelopes], in order, into the newest-first lists: a later
+  /// envelope replaces any earlier one with its ID.
+  void _mergeReceivedEnvelopes(List<ReceivedMessageEnvelope> envelopes) {
+    final incoming = <String, Map<String, ReceivedMessageEnvelope>>{};
+    for (final envelope in envelopes) {
+      (incoming[envelope.conversationId] ??=
+          <String, ReceivedMessageEnvelope>{})[envelope.id] = envelope;
+    }
+    final merged = <String, List<ReceivedMessageEnvelope>>{};
+    for (final entry in incoming.entries) {
+      final existing = messagesByConversation[entry.key] ??
+          const <ReceivedMessageEnvelope>[];
+      merged[entry.key] = <ReceivedMessageEnvelope>[
+        ...entry.value.values,
+        ...existing.where((item) => !entry.value.containsKey(item.id)),
+      ]..sort((left, right) {
+          final byCreatedAt = right.createdAt.compareTo(left.createdAt);
+          return byCreatedAt != 0 ? byCreatedAt : right.id.compareTo(left.id);
+        });
+    }
     messagesByConversation = <String, List<ReceivedMessageEnvelope>>{
       ...messagesByConversation,
-      envelope.conversationId: updated,
+      ...merged,
     };
   }
 
@@ -3555,7 +3644,12 @@ class AppState extends ChangeNotifier {
       try {
         await body();
       } catch (err) {
-        if (err is ApiException && err.statusCode == 401) {
+        // `invalid_credentials` rejects the password typed into a signed-in
+        // prompt (reauthentication), not the session token: the user keeps
+        // the session and can try again.
+        if (err is ApiException &&
+            err.statusCode == 401 &&
+            err.serverCode != 'invalid_credentials') {
           await _clearLocalSession(
               preserveDeviceIdentity: true, preserveOutbox: true);
         }

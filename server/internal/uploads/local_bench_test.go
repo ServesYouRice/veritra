@@ -70,13 +70,13 @@ func newBenchLocalStore(b *testing.B) *LocalStore {
 	return store
 }
 
-func putBenchBlob(b *testing.B, store *LocalStore, size int64) (string, string) {
+func putBenchBlob(b *testing.B, store *LocalStore, size int64) BlobRef {
 	b.Helper()
-	key, digest, n, err := store.PutEncryptedBlob(context.Background(), newCipherReader(size))
-	if err != nil || n != size {
-		b.Fatalf("put: %d %v", n, err)
+	ref, err := store.PutEncryptedBlob(context.Background(), newCipherReader(size))
+	if err != nil || ref.Size != size {
+		b.Fatalf("put: %d %v", ref.Size, err)
 	}
-	return key, digest
+	return ref
 }
 
 func sizeName(size int64) string {
@@ -92,9 +92,9 @@ func BenchmarkPutEncryptedBlob(b *testing.B) {
 			store := newBenchLocalStore(b)
 			b.SetBytes(size)
 			for b.Loop() {
-				key, _ := putBenchBlob(b, store, size)
+				ref := putBenchBlob(b, store, size)
 				b.StopTimer()
-				_ = store.Delete(context.Background(), key)
+				_ = store.Delete(context.Background(), ref.StorageKey)
 				b.StartTimer()
 			}
 		})
@@ -110,12 +110,12 @@ func BenchmarkPutEncryptedBlobParallel(b *testing.B) {
 			b.SetParallelism(4)
 			b.RunParallel(func(pb *testing.PB) {
 				for pb.Next() {
-					key, _, _, err := store.PutEncryptedBlob(context.Background(), newCipherReader(size))
+					ref, err := store.PutEncryptedBlob(context.Background(), newCipherReader(size))
 					if err != nil {
 						b.Error(err)
 						return
 					}
-					_ = store.Delete(context.Background(), key)
+					_ = store.Delete(context.Background(), ref.StorageKey)
 				}
 			})
 		})
@@ -131,7 +131,7 @@ func BenchmarkPutEncryptedBlobOversized(b *testing.B) {
 	for b.Loop() {
 		recorder := httptest.NewRecorder()
 		counting := &countingReader{reader: newCipherReader(body)}
-		_, _, _, err := store.PutEncryptedBlob(context.Background(), http.MaxBytesReader(recorder, io.NopCloser(counting), attachmentCap))
+		_, err := store.PutEncryptedBlob(context.Background(), http.MaxBytesReader(recorder, io.NopCloser(counting), attachmentCap))
 		var maxErr *http.MaxBytesError
 		if !errors.As(err, &maxErr) {
 			b.Fatalf("expected MaxBytesError, got %v", err)
@@ -154,29 +154,20 @@ func (c *countingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// Open verifies the full SHA-256 before any byte is served, so a full read
-// and a small range read pay the same verification cost.
+// Open checks the size, then each read verifies only the 64 KiB chunks it
+// touches, so a range read costs about one chunk hash. RangeLegacy64KiB is a
+// blob stored before chunk records (no record): Open hashes it all first,
+// as every Open did before miss 6 was fixed.
 func BenchmarkOpenVerify(b *testing.B) {
 	ctx := context.Background()
 	for _, size := range []int64{64 * kib, mib, 16 * mib, attachmentCap, backupCap} {
 		store := newBenchLocalStore(b)
-		key, digest := putBenchBlob(b, store, size)
-		b.Run("Full/"+sizeName(size), func(b *testing.B) {
-			b.SetBytes(size)
+		ref := putBenchBlob(b, store, size)
+		legacy := ref
+		legacy.ChunkDigests = nil
+		rangeRead := func(b *testing.B, ref BlobRef) {
 			for b.Loop() {
-				file, err := store.Open(ctx, key, digest, size)
-				if err != nil {
-					b.Fatal(err)
-				}
-				if _, err := io.Copy(io.Discard, file); err != nil {
-					b.Fatal(err)
-				}
-				file.Close()
-			}
-		})
-		b.Run("Range64KiB/"+sizeName(size), func(b *testing.B) {
-			for b.Loop() {
-				file, err := store.Open(ctx, key, digest, size)
+				file, err := store.Open(ctx, ref)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -192,11 +183,26 @@ func BenchmarkOpenVerify(b *testing.B) {
 				}
 				file.Close()
 			}
+		}
+		b.Run("Full/"+sizeName(size), func(b *testing.B) {
+			b.SetBytes(size)
+			for b.Loop() {
+				file, err := store.Open(ctx, ref)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if _, err := io.Copy(io.Discard, file); err != nil {
+					b.Fatal(err)
+				}
+				file.Close()
+			}
 		})
+		b.Run("Range64KiB/"+sizeName(size), func(b *testing.B) { rangeRead(b, ref) })
+		b.Run("RangeLegacy64KiB/"+sizeName(size), func(b *testing.B) { rangeRead(b, legacy) })
 		b.Run("SHA256Only/"+sizeName(size), func(b *testing.B) {
 			b.SetBytes(size)
 			for b.Loop() {
-				file, err := os.Open(filepath.Join(store.root, key))
+				file, err := os.Open(filepath.Join(store.root, ref.StorageKey))
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -219,9 +225,9 @@ func BenchmarkDiskUse(b *testing.B) {
 			store := newBenchLocalStore(b)
 			keys := make([]string, 0, 256)
 			for b.Loop() {
-				key, _ := putBenchBlob(b, store, size)
+				ref := putBenchBlob(b, store, size)
 				if len(keys) < cap(keys) {
-					keys = append(keys, key)
+					keys = append(keys, ref.StorageKey)
 				}
 			}
 			var allocated int64

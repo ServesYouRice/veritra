@@ -6,8 +6,8 @@ Contributions are welcome if they preserve the privacy and security model.
 
 Read [`AGENTS.md`](AGENTS.md). It holds the non-negotiable boundaries — no
 server-side plaintext, no telemetry, no message-content search — and they apply
-to every contribution. Read [`docs/board.md`](docs/board.md) for what is
-actually being worked on.
+to every contribution. Read [`STATE.md`](STATE.md) for the current state
+and the open work.
 
 ## Requirements
 

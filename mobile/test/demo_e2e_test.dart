@@ -311,13 +311,18 @@ class _DemoClient {
     Future<bool> Function() condition, {
     Duration timeout = const Duration(seconds: 90),
   }) async {
+    // Captured before the first await, so it names the step that waited.
+    final caller =
+        StackTrace.current.toString().split('\n').take(3).join(' <- ');
     final deadline = DateTime.now().add(timeout);
     while (!await condition()) {
       if (state.deviceRecoveryRequired) {
         fail('sync stopped: ${state.error}');
       }
       if (DateTime.now().isAfter(deadline)) {
-        fail('timed out waiting for sync');
+        fail('timed out waiting for sync after ${timeout.inSeconds} s '
+            '(connection ${state.connectionStatus.name}, error '
+            '${state.error ?? 'none'}) at $caller');
       }
       await Future<void>.delayed(const Duration(milliseconds: 100));
     }
