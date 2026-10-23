@@ -40,3 +40,7 @@ Thumbs.db
 
 # Local agent config
 .claude/
+
+# Operator secrets and local backups for deploy/docker-compose.yml (I46)
+deploy/secrets/
+deploy/offsite-backups/

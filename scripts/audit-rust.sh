@@ -4,9 +4,8 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 CRATE="$ROOT/crypto/rust"
 
-# OpenMLS 0.9.0 with hpke-rs 0.7 retired the six libcrux advisories, so the
-# parseable policy currently approves no exceptions. The guards below stay as
-# defense in depth: fail if the optional libcrux AEAD backends enter the normal
+# The parseable policy approves only the expiring exceptions it lists. The
+# guards below fail if an excepted or optional libcrux crate enters the normal
 # build graph or if Veritra stops pinning the reviewed classical suite.
 sh "$ROOT/scripts/check-rust-audit-expiry.sh" --self-test
 ignore_flags=$(sh "$ROOT/scripts/check-rust-audit-expiry.sh" --print-ignores)
@@ -21,7 +20,9 @@ if [ "$actual_audit_version" != "$expected_audit_version" ]; then
   exit 1
 fi
 tree=$(cd "$CRATE" && cargo tree --locked --target all -e normal --prefix none)
-for package in libcrux-aes libcrux-aesgcm libcrux-chacha20poly1305; do
+# hpke-rs-libcrux and libcrux-kem carry the excepted RUSTSEC-2026-0330/0331;
+# they may sit in Cargo.lock but must never be built.
+for package in libcrux-aes libcrux-aesgcm libcrux-chacha20poly1305 hpke-rs-libcrux libcrux-kem; do
   if printf '%s\n' "$tree" | grep -q "^${package} v"; then
     echo "Rust audit exception is unsafe: ${package} entered the build graph" >&2
     exit 1

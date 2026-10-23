@@ -10,6 +10,7 @@ import '../../ui/widgets/empty_state.dart';
 import '../../ui/widgets/status_pill.dart';
 import '../search/search_screen.dart';
 import 'chat_screen.dart';
+import 'conversation_details_screen.dart';
 import 'new_conversation_sheet.dart';
 import '../../ui/widgets/refresh_action.dart';
 
@@ -105,6 +106,7 @@ class ChatListScreen extends StatelessWidget {
                     // conversation share a route, and two widgets with one
                     // hero tag is an assertion, not a nicer animation.
                     hero: !embedded,
+                    onActions: () => _showRowActions(context, conversation),
                     onTap: () {
                       state.selectAndPrepare(conversation.id);
                       if (embedded) {
@@ -125,12 +127,71 @@ class ChatListScreen extends StatelessWidget {
       ),
     );
   }
+
+  /// Long-press or right-click on a row. Offers only what the app already
+  /// does elsewhere for a conversation; nothing here needs message content.
+  Future<void> _showRowActions(
+    BuildContext context,
+    Conversation conversation,
+  ) async {
+    final muted = state.isMuted(conversation.id);
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            ListTile(
+              leading: Icon(
+                muted
+                    ? Icons.notifications_active_outlined
+                    : Icons.notifications_off_outlined,
+              ),
+              title: Text(
+                muted ? 'Unmute notifications' : 'Mute notifications',
+              ),
+              onTap: () => Navigator.of(sheetContext).pop('mute'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.info_outline),
+              title: const Text('Conversation details'),
+              onTap: () => Navigator.of(sheetContext).pop('details'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!context.mounted || action == null) {
+      return;
+    }
+    if (action == 'details') {
+      await Navigator.of(context).push(
+        sharedAxisRoute<void>(
+          (_) => ConversationDetailsScreen(
+            state: state,
+            conversationId: conversation.id,
+          ),
+        ),
+      );
+      return;
+    }
+    final ok = await state.setConversationMuted(conversation.id, !muted);
+    if (!ok && context.mounted) {
+      final error = state.errorFor(Ops.mute);
+      if (error != null) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error)));
+      }
+    }
+  }
 }
 
 class _ConversationTile extends StatelessWidget {
   const _ConversationTile({
     required this.conversation,
     required this.onTap,
+    required this.onActions,
     this.muted = false,
     this.selected = false,
     this.hero = false,
@@ -138,6 +199,9 @@ class _ConversationTile extends StatelessWidget {
 
   final Conversation conversation;
   final VoidCallback onTap;
+
+  /// Opens the row's mute/details menu.
+  final VoidCallback onActions;
   final bool muted;
   final bool selected;
   final bool hero;
@@ -161,6 +225,8 @@ class _ConversationTile extends StatelessWidget {
           borderRadius: BorderRadius.circular(BoneRadii.md),
           child: InkWell(
             onTap: onTap,
+            onLongPress: onActions,
+            onSecondaryTap: onActions,
             borderRadius: BorderRadius.circular(BoneRadii.md),
             child: ConstrainedBox(
               // 62dp is the direction's row height; the constraint is a
@@ -255,7 +321,7 @@ class _ConversationTile extends StatelessWidget {
                         children: <Widget>[
                           if (activityAt != null)
                             Text(
-                              formatDate(context, activityAt),
+                              formatListTime(context, activityAt),
                               maxLines: 1,
                               softWrap: false,
                               overflow: TextOverflow.ellipsis,

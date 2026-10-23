@@ -1,0 +1,94 @@
+{
+  "contract_version": 1,
+  "conversations_page": {
+    "conversations": [
+      {
+        "id": "conv_dm",
+        "kind": "dm",
+        "created_at": "2026-06-01T10:00:00Z",
+        "last_message_at": "2026-06-02T12:30:00.123456789Z",
+        "unread_count": 3,
+        "current_role": "member",
+        "peer_account_id": "acct_peer",
+        "peer_username": "peer"
+      },
+      {
+        "id": "conv_group",
+        "kind": "group",
+        "title": "Family",
+        "retention_seconds": 86400,
+        "created_at": "2026-06-01T10:00:00+02:00",
+        "last_message_at": "not-a-time"
+      },
+      {
+        "id": "conv_far",
+        "kind": "group",
+        "created_at": "+275760-09-13T00:00:00.000Z",
+        "last_message_at": "2026-06-01T10:00:00.000000000000000000000000000000Z"
+      }
+    ]
+  },
+  "devices_page": {
+    "devices": [
+      {
+        "id": "dev_1",
+        "account_id": "acct_owner",
+        "name": "Phone",
+        "created_at": "2026-06-01T10:00:00Z",
+        "last_seen_at": "2026-06-02T10:00:00Z"
+      }
+    ]
+  },
+  "message_page": {
+    "messages": [
+      {
+        "id": "msg_1",
+        "conversation_id": "conv_dm",
+        "sender_account_id": "acct_peer",
+        "sender_device_id": "dev_peer",
+        "idempotency_key": "idem_1",
+        "ciphertext": "AQID",
+        "crypto_protocol": "mls10-openmls-v1",
+        "created_at": "2026-06-02T12:30:00Z",
+        "expires_at": "2026-06-09T12:30:00Z"
+      }
+    ],
+    "next_before": "msg_1"
+  },
+  "sync_events": {
+    "events": [
+      {
+        "id": 7,
+        "type": "conversation.created",
+        "account_id": "acct_owner",
+        "conversation_id": "conv_dm",
+        "payload": {"conversation_id": "conv_dm"},
+        "created_at": "2026-06-02T12:30:00Z"
+      }
+    ]
+  },
+  "mls_message": {
+    "mls_message": {
+      "id": "mls_1",
+      "conversation_id": "conv_dm",
+      "sender_account_id": "acct_peer",
+      "sender_device_id": "dev_peer",
+      "kind": "commit",
+      "payload": "AQID",
+      "idempotency_key": "idem_mls_1",
+      "sync_event_id": 8,
+      "created_at": "2026-06-02T12:30:00Z"
+    }
+  },
+  "errors": {
+    "plain": {"status": 403, "body": "{\"error\":\"forbidden\"}"},
+    "with_int_field": {"status": 409, "body": "{\"error\":\"mls_epoch_conflict\",\"epoch\":12}"},
+    "recovery": {
+      "status": 409,
+      "body": "{\"error\":\"device_recovery_required\",\"sync_epoch\":2,\"oldest_event_id\":10,\"latest_event_id\":90}"
+    },
+    "rate_limiter_text": {"status": 429, "body": "rate limited\n"},
+    "unknown_code": {"status": 400, "body": "{\"error\":\"some_future_code\"}"},
+    "hostile_code": {"status": 400, "body": "{\"error\":\"<script>alert(1)</script>\"}"}
+  }
+}

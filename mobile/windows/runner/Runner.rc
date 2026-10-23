@@ -89,11 +89,11 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "org.veritra" "\0"
+            VALUE "CompanyName", "Veritra" "\0"
             VALUE "FileDescription", "Veritra" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "private_messenger" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 org.veritra. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 Veritra contributors. AGPL-3.0-or-later." "\0"
             VALUE "OriginalFilename", "private_messenger.exe" "\0"
             VALUE "ProductName", "Veritra" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"

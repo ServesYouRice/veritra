@@ -10,7 +10,11 @@ import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 
+import 'api_bounded_decoding.dart';
+
 void main() {
+  group('bounded API decoding (T44A)', boundedDecodingTests);
+
   test('CallSession model parsing requires version and invited_account_id', () {
     final now = DateTime.now().toUtc();
     final json = <String, Object?>{

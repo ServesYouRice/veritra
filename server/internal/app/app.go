@@ -39,8 +39,32 @@ type App struct {
 	loginBackoff *httpapi.LoginBackoff
 	metrics      *httpMetrics
 	ready        atomic.Bool
-	Log          *slog.Logger
+	inflight     atomic.Int64
+	// shutdownBudget and shutdownDrain default to ShutdownBudget and
+	// ShutdownDrain; tests shorten them.
+	shutdownBudget time.Duration
+	shutdownDrain  time.Duration
+	Log            *slog.Logger
 }
+
+// Shutdown timing (card I46). The whole stop sequence fits inside
+// ShutdownBudget, which stays below the supported supervisors' stop grace
+// (Compose stop_grace_period and systemd TimeoutStopSec are both 30s), so a
+// supervisor never kills the process while storage is still open.
+//
+//  1. /readyz turns unavailable and realtime sockets are drained.
+//  2. In-flight HTTP requests, including uploads, get ShutdownDrain to finish.
+//  3. Connections still busy are then closed; their handlers get the rest of
+//     the budget to return and run blob cleanup (5s contexts).
+//  4. Serve returns and the caller closes storage.
+//
+// Uploads and downloads keep their 15-minute route deadline in normal
+// operation; a transfer that cannot finish within ShutdownDrain is cut off
+// and the client retries it after restart.
+const (
+	ShutdownBudget = 25 * time.Second
+	ShutdownDrain  = 18 * time.Second
+)
 
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, error) {
 	if logger == nil {
@@ -139,6 +163,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		metrics:      metrics,
 		Log:          logger,
 	}
+	application.shutdownBudget = ShutdownBudget
+	application.shutdownDrain = ShutdownDrain
 	application.ready.Store(true)
 	return application, nil
 }
@@ -157,7 +183,24 @@ func (a *App) Handler() http.Handler {
 	}
 	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Push: a.Push, PushProviders: pushProviders, VAPIDPublicKey: a.Config.VAPIDPublicKey, TURNURLs: a.Config.TURNURLs, TURNSharedSecret: a.Config.TURNSharedSecret, Log: a.Log, SetupToken: a.Config.SetupToken, DefaultInstanceName: a.Config.InstanceName, PasswordCost: a.Config.PasswordCost, Messages: messaging.New(a.Store), ClientIdentities: a.limiter.clientIdentities, LoginBackoff: a.loginBackoff, Ready: a.ready.Load}
 	api.Register(mux)
-	return securityHeaders(a.requestLogger(a.limiter.middleware(routeTimeouts(mux))))
+	return a.trackInflight(securityHeaders(a.requestLogger(a.limiter.middleware(routeTimeouts(mux)))))
+}
+
+// trackInflight counts running handlers, including hijacked realtime
+// sockets that http.Server.Shutdown does not wait for, so Serve can keep
+// storage open until they return.
+func (a *App) trackInflight(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		a.inflight.Add(1)
+		defer a.inflight.Add(-1)
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (a *App) waitInflight(deadline time.Time) {
+	for a.inflight.Load() > 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func (a *App) Serve(ctx context.Context) error {
@@ -182,18 +225,37 @@ func (a *App) Serve(ctx context.Context) error {
 			IdleTimeout:       30 * time.Second,
 		}
 	}
+	budget, drain := a.shutdownBudget, a.shutdownDrain
+	if budget <= 0 {
+		budget = ShutdownBudget
+	}
+	if drain <= 0 || drain > budget {
+		drain = min(ShutdownDrain, budget)
+	}
 	serveCtx, cancelServe := context.WithCancel(ctx)
 	defer cancelServe()
+	var shutdownDeadline atomic.Pointer[time.Time]
+	shutdownDone := make(chan struct{})
 	go func() {
+		defer close(shutdownDone)
 		<-serveCtx.Done()
+		start := time.Now()
+		deadline := start.Add(budget)
+		shutdownDeadline.Store(&deadline)
 		a.ready.Store(false)
 		a.Hub.Drain()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		drainCtx, cancel := context.WithDeadline(context.Background(), start.Add(drain))
 		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
-		if managementServer != nil {
-			_ = managementServer.Shutdown(shutdownCtx)
+		if err := server.Shutdown(drainCtx); err != nil {
+			a.Log.Warn("shutdown_drain_incomplete", "in_flight_requests", a.inflight.Load())
+			_ = server.Close()
 		}
+		if managementServer != nil {
+			if err := managementServer.Shutdown(drainCtx); err != nil {
+				_ = managementServer.Close()
+			}
+		}
+		a.waitInflight(deadline)
 	}()
 	go a.runRetentionSweeper(serveCtx)
 	go a.limiter.cleanupLoop(serveCtx)
@@ -212,12 +274,23 @@ func (a *App) Serve(ctx context.Context) error {
 	}
 	err := <-errCh
 	cancelServe()
-	workerWait := time.NewTimer(25 * time.Second)
+	// One deadline covers the HTTP drain and the push workers, which stop in
+	// parallel; neither may push the total past the budget.
+	fallback := time.Now().Add(budget)
+	budgetTimer := time.NewTimer(budget)
+	defer budgetTimer.Stop()
+	select {
+	case <-shutdownDone:
+	case <-budgetTimer.C:
+	}
+	deadline := fallback
+	if started := shutdownDeadline.Load(); started != nil {
+		deadline = *started
+	}
+	workerWait := time.NewTimer(max(time.Until(deadline), 0))
+	defer workerWait.Stop()
 	select {
 	case <-wakeWorkersDone:
-		if !workerWait.Stop() {
-			<-workerWait.C
-		}
 	case <-workerWait.C:
 	}
 	if errors.Is(err, http.ErrServerClosed) && ctx.Err() != nil {

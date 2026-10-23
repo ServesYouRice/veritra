@@ -11,4 +11,4 @@ PRODUCT_NAME = Veritra
 PRODUCT_BUNDLE_IDENTIFIER = org.veritra.privateMessenger
 
 // The copyright displayed in application information
-PRODUCT_COPYRIGHT = Copyright © 2026 org.veritra. All rights reserved.
+PRODUCT_COPYRIGHT = Copyright © 2026 Veritra contributors. AGPL-3.0-or-later.

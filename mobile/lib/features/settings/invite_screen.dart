@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 
 import '../../core/app_state.dart';
 import '../../core/models.dart';
+import '../../l10n/l10n.dart';
+import '../../ui/confirm.dart';
 import '../../ui/format.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/empty_state.dart';
@@ -73,13 +75,21 @@ class _InviteScreenState extends State<InviteScreen> {
                                     initialValue: maxUses,
                                     items: const <DropdownMenuItem<int>>[
                                       DropdownMenuItem(
-                                          value: 1, child: Text('1')),
+                                        value: 1,
+                                        child: Text('1'),
+                                      ),
                                       DropdownMenuItem(
-                                          value: 5, child: Text('5')),
+                                        value: 5,
+                                        child: Text('5'),
+                                      ),
                                       DropdownMenuItem(
-                                          value: 10, child: Text('10')),
+                                        value: 10,
+                                        child: Text('10'),
+                                      ),
                                       DropdownMenuItem(
-                                          value: 25, child: Text('25')),
+                                        value: 25,
+                                        child: Text('25'),
+                                      ),
                                     ],
                                     onChanged: (value) =>
                                         setState(() => maxUses = value ?? 1),
@@ -94,11 +104,17 @@ class _InviteScreenState extends State<InviteScreen> {
                                     initialValue: expiresInDays,
                                     items: const <DropdownMenuItem<int?>>[
                                       DropdownMenuItem(
-                                          value: 1, child: Text('1 day')),
+                                        value: 1,
+                                        child: Text('1 day'),
+                                      ),
                                       DropdownMenuItem(
-                                          value: 7, child: Text('7 days')),
+                                        value: 7,
+                                        child: Text('7 days'),
+                                      ),
                                       DropdownMenuItem(
-                                          value: 30, child: Text('30 days')),
+                                        value: 30,
+                                        child: Text('30 days'),
+                                      ),
                                     ],
                                     onChanged: (value) =>
                                         setState(() => expiresInDays = value),
@@ -142,7 +158,7 @@ class _InviteScreenState extends State<InviteScreen> {
                       for (final invite in invites)
                         _InviteRow(
                           invite: invite,
-                          onRevoke: () => widget.state.revokeInvite(invite.id),
+                          onRevoke: () => _confirmRevoke(context, invite),
                         ),
                     ],
                   ),
@@ -155,6 +171,19 @@ class _InviteScreenState extends State<InviteScreen> {
     );
   }
 
+  Future<void> _confirmRevoke(BuildContext context, Invite invite) async {
+    final confirmed = await confirmAction(
+      context,
+      title: context.l10n.inviteRevokeTitle,
+      message: context.l10n.inviteRevokeMessage(invite.code),
+      confirmLabel: context.l10n.commonRevoke,
+      destructive: true,
+    );
+    if (confirmed) {
+      await widget.state.revokeInvite(invite.id);
+    }
+  }
+
   Future<void> _create(BuildContext context) async {
     final days = expiresInDays;
     final invite = await widget.state.createInvite(
@@ -165,9 +194,9 @@ class _InviteScreenState extends State<InviteScreen> {
       return;
     }
     if (invite == null && widget.state.error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(widget.state.error!)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(widget.state.error!)));
     }
   }
 }
@@ -191,10 +220,7 @@ class _Labelled extends StatelessWidget {
             left: BoneSpacing.xs,
             bottom: BoneSpacing.sm,
           ),
-          child: Text(
-            label.toUpperCase(),
-            style: theme.textTheme.labelSmall,
-          ),
+          child: Text(label.toUpperCase(), style: theme.textTheme.labelSmall),
         ),
         child,
       ],

@@ -1,31 +1,64 @@
+# Supported single-node deployment (card I46). See docs/operations.md.
+#
+# The server runs the released, provenance-attested image by digest only;
+# this file never builds from a source checkout. Set VERITRA_IMAGE to the
+# exact line of the release's container-image-digest.txt, for example
+#   VERITRA_IMAGE=ghcr.io/<owner>/<repo>:<tag>@sha256:<64 hex digest>
+# after verifying that file's attestation. A tag without @sha256: is mutable
+# and unsupported. deploy/docker-compose.build.yml is a development/CI
+# override that builds locally; it is not a supported deployment path.
+#
+# Secrets: put each one in its own file under VERITRA_SECRETS_DIR (default
+# ./secrets, mounted read-only at /run/secrets), readable by uid 65532, and
+# point the matching *_FILE variable at it, e.g.
+#   PRIVATE_MESSENGER_TURN_SHARED_SECRET_FILE=/run/secrets/turn_shared_secret
+# Secret values are never placed in this file's environment, so they do not
+# appear in `docker compose config` or `docker inspect`.
+
+x-veritra-image: &veritra-image
+  image: "${VERITRA_IMAGE:?set VERITRA_IMAGE to the release image reference pinned by @sha256 digest}"
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  user: "65532:65532"
+  tmpfs:
+    - /tmp:size=16m,mode=1777,noexec,nosuid,nodev
+
 services:
   messenger:
-    build:
-      context: ..
-      dockerfile: server/Dockerfile
+    <<: [*veritra-image, *hardening]
     environment:
       PRIVATE_MESSENGER_ADDR: ":8080"
       PRIVATE_MESSENGER_DATA_DIR: /data
       PRIVATE_MESSENGER_ENV: production
       # Required for the first owner only. Generate a strong random value in
-      # the host environment, complete setup, then unset it and recreate this
-      # service; initialized production instances start safely without it.
+      # the host environment (or a file named by the _FILE variant), complete
+      # setup, then unset it and recreate this service; initialized
+      # production instances start safely without it.
       PRIVATE_MESSENGER_SETUP_TOKEN: "${PRIVATE_MESSENGER_SETUP_TOKEN:-}"
+      PRIVATE_MESSENGER_SETUP_TOKEN_FILE: "${PRIVATE_MESSENGER_SETUP_TOKEN_FILE:-}"
       PRIVATE_MESSENGER_TRUSTED_PROXIES: 172.28.250.0/24
       PRIVATE_MESSENGER_VAPID_SUBSCRIBER: "${PRIVATE_MESSENGER_VAPID_SUBSCRIBER:-}"
       PRIVATE_MESSENGER_VAPID_PUBLIC_KEY: "${PRIVATE_MESSENGER_VAPID_PUBLIC_KEY:-}"
-      PRIVATE_MESSENGER_VAPID_PRIVATE_KEY: "${PRIVATE_MESSENGER_VAPID_PRIVATE_KEY:-}"
+      PRIVATE_MESSENGER_VAPID_PRIVATE_KEY_FILE: "${PRIVATE_MESSENGER_VAPID_PRIVATE_KEY_FILE:-}"
       PRIVATE_MESSENGER_FCM_PROJECT_ID: "${PRIVATE_MESSENGER_FCM_PROJECT_ID:-}"
       PRIVATE_MESSENGER_FCM_CLIENT_EMAIL: "${PRIVATE_MESSENGER_FCM_CLIENT_EMAIL:-}"
-      PRIVATE_MESSENGER_FCM_PRIVATE_KEY: "${PRIVATE_MESSENGER_FCM_PRIVATE_KEY:-}"
+      PRIVATE_MESSENGER_FCM_PRIVATE_KEY_FILE: "${PRIVATE_MESSENGER_FCM_PRIVATE_KEY_FILE:-}"
       PRIVATE_MESSENGER_APNS_TEAM_ID: "${PRIVATE_MESSENGER_APNS_TEAM_ID:-}"
       PRIVATE_MESSENGER_APNS_KEY_ID: "${PRIVATE_MESSENGER_APNS_KEY_ID:-}"
       PRIVATE_MESSENGER_APNS_BUNDLE_ID: "${PRIVATE_MESSENGER_APNS_BUNDLE_ID:-}"
-      PRIVATE_MESSENGER_APNS_PRIVATE_KEY: "${PRIVATE_MESSENGER_APNS_PRIVATE_KEY:-}"
+      PRIVATE_MESSENGER_APNS_PRIVATE_KEY_FILE: "${PRIVATE_MESSENGER_APNS_PRIVATE_KEY_FILE:-}"
       PRIVATE_MESSENGER_TURN_URLS: "${PRIVATE_MESSENGER_TURN_URLS:-}"
-      PRIVATE_MESSENGER_TURN_SHARED_SECRET: "${PRIVATE_MESSENGER_TURN_SHARED_SECRET:-}"
+      PRIVATE_MESSENGER_TURN_SHARED_SECRET_FILE: "${PRIVATE_MESSENGER_TURN_SHARED_SECRET_FILE:-}"
     volumes:
+      # The data volume is the only writable application path: SQLite
+      # database, WAL, blobs, locks and local backups live here.
       - messenger-data:/data
+      - "${VERITRA_SECRETS_DIR:-./secrets}:/run/secrets:ro"
     ports:
       # Plain HTTP is bound to loopback only so it is never exposed to the
       # network without TLS. For production, run the `caddy` profile
@@ -39,11 +72,10 @@ services:
       retries: 3
       start_period: 10s
     restart: unless-stopped
+    # Must stay above the server's 25-second shutdown budget.
     stop_grace_period: 30s
     mem_limit: 1g
     pids_limit: 256
-    security_opt:
-      - no-new-privileges:true
     logging:
       driver: json-file
       options:
@@ -57,9 +89,7 @@ services:
   # Mount separately controlled storage at /offsite; its credentials belong
   # to that mount, never to this service.
   backup:
-    build:
-      context: ..
-      dockerfile: server/Dockerfile
+    <<: [*veritra-image, *hardening]
     profiles: ["backup"]
     command: ["scheduled-backup"]
     environment:
@@ -67,14 +97,15 @@ services:
       PRIVATE_MESSENGER_ENV: production
       PRIVATE_MESSENGER_BACKUP_OFFSITE_DIR: /offsite
       PRIVATE_MESSENGER_BACKUP_KEEP: "${PRIVATE_MESSENGER_BACKUP_KEEP:-7}"
+      # The restore drill copies the whole instance; keep its scratch on the
+      # data volume instead of the small in-memory /tmp.
+      TMPDIR: /data/.tmp
     volumes:
       - messenger-data:/data
       - "${PRIVATE_MESSENGER_BACKUP_OFFSITE_PATH:-./offsite-backups}:/offsite"
     restart: "no"
     mem_limit: 512m
     pids_limit: 64
-    security_opt:
-      - no-new-privileges:true
     network_mode: none
 
   caddy:
@@ -92,8 +123,15 @@ services:
     restart: unless-stopped
     mem_limit: 512m
     pids_limit: 128
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
     security_opt:
       - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=16m,mode=1777,noexec,nosuid,nodev
     logging:
       driver: json-file
       options:

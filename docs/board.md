@@ -155,7 +155,7 @@ independent reviews until all three phases are done"):
   `audit-consensus.md` (I43) to release builds.
 - **D13:** Close I27/G27 by upgrading to OpenMLS 0.9.0 (hpke-rs 0.7), which
   needs Rust 1.91. Done 2026-09-24; see I27.
-- **D14:** The canonical Go toolchain is the latest 1.26 patch (1.26.8).
+- **D14:** The canonical Go toolchain is the latest 1.26 patch (1.26.10 since 2026-10-22, for GO-2026-6603..6809).
 - **D15:** Stay on Flutter 3.44.0 and hold `sqlite3` at 3.5.x until the Flutter
   pin moves in Stage 6 (`sqlite3` 3.6.0 needs a newer `meta` than the SDK
   ships). Amends D01's exact versions: `drift` 2.34.4, `sqlite3` 3.5.2.
@@ -203,6 +203,18 @@ independent reviews until all three phases are done"):
   ABI v6 adds the staged-commit functions; groups keep two past epochs.
   Groups created before this change keep working but cannot change
   membership (recreate them).
+- **D29 (2026-10-22, owner-approved):** G27 reopened. RUSTSEC-2026-0330/0331
+  (libcrux-kem 0.0.9) sit in `Cargo.lock` only because hpke-rs 0.7's `std`
+  feature names the optional hpke-rs-libcrux backend; it is never built, and
+  `scripts/audit-rust.sh` now fails if it or libcrux-kem enters the build
+  graph. The fix needs hpke-rs 0.8, which no released openmls_rust_crypto
+  accepts yet (0.6.0 requires ^0.7; openmls 0.9.1/0.9.2 do not help). Both IDs
+  are excepted until 2026-12-31 in `crypto/rust/audit-policy.json`; remove them
+  when a stable release takes hpke-rs 0.8. Release stays blocked as before.
+- **D30 (2026-10-22, owner-approved):** Add `flutter_localizations` (Flutter
+  SDK) and `intl` 0.20.2 (the version it pins), both BSD-3-Clause, for T44C
+  localization. English-only ARB; generated code is committed in
+  `mobile/lib/l10n`.
 - The crypto surface (ABI v5, payload semantics, local schema v7) freezes after
   Stage 1, with a change log kept for the eventual G25 reviewer (in
   [`crypto.md`](crypto.md); local schema is v8 since I34).
@@ -233,12 +245,12 @@ task boundaries and orchestration rules are in
 | I41 | Implemented and checked (Stage 5, 2026-09-24; QA06, QA07, QA08); real-device wake matrix waits for G24 (D20) | Push registration and platform readiness | I36 |
 | I42 | T42A implemented and verified (QA03, 2026-09-24); T42B deferred by D16/D20, its design still needs approval then; conditional D03 | Authorized calls and native lifecycle | — |
 | I43 | T43A/T43B/T43C implemented; checks/evidence pending (Codex, 2026-08-14) | First-run and accessibility baseline | — |
-| I44 | Prepared, split before claim | Mobile and API quality | release blockers |
+| I44 | T44A, T44B and T44C implemented and checked (2026-10-22); English localization scaffolding in place (D30), most screens still to move | Mobile and API quality | release blockers |
 | I45 | Implemented and checked (Stage 5, 2026-09-24: T45A, T45B, T45C, QA05, QA09) | Backup, restore and migration safety | I29, I39 |
-| I46 | Prepared | Supported deployment hardening | — |
+| I46 | T46 implemented and unit-checked (2026-10-22); hardened upload/backup/restore/push/TURN smoke still pending | Supported deployment hardening | — |
 | I47 | Prepared, conditional | Operational visibility and capacity evidence | I35, I36 |
-| I48 | T48A implemented and checked (2026-09-27); T48B prepared | Transport, realtime and logging hardening | I32 |
-| I49 | Measure, then split | Performance and architecture work | correctness cards |
+| I48 | T48A implemented and checked (2026-09-27); T48B fuzz evidence done (2026-10-22), Autobahn, parser decision and LAN TLS pending | Transport, realtime and logging hardening | I32 |
+| I49 | T49A/T49B measured (2026-10-22, `testing/evidence/benchmarks-t49.md`); six misses proposed as child cards; T49C/T49D open | Performance and architecture work | correctness cards |
 | I50 | Deferred | Product and ecosystem backlog | D06 / mobile release |
 | I51 | Implemented and checked (Stage 5, 2026-09-24, D28) | MLS membership changes after creation, linked devices, per-device key-package claims, join cursor, epoch-ordered commits | I30, I34 |
 

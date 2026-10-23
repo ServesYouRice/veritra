@@ -1,0 +1,16 @@
+# Development and CI override only; NOT a supported deployment path.
+#
+# Builds the server image from the local checkout so CI can smoke-test the
+# hardened profile of docker-compose.yml before a release image exists:
+#   VERITRA_IMAGE=veritra-local:dev docker compose \
+#     -f deploy/docker-compose.yml -f deploy/docker-compose.build.yml build
+# Production uses docker-compose.yml alone with the released image digest.
+services:
+  messenger:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+  backup:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile

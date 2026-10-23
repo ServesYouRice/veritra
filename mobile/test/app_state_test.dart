@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/widgets.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
+import 'package:private_messenger/core/errors.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/push/push_service.dart';
 import 'package:private_messenger/storage/local_store.dart';
@@ -480,6 +481,129 @@ void main() {
         <String>['msg_newest']);
     state.dispose();
   });
+
+  test('a failed list refresh keeps stale lists, reports safely, and retries',
+      () async {
+    final api = _FlakyListApiClient();
+    final state = _signedInState(api);
+    await state.refreshConversations();
+    await state.refreshDevices();
+    expect(state.conversations.map((c) => c.id), <String>['conv_1']);
+    expect(state.devices.map((d) => d.id), <String>['dev_owner']);
+    expect(state.errorFor(Ops.conversations), isNull);
+
+    api.failure = ApiException(503, '{"error":"server_draining"}');
+    await state.refreshConversations();
+    await state.refreshDevices();
+    expect(state.conversations.map((c) => c.id), <String>['conv_1'],
+        reason: 'the last good list survives a failed refresh');
+    expect(state.devices.map((d) => d.id), <String>['dev_owner']);
+    expect(state.errorFor(Ops.conversations),
+        'The server is restarting. Try again shortly.');
+    expect(state.errorFor(Ops.devices),
+        'The server is restarting. Try again shortly.');
+    expect(state.session, isNotNull);
+
+    api.failure = const ApiResponseException();
+    await state.refreshConversations();
+    expect(state.errorFor(Ops.conversations),
+        'The server returned an unexpected response.');
+
+    api.failure = null;
+    await state.refreshConversations();
+    await state.refreshDevices();
+    expect(state.errorFor(Ops.conversations), isNull);
+    expect(state.errorFor(Ops.devices), isNull);
+    state.dispose();
+  });
+
+  test('a 401 list refresh signs out instead of surfacing raw errors',
+      () async {
+    final api = _FlakyListApiClient()
+      ..failure = ApiException(401, '{"error":"unauthorized"}');
+    final state = _signedInState(api);
+    await state.refreshConversations();
+    expect(state.session, isNull);
+    expect(state.errorFor(Ops.conversations),
+        'Your session is no longer valid. Sign in again.');
+    state.dispose();
+  });
+
+  test('search failures reach the UI only as mapped sentences', () async {
+    final api = _FlakyListApiClient()
+      ..failure = ApiException(500, 'SENTINEL_BODY');
+    final state = _signedInState(api);
+    await expectLater(
+      state.searchMetadata('alice'),
+      throwsA(isA<UserFacingException>().having((e) => e.toString(), 'text',
+          'The server had a problem. Try again shortly.')),
+    );
+    api.failure = StateError('internal invariant broke');
+    await expectLater(
+      state.searchMetadata('alice'),
+      throwsA(isA<UserFacingException>()
+          .having((e) => e.toString(), 'text', isNot(contains('invariant')))),
+    );
+    state.dispose();
+  });
+}
+
+AppState _signedInState(ApiClient api) => AppState(
+      apiClientFactory: (_) => api,
+      cryptoService: TestOnlyCryptoService(),
+      localStore: MemoryLocalStore(),
+      syncServiceFactory: (_, __) => FakeSyncService(),
+    )
+      ..api = api
+      ..session = const Session(
+        baseUrl: 'https://localhost:8080',
+        token: 'owner-token',
+        accountId: 'acct_owner',
+        deviceId: 'dev_owner',
+      );
+
+class _FlakyListApiClient extends ApiClient {
+  _FlakyListApiClient() : super(baseUrl: 'https://localhost:8080');
+
+  Object? failure;
+
+  void _maybeFail() {
+    final error = failure;
+    if (error != null) throw error;
+  }
+
+  @override
+  Future<List<Conversation>> conversations(String token) async {
+    _maybeFail();
+    return <Conversation>[Conversation(id: 'conv_1', kind: 'dm')];
+  }
+
+  @override
+  Future<List<Device>> devices(String token) async {
+    _maybeFail();
+    return <Device>[
+      Device(
+        id: 'dev_owner',
+        accountId: 'acct_owner',
+        name: 'Phone',
+        createdAt: DateTime.utc(2026),
+      ),
+    ];
+  }
+
+  @override
+  Future<List<MetadataSearchResult>> searchMetadata(
+    String token,
+    String query, {
+    int limit = 20,
+    int offset = 0,
+  }) async {
+    _maybeFail();
+    return const <MetadataSearchResult>[];
+  }
+
+  @override
+  Future<void> logout(String token) async {}
 }
 
 class _WakePushService implements MobilePushService {

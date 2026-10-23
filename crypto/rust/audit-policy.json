@@ -2,6 +2,17 @@
   "version": 1,
   "timezone": "UTC",
   "cargo_audit_version": "0.22.2",
-  "review_deadline": "2026-08-29T00:00:00Z",
-  "exceptions": []
+  "review_deadline": "2026-12-31T00:00:00Z",
+  "exceptions": [
+    {
+      "id": "RUSTSEC-2026-0330",
+      "scope": "libcrux-kem 0.0.9 via hpke-rs-libcrux 0.7.0 (lockfile only)",
+      "rationale": "Locked but never built: hpke-rs 0.7 names the optional hpke-rs-libcrux backend (=0.7.0, which pins libcrux-kem =0.0.9) in its std feature. The fix needs hpke-rs 0.8; no released openmls_rust_crypto accepts it yet. Approved by the owner on 2026-10-22."
+    },
+    {
+      "id": "RUSTSEC-2026-0331",
+      "scope": "libcrux-kem 0.0.9 via hpke-rs-libcrux 0.7.0 (lockfile only)",
+      "rationale": "Locked but never built: hpke-rs 0.7 names the optional hpke-rs-libcrux backend (=0.7.0, which pins libcrux-kem =0.0.9) in its std feature. The fix needs hpke-rs 0.8; no released openmls_rust_crypto accepts it yet. Approved by the owner on 2026-10-22."
+    }
+  ]
 }

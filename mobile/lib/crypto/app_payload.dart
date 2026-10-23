@@ -6,6 +6,10 @@ const int appPayloadVersion = 1;
 const int _headerLength = 8;
 const int _paddingBucket = 256;
 const int _maxPayloadBytes = 64 * 1024;
+
+/// Longest message text, in UTF-16 code units, a payload body may carry. The
+/// composer and edit dialog check it before sending.
+const int maxAppTextLength = 16384;
 const List<int> _magic = <int>[0x56, 0x41, 0x50, 0x31]; // VAP1
 
 enum AppPayloadType {
@@ -134,7 +138,7 @@ class AppPayloadCodec {
   }
 
   void _validateBody(AppPayloadType type, Map<String, Object?> body) {
-    bool stringField(String name, {int max = 16384}) =>
+    bool stringField(String name, {int max = maxAppTextLength}) =>
         body[name] is String && (body[name] as String).length <= max;
     final valid = switch (type) {
       AppPayloadType.text => stringField('text') && body.length == 1,

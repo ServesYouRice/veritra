@@ -48,6 +48,16 @@ const (
 	MaxPasswordCost     = 15
 )
 
+// SecretEnvKeys are the settings that may also be supplied as a file named
+// by the same key with a _FILE suffix.
+var SecretEnvKeys = []string{
+	"PRIVATE_MESSENGER_SETUP_TOKEN",
+	"PRIVATE_MESSENGER_VAPID_PRIVATE_KEY",
+	"PRIVATE_MESSENGER_FCM_PRIVATE_KEY",
+	"PRIVATE_MESSENGER_APNS_PRIVATE_KEY",
+	"PRIVATE_MESSENGER_TURN_SHARED_SECRET",
+}
+
 func Load() (Config, error) {
 	trustedProxies, err := parseCIDRs(getenv("PRIVATE_MESSENGER_TRUSTED_PROXIES", ""))
 	if err != nil {
@@ -57,26 +67,34 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	secrets := map[string]string{}
+	for _, key := range SecretEnvKeys {
+		value, err := secretEnv(key)
+		if err != nil {
+			return Config{}, err
+		}
+		secrets[key] = value
+	}
 	cfg := Config{
 		Addr:             getenv("PRIVATE_MESSENGER_ADDR", ":8080"),
 		DataDir:          getenv("PRIVATE_MESSENGER_DATA_DIR", "./data"),
 		InstanceName:     getenv("PRIVATE_MESSENGER_INSTANCE_NAME", "Veritra"),
-		SetupToken:       strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_SETUP_TOKEN")),
+		SetupToken:       secrets["PRIVATE_MESSENGER_SETUP_TOKEN"],
 		EnableMetrics:    getenv("PRIVATE_MESSENGER_ENABLE_METRICS", "") == "1",
 		ManagementAddr:   getenv("PRIVATE_MESSENGER_MANAGEMENT_ADDR", "127.0.0.1:9090"),
 		TrustedProxies:   trustedProxies,
 		VAPIDSubscriber:  strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_VAPID_SUBSCRIBER")),
 		VAPIDPublicKey:   strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_VAPID_PUBLIC_KEY")),
-		VAPIDPrivateKey:  strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_VAPID_PRIVATE_KEY")),
+		VAPIDPrivateKey:  secrets["PRIVATE_MESSENGER_VAPID_PRIVATE_KEY"],
 		FCMProjectID:     strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_FCM_PROJECT_ID")),
 		FCMClientEmail:   strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_FCM_CLIENT_EMAIL")),
-		FCMPrivateKey:    strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_FCM_PRIVATE_KEY")),
+		FCMPrivateKey:    secrets["PRIVATE_MESSENGER_FCM_PRIVATE_KEY"],
 		APNsTeamID:       strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_APNS_TEAM_ID")),
 		APNsKeyID:        strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_APNS_KEY_ID")),
 		APNsBundleID:     strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_APNS_BUNDLE_ID")),
-		APNsPrivateKey:   strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_APNS_PRIVATE_KEY")),
+		APNsPrivateKey:   secrets["PRIVATE_MESSENGER_APNS_PRIVATE_KEY"],
 		TURNURLs:         splitNonEmpty(os.Getenv("PRIVATE_MESSENGER_TURN_URLS")),
-		TURNSharedSecret: strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_TURN_SHARED_SECRET")),
+		TURNSharedSecret: secrets["PRIVATE_MESSENGER_TURN_SHARED_SECRET"],
 		Environment:      strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_ENV", "development"))),
 		LogLevel:         strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_LOG_LEVEL", "info"))),
 		LogFormat:        strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_LOG_FORMAT", "text"))),
