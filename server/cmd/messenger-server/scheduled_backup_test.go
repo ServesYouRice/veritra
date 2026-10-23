@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"private-messenger/server/internal/backupstatus"
+	"private-messenger/server/internal/config"
 )
 
 func TestScheduledBackupVerifiesCopiesAndPrunes(t *testing.T) {
@@ -55,7 +56,7 @@ func TestScheduledBackupVerifiesCopiesAndPrunes(t *testing.T) {
 		}
 	}
 	// The off-host copy restores on a clean host.
-	if err := verifyBackup(context.Background(), []string{filepath.Join(offsite, "veritra-20260927T000000Z")}, &bytes.Buffer{}); err != nil {
+	if err := verifyBackup(context.Background(), config.Config{DataDir: t.TempDir()}, []string{filepath.Join(offsite, "veritra-20260927T000000Z")}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 	status, ok := backupstatus.Read(source.DataDir)

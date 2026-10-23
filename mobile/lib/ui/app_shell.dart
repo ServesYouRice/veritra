@@ -10,6 +10,7 @@ import 'tokens.dart';
 import 'widgets/connection_banner.dart';
 import 'widgets/demo_banner.dart';
 import 'widgets/empty_state.dart';
+import '../l10n/l10n.dart';
 
 bool shouldShowFloatingNavLabels({
   required double width,
@@ -61,19 +62,23 @@ class _AppShellState extends State<AppShell> {
     _Destination(
       icon: Icons.chat_bubble_outline,
       selectedIcon: Icons.chat_bubble,
-      label: 'Chats',
+      label: _chatsLabel,
     ),
     _Destination(
       icon: Icons.groups_outlined,
       selectedIcon: Icons.groups,
-      label: 'Communities',
+      label: _communitiesLabel,
     ),
     _Destination(
       icon: Icons.settings_outlined,
       selectedIcon: Icons.settings,
-      label: 'Settings',
+      label: _settingsLabel,
     ),
   ];
+
+  static String _chatsLabel(AppLocalizations l10n) => l10n.navChats;
+  static String _communitiesLabel(AppLocalizations l10n) => l10n.navCommunities;
+  static String _settingsLabel(AppLocalizations l10n) => l10n.settingsTitle;
 
   @override
   Widget build(BuildContext context) {
@@ -128,7 +133,7 @@ class _AppShellState extends State<AppShell> {
                           NavigationRailDestination(
                             icon: Icon(destination.icon),
                             selectedIcon: Icon(destination.selectedIcon),
-                            label: Text(destination.label),
+                            label: Text(destination.label(context.l10n)),
                           ),
                       ],
                     ),
@@ -241,7 +246,7 @@ class _NavItem extends StatelessWidget {
     // hand-rolled bar has to say it itself or the nav stops announcing which
     // destination is current.
     return Semantics(
-      label: destination.label,
+      label: destination.label(context.l10n),
       selected: selected,
       button: true,
       child: Material(
@@ -254,10 +259,13 @@ class _NavItem extends StatelessWidget {
             constraints: const BoxConstraints(
               minHeight: BoneSpacing.minTapTarget,
             ),
-            alignment: Alignment.center,
             padding: const EdgeInsets.symmetric(horizontal: BoneSpacing.sm),
+            // Centred by the Row, not by Container.alignment: an Align
+            // expands to the bottom-bar slot's loose height, which is the
+            // whole screen, and the pill swallowed the page (T43C).
             child: Row(
               mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: <Widget>[
                 ExcludeSemantics(
                   child: Icon(
@@ -270,7 +278,7 @@ class _NavItem extends StatelessWidget {
                   const SizedBox(width: BoneSpacing.sm),
                   Flexible(
                     child: Text(
-                      destination.label,
+                      destination.label(context.l10n),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.labelMedium?.copyWith(
@@ -306,10 +314,10 @@ class _ChatWorkspace extends StatelessWidget {
         const VerticalDivider(width: 1),
         Expanded(
           child: selected == null
-              ? const EmptyState(
+              ? EmptyState(
                   icon: Icons.forum_outlined,
-                  title: 'No conversation selected',
-                  message: 'Pick a conversation from the list to read it here.',
+                  title: context.l10n.shellNoConversationTitle,
+                  message: context.l10n.shellNoConversationMessage,
                 )
               : ChatScreen(
                   key: ValueKey<String>(selected),
@@ -328,15 +336,15 @@ class _StartupState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
+    return Scaffold(
       body: SafeArea(
         child: Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              CircularProgressIndicator(),
-              SizedBox(height: BoneSpacing.lg),
-              Text('Restoring this device…'),
+              const CircularProgressIndicator(),
+              const SizedBox(height: BoneSpacing.lg),
+              Text(context.l10n.shellRestoring),
             ],
           ),
         ),
@@ -354,20 +362,16 @@ class _RecoveryState extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Reset this device?'),
-        content: const Text(
-          'This device starts empty and must be linked again. Its current '
-          'messages stay unreadable here; they are moved aside, not deleted, '
-          'in case the key comes back.',
-        ),
+        title: Text(context.l10n.shellResetTitle),
+        content: Text(context.l10n.shellResetMessage),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+            child: Text(context.l10n.commonCancel),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Reset'),
+            child: Text(context.l10n.shellResetConfirm),
           ),
         ],
       ),
@@ -393,32 +397,31 @@ class _RecoveryState extends StatelessWidget {
                   const Icon(Icons.lock_reset_outlined, size: 48),
                   const SizedBox(height: BoneSpacing.lg),
                   Text(
-                    'Device recovery needed',
+                    context.l10n.shellRecoveryTitle,
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.headlineSmall,
                   ),
                   const SizedBox(height: BoneSpacing.sm),
                   Text(
-                    state.recoveryMessage ??
-                        'This device needs attention before it can be used.',
+                    state.recoveryMessage ?? context.l10n.shellRecoveryFallback,
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: BoneSpacing.lg),
                   FilledButton(
                     onPressed: state.busy ? null : state.tryRestoreSession,
-                    child: const Text('Retry restore'),
+                    child: Text(context.l10n.shellRetryRestore),
                   ),
                   if (state.canContinueWithoutRestore)
                     TextButton(
                       onPressed:
                           state.busy ? null : state.continueWithoutRestore,
-                      child: const Text('Continue to sign in'),
+                      child: Text(context.l10n.shellContinueToSignIn),
                     )
                   else
                     TextButton(
                       onPressed:
                           state.busy ? null : () => _confirmReset(context),
-                      child: const Text('Reset this device'),
+                      child: Text(context.l10n.shellResetDevice),
                     ),
                 ],
               ),
@@ -439,5 +442,5 @@ class _Destination {
 
   final IconData icon;
   final IconData selectedIcon;
-  final String label;
+  final String Function(AppLocalizations l10n) label;
 }

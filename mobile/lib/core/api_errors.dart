@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import '../l10n/l10n.dart';
+
 /// Version of the error contract below. Bump it, and the fixture in
 /// `test/fixtures/api/v1/`, when the server adds, renames or removes a code.
 const int apiErrorContractVersion = 1;
@@ -211,113 +213,103 @@ class ApiException implements Exception {
       kind == ApiErrorKind.unavailable ||
       kind == ApiErrorKind.server;
 
-  /// A sentence safe to show to end users.
-  String get message {
+  /// A sentence safe to show to end users, in English; see
+  /// [localizedMessage].
+  String get message => localizedMessage(englishL10n);
+
+  /// A sentence safe to show to end users, in [l10n]'s language.
+  String localizedMessage(AppLocalizations l10n) {
     switch (serverCode) {
       case 'unauthorized':
-        return 'Your session is no longer valid. Sign in again.';
+        return l10n.apiErrorSessionInvalid;
       case 'invalid_credentials':
-        return 'Sign-in failed. Check your username and password.';
+        return l10n.apiErrorInvalidCredentials;
       case 'recent_auth_required':
-        return 'Confirm your password before this sensitive action.';
+        return l10n.apiErrorRecentAuth;
       case 'device_id_required':
       case 'device_session_required':
-        return 'This device must be linked before password sign-in.';
+        return l10n.apiErrorDeviceNotLinked;
       case 'forbidden':
-        return 'You do not have permission to do that.';
+        return l10n.apiErrorForbidden;
       case 'not_found':
-        return 'That item was not found. It may have been removed.';
+        return l10n.apiErrorNotFound;
       case 'already_setup':
-        return 'This server already has an owner. Sign in or join with an '
-            'invite instead.';
+        return l10n.apiErrorAlreadySetup;
       case 'last_owner_required':
-        return 'Transfer ownership before disabling the last owner account.';
+        return l10n.apiErrorLastOwner;
       case 'weak_password':
-        return 'Password must be 12–72 characters.';
+        return l10n.apiErrorWeakPassword;
       case 'invalid_invite':
-        return 'That invite code is not valid, has expired, or has already '
-            'been used up.';
+        return l10n.apiErrorInvalidInvite;
       case 'invalid_device_link':
-        return 'That link code is not valid or has expired. Generate a new '
-            'one on your linked device.';
+        return l10n.apiErrorInvalidDeviceLink;
       case 'transcript_hash_required':
       case 'transcript_mismatch':
-        return 'The locally verified device credentials changed. Generate a '
-            'new link and compare both devices again.';
+        return l10n.apiErrorTranscriptMismatch;
       case 'invalid_device_name':
-        return 'That device name is not valid.';
+        return l10n.apiErrorInvalidDeviceName;
       case 'invalid_name':
-        return 'That name is not valid.';
+        return l10n.apiErrorInvalidName;
       case 'invalid_max_uses':
-        return 'The invite use limit is not valid.';
+        return l10n.apiErrorInvalidMaxUses;
       case 'invalid_expires_at':
       case 'expires_at_too_far':
-        return 'That expiry time is not valid.';
+        return l10n.apiErrorInvalidExpiry;
       case 'invalid_conversation_kind':
-        return 'The server rejected this conversation type.';
+        return l10n.apiErrorInvalidConversationKind;
       case 'invalid_retention_seconds':
-        return 'That disappearing-message duration is not supported.';
+        return l10n.apiErrorInvalidRetention;
       case 'invalid_role':
-        return 'That member role is not valid.';
+        return l10n.apiErrorInvalidRole;
       case 'account_id_required':
-        return 'Choose an account to add.';
+        return l10n.apiErrorAccountRequired;
       case 'upload_too_large':
-        return 'That file is too large to upload.';
+        return l10n.apiErrorUploadTooLarge;
       case 'device_key_package_required':
       case 'invalid_device_key_package':
       case 'non_production_device_key_package':
       case 'invalid_enrollment':
-        return 'The server refused this build’s encryption keys. A '
-            'client with production encryption support is required.';
+        return l10n.apiErrorKeyPackageRefused;
       case 'storage_error':
       case 'storage_unavailable':
-        return 'The server had a storage problem. Try again shortly.';
+        return l10n.apiErrorStorage;
       case 'storage_quota_exceeded':
-        return 'The server is out of storage for this account. Delete older '
-            'attachments or ask the administrator for more space.';
+        return l10n.apiErrorStorageFull;
       case 'blob_integrity_failed':
-        return 'The encrypted attachment could not be verified. Discard it '
-            'and try again.';
+        return l10n.apiErrorBlobIntegrity;
       case 'setup_authorization_required':
-        return 'The setup token is missing or wrong. Use the one the server '
-            'printed when it started (the demo keeps it in '
-            'data/demo/setup-token).';
+        return l10n.apiErrorSetupToken;
       case 'server_draining':
-        return 'The server is restarting. Try again shortly.';
+        return l10n.apiErrorDraining;
       case 'idempotency_conflict':
-        return 'This message was already submitted with different data. '
-            'Discard it and compose a new message.';
+        return l10n.apiErrorIdempotencyConflict;
       case 'message_expired':
-        return 'That message has expired.';
+        return l10n.apiErrorMessageExpired;
       case 'recovery_transfer_in_progress':
-        return 'Another restore is already downloading this backup. Try '
-            'again shortly.';
+        return l10n.apiErrorRecoveryInProgress;
     }
     switch (kind) {
       case ApiErrorKind.authentication:
-        return 'Your session is no longer valid. Sign in again.';
+        return l10n.apiErrorSessionInvalid;
       case ApiErrorKind.permission:
-        return 'You do not have permission to do that.';
+        return l10n.apiErrorForbidden;
       case ApiErrorKind.notFound:
-        return 'That item was not found. It may have been removed.';
+        return l10n.apiErrorNotFound;
       case ApiErrorKind.conflict:
-        return 'This changed on the server in the meantime. Refresh and try '
-            'again.';
+        return l10n.apiErrorConflict;
       case ApiErrorKind.rateLimited:
-        return 'Too many attempts. Wait a moment and try again.';
+        return l10n.apiErrorRateLimited;
       case ApiErrorKind.tooLarge:
-        return 'That file is too large to upload.';
+        return l10n.apiErrorUploadTooLarge;
       case ApiErrorKind.storageFull:
-        return 'The server is out of storage for this account. Delete older '
-            'attachments or ask the administrator for more space.';
+        return l10n.apiErrorStorageFull;
       case ApiErrorKind.encryption:
-        return 'The server rejected the encrypted data from this build.';
+        return l10n.apiErrorEncryption;
       case ApiErrorKind.unavailable:
       case ApiErrorKind.server:
-        return 'The server had a problem. Try again shortly.';
+        return l10n.apiErrorServer;
       case ApiErrorKind.invalidRequest:
-        return 'The server rejected the request. Check your input and try '
-            'again.';
+        return l10n.apiErrorInvalidRequest;
     }
   }
 
@@ -331,7 +323,7 @@ class ApiResponseException implements FormatException {
   const ApiResponseException();
 
   @override
-  String get message => 'The server returned an unexpected response.';
+  String get message => englishL10n.errorUnexpectedResponse;
 
   @override
   Object? get source => null;

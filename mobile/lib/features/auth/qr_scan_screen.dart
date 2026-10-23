@@ -3,6 +3,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../core/api_client.dart';
 import '../../core/transport_policy.dart';
+import '../../l10n/l10n.dart';
 
 /// Pulls the `code` query parameter out of a scanned device-link URI
 /// (`veritra://device-link?code=…`), falling back to the raw scan when it is
@@ -56,9 +57,10 @@ String? parseDeviceLinkOrigin(
 /// null if the user backs out. Parsing is left to the caller so this screen
 /// stays a thin camera surface.
 class QrScanScreen extends StatefulWidget {
-  const QrScanScreen({this.title = 'Scan link QR', super.key});
+  const QrScanScreen({this.title, super.key});
 
-  final String title;
+  /// The app bar title; defaults to the device-link wording.
+  final String? title;
 
   @override
   State<QrScanScreen> createState() => _QrScanScreenState();
@@ -98,15 +100,15 @@ class _QrScanScreenState extends State<QrScanScreen> {
     final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.title),
+        title: Text(widget.title ?? context.l10n.qrScanLinkTitle),
         actions: <Widget>[
           IconButton(
-            tooltip: 'Toggle torch',
+            tooltip: context.l10n.qrToggleTorch,
             icon: const Icon(Icons.flashlight_on_outlined),
             onPressed: () => _controller.toggleTorch(),
           ),
           IconButton(
-            tooltip: 'Switch camera',
+            tooltip: context.l10n.qrSwitchCamera,
             icon: const Icon(Icons.cameraswitch_outlined),
             onPressed: () => _controller.switchCamera(),
           ),
@@ -138,8 +140,7 @@ class _QrScanScreenState extends State<QrScanScreen> {
             child: Padding(
               padding: const EdgeInsets.all(24),
               child: Text(
-                'Point the camera at the QR code on your existing device '
-                '(Settings → Link a new device).',
+                context.l10n.qrPointCamera,
                 textAlign: TextAlign.center,
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: Colors.white,
@@ -166,11 +167,9 @@ class _ScannerError extends StatelessWidget {
     final theme = Theme.of(context);
     final message = switch (error.errorCode) {
       MobileScannerErrorCode.permissionDenied =>
-        'Camera permission is required to scan. Enable it in system '
-            'settings, or type the link code manually.',
-      MobileScannerErrorCode.unsupported =>
-        'This device can’t scan QR codes. Type the link code manually.',
-      _ => 'The camera could not be started. Type the link code manually.',
+        context.l10n.qrPermissionDenied,
+      MobileScannerErrorCode.unsupported => context.l10n.qrUnsupported,
+      _ => context.l10n.qrCameraFailed,
     };
     return ColoredBox(
       color: Colors.black,
@@ -192,7 +191,7 @@ class _ScannerError extends StatelessWidget {
               const SizedBox(height: 24),
               FilledButton(
                 onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Enter code manually'),
+                child: Text(context.l10n.qrEnterManually),
               ),
             ],
           ),

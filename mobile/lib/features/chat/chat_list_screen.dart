@@ -13,6 +13,7 @@ import 'chat_screen.dart';
 import 'conversation_details_screen.dart';
 import 'new_conversation_sheet.dart';
 import '../../ui/widgets/refresh_action.dart';
+import '../../l10n/l10n.dart';
 
 class ChatListScreen extends StatelessWidget {
   const ChatListScreen({required this.state, this.embedded = false, super.key});
@@ -37,11 +38,14 @@ class ChatListScreen extends StatelessWidget {
         // is worth here.
         toolbarHeight: 64,
         titleSpacing: BoneSpacing.gutter,
-        title: Text('Chats', style: theme.textTheme.displaySmall),
+        title: Text(
+          context.l10n.navChats,
+          style: theme.textTheme.displaySmall,
+        ),
         actions: <Widget>[
           RefreshAction(onRefresh: state.refreshConversations),
           IconButton(
-            tooltip: 'Search',
+            tooltip: context.l10n.chatListSearch,
             onPressed: () => Navigator.of(context).push(
               sharedAxisRoute<void>(
                 (_) => SearchScreen(state: state),
@@ -60,7 +64,7 @@ class ChatListScreen extends StatelessWidget {
         backgroundColor: theme.colorScheme.primary,
         foregroundColor: theme.colorScheme.onPrimary,
         icon: const Icon(Icons.add_comment_outlined),
-        label: const Text('New chat'),
+        label: Text(context.l10n.chatListNewChat),
       ),
       body: RefreshIndicator(
         onRefresh: state.refreshConversations,
@@ -74,11 +78,10 @@ class ChatListScreen extends StatelessWidget {
                   if (!state.conversationsLoaded)
                     const Center(child: CircularProgressIndicator())
                   else
-                    const EmptyState(
+                    EmptyState(
                       icon: Icons.chat_bubble_outline,
-                      title: 'No conversations yet',
-                      message: 'Start a direct message or create a group. '
-                          'Everything is end-to-end encrypted.',
+                      title: context.l10n.chatListEmptyTitle,
+                      message: context.l10n.chatListEmptyMessage,
                     ),
                 ],
               )
@@ -149,13 +152,13 @@ class ChatListScreen extends StatelessWidget {
                     : Icons.notifications_off_outlined,
               ),
               title: Text(
-                muted ? 'Unmute notifications' : 'Mute notifications',
+                muted ? context.l10n.chatListUnmute : context.l10n.chatListMute,
               ),
               onTap: () => Navigator.of(sheetContext).pop('mute'),
             ),
             ListTile(
               leading: const Icon(Icons.info_outline),
-              title: const Text('Conversation details'),
+              title: Text(context.l10n.chatListDetails),
               onTap: () => Navigator.of(sheetContext).pop('details'),
             ),
           ],
@@ -214,7 +217,8 @@ class _ConversationTile extends StatelessWidget {
     final hasUnread = unread > 0;
     final activityAt = conversation.lastActivityAt;
     final retention = conversation.retentionSeconds;
-    final title = conversationTitle(conversation);
+    final l10n = context.l10n;
+    final title = conversationTitle(l10n, conversation);
     // MergeSemantics folds the title, activity time, and unread badge into a
     // single tappable node so a screen reader announces the row once.
     return MergeSemantics(
@@ -271,7 +275,7 @@ class _ConversationTile extends StatelessWidget {
                               if (muted) ...<Widget>[
                                 const SizedBox(width: BoneSpacing.xs + 2),
                                 Semantics(
-                                  label: 'Muted',
+                                  label: l10n.chatListMuted,
                                   child: Icon(
                                     Icons.notifications_off_outlined,
                                     size: 15,
@@ -286,7 +290,7 @@ class _ConversationTile extends StatelessWidget {
                             children: <Widget>[
                               Flexible(
                                 child: Text(
-                                  conversationRowSubtitle(conversation),
+                                  conversationRowSubtitle(l10n, conversation),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: theme.textTheme.bodySmall,
@@ -298,10 +302,12 @@ class _ConversationTile extends StatelessWidget {
                                 // Compact on screen, spoken in full: `1d`
                                 // should not be read out as "one dee".
                                 StatusPill(
-                                  label: retentionChipLabel(retention),
+                                  label: retentionChipLabel(l10n, retention),
                                   uppercase: false,
-                                  semanticsLabel: 'Disappearing after '
-                                      '${retentionLabel(retention)}',
+                                  semanticsLabel:
+                                      l10n.chatListDisappearingAfter(
+                                    retentionLabel(l10n, retention),
+                                  ),
                                 ),
                               ],
                             ],
@@ -337,7 +343,7 @@ class _ConversationTile extends StatelessWidget {
                             ),
                           if (hasUnread) ...<Widget>[
                             const SizedBox(height: BoneSpacing.xs + 2),
-                            _unreadIndicator(unread),
+                            _unreadIndicator(l10n, unread),
                           ],
                         ],
                       ),
@@ -358,8 +364,8 @@ class _ConversationTile extends StatelessWidget {
 /// The old badge always rendered a number, which gave one message the same
 /// weight as thirty. The spoken label is identical either way, so dropping
 /// the number changed nothing for a screen reader.
-Widget _unreadIndicator(int count) {
-  final spoken = '$count unread message${count == 1 ? '' : 's'}';
+Widget _unreadIndicator(AppLocalizations l10n, int count) {
+  final spoken = l10n.chatListUnreadSpoken(count);
   if (count == 1) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
@@ -367,7 +373,9 @@ Widget _unreadIndicator(int count) {
     );
   }
   return StatusPill(
-    label: count > 99 ? '99+' : '$count',
+    label: count > 99
+        ? l10n.chatListUnreadOverflow
+        : l10n.chatListUnreadCount(count),
     tone: StatusTone.accent,
     semanticsLabel: spoken,
   );
@@ -383,7 +391,7 @@ IconData conversationIcon(Conversation conversation) {
   return Icons.group_outlined;
 }
 
-String conversationTitle(Conversation conversation) {
+String conversationTitle(AppLocalizations l10n, Conversation conversation) {
   final title = conversation.title;
   if (title != null && title.isNotEmpty) {
     return title;
@@ -395,23 +403,26 @@ String conversationTitle(Conversation conversation) {
     if (peerId != null) {
       return accountLabel(peerId, conversation.peerUsername);
     }
-    return 'Direct message';
+    return l10n.newConversationDirect;
   }
   if (conversation.isChannel) {
-    return 'Channel';
+    return l10n.searchTypeChannel;
   }
-  return 'Group chat';
+  return l10n.conversationGroupChat;
 }
 
-String conversationSubtitle(Conversation conversation) {
+String conversationSubtitle(
+  AppLocalizations l10n,
+  Conversation conversation,
+) {
   final retention = conversation.retentionSeconds;
   final parts = <String>[
-    if (conversation.isDm) 'Direct message',
-    if (conversation.isGroup) 'Private group',
-    if (conversation.isChannel) 'Community channel',
-    'Encrypted',
+    if (conversation.isDm) l10n.newConversationDirect,
+    if (conversation.isGroup) l10n.conversationPrivateGroup,
+    if (conversation.isChannel) l10n.communityChannelSubtitle,
+    l10n.conversationEncrypted,
     if (retention != null && retention > 0)
-      'Disappearing (${retentionLabel(retention)})',
+      l10n.conversationDisappearing(retentionLabel(l10n, retention)),
   ];
   return parts.join(' · ');
 }
@@ -421,11 +432,14 @@ String conversationSubtitle(Conversation conversation) {
 /// Shorter than [conversationSubtitle], which still backs the details screen
 /// where the long form belongs: the row hands retention to its own chip, and
 /// a DM drops the kind entirely because the title already names the person.
-String conversationRowSubtitle(Conversation conversation) {
+String conversationRowSubtitle(
+  AppLocalizations l10n,
+  Conversation conversation,
+) {
   final parts = <String>[
-    if (conversation.isGroup) 'Private group',
-    if (conversation.isChannel) 'Community channel',
-    'Encrypted',
+    if (conversation.isGroup) l10n.conversationPrivateGroup,
+    if (conversation.isChannel) l10n.communityChannelSubtitle,
+    l10n.conversationEncrypted,
   ];
   return parts.join(' · ');
 }
@@ -485,27 +499,25 @@ Widget conversationAvatar(
   );
 }
 
-String retentionLabel(int seconds) {
+String retentionLabel(AppLocalizations l10n, int seconds) {
   if (seconds >= 86400 && seconds % 86400 == 0) {
-    final days = seconds ~/ 86400;
-    return days == 1 ? '1 day' : '$days days';
+    return l10n.durationDays(seconds ~/ 86400);
   }
   if (seconds >= 3600 && seconds % 3600 == 0) {
-    final hours = seconds ~/ 3600;
-    return hours == 1 ? '1 hour' : '$hours hours';
+    return l10n.durationHours(seconds ~/ 3600);
   }
   final minutes = (seconds / 60).ceil();
-  return minutes <= 1 ? '1 minute' : '$minutes minutes';
+  return l10n.durationMinutes(minutes < 1 ? 1 : minutes);
 }
 
 /// Compact form of [retentionLabel] for the row chip: `30m`, `24h`, `7d`.
-String retentionChipLabel(int seconds) {
+String retentionChipLabel(AppLocalizations l10n, int seconds) {
   if (seconds >= 86400 && seconds % 86400 == 0) {
-    return '${seconds ~/ 86400}d';
+    return l10n.durationChipDays(seconds ~/ 86400);
   }
   if (seconds >= 3600 && seconds % 3600 == 0) {
-    return '${seconds ~/ 3600}h';
+    return l10n.durationChipHours(seconds ~/ 3600);
   }
   final minutes = (seconds / 60).ceil();
-  return '${minutes < 1 ? 1 : minutes}m';
+  return l10n.durationChipMinutes(minutes < 1 ? 1 : minutes);
 }

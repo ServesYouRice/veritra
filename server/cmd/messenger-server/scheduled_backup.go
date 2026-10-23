@@ -66,7 +66,7 @@ func scheduledBackup(ctx context.Context, cfg config.Config, options scheduledBa
 	if err := backup(ctx, cfg, []string{local}, io.Discard); err != nil {
 		return fail(backupstatus.StepBackup, err)
 	}
-	if err := verifyBackup(ctx, []string{local}, io.Discard); err != nil {
+	if err := verifyBackup(ctx, cfg, []string{local}, io.Discard); err != nil {
 		return fail(backupstatus.StepVerify, err)
 	}
 	if options.OffsiteDir != "" {

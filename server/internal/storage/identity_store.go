@@ -16,7 +16,34 @@ import (
 const (
 	SessionIdleLifetime     = 30 * 24 * time.Hour
 	SessionAbsoluteLifetime = 30 * 24 * time.Hour
+
+	// SessionTouchInterval bounds how often an authenticated request writes
+	// sessions.last_used_at/expires_at. One minute caps the write rate at one
+	// per session per minute (instead of one per request) while shortening the
+	// effective idle lifetime by at most one minute, about 0.002% of
+	// SessionIdleLifetime. Validity is still checked on every request.
+	SessionTouchInterval = time.Minute
+	// DeviceSeenInterval bounds devices.last_seen_at writes. The value is only
+	// coarse lost-device review data, so five minutes is precise enough.
+	DeviceSeenInterval = 5 * time.Minute
 )
+
+// SessionActivity is the stored activity of an authenticated session, read in
+// the same query that validates it so callers can skip redundant writes.
+type SessionActivity struct {
+	LastUsedAt       time.Time
+	DeviceLastSeenAt *time.Time
+}
+
+// SessionTouchDue reports whether TouchSession would write at now.
+func (a SessionActivity) SessionTouchDue(now time.Time) bool {
+	return !a.LastUsedAt.After(now.Add(-SessionTouchInterval))
+}
+
+// DeviceSeenDue reports whether MarkDeviceSeen would write at now.
+func (a SessionActivity) DeviceSeenDue(now time.Time) bool {
+	return a.DeviceLastSeenAt == nil || !a.DeviceLastSeenAt.After(now.Add(-DeviceSeenInterval))
+}
 
 func sessionLifetime(createdAt time.Time, requestedExpiry time.Time) (string, string) {
 	idleExpiry := createdAt.Add(SessionIdleLifetime)
@@ -194,12 +221,20 @@ func (s *Store) CreateSession(ctx context.Context, tokenHash, accountID, deviceI
 }
 
 func (s *Store) PrincipalByTokenHash(ctx context.Context, tokenHash string) (domain.Principal, error) {
+	principal, _, err := s.SessionPrincipal(ctx, tokenHash)
+	return principal, err
+}
+
+// SessionPrincipal validates a session with a read-only query and returns its
+// principal plus stored activity timestamps. Every expiry, idle, account and
+// device-revocation rule is enforced here on each call.
+func (s *Store) SessionPrincipal(ctx context.Context, tokenHash string) (domain.Principal, SessionActivity, error) {
 	principal := domain.Principal{}
-	var expiresAt string
-	var recentAuthAt sql.NullString
+	var expiresAt, lastUsedAt string
+	var recentAuthAt, deviceLastSeenAt sql.NullString
 	now := time.Now().UTC()
 	err := s.db.QueryRowContext(ctx, `
-		SELECT a.id, COALESCE(s.device_id, ''), a.username, a.role, s.expires_at, s.recent_auth_at
+		SELECT a.id, COALESCE(s.device_id, ''), a.username, a.role, s.expires_at, s.recent_auth_at, s.last_used_at, d.last_seen_at
 		FROM sessions s JOIN accounts a ON a.id = s.account_id
 		LEFT JOIN devices d ON d.id = s.device_id
 		WHERE s.token_hash = ?
@@ -210,20 +245,24 @@ func (s *Store) PrincipalByTokenHash(ctx context.Context, tokenHash string) (dom
 		  AND a.deleted_at IS NULL
 		  AND (s.device_id IS NULL OR (d.id IS NOT NULL AND d.revoked_at IS NULL))`,
 		tokenHash, formatTime(now), formatTime(now), formatTime(now.Add(-SessionIdleLifetime))).
-		Scan(&principal.AccountID, &principal.DeviceID, &principal.Username, &principal.Role, &expiresAt, &recentAuthAt)
+		Scan(&principal.AccountID, &principal.DeviceID, &principal.Username, &principal.Role, &expiresAt, &recentAuthAt, &lastUsedAt, &deviceLastSeenAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return domain.Principal{}, ErrUnauthorized
+			return domain.Principal{}, SessionActivity{}, ErrUnauthorized
 		}
-		return domain.Principal{}, err
+		return domain.Principal{}, SessionActivity{}, err
 	}
 	principal.ExpiresAt = parseTime(expiresAt)
 	principal.RecentAuthAt = parseOptionalTime(recentAuthAt)
-	return principal, nil
+	activity := SessionActivity{LastUsedAt: parseTime(lastUsedAt)}
+	if principal.DeviceID != "" {
+		activity.DeviceLastSeenAt = parseOptionalTime(deviceLastSeenAt)
+	}
+	return principal, activity, nil
 }
 
 // MarkDeviceSeen records coarse device activity for lost-device review. The
-// five-minute write throttle avoids turning every authenticated request into a
+// DeviceSeenInterval write throttle avoids turning every authenticated request into a
 // database write while keeping the value useful to the account owner.
 func (s *Store) MarkDeviceSeen(ctx context.Context, deviceID string) error {
 	deviceID = strings.TrimSpace(deviceID)
@@ -237,7 +276,7 @@ func (s *Store) MarkDeviceSeen(ctx context.Context, deviceID string) error {
 		WHERE id = ?
 		  AND revoked_at IS NULL
 		  AND (last_seen_at IS NULL OR last_seen_at <= ?)`,
-		formatTime(now), deviceID, formatTime(now.Add(-5*time.Minute)))
+		formatTime(now), deviceID, formatTime(now.Add(-DeviceSeenInterval)))
 	return err
 }
 
@@ -259,10 +298,17 @@ func (s *Store) UpgradePasswordHash(ctx context.Context, accountID, currentHash,
 	return rows == 1, err
 }
 
+// TouchSession extends a valid session's idle expiry. The write is throttled to
+// once per SessionTouchInterval: the conditional UPDATE only matches a valid
+// session whose last_used_at is at least that old. When it matches nothing, a
+// read-only check decides between "valid but recently touched" (nil, possibly
+// by a concurrent request) and "expired, idle-expired or unknown"
+// (ErrUnauthorized), so validation stays exact and there is no race.
 func (s *Store) TouchSession(ctx context.Context, tokenHash string) error {
 	now := time.Now().UTC()
 	idleExpiry := formatTime(now.Add(SessionIdleLifetime))
 	nowStringValue := formatTime(now)
+	idleCutoff := formatTime(now.Add(-SessionIdleLifetime))
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE sessions
 		SET last_used_at = ?,
@@ -270,15 +316,27 @@ func (s *Store) TouchSession(ctx context.Context, tokenHash string) error {
 		WHERE token_hash = ?
 		  AND expires_at > ?
 		  AND absolute_expires_at > ?
-		  AND last_used_at > ?`,
-		nowStringValue, idleExpiry, idleExpiry, tokenHash, nowStringValue, nowStringValue, formatTime(now.Add(-SessionIdleLifetime)))
+		  AND last_used_at > ?
+		  AND last_used_at <= ?`,
+		nowStringValue, idleExpiry, idleExpiry, tokenHash, nowStringValue, nowStringValue, idleCutoff, formatTime(now.Add(-SessionTouchInterval)))
 	if err != nil {
 		return err
 	}
-	if rows, _ := result.RowsAffected(); rows == 0 {
+	if rows, _ := result.RowsAffected(); rows > 0 {
+		return nil
+	}
+	var one int
+	err = s.db.QueryRowContext(ctx, `
+		SELECT 1 FROM sessions
+		WHERE token_hash = ?
+		  AND expires_at > ?
+		  AND absolute_expires_at > ?
+		  AND last_used_at > ?`,
+		tokenHash, nowStringValue, nowStringValue, idleCutoff).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
 		return ErrUnauthorized
 	}
-	return nil
+	return err
 }
 
 func (s *Store) MarkSessionRecentlyAuthenticated(ctx context.Context, tokenHash string) error {

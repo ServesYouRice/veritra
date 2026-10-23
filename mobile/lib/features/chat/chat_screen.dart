@@ -127,7 +127,7 @@ class _ChatScreenState extends State<ChatScreen> {
             automaticallyImplyLeading: widget.showBackButton,
             titleSpacing: widget.showBackButton ? 0 : BoneSpacing.gutter,
             title: conversation == null
-                ? const Text('Conversation')
+                ? Text(context.l10n.searchTypeConversation)
                 : Row(
                     children: <Widget>[
                       conversationAvatar(
@@ -144,7 +144,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           mainAxisSize: MainAxisSize.min,
                           children: <Widget>[
                             Text(
-                              conversationTitle(conversation),
+                              conversationTitle(context.l10n, conversation),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -152,8 +152,8 @@ class _ChatScreenState extends State<ChatScreen> {
                             // of the thread, in the micro style.
                             Text(
                               widget.state.isMuted(conversation.id)
-                                  ? 'MUTED · ENCRYPTED'
-                                  : 'ENCRYPTED',
+                                  ? context.l10n.chatStatusMutedEncrypted
+                                  : context.l10n.chatStatusEncrypted,
                               style: theme.textTheme.labelSmall,
                             ),
                           ],
@@ -164,7 +164,7 @@ class _ChatScreenState extends State<ChatScreen> {
             actions: <Widget>[
               if (conversation != null)
                 IconButton(
-                  tooltip: 'Conversation details',
+                  tooltip: context.l10n.chatListDetails,
                   onPressed: () => Navigator.of(context).push(
                     sharedAxisRoute<void>(
                       (_) => ConversationDetailsScreen(
@@ -182,10 +182,10 @@ class _ChatScreenState extends State<ChatScreen> {
             children: <Widget>[
               Expanded(
                 child: conversation == null
-                    ? const EmptyState(
+                    ? EmptyState(
                         icon: Icons.forum_outlined,
-                        title: 'No conversation selected',
-                        message: 'Pick a conversation from the chat list.',
+                        title: context.l10n.shellNoConversationTitle,
+                        message: context.l10n.chatNoConversationMessage,
                       )
                     : _messagesPane(conversation.id, messages, pending),
               ),
@@ -194,7 +194,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 const _PausedConversationNotice(),
               if (_replyingTo != null)
                 _ReplyBar(
-                  preview: _replyPreview(_replyingTo),
+                  preview: _replyPreview(context.l10n, _replyingTo),
                   onCancel: () => setState(() => _replyingTo = null),
                 ),
               _Composer(
@@ -236,11 +236,10 @@ class _ChatScreenState extends State<ChatScreen> {
           onRetry: () => widget.state.loadMessages(conversationId),
         );
       }
-      return const EmptyState(
+      return EmptyState(
         icon: Icons.lock_outline,
-        title: 'No messages yet',
-        message: 'Messages are stored as encrypted envelopes '
-            'only the members can read.',
+        title: context.l10n.chatEmptyTitle,
+        message: context.l10n.chatEmptyMessage,
       );
     }
     return Column(
@@ -252,7 +251,7 @@ class _ChatScreenState extends State<ChatScreen> {
             actions: <Widget>[
               TextButton(
                 onPressed: () => widget.state.loadMessages(conversationId),
-                child: const Text('Retry'),
+                child: Text(context.l10n.commonRetry),
               ),
             ],
           ),
@@ -279,7 +278,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     // The wide layout also shows the chat list's FAB; two
                     // default hero tags on one route is an assertion.
                     heroTag: null,
-                    tooltip: 'Jump to latest',
+                    tooltip: context.l10n.chatJumpToLatest,
                     onPressed: _jumpToLatest,
                     backgroundColor:
                         Theme.of(context).colorScheme.surfaceContainerHigh,
@@ -312,7 +311,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 children: <Widget>[
                   for (final reaction in quickReactions)
                     IconButton(
-                      tooltip: 'React $reaction',
+                      tooltip: context.l10n.chatReact(reaction),
                       onPressed: () =>
                           Navigator.of(sheetContext).pop('react:$reaction'),
                       icon:
@@ -323,23 +322,23 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             ListTile(
               leading: const Icon(Icons.reply),
-              title: const Text('Reply'),
+              title: Text(context.l10n.chatReply),
               onTap: () => Navigator.of(sheetContext).pop('reply'),
             ),
             ListTile(
               leading: const Icon(Icons.copy),
-              title: const Text('Copy text'),
+              title: Text(context.l10n.chatCopyText),
               onTap: () => Navigator.of(sheetContext).pop('copy'),
             ),
             if (mine) ...<Widget>[
               ListTile(
                 leading: const Icon(Icons.edit_outlined),
-                title: const Text('Edit'),
+                title: Text(context.l10n.chatEdit),
                 onTap: () => Navigator.of(sheetContext).pop('edit'),
               ),
               ListTile(
                 leading: const Icon(Icons.delete_outline),
-                title: const Text('Delete for everyone'),
+                title: Text(context.l10n.chatDeleteForEveryone),
                 onTap: () => Navigator.of(sheetContext).pop('delete'),
               ),
             ],
@@ -371,17 +370,16 @@ class _ChatScreenState extends State<ChatScreen> {
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
-          title: const Text('Delete for everyone?'),
-          content: const Text(
-              'Members\' devices remove the text. The server never had it.'),
+          title: Text(context.l10n.chatDeleteTitle),
+          content: Text(context.l10n.chatDeleteMessage),
           actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('Cancel'),
+              child: Text(context.l10n.commonCancel),
             ),
             FilledButton(
               onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text('Delete'),
+              child: Text(context.l10n.chatDelete),
             ),
           ],
         ),
@@ -407,12 +405,12 @@ class _ChatScreenState extends State<ChatScreen> {
         builder: (context, value, _) {
           final trimmed = value.text.trim();
           final error = trimmed.isEmpty
-              ? 'Enter the new text, or delete the message instead.'
+              ? context.l10n.chatEditEmpty
               : trimmed.length > maxAppTextLength
                   ? context.l10n.validationMessageTooLong
                   : null;
           return AlertDialog(
-            title: const Text('Edit message'),
+            title: Text(context.l10n.chatEditTitle),
             content: TextField(
               controller: controller,
               autofocus: true,
@@ -425,13 +423,13 @@ class _ChatScreenState extends State<ChatScreen> {
             actions: <Widget>[
               TextButton(
                 onPressed: () => Navigator.of(dialogContext).pop(),
-                child: const Text('Cancel'),
+                child: Text(context.l10n.commonCancel),
               ),
               FilledButton(
                 onPressed: error == null
                     ? () => Navigator.of(dialogContext).pop(controller.text)
                     : null,
-                child: const Text('Save'),
+                child: Text(context.l10n.attachmentSave),
               ),
             ],
           );
@@ -493,7 +491,7 @@ class _MessageLoadError extends StatelessWidget {
             ),
             const SizedBox(height: BoneSpacing.lg),
             Text(
-              'Couldn’t load messages',
+              context.l10n.chatLoadFailed,
               style: theme.textTheme.titleMedium,
               textAlign: TextAlign.center,
             ),
@@ -509,7 +507,7 @@ class _MessageLoadError extends StatelessWidget {
             FilledButton.icon(
               onPressed: onRetry,
               icon: const Icon(Icons.refresh),
-              label: const Text('Retry'),
+              label: Text(context.l10n.commonRetry),
             ),
           ],
         ),
@@ -604,7 +602,7 @@ class _MessageList extends StatelessWidget {
           }
           return _PendingMessageBubble(
             text: local?.kind == LocalMessageKind.attachment
-                ? _attachmentSummary(local!, conversationId)
+                ? _attachmentSummary(context.l10n, local!, conversationId)
                 : local?.body ?? record?.draftText,
             state: state.outboxState(key),
             failureMessage: terminal ? state.outboxFailureMessage(key) : null,
@@ -640,8 +638,9 @@ class _MessageList extends StatelessWidget {
             _MessageBubble(
               message: message,
               local: local,
-              replyPreview:
-                  local?.replyTo == null ? null : _replyPreview(replyTarget),
+              replyPreview: local?.replyTo == null
+                  ? null
+                  : _replyPreview(context.l10n, replyTarget),
               reactions: local == null
                   ? const <({String reaction, int count, bool mine})>[]
                   : history.reactionsFor(local.key,
@@ -668,13 +667,13 @@ class _MessageList extends StatelessWidget {
   }
 }
 
-String _replyPreview(LocalMessage? target) {
-  if (target == null) return 'Reply to an earlier message';
+String _replyPreview(AppLocalizations l10n, LocalMessage? target) {
+  if (target == null) return l10n.chatReplyEarlier;
   if (target.deletedAt != null || target.body == null) {
-    return 'Reply to a deleted message';
+    return l10n.chatReplyDeleted;
   }
   if (target.kind == LocalMessageKind.attachment) {
-    return _attachmentSummary(target, target.conversationId);
+    return _attachmentSummary(l10n, target, target.conversationId);
   }
   final text = target.body!.replaceAll(RegExp(r'\s+'), ' ').trim();
   return text.length <= 80 ? text : '${text.substring(0, 80)}…';
@@ -702,7 +701,7 @@ class _HistoryFooter extends StatelessWidget {
             : TextButton.icon(
                 onPressed: onLoad,
                 icon: const Icon(Icons.history),
-                label: const Text('Load older messages'),
+                label: Text(context.l10n.chatLoadOlder),
               ),
       ),
     );
@@ -732,13 +731,14 @@ class _PendingMessageBubble extends StatelessWidget {
     final terminal = state == OutboxDeliveryState.terminal;
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final l10n = context.l10n;
     return Semantics(
       liveRegion: true,
       label: sending
-          ? 'Encrypted message sending'
+          ? l10n.chatPendingSendingSemantics
           : terminal
-              ? 'Encrypted message failed permanently. Copy or discard available.'
-              : 'Encrypted message failed to send. Retry available.',
+              ? l10n.chatPendingTerminalSemantics
+              : l10n.chatPendingFailedSemantics,
       child: Align(
         alignment: Alignment.centerRight,
         child: Container(
@@ -783,10 +783,10 @@ class _PendingMessageBubble extends StatelessWidget {
                   const SizedBox(width: BoneSpacing.sm),
                   Text(
                     sending
-                        ? 'Sending encrypted message'
+                        ? l10n.chatPendingSending
                         : terminal
-                            ? 'Message needs attention'
-                            : 'Send failed',
+                            ? l10n.chatPendingTerminal
+                            : l10n.chatPendingFailed,
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color:
                           sending ? scheme.onSurface : scheme.onErrorContainer,
@@ -811,17 +811,17 @@ class _PendingMessageBubble extends StatelessWidget {
                     if (onRetry != null)
                       TextButton(
                         onPressed: onRetry,
-                        child: const Text('Retry'),
+                        child: Text(l10n.commonRetry),
                       ),
                     if (onCopy != null)
                       TextButton(
                         onPressed: onCopy,
-                        child: const Text('Copy'),
+                        child: Text(l10n.commonCopy),
                       ),
                     if (onDiscard != null)
                       TextButton(
                         onPressed: onDiscard,
-                        child: const Text('Discard'),
+                        child: Text(l10n.chatDiscard),
                       ),
                   ],
                 ),
@@ -940,7 +940,7 @@ class _MessageBubble extends StatelessWidget {
     final background =
         mine ? scheme.surfaceContainerHigh : scheme.surfaceContainerLow;
     final foreground = scheme.onSurface;
-    final sender = mine ? 'you' : senderLabel;
+    final sender = mine ? context.l10n.chatSenderYou : senderLabel;
     return GestureDetector(
       onLongPress: onActions,
       onSecondaryTap: onActions,
@@ -957,7 +957,7 @@ class _MessageBubble extends StatelessWidget {
     if (entries.isEmpty) {
       return <Widget>[
         Text(
-          'This attachment cannot be opened.',
+          context.l10n.chatAttachmentUnopenable,
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
@@ -985,23 +985,21 @@ class _MessageBubble extends StatelessWidget {
     bool unverifiable,
     String? text,
   ) {
+    final l10n = context.l10n;
+    final time = formatTimeOfDay(context, message.createdAt);
     return Semantics(
       excludeSemantics: true,
       onLongPress: onActions,
-      onLongPressHint: onActions == null ? null : 'Message actions',
+      onLongPressHint: onActions == null ? null : l10n.chatMessageActions,
       label: deleted
-          ? 'Deleted message from $sender'
+          ? l10n.chatDeletedSemantics(sender)
           : unverifiable
-              ? 'Message with an unverified sender, '
-                  '${formatTimeOfDay(context, message.createdAt)}'
+              ? l10n.chatUnverifiedSemantics(time)
               : text != null
-                  ? 'Message from $sender, '
-                      '${formatTimeOfDay(context, message.createdAt)}: $text'
+                  ? l10n.chatMessageSemantics(sender, time, text)
                   : local?.kind == LocalMessageKind.attachment
-                      ? 'Attachment from $sender, '
-                          '${formatTimeOfDay(context, message.createdAt)}'
-                      : 'Encrypted message from $sender, '
-                          '${formatTimeOfDay(context, message.createdAt)}',
+                      ? l10n.chatAttachmentSemantics(sender, time)
+                      : l10n.chatEncryptedSemantics(sender, time),
       child: LayoutBuilder(
         builder: (context, constraints) {
           // Taken from the layout rather than the window so the bubble is
@@ -1054,7 +1052,7 @@ class _MessageBubble extends StatelessWidget {
                       ),
                     if (deleted)
                       Text(
-                        'Message deleted',
+                        l10n.chatMessageDeleted,
                         style: theme.textTheme.bodyMedium?.copyWith(
                           color: scheme.onSurfaceVariant,
                           fontStyle: FontStyle.italic,
@@ -1069,7 +1067,7 @@ class _MessageBubble extends StatelessWidget {
                           const SizedBox(width: 6),
                           Flexible(
                             child: Text(
-                              'Sender could not be verified. Message hidden.',
+                              l10n.chatSenderUnverified,
                               style: theme.textTheme.bodyMedium?.copyWith(
                                 color: scheme.error,
                               ),
@@ -1110,7 +1108,10 @@ class _MessageBubble extends StatelessWidget {
                                 ),
                                 child: Text(
                                   item.count > 1
-                                      ? '${item.reaction} ${item.count}'
+                                      ? l10n.chatReactionCount(
+                                          item.reaction,
+                                          item.count,
+                                        )
                                       : item.reaction,
                                   style: theme.textTheme.labelSmall,
                                 ),
@@ -1138,7 +1139,8 @@ class _MessageBubble extends StatelessWidget {
     final theme = Theme.of(context);
     final parts = <String>[
       formatTimeOfDay(context, message.createdAt),
-      if (message.editedAt != null || local?.editedAt != null) 'edited',
+      if (message.editedAt != null || local?.editedAt != null)
+        context.l10n.chatEdited,
     ];
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -1187,14 +1189,14 @@ class _ReplyBar extends StatelessWidget {
           const SizedBox(width: BoneSpacing.sm),
           Expanded(
             child: Text(
-              'Replying to: $preview',
+              context.l10n.chatReplyingTo(preview),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: theme.textTheme.bodySmall,
             ),
           ),
           IconButton(
-            tooltip: 'Cancel reply',
+            tooltip: context.l10n.chatCancelReply,
             onPressed: onCancel,
             icon: const Icon(Icons.close, size: 18),
           ),
@@ -1332,7 +1334,9 @@ class _Composer extends StatelessWidget {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.attach_file),
-                  tooltip: attaching ? 'Sending file' : 'Attach a file',
+                  tooltip: attaching
+                      ? context.l10n.chatSendingFile
+                      : context.l10n.chatAttachFile,
                 ),
               Expanded(
                 // On desktop, Enter sends and Shift+Enter starts a new line.
@@ -1357,7 +1361,7 @@ class _Composer extends StatelessWidget {
                     // `inputDecorationTheme` would otherwise draw a rounded box
                     // inside a rounded box.
                     decoration: InputDecoration(
-                      hintText: 'Message',
+                      hintText: context.l10n.chatComposerHint,
                       filled: false,
                       isDense: true,
                       border: InputBorder.none,
@@ -1376,8 +1380,10 @@ class _Composer extends StatelessWidget {
                       // Silent only until the draft nears the limit; past it
                       // the count turns into an error and Send disables.
                       // Nothing is truncated, so a long paste is never lost.
-                      counterText:
-                          nearLimit ? '$length / $maxAppTextLength' : null,
+                      counterText: nearLimit
+                          ? context.l10n
+                              .chatComposerCounter(length, maxAppTextLength)
+                          : null,
                       counterStyle: overLimit
                           ? theme.textTheme.bodySmall
                               ?.copyWith(color: scheme.error)
@@ -1401,7 +1407,7 @@ class _Composer extends StatelessWidget {
                         ),
                       )
                     : const Icon(Icons.send),
-                tooltip: 'Send',
+                tooltip: context.l10n.attachmentSend,
               ),
             ],
           ),
@@ -1430,8 +1436,7 @@ class _PausedConversationNotice extends StatelessWidget {
           vertical: BoneSpacing.sm,
         ),
         child: Text(
-          'Sending is paused here: the server rejected an encryption update '
-          'for this conversation. Other conversations still work.',
+          context.l10n.chatPausedNotice,
           style: TextStyle(color: scheme.onErrorContainer),
         ),
       ),
@@ -1441,12 +1446,16 @@ class _PausedConversationNotice extends StatelessWidget {
 
 /// One line naming an attachment message's files, for previews and pending
 /// bubbles.
-String _attachmentSummary(LocalMessage message, String conversationId) {
+String _attachmentSummary(
+  AppLocalizations l10n,
+  LocalMessage message,
+  String conversationId,
+) {
   final entries = AttachmentEntry.listFromBody(message.body,
       conversationId: conversationId);
-  if (entries.isEmpty) return 'Attachment';
+  if (entries.isEmpty) return l10n.chatAttachment;
   final first = entries.first.fileName;
   return entries.length == 1
-      ? 'Attachment: $first'
-      : 'Attachments: $first and ${entries.length - 1} more';
+      ? l10n.chatAttachmentOne(first)
+      : l10n.chatAttachmentMany(first, entries.length - 1);
 }

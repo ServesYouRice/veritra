@@ -8,6 +8,7 @@ import '../../ui/tokens.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/tile_group.dart';
+import '../../l10n/l10n.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({required this.state, super.key});
@@ -17,17 +18,18 @@ class ProfileScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final session = state.session;
     final currentDevice = state.devices
         .where((device) => device.id == session?.deviceId)
         .firstOrNull;
     final accountId = session?.accountId;
     final host = session == null
-        ? 'this instance'
+        ? l10n.profileThisInstance
         : (Uri.tryParse(session.baseUrl)?.host ?? session.baseUrl);
     final colors = avatarColorsFor(context, accountId ?? 'unknown');
     return Scaffold(
-      appBar: const LargeTitleBar(title: 'Profile'),
+      appBar: LargeTitleBar(title: l10n.profileTitle),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(
           BoneSpacing.gutter,
@@ -65,7 +67,7 @@ class ProfileScreen extends StatelessWidget {
                   header: true,
                   child: Text(
                     session?.username == null
-                        ? 'Your account'
+                        ? l10n.profileYourAccount
                         : '@${session!.username}',
                     style: theme.textTheme.displaySmall,
                     textAlign: TextAlign.center,
@@ -82,35 +84,37 @@ class ProfileScreen extends StatelessWidget {
               ],
             ),
           ),
-          const SectionHeader('Identity'),
+          SectionHeader(l10n.profileSectionIdentity),
           TileGroup(
             children: <Widget>[
               _IdentityRow(
                 icon: Icons.alternate_email,
-                label: 'Username',
+                label: l10n.connectUsername,
                 value: session?.username == null
-                    ? 'Not available'
+                    ? l10n.profileNotAvailable
                     : '@${session!.username}',
               ),
               _IdentityRow(
                 icon: Icons.badge_outlined,
-                label: 'Account ID',
-                value: accountId == null ? 'Not available' : shortId(accountId),
+                label: l10n.settingsAccountId,
+                value: accountId == null
+                    ? l10n.profileNotAvailable
+                    : shortId(accountId),
                 mono: true,
                 copyValue: accountId,
               ),
               _IdentityRow(
                 icon: Icons.devices_outlined,
-                label: 'Current device',
+                label: l10n.profileCurrentDevice,
                 value: currentDevice?.name ??
                     (session?.deviceId == null
-                        ? 'Not available'
+                        ? l10n.profileNotAvailable
                         : shortId(session!.deviceId!)),
                 copyValue: session?.deviceId,
               ),
               _IdentityRow(
                 icon: Icons.admin_panel_settings_outlined,
-                label: 'Instance role',
+                label: l10n.profileInstanceRole,
                 // Left exactly as the server reports it. Title-casing a role
                 // makes it look like a display name rather than the literal
                 // value, and `profile_screen_test.dart` pins the lowercase.
@@ -118,15 +122,14 @@ class ProfileScreen extends StatelessWidget {
               ),
             ],
           ),
-          const SectionHeader('Encryption'),
+          SectionHeader(l10n.profileSectionEncryption),
           TileGroup(
             children: <Widget>[
               ListTile(
                 leading: const Icon(Icons.lock_clock_outlined),
-                title: const Text('Encryption identity pending'),
+                title: Text(l10n.profileEncryptionPending),
                 subtitle: Text(
-                  'Safety-number verification and profile editing remain '
-                  'unavailable until the reviewed encryption engine ships.',
+                  l10n.profileEncryptionPendingDetail,
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
@@ -176,12 +179,12 @@ class _IdentityRow extends StatelessWidget {
       trailing: copyValue == null
           ? null
           : IconButton(
-              tooltip: 'Copy $label',
+              tooltip: context.l10n.profileCopyLabel(label),
               onPressed: () async {
                 await Clipboard.setData(ClipboardData(text: copyValue!));
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('$label copied.')),
+                    SnackBar(content: Text(context.l10n.settingsCopied(label))),
                   );
                 }
               },

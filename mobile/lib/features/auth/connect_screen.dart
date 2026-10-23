@@ -8,10 +8,12 @@ import '../../core/api_client.dart';
 import '../../core/app_state.dart';
 import '../settings/backup_screen.dart';
 import '../../core/models.dart';
+import '../../ui/about.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/veritra_mark.dart';
 import 'qr_scan_screen.dart';
+import '../../l10n/l10n.dart';
 
 enum AuthMode { owner, signIn, join, linkDevice }
 
@@ -162,16 +164,15 @@ class _ConnectScreenState extends State<ConnectScreen> {
                   ),
                   const SizedBox(height: BoneSpacing.xl),
                   if (setupRequired == true) ...<Widget>[
-                    const _Callout(
+                    _Callout(
                       icon: Icons.rocket_launch_outlined,
-                      title: 'Fresh instance detected',
-                      message: 'No owner account exists yet — create it '
-                          'below.',
+                      title: context.l10n.connectFreshInstanceTitle,
+                      message: context.l10n.connectFreshInstanceMessage,
                     ),
                     const SizedBox(height: BoneSpacing.lg),
                   ],
                   _Field(
-                    label: 'Instance URL',
+                    label: context.l10n.connectInstanceUrl,
                     child: TextFormField(
                       controller: url,
                       keyboardType: TextInputType.url,
@@ -201,7 +202,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
                             onPressed:
                                 widget.state.busy ? null : _completeDeviceLink,
                             icon: const Icon(Icons.sync),
-                            label: const Text('Check approval'),
+                            label: Text(context.l10n.connectCheckApproval),
                           )
                         : FilledButton.icon(
                             onPressed: widget.state.busy ? null : _submit,
@@ -222,13 +223,13 @@ class _ConnectScreenState extends State<ConnectScreen> {
                     const SizedBox(height: BoneSpacing.lg),
                     _ErrorCard(
                       message: widget.state.error!,
-                      action: widget.state.error!.contains('linked')
+                      action: _suggestsLinking(widget.state.error!)
                           ? TextButton(
                               onPressed: () => setState(() {
                                 _modeManuallySelected = true;
                                 mode = AuthMode.linkDevice;
                               }),
-                              child: const Text('Link this device instead'),
+                              child: Text(context.l10n.connectLinkInstead),
                             )
                           : null,
                     ),
@@ -237,7 +238,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
                   Center(
                     child: TextButton(
                       onPressed: _showOtherWays,
-                      child: const Text('Other ways to connect'),
+                      child: Text(context.l10n.connectOtherWays),
                     ),
                   ),
                   if (widget.state.backupAvailable)
@@ -245,7 +246,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
                       child: TextButton(
                         onPressed: () =>
                             showRestoreBackupDialog(context, widget.state),
-                        child: const Text('Restore from a backup'),
+                        child: Text(context.l10n.connectRestoreBackup),
                       ),
                     ),
                 ],
@@ -260,18 +261,18 @@ class _ConnectScreenState extends State<ConnectScreen> {
   List<Widget> _linkDeviceFields(ThemeData theme, DeviceLink? pendingLink) {
     return <Widget>[
       _Field(
-        label: 'Link code',
+        label: context.l10n.connectLinkCode,
         child: TextFormField(
           controller: linkCode,
           autocorrect: false,
           autovalidateMode: AutovalidateMode.onUserInteraction,
           validator: (value) => value == null || value.trim().isEmpty
-              ? 'Enter the link code from your existing device.'
+              ? context.l10n.connectLinkCodeRequired
               : null,
           style: BoneType.mono,
-          decoration: const InputDecoration(
-            hintText: 'From Settings → Link device',
-            prefixIcon: Icon(Icons.qr_code_2),
+          decoration: InputDecoration(
+            hintText: context.l10n.connectLinkCodeHint,
+            prefixIcon: const Icon(Icons.qr_code_2),
           ),
         ),
       ),
@@ -282,16 +283,15 @@ class _ConnectScreenState extends State<ConnectScreen> {
         OutlinedButton.icon(
           onPressed: widget.state.busy ? null : _scanLinkCode,
           icon: const Icon(Icons.qr_code_scanner),
-          label: const Text('Scan QR code'),
+          label: Text(context.l10n.connectScanQr),
         ),
       ],
       if (pendingLink != null) ...<Widget>[
         const SizedBox(height: BoneSpacing.lg),
         _Callout(
           icon: Icons.verified_outlined,
-          title: 'Verification code',
-          message: 'Confirm this code on your already-linked device, then '
-              'check approval below.',
+          title: context.l10n.connectVerificationTitle,
+          message: context.l10n.connectVerificationMessage,
           child: SelectableText(
             pendingLink.verificationCode,
             style: BoneType.mono.copyWith(
@@ -309,42 +309,42 @@ class _ConnectScreenState extends State<ConnectScreen> {
     return <Widget>[
       if (mode == AuthMode.join) ...<Widget>[
         _Field(
-          label: 'Invite code',
+          label: context.l10n.connectInviteCode,
           child: TextFormField(
             controller: inviteCode,
             autocorrect: false,
             autovalidateMode: AutovalidateMode.onUserInteraction,
             validator: (value) => value == null || value.trim().isEmpty
-                ? 'Enter the invite code you received.'
+                ? context.l10n.connectInviteCodeRequired
                 : null,
             style: BoneType.mono,
-            decoration: const InputDecoration(
-              hintText: 'From an admin on this instance',
-              prefixIcon: Icon(Icons.card_giftcard_outlined),
+            decoration: InputDecoration(
+              hintText: context.l10n.connectInviteCodeHint,
+              prefixIcon: const Icon(Icons.card_giftcard_outlined),
             ),
           ),
         ),
         const SizedBox(height: BoneSpacing.lg),
       ],
       _Field(
-        label: 'Username',
+        label: context.l10n.connectUsername,
         child: TextFormField(
           controller: username,
           autofillHints: const <String>[AutofillHints.username],
           autocorrect: false,
           autovalidateMode: AutovalidateMode.onUserInteraction,
           validator: (value) => value == null || value.trim().isEmpty
-              ? 'Enter a username.'
+              ? context.l10n.connectUsernameRequired
               : null,
-          decoration: const InputDecoration(
-            hintText: 'Your name on this instance',
-            prefixIcon: Icon(Icons.person_outline),
+          decoration: InputDecoration(
+            hintText: context.l10n.connectUsernameHint,
+            prefixIcon: const Icon(Icons.person_outline),
           ),
         ),
       ),
       const SizedBox(height: BoneSpacing.lg),
       _Field(
-        label: 'Password',
+        label: context.l10n.connectPassword,
         child: TextFormField(
           controller: password,
           autofillHints: <String>[
@@ -356,10 +356,12 @@ class _ConnectScreenState extends State<ConnectScreen> {
           autovalidateMode: AutovalidateMode.onUserInteraction,
           validator: _validatePassword,
           decoration: InputDecoration(
-            hintText: _isRegistration ? 'At least 12 characters' : null,
+            hintText: _isRegistration ? context.l10n.connectPasswordHint : null,
             prefixIcon: const Icon(Icons.lock_outline),
             suffixIcon: IconButton(
-              tooltip: showPassword ? 'Hide password' : 'Show password',
+              tooltip: showPassword
+                  ? context.l10n.connectHidePassword
+                  : context.l10n.connectShowPassword,
               icon: Icon(showPassword
                   ? Icons.visibility_off_outlined
                   : Icons.visibility_outlined),
@@ -371,16 +373,17 @@ class _ConnectScreenState extends State<ConnectScreen> {
       if (_isRegistration) ...<Widget>[
         const SizedBox(height: BoneSpacing.lg),
         _Field(
-          label: 'Confirm password',
+          label: context.l10n.connectConfirmPassword,
           child: TextFormField(
             controller: passwordConfirmation,
             obscureText: !showPassword,
             autovalidateMode: AutovalidateMode.onUserInteraction,
-            validator: (value) =>
-                value == password.text ? null : 'Passwords do not match.',
-            decoration: const InputDecoration(
-              hintText: 'Repeat your password',
-              prefixIcon: Icon(Icons.lock_reset_outlined),
+            validator: (value) => value == password.text
+                ? null
+                : context.l10n.settingsPasswordsMismatch,
+            decoration: InputDecoration(
+              hintText: context.l10n.connectConfirmPasswordHint,
+              prefixIcon: const Icon(Icons.lock_reset_outlined),
             ),
           ),
         ),
@@ -388,14 +391,14 @@ class _ConnectScreenState extends State<ConnectScreen> {
       if (mode == AuthMode.owner) ...<Widget>[
         const SizedBox(height: BoneSpacing.lg),
         _Field(
-          label: 'Setup token',
+          label: context.l10n.connectSetupToken,
           child: TextFormField(
             controller: setupToken,
             obscureText: true,
             autocorrect: false,
-            decoration: const InputDecoration(
-              hintText: 'Required unless connecting on loopback',
-              prefixIcon: Icon(Icons.vpn_key_outlined),
+            decoration: InputDecoration(
+              hintText: context.l10n.connectSetupTokenHint,
+              prefixIcon: const Icon(Icons.vpn_key_outlined),
             ),
           ),
         ),
@@ -423,9 +426,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: BoneSpacing.xl),
-                child: SectionHeader('Other ways to connect'),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: BoneSpacing.xl),
+                child: SectionHeader(context.l10n.connectOtherWays),
               ),
               for (final option in available)
                 ListTile(
@@ -453,27 +456,32 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
   bool get _isRegistration => mode == AuthMode.owner || mode == AuthMode.join;
 
+  /// Whether [error] says password sign-in needs a linked device.
+  bool _suggestsLinking(String error) =>
+      error == context.l10n.errorPasswordLoginNeedsLink ||
+      error == context.l10n.apiErrorDeviceNotLinked ||
+      error == context.l10n.errorRelinkRequired;
+
   String? _validateUrl(String? value) {
     final raw = value?.trim() ?? '';
     if (raw.isEmpty) {
-      return 'Enter the instance URL.';
+      return context.l10n.connectUrlRequired;
     }
     final parsed = Uri.tryParse(raw);
     if (parsed == null) {
-      return 'Enter a full URL, e.g. https://chat.example.org';
+      return context.l10n.connectUrlInvalid;
     }
     try {
       canonicalizeServerOrigin(raw);
     } on FormatException {
       return parsed.scheme.toLowerCase() == 'https'
-          ? 'Enter only the server origin, e.g. https://chat.example.org'
-          : 'Veritra requires HTTPS. Use an https:// server origin.';
+          ? context.l10n.connectUrlOriginOnly
+          : context.l10n.connectUrlHttpsRequired;
     }
     if (!widget.state.config.transport.allows(raw)) {
       return widget.state.config.transport.allowLoopbackHttp
-          ? 'Use https://, or http:// only for this computer '
-              '(localhost or 127.0.0.1).'
-          : 'Veritra requires HTTPS. Use an https:// server origin.';
+          ? context.l10n.connectUrlLoopbackOnly
+          : context.l10n.connectUrlHttpsRequired;
     }
     return null;
   }
@@ -481,16 +489,16 @@ class _ConnectScreenState extends State<ConnectScreen> {
   String? _validatePassword(String? value) {
     final raw = value ?? '';
     if (raw.isEmpty) {
-      return 'Enter your password.';
+      return context.l10n.connectPasswordRequired;
     }
     // Checked in UTF-8 bytes to match the server's bcrypt limit; the message
     // stays in user language rather than exposing the encoding detail.
     final byteLength = utf8.encode(raw).length;
     if (_isRegistration && byteLength < 12) {
-      return 'Use at least 12 characters.';
+      return context.l10n.settingsPasswordTooShort;
     }
     if (_isRegistration && byteLength > 72) {
-      return 'That password is too long. Use a shorter one.';
+      return context.l10n.settingsPasswordTooLong;
     }
     return null;
   }
@@ -499,33 +507,29 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
   String get _modeDescription => _descriptionFor(mode);
 
-  static String _titleFor(AuthMode mode) {
+  String _titleFor(AuthMode mode) {
     switch (mode) {
       case AuthMode.owner:
-        return 'Create the owner account';
+        return context.l10n.connectModeOwnerTitle;
       case AuthMode.signIn:
-        return 'Sign in';
+        return context.l10n.connectModeSignInTitle;
       case AuthMode.join:
-        return 'Join with an invite';
+        return context.l10n.connectModeJoinTitle;
       case AuthMode.linkDevice:
-        return 'Link this device';
+        return context.l10n.connectModeLinkTitle;
     }
   }
 
-  static String _descriptionFor(AuthMode mode) {
+  String _descriptionFor(AuthMode mode) {
     switch (mode) {
       case AuthMode.owner:
-        return 'First run only: create the owner account on a fresh '
-            'self-hosted instance.';
+        return context.l10n.connectModeOwnerDetail;
       case AuthMode.signIn:
-        return 'Sign in with your password on a device that has already '
-            'been linked to your account.';
+        return context.l10n.connectModeSignInDetail;
       case AuthMode.join:
-        return 'Registration is invite-only. Enter the invite code you '
-            'received from an admin.';
+        return context.l10n.connectModeJoinDetail;
       case AuthMode.linkDevice:
-        return 'Enter the link code generated on your existing device '
-            '(Settings → Link device).';
+        return context.l10n.connectModeLinkDetail;
     }
   }
 
@@ -628,7 +632,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
     if (!mounted) return;
     if (code.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('That is not a Veritra device-link QR.')),
+        SnackBar(content: Text(context.l10n.connectNotDeviceLinkQr)),
       );
       return;
     }
@@ -642,9 +646,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
     if (origin != null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Server origin filled. Verify it before continuing.'),
-        ),
+        SnackBar(content: Text(context.l10n.connectOriginFilled)),
       );
     }
   }
@@ -653,19 +655,16 @@ class _ConnectScreenState extends State<ConnectScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Confirm server'),
-        content: Text(
-          'This QR code suggests $origin. The app will still probe the '
-          'server before using it. Continue with this HTTPS origin?',
-        ),
+        title: Text(context.l10n.connectConfirmServerTitle),
+        content: Text(context.l10n.connectConfirmServerMessage(origin)),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
+            child: Text(context.l10n.commonCancel),
           ),
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Use origin'),
+            child: Text(context.l10n.connectUseOrigin),
           ),
         ],
       ),
@@ -680,13 +679,13 @@ class _ConnectScreenState extends State<ConnectScreen> {
   String get _submitLabel {
     switch (mode) {
       case AuthMode.owner:
-        return 'Create owner';
+        return context.l10n.connectSubmitOwner;
       case AuthMode.signIn:
-        return 'Sign in';
+        return context.l10n.connectSubmitSignIn;
       case AuthMode.join:
-        return 'Join with invite';
+        return context.l10n.connectSubmitJoin;
       case AuthMode.linkDevice:
-        return 'Claim link';
+        return context.l10n.connectSubmitLink;
     }
   }
 }
@@ -742,13 +741,13 @@ class _BrandHeader extends StatelessWidget {
         VeritraMark(size: 72, color: theme.colorScheme.onSurface),
         const SizedBox(height: BoneSpacing.lg),
         Text(
-          'Veritra',
+          veritraProductName,
           style: theme.textTheme.displayMedium,
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: BoneSpacing.xs),
         Text(
-          'Self-hosted, end-to-end encrypted messaging',
+          context.l10n.connectTagline,
           style: theme.textTheme.bodyMedium?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
           ),
@@ -826,10 +825,11 @@ class _ProbeStatus extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final message = result.localizedMessage(context.l10n);
     if (result.state == SetupProbeState.probing) {
       return Semantics(
         liveRegion: true,
-        label: result.message,
+        label: message,
         child: Row(
           children: <Widget>[
             const SizedBox.square(
@@ -837,7 +837,7 @@ class _ProbeStatus extends StatelessWidget {
               child: CircularProgressIndicator(strokeWidth: 2),
             ),
             const SizedBox(width: BoneSpacing.sm),
-            Text(result.message, style: theme.textTheme.bodySmall),
+            Text(message, style: theme.textTheme.bodySmall),
           ],
         ),
       );
@@ -846,7 +846,7 @@ class _ProbeStatus extends StatelessWidget {
     final color = reachable ? scheme.primary : scheme.error;
     return Semantics(
       liveRegion: true,
-      label: result.message,
+      label: message,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
@@ -858,7 +858,7 @@ class _ProbeStatus extends StatelessWidget {
           const SizedBox(width: BoneSpacing.sm),
           Expanded(
             child: Text(
-              result.message,
+              message,
               style: theme.textTheme.bodySmall?.copyWith(color: color),
             ),
           ),

@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: veritra
+  labels:
+    app.kubernetes.io/name: veritra
+    app.kubernetes.io/component: server
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: veritra
+    app.kubernetes.io/component: server
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

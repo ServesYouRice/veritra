@@ -1,0 +1,112 @@
+# Full restore from R2 into the live volume (disaster recovery or a move to a
+# fresh cluster). Not part of the base; apply it by hand:
+#
+#   kubectl -n veritra scale deployment/veritra --replicas=0
+#   kubectl -n veritra wait --for=delete pod -l app.kubernetes.io/component=server --timeout=120s
+#   # set BACKUP below to a name from `rclone lsf offsite:backups`
+#   kubectl apply -f restore-job.yaml
+#   kubectl -n veritra wait --for=condition=complete job/veritra-restore --timeout=3h
+#   kubectl -n veritra delete job veritra-restore
+#   kubectl -n veritra scale deployment/veritra --replicas=1
+#
+# With Flux, suspend the Kustomization first (flux suspend kustomization
+# veritra) so it does not scale the server back up mid-restore, and resume it
+# afterwards. `restore` refuses to run while the database is in use, keeps the
+# previous instance aside under .pre-restore-* names, and finishes or rolls
+# back on the next start if interrupted.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: veritra-restore
+  namespace: veritra
+  labels:
+    app.kubernetes.io/name: veritra
+    app.kubernetes.io/component: restore
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: veritra
+        app.kubernetes.io/component: restore
+    spec:
+      restartPolicy: Never
+      serviceAccountName: veritra
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: fetch-from-r2
+          image: rclone/rclone:1.75.1@sha256:45401ad7410db1d67ffdb58e19059ad20b0d8e0285a60e38bbec55cc1019c7a5
+          args:
+            - copy
+            - offsite:backups/$(BACKUP)
+            - /scratch/backup
+            - --checksum
+            - --s3-no-check-bucket
+            - --transfers=4
+            - --retries=5
+          env:
+            - name: BACKUP
+              value: veritra-YYYYMMDDTHHMMSSZ
+            - name: RCLONE_CONFIG
+              value: /run/secrets/r2/rclone.conf
+            - name: RCLONE_CACHE_DIR
+              value: /tmp/rclone
+            - name: HOME
+              value: /tmp
+          volumeMounts:
+            - name: scratch
+              mountPath: /scratch
+            - name: r2
+              mountPath: /run/secrets/r2
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+      containers:
+        - name: restore
+          # Use the digest the server runs (or the backup's matching release).
+          image: ghcr.io/servesyourice/veritra@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          args: ["restore", "/scratch/backup"]
+          env:
+            - name: PRIVATE_MESSENGER_ENV
+              value: production
+            - name: PRIVATE_MESSENGER_DATA_DIR
+              value: /data
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: scratch
+              mountPath: /scratch
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: veritra-data
+        - name: scratch
+          emptyDir:
+            sizeLimit: 20Gi
+        - name: r2
+          secret:
+            secretName: veritra-r2
+            defaultMode: 0440
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

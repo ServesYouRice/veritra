@@ -127,10 +127,3 @@ String attachmentMediaType(String fileName, String? pickerType) {
   if (lower.endsWith('.webp')) return 'image/webp';
   return 'application/octet-stream';
 }
-
-/// "1.2 MB"-style size for a bubble or dialog.
-String formatAttachmentSize(int bytes) {
-  if (bytes < 1024) return '$bytes B';
-  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
-  return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-}

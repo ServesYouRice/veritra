@@ -1,0 +1,45 @@
+# Headless Service for scraping only; it is not referenced by Traefik.
+apiVersion: v1
+kind: Service
+metadata:
+  name: veritra-metrics
+  namespace: veritra
+  labels:
+    app.kubernetes.io/name: veritra
+    app.kubernetes.io/component: metrics
+    app.kubernetes.io/part-of: veritra
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: veritra
+    app.kubernetes.io/component: server
+  ports:
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+---
+# Only Prometheus or Grafana Alloy in the `monitoring` namespace may scrape.
+# Change the namespace label if the collector runs elsewhere.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: server-metrics-from-monitoring
+  namespace: veritra
+  labels:
+    app.kubernetes.io/name: veritra
+    app.kubernetes.io/part-of: veritra
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: veritra
+      app.kubernetes.io/component: server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 9090

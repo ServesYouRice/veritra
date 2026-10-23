@@ -43,31 +43,28 @@ class _BackupScreenState extends State<BackupScreen> {
         final busy = state.isBusy(Ops.backup);
         final error = state.errorFor(Ops.backup);
         return Scaffold(
-          appBar: const LargeTitleBar(title: 'Encrypted backup'),
+          appBar: LargeTitleBar(title: context.l10n.settingsBackup),
           body: ListView(
             padding: const EdgeInsets.all(BoneSpacing.gutter),
             children: <Widget>[
               Text(
-                'A backup holds this device\'s keys and message history, '
-                'encrypted on this device. The server stores it but cannot '
-                'read it. Restoring it on a new device needs the recovery '
-                'code shown when you make it.',
+                context.l10n.backupIntro,
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
               const SizedBox(height: BoneSpacing.lg),
-              const SectionHeader('Status'),
+              SectionHeader(context.l10n.backupSectionStatus),
               TileGroup(
                 children: <Widget>[
                   ListTile(
                     leading: const Icon(Icons.cloud_done_outlined),
                     title: Text(
                       last == null
-                          ? 'No backup from this device yet'
-                          : 'Last backup ${formatDateTime(context, last.toLocal())}',
+                          ? context.l10n.backupNone
+                          : context.l10n.backupLast(
+                              formatDateTime(context, last.toLocal()),
+                            ),
                     ),
-                    subtitle: const Text(
-                      'A new backup replaces the previous one and its code.',
-                    ),
+                    subtitle: Text(context.l10n.backupReplacesPrevious),
                   ),
                 ],
               ),
@@ -81,7 +78,9 @@ class _BackupScreenState extends State<BackupScreen> {
                       )
                     : const Icon(Icons.backup_outlined),
                 label: Text(
-                  last == null ? 'Make a backup' : 'Make a new backup',
+                  last == null
+                      ? context.l10n.backupMake
+                      : context.l10n.backupMakeNew,
                 ),
               ),
               if (error != null) ...<Widget>[
@@ -129,16 +128,12 @@ class _RecoveryCodeDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Save your recovery code'),
+      title: Text(context.l10n.backupSaveCodeTitle),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          const Text(
-            'Anyone with this code can restore your messages. Keep it '
-            'somewhere safe and offline. It is shown only now, and it stops '
-            'working after it is used or when you make a new backup.',
-          ),
+          Text(context.l10n.backupSaveCodeMessage),
           const SizedBox(height: BoneSpacing.md),
           SelectableText(code, style: BoneType.mono),
         ],
@@ -146,11 +141,11 @@ class _RecoveryCodeDialog extends StatelessWidget {
       actions: <Widget>[
         TextButton(
           onPressed: () => Clipboard.setData(ClipboardData(text: code)),
-          child: const Text('Copy'),
+          child: Text(context.l10n.commonCopy),
         ),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('I saved it'),
+          child: Text(context.l10n.backupSavedIt),
         ),
       ],
     );
@@ -191,15 +186,12 @@ class _RestoreBackupDialogState extends State<_RestoreBackupDialog> {
         final busy = widget.state.isBusy(Ops.restore);
         final error = widget.state.errorFor(Ops.restore);
         return AlertDialog(
-          title: const Text('Restore from a backup'),
+          title: Text(context.l10n.connectRestoreBackup),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              const Text(
-                'This device takes the place of the one that made the '
-                'backup. Stop using that device first.',
-              ),
+              Text(context.l10n.backupRestoreMessage),
               const SizedBox(height: BoneSpacing.md),
               TextField(
                 controller: code,
@@ -207,7 +199,9 @@ class _RestoreBackupDialogState extends State<_RestoreBackupDialog> {
                 autocorrect: false,
                 enableSuggestions: false,
                 style: BoneType.mono,
-                decoration: const InputDecoration(labelText: 'Recovery code'),
+                decoration: InputDecoration(
+                  labelText: context.l10n.backupRecoveryCode,
+                ),
               ),
               if (error != null) ...<Widget>[
                 const SizedBox(height: BoneSpacing.md),
@@ -221,7 +215,7 @@ class _RestoreBackupDialogState extends State<_RestoreBackupDialog> {
           actions: <Widget>[
             TextButton(
               onPressed: busy ? null : () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
+              child: Text(context.l10n.commonCancel),
             ),
             FilledButton(
               onPressed: busy ? null : _restore,
@@ -230,7 +224,7 @@ class _RestoreBackupDialogState extends State<_RestoreBackupDialog> {
                       dimension: 16,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Text('Restore'),
+                  : Text(context.l10n.backupRestore),
             ),
           ],
         );

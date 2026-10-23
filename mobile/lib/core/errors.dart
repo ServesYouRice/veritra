@@ -4,6 +4,7 @@ import 'dart:io';
 import 'api_client.dart';
 import '../crypto/backup_service.dart';
 import '../storage/local_store.dart';
+import '../l10n/l10n.dart';
 
 /// Sending is refused because the server rejected an MLS control message
 /// for the conversation and it stays queued (I34).
@@ -11,7 +12,7 @@ class ConversationPausedException implements Exception {
   const ConversationPausedException();
 
   @override
-  String toString() => 'Sending is paused in this conversation.';
+  String toString() => englishL10n.errorConversationPaused;
 }
 
 /// An error whose [message] is already safe to show, for paths that hand
@@ -47,32 +48,32 @@ bool _isUserSentence(String message) {
 /// AppState stores the result of this instead of `toString()`: raw exception
 /// text is developer-facing, sometimes leaks internals (server error codes,
 /// "Bad state: …" prefixes), and never tells the user what to do next.
-String describeError(Object error) {
+///
+/// The sentence comes from [l10n], English by default (card T44C).
+String describeError(Object error, [AppLocalizations? l10n]) {
+  final strings = l10n ?? englishL10n;
   if (error is OutboxFullException) {
-    return 'Your encrypted message queue is full. Send or discard a pending '
-        'message before composing another.';
+    return strings.errorOutboxFull;
   }
   if (error is BackupException) {
-    return error.message;
+    return error.localizedMessage(strings);
   }
   if (error is ConversationPausedException) {
-    return 'Sending is paused in this conversation because the server '
-        'rejected an encryption update. Other conversations still work.';
+    return strings.errorConversationPausedDetail;
   }
   if (error is UserFacingException) {
     return error.message;
   }
   if (error is ApiException) {
-    return error.message;
+    return error.localizedMessage(strings);
   }
   if (error is ApiResponseException || error is ApiResponseTooLargeException) {
-    return 'The server returned an unexpected response.';
+    return strings.errorUnexpectedResponse;
   }
   if (error is StateError) {
     final message = error.message;
     if (message.contains('MLS') || message.contains('encryption')) {
-      return 'This build does not include the production encryption engine '
-          'yet, so this action is unavailable.';
+      return strings.errorEncryptionUnavailable;
     }
     // App-authored StateErrors that start with a capital letter are written
     // as user-facing sentences (e.g. "Password login requires this device
@@ -81,19 +82,18 @@ String describeError(Object error) {
     // never reach the UI (card T44A).
     if (_isUserSentence(message)) return message;
     if (message.contains('not available') || message.contains('unavailable')) {
-      return 'This action is unavailable in this build.';
+      return strings.errorActionUnavailable;
     }
-    return 'Something went wrong. Please try again.';
+    return strings.errorGeneric;
   }
   if (error is TimeoutException) {
-    return 'The server took too long to respond. Try again.';
+    return strings.errorTimeout;
   }
   if (error is SocketException || error is HttpException) {
-    return 'Could not reach the server. Check the instance URL and your '
-        'connection.';
+    return strings.errorUnreachable;
   }
   if (error is FormatException) {
-    return 'The server returned an unexpected response.';
+    return strings.errorUnexpectedResponse;
   }
-  return 'Something went wrong. Please try again.';
+  return strings.errorGeneric;
 }

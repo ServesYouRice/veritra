@@ -12,6 +12,7 @@ import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/status_pill.dart';
 import '../../ui/widgets/tile_group.dart';
 import '../auth/qr_scan_screen.dart';
+import '../../l10n/l10n.dart';
 
 /// Shows the conversation's safety number so members can compare it in
 /// person or by scanning each other's code.
@@ -76,20 +77,16 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Mark as verified?'),
-        content: const Text(
-          'Only do this after comparing the number with the other person '
-          'in person or over a call you trust. Both of you must see exactly '
-          'the same sixty digits.',
-        ),
+        title: Text(context.l10n.safetyMarkTitle),
+        content: Text(context.l10n.safetyMarkMessage),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+            child: Text(context.l10n.commonCancel),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('They match'),
+            child: Text(context.l10n.safetyTheyMatch),
           ),
         ],
       ),
@@ -103,7 +100,7 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
     try {
       await widget.state.markPeerVerified(widget.conversation.id, peer);
     } catch (_) {
-      _showMessage('The verification could not be saved. Try again.');
+      _showMessage(context.l10n.safetySaveFailed);
     } finally {
       if (mounted) setState(() => _working = false);
     }
@@ -113,7 +110,7 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
   Future<void> _scan() async {
     final scanned = await Navigator.of(context).push<String>(
       MaterialPageRoute<String>(
-        builder: (_) => const QrScanScreen(title: 'Scan safety code'),
+        builder: (_) => QrScanScreen(title: context.l10n.safetyScanTitle),
       ),
     );
     if (scanned == null || !mounted) return;
@@ -122,7 +119,7 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
       matches =
           await widget.state.safetyCodeMatches(widget.conversation.id, scanned);
     } catch (_) {
-      _showMessage('The safety number could not be read. Try again.');
+      _showMessage(context.l10n.safetyReadFailed);
       return;
     }
     if (!mounted) return;
@@ -130,17 +127,12 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
       await showDialog<void>(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Text('Codes do not match'),
-          content: const Text(
-            'This is not the same safety code. Make sure you scanned the code '
-            'for this conversation and that both devices have received the '
-            'latest messages, then try again. If it still does not match, '
-            'do not treat this conversation as verified.',
-          ),
+          title: Text(context.l10n.safetyMismatchTitle),
+          content: Text(context.l10n.safetyMismatchMessage),
           actions: <Widget>[
             FilledButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('OK'),
+              child: Text(context.l10n.commonOk),
             ),
           ],
         ),
@@ -149,11 +141,12 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
     }
     final peer = _peerAccountId;
     if (peer == null) {
-      _showMessage('The codes match.');
+      _showMessage(context.l10n.safetyCodesMatch);
       return;
     }
     await _saveVerification(peer);
-    _showMessage('The codes match. Marked as verified.');
+    if (!mounted) return;
+    _showMessage(context.l10n.safetyCodesMatchVerified);
   }
 
   void _showMessage(String text) {
@@ -164,10 +157,11 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final safety = _safety;
     final canScan = Platform.isAndroid || Platform.isIOS;
     return Scaffold(
-      appBar: const LargeTitleBar(title: 'Safety number'),
+      appBar: LargeTitleBar(title: l10n.safetyTitle),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(
           BoneSpacing.gutter,
@@ -178,11 +172,13 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
         children: <Widget>[
           Text(
             _peerAccountId == null
-                ? 'Every member of this group sees the same number. Compare '
-                    'it in person or scan each other\'s code.'
-                : 'Compare this number with '
-                    '${accountLabel(_peerAccountId!, widget.conversation.peerUsername)} '
-                    'in person, or scan each other\'s code.',
+                ? l10n.safetyGroupIntro
+                : l10n.safetyPeerIntro(
+                    accountLabel(
+                      _peerAccountId!,
+                      widget.conversation.peerUsername,
+                    ),
+                  ),
             style: theme.textTheme.bodyMedium?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),
@@ -193,14 +189,11 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
               children: <Widget>[
                 ListTile(
                   leading: const Icon(Icons.error_outline),
-                  title: const Text('Safety number unavailable'),
-                  subtitle: const Text(
-                    'This device has not joined the encrypted group yet, or '
-                    'its group state could not be read.',
-                  ),
+                  title: Text(l10n.safetyUnavailable),
+                  subtitle: Text(l10n.safetyUnavailableDetail),
                   trailing: TextButton(
                     onPressed: _load,
-                    child: const Text('Retry'),
+                    child: Text(l10n.commonRetry),
                   ),
                 ),
               ],
@@ -215,8 +208,9 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
                   child: Column(
                     children: <Widget>[
                       Semantics(
-                        label: 'Safety number, twelve groups of five: '
-                            '${_digitGroups(safety.digits).join(', ')}',
+                        label: l10n.safetyDigitsSemantics(
+                          _digitGroups(safety.digits).join(', '),
+                        ),
                         excludeSemantics: true,
                         child: SelectableText(
                           _digitLines(safety.digits),
@@ -231,8 +225,7 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
                       ),
                       const SizedBox(height: BoneSpacing.lg),
                       Semantics(
-                        label: 'QR code of this safety number. The other '
-                            'person can scan it to compare.',
+                        label: l10n.safetyQrSemantics,
                         child: Container(
                           // QR codes need a light, uniform quiet zone to scan
                           // reliably, independent of app theme.
@@ -259,21 +252,21 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
                 children: <Widget>[
                   ListTile(
                     leading: const Icon(Icons.verified_user_outlined),
-                    title: const Text('Status'),
+                    title: Text(l10n.backupSectionStatus),
                     subtitle: Text(switch (_status!) {
                       PeerVerificationStatus.verified =>
-                        'You verified this number.',
+                        l10n.safetyVerifiedDetail,
                       PeerVerificationStatus.changed =>
-                        'A device in this conversation was added, removed '
-                            'or replaced since you verified. Compare the new '
-                            'number again.',
-                      PeerVerificationStatus.unverified => 'Not verified yet.',
+                        l10n.safetyChangedDetail,
+                      PeerVerificationStatus.unverified =>
+                        l10n.safetyUnverifiedDetail,
                     }),
                     trailing: StatusPill(
                       label: switch (_status!) {
-                        PeerVerificationStatus.verified => 'Verified',
-                        PeerVerificationStatus.changed => 'Changed',
-                        PeerVerificationStatus.unverified => 'Not verified',
+                        PeerVerificationStatus.verified => l10n.safetyVerified,
+                        PeerVerificationStatus.changed => l10n.safetyChanged,
+                        PeerVerificationStatus.unverified =>
+                          l10n.safetyUnverified,
                       },
                       tone: switch (_status!) {
                         PeerVerificationStatus.verified => StatusTone.verified,
@@ -290,14 +283,14 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
               FilledButton.icon(
                 onPressed: _working ? null : _scan,
                 icon: const Icon(Icons.qr_code_scanner),
-                label: const Text('Scan their code'),
+                label: Text(l10n.safetyScanTheirCode),
               ),
             if (_peerAccountId != null &&
                 _status != PeerVerificationStatus.verified) ...<Widget>[
               const SizedBox(height: BoneSpacing.sm),
               OutlinedButton(
                 onPressed: _working ? null : _markVerified,
-                child: const Text('Mark as verified'),
+                child: Text(l10n.safetyMarkVerified),
               ),
             ],
           ],

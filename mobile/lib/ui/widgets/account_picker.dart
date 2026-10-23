@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
 import '../format.dart';
+import '../../l10n/l10n.dart';
 
 /// A member selected in an [AccountPicker]: the resolved account ID plus a
 /// human-readable label (username when known, shortened ID otherwise).
@@ -24,7 +25,7 @@ class AccountPicker extends StatefulWidget {
     required this.state,
     required this.onChanged,
     this.maxSelection,
-    this.label = 'Username',
+    this.label,
     super.key,
   });
 
@@ -34,7 +35,9 @@ class AccountPicker extends StatefulWidget {
   /// Maximum number of members; null means unlimited. When the limit is 1,
   /// picking a new account replaces the previous selection.
   final int? maxSelection;
-  final String label;
+
+  /// The field label; defaults to "Username".
+  final String? label;
 
   @override
   State<AccountPicker> createState() => _AccountPickerState();
@@ -153,8 +156,8 @@ class _AccountPickerState extends State<AccountPicker> {
           autocorrect: false,
           onChanged: _onChanged,
           decoration: InputDecoration(
-            labelText: widget.label,
-            helperText: 'Exact username, or paste an account ID (acct_…).',
+            labelText: widget.label ?? context.l10n.connectUsername,
+            helperText: context.l10n.accountPickerHelper,
             prefixIcon: const Icon(Icons.person_search_outlined),
             suffixIcon: searching
                 ? const Padding(
@@ -180,7 +183,7 @@ class _AccountPickerState extends State<AccountPicker> {
           Padding(
             padding: const EdgeInsets.only(top: 8),
             child: Text(
-              'No account found with that exact username.',
+              context.l10n.accountPickerNoMatch,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),

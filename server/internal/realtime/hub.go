@@ -28,15 +28,21 @@ type Event struct {
 	CreatedAt      time.Time   `json:"created_at"`
 }
 
+// Hub tracks live sockets. subscribers indexes sockets by account (which
+// bounds per-account and per-device counting to at most
+// maxConnectionsPerAccount entries) and perIP counts sockets per remote
+// address, so Register never scans every live socket. Every removal goes
+// through removeLocked so the indexes and total stay consistent.
 type Hub struct {
 	mu          sync.RWMutex
 	subscribers map[string]map[*Client]struct{}
+	perIP       map[string]int
 	draining    bool
 	total       int
 }
 
 func NewHub() *Hub {
-	return &Hub{subscribers: map[string]map[*Client]struct{}{}}
+	return &Hub{subscribers: map[string]map[*Client]struct{}{}, perIP: map[string]int{}}
 }
 
 // ConnectionCount returns only an aggregate operational gauge. It never
@@ -53,18 +59,12 @@ func (h *Hub) Register(accountID, deviceID, remoteIP string) (*Client, error) {
 	if h.draining {
 		return nil, ErrHubDraining
 	}
-	accountCount, deviceCount, ipCount := 0, 0, 0
-	for _, clients := range h.subscribers {
-		for existing := range clients {
-			if existing.accountID == accountID {
-				accountCount++
-			}
-			if existing.accountID == accountID && existing.deviceID == deviceID {
-				deviceCount++
-			}
-			if existing.remoteIP == remoteIP {
-				ipCount++
-			}
+	accountClients := h.subscribers[accountID]
+	accountCount, deviceCount, ipCount := len(accountClients), 0, h.perIP[remoteIP]
+	// At most maxConnectionsPerAccount sockets can share an account.
+	for existing := range accountClients {
+		if existing.deviceID == deviceID {
+			deviceCount++
 		}
 	}
 	if h.total >= maxConnections || accountCount >= maxConnectionsPerAccount ||
@@ -76,8 +76,25 @@ func (h *Hub) Register(accountID, deviceID, remoteIP string) (*Client, error) {
 		h.subscribers[accountID] = map[*Client]struct{}{}
 	}
 	h.subscribers[accountID][client] = struct{}{}
+	h.perIP[remoteIP]++
 	h.total++
 	return client, nil
+}
+
+// removeLocked drops a registered client from every index. The caller holds
+// h.mu and decides whether to close the client. Deleting the current key
+// while ranging over a map is safe in Go.
+func (h *Hub) removeLocked(clients map[*Client]struct{}, client *Client) {
+	delete(clients, client)
+	h.total--
+	if n := h.perIP[client.remoteIP] - 1; n > 0 {
+		h.perIP[client.remoteIP] = n
+	} else {
+		delete(h.perIP, client.remoteIP)
+	}
+	if len(clients) == 0 {
+		delete(h.subscribers, client.accountID)
+	}
 }
 
 func (h *Hub) Unregister(client *Client) {
@@ -85,11 +102,7 @@ func (h *Hub) Unregister(client *Client) {
 	defer h.mu.Unlock()
 	if clients := h.subscribers[client.accountID]; clients != nil {
 		if _, ok := clients[client]; ok {
-			delete(clients, client)
-			h.total--
-		}
-		if len(clients) == 0 {
-			delete(h.subscribers, client.accountID)
+			h.removeLocked(clients, client)
 		}
 	}
 	client.Close()
@@ -101,13 +114,9 @@ func (h *Hub) DisconnectDevice(accountID, deviceID string) {
 	clients := h.subscribers[accountID]
 	for client := range clients {
 		if client.deviceID == deviceID {
-			delete(clients, client)
-			h.total--
+			h.removeLocked(clients, client)
 			client.Close()
 		}
-	}
-	if len(clients) == 0 {
-		delete(h.subscribers, accountID)
 	}
 }
 
@@ -117,24 +126,20 @@ func (h *Hub) DisconnectAccountExceptDevice(accountID, keepDeviceID string) {
 	clients := h.subscribers[accountID]
 	for client := range clients {
 		if client.deviceID != keepDeviceID {
-			delete(clients, client)
-			h.total--
+			h.removeLocked(clients, client)
 			client.Close()
 		}
-	}
-	if len(clients) == 0 {
-		delete(h.subscribers, accountID)
 	}
 }
 
 func (h *Hub) DisconnectAccount(accountID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	for client := range h.subscribers[accountID] {
+	clients := h.subscribers[accountID]
+	for client := range clients {
+		h.removeLocked(clients, client)
 		client.Close()
-		h.total--
 	}
-	delete(h.subscribers, accountID)
 }
 
 // Drain rejects new registrations and closes every hijacked connection.
@@ -148,6 +153,7 @@ func (h *Hub) Drain() {
 		}
 		delete(h.subscribers, accountID)
 	}
+	clear(h.perIP)
 	h.total = 0
 }
 

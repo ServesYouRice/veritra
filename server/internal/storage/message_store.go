@@ -788,31 +788,57 @@ func (s *Store) ListSyncEvents(ctx context.Context, accountID, deviceID string, 
 	return events, rows.Err()
 }
 
+// syncEventBlockedFor is true when the conversation event se comes from an
+// account that blocker blocked. blocker is SQL text (a column or a
+// positional parameter), never a value.
+func syncEventBlockedFor(blocker string) string {
+	return `EXISTS (
+		SELECT 1 FROM account_blocks b
+		WHERE b.blocker_account_id = ` + blocker + `
+		  AND b.blocked_account_id = CASE
+		    WHEN se.event_type LIKE 'message.%' THEN (SELECT sender_account_id FROM message_envelopes WHERE id = json_extract(se.payload_json, '$.message_id'))
+		    WHEN se.event_type LIKE 'reaction.%' OR se.event_type = 'read_receipt.updated' THEN json_extract(se.payload_json, '$.account_id')
+		    WHEN se.event_type LIKE 'call.%' THEN json_extract(se.payload_json, '$.created_by')
+		    ELSE NULL
+		  END
+	)`
+}
+
+// syncBoundsQuery returns the lowest and highest sync event id the account
+// may see: its account events plus the unblocked events of its
+// conversations. Each conversation is walked on idx_sync_events_conversation
+// from the relevant end and stops at its first visible event, so the block
+// predicate runs only on the few rows at each edge instead of on every event
+// on the instance (T49A). The unary + keeps account_id IS NULL off
+// idx_sync_events_account, which would scan every conversation event.
+var syncBoundsQuery = `
+	SELECT
+	  (SELECT MIN(v) FROM (
+	     SELECT MIN(id) AS v FROM sync_events WHERE account_id = ?1
+	     UNION ALL
+	     SELECT (SELECT se.id FROM sync_events se
+	             WHERE se.conversation_id = m.conversation_id AND +se.account_id IS NULL
+	               AND NOT ` + syncEventBlockedFor("?1") + `
+	             ORDER BY se.id ASC LIMIT 1)
+	     FROM memberships m WHERE m.account_id = ?1 AND m.conversation_id IS NOT NULL
+	  )),
+	  (SELECT MAX(v) FROM (
+	     SELECT MAX(id) AS v FROM sync_events WHERE account_id = ?1
+	     UNION ALL
+	     SELECT (SELECT se.id FROM sync_events se
+	             WHERE se.conversation_id = m.conversation_id AND +se.account_id IS NULL
+	               AND NOT ` + syncEventBlockedFor("?1") + `
+	             ORDER BY se.id DESC LIMIT 1)
+	     FROM memberships m WHERE m.account_id = ?1 AND m.conversation_id IS NOT NULL
+	  ))`
+
 func (s *Store) SyncBounds(ctx context.Context, accountID string) (string, int64, int64, error) {
 	var epoch string
 	if err := s.db.QueryRowContext(ctx, `SELECT epoch FROM sync_state WHERE id = 1`).Scan(&epoch); err != nil {
 		return "", 0, 0, err
 	}
 	var oldest, latest sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `
-		SELECT MIN(id), MAX(id) FROM (
-			SELECT id FROM sync_events WHERE account_id = ?
-			UNION ALL
-			SELECT se.id FROM sync_events se
-			JOIN memberships m ON m.conversation_id = se.conversation_id
-			WHERE se.account_id IS NULL AND m.account_id = ?
-			  AND NOT EXISTS (
-			    SELECT 1 FROM account_blocks b
-			    WHERE b.blocker_account_id = m.account_id
-			      AND b.blocked_account_id = CASE
-			        WHEN se.event_type LIKE 'message.%' THEN (SELECT sender_account_id FROM message_envelopes WHERE id = json_extract(se.payload_json, '$.message_id'))
-			        WHEN se.event_type LIKE 'reaction.%' OR se.event_type = 'read_receipt.updated' THEN json_extract(se.payload_json, '$.account_id')
-			        WHEN se.event_type LIKE 'call.%' THEN json_extract(se.payload_json, '$.created_by')
-			        ELSE NULL
-			      END
-			  )
-		)`, accountID, accountID).Scan(&oldest, &latest)
-	if err != nil {
+	if err := s.db.QueryRowContext(ctx, syncBoundsQuery, accountID).Scan(&oldest, &latest); err != nil {
 		return "", 0, 0, err
 	}
 	return epoch, oldest.Int64, latest.Int64, nil

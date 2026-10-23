@@ -355,25 +355,7 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 }
 
 func (a *API) allowTyping(accountID, conversationID string, now time.Time) bool {
-	a.typingMu.Lock()
-	defer a.typingMu.Unlock()
-	if a.typingLast == nil {
-		a.typingLast = make(map[string]time.Time)
-	}
-	key := accountID + "\x00" + conversationID
-	if last := a.typingLast[key]; !last.IsZero() && now.Sub(last) < 2*time.Second {
-		return false
-	}
-	a.typingLast[key] = now
-	if len(a.typingLast) > 10_000 {
-		cutoff := now.Add(-time.Minute)
-		for item, last := range a.typingLast {
-			if last.Before(cutoff) {
-				delete(a.typingLast, item)
-			}
-		}
-	}
-	return true
+	return a.typing.allow(accountID+"\x00"+conversationID, now)
 }
 
 type messageEnvelopeRequest struct {

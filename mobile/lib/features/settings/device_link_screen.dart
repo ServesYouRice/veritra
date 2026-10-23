@@ -8,6 +8,7 @@ import '../../ui/tokens.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/status_pill.dart';
 import '../../ui/widgets/tile_group.dart';
+import '../../l10n/l10n.dart';
 
 /// The QR payload for a link code, built here rather than taken from the
 /// server's `link_uri`, so a server cannot place anything else (such as an
@@ -37,10 +38,11 @@ class DeviceLinkScreen extends StatelessWidget {
       animation: state,
       builder: (context, _) {
         final theme = Theme.of(context);
+        final l10n = context.l10n;
         final link = state.activeDeviceLink;
         final qrPayload = deviceLinkQrPayload(link?.code);
         return Scaffold(
-          appBar: const LargeTitleBar(title: 'Link a device'),
+          appBar: LargeTitleBar(title: l10n.deviceLinkTitle),
           body: ListView(
             padding: const EdgeInsets.fromLTRB(
               BoneSpacing.gutter,
@@ -50,9 +52,7 @@ class DeviceLinkScreen extends StatelessWidget {
             ),
             children: <Widget>[
               Text(
-                'Generate a one-time code, enter it on the new device, then '
-                'approve it here with the verification code the new device '
-                'shows.',
+                l10n.deviceLinkIntro,
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
@@ -61,7 +61,11 @@ class DeviceLinkScreen extends StatelessWidget {
               FilledButton.icon(
                 onPressed: state.busy ? null : state.createDeviceLink,
                 icon: const Icon(Icons.qr_code_2),
-                label: Text(link == null ? 'Create link' : 'Create new link'),
+                label: Text(
+                  link == null
+                      ? l10n.deviceLinkCreate
+                      : l10n.deviceLinkCreateNew,
+                ),
               ),
               if (link != null) ...<Widget>[
                 if (qrPayload != null && link.state == 'pending') ...<Widget>[
@@ -73,8 +77,7 @@ class DeviceLinkScreen extends StatelessWidget {
                         child: Column(
                           children: <Widget>[
                             Semantics(
-                              label: 'QR code containing the device link. '
-                                  'Scan it with the new device.',
+                              label: l10n.deviceLinkQrSemantics,
                               child: Container(
                                 // QR codes need a light, uniform quiet zone
                                 // to scan reliably, independent of app theme.
@@ -95,8 +98,7 @@ class DeviceLinkScreen extends StatelessWidget {
                             ),
                             const SizedBox(height: BoneSpacing.md),
                             Text(
-                              'Scan it with the Veritra app on the new '
-                              'device, or type the link code below.',
+                              l10n.deviceLinkQrHint,
                               style: theme.textTheme.bodySmall?.copyWith(
                                 color: theme.colorScheme.onSurfaceVariant,
                               ),
@@ -113,9 +115,12 @@ class DeviceLinkScreen extends StatelessWidget {
                   children: <Widget>[
                     ListTile(
                       leading: const Icon(Icons.info_outline),
-                      title: Text('STATUS', style: theme.textTheme.labelSmall),
+                      title: Text(
+                        l10n.deviceLinkStatusLabel,
+                        style: theme.textTheme.labelSmall,
+                      ),
                       trailing: StatusPill(
-                        label: link.state,
+                        label: l10n.deviceLinkState(link.state),
                         tone: switch (link.state) {
                           'approved' => StatusTone.verified,
                           'claimed' => StatusTone.info,
@@ -125,25 +130,25 @@ class DeviceLinkScreen extends StatelessWidget {
                     ),
                     _LinkValueTile(
                       icon: Icons.pin_outlined,
-                      title: 'Link code',
+                      title: l10n.connectLinkCode,
                       value: link.code ?? '',
                       copyable: true,
                     ),
                     _LinkValueTile(
                       icon: Icons.verified_outlined,
-                      title: 'Verification code',
+                      title: l10n.connectVerificationTitle,
                       value: link.verificationCode,
                     ),
                     _LinkValueTile(
                       icon: Icons.timer_outlined,
-                      title: 'Expires',
+                      title: l10n.inviteExpires,
                       value: formatDateTime(context, link.expiresAt),
                       mono: false,
                     ),
                     if (link.claimedDeviceName != null)
                       _LinkValueTile(
                         icon: Icons.tablet_android_outlined,
-                        title: 'Claimed by',
+                        title: l10n.deviceLinkClaimedBy,
                         value: link.claimedDeviceName!,
                         mono: false,
                       ),
@@ -153,13 +158,13 @@ class DeviceLinkScreen extends StatelessWidget {
                 OutlinedButton.icon(
                   onPressed: state.busy ? null : state.refreshActiveDeviceLink,
                   icon: const Icon(Icons.refresh),
-                  label: const Text('Refresh status'),
+                  label: Text(l10n.deviceLinkRefreshStatus),
                 ),
                 const SizedBox(height: 8),
                 FilledButton.icon(
                   onPressed: state.busy ? null : () => _approve(context),
                   icon: const Icon(Icons.verified_user_outlined),
-                  label: const Text('Approve device'),
+                  label: Text(l10n.deviceLinkApproveDevice),
                 ),
               ],
               if (state.error != null) ...<Widget>[
@@ -183,7 +188,7 @@ class DeviceLinkScreen extends StatelessWidget {
         context: context,
         builder: (context) {
           return AlertDialog(
-            title: const Text('Verification code'),
+            title: Text(context.l10n.connectVerificationTitle),
             content: TextField(
               controller: controller,
               autofocus: true,
@@ -193,11 +198,11 @@ class DeviceLinkScreen extends StatelessWidget {
             actions: <Widget>[
               TextButton(
                 onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Cancel'),
+                child: Text(context.l10n.commonCancel),
               ),
               FilledButton(
                 onPressed: () => Navigator.of(context).pop(controller.text),
-                child: const Text('Approve'),
+                child: Text(context.l10n.deviceLinkApprove),
               ),
             ],
           );
@@ -245,13 +250,15 @@ class _LinkValueTile extends StatelessWidget {
       ),
       trailing: copyable && value.isNotEmpty
           ? IconButton(
-              tooltip: 'Copy',
+              tooltip: context.l10n.commonCopy,
               icon: const Icon(Icons.copy_outlined),
               onPressed: () {
                 Clipboard.setData(ClipboardData(text: value));
                 ScaffoldMessenger.of(
                   context,
-                ).showSnackBar(SnackBar(content: Text('$title copied.')));
+                ).showSnackBar(
+                  SnackBar(content: Text(context.l10n.settingsCopied(title))),
+                );
               },
             )
           : null,

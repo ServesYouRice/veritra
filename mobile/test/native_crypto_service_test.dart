@@ -199,7 +199,12 @@ void main() {
     final next =
         await bob.send(AppPayloadType.text, <String, Object?>{'text': 'next'});
     await alice.receive(bob, next);
-    expect((await alice.history()).last.body, 'next');
+    // Both messages can share a timestamp, so do not rely on list order.
+    final after = await alice.history();
+    expect(after, hasLength(2));
+    expect(after.where((m) => m.kind == LocalMessageKind.unverifiable),
+        hasLength(1));
+    expect(after.map((m) => m.body), contains('next'));
   }, skip: skip);
 }
 

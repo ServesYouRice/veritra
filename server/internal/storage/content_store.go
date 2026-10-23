@@ -945,18 +945,18 @@ func (s *Store) BackupForRecoveryToken(ctx context.Context, recoveryTokenHash []
 	return backup, err
 }
 
+// enforceBlobQuota admits incoming bytes for accountID inside tx, the
+// single-writer transaction that then writes the blob row. Usage comes from
+// the counters that migration 0031 keeps equal to the attachment and backup
+// row sums by trigger in the same transaction (T49B), so the check is as
+// strict as summing the rows and costs two primary-key reads.
 func enforceBlobQuota(ctx context.Context, tx *sql.Tx, accountID string, incoming int64) error {
 	const accountLimit int64 = 1 << 30
 	const instanceLimit int64 = 10 << 30
-	const usageQuery = `SELECT COALESCE(SUM(size_bytes), 0) FROM (
-		SELECT owner_account_id AS account_id, size_bytes FROM attachment_envelopes
-		UNION ALL SELECT account_id, size_bytes FROM backup_blobs
-	)`
 	var accountUsage, instanceUsage int64
-	if err := tx.QueryRowContext(ctx, usageQuery+` WHERE account_id = ?`, accountID).Scan(&accountUsage); err != nil {
-		return err
-	}
-	if err := tx.QueryRowContext(ctx, usageQuery).Scan(&instanceUsage); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT
+		COALESCE((SELECT size_bytes FROM blob_usage_accounts WHERE account_id = ?), 0),
+		(SELECT size_bytes FROM blob_usage_instance WHERE id = 1)`, accountID).Scan(&accountUsage, &instanceUsage); err != nil {
 		return err
 	}
 	if incoming < 0 || accountUsage > accountLimit-incoming || instanceUsage > instanceLimit-incoming {
