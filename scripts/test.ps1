@@ -16,6 +16,9 @@ if ($PythonCmd) {
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   & $PythonCmd (Join-Path $Root "scripts/check-coverage_test.py")
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+} else {
+  [Console]::Error.WriteLine("release-policy fixtures need py, python3 or python; none found")
+  exit 1
 }
 
 if (Get-Command go -ErrorAction SilentlyContinue) {
