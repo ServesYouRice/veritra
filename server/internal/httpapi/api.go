@@ -43,8 +43,7 @@ type API struct {
 	ClientIdentities    *ClientIdentityResolver
 	LoginBackoff        *LoginBackoff
 	Ready               func() bool
-	typingMu            sync.Mutex
-	typingLast          map[string]time.Time
+	typing              typingLimiter
 }
 
 func (a *API) passwordCost() int {

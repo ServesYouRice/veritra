@@ -76,3 +76,43 @@ All data is synthetic random ciphertext from a fixed seed.
 Observations, not cards: oversized uploads stream to the cap before
 rejection and quota is checked after the blob is durable; the flat blob
 directory makes the temp sweep linear; small blobs take a full 4 KiB block.
+
+## After: items 4-5 (realtime registration, typing state)
+
+Same host class and benchmarks (`hub_bench_test.go`, `typing_bench_test.go`);
+`go test -run '^$' -bench 'Hub|Typing' -benchmem -benchtime 1s -count 2
+./internal/realtime ./internal/httpapi`. "Before" is a fresh re-run of the
+old code on this host just before the change (so it differs slightly from the
+table above). The host was shared and noisy; treat small (<2x) differences
+as noise.
+
+| Benchmark | Dataset | Before ns/op | After ns/op |
+|---|---|---|---|
+| Hub Register+Unregister | 0 / 1k / 5k / 9k sockets | 737 / 79k / 429k / **921k** | 1.0k / 1.8k / 1.1k / **0.9k** |
+| Hub Register, parallel | 9k sockets | 996k | 0.88k |
+| Hub Publish to 5 accounts | 1k / 9k sockets | 2.4k / 2.6k | 2.5k / 2.5k |
+| Typing, steady active pairs | 1k / 5k / 10,001 / 20k | 114 / 121 / **117k** / **240k** | 197 / 224 / 252 / 257 |
+| Typing burst of new pairs (per call) | 5k / 10k / 20k | 190 / 256 / **96.8k** | 194 / 208 / 282 |
+| Typing, throttled | - | 92 | 97 |
+
+- **Item 4:** `Hub` keeps a per-IP socket count next to the per-account set.
+  Register reads the account and IP counts directly and counts devices only
+  within the account (at most 10 sockets). Limits (10,000 total, 20 per IP,
+  10 per account, 3 per device per account), rejection with
+  `ErrConnectionLimit`, draining, and all removal paths (Unregister,
+  DisconnectDevice, DisconnectAccountExceptDevice, DisconnectAccount, Drain)
+  are unchanged; all removals share one index-cleanup helper under the hub
+  lock. Register never replaced an older socket and still does not.
+- **Item 5:** typing state moved to `typingLimiter`: two time generations,
+  each at most one 2 s throttle interval wide; rotation drops the older one
+  wholesale, so expiry is O(1) amortised. Every entry young enough to
+  throttle survives rotation, so admit/throttle decisions match an unbounded
+  per-pair map (randomised test against a reference). Hard bound: 50,000
+  pairs across both generations; a new pair past it is refused (429, as for
+  throttling) until the generation rotates. Steady state costs about 100 ns
+  more than the old sub-cap path because entries move between generations.
+- **Tests:** `server/internal/realtime/hub_test.go` (each limit, slot reuse,
+  double unregister, every disconnect path, drain, concurrent churn with a
+  brute-force index check) and `server/internal/httpapi/typing_limiter_test.go`
+  (window, rotation boundary, reference equivalence, expiry, memory bound,
+  concurrency); run with `-race`.
