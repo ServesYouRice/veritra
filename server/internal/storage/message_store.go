@@ -739,11 +739,11 @@ func (s *Store) ListSyncEvents(ctx context.Context, accountID, deviceID string, 
 	// Only a cursor past the start can have expired, and only the oldest
 	// bound tells; the latest bound would cost as much again.
 	if afterID > 0 {
-		var oldest sql.NullInt64
-		if err := s.db.QueryRowContext(ctx, syncOldestQuery, accountID).Scan(&oldest); err != nil {
+		var expired bool
+		if err := s.db.QueryRowContext(ctx, syncCursorExpiredQuery, accountID, afterID).Scan(&expired); err != nil {
 			return nil, err
 		}
-		if oldest.Int64 > 0 && afterID < oldest.Int64-1 {
+		if expired {
 			return nil, ErrSyncCursorExpired
 		}
 	}
@@ -874,9 +874,19 @@ func syncEventBlockedFor(blocker string) string {
 // idx_sync_events_account, which would scan every conversation event.
 var syncBoundsQuery = `SELECT ` + syncOldestExpr + `, ` + syncLatestExpr
 
-// syncOldestQuery is the oldest half of syncBoundsQuery, which is all a
-// page needs to tell whether its cursor has expired.
-var syncOldestQuery = `SELECT ` + syncOldestExpr
+// syncCursorExpiredQuery is true when cursor ?2 of account ?1 is older than
+// the oldest event the account may see (syncOldestExpr) less one. That
+// bound walks each conversation from its start to its first unblocked
+// event, which is long when a blocked sender's events lead it. The usual
+// cursor is the last event of a page; while that event is still there and
+// counts towards the bound, the bound is at most the cursor, so one
+// primary-key read settles it and the CASE never evaluates the bound.
+var syncCursorExpiredQuery = `SELECT CASE WHEN EXISTS (
+	  SELECT 1 FROM sync_events se
+	  WHERE se.id = ?2 AND (se.account_id = ?1 OR (se.account_id IS NULL
+	    AND EXISTS (SELECT 1 FROM memberships m WHERE m.account_id = ?1 AND m.conversation_id = se.conversation_id)
+	    AND NOT ` + syncEventBlockedFor("?1") + `))
+	) THEN 0 ELSE COALESCE(?2 < ` + syncOldestExpr + ` - 1, 0) END`
 
 var syncOldestExpr = `
 	  (SELECT MIN(v) FROM (

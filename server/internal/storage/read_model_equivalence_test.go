@@ -503,6 +503,18 @@ func TestSyncHiddenRunMatchesLegacy(t *testing.T) {
 			if want := map[hiddenRunMode]int{hiddenRemoved: 1}[mode]; hidden != want {
 				t.Fatalf("device saw %d hidden-run messages, want %d", hidden, want)
 			}
+			// After retention, cursors into the pruned range expire as
+			// before, whether or not the event at the cursor counts.
+			if _, err := store.db.ExecContext(ctx, `DELETE FROM sync_events WHERE id <= ?`, ds.LastEventID/4); err != nil {
+				t.Fatal(err)
+			}
+			checkSyncEventsMatch(t, store, ds.Account, []string{ds.Device}, true, true, ds.LastEventID/2)
+			for after := int64(1); after <= ds.LastEventID+1; after += 7 {
+				checkSyncPage(t, store, ds.Account, ds.Device, after, 5)
+			}
+			if _, err := store.ListSyncEvents(ctx, ds.Account, ds.Device, 1, 5); !errors.Is(err, ErrSyncCursorExpired) {
+				t.Fatalf("cursor in the pruned range: err=%v, want expired", err)
+			}
 		})
 	}
 }
