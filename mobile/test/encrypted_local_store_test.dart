@@ -1,8 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:drift/drift.dart' show OrderingTerm, Variable;
-import 'package:drift/native.dart' show NativeDatabase;
+import 'package:drift/drift.dart'
+    show
+        CouldNotRollBackException,
+        DriftWrappedException,
+        OrderingTerm,
+        Variable;
+import 'package:drift/native.dart' show NativeDatabase, SqliteException;
 import 'package:flutter/services.dart' show MethodCall;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -964,7 +969,8 @@ void main() {
     databases.removeLast();
 
     // The open fails as an upgrade failure, not as a wrong key, and the file
-    // and its key are left alone.
+    // and its key are left alone. It is not a full device, so it is not
+    // reported as one.
     await expectLater(openStore().pendingMlsMessages(),
         throwsA(_storeFailure(LocalStoreFailureKind.upgradeFailed)));
     await databases.removeLast().close();
@@ -1020,8 +1026,7 @@ void main() {
     return pages;
   }
 
-  test('a full disk during the upgrade is reported as an upgrade failure',
-      () async {
+  test('a full disk during the upgrade is reported as a full device', () async {
     final pages = await seedVersion8();
     final original =
         File('${directory.path}/veritra-local.db').readAsBytesSync();
@@ -1043,7 +1048,7 @@ void main() {
     await expectLater(
         store.loadSnapshot(),
         throwsA(allOf(
-            _storeFailure(LocalStoreFailureKind.upgradeFailed),
+            _storeFailure(LocalStoreFailureKind.upgradeStorageFull),
             isA<LocalStoreUnavailableException>()
                 .having((error) => error.retryable, 'retryable', isTrue))));
     // Nothing was changed, moved, deleted or reset.
@@ -1060,6 +1065,30 @@ void main() {
     expect(snapshot?.messagesByConversation['conv_1'], hasLength(200));
     expect(await userVersion(databases.last), 9);
     expect(await hasEnvelopeIndex(databases.last), isTrue);
+  });
+
+  test('only a full device or an I/O error counts as a full device', () {
+    SqliteException sqlite(int code) =>
+        SqliteException(extendedResultCode: code, message: 'test');
+    // SQLITE_FULL, SQLITE_IOERR and an extended code (SQLITE_IOERR_WRITE).
+    for (final code in <int>[13, 10, 778]) {
+      expect(isStorageFullError(sqlite(code)), isTrue, reason: '$code');
+      expect(
+          isStorageFullError(
+              DriftWrappedException(message: 'wrapped', cause: sqlite(code))),
+          isTrue);
+    }
+    expect(
+        isStorageFullError(CouldNotRollBackException(
+            StateError('step'), StackTrace.empty, sqlite(10))),
+        isTrue);
+    // SQLITE_ERROR, SQLITE_CORRUPT, SQLITE_NOTADB and anything else.
+    for (final code in <int>[1, 11, 26]) {
+      expect(isStorageFullError(sqlite(code)), isFalse, reason: '$code');
+    }
+    expect(isStorageFullError(StateError('disk is full')), isFalse);
+    expect(isStorageFullError(DriftWrappedException(message: 'no cause')),
+        isFalse);
   });
 
   test('a wrong key on a database that needs an upgrade is a wrong key',

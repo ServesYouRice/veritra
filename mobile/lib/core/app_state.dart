@@ -652,6 +652,8 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     try {
       final stored = await localStore.loadSession();
+      // The local database opened, so a run of failed upgrades is over.
+      _storageFullFailures = 0;
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
       if (stored == null) {
         lifecycle = SessionLifecycle.ready;
@@ -726,12 +728,19 @@ class AppState extends ChangeNotifier {
       lifecycle = SessionLifecycle.recoveryRequired;
       localStoreFailure =
           error is LocalStoreUnavailableException ? error.kind : null;
+      _storageFullFailures =
+          localStoreFailure == LocalStoreFailureKind.upgradeStorageFull
+              ? _storageFullFailures + 1
+              : 0;
       recoveryMessage = error is LocalStoreUnavailableException
           ? _localStoreFailureMessage(error.kind)
           : l10n.recoveryRestoreFailed;
       notifyListeners();
     }
   }
+
+  /// Restores in a row whose upgrade failed for lack of space.
+  int _storageFullFailures = 0;
 
   String _localStoreFailureMessage(LocalStoreFailureKind kind) {
     switch (kind) {
@@ -744,8 +753,12 @@ class AppState extends ChangeNotifier {
       case LocalStoreFailureKind.keyMalformed:
       case LocalStoreFailureKind.keyRejected:
         return l10n.recoveryKeyMissing;
+      case LocalStoreFailureKind.upgradeStorageFull:
+        return _storageFullFailures > 1
+            ? l10n.recoveryUpgradeStillFull
+            : l10n.recoveryUpgradeFailed;
       case LocalStoreFailureKind.upgradeFailed:
-        return l10n.recoveryUpgradeFailed;
+        return l10n.recoveryUpgradeError;
     }
   }
 
@@ -756,11 +769,19 @@ class AppState extends ChangeNotifier {
   /// recovery screen offers it only for other restore failures.
   bool get canContinueWithoutRestore => localStoreFailure == null;
 
-  /// A failed upgrade leaves a readable database with its key: freeing
-  /// storage and retrying is the fix, so a reset is never offered for it.
-  bool get canResetLocalData =>
-      localStoreFailure != null &&
-      localStoreFailure != LocalStoreFailureKind.upgradeFailed;
+  /// A reset moves the database and its key aside (it never deletes them),
+  /// so it is always reachable and the user is never stuck. An upgrade that
+  /// ran out of space leaves a readable database, though, and freeing space
+  /// and retrying is the fix: the reset is offered for it only once a retry
+  /// has failed the same way again.
+  bool get canResetLocalData {
+    final failure = localStoreFailure;
+    if (failure == null) return false;
+    if (failure == LocalStoreFailureKind.upgradeStorageFull) {
+      return _storageFullFailures > 1;
+    }
+    return true;
+  }
 
   void continueWithoutRestore() {
     if (lifecycle != SessionLifecycle.recoveryRequired ||
@@ -789,6 +810,7 @@ class AppState extends ChangeNotifier {
       try {
         await localStore.quarantineUnreadableDatabase(confirmed: true);
         localStoreFailure = null;
+        _storageFullFailures = 0;
         recoveryMessage = null;
         lifecycle = SessionLifecycle.ready;
       } catch (err) {

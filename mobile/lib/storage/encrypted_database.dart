@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
+import 'package:drift/isolate.dart' show DriftRemoteException;
 
 part 'encrypted_database.g.dart';
 
@@ -1565,4 +1566,26 @@ EncryptedLocalDatabase openEncryptedLocalDatabase(File file, String keyHex) {
       },
     ),
   );
+}
+
+/// Whether [error], or an error it wraps, is SQLite reporting a full device
+/// (`SQLITE_FULL`) or a failed read or write (`SQLITE_IOERR`). Errors from
+/// the background isolate arrive wrapped, several layers deep.
+bool isStorageFullError(Object error) => _isStorageFull(error, 0);
+
+const _sqliteIoErr = 10;
+const _sqliteFull = 13;
+
+bool _isStorageFull(Object? error, int depth) {
+  if (error == null || depth > 8) return false;
+  return switch (error) {
+    SqliteException(:final resultCode) =>
+      resultCode == _sqliteFull || resultCode == _sqliteIoErr,
+    DriftRemoteException(:final remoteCause) =>
+      _isStorageFull(remoteCause, depth + 1),
+    DriftWrappedException(:final cause) => _isStorageFull(cause, depth + 1),
+    CouldNotRollBackException(:final cause, :final exception) =>
+      _isStorageFull(cause, depth + 1) || _isStorageFull(exception, depth + 1),
+    _ => false,
+  };
 }
