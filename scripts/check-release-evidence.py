@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import plistlib
@@ -124,9 +125,11 @@ ANDROID_APPLICATION_ID = "org.veritra.private_messenger"
 ANDROID_CRYPTO_LIBRARY = "lib/arm64-v8a/libprivate_messenger_crypto.so"
 ANDROID_DEBUG_CERTIFICATE_MARKER = b"Android Debug"  # CN of the SDK debug keystore
 APK_SIG_BLOCK_MAGIC = b"APK Sig Block 42"
+ZIP_EOCD_MAGIC, ZIP64_LOCATOR_MAGIC, ZIP_EOCD_SIZE = b"PK\x05\x06", b"PK\x06\x07", 22
 APK_SIGNATURE_SCHEMES = (0x7109871A, 0xF05368C0, 0x1B93AD61)  # v2, v3, v3.1
 MAX_APK_BYTES = 512 * 1024 * 1024
 AXML_FILE, AXML_STRING_POOL, AXML_RESOURCE_MAP, AXML_START_ELEMENT = 0x0003, 0x0001, 0x0180, 0x0102
+AXML_FIRST_NODE, AXML_LAST_NODE = 0x0100, 0x017F  # namespace, element, end and CDATA nodes
 AXML_UTF8_FLAG = 0x100
 AXML_TYPE_STRING, AXML_TYPE_BOOLEAN = 0x03, 0x12
 ANDROID_ATTR_DEBUGGABLE = 0x0101000F
@@ -546,10 +549,34 @@ def length_prefixed_items(buffer: bytes) -> list[bytes]:
     return items
 
 
+def apk_zip_layout_error(data: bytes) -> str | None:
+    """Why the APK's zip end record is not the single, unambiguous one.
+
+    An APK has no zip comment, so its end of central directory record is
+    exactly the last 22 bytes. A comment could hide a second signing block,
+    central directory and end record that a lenient reader (Python's zipfile,
+    a backwards scan) would pick instead of the one Android uses, so no other
+    end record signature may appear where a comment could reach. ZIP64 and
+    multi-disk archives are not APKs.
+    """
+    eocd = len(data) - ZIP_EOCD_SIZE
+    if eocd < 0 or data[eocd : eocd + 4] != ZIP_EOCD_MAGIC or data[-2:] != b"\0\0":
+        return "has a zip comment or does not end with its end of central directory record"
+    if data.count(ZIP_EOCD_MAGIC, max(0, eocd - 0xFFFF)) != 1:
+        return "has more than one end of central directory record"
+    disk, directory_disk, disk_entries, entries = struct.unpack_from("<HHHH", data, eocd + 4)
+    if disk or directory_disk or disk_entries != entries or (eocd >= 20 and data[eocd - 20 : eocd - 16] == ZIP64_LOCATOR_MAGIC):
+        return "is a multi-disk or ZIP64 archive"
+    return None
+
+
 def apk_signing_block(data: bytes) -> dict[int, bytes]:
-    """ID-value pairs of the APK Signing Block; empty when there is none."""
-    eocd = data.rfind(b"PK\x05\x06", max(0, len(data) - 22 - 0xFFFF))
-    if eocd < 0 or eocd + 22 > len(data):
+    """ID-value pairs of the APK Signing Block; empty when there is none.
+
+    The end record is the last 22 bytes (``apk_zip_layout_error`` passed).
+    """
+    eocd = len(data) - ZIP_EOCD_SIZE
+    if eocd < 0 or data[eocd : eocd + 4] != ZIP_EOCD_MAGIC:
         raise ValueError("no end of central directory")
     cd_size, cd_offset = struct.unpack_from("<II", data, eocd + 12)
     if cd_offset + cd_size != eocd:
@@ -628,13 +655,20 @@ def manifest_facts(data: bytes) -> tuple[str | None, bool]:
 
     Any ``debuggable`` attribute that is not a literal false counts as
     debuggable, so a resource reference fails closed.
+
+    Android reads the string pool and resource map only before the first XML
+    node, so one of either anywhere else, or a second one, could show this
+    check other names or attribute IDs than the platform uses: both are
+    refused. So is a ``manifest`` element that is not the single root, since
+    the platform takes the package from the root.
     """
     kind, header_size, total = struct.unpack_from("<HHI", data, 0)
     if kind != AXML_FILE or total > len(data):
         raise ValueError("not a compiled Android XML file")
-    strings: list[str] = []
-    resource_ids: list[int] = []
+    strings: list[str] | None = None
+    resource_ids: list[int] | None = None
     package, debuggable = None, False
+    in_nodes, elements = False, 0
     offset = header_size
     while offset + 8 <= total:
         kind, chunk_header, size = struct.unpack_from("<HHI", data, offset)
@@ -642,19 +676,31 @@ def manifest_facts(data: bytes) -> tuple[str | None, bool]:
             raise ValueError("chunk out of range")
         chunk = data[offset : offset + size]
         if kind == AXML_STRING_POOL:
+            if in_nodes or strings is not None:
+                raise ValueError("string pool after the first XML node, or a second one")
             strings = axml_strings(chunk)
         elif kind == AXML_RESOURCE_MAP:
+            if in_nodes or resource_ids is not None:
+                raise ValueError("resource map after the first XML node, or a second one")
             resource_ids = list(struct.unpack_from(f"<{(size - chunk_header) // 4}I", chunk, chunk_header))
-        elif kind == AXML_START_ELEMENT:
+        elif AXML_FIRST_NODE <= kind <= AXML_LAST_NODE:
+            in_nodes = True
+        if kind == AXML_START_ELEMENT:
+            if strings is None:
+                raise ValueError("XML element without a string pool")
+            ids = resource_ids or []
             _, name, attr_start, attr_size, attr_count = struct.unpack_from("<IIHHH", chunk, chunk_header)
             if attr_size < 20:
                 raise ValueError("short attribute")
             element = strings[name]
+            if (element == "manifest") != (elements == 0):
+                raise ValueError("manifest is not the single root element")
+            elements += 1
             for index in range(attr_count):
                 at = chunk_header + attr_start + index * attr_size
                 _, attr_name, raw, _, _, value_type, value = struct.unpack_from("<IIIHBBI", chunk, at)
                 attr = strings[attr_name] if attr_name < len(strings) else ""
-                attr_id = resource_ids[attr_name] if attr_name < len(resource_ids) else None
+                attr_id = ids[attr_name] if attr_name < len(ids) else None
                 if element == "manifest" and attr == "package" and not attr_id:
                     package = strings[value] if value_type == AXML_TYPE_STRING else strings[raw]
                 if element == "application" and (attr_id == ANDROID_ATTR_DEBUGGABLE or attr == "debuggable"):
@@ -673,8 +719,20 @@ def apk_errors(path: Path, pinned_certificate: str | None) -> list[str]:
         if path.stat().st_size > MAX_APK_BYTES:
             return ["signed android artifact is too large"]
         data = path.read_bytes()
-        with zipfile.ZipFile(path) as archive:
-            names = set(archive.namelist())
+        layout = apk_zip_layout_error(data)
+        if layout:
+            return [f"signed android artifact {layout}"]
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            entries = archive.infolist()
+            # Readers disagree on which of two same-named entries wins, and
+            # zipfile cuts names at a NUL byte that Android keeps.
+            if len({entry.filename for entry in entries}) != len(entries) or any(
+                entry.filename != entry.orig_filename for entry in entries
+            ):
+                return ["signed android artifact has duplicate or ambiguous entry names"]
+            if struct.unpack_from("<H", data, len(data) - ZIP_EOCD_SIZE + 10)[0] != len(entries):
+                return ["signed android artifact central directory does not match its end record"]
+            names = {entry.filename for entry in entries}
             if "AndroidManifest.xml" not in names or "classes.dex" not in names:
                 return ["signed android artifact is not an Android app package"]
             package, debuggable = manifest_facts(read_member(archive, "AndroidManifest.xml"))

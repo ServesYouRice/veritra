@@ -117,7 +117,7 @@ recorded and checked, but never count: iOS `simulator-debug` (job
 | Platform | Signed file | Structural checks in `check-release-evidence.py` |
 |---|---|---|
 | iOS | `.ipa` | One `Payload/*.app`, iphoneos plist, arm64 iOS Mach-O with a code signature, distribution profile (`get-task-allow=false`) |
-| Android | `.apk` (not `.aab`) | `org.veritra.private_messenger`, not debuggable, arm64 crypto library, an APK Signature Scheme v2/v3 block with exactly one signer whose certificate SHA-256 is the pinned `android.release_certificate_sha256` (the record's `signing.certificate_sha256` must name it too) and is not the Android debug certificate |
+| Android | `.apk` (not `.aab`) | `org.veritra.private_messenger`, not debuggable, arm64 crypto library, an APK Signature Scheme v2/v3 block with exactly one signer whose certificate SHA-256 is the pinned `android.release_certificate_sha256` (the record's `signing.certificate_sha256` must name it too) and is not the Android debug certificate. Archives a lenient parser could read differently from Android are refused: a zip comment, a second end-of-central-directory signature, ZIP64 or multi-disk records, duplicate entry names, and a manifest with a second (or late) string pool or resource map or a `manifest` element that is not the single root |
 
 Both bind the platform, type, candidate commit, the file's sha256 and the
 provenance (workflow, job, run, source commit). A signed file with the same
