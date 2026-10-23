@@ -569,3 +569,147 @@ Verify `/readyz`, owner login, conversation metadata, and encrypted attachment
 download authorization. Do not inspect or log ciphertext bodies during the
 drill. Destroy the isolated drill data according to the operator's retention
 policy after recording the date and result.
+
+## Capacity alerts and runbooks
+
+Card I47. Measurements and method: `testing/evidence/T47-capacity.md`.
+
+**Supported host tiers.** One server process, SQLite WAL and blobs on a
+local SSD.
+
+| Tier | Container | Volume | Synthetic dataset | Rated busy hour |
+|---|---|---|---|---|
+| S | 1 vCPU, 1 GiB | 40 GiB (the shipped PVC) | 50 accounts, 25 DMs and 15 groups of 5, 20k messages, 200 attachments | 50 accounts (75 clients) at 4 messages per device per minute, about 3 messages/s |
+| M | 2 vCPU, 2 GiB | 100 GiB | 250 accounts, 125 DMs and 75 groups of 5, 100k messages, 1,000 attachments | 250 accounts (375 clients) at 2 messages per device per minute, about 7 messages/s, while few devices catch up from deep history (below) |
+
+On tier M, a device that catches up from the middle of a 100k-event history
+spends 0.1-0.5 s per sync page; with a fifth of the devices doing that in
+the busy hour, sync p95 exceeds the target at every load step. That is the
+open `ListSyncEvents` cursor follow-up from T49, not a limit of the tier.
+
+"Rated" is half the highest load at which every target below held. The
+workload model: every device keeps its sync socket open; sends follow a
+Poisson process; one message in 20 carries a 256 KiB attachment (one
+attachment in 25 is 25 MiB) that every online recipient downloads; every
+realtime event triggers the app's catch-up (`GET /sync/events` until empty);
+each device reads its conversation list and one history page every two
+minutes; half the accounts have a second client; a fifth of the devices
+catch up once from the middle of history, as after a night offline.
+
+**Targets.** Interactive requests (send, sync page, conversation list,
+history): p95 ≤ 150 ms and p99 ≤ 500 ms; realtime delivery p99 ≤ 2 s; a
+cold catch-up page p99 ≤ 1 s; errors < 0.1% and no 5xx; writer wait p99
+≤ 100 ms; Go memory ≤ 50% of the container limit. A stalled push provider
+loses no wake job and its backlog drains within 5 minutes of recovery. A
+restart is ready within 30 s, loses no acknowledged message, and leased wake
+jobs resume after their 30 s lease. The retention backlog stays below 1,200
+rows after two sweeps.
+
+**Disk budget.** Each scheduled backup copies every blob, and its restore
+drill restores one more copy, so a backup run peaks at about
+`(PRIVATE_MESSENGER_BACKUP_KEEP + 3) × live data`. With the default of 7
+that is ten times the live data: the 40 GiB volume holds about 3.6 GiB of
+live data with 10% free. Lower the keep count or grow the volume before
+raising storage quotas.
+
+**Per-address limit.** The general limit is 240 requests a minute per
+client address. At the S rating a device and its companion use about 40
+together; at four times that rate they reach the limit before the server
+slows, so a household of very active devices behind one NAT hits it first
+(`veritra_rate_limit_rejections_total`).
+
+**Measure your own host.** `scripts/capacity.sh s load -rate 1,4,8,16`
+(also `m`, and the `backup` and `restart` scenarios) runs the server in a
+container with the tier's limits, seeds it through the public API with
+`server/cmd/veritra-load` and prints the report; add `-duration 2h` for a
+soak. `go test -run Scenario ./internal/app` replays a provider stall and a
+restart with wake work in flight. Run `promtool test rules
+veritra-alerts.test.yml` in `deploy/kubernetes/examples/monitoring` after
+changing a rule.
+
+**Metrics added for this contract.** SQLite pool waits and writer wait
+(`veritra_sqlite_pool_*`, `veritra_sqlite_writer_acquire_duration_seconds`),
+file-system free and size and database, WAL and blob bytes
+(`veritra_storage_*`, rounded down to 64 MiB so a size never matches one
+upload), the last backup attempt and restore drill, push send duration,
+timeouts and oldest queued job, realtime events dropped for a full socket
+buffer and refused sockets, rate-limit rejections by scope, retention sweep
+time, process start time and Go memory. All are instance-wide; labels come
+from fixed sets.
+
+**Hosted metrics.** Below about 20 users, per-route counts, the socket count
+and goroutines read as an activity timeline of those people. When metrics
+leave the host (Grafana Cloud), send only the series the alerts need: see
+the `write_relabel_configs` example in `scrape-config.yml`.
+
+| Alert | Means | First thing to do |
+|---|---|---|
+| `VeritraRestoreDrillOverdue` (warning) | No passing R2 drill in 35 days, or never | Start one: `kubectl -n veritra create job --from=cronjob/veritra-restore-drill veritra-restore-drill-manual-1` |
+| `VeritraLocalRestoreDrillFailed` (critical) | The last backup's restore drill failed | Read the `scheduled-backup` log; run `messenger-server verify-backup` on the newest backup; treat it as unusable |
+| `VeritraServerRestarting` (warning) | More than 3 starts in an hour | `kubectl -n veritra describe pod`; look for OOM kills, probe failures, a crash at startup |
+| `VeritraServerOOMKilled` (warning) | The container hit its memory limit | Raise `limits.memory` or set `GOMEMLIMIT` to about 70% of it; check `veritra_realtime_connections` and large downloads |
+| `VeritraMemoryHigh` (warning) | Go holds over 80% of 1 GiB | As above; the rule's threshold must follow the limit |
+| `VeritraHTTPErrorsHigh` (warning) | Over 2% of requests return 5xx | Server log `level=ERROR`/`WARN`; `/readyz`; disk free; then `VeritraWriterSaturated` |
+| `VeritraLatencyHigh` (warning) | Interactive p99 over 500 ms | Check CPU throttling and writer wait; compare with the tier rating; a long backup run overlapping the busy hour shows here |
+| `VeritraWriterSaturated` (warning) | Requests queue for the single SQLite writer | Look for a long transaction (retention sweep, account export, restore); move the backup schedule off the busy hour; then a bigger tier |
+| `VeritraRateLimitStorm` (warning) | Over 5% of requests get 429 | Usually `PRIVATE_MESSENGER_TRUSTED_PROXIES` is wrong and every client shares one address; check two clients on different networks |
+| `VeritraPushFailing` (warning) | Most wakes to one provider fail | Provider status page; credentials (`_PRIVATE_KEY_FILE`), clock skew, egress network policy |
+| `VeritraPushBacklogStalled` (warning) | Wakes queue for 15 min with none delivered | As above; jobs expire after 24 h, messages are still delivered on the next sync |
+| `VeritraRetentionBacklogHigh` (warning) | Over 1,200 expired rows after two sweeps | Server log `retention_prune_failed`; disk errors; run with more sweep time only after finding the cause |
+| `VeritraRetentionStalled` (warning) | No finished sweep in 7 h, or rows older than 13 h | The sweeper runs in `serve`; check for a stuck pod or a database lock (`VeritraWriterSaturated`) |
+| `VeritraDataDiskLow` (critical) | Under 10% free where the database or blobs live | Free space now: lower `PRIVATE_MESSENGER_BACKUP_KEEP`, delete old local backups, grow the volume; writes fail when it is full |
+| `VeritraDataDiskFillsSoon` (warning) | Free space runs out within 3 days at the 24 h trend | Same as above, before it is urgent; check for an upload burst against the quota |
+| `VeritraWALLarge` (warning) | The SQLite WAL is over 256 MiB | A long read blocks checkpoints: look for a running export or backup copy; it shrinks after the next checkpoint |
+
+## Admission limits
+
+Card I49 (T49D). Per-account limits bound what one account can make the
+instance store or fan out. Each is an environment variable; a value out of
+range stops startup, and the server logs the resolved values at start
+(`admission_limits`). Defaults come from the tier S measurements in
+`testing/evidence/T47-capacity.md`. Stored limits are checked inside the
+write transaction, so concurrent requests cannot both take the last slot.
+
+| `PRIVATE_MESSENGER_LIMIT_...` | Default | Range | Counts | Refusal |
+|---|---|---|---|---|
+| `INSTANCE_STORAGE_MIB` | volume × 0.9 / (backup keep + 3), at most 10,240; 3,686 on the 40 GiB PVC | 64-16,777,216 | encrypted attachments and backups on the instance | 507 `storage_quota_exceeded` |
+| `ACCOUNT_STORAGE_MIB` | 512, never above the instance limit | 16-1,048,576 | the same, per account | 507 `storage_quota_exceeded` |
+| `ACCOUNT_BLOBS` | 10,000 | 100-1,000,000 | attachments and backups per account (each takes at least 4 KiB on disk) | 507 `storage_quota_exceeded` |
+| `DEVICES_PER_ACCOUNT` | 10 (the realtime hub allows 10 sockets per account) | 1-10 | active devices; also at most 3 open device links | 409 `device_limit_reached`, `device_link_limit_reached` |
+| `CONVERSATION_MEMBERS` | 100 | 2-1,000 | members of a group, a community and each of its channels | 409 `conversation_member_limit_reached` |
+| `CONVERSATIONS_PER_ACCOUNT` | 1,000 | 10-10,000 | conversations an account belongs to | 409 `conversation_limit_reached` to that account; adding an account that is full answers 403 `forbidden`, as a block does |
+| `DELIVERIES_PER_MINUTE` | 1,000 | 60-1,000,000, and at least 2 × (1 + members) | per account, each fan-out write counts 1 plus every account it is published to | 429 `write_rate_limited` with `Retry-After` |
+| `WRITE_MIB_PER_HOUR` | 64 | 16-65,536 | request bodies of those writes | 429 `write_rate_limited` |
+
+Why these defaults: a realtime delivery costs the server 4-10 ms of CPU;
+one account at 1,000 a minute (17/s) is about a third of the 47/s tier S
+served within its latency targets. A message counts 1 plus every member
+account it reaches (the sender's own included, for its other devices), so
+that is about 330 DMs a minute but 10 messages a minute into a full
+100-member group, after a burst of the same size; raise it for large busy
+groups. At 1,000 memberships a sync page
+costs 14-18 ms against 28-30 ms at 2,000. One 1 KiB message becomes 3.8 KiB
+of database, so 64 MiB an hour caps one account's database growth at about
+240 MiB an hour, while heavy text use writes about 1 MiB a day. The write
+budget is in memory: a restart refills it, and a bulk import through the
+API proceeds at its pace.
+
+**Write guard.** With less free space than the smaller of 5% and 2 GiB on
+the database or blob file system, the server answers new messages, MLS
+messages and uploads with 507 `server_storage_low`; reads continue.
+`VeritraDataDiskLow` pages at 10%.
+
+**Upgrading.** The instance storage limit used to be a fixed 10 GiB. On a
+small volume an instance already above the derived value keeps its data
+but refuses uploads; `messenger-server doctor` prints usage against the
+limit. Set `PRIVATE_MESSENGER_LIMIT_INSTANCE_STORAGE_MIB` when the blob
+directory shares its file system with other data: k3s `local-path` volumes
+live on the node's root disk, so set it from the PVC size (3,686 for 40 GiB
+with seven backups). The derivation reads `PRIVATE_MESSENGER_BACKUP_KEEP`;
+set the same value on the server if you change it for the backup job.
+
+| Alert | Means | First thing to do |
+|---|---|---|
+| `VeritraWritesRefusedLowDisk` (critical) | Under 5% (or 2 GiB) free; new messages and uploads get 507 | Free space now (see `VeritraDataDiskLow`); writes resume within 30 s of the next sample above the threshold |
+| `VeritraWriteBudgetRefusals` (warning) | An account keeps exceeding its fan-out or byte budget | Usually a misbehaving client or abuse; the account's other requests still work. Raise the limit only for a known heavy use such as a large busy group |
+| `VeritraStorageQuotaRefusals` (warning) | Uploads are refused by a storage quota | `doctor` shows instance usage; raise the account or instance limit only after sizing the volume with the disk budget above |

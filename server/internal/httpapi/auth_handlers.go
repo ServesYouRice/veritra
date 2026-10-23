@@ -694,7 +694,7 @@ func (a *API) deviceLinkSubroute(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		payload := map[string]interface{}{"device": device, "device_link_id": link.ID}
-		a.publishCommittedEvent([]string{principal.AccountID}, realtime.Event{Version: "v1", Type: "device.updated", ID: eventID, Payload: payload, CreatedAt: time.Now().UTC()})
+		a.publishCommittedEvent(r.Context(), []string{principal.AccountID}, realtime.Event{Version: "v1", Type: "device.updated", ID: eventID, Payload: payload, CreatedAt: time.Now().UTC()})
 		a.recordAuditEvent(r.Context(), &principal.AccountID, "device_link.approved", map[string]string{"link_id": link.ID, "device_id": device.ID})
 		writeJSON(w, http.StatusOK, map[string]interface{}{"device_link": deviceLinkPayload(link), "device": device})
 	case parts[1] == "claim-status" && r.Method == http.MethodGet:
@@ -904,7 +904,7 @@ func (a *API) revokeDevice(w http.ResponseWriter, r *http.Request, principal dom
 		return
 	}
 	payload := map[string]string{"device_id": deviceID}
-	a.publishCommittedEvent([]string{principal.AccountID}, realtime.Event{Version: "v1", Type: "device.revoked", ID: eventID, Payload: payload, CreatedAt: time.Now().UTC()})
+	a.publishCommittedEvent(r.Context(), []string{principal.AccountID}, realtime.Event{Version: "v1", Type: "device.revoked", ID: eventID, Payload: payload, CreatedAt: time.Now().UTC()})
 	a.Hub.DisconnectDevice(principal.AccountID, deviceID)
 	a.recordAuditEvent(r.Context(), &principal.AccountID, "device.revoked", map[string]string{"device_id": deviceID})
 	w.WriteHeader(http.StatusNoContent)

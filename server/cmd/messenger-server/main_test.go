@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,6 +96,38 @@ func TestOffHostBackupRestoresOnCleanHost(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(output.String(), "storage: ok") {
+		t.Fatalf("doctor output=%q", output.String())
+	}
+}
+
+func TestDoctorWarnsWhenBlobsReachTheInstanceLimit(t *testing.T) {
+	ctx := context.Background()
+	cfg := commandConfig(t.TempDir())
+	cfg.Limits.InstanceStorageBytes = 64 << 20
+	cfg.Limits.AccountStorageBytes = 16 << 20
+	if err := migrate(ctx, cfg, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := doctor(ctx, cfg, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "encrypted storage: 0 MiB of 64 MiB instance limit (configured)") || strings.Contains(output.String(), "warning:") {
+		t.Fatalf("doctor output=%q", output.String())
+	}
+	db, err := sql.Open("sqlite", cfg.DatabasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`UPDATE blob_usage_instance SET size_bytes = ? WHERE id = 1`, int64(64<<20)); err != nil {
+		t.Fatal(err)
+	}
+	output.Reset()
+	if err := doctor(ctx, cfg, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "warning: stored blobs reach the instance storage limit") {
 		t.Fatalf("doctor output=%q", output.String())
 	}
 }

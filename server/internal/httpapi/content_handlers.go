@@ -18,6 +18,9 @@ import (
 )
 
 func (a *API) uploadAttachment(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	if a.diskLow(w) {
+		return
+	}
 	if r.Header.Get("X-Private-Messenger-Encrypted") != "1" {
 		writeError(w, http.StatusBadRequest, "encrypted_upload_header_required")
 		return
@@ -137,6 +140,9 @@ func (a *API) attachmentSubroute(w http.ResponseWriter, r *http.Request, princip
 }
 
 func (a *API) uploadBackup(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	if a.diskLow(w) {
+		return
+	}
 	if r.Header.Get("X-Private-Messenger-Encrypted") != "1" {
 		writeError(w, http.StatusBadRequest, "encrypted_upload_header_required")
 		return

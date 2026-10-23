@@ -12,6 +12,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"private-messenger/server/internal/admission"
 	"private-messenger/server/internal/domain"
 )
 
@@ -58,7 +59,7 @@ func (s *Store) CreateAttachmentEnvelope(ctx context.Context, attachment domain.
 		return domain.AttachmentEnvelope{}, err
 	}
 	defer tx.Rollback()
-	if err := enforceBlobQuota(ctx, tx, attachment.OwnerAccountID, attachment.SizeBytes); err != nil {
+	if err := s.enforceBlobQuota(ctx, tx, attachment.OwnerAccountID, attachment.SizeBytes); err != nil {
 		return domain.AttachmentEnvelope{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO attachment_envelopes(id, owner_account_id, conversation_id, storage_key, ciphertext_sha256, size_bytes, crypto_metadata_json, created_at, chunk_digests) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`, attachment.ID, attachment.OwnerAccountID, nullableString(attachment.ConversationID), attachment.StorageKey, attachment.CiphertextSHA256, attachment.SizeBytes, string(attachment.CryptoMetadata), formatTime(attachment.CreatedAt), nullableBytes(attachment.ChunkDigests)); err != nil {
@@ -774,7 +775,7 @@ func (s *Store) CreateBackupBlobWithChunkDigests(ctx context.Context, accountID,
 		return err
 	}
 	defer tx.Rollback()
-	if err := enforceBlobQuota(ctx, tx, accountID, sizeBytes); err != nil {
+	if err := s.enforceBlobQuota(ctx, tx, accountID, sizeBytes); err != nil {
 		return err
 	}
 	if len(recoveryTokenHash) != 32 {
@@ -955,14 +956,16 @@ func (s *Store) BackupForRecoveryToken(ctx context.Context, recoveryTokenHash []
 	return backup, err
 }
 
-// enforceBlobQuota admits incoming bytes for accountID inside tx, the
-// single-writer transaction that then writes the blob row. Usage comes from
-// the counters that migration 0031 keeps equal to the attachment and backup
-// row sums by trigger in the same transaction (T49B), so the check is as
-// strict as summing the rows and costs two primary-key reads.
-func enforceBlobQuota(ctx context.Context, tx *sql.Tx, accountID string, incoming int64) error {
-	const accountLimit int64 = 1 << 30
-	const instanceLimit int64 = 10 << 30
+// enforceBlobQuota admits one more blob of incoming bytes for accountID
+// inside tx, the single-writer transaction that then writes the blob row.
+// Usage comes from the counters that migration 0031 keeps equal to the
+// attachment and backup row sums by trigger in the same transaction (T49B),
+// so the check is as strict as summing the rows and costs two primary-key
+// reads. The per-account blob count (T49D, indexed by migration 0033) bounds
+// files on disk: every blob takes at least one 4 KiB block. One error covers
+// every storage limit.
+func (s *Store) enforceBlobQuota(ctx context.Context, tx *sql.Tx, accountID string, incoming int64) error {
+	accountLimit, instanceLimit := s.limits.AccountStorageBytes, s.limits.InstanceStorageBytes
 	var accountUsage, instanceUsage int64
 	if err := tx.QueryRowContext(ctx, `SELECT
 		COALESCE((SELECT size_bytes FROM blob_usage_accounts WHERE account_id = ?), 0),
@@ -970,7 +973,16 @@ func enforceBlobQuota(ctx context.Context, tx *sql.Tx, accountID string, incomin
 		return err
 	}
 	if incoming < 0 || accountUsage > accountLimit-incoming || instanceUsage > instanceLimit-incoming {
-		return ErrStorageQuota
+		return s.refuse(admission.Storage, ErrStorageQuota)
+	}
+	blobs, err := countRows(ctx, tx, `SELECT
+		(SELECT COUNT(*) FROM attachment_envelopes WHERE owner_account_id = ?) +
+		(SELECT COUNT(*) FROM backup_blobs WHERE account_id = ?)`, accountID, accountID)
+	if err != nil {
+		return err
+	}
+	if blobs >= s.limits.AccountBlobs {
+		return s.refuse(admission.Blobs, ErrStorageQuota)
 	}
 	return nil
 }

@@ -16,12 +16,18 @@ import (
 const fileName = "backup-status.json"
 
 // Status is the last known state of scheduled backups.
+//
+// LastDrillAt and LastDrillPassed record the most recent restore drill:
+// the one every scheduled backup runs, or `verify-backup` run against this
+// data directory (for example on an off-host copy).
 type Status struct {
 	LastAttemptAt       time.Time  `json:"last_attempt_at"`
 	LastSuccessAt       *time.Time `json:"last_success_at,omitempty"`
 	LastFailureAt       *time.Time `json:"last_failure_at,omitempty"`
 	LastFailureStep     string     `json:"last_failure_step,omitempty"`
 	ConsecutiveFailures int        `json:"consecutive_failures"`
+	LastDrillAt         *time.Time `json:"last_drill_at,omitempty"`
+	LastDrillPassed     bool       `json:"last_drill_passed,omitempty"`
 }
 
 // Steps a scheduled backup can fail at.
@@ -66,6 +72,16 @@ func RecordFailure(dataDir, step string, now time.Time) error {
 	status.LastFailureAt = &now
 	status.LastFailureStep = step
 	status.ConsecutiveFailures++
+	return write(dataDir, status)
+}
+
+// RecordDrill records the outcome of a restore drill and keeps every other
+// field.
+func RecordDrill(dataDir string, passed bool, now time.Time) error {
+	status, _ := Read(dataDir)
+	now = now.UTC()
+	status.LastDrillAt = &now
+	status.LastDrillPassed = passed
 	return write(dataDir, status)
 }
 

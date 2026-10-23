@@ -97,3 +97,44 @@ func TestScheduledBackupFailureIsRecordedWithoutSuccess(t *testing.T) {
 		t.Fatalf("status after recovery=%#v", status)
 	}
 }
+
+func TestScheduledBackupRecordsRestoreDrillOutcome(t *testing.T) {
+	source := seedInstance(t, "live")
+	clock := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	options := scheduledBackupOptions{
+		LocalDir: filepath.Join(source.DataDir, "backups"), Keep: 3,
+		Now: func() time.Time { return clock },
+	}
+	if err := scheduledBackup(context.Background(), source, options, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	status, _ := backupstatus.Read(source.DataDir)
+	if status.LastDrillAt == nil || !status.LastDrillAt.Equal(clock) || !status.LastDrillPassed {
+		t.Fatalf("passing drill not recorded: %#v", status)
+	}
+	withFault(t, "restore:stage-database", &os.PathError{Op: "write", Path: "x", Err: syscall.EIO})
+	clock = clock.Add(time.Hour)
+	if err := scheduledBackup(context.Background(), source, options, &bytes.Buffer{}); err == nil {
+		t.Fatal("scheduled backup succeeded although its restore drill failed")
+	}
+	status, _ = backupstatus.Read(source.DataDir)
+	if status.LastDrillAt == nil || !status.LastDrillAt.Equal(clock) || status.LastDrillPassed ||
+		status.LastFailureStep != backupstatus.StepVerify || status.LastSuccessAt == nil || !status.LastSuccessAt.Equal(clock.Add(-time.Hour)) {
+		t.Fatalf("failed drill not recorded: %#v", status)
+	}
+}
+
+func TestStandaloneDrillRecordsOnlyForAnInstanceDataDir(t *testing.T) {
+	scratch := commandConfig(t.TempDir())
+	recordStandaloneDrill(scratch, true, time.Now(), &bytes.Buffer{})
+	if _, ok := backupstatus.Read(scratch.DataDir); ok {
+		t.Fatal("a drill in scratch space wrote a status file")
+	}
+	live := seedInstance(t, "live")
+	at := time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)
+	recordStandaloneDrill(live, false, at, &bytes.Buffer{})
+	status, ok := backupstatus.Read(live.DataDir)
+	if !ok || status.LastDrillAt == nil || !status.LastDrillAt.Equal(at) || status.LastDrillPassed {
+		t.Fatalf("standalone drill result=%#v", status)
+	}
+}
