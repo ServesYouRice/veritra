@@ -147,3 +147,49 @@ coverage 60.53% (floor 43%); goldens pass with `TZ=UTC`.
    low-end Android and iOS (G24); OpenMLS decryption inside the burst; the
    legacy repair path that fetches one envelope per event without an inline
    copy.
+
+## After: envelope index
+
+Measured miss 2, fixed: local schema 9 adds the index
+`local_ciphertext_envelopes_conversation_position` on
+`(conversation_id, position)` (index only, `CREATE INDEX IF NOT EXISTS`; see
+`docs/crypto.md`). `EXPLAIN QUERY PLAN` for the tail lookup went from `SCAN`
+plus `USE TEMP B-TREE FOR ORDER BY` to `SEARCH ... USING INDEX
+(conversation_id=?)`; the ordered snapshot read now walks the index instead
+of sorting. Same host and commands as above, 2026-10-23, load average 0.4-2.6.
+Medians of three runs; "before" is `d2d9eb8`'s `lib/`, run the same day.
+
+| Scenario | Dataset | Before | After |
+|---|---|---|---|
+| Commit one received message (store only) | 10,180 vs 0 cached envelopes | 23.4 vs 5.6 ms | **5.4 vs 5.4 ms** |
+| Sync burst, total | 500 msgs, 10,180 cached | 13.1 s (26 ms/msg) | **2.6 s (5.2 ms/msg)** |
+| Sync burst, total | 500 msgs, 1,180 cached | 2.7 s (5.3 ms/msg) | 2.4 s (4.9 ms/msg) |
+| One snapshot rewrite | 10,180 cached | 265 ms | 313 ms |
+| Online restore / open conversation | 10,180 cached | 435 / 319 ms | 431 / 313 ms |
+| Cold start restore, first / warm code | 10,180 cached | 308 / 182 ms | 269 / 165 ms |
+
+The target is met: at 10k rows a commit costs the same as with an empty
+cache. The snapshot rewrite now also maintains the index (+48 ms median,
+within this host's noise). Rollback: revert. A schema 8 build that opens a
+v9 file records version 8 and keeps using the index; this was checked with the
+schema 8 code.
+
+**Migration advice (advisor checkpoint).** Verdict: sound for demo builds,
+no must-change. Adopted: every upgrade step and `PRAGMA user_version` run in
+one transaction (a test forces a v7 upgrade to fail at the index and finds
+version 7 with no v8 columns; the next open completes it); a comment that
+`PRAGMA foreign_keys` is ignored inside that transaction; a non-unique index;
+the rewrite cost measured above. Downgrade is acceptable as long as no other
+branch claims schema 9 for a different change. Follow-ups, not schema
+changes and not done here:
+- A failed upgrade, for example when the disk is full, surfaces as
+  `keyRejected`. The file and its key are kept, and quarantine needs
+  confirmation and keeps a readable copy, but the message is wrong. It needs
+  its own failure kind and string.
+- Android 12+ device-to-device transfer ignores `allowBackup="false"` unless
+  `dataExtractionRules` excludes the file, and iOS backups include it. A
+  copied file cannot be opened without its device-only key, so it lands on
+  the recovery screen.
+
+The app's own encrypted backup is a logical export, so this change does not
+affect it.

@@ -3942,6 +3942,9 @@ abstract class _$EncryptedLocalDatabase extends GeneratedDatabase {
   late final $LocalMessagesTable localMessages = $LocalMessagesTable(this);
   late final $LocalMessageReactionsTable localMessageReactions =
       $LocalMessageReactionsTable(this);
+  late final Index localCiphertextEnvelopesConversationPosition = Index(
+      'local_ciphertext_envelopes_conversation_position',
+      'CREATE INDEX IF NOT EXISTS local_ciphertext_envelopes_conversation_position ON local_ciphertext_envelopes (conversation_id, position)');
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -3958,7 +3961,8 @@ abstract class _$EncryptedLocalDatabase extends GeneratedDatabase {
         localMlsOutboxEntries,
         localPeerVerifications,
         localMessages,
-        localMessageReactions
+        localMessageReactions,
+        localCiphertextEnvelopesConversationPosition
       ];
 }
 

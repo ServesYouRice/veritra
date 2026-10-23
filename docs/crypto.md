@@ -121,3 +121,7 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   "changed". Groups show the number for a live comparison and store nothing.
   Residual: first contact is still trust-on-first-use (no key transparency),
   and a change to one's own devices also changes a DM's number.
+- **T49C follow-up (2026-10-23):** local schema v9 is index only:
+  `local_ciphertext_envelopes (conversation_id, position)`, created with
+  `CREATE INDEX IF NOT EXISTS`; no table, row, ABI or payload change. An
+  upgrade now runs all its steps and the new version in one transaction.
