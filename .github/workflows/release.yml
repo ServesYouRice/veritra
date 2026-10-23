@@ -40,7 +40,11 @@ jobs:
         run: |
           test -n "$DEFAULT_BRANCH"
           git fetch --no-tags origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH"
-          echo "commit=$(git rev-parse --verify "refs/remotes/origin/$DEFAULT_BRANCH^{commit}")" >> "$GITHUB_OUTPUT"
+          # Assigned first, so a failed rev-parse stops the step (bash -e)
+          # instead of writing an empty output.
+          commit="$(git rev-parse --verify "refs/remotes/origin/$DEFAULT_BRANCH^{commit}")"
+          printf '%s\n' "$commit" | grep -Eqx '[0-9a-f]{40}'
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
       - name: Enforce production release gates
         env:
           RELEASE_APPROVALS_COMMIT: ${{ steps.approvals.outputs.commit }}

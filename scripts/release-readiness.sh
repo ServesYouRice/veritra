@@ -9,8 +9,10 @@ sh "$ROOT/scripts/check-rust-audit-expiry.sh"
 # Approvals cannot be committed in the candidate itself (a file cannot name
 # the SHA of its own commit). They are read from a later commit on the
 # protected default branch: release.yml resolves it once and passes it in.
-# Locally it defaults to the fetched origin/main; empty fails closed.
-APPROVALS_COMMIT=${RELEASE_APPROVALS_COMMIT:-$(git rev-parse --verify --quiet 'refs/remotes/origin/main^{commit}' || true)}
+# Only when RELEASE_APPROVALS_COMMIT is unset does it default to the fetched
+# origin/main (for local runs). Set but empty, or with no origin/main, the
+# checker gets an empty value and fails closed.
+APPROVALS_COMMIT=${RELEASE_APPROVALS_COMMIT-$(git rev-parse --verify --quiet 'refs/remotes/origin/main^{commit}' || true)}
 
 # Positive approval evidence is the release gate. The legacy markers below are
 # defense in depth only; a rename cannot satisfy the approval contract.
