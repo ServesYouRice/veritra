@@ -237,6 +237,26 @@ void main() {
     expect(lookupAppLocalizations(const Locale('sr', 'RS')).localeName, 'sr');
   });
 
+  test('iOS declares the same languages', () {
+    // iOS offers only the languages the bundle lists, in its per-app
+    // language setting too.
+    final plist = File('ios/Runner/Info.plist').readAsStringSync();
+    final declared = RegExp(
+      r'<key>CFBundleLocalizations</key>\s*<array>(.*?)</array>',
+      dotAll: true,
+    ).firstMatch(plist);
+    expect(declared, isNotNull);
+    expect(
+      RegExp(r'<string>([^<]*)</string>')
+          .allMatches(declared!.group(1)!)
+          .map((match) => match.group(1))
+          .toList(),
+      AppLocalizations.supportedLocales
+          .map((locale) => locale.toLanguageTag())
+          .toList(),
+    );
+  });
+
   test('Serbian plurals pick the right form', () {
     final sr = lookupAppLocalizations(const Locale('sr'));
     expect(sr.durationDays(1), '1 дан');
