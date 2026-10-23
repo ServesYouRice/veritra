@@ -5,7 +5,7 @@
 
 Veritra is an open-source, self-hostable, privacy-first messaging app. The first product shape is closer to WhatsApp or Signal than Discord: direct messages, private group chats, lightweight communities, optional channels, simple roles, and end-to-end encrypted message envelopes.
 
-This repository is an initial MVP foundation with fail-closed boundaries around unfinished production features. See [`docs/board.md`](docs/board.md) for the single current work list, and [`docs/overview.md`](docs/overview.md) for an architecture walkthrough.
+This repository is an alpha with fail-closed boundaries around unfinished production features. See [`STATE.md`](STATE.md) for the current state and the open work, and [`docs/overview.md`](docs/overview.md) for an architecture walkthrough.
 
 ## Current Status
 
@@ -13,11 +13,11 @@ This repository is an initial MVP foundation with fail-closed boundaries around 
 - Server: Go modular monolith, single binary target, SQLite-first.
 - Mobile: Flutter client for Android and iOS.
 - Crypto: server-side ciphertext-only model plus MLS/OpenMLS integration boundary. Production message crypto is not complete.
-- Hosting: single binary goal plus Docker Compose and Caddy examples.
+- Hosting: single binary; Docker Compose with Caddy, systemd, and a single-node Kubernetes (k3s) base with backups to S3-compatible storage. See [`docs/operations.md`](docs/operations.md).
 
 ## Roadmap
 
-One product, one repository, three phases — decided as **D06**, reordered by **D10** on the board.
+One product, one repository, three phases — decided as **D06**, reordered by **D10** (see [`STATE.md`](STATE.md#standing-decisions)).
 
 1. **Mobile** — Android and iOS. The first release.
 2. **Desktop** — Windows and Linux, then macOS. Additional Flutter targets in this repository reusing the same Rust crypto core, not a fork. A self-hosted internal-network deployment is this plus the same server.
@@ -28,7 +28,7 @@ locally started server plus the Android, iOS, Windows and Linux apps. Demo build
 use real end-to-end encryption that has not yet been independently reviewed;
 release builds stay fail-closed until it has.
 
-Triggers and rationale are in [`docs/board.md`](docs/board.md#roadmap-after-release).
+The roadmap and what is left are in [`STATE.md`](STATE.md#roadmap).
 
 ## Quickstart
 
@@ -98,19 +98,19 @@ crypto/     Rust crypto boundary
 deploy/     Docker Compose, Caddy, systemd
 scripts/    Dockerized development commands
 docs/       Authoritative project documentation (see below)
-implementation/  LLM-ready execution contracts derived from the audit consensus
 ```
 
 Authoritative project documentation lives in [`docs/`](docs/):
 
 | File | What it is |
 | --- | --- |
-| [`board.md`](docs/board.md) | **The board.** Active cards, decisions, release evidence, roadmap, review brief |
-| [`audit-consensus.md`](docs/audit-consensus.md) | Reconciled Codex/Opus findings, implementation order, acceptance checks, source trace |
 | [`overview.md`](docs/overview.md) | Architecture walkthrough — what it is, how it fits together, how to run it |
 | [`design.md`](docs/design.md) | The K2 · Bone palette, per-screen spec, and how it landed in Flutter |
-| [`operations.md`](docs/operations.md) | Self-hosting: setup, secrets, upgrade, rollback, restore drill |
-| [`crypto.md`](docs/crypto.md) | The MLS/OpenMLS boundary and its C ABI |
+| [`operations.md`](docs/operations.md) | Self-hosting and deployment: setup, secrets, upgrade, rollback, backups, restore drill, monitoring |
+| [`crypto.md`](docs/crypto.md) | The MLS/OpenMLS boundary, its C ABI and change log |
+| [`security-review.md`](docs/security-review.md) | Independent review brief, signed-device matrix, findings log |
+| [`demo.md`](docs/demo.md) | Running the local demos |
+| [`sdk.md`](docs/sdk.md) | Phase 3 outline: the client SDK |
 | [`branding/`](docs/branding/) | Marks, wordmarks, icons |
 
 Superseded audits, plans, task contracts, testing reports, and brand
@@ -119,15 +119,10 @@ the recovery path when an authoritative card cites a specific old revision.
 
 Two documents are authoritative and should be read before changing anything:
 [`AGENTS.md`](AGENTS.md) for the non-negotiable boundaries, and
-[`docs/board.md`](docs/board.md) for what is actually being worked on.
-For audit-derived work,
-[`implementation/REMAINING_WORK.md`](implementation/REMAINING_WORK.md) then
-provides the claimable task contracts. It is derivative: the board and
-consensus win if they disagree.
+[`STATE.md`](STATE.md) for the current state, standing decisions and open work.
 
 ## Important Caveat
 
 The MVP foundation is compatible with E2EE everywhere, but full production cryptography is not complete. Any feature that would require plaintext on the server is rejected or documented as future work.
 
-See [`docs/board.md`](docs/board.md) for release blockers,
-user decisions, and deferred work.
+See [`STATE.md`](STATE.md) for release gates, decisions, and open work.

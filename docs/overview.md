@@ -5,7 +5,7 @@ Go server · Flutter app · Rust/OpenMLS crypto.
 
 Orientation for someone new to the repository: what it is, how it is put
 together, and how to run it. **Current work and status live in
-[`board.md`](board.md)**, not here.
+[`STATE.md`](../STATE.md)**, not here.
 
 **Snapshot:** server behaviour below verified at commit `6c22e44` on 2026-08-05.
 
@@ -130,7 +130,7 @@ reports `release blocked: production MLS crypto is not wired`.
 | Deploy | `deploy/` | Compose · Caddy · systemd | ✅ |
 | Design | [`design.md`](design.md) | palette + per-screen spec | 🟡 K2 · Bone, landing as I28 |
 | Branding | [`branding/`](branding/) | marks, wordmarks, icons | ✅ |
-| Board | [`board.md`](board.md) | — | single source of truth |
+| State | [`STATE.md`](../STATE.md) | — | single source of truth |
 
 ### Server modules
 
@@ -209,11 +209,11 @@ TURN for calls · Prometheus metrics on a private `:9090`.
 
 ## 6. Status and roadmap
 
-**Status lives in one place: [`board.md`](board.md).** Card state, release
-evidence, verification runs and the independent-review brief are all there. This
+**Status lives in one place: [`STATE.md`](../STATE.md).** Open work, decisions,
+release gates and evidence pointers are all there. This
 document deliberately does not repeat them — the duplicate copy is what went
-stale last time. In shape: most cards are done, one is active and unblocked, and
-the rest wait on people, hardware or upstream.
+stale last time. In shape: the local work queue is done; what is left waits on
+people (a reviewer), hardware (signed devices), accounts (hosting) or upstream.
 
 ### Sequencing (decisions D06 and D10)
 
@@ -236,7 +236,7 @@ would owe a separate independent security review for a second copy of the same
 protocol. Embedding is deferred until someone answers whether embedded
 conversations stay end-to-end encrypted; if they do, the deliverable is a client
 SDK, because there is no server-side key to hand a drop-in widget. Full triggers
-are in the board's roadmap section.
+are in the roadmap section of [`STATE.md`](../STATE.md#roadmap).
 
 A self-hosted internal-network deployment is Phase 2 plus this same server. It
 needs no server change.
@@ -245,8 +245,9 @@ needs no server change.
 
 ## 7. Verification
 
-The last full recorded run, its date and its results are in the board's release
-evidence matrix. Reproduce with the commands in §8 — they fall back to pinned
+The last full recorded run, its date and its results are in
+[`testing/evidence/`](../testing/evidence/) (the newest is
+`verification-2026-10-23.md`). Reproduce with the commands in §8 — they fall back to pinned
 Docker images when a toolchain is missing, so the checks are runnable anywhere
 Docker is.
 
@@ -289,8 +290,9 @@ messenger-server reset-owner-password --account <u> --password-file <f>
 | --- | --- |
 | **Does it start?** | ✅ Yes — clean, zero config, self-migrating |
 | **Is it usable?** | ❌ No — messaging is intentionally fail-closed |
-| **Is the code done?** | ✅ Essentially — see [`board.md`](board.md) for the count |
-| **What's left?** | one local card; the rest need people, hardware or upstream |
+| **Is the code done?** | ✅ Essentially — see [`STATE.md`](../STATE.md) |
+| **What's left?** | product features, plus a reviewer, devices, hosting accounts and one upstream release |
 
-The engineering is done and it holds together. What remains is a visual rebuild
-to finish, an upstream dependency, some hardware, and a reviewer.
+The engineering holds together. What remains is the independent crypto review,
+signed-device evidence, the first real deployment, one upstream crypto release,
+and the product features listed in [`STATE.md`](../STATE.md#recommended-next).

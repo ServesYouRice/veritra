@@ -27,8 +27,8 @@ CSS, and a DOM.
 **Do not create a `plan.md`, an audit file, or any other new tracking file.**
 Repos accumulate these faster than they retire them.
 
-- If the repo has a board or task directory (for example
-  `docs/board.md`), add one card in that format and stop.
+- If the repo has a status file or task directory (for example
+  `STATE.md`), add one item in that format and stop.
 - Otherwise put the plan in your reply to the user, not on disk.
 
 Either way the plan is four short parts: state of the UI in 2–3 sentences; a
@@ -145,7 +145,7 @@ Always keep the `prefers-reduced-motion: reduce` kill switch and any
 - Leave no scaffolding behind. Any temporary config or note you created gets
   deleted or `.git/info/exclude`d before you finish. Ask before deleting
   anything you did not create.
-- Update the board card you opened in Phase 1; do not write a completion
+- Update the item you opened in Phase 1; do not write a completion
   report file.
 - Report to the user in short, plain sentences (see AGENTS.md): what was
   missing, what was added, what was modernized, proof it passes.
