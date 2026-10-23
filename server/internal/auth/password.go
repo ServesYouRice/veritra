@@ -191,9 +191,9 @@ func parseArgon2id(encoded string) (argon2idHash, bool) {
 	if len(fields) != 3 {
 		return argon2idHash{}, false
 	}
-	memory, okM := parseParam(fields[0], "m=", maxStoredArgon2idMemoryKiB)
-	passes, okT := parseParam(fields[1], "t=", maxStoredArgon2idPasses)
-	lanes, okP := parseParam(fields[2], "p=", maxStoredArgon2idLanes)
+	memory, okM := parseParam(fields[0], "m=", 32, maxStoredArgon2idMemoryKiB)
+	passes, okT := parseParam(fields[1], "t=", 32, maxStoredArgon2idPasses)
+	lanes, okP := parseParam(fields[2], "p=", 8, maxStoredArgon2idLanes)
 	if !okM || !okT || !okP || passes < 1 || lanes < 1 || memory < 8*lanes {
 		return argon2idHash{}, false
 	}
@@ -212,12 +212,14 @@ func parseArgon2id(encoded string) (argon2idHash, bool) {
 	}, true
 }
 
-func parseParam(field, prefix string, limit uint64) (uint64, bool) {
+// parseParam parses a decimal parameter that fits bitSize bits (the width of
+// the field it is converted to) and does not exceed limit.
+func parseParam(field, prefix string, bitSize int, limit uint64) (uint64, bool) {
 	raw, ok := strings.CutPrefix(field, prefix)
 	if !ok {
 		return 0, false
 	}
-	value, err := strconv.ParseUint(raw, 10, 32)
+	value, err := strconv.ParseUint(raw, 10, bitSize)
 	return value, err == nil && value <= limit
 }
 
