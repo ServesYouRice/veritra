@@ -132,20 +132,29 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   rows are the same as after the former full rewrite.
 - **Local database upgrade failure (2026-10-23):** no schema change. An
   open that fails after the key has opened the file and a schema upgrade
-  has started (for example, a full disk) is reported as `upgradeFailed`,
-  not `keyRejected`. The upgrade transaction rolls back, the file and its
-  key stay as they were, the failed handle is closed and a retry runs the
-  upgrade again. The recovery screen asks the user to free space and
-  retry, and offers no reset for this case.
+  has started is reported as an upgrade failure, not `keyRejected`; a wrong
+  key still fails before the upgrade and stays `keyRejected`. The upgrade
+  transaction rolls back, the file and its key stay as they were, the
+  failed handle is closed and a retry runs the upgrade again. SQLite
+  `SQLITE_FULL` or `SQLITE_IOERR` is `upgradeStorageFull`: the recovery
+  screen asks the user to free space and retry, and offers the confirmed
+  reset only once a retry has failed the same way again. Any other error
+  (a damaged page, a step that cannot complete) is `upgradeFailed`: a
+  neutral message, Retry first and the confirmed reset at once. The reset
+  quarantines the file and its key as before, so no failure leaves
+  clearing app data as the only way out.
 - **Backups and device transfer (2026-10-23):** platform policy, no data
   change. Android keeps `allowBackup="false"` and adds
   `dataExtractionRules` (API 31+, cloud backup and device-to-device
   transfer) and `fullBackupContent` rules (older versions) that exclude
   every app-data domain; Android 12+ transfers otherwise ignore
-  `allowBackup`. On iOS each database open asks the Runner (channel
-  `org.veritra.private_messenger/storage`) to set
+  `allowBackup`. On iOS each database open, before and after it, asks the
+  Runner (channel `org.veritra.private_messenger/storage`) to set
   `NSURLIsExcludedFromBackupKey` on the profile directory and the existing
-  database, WAL and SHM files; a failure there does not block the open.
+  database, WAL and SHM files. Before: a database this build cannot open is
+  excluded too, and a new one is created in an excluded directory. The
+  Runner tries every path and reports failures once, as a count; a failure
+  there does not block the open.
   Defence in depth: a copied database cannot be opened without its
   device-only key. The app's own encrypted backup is unaffected. Not yet
   built or run on a device.

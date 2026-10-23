@@ -7,7 +7,9 @@ typedef BackupExclusion = Future<void> Function(List<String> paths);
 
 /// iOS: the Runner sets `NSURLIsExcludedFromBackupKey` on each existing path
 /// (see `ios/Runner/AppDelegate.swift`); a directory covers files created in
-/// it later. Android needs no call: its manifest's backup and data
+/// it later. It tries every path, and a path that refuses makes the call
+/// fail with `exclude_failed` (the count of failures, never a path) once the
+/// rest are done. Android needs no call: its manifest's backup and data
 /// extraction rules exclude all app data.
 abstract final class PlatformBackupExclusion {
   static const channel = MethodChannel('org.veritra.private_messenger/storage');

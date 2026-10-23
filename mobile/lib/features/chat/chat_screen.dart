@@ -55,9 +55,9 @@ class _ChatScreenState extends State<ChatScreen> {
       TextEditingController.fromValue(_draftValue(widget.conversationId));
   final scroll = ScrollController();
 
-  /// The message the next send replies to, if any.
-  late LocalMessage? _replyingTo =
-      _drafts.replyTargetFor(widget.conversationId);
+  /// The key of the message the next send replies to, if any. The message
+  /// itself is read from the current history ([_replyTarget]), never kept.
+  late String? _replyingTo = _drafts.replyTargetFor(widget.conversationId);
 
   ComposerDrafts get _drafts => widget.state.composerDrafts;
 
@@ -112,9 +112,23 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _saveDraft() => _drafts.setText(widget.conversationId, composer.text);
 
-  void _setReplyTarget(LocalMessage? message) {
-    _drafts.setReplyTarget(widget.conversationId, message);
-    setState(() => _replyingTo = message);
+  void _setReplyTarget(String? messageKey) {
+    _drafts.setReplyTarget(widget.conversationId, messageKey);
+    setState(() => _replyingTo = messageKey);
+  }
+
+  /// The reply target as the history has it now, so an edit shows. A target
+  /// that was deleted, or is no longer in the history, is dropped: the next
+  /// send is then an ordinary message. Safe during build: the drafts are not
+  /// listenable, and the caller draws no reply bar for it.
+  LocalMessage? _replyTarget() {
+    final key = _replyingTo;
+    if (key == null) return null;
+    final target = widget.state.historyFor(widget.conversationId).forKey(key);
+    if (target != null && target.deletedAt == null) return target;
+    _drafts.setReplyTarget(widget.conversationId, null);
+    _replyingTo = null;
+    return null;
   }
 
   /// The list is reversed, so scrolling back in time approaches maxScrollExtent.
@@ -166,6 +180,7 @@ class _ChatScreenState extends State<ChatScreen> {
             .firstOrNull;
         final messages = widget.state.timelineFor(widget.conversationId);
         final pending = widget.state.pendingFor(widget.conversationId);
+        final replyTarget = _replyTarget();
         return Scaffold(
           appBar: AppBar(
             automaticallyImplyLeading: widget.showBackButton,
@@ -236,9 +251,9 @@ class _ChatScreenState extends State<ChatScreen> {
               if (conversation != null &&
                   widget.state.mlsConversationFailed(conversation.id))
                 const _PausedConversationNotice(),
-              if (_replyingTo != null)
+              if (replyTarget != null)
                 _ReplyBar(
-                  preview: _replyPreview(context.l10n, _replyingTo),
+                  preview: _replyPreview(context.l10n, replyTarget),
                   onCancel: () => _setReplyTarget(null),
                 ),
               _Composer(
@@ -403,7 +418,7 @@ class _ChatScreenState extends State<ChatScreen> {
       sent = await state.react(
           conversationId, message.key, alreadyMine ? '' : reaction);
     } else if (action == 'reply') {
-      _setReplyTarget(message);
+      _setReplyTarget(message.key);
     } else if (action == 'copy') {
       await Clipboard.setData(ClipboardData(text: message.body ?? ''));
     } else if (action == 'edit') {
@@ -489,10 +504,10 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     final state = widget.state;
     final conversationId = widget.conversationId;
-    final replyingTo = _replyingTo;
+    final replyingTo = _replyTarget()?.key;
     final sent = replyingTo == null
         ? await state.sendMessageTo(conversationId, text)
-        : await state.replyTo(conversationId, replyingTo.key, text);
+        : await state.replyTo(conversationId, replyingTo, text);
     if (sent) {
       // Durable acceptance, rather than HTTP delivery, is the point at which
       // the submitted draft is safe to clear. Preserve newer edits. The
@@ -503,7 +518,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) {
         return;
       }
-      if (identical(_replyingTo, replyingTo)) {
+      if (_replyingTo == replyingTo) {
         setState(() => _replyingTo = null);
       }
       if (composer.text.trim() == text) composer.clear();

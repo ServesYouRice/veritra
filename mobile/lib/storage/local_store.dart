@@ -50,8 +50,17 @@ enum LocalStoreFailureKind {
   keyWriteFailed,
 
   /// The key opened the database, but upgrading it to this app version
-  /// failed, for example because the disk is full. The upgrade rolled back;
-  /// the database and its key are as they were, and a retry runs it again.
+  /// failed because the device is full or could not write (SQLite reported
+  /// `SQLITE_FULL` or `SQLITE_IOERR`). The upgrade rolled back; the database
+  /// and its key are as they were, and a retry after freeing space runs it
+  /// again.
+  upgradeStorageFull,
+
+  /// The key opened the database, but upgrading or opening it for this app
+  /// version failed for another reason, for example a damaged page or a step
+  /// that cannot complete. The upgrade rolled back and nothing was changed.
+  /// A retry runs it again; if that keeps failing, only the confirmed
+  /// [LocalStore.quarantineUnreadableDatabase] moves the database aside.
   upgradeFailed,
 }
 
@@ -67,6 +76,7 @@ class LocalStoreUnavailableException implements Exception {
       kind == LocalStoreFailureKind.profileLocked ||
       kind == LocalStoreFailureKind.keyUnavailable ||
       kind == LocalStoreFailureKind.keyWriteFailed ||
+      kind == LocalStoreFailureKind.upgradeStorageFull ||
       kind == LocalStoreFailureKind.upgradeFailed;
 
   @override
@@ -1718,6 +1728,10 @@ class SecureLocalStore implements LocalStore {
     final lock = await lockFile.open(mode: FileMode.append);
     await lock.lock(FileLock.exclusive);
     try {
+      // Before anything can fail: a database from an older build that this
+      // one cannot open is excluded too, and a new database file is created
+      // in a directory that is already excluded.
+      await _excludeFromBackup(directory);
       // A reset interrupted by a crash is finished before anything else.
       await _completeReset(directory);
       final String? keyHex;
@@ -1744,7 +1758,7 @@ class SecureLocalStore implements LocalStore {
       try {
         database = _databaseFactory(databaseFile, key);
         await database.readCursor();
-      } catch (_) {
+      } catch (error) {
         if (!databaseExists) rethrow;
         if (database != null && database.upgradeStarted) {
           // The key opened the file and the upgrade rolled back. Drift
@@ -1755,8 +1769,9 @@ class SecureLocalStore implements LocalStore {
           } catch (_) {
             // It is unusable either way.
           }
-          throw const LocalStoreUnavailableException(
-              LocalStoreFailureKind.upgradeFailed);
+          throw LocalStoreUnavailableException(isStorageFullError(error)
+              ? LocalStoreFailureKind.upgradeStorageFull
+              : LocalStoreFailureKind.upgradeFailed);
         }
         // SQLite cannot tell a wrong key from a damaged file. Either way the
         // file is left exactly as it is.
@@ -1764,6 +1779,7 @@ class SecureLocalStore implements LocalStore {
             LocalStoreFailureKind.keyRejected);
       }
       await _migrateLegacyRecord(database);
+      // Again now that the database, WAL and SHM files exist.
       await _excludeFromBackup(directory);
       return database;
     } finally {
@@ -1774,8 +1790,10 @@ class SecureLocalStore implements LocalStore {
 
   /// Keeps the profile directory (and with it every later WAL, SHM, lock
   /// and quarantined copy) and the database files out of platform backups.
-  /// Best effort: the database cannot be opened elsewhere without its
-  /// device-only key, so a failure here does not stop the app.
+  /// Runs before and after each open; the platform skips paths that do not
+  /// exist yet and tries every path even when one fails. Best effort: the
+  /// database cannot be opened elsewhere without its device-only key, so a
+  /// failure here does not stop the app.
   Future<void> _excludeFromBackup(Directory directory) async {
     final exclude = _backupExclusion;
     if (exclude == null) return;

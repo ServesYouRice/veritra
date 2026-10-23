@@ -474,12 +474,12 @@ void main() {
     expect(state.recoveryMessage, state.l10n.recoveryKeyMissing);
     expect(state.canResetLocalData, isTrue);
 
-    // A failed upgrade (a full disk, say) is not a wrong key: the message
-    // says to free space and retry, and no reset is offered or done.
-    localStore.kind = LocalStoreFailureKind.upgradeFailed;
+    // An upgrade that ran out of space is not a wrong key: the message says
+    // to free space and retry, and no reset is offered or done at first.
+    localStore.kind = LocalStoreFailureKind.upgradeStorageFull;
     await state.tryRestoreSession();
     expect(state.lifecycle, SessionLifecycle.recoveryRequired);
-    expect(state.localStoreFailure, LocalStoreFailureKind.upgradeFailed);
+    expect(state.localStoreFailure, LocalStoreFailureKind.upgradeStorageFull);
     expect(state.recoveryMessage, state.l10n.recoveryUpgradeFailed);
     expect(state.recoveryMessage, isNot(state.l10n.recoveryKeyMissing));
     expect(state.canResetLocalData, isFalse);
@@ -497,8 +497,87 @@ void main() {
     state.dispose();
   });
 
+  test('an upgrade that keeps failing for space offers the confirmed reset',
+      () async {
+    final localStore =
+        _UnreadableStore(LocalStoreFailureKind.upgradeStorageFull);
+    final state = AppState(
+      apiClientFactory: (_) => throw UnimplementedError(),
+      cryptoService: TestOnlyCryptoService(),
+      localStore: localStore,
+      syncServiceFactory: (_, __) => FakeSyncService(),
+    );
+
+    await state.tryRestoreSession();
+    expect(state.canResetLocalData, isFalse);
+
+    // The retry fails the same way: the user is not left stuck.
+    await state.tryRestoreSession();
+    expect(state.localStoreFailure, LocalStoreFailureKind.upgradeStorageFull);
+    expect(state.recoveryMessage, state.l10n.recoveryUpgradeStillFull);
+    expect(state.canResetLocalData, isTrue);
+    expect(state.canContinueWithoutRestore, isFalse);
+    expect(() => state.resetUnreadableLocalData(confirmed: false),
+        throwsArgumentError);
+    expect(localStore.quarantined, isFalse);
+
+    // A restore that opens the database ends the run: a later failure for
+    // space asks to free space and retry first again.
+    localStore.kind = null;
+    await state.tryRestoreSession();
+    expect(state.lifecycle, SessionLifecycle.ready);
+    localStore.kind = LocalStoreFailureKind.upgradeStorageFull;
+    await state.tryRestoreSession();
+    expect(state.recoveryMessage, state.l10n.recoveryUpgradeFailed);
+    expect(state.canResetLocalData, isFalse);
+    // So does a different failure in between.
+    await state.tryRestoreSession();
+    expect(state.canResetLocalData, isTrue);
+    localStore.kind = LocalStoreFailureKind.keyUnavailable;
+    await state.tryRestoreSession();
+    localStore.kind = LocalStoreFailureKind.upgradeStorageFull;
+    await state.tryRestoreSession();
+    expect(state.canResetLocalData, isFalse);
+
+    await state.tryRestoreSession();
+    await state.resetUnreadableLocalData(confirmed: true);
+    expect(localStore.quarantined, isTrue);
+    expect(state.lifecycle, SessionLifecycle.ready);
+    expect(state.localStoreFailure, isNull);
+    state.dispose();
+  });
+
+  test('an upgrade that fails for another reason offers the reset at once',
+      () async {
+    final localStore = _UnreadableStore(LocalStoreFailureKind.upgradeFailed);
+    final state = AppState(
+      apiClientFactory: (_) => throw UnimplementedError(),
+      cryptoService: TestOnlyCryptoService(),
+      localStore: localStore,
+      syncServiceFactory: (_, __) => FakeSyncService(),
+    );
+
+    await state.tryRestoreSession();
+    expect(state.lifecycle, SessionLifecycle.recoveryRequired);
+    expect(state.localStoreFailure, LocalStoreFailureKind.upgradeFailed);
+    // Freeing space would not help, so the message does not ask for it.
+    expect(state.recoveryMessage, state.l10n.recoveryUpgradeError);
+    expect(state.recoveryMessage, isNot(contains('space')));
+    expect(state.canResetLocalData, isTrue);
+    expect(state.canContinueWithoutRestore, isFalse);
+    expect(() => state.resetUnreadableLocalData(confirmed: false),
+        throwsArgumentError);
+    expect(localStore.quarantined, isFalse);
+
+    await state.resetUnreadableLocalData(confirmed: true);
+    expect(localStore.quarantined, isTrue);
+    expect(state.lifecycle, SessionLifecycle.ready);
+    state.dispose();
+  });
+
   for (final kind in <LocalStoreFailureKind>[
     LocalStoreFailureKind.keyRejected,
+    LocalStoreFailureKind.upgradeStorageFull,
     LocalStoreFailureKind.upgradeFailed,
   ]) {
     testWidgets('the recovery screen for ${kind.name}', (tester) async {
@@ -512,18 +591,73 @@ void main() {
       await tester.pumpWidget(veritraTestApp(state: state));
       await tester.pumpAndSettle();
 
-      final upgrade = kind == LocalStoreFailureKind.upgradeFailed;
-      expect(find.text(state.l10n.recoveryUpgradeFailed),
-          upgrade ? findsOneWidget : findsNothing);
-      expect(find.text(state.l10n.recoveryKeyMissing),
-          upgrade ? findsNothing : findsOneWidget);
+      final message = switch (kind) {
+        LocalStoreFailureKind.upgradeStorageFull =>
+          state.l10n.recoveryUpgradeFailed,
+        LocalStoreFailureKind.upgradeFailed => state.l10n.recoveryUpgradeError,
+        _ => state.l10n.recoveryKeyMissing,
+      };
+      for (final text in <String>{
+        state.l10n.recoveryUpgradeFailed,
+        state.l10n.recoveryUpgradeError,
+        state.l10n.recoveryKeyMissing,
+      }) {
+        expect(
+            find.text(text), text == message ? findsOneWidget : findsNothing);
+      }
       expect(find.text(state.l10n.shellRetryRestore), findsOneWidget);
-      expect(find.text(state.l10n.shellResetDevice),
-          upgrade ? findsNothing : findsOneWidget);
+      expect(find.text(state.l10n.shellContinueToSignIn), findsNothing);
+      expect(
+          find.text(state.l10n.shellResetDevice),
+          kind == LocalStoreFailureKind.upgradeStorageFull
+              ? findsNothing
+              : findsOneWidget);
       await tester.pumpWidget(const SizedBox());
       state.dispose();
     });
   }
+
+  testWidgets('a retry that runs out of space again shows the reset',
+      (tester) async {
+    final localStore =
+        _UnreadableStore(LocalStoreFailureKind.upgradeStorageFull);
+    final state = AppState(
+      apiClientFactory: (_) => throw UnimplementedError(),
+      cryptoService: TestOnlyCryptoService(),
+      localStore: localStore,
+      syncServiceFactory: (_, __) => FakeSyncService(),
+    );
+    await tester.runAsync(state.tryRestoreSession);
+    await tester.pumpWidget(veritraTestApp(state: state));
+    await tester.pumpAndSettle();
+    expect(find.text(state.l10n.shellResetDevice), findsNothing);
+
+    await tester.tap(find.text(state.l10n.shellRetryRestore));
+    // The retry queues behind the first restore, which ran outside the fake
+    // clock; let that queue move.
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pumpAndSettle();
+    expect(find.text(state.l10n.recoveryUpgradeStillFull), findsOneWidget);
+    expect(find.text(state.l10n.shellRetryRestore), findsOneWidget);
+
+    // The reset still asks first; cancelling changes nothing.
+    await tester.tap(find.text(state.l10n.shellResetDevice));
+    await tester.pumpAndSettle();
+    expect(find.text(state.l10n.shellResetTitle), findsOneWidget);
+    await tester.tap(find.text(state.l10n.commonCancel));
+    await tester.pumpAndSettle();
+    expect(localStore.quarantined, isFalse);
+    expect(state.lifecycle, SessionLifecycle.recoveryRequired);
+
+    await tester.tap(find.text(state.l10n.shellResetDevice));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(state.l10n.shellResetConfirm));
+    await tester.pumpAndSettle();
+    expect(localStore.quarantined, isTrue);
+    expect(state.lifecycle, SessionLifecycle.ready);
+    await tester.pumpWidget(const SizedBox());
+    state.dispose();
+  });
 
   test('full outbox refuses before encryption and keeps all entries', () async {
     final localStore = MemoryLocalStore();

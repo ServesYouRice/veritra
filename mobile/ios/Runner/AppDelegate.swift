@@ -96,9 +96,10 @@ import UserNotifications
 
   /// Keeps the encrypted local database out of iCloud and computer backups
   /// (NSURLIsExcludedFromBackupKey). The Dart store sends its directory, so
-  /// WAL and SHM files created later are covered, and the files that exist
-  /// now. A copied database cannot be opened without its keychain key, which
-  /// is this-device-only; this keeps even that copy off other devices.
+  /// WAL and SHM files created later are covered, and the database files,
+  /// before and after each open; paths that do not exist yet are skipped. A
+  /// copied database cannot be opened without its keychain key, which is
+  /// this-device-only; this keeps even that copy off other devices.
   private func registerStorageChannel(_ registry: FlutterPluginRegistry) {
     guard let registrar = registry.registrar(forPlugin: "VeritraStorage") else { return }
     FlutterMethodChannel(
@@ -110,6 +111,9 @@ import UserNotifications
             let paths = arguments["paths"] as? [String], !paths.isEmpty else {
         result(FlutterError(code: "invalid_arguments", message: "Paths are required", details: nil)); return
       }
+      // Every path is tried: one that refuses must not leave the others in
+      // backups. Failures are counted and reported once, at the end.
+      var failures = 0
       for path in paths where FileManager.default.fileExists(atPath: path) {
         var url = URL(fileURLWithPath: path)
         var values = URLResourceValues()
@@ -117,11 +121,15 @@ import UserNotifications
         do {
           try url.setResourceValues(values)
         } catch {
-          // No error description: it would name the file's path.
-          result(FlutterError(code: "exclude_failed", message: nil, details: nil)); return
+          failures += 1
         }
       }
-      result(nil)
+      if failures > 0 {
+        // A count only: an error description would name the file's path.
+        result(FlutterError(code: "exclude_failed", message: nil, details: failures))
+      } else {
+        result(nil)
+      }
     }
   }
 

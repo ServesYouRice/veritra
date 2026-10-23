@@ -2061,6 +2061,14 @@ class AppLocalizationsEn extends AppLocalizations {
       'This device could not update its message storage for this version of Veritra, for example because the device is full. Nothing has been changed or deleted. Free up some space, then retry.';
 
   @override
+  String get recoveryUpgradeStillFull =>
+      'This device still could not update its message storage. Nothing has been changed or deleted. Free up more space and retry, or reset this device and link it again.';
+
+  @override
+  String get recoveryUpgradeError =>
+      'This device could not update its message storage for this version of Veritra. Nothing has been changed or deleted. Retry. If it keeps failing, you can reset this device and link it again.';
+
+  @override
   String get errorPasswordLoginNeedsLink =>
       'Password login requires this device to be linked first.';
 
