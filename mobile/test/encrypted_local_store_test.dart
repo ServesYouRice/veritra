@@ -3,9 +3,11 @@ import 'dart:io';
 
 import 'package:drift/drift.dart' show OrderingTerm, Variable;
 import 'package:drift/native.dart' show NativeDatabase;
+import 'package:flutter/services.dart' show MethodCall;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/storage/backup_exclusion.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_recovery.dart';
@@ -112,6 +114,79 @@ void main() {
       deviceId: 'dev_2',
     ));
     expect(await reopened.loadSyncRecovery(), isNull);
+  });
+
+  test('each open keeps the profile and its database out of backups', () async {
+    final excluded = <List<String>>[];
+    SecureLocalStore openStore({
+      String namespace = '',
+      bool failing = false,
+    }) =>
+        SecureLocalStore(
+          storage: secureStorage,
+          directoryProvider: () async => directory,
+          namespace: namespace,
+          backupExclusion: (paths) async {
+            excluded.add(paths);
+            if (failing) throw StateError('platform refused');
+          },
+          databaseFactory: (file, keyHex) {
+            final database = openEncryptedLocalDatabase(file, keyHex);
+            databases.add(database);
+            return database;
+          },
+        );
+
+    await openStore().saveSyncCursor(3);
+    final root = directory.path;
+    expect(excluded, <List<String>>[
+      <String>[
+        root,
+        '$root/veritra-local.db-wal',
+        '$root/veritra-local.db-shm',
+        '$root/veritra-local.db',
+      ],
+    ]);
+    // The files exist when the platform is asked, so they get the mark
+    // too; the directory covers WAL and SHM files created later.
+    expect(File('$root/veritra-local.db').existsSync(), isTrue);
+    expect(File('$root/veritra-local.db-wal').existsSync(), isTrue);
+
+    final demo = '$root/profiles/demo';
+    await openStore(namespace: 'demo').saveSyncCursor(1);
+    expect(excluded.last.first, demo);
+    expect(excluded.last.last, '$demo/veritra-local.db');
+
+    // Defence in depth only: a platform failure does not block the store.
+    for (final database in databases) {
+      await database.close();
+    }
+    databases.clear();
+    expect(await openStore(failing: true).loadSyncCursor(), 3);
+    expect(excluded, hasLength(3));
+  });
+
+  test('iOS backup exclusion goes through the Runner storage channel',
+      () async {
+    final calls = <MethodCall>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(PlatformBackupExclusion.channel,
+            (call) async {
+      calls.add(call);
+      return null;
+    });
+    addTearDown(() => TestDefaultBinaryMessengerBinding
+        .instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(PlatformBackupExclusion.channel, null));
+
+    await PlatformBackupExclusion.exclude(
+        <String>['/a', '/a/veritra-local.db']);
+    expect(PlatformBackupExclusion.channel.name,
+        'org.veritra.private_messenger/storage');
+    expect(calls.single.method, 'excludeFromBackup');
+    expect(calls.single.arguments, <String, Object?>{
+      'paths': <String>['/a', '/a/veritra-local.db'],
+    });
   });
 
   test('a namespaced store keeps its own database and key', () async {

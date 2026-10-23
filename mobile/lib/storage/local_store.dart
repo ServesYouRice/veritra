@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../core/models.dart';
 import '../sync/sync_recovery.dart';
+import 'backup_exclusion.dart';
 import 'encrypted_database.dart';
 
 final Map<String, Future<void>> _databaseOpenTails = <String, Future<void>>{};
@@ -992,6 +993,7 @@ class SecureLocalStore implements LocalStore {
     Future<Directory> Function()? directoryProvider,
     LocalDatabaseFactory? databaseFactory,
     MlsCommitFailureInjector? mlsCommitFailureInjector,
+    BackupExclusion? backupExclusion,
     String namespace = '',
   })  : assert(RegExp(r'^[a-z0-9-]{0,40}$').hasMatch(namespace)),
         _namespace = namespace,
@@ -1014,7 +1016,9 @@ class SecureLocalStore implements LocalStore {
         _directoryProvider =
             directoryProvider ?? getApplicationSupportDirectory,
         _databaseFactory = databaseFactory ?? openEncryptedLocalDatabase,
-        _mlsCommitFailureInjector = mlsCommitFailureInjector;
+        _mlsCommitFailureInjector = mlsCommitFailureInjector,
+        _backupExclusion = backupExclusion ??
+            (Platform.isIOS ? PlatformBackupExclusion.exclude : null);
 
   static const _legacyRecordKey = 'veritra.account_state.v2';
   static const _databaseKey = 'veritra.database_key.v1';
@@ -1039,6 +1043,7 @@ class SecureLocalStore implements LocalStore {
   final Future<Directory> Function() _directoryProvider;
   final LocalDatabaseFactory _databaseFactory;
   final MlsCommitFailureInjector? _mlsCommitFailureInjector;
+  final BackupExclusion? _backupExclusion;
   Future<EncryptedLocalDatabase>? _openingDatabase;
   String? _databasePath;
   String? _syncLeaseKey;
@@ -1759,10 +1764,29 @@ class SecureLocalStore implements LocalStore {
             LocalStoreFailureKind.keyRejected);
       }
       await _migrateLegacyRecord(database);
+      await _excludeFromBackup(directory);
       return database;
     } finally {
       await lock.unlock();
       await lock.close();
+    }
+  }
+
+  /// Keeps the profile directory (and with it every later WAL, SHM, lock
+  /// and quarantined copy) and the database files out of platform backups.
+  /// Best effort: the database cannot be opened elsewhere without its
+  /// device-only key, so a failure here does not stop the app.
+  Future<void> _excludeFromBackup(Directory directory) async {
+    final exclude = _backupExclusion;
+    if (exclude == null) return;
+    try {
+      await exclude(<String>[
+        directory.path,
+        for (final name in _databaseFileNames)
+          '${directory.path}${Platform.pathSeparator}$name',
+      ]);
+    } catch (_) {
+      // Retried on the next open.
     }
   }
 
