@@ -607,26 +607,30 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         if (cursor != null && (previousCursor?.cursor ?? 0) > cursor) return;
         await delete(localCiphertextEnvelopes).go();
         await delete(localConversations).go();
+        // One batch inside the same transaction: the same rows as inserting
+        // them one by one, without a round trip to the database isolate per
+        // row, which made each rewrite of a full cache take seconds (T49C).
         var position = 0;
-        for (final conversation in conversations) {
-          await into(localConversations).insert(
-            LocalConversationsCompanion.insert(
-              id: conversation.id,
-              position: position++,
-              payloadJson: conversation.payloadJson,
-            ),
-          );
-        }
-        for (final envelope in envelopes) {
-          await into(localCiphertextEnvelopes).insert(
-            LocalCiphertextEnvelopesCompanion.insert(
-              id: envelope.id,
-              conversationId: envelope.conversationId,
-              position: envelope.position,
-              payloadJson: envelope.payloadJson,
-            ),
-          );
-        }
+        await batch((batch) {
+          batch.insertAll(localConversations, <LocalConversationsCompanion>[
+            for (final conversation in conversations)
+              LocalConversationsCompanion.insert(
+                id: conversation.id,
+                position: position++,
+                payloadJson: conversation.payloadJson,
+              ),
+          ]);
+          batch.insertAll(
+              localCiphertextEnvelopes, <LocalCiphertextEnvelopesCompanion>[
+            for (final envelope in envelopes)
+              LocalCiphertextEnvelopesCompanion.insert(
+                id: envelope.id,
+                conversationId: envelope.conversationId,
+                position: envelope.position,
+                payloadJson: envelope.payloadJson,
+              ),
+          ]);
+        });
         if (cursor != null) {
           await into(localSyncStates).insertOnConflictUpdate(
             LocalSyncStatesCompanion.insert(

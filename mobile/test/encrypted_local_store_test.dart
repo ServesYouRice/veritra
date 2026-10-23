@@ -347,6 +347,66 @@ void main() {
     expect((await restarted.loadSnapshot())?.cursor, 12);
   });
 
+  test('a snapshot rewrite is all or nothing and keeps the order', () async {
+    final store = createStore();
+    await store.saveSession(const Session(
+      baseUrl: 'https://example.test',
+      token: 'token',
+      accountId: 'acct_1',
+      deviceId: 'dev_1',
+    ));
+    ReceivedMessageEnvelope envelope(String id, String conversationId) =>
+        ReceivedMessageEnvelope(
+          id: id,
+          conversationId: conversationId,
+          senderAccountId: 'acct_1',
+          senderDeviceId: 'dev_1',
+          idempotencyKey: 'key_$id',
+          ciphertext: <int>[1],
+          cryptoProtocol: 'mls10-openmls-v1',
+          createdAt: DateTime.utc(2026, 7, 29),
+        );
+    await store.saveProjection(
+      <Conversation>[
+        Conversation(id: 'conv_2', kind: 'group'),
+        Conversation(id: 'conv_1', kind: 'group'),
+      ],
+      <String, List<ReceivedMessageEnvelope>>{
+        'conv_1': <ReceivedMessageEnvelope>[
+          envelope('msg_b', 'conv_1'),
+          envelope('msg_a', 'conv_1'),
+        ],
+        'conv_2': <ReceivedMessageEnvelope>[envelope('msg_c', 'conv_2')],
+      },
+    );
+
+    // The same envelope ID twice violates the key on the second insert;
+    // the rows written before it must roll back with it.
+    await expectLater(
+      store.saveProjection(
+        <Conversation>[
+          Conversation(id: 'conv_3', kind: 'group'),
+          Conversation(id: 'conv_4', kind: 'group'),
+        ],
+        <String, List<ReceivedMessageEnvelope>>{
+          'conv_3': <ReceivedMessageEnvelope>[envelope('msg_x', 'conv_3')],
+          'conv_4': <ReceivedMessageEnvelope>[envelope('msg_x', 'conv_4')],
+        },
+      ),
+      throwsA(anything),
+    );
+
+    final snapshot = (await store.loadSnapshot())!;
+    expect(snapshot.conversations.map((item) => item.id),
+        <String>['conv_2', 'conv_1']);
+    expect(snapshot.messagesByConversation['conv_1']!.map((item) => item.id),
+        <String>['msg_b', 'msg_a']);
+    expect(snapshot.messagesByConversation['conv_2']!.map((item) => item.id),
+        <String>['msg_c']);
+    expect(snapshot.messagesByConversation.keys,
+        unorderedEquals(<String>['conv_1', 'conv_2']));
+  });
+
   test('wrong database key fails closed', () async {
     final first = createStore();
     await first.saveSyncCursor(3);

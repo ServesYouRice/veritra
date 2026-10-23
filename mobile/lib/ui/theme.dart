@@ -12,9 +12,16 @@ import 'tokens.dart';
 /// Surfaces separate by **tone, not shadow**: elevation stays at zero, the
 /// surface tint is transparent so Material's elevation overlay never shifts a
 /// colour, and hairlines carry the separation.
-ThemeData veritraLightTheme() => _buildTheme(Brightness.light);
+///
+/// Each theme is built once and shared: the app root asks for both on every
+/// rebuild, and [ThemeData] is immutable, so building them again only cost
+/// time (T49C).
+ThemeData veritraLightTheme() => _lightTheme;
 
-ThemeData veritraDarkTheme() => _buildTheme(Brightness.dark);
+ThemeData veritraDarkTheme() => _darkTheme;
+
+final ThemeData _lightTheme = _buildTheme(Brightness.light);
+final ThemeData _darkTheme = _buildTheme(Brightness.dark);
 
 const ColorScheme _darkScheme = ColorScheme(
   brightness: Brightness.dark,
