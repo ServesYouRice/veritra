@@ -275,11 +275,11 @@ func TestRetentionAttachmentRowsAndBlobsStayConsistent(t *testing.T) {
 	ctx := context.Background()
 	put := func() string {
 		t.Helper()
-		key, _, _, err := h.blobs.PutEncryptedBlob(ctx, strings.NewReader("ciphertext"))
+		ref, err := h.blobs.PutEncryptedBlob(ctx, strings.NewReader("ciphertext"))
 		if err != nil {
 			t.Fatalf("put blob: %v", err)
 		}
-		return key
+		return ref.StorageKey
 	}
 	now := time.Now()
 	attach := func(id, key string, created time.Time) {
