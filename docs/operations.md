@@ -617,12 +617,12 @@ local SSD.
 | Tier | Container | Volume | Synthetic dataset | Rated busy hour |
 |---|---|---|---|---|
 | S | 1 vCPU, 1 GiB | 40 GiB (the shipped PVC) | 50 accounts, 25 DMs and 15 groups of 5, 20k messages, 200 attachments | 50 accounts (75 clients) at 4 messages per device per minute, about 3 messages/s |
-| M | 2 vCPU, 2 GiB | 100 GiB | 250 accounts, 125 DMs and 75 groups of 5, 100k messages, 1,000 attachments | 250 accounts (375 clients) at 2 messages per device per minute, about 7 messages/s, while few devices catch up from deep history (below) |
+| M | 2 vCPU, 2 GiB | 100 GiB | 250 accounts, 125 DMs and 75 groups of 5, 100k messages, 1,000 attachments | 250 accounts (375 clients) at 4 messages per device per minute, about 13 messages/s, with a fifth of the devices catching up from deep history |
 
 On tier M, a device that catches up from the middle of a 100k-event history
-spends 0.1-0.5 s per sync page; with a fifth of the devices doing that in
-the busy hour, sync p95 exceeds the target at every load step. That is the
-open `ListSyncEvents` cursor follow-up from T49, not a limit of the tier.
+spends about 10-15 ms per sync page (p99 under 100 ms up to 8 messages per
+device per minute); before the T49 cursor follow-up it was 0.1-0.5 s and
+missed every step.
 
 "Rated" is half the highest load at which every target below held. The
 workload model: every device keeps its sync socket open; sends follow a

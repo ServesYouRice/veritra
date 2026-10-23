@@ -171,3 +171,44 @@ showing 507 to the user (mobile, not in this card). **Noted:** a community
 add refused because a channel the caller cannot see is full reveals that
 some channel is full, not which or whose; the per-address limit for
 households behind one NAT is a separate card.
+
+## Tier M rerun after the ListSyncEvents fix (2026-10-23)
+
+The T49 cursor follow-up (`ListSyncEvents` from a mid-history cursor:
+172 ms -> 2.1 ms per page in `benchmarks-t49.md`) at commit `b2e3ee9`.
+Same tool and full model (a fifth of the devices catch up once from the
+middle of history in each window):
+
+```sh
+scripts/capacity.sh m load -rate 1,4,8 -warmup 15s -duration 60s
+```
+
+Host: the same class of shared 4 vCPU Xeon, 15 GiB, but much less loaded
+than the runs above (load average about 1-2 instead of 5-10), Docker 29.9
+with `busybox:1.37.0` from `mirror.gcr.io` (Docker Hub refused the pull
+with 429). Seeding 100k messages and 1,000 attachments took 3m54s; the
+whole run about 8 minutes. Client-side ms:
+
+| msgs/device/min | msgs/s | sync GET/s | send p95/p99 | sync p95/p99 | list p99 | delivery p99 | cold page p50/p99 | errors | verdict |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 4.3 | 42 | 31 / 38 | 22 / 30 | 43 | 39 | 10 / 43 | 0 | pass |
+| 4 | 12.7 | 128 | 15 / 46 | 42 / 200 | 29 | 49 | 10 / 41 | 0 | pass |
+| 8 | 31.2 | 320 | 44 / 113 | 71 / 185 | 122 | 117 | 14 / 100 | 0.05% (9 sync 429s) | pass |
+
+Before (the full-model table above): cold page p50/p99 115/1114,
+171/1330 and 471/1649 ms, and every step missed. Cold pages now stay
+under 100 ms at p99 and no longer slow the other syncs.
+
+- Server side: writer acquire p99 <= 25 ms at 1 and 4, <= 100 ms at 8;
+  Go memory 50-54 MB; 373 sockets; 0 dropped realtime events; 0 5xx.
+  Container peak 185% of one core (2 available, at 8) and 455 MiB.
+- The nine 429s at 8 came from the per-address limit (a device and its
+  companion share an address; same account, so the shared-address change
+  does not lift them).
+- Verify: 3,355 acknowledged messages checked, 0 missing, 0 unreadable.
+- **Rating:** half the highest passing step: 4 msgs/device/min for 250
+  accounts and 375 clients (about 13 messages/s) with the full model,
+  cold catch-ups included (was 2, valid only while few devices caught up).
+  The host was quieter than for the earlier runs, so part of the gain is
+  the host; the benchmark isolates the query. A long soak and a rerun on
+  the owner's host are still open.

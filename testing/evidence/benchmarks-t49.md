@@ -238,3 +238,60 @@ jobs. Means of two runs of
   into NULL, after the response; the operations note; the optional pooled
   buffer. Kept multipart ranges (still verified on read) and migration 0034,
   the number this batch assigned.
+
+## After: ListSyncEvents from a mid-history cursor (T49 follow-up)
+
+Same `BenchmarkSyncBounds` and `BenchmarkMembershipsPerAccount` datasets.
+Both columns were run on this host, one after the other: 4 vCPU Intel Xeon,
+15 GiB, go1.26.10, Linux 6.18 amd64, lightly loaded. Means of two runs of
+`cd server && go test -run '^$' -bench 'SyncBounds|MembershipsPerAccount' -benchmem -count 2 ./internal/storage`.
+The 252 ms in the table above was measured on another host; here the same
+code took 172 ms.
+
+| Benchmark | Dataset | Before ns/op | After ns/op |
+|---|---|---|---|
+| ListSyncEvents from mid, 100 | small / large | 16.0M / **172M** | 1.13M / **2.11M** |
+| ListSyncEvents from 0, 100 | small / large | 1.36M / 2.89M | 1.66M / 2.69M |
+| ListSyncEvents from mid, 100 | 200 / 1,000 / 2,000 memberships | 2.28M / 12.1M / 23.6M | 2.72M / 10.4M / 18.8M |
+| SyncBounds | small / large | 0.47M / 1.93M | 0.46M / 1.97M (unchanged) |
+
+**EXPLAIN QUERY PLAN (before):** the conversation half of the page was
+`SEARCH se USING INDEX idx_sync_events_account (account_id=? AND id>?)` for
+`account_id IS NULL`: every conversation event on the instance after the
+cursor, in id order, each with the MLS join and block subqueries and a
+membership probe (`sqlite_autoindex_memberships_3`). From mid-history the
+large dataset's account has nothing there, so the scan read the whole
+50k-event tail before reaching its own account events. The page also ran
+the full `SyncBounds` (both ends) only to check the cursor's age.
+
+**After:** a k-way merge. `first_events` (MATERIALIZED) takes each
+membership's first visible event after the cursor with `SEARCH se USING
+INDEX idx_sync_events_conversation (conversation_id=? AND id>?)`; a
+recursive CTE ordered by id (SQLite runs it as a priority queue, as a
+co-routine) takes the smallest and queues the next visible event of the same
+conversation on the same index, and stops after the page limit. A page
+reads about memberships + limit events wherever the cursor is. Account
+events come from `idx_sync_events_account` as before. The cursor check
+reads only the oldest bound, and none for a cursor of 0. No new index and
+no migration.
+
+**Cost moved:** a dense page (an account in hundreds of busy
+conversations, read from the start) now does one index probe per
+membership even when the first conversation fills the page: small from 0
+is 0.3 ms slower, 200 memberships from mid 0.4 ms slower. At 1,000-2,000
+memberships the merge is faster than the old scan.
+
+**Equivalence:** `read_model_equivalence_test.go` keeps the old query (and
+the old MLS join filter text) verbatim and compares every page of every
+account's stream with page size 7, plus cursors in the middle, before the
+oldest event (expired), past the newest and the limit normalisation, for
+the account's device, a second device that joined the hot MLS group late
+and was removed, and no device. The seed adds encrypted events naming an
+epoch before and after each device's join epoch, MLS and call events,
+Welcomes per device and blocked edge events; the comparison runs again
+after retention pruning and account deletion. Dropping the visibility
+filter from the merge step makes it fail.
+
+**Still open (not changed):** the HTTP handler calls `SyncBounds` once more
+per page for the response's bounds (1.9 ms at large, 11-22 ms at
+1,000-2,000 memberships).
