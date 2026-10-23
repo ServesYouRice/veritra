@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"fmt"
 	"io/fs"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -191,4 +193,40 @@ INSERT INTO table_that_does_not_exist VALUES(1);
 	if err := store.Migrate(ctx, migrations.FS); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// T49B: a database migrated before 0031 gets blob usage counters
+// backfilled from its attachment and backup rows.
+func TestBlobUsageBackfillOnUpgrade(t *testing.T) {
+	ctx := context.Background()
+	store := openBareStore(t)
+	old, _ := migrationsUpTo(t, "0030")
+	if err := store.Migrate(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	seedHistorical(t, store)
+	for i, row := range []struct {
+		table, owner string
+		size         int64
+	}{{"attachment_envelopes", "acct_a", 100}, {"attachment_envelopes", "acct_a", 23}, {"attachment_envelopes", "acct_b", 7}, {"backup_blobs", "acct_a", 1000}} {
+		var err error
+		if row.table == "attachment_envelopes" {
+			_, err = store.db.ExecContext(ctx, `INSERT INTO attachment_envelopes(id, owner_account_id, storage_key, ciphertext_sha256, size_bytes, crypto_metadata_json, created_at) VALUES(?, ?, ?, 'x', ?, '{}', '2026-01-01T00:00:00Z')`,
+				fmt.Sprintf("att_%d", i), row.owner, fmt.Sprintf("blob_%d", i), row.size)
+		} else {
+			_, err = store.db.ExecContext(ctx, `INSERT INTO backup_blobs(id, account_id, storage_key, size_bytes, key_derivation_metadata_json, created_at) VALUES(?, ?, ?, ?, '{}', '2026-01-01T00:00:00Z')`,
+				fmt.Sprintf("bak_%d", i), row.owner, fmt.Sprintf("blob_%d", i), row.size)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Migrate(ctx, migrations.FS); err != nil {
+		t.Fatal(err)
+	}
+	counters, total, _, _ := blobUsage(t, store)
+	if !reflect.DeepEqual(counters, map[string]int64{"acct_a": 1123, "acct_b": 7}) || total != 1130 {
+		t.Fatalf("backfill counters=%v total=%d", counters, total)
+	}
+	checkBlobUsageMatches(t, store, "after upgrade")
 }

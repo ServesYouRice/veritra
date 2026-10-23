@@ -1066,67 +1066,84 @@ func (s *Store) ListConversations(ctx context.Context, accountID string) ([]doma
 	return s.ListConversationsPage(ctx, accountID, 1000, "")
 }
 
+// listConversationsPageQuery lists the account's conversations by latest
+// visible activity (T49A). Parameters: ?1 account, ?2 now, ?3 before-cursor
+// conversation id (empty for the first page), ?4 limit.
+//
+// Ordering needs every membership's last visible message, so that is one
+// newest-first walk of idx_messages_conversation_created per conversation,
+// stopping at the first message that is not deleted, expired or from a
+// blocked sender. Unread counts and DM peers are computed only for the
+// conversations on the returned page.
+const listConversationsPageQuery = `
+	WITH conversation_activity AS MATERIALIZED (
+		SELECT c.id, c.kind, c.title, c.community_id, c.channel_id,
+		       c.created_by, c.retention_seconds, c.created_at,
+		       m.role AS current_role,
+		       (SELECT me.created_at FROM message_envelopes me
+		        WHERE me.conversation_id = c.id
+		          AND me.deleted_at IS NULL
+		          AND (me.expires_at IS NULL OR me.expires_at > ?2)
+		          AND NOT EXISTS (SELECT 1 FROM account_blocks b WHERE b.blocker_account_id = ?1 AND b.blocked_account_id = me.sender_account_id)
+		        ORDER BY me.created_at DESC LIMIT 1) AS last_message_at
+		FROM memberships m
+		JOIN conversations c ON c.id = m.conversation_id
+		WHERE m.account_id = ?1
+	), ranked AS (
+		SELECT *, COALESCE(last_message_at, created_at) AS activity_at
+		FROM conversation_activity
+	), page AS (
+		SELECT * FROM ranked
+		WHERE (?3 = '' OR (activity_at, id) < (
+			SELECT activity_at, id FROM ranked WHERE id = ?3
+		))
+		ORDER BY activity_at DESC, id DESC
+		LIMIT ?4
+	)
+	SELECT p.id, p.kind, p.title, p.community_id, p.channel_id, p.created_by,
+	       p.retention_seconds, p.created_at, p.current_role, p.last_message_at,
+	       -- Unread: visible messages from others after the read receipt's
+	       -- message (all of them without a receipt). Split by case so the
+	       -- receipt bound is a created_at range on the index.
+	       CASE WHEN rr.message_id IS NULL THEN (
+	           SELECT COUNT(*) FROM message_envelopes me
+	           WHERE me.conversation_id = p.id
+	             AND me.sender_account_id != ?1
+	             AND NOT EXISTS (SELECT 1 FROM account_blocks b WHERE b.blocker_account_id = ?1 AND b.blocked_account_id = me.sender_account_id)
+	             AND me.deleted_at IS NULL
+	             AND (me.expires_at IS NULL OR me.expires_at > ?2)
+	       ) ELSE (
+	           SELECT COUNT(*) FROM message_envelopes me
+	           WHERE me.conversation_id = p.id
+	             AND me.created_at > (SELECT created_at FROM message_envelopes WHERE id = rr.message_id)
+	             AND me.sender_account_id != ?1
+	             AND NOT EXISTS (SELECT 1 FROM account_blocks b WHERE b.blocker_account_id = ?1 AND b.blocked_account_id = me.sender_account_id)
+	             AND me.deleted_at IS NULL
+	             AND (me.expires_at IS NULL OR me.expires_at > ?2)
+	       ) END AS unread_count,
+	       -- DM counterpart identity. Restricted to two-account DMs the
+	       -- requester is already a member of, so it reveals nothing beyond
+	       -- shared membership. NULL for group and channel conversations.
+	       CASE WHEN p.kind = 'dm' THEN (
+	           SELECT m2.account_id FROM memberships m2
+	           WHERE m2.conversation_id = p.id AND m2.account_id != ?1
+	           ORDER BY m2.created_at, m2.account_id LIMIT 1
+	       ) END AS peer_account_id,
+	       CASE WHEN p.kind = 'dm' THEN (
+	           SELECT COALESCE(a2.username, '') FROM memberships m2
+	           LEFT JOIN accounts a2 ON a2.id = m2.account_id
+	           WHERE m2.conversation_id = p.id AND m2.account_id != ?1
+	           ORDER BY m2.created_at, m2.account_id LIMIT 1
+	       ) END AS peer_username
+	FROM page p
+	LEFT JOIN read_receipts rr ON rr.conversation_id = p.id AND rr.account_id = ?1
+	ORDER BY p.activity_at DESC, p.id DESC`
+
 func (s *Store) ListConversationsPage(ctx context.Context, accountID string, limit int, beforeID string) ([]domain.Conversation, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	now := nowString()
-	rows, err := s.db.QueryContext(ctx, `
-		WITH conversation_activity AS (
-			SELECT c.id, c.kind, c.title, c.community_id, c.channel_id,
-			       c.created_by, c.retention_seconds, c.created_at,
-			       m.role AS current_role, lm.last_message_at,
-			       COALESCE(lm.last_message_at, c.created_at) AS activity_at,
-			       COALESCE((
-			           SELECT COUNT(*) FROM message_envelopes me
-			           WHERE me.conversation_id = c.id
-			             AND me.sender_account_id != ?
-			             AND NOT EXISTS (SELECT 1 FROM account_blocks b WHERE b.blocker_account_id = ? AND b.blocked_account_id = me.sender_account_id)
-			             AND me.deleted_at IS NULL
-			             AND (me.expires_at IS NULL OR me.expires_at > ?)
-			             AND (rr.message_id IS NULL OR me.created_at > (
-			                 SELECT created_at FROM message_envelopes WHERE id = rr.message_id
-			             ))
-			       ), 0) AS unread_count,
-			       -- DM counterpart identity. Restricted to two-account DMs
-			       -- the requester is already a member of, so it reveals
-			       -- nothing beyond shared membership. NULL for group and
-			       -- channel conversations.
-			       CASE WHEN c.kind = 'dm' THEN (
-			           SELECT m2.account_id FROM memberships m2
-			           WHERE m2.conversation_id = c.id AND m2.account_id != ?
-			           ORDER BY m2.created_at, m2.account_id LIMIT 1
-			       ) END AS peer_account_id,
-			       CASE WHEN c.kind = 'dm' THEN (
-			           SELECT COALESCE(a2.username, '') FROM memberships m2
-			           LEFT JOIN accounts a2 ON a2.id = m2.account_id
-			           WHERE m2.conversation_id = c.id AND m2.account_id != ?
-			           ORDER BY m2.created_at, m2.account_id LIMIT 1
-			       ) END AS peer_username
-			FROM conversations c
-			JOIN memberships m ON m.conversation_id = c.id
-			LEFT JOIN read_receipts rr
-			  ON rr.conversation_id = c.id AND rr.account_id = ?
-			LEFT JOIN (
-				SELECT conversation_id, MAX(created_at) AS last_message_at
-				FROM message_envelopes
-				WHERE deleted_at IS NULL
-				  AND (expires_at IS NULL OR expires_at > ?)
-				  AND NOT EXISTS (SELECT 1 FROM account_blocks b WHERE b.blocker_account_id = ? AND b.blocked_account_id = message_envelopes.sender_account_id)
-				GROUP BY conversation_id
-			) lm ON lm.conversation_id = c.id
-			WHERE m.account_id = ?
-		)
-		SELECT id, kind, title, community_id, channel_id, created_by,
-		       retention_seconds, created_at, current_role, last_message_at,
-		       unread_count, peer_account_id, peer_username
-		FROM conversation_activity
-		WHERE (? = '' OR (activity_at, id) < (
-			SELECT activity_at, id FROM conversation_activity WHERE id = ?
-		))
-		ORDER BY activity_at DESC, id DESC
-		LIMIT ?`,
-		accountID, accountID, now, accountID, accountID, accountID, now, accountID, accountID, beforeID, beforeID, limit)
+	rows, err := s.db.QueryContext(ctx, listConversationsPageQuery, accountID, nowString(), beforeID, limit)
 	if err != nil {
 		return nil, err
 	}
