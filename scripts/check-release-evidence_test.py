@@ -1253,6 +1253,13 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
         expect_blocked(root, with_android(record(provenance=provenance)), f"{label} provenance is the debug emulator CI build")
     for provenance in ({"builder": "local"}, {"workflow": "android.yml"}, {"run_id": 457}, {"run_id": "４５７"}):
         expect_blocked(root, with_android(record(provenance=provenance)), f"{label} provenance does not name a GitHub Actions workflow, job and run")
+    # gh reads the workflow as a regular expression (review finding): "c..yml"
+    # would match ci.yml, so the base name cannot contain a dot.
+    for workflow in ("c..yml", "ci.yml.yml", "android.signed.yml", ".yml", "a+.yml", "a*.yml", "android-signed.yml/x.yml"):
+        expect_blocked(root, with_android(record(provenance={"workflow": ".github/workflows/" + workflow})),
+                       f"{label} provenance does not name a GitHub Actions workflow, job and run")
+    for workflow in ("android_signed.yaml", "Android-Signed-2.yml"):
+        expect_valid(root, with_android(record(provenance={"workflow": ".github/workflows/" + workflow})))
 
     # Emulator-debug records are checked, and a bad one blocks the release.
     for changes, reason in (

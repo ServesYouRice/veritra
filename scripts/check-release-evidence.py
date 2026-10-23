@@ -135,7 +135,9 @@ AXML_TYPE_STRING, AXML_TYPE_BOOLEAN = 0x03, 0x12
 ANDROID_ATTR_DEBUGGABLE = 0x0101000F
 FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 RUN_ID_RE = re.compile(r"^[0-9]{1,20}$")  # ASCII only; str.isdigit accepts other scripts
-WORKFLOW_RE = re.compile(r"^\.github/workflows/[A-Za-z0-9._-]+\.ya?ml$")
+# No "." in the base name: release.yml passes the path to gh as a regular
+# expression, where "c..yml" would also match "ci.yml".
+WORKFLOW_RE = re.compile(r"^\.github/workflows/[A-Za-z0-9_-]+\.ya?ml$")
 MAX_IPA_MEMBER = 256 * 1024 * 1024
 MH_MAGIC_64 = 0xFEEDFACF
 FAT_MAGIC = 0xCAFEBABE
