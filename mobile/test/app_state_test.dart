@@ -347,6 +347,20 @@ void main() {
       expect(state.session?.token, 'owner-token');
       expect((await localStore.loadSession())?.token, 'owner-token');
     });
+
+    test('a wrong reauthentication password does not sign out', () async {
+      api.failure = ApiException(401, '{"error":"invalid_credentials"}');
+      expect(await state.reauthenticate('wrong-password'), isFalse);
+      expect(state.session?.token, 'owner-token');
+      expect((await localStore.loadSession())?.token, 'owner-token');
+      expect(state.error, isNotNull);
+    });
+
+    test('a rejected session token still signs out', () async {
+      api.failure = ApiException(401, '{"error":"unauthorized"}');
+      expect(await state.reauthenticate('owner-password-123'), isFalse);
+      expect(state.session, isNull);
+    });
   });
 
   test('failed encrypted envelope persists and retry reuses its key', () async {

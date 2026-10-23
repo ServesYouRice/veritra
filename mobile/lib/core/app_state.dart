@@ -3585,7 +3585,12 @@ class AppState extends ChangeNotifier {
       try {
         await body();
       } catch (err) {
-        if (err is ApiException && err.statusCode == 401) {
+        // `invalid_credentials` rejects the password typed into a signed-in
+        // prompt (reauthentication), not the session token: the user keeps
+        // the session and can try again.
+        if (err is ApiException &&
+            err.statusCode == 401 &&
+            err.serverCode != 'invalid_credentials') {
           await _clearLocalSession(
               preserveDeviceIdentity: true, preserveOutbox: true);
         }
