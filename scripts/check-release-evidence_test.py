@@ -193,6 +193,7 @@ def lp(data: bytes) -> bytes:
 
 ANDROID_NS = "http://schemas.android.com/apk/res/android"
 ATTR_DEBUGGABLE = 0x0101000F
+ATTR_MIN_SDK = 0x0101020C
 
 
 def string_pool(strings: list[str]) -> bytes:
@@ -223,17 +224,32 @@ def axml(
     wrapper: str | None = None,
     pool_after_node: bool = False,
     map_after_node: bool = False,
+    min_sdk: object = 24,
+    package_attrs: tuple[tuple[str | None, str | None, str | None], ...] | None = None,
+    repeat_debuggable: bool = False,
+    extra_debuggable: str | None = None,
 ) -> bytes:
-    """A compiled AndroidManifest.xml: <manifest package><application debuggable?>.
+    """A compiled AndroidManifest.xml: <manifest package><uses-sdk
+    minSdkVersion?><application debuggable?>.
 
     The keyword options add parser tricks: a second string pool or resource
     map before the first node; a pool (naming ``late_pool_package`` where the
     package was) or a map (giving the debuggable attribute ``late_map``)
     after it; the only pool or map moved after it; a second <manifest>
-    inside the root; a root that wraps it.
+    inside the root; a root that wraps it. ``package_attrs`` replaces the
+    package attribute with (namespace, raw string, typed string) triples;
+    ``repeat_debuggable`` writes the debuggable attribute twice, and
+    ``extra_debuggable`` adds a second, false one under another name with the
+    same resource ID. ``min_sdk`` is None (no <uses-sdk>), an int, or a
+    (type, value) pair.
     """
-    strings = [debuggable_name, "package", "manifest", "application", "android", ANDROID_NS, package]
-    strings += [value for value in (nested_manifest, wrapper) if value and value not in strings]
+    attr_names = [debuggable_name, "minSdkVersion"] + ([extra_debuggable] if extra_debuggable else [])
+    attr_ids = [ATTR_DEBUGGABLE, ATTR_MIN_SDK] + ([ATTR_DEBUGGABLE] if extra_debuggable else [])
+    strings = attr_names + ["package", "manifest", "application", "uses-sdk", "android", ANDROID_NS, package]
+    package_specs = package_attrs if package_attrs is not None else ((None, package, package),)
+    for value in [part for spec in package_specs for part in spec] + [nested_manifest, wrapper]:
+        if value and value not in strings:
+            strings.append(value)
     index = {value: position for position, value in enumerate(strings)}
     none = 0xFFFFFFFF
 
@@ -245,25 +261,41 @@ def axml(
     def end(name: str) -> bytes:
         return struct.pack("<HHIIIII", 0x0103, 16, 24, 1, none, none, index[name])
 
-    def package_attr(value: str) -> bytes:
-        return struct.pack("<IIIHBBI", none, index["package"], index[value], 8, 0, 0x03, index[value])
+    def attribute(namespace: str | None, name: str, raw: str | None, value_type: int, value: int) -> bytes:
+        return struct.pack("<IIIHBBI", none if namespace is None else index[namespace], index[name],
+                           none if raw is None else index[raw], 8, 0, value_type, value)
 
+    package_attributes = [
+        attribute(namespace, "package", raw, 0x03 if typed else 0x00, index[typed] if typed else 0)
+        for namespace, raw, typed in package_specs
+    ]
     application_attrs = []
     if debuggable is not None:
         value_type, value = debuggable if isinstance(debuggable, tuple) else (0x12, none if debuggable else 0)
-        application_attrs.append(struct.pack("<IIIHBBI", index[ANDROID_NS], index[debuggable_name], none, 8, 0, value_type, value))
+        application_attrs.append(attribute(ANDROID_NS, debuggable_name, None, value_type, value))
+        if repeat_debuggable:
+            application_attrs.append(application_attrs[0])
+    if extra_debuggable:
+        application_attrs.append(attribute(ANDROID_NS, extra_debuggable, None, 0x12, 0))
+    sdk_attrs = []
+    if min_sdk is not None:
+        value_type, value = min_sdk if isinstance(min_sdk, tuple) else (0x10, min_sdk)
+        sdk_attrs.append(attribute(ANDROID_NS, "minSdkVersion", None, value_type, value))
     namespace = struct.pack("<HHIIIII", 0x0100, 16, 24, 1, none, index["android"], index[ANDROID_NS])
     pools = string_pool(strings) * (2 if second_pool else 1)
-    maps = resource_map(ATTR_DEBUGGABLE) * (2 if second_map else 1)
+    maps = resource_map(*attr_ids) * (2 if second_map else 1)
     head = (b"" if pool_after_node else pools) + (b"" if map_after_node else maps)
     late = (pools if pool_after_node else b"") + (maps if map_after_node else b"")
     if late_pool_package is not None:
         late += string_pool([late_pool_package if value == package else value for value in strings])
     if late_map is not None:
         late += resource_map(late_map)
-    manifest = element("manifest", [package_attr(package)])
+    manifest = element("manifest", package_attributes)
     if nested_manifest:
-        manifest += element("manifest", [package_attr(nested_manifest)]) + end("manifest")
+        manifest += element("manifest", [attribute(None, "package", nested_manifest, 0x03, index[nested_manifest])])
+        manifest += end("manifest")
+    if min_sdk is not None:
+        manifest += element("uses-sdk", sdk_attrs) + end("uses-sdk")
     tree = manifest + element("application", application_attrs) + end("application") + end("manifest")
     if wrapper:
         tree = element(wrapper, []) + tree + end(wrapper)
@@ -1070,12 +1102,25 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
         value = android_signed_record(name, build_apk(dist / name, **options), cert)  # type: ignore[arg-type]
         return value
 
-    # Valid: v2 + v3 (the fixture), v2 only, v3 only, and the emulator-debug
-    # record the mobile CI job writes, next to the signed one.
+    # Valid: v2 + v3 (the fixture), v2 only, and the emulator-debug record the
+    # mobile CI job writes, next to the signed one.
     expect_valid(root, with_android(signed))
     expect_valid(root, with_android(apk("v2.apk", signers={APK_V2: [RELEASE_CERT]})))
-    expect_valid(root, with_android(apk("v3.apk", signers={APK_V3: [RELEASE_CERT]})))
     expect_valid(root, with_android(apk("debuggable-false.apk", manifest=axml(debuggable=False))))
+    # v3 alone is not enough (review finding): Android 7.0-8.1 never read v3
+    # and, without v2, verify v1, here from another key.
+    other_v1 = (("META-INF/MANIFEST.MF", b"Manifest-Version: 1.0\n"), ("META-INF/OTHER.SF", b"x"),
+                ("META-INF/OTHER.RSA", OTHER_CERT))
+    for name, options in (("v3.apk", {}), ("v3-other-v1.apk", {"before": other_v1})):
+        expect_blocked(root, with_android(apk(name, signers={APK_V3: [RELEASE_CERT]}, **options)),
+                       "signed android artifact has no APK Signature Scheme v2 signature", no_signed)
+    # Releases older than 7.0 verify only v1, so minSdkVersion must be 24+.
+    expect_valid(root, with_android(apk("min-sdk-28.apk", manifest=axml(min_sdk=28))))
+    expect_valid(root, with_android(apk("min-sdk-hex.apk", manifest=axml(min_sdk=(0x11, 24)))))
+    for name, min_sdk, shown in (("min-sdk-23.apk", 23, 23), ("no-uses-sdk.apk", None, 1),
+                                 ("min-sdk-string.apk", (0x03, 0), 1), ("min-sdk-ref.apk", (0x01, 0x7F010000), 1)):
+        expect_blocked(root, with_android(apk(name, manifest=axml(min_sdk=min_sdk))),
+                       f"verify only v1 signatures (minSdkVersion {shown} < 24)", no_signed)
     emulator_digest = build_apk(dist / EMULATOR_APK, manifest=axml(debuggable=True), signers={APK_V2: [DEBUG_CERT]})
     emulator = writer.emulator_record(COMMIT, "790", dist / EMULATOR_APK)
     assert emulator["digest"] == emulator_digest
@@ -1117,10 +1162,10 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
     expect_blocked(root, with_android(twin, signed), "android signed-release artifact has the same digest as a debug build")
 
     # Unsigned: the CI release APK has no signing block; v1-only is not enough.
-    expect_blocked(root, with_android(apk("unsigned.apk", signers={})), "has no APK Signature Scheme v2 or v3 signature", no_signed)
-    expect_blocked(root, with_android(apk("v1-only.apk", v1_only=True)), "has no APK Signature Scheme v2 or v3 signature")
+    expect_blocked(root, with_android(apk("unsigned.apk", signers={})), "has no APK Signature Scheme v2 signature", no_signed)
+    expect_blocked(root, with_android(apk("v1-only.apk", v1_only=True)), "has no APK Signature Scheme v2 signature")
     expect_blocked(root, with_android(apk("other-block.apk", block=apk_signing_block([(0x42726577, b"\0" * 8)]))),
-                   "has no APK Signature Scheme v2 or v3 signature")
+                   "has no APK Signature Scheme v2 signature")
     expect_blocked(root, with_android(record(signing={"status": "unsigned"})), f"{label} signing status is not 'signed'", no_signed)
     for signing in ({"identity": "debug"}, {"identity": "distribution"}, {"verification": "fail"}, {"verifier": ""}):
         expect_blocked(root, with_android(record(signing=signing)), f"{label} signature was not verified as a release signature")
@@ -1137,7 +1182,9 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
                    absent=("signer certificate is not the pinned",))
     expect_blocked(root, with_android(apk("mixed.apk", signers={APK_V2: [RELEASE_CERT], APK_V3: [OTHER_CERT]})),
                    "signer certificate is not the pinned release certificate")
-    expect_blocked(root, with_android(apk("other-signer.apk", signers={APK_V3: [OTHER_CERT]})),
+    expect_blocked(root, with_android(apk("v2-off-pin.apk", signers={APK_V2: [OTHER_CERT], APK_V3: [RELEASE_CERT]})),
+                   "signer certificate is not the pinned release certificate")
+    expect_blocked(root, with_android(apk("other-signer.apk", signers={APK_V2: [OTHER_CERT]})),
                    "signed android artifact signer certificate is not the pinned release certificate",
                    absent=(f"{label} signing certificate is not the pinned",))
     expect_blocked(root, with_android(apk("two-signers.apk", signers={APK_V2: [RELEASE_CERT, OTHER_CERT]})),
@@ -1242,6 +1289,29 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
     expect_blocked(root, with_android(apk("debuggable-by-id.apk", manifest=axml(debuggable=True, debuggable_name="dbg"))),
                    "signed android artifact is debuggable")
     expect_valid(root, with_android(apk("false-by-id.apk", manifest=axml(debuggable=False, debuggable_name="dbg"))))
+
+    # The package as Android reads it (review finding): the "package"
+    # attribute with no namespace, as its raw string. Each case below read
+    # as Veritra to the old checker while Android read org.evil.app.
+    evil, other_ns = "org.evil.app", "http://example.invalid/ns"
+    unreadable, not_app = "signed android artifact is not a readable APK", f"signed android artifact is not the {APP_ID} app"
+    for name, attrs, reason in (
+        ("package-raw-typed.apk", ((None, evil, APP_ID),), unreadable),
+        ("package-typed-only.apk", ((None, None, APP_ID),), unreadable),
+        ("package-twice.apk", ((None, evil, evil), (None, APP_ID, APP_ID)), unreadable),
+        ("package-namespaced.apk", ((None, evil, evil), (other_ns, APP_ID, APP_ID)), not_app),
+        ("package-only-namespaced.apk", ((other_ns, APP_ID, APP_ID),), not_app),
+    ):
+        expect_blocked(root, with_android(apk(name, manifest=axml(package_attrs=attrs))), reason, no_signed)
+    # A namespaced "package" next to the real one is not the package.
+    expect_valid(root, with_android(apk("package-plus-namespaced.apk",
+                                        manifest=axml(package_attrs=((None, APP_ID, APP_ID), (other_ns, evil, evil))))))
+    # Two attributes of one name, or one resource ID, in an element.
+    for name, manifest in (
+        ("debuggable-twice.apk", axml(debuggable=False, repeat_debuggable=True)),
+        ("debuggable-two-names.apk", axml(debuggable=False, extra_debuggable="debuggable2")),
+    ):
+        expect_blocked(root, with_android(apk(name, manifest=manifest)), "signed android artifact is not a readable APK", no_signed)
 
     # Record binding: file, digest, commit, build, type.
     for name in ("Veritra-android.aab", "../Veritra-android.apk", "Veritra-android.zip", ""):
