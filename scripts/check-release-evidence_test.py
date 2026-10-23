@@ -220,13 +220,16 @@ def axml(
     late_map: int | None = None,
     nested_manifest: str | None = None,
     wrapper: str | None = None,
+    pool_after_node: bool = False,
+    map_after_node: bool = False,
 ) -> bytes:
     """A compiled AndroidManifest.xml: <manifest package><application debuggable?>.
 
     The keyword options add parser tricks: a second string pool or resource
     map before the first node; a pool (naming ``late_pool_package`` where the
     package was) or a map (giving the debuggable attribute ``late_map``)
-    after it; a second <manifest> inside the root; a root that wraps it.
+    after it; the only pool or map moved after it; a second <manifest>
+    inside the root; a root that wraps it.
     """
     strings = [debuggable_name, "package", "manifest", "application", "android", ANDROID_NS, package]
     strings += [value for value in (nested_manifest, wrapper) if value and value not in strings]
@@ -249,8 +252,10 @@ def axml(
         value_type, value = debuggable if isinstance(debuggable, tuple) else (0x12, none if debuggable else 0)
         application_attrs.append(struct.pack("<IIIHBBI", index[ANDROID_NS], index[debuggable_name], none, 8, 0, value_type, value))
     namespace = struct.pack("<HHIIIII", 0x0100, 16, 24, 1, none, index["android"], index[ANDROID_NS])
-    head = string_pool(strings) * (2 if second_pool else 1) + resource_map(ATTR_DEBUGGABLE) * (2 if second_map else 1)
-    late = b""
+    pools = string_pool(strings) * (2 if second_pool else 1)
+    maps = resource_map(ATTR_DEBUGGABLE) * (2 if second_map else 1)
+    head = (b"" if pool_after_node else pools) + (b"" if map_after_node else maps)
+    late = (pools if pool_after_node else b"") + (maps if map_after_node else b"")
     if late_pool_package is not None:
         late += string_pool([late_pool_package if value == package else value for value in strings])
     if late_map is not None:
@@ -1226,6 +1231,8 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
         ("second-pool.apk", axml(second_pool=True)),
         ("late-map.apk", axml(debuggable=True, debuggable_name="dbg", late_map=0x7F010000)),
         ("second-map.apk", axml(second_map=True)),
+        ("pool-after-node.apk", axml(pool_after_node=True)),
+        ("map-after-node.apk", axml(map_after_node=True)),
         ("nested-manifest.apk", axml(package="org.example.other", nested_manifest=APP_ID)),
         ("wrapped-manifest.apk", axml(wrapper="root")),
     ):

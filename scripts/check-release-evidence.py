@@ -567,7 +567,8 @@ def apk_zip_layout_error(data: bytes) -> str | None:
     if data.count(ZIP_EOCD_MAGIC, max(0, eocd - 0xFFFF)) != 1:
         return "has more than one end of central directory record"
     disk, directory_disk, disk_entries, entries = struct.unpack_from("<HHHH", data, eocd + 4)
-    if disk or directory_disk or disk_entries != entries or (eocd >= 20 and data[eocd - 20 : eocd - 16] == ZIP64_LOCATOR_MAGIC):
+    zip64 = eocd >= 20 and data[eocd - 20 : eocd - 16] == ZIP64_LOCATOR_MAGIC
+    if disk or directory_disk or disk_entries != entries or zip64:
         return "is a multi-disk or ZIP64 archive"
     return None
 
