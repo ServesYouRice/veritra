@@ -105,6 +105,61 @@ identifiers or signing material.
 | LAN TLS with a private CA (T48B) | Pending hardware | Pending hardware |
 | TalkBack/VoiceOver/large text/reduced motion | Pending hardware | Pending hardware |
 
+### Signed artifact evidence
+
+The release needs exactly one `signed-release` record per platform
+(`veritra-mobile-artifact/1`, decision D37), built from the candidate by a
+workflow other than CI, staged with its file for `release.yml`, and attested
+there with `gh attestation verify`. The debug builds hosted CI makes are
+recorded and checked, but never count: iOS `simulator-debug` (job
+`mobile-ios`) and Android `emulator-debug` (the demo APK, job `mobile`).
+
+| Platform | Signed file | Structural checks in `check-release-evidence.py` |
+|---|---|---|
+| iOS | `.ipa` | One `Payload/*.app`, iphoneos plist, arm64 iOS Mach-O with a code signature, distribution profile (`get-task-allow=false`) |
+| Android | `.apk` (not `.aab`) | `org.veritra.private_messenger`, not debuggable, arm64 crypto library, an APK Signature Scheme v2/v3 block with exactly one signer whose certificate SHA-256 equals the record's `signing.certificate_sha256` and is not the Android debug certificate |
+
+Both bind the platform, type, candidate commit, the file's sha256 and the
+provenance (workflow, job, run, source commit). A signed file with the same
+digest as a debug build blocks. The checks are structural; the signed build
+runs `codesign --verify` or `apksigner verify`, and the attestation proves
+which workflow and commit made the file. Signing-key rotation (several
+certificates) is not accepted yet.
+
+## Recording an approval
+
+An approval file cannot sit in the commit it approves: it would have to
+contain that commit's own SHA. So the frozen candidate is merged to `main`
+first, and each approval lands later, in its own pull request, at
+`release/approvals/<candidate sha>/production-crypto.json` or
+`independent-review.json`:
+
+```json
+{
+  "schema": "veritra-release-approval/1",
+  "approval": "independent_review",
+  "status": "approved",
+  "reviewed_commit": "<candidate sha>",
+  "reviewed_tree": "<output of: git rev-parse CANDIDATE^{tree}>",
+  "reviewer": "<name>",
+  "reviewer_is_author": false
+}
+```
+
+`production_crypto` also has `"behavior_test": "pass"`. No other keys are
+allowed. The release tag points at the candidate. `release.yml` reads the
+approvals from the tip of the default branch, never from the tag or a pull
+request, and `scripts/check-release-evidence.py` blocks unless:
+
+- that tip descends from the candidate;
+- each approval names the candidate and its tree;
+- the change that put each approval on `main` (a merged pull request counts
+  as one change) came after the candidate and touched nothing outside
+  `release/approvals/<candidate sha>/`.
+
+The published release evidence records the approvals commit and the sha256
+of each approval file.
+
 ## Findings log
 
 Record each independent finding with its ID, severity, affected revision and
