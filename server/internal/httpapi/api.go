@@ -154,7 +154,7 @@ func (a *API) withAuth(next authedHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tokenHash, ok := bearerTokenHash(r)
 		if !ok {
-			writeError(w, http.StatusUnauthorized, "unauthorized")
+			refuseUnauthenticated(w, r)
 			return
 		}
 		// The read validates expiry, idle expiry, account status and device
@@ -162,7 +162,7 @@ func (a *API) withAuth(next authedHandler) http.HandlerFunc {
 		// stored timestamps are fresh so most requests never take the writer.
 		principal, activity, err := a.Store.SessionPrincipal(r.Context(), tokenHash)
 		if err != nil {
-			writeError(w, http.StatusUnauthorized, "unauthorized")
+			refuseUnauthenticated(w, r)
 			return
 		}
 		if !admitAccount(w, r, principal.AccountID) {
@@ -207,12 +207,12 @@ func recentlyAuthenticated(principal domain.Principal) bool {
 func (a *API) authenticate(w http.ResponseWriter, r *http.Request) (domain.Principal, bool) {
 	tokenHash, ok := bearerTokenHash(r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
+		refuseUnauthenticated(w, r)
 		return domain.Principal{}, false
 	}
 	principal, err := a.Store.PrincipalByTokenHash(r.Context(), tokenHash)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
+		refuseUnauthenticated(w, r)
 		return domain.Principal{}, false
 	}
 	if !admitAccount(w, r, principal.AccountID) {

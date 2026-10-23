@@ -88,29 +88,50 @@ without a valid session; see below for signed-in ones), 10 credential
 requests/minute (including login and reauthentication), and 5 enrollment
 requests/minute. IPv6 sources are grouped by /64.
 
-People behind one router (a household, an office) share one source
-address. A request with a session token is first charged to that address;
-once the token resolves to a session, the charge moves to that account's
-own budget at the address, so they do not use up each other's requests. A
-token that does not resolve stays charged to the address, so guessed
-tokens, anonymous requests and credential attempts from one address
-together stay within the 240, as before. Credential and enrollment routes
-(setup, login, reauthentication, registration, recovery, device-link
-claims) always use the address budgets, with or without a token.
+People behind one router (a household, an office, a carrier NAT) share
+one source address. A request with a session token is admitted on that
+address's signed-in budget only. Once the token has been looked up, a valid
+session is charged to that account's own budget at the address, so people
+there do not use up each other's requests. A token that does not resolve
+(guessed, expired, revoked) is charged to the address's 240 instead, which
+it shares with anonymous requests and credential attempts, as before; past
+the 240 such a token is answered 429 rather than 401. A token on a route
+that never looks it up (health, setup status, a path with no route) is
+charged to the 240 after it is served. Credential and enrollment routes
+(setup, login, reauthentication, registration, recovery, device-link claim
+and claim status, and the setup, registration and device-link enrollment
+reservations) always use the address budgets, with or without a token.
 
 | `PRIVATE_MESSENGER_RATE_LIMIT_...` | Default | Range | Counts per minute |
 |---|---|---|---|
 | `ADDRESS_PER_MINUTE` | 240 | 60-100,000 | requests from one address without a session that resolves, including credential and enrollment routes |
 | `ACCOUNT_PER_MINUTE` | 240 | 60-100,000 | requests with a valid session, per account at one address (an account on several networks gets this at each, as before) |
-| `SIGNED_IN_ADDRESS_PER_MINUTE` | 1,200 | 60-1,000,000, at least `ACCOUNT_PER_MINUTE` | all requests carrying a session token from one address, every account together |
+| `SIGNED_IN_ADDRESS_PER_MINUTE` | 1,200 | 60-1,000,000, at least `ACCOUNT_PER_MINUTE` | all requests carrying a session token from one address, valid or not, every account together |
 
-The credential (10) and enrollment (5) budgets are fixed. The trade-off:
-one address with valid sessions of five or more accounts can now send up
-to 1,200 signed-in requests a minute instead of 240 in all, while a single
-account still gets 240 at an address and nothing without a valid session
-gets more than before. Set `SIGNED_IN_ADDRESS_PER_MINUTE` equal to
-`ACCOUNT_PER_MINUTE` to give a whole address no more than one account's
-budget; raise it for a large office. A refusal is 429 with `Retry-After`;
+The credential (10) and enrollment (5) budgets are fixed. The trade-offs:
+
+- One address with valid sessions of five or more accounts can send up to
+  1,200 signed-in requests a minute instead of 240 in all; a single account
+  still gets 240 at an address.
+- Anonymous requests and stale tokens cannot refuse the signed-in people
+  at an address. A device stuck retrying with an expired session uses up
+  the address's 240 (so signed-out neighbours there wait, as with any
+  anonymous flood), but neighbours with a valid session keep their own
+  budgets. Only the shared signed-in ceiling is common to all of them, and
+  tokens that do not resolve count against it too, so a retry loop has to
+  send 1,200 requests a minute to refuse its neighbours.
+- In return, the number of token lookups from one address is bounded by
+  `SIGNED_IN_ADDRESS_PER_MINUTE` (1,200 by default) rather than by the 240:
+  past the 240 a bad token is still refused, but after its lookup (one
+  indexed read of a token hash). Session tokens are 256-bit random values,
+  so this rate does not make guessing feasible; it is a load bound. Requests
+  carrying a junk token on routes that never look it up are bounded the
+  same way. Raising `SIGNED_IN_ADDRESS_PER_MINUTE` for a large office
+  raises both.
+
+Set `SIGNED_IN_ADDRESS_PER_MINUTE` equal to `ACCOUNT_PER_MINUTE` to give a
+whole address no more than one account's budget; raise it for a large
+office. A refusal is 429 with `Retry-After`;
 `veritra_rate_limit_rejections_total` counts it by scope (`general`,
 `auth`, `enrollment`, `account`, `signed_in`). Realtime sockets have their
 own fixed limits (20 per address, 10 per account). The server logs the

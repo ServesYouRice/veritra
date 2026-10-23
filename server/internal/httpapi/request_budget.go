@@ -8,15 +8,19 @@ import (
 
 // RequestBudget is the request-rate charge that the outer rate limiter puts
 // on a request carrying a session token. The limiter cannot tell a valid
-// token from a guess, so it first charges the client address's budget for
-// requests without a session. Once the token resolves to a session,
-// Authenticated moves the charge to that account's budget at the address,
-// so people sharing one address (a household or an office behind one
-// router) do not use up each other's requests. It reports false, with a
-// Retry-After in seconds, when the account's budget is spent. A token that
-// never resolves stays charged to the address.
+// token from a guess, so it admits the request on its client address's
+// budget for requests with a token (every account behind the address
+// together) and settles the charge once the token has been looked up:
+// Authenticated charges that account's budget at the address, so people
+// sharing one address (a household or an office behind one router) do not
+// use up each other's requests, and Unauthenticated charges the address's
+// budget for requests without a session. Each reports false, with a
+// Retry-After in seconds, when that budget is spent. Only the first call
+// counts; a request that makes neither is charged as one without a
+// session when it ends.
 type RequestBudget interface {
 	Authenticated(accountID string) (ok bool, retryAfterSeconds int)
+	Unauthenticated() (ok bool, retryAfterSeconds int)
 }
 
 type requestBudgetKey struct{}
@@ -44,7 +48,24 @@ func admitAccount(w http.ResponseWriter, r *http.Request, accountID string) bool
 	if allowed {
 		return true
 	}
+	writeRateLimited(w, retryAfter)
+	return false
+}
+
+// refuseUnauthenticated answers a request whose bearer token is missing or
+// did not resolve to a session: 401, or 429 once its address has spent its
+// budget for requests without a session.
+func refuseUnauthenticated(w http.ResponseWriter, r *http.Request) {
+	if budget, ok := r.Context().Value(requestBudgetKey{}).(RequestBudget); ok {
+		if allowed, retryAfter := budget.Unauthenticated(); !allowed {
+			writeRateLimited(w, retryAfter)
+			return
+		}
+	}
+	writeError(w, http.StatusUnauthorized, "unauthorized")
+}
+
+func writeRateLimited(w http.ResponseWriter, retryAfter int) {
 	w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 	http.Error(w, "rate limited", http.StatusTooManyRequests)
-	return false
 }

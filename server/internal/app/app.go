@@ -1078,11 +1078,15 @@ func requestRoute(pattern string) string {
 }
 
 // Request budgets per minute (docs/operations.md, "Credential abuse
-// controls"). Every request is charged to its client address. A request
-// with a session token is charged there only until the token resolves:
-// then it moves to its account's budget at that address, so people behind
-// one router do not use up each other's requests. Credential and enrollment
-// routes always stay on the address budgets, whatever they carry.
+// controls"). A request without a session token is charged to its client
+// address's general budget. A request with one is admitted on the
+// address's signed-in budget, never the general one, and settled once its
+// token has been looked up: a valid session is charged to its account's
+// budget at that address, a token that does not resolve to the general
+// budget. So anonymous requests and stale tokens at an address cannot
+// refuse its signed-in people, while token lookups stay bounded per address
+// by the signed-in budget. Credential and enrollment routes always stay on
+// the address budgets, whatever they carry.
 type rateLimits struct {
 	// general: requests per address without a session that resolves.
 	general int
@@ -1212,21 +1216,24 @@ func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
 		class := httpapi.ClassifyRoute(r.URL.Path)
 		auth := class == httpapi.CredentialRoute
 		enrollment := class == httpapi.EnrollmentRoute
-		// A session token on any other route may move the request to its
-		// account's budget once it resolves (accountCharge).
+		// A session token on any other route is admitted on the address's
+		// signed-in budget alone, so requests without a session there
+		// cannot refuse it; accountCharge settles it once the token has
+		// been looked up.
 		signedIn := !auth && !enrollment && httpapi.HasBearerToken(r)
 
 		rl.mu.Lock()
 		b := rl.bucketLocked(rl.buckets, remoteHash(rl.salt[:], host), now)
-		b.general++
+		if signedIn {
+			b.signedIn++
+		} else {
+			b.general++
+		}
 		if auth {
 			b.auth++
 		}
 		if enrollment {
 			b.enrollment++
-		}
-		if signedIn {
-			b.signedIn++
 		}
 		scope := -1
 		switch {
@@ -1236,7 +1243,7 @@ func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
 			scope = scopeEnrollment
 		case signedIn && b.signedIn > rl.limits.signedIn:
 			scope = scopeSignedIn
-		case b.general > rl.limits.general:
+		case !signedIn && b.general > rl.limits.general:
 			scope = scopeGeneral
 		}
 		retryAfter := boundedRetryAfter(b.reset.Sub(now))
@@ -1252,54 +1259,84 @@ func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		request := r.WithContext(httpapi.WithRequestBudget(r.Context(), &accountCharge{limiter: rl, host: host, address: b}))
+		charge := &accountCharge{limiter: rl, host: host}
+		request := r.WithContext(httpapi.WithRequestBudget(r.Context(), charge))
 		// Copy the matched pattern back for the request logger, as
-		// routeTimeouts does, also when the handler aborts.
-		defer func() { r.Pattern = request.Pattern }()
+		// routeTimeouts does, and settle a token the route never looked
+		// up, also when the handler aborts.
+		defer func() {
+			r.Pattern = request.Pattern
+			charge.settleUnused()
+		}()
 		next.ServeHTTP(w, request)
 	})
 }
 
 // accountCharge is the httpapi.RequestBudget of one request with a session
-// token. The middleware charged it to the address's general budget, which
-// is where it stays when the token does not resolve: requests without a
-// valid session from one address stay within that budget, as before
-// per-account budgets.
+// token. The middleware admitted it on the address's signed-in budget;
+// the first of Authenticated, Unauthenticated or settleUnused decides
+// which other budget it is charged to.
 type accountCharge struct {
 	limiter *rateLimiter
 	host    string
-	address *bucket // the address's bucket for the minute the request came in
 
 	done       bool
 	ok         bool
 	retryAfter int
 }
 
-// Authenticated moves the request from the address's general budget to
-// the budget of accountID at the same address. Only the first call counts.
+// Authenticated charges the request to the budget of accountID at the
+// request's address.
 func (c *accountCharge) Authenticated(accountID string) (bool, int) {
 	rl := c.limiter
-	now := time.Now()
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
-	if c.done {
-		return c.ok, c.retryAfter
-	}
-	c.done = true
-	// The refund goes to the bucket of the minute that was charged; once
-	// that minute is over its bucket no longer counts, so a late refund
-	// never lowers a newer minute.
-	if c.address.general > 0 {
-		c.address.general--
-	}
-	b := rl.bucketLocked(rl.accountBuckets, rl.accountKey(accountID, c.host), now)
-	b.general++
-	c.ok = b.general <= rl.limits.account
-	c.retryAfter = boundedRetryAfter(b.reset.Sub(now))
-	if !c.ok {
-		rl.rejections[scopeAccount].Add(1)
+	if !c.done {
+		c.settleLocked(rl.accountBuckets, rl.accountKey(accountID, c.host), rl.limits.account, scopeAccount)
 	}
 	return c.ok, c.retryAfter
+}
+
+// Unauthenticated charges a request whose token did not resolve to the
+// address's general budget, as a request without a session: guessed and
+// stale tokens from one address share that budget with anonymous
+// requests, and once it is spent they are refused (after their lookup).
+func (c *accountCharge) Unauthenticated() (bool, int) {
+	rl := c.limiter
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	if !c.done {
+		c.settleLocked(rl.buckets, remoteHash(rl.salt[:], c.host), rl.limits.general, scopeGeneral)
+	}
+	return c.ok, c.retryAfter
+}
+
+// settleUnused charges a request whose route never looked its token up (a
+// public route, or no route) to the general budget once it has been
+// served, as one without a session.
+func (c *accountCharge) settleUnused() {
+	rl := c.limiter
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	if !c.done {
+		c.settleLocked(rl.buckets, remoteHash(rl.salt[:], c.host), rl.limits.general, -1)
+	}
+}
+
+// settleLocked charges key's general count in table for the current minute
+// against limit, counting a refusal under scope unless it is -1. rl.mu
+// must be held.
+func (c *accountCharge) settleLocked(table map[string]*bucket, key string, limit, scope int) {
+	rl := c.limiter
+	now := time.Now()
+	c.done = true
+	b := rl.bucketLocked(table, key, now)
+	b.general++
+	c.ok = b.general <= limit
+	c.retryAfter = boundedRetryAfter(b.reset.Sub(now))
+	if !c.ok && scope >= 0 {
+		rl.rejections[scope].Add(1)
+	}
 }
 
 // accountKey keys an account's budget at one client address. Like address
