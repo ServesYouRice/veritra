@@ -1,0 +1,21 @@
+# Prometheus Operator scrape of the private metrics port. The job label is
+# the Service name, veritra-metrics, which the alert rules expect. Set the
+# label your Prometheus serviceMonitorSelector matches.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: veritra
+  namespace: veritra
+  labels:
+    app.kubernetes.io/name: veritra
+    app.kubernetes.io/part-of: veritra
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: veritra
+      app.kubernetes.io/component: metrics
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 60s

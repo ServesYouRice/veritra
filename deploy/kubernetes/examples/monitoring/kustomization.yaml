@@ -1,0 +1,49 @@
+# Optional monitoring for Veritra, as a kustomize Component. Add it to the
+# overlay with `components: [../monitoring]` (examples/overlay does). It:
+#
+# - turns on the server's private metrics listener on the pod's own address,
+#   port 9090 (production refuses a public or wildcard address, so the pod IP
+#   comes from the downward API);
+# - adds a headless veritra-metrics Service and a NetworkPolicy that lets
+#   only the `monitoring` namespace reach that port. The public Service and
+#   Traefik never see it.
+#
+# The metrics hold aggregate counts and ages only: no user, account,
+# conversation, device, token or endpoint labels.
+#
+# Not included because they need the Prometheus Operator CRDs; add them to
+# the overlay's resources if the cluster has them:
+#   servicemonitor.yaml, prometheus-rules.yaml
+# Without the operator (Grafana Cloud with Alloy, plain Prometheus) use
+# scrape-config.yml and veritra-alerts.rules.yml instead.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - metrics.yaml
+patches:
+  - target:
+      kind: Deployment
+      name: veritra
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/ports/-
+        value:
+          name: metrics
+          containerPort: 9090
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: PRIVATE_MESSENGER_ENABLE_METRICS
+          value: "1"
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: PRIVATE_MESSENGER_MANAGEMENT_ADDR
+          value: $(POD_IP):9090

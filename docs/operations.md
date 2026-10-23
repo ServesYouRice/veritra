@@ -250,6 +250,63 @@ conversations. For a real restore, use `examples/restore-job.yaml`: suspend
 Flux, scale the server to zero, restore a named backup into the volume, then
 scale back up.
 
+## Monitoring and alerts
+
+Metrics are off by default. `PRIVATE_MESSENGER_ENABLE_METRICS=1` serves
+`/metrics` on `PRIVATE_MESSENGER_MANAGEMENT_ADDR` (default `127.0.0.1:9090`;
+production accepts only a loopback or private IP). They hold aggregate counts
+and ages only, never users, accounts, conversations, devices, tokens or
+endpoints.
+
+**Kubernetes.** `deploy/kubernetes/examples/monitoring` is a kustomize
+component (the example overlay includes it): it binds the listener to the
+pod IP, adds a headless `veritra-metrics` Service and lets only the
+`monitoring` namespace reach port 9090. Scrape it with `servicemonitor.yaml`
+(Prometheus Operator) or `scrape-config.yml` (Grafana Alloy, plain
+Prometheus); keep `job="veritra-metrics"`. Load the rules as
+`prometheus-rules.yaml` or, for Grafana Cloud, `mimirtool rules load
+veritra-alerts.rules.yml`. They also need kube-state-metrics, cert-manager's
+metrics and node-exporter.
+
+| Alert | Means | First thing to do |
+|---|---|---|
+| `VeritraBackupStale` (critical) | No verified backup for 26 h | `kubectl -n veritra get jobs`; read the newest `veritra-backup` Job's `scheduled-backup` log |
+| `VeritraBackupNeverSucceeded` (critical) | No verified backup since install | Run the backup Job by hand: `kubectl -n veritra create job --from=cronjob/veritra-backup backup-now` |
+| `VeritraBackupFailing` (warning) | The last backup run(s) failed | `last_failure_step` in `<data dir>/backup-status.json` names the step (backup, verify, ...); check disk space first |
+| `VeritraBackupJobFailed` (warning) | A backup Job failed, including the copy to R2 | Read the `copy-to-r2` log; check the R2 token and bucket lock |
+| `VeritraRestoreDrillFailed` (critical) | The monthly R2 restore drill failed | Read both container logs; rerun the drill. Treat off-host backups as unproven until it passes |
+| `VeritraServerDown` (critical) | Metrics not scraped for 5 min | `kubectl -n veritra get pods`; check the pod, then the NetworkPolicy and collector |
+| `VeritraServerNotReady` (critical) | No ready server pod for 5 min | `kubectl -n veritra describe pod`; `/readyz` fails when storage is unhealthy |
+| `VeritraCertificateExpiringSoon` (warning) | Certificate expires in under 14 days | `kubectl -n veritra describe certificate veritra`; check the Cloudflare DNS-01 token |
+| `VeritraVolumeFilling`, `VeritraNodeDiskFilling` (warning) | Data volume or node disk over 80% | Grow the volume or disk; lowering `PRIVATE_MESSENGER_BACKUP_KEEP` frees the most |
+
+A failed Job keeps its alert firing until the Job is deleted
+(`kubectl -n veritra delete job <name>`); do that once the cause is fixed. A
+drill started by hand counts only if its name starts with
+`veritra-restore-drill-`. k3s `local-path` volumes report no kubelet volume
+stats, so there `VeritraNodeDiskFilling` is the disk alert.
+
+**External uptime check.** Monitor `https://<host>/healthz` from outside
+(UptimeRobot free tier, HTTP(S) monitor, 5-minute interval, alert on any
+non-200). It covers DNS, Traefik and TLS, which in-cluster checks cannot.
+
+**Compose and systemd.** Without Prometheus, a cron job is enough; cron
+mails any output. Under systemd, set `PRIVATE_MESSENGER_ENABLE_METRICS=1` in
+the env file:
+
+```sh
+#!/bin/sh
+# */10 * * * * /usr/local/bin/veritra-check
+curl -fsS -o /dev/null https://chat.example.org/healthz || echo "veritra: healthz failed"
+age=$(curl -fsS http://127.0.0.1:9090/metrics | awk '$1=="veritra_backup_last_success_age_seconds"{print $2}')
+[ "${age:--1}" -ge 0 ] && [ "$age" -le 93600 ] || echo "veritra: backup age ${age:-unknown}"
+```
+
+Under Compose the metrics listener stays inside the container; check
+`docker compose ps` health (it runs `messenger-server healthcheck`) and the
+backup's exit status: `docker compose --profile backup run --rm backup ||
+echo "veritra: backup failed"`.
+
 ## Retention capacity
 
 The retention sweeper drains expired messages, calls, operational rows and
@@ -309,9 +366,9 @@ job daily with `deploy/systemd/private-messenger-backup.timer`, or with
 Recovery objectives: with the daily timer the recovery point is at most 24
 hours (plus the timer's 15-minute jitter); the recovery time is the restore
 below plus a server start, usually minutes for a single node. Alert when
-`veritra_backup_last_success_age_seconds` is above 90,000 (25 hours) or `-1`
+`veritra_backup_last_success_age_seconds` is above 93,600 (26 hours) or `-1`
 (no verified backup yet), or when `veritra_backup_consecutive_failures` is
-above zero. The metrics and `<data dir>/backup-status.json` hold times, a
+above zero (see [Monitoring and alerts](#monitoring-and-alerts)). The metrics and `<data dir>/backup-status.json` hold times, a
 failure step and a count only.
 
 `messenger-server verify-backup <path>` runs the same restore drill on any
