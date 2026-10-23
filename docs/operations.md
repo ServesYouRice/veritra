@@ -374,6 +374,11 @@ failure step and a count only.
 `messenger-server verify-backup <path>` runs the same restore drill on any
 backup, for example on the off-host copy from a clean host.
 
+Downloads verify each 64 KiB chunk of an encrypted blob before sending it,
+so damage in a part nobody requests is not noticed by downloads. The backup
+job hashes every blob in full and fails on a mismatch: a passing daily backup
+is also the full blob check. A damaged blob logs `blob_integrity_failed`.
+
 ## Restore safety
 
 `restore` copies and verifies the backup into a private staging directory

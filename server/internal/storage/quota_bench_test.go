@@ -94,11 +94,11 @@ func BenchmarkBlobDeletionReconcile(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		for j := 0; j < batch; j++ {
-			key, _, _, err := blobs.PutEncryptedBlob(ctx, bytes.NewReader(payload))
+			blob, err := blobs.PutEncryptedBlob(ctx, bytes.NewReader(payload))
 			if err != nil {
 				b.Fatal(err)
 			}
-			if err := store.QueueBlobDeletion(ctx, key); err != nil {
+			if err := store.QueueBlobDeletion(ctx, blob.StorageKey); err != nil {
 				b.Fatal(err)
 			}
 		}
