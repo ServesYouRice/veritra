@@ -175,14 +175,30 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
 /// and a few bounded integer fields; the raw response body is never stored,
 /// so it cannot reach the UI or a log through this object.
 class ApiException implements Exception {
-  ApiException(this.statusCode, [String body = ''])
+  ApiException(this.statusCode, [String body = '', this.retryAfter])
       : _decoded = _DecodedError.parse(body);
 
   /// Error bodies longer than this are not parsed (card T44A).
   static const int maxErrorBodyBytes = 4096;
 
+  /// Longest server-requested wait honoured; a larger value is clamped.
+  static const Duration maxRetryAfter = Duration(minutes: 5);
+
   final int statusCode;
   final _DecodedError _decoded;
+
+  /// The server's `Retry-After` in whole seconds (a rate limit names when
+  /// its window resets), bounded to [maxRetryAfter]; null when absent.
+  final Duration? retryAfter;
+
+  /// Parses a delta-seconds `Retry-After` header; the HTTP-date form, which
+  /// this server never sends, and malformed values give null.
+  static Duration? parseRetryAfter(String? header) {
+    final seconds = int.tryParse(header?.trim() ?? '');
+    if (seconds == null || seconds < 0) return null;
+    final wait = Duration(seconds: seconds);
+    return wait > maxRetryAfter ? maxRetryAfter : wait;
+  }
 
   /// The server's error code, when it sent a well-formed one.
   String? get serverCode => _decoded.code;

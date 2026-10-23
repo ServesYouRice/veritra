@@ -210,6 +210,40 @@ void main() {
     harness.dispose();
   });
 
+  test('a rate limit with Retry-After is retried when its window resets',
+      () async {
+    // Without the header the backoff would wait 2, 4 and 8 s for these
+    // three retries; the server's Retry-After (0 s here) brings each one
+    // forward to about a second.
+    final api = _ScriptedApi()
+      ..events = <SyncEvent>[_mlsEvent(5, 'mls_1')]
+      ..syncStatus = 429
+      ..syncRetryAfter = Duration.zero;
+    final harness = await _Harness.start(api);
+    await harness.waitFor(
+        () => harness.state.connectionStatus == ConnectionStatus.offline);
+    final watch = Stopwatch()..start();
+    final firstCalls = api.syncCalls;
+    await harness.waitFor(() => api.syncCalls >= firstCalls + 3);
+    expect(watch.elapsed, lessThan(const Duration(seconds: 10)));
+
+    api.syncStatus = null;
+    await harness
+        .waitFor(() async => await harness.store.loadSyncCursor() == 5);
+    expect(harness.state.connectionStatus, ConnectionStatus.online);
+    harness.dispose();
+  });
+
+  test('Retry-After parses delta seconds and is bounded', () {
+    expect(ApiException.parseRetryAfter('17'), const Duration(seconds: 17));
+    expect(ApiException.parseRetryAfter(' 3 '), const Duration(seconds: 3));
+    expect(ApiException.parseRetryAfter('86400'), ApiException.maxRetryAfter);
+    expect(ApiException.parseRetryAfter(null), isNull);
+    expect(ApiException.parseRetryAfter('-1'), isNull);
+    expect(
+        ApiException.parseRetryAfter('Wed, 21 Oct 2026 07:28:00 GMT'), isNull);
+  });
+
   test('a network failure while fetching MLS messages is not recorded',
       () async {
     final api = _ScriptedApi()
@@ -427,6 +461,7 @@ class _ScriptedApi extends ApiClient {
   bool networkDown = false;
   bool mlsNetworkDown = false;
   int? syncStatus;
+  Duration? syncRetryAfter;
   int syncCalls = 0;
   int mlsListCalls = 0;
   int mlsMessageCalls = 0;
@@ -468,7 +503,9 @@ class _ScriptedApi extends ApiClient {
     if (networkDown) throw const SocketException('offline');
     final status = syncStatus;
     if (status == 401) throw ApiException(401, '{"error":"unauthorized"}');
-    if (status == 429) throw ApiException(429, 'rate limited');
+    if (status == 429) {
+      throw ApiException(429, 'rate limited', syncRetryAfter);
+    }
     if (status == 409) {
       throw ApiException(409, '{"error":"device_recovery_required"}');
     }

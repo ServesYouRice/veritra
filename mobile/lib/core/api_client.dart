@@ -1219,7 +1219,12 @@ class ApiClient {
       truncate: true,
     );
     final text = utf8.decode(bytes, allowMalformed: true);
-    return ApiException(response.statusCode, text);
+    return ApiException(
+      response.statusCode,
+      text,
+      ApiException.parseRetryAfter(
+          response.headers.value(HttpHeaders.retryAfterHeader)),
+    );
   }
 
   static Future<Uint8List> _readBounded(

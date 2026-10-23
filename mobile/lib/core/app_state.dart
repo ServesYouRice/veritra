@@ -2598,19 +2598,25 @@ class AppState extends ChangeNotifier {
       syncError = describeError(err, l10n);
       _setConnectionStatus(ConnectionStatus.offline);
       notifyListeners();
-      _scheduleCatchUpRetry();
+      _scheduleCatchUpRetry(
+          retryAfter: err is ApiException ? err.retryAfter : null);
     }
   }
 
   /// A catch-up that failed for a reason that passes (no connection, a
   /// rate limit, a server error) is tried again with backoff, so the device
-  /// does not stay behind until the next socket event or wake.
-  void _scheduleCatchUpRetry() {
+  /// does not stay behind until the next socket event or wake. A rate limit
+  /// names when its window resets; waiting exactly that long, plus a second
+  /// for clock rounding, keeps a late backoff step (up to a minute) from
+  /// missing the reset by a few seconds and doubling the wait.
+  void _scheduleCatchUpRetry({Duration? retryAfter}) {
     if (_disposed) return;
     _catchUpRetryTimer?.cancel();
-    final seconds = min(60, 2 << min(_catchUpRetryAttempt, 5));
+    final delay = retryAfter != null
+        ? retryAfter + const Duration(seconds: 1)
+        : Duration(seconds: min(60, 2 << min(_catchUpRetryAttempt, 5)));
     _catchUpRetryAttempt++;
-    _catchUpRetryTimer = Timer(Duration(seconds: seconds), () {
+    _catchUpRetryTimer = Timer(delay, () {
       _catchUpRetryTimer = null;
       unawaited(_catchUpSyncEvents());
     });
