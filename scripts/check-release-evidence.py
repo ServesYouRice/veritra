@@ -10,10 +10,15 @@ recorded digest:
 
 - iOS: structurally a device-signed app: Payload/*.app, iphoneos Info.plist,
   arm64 iOS Mach-O with a code signature, and an embedded distribution
-  provisioning profile.
-- Android: an APK of the Veritra app, not debuggable, shipping the arm64 crypto
-  library, with an APK Signature Scheme v2/v3 block that has exactly one signer
-  whose certificate is the release certificate pinned in the policy
+  provisioning profile, for the team and bundle ID pinned in the policy
+  (``ios.team_id``, ``ios.bundle_id``). While either pin is null, no iOS
+  signed-release record counts.
+- Both: an unambiguous zip (no comment, one end record, no ZIP64, no
+  duplicate entry names).
+- Android: an APK of the Veritra app, not debuggable, minSdkVersion 24 or
+  later, shipping the arm64 crypto library, with an APK Signature Scheme v2
+  block (and any v3 blocks) that has exactly one signer whose certificate is
+  the release certificate pinned in the policy
   (``android.release_certificate_sha256``, which the record must also name)
   and is not the Android debug certificate. While the pin is null, no Android
   signed-release record counts.
@@ -121,24 +126,41 @@ ARTIFACT_RULES = {
 }
 CERTIFICATE_RE = re.compile(r"^[0-9a-f]{64}$")
 ANDROID_PIN_KEY = "release_certificate_sha256"  # policy["android"]; null until the owner pins it
+# Signing identity pins in the policy, each null until the owner sets it:
+# platform -> key -> (format, description).
+SIGNING_PINS = {
+    "android": {ANDROID_PIN_KEY: (CERTIFICATE_RE, "64 lowercase hex characters")},
+    "ios": {
+        "team_id": (re.compile(r"^[A-Z0-9]{10}$"), "a 10-character Apple team ID (A-Z, 0-9)"),
+        "bundle_id": (re.compile(r"^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$"), "a reverse-DNS bundle ID"),
+    },
+}
 ANDROID_APPLICATION_ID = "org.veritra.private_messenger"
 ANDROID_CRYPTO_LIBRARY = "lib/arm64-v8a/libprivate_messenger_crypto.so"
 ANDROID_DEBUG_CERTIFICATE_MARKER = b"Android Debug"  # CN of the SDK debug keystore
 APK_SIG_BLOCK_MAGIC = b"APK Sig Block 42"
 ZIP_EOCD_MAGIC, ZIP64_LOCATOR_MAGIC, ZIP_EOCD_SIZE = b"PK\x05\x06", b"PK\x06\x07", 22
-APK_SIGNATURE_SCHEMES = (0x7109871A, 0xF05368C0, 0x1B93AD61)  # v2, v3, v3.1
+APK_SIGNATURE_V2 = 0x7109871A
+APK_SIGNATURE_SCHEMES = (APK_SIGNATURE_V2, 0xF05368C0, 0x1B93AD61)  # v2, v3, v3.1
 MAX_APK_BYTES = 512 * 1024 * 1024
 AXML_FILE, AXML_STRING_POOL, AXML_RESOURCE_MAP, AXML_START_ELEMENT = 0x0003, 0x0001, 0x0180, 0x0102
 AXML_FIRST_NODE, AXML_LAST_NODE = 0x0100, 0x017F  # namespace, element, end and CDATA nodes
 AXML_UTF8_FLAG = 0x100
 AXML_TYPE_STRING, AXML_TYPE_BOOLEAN = 0x03, 0x12
+AXML_TYPE_INTEGERS = (0x10, 0x11)  # decimal, hex
+AXML_NO_INDEX = 0xFFFFFFFF
 ANDROID_ATTR_DEBUGGABLE = 0x0101000F
+ANDROID_ATTR_MIN_SDK = 0x0101020C
+# Android 7.0. Older releases verify only v1 (JAR) signatures, which this
+# check does not read; Flutter 3.44's default minSdk is 24.
+ANDROID_MIN_SDK = 24
 FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 RUN_ID_RE = re.compile(r"^[0-9]{1,20}$")  # ASCII only; str.isdigit accepts other scripts
 # No "." in the base name: release.yml passes the path to gh as a regular
 # expression, where "c..yml" would also match "ci.yml".
 WORKFLOW_RE = re.compile(r"^\.github/workflows/[A-Za-z0-9_-]+\.ya?ml$")
 MAX_IPA_MEMBER = 256 * 1024 * 1024
+MAX_IPA_BYTES = 1024 * 1024 * 1024
 MH_MAGIC_64 = 0xFEEDFACF
 FAT_MAGIC = 0xCAFEBABE
 FAT_MAGIC_64 = 0xCAFEBABF
@@ -376,23 +398,25 @@ def verify_approvals(
     return verified
 
 
-def android_release_certificate(policy: dict[str, Any], errors: list[str] | None = None) -> str | None:
-    """The pinned Android release certificate SHA-256; None while unpinned.
+def signing_pins(policy: dict[str, Any], errors: list[str] | None = None) -> dict[str, dict[str, str] | None]:
+    """Each platform's pinned signing identity; None while any of its pins is null.
 
-    The owner pins it in the reviewed policy (docs/security-review.md). A
-    malformed pin is reported to ``errors`` and treated as unpinned.
+    The owner pins them in the reviewed policy (docs/security-review.md). A
+    malformed block or pin is reported to ``errors`` and treated as unpinned.
     """
-    android = policy.get("android")
-    pin = android.get(ANDROID_PIN_KEY) if isinstance(android, dict) else None
-    if (
-        not isinstance(android, dict)
-        or set(android) != {ANDROID_PIN_KEY}
-        or not (pin is None or (isinstance(pin, str) and CERTIFICATE_RE.fullmatch(pin)))
-    ):
+    pins: dict[str, dict[str, str] | None] = {}
+    for platform, rules in SIGNING_PINS.items():
+        block = policy.get(platform)
+        shaped = isinstance(block, dict) and set(block) == set(rules)
+        bad = [
+            key
+            for key, (pattern, _) in rules.items()
+            if not shaped or not (block[key] is None or (isinstance(block[key], str) and pattern.fullmatch(block[key])))
+        ]
         if errors is not None:
-            errors.append(f"release policy android.{ANDROID_PIN_KEY} is not null or 64 lowercase hex characters")
-        return None
-    return pin
+            errors.extend(f"release policy {platform}.{key} is not null or {rules[key][1]}" for key in bad)
+        pins[platform] = None if bad or any(block[key] is None for key in rules) else dict(block)
+    return pins
 
 
 def preflight(
@@ -405,7 +429,7 @@ def preflight(
         errors.append("release policy required CI jobs do not match the protected set")
     if policy.get("mobile_artifacts") != REQUIRED_MOBILE_ARTIFACTS:
         errors.append("release policy mobile artifact rules do not match the protected set")
-    android_release_certificate(policy, errors)
+    signing_pins(policy, errors)
     if policy.get("approvals") != REQUIRED_APPROVALS:
         errors.append("release policy approvals do not match the protected set")
     # The protected approval rules apply whatever the policy file says.
@@ -477,7 +501,8 @@ def macho_errors(data: bytes) -> list[str]:
     return []
 
 
-def profile_errors(blob: bytes) -> list[str]:
+def profile_errors(blob: bytes, team_id: str | None, bundle_id: str | None) -> list[str]:
+    """A distribution profile for the pinned team and app (None: nothing passes)."""
     # The profile is CMS-wrapped; only its embedded plist is read, never echoed.
     start, end = blob.find(b"<?xml"), blob.find(b"</plist>")
     if start < 0 or end < start:
@@ -489,6 +514,13 @@ def profile_errors(blob: bytes) -> list[str]:
     entitlements = profile.get("Entitlements") if isinstance(profile, dict) else None
     if not isinstance(entitlements, dict) or entitlements.get("get-task-allow") is not False:
         return ["signed ios provisioning profile is not a distribution profile"]
+    if (
+        team_id is None
+        or profile.get("TeamIdentifier") != [team_id]
+        or entitlements.get("application-identifier") != f"{team_id}.{bundle_id}"
+        or entitlements.get("com.apple.developer.team-identifier", team_id) != team_id
+    ):
+        return ["signed ios provisioning profile is not for the pinned team and bundle ID"]
     return []
 
 
@@ -499,10 +531,24 @@ def read_member(archive: zipfile.ZipFile, name: str) -> bytes:
     return archive.read(info)
 
 
-def ipa_errors(path: Path) -> list[str]:
-    """Structural device-signing checks; cryptographic checks happen in G24."""
+def ipa_errors(path: Path, pins: dict[str, str] | None) -> list[str]:
+    """Structural device-signing checks; cryptographic checks happen in G24.
+
+    The app must be the pinned bundle ID under the pinned team; with no pins,
+    nothing passes. The zip must be as unambiguous as an APK's.
+    """
+    team_id, bundle_id = (pins["team_id"], pins["bundle_id"]) if pins else (None, None)
     try:
-        with zipfile.ZipFile(path) as archive:
+        if path.stat().st_size > MAX_IPA_BYTES:
+            return ["signed ios artifact is too large"]
+        data = path.read_bytes()
+        layout = zip_layout_error(data)
+        if layout:
+            return [f"signed ios artifact {layout}"]
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            problem = zip_entries_error(data, archive)
+            if problem:
+                return [f"signed ios artifact {problem}"]
             names = set(archive.namelist())
             apps = {
                 name.split("/")[1]
@@ -518,6 +564,8 @@ def ipa_errors(path: Path) -> list[str]:
             errors: list[str] = []
             if info.get("DTPlatformName") != "iphoneos" or info.get("CFBundleSupportedPlatforms") != ["iPhoneOS"]:
                 errors.append("signed ios artifact is not built for iphoneos devices")
+            if bundle_id is None or info.get("CFBundleIdentifier") != bundle_id:
+                errors.append("signed ios artifact is not the pinned bundle ID")
             executable = info.get("CFBundleExecutable")
             if not isinstance(executable, str) or not FILE_RE.fullmatch(executable):
                 return errors + ["signed ios Info.plist has no valid executable name"]
@@ -526,7 +574,8 @@ def ipa_errors(path: Path) -> list[str]:
             if app + "embedded.mobileprovision" not in names:
                 errors.append("signed ios app bundle has no embedded provisioning profile")
             else:
-                errors.extend(profile_errors(read_member(archive, app + "embedded.mobileprovision")))
+                profile = read_member(archive, app + "embedded.mobileprovision")
+                errors.extend(profile_errors(profile, team_id, bundle_id))
             if app + executable not in names:
                 return errors + ["signed ios app bundle is missing its executable"]
             errors.extend(macho_errors(read_member(archive, app + executable)))
@@ -551,15 +600,15 @@ def length_prefixed_items(buffer: bytes) -> list[bytes]:
     return items
 
 
-def apk_zip_layout_error(data: bytes) -> str | None:
-    """Why the APK's zip end record is not the single, unambiguous one.
+def zip_layout_error(data: bytes) -> str | None:
+    """Why a signed APK's or IPA's zip end record is not the single, unambiguous one.
 
-    An APK has no zip comment, so its end of central directory record is
+    Neither has a zip comment, so the end of central directory record is
     exactly the last 22 bytes. A comment could hide a second signing block,
     central directory and end record that a lenient reader (Python's zipfile,
-    a backwards scan) would pick instead of the one Android uses, so no other
-    end record signature may appear where a comment could reach. ZIP64 and
-    multi-disk archives are not APKs.
+    a backwards scan) would pick instead of the one the platform uses, so no
+    other end record signature may appear where a comment could reach. ZIP64
+    and multi-disk archives are refused too.
     """
     eocd = len(data) - ZIP_EOCD_SIZE
     if eocd < 0 or data[eocd : eocd + 4] != ZIP_EOCD_MAGIC or data[-2:] != b"\0\0":
@@ -573,10 +622,26 @@ def apk_zip_layout_error(data: bytes) -> str | None:
     return None
 
 
+def zip_entries_error(data: bytes, archive: zipfile.ZipFile) -> str | None:
+    """Why the entries are ambiguous; run after ``zip_layout_error`` passed.
+
+    Readers disagree on which of two same-named entries wins (zipfile takes
+    the last), and zipfile cuts a name at a NUL byte the platform keeps.
+    """
+    entries = archive.infolist()
+    if len({entry.filename for entry in entries}) != len(entries) or any(
+        entry.filename != entry.orig_filename for entry in entries
+    ):
+        return "has duplicate or ambiguous entry names"
+    if struct.unpack_from("<H", data, len(data) - ZIP_EOCD_SIZE + 10)[0] != len(entries):
+        return "central directory does not match its end record"
+    return None
+
+
 def apk_signing_block(data: bytes) -> dict[int, bytes]:
     """ID-value pairs of the APK Signing Block; empty when there is none.
 
-    The end record is the last 22 bytes (``apk_zip_layout_error`` passed).
+    The end record is the last 22 bytes (``zip_layout_error`` passed).
     """
     eocd = len(data) - ZIP_EOCD_SIZE
     if eocd < 0 or data[eocd : eocd + 4] != ZIP_EOCD_MAGIC:
@@ -653,17 +718,21 @@ def axml_strings(chunk: bytes) -> list[str]:
     return strings
 
 
-def manifest_facts(data: bytes) -> tuple[str | None, bool]:
-    """(package, debuggable) from a compiled AndroidManifest.xml.
+def manifest_facts(data: bytes) -> tuple[str | None, bool, int]:
+    """(package, debuggable, lowest minSdkVersion) from a compiled AndroidManifest.xml.
 
     Any ``debuggable`` attribute that is not a literal false counts as
-    debuggable, so a resource reference fails closed.
+    debuggable, so a resource reference fails closed. A missing or non-integer
+    ``minSdkVersion`` counts as 1, Android's default.
 
     Android reads the string pool and resource map only before the first XML
     node, so one of either anywhere else, or a second one, could show this
     check other names or attribute IDs than the platform uses: both are
     refused. So is a ``manifest`` element that is not the single root, since
-    the platform takes the package from the root.
+    the platform takes the package from the root, and an element with two
+    attributes of one name or resource ID, since readers pick different ones.
+    The package is what Android reads: the ``package`` attribute with no
+    namespace, as its raw string, which must also be the typed value.
     """
     kind, header_size, total = struct.unpack_from("<HHI", data, 0)
     if kind != AXML_FILE or total > len(data):
@@ -671,6 +740,7 @@ def manifest_facts(data: bytes) -> tuple[str | None, bool]:
     strings: list[str] | None = None
     resource_ids: list[int] | None = None
     package, debuggable = None, False
+    min_sdks: list[int] = []
     in_nodes, elements = False, 0
     offset = header_size
     while offset + 8 <= total:
@@ -699,18 +769,32 @@ def manifest_facts(data: bytes) -> tuple[str | None, bool]:
             if (element == "manifest") != (elements == 0):
                 raise ValueError("manifest is not the single root element")
             elements += 1
+            if element == "uses-sdk":
+                min_sdks.append(1)
+            seen: set[tuple[Any, ...]] = set()
             for index in range(attr_count):
                 at = chunk_header + attr_start + index * attr_size
-                _, attr_name, raw, _, _, value_type, value = struct.unpack_from("<IIIHBBI", chunk, at)
+                namespace, attr_name, raw, _, _, value_type, value = struct.unpack_from("<IIIHBBI", chunk, at)
                 attr = strings[attr_name] if attr_name < len(strings) else ""
                 attr_id = ids[attr_name] if attr_name < len(ids) else None
-                if element == "manifest" and attr == "package" and not attr_id:
-                    package = strings[value] if value_type == AXML_TYPE_STRING else strings[raw]
+                keys = {("name", None if namespace == AXML_NO_INDEX else strings[namespace], attr)}
+                if attr_id:
+                    keys.add(("id", attr_id))
+                if not seen.isdisjoint(keys):
+                    raise ValueError("duplicate attribute")
+                seen |= keys
+                if element == "manifest" and attr == "package" and namespace == AXML_NO_INDEX:
+                    # Android: the raw string (no duplicate, so the first).
+                    if raw == AXML_NO_INDEX or value_type != AXML_TYPE_STRING or strings[raw] != strings[value]:
+                        raise ValueError("package raw and typed values differ")
+                    package = strings[raw]
                 if element == "application" and (attr_id == ANDROID_ATTR_DEBUGGABLE or attr == "debuggable"):
                     if value_type != AXML_TYPE_BOOLEAN or value != 0:
                         debuggable = True
+                if element == "uses-sdk" and (attr_id == ANDROID_ATTR_MIN_SDK or attr == "minSdkVersion"):
+                    min_sdks[-1] = value if value_type in AXML_TYPE_INTEGERS else 1
         offset += size
-    return package, debuggable
+    return package, debuggable, min(min_sdks, default=1)
 
 
 def apk_errors(path: Path, pinned_certificate: str | None) -> list[str]:
@@ -722,42 +806,42 @@ def apk_errors(path: Path, pinned_certificate: str | None) -> list[str]:
         if path.stat().st_size > MAX_APK_BYTES:
             return ["signed android artifact is too large"]
         data = path.read_bytes()
-        layout = apk_zip_layout_error(data)
+        layout = zip_layout_error(data)
         if layout:
             return [f"signed android artifact {layout}"]
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            entries = archive.infolist()
-            # Readers disagree on which of two same-named entries wins, and
-            # zipfile cuts names at a NUL byte that Android keeps.
-            if len({entry.filename for entry in entries}) != len(entries) or any(
-                entry.filename != entry.orig_filename for entry in entries
-            ):
-                return ["signed android artifact has duplicate or ambiguous entry names"]
-            if struct.unpack_from("<H", data, len(data) - ZIP_EOCD_SIZE + 10)[0] != len(entries):
-                return ["signed android artifact central directory does not match its end record"]
-            names = {entry.filename for entry in entries}
+            problem = zip_entries_error(data, archive)
+            if problem:
+                return [f"signed android artifact {problem}"]
+            names = set(archive.namelist())
             if "AndroidManifest.xml" not in names or "classes.dex" not in names:
                 return ["signed android artifact is not an Android app package"]
-            package, debuggable = manifest_facts(read_member(archive, "AndroidManifest.xml"))
+            package, debuggable, min_sdk = manifest_facts(read_member(archive, "AndroidManifest.xml"))
             errors: list[str] = []
             if package != ANDROID_APPLICATION_ID:
                 errors.append(f"signed android artifact is not the {ANDROID_APPLICATION_ID} app")
             if debuggable:
                 errors.append("signed android artifact is debuggable")
+            if min_sdk < ANDROID_MIN_SDK:
+                errors.append(
+                    f"signed android artifact supports Android releases that verify only v1 signatures "
+                    f"(minSdkVersion {min_sdk} < {ANDROID_MIN_SDK})"
+                )
             if ANDROID_CRYPTO_LIBRARY not in names:
                 errors.append("signed android artifact does not ship the arm64-v8a crypto library")
     except Exception:  # BadZipFile, struct, index and decode errors all fail closed
         return ["signed android artifact is not a readable APK"]
     try:
         pairs = apk_signing_block(data)
-        schemes = [signer_certificates(pairs[scheme]) for scheme in APK_SIGNATURE_SCHEMES if scheme in pairs]
+        schemes = {scheme: signer_certificates(pairs[scheme]) for scheme in APK_SIGNATURE_SCHEMES if scheme in pairs}
     except Exception:
         return errors + ["signed android artifact has a malformed APK signing block"]
-    if not schemes:
-        return errors + ["signed android artifact has no APK Signature Scheme v2 or v3 signature"]
-    if any(len(leaves) != 1 for leaves in schemes):
+    # Android 7.0-8.1 never read v3: without v2 they verify v1 (any key).
+    if APK_SIGNATURE_V2 not in schemes:
+        return errors + ["signed android artifact has no APK Signature Scheme v2 signature"]
+    if any(len(leaves) != 1 for leaves in schemes.values()):
         return errors + ["signed android artifact must have exactly one signer"]
-    leaves = {leaves[0] for leaves in schemes}
+    leaves = {leaves[0] for leaves in schemes.values()}
     if any(ANDROID_DEBUG_CERTIFICATE_MARKER in leaf for leaf in leaves):
         errors.append("signed android artifact is signed with the Android debug certificate")
     fingerprints = {hashlib.sha256(leaf).hexdigest() for leaf in leaves}
@@ -772,7 +856,7 @@ def check_mobile_record(
     candidate: str,
     ci_run_id: Any,
     artifacts_dir: Path,
-    pinned_certificate: str | None,
+    pins: dict[str, dict[str, str] | None],
     errors: list[str],
 ) -> tuple[str, str, str] | None:
     """Validate one record; return (platform, type, digest) only if it is sound."""
@@ -837,6 +921,14 @@ def check_mobile_record(
         identity = rules["identity"]
         if signing.get("identity") != identity or signing.get("verification") != "pass" or not signing.get("verifier"):
             errors.append(f"{label} signature was not verified as a {identity} signature")
+        platform_pins = pins.get(platform)
+        pinned_certificate = platform_pins[ANDROID_PIN_KEY] if platform == "android" and platform_pins else None
+        if platform == "ios" and platform_pins is None:
+            # Without the pins, any team's app under any bundle ID would do.
+            errors.append(
+                f"{label} cannot count until the iOS team and bundle IDs are pinned "
+                "(pin first: ios.team_id and ios.bundle_id in release/release-policy.json)"
+            )
         if platform == "android":
             # The record's own fingerprint proves nothing: any non-debug key
             # would match itself. The certificate must be the pinned one.
@@ -866,7 +958,7 @@ def check_mobile_record(
             elif sha256_file(path) != digest:
                 errors.append(f"{label} file does not match its recorded digest")
             elif platform == "ios":
-                errors.extend(ipa_errors(path))
+                errors.extend(ipa_errors(path, platform_pins))
             else:
                 errors.extend(apk_errors(path, pinned_certificate))
     if len(errors) != start or digest is None:
@@ -878,7 +970,7 @@ def validate_mobile_artifacts(
     manifest: dict[str, Any],
     candidate: str,
     artifacts_dir: Path,
-    pinned_certificate: str | None,
+    pins: dict[str, dict[str, str] | None],
     errors: list[str],
 ) -> None:
     records = manifest.get("mobile_artifacts")
@@ -888,7 +980,7 @@ def validate_mobile_artifacts(
     sound = []
     for index, record in enumerate(records):
         result = check_mobile_record(
-            index, record, candidate, manifest.get("ci_run_id"), artifacts_dir, pinned_certificate, errors
+            index, record, candidate, manifest.get("ci_run_id"), artifacts_dir, pins, errors
         )
         if result is not None:
             sound.append(result)
@@ -968,7 +1060,7 @@ def validate_manifest(
     if artifacts_dir is None:
         errors.append("no mobile artifact directory to verify signed artifacts against")
     else:
-        validate_mobile_artifacts(manifest, candidate, artifacts_dir, android_release_certificate(policy), errors)
+        validate_mobile_artifacts(manifest, candidate, artifacts_dir, signing_pins(policy), errors)
     return errors
 
 

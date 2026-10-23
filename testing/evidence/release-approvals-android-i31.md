@@ -146,6 +146,49 @@ the lone-late pool and map fixtures now cover.
 | `./scripts/release-readiness.sh` (unset, local `origin/main`) | blocked as expected |
 | Reviewer's APK probe (duplicate manifest, comment-smuggled view) | both blocked |
 
+## Second review of the fixes
+
+A second independent review of the round above found nothing weaker and
+four gaps. Its proofs (`poc_pkg.py`, `poc_ipa.py`, `poc_v1.py`) all passed
+the checker before this round and are fixtures now.
+
+| # | Finding | Result |
+|---|---|---|
+| 1 | CODEOWNERS covered only `release/approvals/`, so a normal pull request could drop that line or change a pin first | Fixed. Also owned: CODEOWNERS itself, `.github/workflows/`, `release/`, every script the gate runs (from `release-readiness.sh`, `release-image.sh`, `release.yml`, the audit expiry check) with its tests, and `crypto/rust/audit-policy.json`. The suite fails if a gate script is not owned or a listed path is missing |
+| 2 | iOS had no pin and none of the zip hardening: an IPA for `com.someone.else` with a zip comment and two profiles (the first debuggable) passed | Fixed. IPAs get the APK zip rules. `ios.team_id` and `ios.bundle_id` (null today) in the policy; while either is null every iOS signed-release record is refused ("pin first"). Set, `CFBundleIdentifier`, the profile's `TeamIdentifier`, `application-identifier` and team entitlement must match |
+| 3 | The manifest `package` was the last match in any namespace, typed value first; Android takes the first no-namespace one, raw string | Fixed. Only the no-namespace attribute counts; raw and typed must name the same string; two attributes of one name or resource ID in an element are refused |
+| 4 | v3 only plus a v1 signature from another key passed; Android 7.0-8.1 never read v3 and fall back to v1 | Fixed. A v2 block whose signer is the pin is required, with the v3 checks. Also `minSdkVersion` must be 24+ (Flutter 3.44's default), since older releases verify only v1, which this check cannot read |
+| nit | Writer's git call without the grafts env | Fixed |
+
+New fixtures: the reviewer's four package layouts, a namespaced `package`
+next to the real one (passes), duplicate attributes by name and by ID; v3
+alone, v3 with a foreign v1, v2 off the pin, minSdk 23, missing, a string
+and a reference (28 and hex 24 pass); the reviewer's IPA and each of its
+tricks alone, other or missing bundle, other or extra team, other or
+wildcard App ID, other team entitlement, 3 unpinned and 10 malformed iOS
+policies, a pin to another team (a profile without the team entitlement
+passes); an end record claiming a comment past the end of the file; a
+manifest whose root is not `manifest`.
+
+Not validated on real artifacts: a Xcode-exported `.ipa` and a Gradle
+release APK must confirm at G24 that they carry no zip comment or ZIP64
+records and that the profile fields read as expected.
+
+Mutation check: the 72 earlier mutations (three anchors moved) plus 25 for
+this round, including the reviewer's own (`review3/mutate.py`). The first
+run killed 96 of 97; the survivor (dropping "the root must be `manifest`")
+is now covered by the root-name fixture, and a rerun of this round's 25
+killed all of them. Equivalent mutants left out: reading the package from
+the typed value (it must equal the raw one), and an unpinned team (an empty
+pin already fails). The 1 GiB IPA size cap has no fixture, like the APK's.
+
+| Check | Result |
+|---|---|
+| All six `scripts/*_test.py` suites, Python 3.13 and 3.12 | pass |
+| `sh -n scripts/release-readiness.sh` | pass |
+| `./scripts/release-readiness.sh` | blocked as expected |
+| Reviewer's proofs | all blocked |
+
 ## I31: MLS payloads from the outbox through the native library
 
 `mobile/test/native_outbox_test.dart`. Both tests passed 3/3 in repeated

@@ -29,6 +29,10 @@
   "android": {
     "release_certificate_sha256": null
   },
+  "ios": {
+    "team_id": null,
+    "bundle_id": null
+  },
   "approvals": {
     "production_crypto": {
       "path": "release/approvals/{commit}/production-crypto.json",
