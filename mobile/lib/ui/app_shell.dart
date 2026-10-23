@@ -82,6 +82,23 @@ class _AppShellState extends State<AppShell> {
   static String _settingsLabel(AppLocalizations l10n) => l10n.settingsTitle;
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Runs again whenever the app's locale changes.
+    _useAppLocale();
+  }
+
+  @override
+  void didUpdateWidget(AppShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.state != widget.state) _useAppLocale();
+  }
+
+  /// The errors, recovery and probe text AppState stores for the UI follow
+  /// the app's locale (T44C). Push payloads stay generic: they carry no text.
+  void _useAppLocale() => widget.state.l10n = context.l10n;
+
+  @override
   Widget build(BuildContext context) {
     // The shell depends only on where the session stands. Each page listens
     // to the state for what it shows itself (T49C-1), so a notification does

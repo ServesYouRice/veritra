@@ -35,7 +35,7 @@ This project is licensed AGPL-3.0-or-later. Dependency licenses must be compatib
 
 ## Mobile Localization Dependencies
 
-Added for T44C (localization scaffolding, English template only).
+Added for T44C (localization scaffolding). The Serbian translation added no further dependency.
 
 | Component | Use | License | Notes |
 | --- | --- | --- | --- |

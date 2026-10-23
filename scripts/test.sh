@@ -12,12 +12,14 @@ if command -v python3 >/dev/null 2>&1; then
   python3 "$ROOT/scripts/check-ci-evidence_test.py"
   python3 "$ROOT/scripts/write-release-evidence_test.py"
   python3 "$ROOT/scripts/check-coverage_test.py"
+  python3 "$ROOT/scripts/l10n-sr-latn_test.py"
 elif command -v python >/dev/null 2>&1; then
   python "$ROOT/scripts/check-release-evidence_test.py"
   python "$ROOT/scripts/check-dart-retractions_test.py"
   python "$ROOT/scripts/check-ci-evidence_test.py"
   python "$ROOT/scripts/write-release-evidence_test.py"
   python "$ROOT/scripts/check-coverage_test.py"
+  python "$ROOT/scripts/l10n-sr-latn_test.py"
 else
   echo "release-policy fixtures need python3 or python; none found" >&2
   exit 1

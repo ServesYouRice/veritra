@@ -57,12 +57,13 @@ void setWindowSize(WidgetTester tester, Size size) {
 
 /// The app shell as `main.dart` composes it: the real themes and
 /// localizations, an [AppearanceScope], and a rebuild on every [state]
-/// change. The locale is fixed to `en` and the clock format to 24 hours.
+/// change. The locale defaults to `en` and the clock format is 24 hours.
 Widget veritraTestApp({
   required AppState state,
   ThemeMode themeMode = ThemeMode.light,
   double textScale = 1.0,
   bool disableAnimations = false,
+  Locale locale = const Locale('en'),
 }) {
   final appearance = AppearanceController(MemoryAppearanceStore(themeMode));
   unawaited(appearance.load());
@@ -75,7 +76,7 @@ Widget veritraTestApp({
         theme: veritraLightTheme(),
         darkTheme: veritraDarkTheme(),
         themeMode: themeMode,
-        locale: const Locale('en'),
+        locale: locale,
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         builder: (context, child) => MediaQuery(

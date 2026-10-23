@@ -14,6 +14,12 @@
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>sr</string>
+		<string>sr-Latn</string>
+	</array>
 	<key>CFBundleName</key>
 	<string>Veritra</string>
 	<key>CFBundlePackageType</key>

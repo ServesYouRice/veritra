@@ -2,6 +2,9 @@ arb-dir: lib/l10n
 template-arb-file: app_en.arb
 output-localization-file: app_localizations.dart
 output-class: AppLocalizations
-# English is the only locale for now; untranslated messages would fall back
-# to it anyway.
+# Locales: English (the template), Serbian Cyrillic (app_sr.arb) and Serbian
+# Latin (app_sr_Latn.arb, generated from app_sr.arb by
+# scripts/l10n-sr-latn.py; never edit it by hand). gen-l10n would fall back
+# to English for a message a locale lacks; test/l10n_locales_test.dart fails
+# instead, so every locale translates every message.
 nullable-getter: true

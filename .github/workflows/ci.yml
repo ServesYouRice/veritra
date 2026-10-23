@@ -352,6 +352,7 @@ jobs:
           python3 scripts/check-ci-evidence_test.py
           python3 scripts/write-release-evidence_test.py
           python3 scripts/check-coverage_test.py
+          python3 scripts/l10n-sr-latn_test.py
 
   vulnerabilities:
     runs-on: ubuntu-latest
