@@ -8,15 +8,17 @@
 # set at this edge — the app only emits HSTS when it terminates TLS itself,
 # which it does not when running behind this proxy.
 messenger.example.com {
-	# If access logs are enabled, keep request URLs and recovery credentials out
-	# of the configured proxy log. The application logs matched route patterns,
-	# and recovery credentials are accepted only in this header on a fixed route.
-	log {
-		format filter {
-			request>uri delete
-			request>headers>X-Recovery-Token delete
-		}
-	}
+	# No access log: a `log` directive here turns one on, with client
+	# addresses and request headers. The application logs matched route
+	# patterns only. If you need one while debugging, drop the URI (it holds
+	# IDs) and the capability headers (Caddy already redacts Authorization):
+	#   log {
+	#   	format filter {
+	#   		request>uri delete
+	#   		request>headers>X-Recovery-Token delete
+	#   		request>headers>X-Veritra-Setup-Token delete
+	#   	}
+	#   }
 	reverse_proxy messenger:8080 {
 		# Overwrite client-supplied forwarding headers. The application trusts
 		# only this proxy network and walks the resulting chain right-to-left.
@@ -24,6 +26,8 @@ messenger.example.com {
 		header_up X-Real-IP {remote_host}
 	}
 	header {
+		# Applied after the server's own headers, so each is sent once.
+		defer
 		Referrer-Policy "no-referrer"
 		X-Content-Type-Options "nosniff"
 		Strict-Transport-Security "max-age=63072000; includeSubDomains"
