@@ -77,7 +77,8 @@ class AppLocalizationsSr extends AppLocalizations {
   String get aboutLicenses => 'Лиценце отвореног кода';
 
   @override
-  String get aboutLicensesDetail => 'Обавештења за Veritra и њене компоненте';
+  String get aboutLicensesDetail =>
+      'Напомене о лиценцама за Veritra и њене компоненте';
 
   @override
   String get settingsTitle => 'Подешавања';
@@ -569,7 +570,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get connectTagline =>
-      'Размена порука шифрована с краја на крај, на вашем серверу';
+      'Самостално хостована размена порука, шифрована с краја на крај';
 
   @override
   String get qrScanLinkTitle => 'Скенирај QR код за повезивање';
@@ -665,7 +666,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get accountPickerHelper =>
-      'Тачно корисничко име или налепите ИД налога (acct_…).';
+      'Унесите тачно корисничко име или налепите ИД налога (acct_…).';
 
   @override
   String get accountPickerNoMatch =>
@@ -874,7 +875,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get shellResetMessage =>
-      'Овај уређај почиње празан и мора поново да се повеже. Његове тренутне поруке овде остају нечитљиве; склањају се у страну, а не бришу, за случај да се кључ врати.';
+      'Овај уређај ће бити празан и мора поново да се повеже. Његове тренутне поруке овде остају нечитљиве; склањају се у страну, а не бришу, за случај да се кључ врати.';
 
   @override
   String get shellResetConfirm => 'Ресетуј';
@@ -1091,7 +1092,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get bannerRelinkMessage =>
-      'Ово одјављује овај уређај и брише његове поруке и кључеве за шифровање. После тога га поново повежите са другог уређаја. Поруке које постоје само на овом уређају не могу се вратити.';
+      'Ово одјављује овај уређај и брише његове поруке и кључеве за шифровање. После тога га поново повежите са другог уређаја. Поруке које постоје само на овом уређају не могу се повратити.';
 
   @override
   String get bannerRelinkConfirm => 'Избриши и одјави';
@@ -1349,11 +1350,11 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get safetyGroupIntro =>
-      'Сваки члан ове групе види исти број. Упоредите га уживо или скенирајте кодове једни другима.';
+      'Сваки члан ове групе види исти број. Упоредите га уживо или међусобно скенирајте кодове.';
 
   @override
   String safetyPeerIntro(String peer) {
-    return 'Упоредите овај број са корисником $peer уживо или скенирајте кодове једно другом.';
+    return 'Упоредите овај број са корисником $peer уживо или међусобно скенирајте кодове.';
   }
 
   @override
@@ -1392,7 +1393,7 @@ class AppLocalizationsSr extends AppLocalizations {
   String get safetyUnverified => 'Није верификовано';
 
   @override
-  String get safetyScanTheirCode => 'Скенирај њихов код';
+  String get safetyScanTheirCode => 'Скенирај код друге особе';
 
   @override
   String get safetyMarkVerified => 'Означи као верификовано';
@@ -2000,7 +2001,7 @@ class AppLocalizationsSr extends AppLocalizations {
       'Ова радња није доступна у овој верзији апликације.';
 
   @override
-  String get errorGeneric => 'Нешто није у реду. Покушајте поново.';
+  String get errorGeneric => 'Дошло је до грешке. Покушајте поново.';
 
   @override
   String get errorTimeout =>
@@ -2187,7 +2188,8 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get aboutLicenses => 'Licence otvorenog koda';
 
   @override
-  String get aboutLicensesDetail => 'Obaveštenja za Veritra i njene komponente';
+  String get aboutLicensesDetail =>
+      'Napomene o licencama za Veritra i njene komponente';
 
   @override
   String get settingsTitle => 'Podešavanja';
@@ -2679,7 +2681,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get connectTagline =>
-      'Razmena poruka šifrovana s kraja na kraj, na vašem serveru';
+      'Samostalno hostovana razmena poruka, šifrovana s kraja na kraj';
 
   @override
   String get qrScanLinkTitle => 'Skeniraj QR kod za povezivanje';
@@ -2775,7 +2777,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get accountPickerHelper =>
-      'Tačno korisničko ime ili nalepite ID naloga (acct_…).';
+      'Unesite tačno korisničko ime ili nalepite ID naloga (acct_…).';
 
   @override
   String get accountPickerNoMatch =>
@@ -2984,7 +2986,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get shellResetMessage =>
-      'Ovaj uređaj počinje prazan i mora ponovo da se poveže. Njegove trenutne poruke ovde ostaju nečitljive; sklanjaju se u stranu, a ne brišu, za slučaj da se ključ vrati.';
+      'Ovaj uređaj će biti prazan i mora ponovo da se poveže. Njegove trenutne poruke ovde ostaju nečitljive; sklanjaju se u stranu, a ne brišu, za slučaj da se ključ vrati.';
 
   @override
   String get shellResetConfirm => 'Resetuj';
@@ -3201,7 +3203,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get bannerRelinkMessage =>
-      'Ovo odjavljuje ovaj uređaj i briše njegove poruke i ključeve za šifrovanje. Posle toga ga ponovo povežite sa drugog uređaja. Poruke koje postoje samo na ovom uređaju ne mogu se vratiti.';
+      'Ovo odjavljuje ovaj uređaj i briše njegove poruke i ključeve za šifrovanje. Posle toga ga ponovo povežite sa drugog uređaja. Poruke koje postoje samo na ovom uređaju ne mogu se povratiti.';
 
   @override
   String get bannerRelinkConfirm => 'Izbriši i odjavi';
@@ -3459,11 +3461,11 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get safetyGroupIntro =>
-      'Svaki član ove grupe vidi isti broj. Uporedite ga uživo ili skenirajte kodove jedni drugima.';
+      'Svaki član ove grupe vidi isti broj. Uporedite ga uživo ili međusobno skenirajte kodove.';
 
   @override
   String safetyPeerIntro(String peer) {
-    return 'Uporedite ovaj broj sa korisnikom $peer uživo ili skenirajte kodove jedno drugom.';
+    return 'Uporedite ovaj broj sa korisnikom $peer uživo ili međusobno skenirajte kodove.';
   }
 
   @override
@@ -3502,7 +3504,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get safetyUnverified => 'Nije verifikovano';
 
   @override
-  String get safetyScanTheirCode => 'Skeniraj njihov kod';
+  String get safetyScanTheirCode => 'Skeniraj kod druge osobe';
 
   @override
   String get safetyMarkVerified => 'Označi kao verifikovano';
@@ -4113,7 +4115,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Ova radnja nije dostupna u ovoj verziji aplikacije.';
 
   @override
-  String get errorGeneric => 'Nešto nije u redu. Pokušajte ponovo.';
+  String get errorGeneric => 'Došlo je do greške. Pokušajte ponovo.';
 
   @override
   String get errorTimeout =>
