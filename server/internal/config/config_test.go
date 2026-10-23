@@ -158,3 +158,46 @@ func TestTrustedProxyRangesAcceptOperatorNetworks(t *testing.T) {
 		t.Fatal("IPv4-mapped trusted range did not narrow to its IPv4 network")
 	}
 }
+
+// TURN URLs are handed to WebRTC as ICE server URLs, so they must be in the
+// RFC 7065 form (turn:host:port) that server/config.example.env shows.
+func TestTURNURLsUseTheRFC7065Form(t *testing.T) {
+	t.Setenv("PRIVATE_MESSENGER_TURN_SHARED_SECRET", "turn-secret-for-test")
+	for raw, want := range map[string]string{
+		"turns:turn.example.com:5349?transport=tcp": "turns:turn.example.com:5349?transport=tcp",
+		"turn:turn.example.com":                     "turn:turn.example.com",
+		"turn:192.0.2.10:3478?transport=udp":        "turn:192.0.2.10:3478?transport=udp",
+		"turn:[2001:db8::1]:3478":                   "turn:[2001:db8::1]:3478",
+		"turn:[2001:db8::1]":                        "turn:[2001:db8::1]",
+		"turns://turn.example.com:5349":             "turns:turn.example.com:5349",
+		" turn://turn.example.com:3478 ":            "turn:turn.example.com:3478",
+	} {
+		t.Setenv("PRIVATE_MESSENGER_TURN_URLS", raw)
+		cfg, err := Load()
+		if err != nil || len(cfg.TURNURLs) != 1 || cfg.TURNURLs[0] != want {
+			t.Fatalf("%q: got %q err=%v, want %q", raw, cfg.TURNURLs, err, want)
+		}
+	}
+	for _, raw := range []string{
+		"stun:turn.example.com:3478",
+		"https://turn.example.com",
+		"turn:",
+		"turn:user@turn.example.com:3478",
+		"turn://user:pw@turn.example.com:3478",
+		"turn:turn.example.com:0",
+		"turn:turn.example.com:70000",
+		"turn:turn.example.com:",
+		"turn:2001:db8::1",
+		"turn:[turn.example.com]:3478",
+		"turn:turn.example.com:3478?transport=sctp",
+		"turn:turn.example.com:3478?transport=udp&x=1",
+		"turn://turn.example.com:3478/path",
+		"turn:turn.example.com#frag",
+		"turn:-bad.example.com",
+	} {
+		t.Setenv("PRIVATE_MESSENGER_TURN_URLS", raw)
+		if _, err := Load(); err == nil {
+			t.Fatalf("%q was accepted", raw)
+		}
+	}
+}

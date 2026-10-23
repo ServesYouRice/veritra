@@ -118,11 +118,12 @@ func Load() (Config, error) {
 	if (len(cfg.TURNURLs) == 0) != (cfg.TURNSharedSecret == "") {
 		return Config{}, fmt.Errorf("TURN URLs and shared secret must be configured together")
 	}
-	for _, raw := range cfg.TURNURLs {
-		value, err := url.Parse(raw)
-		if err != nil || (value.Scheme != "turn" && value.Scheme != "turns") || value.Host == "" || value.User != nil {
-			return Config{}, fmt.Errorf("invalid PRIVATE_MESSENGER_TURN_URLS entry")
+	for i, raw := range cfg.TURNURLs {
+		canonical, err := canonicalTURNURL(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid PRIVATE_MESSENGER_TURN_URLS entry: %w", err)
 		}
+		cfg.TURNURLs[i] = canonical
 	}
 	if raw := strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_SYNC_EVENT_RETENTION_DAYS")); raw != "" {
 		days, err := strconv.Atoi(raw)
@@ -247,6 +248,70 @@ var nonPublicProxyRanges = []netip.Prefix{
 	netip.MustParsePrefix("::1/128"),
 	netip.MustParsePrefix("fc00::/7"),
 	netip.MustParsePrefix("fe80::/10"),
+}
+
+// canonicalTURNURL accepts a TURN URI in the RFC 7065 form WebRTC clients
+// parse, turn[s]:host[:port][?transport=udp|tcp], and returns it in that
+// form. The authority form some guides use (turn://host:port) is rewritten
+// without the slashes, because WebRTC would read "//host" as the hostname.
+func canonicalTURNURL(raw string) (string, error) {
+	value, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (value.Scheme != "turn" && value.Scheme != "turns") {
+		return "", fmt.Errorf("want turn:host[:port] or turns:host[:port]")
+	}
+	hostPort := value.Opaque
+	if hostPort == "" && value.Path == "" {
+		hostPort = value.Host
+	}
+	if hostPort == "" || value.User != nil || value.Fragment != "" || strings.ContainsAny(hostPort, "@/") {
+		return "", fmt.Errorf("want turn:host[:port] or turns:host[:port]")
+	}
+	host := hostPort
+	switch {
+	case strings.HasPrefix(hostPort, "[") && strings.HasSuffix(hostPort, "]"):
+		host = hostPort[1 : len(hostPort)-1]
+	case strings.Contains(hostPort, ":"):
+		h, port, err := net.SplitHostPort(hostPort)
+		if err != nil {
+			return "", fmt.Errorf("invalid host or port")
+		}
+		if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+			return "", fmt.Errorf("invalid port")
+		}
+		host = h
+	}
+	bracketed := strings.HasPrefix(hostPort, "[")
+	if !validTURNHost(host) || bracketed != strings.Contains(host, ":") {
+		return "", fmt.Errorf("invalid host (IPv6 addresses go in brackets)")
+	}
+	canonical := value.Scheme + ":" + hostPort
+	if value.RawQuery != "" {
+		query, err := url.ParseQuery(value.RawQuery)
+		transport := query.Get("transport")
+		if err != nil || len(query) != 1 || len(query["transport"]) != 1 || (transport != "udp" && transport != "tcp") {
+			return "", fmt.Errorf("the only query allowed is transport=udp or transport=tcp")
+		}
+		canonical += "?transport=" + transport
+	}
+	return canonical, nil
+}
+
+func validTURNHost(host string) bool {
+	if host == "" || len(host) > 253 {
+		return false
+	}
+	if net.ParseIP(host) != nil {
+		return true
+	}
+	if strings.HasPrefix(host, "-") || strings.HasPrefix(host, ".") {
+		return false
+	}
+	for _, r := range host {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '.') {
+			return false
+		}
+	}
+	return true
 }
 
 func parseCIDRs(raw string) ([]*net.IPNet, error) {
