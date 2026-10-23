@@ -46,6 +46,7 @@ type Config struct {
 	SessionIdleLifetime     time.Duration
 	SessionAbsoluteLifetime time.Duration
 	Limits                  Limits
+	RateLimits              RateLimits
 }
 
 const (
@@ -81,6 +82,10 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	limits, err := loadLimits()
+	if err != nil {
+		return Config{}, err
+	}
+	rateLimits, err := loadRateLimits()
 	if err != nil {
 		return Config{}, err
 	}
@@ -121,6 +126,7 @@ func Load() (Config, error) {
 		SessionIdleLifetime:     DefaultSessionIdleLifetime,
 		SessionAbsoluteLifetime: DefaultSessionAbsoluteLifetime,
 		Limits:                  limits,
+		RateLimits:              rateLimits,
 	}
 	if cfg.Environment != "development" && cfg.Environment != "production" {
 		return Config{}, fmt.Errorf("PRIVATE_MESSENGER_ENV must be development or production")

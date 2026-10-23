@@ -83,12 +83,43 @@ HTTPS-only, and release builds (`main.dart`) never accept cleartext. See
 
 ## Credential abuse controls
 
-The per-source limiter allows 240 general requests/minute, 10 credential
+The per-source limiter allows 240 general requests/minute (requests
+without a valid session; see below for signed-in ones), 10 credential
 requests/minute (including login and reauthentication), and 5 enrollment
-requests/minute. IPv6 sources are grouped by /64. Login and reauthentication
-also use bounded account, source/device and session backoff scopes: the first
-two failures are unauthorized responses, the third starts a 1-second delay that
-progresses to 60 seconds, and entries expire after 15 minutes. The controls
+requests/minute. IPv6 sources are grouped by /64.
+
+People behind one router (a household, an office) share one source
+address. A request with a session token is first charged to that address;
+once the token resolves to a session, the charge moves to that account's
+own budget at the address, so they do not use up each other's requests. A
+token that does not resolve stays charged to the address, so guessed
+tokens, anonymous requests and credential attempts from one address
+together stay within the 240, as before. Credential and enrollment routes
+(setup, login, reauthentication, registration, recovery, device-link
+claims) always use the address budgets, with or without a token.
+
+| `PRIVATE_MESSENGER_RATE_LIMIT_...` | Default | Range | Counts per minute |
+|---|---|---|---|
+| `ADDRESS_PER_MINUTE` | 240 | 60-100,000 | requests from one address without a session that resolves, including credential and enrollment routes |
+| `ACCOUNT_PER_MINUTE` | 240 | 60-100,000 | requests with a valid session, per account at one address (an account on several networks gets this at each, as before) |
+| `SIGNED_IN_ADDRESS_PER_MINUTE` | 1,200 | 60-1,000,000, at least `ACCOUNT_PER_MINUTE` | all requests carrying a session token from one address, every account together |
+
+The credential (10) and enrollment (5) budgets are fixed. The trade-off:
+one address with valid sessions of five or more accounts can now send up
+to 1,200 signed-in requests a minute instead of 240 in all, while a single
+account still gets 240 at an address and nothing without a valid session
+gets more than before. Set `SIGNED_IN_ADDRESS_PER_MINUTE` equal to
+`ACCOUNT_PER_MINUTE` to give a whole address no more than one account's
+budget; raise it for a large office. A refusal is 429 with `Retry-After`;
+`veritra_rate_limit_rejections_total` counts it by scope (`general`,
+`auth`, `enrollment`, `account`, `signed_in`). Realtime sockets have their
+own fixed limits (20 per address, 10 per account). The server logs the
+resolved values at start (`rate_limits`).
+
+Login and reauthentication also use bounded account, source/device and
+session backoff scopes: the first two failures are unauthorized responses,
+the third starts a 1-second delay that progresses to 60 seconds, and entries
+expire after 15 minutes. The controls
 evict under bounded-table pressure and sweep expired state; they do not expose
 usernames, addresses, device IDs or tokens in metrics. Monitor
 `veritra_rate_limit_buckets`, `veritra_rate_limit_evictions_total`,
@@ -618,11 +649,13 @@ that is ten times the live data: the 40 GiB volume holds about 3.6 GiB of
 live data with 10% free. Lower the keep count or grow the volume before
 raising storage quotas.
 
-**Per-address limit.** The general limit is 240 requests a minute per
-client address. At the S rating a device and its companion use about 40
-together; at four times that rate they reach the limit before the server
-slows, so a household of very active devices behind one NAT hits it first
-(`veritra_rate_limit_rejections_total`).
+**Request limits.** Signed-in requests are limited to 240 a minute per
+account at one client address, and 1,200 for all accounts at one address
+(see [Credential abuse controls](#credential-abuse-controls)). At the S
+rating a device and its companion use about 40 together; at four times
+that rate one very active account reaches its 240 before the server slows
+(`veritra_rate_limit_rejections_total`), but other people behind the same
+router keep their own budgets.
 
 **Measure your own host.** `scripts/capacity.sh s load -rate 1,4,8,16`
 (also `m`, and the `backup` and `restart` scenarios) runs the server in a

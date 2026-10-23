@@ -33,7 +33,7 @@ var allowedLabelValues = map[string]map[string]bool{
 	"pool":         {"writer": true, "reader": true},
 	"volume":       {"database": true, "blobs": true},
 	"component":    {"database": true, "wal": true, "blobs": true},
-	"scope":        {"general": true, "auth": true, "enrollment": true},
+	"scope":        {"general": true, "auth": true, "enrollment": true, "account": true, "signed_in": true},
 	"reason":       {"limit": true, "draining": true},
 	"limit": {"storage": true, "blobs": true, "devices": true, "device_links": true, "conversations": true,
 		"conversation_members": true, "deliveries": true, "write_bytes": true, "disk": true},
@@ -203,7 +203,7 @@ func TestPushSendTimeoutsAndOldestAgeAreCounted(t *testing.T) {
 }
 
 func TestRateLimitRejectionsAreCountedByScope(t *testing.T) {
-	limiter, err := newRateLimiter(httpapi.NewClientIdentityResolver(nil), 2, 1, 1)
+	limiter, err := newRateLimiter(httpapi.NewClientIdentityResolver(nil), rateLimits{general: 2, auth: 1, enrollment: 1, account: 2, signedIn: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
