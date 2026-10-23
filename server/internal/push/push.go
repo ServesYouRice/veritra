@@ -81,6 +81,7 @@ func NewWebPushProvider(config WebPushConfig) (*WebPushProvider, error) {
 	if parsed, err := url.Parse(config.Subscriber); err != nil || (parsed.Scheme != "mailto" && parsed.Scheme != "https") {
 		return nil, errors.New("VAPID subscriber must be a mailto or HTTPS URI")
 	}
+	config.Subscriber = librarySubscriber(config.Subscriber)
 	transport := &http.Transport{
 		Proxy:                 nil,
 		DialContext:           publicOnlyDialer,
@@ -102,6 +103,21 @@ func NewWebPushProvider(config WebPushConfig) (*WebPushProvider, error) {
 		},
 		slots: make(chan struct{}, 32),
 	}, nil
+}
+
+// librarySubscriber adapts the configured VAPID contact URI to webpush-go,
+// which prefixes "mailto:" to anything not starting with "https:". Without
+// this the JWT "sub" claim would read "mailto:mailto:...".
+func librarySubscriber(configured string) string {
+	configured = strings.TrimSpace(configured)
+	scheme, rest, _ := strings.Cut(configured, ":")
+	switch strings.ToLower(scheme) {
+	case "mailto":
+		return rest
+	case "https":
+		return "https:" + rest
+	}
+	return configured
 }
 
 func (p *WebPushProvider) SendEncryptedEventAvailable(ctx context.Context, notification Notification) error {

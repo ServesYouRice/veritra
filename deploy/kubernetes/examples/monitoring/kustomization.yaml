@@ -9,7 +9,12 @@
 #   Traefik never see it.
 #
 # The metrics hold aggregate counts and ages only: no user, account,
-# conversation, device, token or endpoint labels.
+# conversation, device, token or endpoint labels. Byte sizes are rounded to
+# 64 MiB. For a hosted collector on a small instance, forward only the series
+# the alerts need (scrape-config.yml shows the keep-list).
+#
+# veritra-alerts.test.yml holds promtool unit tests for the rules; it is not
+# a cluster resource.
 #
 # Not included because they need the Prometheus Operator CRDs; add them to
 # the overlay's resources if the cluster has them:

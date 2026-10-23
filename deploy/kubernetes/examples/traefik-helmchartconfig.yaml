@@ -11,11 +11,14 @@ spec:
   valuesContent: |-
     ports:
       web:
-        redirections:
-          entryPoint:
-            to: websecure
-            scheme: https
-            permanent: true
+        # Under http: (checked with chart 40.1 in k3s v1.34.12); a
+        # top-level ports.web.redirections key is silently ignored.
+        http:
+          redirections:
+            entryPoint:
+              to: websecure
+              scheme: https
+              permanent: true
       websecure:
         transport:
           respondingTimeouts:

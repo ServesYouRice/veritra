@@ -1,7 +1,7 @@
 # Crypto Boundary
 
 The selected production direction is MLS through OpenMLS. This Rust crate now
-pins OpenMLS 0.9.0 and contains a tested native core for signed key packages,
+pins OpenMLS 0.9.2 and contains a tested native core for signed key packages,
 group creation/join, and authenticated application messages. It also exposes a
 versioned C ABI and Rust-side credential/key-package boundary types. ABI v6 has
 tested opaque device handles, zeroing owned buffers, credential public-key
@@ -42,7 +42,7 @@ The public header is `crypto/rust/include/veritra_crypto.h`, which pins
 Key-package size checks mirror the server transport boundary (64 bytes through
 48 KiB). Passing that check does **not** verify an MLS key package.
 
-OpenMLS 0.9.0, `openmls_rust_crypto` 0.6.0, and their supporting crates are
+OpenMLS 0.9.2, `openmls_rust_crypto` 0.6.0, and their supporting crates are
 exactly pinned (Rust 1.91 or newer). All 205 locked third-party packages declare
 compatible license choices recorded in `THIRD_PARTY_NOTICES.md`. Sealed state
 uses envelope format version 2; version 1 blobs written under OpenMLS 0.8.1 fail
@@ -121,3 +121,7 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   "changed". Groups show the number for a live comparison and store nothing.
   Residual: first contact is still trust-on-first-use (no key transparency),
   and a change to one's own devices also changes a DM's number.
+- **T49C follow-up (2026-10-23):** local schema v9 is index only:
+  `local_ciphertext_envelopes (conversation_id, position)`, created with
+  `CREATE INDEX IF NOT EXISTS`; no table, row, ABI or payload change. An
+  upgrade now runs all its steps and the new version in one transaction.

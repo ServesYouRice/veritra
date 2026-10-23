@@ -179,3 +179,62 @@ as noise.
   brute-force index check) and `server/internal/httpapi/typing_limiter_test.go`
   (window, rotation boundary, reference equivalence, expiry, memory bound,
   concurrency); run with `-race`.
+
+## After: miss 6 (range verification)
+
+Same `BenchmarkOpenVerify` and `BenchmarkPutEncryptedBlob` (64 KiB to
+100 MiB of synthetic ciphertext). Both columns were run on this host: 4 vCPU
+Intel Xeon with SHA-NI, 15 GiB, go1.26.10, Linux amd64, shared with other
+jobs. Means of two runs of
+`cd server && go test -run '^$' -bench 'OpenVerify|PutEncryptedBlob$' -benchmem -count 2 ./internal/uploads`.
+
+| Benchmark | Size | Before ns/op | After ns/op |
+|---|---|---|---|
+| Open + 64 KiB range read | 64K / 1M / 16M / 50M / 100M | 51.6k / 622k / 10.4M / 32.8M / **69.3M** | 40.9k / 41.1k / 41.3k / 40.9k / **41.3k** |
+| Open + full read | 64K / 1M / 16M / 50M / 100M | 51.8k / 658k / 11.9M / 38.7M / 83.0M | 41.0k / 624k / 10.7M / 35.6M / 72.7M |
+| Range read, blob without a record (first open only) | 64K / 1M / 16M / 50M / 100M | same as the range row | 123k / 1.29M / 20.2M / 64.0M / 129M |
+| PutEncryptedBlob | 64K / 1M / 16M / 50M | 857k / 2.64M / 24.0M / 78.6M | 834k / 3.23M / 36.2M / 111M |
+
+- **Change:** an upload hashes each 64 KiB chunk in the same pass as the
+  whole blob. The record (version, whole digest, chunk digests; 32 B per
+  64 KiB, 51 KiB for 100 MiB) goes into the new nullable `chunk_digests`
+  column in the same INSERT as the attachment or backup row
+  (`0034_blob_chunk_digests.sql`, additive). `Open` checks the size; each
+  read hashes the chunk it needs and serves only from that hashed buffer,
+  which also closes the old hash-then-reread gap. Bytes appended after
+  `Open` are never read.
+- **Client view:** the chunk holding the first byte is verified before the
+  status line, so a bad chunk there is the usual `500 blob_integrity_failed`.
+  A bad chunk later aborts the response (`http.ErrAbortHandler`): a broken
+  transfer, never an unverified byte. Resuming there gets the clean 500, and
+  recovery records only the bytes sent before the bad chunk. The server logs
+  `blob_integrity_failed` with no key or bytes.
+- **Existing blobs (NULL):** still verified in full on open. A success stores
+  the rebuilt record, only into a NULL row that still has the same digest and
+  size, so later ranges are fast. A malformed record falls back to the full
+  check and logs `blob_digest_record_invalid`.
+- **Costs:** uploads hash twice (about +40% at 16-50 MiB when CPU-bound; real
+  uploads are network-bound). The first open of an existing blob also hashes
+  twice. Each open download holds one pooled 64 KiB buffer; sendfile is no
+  longer used.
+- **Detection:** downloads no longer notice damage outside the bytes they
+  request. The daily backup still hashes every blob in full
+  (`docs/operations.md`).
+- **Rollback:** older binaries ignore the column. Rows they write get NULL,
+  which is verified in full.
+- **Tests:** `uploads/local_test.go`, `httpapi/blob_verification_test.go`,
+  `storage/blob_chunk_digests_test.go`. They cover: a bad chunk inside and
+  outside the range, a read across the boundary, multipart ranges, aborted
+  downloads over a real connection, recovery progress and resume, legacy
+  rows (fail, then backfill), malformed records, a file truncated or
+  extended after open, the verified buffer, seek bounds, and concurrent
+  readers under `-race`.
+- **Advisor (before coding):** asked to find integrity holes in this design
+  (substitution, truncation, TOCTOU, record/row mismatch, multipart ranges,
+  recovery accounting, concurrency, crash safety), and to rule on the
+  fallback, backfill and chunk size. No blocker. Adopted: an explicit abort
+  instead of a short body; one response writer with an integrity flag for
+  both download paths; strict record checks; exact chunk reads; backfill only
+  into NULL, after the response; the operations note; the optional pooled
+  buffer. Kept multipart ranges (still verified on read) and migration 0034,
+  the number this batch assigned.

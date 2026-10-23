@@ -85,6 +85,9 @@ spec:
                 # verify-backup stages its drill under <data dir>/.veritra-restore-drill.
                 - name: PRIVATE_MESSENGER_DATA_DIR
                   value: /scratch/drill
+                # About 75% of limits.memory.
+                - name: GOMEMLIMIT
+                  value: 384MiB
               volumeMounts:
                 - name: scratch
                   mountPath: /scratch

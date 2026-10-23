@@ -15,3 +15,19 @@ scrape_configs:
       - source_labels: [__meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
         regex: veritra-metrics;metrics
         action: keep
+
+# Sending metrics off the host (Grafana Cloud remote_write)? The series are
+# aggregates, but on an instance with a handful of users the per-route
+# request counts, socket count and goroutines read as an activity timeline
+# of those people. Below about 20 users, send off-host only what the alert
+# rules need by adding this to the remote_write entry (Alloy: the same
+# regex in a prometheus.relabel component in front of prometheus.remote_write).
+# VeritraLatencyHigh then needs a local Prometheus, because the per-route
+# latency histogram stays on the host.
+#
+# remote_write:
+#   - url: https://<your-stack>.grafana.net/api/prom/push
+#     write_relabel_configs:
+#       - source_labels: [__name__]
+#         regex: up|kube_.*|certmanager_.*|kubelet_volume_stats_.*|node_filesystem_.*|veritra_(admission_.*|backup_.*|process_start_time_seconds|go_memory_bytes|storage_.*|sqlite_pool_wait_seconds_total|sqlite_writer_acquire_duration_seconds_(bucket|count)|push_deliveries_total|push_backlog_oldest_job_timestamp_seconds|retention_.*|rate_limit_rejections_total|http_requests_total|http_responses_total)
+#         action: keep

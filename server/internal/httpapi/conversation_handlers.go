@@ -188,8 +188,8 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 			eventType = "membership.left"
 		}
 		payload := map[string]string{"conversation_id": conversationID, "account_id": targetAccountID, "mls_coordination": "pending"}
-		a.publishCommittedEvent(a.conversationMemberIDs(r.Context(), conversationID), realtime.Event{Version: "v1", Type: eventType, ID: events.RemainingMembersEventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
-		a.publishCommittedEvent([]string{targetAccountID}, realtime.Event{Version: "v1", Type: eventType, ID: events.RemovedMemberEventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
+		a.publishCommittedEvent(r.Context(), a.conversationMemberIDs(r.Context(), conversationID), realtime.Event{Version: "v1", Type: eventType, ID: events.RemainingMembersEventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
+		a.publishCommittedEvent(r.Context(), []string{targetAccountID}, realtime.Event{Version: "v1", Type: eventType, ID: events.RemovedMemberEventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
 		a.recordAuditEvent(r.Context(), &principal.AccountID, "conversation.member.removed", map[string]string{"conversation_id": conversationID})
 		writeJSON(w, http.StatusOK, map[string]string{"status": "membership_removed", "mls_coordination": "pending"})
 		return
@@ -232,7 +232,7 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 			return
 		}
 		payload := map[string]string{"conversation_id": conversationID, "account_id": req.AccountID, "role": req.Role, "mls_coordination": "pending"}
-		a.publishCommittedEvent(a.conversationMemberIDs(r.Context(), conversationID), realtime.Event{Version: "v1", Type: "membership.updated", ID: eventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
+		a.publishCommittedEvent(r.Context(), a.conversationMemberIDs(r.Context(), conversationID), realtime.Event{Version: "v1", Type: "membership.updated", ID: eventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
 		a.recordAuditEvent(r.Context(), &principal.AccountID, "conversation.member.added", map[string]string{"conversation_id": conversationID, "role": req.Role})
 		writeJSON(w, http.StatusOK, map[string]string{"status": "membership_updated", "mls_coordination": "pending"})
 	case parts[1] == "messages" && r.Method == http.MethodGet:
@@ -323,7 +323,7 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 		}
 		payload := map[string]string{"account_id": principal.AccountID, "message_id": req.MessageID}
 		members := a.conversationRecipientsForSender(r.Context(), conversationID, principal.AccountID)
-		a.publishCommittedEvent(members, realtime.Event{Version: "v1", Type: "read_receipt.updated", ID: eventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
+		a.publishCommittedEvent(r.Context(), members, realtime.Event{Version: "v1", Type: "read_receipt.updated", ID: eventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
 		w.WriteHeader(http.StatusNoContent)
 	case parts[1] == "retention" && (r.Method == http.MethodPut || r.Method == http.MethodPatch):
 		var req struct {
@@ -347,7 +347,7 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 		}
 		a.recordAuditEvent(r.Context(), &principal.AccountID, "conversation.retention.updated", retentionMeta)
 		members := a.conversationMemberIDs(r.Context(), conversationID)
-		a.publishCommittedEvent(members, realtime.Event{Version: "v1", Type: "retention.updated", ID: eventID, ConversationID: conversationID, Payload: conversation, CreatedAt: time.Now().UTC()})
+		a.publishCommittedEvent(r.Context(), members, realtime.Event{Version: "v1", Type: "retention.updated", ID: eventID, ConversationID: conversationID, Payload: conversation, CreatedAt: time.Now().UTC()})
 		writeJSON(w, http.StatusOK, conversation)
 	default:
 		writeError(w, http.StatusNotFound, "not_found")
@@ -419,7 +419,7 @@ func (a *API) createMessageEnvelope(w http.ResponseWriter, r *http.Request, prin
 		return
 	}
 	if !result.Duplicate {
-		a.publishCommittedEvent(result.Recipients, realtime.Event{Version: "v1", Type: "message.envelope.created", ID: result.EventID, ConversationID: result.Envelope.ConversationID, Payload: result.Envelope, CreatedAt: time.Now().UTC()})
+		a.publishCommittedEvent(r.Context(), result.Recipients, realtime.Event{Version: "v1", Type: "message.envelope.created", ID: result.EventID, ConversationID: result.Envelope.ConversationID, Payload: result.Envelope, CreatedAt: time.Now().UTC()})
 	}
 	status := http.StatusCreated
 	if result.Duplicate {
@@ -497,7 +497,7 @@ func (a *API) messageSubroute(w http.ResponseWriter, r *http.Request, principal 
 		}
 		payload := map[string]string{"message_id": messageID, "account_id": principal.AccountID}
 		members := a.conversationRecipientsForSender(r.Context(), conversationID, principal.AccountID)
-		a.publishCommittedEvent(members, realtime.Event{Version: "v1", Type: "reaction.deleted", ID: eventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
+		a.publishCommittedEvent(r.Context(), members, realtime.Event{Version: "v1", Type: "reaction.deleted", ID: eventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
 		w.WriteHeader(http.StatusNoContent)
 	case parts[1] == "reactions" && r.Method == http.MethodPost:
 		raw, ok := readLimitedJSON(w, r)
@@ -526,7 +526,7 @@ func (a *API) messageSubroute(w http.ResponseWriter, r *http.Request, principal 
 		}
 		payload := map[string]string{"message_id": messageID, "account_id": principal.AccountID}
 		members := a.conversationRecipientsForSender(r.Context(), conversationID, principal.AccountID)
-		a.publishCommittedEvent(members, realtime.Event{Version: "v1", Type: "reaction.created", ID: eventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
+		a.publishCommittedEvent(r.Context(), members, realtime.Event{Version: "v1", Type: "reaction.created", ID: eventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		writeError(w, http.StatusNotFound, "not_found")
@@ -555,14 +555,15 @@ func decodeEncryptedMutation(w http.ResponseWriter, r *http.Request) (encryptedM
 
 func (a *API) publishMessageEvent(r *http.Request, eventType string, eventID int64, envelope domain.MessageEnvelope) {
 	members := a.conversationRecipientsForSender(r.Context(), envelope.ConversationID, envelope.SenderAccountID)
-	a.publishCommittedEvent(members, realtime.Event{Version: "v1", Type: eventType, ID: eventID, ConversationID: envelope.ConversationID, Payload: envelope, CreatedAt: time.Now().UTC()})
+	a.publishCommittedEvent(r.Context(), members, realtime.Event{Version: "v1", Type: eventType, ID: eventID, ConversationID: envelope.ConversationID, Payload: envelope, CreatedAt: time.Now().UTC()})
 }
 
-func (a *API) publishCommittedEvent(accountIDs []string, event realtime.Event) {
+func (a *API) publishCommittedEvent(ctx context.Context, accountIDs []string, event realtime.Event) {
 	if event.ID <= 0 {
 		a.warn("realtime_event_without_commit", "event_type", event.Type)
 		return
 	}
+	countRecipients(ctx, len(accountIDs))
 	a.Hub.Publish(accountIDs, event)
 }
 

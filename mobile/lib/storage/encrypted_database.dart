@@ -139,6 +139,12 @@ class LocalConversations extends Table {
   Set<Column<Object>> get primaryKey => {id};
 }
 
+/// Schema 9 (T49C): the index serves the tail lookup every received message
+/// commits (`WHERE conversation_id = ? ORDER BY position DESC LIMIT 1`) and
+/// the ordered snapshot read, which otherwise scan and sort the whole cache.
+@TableIndex.sql('CREATE INDEX IF NOT EXISTS '
+    'local_ciphertext_envelopes_conversation_position '
+    'ON local_ciphertext_envelopes (conversation_id, position)')
 class LocalCiphertextEnvelopes extends Table {
   TextColumn get id => text()();
   TextColumn get conversationId => text()();
@@ -280,7 +286,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   static const lastBackupName = 'backup.last_created_at';
 
   @override
-  int get schemaVersion => 8;
+  int get schemaVersion => 9;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -290,47 +296,63 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             LocalSyncStatesCompanion.insert(singleton: const Value(1)),
           );
         },
+        // One transaction for every step and the new version number: a failed
+        // upgrade leaves the old schema and version untouched and the next
+        // open retries it; a committed one is never rerun. PRAGMA foreign_keys
+        // has no effect inside it, so a future table rebuild that needs it off
+        // must set it before the transaction.
         onUpgrade: (migrator, from, to) async {
-          if (from < 2) {
-            await migrator.createTable(localMlsTransitions);
-          }
-          if (from < 3) {
-            await migrator.createTable(localMlsOutboxEntries);
-          }
-          if (from < 4) {
-            await migrator.addColumn(
-              localMlsOutboxEntries,
-              localMlsOutboxEntries.revocationDeviceId,
-            );
-          }
-          if (from < 5) {
-            await migrator.addColumn(
-                localOutboxEntries, localOutboxEntries.attemptCount);
-            await migrator.addColumn(
-                localOutboxEntries, localOutboxEntries.nextAttemptAt);
-            await migrator.addColumn(
-                localOutboxEntries, localOutboxEntries.failureClass);
-            await migrator.addColumn(
-                localOutboxEntries, localOutboxEntries.terminal);
-          }
-          if (from < 6) {
-            await migrator.createTable(localPeerVerifications);
-          }
-          if (from < 7) {
-            await migrator.createTable(localMessages);
-            await migrator.createTable(localMessageReactions);
-          }
-          if (from < 8) {
-            // Durable delivery state for MLS control messages (I34).
-            await migrator.addColumn(
-                localMlsOutboxEntries, localMlsOutboxEntries.attemptCount);
-            await migrator.addColumn(
-                localMlsOutboxEntries, localMlsOutboxEntries.nextAttemptAt);
-            await migrator.addColumn(
-                localMlsOutboxEntries, localMlsOutboxEntries.failureClass);
-            await migrator.addColumn(
-                localMlsOutboxEntries, localMlsOutboxEntries.terminal);
-          }
+          await transaction(() async {
+            if (from < 2) {
+              await migrator.createTable(localMlsTransitions);
+            }
+            if (from < 3) {
+              await migrator.createTable(localMlsOutboxEntries);
+            }
+            if (from < 4) {
+              await migrator.addColumn(
+                localMlsOutboxEntries,
+                localMlsOutboxEntries.revocationDeviceId,
+              );
+            }
+            if (from < 5) {
+              await migrator.addColumn(
+                  localOutboxEntries, localOutboxEntries.attemptCount);
+              await migrator.addColumn(
+                  localOutboxEntries, localOutboxEntries.nextAttemptAt);
+              await migrator.addColumn(
+                  localOutboxEntries, localOutboxEntries.failureClass);
+              await migrator.addColumn(
+                  localOutboxEntries, localOutboxEntries.terminal);
+            }
+            if (from < 6) {
+              await migrator.createTable(localPeerVerifications);
+            }
+            if (from < 7) {
+              await migrator.createTable(localMessages);
+              await migrator.createTable(localMessageReactions);
+            }
+            if (from < 8) {
+              // Durable delivery state for MLS control messages (I34).
+              await migrator.addColumn(
+                  localMlsOutboxEntries, localMlsOutboxEntries.attemptCount);
+              await migrator.addColumn(
+                  localMlsOutboxEntries, localMlsOutboxEntries.nextAttemptAt);
+              await migrator.addColumn(
+                  localMlsOutboxEntries, localMlsOutboxEntries.failureClass);
+              await migrator.addColumn(
+                  localMlsOutboxEntries, localMlsOutboxEntries.terminal);
+            }
+            if (from < 9) {
+              // Index only (T49C): no table or row changes, and code for
+              // schema 8 never names it.
+              await migrator
+                  .createIndex(localCiphertextEnvelopesConversationPosition);
+            }
+            // Drift writes the version again after this returns, outside the
+            // transaction; writing it here too closes that gap.
+            await customStatement('PRAGMA user_version = $to');
+          });
         },
         beforeOpen: (details) async {
           await customStatement('PRAGMA foreign_keys = ON');
@@ -607,26 +629,30 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         if (cursor != null && (previousCursor?.cursor ?? 0) > cursor) return;
         await delete(localCiphertextEnvelopes).go();
         await delete(localConversations).go();
+        // One batch inside the same transaction: the same rows as inserting
+        // them one by one, without a round trip to the database isolate per
+        // row, which made each rewrite of a full cache take seconds (T49C).
         var position = 0;
-        for (final conversation in conversations) {
-          await into(localConversations).insert(
-            LocalConversationsCompanion.insert(
-              id: conversation.id,
-              position: position++,
-              payloadJson: conversation.payloadJson,
-            ),
-          );
-        }
-        for (final envelope in envelopes) {
-          await into(localCiphertextEnvelopes).insert(
-            LocalCiphertextEnvelopesCompanion.insert(
-              id: envelope.id,
-              conversationId: envelope.conversationId,
-              position: envelope.position,
-              payloadJson: envelope.payloadJson,
-            ),
-          );
-        }
+        await batch((batch) {
+          batch.insertAll(localConversations, <LocalConversationsCompanion>[
+            for (final conversation in conversations)
+              LocalConversationsCompanion.insert(
+                id: conversation.id,
+                position: position++,
+                payloadJson: conversation.payloadJson,
+              ),
+          ]);
+          batch.insertAll(
+              localCiphertextEnvelopes, <LocalCiphertextEnvelopesCompanion>[
+            for (final envelope in envelopes)
+              LocalCiphertextEnvelopesCompanion.insert(
+                id: envelope.id,
+                conversationId: envelope.conversationId,
+                position: envelope.position,
+                payloadJson: envelope.payloadJson,
+              ),
+          ]);
+        });
         if (cursor != null) {
           await into(localSyncStates).insertOnConflictUpdate(
             LocalSyncStatesCompanion.insert(

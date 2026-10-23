@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -18,10 +19,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"private-messenger/server/internal/admission"
 	"private-messenger/server/internal/backupstatus"
 	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/httpapi"
 	"private-messenger/server/internal/messaging"
+	"private-messenger/server/internal/opmetrics"
 	"private-messenger/server/internal/push"
 	"private-messenger/server/internal/realtime"
 	"private-messenger/server/internal/storage"
@@ -39,12 +42,22 @@ type App struct {
 	loginBackoff *httpapi.LoginBackoff
 	metrics      *httpMetrics
 	ready        atomic.Bool
-	inflight     atomic.Int64
+	budget       *admission.Budget
+	// lowDisk is set by the capacity sampler when diskLow.
+	lowDisk  atomic.Bool
+	inflight atomic.Int64
 	// shutdownBudget and shutdownDrain default to ShutdownBudget and
 	// ShutdownDrain; tests shorten them.
 	shutdownBudget time.Duration
 	shutdownDrain  time.Duration
-	Log            *slog.Logger
+	// retentionBudget overrides retentionTimeBudget when set; tests lengthen
+	// it so slow race-instrumented runs exercise the batch ceiling.
+	retentionBudget time.Duration
+	// pushSendTimeout and pushRetryDelay default to pushWakeSendTimeout and
+	// the jittered backoff; the capacity scenario tests shorten them.
+	pushSendTimeout time.Duration
+	pushRetryDelay  time.Duration
+	Log             *slog.Logger
 }
 
 // Shutdown timing (card I46). The whole stop sequence fits inside
@@ -70,10 +83,12 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
 	}
+	cfg, storageSource := ResolveInstanceStorage(cfg)
 	store, err := storage.Open(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
+	logLimits(logger, store.Limits(), storageSource)
 	if err := store.Migrate(ctx, migrations.FS); err != nil {
 		_ = store.Close()
 		return nil, err
@@ -152,6 +167,10 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	metrics.backupStatus = func() (backupstatus.Status, bool) { return backupstatus.Read(dataDir) }
 	metrics.rateLimiter = limiter
 	metrics.loginBackoff = loginBackoff
+	metrics.pools = store.PoolStats
+	metrics.writerAcquire = store.WriterAcquire
+	metrics.hubStats = hub.Stats
+	metrics.admission = store.AdmissionCounters()
 	application := &App{
 		Config:       cfg,
 		Store:        store,
@@ -161,8 +180,10 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		limiter:      limiter,
 		loginBackoff: loginBackoff,
 		metrics:      metrics,
+		budget:       newBudget(store.Limits(), store.AdmissionCounters()),
 		Log:          logger,
 	}
+	metrics.lowDisk = application.lowDisk.Load
 	application.shutdownBudget = ShutdownBudget
 	application.shutdownDrain = ShutdownDrain
 	application.ready.Store(true)
@@ -181,7 +202,8 @@ func (a *App) Handler() http.Handler {
 	if a.Config.APNsTeamID != "" {
 		pushProviders = append(pushProviders, "apns")
 	}
-	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Push: a.Push, PushProviders: pushProviders, VAPIDPublicKey: a.Config.VAPIDPublicKey, TURNURLs: a.Config.TURNURLs, TURNSharedSecret: a.Config.TURNSharedSecret, Log: a.Log, SetupToken: a.Config.SetupToken, DefaultInstanceName: a.Config.InstanceName, PasswordCost: a.Config.PasswordCost, Messages: messaging.New(a.Store), ClientIdentities: a.limiter.clientIdentities, LoginBackoff: a.loginBackoff, Ready: a.ready.Load}
+	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Push: a.Push, PushProviders: pushProviders, VAPIDPublicKey: a.Config.VAPIDPublicKey, TURNURLs: a.Config.TURNURLs, TURNSharedSecret: a.Config.TURNSharedSecret, Log: a.Log, SetupToken: a.Config.SetupToken, DefaultInstanceName: a.Config.InstanceName, PasswordCost: a.Config.PasswordCost, Messages: messaging.New(a.Store), ClientIdentities: a.limiter.clientIdentities, LoginBackoff: a.loginBackoff, Ready: a.ready.Load,
+		Budget: a.budget, Admission: a.Store.AdmissionCounters(), LowDisk: a.lowDisk.Load}
 	api.Register(mux)
 	return a.trackInflight(securityHeaders(a.requestLogger(a.limiter.middleware(routeTimeouts(mux)))))
 }
@@ -258,6 +280,8 @@ func (a *App) Serve(ctx context.Context) error {
 		a.waitInflight(deadline)
 	}()
 	go a.runRetentionSweeper(serveCtx)
+	// Always sampled: the low-disk write guard reads it.
+	go a.runCapacitySampler(serveCtx)
 	go a.limiter.cleanupLoop(serveCtx)
 	go a.loginBackoff.CleanupLoop(serveCtx)
 	wakeWorkersDone := make(chan struct{})
@@ -337,6 +361,11 @@ func (a *App) runRetentionSweeper(ctx context.Context) {
 	ticker := time.NewTicker(6 * time.Hour)
 	defer ticker.Stop()
 	sweep := func() {
+		started := time.Now()
+		defer func() {
+			a.metrics.retentionSweptAt.Store(time.Now().Unix())
+			a.metrics.retentionSweepNanos.Store(int64(time.Since(started)))
+		}()
 		if cleaner, ok := a.Blobs.(uploads.TemporaryFileCleaner); ok {
 			if removed, err := cleaner.CleanupTemporaryFiles(ctx, time.Now().UTC().Add(-time.Hour)); err != nil {
 				a.Log.Warn("temporary_blob_cleanup_failed", "err", err)
@@ -385,7 +414,7 @@ const (
 func (a *App) drainExpiredContent(ctx context.Context, now time.Time) {
 	started := time.Now()
 	var total int64
-	for batch := 0; batch < retentionMaxBatches && time.Since(started) < retentionTimeBudget; batch++ {
+	for batch := 0; batch < retentionMaxBatches && time.Since(started) < a.retentionTimeLimit(); batch++ {
 		if ctx.Err() != nil {
 			return
 		}
@@ -410,7 +439,7 @@ func (a *App) drainExpiredContent(ctx context.Context, now time.Time) {
 func (a *App) drainRetention(ctx context.Context, name string, prune func() (int64, error)) {
 	started := time.Now()
 	var total int64
-	for batch := 0; batch < retentionMaxBatches && time.Since(started) < retentionTimeBudget; batch++ {
+	for batch := 0; batch < retentionMaxBatches && time.Since(started) < a.retentionTimeLimit(); batch++ {
 		if ctx.Err() != nil {
 			return
 		}
@@ -430,6 +459,13 @@ func (a *App) drainRetention(ctx context.Context, name string, prune func() (int
 	if total > 0 {
 		a.Log.Info("retention_rows_pruned", "class", name, "removed", total)
 	}
+}
+
+func (a *App) retentionTimeLimit() time.Duration {
+	if a.retentionBudget > 0 {
+		return a.retentionBudget
+	}
+	return retentionTimeBudget
 }
 
 func retentionYield(ctx context.Context) bool {
@@ -547,7 +583,7 @@ func (a *App) deliverPushWake(ctx context.Context, metric *pushDeliveryMetrics, 
 		}
 		metric.failed.Add(1)
 		a.Log.Warn("push_wake_refresh_failed", "provider", job.Provider, "err", refreshErr)
-		nextAttempt := time.Now().UTC().Add(pushWakeRetryDelay(job.Attempts))
+		nextAttempt := time.Now().UTC().Add(a.retryDelay(job.Attempts))
 		retryCtx, retryCancel := context.WithTimeout(ctx, 2*time.Second)
 		_ = a.Store.RetryPushWakeJob(retryCtx, job, nextAttempt, time.Now().UTC())
 		retryCancel()
@@ -555,13 +591,22 @@ func (a *App) deliverPushWake(ctx context.Context, metric *pushDeliveryMetrics, 
 	}
 	job = freshJob
 	metric.attempted.Add(1)
-	sendCtx, cancel := context.WithTimeout(ctx, pushWakeSendTimeout)
+	sendTimeout := a.pushSendTimeout
+	if sendTimeout <= 0 {
+		sendTimeout = pushWakeSendTimeout
+	}
+	sendCtx, cancel := context.WithTimeout(ctx, sendTimeout)
+	sendStarted := time.Now()
 	err := a.Push.SendEncryptedEventAvailable(sendCtx, push.Notification{
 		Provider:   job.Provider,
 		Endpoint:   job.Endpoint,
 		PublicKey:  job.PublicKey,
 		AuthSecret: job.AuthSecret,
 	})
+	metric.sendDuration.Observe(time.Since(sendStarted))
+	if err != nil && ctx.Err() == nil && errors.Is(sendCtx.Err(), context.DeadlineExceeded) {
+		metric.timeouts.Add(1)
+	}
 	cancel()
 	if err == nil {
 		// The provider accepted the wake, so it counts as delivered even if
@@ -595,13 +640,20 @@ func (a *App) deliverPushWake(ctx context.Context, metric *pushDeliveryMetrics, 
 		return
 	}
 	metric.failed.Add(1)
-	nextAttempt := time.Now().UTC().Add(pushWakeRetryDelay(job.Attempts))
+	nextAttempt := time.Now().UTC().Add(a.retryDelay(job.Attempts))
 	retryCtx, retryCancel := context.WithTimeout(ctx, 2*time.Second)
 	retryErr := a.Store.RetryPushWakeJob(retryCtx, job, nextAttempt, time.Now().UTC())
 	retryCancel()
 	if retryErr != nil {
 		a.Log.Warn("push_wake_retry_record_failed", "provider", job.Provider, "err", retryErr)
 	}
+}
+
+func (a *App) retryDelay(attempts int) time.Duration {
+	if a.pushRetryDelay > 0 {
+		return a.pushRetryDelay
+	}
+	return pushWakeRetryDelay(attempts)
 }
 
 func pushWakeRetryDelay(attempts int) time.Duration {
@@ -638,10 +690,14 @@ func (a *App) updatePushWakeMetrics(ctx context.Context) {
 	}
 	for _, provider := range pushMetricProviders {
 		a.metrics.push[provider].backlog.Store(0)
+		a.metrics.push[provider].oldestQueuedAt.Store(0)
 	}
 	for _, item := range backlog {
 		if metric := a.metrics.push[item.Provider]; metric != nil {
 			metric.backlog.Store(item.Rows)
+			if !item.OldestCreatedAt.IsZero() {
+				metric.oldestQueuedAt.Store(item.OldestCreatedAt.Unix())
+			}
 		}
 	}
 }
@@ -659,7 +715,7 @@ func (a *App) updateRetentionMetrics(ctx context.Context, now time.Time) {
 func (a *App) reconcileBlobDeletions(ctx context.Context) {
 	started := time.Now()
 	failed := 0
-	for batch := 0; batch < retentionMaxBatches && time.Since(started) < retentionTimeBudget; batch++ {
+	for batch := 0; batch < retentionMaxBatches && time.Since(started) < a.retentionTimeLimit(); batch++ {
 		storageKeys, err := a.Store.PendingBlobDeletions(ctx, 500)
 		if err != nil {
 			a.Log.Warn("blob_cleanup_queue_read_failed")
@@ -746,6 +802,17 @@ type httpMetrics struct {
 	push                map[string]*pushDeliveryMetrics
 	rateLimiter         *rateLimiter
 	loginBackoff        *httpapi.LoginBackoff
+
+	// Capacity signals (card I47); see capacity_metrics.go.
+	startedAt           time.Time
+	pools               func() (writer, reader sql.DBStats)
+	writerAcquire       func() opmetrics.Snapshot
+	hubStats            func() realtime.HubStats
+	capacity            capacityMetrics
+	retentionSweptAt    atomic.Int64
+	retentionSweepNanos atomic.Int64
+	admission           *admission.Counters
+	lowDisk             func() bool
 }
 
 type pushDeliveryMetrics struct {
@@ -754,27 +821,34 @@ type pushDeliveryMetrics struct {
 	failed    atomic.Int64
 	abandoned atomic.Int64
 	backlog   atomic.Int64
+	timeouts  atomic.Int64
+	// oldestQueuedAt is the unix time the oldest live job was queued, 0
+	// when there is none. A timestamp keeps aging in PromQL (time() - x)
+	// even if a stuck worker stops refreshing it.
+	oldestQueuedAt atomic.Int64
+	sendDuration   *opmetrics.Histogram
 }
 
 type routeMetrics struct {
 	total          atomic.Int64
 	durationMicros atomic.Int64
-	latency        [7]atomic.Int64
+	latency        [len(latencyBounds) + 1]atomic.Int64
 }
 
 var latencyBounds = [...]time.Duration{
 	10 * time.Millisecond,
 	50 * time.Millisecond,
 	100 * time.Millisecond,
+	250 * time.Millisecond,
 	500 * time.Millisecond,
 	time.Second,
 	5 * time.Second,
 }
 
 func newHTTPMetrics() *httpMetrics {
-	metrics := &httpMetrics{push: make(map[string]*pushDeliveryMetrics, 3)}
+	metrics := &httpMetrics{push: make(map[string]*pushDeliveryMetrics, 3), startedAt: time.Now()}
 	for _, provider := range pushMetricProviders {
-		metrics.push[provider] = &pushDeliveryMetrics{}
+		metrics.push[provider] = &pushDeliveryMetrics{sendDuration: newPushSendHistogram()}
 	}
 	return metrics
 }
@@ -844,6 +918,24 @@ func (m *httpMetrics) handle(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprintf(w, "veritra_backup_last_success_age_seconds %d\n", age)
 		_, _ = fmt.Fprint(w, "# TYPE veritra_backup_consecutive_failures gauge\n")
 		_, _ = fmt.Fprintf(w, "veritra_backup_consecutive_failures %d\n", status.ConsecutiveFailures)
+		var lastAttempt, lastDrill, drillPassed int64
+		if recorded && !status.LastAttemptAt.IsZero() {
+			lastAttempt = status.LastAttemptAt.Unix()
+		}
+		if recorded && status.LastDrillAt != nil {
+			lastDrill = status.LastDrillAt.Unix()
+			if status.LastDrillPassed {
+				drillPassed = 1
+			}
+		}
+		_, _ = fmt.Fprint(w, "# TYPE veritra_backup_last_attempt_timestamp_seconds gauge\n")
+		_, _ = fmt.Fprintf(w, "veritra_backup_last_attempt_timestamp_seconds %d\n", lastAttempt)
+		// The drill timestamp is 0 until a drill is recorded; success is 1
+		// only when the last recorded drill passed.
+		_, _ = fmt.Fprint(w, "# TYPE veritra_backup_last_restore_drill_timestamp_seconds gauge\n")
+		_, _ = fmt.Fprintf(w, "veritra_backup_last_restore_drill_timestamp_seconds %d\n", lastDrill)
+		_, _ = fmt.Fprint(w, "# TYPE veritra_backup_last_restore_drill_success gauge\n")
+		_, _ = fmt.Fprintf(w, "veritra_backup_last_restore_drill_success %d\n", drillPassed)
 	}
 	if m.realtimeConnections != nil {
 		_, _ = fmt.Fprint(w, "# TYPE veritra_realtime_connections gauge\n")
@@ -872,6 +964,10 @@ func (m *httpMetrics) handle(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprintf(w, "veritra_rate_limit_buckets %d\n", entries)
 		_, _ = fmt.Fprint(w, "# TYPE veritra_rate_limit_evictions_total counter\n")
 		_, _ = fmt.Fprintf(w, "veritra_rate_limit_evictions_total %d\n", evictions)
+		_, _ = fmt.Fprint(w, "# TYPE veritra_rate_limit_rejections_total counter\n")
+		for i, scope := range rateLimitScopes {
+			_, _ = fmt.Fprintf(w, "veritra_rate_limit_rejections_total{scope=%q} %d\n", scope, m.rateLimiter.rejections[i].Load())
+		}
 	}
 	if m.loginBackoff != nil {
 		entries, evictions := m.loginBackoff.Stats()
@@ -879,6 +975,10 @@ func (m *httpMetrics) handle(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprintf(w, "veritra_login_backoff_entries %d\n", entries)
 		_, _ = fmt.Fprint(w, "# TYPE veritra_login_backoff_evictions_total counter\n")
 		_, _ = fmt.Fprintf(w, "veritra_login_backoff_evictions_total %d\n", evictions)
+	}
+	m.writeCapacityMetrics(w)
+	if m.admission != nil {
+		writeAdmissionMetrics(w, m.admission, m.lowDisk != nil && m.lowDisk())
 	}
 }
 
@@ -933,10 +1033,14 @@ type rateLimiter struct {
 	authLimit        int
 	enrollmentLimit  int
 
-	mu        sync.Mutex
-	buckets   map[string]*bucket
-	evictions atomic.Int64
+	mu         sync.Mutex
+	buckets    map[string]*bucket
+	evictions  atomic.Int64
+	rejections [len(rateLimitScopes)]atomic.Int64
 }
+
+// rateLimitScopes name the limit a rejected request hit, for metrics only.
+var rateLimitScopes = [...]string{"general", "auth", "enrollment"}
 
 type bucket struct {
 	general    int
@@ -1018,6 +1122,14 @@ func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
 		rl.mu.Unlock()
 
 		if overGeneral || overAuth || overEnrollment {
+			switch {
+			case overAuth:
+				rl.rejections[1].Add(1)
+			case overEnrollment:
+				rl.rejections[2].Add(1)
+			default:
+				rl.rejections[0].Add(1)
+			}
 			w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 			http.Error(w, "rate limited", http.StatusTooManyRequests)
 			return

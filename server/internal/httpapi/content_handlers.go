@@ -18,6 +18,9 @@ import (
 )
 
 func (a *API) uploadAttachment(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	if a.diskLow(w) {
+		return
+	}
 	if r.Header.Get("X-Private-Messenger-Encrypted") != "1" {
 		writeError(w, http.StatusBadRequest, "encrypted_upload_header_required")
 		return
@@ -44,7 +47,7 @@ func (a *API) uploadAttachment(w http.ResponseWriter, r *http.Request, principal
 		writeError(w, http.StatusBadRequest, "invalid_crypto_metadata")
 		return
 	}
-	storageKey, sha, size, err := a.Blobs.PutEncryptedBlob(r.Context(), http.MaxBytesReader(w, r.Body, 50<<20))
+	blob, err := a.Blobs.PutEncryptedBlob(r.Context(), http.MaxBytesReader(w, r.Body, 50<<20))
 	if err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
@@ -57,13 +60,14 @@ func (a *API) uploadAttachment(w http.ResponseWriter, r *http.Request, principal
 	attachment, err := a.Store.CreateAttachmentEnvelope(r.Context(), domain.AttachmentEnvelope{
 		OwnerAccountID:   principal.AccountID,
 		ConversationID:   conversationID,
-		StorageKey:       storageKey,
-		CiphertextSHA256: sha,
-		SizeBytes:        size,
+		StorageKey:       blob.StorageKey,
+		CiphertextSHA256: blob.SHA256,
+		SizeBytes:        blob.Size,
 		CryptoMetadata:   metadata,
+		ChunkDigests:     blob.ChunkDigests,
 	})
 	if err != nil {
-		a.cleanupUncommittedBlob(r.Context(), storageKey)
+		a.cleanupUncommittedBlob(r.Context(), blob.StorageKey)
 		if errors.Is(err, storage.ErrStorageQuota) {
 			handleStorageError(w, err)
 			return
@@ -114,7 +118,10 @@ func (a *API) attachmentSubroute(w http.ResponseWriter, r *http.Request, princip
 	}
 	switch r.Method {
 	case http.MethodGet:
-		serveEncryptedBlob(w, r, a.Blobs, attachment.StorageKey, attachment.CiphertextSHA256, attachment.SizeBytes)
+		a.serveEncryptedBlob(w, r, uploads.BlobRef{
+			StorageKey: attachment.StorageKey, SHA256: attachment.CiphertextSHA256,
+			Size: attachment.SizeBytes, ChunkDigests: attachment.ChunkDigests,
+		})
 	case http.MethodDelete:
 		if attachment.OwnerAccountID != principal.AccountID {
 			writeError(w, http.StatusForbidden, "forbidden")
@@ -133,6 +140,9 @@ func (a *API) attachmentSubroute(w http.ResponseWriter, r *http.Request, princip
 }
 
 func (a *API) uploadBackup(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	if a.diskLow(w) {
+		return
+	}
 	if r.Header.Get("X-Private-Messenger-Encrypted") != "1" {
 		writeError(w, http.StatusBadRequest, "encrypted_upload_header_required")
 		return
@@ -152,7 +162,7 @@ func (a *API) uploadBackup(w http.ResponseWriter, r *http.Request, principal dom
 		return
 	}
 	recoveryTokenHash := sha256.Sum256(recoveryToken)
-	storageKey, sha, size, err := a.Blobs.PutEncryptedBlob(r.Context(), http.MaxBytesReader(w, r.Body, 100<<20))
+	blob, err := a.Blobs.PutEncryptedBlob(r.Context(), http.MaxBytesReader(w, r.Body, 100<<20))
 	if err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
@@ -162,8 +172,8 @@ func (a *API) uploadBackup(w http.ResponseWriter, r *http.Request, principal dom
 		writeError(w, http.StatusInternalServerError, "backup_upload_failed")
 		return
 	}
-	if err := a.Store.CreateBackupBlob(r.Context(), principal.AccountID, principal.DeviceID, storageKey, sha, size, metadata, recoveryTokenHash[:]); err != nil {
-		a.cleanupUncommittedBlob(r.Context(), storageKey)
+	if err := a.Store.CreateBackupBlobWithChunkDigests(r.Context(), principal.AccountID, principal.DeviceID, blob.StorageKey, blob.SHA256, blob.Size, blob.ChunkDigests, metadata, recoveryTokenHash[:]); err != nil {
+		a.cleanupUncommittedBlob(r.Context(), blob.StorageKey)
 		if errors.Is(err, storage.ErrStorageQuota) {
 			handleStorageError(w, err)
 			return
@@ -171,7 +181,7 @@ func (a *API) uploadBackup(w http.ResponseWriter, r *http.Request, principal dom
 		writeError(w, http.StatusInternalServerError, "backup_record_failed")
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]interface{}{"storage_key": storageKey, "ciphertext_sha256": sha, "size_bytes": size})
+	writeJSON(w, http.StatusCreated, map[string]interface{}{"storage_key": blob.StorageKey, "ciphertext_sha256": blob.SHA256, "size_bytes": blob.Size})
 }
 
 func validBackupCryptoMetadata(raw json.RawMessage) bool {
@@ -218,7 +228,7 @@ func (a *API) recoverBackup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusRequestedRangeNotSatisfiable, "invalid_recovery_range")
 		return
 	}
-	serveRecoveryBlob(w, r, a.Store, a.Blobs, transfer, end-start+1)
+	a.serveRecoveryBlob(w, r, transfer, end-start+1)
 }
 
 func recoveryRange(r *http.Request, size int64) (int64, int64, error) {
@@ -280,45 +290,106 @@ func recoveryRangeStart(r *http.Request) (int64, error) {
 	return start, nil
 }
 
-type recoveryResponseWriter struct {
+// blobResponseWriter carries a verified blob through http.ServeContent.
+// Before a 200 or 206 status line is sent it verifies the chunk holding the
+// first byte to serve, so a bad chunk there becomes a clean
+// 500 blob_integrity_failed. A chunk that fails later stops the copy; the
+// caller then aborts the response (panic(http.ErrAbortHandler)), so the
+// client sees a broken transfer, never an unverified byte. It also records
+// the status and the body bytes handed to the connection.
+type blobResponseWriter struct {
 	http.ResponseWriter
-	written int64
-	status  int
-	err     error
+	blob            uploads.Blob
+	status          int
+	written         int64
+	integrityFailed bool
 }
 
-func (w *recoveryResponseWriter) Write(p []byte) (int, error) {
-	if w.status == 0 {
-		w.status = http.StatusOK
-	}
-	n, err := w.ResponseWriter.Write(p)
-	w.written += int64(n)
-	if err != nil {
-		w.err = err
-	}
-	return n, err
-}
-
-func (w *recoveryResponseWriter) WriteHeader(status int) {
+func (w *blobResponseWriter) WriteHeader(status int) {
 	if w.status != 0 {
 		return
+	}
+	// A multipart/byteranges body is produced by a ServeContent goroutine
+	// that positions the blob itself; its chunks are still verified on read.
+	if (status == http.StatusOK || status == http.StatusPartialContent) &&
+		!strings.HasPrefix(w.Header().Get("Content-Type"), "multipart/") {
+		if err := w.blob.VerifyCurrent(); err != nil {
+			w.integrityFailed = true
+			w.status = http.StatusInternalServerError
+			for _, key := range []string{"Accept-Ranges", "Content-Disposition", "Content-Length", "Content-Range", "Etag"} {
+				w.Header().Del(key)
+			}
+			writeError(w.ResponseWriter, http.StatusInternalServerError, "blob_integrity_failed")
+			return
+		}
 	}
 	w.status = status
 	w.ResponseWriter.WriteHeader(status)
 }
 
-func serveRecoveryBlob(w http.ResponseWriter, r *http.Request, store *storage.Store, blobs uploads.Store, transfer storage.RecoveryTransfer, expected int64) {
-	file, err := blobs.Open(r.Context(), transfer.Backup.StorageKey, transfer.Backup.CiphertextSHA256, transfer.Backup.SizeBytes)
-	if err != nil {
-		_ = finalizeRecoveryTransfer(r, store, transfer, 0, 0)
-		if errors.Is(err, uploads.ErrBlobIntegrity) {
-			writeError(w, http.StatusInternalServerError, "blob_integrity_failed")
-			return
-		}
+func (w *blobResponseWriter) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	if w.integrityFailed {
+		return 0, uploads.ErrBlobIntegrity
+	}
+	n, err := w.ResponseWriter.Write(p)
+	w.written += int64(n)
+	return n, err
+}
+
+// openBlob opens ref for a download and writes the error response itself
+// when it cannot.
+func (a *API) openBlob(w http.ResponseWriter, r *http.Request, ref uploads.BlobRef) (uploads.Blob, bool) {
+	blob, err := a.Blobs.Open(r.Context(), ref)
+	if err == nil {
+		return blob, true
+	}
+	if errors.Is(err, uploads.ErrBlobIntegrity) {
+		a.warn("blob_integrity_failed")
+		writeError(w, http.StatusInternalServerError, "blob_integrity_failed")
+	} else {
 		writeError(w, http.StatusNotFound, "blob_not_found")
+	}
+	return nil, false
+}
+
+// finishBlobResponse runs after ServeContent. It stores the record Open
+// rebuilt for a blob stored before chunk records existed, and reports
+// whether a chunk failed after the status line was sent, in which case the
+// caller must abort the response.
+func (a *API) finishBlobResponse(r *http.Request, ref uploads.BlobRef, blob uploads.Blob, writer *blobResponseWriter) bool {
+	if record := blob.RecomputedChunkDigests(); record != nil {
+		if ref.ChunkDigests != nil {
+			a.warn("blob_digest_record_invalid")
+		}
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+		err := a.Store.RecordBlobChunkDigests(ctx, ref.StorageKey, ref.SHA256, ref.Size, record)
+		cancel()
+		if err != nil {
+			a.warn("blob_digest_backfill_failed")
+		}
+	}
+	if writer.integrityFailed {
+		a.warn("blob_integrity_failed")
+		return false
+	}
+	if blob.Err() != nil {
+		a.warn("blob_integrity_failed")
+		return true
+	}
+	return false
+}
+
+func (a *API) serveRecoveryBlob(w http.ResponseWriter, r *http.Request, transfer storage.RecoveryTransfer, expected int64) {
+	ref := backupBlobRef(transfer.Backup)
+	blob, ok := a.openBlob(w, r, ref)
+	if !ok {
+		_ = finalizeRecoveryTransfer(r, a.Store, transfer, 0, 0)
 		return
 	}
-	defer file.Close()
+	defer blob.Close()
 	w.Header().Set("Cache-Control", "no-store, private")
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment")
@@ -326,15 +397,15 @@ func serveRecoveryBlob(w http.ResponseWriter, r *http.Request, store *storage.St
 	if transfer.Backup.CiphertextSHA256 != "" {
 		w.Header().Set("ETag", `"sha256-`+transfer.Backup.CiphertextSHA256+`"`)
 	}
-	tracked := &recoveryResponseWriter{ResponseWriter: w}
+	tracked := &blobResponseWriter{ResponseWriter: w, blob: blob}
 	request := r.Clone(r.Context())
 	request.Header.Del("If-Match")
 	request.Header.Del("If-None-Match")
 	request.Header.Del("If-Modified-Since")
 	request.Header.Del("If-Unmodified-Since")
 	request.Header.Del("If-Range")
-	http.ServeContent(tracked, request, "encrypted.bin", time.Time{}, file)
-	validResponse := tracked.status == http.StatusOK || tracked.status == http.StatusPartialContent
+	http.ServeContent(tracked, request, "encrypted.bin", time.Time{}, blob)
+	validResponse := !tracked.integrityFailed && (tracked.status == http.StatusOK || tracked.status == http.StatusPartialContent)
 	if r.Header.Get("Range") != "" {
 		validResponse = validResponse && tracked.status == http.StatusPartialContent &&
 			w.Header().Get("Content-Range") == "bytes "+strconv.FormatInt(transfer.StartOffset, 10)+"-"+
@@ -345,11 +416,16 @@ func serveRecoveryBlob(w http.ResponseWriter, r *http.Request, store *storage.St
 	if contentLength, err := strconv.ParseInt(w.Header().Get("Content-Length"), 10, 64); err != nil || contentLength != expected {
 		validResponse = false
 	}
-	if !validResponse || tracked.written > expected {
-		tracked.written = 0
+	// Only bytes handed to the connection count, and those were verified:
+	// a mid-stream failure records progress up to the bad chunk.
+	written := tracked.written
+	if !validResponse || written > expected {
+		written = 0
 	}
-	if err := finalizeRecoveryTransfer(r, store, transfer, tracked.written, expected); err != nil {
-		return
+	abort := a.finishBlobResponse(r, ref, blob, tracked)
+	_ = finalizeRecoveryTransfer(r, a.Store, transfer, written, expected)
+	if abort {
+		panic(http.ErrAbortHandler)
 	}
 }
 
@@ -382,7 +458,7 @@ func (a *API) backupSubroute(w http.ResponseWriter, r *http.Request, principal d
 	}
 	switch r.Method {
 	case http.MethodGet:
-		serveEncryptedBlob(w, r, a.Blobs, backup.StorageKey, backup.CiphertextSHA256, backup.SizeBytes)
+		a.serveEncryptedBlob(w, r, backupBlobRef(backup))
 	case http.MethodDelete:
 		deleted, err := a.Store.DeleteBackup(r.Context(), id, principal.AccountID)
 		if err != nil {
@@ -396,24 +472,32 @@ func (a *API) backupSubroute(w http.ResponseWriter, r *http.Request, principal d
 	}
 }
 
-func serveEncryptedBlob(w http.ResponseWriter, r *http.Request, blobs uploads.Store, storageKey, sha string, size int64) {
-	file, err := blobs.Open(r.Context(), storageKey, sha, size)
-	if err != nil {
-		if errors.Is(err, uploads.ErrBlobIntegrity) {
-			writeError(w, http.StatusInternalServerError, "blob_integrity_failed")
-			return
-		}
-		writeError(w, http.StatusNotFound, "blob_not_found")
+func backupBlobRef(backup domain.BackupBlob) uploads.BlobRef {
+	return uploads.BlobRef{
+		StorageKey: backup.StorageKey, SHA256: backup.CiphertextSHA256,
+		Size: backup.SizeBytes, ChunkDigests: backup.ChunkDigests,
+	}
+}
+
+// serveEncryptedBlob streams a blob, verifying each chunk before it is sent
+// (see blobResponseWriter for what a client sees on a failure).
+func (a *API) serveEncryptedBlob(w http.ResponseWriter, r *http.Request, ref uploads.BlobRef) {
+	blob, ok := a.openBlob(w, r, ref)
+	if !ok {
 		return
 	}
-	defer file.Close()
+	defer blob.Close()
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if sha != "" {
-		w.Header().Set("ETag", `"sha256-`+sha+`"`)
+	if ref.SHA256 != "" {
+		w.Header().Set("ETag", `"sha256-`+ref.SHA256+`"`)
 	}
-	http.ServeContent(w, r, "encrypted.bin", time.Time{}, file)
+	writer := &blobResponseWriter{ResponseWriter: w, blob: blob}
+	http.ServeContent(writer, r, "encrypted.bin", time.Time{}, blob)
+	if a.finishBlobResponse(r, ref, blob, writer) {
+		panic(http.ErrAbortHandler)
+	}
 }
 
 func (a *API) cleanupUncommittedBlob(ctx context.Context, storageKey string) {

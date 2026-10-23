@@ -94,8 +94,42 @@ def test_select_ci_evidence() -> None:
     assert result_multiple["run_id"] == 302
 
 
+def test_simulator_job_stays_mandatory() -> None:
+    """QA02: the debug simulator job is required, and CI evidence is jobs only."""
+    assert "mobile-ios" in REQUIRED_JOBS
+    candidate_run = {"databaseId": 401, "headSha": COMMIT, "status": "completed", "conclusion": "success", "createdAt": "2026-08-24T15:00:00Z"}
+
+    def jobs_with(overrides: dict[str, object], extra: list[dict[str, object]] | None = None):
+        jobs = []
+        for job in REQUIRED_JOBS:
+            conclusion = overrides.get(job, "success")
+            if conclusion is not None:  # None drops the job entirely
+                jobs.append({"name": job, "conclusion": conclusion})
+        return lambda _: {"jobs": jobs + (extra or [])}
+
+    # Skipped, cancelled or absent simulator job: no evidence.
+    for conclusion in ["skipped", "cancelled", "neutral", "failure", ""]:
+        assert check_ci.select_ci_evidence(COMMIT, [candidate_run], jobs_with({"mobile-ios": conclusion})) is None
+    assert check_ci.select_ci_evidence(COMMIT, [candidate_run], jobs_with({"mobile-ios": None})) is None
+
+    # A skipped duplicate cannot hide behind a successful copy, in either order.
+    duplicate = [{"name": "mobile-ios", "conclusion": "skipped"}]
+    assert check_ci.select_ci_evidence(COMMIT, [candidate_run], jobs_with({}, duplicate)) is None
+    reordered = lambda _: {"jobs": duplicate + [{"name": job, "conclusion": "success"} for job in REQUIRED_JOBS]}
+    assert check_ci.select_ci_evidence(COMMIT, [candidate_run], reordered) is None
+
+    # A job that claims to be a signed build adds nothing: the evidence carries
+    # job conclusions only, never mobile artifact records.
+    signed_claim = [{"name": "ios-signed-release", "conclusion": "success"}]
+    result = check_ci.select_ci_evidence(COMMIT, [candidate_run], jobs_with({}, signed_claim))
+    assert result is not None
+    assert set(result) == {"run_id", "head_sha", "conclusion", "jobs"}
+    assert set(result["jobs"]) == set(REQUIRED_JOBS)
+
+
 if __name__ == "__main__":
     test_commit_validation()
     test_policy_validation()
     test_select_ci_evidence()
+    test_simulator_job_stays_mandatory()
     print("CI evidence selection adversarial tests passed")

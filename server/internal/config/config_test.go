@@ -45,6 +45,35 @@ func TestLoadPasswordCostRange(t *testing.T) {
 	}
 }
 
+func TestLoadSessionLifetimes(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SessionIdleLifetime != DefaultSessionIdleLifetime || cfg.SessionAbsoluteLifetime != DefaultSessionAbsoluteLifetime {
+		t.Fatalf("default lifetimes idle=%s absolute=%s", cfg.SessionIdleLifetime, cfg.SessionAbsoluteLifetime)
+	}
+	t.Setenv("PRIVATE_MESSENGER_SESSION_IDLE_DAYS", "7")
+	t.Setenv("PRIVATE_MESSENGER_SESSION_ABSOLUTE_DAYS", "60")
+	cfg, err = Load()
+	if err != nil || cfg.SessionIdleLifetime != 7*24*time.Hour || cfg.SessionAbsoluteLifetime != 60*24*time.Hour {
+		t.Fatalf("configured lifetimes idle=%s absolute=%s err=%v", cfg.SessionIdleLifetime, cfg.SessionAbsoluteLifetime, err)
+	}
+	t.Setenv("PRIVATE_MESSENGER_SESSION_IDLE_DAYS", "")
+	t.Setenv("PRIVATE_MESSENGER_SESSION_ABSOLUTE_DAYS", "7")
+	cfg, err = Load()
+	if err != nil || cfg.SessionIdleLifetime != 7*24*time.Hour || cfg.SessionAbsoluteLifetime != 7*24*time.Hour {
+		t.Fatalf("short absolute lifetime idle=%s absolute=%s err=%v", cfg.SessionIdleLifetime, cfg.SessionAbsoluteLifetime, err)
+	}
+	for _, values := range [][2]string{{"0", "30"}, {"14", "366"}, {"x", "30"}, {"31", "30"}} {
+		t.Setenv("PRIVATE_MESSENGER_SESSION_IDLE_DAYS", values[0])
+		t.Setenv("PRIVATE_MESSENGER_SESSION_ABSOLUTE_DAYS", values[1])
+		if _, err := Load(); err == nil {
+			t.Fatalf("invalid session lifetimes accepted: idle=%q absolute=%q", values[0], values[1])
+		}
+	}
+}
+
 func TestValidateSetupTokenUsesDecodedEntropyFloor(t *testing.T) {
 	decoded := make([]byte, 32)
 	for i := range decoded {
@@ -156,5 +185,48 @@ func TestTrustedProxyRangesAcceptOperatorNetworks(t *testing.T) {
 	}
 	if mapped[0].Contains(net.ParseIP("203.0.113.1")) || !mapped[0].Contains(net.ParseIP("10.1.2.3")) {
 		t.Fatal("IPv4-mapped trusted range did not narrow to its IPv4 network")
+	}
+}
+
+// TURN URLs are handed to WebRTC as ICE server URLs, so they must be in the
+// RFC 7065 form (turn:host:port) that server/config.example.env shows.
+func TestTURNURLsUseTheRFC7065Form(t *testing.T) {
+	t.Setenv("PRIVATE_MESSENGER_TURN_SHARED_SECRET", "turn-secret-for-test")
+	for raw, want := range map[string]string{
+		"turns:turn.example.com:5349?transport=tcp": "turns:turn.example.com:5349?transport=tcp",
+		"turn:turn.example.com":                     "turn:turn.example.com",
+		"turn:192.0.2.10:3478?transport=udp":        "turn:192.0.2.10:3478?transport=udp",
+		"turn:[2001:db8::1]:3478":                   "turn:[2001:db8::1]:3478",
+		"turn:[2001:db8::1]":                        "turn:[2001:db8::1]",
+		"turns://turn.example.com:5349":             "turns:turn.example.com:5349",
+		" turn://turn.example.com:3478 ":            "turn:turn.example.com:3478",
+	} {
+		t.Setenv("PRIVATE_MESSENGER_TURN_URLS", raw)
+		cfg, err := Load()
+		if err != nil || len(cfg.TURNURLs) != 1 || cfg.TURNURLs[0] != want {
+			t.Fatalf("%q: got %q err=%v, want %q", raw, cfg.TURNURLs, err, want)
+		}
+	}
+	for _, raw := range []string{
+		"stun:turn.example.com:3478",
+		"https://turn.example.com",
+		"turn:",
+		"turn:user@turn.example.com:3478",
+		"turn://user:pw@turn.example.com:3478",
+		"turn:turn.example.com:0",
+		"turn:turn.example.com:70000",
+		"turn:turn.example.com:",
+		"turn:2001:db8::1",
+		"turn:[turn.example.com]:3478",
+		"turn:turn.example.com:3478?transport=sctp",
+		"turn:turn.example.com:3478?transport=udp&x=1",
+		"turn://turn.example.com:3478/path",
+		"turn:turn.example.com#frag",
+		"turn:-bad.example.com",
+	} {
+		t.Setenv("PRIVATE_MESSENGER_TURN_URLS", raw)
+		if _, err := Load(); err == nil {
+			t.Fatalf("%q was accepted", raw)
+		}
 	}
 }

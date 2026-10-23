@@ -25,11 +25,11 @@ This project is licensed AGPL-3.0-or-later. Dependency licenses must be compatib
 | `file_selector` 1.1.0 | Picking a file to send as an encrypted attachment, and choosing where to save one on desktop | BSD-3-Clause | Direct Flutter dependency maintained by flutter.dev; its platform packages (`file_selector_android`, `_ios`, `_linux`, `_macos`, `_windows`, `_web`, `_platform_interface`) and `cross_file` 0.3.5+5 come with it. The file is encrypted on the device before upload. |
 | `http` 1.6.0 | HTTP client pulled in by the `file_selector` packages | BSD-3-Clause | Transitive Flutter dependency pinned in `mobile/pubspec.lock`; the app does not use it. |
 | `aes-gcm` 0.11.1 | Authenticated encryption for platform-wrapped MLS state, attachment, and backup chunks | Apache-2.0 OR MIT | Exact version pinned; does not replace MLS message protection. |
-| `openmls` 0.9.0 | MLS 1.0 group state and message processing | MIT | Exact version pinned in `crypto/rust/Cargo.lock`; sensitive debug features are disabled. |
+| `openmls` 0.9.2 | MLS 1.0 group state and message processing | MIT | Exact version pinned in `crypto/rust/Cargo.lock`; sensitive debug features are disabled. |
 | `openmls_basic_credential` 0.6.0 | Basic MLS credential signing keys | MIT | Exact version pinned; used to bind the application device identity to MLS credentials. |
 | `openmls_rust_crypto` 0.6.0 | RustCrypto provider for OpenMLS | MIT | Exact version pinned; native provider core only, pending platform-secure persistence review. |
 | `openmls_traits` 0.6.0 | OpenMLS provider and storage traits | MIT | Exact version pinned. |
-| `sha2` 0.11.0 | SHA-256 enrollment key-package commitment | Apache-2.0 OR MIT | Exact version pinned; used only to bind the public key package into the signed enrollment proof. |
+| `sha2` 0.11.1 | SHA-256 enrollment key-package commitment | Apache-2.0 OR MIT | Exact version pinned; used only to bind the public key package into the signed enrollment proof. |
 | `tls_codec` 0.5.0 | RFC 9420 TLS presentation-language encoding | MIT | Exact version pinned for MLS transport serialization. |
 | Flutter SDK | Mobile client framework | BSD-3-Clause | Toolchain, not vendored. |
 
@@ -46,7 +46,9 @@ Added for T44C (localization scaffolding, English template only).
 
 Signal/libsignal, OpenMLS, Matrix/Synapse/Element, SimpleX Chat, Mattermost, Zulip, Rocket.Chat, Stoat/Revolt, PocketBase, Pion, LiveKit, Caddy, UnifiedPush, ntfy, and MiroTalk were studied for architecture, deployment, crypto, licensing, and self-hosting lessons. No source code from these projects is copied into this repository.
 
-OpenMLS dependency review (2026-09-24, OpenMLS 0.9.0 / hpke-rs 0.7): the
+OpenMLS dependency review (2026-09-24, OpenMLS 0.9.0 / hpke-rs 0.7; patch
+update to OpenMLS 0.9.2 and sha2 0.11.1 on 2026-10-23, same graph and
+licenses, for GHSA-gc79-23g3-8g52, GHSA-p276-g3f3-wwgh and GHSA-94v4-rg25-x625): the
 locked graph contains 205 third-party packages. Every package declares a
 license. The observed SPDX expressions are MIT, Apache-2.0, ISC, BSD-1-Clause,
 BSD-2-Clause, BSD-3-Clause, MPL-2.0, Unicode-3.0, LLVM-exception,

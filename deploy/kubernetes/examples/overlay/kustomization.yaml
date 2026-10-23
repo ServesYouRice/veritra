@@ -21,7 +21,7 @@ configMapGenerator:
       - PRIVATE_MESSENGER_INSTANCE_NAME=Veritra
       # - PRIVATE_MESSENGER_VAPID_SUBSCRIBER=mailto:owner@example.com
       # - PRIVATE_MESSENGER_VAPID_PUBLIC_KEY=...
-      # - PRIVATE_MESSENGER_TURN_URLS=turns://turn.example.com:5349
+      # - PRIVATE_MESSENGER_TURN_URLS=turns:turn.example.com:5349?transport=tcp
 patches:
   - target:
       kind: IngressRoute

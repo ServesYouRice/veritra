@@ -18,8 +18,10 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"private-messenger/server/internal/admission"
 	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/domain"
+	"private-messenger/server/internal/opmetrics"
 )
 
 var (
@@ -48,12 +50,20 @@ var (
 )
 
 type Store struct {
-	db *dbRouter
+	db       *dbRouter
+	sessions sessionPolicy
+	// limits are the admission limits with defaults applied; admission
+	// counts their refusals (admission_store.go).
+	limits    config.Limits
+	admission *admission.Counters
 }
 
 type dbRouter struct {
 	reader *sql.DB
 	writer *sql.DB
+	// writerAcquire times BeginTx on the one-connection writer pool, which
+	// is the wait for the instance's single SQLite writer (card I47).
+	writerAcquire *opmetrics.Histogram
 }
 
 func (db *dbRouter) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
@@ -69,7 +79,10 @@ func (db *dbRouter) QueryRowContext(ctx context.Context, query string, args ...i
 }
 
 func (db *dbRouter) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
-	return db.writer.BeginTx(ctx, opts)
+	started := time.Now()
+	tx, err := db.writer.BeginTx(ctx, opts)
+	db.writerAcquire.Observe(time.Since(started))
+	return tx, err
 }
 
 func (db *dbRouter) PingContext(ctx context.Context) error {
@@ -117,7 +130,8 @@ func Open(ctx context.Context, cfg config.Config) (*Store, error) {
 	// Query calls use their own pool. SQLite's WAL mode gives those reads
 	// deferred transactions by default, while writes stay serialized through
 	// the single writer connection.
-	store := &Store{db: &dbRouter{reader: reader, writer: writer}}
+	store := &Store{db: &dbRouter{reader: reader, writer: writer, writerAcquire: newWriterAcquireHistogram()},
+		sessions: newSessionPolicy(cfg), limits: resolveLimits(cfg.Limits), admission: &admission.Counters{}}
 	return store, nil
 }
 
@@ -601,11 +615,13 @@ func scanMessage(rows scanner) (domain.MessageEnvelope, error) {
 	return msg, nil
 }
 
-func scanAttachment(rows scanner) (domain.AttachmentEnvelope, error) {
+// scanAttachment reads the standard attachment columns, then any extra
+// columns into extra.
+func scanAttachment(rows scanner, extra ...any) (domain.AttachmentEnvelope, error) {
 	var attachment domain.AttachmentEnvelope
 	var conversationID sql.NullString
 	var metadata, created string
-	if err := rows.Scan(&attachment.ID, &attachment.OwnerAccountID, &conversationID, &attachment.StorageKey, &attachment.CiphertextSHA256, &attachment.SizeBytes, &metadata, &created); err != nil {
+	if err := rows.Scan(append([]any{&attachment.ID, &attachment.OwnerAccountID, &conversationID, &attachment.StorageKey, &attachment.CiphertextSHA256, &attachment.SizeBytes, &metadata, &created}, extra...)...); err != nil {
 		return domain.AttachmentEnvelope{}, err
 	}
 	attachment.ConversationID = stringPtr(conversationID)
@@ -614,11 +630,13 @@ func scanAttachment(rows scanner) (domain.AttachmentEnvelope, error) {
 	return attachment, nil
 }
 
-func scanBackup(rows scanner) (domain.BackupBlob, error) {
+// scanBackup reads the standard backup columns, then any extra columns
+// into extra.
+func scanBackup(rows scanner, extra ...any) (domain.BackupBlob, error) {
 	var backup domain.BackupBlob
 	var deviceID sql.NullString
 	var metadata, created string
-	if err := rows.Scan(&backup.ID, &backup.AccountID, &deviceID, &backup.StorageKey, &backup.CiphertextSHA256, &backup.SizeBytes, &metadata, &created); err != nil {
+	if err := rows.Scan(append([]any{&backup.ID, &backup.AccountID, &deviceID, &backup.StorageKey, &backup.CiphertextSHA256, &backup.SizeBytes, &metadata, &created}, extra...)...); err != nil {
 		return domain.BackupBlob{}, err
 	}
 	backup.DeviceID = stringPtr(deviceID)

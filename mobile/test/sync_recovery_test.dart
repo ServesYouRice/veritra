@@ -157,6 +157,27 @@ void main() {
     harness.dispose();
   });
 
+  test('messages committed before a failure in the same page are shown',
+      () async {
+    // Received messages reach the UI in batches (T49C); a failure later in
+    // the page must not hide the ones already committed.
+    final api = _ScriptedApi()
+      ..events = <SyncEvent>[
+        _envelopeEvent(4, 'msg_one'),
+        _envelopeEvent(5, 'msg_two'),
+        _envelopeEvent(6, 'msg_bad', ciphertext: _undecryptable),
+      ];
+    final harness = await _Harness.start(api);
+    await harness.waitFor(() => harness.state.syncRecovery != null);
+    expect(harness.state.syncRecovery!.eventId, 6);
+    expect(await harness.store.loadSyncCursor(), 5);
+    expect(
+      harness.state.messagesFor('conv_1').map((message) => message.id),
+      unorderedEquals(<String>['msg_one', 'msg_two']),
+    );
+    harness.dispose();
+  });
+
   test('a missing legacy envelope without proof of expiry stops sync',
       () async {
     final api = _ScriptedApi()
@@ -208,6 +229,40 @@ void main() {
     expect(api.syncCalls, greaterThan(callsWhileLimited));
     expect(harness.state.connectionStatus, ConnectionStatus.online);
     harness.dispose();
+  });
+
+  test('a rate limit with Retry-After is retried when its window resets',
+      () async {
+    // Without the header the backoff would wait 2, 4 and 8 s for these
+    // three retries; the server's Retry-After (0 s here) brings each one
+    // forward to about a second.
+    final api = _ScriptedApi()
+      ..events = <SyncEvent>[_mlsEvent(5, 'mls_1')]
+      ..syncStatus = 429
+      ..syncRetryAfter = Duration.zero;
+    final harness = await _Harness.start(api);
+    await harness.waitFor(
+        () => harness.state.connectionStatus == ConnectionStatus.offline);
+    final watch = Stopwatch()..start();
+    final firstCalls = api.syncCalls;
+    await harness.waitFor(() => api.syncCalls >= firstCalls + 3);
+    expect(watch.elapsed, lessThan(const Duration(seconds: 10)));
+
+    api.syncStatus = null;
+    await harness
+        .waitFor(() async => await harness.store.loadSyncCursor() == 5);
+    expect(harness.state.connectionStatus, ConnectionStatus.online);
+    harness.dispose();
+  });
+
+  test('Retry-After parses delta seconds and is bounded', () {
+    expect(ApiException.parseRetryAfter('17'), const Duration(seconds: 17));
+    expect(ApiException.parseRetryAfter(' 3 '), const Duration(seconds: 3));
+    expect(ApiException.parseRetryAfter('86400'), ApiException.maxRetryAfter);
+    expect(ApiException.parseRetryAfter(null), isNull);
+    expect(ApiException.parseRetryAfter('-1'), isNull);
+    expect(
+        ApiException.parseRetryAfter('Wed, 21 Oct 2026 07:28:00 GMT'), isNull);
   });
 
   test('a network failure while fetching MLS messages is not recorded',
@@ -427,6 +482,7 @@ class _ScriptedApi extends ApiClient {
   bool networkDown = false;
   bool mlsNetworkDown = false;
   int? syncStatus;
+  Duration? syncRetryAfter;
   int syncCalls = 0;
   int mlsListCalls = 0;
   int mlsMessageCalls = 0;
@@ -468,7 +524,9 @@ class _ScriptedApi extends ApiClient {
     if (networkDown) throw const SocketException('offline');
     final status = syncStatus;
     if (status == 401) throw ApiException(401, '{"error":"unauthorized"}');
-    if (status == 429) throw ApiException(429, 'rate limited');
+    if (status == 429) {
+      throw ApiException(429, 'rate limited', syncRetryAfter);
+    }
     if (status == 409) {
       throw ApiException(409, '{"error":"device_recovery_required"}');
     }

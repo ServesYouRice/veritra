@@ -1,12 +1,14 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:drift/drift.dart' show OrderingTerm, Variable;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_recovery.dart';
+import 'package:sqlite3/sqlite3.dart' show sqlite3;
 
 Matcher _storeFailure(LocalStoreFailureKind kind) =>
     isA<LocalStoreUnavailableException>()
@@ -347,6 +349,66 @@ void main() {
     expect((await restarted.loadSnapshot())?.cursor, 12);
   });
 
+  test('a snapshot rewrite is all or nothing and keeps the order', () async {
+    final store = createStore();
+    await store.saveSession(const Session(
+      baseUrl: 'https://example.test',
+      token: 'token',
+      accountId: 'acct_1',
+      deviceId: 'dev_1',
+    ));
+    ReceivedMessageEnvelope envelope(String id, String conversationId) =>
+        ReceivedMessageEnvelope(
+          id: id,
+          conversationId: conversationId,
+          senderAccountId: 'acct_1',
+          senderDeviceId: 'dev_1',
+          idempotencyKey: 'key_$id',
+          ciphertext: <int>[1],
+          cryptoProtocol: 'mls10-openmls-v1',
+          createdAt: DateTime.utc(2026, 7, 29),
+        );
+    await store.saveProjection(
+      <Conversation>[
+        Conversation(id: 'conv_2', kind: 'group'),
+        Conversation(id: 'conv_1', kind: 'group'),
+      ],
+      <String, List<ReceivedMessageEnvelope>>{
+        'conv_1': <ReceivedMessageEnvelope>[
+          envelope('msg_b', 'conv_1'),
+          envelope('msg_a', 'conv_1'),
+        ],
+        'conv_2': <ReceivedMessageEnvelope>[envelope('msg_c', 'conv_2')],
+      },
+    );
+
+    // The same envelope ID twice violates the key on the second insert;
+    // the rows written before it must roll back with it.
+    await expectLater(
+      store.saveProjection(
+        <Conversation>[
+          Conversation(id: 'conv_3', kind: 'group'),
+          Conversation(id: 'conv_4', kind: 'group'),
+        ],
+        <String, List<ReceivedMessageEnvelope>>{
+          'conv_3': <ReceivedMessageEnvelope>[envelope('msg_x', 'conv_3')],
+          'conv_4': <ReceivedMessageEnvelope>[envelope('msg_x', 'conv_4')],
+        },
+      ),
+      throwsA(anything),
+    );
+
+    final snapshot = (await store.loadSnapshot())!;
+    expect(snapshot.conversations.map((item) => item.id),
+        <String>['conv_2', 'conv_1']);
+    expect(snapshot.messagesByConversation['conv_1']!.map((item) => item.id),
+        <String>['msg_b', 'msg_a']);
+    expect(snapshot.messagesByConversation['conv_2']!.map((item) => item.id),
+        <String>['msg_c']);
+    expect(snapshot.messagesByConversation.keys,
+        unorderedEquals(<String>['conv_1', 'conv_2']));
+  });
+
   test('wrong database key fails closed', () async {
     final first = createStore();
     await first.saveSyncCursor(3);
@@ -535,6 +597,173 @@ void main() {
     expect((await upgraded.pendingMlsMessages()).single.attemptCount, 1);
   });
 
+  const envelopeIndex = 'local_ciphertext_envelopes_conversation_position';
+
+  Future<int> userVersion(EncryptedLocalDatabase database) async =>
+      (await database.customSelect('PRAGMA user_version').getSingle())
+          .read<int>('user_version');
+
+  Future<bool> hasEnvelopeIndex(EncryptedLocalDatabase database) async =>
+      (await database.customSelect(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?",
+        variables: <Variable<Object>>[Variable<String>(envelopeIndex)],
+      ).get())
+          .isNotEmpty;
+
+  /// SQLite's plan for the tail lookup that every received message's commit
+  /// makes, built exactly as `commitSyncEvent` and `commitMlsTransition`
+  /// build it.
+  Future<String> tailLookupPlan(EncryptedLocalDatabase database) async {
+    final query = database.select(database.localCiphertextEnvelopes)
+      ..where((table) => table.conversationId.equals('conv_1'))
+      ..orderBy([(table) => OrderingTerm.desc(table.position)])
+      ..limit(1);
+    final rows = await database.customSelect(
+      'EXPLAIN QUERY PLAN ${query.constructQuery().sql}',
+      variables: <Variable<Object>>[Variable<String>('conv_1')],
+    ).get();
+    return rows.map((row) => row.read<String>('detail')).join('\n');
+  }
+
+  test('a new database has the envelope index on schema 9', () async {
+    final store = createStore();
+    await store.saveSyncCursor(1);
+    final database = databases.last;
+    expect(await userVersion(database), 9);
+    expect(await hasEnvelopeIndex(database), isTrue);
+    expect(
+        await tailLookupPlan(database),
+        'SEARCH local_ciphertext_envelopes USING INDEX $envelopeIndex '
+        '(conversation_id=?)');
+  });
+
+  test('a version 8 database keeps its rows and gains the envelope index',
+      () async {
+    final store = createStore();
+    await store.saveSnapshot(
+      <Conversation>[
+        Conversation(id: 'conv_1', kind: 'group'),
+        Conversation(id: 'conv_2', kind: 'group'),
+      ],
+      <String, List<ReceivedMessageEnvelope>>{
+        'conv_1': <ReceivedMessageEnvelope>[
+          _receivedEnvelope(),
+          _receivedEnvelope(id: 'msg_2'),
+        ],
+        'conv_2': <ReceivedMessageEnvelope>[
+          _receivedEnvelope(id: 'msg_3', conversationId: 'conv_2'),
+        ],
+      },
+      1,
+    );
+    final database = databases.last;
+    await database.customStatement('DROP INDEX $envelopeIndex');
+    await database.customStatement('PRAGMA user_version = 8');
+    expect(await tailLookupPlan(database), isNot(contains(envelopeIndex)));
+    await database.close();
+    databases.removeLast();
+
+    final upgraded = createStore();
+    final snapshot = await upgraded.loadSnapshot();
+    final reopened = databases.last;
+    expect(await userVersion(reopened), 9);
+    expect(await hasEnvelopeIndex(reopened), isTrue);
+    expect(await tailLookupPlan(reopened), contains('INDEX $envelopeIndex'));
+    expect(snapshot?.cursor, 1);
+    expect(snapshot?.conversations.map((item) => item.id),
+        <String>['conv_1', 'conv_2']);
+    expect(snapshot?.messagesByConversation['conv_1']?.map((item) => item.id),
+        <String>['msg_1', 'msg_2']);
+    expect(snapshot?.messagesByConversation['conv_2']?.map((item) => item.id),
+        <String>['msg_3']);
+
+    // A received message still lands after its conversation's tail.
+    await upgraded.commitSyncEvent(SyncEventCommit(
+      eventKey: 'sync:2',
+      conversationId: 'conv_1',
+      expectedCursor: 1,
+      cursor: 2,
+      envelope: _receivedEnvelope(id: 'msg_4'),
+    ));
+    expect(
+        (await upgraded.loadSnapshot())
+            ?.messagesByConversation['conv_1']
+            ?.map((item) => item.id),
+        <String>['msg_1', 'msg_2', 'msg_4']);
+  });
+
+  test('a failed upgrade leaves the old schema and version in place', () async {
+    late File databaseFile;
+    late String databaseKey;
+    SecureLocalStore openStore() => SecureLocalStore(
+          storage: secureStorage,
+          directoryProvider: () async => directory,
+          databaseFactory: (file, keyHex) {
+            databaseFile = file;
+            databaseKey = keyHex;
+            final database = openEncryptedLocalDatabase(file, keyHex);
+            databases.add(database);
+            return database;
+          },
+        );
+    final store = openStore();
+    await store.saveCryptoState(
+      StoredCryptoState(
+        counter: 1,
+        stateKey: List<int>.filled(32, 1),
+        sealedState: <int>[1],
+      ),
+      0,
+    );
+    await queueMls(store, <String>['old_item']);
+    final database = databases.last;
+    // A version 7 database whose last step (the index) cannot be created
+    // because a table already has its name.
+    for (final column in <String>[
+      'attempt_count',
+      'next_attempt_at',
+      'failure_class',
+      'terminal',
+    ]) {
+      await database.customStatement(
+          'ALTER TABLE local_mls_outbox_entries DROP COLUMN $column');
+    }
+    await database.customStatement('DROP INDEX $envelopeIndex');
+    await database.customStatement('CREATE TABLE $envelopeIndex (blocker)');
+    await database.customStatement('PRAGMA user_version = 7');
+    await database.close();
+    databases.removeLast();
+
+    // The open fails the way any unreadable database does, and the file is
+    // left alone.
+    await expectLater(openStore().pendingMlsMessages(),
+        throwsA(_storeFailure(LocalStoreFailureKind.keyRejected)));
+    await databases.removeLast().close();
+
+    // Nothing of the earlier version 8 step stayed behind.
+    final raw = sqlite3.open(databaseFile.path);
+    try {
+      raw
+        ..execute("PRAGMA cipher = 'chacha20'")
+        ..execute("PRAGMA hexkey = '$databaseKey'");
+      expect(raw.select('PRAGMA user_version').single['user_version'], 7);
+      expect(
+          raw
+              .select('PRAGMA table_info(local_mls_outbox_entries)')
+              .map((row) => row['name']),
+          isNot(contains('attempt_count')));
+      raw.execute('DROP TABLE $envelopeIndex');
+    } finally {
+      raw.close();
+    }
+
+    // With the cause gone, the next open runs the whole upgrade.
+    final upgraded = openStore();
+    expect((await upgraded.pendingMlsMessages()).single.attemptCount, 0);
+    expect(await userVersion(databases.last), 9);
+    expect(await hasEnvelopeIndex(databases.last), isTrue);
+  });
+
   test('crypto state and cursor roll back together', () async {
     final store = createStore();
     await store.saveCryptoState(
@@ -674,9 +903,13 @@ MessageEnvelope _outboxEnvelope(String key) => MessageEnvelope(
       cryptoProtocol: 'mls10-openmls-v1',
     );
 
-ReceivedMessageEnvelope _receivedEnvelope() => ReceivedMessageEnvelope(
-      id: 'msg_1',
-      conversationId: 'conv_1',
+ReceivedMessageEnvelope _receivedEnvelope({
+  String id = 'msg_1',
+  String conversationId = 'conv_1',
+}) =>
+    ReceivedMessageEnvelope(
+      id: id,
+      conversationId: conversationId,
       senderAccountId: 'acct_1',
       senderDeviceId: 'dev_1',
       idempotencyKey: 'received_1',

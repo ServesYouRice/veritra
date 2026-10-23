@@ -79,6 +79,11 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'recovery_transfer_in_progress': ApiErrorKind.conflict,
   'transcript_mismatch': ApiErrorKind.conflict,
   'device_recovery_required': ApiErrorKind.conflict,
+  // Admission limits (card T49D).
+  'device_limit_reached': ApiErrorKind.conflict,
+  'device_link_limit_reached': ApiErrorKind.conflict,
+  'conversation_limit_reached': ApiErrorKind.conflict,
+  'conversation_member_limit_reached': ApiErrorKind.conflict,
   // Invalid request.
   'account_id_required': ApiErrorKind.invalidRequest,
   'before_and_after_exclusive': ApiErrorKind.invalidRequest,
@@ -118,9 +123,11 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'typing_rate_limited': ApiErrorKind.rateLimited,
   'realtime_connection_limit': ApiErrorKind.rateLimited,
   'key_package_quota_exceeded': ApiErrorKind.rateLimited,
+  'write_rate_limited': ApiErrorKind.rateLimited,
   // Size and storage.
   'upload_too_large': ApiErrorKind.tooLarge,
   'storage_quota_exceeded': ApiErrorKind.storageFull,
+  'server_storage_low': ApiErrorKind.storageFull,
   // Encryption contract.
   'blob_integrity_failed': ApiErrorKind.encryption,
   'device_key_package_required': ApiErrorKind.encryption,
@@ -142,6 +149,7 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'blob_storage_unavailable': ApiErrorKind.unavailable,
   'push_provider_unavailable': ApiErrorKind.unavailable,
   'setup_ui_unavailable': ApiErrorKind.unavailable,
+  'password_hashing_busy': ApiErrorKind.unavailable,
   // Internal server failures.
   'attachment_record_failed': ApiErrorKind.server,
   'backup_record_failed': ApiErrorKind.server,
@@ -159,10 +167,12 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'invite_create_failed': ApiErrorKind.server,
   'invites_list_failed': ApiErrorKind.server,
   'owner_create_failed': ApiErrorKind.server,
+  'password_hash_failed': ApiErrorKind.server,
   'push_subscription_failed': ApiErrorKind.server,
   'register_failed': ApiErrorKind.server,
   'search_failed': ApiErrorKind.server,
   'session_create_failed': ApiErrorKind.server,
+  'session_rotate_failed': ApiErrorKind.server,
   'setup_status_failed': ApiErrorKind.server,
   'storage_error': ApiErrorKind.server,
   'sync_events_failed': ApiErrorKind.server,
@@ -175,14 +185,30 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
 /// and a few bounded integer fields; the raw response body is never stored,
 /// so it cannot reach the UI or a log through this object.
 class ApiException implements Exception {
-  ApiException(this.statusCode, [String body = ''])
+  ApiException(this.statusCode, [String body = '', this.retryAfter])
       : _decoded = _DecodedError.parse(body);
 
   /// Error bodies longer than this are not parsed (card T44A).
   static const int maxErrorBodyBytes = 4096;
 
+  /// Longest server-requested wait honoured; a larger value is clamped.
+  static const Duration maxRetryAfter = Duration(minutes: 5);
+
   final int statusCode;
   final _DecodedError _decoded;
+
+  /// The server's `Retry-After` in whole seconds (a rate limit names when
+  /// its window resets), bounded to [maxRetryAfter]; null when absent.
+  final Duration? retryAfter;
+
+  /// Parses a delta-seconds `Retry-After` header; the HTTP-date form, which
+  /// this server never sends, and malformed values give null.
+  static Duration? parseRetryAfter(String? header) {
+    final seconds = int.tryParse(header?.trim() ?? '');
+    if (seconds == null || seconds < 0) return null;
+    final wait = Duration(seconds: seconds);
+    return wait > maxRetryAfter ? maxRetryAfter : wait;
+  }
 
   /// The server's error code, when it sent a well-formed one.
   String? get serverCode => _decoded.code;
@@ -287,6 +313,18 @@ class ApiException implements Exception {
         return l10n.apiErrorMessageExpired;
       case 'recovery_transfer_in_progress':
         return l10n.apiErrorRecoveryInProgress;
+      case 'write_rate_limited':
+        return l10n.apiErrorWriteRateLimited;
+      case 'server_storage_low':
+        return l10n.apiErrorServerStorageLow;
+      case 'device_limit_reached':
+        return l10n.apiErrorDeviceLimit;
+      case 'device_link_limit_reached':
+        return l10n.apiErrorDeviceLinkLimit;
+      case 'conversation_limit_reached':
+        return l10n.apiErrorConversationLimit;
+      case 'conversation_member_limit_reached':
+        return l10n.apiErrorConversationMemberLimit;
     }
     switch (kind) {
       case ApiErrorKind.authentication:

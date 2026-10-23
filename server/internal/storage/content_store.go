@@ -12,6 +12,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"private-messenger/server/internal/admission"
 	"private-messenger/server/internal/domain"
 )
 
@@ -58,10 +59,10 @@ func (s *Store) CreateAttachmentEnvelope(ctx context.Context, attachment domain.
 		return domain.AttachmentEnvelope{}, err
 	}
 	defer tx.Rollback()
-	if err := enforceBlobQuota(ctx, tx, attachment.OwnerAccountID, attachment.SizeBytes); err != nil {
+	if err := s.enforceBlobQuota(ctx, tx, attachment.OwnerAccountID, attachment.SizeBytes); err != nil {
 		return domain.AttachmentEnvelope{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO attachment_envelopes(id, owner_account_id, conversation_id, storage_key, ciphertext_sha256, size_bytes, crypto_metadata_json, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, attachment.ID, attachment.OwnerAccountID, nullableString(attachment.ConversationID), attachment.StorageKey, attachment.CiphertextSHA256, attachment.SizeBytes, string(attachment.CryptoMetadata), formatTime(attachment.CreatedAt)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO attachment_envelopes(id, owner_account_id, conversation_id, storage_key, ciphertext_sha256, size_bytes, crypto_metadata_json, created_at, chunk_digests) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`, attachment.ID, attachment.OwnerAccountID, nullableString(attachment.ConversationID), attachment.StorageKey, attachment.CiphertextSHA256, attachment.SizeBytes, string(attachment.CryptoMetadata), formatTime(attachment.CreatedAt), nullableBytes(attachment.ChunkDigests)); err != nil {
 		return domain.AttachmentEnvelope{}, err
 	}
 	return attachment, tx.Commit()
@@ -92,15 +93,19 @@ func (s *Store) ListAttachments(ctx context.Context, accountID string, limit int
 	return result, rows.Err()
 }
 
+// AttachmentForAccount returns an attachment the account may read,
+// including its chunk-digest record.
 func (s *Store) AttachmentForAccount(ctx context.Context, id, accountID string) (domain.AttachmentEnvelope, error) {
+	var digests []byte
 	attachment, err := scanAttachment(s.db.QueryRowContext(ctx, `
-		SELECT a.id, a.owner_account_id, a.conversation_id, a.storage_key, a.ciphertext_sha256, a.size_bytes, a.crypto_metadata_json, a.created_at
+		SELECT a.id, a.owner_account_id, a.conversation_id, a.storage_key, a.ciphertext_sha256, a.size_bytes, a.crypto_metadata_json, a.created_at, a.chunk_digests
 		FROM attachment_envelopes a
 		LEFT JOIN memberships m ON m.conversation_id = a.conversation_id AND m.account_id = ?
-		WHERE a.id = ? AND (a.owner_account_id = ? OR m.id IS NOT NULL)`, accountID, id, accountID))
+		WHERE a.id = ? AND (a.owner_account_id = ? OR m.id IS NOT NULL)`, accountID, id, accountID), &digests)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.AttachmentEnvelope{}, ErrNotFound
 	}
+	attachment.ChunkDigests = digests
 	return attachment, err
 }
 
@@ -721,7 +726,7 @@ func (s *Store) PruneOperationalRows(ctx context.Context, now time.Time) (int64,
 		return 0, err
 	}
 	defer tx.Rollback()
-	cutoff := formatTime(now.UTC().Add(-30 * 24 * time.Hour))
+	cutoff := formatTime(now.UTC().Add(-OperationalRowRetention))
 	queries := []struct {
 		query string
 		args  []interface{}
@@ -752,6 +757,12 @@ func (s *Store) PruneOperationalRows(ctx context.Context, now time.Time) (int64,
 }
 
 func (s *Store) CreateBackupBlob(ctx context.Context, accountID, deviceID, storageKey, ciphertextSHA256 string, sizeBytes int64, keyDerivationMetadata json.RawMessage, recoveryTokenHash []byte) error {
+	return s.CreateBackupBlobWithChunkDigests(ctx, accountID, deviceID, storageKey, ciphertextSHA256, sizeBytes, nil, keyDerivationMetadata, recoveryTokenHash)
+}
+
+// CreateBackupBlobWithChunkDigests is CreateBackupBlob that also stores the
+// blob store's chunk-digest record in the same INSERT.
+func (s *Store) CreateBackupBlobWithChunkDigests(ctx context.Context, accountID, deviceID, storageKey, ciphertextSHA256 string, sizeBytes int64, chunkDigests []byte, keyDerivationMetadata json.RawMessage, recoveryTokenHash []byte) error {
 	if len(keyDerivationMetadata) == 0 {
 		keyDerivationMetadata = json.RawMessage(`{}`)
 	}
@@ -764,7 +775,7 @@ func (s *Store) CreateBackupBlob(ctx context.Context, accountID, deviceID, stora
 		return err
 	}
 	defer tx.Rollback()
-	if err := enforceBlobQuota(ctx, tx, accountID, sizeBytes); err != nil {
+	if err := s.enforceBlobQuota(ctx, tx, accountID, sizeBytes); err != nil {
 		return err
 	}
 	if len(recoveryTokenHash) != 32 {
@@ -790,7 +801,7 @@ func (s *Store) CreateBackupBlob(ctx context.Context, accountID, deviceID, stora
 		recovery_lease_expires_at = NULL WHERE account_id = ? AND device_id = ?`, accountID, deviceID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO backup_blobs(id, account_id, device_id, storage_key, ciphertext_sha256, size_bytes, key_derivation_metadata_json, created_at, recovery_token_hash, recovery_expires_at, recovery_next_offset) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`, id, accountID, nullableEmptyString(deviceID), storageKey, ciphertextSHA256, sizeBytes, string(keyDerivationMetadata), nowString(), recoveryTokenHash, formatTime(recoveryExpiresAt)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO backup_blobs(id, account_id, device_id, storage_key, ciphertext_sha256, size_bytes, key_derivation_metadata_json, created_at, recovery_token_hash, recovery_expires_at, recovery_next_offset, chunk_digests) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`, id, accountID, nullableEmptyString(deviceID), storageKey, ciphertextSHA256, sizeBytes, string(keyDerivationMetadata), nowString(), recoveryTokenHash, formatTime(recoveryExpiresAt), nullableBytes(chunkDigests)); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -821,12 +832,12 @@ func (s *Store) BeginRecoveryTransfer(ctx context.Context, recoveryTokenHash []b
 	err = tx.QueryRowContext(ctx, `SELECT id, account_id, device_id, storage_key,
 		ciphertext_sha256, size_bytes, key_derivation_metadata_json, created_at,
 		recovery_expires_at, recovery_next_offset, recovery_lease_id,
-		recovery_lease_expires_at FROM backup_blobs
+		recovery_lease_expires_at, chunk_digests FROM backup_blobs
 		WHERE recovery_token_hash = ?`, recoveryTokenHash).Scan(
 		&transfer.Backup.ID, &transfer.Backup.AccountID, &deviceID,
 		&transfer.Backup.StorageKey, &transfer.Backup.CiphertextSHA256,
 		&transfer.Backup.SizeBytes, &metadata, &created, &recoveryExpiresAt,
-		&nextOffset, &lease, &leaseExpiresAt)
+		&nextOffset, &lease, &leaseExpiresAt, &transfer.Backup.ChunkDigests)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RecoveryTransfer{}, ErrNotFound
 	}
@@ -945,14 +956,16 @@ func (s *Store) BackupForRecoveryToken(ctx context.Context, recoveryTokenHash []
 	return backup, err
 }
 
-// enforceBlobQuota admits incoming bytes for accountID inside tx, the
-// single-writer transaction that then writes the blob row. Usage comes from
-// the counters that migration 0031 keeps equal to the attachment and backup
-// row sums by trigger in the same transaction (T49B), so the check is as
-// strict as summing the rows and costs two primary-key reads.
-func enforceBlobQuota(ctx context.Context, tx *sql.Tx, accountID string, incoming int64) error {
-	const accountLimit int64 = 1 << 30
-	const instanceLimit int64 = 10 << 30
+// enforceBlobQuota admits one more blob of incoming bytes for accountID
+// inside tx, the single-writer transaction that then writes the blob row.
+// Usage comes from the counters that migration 0031 keeps equal to the
+// attachment and backup row sums by trigger in the same transaction (T49B),
+// so the check is as strict as summing the rows and costs two primary-key
+// reads. The per-account blob count (T49D, indexed by migration 0033) bounds
+// files on disk: every blob takes at least one 4 KiB block. One error covers
+// every storage limit.
+func (s *Store) enforceBlobQuota(ctx context.Context, tx *sql.Tx, accountID string, incoming int64) error {
+	accountLimit, instanceLimit := s.limits.AccountStorageBytes, s.limits.InstanceStorageBytes
 	var accountUsage, instanceUsage int64
 	if err := tx.QueryRowContext(ctx, `SELECT
 		COALESCE((SELECT size_bytes FROM blob_usage_accounts WHERE account_id = ?), 0),
@@ -960,7 +973,16 @@ func enforceBlobQuota(ctx context.Context, tx *sql.Tx, accountID string, incomin
 		return err
 	}
 	if incoming < 0 || accountUsage > accountLimit-incoming || instanceUsage > instanceLimit-incoming {
-		return ErrStorageQuota
+		return s.refuse(admission.Storage, ErrStorageQuota)
+	}
+	blobs, err := countRows(ctx, tx, `SELECT
+		(SELECT COUNT(*) FROM attachment_envelopes WHERE owner_account_id = ?) +
+		(SELECT COUNT(*) FROM backup_blobs WHERE account_id = ?)`, accountID, accountID)
+	if err != nil {
+		return err
+	}
+	if blobs >= s.limits.AccountBlobs {
+		return s.refuse(admission.Blobs, ErrStorageQuota)
 	}
 	return nil
 }
@@ -985,12 +1007,41 @@ func (s *Store) ListBackups(ctx context.Context, accountID string, limit int) ([
 	return result, rows.Err()
 }
 
+// BackupForAccount returns one of the account's backups, including its
+// chunk-digest record.
 func (s *Store) BackupForAccount(ctx context.Context, id, accountID string) (domain.BackupBlob, error) {
-	backup, err := scanBackup(s.db.QueryRowContext(ctx, `SELECT id, account_id, device_id, storage_key, ciphertext_sha256, size_bytes, key_derivation_metadata_json, created_at FROM backup_blobs WHERE id = ? AND account_id = ?`, id, accountID))
+	var digests []byte
+	backup, err := scanBackup(s.db.QueryRowContext(ctx, `SELECT id, account_id, device_id, storage_key, ciphertext_sha256, size_bytes, key_derivation_metadata_json, created_at, chunk_digests FROM backup_blobs WHERE id = ? AND account_id = ?`, id, accountID), &digests)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.BackupBlob{}, ErrNotFound
 	}
+	backup.ChunkDigests = digests
 	return backup, err
+}
+
+// RecordBlobChunkDigests stores a chunk-digest record that the blob store
+// built while it verified a whole blob that had none (stored before
+// migration 0034). It writes only a row that still has no record and still
+// holds the digest and size that were verified, so it never replaces a
+// record, including one in a newer format.
+func (s *Store) RecordBlobChunkDigests(ctx context.Context, storageKey, ciphertextSHA256 string, sizeBytes int64, chunkDigests []byte) error {
+	if storageKey == "" || len(chunkDigests) == 0 {
+		return ErrInvalidInput
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, query := range []string{
+		`UPDATE attachment_envelopes SET chunk_digests = ? WHERE storage_key = ? AND ciphertext_sha256 = ? AND size_bytes = ? AND chunk_digests IS NULL`,
+		`UPDATE backup_blobs SET chunk_digests = ? WHERE storage_key = ? AND ciphertext_sha256 = ? AND size_bytes = ? AND chunk_digests IS NULL`,
+	} {
+		if _, err := tx.ExecContext(ctx, query, chunkDigests, storageKey, ciphertextSHA256, sizeBytes); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) DeleteBackup(ctx context.Context, id, accountID string) (domain.BackupBlob, error) {

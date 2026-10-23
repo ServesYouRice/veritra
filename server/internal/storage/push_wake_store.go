@@ -30,9 +30,12 @@ type PushWakeJob struct {
 }
 
 // PushWakeBacklog is aggregate-only operational state for one provider.
+// OldestCreatedAt is when the oldest live job was queued (zero when there is
+// none), so a stalled provider shows even when the row count is small.
 type PushWakeBacklog struct {
-	Provider string
-	Rows     int64
+	Provider        string
+	Rows            int64
+	OldestCreatedAt time.Time
 }
 
 func enqueuePushWakeJobs(ctx context.Context, tx *sql.Tx, eventID int64, conversationID, senderAccountID string, createdAt, expiresAt string) error {
@@ -314,7 +317,7 @@ func (s *Store) RetirePushWakeSubscription(ctx context.Context, job PushWakeJob)
 
 func (s *Store) PushWakeBacklog(ctx context.Context, now time.Time) ([]PushWakeBacklog, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT ps.provider, COUNT(*)
+		SELECT ps.provider, COUNT(*), MIN(w.created_at)
 		FROM push_wake_jobs w
 		JOIN push_subscriptions ps ON ps.id = w.subscription_id AND ps.account_id = w.recipient_account_id
 		WHERE w.expires_at > ? AND ps.disabled_at IS NULL
@@ -326,8 +329,12 @@ func (s *Store) PushWakeBacklog(ctx context.Context, now time.Time) ([]PushWakeB
 	backlog := make([]PushWakeBacklog, 0, 3)
 	for rows.Next() {
 		var item PushWakeBacklog
-		if err := rows.Scan(&item.Provider, &item.Rows); err != nil {
+		var oldest sql.NullString
+		if err := rows.Scan(&item.Provider, &item.Rows, &oldest); err != nil {
 			return nil, err
+		}
+		if oldest.Valid && oldest.String != "" {
+			item.OldestCreatedAt = parseTime(oldest.String)
 		}
 		backlog = append(backlog, item)
 	}

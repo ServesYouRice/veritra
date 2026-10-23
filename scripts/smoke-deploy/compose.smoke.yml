@@ -1,0 +1,47 @@
+# Override used only by scripts/smoke-deploy.sh; never a deployment file.
+#
+# On top of deploy/docker-compose.yml (unchanged hardening) it:
+# - publishes the server and Caddy on loopback test ports instead of
+#   8080/80/443;
+# - mounts the smoke Caddyfile, which the script derives from
+#   deploy/caddy/Caddyfile by changing only the site name to localhost with
+#   `tls internal`;
+# - adds coturn with Veritra's TURN shared secret, so the credential the
+#   server issues is tried on a real relay. Its config file holds the secret;
+#   the server itself never contacts TURN.
+services:
+  messenger:
+    ports: !override
+      - "127.0.0.1:${SMOKE_HTTP_PORT:-18080}:8080"
+
+  caddy:
+    ports: !override
+      - "127.0.0.1:${SMOKE_HTTPS_PORT:-18443}:443"
+    volumes: !override
+      - "${SMOKE_CADDYFILE:?set by scripts/smoke-deploy.sh}:/etc/caddy/Caddyfile:ro"
+      - caddy-data:/data
+      - caddy-config:/config
+
+  coturn:
+    image: coturn/coturn:4.18.0-alpine@sha256:c29135c08565810d37053f384584392b7c24b69570fc81a721b878d6fe63e04e
+    profiles: ["caddy"]
+    command: ["-c", "/run/turn/turnserver.conf"]
+    volumes:
+      - "${SMOKE_TURN_CONF:?set by scripts/smoke-deploy.sh}:/run/turn/turnserver.conf:ro"
+    read_only: true
+    cap_drop:
+      - ALL
+    # turnserver carries this file capability; exec fails without it.
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=16m,mode=1777,noexec,nosuid,nodev
+      - /var/lib/coturn:size=16m,mode=1777,noexec,nosuid,nodev
+    mem_limit: 256m
+    pids_limit: 128
+    restart: "no"
+    networks:
+      messenger-net:
+        ipv4_address: 172.28.250.30

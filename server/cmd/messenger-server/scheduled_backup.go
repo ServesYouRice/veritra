@@ -66,8 +66,12 @@ func scheduledBackup(ctx context.Context, cfg config.Config, options scheduledBa
 	if err := backup(ctx, cfg, []string{local}, io.Discard); err != nil {
 		return fail(backupstatus.StepBackup, err)
 	}
-	if err := verifyBackup(ctx, cfg, []string{local}, io.Discard); err != nil {
-		return fail(backupstatus.StepVerify, err)
+	drillErr := verifyBackup(ctx, cfg, []string{local}, io.Discard)
+	if err := backupstatus.RecordDrill(cfg.DataDir, drillErr == nil, options.Now()); err != nil {
+		return fail(backupstatus.StepVerify, errors.Join(drillErr, err))
+	}
+	if drillErr != nil {
+		return fail(backupstatus.StepVerify, drillErr)
 	}
 	if options.OffsiteDir != "" {
 		if err := copyBackupOffsite(local, filepath.Join(options.OffsiteDir, name)); err != nil {
@@ -87,6 +91,19 @@ func scheduledBackup(ctx context.Context, cfg config.Config, options scheduledBa
 	}
 	fmt.Fprintf(stdout, "scheduled backup verified: %s\n", name)
 	return nil
+}
+
+// recordStandaloneDrill records a `verify-backup` result in the status the
+// server reports, but only when the data directory belongs to an instance
+// (its database exists), so a drill in scratch space leaves no status file.
+// Recording is best effort: the drill's own result decides the exit status.
+func recordStandaloneDrill(cfg config.Config, passed bool, now time.Time, stderr io.Writer) {
+	if _, err := os.Stat(cfg.DatabasePath); err != nil {
+		return
+	}
+	if err := backupstatus.RecordDrill(cfg.DataDir, passed, now); err != nil {
+		fmt.Fprintln(stderr, "warning: could not record the restore drill result in backup-status.json")
+	}
 }
 
 // copyBackupOffsite copies a verified backup into a staging directory at the
