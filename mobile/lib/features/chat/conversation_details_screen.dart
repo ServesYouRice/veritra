@@ -15,6 +15,7 @@ import '../../ui/widgets/status_pill.dart';
 import '../../ui/widgets/tile_group.dart';
 import 'chat_list_screen.dart';
 import 'safety_number_screen.dart';
+import '../../l10n/l10n.dart';
 
 /// Conversation metadata and management: who is in it, notification mute,
 /// safety actions, and disappearing-message retention.
@@ -66,12 +67,13 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
             .where((c) => c.id == conversationId)
             .firstOrNull;
         if (conversation == null) {
-          return const Scaffold(
-            appBar: LargeTitleBar(title: 'Conversation'),
-            body: Center(child: Text('Conversation not found.')),
+          return Scaffold(
+            appBar: LargeTitleBar(title: context.l10n.searchTypeConversation),
+            body: Center(child: Text(context.l10n.detailsNotFound)),
           );
         }
         final theme = Theme.of(context);
+        final l10n = context.l10n;
         final retention = conversation.retentionSeconds;
         final myRole = conversation.currentRole ?? 'member';
         final canManage =
@@ -83,7 +85,7 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
         final members = state.membersFor(conversationId);
         final memberError = state.errorFor(Ops.members);
         return Scaffold(
-          appBar: const LargeTitleBar(title: 'Conversation details'),
+          appBar: LargeTitleBar(title: l10n.chatListDetails),
           body: ListView(
             padding: const EdgeInsets.fromLTRB(
               BoneSpacing.gutter,
@@ -97,13 +99,13 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
                   ListTile(
                     leading:
                         conversationAvatar(context, conversation, radius: 20),
-                    title: Text(conversationTitle(conversation)),
-                    subtitle: Text(conversationSubtitle(conversation)),
+                    title: Text(conversationTitle(l10n, conversation)),
+                    subtitle: Text(conversationSubtitle(l10n, conversation)),
                   ),
                   ListTile(
                     leading: const Icon(Icons.tag_outlined),
                     title: Text(
-                      'CONVERSATION ID',
+                      l10n.detailsConversationIdLabel,
                       style: theme.textTheme.labelSmall,
                     ),
                     subtitle: Text(
@@ -113,17 +115,20 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
                       ),
                     ),
                     trailing: IconButton(
-                      tooltip: 'Copy ID',
+                      tooltip: l10n.detailsCopyId,
                       icon: const Icon(Icons.copy_outlined),
-                      onPressed: () =>
-                          _copy(context, conversation.id, 'Conversation ID'),
+                      onPressed: () => _copy(
+                        context,
+                        conversation.id,
+                        l10n.detailsConversationId,
+                      ),
                     ),
                   ),
                   if (conversation.createdAt != null)
                     ListTile(
                       leading: const Icon(Icons.schedule_outlined),
                       title: Text(
-                        'CREATED',
+                        l10n.detailsCreatedLabel,
                         style: theme.textTheme.labelSmall,
                       ),
                       subtitle: Text(
@@ -132,16 +137,13 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
                     ),
                 ],
               ),
-              const SectionHeader('Notifications'),
+              SectionHeader(l10n.settingsSectionNotifications),
               TileGroup(
                 children: <Widget>[
                   SwitchListTile(
                     secondary: const Icon(Icons.notifications_off_outlined),
-                    title: const Text('Mute notifications'),
-                    subtitle: const Text(
-                      'Stops push for this conversation. Messages still '
-                      'arrive and still count as unread.',
-                    ),
+                    title: Text(l10n.chatListMute),
+                    subtitle: Text(l10n.detailsMuteDetail),
                     value: state.isMuted(conversationId),
                     onChanged: state.isBusy(Ops.mute)
                         ? null
@@ -151,13 +153,13 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
               ),
               if (state.errorFor(Ops.mute) != null)
                 _InlineError(message: state.errorFor(Ops.mute)!),
-              const SectionHeader('Members'),
+              SectionHeader(l10n.detailsSectionMembers),
               if (memberError != null) _InlineError(message: memberError),
               TileGroup(
                 children: <Widget>[
                   if (members.isEmpty && state.isBusy(Ops.members))
-                    const ListTile(
-                      leading: SizedBox.square(
+                    ListTile(
+                      leading: const SizedBox.square(
                         dimension: 24,
                         child: Center(
                           child: SizedBox.square(
@@ -166,16 +168,13 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
                           ),
                         ),
                       ),
-                      title: Text('Loading members…'),
+                      title: Text(l10n.detailsLoadingMembers),
                     )
                   else if (members.isEmpty)
-                    const ListTile(
-                      leading: Icon(Icons.person_outline),
-                      title: Text('Member list unavailable'),
-                      subtitle: Text(
-                        'The server did not return the roster for this '
-                        'conversation.',
-                      ),
+                    ListTile(
+                      leading: const Icon(Icons.person_outline),
+                      title: Text(l10n.detailsMembersUnavailable),
+                      subtitle: Text(l10n.detailsMembersUnavailableDetail),
                     )
                   else
                     for (final member in members)
@@ -195,10 +194,10 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
                   if (!isDm && state.membershipChangesAvailable)
                     ListTile(
                       leading: const Icon(Icons.person_add_outlined),
-                      title: const Text('Add member'),
+                      title: Text(l10n.detailsAddMember),
                       subtitle: Text(canManage
-                          ? 'Look up an account by username'
-                          : 'Moderator permission required'),
+                          ? l10n.detailsAddMemberDetail
+                          : l10n.detailsAddMemberNoPermission),
                       onTap: state.isBusy(Ops.members) || !canManage
                           ? null
                           : () => _addMember(context, myRole),
@@ -207,24 +206,19 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
               ),
               const SizedBox(height: BoneSpacing.sm),
               Text(
-                'This is the server\'s membership record. Encrypted delivery '
-                'follows a separate group update, so a change here is not by '
-                'itself proof of who can decrypt new messages.',
+                l10n.detailsMembershipNote,
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
-              const SectionHeader('Safety'),
+              SectionHeader(l10n.settingsSectionSafety),
               TileGroup(
                 children: <Widget>[
                   if (state.safetyNumbersAvailable)
                     ListTile(
                       leading: const Icon(Icons.verified_user_outlined),
-                      title: const Text('Safety number'),
-                      subtitle: const Text(
-                        'Compare it with the other members to check that '
-                        'no one is intercepting this conversation.',
-                      ),
+                      title: Text(l10n.safetyTitle),
+                      subtitle: Text(l10n.detailsSafetyDetail),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () => Navigator.of(context).push(
                         MaterialPageRoute<void>(
@@ -246,20 +240,17 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
                     ),
                   ListTile(
                     leading: const Icon(Icons.logout),
-                    title: Text(isDm
-                        ? 'Leave this conversation'
-                        : 'Leave conversation'),
-                    subtitle: const Text(
-                      'You stop receiving new messages. Messages already on '
-                      'other members\' devices are not deleted.',
+                    title: Text(
+                      isDm ? l10n.detailsLeaveDm : l10n.detailsLeave,
                     ),
+                    subtitle: Text(l10n.detailsLeaveDetail),
                     onTap: state.isBusy(Ops.members)
                         ? null
                         : () => _confirmLeave(context),
                   ),
                 ],
               ),
-              const SectionHeader('Disappearing messages'),
+              SectionHeader(l10n.detailsSectionDisappearing),
               TileGroup(
                 dividerIndent: 0,
                 children: <Widget>[
@@ -280,7 +271,7 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
                         for (final option in _retentionOptions)
                           RadioListTile<int?>(
                             value: option.seconds,
-                            title: Text(option.label),
+                            title: Text(option.label(l10n)),
                             enabled: !state.busy && canManage,
                           ),
                       ],
@@ -290,9 +281,7 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
               ),
               const SizedBox(height: BoneSpacing.sm),
               Text(
-                'When set, messages sent from then on are deleted from the '
-                'server after this time window. Existing messages keep the '
-                'timer they were sent with.',
+                l10n.detailsDisappearingNote,
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
@@ -327,12 +316,19 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
     ..sort((left, right) => (_rank[left] ?? 0).compareTo(_rank[right] ?? 0));
 
   static const _retentionOptions = <_RetentionOption>[
-    _RetentionOption(null, 'Off'),
-    _RetentionOption(3600, '1 hour'),
-    _RetentionOption(86400, '24 hours'),
-    _RetentionOption(604800, '7 days'),
-    _RetentionOption(2592000, '30 days'),
+    _RetentionOption(null, _retentionOff),
+    _RetentionOption(3600, _retentionHour),
+    _RetentionOption(86400, _retentionDay),
+    _RetentionOption(604800, _retentionWeek),
+    _RetentionOption(2592000, _retentionMonth),
   ];
+
+  static String _retentionOff(AppLocalizations l10n) =>
+      l10n.detailsRetentionOff;
+  static String _retentionHour(AppLocalizations l10n) => l10n.durationHours(1);
+  static String _retentionDay(AppLocalizations l10n) => l10n.durationHours(24);
+  static String _retentionWeek(AppLocalizations l10n) => l10n.durationDays(7);
+  static String _retentionMonth(AppLocalizations l10n) => l10n.durationDays(30);
 
   Future<void> _setMuted(BuildContext context, bool muted) async {
     final ok = await state.setConversationMuted(conversationId, muted);
@@ -353,11 +349,9 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
     final label = accountLabel(member.accountId, member.username);
     final confirmed = await _confirm(
       context,
-      title: 'Remove $label?',
-      message: 'They stop receiving new messages in this conversation. '
-          'Messages they already received stay on their device, and encrypted '
-          'delivery only changes once the group update is committed.',
-      confirmLabel: 'Remove',
+      title: context.l10n.detailsRemoveTitle(label),
+      message: context.l10n.detailsRemoveMessage,
+      confirmLabel: context.l10n.detailsRemoveConfirm,
     );
     if (!confirmed) {
       return;
@@ -372,8 +366,9 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(ok
-            ? '$label removed from the conversation.'
-            : state.errorFor(Ops.members) ?? 'Could not remove $label.'),
+            ? context.l10n.detailsRemoved(label)
+            : state.errorFor(Ops.members) ??
+                context.l10n.detailsRemoveFailed(label)),
       ),
     );
   }
@@ -381,11 +376,9 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
   Future<void> _confirmLeave(BuildContext context) async {
     final confirmed = await _confirm(
       context,
-      title: 'Leave conversation?',
-      message: 'You stop receiving new messages and the conversation is '
-          'removed from this device. Messages other members already received '
-          'are not deleted.',
-      confirmLabel: 'Leave',
+      title: context.l10n.detailsLeaveTitle,
+      message: context.l10n.detailsLeaveMessage,
+      confirmLabel: context.l10n.detailsLeaveConfirm,
       destructive: true,
     );
     if (!confirmed) {
@@ -414,19 +407,19 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
     String conversationId,
     int? retentionSeconds,
   ) async {
+    final l10n = context.l10n;
+    final duration =
+        retentionSeconds == null ? '' : retentionLabel(l10n, retentionSeconds);
     final description = retentionSeconds == null
-        ? 'New messages will no longer disappear. Messages that already have '
-            'a timer keep it.'
-        : 'Messages sent from now on will be deleted from the server '
-            '${retentionLabel(retentionSeconds)} after they are sent. '
-            'Existing messages are not affected.';
+        ? l10n.detailsRetentionOffMessage
+        : l10n.detailsRetentionOnMessage(duration);
     final confirmed = await _confirm(
       context,
       title: retentionSeconds == null
-          ? 'Turn off disappearing messages?'
-          : 'Disappear after ${retentionLabel(retentionSeconds)}?',
+          ? l10n.detailsRetentionOffTitle
+          : l10n.detailsRetentionOnTitle(duration),
       message: description,
-      confirmLabel: 'Apply',
+      confirmLabel: l10n.detailsApply,
     );
     if (confirmed) {
       await state.setConversationRetention(conversationId, retentionSeconds);
@@ -449,7 +442,7 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
+            child: Text(context.l10n.commonCancel),
           ),
           FilledButton(
             style: destructive
@@ -470,7 +463,7 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
   void _copy(BuildContext context, String value, String label) {
     Clipboard.setData(ClipboardData(text: value));
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$label copied.')),
+      SnackBar(content: Text(context.l10n.settingsCopied(label))),
     );
   }
 
@@ -485,7 +478,7 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setDialogState) => AlertDialog(
-          title: const Text('Add member'),
+          title: Text(context.l10n.detailsAddMember),
           content: SizedBox(
             width: 400,
             child: Column(
@@ -505,7 +498,7 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
                     for (final option in grantable)
                       ButtonSegment<String>(
                         value: option,
-                        label: Text(_roleLabel(option)),
+                        label: Text(roleLabel(context.l10n, option)),
                       ),
                   ],
                   selected: <String>{role},
@@ -518,13 +511,13 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
           actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('Cancel'),
+              child: Text(context.l10n.commonCancel),
             ),
             FilledButton(
               onPressed: picked.isEmpty
                   ? null
                   : () => Navigator.of(dialogContext).pop(true),
-              child: const Text('Add'),
+              child: Text(context.l10n.detailsAdd),
             ),
           ],
         ),
@@ -545,24 +538,25 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
     final error = state.error;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(error ??
-            'Added ${picked.first.label} to the conversation. Encrypted '
-                'delivery starts once the group update is committed.'),
+        content: Text(
+          error ?? context.l10n.detailsMemberAdded(picked.first.label),
+        ),
       ),
     );
   }
 }
 
-String _roleLabel(String role) {
+/// The display name of a conversation role the server reports.
+String roleLabel(AppLocalizations l10n, String role) {
   switch (role) {
     case 'owner':
-      return 'Owner';
+      return l10n.roleOwner;
     case 'admin':
-      return 'Admin';
+      return l10n.roleAdmin;
     case 'moderator':
-      return 'Moderator';
+      return l10n.roleModerator;
     default:
-      return 'Member';
+      return l10n.roleMember;
   }
 }
 
@@ -584,14 +578,15 @@ class _MemberTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final label = accountLabel(member.accountId, member.username);
     final colors = avatarColorsFor(context, member.accountId);
     // Role moved onto a pill; what is left in the subtitle is the one thing
     // that is genuinely a detail.
     final details = <String>[
-      if (isSelf) 'You',
+      if (isSelf) l10n.detailsYou,
       if (member.joinedAt != null)
-        'Joined ${formatDate(context, member.joinedAt!)}',
+        l10n.detailsJoined(formatDate(context, member.joinedAt!)),
     ];
     return MergeSemantics(
       child: ListTile(
@@ -620,7 +615,7 @@ class _MemberTile extends StatelessWidget {
               child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
             ),
             const SizedBox(width: BoneSpacing.sm),
-            StatusPill(label: _roleLabel(member.role)),
+            StatusPill(label: roleLabel(l10n, member.role)),
           ],
         ),
         subtitle: details.isEmpty
@@ -633,7 +628,7 @@ class _MemberTile extends StatelessWidget {
               ),
         trailing: canRemove
             ? IconButton(
-                tooltip: 'Remove $label',
+                tooltip: l10n.detailsRemoveMember(label),
                 onPressed: busy ? null : onRemove,
                 icon: const Icon(Icons.person_remove_outlined),
               )
@@ -660,15 +655,16 @@ class _BlockTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final blocked = state.isBlocked(accountId);
+    final l10n = context.l10n;
     return ListTile(
       leading: Icon(blocked ? Icons.person_off : Icons.block),
-      title: Text(blocked ? 'Unblock $label' : 'Block $label'),
-      subtitle: Text(
+      title: Text(
         blocked
-            ? 'Their messages are hidden from this account until you unblock '
-                'them.'
-            : 'The server stops delivering their messages to your account. '
-                'They are not told, and messages already on your devices stay.',
+            ? l10n.searchUnblockAccount(label)
+            : l10n.searchBlockAccount(label),
+      ),
+      subtitle: Text(
+        blocked ? l10n.detailsBlockedDetail : l10n.detailsBlockDetail,
       ),
       onTap: state.isBusy(Ops.blocks)
           ? null
@@ -686,8 +682,10 @@ class _BlockTile extends StatelessWidget {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(ok
-            ? (blocked ? '$label unblocked.' : '$label blocked.')
-            : state.errorFor(Ops.blocks) ?? 'Could not update the block.'),
+            ? (blocked
+                ? context.l10n.blockedUnblocked(label)
+                : context.l10n.searchBlocked(label))
+            : state.errorFor(Ops.blocks) ?? context.l10n.searchBlockFailed),
       ),
     );
   }
@@ -725,5 +723,5 @@ class _RetentionOption {
   const _RetentionOption(this.seconds, this.label);
 
   final int? seconds;
-  final String label;
+  final String Function(AppLocalizations l10n) label;
 }

@@ -6,8 +6,10 @@ import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
 import '../../core/attachments.dart';
+import '../../ui/format.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/large_title_bar.dart';
+import '../../l10n/l10n.dart';
 
 /// Whether this platform can offer a "save as" dialog.
 bool get _canChooseSaveLocation =>
@@ -25,7 +27,7 @@ Future<void> pickAndSendAttachment(
     file = await openFile();
   } catch (_) {
     if (context.mounted) {
-      _snack(context, 'Files cannot be picked on this device.');
+      _snack(context, context.l10n.attachmentPickUnavailable);
     }
     return;
   }
@@ -36,19 +38,18 @@ Future<void> pickAndSendAttachment(
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
-      title: const Text('Send this file?'),
+      title: Text(context.l10n.attachmentSendTitle),
       content: Text(
-        '$name (${formatAttachmentSize(size)}) is encrypted on this device '
-        'before it is uploaded. Everyone in this conversation can open it.',
+        context.l10n.attachmentSendMessage(name, formatFileSize(context, size)),
       ),
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(false),
-          child: const Text('Cancel'),
+          child: Text(context.l10n.commonCancel),
         ),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(true),
-          child: const Text('Send'),
+          child: Text(context.l10n.attachmentSend),
         ),
       ],
     ),
@@ -63,7 +64,7 @@ Future<void> pickAndSendAttachment(
   if (!sent && context.mounted) {
     _snack(
       context,
-      state.errorFor(Ops.attachment) ?? 'The file could not be sent.',
+      state.errorFor(Ops.attachment) ?? context.l10n.attachmentSendFailed,
     );
   }
 }
@@ -93,17 +94,19 @@ Future<void> saveAttachmentAs(
   AttachmentEntry entry,
 ) async {
   if (!_canChooseSaveLocation) {
-    _snack(context, 'In the demo, only images can be opened on this device.');
+    _snack(context, context.l10n.attachmentDemoImagesOnly);
     return;
   }
   final location = await getSaveLocation(suggestedName: entry.fileName);
   if (location == null || !context.mounted) return;
   try {
     await state.saveAttachment(entry, location.path);
-    if (context.mounted) _snack(context, 'Saved ${entry.fileName}.');
+    if (context.mounted) {
+      _snack(context, context.l10n.attachmentSaved(entry.fileName));
+    }
   } catch (_) {
     if (context.mounted) {
-      _snack(context, 'The file could not be downloaded or decrypted.');
+      _snack(context, context.l10n.attachmentDownloadFailed);
     }
   }
 }
@@ -123,10 +126,12 @@ class AttachmentTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final size = formatFileSize(context, entry.plaintextSize);
     return Semantics(
       button: onOpen != null,
-      label: '${entry.isImage ? 'Image' : 'File'} ${entry.fileName}, '
-          '${formatAttachmentSize(entry.plaintextSize)}',
+      label: entry.isImage
+          ? context.l10n.attachmentImageSemantics(entry.fileName, size)
+          : context.l10n.attachmentFileSemantics(entry.fileName, size),
       excludeSemantics: true,
       child: InkWell(
         onTap: onOpen,
@@ -155,7 +160,7 @@ class AttachmentTile extends StatelessWidget {
                       style: theme.textTheme.bodyMedium,
                     ),
                     Text(
-                      formatAttachmentSize(entry.plaintextSize),
+                      size,
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: scheme.onSurfaceVariant,
                       ),
@@ -197,7 +202,7 @@ class _AttachmentImageScreenState extends State<AttachmentImageScreen> {
         actions: <Widget>[
           if (_canChooseSaveLocation)
             IconButton(
-              tooltip: 'Save',
+              tooltip: context.l10n.attachmentSave,
               icon: const Icon(Icons.download_outlined),
               onPressed: () =>
                   saveAttachmentAs(context, widget.state, widget.entry),
@@ -212,13 +217,13 @@ class _AttachmentImageScreenState extends State<AttachmentImageScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
-                  const Text('The image could not be downloaded or decrypted.'),
+                  Text(context.l10n.attachmentImageFailed),
                   const SizedBox(height: BoneSpacing.md),
                   OutlinedButton(
                     onPressed: () => setState(() {
                       _bytes = widget.state.loadAttachment(widget.entry);
                     }),
-                    child: const Text('Retry'),
+                    child: Text(context.l10n.commonRetry),
                   ),
                 ],
               ),
@@ -234,7 +239,7 @@ class _AttachmentImageScreenState extends State<AttachmentImageScreen> {
                 bytes,
                 semanticLabel: widget.entry.fileName,
                 errorBuilder: (context, _, __) =>
-                    const Text('This image cannot be shown.'),
+                    Text(context.l10n.attachmentImageUnshowable),
               ),
             ),
           );

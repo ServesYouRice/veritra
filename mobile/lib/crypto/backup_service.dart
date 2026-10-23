@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import '../core/api_client.dart';
 import '../storage/local_store.dart';
 import 'native_crypto_bindings.dart';
+import '../l10n/l10n.dart';
 
 const int _backupChunkSize = 1024 * 1024;
 const int _maxBackupPlaintext = 64 * 1024 * 1024;
@@ -48,27 +49,28 @@ class BackupException implements Exception {
 
   final BackupFailureKind kind;
 
-  String get message {
+  /// The English explanation; see [localizedMessage].
+  String get message => localizedMessage(englishL10n);
+
+  /// A sentence safe to show to end users, in [l10n]'s language.
+  String localizedMessage(AppLocalizations l10n) {
     switch (kind) {
       case BackupFailureKind.network:
-        return 'The server could not be reached. Try again; the restore '
-            'continues where it stopped.';
+        return l10n.backupErrorNetwork;
       case BackupFailureKind.notFound:
-        return 'This recovery code is unknown, expired or already used.';
+        return l10n.backupErrorNotFound;
       case BackupFailureKind.busy:
-        return 'This backup is being downloaded elsewhere. Try again in a '
-            'few minutes.';
+        return l10n.backupErrorBusy;
       case BackupFailureKind.wrongKey:
-        return 'This recovery code does not open the backup.';
+        return l10n.backupErrorWrongKey;
       case BackupFailureKind.corrupt:
-        return 'The backup is damaged and cannot be restored.';
+        return l10n.backupErrorCorrupt;
       case BackupFailureKind.deviceNotEmpty:
-        return 'This device already has an account. Sign out and reset it '
-            'before restoring a backup.';
+        return l10n.backupErrorDeviceNotEmpty;
       case BackupFailureKind.tooLarge:
-        return 'The backup is larger than this app supports.';
+        return l10n.backupErrorTooLarge;
       case BackupFailureKind.storage:
-        return 'This device could not store the backup.';
+        return l10n.backupErrorStorage;
     }
   }
 

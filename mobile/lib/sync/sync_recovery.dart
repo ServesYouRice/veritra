@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../l10n/l10n.dart';
 
 /// Why one sync event could not be applied (card I33).
 ///
@@ -128,32 +129,30 @@ class SyncRecovery {
     }
   }
 
+  /// A short, content-free explanation for the recovery banner, in English;
+  /// see [localizedMessage].
+  String get message => localizedMessage(englishL10n);
+
   /// A short, content-free explanation for the recovery banner.
-  String get message {
+  String localizedMessage(AppLocalizations l10n) {
     switch (kind) {
       case SyncFailureKind.cursorExpired:
-        return 'This device was away longer than the server keeps updates. '
-            'Restore a backup or link this device again.';
+        return l10n.syncErrorCursorExpired;
       case SyncFailureKind.mlsControlMissing:
       case SyncFailureKind.mlsControlMalformed:
-        return 'An encryption update for a conversation is missing or '
-            'damaged. Messages are paused so none are skipped.';
+        return l10n.syncErrorControlMissing;
       case SyncFailureKind.mlsState:
-        return 'This device could not update its encryption state. Messages '
-            'are paused so none are skipped.';
+        return l10n.syncErrorMlsState;
       case SyncFailureKind.applicationUndecryptable:
       case SyncFailureKind.applicationMissing:
-        return 'A message could not be read on this device. Messages are '
-            'paused so none are skipped.';
+        return l10n.syncErrorUndecryptable;
       case SyncFailureKind.unsupportedEvent:
-        return 'The server sent an update this app version does not know. '
-            'Update the app, then try again.';
+        return l10n.syncErrorUnsupportedEvent;
       case SyncFailureKind.cryptoUnavailable:
-        return 'Encryption is unavailable in this build, so encrypted '
-            'updates cannot be applied.';
+        return l10n.syncErrorCryptoUnavailable;
       case SyncFailureKind.transient:
       case SyncFailureKind.auth:
-        return 'Sync stopped. Try again.';
+        return l10n.syncErrorStopped;
     }
   }
 

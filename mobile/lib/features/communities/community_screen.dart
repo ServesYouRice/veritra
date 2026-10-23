@@ -32,7 +32,7 @@ class CommunityScreen extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: LargeTitleBar(
-        title: 'Communities',
+        title: context.l10n.navCommunities,
         actions: <Widget>[RefreshAction(onRefresh: state.refreshCommunities)],
       ),
       floatingActionButton: FloatingActionButton.extended(
@@ -40,7 +40,7 @@ class CommunityScreen extends StatelessWidget {
         backgroundColor: scheme.primary,
         foregroundColor: scheme.onPrimary,
         icon: const Icon(Icons.group_add_outlined),
-        label: const Text('New community'),
+        label: Text(context.l10n.communityNew),
       ),
       body: RefreshIndicator(
         onRefresh: state.refreshCommunities,
@@ -54,12 +54,10 @@ class CommunityScreen extends StatelessWidget {
                   if (!state.communitiesLoaded)
                     const Center(child: CircularProgressIndicator())
                   else
-                    const EmptyState(
+                    EmptyState(
                       icon: Icons.groups_outlined,
-                      title: 'No communities yet',
-                      message: 'Create a community to organize people around '
-                          'shared channels — private by default, encrypted '
-                          'everywhere.',
+                      title: context.l10n.communityEmptyTitle,
+                      message: context.l10n.communityEmptyMessage,
                     ),
                 ],
               )
@@ -80,14 +78,18 @@ class CommunityScreen extends StatelessWidget {
                           _openChannel(context, conversationId),
                     ),
                   if (_orphanChannels(state).isNotEmpty) ...<Widget>[
-                    const SectionHeader('Other channels you are in'),
+                    SectionHeader(context.l10n.communityOtherChannels),
                     TileGroup(
                       children: <Widget>[
                         for (final conversation in _orphanChannels(state))
                           ListTile(
                             leading: const Icon(Icons.tag),
-                            title: Text(conversation.title ?? 'Channel'),
-                            subtitle: const Text('Community channel'),
+                            title: Text(
+                              conversation.title ??
+                                  context.l10n.searchTypeChannel,
+                            ),
+                            subtitle:
+                                Text(context.l10n.communityChannelSubtitle),
                             onTap: () => _openChannel(context, conversation.id),
                           ),
                       ],
@@ -130,8 +132,8 @@ class CommunityScreen extends StatelessWidget {
   Future<void> _createCommunity(BuildContext context) async {
     final name = await _promptForName(
       context,
-      title: 'New community',
-      label: 'Community name',
+      title: context.l10n.communityNew,
+      label: context.l10n.communityName,
     );
     if (name == null || name.isEmpty) {
       return;
@@ -153,8 +155,8 @@ class CommunityScreen extends StatelessWidget {
   ) async {
     final name = await _promptForName(
       context,
-      title: 'New channel in ${community.name}',
-      label: 'Channel name',
+      title: context.l10n.communityNewChannelIn(community.name),
+      label: context.l10n.communityChannelName,
     );
     if (name == null || name.isEmpty) {
       return;
@@ -273,22 +275,21 @@ class _CommunityCard extends StatelessWidget {
             title: Text(community.name),
             subtitle: Text(
               channels.isEmpty
-                  ? 'No channels yet'
-                  : '${channels.length} channel'
-                      '${channels.length == 1 ? '' : 's'}',
+                  ? context.l10n.communityNoChannels
+                  : context.l10n.communityChannelCount(channels.length),
             ),
             trailing: IconButton(
-              tooltip: 'New channel',
+              tooltip: context.l10n.communityNewChannel,
               onPressed: state.busy ? null : onCreateChannel,
               icon: const Icon(Icons.add),
             ),
           ),
           if (channels.isEmpty)
-            const ListTile(
+            ListTile(
               dense: true,
-              leading: SizedBox(width: 40, child: Icon(Icons.tag)),
-              title: Text('No channels yet'),
-              subtitle: Text('Use + to create the first one.'),
+              leading: const SizedBox(width: 40, child: Icon(Icons.tag)),
+              title: Text(context.l10n.communityNoChannels),
+              subtitle: Text(context.l10n.communityNoChannelsHint),
             ),
           for (final channel in channels)
             _ChannelTile(
@@ -330,7 +331,7 @@ class _ChannelTile extends StatelessWidget {
       enabled: id != null,
       leading: const SizedBox(width: 40, child: Icon(Icons.tag)),
       title: Text(channel.name),
-      subtitle: id == null ? const Text('You are not a member yet') : null,
+      subtitle: id == null ? Text(context.l10n.communityNotMember) : null,
       onTap: id == null ? null : () => onOpen(id),
     );
   }

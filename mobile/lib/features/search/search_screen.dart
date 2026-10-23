@@ -10,6 +10,7 @@ import '../../ui/tokens.dart';
 import '../../ui/widgets/empty_state.dart';
 import '../../ui/widgets/status_pill.dart';
 import '../chat/chat_screen.dart';
+import '../../l10n/l10n.dart';
 
 /// Metadata-only search over what the server actually indexes: accounts by
 /// exact username, plus communities and channels by name. Message contents
@@ -119,7 +120,7 @@ class _SearchScreenState extends State<SearchScreen> {
               decoration: InputDecoration(
                 // The server searches accounts, communities, and channels
                 // only. Promising chats and groups made search look broken.
-                hintText: 'Search people, communities, channels…',
+                hintText: context.l10n.searchHint,
                 border: InputBorder.none,
                 enabledBorder: InputBorder.none,
                 focusedBorder: InputBorder.none,
@@ -134,7 +135,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 suffixIcon: query.text.isEmpty
                     ? null
                     : IconButton(
-                        tooltip: 'Clear search',
+                        tooltip: context.l10n.searchClear,
                         icon: const Icon(Icons.close),
                         onPressed: _clear,
                       ),
@@ -150,19 +151,16 @@ class _SearchScreenState extends State<SearchScreen> {
             : null,
       ),
       body: !searched
-          ? const EmptyState(
+          ? EmptyState(
               icon: Icons.search,
-              title: 'Search metadata',
-              message: 'Find people by exact username, plus communities and '
-                  'channels by name. Message contents are end-to-end '
-                  'encrypted and never searchable on the server.',
+              title: context.l10n.searchIntroTitle,
+              message: context.l10n.searchIntroMessage,
             )
           : results.isEmpty
-              ? const EmptyState(
+              ? EmptyState(
                   icon: Icons.search_off,
-                  title: 'No results',
-                  message: 'Nothing matched. Usernames must match exactly, '
-                      'and message contents are never searchable.',
+                  title: context.l10n.searchNoResultsTitle,
+                  message: context.l10n.searchNoResultsMessage,
                 )
               : ListView.builder(
                   padding: const EdgeInsets.symmetric(
@@ -307,9 +305,9 @@ class _SearchScreenState extends State<SearchScreen> {
     }
     switch (result.type) {
       case 'community':
-        return 'No channel you can open yet';
+        return context.l10n.searchNoOpenChannel;
       case 'channel':
-        return 'Join the community to open it';
+        return context.l10n.searchJoinCommunity;
       default:
         return null;
     }
@@ -333,13 +331,13 @@ class _SearchScreenState extends State<SearchScreen> {
   String _labelForType(String type) {
     switch (type) {
       case 'conversation':
-        return 'Conversation';
+        return context.l10n.searchTypeConversation;
       case 'community':
-        return 'Community';
+        return context.l10n.searchTypeCommunity;
       case 'channel':
-        return 'Channel';
+        return context.l10n.searchTypeChannel;
       case 'account':
-        return 'Account';
+        return context.l10n.searchTypeAccount;
       default:
         return type;
     }
@@ -361,8 +359,11 @@ class _AccountResultActions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final blocked = state.isBlocked(accountId);
+    final l10n = context.l10n;
     return IconButton(
-      tooltip: blocked ? 'Unblock $label' : 'Block $label',
+      tooltip: blocked
+          ? l10n.searchUnblockAccount(label)
+          : l10n.searchBlockAccount(label),
       icon: Icon(blocked ? Icons.person_off : Icons.block),
       onPressed: state.isBusy(Ops.blocks)
           ? null
@@ -376,9 +377,10 @@ class _AccountResultActions extends StatelessWidget {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text(ok
-                      ? (blocked ? '$label unblocked.' : '$label blocked.')
-                      : state.errorFor(Ops.blocks) ??
-                          'Could not update the block.'),
+                      ? (blocked
+                          ? l10n.blockedUnblocked(label)
+                          : l10n.searchBlocked(label))
+                      : state.errorFor(Ops.blocks) ?? l10n.searchBlockFailed),
                 ),
               );
             },
