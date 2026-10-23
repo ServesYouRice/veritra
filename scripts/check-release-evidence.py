@@ -9,6 +9,16 @@ recorded digest, and are structurally a device-signed app: Payload/*.app,
 iphoneos Info.plist, arm64 iOS Mach-O with a code signature, and an embedded
 distribution provisioning profile. These checks are structural only; signature
 and attestation cryptography is verified by codesign and the G24 process.
+
+Approvals cannot live in the candidate commit: a file cannot name the SHA of
+the commit that contains it. Each approval is instead read from git at a
+separate approvals commit, which the release workflow resolves from the tip of
+the protected default branch. The approvals commit must descend from the
+candidate. Each approval sits at a path keyed by the candidate SHA, names that
+SHA and its source tree, and must have landed on the branch, after the
+candidate, in a change that touched nothing but that candidate's approval
+directory. The manifest records the approvals commit and each approval's
+sha256, so the published evidence pins the exact approval bytes.
 """
 
 from __future__ import annotations
@@ -29,7 +39,7 @@ from typing import Any
 
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 REQUIRED_CI_JOBS = (
     "server",
     "crypto",
@@ -80,19 +90,26 @@ CPU_TYPE_ARM64 = 0x0100000C
 LC_CODE_SIGNATURE = 0x1D
 LC_BUILD_VERSION = 0x32
 PLATFORM_IOS = 2
+APPROVAL_SCHEMA = "veritra-release-approval/1"
+APPROVALS_DIR = "release/approvals"
+# {commit} is the candidate SHA. The file is read from the approvals commit.
 REQUIRED_APPROVALS = {
     "production_crypto": {
-        "path": "release/production-crypto-approval.json",
+        "path": APPROVALS_DIR + "/{commit}/production-crypto.json",
         "status": "approved",
         "behavior_test": "pass",
         "not_author": True,
     },
     "independent_review": {
-        "path": "release/independent-review-approval.json",
+        "path": APPROVALS_DIR + "/{commit}/independent-review.json",
         "status": "approved",
         "not_author": True,
     },
 }
+APPROVAL_KEYS = frozenset(
+    {"schema", "approval", "status", "reviewed_commit", "reviewed_tree", "reviewer", "reviewer_is_author"}
+)
+MAX_APPROVAL_BYTES = 64 * 1024
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -123,36 +140,138 @@ def require(value: Any, description: str, errors: list[str]) -> None:
         errors.append(f"missing {description}")
 
 
+def git(root: Path, *args: str) -> bytes | None:
+    """Run a read-only git query; None when git fails, so callers fail closed."""
+    try:
+        return subprocess.run(["git", "-C", str(root), *args], capture_output=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def git_text(root: Path, *args: str) -> str | None:
+    output = git(root, *args)
+    return None if output is None else output.decode("utf-8", "replace").strip()
+
+
+def approval_path(approval_policy: dict[str, Any], candidate: str) -> str:
+    return str(approval_policy["path"]).format(commit=candidate)
+
+
+def landed_alone(root: Path, approvals_commit: str, path: str, candidate: str) -> str | None:
+    """Return why the change that brought ``path`` onto the branch is unsound.
+
+    The change is the newest first-parent commit that touched the file, so a
+    merged pull request counts as one change. It must come after the
+    candidate and touch nothing but this candidate's approval directory, so
+    an approval cannot ride along unnoticed inside a code change.
+    """
+    allowed = f"{APPROVALS_DIR}/{candidate}/"
+    landing = git_text(root, "log", "-1", "--first-parent", "--format=%H", approvals_commit, "--", path)
+    changed = None
+    if landing and COMMIT_RE.fullmatch(landing):
+        output = git(root, "diff", "--no-renames", "--name-only", "-z", f"{landing}^1", landing, "--")
+        if output is not None:
+            changed = [name for name in output.decode("utf-8", "replace").split("\0") if name]
+    if not changed or any(not name.startswith(allowed) for name in changed):
+        return f"did not land in its own change touching only {allowed}"
+    if git(root, "merge-base", "--is-ancestor", candidate, landing) is None:
+        return "landed before the candidate commit"
+    return None
+
+
 def check_approval(
     root: Path,
     approval_name: str,
     approval_policy: dict[str, Any],
     candidate: str,
+    candidate_tree: str,
+    approvals_commit: str,
     errors: list[str],
 ) -> dict[str, Any] | None:
-    path_value = approval_policy.get("path")
-    if not isinstance(path_value, str):
-        errors.append(f"{approval_name} approval path is not configured")
+    """Read one approval from git at the approvals commit and validate it.
+
+    Returns its manifest entry (path, sha256 of the bytes, parsed record)
+    only when it is sound, so the manifest can be compared to git exactly.
+    """
+    path = approval_path(approval_policy, candidate)
+    label = f"{approval_name} approval"
+    blob = git(root, "cat-file", "blob", f"{approvals_commit}:{path}")
+    if blob is None:
+        errors.append(f"{label} is missing from the approvals commit at {path}")
+        return None
+    if len(blob) > MAX_APPROVAL_BYTES:
+        errors.append(f"{label} is too large")
         return None
     try:
-        approval = load_json(root / path_value)
-    except ValueError as exc:
-        errors.append(str(exc))
+        approval = json.loads(blob.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        errors.append(f"{label} is not valid JSON")
         return None
+    keys = APPROVAL_KEYS | ({"behavior_test"} if "behavior_test" in approval_policy else set())
+    if not isinstance(approval, dict) or set(approval) != keys:
+        errors.append(f"{label} fields do not match the protected approval schema")
+        return None
+    start = len(errors)
+    if approval.get("schema") != APPROVAL_SCHEMA:
+        errors.append(f"{label} schema is not {APPROVAL_SCHEMA}")
+    if approval.get("approval") != approval_name:
+        errors.append(f"{label} names a different approval")
     if approval.get("status") != approval_policy.get("status"):
-        errors.append(f"{approval_name} approval is not {approval_policy.get('status')!r}")
+        errors.append(f"{label} is not {approval_policy.get('status')!r}")
     if approval.get("reviewed_commit") != candidate:
-        errors.append(f"{approval_name} approval is not bound to candidate {candidate}")
+        errors.append(f"{label} is not bound to candidate {candidate}")
+    if approval.get("reviewed_tree") != candidate_tree:
+        errors.append(f"{label} is not bound to the candidate source tree")
     required_behavior = approval_policy.get("behavior_test")
     if required_behavior is not None and approval.get("behavior_test") != required_behavior:
         errors.append(f"{approval_name} behavior evidence is not {required_behavior!r}")
     if approval_policy.get("not_author") and approval.get("reviewer_is_author") is not False:
         errors.append(f"{approval_name} reviewer is not independently identified")
-    require(approval.get("reviewer"), f"{approval_name} reviewer", errors)
-    return approval
+    reviewer = approval.get("reviewer")
+    if not isinstance(reviewer, str) or not reviewer.strip():
+        errors.append(f"missing {approval_name} reviewer")
+    problem = landed_alone(root, approvals_commit, path, candidate)
+    if problem:
+        errors.append(f"{label} {problem}")
+    if len(errors) != start:
+        return None
+    return {"path": path, "digest": "sha256:" + hashlib.sha256(blob).hexdigest(), "record": approval}
 
 
-def validate_preflight(root: Path, policy: dict[str, Any], candidate: str) -> list[str]:
+def verify_approvals(
+    root: Path, candidate: str, approvals_commit: str | None, errors: list[str]
+) -> dict[str, dict[str, Any]]:
+    """Validate every required approval; return the sound ones by name."""
+    if not isinstance(approvals_commit, str) or not COMMIT_RE.fullmatch(approvals_commit):
+        errors.append(
+            "approvals commit is not a full lowercase SHA-1 "
+            "(approvals come from a later commit on the protected branch)"
+        )
+        return {}
+    if git(root, "cat-file", "-e", f"{approvals_commit}^{{commit}}") is None:
+        errors.append("approvals commit is not in this repository")
+        return {}
+    candidate_tree = git_text(root, "rev-parse", "--verify", "--quiet", f"{candidate}^{{tree}}")
+    if not candidate_tree:
+        errors.append("candidate commit is not in this repository")
+        return {}
+    if approvals_commit == candidate:
+        errors.append("approvals commit must be a later commit than the candidate")
+        return {}
+    if git(root, "merge-base", "--is-ancestor", candidate, approvals_commit) is None:
+        errors.append("approvals commit does not descend from the candidate commit")
+        return {}
+    verified = {}
+    for name, approval_policy in REQUIRED_APPROVALS.items():
+        entry = check_approval(root, name, approval_policy, candidate, candidate_tree, approvals_commit, errors)
+        if entry is not None:
+            verified[name] = entry
+    return verified
+
+
+def preflight(
+    root: Path, policy: dict[str, Any], candidate: str, approvals_commit: str | None
+) -> tuple[list[str], dict[str, dict[str, Any]]]:
     errors: list[str] = []
     if policy.get("schema_version") != SCHEMA_VERSION:
         errors.append(f"release policy schema version is not protected version {SCHEMA_VERSION}")
@@ -160,16 +279,16 @@ def validate_preflight(root: Path, policy: dict[str, Any], candidate: str) -> li
         errors.append("release policy required CI jobs do not match the protected set")
     if policy.get("mobile_artifacts") != REQUIRED_MOBILE_ARTIFACTS:
         errors.append("release policy mobile artifact rules do not match the protected set")
-    approvals = policy.get("approvals")
-    if approvals != REQUIRED_APPROVALS:
+    if policy.get("approvals") != REQUIRED_APPROVALS:
         errors.append("release policy approvals do not match the protected set")
-        approvals = REQUIRED_APPROVALS
-    for name, approval_policy in approvals.items():
-        if not isinstance(approval_policy, dict):
-            errors.append(f"{name} approval policy is not an object")
-            continue
-        check_approval(root, name, approval_policy, candidate, errors)
-    return errors
+    # The protected approval rules apply whatever the policy file says.
+    return errors, verify_approvals(root, candidate, approvals_commit, errors)
+
+
+def validate_preflight(
+    root: Path, policy: dict[str, Any], candidate: str, approvals_commit: str | None = None
+) -> list[str]:
+    return preflight(root, policy, candidate, approvals_commit)[0]
 
 
 def sha256_file(path: Path) -> str:
@@ -415,8 +534,9 @@ def validate_manifest(
     manifest: dict[str, Any],
     candidate: str,
     artifacts_dir: Path | None = None,
+    approvals_commit: str | None = None,
 ) -> list[str]:
-    errors = validate_preflight(root, policy, candidate)
+    errors, verified = preflight(root, policy, candidate, approvals_commit)
     if manifest.get("schema_version") != policy.get("schema_version"):
         errors.append("release evidence schema version is not current")
     if manifest.get("candidate_commit") != candidate:
@@ -438,21 +558,21 @@ def validate_manifest(
             if ci_jobs.get(job) != "success":
                 errors.append(f"required CI job {job!r} is missing or not successful")
 
-    approvals = REQUIRED_APPROVALS
-    for name, approval_policy in approvals.items():
-        recorded = manifest.get(name)
-        if not isinstance(recorded, dict):
-            errors.append(f"release evidence has no {name} approval")
-            continue
-        if recorded.get("status") != approval_policy.get("status"):
-            errors.append(f"release evidence {name} approval is not approved")
-        if recorded.get("reviewed_commit") != candidate:
-            errors.append(f"release evidence {name} approval is not commit-bound")
-        if approval_policy.get("behavior_test") is not None and recorded.get("behavior_test") != approval_policy["behavior_test"]:
-            errors.append(f"release evidence {name} behavior test did not pass")
-        if approval_policy.get("not_author") and recorded.get("reviewer_is_author") is not False:
-            errors.append(f"release evidence {name} reviewer is not independent")
-        require(recorded.get("reviewer"), f"release evidence {name} reviewer", errors)
+    # The manifest must carry exactly what git holds at the approvals commit.
+    recorded = manifest.get("approvals")
+    if not isinstance(recorded, dict):
+        errors.append("release evidence has no approvals record")
+    else:
+        if recorded.get("commit") != approvals_commit:
+            errors.append("release evidence approvals are not from the verified approvals commit")
+        if set(recorded) != {"commit", *REQUIRED_APPROVALS}:
+            errors.append("release evidence approvals do not match the protected set")
+        for name in REQUIRED_APPROVALS:
+            entry = recorded.get(name)
+            if not isinstance(entry, dict):
+                errors.append(f"release evidence has no {name} approval")
+            elif name in verified and entry != verified[name]:
+                errors.append(f"release evidence {name} approval does not match the approvals commit")
 
     container = manifest.get("container")
     if not isinstance(container, dict):
@@ -481,6 +601,10 @@ def main() -> int:
     parser.add_argument("--evidence", type=Path)
     parser.add_argument("--expected-commit")
     parser.add_argument(
+        "--approvals-commit",
+        help="the later commit on the protected branch that holds the candidate's approvals",
+    )
+    parser.add_argument(
         "--artifacts-dir",
         type=Path,
         help="signed mobile artifact directory (default: $MOBILE_ARTIFACTS_DIR, else the evidence file's directory)",
@@ -496,12 +620,15 @@ def main() -> int:
         return 1
     try:
         policy = load_json(policy_path)
-        errors = validate_preflight(root, policy, candidate)
-        if not args.preflight:
+        if args.preflight:
+            errors = validate_preflight(root, policy, candidate, args.approvals_commit)
+        else:
             evidence_path = (args.evidence or root / "dist/release-evidence.json").resolve()
             env_dir = os.environ.get("MOBILE_ARTIFACTS_DIR")
             artifacts_dir = (args.artifacts_dir or (Path(env_dir) if env_dir else evidence_path.parent)).resolve()
-            errors.extend(validate_manifest(root, policy, load_json(evidence_path), candidate, artifacts_dir))
+            errors = validate_manifest(
+                root, policy, load_json(evidence_path), candidate, artifacts_dir, args.approvals_commit
+            )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1

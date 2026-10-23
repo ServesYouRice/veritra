@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "required_ci_jobs": [
     "server",
     "crypto",
@@ -23,13 +23,13 @@
   },
   "approvals": {
     "production_crypto": {
-      "path": "release/production-crypto-approval.json",
+      "path": "release/approvals/{commit}/production-crypto.json",
       "status": "approved",
       "behavior_test": "pass",
       "not_author": true
     },
     "independent_review": {
-      "path": "release/independent-review-approval.json",
+      "path": "release/approvals/{commit}/independent-review.json",
       "status": "approved",
       "not_author": true
     }

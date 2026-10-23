@@ -20,9 +20,25 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECKER = ROOT / "scripts/check-release-evidence.py"
-COMMIT = "0123456789abcdef0123456789abcdef01234567"
+# Set by fixture() to real commits of the fixture's own git repository.
+COMMIT = ""
+TREE = ""
+APPROVALS_COMMIT = ""
 OTHER_COMMIT = "fedcba9876543210fedcba9876543210fedcba98"
 CI_RUN_ID = 123
+APPROVAL_FILES = {
+    "production_crypto": "production-crypto.json",
+    "independent_review": "independent-review.json",
+}
+GIT_ENV = {
+    **{key: value for key, value in os.environ.items() if not key.startswith("GIT_")},
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_AUTHOR_NAME": "fixture",
+    "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
+    "GIT_COMMITTER_NAME": "fixture",
+    "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
+}
 JOBS = {
     "server": "success",
     "crypto": "success",
@@ -148,68 +164,139 @@ def signed_record(file_name: str, digest: str) -> dict[str, object]:
     }
 
 
+APPROVALS_POLICY = {
+    "production_crypto": {
+        "path": "release/approvals/{commit}/production-crypto.json",
+        "status": "approved",
+        "behavior_test": "pass",
+        "not_author": True,
+    },
+    "independent_review": {
+        "path": "release/approvals/{commit}/independent-review.json",
+        "status": "approved",
+        "not_author": True,
+    },
+}
+
+
+# --- A real git repository: a base commit, the frozen candidate, then the
+# approvals in a later commit, then unrelated later work on the branch.
+
+
+def git(root: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(root), *args], check=True, capture_output=True, text=True, env=GIT_ENV
+    ).stdout.strip()
+
+
+def commit_on(root: Path, start: str, files: dict[str, bytes | None], message: str = "change") -> str:
+    """Commit ``files`` (None deletes) on a detached HEAD at ``start``."""
+    if start:
+        git(root, "checkout", "-q", "--detach", start)
+    for path, content in files.items():
+        if content is None:
+            git(root, "rm", "-q", path)
+            continue
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+        git(root, "add", path)
+    git(root, "commit", "-q", "-m", message)
+    return git(root, "rev-parse", "HEAD")
+
+
+def merge_on(root: Path, first: str, second: str) -> str:
+    git(root, "checkout", "-q", "--detach", first)
+    git(root, "merge", "-q", "--no-ff", "-m", "merge", second)
+    return git(root, "rev-parse", "HEAD")
+
+
+def approval_path(name: str, commit: str | None = None) -> str:
+    return f"release/approvals/{commit or COMMIT}/{APPROVAL_FILES[name]}"
+
+
+def approval_record(name: str, **changes: object) -> dict[str, object]:
+    record: dict[str, object] = {
+        "schema": "veritra-release-approval/1",
+        "approval": name,
+        "status": "approved",
+        "reviewed_commit": COMMIT,
+        "reviewed_tree": TREE,
+        "reviewer": f"{name}-reviewer",
+        "reviewer_is_author": False,
+    }
+    if name == "production_crypto":
+        record["behavior_test"] = "pass"
+    for key, value in changes.items():
+        if value is REMOVE:
+            record.pop(key, None)
+        else:
+            record[key] = value
+    return record
+
+
+REMOVE = object()
+
+
+def approval_bytes(record: object) -> bytes:
+    return (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def approval_files(**records: object) -> dict[str, bytes | None]:
+    """Both approvals for the candidate; keyword arguments replace one."""
+    files: dict[str, bytes | None] = {}
+    for name in APPROVAL_FILES:
+        value = records.get(name, approval_record(name))
+        files[approval_path(name)] = value if isinstance(value, bytes) or value is None else approval_bytes(value)
+    return files
+
+
+def manifest_approvals(root: Path, approvals_commit: str) -> dict[str, object]:
+    recorded: dict[str, object] = {"commit": approvals_commit}
+    for name in APPROVAL_FILES:
+        blob = subprocess.run(
+            ["git", "-C", str(root), "cat-file", "blob", f"{approvals_commit}:{approval_path(name)}"],
+            check=True,
+            capture_output=True,
+            env=GIT_ENV,
+        ).stdout
+        recorded[name] = {
+            "path": approval_path(name),
+            "digest": "sha256:" + hashlib.sha256(blob).hexdigest(),
+            "record": json.loads(blob),
+        }
+    return recorded
+
+
 def fixture() -> tuple[Path, dict[str, object]]:
+    global COMMIT, TREE, APPROVALS_COMMIT
     temp = Path(tempfile.mkdtemp(prefix="veritra-release-evidence-"))
+    git(temp, "init", "-q", "-b", "main")
+    base = commit_on(temp, "", {"README": b"base\n"}, "base")
+    COMMIT = commit_on(temp, base, {"src.txt": b"frozen candidate\n"}, "candidate")
+    TREE = git(temp, "rev-parse", f"{COMMIT}^{{tree}}")
+    approved = commit_on(temp, COMMIT, approval_files(), "approve the candidate")
+    # Later, unrelated work on the protected branch does not disturb them.
+    APPROVALS_COMMIT = commit_on(temp, approved, {"README": b"later work\n"}, "later work")
+    git(temp, "checkout", "-q", "--detach", COMMIT)
+    # Untracked, so checkouts in the cases below never touch them.
     (temp / ".go-version").write_text("1.25.12\n", encoding="utf-8")
     policy = {
-        "schema_version": 2,
+        "schema_version": 3,
         "required_ci_jobs": list(JOBS),
         "mobile_artifacts": MOBILE_POLICY,
-        "approvals": {
-            "production_crypto": {
-                "path": "release/production-crypto-approval.json",
-                "status": "approved",
-                "behavior_test": "pass",
-                "not_author": True,
-            },
-            "independent_review": {
-                "path": "release/independent-review-approval.json",
-                "status": "approved",
-                "not_author": True,
-            },
-        },
+        "approvals": APPROVALS_POLICY,
     }
     write_json(temp / "release/release-policy.json", policy)
-    write_json(
-        temp / "release/production-crypto-approval.json",
-        {
-            "status": "approved",
-            "behavior_test": "pass",
-            "reviewed_commit": COMMIT,
-            "reviewer": "crypto-reviewer",
-            "reviewer_is_author": False,
-        },
-    )
-    write_json(
-        temp / "release/independent-review-approval.json",
-        {
-            "status": "approved",
-            "reviewed_commit": COMMIT,
-            "reviewer": "independent-reviewer",
-            "reviewer_is_author": False,
-        },
-    )
     signed_digest = build_signed_ipa(temp / "dist" / SIGNED_IPA)
     manifest = {
-        "schema_version": 2,
+        "schema_version": 3,
         "candidate_commit": COMMIT,
         "binary_commit": COMMIT,
         "ci_run_id": CI_RUN_ID,
         "ci_conclusion": "success",
         "ci_jobs": JOBS.copy(),
-        "production_crypto": {
-            "status": "approved",
-            "behavior_test": "pass",
-            "reviewed_commit": COMMIT,
-            "reviewer": "crypto-reviewer",
-            "reviewer_is_author": False,
-        },
-        "independent_review": {
-            "status": "approved",
-            "reviewed_commit": COMMIT,
-            "reviewer": "independent-reviewer",
-            "reviewer_is_author": False,
-        },
+        "approvals": manifest_approvals(temp, APPROVALS_COMMIT),
         "container": {
             "image": "ghcr.io/example/veritra:v1",
             "digest": "sha256:" + "a" * 64,
@@ -223,10 +310,23 @@ def fixture() -> tuple[Path, dict[str, object]]:
 
 
 def run(root: Path, *extra: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
-    environment = {key: value for key, value in os.environ.items() if key != "MOBILE_ARTIFACTS_DIR"}
+    # A later --approvals-commit in ``extra`` overrides the default one.
+    environment = {
+        key: value for key, value in os.environ.items() if key != "MOBILE_ARTIFACTS_DIR" and not key.startswith("GIT_")
+    }
     environment.update(env or {})
     return subprocess.run(
-        [sys.executable, str(CHECKER), "--root", str(root), "--expected-commit", COMMIT, *extra],
+        [
+            sys.executable,
+            str(CHECKER),
+            "--root",
+            str(root),
+            "--expected-commit",
+            COMMIT,
+            "--approvals-commit",
+            APPROVALS_COMMIT,
+            *extra,
+        ],
         text=True,
         capture_output=True,
         check=False,
@@ -262,22 +362,25 @@ def expect_blocked(
 
 def qa01_cases(root: Path, manifest: dict[str, object]) -> None:
     # A renamed/moved placeholder cannot satisfy positive approval evidence.
-    crypto = manifest.pop("production_crypto")
+    approvals = manifest["approvals"]
+    crypto = approvals.pop("production_crypto")
     expect_blocked(root, manifest, "has no production_crypto approval")
-    manifest["production_crypto"] = crypto
+    approvals["production_crypto"] = crypto
     expect_valid(root, manifest)
 
     manifest["ci_jobs"]["mobile-ios"] = "skipped"
     expect_blocked(root, manifest, "required CI job 'mobile-ios' is missing or not successful")
     manifest["ci_jobs"]["mobile-ios"] = "success"
 
-    manifest["independent_review"]["status"] = "pending"
-    expect_blocked(root, manifest, "independent_review approval is not approved")
-    manifest["independent_review"]["status"] = "approved"
+    # The manifest cannot say more than git holds at the approvals commit.
+    review = approvals["independent_review"]["record"]
+    review["status"] = "pending"
+    expect_blocked(root, manifest, "independent_review approval does not match the approvals commit")
+    review["status"] = "approved"
 
-    manifest["independent_review"]["reviewer_is_author"] = True
-    expect_blocked(root, manifest, "independent_review reviewer is not independent")
-    manifest["independent_review"]["reviewer_is_author"] = False
+    review["reviewer_is_author"] = True
+    expect_blocked(root, manifest, "independent_review approval does not match the approvals commit")
+    review["reviewer_is_author"] = False
 
     manifest["binary_commit"] = OTHER_COMMIT
     expect_blocked(root, manifest, "packaged binary commit evidence does not match candidate")
@@ -292,6 +395,159 @@ def qa01_cases(root: Path, manifest: dict[str, object]) -> None:
     manifest["container"]["commit"] = COMMIT
 
     expect_valid(root, manifest)
+
+
+def approval_cases(root: Path, valid: dict[str, object]) -> None:
+    """Approvals come from a later commit that descends from the candidate."""
+    base = git(root, "rev-parse", f"{COMMIT}^")
+
+    def check(approvals_commit: str, *reasons: str, preflight: bool = False) -> None:
+        manifest = copy.deepcopy(valid)
+        extra = ("--approvals-commit", approvals_commit) + (("--preflight",) if preflight else ())
+        if reasons:
+            expect_blocked(root, manifest, *reasons, extra=extra)
+        else:
+            manifest["approvals"] = manifest_approvals(root, approvals_commit)
+            expect_valid(root, manifest, *extra)
+
+    def approved(**records: object) -> str:
+        return commit_on(root, COMMIT, approval_files(**records), "approve")
+
+    # Accepted: the fixture's tip (approvals, then later work); the approval
+    # commit itself; approvals merged as a pull request; each approval in
+    # its own change; the preflight gate alone.
+    check(APPROVALS_COMMIT)
+    check(APPROVALS_COMMIT, preflight=True)
+    check(approved())
+    main_moved_on = commit_on(root, COMMIT, {"README": b"main moved on\n"})
+    check(merge_on(root, main_moved_on, approved()))
+    files = approval_files()
+    first, second = list(files)
+    one = commit_on(root, COMMIT, {first: files[first]})
+    check(commit_on(root, commit_on(root, one, {"README": b"between\n"}), {second: files[second]}))
+
+    # No approvals commit, or not a usable one.
+    for bad in ("", "abc", APPROVALS_COMMIT.upper(), APPROVALS_COMMIT[:39]):
+        check(bad, "approvals commit is not a full lowercase SHA-1")
+        check(bad, "approvals commit is not a full lowercase SHA-1", preflight=True)
+    check("f" * 40, "approvals commit is not in this repository")
+    # A file cannot name the commit it is in, so the candidate itself never
+    # holds its approvals.
+    check(COMMIT, "approvals commit must be a later commit than the candidate")
+    # Approvals on a line that never contained the candidate.
+    sibling = commit_on(root, base, approval_files(), "approve from the side")
+    check(sibling, "approvals commit does not descend from the candidate commit")
+
+    # A pull request head may hold perfect approvals; the protected branch
+    # tip without them still blocks, and the workflow never reads PR refs.
+    pull_request_head = approved()
+    protected_tip = commit_on(root, COMMIT, {"README": b"no approvals merged\n"})
+    check(protected_tip, "production_crypto approval is missing", "independent_review approval is missing")
+    check(merge_on(root, protected_tip, pull_request_head))
+
+    # Approvals for another commit, or at another commit's path.
+    check(approved(production_crypto=approval_record("production_crypto", reviewed_commit=OTHER_COMMIT)),
+          f"production_crypto approval is not bound to candidate {COMMIT}")
+    elsewhere = commit_on(root, COMMIT, {
+        approval_path(name, OTHER_COMMIT): approval_bytes(approval_record(name)) for name in APPROVAL_FILES
+    })
+    check(elsewhere, "production_crypto approval is missing from the approvals commit")
+    check(approved(independent_review=approval_record("independent_review", reviewed_tree="0" * 40)),
+          "independent_review approval is not bound to the candidate source tree")
+    check(approved(production_crypto=approval_record("production_crypto", reviewed_tree=REMOVE)),
+          "production_crypto approval fields do not match the protected approval schema")
+
+    # One approval cannot stand in for the other.
+    swapped = approval_record("independent_review", behavior_test="pass")
+    check(approved(production_crypto=swapped), "production_crypto approval names a different approval")
+
+    # Content.
+    check(approved(independent_review=approval_record("independent_review", status="pending")),
+          "independent_review approval is not 'approved'")
+    check(approved(production_crypto=approval_record("production_crypto", behavior_test="fail")),
+          "production_crypto behavior evidence is not 'pass'")
+    for author in (True, None, "false", 0):
+        check(approved(independent_review=approval_record("independent_review", reviewer_is_author=author)),
+              "independent_review reviewer is not independently identified")
+    for reviewer in ("", "   ", None, 7):
+        check(approved(independent_review=approval_record("independent_review", reviewer=reviewer)),
+              "missing independent_review reviewer")
+    check(approved(independent_review=approval_record("independent_review", schema="veritra-release-approval/0")),
+          "independent_review approval schema is not veritra-release-approval/1")
+    check(approved(independent_review=approval_record("independent_review", notes="extra")),
+          "independent_review approval fields do not match the protected approval schema")
+    check(approved(independent_review=approval_record("independent_review", behavior_test="pass")),
+          "independent_review approval fields do not match the protected approval schema")
+    check(approved(production_crypto=approval_record("production_crypto", behavior_test=REMOVE)),
+          "production_crypto approval fields do not match the protected approval schema")
+    check(approved(independent_review=approval_bytes([approval_record("independent_review")])),
+          "independent_review approval fields do not match the protected approval schema")
+    check(approved(independent_review=b"{not json"), "independent_review approval is not valid JSON")
+    check(approved(independent_review=b"\xff\xfe"), "independent_review approval is not valid JSON")
+    check(approved(independent_review=b" " * (64 * 1024 + 1)), "independent_review approval is too large")
+
+    # An approval must land in its own change, after the candidate.
+    smuggled = commit_on(root, COMMIT, {**approval_files(), "src.txt": b"changed with the approval\n"})
+    check(smuggled, "production_crypto approval did not land in its own change touching only release/approvals/")
+    branch = commit_on(root, approved(), {"src.txt": b"code in the same pull request\n"})
+    check(merge_on(root, main_moved_on, branch), "did not land in its own change")
+    with_other_candidate = commit_on(root, COMMIT, {
+        **approval_files(), approval_path("production_crypto", OTHER_COMMIT): b"{}\n"
+    })
+    check(with_other_candidate, "did not land in its own change")
+    touched_later = commit_on(root, APPROVALS_COMMIT, {
+        approval_path("independent_review"): approval_bytes(approval_record("independent_review", reviewer="renamed")),
+        "README": b"and something else\n",
+    })
+    check(touched_later, "independent_review approval did not land in its own change")
+    # The candidate sat on a side branch while the approval landed on main;
+    # the approval change came before the candidate reached the branch.
+    side = commit_on(root, base, {"README": b"main before the candidate\n"})
+    early = commit_on(root, side, approval_files())
+    check(merge_on(root, early, COMMIT), "production_crypto approval landed before the candidate commit")
+
+    # The manifest must hold exactly what git holds at the approvals commit.
+    def tampered(mutate) -> dict[str, object]:
+        manifest = copy.deepcopy(valid)
+        mutate(manifest["approvals"])
+        return manifest
+
+    expect_blocked(root, tampered(lambda a: a.__setitem__("commit", COMMIT)),
+                   "release evidence approvals are not from the verified approvals commit")
+    expect_blocked(root, tampered(lambda a: a["production_crypto"].__setitem__("digest", "sha256:" + "0" * 64)),
+                   "release evidence production_crypto approval does not match the approvals commit")
+    expect_blocked(root, tampered(lambda a: a["production_crypto"].__setitem__("path", "release/production-crypto-approval.json")),
+                   "release evidence production_crypto approval does not match the approvals commit")
+    expect_blocked(root, tampered(lambda a: a["production_crypto"]["record"].__setitem__("reviewer", "someone else")),
+                   "release evidence production_crypto approval does not match the approvals commit")
+    expect_blocked(root, tampered(lambda a: a.__setitem__("extra", {})),
+                   "release evidence approvals do not match the protected set")
+    expect_blocked(root, tampered(lambda a: a.pop("independent_review")), "release evidence has no independent_review approval")
+    manifest = copy.deepcopy(valid)
+    manifest.pop("approvals")
+    expect_blocked(root, manifest, "release evidence has no approvals record")
+    # The schema 2 shape, with approvals inlined at the top level, is stale.
+    legacy = copy.deepcopy(valid)
+    legacy.pop("approvals")
+    legacy["schema_version"] = 2
+    legacy["production_crypto"] = valid["approvals"]["production_crypto"]["record"]
+    expect_blocked(root, legacy, "release evidence schema version is not current", "release evidence has no approvals record")
+
+    # The approval rules cannot be moved back into the candidate tree.
+    policy_path = root / "release/release-policy.json"
+    original_policy = policy_path.read_text(encoding="utf-8")
+    for tampered_approvals in (
+        dict(APPROVALS_POLICY, production_crypto=dict(APPROVALS_POLICY["production_crypto"], path="release/production-crypto-approval.json")),
+        {"independent_review": APPROVALS_POLICY["independent_review"]},
+        dict(APPROVALS_POLICY, independent_review=dict(APPROVALS_POLICY["independent_review"], not_author=False)),
+    ):
+        policy = json.loads(original_policy)
+        policy["approvals"] = tampered_approvals
+        write_json(policy_path, policy)
+        expect_blocked(root, valid, "release policy approvals do not match the protected set")
+    policy_path.write_text(original_policy, encoding="utf-8")
+    git(root, "checkout", "-q", "--detach", COMMIT)
+    expect_valid(root, valid)
 
 
 def qa02_cases(root: Path, valid: dict[str, object]) -> None:
@@ -492,8 +748,9 @@ def qa02_cases(root: Path, valid: dict[str, object]) -> None:
         valid["container"]["image"],
         valid["container"]["digest"],
         "1.25.12\n",
-        lambda rel: json.loads((root / rel).read_text(encoding="utf-8")),
+        writer.git_approval_loader(APPROVALS_COMMIT, root),
         [simulator, signed],
+        APPROVALS_COMMIT,
     )
     expect_valid(root, written)
 
@@ -512,11 +769,13 @@ def main() -> int:
     try:
         expect_valid(root, manifest)
         qa01_cases(root, manifest)
+        approval_cases(root, manifest)
         qa02_cases(root, manifest)
         # The repository policy must equal the protected rules the fixtures use.
         repo_policy = json.loads((ROOT / "release/release-policy.json").read_text(encoding="utf-8"))
         assert repo_policy["mobile_artifacts"] == MOBILE_POLICY, "repository policy drifted from the fixture"
-        assert repo_policy["schema_version"] == 2
+        assert repo_policy["approvals"] == APPROVALS_POLICY, "repository approval rules drifted from the fixture"
+        assert repo_policy["schema_version"] == 3
     finally:
         shutil.rmtree(root)
     print("release evidence adversarial tests passed")

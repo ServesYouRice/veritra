@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -44,8 +45,12 @@ def build_manifest(
     go_version: str,
     approval_loader: Callable[[str], dict[str, object]],
     mobile_artifacts: object,
+    approvals_commit: str,
 ) -> dict[str, object]:
+    """``approval_loader`` maps a repository path to its manifest entry
+    (path, sha256 digest and parsed record) as read at ``approvals_commit``."""
     validate_commit(commit)
+    validate_commit(approvals_commit, "RELEASE_APPROVALS_COMMIT")
     if not image or not digest:
         raise ValueError("CONTAINER_IMAGE and CONTAINER_DIGEST are required")
     approvals = policy.get("approvals", {})
@@ -70,11 +75,32 @@ def build_manifest(
         },
         "mobile_artifacts": mobile_artifacts,
     }
+    # Approvals come from a later commit on the protected branch, at a path
+    # keyed by the candidate; check-release-evidence.py compares every entry
+    # with git again.
+    recorded: dict[str, object] = {"commit": approvals_commit}
     for name, config in approvals.items():
         if not isinstance(config, dict) or not isinstance(config.get("path"), str):
             raise ValueError(f"invalid approval configuration: {name}")
-        manifest[name] = approval_loader(config["path"])
+        recorded[name] = approval_loader(config["path"].format(commit=commit))
+    manifest["approvals"] = recorded
     return manifest
+
+
+def git_approval_loader(approvals_commit: str, root: Path = ROOT) -> Callable[[str], dict[str, object]]:
+    def load_approval(path: str) -> dict[str, object]:
+        try:
+            blob = subprocess.run(
+                ["git", "-C", str(root), "cat-file", "blob", f"{approvals_commit}:{path}"],
+                capture_output=True,
+                check=True,
+            ).stdout
+        except subprocess.CalledProcessError as exc:
+            raise ValueError(f"approval is missing from approvals commit {approvals_commit}: {path}") from exc
+        record = json.loads(blob.decode("utf-8"))
+        return {"path": path, "digest": "sha256:" + hashlib.sha256(blob).hexdigest(), "record": record}
+
+    return load_approval
 
 
 def simulator_record(commit: str, run_id: str, artifact: Path, entry_point: str = "lib/main_demo.dart") -> dict[str, object]:
@@ -122,6 +148,7 @@ def main() -> int:
         return 0
 
     commit = os.environ.get("RELEASE_COMMIT") or os.environ.get("GITHUB_SHA", "")
+    approvals_commit = os.environ.get("RELEASE_APPROVALS_COMMIT", "")
     ci_path = Path(os.environ.get("CI_EVIDENCE_FILE", "dist/ci-evidence.json"))
     mobile_path = Path(os.environ.get("MOBILE_ARTIFACTS_FILE", "dist/mobile-artifacts.json"))
     image = os.environ.get("CONTAINER_IMAGE", "")
@@ -143,12 +170,13 @@ def main() -> int:
             image,
             digest,
             go_version,
-            lambda rel_path: load(ROOT / rel_path),
+            git_approval_loader(approvals_commit),
             load(mobile_file).get("artifacts"),
+            approvals_commit,
         )
         print(json.dumps(manifest, indent=2, sort_keys=True))
         return 0
-    except (ValueError, OSError) as exc:
+    except (ValueError, OSError, UnicodeDecodeError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
 

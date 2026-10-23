@@ -105,6 +105,40 @@ identifiers or signing material.
 | LAN TLS with a private CA (T48B) | Pending hardware | Pending hardware |
 | TalkBack/VoiceOver/large text/reduced motion | Pending hardware | Pending hardware |
 
+## Recording an approval
+
+An approval file cannot sit in the commit it approves: it would have to
+contain that commit's own SHA. So the frozen candidate is merged to `main`
+first, and each approval lands later, in its own pull request, at
+`release/approvals/<candidate sha>/production-crypto.json` or
+`independent-review.json`:
+
+```json
+{
+  "schema": "veritra-release-approval/1",
+  "approval": "independent_review",
+  "status": "approved",
+  "reviewed_commit": "<candidate sha>",
+  "reviewed_tree": "<output of: git rev-parse CANDIDATE^{tree}>",
+  "reviewer": "<name>",
+  "reviewer_is_author": false
+}
+```
+
+`production_crypto` also has `"behavior_test": "pass"`. No other keys are
+allowed. The release tag points at the candidate. `release.yml` reads the
+approvals from the tip of the default branch, never from the tag or a pull
+request, and `scripts/check-release-evidence.py` blocks unless:
+
+- that tip descends from the candidate;
+- each approval names the candidate and its tree;
+- the change that put each approval on `main` (a merged pull request counts
+  as one change) came after the candidate and touched nothing outside
+  `release/approvals/<candidate sha>/`.
+
+The published release evidence records the approvals commit and the sha256
+of each approval file.
+
 ## Findings log
 
 Record each independent finding with its ID, severity, affected revision and

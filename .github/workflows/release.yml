@@ -22,11 +22,28 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: the approvals commit must descend from this one.
+          fetch-depth: 0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: .go-version
           cache-dependency-path: server/go.sum
+      # An approval cannot be committed in the commit it names, so approvals
+      # are read from the tip of the protected default branch, never from the
+      # tag or a pull request ref. Resolved once, so every gate below checks
+      # the same approvals commit.
+      - name: Resolve the approvals commit
+        id: approvals
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          test -n "$DEFAULT_BRANCH"
+          git fetch --no-tags origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH"
+          echo "commit=$(git rev-parse --verify "refs/remotes/origin/$DEFAULT_BRANCH^{commit}")" >> "$GITHUB_OUTPUT"
       - name: Enforce production release gates
+        env:
+          RELEASE_APPROVALS_COMMIT: ${{ steps.approvals.outputs.commit }}
         run: sh scripts/release-readiness.sh
       - name: Require complete CI evidence for this commit
         run: |
@@ -95,6 +112,7 @@ jobs:
       - name: Write release evidence manifest
         env:
           RELEASE_COMMIT: ${{ github.sha }}
+          RELEASE_APPROVALS_COMMIT: ${{ steps.approvals.outputs.commit }}
           CI_EVIDENCE_FILE: dist/ci-evidence.json
           MOBILE_ARTIFACTS_FILE: ${{ runner.temp }}/mobile-artifacts/mobile-artifacts.json
           CONTAINER_IMAGE: ${{ steps.image.outputs.image }}:build-${{ github.sha }}
@@ -103,6 +121,7 @@ jobs:
       - name: Enforce final release evidence gate
         env:
           RELEASE_COMMIT: ${{ github.sha }}
+          RELEASE_APPROVALS_COMMIT: ${{ steps.approvals.outputs.commit }}
           RELEASE_EVIDENCE_FILE: dist/release-evidence.json
           MOBILE_ARTIFACTS_DIR: ${{ runner.temp }}/mobile-artifacts
         run: sh scripts/release-readiness.sh
