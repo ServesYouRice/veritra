@@ -242,7 +242,7 @@ lifecycle rule to expire old copies and a bucket lock shorter than that rule.
 Use an R2 token limited to that one bucket's objects.
 
 The `veritra-restore-drill` CronJob runs monthly (or on demand with
-`kubectl -n veritra create job --from=cronjob/veritra-restore-drill drill-1`):
+`kubectl -n veritra create job --from=cronjob/veritra-restore-drill veritra-restore-drill-manual-1`; keep the `veritra-restore-drill-` prefix so a failure alerts):
 it downloads the newest R2 backup into scratch space and runs
 `verify-backup` on it. A failed Job is a failed drill; alert on it, and on a
 failed backup Job. Run the drill once before the server holds real
