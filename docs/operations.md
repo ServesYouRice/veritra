@@ -124,6 +124,13 @@ and scope metadata. The mobile client writes the bounded pages to a local
 5. If rollback crosses an incompatible migration, stop the server, restore the
    matching pre-upgrade backup, and reinstall its matching binary.
 
+Rolling back past the Argon2id change (migration 0032) is special: the older
+binary starts and accepts current sessions, but it cannot verify Argon2id
+hashes, so anyone who signed in, registered or changed their password after
+the upgrade cannot sign in on it. Prefer rolling forward. Otherwise restore the
+pre-upgrade backup (later data is lost), or keep the old binary and recover
+only the owner with `reset-owner-password`.
+
 Shutdown fits a 25-second budget, below the 30-second stop grace of the
 supported Compose service (`stop_grace_period`) and systemd unit
 (`TimeoutStopSec`); keep both above 25 seconds if you change them. It marks
