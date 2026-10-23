@@ -47,6 +47,11 @@ enum LocalStoreFailureKind {
 
   /// Writing a new key could not be confirmed.
   keyWriteFailed,
+
+  /// The key opened the database, but upgrading it to this app version
+  /// failed, for example because the disk is full. The upgrade rolled back;
+  /// the database and its key are as they were, and a retry runs it again.
+  upgradeFailed,
 }
 
 /// The local database stays closed and untouched. Nothing is reset without
@@ -60,7 +65,8 @@ class LocalStoreUnavailableException implements Exception {
   bool get retryable =>
       kind == LocalStoreFailureKind.profileLocked ||
       kind == LocalStoreFailureKind.keyUnavailable ||
-      kind == LocalStoreFailureKind.keyWriteFailed;
+      kind == LocalStoreFailureKind.keyWriteFailed ||
+      kind == LocalStoreFailureKind.upgradeFailed;
 
   @override
   String toString() => 'LocalStoreUnavailableException(${kind.name})';
@@ -1729,12 +1735,24 @@ class SecureLocalStore implements LocalStore {
             LocalStoreFailureKind.keyMalformed);
       }
       final key = keyHex ?? await _createKey();
-      final EncryptedLocalDatabase database;
+      EncryptedLocalDatabase? database;
       try {
         database = _databaseFactory(databaseFile, key);
         await database.readCursor();
       } catch (_) {
         if (!databaseExists) rethrow;
+        if (database != null && database.upgradeStarted) {
+          // The key opened the file and the upgrade rolled back. Drift
+          // refuses any further use of this handle, so close it; a retry
+          // opens a new one. Nothing is deleted or reset.
+          try {
+            await database.close();
+          } catch (_) {
+            // It is unusable either way.
+          }
+          throw const LocalStoreUnavailableException(
+              LocalStoreFailureKind.upgradeFailed);
+        }
         // SQLite cannot tell a wrong key from a damaged file. Either way the
         // file is left exactly as it is.
         throw const LocalStoreUnavailableException(

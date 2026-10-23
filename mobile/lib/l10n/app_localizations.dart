@@ -3358,6 +3358,12 @@ abstract class AppLocalizations {
   /// **'The reset did not finish. Nothing was deleted. Retry.'**
   String get recoveryResetFailed;
 
+  /// Recovery screen message when the encrypted local database opened with its key but upgrading it to the app's new version failed. The database is unchanged; retrying after freeing storage completes the upgrade.
+  ///
+  /// In en, this message translates to:
+  /// **'This device could not update its message storage for this version of Veritra, for example because the device is full. Nothing has been changed or deleted. Free up some space, then retry.'**
+  String get recoveryUpgradeFailed;
+
   /// No description provided for @errorPasswordLoginNeedsLink.
   ///
   /// In en, this message translates to:

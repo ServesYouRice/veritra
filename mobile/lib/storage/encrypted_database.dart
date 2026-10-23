@@ -288,6 +288,14 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   @override
   int get schemaVersion => 9;
 
+  /// Whether opening this database started a schema upgrade. Upgrades run
+  /// only after the key has opened the file, so an open that fails after
+  /// this is set (for example, because the disk is full) failed in the
+  /// upgrade, not on a wrong key. The upgrade then rolls back and the next
+  /// open runs it again.
+  bool get upgradeStarted => _upgradeStarted;
+  bool _upgradeStarted = false;
+
   @override
   MigrationStrategy get migration => MigrationStrategy(
         onCreate: (migrator) async {
@@ -302,6 +310,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         // has no effect inside it, so a future table rebuild that needs it off
         // must set it before the transaction.
         onUpgrade: (migrator, from, to) async {
+          _upgradeStarted = true;
           await transaction(() async {
             if (from < 2) {
               await migrator.createTable(localMlsTransitions);

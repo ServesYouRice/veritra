@@ -130,3 +130,10 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   transaction deletes the rows that are gone and upserts the rest, writing
   a row only when its conversation, position or payload differs. The stored
   rows are the same as after the former full rewrite.
+- **Local database upgrade failure (2026-10-23):** no schema change. An
+  open that fails after the key has opened the file and a schema upgrade
+  has started (for example, a full disk) is reported as `upgradeFailed`,
+  not `keyRejected`. The upgrade transaction rolls back, the file and its
+  key stay as they were, the failed handle is closed and a retry runs the
+  upgrade again. The recovery screen asks the user to free space and
+  retry, and offers no reset for this case.

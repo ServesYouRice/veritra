@@ -738,6 +738,8 @@ class AppState extends ChangeNotifier {
       case LocalStoreFailureKind.keyMalformed:
       case LocalStoreFailureKind.keyRejected:
         return l10n.recoveryKeyMissing;
+      case LocalStoreFailureKind.upgradeFailed:
+        return l10n.recoveryUpgradeFailed;
     }
   }
 
@@ -747,6 +749,12 @@ class AppState extends ChangeNotifier {
   /// Signing in cannot work while the local database is unreadable, so the
   /// recovery screen offers it only for other restore failures.
   bool get canContinueWithoutRestore => localStoreFailure == null;
+
+  /// A failed upgrade leaves a readable database with its key: freeing
+  /// storage and retrying is the fix, so a reset is never offered for it.
+  bool get canResetLocalData =>
+      localStoreFailure != null &&
+      localStoreFailure != LocalStoreFailureKind.upgradeFailed;
 
   void continueWithoutRestore() {
     if (lifecycle != SessionLifecycle.recoveryRequired ||
@@ -766,8 +774,7 @@ class AppState extends ChangeNotifier {
       throw ArgumentError.value(confirmed, 'confirmed',
           'resetting local data needs explicit confirmation');
     }
-    if (lifecycle != SessionLifecycle.recoveryRequired ||
-        localStoreFailure == null) {
+    if (lifecycle != SessionLifecycle.recoveryRequired || !canResetLocalData) {
       return;
     }
     await _enqueueSessionTransition(() async {

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:drift/drift.dart' show OrderingTerm, Variable;
+import 'package:drift/native.dart' show NativeDatabase;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/models.dart';
@@ -887,11 +888,13 @@ void main() {
     await database.close();
     databases.removeLast();
 
-    // The open fails the way any unreadable database does, and the file is
-    // left alone.
+    // The open fails as an upgrade failure, not as a wrong key, and the file
+    // and its key are left alone.
     await expectLater(openStore().pendingMlsMessages(),
-        throwsA(_storeFailure(LocalStoreFailureKind.keyRejected)));
+        throwsA(_storeFailure(LocalStoreFailureKind.upgradeFailed)));
     await databases.removeLast().close();
+    expect(
+        await secureStorage.read(key: 'veritra.database_key.v1'), databaseKey);
 
     // Nothing of the earlier version 8 step stayed behind.
     final raw = sqlite3.open(databaseFile.path);
@@ -915,6 +918,84 @@ void main() {
     expect((await upgraded.pendingMlsMessages()).single.attemptCount, 0);
     expect(await userVersion(databases.last), 9);
     expect(await hasEnvelopeIndex(databases.last), isTrue);
+  });
+
+  /// A version 8 database with cached rows, compacted so that creating the
+  /// envelope index needs new pages. Returns its page count.
+  Future<int> seedVersion8() async {
+    final store = createStore();
+    await store.saveSnapshot(
+      <Conversation>[Conversation(id: 'conv_1', kind: 'group')],
+      <String, List<ReceivedMessageEnvelope>>{
+        'conv_1': <ReceivedMessageEnvelope>[
+          for (var index = 0; index < 200; index++)
+            _receivedEnvelope(id: 'msg_$index'),
+        ],
+      },
+      1,
+    );
+    final database = databases.last;
+    await database.customStatement('DROP INDEX $envelopeIndex');
+    await database.customStatement('PRAGMA user_version = 8');
+    await database.customStatement('VACUUM');
+    final pages = (await database.customSelect('PRAGMA page_count').getSingle())
+        .read<int>('page_count');
+    await database.close();
+    databases.removeLast();
+    return pages;
+  }
+
+  test('a full disk during the upgrade is reported as an upgrade failure',
+      () async {
+    final pages = await seedVersion8();
+    final original =
+        File('${directory.path}/veritra-local.db').readAsBytesSync();
+    final key = await secureStorage.read(key: 'veritra.database_key.v1');
+    // The file may not grow: what a full disk does to the index's pages.
+    var diskFull = true;
+    final store = SecureLocalStore(
+      storage: secureStorage,
+      directoryProvider: () async => directory,
+      databaseFactory: (file, keyHex) {
+        final database = diskFull
+            ? _openWithoutRoom(file, keyHex, pages)
+            : openEncryptedLocalDatabase(file, keyHex);
+        databases.add(database);
+        return database;
+      },
+    );
+
+    await expectLater(
+        store.loadSnapshot(),
+        throwsA(allOf(
+            _storeFailure(LocalStoreFailureKind.upgradeFailed),
+            isA<LocalStoreUnavailableException>()
+                .having((error) => error.retryable, 'retryable', isTrue))));
+    // Nothing was changed, moved, deleted or reset.
+    await expectDatabaseUnchanged(original);
+    expect(await secureStorage.read(key: 'veritra.database_key.v1'), key);
+    expect(
+        directory.listSync().where((item) => item.path.contains('unreadable-')),
+        isEmpty);
+
+    // With room again, a retry on the same store completes the upgrade.
+    diskFull = false;
+    final snapshot = await store.loadSnapshot();
+    expect(snapshot?.cursor, 1);
+    expect(snapshot?.messagesByConversation['conv_1'], hasLength(200));
+    expect(await userVersion(databases.last), 9);
+    expect(await hasEnvelopeIndex(databases.last), isTrue);
+  });
+
+  test('a wrong key on a database that needs an upgrade is a wrong key',
+      () async {
+    await seedVersion8();
+    final original =
+        File('${directory.path}/veritra-local.db').readAsBytesSync();
+    await secureStorage.write(key: 'veritra.database_key.v1', value: 'ab' * 32);
+    await expectLater(createStore().loadSnapshot(),
+        throwsA(_storeFailure(LocalStoreFailureKind.keyRejected)));
+    await expectDatabaseUnchanged(original);
   });
 
   test('crypto state and cursor roll back together', () async {
@@ -1070,6 +1151,23 @@ ReceivedMessageEnvelope _receivedEnvelope({
       cryptoProtocol: 'mls10-openmls-v1',
       createdAt: DateTime.utc(2026, 7, 29),
     );
+
+/// Opens [file] exactly as [openEncryptedLocalDatabase] does, but caps it at
+/// [maxPages] pages, so any write that needs a new page fails with
+/// SQLITE_FULL, as on a full disk.
+EncryptedLocalDatabase _openWithoutRoom(
+        File file, String keyHex, int maxPages) =>
+    EncryptedLocalDatabase(NativeDatabase.createInBackground(
+      file,
+      setup: (rawDatabase) {
+        rawDatabase.execute("PRAGMA cipher = 'chacha20'");
+        rawDatabase.execute("PRAGMA hexkey = '$keyHex'");
+        rawDatabase.execute('PRAGMA busy_timeout = 5000');
+        rawDatabase.select('SELECT count(*) FROM sqlite_master');
+        rawDatabase.execute('PRAGMA journal_mode = WAL');
+        rawDatabase.execute('PRAGMA max_page_count = $maxPages');
+      },
+    ));
 
 MlsStateTransition _nextTransition() => MlsStateTransition(
       messageId: 'mls_message_2',

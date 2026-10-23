@@ -417,7 +417,7 @@ class _RecoveryState extends StatelessWidget {
                           state.busy ? null : state.continueWithoutRestore,
                       child: Text(context.l10n.shellContinueToSignIn),
                     )
-                  else
+                  else if (state.canResetLocalData)
                     TextButton(
                       onPressed:
                           state.busy ? null : () => _confirmReset(context),
