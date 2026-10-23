@@ -250,7 +250,7 @@ task boundaries and orchestration rules are in
 | I46 | T46 implemented and unit-checked (2026-10-22); instance lock released on crash, session writes throttled, Kubernetes base, R2 backups and local release command added; hardened upload/backup/restore/push/TURN smoke still pending | Supported deployment hardening | — |
 | I47 | Prepared, conditional | Operational visibility and capacity evidence | I35, I36 |
 | I48 | T48A implemented and checked (2026-09-27); T48B implemented and checked (2026-10-22): parser kept and bounded, Autobahn run, LAN TLS path documented; real-device TLS check waits for G24 | Transport, realtime and logging hardening | I32 |
-| I49 | T49A/T49B measured (2026-10-22, `testing/evidence/benchmarks-t49.md`); six misses proposed as child cards; T49C/T49D open | Performance and architecture work | correctness cards |
+| I49 | T49A/T49B measured (2026-10-22, `testing/evidence/benchmarks-t49.md`); misses 1-5 fixed (2026-10-23, migrations 0030-0031 additive); miss 6 needs advisor approval; T49C/T49D open | Performance and architecture work | correctness cards |
 | I50 | Deferred | Product and ecosystem backlog | D06 / mobile release |
 | I51 | Implemented and checked (Stage 5, 2026-09-24, D28) | MLS membership changes after creation, linked devices, per-device key-package claims, join cursor, epoch-ordered commits | I30, I34 |
 

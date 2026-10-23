@@ -97,7 +97,7 @@ Recheck the board before every claim. The model column replaces the repeated
 | T47 | Prepared; conditional for private alpha | Balanced+advisor | I35 and I36 verification |
 | T48A | Implemented and checked (2026-09-27) | Balanced+advisor | — |
 | T48B | Implemented and checked (2026-10-22); real-device TLS check under G24 | Strong | G24 for the device check |
-| T49A-B | Measured (2026-10-22, `testing/evidence/benchmarks-t49.md`); six misses await child cards | Balanced | — |
+| T49A-B | Measured (2026-10-22); misses 1-5 fixed (2026-10-23: sync bounds, conversation list, quota counters, hub registration, typing limiter); 6 (range verification) needs advisor approval; mid-cursor sync page still 252 ms | Balanced | Advisor for miss 6 |
 | T49C-D | Measure after correctness work | Balanced / Strong for T49D | Correctness cards and T47 where named |
 | T50 | Deferred | Strong after trigger | D10/D19, all demos, product trigger |
 | G24 | External | Coordinator/platform specialists | Code blockers, hardware, signing, providers, TURN |
