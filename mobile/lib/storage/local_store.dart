@@ -1728,6 +1728,10 @@ class SecureLocalStore implements LocalStore {
     final lock = await lockFile.open(mode: FileMode.append);
     await lock.lock(FileLock.exclusive);
     try {
+      // Before anything can fail: a database from an older build that this
+      // one cannot open is excluded too, and a new database file is created
+      // in a directory that is already excluded.
+      await _excludeFromBackup(directory);
       // A reset interrupted by a crash is finished before anything else.
       await _completeReset(directory);
       final String? keyHex;
@@ -1775,6 +1779,7 @@ class SecureLocalStore implements LocalStore {
             LocalStoreFailureKind.keyRejected);
       }
       await _migrateLegacyRecord(database);
+      // Again now that the database, WAL and SHM files exist.
       await _excludeFromBackup(directory);
       return database;
     } finally {
@@ -1785,8 +1790,10 @@ class SecureLocalStore implements LocalStore {
 
   /// Keeps the profile directory (and with it every later WAL, SHM, lock
   /// and quarantined copy) and the database files out of platform backups.
-  /// Best effort: the database cannot be opened elsewhere without its
-  /// device-only key, so a failure here does not stop the app.
+  /// Runs before and after each open; the platform skips paths that do not
+  /// exist yet and tries every path even when one fails. Best effort: the
+  /// database cannot be opened elsewhere without its device-only key, so a
+  /// failure here does not stop the app.
   Future<void> _excludeFromBackup(Directory directory) async {
     final exclude = _backupExclusion;
     if (exclude == null) return;

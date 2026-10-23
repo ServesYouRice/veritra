@@ -108,6 +108,17 @@ void main() {
     expect(delegate, contains('values.isExcludedFromBackup = true'));
     expect(delegate,
         contains('registerStorageChannel(engineBridge.pluginRegistry)'));
+    // Every path is tried: a failure is counted inside the loop, never
+    // returned from it, and reported once after it.
+    final handler = delegate.substring(
+        delegate.indexOf('for path in paths where'),
+        delegate.indexOf('func onListen('));
+    final loop = handler.substring(0, handler.indexOf('if failures > 0'));
+    expect(loop, contains('failures += 1'));
+    expect(loop, isNot(contains('return')));
+    expect(loop, isNot(contains('result(')));
+    expect(handler.substring(loop.length),
+        contains('FlutterError(code: "exclude_failed"'));
   });
 
   test('iOS declares why device-link QR scanning needs the camera', () {

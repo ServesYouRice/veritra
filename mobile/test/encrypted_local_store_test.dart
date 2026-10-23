@@ -122,6 +122,9 @@ void main() {
   });
 
   test('each open keeps the profile and its database out of backups', () async {
+    // What happened, in order: each exclusion with whether the database
+    // file existed when the platform was asked, and each open.
+    final events = <String>[];
     final excluded = <List<String>>[];
     SecureLocalStore openStore({
       String namespace = '',
@@ -133,9 +136,13 @@ void main() {
           namespace: namespace,
           backupExclusion: (paths) async {
             excluded.add(paths);
+            events.add(File(paths.last).existsSync()
+                ? 'exclude existing'
+                : 'exclude before the file');
             if (failing) throw StateError('platform refused');
           },
           databaseFactory: (file, keyHex) {
+            events.add('open');
             final database = openEncryptedLocalDatabase(file, keyHex);
             databases.add(database);
             return database;
@@ -144,16 +151,18 @@ void main() {
 
     await openStore().saveSyncCursor(3);
     final root = directory.path;
-    expect(excluded, <List<String>>[
-      <String>[
-        root,
-        '$root/veritra-local.db-wal',
-        '$root/veritra-local.db-shm',
-        '$root/veritra-local.db',
-      ],
-    ]);
-    // The files exist when the platform is asked, so they get the mark
-    // too; the directory covers WAL and SHM files created later.
+    final rootPaths = <String>[
+      root,
+      '$root/veritra-local.db-wal',
+      '$root/veritra-local.db-shm',
+      '$root/veritra-local.db',
+    ];
+    expect(excluded, <List<String>>[rootPaths, rootPaths]);
+    // On first launch the directory is excluded before the new database is
+    // created in it, and the files get the mark once they exist; the
+    // directory covers WAL and SHM files created later.
+    expect(events,
+        <String>['exclude before the file', 'open', 'exclude existing']);
     expect(File('$root/veritra-local.db').existsSync(), isTrue);
     expect(File('$root/veritra-local.db-wal').existsSync(), isTrue);
 
@@ -167,8 +176,42 @@ void main() {
       await database.close();
     }
     databases.clear();
+    events.clear();
     expect(await openStore(failing: true).loadSyncCursor(), 3);
-    expect(excluded, hasLength(3));
+    expect(events, <String>['exclude existing', 'open', 'exclude existing']);
+  });
+
+  test('a database this build cannot open is still kept out of backups',
+      () async {
+    await createStore().saveSyncCursor(3);
+    await databases.removeLast().close();
+    // A database from an older build, say, that this key does not open.
+    await secureStorage.write(key: 'veritra.database_key.v1', value: 'ab' * 32);
+    final excluded = <List<String>>[];
+    final store = SecureLocalStore(
+      storage: secureStorage,
+      directoryProvider: () async => directory,
+      backupExclusion: (paths) async {
+        expect(File(paths.last).existsSync(), isTrue);
+        excluded.add(paths);
+      },
+      databaseFactory: (file, keyHex) {
+        final database = openEncryptedLocalDatabase(file, keyHex);
+        databases.add(database);
+        return database;
+      },
+    );
+    await expectLater(store.loadSyncCursor(),
+        throwsA(_storeFailure(LocalStoreFailureKind.keyRejected)));
+    expect(excluded, hasLength(1));
+    expect(excluded.single.first, directory.path);
+    expect(excluded.single, contains('${directory.path}/veritra-local.db'));
+
+    // So is one whose key is gone: that open fails before any database.
+    await secureStorage.delete(key: 'veritra.database_key.v1');
+    await expectLater(store.loadSyncCursor(),
+        throwsA(_storeFailure(LocalStoreFailureKind.keyMissing)));
+    expect(excluded, hasLength(2));
   });
 
   test('iOS backup exclusion goes through the Runner storage channel',

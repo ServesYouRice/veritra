@@ -148,10 +148,13 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   `dataExtractionRules` (API 31+, cloud backup and device-to-device
   transfer) and `fullBackupContent` rules (older versions) that exclude
   every app-data domain; Android 12+ transfers otherwise ignore
-  `allowBackup`. On iOS each database open asks the Runner (channel
-  `org.veritra.private_messenger/storage`) to set
+  `allowBackup`. On iOS each database open, before and after it, asks the
+  Runner (channel `org.veritra.private_messenger/storage`) to set
   `NSURLIsExcludedFromBackupKey` on the profile directory and the existing
-  database, WAL and SHM files; a failure there does not block the open.
+  database, WAL and SHM files. Before: a database this build cannot open is
+  excluded too, and a new one is created in an excluded directory. The
+  Runner tries every path and reports failures once, as a count; a failure
+  there does not block the open.
   Defence in depth: a copied database cannot be opened without its
   device-only key. The app's own encrypted backup is unaffected. Not yet
   built or run on a device.
