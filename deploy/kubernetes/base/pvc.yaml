@@ -6,6 +6,9 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: veritra-data
+  annotations:
+    # local-path deletes the data with the claim; Flux never prunes it.
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   accessModes:
     - ReadWriteOnce

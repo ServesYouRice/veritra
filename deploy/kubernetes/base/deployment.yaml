@@ -61,6 +61,11 @@ spec:
               value: 10.42.0.0/16
             - name: PRIVATE_MESSENGER_LOG_FORMAT
               value: json
+            # About 75% of limits.memory, so the Go runtime collects before
+            # the kernel kills it (each Argon2id login hash takes 64 MiB, up
+            # to 3 at once). Change both together.
+            - name: GOMEMLIMIT
+              value: 768MiB
           # Optional non-secret settings (instance name, VAPID public key and
           # subscriber, FCM project and client email, APNs team/key/bundle IDs,
           # TURN URLs). Secrets come from files, see the overlay example.

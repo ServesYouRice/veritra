@@ -117,3 +117,23 @@ func TestSystemdUnitsAreHardened(t *testing.T) {
 		t.Fatal("server unit stop timeout no longer covers the shutdown budget")
 	}
 }
+
+// Every supported server process has a memory limit and GOMEMLIMIT at about
+// 75% of it, so Argon2id login bursts make the runtime collect instead of
+// the kernel killing it. A change to one must change the other.
+func TestDeployMemoryLimitsCarryGOMEMLIMIT(t *testing.T) {
+	for name, pair := range map[string][2]string{
+		"docker-compose.yml":                         {"mem_limit: 1g", "GOMEMLIMIT: 768MiB"},
+		"systemd/private-messenger.service":          {"MemoryMax=1G", "Environment=GOMEMLIMIT=768MiB"},
+		"systemd/private-messenger-backup.service":   {"MemoryMax=512M", "Environment=GOMEMLIMIT=384MiB"},
+		"kubernetes/base/deployment.yaml":            {"memory: 1Gi", "value: 768MiB"},
+		"kubernetes/base/backup-cronjob.yaml":        {"memory: 512Mi", "value: 384MiB"},
+		"kubernetes/base/restore-drill-cronjob.yaml": {"memory: 512Mi", "value: 384MiB"},
+		"kubernetes/examples/restore-job.yaml":       {"memory: 512Mi", "value: 384MiB"},
+	} {
+		file := readDeployFile(t, name)
+		if !strings.Contains(file, pair[0]) || !strings.Contains(file, pair[1]) || !strings.Contains(file, "GOMEMLIMIT") {
+			t.Errorf("%s: want %q with %q", name, pair[0], pair[1])
+		}
+	}
+}

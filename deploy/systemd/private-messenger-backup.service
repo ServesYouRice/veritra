@@ -18,9 +18,12 @@ StateDirectory=private-messenger
 StateDirectoryMode=0700
 UMask=0077
 ExecStart=/usr/local/bin/messenger-server scheduled-backup
+MemoryMax=512M
+Environment=GOMEMLIMIT=384MiB
 
-# Least privilege (card I46). The restore drill uses the private /tmp, so it
-# needs disk space there for one copy of the instance.
+# Least privilege (card I46). The restore drill stages under the state
+# directory (.veritra-restore-drill), so it needs disk space there for one
+# copy of the instance.
 NoNewPrivileges=true
 CapabilityBoundingSet=
 AmbientCapabilities=

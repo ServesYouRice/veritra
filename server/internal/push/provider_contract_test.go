@@ -255,3 +255,62 @@ func TestWebPushRefusesPrivateTargetsAndRedirects(t *testing.T) {
 		t.Fatal("a plain-HTTP endpoint was accepted")
 	}
 }
+
+// The VAPID JWT names the operator's contact exactly as configured, never
+// "mailto:mailto:..." (webpush-go adds its own mailto: prefix).
+func TestWebPushVAPIDSubjectIsTheConfiguredContact(t *testing.T) {
+	curve := elliptic.P256()
+	private, x, y, err := elliptic.GenerateKey(curve, rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, px, py, _ := elliptic.GenerateKey(curve, rand.Reader)
+	target := Notification{
+		Provider:   "webpush",
+		Endpoint:   "https://push.example.org/wpush/v2/abc",
+		PublicKey:  base64.RawURLEncoding.EncodeToString(elliptic.Marshal(curve, px, py)),
+		AuthSecret: base64.RawURLEncoding.EncodeToString([]byte("0123456789abcdef")),
+	}
+	for configured, want := range map[string]string{
+		"mailto:ops@example.org":      "mailto:ops@example.org",
+		"MAILTO:ops@example.org":      "mailto:ops@example.org",
+		"https://example.org/contact": "https://example.org/contact",
+		"HTTPS://example.org/contact": "https://example.org/contact",
+	} {
+		provider, err := NewWebPushProvider(WebPushConfig{
+			Subscriber: configured,
+			PublicKey:  base64.RawURLEncoding.EncodeToString(elliptic.Marshal(curve, x, y)),
+			PrivateKey: base64.RawURLEncoding.EncodeToString(private),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var authorization string
+		provider.client.Transport = roundTrip(func(r *http.Request) (*http.Response, error) {
+			authorization = r.Header.Get("Authorization")
+			return respond(http.StatusCreated, ""), nil
+		})
+		if err := provider.SendEncryptedEventAvailable(context.Background(), target); err != nil {
+			t.Fatal(err)
+		}
+		token, _, _ := strings.Cut(strings.TrimPrefix(authorization, "vapid t="), ",")
+		parts := strings.Split(token, ".")
+		if len(parts) != 3 {
+			t.Fatalf("%q: no VAPID JWT in the request", configured)
+		}
+		raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var claims struct {
+			Sub string `json:"sub"`
+			Aud string `json:"aud"`
+		}
+		if err := json.Unmarshal(raw, &claims); err != nil {
+			t.Fatal(err)
+		}
+		if claims.Sub != want || claims.Aud != "https://push.example.org" {
+			t.Fatalf("%q: sub=%q aud=%q, want sub=%q", configured, claims.Sub, claims.Aud, want)
+		}
+	}
+}

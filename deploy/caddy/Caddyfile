@@ -39,6 +39,8 @@ messenger.example.com {
 		header_up X-Real-IP {remote_host}
 	}
 	header {
+		# Applied after the server's own headers, so each is sent once.
+		defer
 		Referrer-Policy "no-referrer"
 		X-Content-Type-Options "nosniff"
 		Strict-Transport-Security "max-age=63072000; includeSubDomains"

@@ -151,11 +151,40 @@ filesystem, all capabilities dropped, `no-new-privileges` and a small
 in-memory `/tmp`. The data volume is the only writable application path. The
 backup service keeps its restore-drill scratch on that volume and has no
 network; its `/offsite` mount must be
-writable by uid 65532. Caddy keeps only `NET_BIND_SERVICE`. The systemd units
+writable by uid 65532. Caddy keeps only `NET_BIND_SERVICE`; its access and
+error logs drop the request URI and every credential header, and it sends
+each security header once. The systemd units
 use `ProtectSystem=strict` with the state directory as the only
 `ReadWritePaths`, an empty capability set, private `/tmp` and devices, and a
 `@system-service` syscall filter. Add a `ReadWritePaths=` line for an
 off-host backup mount or an overridden database or blob directory.
+
+**Memory.** Every server process has a memory limit and `GOMEMLIMIT` at about
+75% of it: 1 GiB and `768MiB` for the server (Compose `mem_limit`, systemd
+`MemoryMax`, Kubernetes `limits.memory`), 512 MiB and `384MiB` for the backup,
+drill and restore jobs. Each Argon2id login hash takes 64 MiB and up to three
+run at once, so without `GOMEMLIMIT` a login burst can reach the limit before
+the Go runtime collects. Change the two together;
+`TestDeployMemoryLimitsCarryGOMEMLIMIT` checks the pairs.
+
+**TURN URLs.** `PRIVATE_MESSENGER_TURN_URLS` takes RFC 7065 URIs, the form
+WebRTC clients parse: `turn:turn.example.com:3478?transport=udp`,
+`turns:turn.example.com:5349?transport=tcp`, IPv6 in brackets. A
+`turn://host:port` entry is rewritten without the slashes; anything else
+stops startup. Point coturn (`use-auth-secret`) at the same shared secret: the
+server issues 10-minute credentials (`<expiry>:<account>`, HMAC-SHA1) and
+never connects to TURN itself.
+
+**Smoke test.** `scripts/smoke-deploy.sh [--image REF]` runs this hardened
+Compose stack (with Caddy on a local `tls internal` copy of the Caddyfile and
+a coturn container) and checks owner setup, attachments, a 96 MiB encrypted
+backup and its recovery download, WebSocket Host/Origin handling, a Web Push
+test wake, TURN credentials on a real relay, the backup job with an off-host
+directory, a graceful stop, and a restore into a fresh volume. It fails if a
+secret, token, ID or payload prefix appears in the logs, `docker compose
+config` or `docker inspect`. Run it before each release; it needs Docker
+(Compose 2.24+) and Go, and takes about three minutes. Real push delivery
+needs a device and provider keys (G24).
 
 **Secrets.** `PRIVATE_MESSENGER_SETUP_TOKEN`, `_VAPID_PRIVATE_KEY`,
 `_FCM_PRIVATE_KEY`, `_APNS_PRIVATE_KEY` and `_TURN_SHARED_SECRET` each accept
@@ -186,7 +215,9 @@ process exits and never go stale.
 It refuses a dirty tree; runs gofmt, go vet, the server tests, govulncheck
 and `scripts/audit-rust.sh`; builds `server/Dockerfile` from `git archive
 HEAD` (only committed files reach the build); scans the image with Trivy and
-stops on any HIGH or CRITICAL finding or embedded secret; pushes
+stops on any HIGH or CRITICAL finding or embedded secret; runs
+`scripts/smoke-deploy.sh` on that exact image (`--skip-smoke` skips it, and
+the release record should say so); pushes
 `ghcr.io/servesyourice/veritra:<commit>`; and prints the digest. With
 `--infra-dir <folder>` it also writes that digest into the folder's
 `kustomization.yaml` and commits it there; push the infra repository to
@@ -209,7 +240,11 @@ The base holds:
 - one Deployment replica with `strategy: Recreate`, so the old pod stops
   before the new one starts (expect a short outage per deploy; clients
   reconnect); `/livez`, `/readyz` probes; non-root, read-only root, all
-  capabilities dropped, seccomp `RuntimeDefault`;
+  capabilities dropped, seccomp `RuntimeDefault`; requests and limits on
+  every container, with `GOMEMLIMIT` set (see Memory above);
+- the namespace and `veritra-data` volume annotated
+  `kustomize.toolkit.fluxcd.io/prune: disabled`, so a file missing from infra
+  never makes Flux delete the data (local-path deletes it with the claim);
 - a Traefik `IngressRoute` with an HSTS headers middleware and a cert-manager
   `Certificate` (Cloudflare DNS-01, so the DNS-only hostname works);
 - default-deny network policies that admit only Traefik to the server, DNS,
@@ -218,17 +253,50 @@ The base holds:
 
 Cluster-wide pieces live in infra; `examples/` has one of each:
 `traefik-helmchartconfig.yaml` raises the websecure read timeout to 16
-minutes (Traefik v3 defaults to 60s, which cuts uploads), redirects HTTP to
-HTTPS and sets `externalTrafficPolicy: Local` so Traefik sees real client
-addresses; `cluster-issuer.yaml`; `secrets.example.yaml` (encrypt with SOPS).
-Traefik streams bodies without a size limit and keeps the `Host` header; the
-server enforces its own 100 MiB cap.
+minutes, redirects HTTP to HTTPS and sets `externalTrafficPolicy: Local` so
+Traefik sees real client addresses; `cluster-issuer.yaml`;
+`secrets.example.yaml` (encrypt with SOPS); `flux-kustomization.yaml`. The
+timeout matters: in the 2026-10-23 rehearsal a 90-second upload was cut off
+at 60 s (HTTP 502) by Traefik's default and completed with this file. With
+the Traefik chart k3s bundles, the redirect must sit under `ports.web.http`;
+a top-level `ports.web.redirections` is silently ignored.
+Traefik streams bodies without a size limit (no Buffering middleware) and
+keeps the `Host` header, which the WebSocket Origin check compares; the
+server enforces its own caps (50 MiB attachments, 100 MiB backups).
 
 `PRIVATE_MESSENGER_TRUSTED_PROXIES` is `10.42.0.0/16`, k3s's default pod
 network; change it if the cluster uses another `--cluster-cidr`. If it, or
 the client address reaching Traefik, is wrong, all users share one rate
 limit. After the first deploy, check that two clients on different networks
 are limited separately.
+
+### Deploying with Flux
+
+`examples/flux-kustomization.yaml` is the one Flux `Kustomization` Veritra
+needs. In infra, keep a copy of `deploy/kubernetes/base` taken at the release
+commit (`apps/veritra/base`) and the overlay next to it
+(`apps/veritra/production`, with `resources: [../base]`), so infra holds
+exactly what is applied. `scripts/release-image.sh --infra-dir
+apps/veritra/production` writes the tested digest there and commits; pushing
+infra deploys. Rolling back is reverting that commit. Secrets
+(`veritra-secrets`, `veritra-r2`) are SOPS-encrypted with age in the same
+folder; Flux decrypts them with the `sops-age` Secret.
+
+There is no migration Job, unlike the handbook's pattern for other apps. The
+server applies its migrations at startup under the single-writer lock (each
+migration and its record in one transaction), so a Job using the new image
+would find the old pod still holding the lock. On rollback, the older binary
+checks the checksums of the migrations it knows and leaves newer ones alone,
+so it starts; it works only if those newer migrations were additive. Across
+an incompatible migration, restore the matching backup instead (see Restore
+safety). The rehearsal's upgrade and rollback used images with the same
+schema, so schema skew is untested.
+
+The Kustomization waits for the Deployment and the Certificate with a
+10-minute timeout, which covers the Recreate stop (up to 40 s) and the
+startup probe (up to 300 s for migrations). While a restore runs, suspend it
+(`flux suspend kustomization veritra`) so Flux does not scale the server back
+up, and resume it afterwards.
 
 
 ## TLS on a LAN install
@@ -250,9 +318,21 @@ next to the live server; that is safe because the copy uses SQLite's
 digest, then copies completed `veritra-*` backups to R2 with `--checksum`
 (MD5 verified on upload) and `--immutable`. Veritra itself has no S3 code or
 R2 credentials; only rclone reads the `veritra-r2` secret, and it mounts the
-data volume read-only. rclone copies and never deletes, so set an R2
-lifecycle rule to expire old copies and a bucket lock shorter than that rule.
-Use an R2 token limited to that one bucket's objects.
+data volume read-only. rclone copies and never deletes, so the bucket's own
+rules do the expiry and the protection:
+
+- **Bucket:** one bucket for Veritra only (the `offsite` remote points at
+  `<bucket>/veritra`, objects land under `veritra/backups/veritra-*`).
+- **Lifecycle rule:** delete objects older than 35 days.
+- **Bucket lock:** a retention rule of 30 days on the whole bucket, shorter
+  than the lifecycle rule so expiry still works. A compromised server can
+  then neither delete nor overwrite the last 30 days of backups.
+- **Token:** an R2 API token with *Object Read & Write* on this bucket only.
+  It cannot change the lock or lifecycle rules (that needs an admin token,
+  which never enters the cluster).
+
+Expect about 30 daily copies in R2 against 7 on the volume; size the bucket
+for that (R2 is free up to 10 GB, then $0.015 per GB a month).
 
 The `veritra-restore-drill` CronJob runs monthly (or on demand with
 `kubectl -n veritra create job --from=cronjob/veritra-restore-drill veritra-restore-drill-manual-1`; keep the `veritra-restore-drill-` prefix so a failure alerts):
@@ -262,6 +342,62 @@ failed backup Job. Run the drill once before the server holds real
 conversations. For a real restore, use `examples/restore-job.yaml`: suspend
 Flux, scale the server to zero, restore a named backup into the volume, then
 scale back up.
+
+**On a rebuilt cluster** (server lost, R2 intact), rehearsed on 2026-10-23
+with an S3 stand-in for R2 (`testing/evidence/T46-deploy-smoke.md`):
+
+1. Bootstrap k3s and Flux from infra with the age key; Flux creates the
+   namespace, Secrets, an empty volume and the server. With no setup token
+   configured (see below) it refuses to start on the empty volume and
+   restarts until the restore; that is expected.
+2. `flux suspend kustomization veritra`, then
+   `kubectl -n veritra scale deployment/veritra --replicas=0` and wait for
+   the pod to go.
+3. In a copy of `examples/restore-job.yaml`, set the image to the digest
+   the server runs and `BACKUP` to the newest name from
+   `rclone lsf offsite:backups`; apply it and wait for it to complete. The
+   empty database is kept aside under a `.pre-restore-*` name.
+4. Delete the Job, scale back to 1, `flux resume kustomization veritra`,
+   then check `/readyz`, owner sign-in and an attachment download.
+
+The restored instance keeps the owner, devices, sessions and push
+registrations. Once the owner is set up, remove the setup-token key from
+`veritra-secrets` and its `PRIVATE_MESSENGER_SETUP_TOKEN_FILE` patch from the
+overlay (one without the other stops startup). A rebuilt server then
+refuses to start empty instead of offering owner setup before the restore.
+
+## Pre-launch checklist
+
+Before the server holds real conversations. Items marked *owner* need
+accounts or decisions only the owner has.
+
+- [ ] *owner* Hostname chosen once (clients bind device identity to it),
+  one level under the domain; DNS-only A/AAAA record to the VPS (not
+  proxied: uploads exceed the proxy's 100 MB cap, and TLS ends on the VPS).
+- [ ] *owner* Cloudflare API token for cert-manager: DNS edit on that one zone.
+- [ ] *owner* R2 bucket with the lifecycle rule, the bucket lock and the
+  bucket-scoped token above; `veritra-r2` encrypted in infra.
+- [ ] *owner* age key in the password manager plus one offline copy;
+  `veritra-secrets` (setup token, VAPID/FCM/APNs keys, TURN secret)
+  encrypted with SOPS in infra.
+- [ ] *owner* GHCR token to push images; a read-only pull secret if the
+  package is private.
+- [ ] Host: firewall open only for 80, 443 (and TURN, if coturn runs on the
+  same VPS); 6443 and 10250 closed, `kubectl` over an SSH tunnel or
+  WireGuard; k3s started with `--secrets-encryption`.
+- [ ] `scripts/smoke-deploy.sh` passed on the release commit, and
+  `scripts/release-image.sh --infra-dir ...` produced the digest in infra.
+- [ ] `examples/traefik-helmchartconfig.yaml` applied: the Traefik pod's
+  arguments show `readTimeout=16m` and the `web` redirect.
+- [ ] `PRIVATE_MESSENGER_TRUSTED_PROXIES` matches the cluster CIDR; two
+  clients on different networks are rate-limited separately.
+- [ ] Owner set up, then the setup-token key and its `_FILE` patch removed.
+- [ ] One backup Job and one restore drill from R2 succeeded
+  (`veritra-restore-drill-manual-1`); the full restore above tried once.
+- [ ] External uptime check on `https://<host>/healthz`; the alerts from
+  [Monitoring and alerts](#monitoring-and-alerts) loaded.
+- [ ] *owner* TURN: where coturn runs (host network on the VPS, like
+  nextra, or a separate box), its ports and its shared secret.
 
 ## Monitoring and alerts
 
