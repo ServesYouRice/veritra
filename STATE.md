@@ -46,8 +46,8 @@ added tests for the acceptance criteria that had none and fixed what they found.
 | Reauth | A mistyped password in the reauth prompt no longer signs the user out | `mobile/test/app_state_test.dart` |
 | T47 observability | _in progress_ | |
 | T49D admission limits | _in progress_ | |
-| T46 deploy smoke + k3s rehearsal | _in progress_ | |
-| QA02 iOS evidence schema | _in progress_ | |
+| T46 deploy smoke + k3s rehearsal | Hardened Compose smoke (`scripts/smoke-deploy.sh`, also run by the release command) and a throwaway k3s cluster: deploy, upgrade, rollback, backup, restore drill, full restore. Fixed TURN URL restart loop, VAPID subject, Traefik redirect, Caddy duplicate headers; `GOMEMLIMIT` set | [`T46-deploy-smoke.md`](testing/evidence/T46-deploy-smoke.md) |
+| QA02 iOS evidence schema | Simulator CI stays required but can never count as signed-iOS evidence; signed records bind platform, type, commit, digest and attested provenance | [`QA02-ios-evidence.md`](testing/evidence/QA02-ios-evidence.md) |
 | Mobile cache index (local schema 9) | Receiving a message with 10k cached rows 23 ms → 5 ms; the upgrade is now one transaction | [`benchmarks-t49c.md`](testing/evidence/benchmarks-t49c.md) |
 
 Earlier work (I01–I28, the Stage 0–5 demo work, T43C, T44A–C, T46 base,
@@ -69,6 +69,9 @@ and keep each change small.
 | T42B | Native incoming-call lifecycle (CallKit, PushKit, Android Telecom) | Deferred by D16/D20; design in [`docs/call-platform-design-proposal.md`](docs/call-platform-design-proposal.md) needs approval when it starts |
 | Downloads | An aborted download (integrity failure mid-stream) skips the normal request log line and metrics | A `blob_integrity_failed` warning is still logged |
 | Local DB upgrade | A failed upgrade (e.g. disk full) shows the wrong-key message | Nothing is lost; needs its own failure kind and UI string |
+| Deploy, untested here | Rollback across a schema change, a live R2 restore, cert-manager issuance, Flux reading the real `infra` repo | Try on the first real deployment |
+| Release approvals | An approval file cannot contain the SHA of the commit it is committed in; `release.yml` needs another way to receive approvals | Found during QA02 |
+| Android signed release | The release policy has no signed-release record for Android yet | Mirror the QA02 iOS schema |
 | Device transfer | Android 12+ device transfer ignores `allowBackup="false"` without `dataExtractionRules`; iOS backups include the database file | A copied file cannot be opened without its device-only key; still worth excluding |
 
 ## Release gates
@@ -97,8 +100,8 @@ proxy), one replica with `Recreate`, the data directory backed up to R2.
 | Local release command (`scripts/release-image.sh`) | ✅ Checks, govulncheck, cargo audit, Trivy, push by digest, writes the digest into `infra` |
 | Off-host backups to R2 | ✅ Built; first restore from R2 still to be tried |
 | Monitoring examples | ✅ Alert rules and private metrics scrape; T47 adds more (in progress) |
-| Hardened smoke and k3s rehearsal | _in progress_ |
-| **Needed from the owner** | OVH VPS, Cloudflare account and domain, an R2 bucket with a lock and a per-bucket token, the age key, a GHCR token with `write:packages`, and **one permanent hostname** (clients bind device identity to it) |
+| Hardened smoke and k3s rehearsal | ✅ Passed with stand-ins (MinIO for R2, a local coturn); Flux example in `deploy/kubernetes/examples/` |
+| **Needed from the owner** | OVH VPS and its firewall, Cloudflare account, domain and a DNS-only record, a Cloudflare DNS token for cert-manager, an R2 bucket with a lock and a per-bucket token, the age key, a GHCR token with `write:packages`, where coturn runs, and **one permanent hostname** (clients bind device identity to it) |
 
 Details: [`docs/operations.md`](docs/operations.md).
 
@@ -130,6 +133,7 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 | **D34** (2026-10-23) | Passwords: Argon2id m=64 MiB, t=2, p=1, at most 3 at once; bcrypt hashes upgrade on login. Sessions: idle 14 d, absolute 30 d, rotation at reauth with a 2-minute grace. Supersedes D17 |
 | **D35** (2026-10-23) | OpenMLS 0.9.2 (security patch over D13's 0.9.0) |
 | **D36** (2026-10-23) | Blob integrity: a SHA-256 per 64 KiB chunk recorded at upload; reads verify only the chunks they serve; old blobs get a full check once |
+| **D37** (2026-10-23) | Release policy v2: exactly one `ios` `signed-release` record from a workflow other than CI, verified by `gh attestation verify`; `simulator-debug` records are checked but never count |
 
 ## Roadmap
 
