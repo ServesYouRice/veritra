@@ -736,43 +736,21 @@ func insertSyncEvent(ctx context.Context, execer syncEventExecer, eventType stri
 // events of its conversations, where encrypted ones follow the device's MLS
 // join cursor (card I51).
 func (s *Store) ListSyncEvents(ctx context.Context, accountID, deviceID string, afterID int64, limit int) ([]domain.SyncEvent, error) {
-	_, oldest, _, err := s.SyncBounds(ctx, accountID)
-	if err != nil {
-		return nil, err
-	}
-	if afterID > 0 && oldest > 0 && afterID < oldest-1 {
-		return nil, ErrSyncCursorExpired
+	// Only a cursor past the start can have expired, and only the oldest
+	// bound tells; the latest bound would cost as much again.
+	if afterID > 0 {
+		var oldest sql.NullInt64
+		if err := s.db.QueryRowContext(ctx, syncOldestQuery, accountID).Scan(&oldest); err != nil {
+			return nil, err
+		}
+		if oldest.Int64 > 0 && afterID < oldest.Int64-1 {
+			return nil, ErrSyncCursorExpired
+		}
 	}
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, event_type, account_id, conversation_id, payload_json, created_at
-		FROM (
-			SELECT id, event_type, account_id, conversation_id, payload_json, created_at
-			FROM sync_events
-			WHERE id > ? AND account_id = ? AND (device_id IS NULL OR device_id = ?)
-			UNION ALL
-			SELECT se.id, se.event_type, se.account_id, se.conversation_id, se.payload_json, se.created_at
-			FROM sync_events se
-			JOIN memberships m ON m.conversation_id = se.conversation_id
-			WHERE se.id > ? AND se.account_id IS NULL AND m.account_id = ?
-			  AND (NOT (se.event_type = 'mls.message.created' OR se.event_type LIKE 'message.envelope.%'
-			            OR se.event_type LIKE 'call.%')
-			       OR `+mlsJoinFilterEvent+`)
-			  AND NOT EXISTS (
-			    SELECT 1 FROM account_blocks b
-			    WHERE b.blocker_account_id = m.account_id
-			      AND b.blocked_account_id = CASE
-			        WHEN se.event_type LIKE 'message.%' THEN (SELECT sender_account_id FROM message_envelopes WHERE id = json_extract(se.payload_json, '$.message_id'))
-			        WHEN se.event_type LIKE 'reaction.%' OR se.event_type = 'read_receipt.updated' THEN json_extract(se.payload_json, '$.account_id')
-			        WHEN se.event_type LIKE 'call.%' THEN json_extract(se.payload_json, '$.created_by')
-			        ELSE NULL
-			      END
-			  )
-		) visible_events
-		ORDER BY id ASC
-		LIMIT ?`, afterID, accountID, deviceID, afterID, accountID, deviceID, limit)
+	rows, err := s.db.QueryContext(ctx, listSyncEventsQuery, accountID, afterID, deviceID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -787,6 +765,67 @@ func (s *Store) ListSyncEvents(ctx context.Context, accountID, deviceID string, 
 	}
 	return events, rows.Err()
 }
+
+// syncEventVisibleTo is true when the conversation event se may go to the
+// device ?3 of account ?1: its encrypted events follow the device's MLS
+// join cursor, and nothing comes from an account ?1 blocked.
+var syncEventVisibleTo = `(NOT (se.event_type = 'mls.message.created' OR se.event_type LIKE 'message.envelope.%'
+	        OR se.event_type LIKE 'call.%')
+	   OR ` + mlsJoinFilterEventFor("?3") + `)
+	AND NOT ` + syncEventBlockedFor("?1")
+
+// listSyncEventsQuery returns the first ?4 events after ?2 that device ?3 of
+// account ?1 may see, in id order. Parameters: ?1 account, ?2 cursor,
+// ?3 device, ?4 limit.
+//
+// Conversation events are merged per conversation (T49 follow-up). The
+// recursive CTE is a priority queue ordered by id: it starts with each
+// membership's first visible event after the cursor, and each row it takes
+// out queues the next visible event of the same conversation, found on
+// idx_sync_events_conversation. Its LIMIT stops the merge after ?4 rows, so
+// a page reads about memberships + ?4 events wherever the cursor is. The
+// former single scan walked every conversation event on the instance after
+// the cursor and checked each against the memberships, which read a whole
+// tail of history when the account's conversations were quiet there
+// (252 ms for a page from mid-history at the large benchmark).
+//
+// first_events is MATERIALIZED so its subquery runs once per membership
+// (a flattened subquery would run it again for the IS NOT NULL test). The
+// unary + keeps account_id IS NULL off idx_sync_events_account.
+var listSyncEventsQuery = `
+	WITH RECURSIVE
+	first_events(id, conversation_id) AS MATERIALIZED (
+	  SELECT (SELECT se.id FROM sync_events se
+	          WHERE se.conversation_id = m.conversation_id AND +se.account_id IS NULL AND se.id > ?2
+	            AND ` + syncEventVisibleTo + `
+	          ORDER BY se.id ASC LIMIT 1), m.conversation_id
+	  FROM memberships m WHERE m.account_id = ?1 AND m.conversation_id IS NOT NULL
+	),
+	conversation_events(id, conversation_id) AS (
+	  SELECT id, conversation_id FROM first_events WHERE id IS NOT NULL
+	  UNION ALL
+	  SELECT next_event.id, q.conversation_id
+	  FROM conversation_events q
+	  JOIN sync_events next_event ON next_event.id = (
+	    SELECT se.id FROM sync_events se
+	    WHERE se.conversation_id = q.conversation_id AND +se.account_id IS NULL AND se.id > q.id
+	      AND ` + syncEventVisibleTo + `
+	    ORDER BY se.id ASC LIMIT 1)
+	  ORDER BY 1
+	  LIMIT ?4
+	),
+	page(id) AS (
+	  SELECT id FROM conversation_events
+	  UNION ALL
+	  SELECT id FROM (
+	    SELECT id FROM sync_events
+	    WHERE account_id = ?1 AND id > ?2 AND (device_id IS NULL OR device_id = ?3)
+	    ORDER BY id ASC LIMIT ?4)
+	)
+	SELECT se.id, se.event_type, se.account_id, se.conversation_id, se.payload_json, se.created_at
+	FROM page JOIN sync_events se ON se.id = page.id
+	ORDER BY se.id ASC
+	LIMIT ?4`
 
 // syncEventBlockedFor is true when the conversation event se comes from an
 // account that blocker blocked. blocker is SQL text (a column or a
@@ -811,8 +850,13 @@ func syncEventBlockedFor(blocker string) string {
 // predicate runs only on the few rows at each edge instead of on every event
 // on the instance (T49A). The unary + keeps account_id IS NULL off
 // idx_sync_events_account, which would scan every conversation event.
-var syncBoundsQuery = `
-	SELECT
+var syncBoundsQuery = `SELECT ` + syncOldestExpr + `, ` + syncLatestExpr
+
+// syncOldestQuery is the oldest half of syncBoundsQuery, which is all a
+// page needs to tell whether its cursor has expired.
+var syncOldestQuery = `SELECT ` + syncOldestExpr
+
+var syncOldestExpr = `
 	  (SELECT MIN(v) FROM (
 	     SELECT MIN(id) AS v FROM sync_events WHERE account_id = ?1
 	     UNION ALL
@@ -821,7 +865,9 @@ var syncBoundsQuery = `
 	               AND NOT ` + syncEventBlockedFor("?1") + `
 	             ORDER BY se.id ASC LIMIT 1)
 	     FROM memberships m WHERE m.account_id = ?1 AND m.conversation_id IS NOT NULL
-	  )),
+	  ))`
+
+var syncLatestExpr = `
 	  (SELECT MAX(v) FROM (
 	     SELECT MAX(id) AS v FROM sync_events WHERE account_id = ?1
 	     UNION ALL
