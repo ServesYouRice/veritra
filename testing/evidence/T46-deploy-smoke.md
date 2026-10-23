@@ -1,6 +1,6 @@
 # T46 — Hardened deployment smoke and k3s rehearsal
 
-Date: 2026-10-23. Branch base `89a437e`. Server fixes in `a06d828`; smoke
+Date: 2026-10-23. Branch base `89a437e`, merged with `72d7225`. Server fixes in `a06d828`; smoke
 in `593c603`; deploy/docs changes in the commit that adds this file.
 
 ## Host
@@ -25,7 +25,10 @@ Caddy came from `mirror.gcr.io` by the same digest.
 
 `scripts/smoke-deploy.sh --image veritra-t46:c`, run as root and again as an
 unprivileged member of the docker group; both passed and cleaned up (no
-containers, volumes or temp files left). About 3 minutes per run.
+containers, volumes or temp files left). About 3 minutes per run. After
+merging the main branch (Argon2id logins, I29 Caddy log filters), image
+`veritra-t46:d` = `52bdf02` (index `sha256:f73bffed…f8273e`) passed the same
+run as root, with Caddy's filtered access log on.
 
 | Check | Result |
 |---|---|
@@ -128,7 +131,8 @@ HTTPS, as for R2).
 |---|---|
 | `cd server && go test ./cmd/messenger-server ./internal/app` | pass |
 | `./scripts/lint.sh` | pass |
-| `./scripts/test.sh` (Go, Rust, Flutter: 293 passed, 23 skipped) | pass |
+| `./scripts/test.sh` (Go, Rust, Flutter: 293 passed, 23 skipped), before the merge | pass |
+| `cd server && go vet ./... && go test ./...`, after the merge | pass |
 | `go test ./internal/config ./internal/push` (new TURN-URL and VAPID-subject tests; the VAPID test fails without its fix) | pass |
 | `TestDeployMemoryLimitsCarryGOMEMLIMIT` (Compose, systemd, k8s limit and `GOMEMLIMIT` pairs) | pass |
 | `systemd-analyze verify` (offline root) on the three units | pass |
