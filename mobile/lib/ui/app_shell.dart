@@ -10,6 +10,7 @@ import 'tokens.dart';
 import 'widgets/connection_banner.dart';
 import 'widgets/demo_banner.dart';
 import 'widgets/empty_state.dart';
+import 'widgets/listenable_selector.dart';
 import '../l10n/l10n.dart';
 
 bool shouldShowFloatingNavLabels({
@@ -82,13 +83,22 @@ class _AppShellState extends State<AppShell> {
 
   @override
   Widget build(BuildContext context) {
-    final content = _buildContent(context);
-    if (!widget.state.config.demo) return content;
-    return Column(
-      children: <Widget>[
-        const DemoBanner(),
-        Expanded(child: content),
-      ],
+    // The shell depends only on where the session stands. Each page listens
+    // to the state for what it shows itself (T49C-1), so a notification does
+    // not rebuild a page that is hidden or unaffected.
+    return ListenableSelector<(SessionLifecycle, bool)>(
+      listenable: widget.state,
+      select: () => (widget.state.lifecycle, widget.state.connected),
+      builder: (context, _, __) {
+        final content = _buildContent(context);
+        if (!widget.state.config.demo) return content;
+        return Column(
+          children: <Widget>[
+            const DemoBanner(),
+            Expanded(child: content),
+          ],
+        );
+      },
     );
   }
 
@@ -304,7 +314,6 @@ class _ChatWorkspace extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final selected = state.selectedConversationId;
     return Row(
       children: <Widget>[
         SizedBox(
@@ -313,18 +322,24 @@ class _ChatWorkspace extends StatelessWidget {
         ),
         const VerticalDivider(width: 1),
         Expanded(
-          child: selected == null
-              ? EmptyState(
-                  icon: Icons.forum_outlined,
-                  title: context.l10n.shellNoConversationTitle,
-                  message: context.l10n.shellNoConversationMessage,
-                )
-              : ChatScreen(
-                  key: ValueKey<String>(selected),
-                  state: state,
-                  conversationId: selected,
-                  showBackButton: false,
-                ),
+          // The list and the open conversation listen for themselves; this
+          // pane only follows the selection.
+          child: ListenableSelector<String?>(
+            listenable: state,
+            select: () => state.selectedConversationId,
+            builder: (context, selected, _) => selected == null
+                ? EmptyState(
+                    icon: Icons.forum_outlined,
+                    title: context.l10n.shellNoConversationTitle,
+                    message: context.l10n.shellNoConversationMessage,
+                  )
+                : ChatScreen(
+                    key: ValueKey<String>(selected),
+                    state: state,
+                    conversationId: selected,
+                    showBackButton: false,
+                  ),
+          ),
         ),
       ],
     );
@@ -383,6 +398,13 @@ class _RecoveryState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: state,
+      builder: (context, _) => _build(context),
+    );
+  }
+
+  Widget _build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
         child: Center(

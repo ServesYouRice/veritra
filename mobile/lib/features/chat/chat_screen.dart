@@ -1,12 +1,13 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart' show defaultTargetPlatform;
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/app_state.dart';
 import '../../core/attachments.dart';
+import '../../core/composer_drafts.dart';
 import '../../core/message_history.dart';
 import '../../core/models.dart';
 import '../../crypto/app_payload.dart' show maxAppTextLength;
@@ -18,13 +19,15 @@ import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/empty_state.dart';
 import '../../ui/widgets/gated_explanation.dart';
+import '../../ui/widgets/listenable_selector.dart';
 import '../../ui/widgets/status_pill.dart';
 import 'attachment_views.dart';
 import 'chat_list_screen.dart';
 import 'conversation_details_screen.dart';
 
-/// Conversation detail screen. Pushed from the chat list; listens to the app
-/// state itself because pushed routes sit outside the root rebuild scope.
+/// Conversation detail screen. Pushed from the chat list, or the detail pane
+/// of the wide layout. It listens to the app state itself, and rebuilds only
+/// when something it shows changes (T49C-1).
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
     required this.state,
@@ -45,11 +48,18 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
-  final composer = TextEditingController();
+  // The draft and reply target live in [AppState.composerDrafts], which
+  // outlives this screen: switching destinations in the wide layout, or
+  // between conversations, disposes it (T49C-4).
+  late final TextEditingController composer =
+      TextEditingController.fromValue(_draftValue(widget.conversationId));
   final scroll = ScrollController();
 
   /// The message the next send replies to, if any.
-  LocalMessage? _replyingTo;
+  late LocalMessage? _replyingTo =
+      _drafts.replyTargetFor(widget.conversationId);
+
+  ComposerDrafts get _drafts => widget.state.composerDrafts;
 
   /// True once the reader has scrolled far enough back that the newest
   /// messages are off screen.
@@ -62,17 +72,49 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    composer.addListener(_saveDraft);
     scroll.addListener(_maybeLoadOlder);
     scroll.addListener(_trackLatest);
   }
 
   @override
+  void didUpdateWidget(ChatScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.conversationId == widget.conversationId &&
+        identical(oldWidget.state, widget.state)) {
+      return;
+    }
+    // The same screen now shows another conversation: its own draft, never
+    // the previous one's. The previous draft is already saved.
+    composer.removeListener(_saveDraft);
+    composer.value = _draftValue(widget.conversationId);
+    composer.addListener(_saveDraft);
+    _replyingTo = _drafts.replyTargetFor(widget.conversationId);
+  }
+
+  @override
   void dispose() {
+    composer.removeListener(_saveDraft);
     scroll.removeListener(_trackLatest);
     scroll.removeListener(_maybeLoadOlder);
     scroll.dispose();
     composer.dispose();
     super.dispose();
+  }
+
+  TextEditingValue _draftValue(String conversationId) {
+    final text = widget.state.composerDrafts.textFor(conversationId);
+    return TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+  }
+
+  void _saveDraft() => _drafts.setText(widget.conversationId, composer.text);
+
+  void _setReplyTarget(LocalMessage? message) {
+    _drafts.setReplyTarget(widget.conversationId, message);
+    setState(() => _replyingTo = message);
   }
 
   /// The list is reversed, so scrolling back in time approaches maxScrollExtent.
@@ -113,9 +155,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: widget.state,
-      builder: (context, _) {
+    return ListenableSelector<List<Object?>>(
+      listenable: widget.state,
+      select: () => _chatScreenSelection(widget.state, widget.conversationId),
+      equals: listEquals,
+      builder: (context, _, __) {
         final theme = Theme.of(context);
         final conversation = widget.state.conversations
             .where((item) => item.id == widget.conversationId)
@@ -195,7 +239,7 @@ class _ChatScreenState extends State<ChatScreen> {
               if (_replyingTo != null)
                 _ReplyBar(
                   preview: _replyPreview(context.l10n, _replyingTo),
-                  onCancel: () => setState(() => _replyingTo = null),
+                  onCancel: () => _setReplyTarget(null),
                 ),
               _Composer(
                 enabled: conversation != null,
@@ -359,7 +403,7 @@ class _ChatScreenState extends State<ChatScreen> {
       sent = await state.react(
           conversationId, message.key, alreadyMine ? '' : reaction);
     } else if (action == 'reply') {
-      setState(() => _replyingTo = message);
+      _setReplyTarget(message);
     } else if (action == 'copy') {
       await Clipboard.setData(ClipboardData(text: message.body ?? ''));
     } else if (action == 'edit') {
@@ -443,21 +487,29 @@ class _ChatScreenState extends State<ChatScreen> {
     if (text.isEmpty) {
       return;
     }
+    final state = widget.state;
+    final conversationId = widget.conversationId;
     final replyingTo = _replyingTo;
     final sent = replyingTo == null
-        ? await widget.state.sendMessageTo(widget.conversationId, text)
-        : await widget.state
-            .replyTo(widget.conversationId, replyingTo.key, text);
-    if (!mounted) {
-      return;
-    }
+        ? await state.sendMessageTo(conversationId, text)
+        : await state.replyTo(conversationId, replyingTo.key, text);
     if (sent) {
+      // Durable acceptance, rather than HTTP delivery, is the point at which
+      // the submitted draft is safe to clear. Preserve newer edits. The
+      // stored draft is cleared even if this screen closed meanwhile, so the
+      // sent text does not come back as a draft.
+      state.composerDrafts
+          .clearSent(conversationId, text: text, replyTo: replyingTo);
+      if (!mounted) {
+        return;
+      }
       if (identical(_replyingTo, replyingTo)) {
         setState(() => _replyingTo = null);
       }
-      // Durable acceptance, rather than HTTP delivery, is the point at which
-      // the submitted draft is safe to clear. Preserve newer edits.
       if (composer.text.trim() == text) composer.clear();
+      return;
+    }
+    if (!mounted) {
       return;
     }
     final error = widget.state.errorFor(Ops.send);
@@ -467,6 +519,45 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
   }
+}
+
+/// Everything the open conversation reads from [AppState] (T49C-1). The chat
+/// rebuilds only when this changes, so a notification about another
+/// conversation, the device list or the connection leaves it alone.
+///
+/// Lists and models compare by identity: AppState replaces them instead of
+/// editing them in place. A new read from the state anywhere in this file's
+/// build methods must be added here, or that part of the chat stays stale.
+List<Object?> _chatScreenSelection(AppState state, String conversationId) {
+  final history = state.historyFor(conversationId);
+  final pending = state.pendingFor(conversationId);
+  final session = state.session;
+  return <Object?>[
+    state.conversations.where((item) => item.id == conversationId).firstOrNull,
+    state.messagesFor(conversationId),
+    // A conversation without loaded history gets a new empty one per call;
+    // every history without messages draws the same.
+    history.messages.isEmpty ? null : history,
+    state.membersFor(conversationId),
+    session?.accountId,
+    session?.deviceId,
+    state.l10n,
+    state.isMuted(conversationId),
+    state.mlsConversationFailed(conversationId),
+    state.isBusy(Ops.send),
+    state.isBusy(Ops.attachment),
+    state.attachmentsAvailable,
+    state.messageActionsAvailable,
+    state.isLoadingMessages(conversationId),
+    state.messageLoadError(conversationId),
+    state.hasMoreHistory(conversationId),
+    state.isLoadingOlder(conversationId),
+    for (final envelope in pending) ...<Object?>[
+      envelope,
+      state.outboxState(envelope.idempotencyKey),
+      state.outboxRecord(envelope.idempotencyKey),
+    ],
+  ];
 }
 
 class _MessageLoadError extends StatelessWidget {

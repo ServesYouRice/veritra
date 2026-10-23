@@ -60,11 +60,9 @@ Future<void> _start(
   WidgetTester tester,
   _Bench bench, {
   Size size = benchPhone,
-  bool scopedRoot = false,
 }) async {
   setBenchWindow(tester, size);
-  await tester.pumpWidget(
-      scopedRoot ? scopedRootApp(bench.state) : benchApp(bench.state));
+  await tester.pumpWidget(benchApp(bench.state));
   await tester.pumpAndSettle();
 }
 
@@ -162,6 +160,10 @@ Future<FrameStats> _deliverOne(
   return FrameStats(frames);
 }
 
+/// Rebuilds by widget type. Since T49C-1 each screen rebuilds under its own
+/// listener, so the open chat shows as `MessageList` and `Composer` (its
+/// content) rather than `ChatScreen` (the route's page, rebuilt only by the
+/// Navigator), and the list as `rows`.
 Map<String, Object> _rebuilds(RebuildCounter counter, {int frames = 1}) =>
     <String, Object>{
       'elements': counter.total ~/ frames,
@@ -170,6 +172,8 @@ Map<String, Object> _rebuilds(RebuildCounter counter, {int frames = 1}) =>
       'ChatListScreen': counter.of('ChatListScreen') ~/ frames,
       'rows': counter.of('_ConversationTile') ~/ frames,
       'ChatScreen': counter.of('ChatScreen') ~/ frames,
+      'MessageList': counter.of('_MessageList') ~/ frames,
+      'Composer': counter.of('_Composer') ~/ frames,
       'bubbles': counter.of('_MessageBubble') ~/ frames,
     };
 
@@ -245,26 +249,15 @@ void main() {
       ...chatBare.fields,
       ..._rebuilds(chatCounterBare, frames: chatBare.count),
     });
-    // The whole app root rebuilds on every AppState change today; see the
-    // scoped-root comparison below and the evidence file.
-    expect(chatCounterBare.of('MaterialApp'), chatBare.count);
-    bench.state.dispose();
-  });
-
-  testWidgets('what-if: a root that does not rebuild on AppState changes',
-      (tester) async {
-    final bench = await _connected(conversations: 200, messages: 2000);
-    await _start(tester, bench, scopedRoot: true);
-    await _openLongConversation(tester, bench);
-    final counter = RebuildCounter()..start();
-    final frames = await _notificationFrames(tester, bench.state);
-    counter.stop();
-    benchReport(
-        'notification, chat open, scoped root (what-if)', <String, Object>{
-      ...frames.fields,
-      ..._rebuilds(counter, frames: frames.count),
-    });
-    expect(counter.of('MaterialApp'), 0);
+    // Since T49C-1 the root listens only to the appearance, and every screen
+    // rebuilds only for what it shows: a notification that changes nothing
+    // rebuilds nothing, and a new message rebuilds the open chat, not the
+    // app root or the list hidden under it.
+    expect(chatCounterBare.counts, isEmpty);
+    expect(listCounterBare.counts, isEmpty);
+    expect(chatCounter.of('MaterialApp'), 0);
+    expect(chatCounter.of('_ConversationTile'), 0);
+    expect(chatCounter.of('_MessageList'), greaterThan(0));
     bench.state.dispose();
   });
 
@@ -299,7 +292,7 @@ void main() {
     bench.state.dispose();
   });
 
-  testWidgets('tab switching keeps the selection; records what is lost',
+  testWidgets('tab switching keeps the selection, list offset and draft',
       (tester) async {
     final bench = await _connected(conversations: 1000, messages: 200);
     await _start(tester, bench);
@@ -320,9 +313,12 @@ void main() {
     final compact = FrameStats(switches);
     final listOffset = _position(tester, _chatListScrollable).pixels;
 
-    // Workspace layout: the open conversation and its draft.
+    // Workspace layout: the open conversation and its draft. The list kept
+    // its offset (T49C-4), so the long group's row is scrolled away.
     setBenchWindow(tester, benchWide);
     await tester.pumpAndSettle();
+    _position(tester, _chatListScrollable).jumpTo(0);
+    await tester.pump();
     await tester.tap(find.text('Long group').first);
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).last, 'unsent draft');
@@ -340,6 +336,8 @@ void main() {
       'wide_draft_kept': draftKept,
     });
     expect(selection, longConversationId);
+    expect(listOffset, 3000);
+    expect(draftKept, isTrue);
     bench.state.dispose();
   });
 
