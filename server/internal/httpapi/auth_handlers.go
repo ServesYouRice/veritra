@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -118,9 +119,9 @@ func (a *API) createOwner(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_identity")
 		return
 	}
-	passwordHash, err := auth.HashPasswordWithCost(req.Password, a.passwordCost())
+	passwordHash, err := auth.HashPasswordContext(r.Context(), auth.Anonymous, req.Password)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "weak_password")
+		writePasswordHashFailure(w, err)
 		return
 	}
 	if len(req.DeviceKeyPackage) == 0 {
@@ -167,7 +168,6 @@ func (a *API) createOwner(w http.ResponseWriter, r *http.Request) {
 		SigningKey:              req.SigningKey,
 		DeviceAuthHash:          deviceAuthHash,
 		SessionHash:             tokenHash,
-		SessionExpiry:           time.Now().UTC().Add(30 * 24 * time.Hour),
 	})
 	if err != nil {
 		if errors.Is(err, storage.ErrAlreadySetup) {
@@ -196,6 +196,26 @@ func (a *API) setupAuthorized(r *http.Request) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// writePasswordHashFailure maps a password hashing or verification error. A
+// policy violation is the client's; a busy or cancelled hasher is transient
+// and never counts as a credential failure.
+func writePasswordHashFailure(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, auth.ErrWeakPassword), errors.Is(err, auth.ErrPasswordTooLong):
+		writeError(w, http.StatusBadRequest, "weak_password")
+	case errors.Is(err, auth.ErrPasswordHashingBusy), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		w.Header().Set("Retry-After", "1")
+		writeError(w, http.StatusServiceUnavailable, "password_hashing_busy")
+	default:
+		writeError(w, http.StatusInternalServerError, "password_hash_failed")
+	}
+}
+
+// sessionRotationHeader opts a reauthentication into token rotation. Clients
+// that send it receive {"token": ...} and must switch to it; others keep the
+// 204 response and their token, so older clients and servers interoperate.
+const sessionRotationHeader = "X-Veritra-Rotate-Session"
+
 type loginRequest struct {
 	Username     string `json:"username"`
 	Password     string `json:"password"`
@@ -218,15 +238,21 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	record, lookupErr := a.Store.LoginRecord(r.Context(), req.Username, req.DeviceID)
-	// Always run bcrypt — against a dummy hash when the lookup failed — so
-	// response time does not leak whether the username exists.
+	// Always verify — against a dummy when the lookup failed — with the same
+	// work as a real account, so response time does not leak whether the
+	// username exists.
 	var storedHash string
 	if lookupErr == nil {
 		storedHash = record.PasswordHash
 	}
-	passwordOK := auth.VerifyPasswordOrDummyWithCost(storedHash, req.Password, a.passwordCost())
+	passwords := a.passwordService()
+	check, err := passwords.Verify(r.Context(), auth.Anonymous, storedHash, req.Password)
+	if err != nil {
+		writePasswordHashFailure(w, err)
+		return
+	}
 	deviceOK := lookupErr == nil && record.DeviceAuthHash != "" && subtle.ConstantTimeCompare([]byte(auth.HashToken(req.DeviceSecret)), []byte(record.DeviceAuthHash)) == 1
-	if lookupErr != nil || !passwordOK || !deviceOK {
+	if lookupErr != nil || !check.OK || !deviceOK {
 		if retryAfter := a.LoginBackoff.FailedAny(time.Now(), backoffKeys...); retryAfter > 0 {
 			writeRetryError(w, "login_backoff", retryAfter)
 			return
@@ -234,20 +260,15 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid_credentials")
 		return
 	}
-	if updatedHash, changed, err := auth.RehashPasswordIfNeeded(record.PasswordHash, req.Password, a.passwordCost()); err != nil {
-		a.warn("password_rehash_failed", "err", err)
-	} else if changed {
-		if _, err := a.Store.UpgradePasswordHash(r.Context(), record.AccountID, record.PasswordHash, updatedHash); err != nil {
-			a.warn("password_rehash_update_failed", "err", err)
-		}
-	}
+	// Only now, with every credential checked, may a legacy hash migrate.
+	passwords.Upgrade(r.Context(), record.AccountID, record.PasswordHash, req.Password, check)
 	a.LoginBackoff.SucceededAny(backoffKeys...)
 	token, tokenHash, err := auth.NewToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "token_create_failed")
 		return
 	}
-	if err := a.Store.CreateSession(r.Context(), tokenHash, record.AccountID, record.DeviceID, time.Now().UTC().Add(30*24*time.Hour)); err != nil {
+	if err := a.Store.CreateSession(r.Context(), tokenHash, record.AccountID, record.DeviceID, time.Time{}); err != nil {
 		writeError(w, http.StatusInternalServerError, "session_create_failed")
 		return
 	}
@@ -307,9 +328,9 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_identity")
 		return
 	}
-	passwordHash, err := auth.HashPasswordWithCost(req.Password, a.passwordCost())
+	passwordHash, err := auth.HashPasswordContext(r.Context(), auth.Anonymous, req.Password)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "weak_password")
+		writePasswordHashFailure(w, err)
 		return
 	}
 	if len(req.DeviceKeyPackage) == 0 {
@@ -356,7 +377,6 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		SigningKey:              req.SigningKey,
 		DeviceAuthHash:          deviceAuthHash,
 		SessionHash:             tokenHash,
-		SessionExpiry:           time.Now().UTC().Add(30 * 24 * time.Hour),
 	})
 	if err != nil {
 		if errors.Is(err, storage.ErrInviteInvalid) {
@@ -689,7 +709,7 @@ func (a *API) deviceLinkSubroute(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "token_create_failed")
 			return
 		}
-		linked, err := a.Store.ConsumeApprovedDeviceLink(r.Context(), linkID, auth.HashToken(claimToken), sessionTokenHash, time.Now().UTC().Add(30*24*time.Hour))
+		linked, err := a.Store.ConsumeApprovedDeviceLink(r.Context(), linkID, auth.HashToken(claimToken), sessionTokenHash, time.Time{})
 		if err != nil {
 			switch {
 			case errors.Is(err, storage.ErrDeviceLinkNotReady):
@@ -745,9 +765,14 @@ func (a *API) reauthenticate(w http.ResponseWriter, r *http.Request, principal d
 		return
 	}
 	passwordHash, deviceAuthHash, err := a.Store.ReauthenticationRecord(r.Context(), principal.AccountID, principal.DeviceID)
-	passwordOK := auth.VerifyPasswordOrDummyWithCost(passwordHash, req.Password, a.passwordCost())
+	passwords := a.passwordService()
+	check, verifyErr := passwords.Verify(r.Context(), auth.SignedIn, passwordHash, req.Password)
+	if verifyErr != nil {
+		writePasswordHashFailure(w, verifyErr)
+		return
+	}
 	deviceOK := err == nil && deviceAuthHash != "" && subtle.ConstantTimeCompare([]byte(auth.HashToken(req.DeviceSecret)), []byte(deviceAuthHash)) == 1
-	if err != nil || !passwordOK || !deviceOK {
+	if err != nil || !check.OK || !deviceOK {
 		if retryAfter := a.LoginBackoff.FailedAny(time.Now(), backoffKeys...); retryAfter > 0 {
 			writeRetryError(w, "reauth_backoff", retryAfter)
 			return
@@ -755,21 +780,47 @@ func (a *API) reauthenticate(w http.ResponseWriter, r *http.Request, principal d
 		writeError(w, http.StatusUnauthorized, "invalid_credentials")
 		return
 	}
-	if updatedHash, changed, err := auth.RehashPasswordIfNeeded(passwordHash, req.Password, a.passwordCost()); err != nil {
-		a.warn("password_rehash_failed", "err", err)
-	} else if changed {
-		if _, err := a.Store.UpgradePasswordHash(r.Context(), principal.AccountID, passwordHash, updatedHash); err != nil {
-			a.warn("password_rehash_update_failed", "err", err)
-		}
-	}
+	passwords.Upgrade(r.Context(), principal.AccountID, passwordHash, req.Password, check)
 	token := bearerToken(r)
-	if token == "" || a.Store.MarkSessionRecentlyAuthenticated(r.Context(), auth.HashToken(token)) != nil {
+	if token == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if r.Header.Get(sessionRotationHeader) == "1" {
+		a.rotateReauthenticatedSession(w, r, principal, token, backoffKeys)
+		return
+	}
+	if a.Store.MarkSessionRecentlyAuthenticated(r.Context(), auth.HashToken(token)) != nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	a.LoginBackoff.SucceededAny(backoffKeys...)
 	a.recordAuditEvent(r.Context(), &principal.AccountID, "session.reauthenticated", map[string]string{"device_id": principal.DeviceID})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// rotateReauthenticatedSession issues a new token for a session whose holder
+// just proved password and device secret (storage.RotateSession has the
+// rules). The device's realtime sockets are closed, because they were opened
+// with the old token; the client reconnects with the new one.
+func (a *API) rotateReauthenticatedSession(w http.ResponseWriter, r *http.Request, principal domain.Principal, presentedToken string, backoffKeys []string) {
+	token, tokenHash, err := auth.NewToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "token_create_failed")
+		return
+	}
+	if err := a.Store.RotateSession(r.Context(), auth.HashToken(presentedToken), tokenHash); err != nil {
+		if errors.Is(err, storage.ErrUnauthorized) {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "session_rotate_failed")
+		return
+	}
+	a.LoginBackoff.SucceededAny(backoffKeys...)
+	a.Hub.DisconnectDevice(principal.AccountID, principal.DeviceID)
+	a.recordAuditEvent(r.Context(), &principal.AccountID, "session.reauthenticated", map[string]string{"device_id": principal.DeviceID, "token_rotated": "true"})
+	writeJSON(w, http.StatusOK, map[string]string{"token": token})
 }
 
 func (a *API) loginBackoffKeys(r *http.Request, username, deviceID string) []string {
@@ -794,9 +845,9 @@ func (a *API) changePassword(w http.ResponseWriter, r *http.Request, principal d
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	hash, err := auth.HashPasswordWithCost(req.NewPassword, a.passwordCost())
+	hash, err := auth.HashPasswordContext(r.Context(), auth.SignedIn, req.NewPassword)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "weak_password")
+		writePasswordHashFailure(w, err)
 		return
 	}
 	token := bearerToken(r)
@@ -808,9 +859,18 @@ func (a *API) changePassword(w http.ResponseWriter, r *http.Request, principal d
 		handleStorageError(w, err)
 		return
 	}
-	a.Hub.DisconnectAccountExceptDevice(principal.AccountID, principal.DeviceID)
+	a.disconnectAccountForRevocation(principal)
 	a.recordAuditEvent(r.Context(), &principal.AccountID, "account.password_changed", map[string]string{"device_id": principal.DeviceID})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// disconnectAccountForRevocation closes every realtime socket of the account
+// after other sessions and the caller's rotated-out token were revoked. The
+// caller's own device is included because a socket there may have been opened
+// with the rotated-out token; the client reconnects with its current token.
+func (a *API) disconnectAccountForRevocation(principal domain.Principal) {
+	a.Hub.DisconnectAccountExceptDevice(principal.AccountID, principal.DeviceID)
+	a.Hub.DisconnectDevice(principal.AccountID, principal.DeviceID)
 }
 
 // logoutAll revokes every session for the account except the caller's current
@@ -825,7 +885,7 @@ func (a *API) logoutAll(w http.ResponseWriter, r *http.Request, principal domain
 		handleStorageError(w, err)
 		return
 	}
-	a.Hub.DisconnectAccountExceptDevice(principal.AccountID, principal.DeviceID)
+	a.disconnectAccountForRevocation(principal)
 	a.recordAuditEvent(r.Context(), &principal.AccountID, "session.logout_others", map[string]string{"device_id": principal.DeviceID})
 	w.WriteHeader(http.StatusNoContent)
 }

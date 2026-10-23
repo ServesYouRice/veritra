@@ -10,12 +10,24 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/domain"
 )
 
 const (
-	SessionIdleLifetime     = 30 * 24 * time.Hour
-	SessionAbsoluteLifetime = 30 * 24 * time.Hour
+	// SessionIdleLifetime and SessionAbsoluteLifetime are the defaults; an
+	// operator may change both (config.SessionIdleLifetime and
+	// config.SessionAbsoluteLifetime). A session ends after the idle lifetime
+	// without use, or the absolute lifetime after its last password and
+	// device-secret authentication (login, or a rotating reauthentication).
+	SessionIdleLifetime     = config.DefaultSessionIdleLifetime
+	SessionAbsoluteLifetime = config.DefaultSessionAbsoluteLifetime
+
+	// SessionRotationGrace is how long a rotated-out token keeps working, so
+	// requests already in flight when the client switched tokens still
+	// complete. The old token cannot carry recent authentication or extend
+	// the session; only the newest token can.
+	SessionRotationGrace = 2 * time.Minute
 
 	// SessionTouchInterval bounds how often an authenticated request writes
 	// sessions.last_used_at/expires_at. One minute caps the write rate at one
@@ -33,11 +45,35 @@ const (
 type SessionActivity struct {
 	LastUsedAt       time.Time
 	DeviceLastSeenAt *time.Time
+	// RotatedOut is true when the request used the session's previous token
+	// inside SessionRotationGrace.
+	RotatedOut bool
 }
 
-// SessionTouchDue reports whether TouchSession would write at now.
+// SessionTouchDue reports whether TouchSession would write at now. A
+// rotated-out token never extends the session.
 func (a SessionActivity) SessionTouchDue(now time.Time) bool {
-	return !a.LastUsedAt.After(now.Add(-SessionTouchInterval))
+	return !a.RotatedOut && !a.LastUsedAt.After(now.Add(-SessionTouchInterval))
+}
+
+type sessionPolicy struct {
+	idle     time.Duration
+	absolute time.Duration
+}
+
+func newSessionPolicy(cfg config.Config) sessionPolicy {
+	policy := sessionPolicy{idle: cfg.SessionIdleLifetime, absolute: cfg.SessionAbsoluteLifetime}
+	if policy.idle <= 0 {
+		policy.idle = SessionIdleLifetime
+	}
+	if policy.absolute <= 0 {
+		policy.absolute = SessionAbsoluteLifetime
+	}
+	if policy.idle > policy.absolute {
+		// config.Load rejects or resolves this; a direct caller is clamped.
+		policy.idle = policy.absolute
+	}
+	return policy
 }
 
 // DeviceSeenDue reports whether MarkDeviceSeen would write at now.
@@ -45,13 +81,19 @@ func (a SessionActivity) DeviceSeenDue(now time.Time) bool {
 	return a.DeviceLastSeenAt == nil || !a.DeviceLastSeenAt.After(now.Add(-DeviceSeenInterval))
 }
 
-func sessionLifetime(createdAt time.Time, requestedExpiry time.Time) (string, string) {
-	idleExpiry := createdAt.Add(SessionIdleLifetime)
+// sessionLifetime returns the idle and absolute expiry for a session
+// authenticated at authenticatedAt. newSessionPolicy keeps idle <= absolute,
+// and a non-zero requestedExpiry can only shorten the idle expiry.
+func (s *Store) sessionLifetime(authenticatedAt time.Time, requestedExpiry time.Time) (string, string) {
+	idleExpiry := authenticatedAt.Add(s.sessions.idle)
 	if !requestedExpiry.IsZero() && requestedExpiry.Before(idleExpiry) {
 		idleExpiry = requestedExpiry
 	}
-	absoluteExpiry := createdAt.Add(SessionAbsoluteLifetime)
-	return formatTime(idleExpiry), formatTime(absoluteExpiry)
+	return formatTime(idleExpiry), formatTime(authenticatedAt.Add(s.sessions.absolute))
+}
+
+func (s *Store) idleCutoff(now time.Time) string {
+	return formatTime(now.Add(-s.sessions.idle))
 }
 
 func (s *Store) CreateOwner(ctx context.Context, input CreateOwnerInput) (AccountDevice, error) {
@@ -74,7 +116,7 @@ func (s *Store) CreateOwner(ctx context.Context, input CreateOwnerInput) (Accoun
 	accountID := reservation.AccountID
 	deviceID := reservation.DeviceID
 	createdAt := nowString()
-	sessionExpiresAt, sessionAbsoluteExpiresAt := sessionLifetime(parseTime(createdAt), input.SessionExpiry)
+	sessionExpiresAt, sessionAbsoluteExpiresAt := s.sessionLifetime(parseTime(createdAt), input.SessionExpiry)
 	instanceName := strings.TrimSpace(input.InstanceName)
 	if instanceName == "" {
 		instanceName = "Veritra"
@@ -147,7 +189,7 @@ func (s *Store) RegisterWithInvite(ctx context.Context, input RegisterInput) (Ac
 	accountID := reservation.AccountID
 	deviceID := reservation.DeviceID
 	createdAt := nowString()
-	sessionExpiresAt, sessionAbsoluteExpiresAt := sessionLifetime(parseTime(createdAt), input.SessionExpiry)
+	sessionExpiresAt, sessionAbsoluteExpiresAt := s.sessionLifetime(parseTime(createdAt), input.SessionExpiry)
 	username := domain.NormalizeUsername(input.Username)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO accounts(id, username, email, password_hash, role, status, created_at) VALUES(?, ?, ?, ?, 'member', 'active', ?)`, accountID, username, nullableString(input.Email), input.PasswordHash, createdAt); err != nil {
 		return AccountDevice{}, err
@@ -215,7 +257,7 @@ func (s *Store) CreateSession(ctx context.Context, tokenHash, accountID, deviceI
 		return ErrForbidden
 	}
 	now := nowString()
-	idleExpiresAt, absoluteExpiresAt := sessionLifetime(time.Now().UTC(), expiresAt)
+	idleExpiresAt, absoluteExpiresAt := s.sessionLifetime(time.Now().UTC(), expiresAt)
 	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions(token_hash, account_id, device_id, expires_at, created_at, recent_auth_at, last_used_at, absolute_expires_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, tokenHash, accountID, nullableEmptyString(deviceID), idleExpiresAt, now, now, now, absoluteExpiresAt)
 	return err
 }
@@ -225,27 +267,48 @@ func (s *Store) PrincipalByTokenHash(ctx context.Context, tokenHash string) (dom
 	return principal, err
 }
 
-// SessionPrincipal validates a session with a read-only query and returns its
-// principal plus stored activity timestamps. Every expiry, idle, account and
-// device-revocation rule is enforced here on each call.
-func (s *Store) SessionPrincipal(ctx context.Context, tokenHash string) (domain.Principal, SessionActivity, error) {
-	principal := domain.Principal{}
-	var expiresAt, lastUsedAt string
-	var recentAuthAt, deviceLastSeenAt sql.NullString
-	now := time.Now().UTC()
-	err := s.db.QueryRowContext(ctx, `
-		SELECT a.id, COALESCE(s.device_id, ''), a.username, a.role, s.expires_at, s.recent_auth_at, s.last_used_at, d.last_seen_at
-		FROM sessions s JOIN accounts a ON a.id = s.account_id
-		LEFT JOIN devices d ON d.id = s.device_id
-		WHERE s.token_hash = ?
+// sessionValidity is the WHERE tail shared by every session lookup: expiry,
+// absolute expiry, idle expiry, account status and device revocation. Its
+// three placeholders take now, now and the idle cutoff.
+const sessionValidity = `
 		  AND s.expires_at > ?
 		  AND s.absolute_expires_at > ?
 		  AND s.last_used_at > ?
 		  AND a.status = 'active'
 		  AND a.deleted_at IS NULL
-		  AND (s.device_id IS NULL OR (d.id IS NOT NULL AND d.revoked_at IS NULL))`,
-		tokenHash, formatTime(now), formatTime(now), formatTime(now.Add(-SessionIdleLifetime))).
-		Scan(&principal.AccountID, &principal.DeviceID, &principal.Username, &principal.Role, &expiresAt, &recentAuthAt, &lastUsedAt, &deviceLastSeenAt)
+		  AND (s.device_id IS NULL OR (d.id IS NOT NULL AND d.revoked_at IS NULL))`
+
+const sessionPrincipalSelect = `
+		SELECT a.id, COALESCE(s.device_id, ''), a.username, a.role, s.expires_at, s.recent_auth_at, s.last_used_at, d.last_seen_at, s.previous_expires_at
+		FROM sessions s JOIN accounts a ON a.id = s.account_id
+		LEFT JOIN devices d ON d.id = s.device_id`
+
+// SessionPrincipal validates a session with a read-only query and returns its
+// principal plus stored activity timestamps. Every expiry, idle, account and
+// device-revocation rule is enforced here on each call. A rotated-out token
+// is accepted only inside SessionRotationGrace, without recent
+// authentication, and with ExpiresAt capped at the end of that grace.
+func (s *Store) SessionPrincipal(ctx context.Context, tokenHash string) (domain.Principal, SessionActivity, error) {
+	now := time.Now().UTC()
+	nowValue := formatTime(now)
+	principal, activity, err := scanSessionPrincipal(s.db.QueryRowContext(ctx,
+		sessionPrincipalSelect+` WHERE s.token_hash = ?`+sessionValidity,
+		tokenHash, nowValue, nowValue, s.idleCutoff(now)), false)
+	if !errors.Is(err, ErrUnauthorized) {
+		return principal, activity, err
+	}
+	// The current-token lookup above is the hot path; this second indexed
+	// read runs only for unknown tokens and tokens inside the rotation grace.
+	return scanSessionPrincipal(s.db.QueryRowContext(ctx,
+		sessionPrincipalSelect+` WHERE s.previous_token_hash = ? AND s.previous_expires_at > ?`+sessionValidity,
+		tokenHash, nowValue, nowValue, nowValue, s.idleCutoff(now)), true)
+}
+
+func scanSessionPrincipal(row *sql.Row, rotatedOut bool) (domain.Principal, SessionActivity, error) {
+	principal := domain.Principal{}
+	var expiresAt, lastUsedAt string
+	var recentAuthAt, deviceLastSeenAt, previousExpiresAt sql.NullString
+	err := row.Scan(&principal.AccountID, &principal.DeviceID, &principal.Username, &principal.Role, &expiresAt, &recentAuthAt, &lastUsedAt, &deviceLastSeenAt, &previousExpiresAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.Principal{}, SessionActivity{}, ErrUnauthorized
@@ -253,8 +316,14 @@ func (s *Store) SessionPrincipal(ctx context.Context, tokenHash string) (domain.
 		return domain.Principal{}, SessionActivity{}, err
 	}
 	principal.ExpiresAt = parseTime(expiresAt)
-	principal.RecentAuthAt = parseOptionalTime(recentAuthAt)
-	activity := SessionActivity{LastUsedAt: parseTime(lastUsedAt)}
+	activity := SessionActivity{LastUsedAt: parseTime(lastUsedAt), RotatedOut: rotatedOut}
+	if rotatedOut {
+		if graceEnd := parseTime(previousExpiresAt.String); graceEnd.Before(principal.ExpiresAt) {
+			principal.ExpiresAt = graceEnd
+		}
+	} else {
+		principal.RecentAuthAt = parseOptionalTime(recentAuthAt)
+	}
 	if principal.DeviceID != "" {
 		activity.DeviceLastSeenAt = parseOptionalTime(deviceLastSeenAt)
 	}
@@ -289,6 +358,14 @@ func (s *Store) ReauthenticationRecord(ctx context.Context, accountID, deviceID 
 	return passwordHash, deviceAuthHash, err
 }
 
+// HasLegacyPasswordHashes reports whether any live account still has a
+// bcrypt hash. Deleted accounts keep a non-hash marker and do not count.
+func (s *Store) HasLegacyPasswordHashes(ctx context.Context) (bool, error) {
+	var present bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM accounts WHERE deleted_at IS NULL AND substr(password_hash, 1, 4) IN ('$2a$', '$2b$', '$2y$'))`).Scan(&present)
+	return present, err
+}
+
 func (s *Store) UpgradePasswordHash(ctx context.Context, accountID, currentHash, updatedHash string) (bool, error) {
 	result, err := s.db.ExecContext(ctx, `UPDATE accounts SET password_hash = ? WHERE id = ? AND password_hash = ? AND deleted_at IS NULL`, updatedHash, accountID, currentHash)
 	if err != nil {
@@ -306,19 +383,22 @@ func (s *Store) UpgradePasswordHash(ctx context.Context, accountID, currentHash,
 // (ErrUnauthorized), so validation stays exact and there is no race.
 func (s *Store) TouchSession(ctx context.Context, tokenHash string) error {
 	now := time.Now().UTC()
-	idleExpiry := formatTime(now.Add(SessionIdleLifetime))
+	idleExpiry := formatTime(now.Add(s.sessions.idle))
 	nowStringValue := formatTime(now)
-	idleCutoff := formatTime(now.Add(-SessionIdleLifetime))
+	idleCutoff := s.idleCutoff(now)
+	// The same write drops a rotated-out token whose grace has ended.
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE sessions
 		SET last_used_at = ?,
-		    expires_at = CASE WHEN absolute_expires_at < ? THEN absolute_expires_at ELSE ? END
+		    expires_at = CASE WHEN absolute_expires_at < ? THEN absolute_expires_at ELSE ? END,
+		    previous_token_hash = CASE WHEN previous_expires_at > ? THEN previous_token_hash END,
+		    previous_expires_at = CASE WHEN previous_expires_at > ? THEN previous_expires_at END
 		WHERE token_hash = ?
 		  AND expires_at > ?
 		  AND absolute_expires_at > ?
 		  AND last_used_at > ?
 		  AND last_used_at <= ?`,
-		nowStringValue, idleExpiry, idleExpiry, tokenHash, nowStringValue, nowStringValue, idleCutoff, formatTime(now.Add(-SessionTouchInterval)))
+		nowStringValue, idleExpiry, idleExpiry, nowStringValue, nowStringValue, tokenHash, nowStringValue, nowStringValue, idleCutoff, formatTime(now.Add(-SessionTouchInterval)))
 	if err != nil {
 		return err
 	}
@@ -339,9 +419,58 @@ func (s *Store) TouchSession(ctx context.Context, tokenHash string) error {
 	return err
 }
 
+// MarkSessionRecentlyAuthenticated records a reauthentication without
+// rotating the token, for clients that do not ask for rotation. It does not
+// renew the absolute lifetime; RotateSession does.
 func (s *Store) MarkSessionRecentlyAuthenticated(ctx context.Context, tokenHash string) error {
 	now := time.Now().UTC()
-	result, err := s.db.ExecContext(ctx, `UPDATE sessions SET recent_auth_at = ?, last_used_at = ? WHERE token_hash = ? AND expires_at > ? AND absolute_expires_at > ? AND last_used_at > ?`, formatTime(now), formatTime(now), tokenHash, formatTime(now), formatTime(now), formatTime(now.Add(-SessionIdleLifetime)))
+	result, err := s.db.ExecContext(ctx, `UPDATE sessions SET recent_auth_at = ?, last_used_at = ? WHERE token_hash = ? AND expires_at > ? AND absolute_expires_at > ? AND last_used_at > ?`, formatTime(now), formatTime(now), tokenHash, formatTime(now), formatTime(now), s.idleCutoff(now))
+	if err != nil {
+		return err
+	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return ErrUnauthorized
+	}
+	return nil
+}
+
+// RotateSession gives a session a new bearer token after its holder has
+// re-authenticated with password and device secret. It is one statement, so
+// concurrent rotations serialise on the writer:
+//
+//   - Presenting the current token makes newTokenHash current, keeps the
+//     presented token for SessionRotationGrace, and drops any older token.
+//   - Presenting the previous token inside its grace (a retry after a lost
+//     response) replaces the current token instead. The grace is not
+//     extended, so the token the client never received dies at once.
+//
+// Either way the session then has exactly one current token and at most one
+// rotated-out token that expires within SessionRotationGrace. The rotation
+// counts as a fresh authentication: recent-auth, idle and absolute lifetimes
+// restart. Logout, password change, logout-all and device or account
+// revocation remove the whole row or its rotated-out token, so revocation
+// covers both tokens.
+func (s *Store) RotateSession(ctx context.Context, presentedTokenHash, newTokenHash string) error {
+	if presentedTokenHash == "" || newTokenHash == "" || presentedTokenHash == newTokenHash {
+		return ErrUnauthorized
+	}
+	now := time.Now().UTC()
+	nowValue := formatTime(now)
+	idleExpiry, absoluteExpiry := s.sessionLifetime(now, time.Time{})
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE sessions
+		SET previous_token_hash = CASE WHEN token_hash = ?1 THEN token_hash ELSE previous_token_hash END,
+		    previous_expires_at = CASE WHEN token_hash = ?1 THEN ?2 ELSE previous_expires_at END,
+		    token_hash = ?3,
+		    recent_auth_at = ?4,
+		    last_used_at = ?4,
+		    expires_at = ?5,
+		    absolute_expires_at = ?6
+		WHERE (token_hash = ?1 OR (previous_token_hash = ?1 AND previous_expires_at > ?4))
+		  AND expires_at > ?4
+		  AND absolute_expires_at > ?4
+		  AND last_used_at > ?7`,
+		presentedTokenHash, formatTime(now.Add(SessionRotationGrace)), newTokenHash, nowValue, idleExpiry, absoluteExpiry, s.idleCutoff(now))
 	if err != nil {
 		return err
 	}
@@ -367,7 +496,7 @@ func (s *Store) ChangePassword(ctx context.Context, accountID, keepTokenHash, ne
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE account_id = ? AND token_hash <> ?`, accountID, keepTokenHash); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET recent_auth_at = ? WHERE token_hash = ?`, nowString(), keepTokenHash); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET recent_auth_at = ?, previous_token_hash = NULL, previous_expires_at = NULL WHERE token_hash = ?`, nowString(), keepTokenHash); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -399,22 +528,36 @@ func (s *Store) ResetOwnerPassword(ctx context.Context, username, newPasswordHas
 	return tx.Commit()
 }
 
-// DeleteSession removes a single session by its token hash (logout of the
-// current device). It is a no-op if the session no longer exists.
+// DeleteSession removes a single session (logout of the current device) by
+// its current token or by a rotated-out token still inside its grace; either
+// way both tokens die. It is a no-op if the session no longer exists.
 func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE token_hash = ?`, tokenHash)
+	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE token_hash = ? OR (previous_token_hash = ? AND previous_expires_at > ?)`, tokenHash, tokenHash, nowString())
 	return err
 }
 
 // DeleteAccountSessionsExcept removes every session for the account except the
-// one identified by keepTokenHash. Pass an empty keepTokenHash to remove all
-// sessions (token_hash is never empty, so the comparison then matches all rows).
+// one identified by keepTokenHash, and drops the kept session's rotated-out
+// token. Pass an empty keepTokenHash to remove all sessions (token_hash is
+// never empty, so the comparison then matches all rows).
 func (s *Store) DeleteAccountSessionsExcept(ctx context.Context, accountID, keepTokenHash string) (int64, error) {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE account_id = ? AND token_hash <> ?`, accountID, keepTokenHash)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
-	return result.RowsAffected()
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE account_id = ? AND token_hash <> ?`, accountID, keepTokenHash)
+	if err != nil {
+		return 0, err
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET previous_token_hash = NULL, previous_expires_at = NULL WHERE account_id = ? AND token_hash = ?`, accountID, keepTokenHash); err != nil {
+		return 0, err
+	}
+	return deleted, tx.Commit()
 }
 
 // RevokeDevice marks one of an account's devices revoked and deletes its

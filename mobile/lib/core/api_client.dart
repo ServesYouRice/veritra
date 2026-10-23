@@ -227,18 +227,33 @@ class ApiClient {
     await _jsonRequest('POST', '/api/v1/auth/logout-all', token: token);
   }
 
-  Future<void> reauthenticate(
+  /// Proves password and device secret again and asks the server to rotate
+  /// the session token (card T37C). Returns the new token, which replaces
+  /// [token] at once; the old one only finishes in-flight requests for a
+  /// short grace. Returns null when the server does not rotate (an older
+  /// server answers 204), and the caller keeps [token].
+  Future<String?> reauthenticate(
     String token,
     String password,
     String deviceSecret,
   ) async {
-    await _jsonRequest(
+    final json = await _jsonRequest(
       'POST',
       '/api/v1/auth/reauth',
       token: token,
       body: {'password': password, 'device_secret': deviceSecret},
+      extraHeaders: const <String, String>{sessionRotationHeader: '1'},
     );
+    if (json.isEmpty) return null;
+    final rotated = json['token'];
+    if (rotated is! String || rotated.isEmpty || rotated.length > 256) {
+      throw const ApiResponseException();
+    }
+    return rotated;
   }
+
+  /// Opts a reauthentication into session-token rotation.
+  static const String sessionRotationHeader = 'X-Veritra-Rotate-Session';
 
   Future<void> changePassword(String token, String newPassword) async {
     await _jsonRequest(

@@ -45,6 +45,35 @@ func TestLoadPasswordCostRange(t *testing.T) {
 	}
 }
 
+func TestLoadSessionLifetimes(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SessionIdleLifetime != DefaultSessionIdleLifetime || cfg.SessionAbsoluteLifetime != DefaultSessionAbsoluteLifetime {
+		t.Fatalf("default lifetimes idle=%s absolute=%s", cfg.SessionIdleLifetime, cfg.SessionAbsoluteLifetime)
+	}
+	t.Setenv("PRIVATE_MESSENGER_SESSION_IDLE_DAYS", "7")
+	t.Setenv("PRIVATE_MESSENGER_SESSION_ABSOLUTE_DAYS", "60")
+	cfg, err = Load()
+	if err != nil || cfg.SessionIdleLifetime != 7*24*time.Hour || cfg.SessionAbsoluteLifetime != 60*24*time.Hour {
+		t.Fatalf("configured lifetimes idle=%s absolute=%s err=%v", cfg.SessionIdleLifetime, cfg.SessionAbsoluteLifetime, err)
+	}
+	t.Setenv("PRIVATE_MESSENGER_SESSION_IDLE_DAYS", "")
+	t.Setenv("PRIVATE_MESSENGER_SESSION_ABSOLUTE_DAYS", "7")
+	cfg, err = Load()
+	if err != nil || cfg.SessionIdleLifetime != 7*24*time.Hour || cfg.SessionAbsoluteLifetime != 7*24*time.Hour {
+		t.Fatalf("short absolute lifetime idle=%s absolute=%s err=%v", cfg.SessionIdleLifetime, cfg.SessionAbsoluteLifetime, err)
+	}
+	for _, values := range [][2]string{{"0", "30"}, {"14", "366"}, {"x", "30"}, {"31", "30"}} {
+		t.Setenv("PRIVATE_MESSENGER_SESSION_IDLE_DAYS", values[0])
+		t.Setenv("PRIVATE_MESSENGER_SESSION_ABSOLUTE_DAYS", values[1])
+		if _, err := Load(); err == nil {
+			t.Fatalf("invalid session lifetimes accepted: idle=%q absolute=%q", values[0], values[1])
+		}
+	}
+}
+
 func TestValidateSetupTokenUsesDecodedEntropyFloor(t *testing.T) {
 	decoded := make([]byte, 32)
 	for i := range decoded {

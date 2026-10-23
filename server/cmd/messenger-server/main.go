@@ -158,11 +158,7 @@ func resetOwnerPassword(ctx context.Context, cfg config.Config, username, passwo
 		return errors.New("password file is too large")
 	}
 	password := strings.TrimRight(string(raw), "\r\n")
-	cost := cfg.PasswordCost
-	if cost == 0 {
-		cost = auth.DefaultBcryptCost
-	}
-	hash, err := auth.HashPasswordWithCost(password, cost)
+	hash, err := auth.HashPasswordContext(ctx, auth.Anonymous, password)
 	if err != nil {
 		return fmt.Errorf("new password rejected: %w", err)
 	}
