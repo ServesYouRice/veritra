@@ -218,6 +218,15 @@ func BenchmarkSyncHiddenRun(b *testing.B) {
 					b.ReportMetric(float64(worst.Microseconds())/1000, "worst-page-ms")
 				})
 			}
+			// The HTTP handler adds these bounds to every page; a blocked
+			// run at a conversation's edges is walked each time.
+			b.Run(fmt.Sprintf("%dx2/%s/SyncBounds", n, mode), func(b *testing.B) {
+				for b.Loop() {
+					if _, _, _, err := store.SyncBounds(ctx, ds.Account); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
 		}
 	}
 }

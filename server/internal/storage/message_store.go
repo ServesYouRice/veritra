@@ -759,13 +759,13 @@ func (s *Store) ListSyncEvents(ctx context.Context, accountID, deviceID string, 
 	}
 	defer rows.Close()
 	var events []domain.SyncEvent
+	candidate := &syncCandidateScanner{rows: rows}
 	for len(events) < limit && rows.Next() {
-		var visible bool
-		event, err := scanSyncEvent(syncCandidateScanner{rows: rows, visible: &visible})
+		event, err := scanSyncEvent(candidate)
 		if err != nil {
 			return nil, err
 		}
-		if visible {
+		if candidate.visible {
 			events = append(events, event)
 		}
 	}
@@ -776,11 +776,13 @@ func (s *Store) ListSyncEvents(ctx context.Context, accountID, deviceID string, 
 // then the columns scanSyncEvent reads.
 type syncCandidateScanner struct {
 	rows    *sql.Rows
-	visible *bool
+	visible bool
+	dest    []interface{}
 }
 
-func (c syncCandidateScanner) Scan(dest ...interface{}) error {
-	return c.rows.Scan(append([]interface{}{c.visible}, dest...)...)
+func (c *syncCandidateScanner) Scan(dest ...interface{}) error {
+	c.dest = append(append(c.dest[:0], &c.visible), dest...)
+	return c.rows.Scan(c.dest...)
 }
 
 // syncEventVisibleTo is true when the conversation event se may go to the
