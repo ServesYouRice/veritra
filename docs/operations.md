@@ -534,6 +534,12 @@ Downloads verify each 64 KiB chunk of an encrypted blob before sending it,
 so damage in a part nobody requests is not noticed by downloads. The backup
 job hashes every blob in full and fails on a mismatch: a passing daily backup
 is also the full blob check. A damaged blob logs `blob_integrity_failed`.
+When the damage is past the first chunk served, the response has already
+started and the server breaks the transfer: its `http_request` log line then
+carries `outcome=aborted` with the status it had sent, and
+`veritra_http_aborted_requests_total` counts it (the request also counts in
+the usual totals; a request aborted before its status line has status 0 and
+no status class).
 
 ## Restore safety
 

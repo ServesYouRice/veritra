@@ -343,11 +343,12 @@ func routeTimeouts(next http.Handler) http.Handler {
 		ctx, cancel := context.WithTimeout(r.Context(), deadline)
 		defer cancel()
 		request := r.WithContext(ctx)
-		next.ServeHTTP(w, request)
 		// ServeMux records the matched pattern on the request it receives. Copy
 		// it back so outer metrics/logging middleware cannot fall back to a raw
-		// URL path merely because this timeout wrapper added a context.
-		r.Pattern = request.Pattern
+		// URL path merely because this timeout wrapper added a context. The
+		// defer also covers a handler that aborts with a panic.
+		defer func() { r.Pattern = request.Pattern }()
+		next.ServeHTTP(w, request)
 	})
 }
 
@@ -778,21 +779,47 @@ func (a *App) requestLogger(next http.Handler) http.Handler {
 		requestID := newRequestID()
 		w.Header().Set("X-Request-ID", requestID)
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		completed := false
+		// A handler that does not return normally was aborted: a download
+		// stopped by a failed integrity check (panic(http.ErrAbortHandler)),
+		// or a panic net/http recovers. It still gets its log line and
+		// metrics. Nothing is recovered here, so the panic keeps its value
+		// and stack and net/http still breaks the connection.
+		defer func() {
+			if completed {
+				return
+			}
+			status := rec.status
+			if !rec.wroteHeader {
+				status = 0 // no status line reached the client
+			}
+			a.metrics.aborted.Add(1)
+			a.logRequest(r, requestID, status, start, "outcome", "aborted")
+		}()
 		next.ServeHTTP(rec, r)
-		a.metrics.record(r.Pattern, rec.status, time.Since(start))
-		a.Log.Info("http_request",
-			"request_id", requestID,
-			"method", r.Method,
-			"route", requestRoute(r.Pattern),
-			"status", rec.status,
-			"duration_ms", time.Since(start).Milliseconds(),
-		)
+		completed = true
+		a.logRequest(r, requestID, rec.status, start)
 	})
+}
+
+// logRequest records the request's metrics and writes its log line: the
+// matched route pattern, never the raw path, and no headers or body.
+func (a *App) logRequest(r *http.Request, requestID string, status int, start time.Time, extra ...any) {
+	elapsed := time.Since(start)
+	a.metrics.record(r.Pattern, status, elapsed)
+	a.Log.Info("http_request", append([]any{
+		"request_id", requestID,
+		"method", r.Method,
+		"route", requestRoute(r.Pattern),
+		"status", status,
+		"duration_ms", elapsed.Milliseconds(),
+	}, extra...)...)
 }
 
 type httpMetrics struct {
 	total               atomic.Int64
 	active              atomic.Int64
+	aborted             atomic.Int64
 	statusClass         [6]atomic.Int64
 	routes              sync.Map
 	realtimeConnections func() int
@@ -886,6 +913,11 @@ func (m *httpMetrics) handle(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "veritra_http_requests_total %d\n", m.total.Load())
 	_, _ = fmt.Fprint(w, "# TYPE veritra_http_active_requests gauge\n")
 	_, _ = fmt.Fprintf(w, "veritra_http_active_requests %d\n", m.active.Load())
+	// Requests whose handler stopped without returning, such as a download
+	// cut off by a failed integrity check. They are also in the counts
+	// above, with the status they had sent (none: no status class).
+	_, _ = fmt.Fprint(w, "# TYPE veritra_http_aborted_requests_total counter\n")
+	_, _ = fmt.Fprintf(w, "veritra_http_aborted_requests_total %d\n", m.aborted.Load())
 	_, _ = fmt.Fprint(w, "# TYPE veritra_http_responses_total counter\n")
 	for class := 1; class <= 5; class++ {
 		_, _ = fmt.Fprintf(w, "veritra_http_responses_total{status_class=%q} %d\n", strconv.Itoa(class)+"xx", m.statusClass[class].Load())
@@ -992,12 +1024,20 @@ func newRequestID() string {
 
 type statusRecorder struct {
 	http.ResponseWriter
-	status int
+	status      int
+	wroteHeader bool
 }
 
 func (r *statusRecorder) WriteHeader(status int) {
 	r.status = status
+	r.wroteHeader = true
 	r.ResponseWriter.WriteHeader(status)
+}
+
+func (r *statusRecorder) Write(p []byte) (int, error) {
+	// A body write sends an implicit 200 status line first.
+	r.wroteHeader = true
+	return r.ResponseWriter.Write(p)
 }
 
 func (r *statusRecorder) Unwrap() http.ResponseWriter {
@@ -1010,6 +1050,7 @@ func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 		return nil, nil, errors.New("hijacking unsupported")
 	}
 	r.status = http.StatusSwitchingProtocols
+	r.wroteHeader = true
 	return hijacker.Hijack()
 }
 
