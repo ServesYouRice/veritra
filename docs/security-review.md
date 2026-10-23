@@ -117,7 +117,7 @@ recorded and checked, but never count: iOS `simulator-debug` (job
 | Platform | Signed file | Structural checks in `check-release-evidence.py` |
 |---|---|---|
 | iOS | `.ipa` | One `Payload/*.app`, iphoneos plist, arm64 iOS Mach-O with a code signature, distribution profile (`get-task-allow=false`) |
-| Android | `.apk` (not `.aab`) | `org.veritra.private_messenger`, not debuggable, arm64 crypto library, an APK Signature Scheme v2/v3 block with exactly one signer whose certificate SHA-256 equals the record's `signing.certificate_sha256` and is not the Android debug certificate |
+| Android | `.apk` (not `.aab`) | `org.veritra.private_messenger`, not debuggable, arm64 crypto library, an APK Signature Scheme v2/v3 block with exactly one signer whose certificate SHA-256 is the pinned `android.release_certificate_sha256` (the record's `signing.certificate_sha256` must name it too) and is not the Android debug certificate |
 
 Both bind the platform, type, candidate commit, the file's sha256 and the
 provenance (workflow, job, run, source commit). A signed file with the same
@@ -125,6 +125,28 @@ digest as a debug build blocks. The checks are structural; the signed build
 runs `codesign --verify` or `apksigner verify`, and the attestation proves
 which workflow and commit made the file. Signing-key rotation (several
 certificates) is not accepted yet.
+
+#### Pinning the Android release certificate
+
+`release/release-policy.json` holds `"android": {"release_certificate_sha256": null}`.
+While it is null, the checker refuses every Android `signed-release` record
+("pin the release certificate first"), so the release stays blocked. The
+owner pins the certificate of the key that signs the G24 release APK once,
+before the candidate is frozen:
+
+1. Read its SHA-256 from a signed APK with
+   `apksigner verify --print-certs app-release.apk` ("Signer #1 certificate
+   SHA-256 digest"), or from the keystore with
+   `keytool -list -v -keystore release.jks -alias <alias>` (the `SHA256:`
+   line, with the colons removed and the letters lower-cased).
+2. Write it as 64 lowercase hex characters, for example
+   `"release_certificate_sha256": "3f2a…"` (all 64), in a reviewed pull
+   request to `main`. Anything else (upper case, colons, a `sha256:` prefix,
+   extra keys) blocks every gate.
+3. Freeze the candidate after that merge. The checker reads the policy from
+   the candidate tree, so the pin is part of what the approvals review.
+
+Changing the key means changing the pin the same way.
 
 ## Recording an approval
 

@@ -26,6 +26,9 @@
       "android": "mobile"
     }
   },
+  "android": {
+    "release_certificate_sha256": null
+  },
   "approvals": {
     "production_crypto": {
       "path": "release/approvals/{commit}/production-crypto.json",

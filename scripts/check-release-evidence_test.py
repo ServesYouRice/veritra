@@ -429,6 +429,7 @@ def fixture() -> tuple[Path, dict[str, object]]:
         "schema_version": 3,
         "required_ci_jobs": list(JOBS),
         "mobile_artifacts": MOBILE_POLICY,
+        "android": {"release_certificate_sha256": fingerprint(RELEASE_CERT)},
         "approvals": APPROVALS_POLICY,
     }
     write_json(temp / "release/release-policy.json", policy)
@@ -1033,11 +1034,21 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
     for signing in ({"identity": "debug"}, {"identity": "distribution"}, {"verification": "fail"}, {"verifier": ""}):
         expect_blocked(root, with_android(record(signing=signing)), f"{label} signature was not verified as a release signature")
 
-    # Signing certificate fingerprint: bound to the record, one signer only.
+    # Signing certificate: the pinned release certificate, named by the record,
+    # one signer only. Review finding: a record naming its own (non-debug)
+    # key was accepted, since it was only compared with itself.
+    own_key = {APK_V2: [OTHER_CERT], APK_V3: [OTHER_CERT]}
+    expect_blocked(root, with_android(apk("own-key.apk", OTHER_CERT, signers=own_key)),
+                   f"{label} signing certificate is not the pinned release certificate",
+                   "signed android artifact signer certificate is not the pinned release certificate", no_signed)
     expect_blocked(root, with_android(apk("other-cert.apk", OTHER_CERT, signers={APK_V2: [RELEASE_CERT]})),
-                   "signer certificate does not match the recorded fingerprint", no_signed)
+                   f"{label} signing certificate is not the pinned release certificate", no_signed,
+                   absent=("signer certificate is not the pinned",))
     expect_blocked(root, with_android(apk("mixed.apk", signers={APK_V2: [RELEASE_CERT], APK_V3: [OTHER_CERT]})),
-                   "signer certificate does not match the recorded fingerprint")
+                   "signer certificate is not the pinned release certificate")
+    expect_blocked(root, with_android(apk("other-signer.apk", signers={APK_V3: [OTHER_CERT]})),
+                   "signed android artifact signer certificate is not the pinned release certificate",
+                   absent=(f"{label} signing certificate is not the pinned",))
     expect_blocked(root, with_android(apk("two-signers.apk", signers={APK_V2: [RELEASE_CERT, OTHER_CERT]})),
                    "signed android artifact must have exactly one signer")
     expect_blocked(root, with_android(apk("no-signer.apk", signers={APK_V2: []})), "must have exactly one signer")
@@ -1123,6 +1134,53 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
     # Skipped mobile CI: the emulator build job stays required.
     expect_blocked(root, variant_ci(valid, "mobile", "skipped"), "required CI job 'mobile' is missing or not successful")
     expect_blocked(root, variant_ci(valid, "mobile", None), "required CI job 'mobile' is missing or not successful")
+
+    # The pin lives in the policy. Unpinned (null, the repository today): no
+    # Android signed-release record counts, whatever key signed it, while the
+    # iOS record and the preflight are unaffected.
+    policy_path = root / "release/release-policy.json"
+    original_policy = policy_path.read_text(encoding="utf-8")
+
+    def set_android_policy(android: object) -> None:
+        policy = json.loads(original_policy)
+        if android is REMOVE:
+            policy.pop("android")
+        else:
+            policy["android"] = android
+        write_json(policy_path, policy)
+
+    unpinned = "pin the release certificate first"
+    try:
+        set_android_policy({"release_certificate_sha256": None})
+        expect_blocked(root, valid, unpinned, "signer certificate is not the pinned release certificate", no_signed,
+                       absent=("ios signed-release", "release policy android"))
+        expect_blocked(root, with_android(apk("unpinned-own-key.apk", OTHER_CERT, signers=own_key)), unpinned, no_signed)
+        expect_valid(root, valid, "--preflight")
+        good = fingerprint(RELEASE_CERT)
+        for android in (
+            {"release_certificate_sha256": good.upper()},
+            {"release_certificate_sha256": good[:63]},
+            {"release_certificate_sha256": "sha256:" + good},
+            {"release_certificate_sha256": ""},
+            {"release_certificate_sha256": 7},
+            {"release_certificate_sha256": [good]},
+            {"release_certificate_sha256": good, "previous_certificate_sha256": None},
+            {},
+            None,
+            good,
+            REMOVE,
+        ):
+            set_android_policy(android)
+            malformed = "release policy android.release_certificate_sha256 is not null or 64 lowercase hex characters"
+            expect_blocked(root, valid, malformed, unpinned)
+            expect_blocked(root, valid, malformed, extra=("--preflight",))
+        # Pinned to another key: the fixture's release-signed APK no longer counts.
+        set_android_policy({"release_certificate_sha256": fingerprint(OTHER_CERT)})
+        expect_blocked(root, valid, f"{label} signing certificate is not the pinned release certificate",
+                       "signed android artifact signer certificate is not the pinned release certificate", no_signed)
+        expect_valid(root, with_android(apk("pinned-other.apk", OTHER_CERT, signers=own_key)))
+    finally:
+        policy_path.write_text(original_policy, encoding="utf-8")
     expect_valid(root, valid)
 
 
@@ -1153,6 +1211,9 @@ def main() -> int:
         repo_policy = json.loads((ROOT / "release/release-policy.json").read_text(encoding="utf-8"))
         assert repo_policy["mobile_artifacts"] == MOBILE_POLICY, "repository policy drifted from the fixture"
         assert repo_policy["approvals"] == APPROVALS_POLICY, "repository approval rules drifted from the fixture"
+        pin = repo_policy["android"]["release_certificate_sha256"]
+        assert set(repo_policy["android"]) == {"release_certificate_sha256"}, "repository android policy drifted"
+        assert pin is None or (len(pin) == 64 and set(pin) <= set("0123456789abcdef")), "malformed repository pin"
         assert repo_policy["schema_version"] == 3
     finally:
         shutil.rmtree(root)

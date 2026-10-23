@@ -13,8 +13,10 @@ recorded digest:
   provisioning profile.
 - Android: an APK of the Veritra app, not debuggable, shipping the arm64 crypto
   library, with an APK Signature Scheme v2/v3 block that has exactly one signer
-  whose certificate is the recorded SHA-256 fingerprint and is not the Android
-  debug certificate.
+  whose certificate is the release certificate pinned in the policy
+  (``android.release_certificate_sha256``, which the record must also name)
+  and is not the Android debug certificate. While the pin is null, no Android
+  signed-release record counts.
 
 These checks are structural only; signature and attestation cryptography is
 verified by codesign/apksigner in the G24 build and by ``gh attestation
@@ -117,6 +119,7 @@ ARTIFACT_RULES = {
     },
 }
 CERTIFICATE_RE = re.compile(r"^[0-9a-f]{64}$")
+ANDROID_PIN_KEY = "release_certificate_sha256"  # policy["android"]; null until the owner pins it
 ANDROID_APPLICATION_ID = "org.veritra.private_messenger"
 ANDROID_CRYPTO_LIBRARY = "lib/arm64-v8a/libprivate_messenger_crypto.so"
 ANDROID_DEBUG_CERTIFICATE_MARKER = b"Android Debug"  # CN of the SDK debug keystore
@@ -368,6 +371,25 @@ def verify_approvals(
     return verified
 
 
+def android_release_certificate(policy: dict[str, Any], errors: list[str] | None = None) -> str | None:
+    """The pinned Android release certificate SHA-256; None while unpinned.
+
+    The owner pins it in the reviewed policy (docs/security-review.md). A
+    malformed pin is reported to ``errors`` and treated as unpinned.
+    """
+    android = policy.get("android")
+    pin = android.get(ANDROID_PIN_KEY) if isinstance(android, dict) else None
+    if (
+        not isinstance(android, dict)
+        or set(android) != {ANDROID_PIN_KEY}
+        or not (pin is None or (isinstance(pin, str) and CERTIFICATE_RE.fullmatch(pin)))
+    ):
+        if errors is not None:
+            errors.append(f"release policy android.{ANDROID_PIN_KEY} is not null or 64 lowercase hex characters")
+        return None
+    return pin
+
+
 def preflight(
     root: Path, policy: dict[str, Any], candidate: str, approvals_commit: str | None
 ) -> tuple[list[str], dict[str, dict[str, Any]]]:
@@ -378,6 +400,7 @@ def preflight(
         errors.append("release policy required CI jobs do not match the protected set")
     if policy.get("mobile_artifacts") != REQUIRED_MOBILE_ARTIFACTS:
         errors.append("release policy mobile artifact rules do not match the protected set")
+    android_release_certificate(policy, errors)
     if policy.get("approvals") != REQUIRED_APPROVALS:
         errors.append("release policy approvals do not match the protected set")
     # The protected approval rules apply whatever the policy file says.
@@ -641,8 +664,11 @@ def manifest_facts(data: bytes) -> tuple[str | None, bool]:
     return package, debuggable
 
 
-def apk_errors(path: Path, certificate: str | None) -> list[str]:
-    """Structural release-signing checks; apksigner verifies the signature in G24."""
+def apk_errors(path: Path, pinned_certificate: str | None) -> list[str]:
+    """Structural release-signing checks; apksigner verifies the signature in G24.
+
+    The signer must be the pinned release certificate; with no pin, nothing passes.
+    """
     try:
         if path.stat().st_size > MAX_APK_BYTES:
             return ["signed android artifact is too large"]
@@ -674,8 +700,8 @@ def apk_errors(path: Path, certificate: str | None) -> list[str]:
     if any(ANDROID_DEBUG_CERTIFICATE_MARKER in leaf for leaf in leaves):
         errors.append("signed android artifact is signed with the Android debug certificate")
     fingerprints = {hashlib.sha256(leaf).hexdigest() for leaf in leaves}
-    if certificate is not None and fingerprints != {certificate}:
-        errors.append("signed android artifact signer certificate does not match the recorded fingerprint")
+    if fingerprints != {pinned_certificate}:
+        errors.append("signed android artifact signer certificate is not the pinned release certificate")
     return errors
 
 
@@ -685,6 +711,7 @@ def check_mobile_record(
     candidate: str,
     ci_run_id: Any,
     artifacts_dir: Path,
+    pinned_certificate: str | None,
     errors: list[str],
 ) -> tuple[str, str, str] | None:
     """Validate one record; return (platform, type, digest) only if it is sound."""
@@ -749,12 +776,19 @@ def check_mobile_record(
         identity = rules["identity"]
         if signing.get("identity") != identity or signing.get("verification") != "pass" or not signing.get("verifier"):
             errors.append(f"{label} signature was not verified as a {identity} signature")
-        certificate = None
         if platform == "android":
+            # The record's own fingerprint proves nothing: any non-debug key
+            # would match itself. The certificate must be the pinned one.
+            if pinned_certificate is None:
+                errors.append(
+                    f"{label} cannot count until the release certificate is pinned "
+                    f"(pin the release certificate first: android.{ANDROID_PIN_KEY} in release/release-policy.json)"
+                )
             certificate = signing.get("certificate_sha256")
             if not isinstance(certificate, str) or not CERTIFICATE_RE.fullmatch(certificate):
                 errors.append(f"{label} has no valid signing certificate SHA-256 fingerprint")
-                certificate = None
+            elif pinned_certificate is not None and certificate != pinned_certificate:
+                errors.append(f"{label} signing certificate is not the pinned release certificate")
         # Compare run IDs as integers so "0123" cannot dodge CI run 123.
         same_run = (
             isinstance(run_id, str)
@@ -773,7 +807,7 @@ def check_mobile_record(
             elif platform == "ios":
                 errors.extend(ipa_errors(path))
             else:
-                errors.extend(apk_errors(path, certificate))
+                errors.extend(apk_errors(path, pinned_certificate))
     if len(errors) != start or digest is None:
         return None
     return platform, artifact_type, digest
@@ -783,6 +817,7 @@ def validate_mobile_artifacts(
     manifest: dict[str, Any],
     candidate: str,
     artifacts_dir: Path,
+    pinned_certificate: str | None,
     errors: list[str],
 ) -> None:
     records = manifest.get("mobile_artifacts")
@@ -791,7 +826,9 @@ def validate_mobile_artifacts(
         records = []
     sound = []
     for index, record in enumerate(records):
-        result = check_mobile_record(index, record, candidate, manifest.get("ci_run_id"), artifacts_dir, errors)
+        result = check_mobile_record(
+            index, record, candidate, manifest.get("ci_run_id"), artifacts_dir, pinned_certificate, errors
+        )
         if result is not None:
             sound.append(result)
     debug_digests = {digest for _, kind, digest in sound if kind in DEBUG_TYPES}
@@ -870,7 +907,7 @@ def validate_manifest(
     if artifacts_dir is None:
         errors.append("no mobile artifact directory to verify signed artifacts against")
     else:
-        validate_mobile_artifacts(manifest, candidate, artifacts_dir, errors)
+        validate_mobile_artifacts(manifest, candidate, artifacts_dir, android_release_certificate(policy), errors)
     return errors
 
 
