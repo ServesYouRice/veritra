@@ -176,9 +176,9 @@ request, and `scripts/check-release-evidence.py` blocks unless:
 - that tip descends from the candidate;
 - each approval names the candidate and its tree;
 - each approval has a non-empty `reviewer` and `reviewer_is_author` exactly
-  `false`, and the `reviewer` is not the candidate commit's git author (its
-  name, or its email anywhere in the field, ignoring case; raw and after
-  `.mailmap`);
+  `false`, and the `reviewer` is not the candidate commit's git author (the
+  whole field equal to its name, or its email as one word of the field, as
+  in `Name <email>`; ignoring case, raw and after `.mailmap`);
 - the change that put each approval on `main` (a merged pull request counts
   as one change) came after the candidate and touched nothing outside
   `release/approvals/<candidate sha>/`.
