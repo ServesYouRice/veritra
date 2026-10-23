@@ -239,9 +239,8 @@ func (a *API) deleteAccount(w http.ResponseWriter, r *http.Request, principal do
 }
 
 func (a *API) syncWebSocket(w http.ResponseWriter, r *http.Request) {
-	principal, err := a.principalFromRequest(r)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
+	principal, ok := a.authenticate(w, r)
+	if !ok {
 		return
 	}
 	remoteIP := a.clientIP(r)

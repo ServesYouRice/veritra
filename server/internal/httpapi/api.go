@@ -165,6 +165,9 @@ func (a *API) withAuth(next authedHandler) http.HandlerFunc {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
+		if !admitAccount(w, r, principal.AccountID) {
+			return
+		}
 		now := time.Now().UTC()
 		if principal.DeviceID != "" && activity.DeviceSeenDue(now) {
 			if err := a.Store.MarkDeviceSeen(r.Context(), principal.DeviceID); err != nil {
@@ -198,12 +201,24 @@ func recentlyAuthenticated(principal domain.Principal) bool {
 	return principal.DeviceID != "" && principal.RecentAuthAt != nil && principal.RecentAuthAt.After(time.Now().UTC().Add(-5*time.Minute))
 }
 
-func (a *API) principalFromRequest(r *http.Request) (domain.Principal, error) {
+// authenticate resolves the request's session for handlers outside withAuth
+// and charges it to the account's request budget. It writes the 401 or 429
+// itself and reports whether the handler may go on.
+func (a *API) authenticate(w http.ResponseWriter, r *http.Request) (domain.Principal, bool) {
 	tokenHash, ok := bearerTokenHash(r)
 	if !ok {
-		return domain.Principal{}, storage.ErrUnauthorized
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return domain.Principal{}, false
 	}
-	return a.Store.PrincipalByTokenHash(r.Context(), tokenHash)
+	principal, err := a.Store.PrincipalByTokenHash(r.Context(), tokenHash)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return domain.Principal{}, false
+	}
+	if !admitAccount(w, r, principal.AccountID) {
+		return domain.Principal{}, false
+	}
+	return principal, true
 }
 
 // bearerTokenHash returns the hash of a well-formed bearer token. The raw

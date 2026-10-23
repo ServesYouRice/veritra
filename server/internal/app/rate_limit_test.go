@@ -16,7 +16,7 @@ func TestEnrollmentLimiterUsesSpoofResistantProxyIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse proxy network: %v", err)
 	}
-	limiter, err := newRateLimiter(httpapi.NewClientIdentityResolver([]*net.IPNet{proxyNetwork}), 100, 100, 2)
+	limiter, err := newRateLimiter(httpapi.NewClientIdentityResolver([]*net.IPNet{proxyNetwork}), rateLimits{general: 100, auth: 100, enrollment: 2, account: 100, signedIn: 100})
 	if err != nil {
 		t.Fatalf("new limiter: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestRecoveryRouteUsesCredentialRateLimit(t *testing.T) {
 }
 
 func TestRateLimiterEvictsInsteadOfRefusingNewClients(t *testing.T) {
-	limiter, err := newRateLimiter(httpapi.NewClientIdentityResolver(nil), 100, 100, 100)
+	limiter, err := newRateLimiter(httpapi.NewClientIdentityResolver(nil), rateLimits{general: 100, auth: 100, enrollment: 100, account: 100, signedIn: 100})
 	if err != nil {
 		t.Fatalf("new limiter: %v", err)
 	}
