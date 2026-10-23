@@ -13,8 +13,10 @@ recorded digest:
   provisioning profile.
 - Android: an APK of the Veritra app, not debuggable, shipping the arm64 crypto
   library, with an APK Signature Scheme v2/v3 block that has exactly one signer
-  whose certificate is the recorded SHA-256 fingerprint and is not the Android
-  debug certificate.
+  whose certificate is the release certificate pinned in the policy
+  (``android.release_certificate_sha256``, which the record must also name)
+  and is not the Android debug certificate. While the pin is null, no Android
+  signed-release record counts.
 
 These checks are structural only; signature and attestation cryptography is
 verified by codesign/apksigner in the G24 build and by ``gh attestation
@@ -35,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import plistlib
@@ -117,19 +120,24 @@ ARTIFACT_RULES = {
     },
 }
 CERTIFICATE_RE = re.compile(r"^[0-9a-f]{64}$")
+ANDROID_PIN_KEY = "release_certificate_sha256"  # policy["android"]; null until the owner pins it
 ANDROID_APPLICATION_ID = "org.veritra.private_messenger"
 ANDROID_CRYPTO_LIBRARY = "lib/arm64-v8a/libprivate_messenger_crypto.so"
 ANDROID_DEBUG_CERTIFICATE_MARKER = b"Android Debug"  # CN of the SDK debug keystore
 APK_SIG_BLOCK_MAGIC = b"APK Sig Block 42"
+ZIP_EOCD_MAGIC, ZIP64_LOCATOR_MAGIC, ZIP_EOCD_SIZE = b"PK\x05\x06", b"PK\x06\x07", 22
 APK_SIGNATURE_SCHEMES = (0x7109871A, 0xF05368C0, 0x1B93AD61)  # v2, v3, v3.1
 MAX_APK_BYTES = 512 * 1024 * 1024
 AXML_FILE, AXML_STRING_POOL, AXML_RESOURCE_MAP, AXML_START_ELEMENT = 0x0003, 0x0001, 0x0180, 0x0102
+AXML_FIRST_NODE, AXML_LAST_NODE = 0x0100, 0x017F  # namespace, element, end and CDATA nodes
 AXML_UTF8_FLAG = 0x100
 AXML_TYPE_STRING, AXML_TYPE_BOOLEAN = 0x03, 0x12
 ANDROID_ATTR_DEBUGGABLE = 0x0101000F
 FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 RUN_ID_RE = re.compile(r"^[0-9]{1,20}$")  # ASCII only; str.isdigit accepts other scripts
-WORKFLOW_RE = re.compile(r"^\.github/workflows/[A-Za-z0-9._-]+\.ya?ml$")
+# No "." in the base name: release.yml passes the path to gh as a regular
+# expression, where "c..yml" would also match "ci.yml".
+WORKFLOW_RE = re.compile(r"^\.github/workflows/[A-Za-z0-9_-]+\.ya?ml$")
 MAX_IPA_MEMBER = 256 * 1024 * 1024
 MH_MAGIC_64 = 0xFEEDFACF
 FAT_MAGIC = 0xCAFEBABE
@@ -175,12 +183,10 @@ def load_json(path: Path) -> dict[str, Any]:
 def expected_commit(root: Path, supplied: str | None) -> str:
     if supplied:
         return supplied
-    try:
-        return subprocess.check_output(
-            ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
-        ).strip()
-    except (OSError, subprocess.CalledProcessError) as exc:
-        raise ValueError("cannot determine the candidate commit") from exc
+    head = git_text(root, "rev-parse", "HEAD")
+    if not head:
+        raise ValueError("cannot determine the candidate commit")
+    return head
 
 
 def require(value: Any, description: str, errors: list[str]) -> None:
@@ -188,15 +194,26 @@ def require(value: Any, description: str, errors: list[str]) -> None:
         errors.append(f"missing {description}")
 
 
+# History must read as committed. Replace refs and a grafts file
+# (.git/info/grafts, or GIT_GRAFT_FILE from the caller) can both rewrite it
+# locally: a replace ref could make a commit without approvals read as one
+# with them, and a graft could give an unrelated approvals commit the
+# candidate as a parent. --no-replace-objects does not disable grafts, so the
+# graft file is pointed at a path under os.devnull, which is not a directory
+# and so can never exist.
+GIT_HISTORY_ENV = {"GIT_NO_REPLACE_OBJECTS": "1", "GIT_GRAFT_FILE": os.path.join(os.devnull, "grafts")}
+
+
 def git(root: Path, *args: str) -> bytes | None:
     """Run a read-only git query; None when git fails, so callers fail closed.
 
-    Replace refs are ignored: a local refs/replace entry must not be able to
-    make a commit without approvals read as one with them.
+    Replace refs and grafts are ignored (``GIT_HISTORY_ENV``).
     """
     command = ["git", "--no-replace-objects", "-C", str(root), *args]
     try:
-        return subprocess.run(command, capture_output=True, check=True).stdout
+        return subprocess.run(
+            command, capture_output=True, check=True, env={**os.environ, **GIT_HISTORY_ENV}
+        ).stdout
     except (OSError, subprocess.CalledProcessError):
         return None
 
@@ -208,6 +225,34 @@ def git_text(root: Path, *args: str) -> str | None:
 
 def approval_path(approval_policy: dict[str, Any], candidate: str) -> str:
     return str(approval_policy["path"]).format(commit=candidate)
+
+
+def normalized_identity(value: str) -> str:
+    return " ".join(value.split()).casefold()
+
+
+def git_author(root: Path, commit: str) -> tuple[set[str], set[str]] | None:
+    """(names, emails) of the commit's author, raw and after .mailmap."""
+    output = git(root, "show", "-s", "--format=%an%x00%ae%x00%aN%x00%aE", commit)
+    if output is None:
+        return None
+    parts = [normalized_identity(part) for part in output.decode("utf-8", "replace").strip("\n").split("\0")]
+    if len(parts) != 4:
+        return None
+    return {name for name in parts[0::2] if name}, {email for email in parts[1::2] if email}
+
+
+def reviewer_is_git_author(reviewer: str, author: tuple[set[str], set[str]]) -> bool:
+    """Whether the self-declared reviewer is the candidate's recorded author.
+
+    Both sides are self-declared (git identities are whatever the committer
+    configured), so this only catches an author recording themselves under
+    the same name or email; it is no proof of independence.
+    """
+    names, emails = author
+    value = normalized_identity(reviewer)
+    # "Name <email>" and similar forms are split so the email is compared whole.
+    return value in names or not emails.isdisjoint(re.split(r"[\s<>()\[\],;:\"']+", value))
 
 
 def landed_alone(root: Path, approvals_commit: str, path: str, candidate: str) -> str | None:
@@ -238,6 +283,7 @@ def check_approval(
     approval_policy: dict[str, Any],
     candidate: str,
     candidate_tree: str,
+    candidate_author: tuple[set[str], set[str]],
     approvals_commit: str,
     errors: list[str],
 ) -> dict[str, Any] | None:
@@ -283,6 +329,8 @@ def check_approval(
     reviewer = approval.get("reviewer")
     if not isinstance(reviewer, str) or not reviewer.strip():
         errors.append(f"missing {approval_name} reviewer")
+    elif approval_policy.get("not_author") and reviewer_is_git_author(reviewer, candidate_author):
+        errors.append(f"{approval_name} reviewer is the candidate commit's git author")
     problem = landed_alone(root, approvals_commit, path, candidate)
     if problem:
         errors.append(f"{label} {problem}")
@@ -314,12 +362,37 @@ def verify_approvals(
     if git(root, "merge-base", "--is-ancestor", candidate, approvals_commit) is None:
         errors.append("approvals commit does not descend from the candidate commit")
         return {}
+    candidate_author = git_author(root, candidate)
+    if candidate_author is None:
+        errors.append("cannot read the candidate commit's git author")
+        return {}
     verified = {}
     for name, approval_policy in REQUIRED_APPROVALS.items():
-        entry = check_approval(root, name, approval_policy, candidate, candidate_tree, approvals_commit, errors)
+        entry = check_approval(
+            root, name, approval_policy, candidate, candidate_tree, candidate_author, approvals_commit, errors
+        )
         if entry is not None:
             verified[name] = entry
     return verified
+
+
+def android_release_certificate(policy: dict[str, Any], errors: list[str] | None = None) -> str | None:
+    """The pinned Android release certificate SHA-256; None while unpinned.
+
+    The owner pins it in the reviewed policy (docs/security-review.md). A
+    malformed pin is reported to ``errors`` and treated as unpinned.
+    """
+    android = policy.get("android")
+    pin = android.get(ANDROID_PIN_KEY) if isinstance(android, dict) else None
+    if (
+        not isinstance(android, dict)
+        or set(android) != {ANDROID_PIN_KEY}
+        or not (pin is None or (isinstance(pin, str) and CERTIFICATE_RE.fullmatch(pin)))
+    ):
+        if errors is not None:
+            errors.append(f"release policy android.{ANDROID_PIN_KEY} is not null or 64 lowercase hex characters")
+        return None
+    return pin
 
 
 def preflight(
@@ -332,6 +405,7 @@ def preflight(
         errors.append("release policy required CI jobs do not match the protected set")
     if policy.get("mobile_artifacts") != REQUIRED_MOBILE_ARTIFACTS:
         errors.append("release policy mobile artifact rules do not match the protected set")
+    android_release_certificate(policy, errors)
     if policy.get("approvals") != REQUIRED_APPROVALS:
         errors.append("release policy approvals do not match the protected set")
     # The protected approval rules apply whatever the policy file says.
@@ -477,10 +551,35 @@ def length_prefixed_items(buffer: bytes) -> list[bytes]:
     return items
 
 
+def apk_zip_layout_error(data: bytes) -> str | None:
+    """Why the APK's zip end record is not the single, unambiguous one.
+
+    An APK has no zip comment, so its end of central directory record is
+    exactly the last 22 bytes. A comment could hide a second signing block,
+    central directory and end record that a lenient reader (Python's zipfile,
+    a backwards scan) would pick instead of the one Android uses, so no other
+    end record signature may appear where a comment could reach. ZIP64 and
+    multi-disk archives are not APKs.
+    """
+    eocd = len(data) - ZIP_EOCD_SIZE
+    if eocd < 0 or data[eocd : eocd + 4] != ZIP_EOCD_MAGIC or data[-2:] != b"\0\0":
+        return "has a zip comment or does not end with its end of central directory record"
+    if data.count(ZIP_EOCD_MAGIC, max(0, eocd - 0xFFFF)) != 1:
+        return "has more than one end of central directory record"
+    disk, directory_disk, disk_entries, entries = struct.unpack_from("<HHHH", data, eocd + 4)
+    zip64 = eocd >= 20 and data[eocd - 20 : eocd - 16] == ZIP64_LOCATOR_MAGIC
+    if disk or directory_disk or disk_entries != entries or zip64:
+        return "is a multi-disk or ZIP64 archive"
+    return None
+
+
 def apk_signing_block(data: bytes) -> dict[int, bytes]:
-    """ID-value pairs of the APK Signing Block; empty when there is none."""
-    eocd = data.rfind(b"PK\x05\x06", max(0, len(data) - 22 - 0xFFFF))
-    if eocd < 0 or eocd + 22 > len(data):
+    """ID-value pairs of the APK Signing Block; empty when there is none.
+
+    The end record is the last 22 bytes (``apk_zip_layout_error`` passed).
+    """
+    eocd = len(data) - ZIP_EOCD_SIZE
+    if eocd < 0 or data[eocd : eocd + 4] != ZIP_EOCD_MAGIC:
         raise ValueError("no end of central directory")
     cd_size, cd_offset = struct.unpack_from("<II", data, eocd + 12)
     if cd_offset + cd_size != eocd:
@@ -559,13 +658,20 @@ def manifest_facts(data: bytes) -> tuple[str | None, bool]:
 
     Any ``debuggable`` attribute that is not a literal false counts as
     debuggable, so a resource reference fails closed.
+
+    Android reads the string pool and resource map only before the first XML
+    node, so one of either anywhere else, or a second one, could show this
+    check other names or attribute IDs than the platform uses: both are
+    refused. So is a ``manifest`` element that is not the single root, since
+    the platform takes the package from the root.
     """
     kind, header_size, total = struct.unpack_from("<HHI", data, 0)
     if kind != AXML_FILE or total > len(data):
         raise ValueError("not a compiled Android XML file")
-    strings: list[str] = []
-    resource_ids: list[int] = []
+    strings: list[str] | None = None
+    resource_ids: list[int] | None = None
     package, debuggable = None, False
+    in_nodes, elements = False, 0
     offset = header_size
     while offset + 8 <= total:
         kind, chunk_header, size = struct.unpack_from("<HHI", data, offset)
@@ -573,19 +679,31 @@ def manifest_facts(data: bytes) -> tuple[str | None, bool]:
             raise ValueError("chunk out of range")
         chunk = data[offset : offset + size]
         if kind == AXML_STRING_POOL:
+            if in_nodes or strings is not None:
+                raise ValueError("string pool after the first XML node, or a second one")
             strings = axml_strings(chunk)
         elif kind == AXML_RESOURCE_MAP:
+            if in_nodes or resource_ids is not None:
+                raise ValueError("resource map after the first XML node, or a second one")
             resource_ids = list(struct.unpack_from(f"<{(size - chunk_header) // 4}I", chunk, chunk_header))
-        elif kind == AXML_START_ELEMENT:
+        elif AXML_FIRST_NODE <= kind <= AXML_LAST_NODE:
+            in_nodes = True
+        if kind == AXML_START_ELEMENT:
+            if strings is None:
+                raise ValueError("XML element without a string pool")
+            ids = resource_ids or []
             _, name, attr_start, attr_size, attr_count = struct.unpack_from("<IIHHH", chunk, chunk_header)
             if attr_size < 20:
                 raise ValueError("short attribute")
             element = strings[name]
+            if (element == "manifest") != (elements == 0):
+                raise ValueError("manifest is not the single root element")
+            elements += 1
             for index in range(attr_count):
                 at = chunk_header + attr_start + index * attr_size
                 _, attr_name, raw, _, _, value_type, value = struct.unpack_from("<IIIHBBI", chunk, at)
                 attr = strings[attr_name] if attr_name < len(strings) else ""
-                attr_id = resource_ids[attr_name] if attr_name < len(resource_ids) else None
+                attr_id = ids[attr_name] if attr_name < len(ids) else None
                 if element == "manifest" and attr == "package" and not attr_id:
                     package = strings[value] if value_type == AXML_TYPE_STRING else strings[raw]
                 if element == "application" and (attr_id == ANDROID_ATTR_DEBUGGABLE or attr == "debuggable"):
@@ -595,14 +713,29 @@ def manifest_facts(data: bytes) -> tuple[str | None, bool]:
     return package, debuggable
 
 
-def apk_errors(path: Path, certificate: str | None) -> list[str]:
-    """Structural release-signing checks; apksigner verifies the signature in G24."""
+def apk_errors(path: Path, pinned_certificate: str | None) -> list[str]:
+    """Structural release-signing checks; apksigner verifies the signature in G24.
+
+    The signer must be the pinned release certificate; with no pin, nothing passes.
+    """
     try:
         if path.stat().st_size > MAX_APK_BYTES:
             return ["signed android artifact is too large"]
         data = path.read_bytes()
-        with zipfile.ZipFile(path) as archive:
-            names = set(archive.namelist())
+        layout = apk_zip_layout_error(data)
+        if layout:
+            return [f"signed android artifact {layout}"]
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            entries = archive.infolist()
+            # Readers disagree on which of two same-named entries wins, and
+            # zipfile cuts names at a NUL byte that Android keeps.
+            if len({entry.filename for entry in entries}) != len(entries) or any(
+                entry.filename != entry.orig_filename for entry in entries
+            ):
+                return ["signed android artifact has duplicate or ambiguous entry names"]
+            if struct.unpack_from("<H", data, len(data) - ZIP_EOCD_SIZE + 10)[0] != len(entries):
+                return ["signed android artifact central directory does not match its end record"]
+            names = {entry.filename for entry in entries}
             if "AndroidManifest.xml" not in names or "classes.dex" not in names:
                 return ["signed android artifact is not an Android app package"]
             package, debuggable = manifest_facts(read_member(archive, "AndroidManifest.xml"))
@@ -628,8 +761,8 @@ def apk_errors(path: Path, certificate: str | None) -> list[str]:
     if any(ANDROID_DEBUG_CERTIFICATE_MARKER in leaf for leaf in leaves):
         errors.append("signed android artifact is signed with the Android debug certificate")
     fingerprints = {hashlib.sha256(leaf).hexdigest() for leaf in leaves}
-    if certificate is not None and fingerprints != {certificate}:
-        errors.append("signed android artifact signer certificate does not match the recorded fingerprint")
+    if fingerprints != {pinned_certificate}:
+        errors.append("signed android artifact signer certificate is not the pinned release certificate")
     return errors
 
 
@@ -639,6 +772,7 @@ def check_mobile_record(
     candidate: str,
     ci_run_id: Any,
     artifacts_dir: Path,
+    pinned_certificate: str | None,
     errors: list[str],
 ) -> tuple[str, str, str] | None:
     """Validate one record; return (platform, type, digest) only if it is sound."""
@@ -703,12 +837,19 @@ def check_mobile_record(
         identity = rules["identity"]
         if signing.get("identity") != identity or signing.get("verification") != "pass" or not signing.get("verifier"):
             errors.append(f"{label} signature was not verified as a {identity} signature")
-        certificate = None
         if platform == "android":
+            # The record's own fingerprint proves nothing: any non-debug key
+            # would match itself. The certificate must be the pinned one.
+            if pinned_certificate is None:
+                errors.append(
+                    f"{label} cannot count until the release certificate is pinned "
+                    f"(pin the release certificate first: android.{ANDROID_PIN_KEY} in release/release-policy.json)"
+                )
             certificate = signing.get("certificate_sha256")
             if not isinstance(certificate, str) or not CERTIFICATE_RE.fullmatch(certificate):
                 errors.append(f"{label} has no valid signing certificate SHA-256 fingerprint")
-                certificate = None
+            elif pinned_certificate is not None and certificate != pinned_certificate:
+                errors.append(f"{label} signing certificate is not the pinned release certificate")
         # Compare run IDs as integers so "0123" cannot dodge CI run 123.
         same_run = (
             isinstance(run_id, str)
@@ -727,7 +868,7 @@ def check_mobile_record(
             elif platform == "ios":
                 errors.extend(ipa_errors(path))
             else:
-                errors.extend(apk_errors(path, certificate))
+                errors.extend(apk_errors(path, pinned_certificate))
     if len(errors) != start or digest is None:
         return None
     return platform, artifact_type, digest
@@ -737,6 +878,7 @@ def validate_mobile_artifacts(
     manifest: dict[str, Any],
     candidate: str,
     artifacts_dir: Path,
+    pinned_certificate: str | None,
     errors: list[str],
 ) -> None:
     records = manifest.get("mobile_artifacts")
@@ -745,7 +887,9 @@ def validate_mobile_artifacts(
         records = []
     sound = []
     for index, record in enumerate(records):
-        result = check_mobile_record(index, record, candidate, manifest.get("ci_run_id"), artifacts_dir, errors)
+        result = check_mobile_record(
+            index, record, candidate, manifest.get("ci_run_id"), artifacts_dir, pinned_certificate, errors
+        )
         if result is not None:
             sound.append(result)
     debug_digests = {digest for _, kind, digest in sound if kind in DEBUG_TYPES}
@@ -824,7 +968,7 @@ def validate_manifest(
     if artifacts_dir is None:
         errors.append("no mobile artifact directory to verify signed artifacts against")
     else:
-        validate_mobile_artifacts(manifest, candidate, artifacts_dir, errors)
+        validate_mobile_artifacts(manifest, candidate, artifacts_dir, android_release_certificate(policy), errors)
     return errors
 
 

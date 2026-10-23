@@ -15,7 +15,9 @@ import struct
 import subprocess
 import sys
 import tempfile
+import warnings
 import zipfile
+import zlib
 from pathlib import Path
 
 
@@ -188,21 +190,50 @@ def lp(data: bytes) -> bytes:
     return struct.pack("<I", len(data)) + data
 
 
-def axml(package: str = APP_ID, debuggable: object = None) -> bytes:
-    """A compiled AndroidManifest.xml: <manifest package><application debuggable?>."""
-    strings = ["debuggable", "package", "manifest", "application", "android",
-               "http://schemas.android.com/apk/res/android", package]
-    index = {value: position for position, value in enumerate(strings)}
+ANDROID_NS = "http://schemas.android.com/apk/res/android"
+ATTR_DEBUGGABLE = 0x0101000F
+
+
+def string_pool(strings: list[str]) -> bytes:
     offsets, data = b"", b""
     for value in strings:
         offsets += struct.pack("<I", len(data))
-        encoded = value.encode("utf-16-le")
-        data += struct.pack("<H", len(value)) + encoded + b"\0\0"
+        data += struct.pack("<H", len(value)) + value.encode("utf-16-le") + b"\0\0"
     data = data.ljust((len(data) + 3) // 4 * 4, b"\0")
     header = 28
     pool = struct.pack("<IIIII", len(strings), 0, 0, header + len(offsets), 0) + offsets + data
-    pool = struct.pack("<HHI", 0x0001, header, 8 + len(pool)) + pool
-    resource_map = struct.pack("<HHII", 0x0180, 8, 12, 0x0101000F)
+    return struct.pack("<HHI", 0x0001, header, 8 + len(pool)) + pool
+
+
+def resource_map(*ids: int) -> bytes:
+    return struct.pack("<HHI", 0x0180, 8, 8 + 4 * len(ids)) + struct.pack(f"<{len(ids)}I", *ids)
+
+
+def axml(
+    package: str = APP_ID,
+    debuggable: object = None,
+    *,
+    debuggable_name: str = "debuggable",
+    second_pool: bool = False,
+    late_pool_package: str | None = None,
+    second_map: bool = False,
+    late_map: int | None = None,
+    nested_manifest: str | None = None,
+    wrapper: str | None = None,
+    pool_after_node: bool = False,
+    map_after_node: bool = False,
+) -> bytes:
+    """A compiled AndroidManifest.xml: <manifest package><application debuggable?>.
+
+    The keyword options add parser tricks: a second string pool or resource
+    map before the first node; a pool (naming ``late_pool_package`` where the
+    package was) or a map (giving the debuggable attribute ``late_map``)
+    after it; the only pool or map moved after it; a second <manifest>
+    inside the root; a root that wraps it.
+    """
+    strings = [debuggable_name, "package", "manifest", "application", "android", ANDROID_NS, package]
+    strings += [value for value in (nested_manifest, wrapper) if value and value not in strings]
+    index = {value: position for position, value in enumerate(strings)}
     none = 0xFFFFFFFF
 
     def element(name: str, attributes: list[bytes]) -> bytes:
@@ -213,16 +244,29 @@ def axml(package: str = APP_ID, debuggable: object = None) -> bytes:
     def end(name: str) -> bytes:
         return struct.pack("<HHIIIII", 0x0103, 16, 24, 1, none, none, index[name])
 
-    package_attr = struct.pack("<IIIHBBI", none, index["package"], index[package], 8, 0, 0x03, index[package])
+    def package_attr(value: str) -> bytes:
+        return struct.pack("<IIIHBBI", none, index["package"], index[value], 8, 0, 0x03, index[value])
+
     application_attrs = []
     if debuggable is not None:
         value_type, value = debuggable if isinstance(debuggable, tuple) else (0x12, none if debuggable else 0)
-        ns = index["http://schemas.android.com/apk/res/android"]
-        application_attrs.append(struct.pack("<IIIHBBI", ns, index["debuggable"], none, 8, 0, value_type, value))
-    namespace = struct.pack("<HHIIIII", 0x0100, 16, 24, 1, none, index["android"],
-                            index["http://schemas.android.com/apk/res/android"])
-    body = (pool + resource_map + namespace + element("manifest", [package_attr])
-            + element("application", application_attrs) + end("application") + end("manifest"))
+        application_attrs.append(struct.pack("<IIIHBBI", index[ANDROID_NS], index[debuggable_name], none, 8, 0, value_type, value))
+    namespace = struct.pack("<HHIIIII", 0x0100, 16, 24, 1, none, index["android"], index[ANDROID_NS])
+    pools = string_pool(strings) * (2 if second_pool else 1)
+    maps = resource_map(ATTR_DEBUGGABLE) * (2 if second_map else 1)
+    head = (b"" if pool_after_node else pools) + (b"" if map_after_node else maps)
+    late = (pools if pool_after_node else b"") + (maps if map_after_node else b"")
+    if late_pool_package is not None:
+        late += string_pool([late_pool_package if value == package else value for value in strings])
+    if late_map is not None:
+        late += resource_map(late_map)
+    manifest = element("manifest", [package_attr(package)])
+    if nested_manifest:
+        manifest += element("manifest", [package_attr(nested_manifest)]) + end("manifest")
+    tree = manifest + element("application", application_attrs) + end("application") + end("manifest")
+    if wrapper:
+        tree = element(wrapper, []) + tree + end(wrapper)
+    body = head + namespace + late + tree
     return struct.pack("<HHI", 0x0003, 8, 8 + len(body)) + body
 
 
@@ -252,18 +296,29 @@ def build_apk(
     signers: dict[int, list[bytes]] | None = None,
     block: bytes | None = None,
     v1_only: bool = False,
+    before: tuple[tuple[str, bytes], ...] = (),
+    comment: bytes = b"",
 ) -> str:
-    """Build an APK; by default signed (v2 and v3) with RELEASE_CERT."""
+    """Build an APK; by default signed (v2 and v3) with RELEASE_CERT.
+
+    ``before`` entries are written first (duplicate names allowed), and
+    ``comment`` becomes the zip comment.
+    """
     buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("AndroidManifest.xml", axml() if manifest is None else manifest)
-        if dex:
-            archive.writestr("classes.dex", b"dex\n035\0synthetic")
-        if crypto:
-            archive.writestr("lib/arm64-v8a/libprivate_messenger_crypto.so", b"\x7fELF synthetic")
-        archive.writestr("resources.arsc", b"synthetic")
-        if v1_only:
-            archive.writestr("META-INF/CERT.RSA", RELEASE_CERT)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # zipfile warns on the duplicate names under test
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, content in before:
+                archive.writestr(name, content)
+            archive.writestr("AndroidManifest.xml", axml() if manifest is None else manifest)
+            if dex:
+                archive.writestr("classes.dex", b"dex\n035\0synthetic")
+            if crypto:
+                archive.writestr("lib/arm64-v8a/libprivate_messenger_crypto.so", b"\x7fELF synthetic")
+            archive.writestr("resources.arsc", b"synthetic")
+            if v1_only:
+                archive.writestr("META-INF/CERT.RSA", RELEASE_CERT)
+            archive.comment = comment
     data = buffer.getvalue()
     if signers is None and block is None and not v1_only:
         signers = {APK_V2: [RELEASE_CERT], APK_V3: [RELEASE_CERT]}
@@ -278,6 +333,41 @@ def build_apk(
         data = (data[:cd_offset] + block + data[cd_offset:eocd + 16]
                 + struct.pack("<I", cd_offset + len(block)) + data[eocd + 20:])
     path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def comment_smuggled_apk(path: Path, trailing: bytes) -> str:
+    """Review finding: a debuggable, debug-signed APK whose zip comment hides
+    a second view (a clean manifest, a release signing block, a central
+    directory and an end record) that a backwards end-record scan picks.
+
+    With ``trailing`` bytes after the hidden end record, the comment is what
+    gives it away; without, the outer end record is what remains.
+    """
+    build_apk(path, manifest=axml(debuggable=True), signers={APK_V2: [DEBUG_CERT]})
+    data = path.read_bytes()
+    eocd = len(data) - 22
+    cd_size, cd_offset = struct.unpack_from("<II", data, eocd + 12)
+    clean, name = axml(), b"AndroidManifest.xml"
+    local = struct.pack("<IHHHHHIIIHH", 0x04034B50, 20, 0, 0, 0, 0, zlib.crc32(clean), len(clean), len(clean),
+                        len(name), 0) + name + clean
+    directory, position, count = bytearray(), cd_offset, 0
+    while position < cd_offset + cd_size:
+        name_size, extra_size, comment_size = struct.unpack_from("<HHH", data, position + 28)
+        entry = bytearray(data[position:position + 46 + name_size + extra_size + comment_size])
+        if data[position + 46:position + 46 + name_size] == name:
+            struct.pack_into("<H", entry, 10, 0)  # stored
+            struct.pack_into("<III", entry, 16, zlib.crc32(clean), len(clean), len(clean))
+            struct.pack_into("<I", entry, 42, len(data))  # the comment starts at the old end of file
+        directory += entry
+        position += len(entry)
+        count += 1
+    block = apk_signing_block([(APK_V2, lp(lp(apk_signer(RELEASE_CERT, APK_V2))))])
+    hidden_offset = len(data) + len(local) + len(block)
+    hidden_end = struct.pack("<IHHHHIIH", 0x06054B50, 0, 0, count, count, len(directory), hidden_offset, 0)
+    comment = local + block + bytes(directory) + hidden_end + trailing
+    data = data[:eocd + 20] + struct.pack("<H", len(comment)) + comment
     path.write_bytes(data)
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
@@ -429,6 +519,7 @@ def fixture() -> tuple[Path, dict[str, object]]:
         "schema_version": 3,
         "required_ci_jobs": list(JOBS),
         "mobile_artifacts": MOBILE_POLICY,
+        "android": {"release_certificate_sha256": fingerprint(RELEASE_CERT)},
         "approvals": APPROVALS_POLICY,
     }
     write_json(temp / "release/release-policy.json", policy)
@@ -598,6 +689,24 @@ def approval_cases(root: Path, valid: dict[str, object]) -> None:
         check(protected_tip, "production_crypto approval is missing")
     finally:
         git(root, "replace", "-d", protected_tip)
+    # Nor can a graft (review finding: --no-replace-objects leaves grafts on).
+    # An orphan commit holding the candidate's tree plus perfect approvals
+    # passes every check once grafted onto the candidate.
+    orphan = git(root, "commit-tree", git(root, "rev-parse", f"{approved()}^{{tree}}"), "-m", "orphan approvals")
+    check(orphan, "approvals commit does not descend from the candidate commit")
+    graft_line = f"{orphan} {COMMIT}\n"
+    grafts = root / ".git/info/grafts"
+    grafts.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        grafts.write_text(graft_line, encoding="utf-8")
+        assert git(root, "merge-base", "--is-ancestor", COMMIT, orphan) == ""  # the graft is live
+        check(orphan, "approvals commit does not descend from the candidate commit")
+    finally:
+        grafts.unlink()
+    caller_grafts = root / "caller-grafts"
+    caller_grafts.write_text(graft_line, encoding="utf-8")
+    expect_blocked(root, copy.deepcopy(valid), "approvals commit does not descend from the candidate commit",
+                   extra=("--approvals-commit", orphan), env={"GIT_GRAFT_FILE": str(caller_grafts)})
 
     # Approvals for another commit, or at another commit's path.
     check(approved(production_crypto=approval_record("production_crypto", reviewed_commit=OTHER_COMMIT)),
@@ -626,6 +735,16 @@ def approval_cases(root: Path, valid: dict[str, object]) -> None:
     for reviewer in ("", "   ", None, 7):
         check(approved(independent_review=approval_record("independent_review", reviewer=reviewer)),
               "missing independent_review reviewer")
+    # The reviewer cannot be the candidate's git author (fixture <fixture@example.invalid>),
+    # by name or email; a self-declared check, so only these exact identities.
+    for reviewer in ("fixture", " FIXTURE ", "Fixture@Example.Invalid", "Someone <fixture@example.invalid>",
+                     "fixture (mailto:fixture@example.invalid)"):
+        check(approved(independent_review=approval_record("independent_review", reviewer=reviewer)),
+              "independent_review reviewer is the candidate commit's git author")
+    check(approved(production_crypto=approval_record("production_crypto", reviewer="fixture")),
+          "production_crypto reviewer is the candidate commit's git author")
+    for reviewer in ("fixture reviewer", "Other <other.fixture@example.invalid>"):
+        check(approved(independent_review=approval_record("independent_review", reviewer=reviewer)))
     check(approved(independent_review=approval_record("independent_review", schema="veritra-release-approval/0")),
           "independent_review approval schema is not veritra-release-approval/1")
     check(approved(independent_review=approval_record("independent_review", notes="extra")),
@@ -1005,11 +1124,21 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
     for signing in ({"identity": "debug"}, {"identity": "distribution"}, {"verification": "fail"}, {"verifier": ""}):
         expect_blocked(root, with_android(record(signing=signing)), f"{label} signature was not verified as a release signature")
 
-    # Signing certificate fingerprint: bound to the record, one signer only.
+    # Signing certificate: the pinned release certificate, named by the record,
+    # one signer only. Review finding: a record naming its own (non-debug)
+    # key was accepted, since it was only compared with itself.
+    own_key = {APK_V2: [OTHER_CERT], APK_V3: [OTHER_CERT]}
+    expect_blocked(root, with_android(apk("own-key.apk", OTHER_CERT, signers=own_key)),
+                   f"{label} signing certificate is not the pinned release certificate",
+                   "signed android artifact signer certificate is not the pinned release certificate", no_signed)
     expect_blocked(root, with_android(apk("other-cert.apk", OTHER_CERT, signers={APK_V2: [RELEASE_CERT]})),
-                   "signer certificate does not match the recorded fingerprint", no_signed)
+                   f"{label} signing certificate is not the pinned release certificate", no_signed,
+                   absent=("signer certificate is not the pinned",))
     expect_blocked(root, with_android(apk("mixed.apk", signers={APK_V2: [RELEASE_CERT], APK_V3: [OTHER_CERT]})),
-                   "signer certificate does not match the recorded fingerprint")
+                   "signer certificate is not the pinned release certificate")
+    expect_blocked(root, with_android(apk("other-signer.apk", signers={APK_V3: [OTHER_CERT]})),
+                   "signed android artifact signer certificate is not the pinned release certificate",
+                   absent=(f"{label} signing certificate is not the pinned",))
     expect_blocked(root, with_android(apk("two-signers.apk", signers={APK_V2: [RELEASE_CERT, OTHER_CERT]})),
                    "signed android artifact must have exactly one signer")
     expect_blocked(root, with_android(apk("no-signer.apk", signers={APK_V2: []})), "must have exactly one signer")
@@ -1053,11 +1182,65 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
     not_zip = dist / "not-a-zip.apk"
     not_zip.write_bytes(b"synthetic, not an archive")
     expect_blocked(root, with_android(record(file=not_zip.name, digest="sha256:" + hashlib.sha256(not_zip.read_bytes()).hexdigest())),
-                   "signed android artifact is not a readable APK")
+                   "signed android artifact has a zip comment or does not end with its end of central directory record")
     ipa_as_apk = dist / "ipa-as.apk"
     shutil.copy(dist / SIGNED_IPA, ipa_as_apk)
     expect_blocked(root, with_android(record(file=ipa_as_apk.name, digest="sha256:" + hashlib.sha256(ipa_as_apk.read_bytes()).hexdigest())),
                    "signed android artifact is not an Android app package")
+
+    # Zip parsing tricks (review finding): each shows a lenient reader a
+    # different archive than the one Android reads, or is not an APK at all.
+    def raw(name: str, data: bytes) -> dict[str, object]:
+        (dist / name).write_bytes(data)
+        return record(file=name, digest="sha256:" + hashlib.sha256(data).hexdigest())
+
+    for name, trailing, reason in (
+        ("smuggled-comment.apk", b"X", "has a zip comment or does not end with its end of central directory record"),
+        ("smuggled-end.apk", b"", "has more than one end of central directory record"),
+    ):
+        smuggled = record(file=name, digest=comment_smuggled_apk(dist / name, trailing))
+        expect_blocked(root, with_android(smuggled), f"signed android artifact {reason}", no_signed,
+                       absent=("is debuggable", "debug certificate"))
+    expect_blocked(root, with_android(apk("comment.apk", comment=b"release notes")), "has a zip comment")
+    good = (dist / SIGNED_APK).read_bytes()
+    end = len(good) - 22
+    entries = struct.unpack_from("<H", good, end + 10)[0]
+    for name, data, reason in (
+        ("zip64.apk", good[:end] + b"PK\x06\x07" + bytes(16) + good[end:], "is a multi-disk or ZIP64 archive"),
+        ("disk.apk", good[:end + 4] + struct.pack("<H", 1) + good[end + 6:], "is a multi-disk or ZIP64 archive"),
+        ("directory-disk.apk", good[:end + 6] + struct.pack("<H", 1) + good[end + 8:], "is a multi-disk or ZIP64 archive"),
+        ("disk-entries.apk", good[:end + 8] + struct.pack("<H", entries - 1) + good[end + 10:], "is a multi-disk or ZIP64 archive"),
+        ("entry-count.apk", good[:end + 8] + struct.pack("<HH", entries - 1, entries - 1) + good[end + 12:],
+         "central directory does not match its end record"),
+    ):
+        expect_blocked(root, with_android(raw(name, data)), f"signed android artifact {reason}", no_signed)
+    # Two entries with one name: zipfile reads the last, Android may read the
+    # first. A NUL byte zipfile cuts off is the same ambiguity.
+    duplicate = "signed android artifact has duplicate or ambiguous entry names"
+    expect_blocked(root, with_android(apk("dup-manifest.apk", before=(("AndroidManifest.xml", axml(debuggable=True)),))),
+                   duplicate, no_signed)
+    expect_blocked(root, with_android(apk("dup-dex.apk", before=(("classes.dex", b"other"),))), duplicate)
+    apk("nul-name.apk", dex=False, before=(("classes.dexX", b"dex\n035\0synthetic"),))
+    expect_blocked(root, with_android(raw("nul-name.apk", (dist / "nul-name.apk").read_bytes().replace(b"classes.dexX", b"classes.dex\0"))),
+                   duplicate)
+
+    # Manifest parser tricks (review finding): Android reads the string pool
+    # and resource map before the first XML node only, and the root manifest.
+    for name, manifest in (
+        ("late-pool.apk", axml(package="org.example.other", late_pool_package=APP_ID)),
+        ("second-pool.apk", axml(second_pool=True)),
+        ("late-map.apk", axml(debuggable=True, debuggable_name="dbg", late_map=0x7F010000)),
+        ("second-map.apk", axml(second_map=True)),
+        ("pool-after-node.apk", axml(pool_after_node=True)),
+        ("map-after-node.apk", axml(map_after_node=True)),
+        ("nested-manifest.apk", axml(package="org.example.other", nested_manifest=APP_ID)),
+        ("wrapped-manifest.apk", axml(wrapper="root")),
+    ):
+        expect_blocked(root, with_android(apk(name, manifest=manifest)), "signed android artifact is not a readable APK", no_signed)
+    # debuggable is found by its resource ID, whatever its name string says.
+    expect_blocked(root, with_android(apk("debuggable-by-id.apk", manifest=axml(debuggable=True, debuggable_name="dbg"))),
+                   "signed android artifact is debuggable")
+    expect_valid(root, with_android(apk("false-by-id.apk", manifest=axml(debuggable=False, debuggable_name="dbg"))))
 
     # Record binding: file, digest, commit, build, type.
     for name in ("Veritra-android.aab", "../Veritra-android.apk", "Veritra-android.zip", ""):
@@ -1077,6 +1260,13 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
         expect_blocked(root, with_android(record(provenance=provenance)), f"{label} provenance is the debug emulator CI build")
     for provenance in ({"builder": "local"}, {"workflow": "android.yml"}, {"run_id": 457}, {"run_id": "４５７"}):
         expect_blocked(root, with_android(record(provenance=provenance)), f"{label} provenance does not name a GitHub Actions workflow, job and run")
+    # gh reads the workflow as a regular expression (review finding): "c..yml"
+    # would match ci.yml, so the base name cannot contain a dot.
+    for workflow in ("c..yml", "ci.yml.yml", "android.signed.yml", ".yml", "a+.yml", "a*.yml", "android-signed.yml/x.yml"):
+        expect_blocked(root, with_android(record(provenance={"workflow": ".github/workflows/" + workflow})),
+                       f"{label} provenance does not name a GitHub Actions workflow, job and run")
+    for workflow in ("android_signed.yaml", "Android-Signed-2.yml"):
+        expect_valid(root, with_android(record(provenance={"workflow": ".github/workflows/" + workflow})))
 
     # Emulator-debug records are checked, and a bad one blocks the release.
     for changes, reason in (
@@ -1095,6 +1285,53 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
     # Skipped mobile CI: the emulator build job stays required.
     expect_blocked(root, variant_ci(valid, "mobile", "skipped"), "required CI job 'mobile' is missing or not successful")
     expect_blocked(root, variant_ci(valid, "mobile", None), "required CI job 'mobile' is missing or not successful")
+
+    # The pin lives in the policy. Unpinned (null, the repository today): no
+    # Android signed-release record counts, whatever key signed it, while the
+    # iOS record and the preflight are unaffected.
+    policy_path = root / "release/release-policy.json"
+    original_policy = policy_path.read_text(encoding="utf-8")
+
+    def set_android_policy(android: object) -> None:
+        policy = json.loads(original_policy)
+        if android is REMOVE:
+            policy.pop("android")
+        else:
+            policy["android"] = android
+        write_json(policy_path, policy)
+
+    unpinned = "pin the release certificate first"
+    try:
+        set_android_policy({"release_certificate_sha256": None})
+        expect_blocked(root, valid, unpinned, "signer certificate is not the pinned release certificate", no_signed,
+                       absent=("ios signed-release", "release policy android"))
+        expect_blocked(root, with_android(apk("unpinned-own-key.apk", OTHER_CERT, signers=own_key)), unpinned, no_signed)
+        expect_valid(root, valid, "--preflight")
+        good = fingerprint(RELEASE_CERT)
+        for android in (
+            {"release_certificate_sha256": good.upper()},
+            {"release_certificate_sha256": good[:63]},
+            {"release_certificate_sha256": "sha256:" + good},
+            {"release_certificate_sha256": ""},
+            {"release_certificate_sha256": 7},
+            {"release_certificate_sha256": [good]},
+            {"release_certificate_sha256": good, "previous_certificate_sha256": None},
+            {},
+            None,
+            good,
+            REMOVE,
+        ):
+            set_android_policy(android)
+            malformed = "release policy android.release_certificate_sha256 is not null or 64 lowercase hex characters"
+            expect_blocked(root, valid, malformed, unpinned)
+            expect_blocked(root, valid, malformed, extra=("--preflight",))
+        # Pinned to another key: the fixture's release-signed APK no longer counts.
+        set_android_policy({"release_certificate_sha256": fingerprint(OTHER_CERT)})
+        expect_blocked(root, valid, f"{label} signing certificate is not the pinned release certificate",
+                       "signed android artifact signer certificate is not the pinned release certificate", no_signed)
+        expect_valid(root, with_android(apk("pinned-other.apk", OTHER_CERT, signers=own_key)))
+    finally:
+        policy_path.write_text(original_policy, encoding="utf-8")
     expect_valid(root, valid)
 
 
@@ -1125,6 +1362,9 @@ def main() -> int:
         repo_policy = json.loads((ROOT / "release/release-policy.json").read_text(encoding="utf-8"))
         assert repo_policy["mobile_artifacts"] == MOBILE_POLICY, "repository policy drifted from the fixture"
         assert repo_policy["approvals"] == APPROVALS_POLICY, "repository approval rules drifted from the fixture"
+        pin = repo_policy["android"]["release_certificate_sha256"]
+        assert set(repo_policy["android"]) == {"release_certificate_sha256"}, "repository android policy drifted"
+        assert pin is None or (len(pin) == 64 and set(pin) <= set("0123456789abcdef")), "malformed repository pin"
         assert repo_policy["schema_version"] == 3
     finally:
         shutil.rmtree(root)

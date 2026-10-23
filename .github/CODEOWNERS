@@ -1,0 +1,3 @@
+# Release approvals (docs/security-review.md). This only binds once branch
+# protection on main requires review from code owners.
+/release/approvals/ @ServesYouRice

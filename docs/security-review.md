@@ -117,7 +117,7 @@ recorded and checked, but never count: iOS `simulator-debug` (job
 | Platform | Signed file | Structural checks in `check-release-evidence.py` |
 |---|---|---|
 | iOS | `.ipa` | One `Payload/*.app`, iphoneos plist, arm64 iOS Mach-O with a code signature, distribution profile (`get-task-allow=false`) |
-| Android | `.apk` (not `.aab`) | `org.veritra.private_messenger`, not debuggable, arm64 crypto library, an APK Signature Scheme v2/v3 block with exactly one signer whose certificate SHA-256 equals the record's `signing.certificate_sha256` and is not the Android debug certificate |
+| Android | `.apk` (not `.aab`) | `org.veritra.private_messenger`, not debuggable, arm64 crypto library, an APK Signature Scheme v2/v3 block with exactly one signer whose certificate SHA-256 is the pinned `android.release_certificate_sha256` (the record's `signing.certificate_sha256` must name it too) and is not the Android debug certificate. Archives a lenient parser could read differently from Android are refused: a zip comment, a second end-of-central-directory signature, ZIP64 or multi-disk records, duplicate entry names, and a manifest with a second (or late) string pool or resource map or a `manifest` element that is not the single root |
 
 Both bind the platform, type, candidate commit, the file's sha256 and the
 provenance (workflow, job, run, source commit). A signed file with the same
@@ -125,6 +125,28 @@ digest as a debug build blocks. The checks are structural; the signed build
 runs `codesign --verify` or `apksigner verify`, and the attestation proves
 which workflow and commit made the file. Signing-key rotation (several
 certificates) is not accepted yet.
+
+#### Pinning the Android release certificate
+
+`release/release-policy.json` holds `"android": {"release_certificate_sha256": null}`.
+While it is null, the checker refuses every Android `signed-release` record
+("pin the release certificate first"), so the release stays blocked. The
+owner pins the certificate of the key that signs the G24 release APK once,
+before the candidate is frozen:
+
+1. Read its SHA-256 from a signed APK with
+   `apksigner verify --print-certs app-release.apk` ("Signer #1 certificate
+   SHA-256 digest"), or from the keystore with
+   `keytool -list -v -keystore release.jks -alias <alias>` (the `SHA256:`
+   line, with the colons removed and the letters lower-cased).
+2. Write it as 64 lowercase hex characters, for example
+   `"release_certificate_sha256": "3f2a…"` (all 64), in a reviewed pull
+   request to `main`. Anything else (upper case, colons, a `sha256:` prefix,
+   extra keys) blocks every gate.
+3. Freeze the candidate after that merge. The checker reads the policy from
+   the candidate tree, so the pin is part of what the approvals review.
+
+Changing the key means changing the pin the same way.
 
 ## Recording an approval
 
@@ -153,9 +175,22 @@ request, and `scripts/check-release-evidence.py` blocks unless:
 
 - that tip descends from the candidate;
 - each approval names the candidate and its tree;
+- each approval has a non-empty `reviewer` and `reviewer_is_author` exactly
+  `false`, and the `reviewer` is not the candidate commit's git author (the
+  whole field equal to its name, or its email as one word of the field, as
+  in `Name <email>`; ignoring case, raw and after `.mailmap`);
 - the change that put each approval on `main` (a merged pull request counts
   as one change) came after the candidate and touched nothing outside
   `release/approvals/<candidate sha>/`.
+
+The reviewer checks are self-declared: `reviewer` is free text and git
+author names and emails are whatever the committer configured. They catch an
+author approving under their own recorded identity, not a false name; the
+real control is who may merge to `main`.
+
+Git is read with replace refs and grafts disabled (`GIT_NO_REPLACE_OBJECTS=1`,
+`GIT_GRAFT_FILE` pointed at a path that cannot exist), so local history
+rewrites cannot make an unrelated commit descend from the candidate.
 
 The published release evidence records the approvals commit and the sha256
 of each approval file.

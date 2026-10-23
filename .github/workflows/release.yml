@@ -40,7 +40,11 @@ jobs:
         run: |
           test -n "$DEFAULT_BRANCH"
           git fetch --no-tags origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH"
-          echo "commit=$(git rev-parse --verify "refs/remotes/origin/$DEFAULT_BRANCH^{commit}")" >> "$GITHUB_OUTPUT"
+          # Assigned first, so a failed rev-parse stops the step (bash -e)
+          # instead of writing an empty output.
+          commit="$(git rev-parse --verify "refs/remotes/origin/$DEFAULT_BRANCH^{commit}")"
+          printf '%s\n' "$commit" | grep -Eqx '[0-9a-f]{40}'
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
       - name: Enforce production release gates
         env:
           RELEASE_APPROVALS_COMMIT: ${{ steps.approvals.outputs.commit }}
@@ -141,9 +145,14 @@ jobs:
           for index in $(seq 0 $((count - 1))); do
             file="$(printf '%s' "$signed" | jq -r ".[$index].file")"
             workflow="$(printf '%s' "$signed" | jq -r ".[$index].provenance.workflow")"
+            # gh turns --signer-workflow into the regular expression
+            # ^https://<host>/<value>, anchored at the start only. Escape the
+            # value and end it at the "@<ref>" of the certificate identity, so
+            # only this exact workflow file matches.
+            signer="$(printf '%s/%s' "$GITHUB_REPOSITORY" "$workflow" | sed 's/[][\\.*^$+?(){}|]/\\&/g')@"
             gh attestation verify "$MOBILE_ARTIFACTS_DIR/$file" \
               --repo "$GITHUB_REPOSITORY" \
-              --signer-workflow "$GITHUB_REPOSITORY/$workflow" \
+              --signer-workflow "$signer" \
               --source-digest "$GITHUB_SHA" \
               --deny-self-hosted-runners
           done
