@@ -219,6 +219,34 @@ def approval_path(approval_policy: dict[str, Any], candidate: str) -> str:
     return str(approval_policy["path"]).format(commit=candidate)
 
 
+def normalized_identity(value: str) -> str:
+    return " ".join(value.split()).casefold()
+
+
+def git_author(root: Path, commit: str) -> tuple[set[str], set[str]] | None:
+    """(names, emails) of the commit's author, raw and after .mailmap."""
+    output = git(root, "show", "-s", "--format=%an%x00%ae%x00%aN%x00%aE", commit)
+    if output is None:
+        return None
+    parts = [normalized_identity(part) for part in output.decode("utf-8", "replace").strip("\n").split("\0")]
+    if len(parts) != 4:
+        return None
+    return {name for name in parts[0::2] if name}, {email for email in parts[1::2] if email}
+
+
+def reviewer_is_git_author(reviewer: str, author: tuple[set[str], set[str]]) -> bool:
+    """Whether the self-declared reviewer is the candidate's recorded author.
+
+    Both sides are self-declared (git identities are whatever the committer
+    configured), so this only catches an author recording themselves under
+    the same name or email; it is no proof of independence.
+    """
+    names, emails = author
+    value = normalized_identity(reviewer)
+    # "Name <email>" and similar forms are split so the email is compared whole.
+    return value in names or not emails.isdisjoint(re.split(r"[\s<>()\[\],;:\"']+", value))
+
+
 def landed_alone(root: Path, approvals_commit: str, path: str, candidate: str) -> str | None:
     """Return why the change that brought ``path`` onto the branch is unsound.
 
@@ -247,6 +275,7 @@ def check_approval(
     approval_policy: dict[str, Any],
     candidate: str,
     candidate_tree: str,
+    candidate_author: tuple[set[str], set[str]],
     approvals_commit: str,
     errors: list[str],
 ) -> dict[str, Any] | None:
@@ -292,6 +321,8 @@ def check_approval(
     reviewer = approval.get("reviewer")
     if not isinstance(reviewer, str) or not reviewer.strip():
         errors.append(f"missing {approval_name} reviewer")
+    elif approval_policy.get("not_author") and reviewer_is_git_author(reviewer, candidate_author):
+        errors.append(f"{approval_name} reviewer is the candidate commit's git author")
     problem = landed_alone(root, approvals_commit, path, candidate)
     if problem:
         errors.append(f"{label} {problem}")
@@ -323,9 +354,15 @@ def verify_approvals(
     if git(root, "merge-base", "--is-ancestor", candidate, approvals_commit) is None:
         errors.append("approvals commit does not descend from the candidate commit")
         return {}
+    candidate_author = git_author(root, candidate)
+    if candidate_author is None:
+        errors.append("cannot read the candidate commit's git author")
+        return {}
     verified = {}
     for name, approval_policy in REQUIRED_APPROVALS.items():
-        entry = check_approval(root, name, approval_policy, candidate, candidate_tree, approvals_commit, errors)
+        entry = check_approval(
+            root, name, approval_policy, candidate, candidate_tree, candidate_author, approvals_commit, errors
+        )
         if entry is not None:
             verified[name] = entry
     return verified

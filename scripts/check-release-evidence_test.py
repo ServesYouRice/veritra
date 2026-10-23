@@ -644,6 +644,16 @@ def approval_cases(root: Path, valid: dict[str, object]) -> None:
     for reviewer in ("", "   ", None, 7):
         check(approved(independent_review=approval_record("independent_review", reviewer=reviewer)),
               "missing independent_review reviewer")
+    # The reviewer cannot be the candidate's git author (fixture <fixture@example.invalid>),
+    # by name or email; a self-declared check, so only these exact identities.
+    for reviewer in ("fixture", " FIXTURE ", "Fixture@Example.Invalid", "Someone <fixture@example.invalid>",
+                     "fixture (mailto:fixture@example.invalid)"):
+        check(approved(independent_review=approval_record("independent_review", reviewer=reviewer)),
+              "independent_review reviewer is the candidate commit's git author")
+    check(approved(production_crypto=approval_record("production_crypto", reviewer="fixture")),
+          "production_crypto reviewer is the candidate commit's git author")
+    for reviewer in ("fixture reviewer", "Other <other.fixture@example.invalid>"):
+        check(approved(independent_review=approval_record("independent_review", reviewer=reviewer)))
     check(approved(independent_review=approval_record("independent_review", schema="veritra-release-approval/0")),
           "independent_review approval schema is not veritra-release-approval/1")
     check(approved(independent_review=approval_record("independent_review", notes="extra")),

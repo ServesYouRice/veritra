@@ -153,9 +153,22 @@ request, and `scripts/check-release-evidence.py` blocks unless:
 
 - that tip descends from the candidate;
 - each approval names the candidate and its tree;
+- each approval has a non-empty `reviewer` and `reviewer_is_author` exactly
+  `false`, and the `reviewer` is not the candidate commit's git author (its
+  name, or its email anywhere in the field, ignoring case; raw and after
+  `.mailmap`);
 - the change that put each approval on `main` (a merged pull request counts
   as one change) came after the candidate and touched nothing outside
   `release/approvals/<candidate sha>/`.
+
+The reviewer checks are self-declared: `reviewer` is free text and git
+author names and emails are whatever the committer configured. They catch an
+author approving under their own recorded identity, not a false name; the
+real control is who may merge to `main`.
+
+Git is read with replace refs and grafts disabled (`GIT_NO_REPLACE_OBJECTS=1`,
+`GIT_GRAFT_FILE` pointed at a path that cannot exist), so local history
+rewrites cannot make an unrelated commit descend from the candidate.
 
 The published release evidence records the approvals commit and the sha256
 of each approval file.
