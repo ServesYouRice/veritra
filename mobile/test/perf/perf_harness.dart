@@ -401,6 +401,9 @@ class BenchApi extends ApiClient {
   Future<ReceivedMessageEnvelope> message(
           String token, String messageId) async =>
       throw ApiException(404, '{"error":"not_found"}');
+
+  @override
+  Future<void> logout(String token) async {}
 }
 
 /// A realtime socket that only speaks when a test asks it to.

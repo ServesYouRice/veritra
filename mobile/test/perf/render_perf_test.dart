@@ -292,7 +292,7 @@ void main() {
     bench.state.dispose();
   });
 
-  testWidgets('tab switching keeps the selection; records what is lost',
+  testWidgets('tab switching keeps the selection, list offset and draft',
       (tester) async {
     final bench = await _connected(conversations: 1000, messages: 200);
     await _start(tester, bench);
@@ -313,9 +313,12 @@ void main() {
     final compact = FrameStats(switches);
     final listOffset = _position(tester, _chatListScrollable).pixels;
 
-    // Workspace layout: the open conversation and its draft.
+    // Workspace layout: the open conversation and its draft. The list kept
+    // its offset (T49C-4), so the long group's row is scrolled away.
     setBenchWindow(tester, benchWide);
     await tester.pumpAndSettle();
+    _position(tester, _chatListScrollable).jumpTo(0);
+    await tester.pump();
     await tester.tap(find.text('Long group').first);
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).last, 'unsent draft');
@@ -333,6 +336,8 @@ void main() {
       'wide_draft_kept': draftKept,
     });
     expect(selection, longConversationId);
+    expect(listOffset, 3000);
+    expect(draftKept, isTrue);
     bench.state.dispose();
   });
 

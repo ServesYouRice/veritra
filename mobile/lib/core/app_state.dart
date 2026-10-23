@@ -19,6 +19,7 @@ import '../sync/sync_service.dart';
 import 'api_client.dart';
 import 'attachments.dart';
 import 'client_config.dart';
+import 'composer_drafts.dart';
 import 'errors.dart';
 import 'message_history.dart';
 import '../storage/encrypted_database.dart' show LocalMessageKind;
@@ -202,6 +203,10 @@ class AppState extends ChangeNotifier {
   final Map<String, PendingEnvelopeRecord> _outboxRecords =
       <String, PendingEnvelopeRecord>{};
   String? selectedConversationId;
+
+  /// Unsent composer text and reply targets, in memory only (T49C-4). Not
+  /// part of what [notifyListeners] reports; cleared when the session ends.
+  final ComposerDrafts composerDrafts = ComposerDrafts();
   DeviceLink? activeDeviceLink;
   DeviceLinkClaim? pendingDeviceLinkClaim;
   String? error;
@@ -717,6 +722,7 @@ class AppState extends ChangeNotifier {
       conversationsLoaded = false;
       messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
       _history.clear();
+      composerDrafts.clear();
       lifecycle = SessionLifecycle.recoveryRequired;
       localStoreFailure =
           error is LocalStoreUnavailableException ? error.kind : null;
@@ -1334,6 +1340,7 @@ class AppState extends ChangeNotifier {
       };
       _historyCursors.remove(conversationId);
       _mutedConversations.remove(conversationId);
+      composerDrafts.remove(conversationId);
       if (selectedConversationId == conversationId) {
         selectedConversationId = null;
       }
@@ -3055,6 +3062,7 @@ class AppState extends ChangeNotifier {
     devices = <Device>[];
     messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
     _history.clear();
+    composerDrafts.clear();
     pendingOutbox = <MessageEnvelope>[];
     _outboxStates.clear();
     _outboxRecords.clear();

@@ -103,6 +103,12 @@ class ChatListScreen extends StatelessWidget {
             // by a tinted ground, which is what removes the most recognisably
             // default surface in the app (`docs/design.md` §3).
             : ListView.builder(
+                // Keeps the scroll offset when another destination replaces
+                // the list and it comes back (T49C-4). Per account, so a
+                // different account's list starts at the top.
+                key: PageStorageKey<String>(
+                  'chat-list:${state.session?.accountId}',
+                ),
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.fromLTRB(
                   BoneSpacing.sm,
