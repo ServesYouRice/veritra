@@ -29,10 +29,10 @@ const int _history = 2000;
 /// own page size of 200.
 const int _burst = 500;
 
-/// Every received message's commit currently scans the whole ciphertext
-/// cache (see the store-scan test), so the burst runs on a device with a
-/// tenth of the cache by default, which keeps it in the normal test run.
-/// `VERITRA_PERF_FULL=1` runs it on the full cache.
+/// Until local schema 9 indexed it, every received message's commit scanned
+/// the whole ciphertext cache (see the store-scan test), so the burst runs
+/// on a device with a tenth of the cache by default, as in the recorded
+/// results. `VERITRA_PERF_FULL=1` runs it on the full cache.
 final bool _fullBurst = Platform.environment['VERITRA_PERF_FULL'] == '1';
 final int _burstCacheConversations = _fullBurst ? _conversations : 50;
 
