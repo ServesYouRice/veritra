@@ -21,6 +21,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MOBILE_RECORD_SCHEMA = "veritra-mobile-artifact/1"
+# As in check-release-evidence.py: no replace refs, no grafts (the path under
+# os.devnull can never exist). The checker compares the result with git anyway.
+GIT_HISTORY_ENV = {"GIT_NO_REPLACE_OBJECTS": "1", "GIT_GRAFT_FILE": os.path.join(os.devnull, "grafts")}
 
 
 def load(path: Path) -> dict[str, object]:
@@ -96,6 +99,7 @@ def git_approval_loader(approvals_commit: str, root: Path = ROOT) -> Callable[[s
                 ["git", "--no-replace-objects", "-C", str(root), "cat-file", "blob", f"{approvals_commit}:{path}"],
                 capture_output=True,
                 check=True,
+                env={**os.environ, **GIT_HISTORY_ENV},
             ).stdout
         except subprocess.CalledProcessError as exc:
             raise ValueError(f"approval is missing from approvals commit {approvals_commit}: {path}") from exc
