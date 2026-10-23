@@ -28,6 +28,7 @@ mobile/ios/Frameworks/
 mobile/linux/crypto/
 mobile/macos/crypto/
 mobile/windows/crypto/
+mobile/test/goldens/failures/
 
 # Rust
 crypto/rust/target/

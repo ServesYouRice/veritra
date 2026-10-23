@@ -254,10 +254,13 @@ class _NavItem extends StatelessWidget {
             constraints: const BoxConstraints(
               minHeight: BoneSpacing.minTapTarget,
             ),
-            alignment: Alignment.center,
             padding: const EdgeInsets.symmetric(horizontal: BoneSpacing.sm),
+            // Centred by the Row, not by Container.alignment: an Align
+            // expands to the bottom-bar slot's loose height, which is the
+            // whole screen, and the pill swallowed the page (T43C).
             child: Row(
               mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: <Widget>[
                 ExcludeSemantics(
                   child: Icon(
