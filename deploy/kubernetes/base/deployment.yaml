@@ -66,6 +66,12 @@ spec:
             # to 3 at once). Change both together.
             - name: GOMEMLIMIT
               value: 768MiB
+            # local-path volumes sit on the node's root disk, so the instance
+            # storage limit cannot be derived from the file system. 3686 MiB
+            # is 40 GiB (pvc.yaml) x 0.9 / (7 backups + 3); change it with the
+            # PVC size or PRIVATE_MESSENGER_BACKUP_KEEP.
+            - name: PRIVATE_MESSENGER_LIMIT_INSTANCE_STORAGE_MIB
+              value: "3686"
           # Optional non-secret settings (instance name, VAPID public key and
           # subscriber, FCM project and client email, APNs team/key/bundle IDs,
           # TURN URLs). Secrets come from files, see the overlay example.
