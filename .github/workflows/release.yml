@@ -88,10 +88,15 @@ jobs:
             ${{ steps.image.outputs.image }}:build-${{ github.sha }}
       - name: Record immutable container digest
         run: printf '%s@%s\n' '${{ steps.image.outputs.image }}:build-${{ github.sha }}' '${{ steps.container.outputs.digest }}' > dist/container-image-digest.txt
+      # QA02: signed iOS evidence is separate from the mobile-ios simulator CI
+      # job. The G24 signed build must stage mobile-artifacts.json and its .ipa
+      # in this directory (kept out of dist/, so nothing here is published).
+      # Nothing stages them yet, so the release stays blocked until G24.
       - name: Write release evidence manifest
         env:
           RELEASE_COMMIT: ${{ github.sha }}
           CI_EVIDENCE_FILE: dist/ci-evidence.json
+          MOBILE_ARTIFACTS_FILE: ${{ runner.temp }}/mobile-artifacts/mobile-artifacts.json
           CONTAINER_IMAGE: ${{ steps.image.outputs.image }}:build-${{ github.sha }}
           CONTAINER_DIGEST: ${{ steps.container.outputs.digest }}
         run: python3 scripts/write-release-evidence.py > dist/release-evidence.json
@@ -99,7 +104,28 @@ jobs:
         env:
           RELEASE_COMMIT: ${{ github.sha }}
           RELEASE_EVIDENCE_FILE: dist/release-evidence.json
+          MOBILE_ARTIFACTS_DIR: ${{ runner.temp }}/mobile-artifacts
         run: sh scripts/release-readiness.sh
+      # The offline gate checks structure and digests only. Here the signed
+      # build's GitHub attestation must prove which workflow and commit made
+      # each signed .ipa. Zero signed records fails, never passes vacuously.
+      - name: Verify signed mobile artifact attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MOBILE_ARTIFACTS_DIR: ${{ runner.temp }}/mobile-artifacts
+        run: |
+          signed="$(jq -c '[.mobile_artifacts[] | select(.artifact_type == "signed-release")]' dist/release-evidence.json)"
+          count="$(printf '%s' "$signed" | jq 'length')"
+          test "$count" -ge 1
+          for index in $(seq 0 $((count - 1))); do
+            file="$(printf '%s' "$signed" | jq -r ".[$index].file")"
+            workflow="$(printf '%s' "$signed" | jq -r ".[$index].provenance.workflow")"
+            gh attestation verify "$MOBILE_ARTIFACTS_DIR/$file" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/$workflow" \
+              --source-digest "$GITHUB_SHA" \
+              --deny-self-hosted-runners
+          done
       - name: Verify the tag target before promotion
         run: test "$(git rev-list -n 1 "$GITHUB_REF_NAME")" = "$GITHUB_SHA"
       - name: Promote verified image tags

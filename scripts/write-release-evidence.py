@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
-"""Build the ephemeral release evidence manifest after artifact packaging."""
+"""Build the ephemeral release evidence manifest after artifact packaging.
+
+With ``--ios-simulator-record FILE`` it instead prints the simulator-debug
+record that the ``mobile-ios`` CI job publishes next to its simulator build.
+That record type can never satisfy the signed-release requirement.
+"""
 
 from __future__ import annotations
 
+import argparse
+import hashlib
 import json
 import os
 import sys
@@ -10,6 +17,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+MOBILE_RECORD_SCHEMA = "veritra-mobile-artifact/1"
 
 
 def load(path: Path) -> dict[str, object]:
@@ -22,6 +30,11 @@ def load(path: Path) -> dict[str, object]:
 from typing import Callable
 
 
+def validate_commit(commit: str, name: str = "RELEASE_COMMIT") -> None:
+    if len(commit) != 40 or any(char not in "0123456789abcdef" for char in commit):
+        raise ValueError(f"{name} must be a 40-character lowercase hex SHA")
+
+
 def build_manifest(
     policy: dict[str, object],
     ci: dict[str, object],
@@ -30,14 +43,18 @@ def build_manifest(
     digest: str,
     go_version: str,
     approval_loader: Callable[[str], dict[str, object]],
+    mobile_artifacts: object,
 ) -> dict[str, object]:
-    if len(commit) != 40 or any(char not in "0123456789abcdef" for char in commit):
-        raise ValueError("RELEASE_COMMIT must be a 40-character lowercase hex SHA")
+    validate_commit(commit)
     if not image or not digest:
         raise ValueError("CONTAINER_IMAGE and CONTAINER_DIGEST are required")
     approvals = policy.get("approvals", {})
     if not isinstance(approvals, dict):
         raise ValueError("release policy has no approvals")
+    # Mobile records come only from the separate mobile artifact file, never
+    # from CI job evidence, so a simulator CI run cannot add signed evidence.
+    if not isinstance(mobile_artifacts, list) or not all(isinstance(r, dict) for r in mobile_artifacts):
+        raise ValueError("mobile artifact evidence must be a list of records")
     manifest: dict[str, object] = {
         "schema_version": policy.get("schema_version"),
         "candidate_commit": commit,
@@ -51,6 +68,7 @@ def build_manifest(
             "commit": commit,
             "toolchain": go_version.strip(),
         },
+        "mobile_artifacts": mobile_artifacts,
     }
     for name, config in approvals.items():
         if not isinstance(config, dict) or not isinstance(config.get("path"), str):
@@ -59,9 +77,53 @@ def build_manifest(
     return manifest
 
 
+def simulator_record(commit: str, run_id: str, artifact: Path, entry_point: str = "lib/main_demo.dart") -> dict[str, object]:
+    """Describe the hosted CI simulator build; it is unsigned debug output."""
+    validate_commit(commit, "GITHUB_SHA")
+    if not run_id or len(run_id) > 20 or any(char not in "0123456789" for char in run_id):
+        raise ValueError("GITHUB_RUN_ID must be ASCII digits")
+    hasher = hashlib.sha256()
+    with artifact.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    digest = hasher.hexdigest()
+    return {
+        "schema": MOBILE_RECORD_SCHEMA,
+        "platform": "ios",
+        "artifact_type": "simulator-debug",
+        "commit": commit,
+        "file": artifact.name,
+        "digest": f"sha256:{digest}",
+        "build": {"sdk": "iphonesimulator", "configuration": "debug", "entry_point": entry_point},
+        "signing": {"status": "unsigned"},
+        "provenance": {
+            "builder": "github-actions",
+            "workflow": ".github/workflows/ci.yml",
+            "job": "mobile-ios",
+            "run_id": run_id,
+            "source_commit": commit,
+        },
+    }
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--ios-simulator-record", type=Path, metavar="FILE")
+    args = parser.parse_args()
+    if args.ios_simulator_record:
+        try:
+            record = simulator_record(
+                os.environ.get("GITHUB_SHA", ""), os.environ.get("GITHUB_RUN_ID", ""), args.ios_simulator_record
+            )
+        except (ValueError, OSError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(json.dumps(record, indent=2, sort_keys=True))
+        return 0
+
     commit = os.environ.get("RELEASE_COMMIT") or os.environ.get("GITHUB_SHA", "")
     ci_path = Path(os.environ.get("CI_EVIDENCE_FILE", "dist/ci-evidence.json"))
+    mobile_path = Path(os.environ.get("MOBILE_ARTIFACTS_FILE", "dist/mobile-artifacts.json"))
     image = os.environ.get("CONTAINER_IMAGE", "")
     digest = os.environ.get("CONTAINER_DIGEST", "")
     if not commit or not image or not digest:
@@ -70,6 +132,9 @@ def main() -> int:
     try:
         policy = load(ROOT / "release/release-policy.json")
         ci = load((ROOT / ci_path).resolve())
+        mobile_file = (ROOT / mobile_path).resolve()
+        if not mobile_file.is_file():
+            raise ValueError(f"signed mobile artifact evidence is missing (G24): {mobile_file}")
         go_version = (ROOT / ".go-version").read_text(encoding="utf-8")
         manifest = build_manifest(
             policy,
@@ -79,6 +144,7 @@ def main() -> int:
             digest,
             go_version,
             lambda rel_path: load(ROOT / rel_path),
+            load(mobile_file).get("artifacts"),
         )
         print(json.dumps(manifest, indent=2, sort_keys=True))
         return 0

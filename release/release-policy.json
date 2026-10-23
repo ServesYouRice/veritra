@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "required_ci_jobs": [
     "server",
     "crypto",
@@ -9,6 +9,18 @@
     "licenses",
     "vulnerabilities"
   ],
+  "mobile_artifacts": {
+    "record_schema": "veritra-mobile-artifact/1",
+    "required": [
+      {
+        "platform": "ios",
+        "artifact_type": "signed-release"
+      }
+    ],
+    "simulator_ci_jobs": {
+      "ios": "mobile-ios"
+    }
+  },
   "approvals": {
     "production_crypto": {
       "path": "release/production-crypto-approval.json",
