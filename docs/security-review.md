@@ -116,7 +116,7 @@ recorded and checked, but never count: iOS `simulator-debug` (job
 
 | Platform | Signed file | Structural checks in `check-release-evidence.py` |
 |---|---|---|
-| iOS | `.ipa` | One `Payload/*.app`, iphoneos plist, arm64 iOS Mach-O with a code signature, distribution profile (`get-task-allow=false`) |
+| iOS | `.ipa` | One `Payload/*.app`, iphoneos plist whose `CFBundleIdentifier` is the pinned `ios.bundle_id`, arm64 iOS Mach-O with a code signature, distribution profile (`get-task-allow=false`) whose `TeamIdentifier` is exactly the pinned `ios.team_id` and whose `application-identifier` is `<team>.<bundle>` (and `com.apple.developer.team-identifier`, when present, the team). The same zip rules as Android: no comment, one end record, no ZIP64 or multi-disk records, no duplicate entry names |
 | Android | `.apk` (not `.aab`) | `org.veritra.private_messenger` (the no-namespace `package` attribute, raw string equal to the typed one, as Android reads it), not debuggable, `minSdkVersion` 24 or later (older releases verify only v1), arm64 crypto library, an APK Signature Scheme v2 block (Android 7.0-8.1 never read v3) and any v3 blocks, each with exactly one signer whose certificate SHA-256 is the pinned `android.release_certificate_sha256` (the record's `signing.certificate_sha256` must name it too) and is not the Android debug certificate. Archives a lenient parser could read differently from Android are refused: a zip comment, a second end-of-central-directory signature, ZIP64 or multi-disk records, duplicate entry names, and a manifest with a second (or late) string pool or resource map, a `manifest` element that is not the single root, or two attributes of one name or resource ID in an element |
 
 Both bind the platform, type, candidate commit, the file's sha256 and the
@@ -147,6 +147,24 @@ before the candidate is frozen:
    the candidate tree, so the pin is part of what the approvals review.
 
 Changing the key means changing the pin the same way.
+
+#### Pinning the iOS team and bundle IDs
+
+`release/release-policy.json` also holds `"ios": {"team_id": null, "bundle_id": null}`.
+While either is null, the checker refuses every iOS `signed-release` record
+("pin first"). The owner sets both in the same reviewed pull request as the
+Android pin, before the candidate is frozen:
+
+- `team_id`: the 10-character Apple Developer Team ID (upper-case letters
+  and digits), shown under Membership in the developer account, or as
+  `TeamIdentifier` in the distribution profile
+  (`security cms -D -i profile.mobileprovision`).
+- `bundle_id`: the app's bundle ID, `PRODUCT_BUNDLE_IDENTIFIER` of the
+  Runner target (`org.veritra.privateMessenger` in the Xcode project today),
+  which must also be the profile's explicit App ID; wildcard profiles fail.
+
+A real export has not been run through these checks yet. G24 must confirm on
+its first signed `.ipa` that Xcode writes no zip comment or ZIP64 records.
 
 ## Recording an approval
 

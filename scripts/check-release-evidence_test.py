@@ -69,6 +69,10 @@ spec = importlib.util.spec_from_file_location("write_release_evidence", ROOT / "
 assert spec and spec.loader
 writer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(writer)
+checker_spec = importlib.util.spec_from_file_location("check_release_evidence", CHECKER)
+assert checker_spec and checker_spec.loader
+checker = importlib.util.module_from_spec(checker_spec)
+checker_spec.loader.exec_module(checker)
 
 
 def write_json(path: Path, value: object) -> None:
@@ -104,8 +108,20 @@ def fat(*slices: bytes) -> bytes:
     return header.ljust(offset, b"\0") + body
 
 
-def profile(get_task_allow: bool) -> bytes:
-    plist = plistlib.dumps({"Name": "synthetic fixture", "Entitlements": {"get-task-allow": get_task_allow}})
+TEAM_ID, BUNDLE_ID = "ABCDE12345", "org.veritra.privateMessenger"
+
+
+def profile(
+    get_task_allow: bool,
+    *,
+    teams: object = (TEAM_ID,),
+    app_id: str = f"{TEAM_ID}.{BUNDLE_ID}",
+    team_entitlement: str | None = TEAM_ID,
+) -> bytes:
+    entitlements: dict[str, object] = {"get-task-allow": get_task_allow, "application-identifier": app_id}
+    if team_entitlement is not None:
+        entitlements["com.apple.developer.team-identifier"] = team_entitlement
+    plist = plistlib.dumps({"Name": "synthetic fixture", "TeamIdentifier": list(teams), "Entitlements": entitlements})
     return b"SYNTHETIC-CMS-PLACEHOLDER" + plist + b"SYNTHETIC-CMS-PLACEHOLDER"
 
 
@@ -119,19 +135,30 @@ def build_app_zip(
     code_resources: bool = True,
     provisioning: bytes | None = None,
     extra_apps: tuple[str, ...] = (),
+    bundle_id: str | None = BUNDLE_ID,
+    before: tuple[tuple[str, bytes], ...] = (),
+    comment: bytes = b"",
 ) -> str:
+    """``before`` members are written first (duplicate names allowed)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
-        info = {"CFBundleExecutable": "Runner", "DTPlatformName": platform_name, "CFBundleSupportedPlatforms": list(supported)}
-        archive.writestr(prefix + "Info.plist", plistlib.dumps(info, fmt=plistlib.FMT_BINARY))
-        archive.writestr(prefix + "Runner", macho() if executable is None else executable)
-        if code_resources:
-            archive.writestr(prefix + "_CodeSignature/CodeResources", b"synthetic placeholder")
-        if provisioning is not None:
-            archive.writestr(prefix + "embedded.mobileprovision", provisioning)
-        archive.writestr(prefix + "Frameworks/App.framework/App", b"synthetic")
-        for app in extra_apps:
-            archive.writestr(f"Payload/{app}/Info.plist", b"")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # zipfile warns on the duplicate names under test
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, content in before:
+                archive.writestr(prefix + name, content)
+            info = {"CFBundleExecutable": "Runner", "DTPlatformName": platform_name, "CFBundleSupportedPlatforms": list(supported)}
+            if bundle_id is not None:
+                info["CFBundleIdentifier"] = bundle_id
+            archive.writestr(prefix + "Info.plist", plistlib.dumps(info, fmt=plistlib.FMT_BINARY))
+            archive.writestr(prefix + "Runner", macho() if executable is None else executable)
+            if code_resources:
+                archive.writestr(prefix + "_CodeSignature/CodeResources", b"synthetic placeholder")
+            if provisioning is not None:
+                archive.writestr(prefix + "embedded.mobileprovision", provisioning)
+            archive.writestr(prefix + "Frameworks/App.framework/App", b"synthetic")
+            for app in extra_apps:
+                archive.writestr(f"Payload/{app}/Info.plist", b"")
+            archive.comment = comment
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
@@ -553,6 +580,7 @@ def fixture() -> tuple[Path, dict[str, object]]:
         "required_ci_jobs": list(JOBS),
         "mobile_artifacts": MOBILE_POLICY,
         "android": {"release_certificate_sha256": fingerprint(RELEASE_CERT)},
+        "ios": {"team_id": TEAM_ID, "bundle_id": BUNDLE_ID},
         "approvals": APPROVALS_POLICY,
     }
     write_json(temp / "release/release-policy.json", policy)
@@ -1005,8 +1033,80 @@ def qa02_cases(root: Path, valid: dict[str, object]) -> None:
     expect_valid(root, valid, env={"MOBILE_ARTIFACTS_DIR": str(elsewhere)})
     not_zip = dist / "not-a-zip.ipa"
     not_zip.write_bytes(b"synthetic, not an archive")
-    expect_blocked(root, with_record(record(file=not_zip.name, digest="sha256:" + hashlib.sha256(not_zip.read_bytes()).hexdigest())), "is not a readable iOS app archive")
+    expect_blocked(root, with_record(record(file=not_zip.name, digest="sha256:" + hashlib.sha256(not_zip.read_bytes()).hexdigest())),
+                   "signed ios artifact has a zip comment or does not end with its end of central directory record")
+    # A zip without the app's Info.plist is still unreadable.
+    no_plist = dist / "no-plist.ipa"
+    with zipfile.ZipFile(no_plist, "w") as archive:
+        archive.writestr("Payload/Runner.app/Runner", macho())
+    expect_blocked(root, with_record(record(file=no_plist.name, digest="sha256:" + hashlib.sha256(no_plist.read_bytes()).hexdigest())),
+                   "signed ios artifact is not a readable iOS app archive")
     expect_blocked(root, with_record(signed_bytes("two-apps.ipa", extra_apps=("Other.app",))), "must hold exactly one Payload/*.app bundle")
+
+    # Review finding: another app, a zip comment and two profiles (zipfile
+    # reads the last, a distribution one; the first allows debugging) passed.
+    reviewer_ipa = signed_bytes("reviewer.ipa", prefix="Payload/Other.app/", bundle_id="com.someone.else",
+                                before=(("embedded.mobileprovision", profile(True)),), comment=b"anything")
+    expect_blocked(root, with_record(reviewer_ipa),
+                   "signed ios artifact has a zip comment or does not end with its end of central directory record", no_signed)
+    expect_blocked(root, with_record(signed_bytes("comment.ipa", comment=b"anything")), "signed ios artifact has a zip comment")
+    expect_blocked(root, with_record(signed_bytes("two-profiles.ipa", before=(("embedded.mobileprovision", profile(True)),))),
+                   "signed ios artifact has duplicate or ambiguous entry names", no_signed)
+    # The pinned team and bundle ID: Info.plist and the profile.
+    for name, options, reason in (
+        ("other-bundle.ipa", {"bundle_id": "com.someone.else"}, "signed ios artifact is not the pinned bundle ID"),
+        ("no-bundle.ipa", {"bundle_id": None}, "signed ios artifact is not the pinned bundle ID"),
+        ("other-team.ipa", {"provisioning": profile(False, teams=("ZZZZZ99999",))}, "not for the pinned team and bundle ID"),
+        ("two-teams.ipa", {"provisioning": profile(False, teams=(TEAM_ID, "ZZZZZ99999"))}, "not for the pinned team and bundle ID"),
+        ("other-app-id.ipa", {"provisioning": profile(False, app_id=f"{TEAM_ID}.com.someone.else")},
+         "not for the pinned team and bundle ID"),
+        ("wildcard-app-id.ipa", {"provisioning": profile(False, app_id=f"{TEAM_ID}.*")}, "not for the pinned team and bundle ID"),
+        ("other-team-entitlement.ipa", {"provisioning": profile(False, team_entitlement="ZZZZZ99999")},
+         "not for the pinned team and bundle ID"),
+    ):
+        expect_blocked(root, with_record(signed_bytes(name, **options)), reason, no_signed)
+    expect_valid(root, with_record(signed_bytes("no-team-entitlement.ipa", provisioning=profile(False, team_entitlement=None))))
+
+    # The pins live in the policy. Unpinned (null, the repository today): no
+    # iOS signed-release record counts, while Android and the preflight are
+    # unaffected. A malformed pin blocks both gates.
+    policy_path = root / "release/release-policy.json"
+    original_policy = policy_path.read_text(encoding="utf-8")
+    try:
+        for ios_pins in ({"team_id": None, "bundle_id": BUNDLE_ID}, {"team_id": TEAM_ID, "bundle_id": None},
+                         {"team_id": None, "bundle_id": None}):
+            write_json(policy_path, dict(json.loads(original_policy), ios=ios_pins))
+            expect_blocked(root, valid, f"{label} cannot count until the iOS team and bundle IDs are pinned (pin first",
+                           "signed ios artifact is not the pinned bundle ID", no_signed,
+                           absent=("android signed-release", "release policy ios"))
+            expect_valid(root, valid, "--preflight")
+        for ios_pins, bad in (
+            ({"team_id": TEAM_ID.lower(), "bundle_id": BUNDLE_ID}, "team_id"),
+            ({"team_id": TEAM_ID[:9], "bundle_id": BUNDLE_ID}, "team_id"),
+            ({"team_id": 12345, "bundle_id": BUNDLE_ID}, "team_id"),
+            ({"team_id": TEAM_ID, "bundle_id": "noDots"}, "bundle_id"),
+            ({"team_id": TEAM_ID, "bundle_id": "org.veritra.private_messenger"}, "bundle_id"),
+            ({"team_id": TEAM_ID, "bundle_id": "org..veritra"}, "bundle_id"),
+            ({"team_id": TEAM_ID, "bundle_id": BUNDLE_ID, "profile": None}, "team_id"),
+            ({"team_id": TEAM_ID}, "bundle_id"),
+            (None, "team_id"),
+            (REMOVE, "bundle_id"),
+        ):
+            policy = json.loads(original_policy)
+            if ios_pins is REMOVE:
+                policy.pop("ios")
+            else:
+                policy["ios"] = ios_pins
+            write_json(policy_path, policy)
+            malformed = f"release policy ios.{bad} is not null or"
+            expect_blocked(root, valid, malformed, "pin first")
+            expect_blocked(root, valid, malformed, extra=("--preflight",))
+        # Pinned to another team: the fixture's IPA no longer counts.
+        write_json(policy_path, dict(json.loads(original_policy), ios={"team_id": "ZZZZZ99999", "bundle_id": BUNDLE_ID}))
+        expect_blocked(root, valid, "signed ios provisioning profile is not for the pinned team and bundle ID", no_signed)
+    finally:
+        policy_path.write_text(original_policy, encoding="utf-8")
+    expect_valid(root, valid)
 
     # Provenance must be a separate GitHub Actions build, never the simulator CI.
     for provenance in (
@@ -1463,6 +1563,10 @@ def main() -> int:
         pin = repo_policy["android"]["release_certificate_sha256"]
         assert set(repo_policy["android"]) == {"release_certificate_sha256"}, "repository android policy drifted"
         assert pin is None or (len(pin) == 64 and set(pin) <= set("0123456789abcdef")), "malformed repository pin"
+        assert set(repo_policy["ios"]) == {"team_id", "bundle_id"}, "repository ios policy drifted"
+        errors: list[str] = []
+        checker.signing_pins(repo_policy, errors)
+        assert not errors, errors
         assert repo_policy["schema_version"] == 3
     finally:
         shutil.rmtree(root)
