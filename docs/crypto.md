@@ -125,3 +125,8 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   `local_ciphertext_envelopes (conversation_id, position)`, created with
   `CREATE INDEX IF NOT EXISTS`; no table, row, ABI or payload change. An
   upgrade now runs all its steps and the new version in one transaction.
+- **T49C-3 (2026-10-23):** no schema, ABI or payload change. The cached
+  conversation list and ciphertext snapshot are written incrementally: one
+  transaction deletes the rows that are gone and upserts the rest, writing
+  a row only when its conversation, position or payload differs. The stored
+  rows are the same as after the former full rewrite.

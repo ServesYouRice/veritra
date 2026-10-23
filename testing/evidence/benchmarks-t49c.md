@@ -193,3 +193,46 @@ changes and not done here:
 
 The app's own encrypted backup is a logical export, so this change does not
 affect it.
+
+## After: incremental snapshot writes (T49C-3)
+
+Measured miss 3, fixed without a schema change (local schema stays 9).
+`replaceSnapshot` no longer deletes both cache tables and inserts every
+row. In the same single transaction it reads the stored IDs, deletes the
+rows that are gone and upserts the rest with
+`ON CONFLICT (id) DO UPDATE ... WHERE <a column differs>`, so an unchanged
+row is compared and left alone. The rows afterwards are exactly those of a
+full rewrite (same IDs, positions, payloads and order); a repeated ID is
+refused before anything is written, as the full rewrite refused it. A
+failure part-way still rolls back the deletes and updates before it (test
+with an injected trigger in `encrypted_local_store_test.dart`).
+
+Same host and commands as above, 2026-10-23, load average 1.5-2.6, a second
+Flutter job sharing the host. Medians of three runs; "before" is this
+branch's tests against `138891c`'s `lib/`. Rows are SQLite
+`total_changes()`; pages are the frames the write appended to an emptied
+write-ahead log (4 KiB each). Both are exact. New scenario: `snapshot
+rewrites of a full cache` in `startup_sync_perf_test.dart`.
+
+| Scenario | Dataset | Before | After |
+|---|---|---|---|
+| Rewrite, nothing changed (restore, refresh, open) | 10,180 cached | 286 ms, 21,360 rows, 1,878 pages (7.3 MiB) | **163 ms, 0 rows, 0 pages** |
+| Rewrite after one new message (conversation moves to the top) | same | 265 ms, 21,365 rows, 1,879 pages | **128 ms, 34 rows, 8 pages** |
+| Rewrite after leaving one conversation (20 envelopes) | same | 255 ms, 21,261 rows, 1,873 pages | **152 ms, 418 rows, 29 pages** |
+| Online restore (includes a rewrite) | same | 458 ms | **289 ms** |
+| Open conversation (`loadMessages`, two rewrites) | same | 270 ms | **189 ms** |
+| One snapshot rewrite (existing scenario) | same | 250 ms | **141 ms** |
+| Cold start restore, sync burst, commit per message | - | unchanged (no snapshot write on these paths) | same |
+
+Leaving a conversation still updates the positions of every conversation
+listed after it (about 400 small rows). What remains of the time is CPU
+work proportional to the cache: encoding each cached envelope to JSON
+(about 40 ms at 10k rows) and sending and comparing it in the database
+isolate (about 100 ms). The disk work is gone: an unchanged rewrite used to
+write 7.3 MiB to the write-ahead log, with `secure_delete` zeroing the
+freed pages, and checkpoint it back; on phone flash that write and its
+fsync are the larger cost, which this host does not show. Skipping the
+encode for unchanged conversations would need an in-memory record of what
+is stored, which other writers (`commitMlsTransition`, `commitSyncEvent`,
+another store on the same file) can make stale; not done, the database
+stays the only record. Rollback: revert; no data or schema change.

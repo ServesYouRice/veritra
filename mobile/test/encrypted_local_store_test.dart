@@ -382,8 +382,19 @@ void main() {
       },
     );
 
-    // The same envelope ID twice violates the key on the second insert;
-    // the rows written before it must roll back with it.
+    Future<void> expectFirstSnapshot() async {
+      final snapshot = (await store.loadSnapshot())!;
+      expect(snapshot.conversations.map((item) => item.id),
+          <String>['conv_2', 'conv_1']);
+      expect(snapshot.messagesByConversation['conv_1']!.map((item) => item.id),
+          <String>['msg_b', 'msg_a']);
+      expect(snapshot.messagesByConversation['conv_2']!.map((item) => item.id),
+          <String>['msg_c']);
+      expect(snapshot.messagesByConversation.keys,
+          unorderedEquals(<String>['conv_1', 'conv_2']));
+    }
+
+    // The same envelope ID twice is refused before anything is written.
     await expectLater(
       store.saveProjection(
         <Conversation>[
@@ -395,18 +406,160 @@ void main() {
           'conv_4': <ReceivedMessageEnvelope>[envelope('msg_x', 'conv_4')],
         },
       ),
-      throwsA(anything),
+      throwsStateError,
     );
+    await expectFirstSnapshot();
 
+    // A failure at the last write (the new envelope) rolls back the deletes
+    // and reorders the same rewrite made before it.
+    final database = databases.last;
+    await database
+        .customStatement('CREATE TEMP TRIGGER fail_msg_x BEFORE INSERT ON '
+            "local_ciphertext_envelopes WHEN NEW.id = 'msg_x' "
+            "BEGIN SELECT RAISE(ABORT, 'injected'); END");
+    final next = <Conversation>[Conversation(id: 'conv_1', kind: 'group')];
+    final nextMessages = <String, List<ReceivedMessageEnvelope>>{
+      'conv_1': <ReceivedMessageEnvelope>[
+        envelope('msg_x', 'conv_1'),
+        envelope('msg_a', 'conv_1'),
+        envelope('msg_b', 'conv_1'),
+      ],
+    };
+    await expectLater(
+        store.saveProjection(next, nextMessages), throwsA(anything));
+    await expectFirstSnapshot();
+
+    await database.customStatement('DROP TRIGGER fail_msg_x');
+    await store.saveProjection(next, nextMessages);
     final snapshot = (await store.loadSnapshot())!;
-    expect(snapshot.conversations.map((item) => item.id),
-        <String>['conv_2', 'conv_1']);
+    expect(snapshot.conversations.map((item) => item.id), <String>['conv_1']);
+    expect(snapshot.messagesByConversation.keys, <String>['conv_1']);
     expect(snapshot.messagesByConversation['conv_1']!.map((item) => item.id),
-        <String>['msg_b', 'msg_a']);
-    expect(snapshot.messagesByConversation['conv_2']!.map((item) => item.id),
-        <String>['msg_c']);
-    expect(snapshot.messagesByConversation.keys,
-        unorderedEquals(<String>['conv_1', 'conv_2']));
+        <String>['msg_x', 'msg_a', 'msg_b']);
+  });
+
+  test('a snapshot rewrite writes only the rows that changed', () async {
+    final store = createStore();
+    await store.saveSession(const Session(
+      baseUrl: 'https://example.test',
+      token: 'token',
+      accountId: 'acct_1',
+      deviceId: 'dev_1',
+    ));
+    ReceivedMessageEnvelope envelope(String id, String conversationId,
+            {int ciphertext = 1}) =>
+        ReceivedMessageEnvelope(
+          id: id,
+          conversationId: conversationId,
+          senderAccountId: 'acct_1',
+          senderDeviceId: 'dev_1',
+          idempotencyKey: 'key_$id',
+          ciphertext: <int>[ciphertext],
+          cryptoProtocol: 'mls10-openmls-v1',
+          createdAt: DateTime.utc(2026, 7, 29),
+        );
+    final database = databases.last;
+    Future<int> rowChanges() async => (await database
+            .customSelect('SELECT total_changes() AS changes')
+            .getSingle())
+        .read<int>('changes');
+    Future<int> write(List<Conversation> conversations,
+        Map<String, List<ReceivedMessageEnvelope>> messages,
+        {int? cursor}) async {
+      final before = await rowChanges();
+      if (cursor == null) {
+        await store.saveProjection(conversations, messages);
+      } else {
+        await store.saveSnapshot(conversations, messages, cursor);
+      }
+      return await rowChanges() - before;
+    }
+
+    Future<void> expectStored(List<Conversation> conversations,
+        Map<String, List<ReceivedMessageEnvelope>> messages) async {
+      final snapshot = (await store.loadSnapshot())!;
+      expect(snapshot.conversations.map((item) => jsonEncode(item.toJson())),
+          conversations.map((item) => jsonEncode(item.toJson())));
+      expect(
+          snapshot.messagesByConversation.keys, unorderedEquals(messages.keys));
+      for (final entry in messages.entries) {
+        expect(
+            snapshot.messagesByConversation[entry.key]!
+                .map((item) => jsonEncode(item.toJson())),
+            entry.value.map((item) => jsonEncode(item.toJson())));
+      }
+    }
+
+    var conversations = <Conversation>[
+      Conversation(id: 'conv_1', kind: 'group'),
+      Conversation(id: 'conv_2', kind: 'group'),
+      Conversation(id: 'conv_3', kind: 'dm'),
+    ];
+    var messages = <String, List<ReceivedMessageEnvelope>>{
+      'conv_1': <ReceivedMessageEnvelope>[
+        envelope('msg_2', 'conv_1'),
+        envelope('msg_1', 'conv_1'),
+      ],
+      'conv_2': <ReceivedMessageEnvelope>[envelope('msg_3', 'conv_2')],
+      'conv_3': <ReceivedMessageEnvelope>[envelope('msg_4', 'conv_3')],
+    };
+    expect(await write(conversations, messages, cursor: 3), 3 + 4 + 1);
+    await expectStored(conversations, messages);
+
+    // Nothing changed: no row is written (the cursor row still is).
+    expect(await write(conversations, messages, cursor: 3), 1);
+    expect(await write(conversations, messages), 0);
+    await expectStored(conversations, messages);
+
+    // A new message at the head moves its conversation to the top and the
+    // conversation's older rows down one position.
+    conversations = <Conversation>[
+      conversations[1],
+      conversations[0],
+      conversations[2],
+    ];
+    messages = <String, List<ReceivedMessageEnvelope>>{
+      ...messages,
+      'conv_2': <ReceivedMessageEnvelope>[
+        envelope('msg_5', 'conv_2'),
+        envelope('msg_3', 'conv_2'),
+      ],
+    };
+    // conv_2 and conv_1 swap positions; msg_5 is new and msg_3 moves.
+    expect(await write(conversations, messages), 2 + 2);
+    await expectStored(conversations, messages);
+
+    // A changed payload, an envelope that moved conversation, a renamed
+    // conversation and a conversation that left with its envelopes.
+    conversations = <Conversation>[
+      conversations[0],
+      Conversation(id: 'conv_1', kind: 'group', title: 'Renamed'),
+    ];
+    messages = <String, List<ReceivedMessageEnvelope>>{
+      'conv_1': <ReceivedMessageEnvelope>[
+        envelope('msg_2', 'conv_1', ciphertext: 2),
+        envelope('msg_1', 'conv_1'),
+        envelope('msg_4', 'conv_1'),
+      ],
+      'conv_2': messages['conv_2']!,
+    };
+    // conv_3 deleted, conv_1 updated; msg_2 updated, msg_4 moved.
+    expect(await write(conversations, messages), 2 + 2);
+    await expectStored(conversations, messages);
+
+    // An empty projection empties both tables.
+    expect(
+        await write(const <Conversation>[],
+            const <String, List<ReceivedMessageEnvelope>>{}),
+        2 + 5);
+    expect(await store.loadSnapshot(), isNull);
+    expect(
+        (await database
+                .customSelect('SELECT COUNT(*) AS rows FROM '
+                    'local_ciphertext_envelopes')
+                .getSingle())
+            .read<int>('rows'),
+        0);
   });
 
   test('wrong database key fails closed', () async {
