@@ -189,9 +189,14 @@ def require(value: Any, description: str, errors: list[str]) -> None:
 
 
 def git(root: Path, *args: str) -> bytes | None:
-    """Run a read-only git query; None when git fails, so callers fail closed."""
+    """Run a read-only git query; None when git fails, so callers fail closed.
+
+    Replace refs are ignored: a local refs/replace entry must not be able to
+    make a commit without approvals read as one with them.
+    """
+    command = ["git", "--no-replace-objects", "-C", str(root), *args]
     try:
-        return subprocess.run(["git", "-C", str(root), *args], capture_output=True, check=True).stdout
+        return subprocess.run(command, capture_output=True, check=True).stdout
     except (OSError, subprocess.CalledProcessError):
         return None
 

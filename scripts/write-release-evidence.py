@@ -93,7 +93,7 @@ def git_approval_loader(approvals_commit: str, root: Path = ROOT) -> Callable[[s
     def load_approval(path: str) -> dict[str, object]:
         try:
             blob = subprocess.run(
-                ["git", "-C", str(root), "cat-file", "blob", f"{approvals_commit}:{path}"],
+                ["git", "--no-replace-objects", "-C", str(root), "cat-file", "blob", f"{approvals_commit}:{path}"],
                 capture_output=True,
                 check=True,
             ).stdout

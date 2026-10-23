@@ -591,6 +591,13 @@ def approval_cases(root: Path, valid: dict[str, object]) -> None:
     protected_tip = commit_on(root, COMMIT, {"README": b"no approvals merged\n"})
     check(protected_tip, "production_crypto approval is missing", "independent_review approval is missing")
     check(merge_on(root, protected_tip, pull_request_head))
+    # A replace ref cannot make the protected tip read as the approved head.
+    git(root, "replace", protected_tip, pull_request_head)
+    try:
+        assert git(root, "cat-file", "-p", f"{protected_tip}:{approval_path('production_crypto')}")
+        check(protected_tip, "production_crypto approval is missing")
+    finally:
+        git(root, "replace", "-d", protected_tip)
 
     # Approvals for another commit, or at another commit's path.
     check(approved(production_crypto=approval_record("production_crypto", reviewed_commit=OTHER_COMMIT)),
