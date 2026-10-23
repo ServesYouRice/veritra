@@ -1064,6 +1064,8 @@ func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 
 func (r *statusRecorder) Flush() {
 	if flusher, ok := r.ResponseWriter.(http.Flusher); ok {
+		// Flushing sends the status line (an implicit 200) if none was.
+		r.wroteHeader = true
 		flusher.Flush()
 	}
 }
