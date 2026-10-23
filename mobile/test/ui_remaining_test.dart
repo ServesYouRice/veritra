@@ -11,6 +11,7 @@ import 'package:private_messenger/features/chat/chat_list_screen.dart';
 import 'package:private_messenger/features/chat/chat_screen.dart';
 import 'package:private_messenger/features/chat/conversation_details_screen.dart';
 import 'package:private_messenger/features/settings/blocked_accounts_screen.dart';
+import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
@@ -34,9 +35,10 @@ void main() {
         peerAccountId: 'acct_bob',
         peerUsername: 'bob',
       );
-      expect(conversationTitle(alice), '@alice');
-      expect(conversationTitle(bob), '@bob');
-      expect(conversationTitle(alice), isNot(conversationTitle(bob)));
+      expect(conversationTitle(englishL10n, alice), '@alice');
+      expect(conversationTitle(englishL10n, bob), '@bob');
+      expect(conversationTitle(englishL10n, alice),
+          isNot(conversationTitle(englishL10n, bob)));
     });
 
     test('a DM without a username still distinguishes the peer', () {
@@ -50,8 +52,9 @@ void main() {
         kind: 'dm',
         peerAccountId: 'acct_0000000000000002',
       );
-      expect(conversationTitle(one), isNot('Direct message'));
-      expect(conversationTitle(one), isNot(conversationTitle(two)));
+      expect(conversationTitle(englishL10n, one), isNot('Direct message'));
+      expect(conversationTitle(englishL10n, one),
+          isNot(conversationTitle(englishL10n, two)));
     });
 
     test('peer identity survives a snapshot round trip', () {
@@ -74,7 +77,7 @@ void main() {
         'peer_username': '',
       });
       expect(conversation.peerUsername, isNull);
-      expect(conversationTitle(conversation), contains('acct_'));
+      expect(conversationTitle(englishL10n, conversation), contains('acct_'));
     });
 
     testWidgets('the chat list renders distinct rows for two DMs',

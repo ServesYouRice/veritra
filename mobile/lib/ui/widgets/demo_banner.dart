@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../tokens.dart';
+import '../../l10n/l10n.dart';
 
 /// Always-visible notice for demo builds (decision D11). Demo builds run the
 /// real end-to-end encryption before its independent review, so they must
@@ -8,6 +9,8 @@ import '../tokens.dart';
 class DemoBanner extends StatelessWidget {
   const DemoBanner({super.key});
 
+  /// The English label, for tests and logs. The banner itself reads it from
+  /// the app's strings (`demoBannerLabel`), which must stay equal to this.
   static const label = 'Demo build · unreviewed encryption';
 
   @override
@@ -18,9 +21,11 @@ class DemoBanner extends StatelessWidget {
             ? VeritraStateColors.dark
             : VeritraStateColors.light);
     final scheme = theme.colorScheme;
+    final l10n = context.l10n;
+    final notice = l10n.demoBannerNotice(l10n.demoBannerLabel);
     return Semantics(
       container: true,
-      label: '$label. Not for real conversations.',
+      label: notice,
       excludeSemantics: true,
       child: Material(
         color: scheme.surfaceContainerHigh,
@@ -41,7 +46,7 @@ class DemoBanner extends StatelessWidget {
                 const SizedBox(width: BoneSpacing.sm),
                 Expanded(
                   child: Text(
-                    '$label. Not for real conversations.',
+                    notice,
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: scheme.onSurface,
                     ),

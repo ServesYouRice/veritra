@@ -14,8 +14,8 @@ String formatDate(BuildContext context, DateTime time) {
   return MaterialLocalizations.of(context).formatMediumDate(time.toLocal());
 }
 
-String formatDateTime(BuildContext context, DateTime time) =>
-    '${formatDate(context, time)} · ${formatTimeOfDay(context, time)}';
+String formatDateTime(BuildContext context, DateTime time) => context.l10n
+    .dateTimeJoined(formatDate(context, time), formatTimeOfDay(context, time));
 
 /// Compact, locale-aware timestamp for a list row: the time of day for today,
 /// `Yesterday`, the month and day within the current year, otherwise a short
@@ -44,6 +44,16 @@ String formatListTime(BuildContext context, DateTime time, {DateTime? now}) {
     return localizations.formatShortMonthDay(local);
   }
   return localizations.formatShortDate(local);
+}
+
+/// "1.2 MB"-style size for a bubble or dialog, with locale-aware digits.
+String formatFileSize(BuildContext context, int bytes) {
+  final l10n = context.l10n;
+  if (bytes < 1024) return l10n.fileSizeBytes(bytes);
+  if (bytes < 1024 * 1024) {
+    return l10n.fileSizeKilobytes((bytes / 1024).round());
+  }
+  return l10n.fileSizeMegabytes(bytes / (1024 * 1024));
 }
 
 /// Compact identifier preview, e.g. `acct_9f2…c41`.

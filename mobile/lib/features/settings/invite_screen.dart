@@ -35,10 +35,11 @@ class _InviteScreenState extends State<InviteScreen> {
     return AnimatedBuilder(
       animation: widget.state,
       builder: (context, _) {
+        final l10n = context.l10n;
         final invites = widget.state.invites;
         return Scaffold(
           appBar: LargeTitleBar(
-            title: 'Invites',
+            title: l10n.settingsInvites,
             actions: <Widget>[
               RefreshAction(onRefresh: widget.state.refreshInvites),
             ],
@@ -54,9 +55,9 @@ class _InviteScreenState extends State<InviteScreen> {
                 BoneSpacing.xl,
               ),
               children: <Widget>[
-                const SectionHeader(
-                  'Create an invite',
-                  padding: EdgeInsets.only(bottom: BoneSpacing.sm),
+                SectionHeader(
+                  l10n.inviteCreateSection,
+                  padding: const EdgeInsets.only(bottom: BoneSpacing.sm),
                 ),
                 TileGroup(
                   dividerIndent: 0,
@@ -70,26 +71,22 @@ class _InviteScreenState extends State<InviteScreen> {
                             children: <Widget>[
                               Expanded(
                                 child: _Labelled(
-                                  label: 'Max uses',
+                                  label: l10n.inviteMaxUses,
                                   child: DropdownButtonFormField<int>(
                                     initialValue: maxUses,
-                                    items: const <DropdownMenuItem<int>>[
-                                      DropdownMenuItem(
-                                        value: 1,
-                                        child: Text('1'),
-                                      ),
-                                      DropdownMenuItem(
-                                        value: 5,
-                                        child: Text('5'),
-                                      ),
-                                      DropdownMenuItem(
-                                        value: 10,
-                                        child: Text('10'),
-                                      ),
-                                      DropdownMenuItem(
-                                        value: 25,
-                                        child: Text('25'),
-                                      ),
+                                    items: <DropdownMenuItem<int>>[
+                                      for (final count in const <int>[
+                                        1,
+                                        5,
+                                        10,
+                                        25,
+                                      ])
+                                        DropdownMenuItem(
+                                          value: count,
+                                          child: Text(
+                                            l10n.inviteMaxUsesOption(count),
+                                          ),
+                                        ),
                                     ],
                                     onChanged: (value) =>
                                         setState(() => maxUses = value ?? 1),
@@ -99,22 +96,17 @@ class _InviteScreenState extends State<InviteScreen> {
                               const SizedBox(width: BoneSpacing.md),
                               Expanded(
                                 child: _Labelled(
-                                  label: 'Expires',
+                                  label: l10n.inviteExpires,
                                   child: DropdownButtonFormField<int?>(
                                     initialValue: expiresInDays,
-                                    items: const <DropdownMenuItem<int?>>[
-                                      DropdownMenuItem(
-                                        value: 1,
-                                        child: Text('1 day'),
-                                      ),
-                                      DropdownMenuItem(
-                                        value: 7,
-                                        child: Text('7 days'),
-                                      ),
-                                      DropdownMenuItem(
-                                        value: 30,
-                                        child: Text('30 days'),
-                                      ),
+                                    items: <DropdownMenuItem<int?>>[
+                                      for (final days in const <int>[1, 7, 30])
+                                        DropdownMenuItem(
+                                          value: days,
+                                          child: Text(
+                                            l10n.durationDays(days),
+                                          ),
+                                        ),
                                     ],
                                     onChanged: (value) =>
                                         setState(() => expiresInDays = value),
@@ -129,7 +121,7 @@ class _InviteScreenState extends State<InviteScreen> {
                                 ? null
                                 : () => _create(context),
                             icon: const Icon(Icons.card_giftcard_outlined),
-                            label: const Text('Create invite'),
+                            label: Text(l10n.inviteCreate),
                           ),
                         ],
                       ),
@@ -141,18 +133,17 @@ class _InviteScreenState extends State<InviteScreen> {
                   // Spinner until the first fetch resolves, then the empty
                   // state — otherwise "No invites yet" flashes during load.
                   widget.state.invitesLoaded
-                      ? const EmptyState(
+                      ? EmptyState(
                           icon: Icons.card_giftcard_outlined,
-                          title: 'No invites yet',
-                          message: 'Invite codes you create appear here. Share '
-                              'them over a secure channel.',
+                          title: l10n.inviteEmptyTitle,
+                          message: l10n.inviteEmptyMessage,
                         )
                       : const Padding(
                           padding: EdgeInsets.symmetric(vertical: 32),
                           child: Center(child: CircularProgressIndicator()),
                         )
                 else ...<Widget>[
-                  const SectionHeader('Your invites'),
+                  SectionHeader(l10n.inviteYourInvites),
                   TileGroup(
                     children: <Widget>[
                       for (final invite in invites)
@@ -257,24 +248,25 @@ class _InviteRow extends StatelessWidget {
           // Uses are the fact that decides whether the code still works, so
           // they get the pill rather than a clause in the joined subtitle.
           StatusPill(
-            label: '${invite.uses}/${invite.maxUses}',
+            label: context.l10n.inviteUsesPill(invite.uses, invite.maxUses),
             tone: exhausted ? StatusTone.warning : StatusTone.neutral,
             uppercase: false,
-            semanticsLabel: '${invite.uses} of ${invite.maxUses} uses',
+            semanticsLabel:
+                context.l10n.inviteUsesSemantics(invite.uses, invite.maxUses),
           ),
         ],
       ),
       subtitle: Text(
         expires == null
-            ? 'Never expires'
-            : 'Expires ${formatDateTime(context, expires)}',
+            ? context.l10n.inviteNeverExpires
+            : context.l10n.inviteExpiresAt(formatDateTime(context, expires)),
         style: theme.textTheme.bodySmall?.copyWith(
           color: theme.colorScheme.onSurfaceVariant,
         ),
       ),
       trailing: MenuAnchor(
         builder: (context, controller, _) => IconButton(
-          tooltip: 'Invite actions',
+          tooltip: context.l10n.inviteActions,
           icon: const Icon(Icons.more_vert),
           onPressed: () =>
               controller.isOpen ? controller.close() : controller.open(),
@@ -285,15 +277,15 @@ class _InviteRow extends StatelessWidget {
             onPressed: () {
               Clipboard.setData(ClipboardData(text: invite.code));
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Invite code copied.')),
+                SnackBar(content: Text(context.l10n.inviteCodeCopied)),
               );
             },
-            child: const Text('Copy code'),
+            child: Text(context.l10n.inviteCopyCode),
           ),
           MenuItemButton(
             leadingIcon: const Icon(Icons.block_outlined),
             onPressed: onRevoke,
-            child: const Text('Revoke'),
+            child: Text(context.l10n.commonRevoke),
           ),
         ],
       ),

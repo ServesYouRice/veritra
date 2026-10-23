@@ -4,6 +4,7 @@ import '../../core/app_state.dart';
 import '../../sync/sync_recovery.dart';
 import '../format.dart';
 import '../tokens.dart';
+import '../../l10n/l10n.dart';
 
 /// Compact, persistent connection state for the app shell.
 ///
@@ -39,18 +40,18 @@ class ConnectionBanner extends StatelessWidget {
     final foreground = offline ? scheme.onErrorContainer : scheme.onSurface;
     final accent = offline ? scheme.onErrorContainer : states.info;
     final lastSynced = state.lastSyncedAt;
+    final l10n = context.l10n;
     final detail = <String>[
-      if (offline)
-        'Messages you send stay queued on this device.'
-      else
-        'Reconnecting to the server…',
+      if (offline) l10n.bannerQueued else l10n.bannerReconnecting,
       if (lastSynced != null)
-        'Last synced ${formatDateTime(context, lastSynced)}.',
+        l10n.bannerLastSynced(formatDateTime(context, lastSynced)),
     ].join(' ');
     return Semantics(
       liveRegion: true,
       container: true,
-      label: offline ? 'Offline. $detail' : 'Connecting to the server. $detail',
+      label: offline
+          ? l10n.bannerOfflineSemantics(detail)
+          : l10n.bannerConnectingSemantics(detail),
       excludeSemantics: true,
       child: Material(
         color: background,
@@ -82,7 +83,7 @@ class ConnectionBanner extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
                     Text(
-                      offline ? 'Offline' : 'Connecting…',
+                      offline ? l10n.bannerOffline : l10n.bannerConnecting,
                       style: theme.textTheme.labelLarge?.copyWith(
                         color: foreground,
                         fontWeight: FontWeight.w600,
@@ -142,7 +143,7 @@ class _SyncRecoveryBanner extends StatelessWidget {
                   const SizedBox(width: BoneSpacing.md),
                   Expanded(
                     child: Text(
-                      'Messages paused',
+                      context.l10n.bannerPaused,
                       style: theme.textTheme.labelLarge?.copyWith(
                         color: scheme.onErrorContainer,
                         fontWeight: FontWeight.w600,
@@ -152,7 +153,7 @@ class _SyncRecoveryBanner extends StatelessWidget {
                 ],
               ),
               Text(
-                recovery.message,
+                recovery.localizedMessage(context.l10n),
                 style: theme.textTheme.bodySmall
                     ?.copyWith(color: scheme.onErrorContainer),
               ),
@@ -162,13 +163,13 @@ class _SyncRecoveryBanner extends StatelessWidget {
                   if (choices.contains(SyncRecoveryChoice.retry))
                     TextButton(
                       onPressed: state.busy ? null : state.retrySyncRecovery,
-                      child: const Text('Try again'),
+                      child: Text(context.l10n.bannerTryAgain),
                     ),
                   if (choices.contains(SyncRecoveryChoice.relink))
                     TextButton(
                       onPressed:
                           state.busy ? null : () => _confirmRelink(context),
-                      child: const Text('Link this device again'),
+                      child: Text(context.l10n.bannerRelink),
                     ),
                 ],
               ),
@@ -183,20 +184,16 @@ class _SyncRecoveryBanner extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Link this device again?'),
-        content: const Text(
-          'This signs this device out and deletes its messages and '
-          'encryption keys. Link it again from another device afterwards. '
-          'Messages that are only on this device cannot be recovered.',
-        ),
+        title: Text(context.l10n.bannerRelinkTitle),
+        content: Text(context.l10n.bannerRelinkMessage),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+            child: Text(context.l10n.commonCancel),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Delete and sign out'),
+            child: Text(context.l10n.bannerRelinkConfirm),
           ),
         ],
       ),

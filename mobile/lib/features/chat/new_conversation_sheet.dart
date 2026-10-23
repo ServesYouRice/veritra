@@ -56,6 +56,7 @@ class _NewConversationFormState extends State<_NewConversationForm> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final titleError = attempted && kind == 'group' ? _titleError() : null;
     final membersError = attempted ? _membersError() : null;
     final footerError = membersError ?? submitError;
@@ -67,19 +68,19 @@ class _NewConversationFormState extends State<_NewConversationForm> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          Text('New conversation', style: theme.textTheme.titleLarge),
+          Text(l10n.newConversationTitle, style: theme.textTheme.titleLarge),
           const SizedBox(height: 16),
           SegmentedButton<String>(
-            segments: const <ButtonSegment<String>>[
+            segments: <ButtonSegment<String>>[
               ButtonSegment<String>(
                 value: 'dm',
-                label: Text('Direct message'),
-                icon: Icon(Icons.person_outline),
+                label: Text(l10n.newConversationDirect),
+                icon: const Icon(Icons.person_outline),
               ),
               ButtonSegment<String>(
                 value: 'group',
-                label: Text('Group'),
-                icon: Icon(Icons.group_outlined),
+                label: Text(l10n.newConversationGroup),
+                icon: const Icon(Icons.group_outlined),
               ),
             ],
             selected: <String>{kind},
@@ -100,7 +101,7 @@ class _NewConversationFormState extends State<_NewConversationForm> {
               textCapitalization: TextCapitalization.words,
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
-                labelText: 'Group name',
+                labelText: l10n.newConversationGroupName,
                 prefixIcon: const Icon(Icons.badge_outlined),
                 errorText: titleError,
               ),
@@ -110,7 +111,9 @@ class _NewConversationFormState extends State<_NewConversationForm> {
           AccountPicker(
             key: ValueKey<String>(kind),
             state: widget.state,
-            label: kind == 'dm' ? 'Who do you want to message?' : 'Add members',
+            label: kind == 'dm'
+                ? l10n.newConversationWho
+                : l10n.newConversationAddMembers,
             maxSelection: kind == 'dm' ? 1 : null,
             onChanged: (value) => setState(() => members = value),
           ),
@@ -131,7 +134,9 @@ class _NewConversationFormState extends State<_NewConversationForm> {
           FilledButton.icon(
             onPressed: submitting ? null : _submit,
             icon: const Icon(Icons.add_comment_outlined),
-            label: Text(kind == 'dm' ? 'Start DM' : 'Create group'),
+            label: Text(kind == 'dm'
+                ? l10n.newConversationStartDm
+                : l10n.newConversationCreateGroup),
           ),
         ],
       ),
@@ -149,8 +154,8 @@ class _NewConversationFormState extends State<_NewConversationForm> {
       return null;
     }
     return kind == 'dm'
-        ? 'Pick the person to message first.'
-        : 'Add at least one other member.';
+        ? context.l10n.newConversationPickPerson
+        : context.l10n.newConversationAddOneMember;
   }
 
   Future<void> _submit() async {

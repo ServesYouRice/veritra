@@ -96,7 +96,10 @@ void main() {
 
       expect(find.text(englishL10n.validationMessageTooLong), findsOneWidget);
       expect(
-        find.text('${maxAppTextLength + 1} / $maxAppTextLength'),
+        find.text(englishL10n.chatComposerCounter(
+          maxAppTextLength + 1,
+          maxAppTextLength,
+        )),
         findsOneWidget,
       );
       expect(_sendButton(tester).onPressed, isNull);

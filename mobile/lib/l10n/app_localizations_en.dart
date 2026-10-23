@@ -398,4 +398,1676 @@ class AppLocalizationsEn extends AppLocalizations {
   String inviteRevokeMessage(String code) {
     return 'Code $code stops working immediately. People who already joined with it keep their accounts.';
   }
+
+  @override
+  String get connectFreshInstanceTitle => 'Fresh instance detected';
+
+  @override
+  String get connectFreshInstanceMessage =>
+      'No owner account exists yet — create it below.';
+
+  @override
+  String get connectInstanceUrl => 'Instance URL';
+
+  @override
+  String get connectCheckApproval => 'Check approval';
+
+  @override
+  String get connectLinkInstead => 'Link this device instead';
+
+  @override
+  String get connectOtherWays => 'Other ways to connect';
+
+  @override
+  String get connectRestoreBackup => 'Restore from a backup';
+
+  @override
+  String get connectLinkCode => 'Link code';
+
+  @override
+  String get connectLinkCodeRequired =>
+      'Enter the link code from your existing device.';
+
+  @override
+  String get connectLinkCodeHint => 'From Settings → Link device';
+
+  @override
+  String get connectScanQr => 'Scan QR code';
+
+  @override
+  String get connectVerificationTitle => 'Verification code';
+
+  @override
+  String get connectVerificationMessage =>
+      'Confirm this code on your already-linked device, then check approval below.';
+
+  @override
+  String get connectInviteCode => 'Invite code';
+
+  @override
+  String get connectInviteCodeRequired => 'Enter the invite code you received.';
+
+  @override
+  String get connectInviteCodeHint => 'From an admin on this instance';
+
+  @override
+  String get connectUsername => 'Username';
+
+  @override
+  String get connectUsernameRequired => 'Enter a username.';
+
+  @override
+  String get connectUsernameHint => 'Your name on this instance';
+
+  @override
+  String get connectPassword => 'Password';
+
+  @override
+  String get connectPasswordHint => 'At least 12 characters';
+
+  @override
+  String get connectHidePassword => 'Hide password';
+
+  @override
+  String get connectShowPassword => 'Show password';
+
+  @override
+  String get connectConfirmPassword => 'Confirm password';
+
+  @override
+  String get connectConfirmPasswordHint => 'Repeat your password';
+
+  @override
+  String get connectSetupToken => 'Setup token';
+
+  @override
+  String get connectSetupTokenHint => 'Required unless connecting on loopback';
+
+  @override
+  String get connectUrlRequired => 'Enter the instance URL.';
+
+  @override
+  String get connectUrlInvalid =>
+      'Enter a full URL, e.g. https://chat.example.org';
+
+  @override
+  String get connectUrlOriginOnly =>
+      'Enter only the server origin, e.g. https://chat.example.org';
+
+  @override
+  String get connectUrlHttpsRequired =>
+      'Veritra requires HTTPS. Use an https:// server origin.';
+
+  @override
+  String get connectUrlLoopbackOnly =>
+      'Use https://, or http:// only for this computer (localhost or 127.0.0.1).';
+
+  @override
+  String get connectPasswordRequired => 'Enter your password.';
+
+  @override
+  String get connectModeOwnerTitle => 'Create the owner account';
+
+  @override
+  String get connectModeSignInTitle => 'Sign in';
+
+  @override
+  String get connectModeJoinTitle => 'Join with an invite';
+
+  @override
+  String get connectModeLinkTitle => 'Link this device';
+
+  @override
+  String get connectModeOwnerDetail =>
+      'First run only: create the owner account on a fresh self-hosted instance.';
+
+  @override
+  String get connectModeSignInDetail =>
+      'Sign in with your password on a device that has already been linked to your account.';
+
+  @override
+  String get connectModeJoinDetail =>
+      'Registration is invite-only. Enter the invite code you received from an admin.';
+
+  @override
+  String get connectModeLinkDetail =>
+      'Enter the link code generated on your existing device (Settings → Link device).';
+
+  @override
+  String get connectNotDeviceLinkQr => 'That is not a Veritra device-link QR.';
+
+  @override
+  String get connectOriginFilled =>
+      'Server origin filled. Verify it before continuing.';
+
+  @override
+  String get connectConfirmServerTitle => 'Confirm server';
+
+  @override
+  String connectConfirmServerMessage(String origin) {
+    return 'This QR code suggests $origin. The app will still probe the server before using it. Continue with this HTTPS origin?';
+  }
+
+  @override
+  String get connectUseOrigin => 'Use origin';
+
+  @override
+  String get connectSubmitOwner => 'Create owner';
+
+  @override
+  String get connectSubmitSignIn => 'Sign in';
+
+  @override
+  String get connectSubmitJoin => 'Join with invite';
+
+  @override
+  String get connectSubmitLink => 'Claim link';
+
+  @override
+  String get connectTagline => 'Self-hosted, end-to-end encrypted messaging';
+
+  @override
+  String get qrScanLinkTitle => 'Scan link QR';
+
+  @override
+  String get qrToggleTorch => 'Toggle torch';
+
+  @override
+  String get qrSwitchCamera => 'Switch camera';
+
+  @override
+  String get qrPointCamera =>
+      'Point the camera at the QR code on your existing device (Settings → Link a new device).';
+
+  @override
+  String get qrPermissionDenied =>
+      'Camera permission is required to scan. Enable it in system settings, or type the link code manually.';
+
+  @override
+  String get qrUnsupported =>
+      'This device can’t scan QR codes. Type the link code manually.';
+
+  @override
+  String get qrCameraFailed =>
+      'The camera could not be started. Type the link code manually.';
+
+  @override
+  String get qrEnterManually => 'Enter code manually';
+
+  @override
+  String get newConversationTitle => 'New conversation';
+
+  @override
+  String get newConversationDirect => 'Direct message';
+
+  @override
+  String get newConversationGroup => 'Group';
+
+  @override
+  String get newConversationGroupName => 'Group name';
+
+  @override
+  String get newConversationWho => 'Who do you want to message?';
+
+  @override
+  String get newConversationAddMembers => 'Add members';
+
+  @override
+  String get newConversationStartDm => 'Start DM';
+
+  @override
+  String get newConversationCreateGroup => 'Create group';
+
+  @override
+  String get newConversationPickPerson => 'Pick the person to message first.';
+
+  @override
+  String get newConversationAddOneMember => 'Add at least one other member.';
+
+  @override
+  String get blockedEmptyTitle => 'No blocked accounts';
+
+  @override
+  String get blockedEmptyMessage =>
+      'Block someone from a direct message to stop the server delivering their messages to you.';
+
+  @override
+  String get blockedLabel => 'Blocked';
+
+  @override
+  String blockedOn(String date) {
+    return 'Blocked $date';
+  }
+
+  @override
+  String get blockedUnblock => 'Unblock';
+
+  @override
+  String blockedUnblocked(String label) {
+    return '$label unblocked.';
+  }
+
+  @override
+  String blockedUnblockFailed(String label) {
+    return 'Could not unblock $label.';
+  }
+
+  @override
+  String get blockedLoadFailed => 'Couldn’t load blocked accounts';
+
+  @override
+  String get commonRetry => 'Retry';
+
+  @override
+  String get accountPickerHelper =>
+      'Exact username, or paste an account ID (acct_…).';
+
+  @override
+  String get accountPickerNoMatch =>
+      'No account found with that exact username.';
+
+  @override
+  String get searchHint => 'Search people, communities, channels…';
+
+  @override
+  String get searchClear => 'Clear search';
+
+  @override
+  String get searchIntroTitle => 'Search metadata';
+
+  @override
+  String get searchIntroMessage =>
+      'Find people by exact username, plus communities and channels by name. Message contents are end-to-end encrypted and never searchable on the server.';
+
+  @override
+  String get searchNoResultsTitle => 'No results';
+
+  @override
+  String get searchNoResultsMessage =>
+      'Nothing matched. Usernames must match exactly, and message contents are never searchable.';
+
+  @override
+  String get searchNoOpenChannel => 'No channel you can open yet';
+
+  @override
+  String get searchJoinCommunity => 'Join the community to open it';
+
+  @override
+  String get searchTypeConversation => 'Conversation';
+
+  @override
+  String get searchTypeCommunity => 'Community';
+
+  @override
+  String get searchTypeChannel => 'Channel';
+
+  @override
+  String get searchTypeAccount => 'Account';
+
+  @override
+  String searchUnblockAccount(String label) {
+    return 'Unblock $label';
+  }
+
+  @override
+  String searchBlockAccount(String label) {
+    return 'Block $label';
+  }
+
+  @override
+  String searchBlocked(String label) {
+    return '$label blocked.';
+  }
+
+  @override
+  String get searchBlockFailed => 'Could not update the block.';
+
+  @override
+  String get inviteCreateSection => 'Create an invite';
+
+  @override
+  String get inviteMaxUses => 'Max uses';
+
+  @override
+  String inviteMaxUsesOption(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    return '$countString';
+  }
+
+  @override
+  String get inviteExpires => 'Expires';
+
+  @override
+  String durationDays(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$countString days',
+      one: '1 day',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get inviteCreate => 'Create invite';
+
+  @override
+  String get inviteEmptyTitle => 'No invites yet';
+
+  @override
+  String get inviteEmptyMessage =>
+      'Invite codes you create appear here. Share them over a secure channel.';
+
+  @override
+  String get inviteYourInvites => 'Your invites';
+
+  @override
+  String inviteUsesPill(int uses, int maxUses) {
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String usesString = usesNumberFormat.format(uses);
+    final intl.NumberFormat maxUsesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String maxUsesString = maxUsesNumberFormat.format(maxUses);
+
+    return '$usesString/$maxUsesString';
+  }
+
+  @override
+  String inviteUsesSemantics(int uses, int maxUses) {
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String usesString = usesNumberFormat.format(uses);
+    final intl.NumberFormat maxUsesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String maxUsesString = maxUsesNumberFormat.format(maxUses);
+
+    return '$usesString of $maxUsesString uses';
+  }
+
+  @override
+  String get inviteNeverExpires => 'Never expires';
+
+  @override
+  String inviteExpiresAt(String time) {
+    return 'Expires $time';
+  }
+
+  @override
+  String get inviteActions => 'Invite actions';
+
+  @override
+  String get inviteCodeCopied => 'Invite code copied.';
+
+  @override
+  String get inviteCopyCode => 'Copy code';
+
+  @override
+  String get profileThisInstance => 'this instance';
+
+  @override
+  String get profileTitle => 'Profile';
+
+  @override
+  String get profileYourAccount => 'Your account';
+
+  @override
+  String get profileSectionIdentity => 'Identity';
+
+  @override
+  String get profileNotAvailable => 'Not available';
+
+  @override
+  String get profileCurrentDevice => 'Current device';
+
+  @override
+  String get profileInstanceRole => 'Instance role';
+
+  @override
+  String get profileSectionEncryption => 'Encryption';
+
+  @override
+  String get profileEncryptionPending => 'Encryption identity pending';
+
+  @override
+  String get profileEncryptionPendingDetail =>
+      'Safety-number verification and profile editing remain unavailable until the reviewed encryption engine ships.';
+
+  @override
+  String profileCopyLabel(String label) {
+    return 'Copy $label';
+  }
+
+  @override
+  String get navChats => 'Chats';
+
+  @override
+  String get navCommunities => 'Communities';
+
+  @override
+  String get shellNoConversationTitle => 'No conversation selected';
+
+  @override
+  String get shellNoConversationMessage =>
+      'Pick a conversation from the list to read it here.';
+
+  @override
+  String get shellRestoring => 'Restoring this device…';
+
+  @override
+  String get shellResetTitle => 'Reset this device?';
+
+  @override
+  String get shellResetMessage =>
+      'This device starts empty and must be linked again. Its current messages stay unreadable here; they are moved aside, not deleted, in case the key comes back.';
+
+  @override
+  String get shellResetConfirm => 'Reset';
+
+  @override
+  String get shellRecoveryTitle => 'Device recovery needed';
+
+  @override
+  String get shellRecoveryFallback =>
+      'This device needs attention before it can be used.';
+
+  @override
+  String get shellRetryRestore => 'Retry restore';
+
+  @override
+  String get shellContinueToSignIn => 'Continue to sign in';
+
+  @override
+  String get shellResetDevice => 'Reset this device';
+
+  @override
+  String get communityNew => 'New community';
+
+  @override
+  String get communityEmptyTitle => 'No communities yet';
+
+  @override
+  String get communityEmptyMessage =>
+      'Create a community to organize people around shared channels — private by default, encrypted everywhere.';
+
+  @override
+  String get communityOtherChannels => 'Other channels you are in';
+
+  @override
+  String get communityChannelSubtitle => 'Community channel';
+
+  @override
+  String get communityName => 'Community name';
+
+  @override
+  String communityNewChannelIn(String community) {
+    return 'New channel in $community';
+  }
+
+  @override
+  String get communityChannelName => 'Channel name';
+
+  @override
+  String get communityNoChannels => 'No channels yet';
+
+  @override
+  String communityChannelCount(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$countString channels',
+      one: '1 channel',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get communityNewChannel => 'New channel';
+
+  @override
+  String get communityNoChannelsHint => 'Use + to create the first one.';
+
+  @override
+  String get communityNotMember => 'You are not a member yet';
+
+  @override
+  String get backupIntro =>
+      'A backup holds this device\'s keys and message history, encrypted on this device. The server stores it but cannot read it. Restoring it on a new device needs the recovery code shown when you make it.';
+
+  @override
+  String get backupSectionStatus => 'Status';
+
+  @override
+  String get backupNone => 'No backup from this device yet';
+
+  @override
+  String backupLast(String time) {
+    return 'Last backup $time';
+  }
+
+  @override
+  String get backupReplacesPrevious =>
+      'A new backup replaces the previous one and its code.';
+
+  @override
+  String get backupMake => 'Make a backup';
+
+  @override
+  String get backupMakeNew => 'Make a new backup';
+
+  @override
+  String get backupSaveCodeTitle => 'Save your recovery code';
+
+  @override
+  String get backupSaveCodeMessage =>
+      'Anyone with this code can restore your messages. Keep it somewhere safe and offline. It is shown only now, and it stops working after it is used or when you make a new backup.';
+
+  @override
+  String get commonCopy => 'Copy';
+
+  @override
+  String get backupSavedIt => 'I saved it';
+
+  @override
+  String get backupRestoreMessage =>
+      'This device takes the place of the one that made the backup. Stop using that device first.';
+
+  @override
+  String get backupRecoveryCode => 'Recovery code';
+
+  @override
+  String get backupRestore => 'Restore';
+
+  @override
+  String get deviceLinkTitle => 'Link a device';
+
+  @override
+  String get deviceLinkIntro =>
+      'Generate a one-time code, enter it on the new device, then approve it here with the verification code the new device shows.';
+
+  @override
+  String get deviceLinkCreate => 'Create link';
+
+  @override
+  String get deviceLinkCreateNew => 'Create new link';
+
+  @override
+  String get deviceLinkQrSemantics =>
+      'QR code containing the device link. Scan it with the new device.';
+
+  @override
+  String get deviceLinkQrHint =>
+      'Scan it with the Veritra app on the new device, or type the link code below.';
+
+  @override
+  String get deviceLinkStatusLabel => 'STATUS';
+
+  @override
+  String deviceLinkState(String state) {
+    String _temp0 = intl.Intl.selectLogic(
+      state,
+      {
+        'pending': 'pending',
+        'claimed': 'claimed',
+        'approved': 'approved',
+        'expired': 'expired',
+        'other': '$state',
+      },
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get deviceLinkClaimedBy => 'Claimed by';
+
+  @override
+  String get deviceLinkRefreshStatus => 'Refresh status';
+
+  @override
+  String get deviceLinkApproveDevice => 'Approve device';
+
+  @override
+  String get deviceLinkApprove => 'Approve';
+
+  @override
+  String get bannerQueued => 'Messages you send stay queued on this device.';
+
+  @override
+  String get bannerReconnecting => 'Reconnecting to the server…';
+
+  @override
+  String bannerLastSynced(String time) {
+    return 'Last synced $time.';
+  }
+
+  @override
+  String bannerOfflineSemantics(String detail) {
+    return 'Offline. $detail';
+  }
+
+  @override
+  String bannerConnectingSemantics(String detail) {
+    return 'Connecting to the server. $detail';
+  }
+
+  @override
+  String get bannerOffline => 'Offline';
+
+  @override
+  String get bannerConnecting => 'Connecting…';
+
+  @override
+  String get bannerPaused => 'Messages paused';
+
+  @override
+  String get bannerTryAgain => 'Try again';
+
+  @override
+  String get bannerRelink => 'Link this device again';
+
+  @override
+  String get bannerRelinkTitle => 'Link this device again?';
+
+  @override
+  String get bannerRelinkMessage =>
+      'This signs this device out and deletes its messages and encryption keys. Link it again from another device afterwards. Messages that are only on this device cannot be recovered.';
+
+  @override
+  String get bannerRelinkConfirm => 'Delete and sign out';
+
+  @override
+  String get attachmentPickUnavailable =>
+      'Files cannot be picked on this device.';
+
+  @override
+  String get attachmentSendTitle => 'Send this file?';
+
+  @override
+  String attachmentSendMessage(String name, String size) {
+    return '$name ($size) is encrypted on this device before it is uploaded. Everyone in this conversation can open it.';
+  }
+
+  @override
+  String get attachmentSend => 'Send';
+
+  @override
+  String get attachmentSendFailed => 'The file could not be sent.';
+
+  @override
+  String get attachmentDemoImagesOnly =>
+      'In the demo, only images can be opened on this device.';
+
+  @override
+  String attachmentSaved(String fileName) {
+    return 'Saved $fileName.';
+  }
+
+  @override
+  String get attachmentDownloadFailed =>
+      'The file could not be downloaded or decrypted.';
+
+  @override
+  String attachmentImageSemantics(String fileName, String size) {
+    return 'Image $fileName, $size';
+  }
+
+  @override
+  String attachmentFileSemantics(String fileName, String size) {
+    return 'File $fileName, $size';
+  }
+
+  @override
+  String get attachmentSave => 'Save';
+
+  @override
+  String get attachmentImageFailed =>
+      'The image could not be downloaded or decrypted.';
+
+  @override
+  String get attachmentImageUnshowable => 'This image cannot be shown.';
+
+  @override
+  String fileSizeBytes(int size) {
+    final intl.NumberFormat sizeNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String sizeString = sizeNumberFormat.format(size);
+
+    return '$sizeString B';
+  }
+
+  @override
+  String fileSizeKilobytes(int size) {
+    final intl.NumberFormat sizeNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String sizeString = sizeNumberFormat.format(size);
+
+    return '$sizeString KB';
+  }
+
+  @override
+  String fileSizeMegabytes(double size) {
+    final intl.NumberFormat sizeNumberFormat =
+        intl.NumberFormat.decimalPatternDigits(
+            locale: localeName, decimalDigits: 1);
+    final String sizeString = sizeNumberFormat.format(size);
+
+    return '$sizeString MB';
+  }
+
+  @override
+  String get chatListSearch => 'Search';
+
+  @override
+  String get chatListNewChat => 'New chat';
+
+  @override
+  String get chatListEmptyTitle => 'No conversations yet';
+
+  @override
+  String get chatListEmptyMessage =>
+      'Start a direct message or create a group. Everything is end-to-end encrypted.';
+
+  @override
+  String get chatListUnmute => 'Unmute notifications';
+
+  @override
+  String get chatListMute => 'Mute notifications';
+
+  @override
+  String get chatListDetails => 'Conversation details';
+
+  @override
+  String get chatListMuted => 'Muted';
+
+  @override
+  String chatListDisappearingAfter(String duration) {
+    return 'Disappearing after $duration';
+  }
+
+  @override
+  String chatListUnreadSpoken(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$countString unread messages',
+      one: '1 unread message',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String chatListUnreadCount(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    return '$countString';
+  }
+
+  @override
+  String get chatListUnreadOverflow => '99+';
+
+  @override
+  String get conversationGroupChat => 'Group chat';
+
+  @override
+  String get conversationPrivateGroup => 'Private group';
+
+  @override
+  String get conversationEncrypted => 'Encrypted';
+
+  @override
+  String conversationDisappearing(String duration) {
+    return 'Disappearing ($duration)';
+  }
+
+  @override
+  String durationHours(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$countString hours',
+      one: '1 hour',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String durationMinutes(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$countString minutes',
+      one: '1 minute',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String durationChipDays(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    return '${countString}d';
+  }
+
+  @override
+  String durationChipHours(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    return '${countString}h';
+  }
+
+  @override
+  String durationChipMinutes(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    return '${countString}m';
+  }
+
+  @override
+  String get safetyMarkTitle => 'Mark as verified?';
+
+  @override
+  String get safetyMarkMessage =>
+      'Only do this after comparing the number with the other person in person or over a call you trust. Both of you must see exactly the same sixty digits.';
+
+  @override
+  String get safetyTheyMatch => 'They match';
+
+  @override
+  String get safetySaveFailed =>
+      'The verification could not be saved. Try again.';
+
+  @override
+  String get safetyScanTitle => 'Scan safety code';
+
+  @override
+  String get safetyReadFailed =>
+      'The safety number could not be read. Try again.';
+
+  @override
+  String get safetyMismatchTitle => 'Codes do not match';
+
+  @override
+  String get safetyMismatchMessage =>
+      'This is not the same safety code. Make sure you scanned the code for this conversation and that both devices have received the latest messages, then try again. If it still does not match, do not treat this conversation as verified.';
+
+  @override
+  String get commonOk => 'OK';
+
+  @override
+  String get safetyCodesMatch => 'The codes match.';
+
+  @override
+  String get safetyCodesMatchVerified => 'The codes match. Marked as verified.';
+
+  @override
+  String get safetyTitle => 'Safety number';
+
+  @override
+  String get safetyGroupIntro =>
+      'Every member of this group sees the same number. Compare it in person or scan each other\'s code.';
+
+  @override
+  String safetyPeerIntro(String peer) {
+    return 'Compare this number with $peer in person, or scan each other\'s code.';
+  }
+
+  @override
+  String get safetyUnavailable => 'Safety number unavailable';
+
+  @override
+  String get safetyUnavailableDetail =>
+      'This device has not joined the encrypted group yet, or its group state could not be read.';
+
+  @override
+  String safetyDigitsSemantics(String groups) {
+    return 'Safety number, twelve groups of five: $groups';
+  }
+
+  @override
+  String get safetyQrSemantics =>
+      'QR code of this safety number. The other person can scan it to compare.';
+
+  @override
+  String get safetyVerifiedDetail => 'You verified this number.';
+
+  @override
+  String get safetyChangedDetail =>
+      'A device in this conversation was added, removed or replaced since you verified. Compare the new number again.';
+
+  @override
+  String get safetyUnverifiedDetail => 'Not verified yet.';
+
+  @override
+  String get safetyVerified => 'Verified';
+
+  @override
+  String get safetyChanged => 'Changed';
+
+  @override
+  String get safetyUnverified => 'Not verified';
+
+  @override
+  String get safetyScanTheirCode => 'Scan their code';
+
+  @override
+  String get safetyMarkVerified => 'Mark as verified';
+
+  @override
+  String get detailsNotFound => 'Conversation not found.';
+
+  @override
+  String get detailsConversationIdLabel => 'CONVERSATION ID';
+
+  @override
+  String get detailsCopyId => 'Copy ID';
+
+  @override
+  String get detailsConversationId => 'Conversation ID';
+
+  @override
+  String get detailsCreatedLabel => 'CREATED';
+
+  @override
+  String get detailsMuteDetail =>
+      'Stops push for this conversation. Messages still arrive and still count as unread.';
+
+  @override
+  String get detailsSectionMembers => 'Members';
+
+  @override
+  String get detailsLoadingMembers => 'Loading members…';
+
+  @override
+  String get detailsMembersUnavailable => 'Member list unavailable';
+
+  @override
+  String get detailsMembersUnavailableDetail =>
+      'The server did not return the roster for this conversation.';
+
+  @override
+  String get detailsAddMember => 'Add member';
+
+  @override
+  String get detailsAddMemberDetail => 'Look up an account by username';
+
+  @override
+  String get detailsAddMemberNoPermission => 'Moderator permission required';
+
+  @override
+  String get detailsMembershipNote =>
+      'This is the server\'s membership record. Encrypted delivery follows a separate group update, so a change here is not by itself proof of who can decrypt new messages.';
+
+  @override
+  String get detailsSafetyDetail =>
+      'Compare it with the other members to check that no one is intercepting this conversation.';
+
+  @override
+  String get detailsLeaveDm => 'Leave this conversation';
+
+  @override
+  String get detailsLeave => 'Leave conversation';
+
+  @override
+  String get detailsLeaveDetail =>
+      'You stop receiving new messages. Messages already on other members\' devices are not deleted.';
+
+  @override
+  String get detailsSectionDisappearing => 'Disappearing messages';
+
+  @override
+  String get detailsDisappearingNote =>
+      'When set, messages sent from then on are deleted from the server after this time window. Existing messages keep the timer they were sent with.';
+
+  @override
+  String get detailsRetentionOff => 'Off';
+
+  @override
+  String detailsRemoveTitle(String label) {
+    return 'Remove $label?';
+  }
+
+  @override
+  String get detailsRemoveMessage =>
+      'They stop receiving new messages in this conversation. Messages they already received stay on their device, and encrypted delivery only changes once the group update is committed.';
+
+  @override
+  String get detailsRemoveConfirm => 'Remove';
+
+  @override
+  String detailsRemoved(String label) {
+    return '$label removed from the conversation.';
+  }
+
+  @override
+  String detailsRemoveFailed(String label) {
+    return 'Could not remove $label.';
+  }
+
+  @override
+  String get detailsLeaveTitle => 'Leave conversation?';
+
+  @override
+  String get detailsLeaveMessage =>
+      'You stop receiving new messages and the conversation is removed from this device. Messages other members already received are not deleted.';
+
+  @override
+  String get detailsLeaveConfirm => 'Leave';
+
+  @override
+  String get detailsRetentionOffMessage =>
+      'New messages will no longer disappear. Messages that already have a timer keep it.';
+
+  @override
+  String detailsRetentionOnMessage(String duration) {
+    return 'Messages sent from now on will be deleted from the server $duration after they are sent. Existing messages are not affected.';
+  }
+
+  @override
+  String get detailsRetentionOffTitle => 'Turn off disappearing messages?';
+
+  @override
+  String detailsRetentionOnTitle(String duration) {
+    return 'Disappear after $duration?';
+  }
+
+  @override
+  String get detailsApply => 'Apply';
+
+  @override
+  String get detailsAdd => 'Add';
+
+  @override
+  String detailsMemberAdded(String label) {
+    return 'Added $label to the conversation. Encrypted delivery starts once the group update is committed.';
+  }
+
+  @override
+  String get roleOwner => 'Owner';
+
+  @override
+  String get roleAdmin => 'Admin';
+
+  @override
+  String get roleModerator => 'Moderator';
+
+  @override
+  String get roleMember => 'Member';
+
+  @override
+  String get detailsYou => 'You';
+
+  @override
+  String detailsJoined(String date) {
+    return 'Joined $date';
+  }
+
+  @override
+  String detailsRemoveMember(String label) {
+    return 'Remove $label';
+  }
+
+  @override
+  String get detailsBlockedDetail =>
+      'Their messages are hidden from this account until you unblock them.';
+
+  @override
+  String get detailsBlockDetail =>
+      'The server stops delivering their messages to your account. They are not told, and messages already on your devices stay.';
+
+  @override
+  String get chatStatusMutedEncrypted => 'MUTED · ENCRYPTED';
+
+  @override
+  String get chatStatusEncrypted => 'ENCRYPTED';
+
+  @override
+  String get chatNoConversationMessage =>
+      'Pick a conversation from the chat list.';
+
+  @override
+  String get chatEmptyTitle => 'No messages yet';
+
+  @override
+  String get chatEmptyMessage =>
+      'Messages are stored as encrypted envelopes only the members can read.';
+
+  @override
+  String get chatJumpToLatest => 'Jump to latest';
+
+  @override
+  String chatReact(String reaction) {
+    return 'React $reaction';
+  }
+
+  @override
+  String get chatReply => 'Reply';
+
+  @override
+  String get chatCopyText => 'Copy text';
+
+  @override
+  String get chatEdit => 'Edit';
+
+  @override
+  String get chatDeleteForEveryone => 'Delete for everyone';
+
+  @override
+  String get chatDeleteTitle => 'Delete for everyone?';
+
+  @override
+  String get chatDeleteMessage =>
+      'Members\' devices remove the text. The server never had it.';
+
+  @override
+  String get chatDelete => 'Delete';
+
+  @override
+  String get chatEditEmpty =>
+      'Enter the new text, or delete the message instead.';
+
+  @override
+  String get chatEditTitle => 'Edit message';
+
+  @override
+  String get chatLoadFailed => 'Couldn’t load messages';
+
+  @override
+  String get chatReplyEarlier => 'Reply to an earlier message';
+
+  @override
+  String get chatReplyDeleted => 'Reply to a deleted message';
+
+  @override
+  String get chatLoadOlder => 'Load older messages';
+
+  @override
+  String get chatPendingSendingSemantics => 'Encrypted message sending';
+
+  @override
+  String get chatPendingTerminalSemantics =>
+      'Encrypted message failed permanently. Copy or discard available.';
+
+  @override
+  String get chatPendingFailedSemantics =>
+      'Encrypted message failed to send. Retry available.';
+
+  @override
+  String get chatPendingSending => 'Sending encrypted message';
+
+  @override
+  String get chatPendingTerminal => 'Message needs attention';
+
+  @override
+  String get chatPendingFailed => 'Send failed';
+
+  @override
+  String get chatDiscard => 'Discard';
+
+  @override
+  String get chatSenderYou => 'you';
+
+  @override
+  String get chatAttachmentUnopenable => 'This attachment cannot be opened.';
+
+  @override
+  String get chatMessageActions => 'Message actions';
+
+  @override
+  String chatDeletedSemantics(String sender) {
+    return 'Deleted message from $sender';
+  }
+
+  @override
+  String chatUnverifiedSemantics(String time) {
+    return 'Message with an unverified sender, $time';
+  }
+
+  @override
+  String chatMessageSemantics(String sender, String time, String text) {
+    return 'Message from $sender, $time: $text';
+  }
+
+  @override
+  String chatAttachmentSemantics(String sender, String time) {
+    return 'Attachment from $sender, $time';
+  }
+
+  @override
+  String chatEncryptedSemantics(String sender, String time) {
+    return 'Encrypted message from $sender, $time';
+  }
+
+  @override
+  String get chatMessageDeleted => 'Message deleted';
+
+  @override
+  String get chatSenderUnverified =>
+      'Sender could not be verified. Message hidden.';
+
+  @override
+  String chatReactionCount(String reaction, int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    return '$reaction $countString';
+  }
+
+  @override
+  String get chatEdited => 'edited';
+
+  @override
+  String chatReplyingTo(String preview) {
+    return 'Replying to: $preview';
+  }
+
+  @override
+  String get chatCancelReply => 'Cancel reply';
+
+  @override
+  String get chatSendingFile => 'Sending file';
+
+  @override
+  String get chatAttachFile => 'Attach a file';
+
+  @override
+  String get chatComposerHint => 'Message';
+
+  @override
+  String chatComposerCounter(int length, int max) {
+    final intl.NumberFormat lengthNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String lengthString = lengthNumberFormat.format(length);
+    final intl.NumberFormat maxNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String maxString = maxNumberFormat.format(max);
+
+    return '$lengthString / $maxString';
+  }
+
+  @override
+  String get chatPausedNotice =>
+      'Sending is paused here: the server rejected an encryption update for this conversation. Other conversations still work.';
+
+  @override
+  String get chatAttachment => 'Attachment';
+
+  @override
+  String chatAttachmentOne(String name) {
+    return 'Attachment: $name';
+  }
+
+  @override
+  String chatAttachmentMany(String name, int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    return 'Attachments: $name and $countString more';
+  }
+
+  @override
+  String get demoBannerLabel => 'Demo build · unreviewed encryption';
+
+  @override
+  String demoBannerNotice(String label) {
+    return '$label. Not for real conversations.';
+  }
+
+  @override
+  String dateTimeJoined(String date, String time) {
+    return '$date · $time';
+  }
+
+  @override
+  String get backupErrorNetwork =>
+      'The server could not be reached. Try again; the restore continues where it stopped.';
+
+  @override
+  String get backupErrorNotFound =>
+      'This recovery code is unknown, expired or already used.';
+
+  @override
+  String get backupErrorBusy =>
+      'This backup is being downloaded elsewhere. Try again in a few minutes.';
+
+  @override
+  String get backupErrorWrongKey =>
+      'This recovery code does not open the backup.';
+
+  @override
+  String get backupErrorCorrupt =>
+      'The backup is damaged and cannot be restored.';
+
+  @override
+  String get backupErrorDeviceNotEmpty =>
+      'This device already has an account. Sign out and reset it before restoring a backup.';
+
+  @override
+  String get backupErrorTooLarge =>
+      'The backup is larger than this app supports.';
+
+  @override
+  String get backupErrorStorage => 'This device could not store the backup.';
+
+  @override
+  String get syncErrorCursorExpired =>
+      'This device was away longer than the server keeps updates. Restore a backup or link this device again.';
+
+  @override
+  String get syncErrorControlMissing =>
+      'An encryption update for a conversation is missing or damaged. Messages are paused so none are skipped.';
+
+  @override
+  String get syncErrorMlsState =>
+      'This device could not update its encryption state. Messages are paused so none are skipped.';
+
+  @override
+  String get syncErrorUndecryptable =>
+      'A message could not be read on this device. Messages are paused so none are skipped.';
+
+  @override
+  String get syncErrorUnsupportedEvent =>
+      'The server sent an update this app version does not know. Update the app, then try again.';
+
+  @override
+  String get syncErrorCryptoUnavailable =>
+      'Encryption is unavailable in this build, so encrypted updates cannot be applied.';
+
+  @override
+  String get syncErrorStopped => 'Sync stopped. Try again.';
+
+  @override
+  String get apiErrorSessionInvalid =>
+      'Your session is no longer valid. Sign in again.';
+
+  @override
+  String get apiErrorInvalidCredentials =>
+      'Sign-in failed. Check your username and password.';
+
+  @override
+  String get apiErrorRecentAuth =>
+      'Confirm your password before this sensitive action.';
+
+  @override
+  String get apiErrorDeviceNotLinked =>
+      'This device must be linked before password sign-in.';
+
+  @override
+  String get apiErrorForbidden => 'You do not have permission to do that.';
+
+  @override
+  String get apiErrorNotFound =>
+      'That item was not found. It may have been removed.';
+
+  @override
+  String get apiErrorAlreadySetup =>
+      'This server already has an owner. Sign in or join with an invite instead.';
+
+  @override
+  String get apiErrorLastOwner =>
+      'Transfer ownership before disabling the last owner account.';
+
+  @override
+  String get apiErrorWeakPassword => 'Password must be 12–72 characters.';
+
+  @override
+  String get apiErrorInvalidInvite =>
+      'That invite code is not valid, has expired, or has already been used up.';
+
+  @override
+  String get apiErrorInvalidDeviceLink =>
+      'That link code is not valid or has expired. Generate a new one on your linked device.';
+
+  @override
+  String get apiErrorTranscriptMismatch =>
+      'The locally verified device credentials changed. Generate a new link and compare both devices again.';
+
+  @override
+  String get apiErrorInvalidDeviceName => 'That device name is not valid.';
+
+  @override
+  String get apiErrorInvalidName => 'That name is not valid.';
+
+  @override
+  String get apiErrorInvalidMaxUses => 'The invite use limit is not valid.';
+
+  @override
+  String get apiErrorInvalidExpiry => 'That expiry time is not valid.';
+
+  @override
+  String get apiErrorInvalidConversationKind =>
+      'The server rejected this conversation type.';
+
+  @override
+  String get apiErrorInvalidRetention =>
+      'That disappearing-message duration is not supported.';
+
+  @override
+  String get apiErrorInvalidRole => 'That member role is not valid.';
+
+  @override
+  String get apiErrorAccountRequired => 'Choose an account to add.';
+
+  @override
+  String get apiErrorUploadTooLarge => 'That file is too large to upload.';
+
+  @override
+  String get apiErrorKeyPackageRefused =>
+      'The server refused this build’s encryption keys. A client with production encryption support is required.';
+
+  @override
+  String get apiErrorStorage =>
+      'The server had a storage problem. Try again shortly.';
+
+  @override
+  String get apiErrorStorageFull =>
+      'The server is out of storage for this account. Delete older attachments or ask the administrator for more space.';
+
+  @override
+  String get apiErrorBlobIntegrity =>
+      'The encrypted attachment could not be verified. Discard it and try again.';
+
+  @override
+  String get apiErrorSetupToken =>
+      'The setup token is missing or wrong. Use the one the server printed when it started (the demo keeps it in data/demo/setup-token).';
+
+  @override
+  String get apiErrorDraining => 'The server is restarting. Try again shortly.';
+
+  @override
+  String get apiErrorIdempotencyConflict =>
+      'This message was already submitted with different data. Discard it and compose a new message.';
+
+  @override
+  String get apiErrorMessageExpired => 'That message has expired.';
+
+  @override
+  String get apiErrorRecoveryInProgress =>
+      'Another restore is already downloading this backup. Try again shortly.';
+
+  @override
+  String get apiErrorConflict =>
+      'This changed on the server in the meantime. Refresh and try again.';
+
+  @override
+  String get apiErrorRateLimited =>
+      'Too many attempts. Wait a moment and try again.';
+
+  @override
+  String get apiErrorEncryption =>
+      'The server rejected the encrypted data from this build.';
+
+  @override
+  String get apiErrorServer => 'The server had a problem. Try again shortly.';
+
+  @override
+  String get apiErrorInvalidRequest =>
+      'The server rejected the request. Check your input and try again.';
+
+  @override
+  String get errorUnexpectedResponse =>
+      'The server returned an unexpected response.';
+
+  @override
+  String get errorConversationPaused =>
+      'Sending is paused in this conversation.';
+
+  @override
+  String get errorOutboxFull =>
+      'Your encrypted message queue is full. Send or discard a pending message before composing another.';
+
+  @override
+  String get errorConversationPausedDetail =>
+      'Sending is paused in this conversation because the server rejected an encryption update. Other conversations still work.';
+
+  @override
+  String get errorEncryptionUnavailable =>
+      'This build does not include the production encryption engine yet, so this action is unavailable.';
+
+  @override
+  String get errorActionUnavailable =>
+      'This action is unavailable in this build.';
+
+  @override
+  String get errorGeneric => 'Something went wrong. Please try again.';
+
+  @override
+  String get errorTimeout => 'The server took too long to respond. Try again.';
+
+  @override
+  String get errorUnreachable =>
+      'Could not reach the server. Check the instance URL and your connection.';
+
+  @override
+  String get probeChecking => 'Checking the server…';
+
+  @override
+  String get probeReached => 'Veritra server reached.';
+
+  @override
+  String probeConnectedTo(String name) {
+    return 'Connected to $name.';
+  }
+
+  @override
+  String get probeInvalidOrigin =>
+      'Enter an HTTPS server origin, for example https://chat.example.org.';
+
+  @override
+  String get probeInsecure =>
+      'Veritra requires HTTPS. Put a self-hosted server behind TLS with a trusted certificate or Caddy.';
+
+  @override
+  String get probeDnsFailure =>
+      'That address could not be found. Check the hostname and try again.';
+
+  @override
+  String get probeTlsFailure =>
+      'The server certificate was not accepted. Use a trusted certificate or configure Caddy TLS.';
+
+  @override
+  String get probeTimedOut =>
+      'The server took too long to respond. Check the address and connection.';
+
+  @override
+  String get probeNotVeritra =>
+      'That address does not look like a Veritra server.';
+
+  @override
+  String get probeUnavailable =>
+      'Could not reach the server. Check the address and your connection.';
+
+  @override
+  String get outboxSendFailed =>
+      'This encrypted message could not be sent. Copy it or discard it.';
+
+  @override
+  String get recoveryRestoreFailed =>
+      'This device could not restore its encrypted session. Retry or continue to sign in without clearing local data.';
+
+  @override
+  String get recoveryProfileLocked =>
+      'This profile is already open in another Veritra window. Close that window, then retry.';
+
+  @override
+  String get recoveryKeyUnavailable =>
+      'This device could not read its secure storage. Unlock the device and retry. Your messages are kept.';
+
+  @override
+  String get recoveryKeyMissing =>
+      'The key that protects this device\'s messages is missing or does not match. Nothing has been deleted. You can retry, or reset this device and link it again.';
+
+  @override
+  String get recoveryResetFailed =>
+      'The reset did not finish. Nothing was deleted. Retry.';
+
+  @override
+  String get errorPasswordLoginNeedsLink =>
+      'Password login requires this device to be linked first.';
+
+  @override
+  String get attachmentSendFailedState => 'The attachment could not be sent.';
+
+  @override
+  String get errorRelinkRequired => 'This device must be linked again.';
+
+  @override
+  String get pushTestSent =>
+      'Test sent. A notification should arrive within a minute.';
+
+  @override
+  String get pushTestGone =>
+      'The push provider no longer accepts this device. Registering again.';
+
+  @override
+  String get pushTestRejected =>
+      'The push provider did not accept the test. Try again later.';
+
+  @override
+  String get pushTestRateLimited =>
+      'Wait a minute before sending another test.';
+
+  @override
+  String get pushTestNotRegistered =>
+      'This device is not registered for push yet.';
+
+  @override
+  String get pushTestFailed => 'The test could not be sent.';
+
+  @override
+  String errorServerNotAllowed(String url) {
+    return 'This build does not allow the server address $url. Use an https:// server origin.';
+  }
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
+import '../../l10n/l10n.dart';
 
 /// A refresh button for desktop, where there is no pull-to-refresh gesture.
 /// Renders nothing on phones, which keep the pull gesture.
@@ -17,7 +18,7 @@ class RefreshAction extends StatelessWidget {
   Widget build(BuildContext context) {
     if (!shown) return const SizedBox.shrink();
     return IconButton(
-      tooltip: 'Refresh',
+      tooltip: context.l10n.commonRefresh,
       onPressed: () => onRefresh(),
       icon: const Icon(Icons.refresh),
     );

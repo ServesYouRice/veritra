@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/features/chat/chat_list_screen.dart';
 import 'package:private_messenger/features/chat/chat_screen.dart';
+import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/ui/avatar.dart';
 import 'package:private_messenger/ui/theme.dart';
 import 'package:private_messenger/ui/tokens.dart';
@@ -86,14 +87,14 @@ void main() {
       // Same unit as the spoken label in both cases: the chip is what is
       // seen and the label is what is announced, and a chip reading `24h`
       // beside a label reading "1 day" is one fact told two ways.
-      expect(retentionChipLabel(86400), '1d');
-      expect(retentionLabel(86400), '1 day');
-      expect(retentionChipLabel(604800), '7d');
-      expect(retentionLabel(604800), '7 days');
-      expect(retentionChipLabel(3600), '1h');
-      expect(retentionLabel(3600), '1 hour');
-      expect(retentionChipLabel(1800), '30m');
-      expect(retentionLabel(1800), '30 minutes');
+      expect(retentionChipLabel(englishL10n, 86400), '1d');
+      expect(retentionLabel(englishL10n, 86400), '1 day');
+      expect(retentionChipLabel(englishL10n, 604800), '7d');
+      expect(retentionLabel(englishL10n, 604800), '7 days');
+      expect(retentionChipLabel(englishL10n, 3600), '1h');
+      expect(retentionLabel(englishL10n, 3600), '1 hour');
+      expect(retentionChipLabel(englishL10n, 1800), '30m');
+      expect(retentionLabel(englishL10n, 1800), '30 minutes');
     });
   });
 

@@ -23,6 +23,7 @@ import 'errors.dart';
 import 'message_history.dart';
 import '../storage/encrypted_database.dart' show LocalMessageKind;
 import 'models.dart';
+import '../l10n/l10n.dart';
 
 typedef ApiClientFactory = ApiClient Function(String baseUrl);
 typedef SyncServiceFactory = SyncService Function(String baseUrl, String token);
@@ -67,37 +68,35 @@ class SetupProbeResult {
 
   bool get isReachable => state == SetupProbeState.reachable;
 
-  String get message {
+  /// The probe outcome in English; see [localizedMessage].
+  String get message => localizedMessage(englishL10n);
+
+  /// The probe outcome as a sentence for the connect screen.
+  String localizedMessage(AppLocalizations l10n) {
     switch (state) {
       case SetupProbeState.idle:
         return '';
       case SetupProbeState.probing:
-        return 'Checking the server…';
+        return l10n.probeChecking;
       case SetupProbeState.reachable:
         final name = instanceName?.trim();
         return name == null || name.isEmpty
-            ? 'Veritra server reached.'
-            : 'Connected to $name.';
+            ? l10n.probeReached
+            : l10n.probeConnectedTo(name);
       case SetupProbeState.invalidOrigin:
-        return 'Enter an HTTPS server origin, for example '
-            'https://chat.example.org.';
+        return l10n.probeInvalidOrigin;
       case SetupProbeState.insecureTransport:
-        return 'Veritra requires HTTPS. Put a self-hosted server behind TLS '
-            'with a trusted certificate or Caddy.';
+        return l10n.probeInsecure;
       case SetupProbeState.dnsFailure:
-        return 'That address could not be found. Check the hostname and try '
-            'again.';
+        return l10n.probeDnsFailure;
       case SetupProbeState.tlsFailure:
-        return 'The server certificate was not accepted. Use a trusted '
-            'certificate or configure Caddy TLS.';
+        return l10n.probeTlsFailure;
       case SetupProbeState.timedOut:
-        return 'The server took too long to respond. Check the address and '
-            'connection.';
+        return l10n.probeTimedOut;
       case SetupProbeState.notVeritra:
-        return 'That address does not look like a Veritra server.';
+        return l10n.probeNotVeritra;
       case SetupProbeState.unavailable:
-        return 'Could not reach the server. Check the address and your '
-            'connection.';
+        return l10n.probeUnavailable;
     }
   }
 }
@@ -173,6 +172,10 @@ class AppState extends ChangeNotifier {
   final LocalStore localStore;
   final SyncServiceFactory syncServiceFactory;
   final MobilePushService pushService;
+
+  /// Strings for the messages AppState stores for the UI (errors, recovery
+  /// and probe text). English until the app adds another locale (T44C).
+  AppLocalizations l10n = englishL10n;
 
   Session? session;
   ApiClient? api;
@@ -511,10 +514,9 @@ class AppState extends ChangeNotifier {
     final failure = _outboxRecords[idempotencyKey]?.failureClass ?? '';
     if (failure.contains('storage_quota_exceeded') ||
         failure.contains(':507:')) {
-      return 'The server is out of storage for this account. Delete older '
-          'attachments or ask the administrator for more space.';
+      return l10n.apiErrorStorageFull;
     }
-    return 'This encrypted message could not be sent. Copy it or discard it.';
+    return l10n.outboxSendFailed;
   }
 
   /// Probe the instance without changing global action state. The result is
@@ -716,27 +718,22 @@ class AppState extends ChangeNotifier {
           error is LocalStoreUnavailableException ? error.kind : null;
       recoveryMessage = error is LocalStoreUnavailableException
           ? _localStoreFailureMessage(error.kind)
-          : 'This device could not restore its encrypted session. Retry or '
-              'continue to sign in without clearing local data.';
+          : l10n.recoveryRestoreFailed;
       notifyListeners();
     }
   }
 
-  static String _localStoreFailureMessage(LocalStoreFailureKind kind) {
+  String _localStoreFailureMessage(LocalStoreFailureKind kind) {
     switch (kind) {
       case LocalStoreFailureKind.profileLocked:
-        return 'This profile is already open in another Veritra window. '
-            'Close that window, then retry.';
+        return l10n.recoveryProfileLocked;
       case LocalStoreFailureKind.keyUnavailable:
       case LocalStoreFailureKind.keyWriteFailed:
-        return 'This device could not read its secure storage. Unlock the '
-            'device and retry. Your messages are kept.';
+        return l10n.recoveryKeyUnavailable;
       case LocalStoreFailureKind.keyMissing:
       case LocalStoreFailureKind.keyMalformed:
       case LocalStoreFailureKind.keyRejected:
-        return 'The key that protects this device\'s messages is missing or '
-            'does not match. Nothing has been deleted. You can retry, or '
-            'reset this device and link it again.';
+        return l10n.recoveryKeyMissing;
     }
   }
 
@@ -778,8 +775,7 @@ class AppState extends ChangeNotifier {
         recoveryMessage = null;
         lifecycle = SessionLifecycle.ready;
       } catch (err) {
-        recoveryMessage = 'The reset did not finish. Nothing was deleted. '
-            'Retry.';
+        recoveryMessage = l10n.recoveryResetFailed;
       } finally {
         busy = false;
         notifyListeners();
@@ -827,8 +823,7 @@ class AppState extends ChangeNotifier {
           deviceId.isEmpty ||
           deviceSecret == null ||
           deviceSecret.isEmpty) {
-        throw StateError(
-            'Password login requires this device to be linked first.');
+        throw StateError(l10n.errorPasswordLoginNeedsLink);
       }
       session = await api!.login(
         username: username,
@@ -873,7 +868,7 @@ class AppState extends ChangeNotifier {
               preserveDeviceIdentity: true, preserveOutbox: true);
         });
       }
-      _opErrors[op] = describeError(err);
+      _opErrors[op] = describeError(err, l10n);
       notifyListeners();
     }
   }
@@ -1052,7 +1047,7 @@ class AppState extends ChangeNotifier {
       _historyCursors[conversationId] = page.nextBefore;
       await _persistSnapshot();
     } catch (err) {
-      _messageLoadErrors[conversationId] = describeError(err);
+      _messageLoadErrors[conversationId] = describeError(err, l10n);
     } finally {
       _loadingOlder.remove(conversationId);
       notifyListeners();
@@ -1073,7 +1068,7 @@ class AppState extends ChangeNotifier {
       if (_mlsCrypto != null) await refreshHistory(conversationId);
       unawaited(markNewestMessageRead(conversationId));
     } catch (err) {
-      _messageLoadErrors[conversationId] = describeError(err);
+      _messageLoadErrors[conversationId] = describeError(err, l10n);
     } finally {
       _loadingMessageConversations.remove(conversationId);
       notifyListeners();
@@ -1461,7 +1456,7 @@ class AppState extends ChangeNotifier {
     } catch (err) {
       // The search screen shows the thrown error's text, so hand it only
       // the mapped sentence (card T44A).
-      throw UserFacingException(describeError(err));
+      throw UserFacingException(describeError(err, l10n));
     }
   }
 
@@ -1696,11 +1691,11 @@ class AppState extends ChangeNotifier {
       );
       if (!sent) {
         _opErrors[Ops.attachment] =
-            _opErrors[Ops.send] ?? 'The attachment could not be sent.';
+            _opErrors[Ops.send] ?? l10n.attachmentSendFailedState;
       }
       return sent;
     } catch (err) {
-      _opErrors[Ops.attachment] = describeError(err);
+      _opErrors[Ops.attachment] = describeError(err, l10n);
       return false;
     } finally {
       await prepared?.cleanup();
@@ -2040,7 +2035,7 @@ class AppState extends ChangeNotifier {
       final client = api;
       final deviceSecret = current?.deviceSecret;
       if (current == null || client == null || deviceSecret == null) {
-        throw StateError('This device must be linked again.');
+        throw StateError(l10n.errorRelinkRequired);
       }
       await client.reauthenticate(current.token, password, deviceSecret);
       succeeded = true;
@@ -2294,12 +2289,10 @@ class AppState extends ChangeNotifier {
       try {
         final results = await client.sendTestPush(current.token);
         pushTestResult = results.every((result) => result == 'delivered')
-            ? 'Test sent. A notification should arrive within a minute.'
+            ? l10n.pushTestSent
             : results.contains('gone')
-                ? 'The push provider no longer accepts this device. '
-                    'Registering again.'
-                : 'The push provider did not accept the test. Try again '
-                    'later.';
+                ? l10n.pushTestGone
+                : l10n.pushTestRejected;
         if (results.contains('gone')) {
           _pushSubscriptionId = null;
           pushProvider = null;
@@ -2309,10 +2302,10 @@ class AppState extends ChangeNotifier {
       } on ApiException catch (error) {
         if (error.statusCode == 401) rethrow;
         pushTestResult = error.serverCode == 'push_test_rate_limited'
-            ? 'Wait a minute before sending another test.'
+            ? l10n.pushTestRateLimited
             : error.serverCode == 'no_push_subscription'
-                ? 'This device is not registered for push yet.'
-                : 'The test could not be sent.';
+                ? l10n.pushTestNotRegistered
+                : l10n.pushTestFailed;
       }
     });
   }
@@ -2602,7 +2595,7 @@ class AppState extends ChangeNotifier {
       // whatever the user last tapped. Writing it to the shared [error] made
       // unrelated screens report it as their own failure, so it goes to
       // [syncError] and the offline banner instead.
-      syncError = describeError(err);
+      syncError = describeError(err, l10n);
       _setConnectionStatus(ConnectionStatus.offline);
       notifyListeners();
       _scheduleCatchUpRetry();
@@ -2652,7 +2645,7 @@ class AppState extends ChangeNotifier {
   void _enterSyncRecovery(SyncRecovery recovery) {
     syncRecovery = recovery;
     deviceRecoveryRequired = true;
-    syncError = recovery.message;
+    syncError = recovery.localizedMessage(l10n);
     _setConnectionStatus(ConnectionStatus.offline);
     notifyListeners();
   }
@@ -3521,8 +3514,7 @@ class AppState extends ChangeNotifier {
     // The UI validates too, but this is the one place every connection path
     // (setup, registration, sign-in, device link, restore) goes through.
     if (!config.transport.allows(baseUrl)) {
-      throw StateError('This build does not allow the server address '
-          '$baseUrl. Use an https:// server origin.');
+      throw StateError(l10n.errorServerNotAllowed(baseUrl));
     }
     api?.close();
     api = apiClientFactory(baseUrl);
@@ -3546,7 +3538,7 @@ class AppState extends ChangeNotifier {
           await _clearLocalSession(
               preserveDeviceIdentity: true, preserveOutbox: true);
         }
-        _opErrors[op] = describeError(err);
+        _opErrors[op] = describeError(err, l10n);
       } finally {
         _busyOps.remove(op);
         notifyListeners();
@@ -3567,7 +3559,7 @@ class AppState extends ChangeNotifier {
           await _clearLocalSession(
               preserveDeviceIdentity: true, preserveOutbox: true);
         }
-        error = describeError(err);
+        error = describeError(err, l10n);
       } finally {
         busy = false;
         notifyListeners();

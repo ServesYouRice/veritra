@@ -9,6 +9,7 @@ import '../../ui/tokens.dart';
 import '../../ui/widgets/empty_state.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/refresh_action.dart';
+import '../../l10n/l10n.dart';
 
 /// Review and undo blocks. Blocking is enforced by the server for delivery;
 /// it is not a claim about the other person's device, and the copy here says
@@ -45,7 +46,7 @@ class _BlockedAccountsScreenState extends State<BlockedAccountsScreen> {
         final error = state.errorFor(Ops.blocks);
         return Scaffold(
           appBar: LargeTitleBar(
-            title: 'Blocked accounts',
+            title: context.l10n.settingsBlockedAccounts,
             actions: <Widget>[RefreshAction(onRefresh: state.refreshBlocks)],
           ),
           body: RefreshIndicator(
@@ -63,12 +64,10 @@ class _BlockedAccountsScreenState extends State<BlockedAccountsScreen> {
                           onRetry: state.refreshBlocks,
                         )
                       else
-                        const EmptyState(
+                        EmptyState(
                           icon: Icons.block_outlined,
-                          title: 'No blocked accounts',
-                          message: 'Block someone from a direct message to '
-                              'stop the server delivering their messages to '
-                              'you.',
+                          title: context.l10n.blockedEmptyTitle,
+                          message: context.l10n.blockedEmptyMessage,
                         ),
                     ],
                   )
@@ -107,9 +106,10 @@ class _BlockedAccountsScreenState extends State<BlockedAccountsScreen> {
                           ),
                           title: Text(label),
                           subtitle: Text(block.createdAt == null
-                              ? 'Blocked'
-                              : 'Blocked '
-                                  '${formatDate(context, block.createdAt!)}'),
+                              ? context.l10n.blockedLabel
+                              : context.l10n.blockedOn(
+                                  formatDate(context, block.createdAt!),
+                                )),
                           trailing: TextButton(
                             onPressed: state.isBusy(Ops.blocks)
                                 ? null
@@ -118,7 +118,7 @@ class _BlockedAccountsScreenState extends State<BlockedAccountsScreen> {
                                       block.accountId,
                                       label,
                                     ),
-                            child: const Text('Unblock'),
+                            child: Text(context.l10n.blockedUnblock),
                           ),
                         ),
                       );
@@ -142,8 +142,9 @@ class _BlockedAccountsScreenState extends State<BlockedAccountsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(ok
-            ? '$label unblocked.'
-            : widget.state.errorFor(Ops.blocks) ?? 'Could not unblock $label.'),
+            ? context.l10n.blockedUnblocked(label)
+            : widget.state.errorFor(Ops.blocks) ??
+                context.l10n.blockedUnblockFailed(label)),
       ),
     );
   }
@@ -169,7 +170,7 @@ class _ErrorState extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           Text(
-            'Couldn’t load blocked accounts',
+            context.l10n.blockedLoadFailed,
             style: theme.textTheme.titleMedium,
             textAlign: TextAlign.center,
           ),
@@ -185,7 +186,7 @@ class _ErrorState extends StatelessWidget {
           FilledButton.icon(
             onPressed: onRetry,
             icon: const Icon(Icons.refresh),
-            label: const Text('Retry'),
+            label: Text(context.l10n.commonRetry),
           ),
         ],
       ),
