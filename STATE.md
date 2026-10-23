@@ -40,7 +40,7 @@ added tests for the acceptance criteria that had none and fixed what they found.
 | Go/Dart/CI dependency bumps | x/crypto 0.58, sqlite 1.60.1, drift_dev 2.35.1, actions | CI |
 | T37C passwords and sessions | Argon2id, rehash on login, idle 14 d / absolute 30 d, token rotation at reauth | [`T37C-password-sessions.md`](testing/evidence/T37C-password-sessions.md) |
 | T49 miss 6 | Range downloads verify only the chunks they serve: 69 ms → 41 µs for 64 KiB of a 100 MiB blob | [`benchmarks-t49.md`](testing/evidence/benchmarks-t49.md) |
-| T49C mobile | 500-message burst 14.7 s → 3.8 s; opening a chat 1.7 s → 0.3 s | [`benchmarks-t49c.md`](testing/evidence/benchmarks-t49c.md) |
+| T49C mobile | 500-message burst 14.7 s → 2.6 s (with the index below); opening a chat 1.7 s → 0.3 s | [`benchmarks-t49c.md`](testing/evidence/benchmarks-t49c.md) |
 | Verification sweep | I29–I38 tests added; retention metric and Caddy log leaks fixed; QA01/QA04 verified | [`verification-2026-10-23.md`](testing/evidence/verification-2026-10-23.md) |
 | Sync retry | A rate-limited catch-up honours `Retry-After` (was up to 2 min stalled) | `mobile/test/sync_recovery_test.dart` |
 | Reauth | A mistyped password in the reauth prompt no longer signs the user out | `mobile/test/app_state_test.dart` |
@@ -48,7 +48,7 @@ added tests for the acceptance criteria that had none and fixed what they found.
 | T49D admission limits | _in progress_ | |
 | T46 deploy smoke + k3s rehearsal | _in progress_ | |
 | QA02 iOS evidence schema | _in progress_ | |
-| Mobile cache index (local schema 9) | _in progress_ | |
+| Mobile cache index (local schema 9) | Receiving a message with 10k cached rows 23 ms → 5 ms; the upgrade is now one transaction | [`benchmarks-t49c.md`](testing/evidence/benchmarks-t49c.md) |
 
 Earlier work (I01–I28, the Stage 0–5 demo work, T43C, T44A–C, T46 base,
 T48A/B, T49A/B misses 1–5) is recorded in Git history and in the evidence
@@ -68,6 +68,8 @@ and keep each change small.
 | T44C | A second app language | English only today; needs a native-speaker review |
 | T42B | Native incoming-call lifecycle (CallKit, PushKit, Android Telecom) | Deferred by D16/D20; design in [`docs/call-platform-design-proposal.md`](docs/call-platform-design-proposal.md) needs approval when it starts |
 | Downloads | An aborted download (integrity failure mid-stream) skips the normal request log line and metrics | A `blob_integrity_failed` warning is still logged |
+| Local DB upgrade | A failed upgrade (e.g. disk full) shows the wrong-key message | Nothing is lost; needs its own failure kind and UI string |
+| Device transfer | Android 12+ device transfer ignores `allowBackup="false"` without `dataExtractionRules`; iOS backups include the database file | A copied file cannot be opened without its device-only key; still worth excluding |
 
 ## Release gates
 
