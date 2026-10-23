@@ -1,10 +1,14 @@
 package app
 
 import (
+	"context"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -61,14 +65,74 @@ func TestEnrollmentLimiterUsesSpoofResistantProxyIdentity(t *testing.T) {
 }
 
 func TestRecoveryRouteUsesCredentialRateLimit(t *testing.T) {
-	if !isAuthEndpoint("/api/v1/recovery") {
+	if httpapi.ClassifyRoute("/api/v1/recovery") != httpapi.CredentialRoute {
 		t.Fatal("recovery route is not in the strict credential rate class")
 	}
-	if isAuthEndpoint("/api/v1/recovery/secret") {
+	if httpapi.ClassifyRoute("/api/v1/recovery/secret") == httpapi.CredentialRoute {
 		t.Fatal("legacy token path unexpectedly accepted as credential route")
 	}
-	if !isAuthEndpoint("/api/v1/auth/reauth") {
+	if httpapi.ClassifyRoute("/api/v1/auth/reauth") != httpapi.CredentialRoute {
 		t.Fatal("reauth route is not in the strict credential rate class")
+	}
+}
+
+// Through the real router: every spelling that reaches the claim-status
+// handler is a credential request (10 a minute per address), and the
+// device-link enrollment reservation is an enrollment request (5).
+func TestDeviceLinkRoutesUseTheirFixedBudgets(t *testing.T) {
+	application, err := New(context.Background(), deploymentConfig(t), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = application.Close() })
+	handler := application.Handler()
+	send := func(address, method, path string) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(method, path, strings.NewReader(`{"code":"not-a-link-code"}`))
+		request.RemoteAddr = address + ":40000"
+		request.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder
+	}
+	rejected := func(scope int) int64 { return application.limiter.rejections[scope].Load() }
+
+	const prober = "203.0.113.70"
+	for i, path := range []string{
+		"/api/v1/device-links/link_x/claim-status/",
+		"/api/v1/device-links/link_x/claim-status",
+		"/api/v1/device-links/link_x%2Fclaim-status%2F",
+	} {
+		recorder := send(prober, http.MethodGet, path)
+		if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "claim_token_required") {
+			t.Fatalf("%s did not reach the claim-status handler: %d %s", path, recorder.Code, recorder.Body.String())
+		}
+		if i == 0 {
+			for j := 0; j < 7; j++ {
+				send(prober, http.MethodGet, path)
+			}
+		}
+	}
+	before := rejected(scopeAuth)
+	if code := send(prober, http.MethodGet, "/api/v1/device-links/link_y/claim-status/").Code; code != http.StatusTooManyRequests {
+		t.Fatalf("eleventh claim-status probe status=%d, want 429", code)
+	}
+	if got := rejected(scopeAuth); got != before+1 {
+		t.Fatalf("auth rejections %d -> %d", before, got)
+	}
+
+	const enroller = "203.0.113.71"
+	for i := 0; i < enrollmentRequestsPerMinute; i++ {
+		if code := send(enroller, http.MethodPost, "/api/v1/device-links/claim-enrollment").Code; code == http.StatusTooManyRequests || code == http.StatusNotFound {
+			t.Fatalf("claim-enrollment %d status=%d", i+1, code)
+		}
+	}
+	before = rejected(scopeEnrollment)
+	if code := send(enroller, http.MethodPost, "/api/v1/device-links/claim-enrollment").Code; code != http.StatusTooManyRequests {
+		t.Fatalf("sixth claim-enrollment status=%d, want 429", code)
+	}
+	if got := rejected(scopeEnrollment); got != before+1 {
+		t.Fatalf("enrollment rejections %d -> %d", before, got)
 	}
 }
 

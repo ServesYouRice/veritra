@@ -640,7 +640,7 @@ func (a *API) claimDeviceLink(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) deviceLinkSubroute(w http.ResponseWriter, r *http.Request) {
-	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/device-links/"), "/"), "/")
+	parts := deviceLinkPathParts(r.URL.Path)
 	if len(parts) == 1 && parts[0] != "" && r.Method == http.MethodGet {
 		principal, ok := a.authenticate(w, r)
 		if !ok {

@@ -1209,8 +1209,9 @@ func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host := rateLimitHost(rl.clientIP(r))
 		now := time.Now()
-		auth := isAuthEndpoint(r.URL.Path)
-		enrollment := isEnrollmentEndpoint(r.URL.Path)
+		class := httpapi.ClassifyRoute(r.URL.Path)
+		auth := class == httpapi.CredentialRoute
+		enrollment := class == httpapi.EnrollmentRoute
 		// A session token on any other route may move the request to its
 		// account's budget once it resolves (accountCharge).
 		signedIn := !auth && !enrollment && httpapi.HasBearerToken(r)
@@ -1311,23 +1312,6 @@ func (rl *rateLimiter) accountKey(accountID, host string) string {
 	_, _ = hasher.Write([]byte{0})
 	_, _ = hasher.Write([]byte(host))
 	return hex.EncodeToString(hasher.Sum(nil))
-}
-
-func isAuthEndpoint(path string) bool {
-	switch path {
-	case "/api/v1/setup/owner",
-		"/api/v1/auth/login",
-		"/api/v1/auth/reauth",
-		"/api/v1/register",
-		"/api/v1/recovery",
-		"/api/v1/device-links/claim":
-		return true
-	}
-	return strings.HasPrefix(path, "/api/v1/device-links/") && strings.HasSuffix(path, "/claim-status")
-}
-
-func isEnrollmentEndpoint(path string) bool {
-	return strings.HasSuffix(path, "/enrollment")
 }
 
 func (rl *rateLimiter) clientIP(r *http.Request) string {
