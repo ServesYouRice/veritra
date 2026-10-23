@@ -10,6 +10,7 @@ import io
 import json
 import os
 import plistlib
+import re
 import shutil
 import struct
 import subprocess
@@ -1350,7 +1351,34 @@ def with_record_list(records: list[object], valid: dict[str, object]) -> dict[st
     return manifest
 
 
+def codeowners_cases() -> None:
+    """CODEOWNERS covers the gate: itself, the workflows, release/ (policy,
+    pins, approvals) and every script the gate runs, with its tests. Review
+    finding: owning only release/approvals/ let a normal pull request drop
+    that rule or change a pin first."""
+    owners: dict[str, list[str]] = {}
+    for line in (ROOT / ".github/CODEOWNERS").read_text(encoding="utf-8").splitlines():
+        if line.strip() and not line.lstrip().startswith("#"):
+            pattern, *names = line.split()
+            assert names, f"CODEOWNERS line without an owner: {line}"
+            owners[pattern] = names
+    for pattern in owners:
+        assert (ROOT / pattern.lstrip("/")).exists(), f"CODEOWNERS names a missing path: {pattern}"
+    for required in ("/.github/CODEOWNERS", "/.github/workflows/", "/release/"):
+        assert required in owners, f"CODEOWNERS does not cover {required}"
+    gate = ("scripts/release-readiness.sh", "scripts/release-image.sh", ".github/workflows/release.yml",
+            "scripts/check-rust-audit-expiry.sh")
+    scripts = set()
+    for source in gate:
+        scripts |= set(re.findall(r"scripts/[A-Za-z0-9_.-]+\.(?:sh|py)\b", (ROOT / source).read_text(encoding="utf-8")))
+    for script in sorted(scripts):
+        test = script.rsplit(".", 1)[0] + "_test.py"
+        for path in (script, test) if (ROOT / test).exists() else (script,):
+            assert "/" + path in owners, f"CODEOWNERS does not cover {path}, which the release gate runs"
+
+
 def main() -> int:
+    codeowners_cases()
     root, manifest = fixture()
     try:
         expect_valid(root, manifest)
