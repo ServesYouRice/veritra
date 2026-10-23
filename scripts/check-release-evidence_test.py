@@ -598,6 +598,24 @@ def approval_cases(root: Path, valid: dict[str, object]) -> None:
         check(protected_tip, "production_crypto approval is missing")
     finally:
         git(root, "replace", "-d", protected_tip)
+    # Nor can a graft (review finding: --no-replace-objects leaves grafts on).
+    # An orphan commit holding the candidate's tree plus perfect approvals
+    # passes every check once grafted onto the candidate.
+    orphan = git(root, "commit-tree", git(root, "rev-parse", f"{approved()}^{{tree}}"), "-m", "orphan approvals")
+    check(orphan, "approvals commit does not descend from the candidate commit")
+    graft_line = f"{orphan} {COMMIT}\n"
+    grafts = root / ".git/info/grafts"
+    grafts.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        grafts.write_text(graft_line, encoding="utf-8")
+        assert git(root, "merge-base", "--is-ancestor", COMMIT, orphan) == ""  # the graft is live
+        check(orphan, "approvals commit does not descend from the candidate commit")
+    finally:
+        grafts.unlink()
+    caller_grafts = root / "caller-grafts"
+    caller_grafts.write_text(graft_line, encoding="utf-8")
+    expect_blocked(root, copy.deepcopy(valid), "approvals commit does not descend from the candidate commit",
+                   extra=("--approvals-commit", orphan), env={"GIT_GRAFT_FILE": str(caller_grafts)})
 
     # Approvals for another commit, or at another commit's path.
     check(approved(production_crypto=approval_record("production_crypto", reviewed_commit=OTHER_COMMIT)),

@@ -175,12 +175,10 @@ def load_json(path: Path) -> dict[str, Any]:
 def expected_commit(root: Path, supplied: str | None) -> str:
     if supplied:
         return supplied
-    try:
-        return subprocess.check_output(
-            ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
-        ).strip()
-    except (OSError, subprocess.CalledProcessError) as exc:
-        raise ValueError("cannot determine the candidate commit") from exc
+    head = git_text(root, "rev-parse", "HEAD")
+    if not head:
+        raise ValueError("cannot determine the candidate commit")
+    return head
 
 
 def require(value: Any, description: str, errors: list[str]) -> None:
@@ -188,15 +186,26 @@ def require(value: Any, description: str, errors: list[str]) -> None:
         errors.append(f"missing {description}")
 
 
+# History must read as committed. Replace refs and a grafts file
+# (.git/info/grafts, or GIT_GRAFT_FILE from the caller) can both rewrite it
+# locally: a replace ref could make a commit without approvals read as one
+# with them, and a graft could give an unrelated approvals commit the
+# candidate as a parent. --no-replace-objects does not disable grafts, so the
+# graft file is pointed at a path under os.devnull, which is not a directory
+# and so can never exist.
+GIT_HISTORY_ENV = {"GIT_NO_REPLACE_OBJECTS": "1", "GIT_GRAFT_FILE": os.path.join(os.devnull, "grafts")}
+
+
 def git(root: Path, *args: str) -> bytes | None:
     """Run a read-only git query; None when git fails, so callers fail closed.
 
-    Replace refs are ignored: a local refs/replace entry must not be able to
-    make a commit without approvals read as one with them.
+    Replace refs and grafts are ignored (``GIT_HISTORY_ENV``).
     """
     command = ["git", "--no-replace-objects", "-C", str(root), *args]
     try:
-        return subprocess.run(command, capture_output=True, check=True).stdout
+        return subprocess.run(
+            command, capture_output=True, check=True, env={**os.environ, **GIT_HISTORY_ENV}
+        ).stdout
     except (OSError, subprocess.CalledProcessError):
         return None
 
