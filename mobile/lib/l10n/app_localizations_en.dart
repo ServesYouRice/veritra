@@ -1918,6 +1918,29 @@ class AppLocalizationsEn extends AppLocalizations {
       'Another restore is already downloading this backup. Try again shortly.';
 
   @override
+  String get apiErrorWriteRateLimited =>
+      'You are sending a lot right now. Wait a minute and try again.';
+
+  @override
+  String get apiErrorServerStorageLow =>
+      'The server is almost out of space, so new messages and uploads are paused. Ask the administrator to free some up.';
+
+  @override
+  String get apiErrorDeviceLimit =>
+      'This account already has the most devices allowed. Remove one in Settings first.';
+
+  @override
+  String get apiErrorDeviceLinkLimit =>
+      'Too many device links are waiting. Finish or cancel one first.';
+
+  @override
+  String get apiErrorConversationLimit =>
+      'You have reached the most conversations allowed on this server. Leave or delete one first.';
+
+  @override
+  String get apiErrorConversationMemberLimit => 'This conversation is full.';
+
+  @override
   String get apiErrorConflict =>
       'This changed on the server in the meantime. Refresh and try again.';
 

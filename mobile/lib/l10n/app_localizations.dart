@@ -3142,6 +3142,42 @@ abstract class AppLocalizations {
   /// **'Another restore is already downloading this backup. Try again shortly.'**
   String get apiErrorRecoveryInProgress;
 
+  /// No description provided for @apiErrorWriteRateLimited.
+  ///
+  /// In en, this message translates to:
+  /// **'You are sending a lot right now. Wait a minute and try again.'**
+  String get apiErrorWriteRateLimited;
+
+  /// No description provided for @apiErrorServerStorageLow.
+  ///
+  /// In en, this message translates to:
+  /// **'The server is almost out of space, so new messages and uploads are paused. Ask the administrator to free some up.'**
+  String get apiErrorServerStorageLow;
+
+  /// No description provided for @apiErrorDeviceLimit.
+  ///
+  /// In en, this message translates to:
+  /// **'This account already has the most devices allowed. Remove one in Settings first.'**
+  String get apiErrorDeviceLimit;
+
+  /// No description provided for @apiErrorDeviceLinkLimit.
+  ///
+  /// In en, this message translates to:
+  /// **'Too many device links are waiting. Finish or cancel one first.'**
+  String get apiErrorDeviceLinkLimit;
+
+  /// No description provided for @apiErrorConversationLimit.
+  ///
+  /// In en, this message translates to:
+  /// **'You have reached the most conversations allowed on this server. Leave or delete one first.'**
+  String get apiErrorConversationLimit;
+
+  /// No description provided for @apiErrorConversationMemberLimit.
+  ///
+  /// In en, this message translates to:
+  /// **'This conversation is full.'**
+  String get apiErrorConversationMemberLimit;
+
   /// No description provided for @apiErrorConflict.
   ///
   /// In en, this message translates to:

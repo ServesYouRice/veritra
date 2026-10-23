@@ -17,10 +17,14 @@
     "communities_list_failed": "server",
     "community_create_failed": "server",
     "conversation_id_required": "invalidRequest",
+    "conversation_limit_reached": "conflict",
+    "conversation_member_limit_reached": "conflict",
     "conversations_list_failed": "server",
     "device_id_required": "authentication",
     "device_key_package_required": "encryption",
+    "device_limit_reached": "conflict",
     "device_link_claim_failed": "server",
+    "device_link_limit_reached": "conflict",
     "device_link_status_failed": "server",
     "device_recovery_required": "conflict",
     "device_secret_create_failed": "server",
@@ -99,6 +103,7 @@
     "register_failed": "server",
     "search_failed": "server",
     "server_draining": "unavailable",
+    "server_storage_low": "storageFull",
     "session_create_failed": "server",
     "session_rotate_failed": "server",
     "setup_authorization_required": "permission",
@@ -116,6 +121,7 @@
     "unauthorized": "authentication",
     "upload_failed": "server",
     "upload_too_large": "tooLarge",
-    "weak_password": "invalidRequest"
+    "weak_password": "invalidRequest",
+    "write_rate_limited": "rateLimited"
   }
 }

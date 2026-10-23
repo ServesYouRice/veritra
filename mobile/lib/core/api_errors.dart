@@ -79,6 +79,11 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'recovery_transfer_in_progress': ApiErrorKind.conflict,
   'transcript_mismatch': ApiErrorKind.conflict,
   'device_recovery_required': ApiErrorKind.conflict,
+  // Admission limits (card T49D).
+  'device_limit_reached': ApiErrorKind.conflict,
+  'device_link_limit_reached': ApiErrorKind.conflict,
+  'conversation_limit_reached': ApiErrorKind.conflict,
+  'conversation_member_limit_reached': ApiErrorKind.conflict,
   // Invalid request.
   'account_id_required': ApiErrorKind.invalidRequest,
   'before_and_after_exclusive': ApiErrorKind.invalidRequest,
@@ -118,9 +123,11 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'typing_rate_limited': ApiErrorKind.rateLimited,
   'realtime_connection_limit': ApiErrorKind.rateLimited,
   'key_package_quota_exceeded': ApiErrorKind.rateLimited,
+  'write_rate_limited': ApiErrorKind.rateLimited,
   // Size and storage.
   'upload_too_large': ApiErrorKind.tooLarge,
   'storage_quota_exceeded': ApiErrorKind.storageFull,
+  'server_storage_low': ApiErrorKind.storageFull,
   // Encryption contract.
   'blob_integrity_failed': ApiErrorKind.encryption,
   'device_key_package_required': ApiErrorKind.encryption,
@@ -306,6 +313,18 @@ class ApiException implements Exception {
         return l10n.apiErrorMessageExpired;
       case 'recovery_transfer_in_progress':
         return l10n.apiErrorRecoveryInProgress;
+      case 'write_rate_limited':
+        return l10n.apiErrorWriteRateLimited;
+      case 'server_storage_low':
+        return l10n.apiErrorServerStorageLow;
+      case 'device_limit_reached':
+        return l10n.apiErrorDeviceLimit;
+      case 'device_link_limit_reached':
+        return l10n.apiErrorDeviceLinkLimit;
+      case 'conversation_limit_reached':
+        return l10n.apiErrorConversationLimit;
+      case 'conversation_member_limit_reached':
+        return l10n.apiErrorConversationMemberLimit;
     }
     switch (kind) {
       case ApiErrorKind.authentication:
