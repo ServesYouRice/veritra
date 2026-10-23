@@ -7,7 +7,8 @@ import (
 )
 
 // T49A: realtime registration cost against the number of live sockets.
-// Register holds the hub write lock while it counts every connection.
+// Register holds the hub write lock; it originally counted every
+// connection and now uses per-account and per-IP indexes.
 
 func benchPopulateHub(b *testing.B, existing int) *Hub {
 	b.Helper()

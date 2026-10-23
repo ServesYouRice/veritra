@@ -6,10 +6,10 @@ import (
 	"time"
 )
 
-// T49A: typing-state growth. allowTyping keeps one entry per
-// account/conversation pair and sweeps entries older than a minute only
-// once the map exceeds 10,000 entries; the sweep runs on every admitted
-// call while the map stays over the cap.
+// T49A: typing-state growth. allowTyping originally kept one entry per
+// account/conversation pair and swept the whole map on every admitted call
+// past 10,000 entries; it now expires entries by rotating two time
+// generations (typingLimiter).
 
 // Steady state: active pairs each send one typing update every 3s, so all
 // entries stay fresh and the map size equals the active pair count.
@@ -29,7 +29,7 @@ func BenchmarkTypingAllowSteady(b *testing.B) {
 				api.allowTyping(keys[i%active], "conv", base.Add(time.Duration(round)*3*time.Second))
 				i++
 			}
-			b.ReportMetric(float64(len(api.typingLast)), "entries")
+			b.ReportMetric(float64(api.typing.entries()), "entries")
 		})
 	}
 }
