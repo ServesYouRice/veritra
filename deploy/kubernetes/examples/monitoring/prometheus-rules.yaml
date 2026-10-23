@@ -1,0 +1,110 @@
+# Veritra alert rules for the Prometheus Operator (kube-prometheus-stack).
+# The same rules as veritra-alerts.rules.yml, indented under spec; change
+# both together. Set the label your Prometheus ruleSelector matches (the
+# kube-prometheus-stack default is release: <helm release name>).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: veritra
+  namespace: veritra
+  labels:
+    app.kubernetes.io/name: veritra
+    app.kubernetes.io/part-of: veritra
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: veritra-backup
+      rules:
+        - alert: VeritraBackupStale
+          # Daily job at 03:15 UTC that may run up to 3 hours: 26 h leaves room.
+          expr: veritra_backup_last_success_age_seconds > 93600
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: No verified Veritra backup in the last 26 hours.
+            runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#monitoring-and-alerts
+        - alert: VeritraBackupNeverSucceeded
+          # -1 means no verified backup has ever been recorded.
+          expr: veritra_backup_last_success_age_seconds == -1
+          for: 26h
+          labels:
+            severity: critical
+          annotations:
+            summary: Veritra has never recorded a verified backup.
+            runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#monitoring-and-alerts
+        - alert: VeritraBackupFailing
+          expr: veritra_backup_consecutive_failures >= 1
+          labels:
+            severity: warning
+          annotations:
+            summary: The last {{ $value }} Veritra backup run(s) failed.
+            runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#monitoring-and-alerts
+        - alert: VeritraBackupJobFailed
+          # Also catches a failed copy to R2, which the server cannot see.
+          expr: sum by (namespace, job_name) (kube_job_status_failed{namespace="veritra", job_name=~"veritra-backup-.*"}) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: Backup Job {{ $labels.job_name }} failed.
+            runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#monitoring-and-alerts
+        - alert: VeritraRestoreDrillFailed
+          expr: sum by (namespace, job_name) (kube_job_status_failed{namespace="veritra", job_name=~"veritra-restore-drill-.*"}) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: Restore drill {{ $labels.job_name }} failed.
+            runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#monitoring-and-alerts
+    - name: veritra-server
+      rules:
+        - alert: VeritraServerDown
+          expr: up{job="veritra-metrics"} == 0 or absent(up{job="veritra-metrics"})
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: The Veritra metrics target is down or missing.
+            runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#monitoring-and-alerts
+        - alert: VeritraServerNotReady
+          expr: kube_deployment_status_replicas_available{namespace="veritra", deployment="veritra"} < 1
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: The Veritra server has had no ready pod for 5 minutes.
+            runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#monitoring-and-alerts
+    - name: veritra-platform
+      rules:
+        - alert: VeritraCertificateExpiringSoon
+          # cert-manager renews 30 days ahead; 14 days left means renewal is stuck.
+          expr: certmanager_certificate_expiration_timestamp_seconds{namespace="veritra"} - time() < 14 * 86400
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: Certificate {{ $labels.name }} expires in less than 14 days.
+            runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#monitoring-and-alerts
+        - alert: VeritraVolumeFilling
+          # Needs a CSI volume; k3s local-path volumes report no kubelet stats,
+          # so VeritraNodeDiskFilling covers them.
+          expr: |
+            kubelet_volume_stats_used_bytes{namespace="veritra", persistentvolumeclaim="veritra-data"}
+              / kubelet_volume_stats_capacity_bytes{namespace="veritra", persistentvolumeclaim="veritra-data"} > 0.80
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: The veritra-data volume is more than 80% full.
+            runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#monitoring-and-alerts
+        - alert: VeritraNodeDiskFilling
+          # local-path keeps volumes under /var/lib/rancher/k3s/storage on the
+          # root filesystem. Change mountpoint if it lives elsewhere.
+          expr: |
+            1 - node_filesystem_avail_bytes{mountpoint="/", fstype!~"tmpfs|overlay"}
+              / node_filesystem_size_bytes{mountpoint="/", fstype!~"tmpfs|overlay"} > 0.80
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: The node's root filesystem, which holds the Veritra volume, is more than 80% full.
+            runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#monitoring-and-alerts
