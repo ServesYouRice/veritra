@@ -288,6 +288,14 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   @override
   int get schemaVersion => 9;
 
+  /// Whether opening this database started a schema upgrade. Upgrades run
+  /// only after the key has opened the file, so an open that fails after
+  /// this is set (for example, because the disk is full) failed in the
+  /// upgrade, not on a wrong key. The upgrade then rolls back and the next
+  /// open runs it again.
+  bool get upgradeStarted => _upgradeStarted;
+  bool _upgradeStarted = false;
+
   @override
   MigrationStrategy get migration => MigrationStrategy(
         onCreate: (migrator) async {
@@ -302,6 +310,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         // has no effect inside it, so a future table rebuild that needs it off
         // must set it before the transaction.
         onUpgrade: (migrator, from, to) async {
+          _upgradeStarted = true;
           await transaction(() async {
             if (from < 2) {
               await migrator.createTable(localMlsTransitions);
@@ -608,6 +617,32 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         );
       });
 
+  static const _deleteCachedConversation =
+      'DELETE FROM local_conversations WHERE id = ?';
+  static const _deleteCachedEnvelope =
+      'DELETE FROM local_ciphertext_envelopes WHERE id = ?';
+  static const _upsertCachedConversation =
+      'INSERT INTO local_conversations (id, position, payload_json) '
+      'VALUES (?, ?, ?) ON CONFLICT (id) DO UPDATE SET '
+      'position = excluded.position, payload_json = excluded.payload_json '
+      'WHERE position IS NOT excluded.position '
+      'OR payload_json IS NOT excluded.payload_json';
+  static const _upsertCachedEnvelope = 'INSERT INTO local_ciphertext_envelopes '
+      '(id, conversation_id, position, payload_json) VALUES (?, ?, ?, ?) '
+      'ON CONFLICT (id) DO UPDATE SET '
+      'conversation_id = excluded.conversation_id, '
+      'position = excluded.position, payload_json = excluded.payload_json '
+      'WHERE conversation_id IS NOT excluded.conversation_id '
+      'OR position IS NOT excluded.position '
+      'OR payload_json IS NOT excluded.payload_json';
+
+  /// Makes the cached conversation list and ciphertext snapshot exactly
+  /// [conversations] (positioned in order) and [envelopes], in one
+  /// transaction. The rows are the same as deleting both tables and
+  /// inserting everything, but only rows that are new, changed or gone are
+  /// written (T49C-3): restoring, refreshing or opening a conversation
+  /// otherwise rewrote the whole cache each time. A repeated ID is refused
+  /// and the transaction writes nothing.
   Future<void> replaceSnapshot({
     required Iterable<({String id, String payloadJson})> conversations,
     required Iterable<
@@ -627,31 +662,65 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
                   ..where((table) => table.singleton.equals(1)))
                 .getSingleOrNull();
         if (cursor != null && (previousCursor?.cursor ?? 0) > cursor) return;
-        await delete(localCiphertextEnvelopes).go();
-        await delete(localConversations).go();
-        // One batch inside the same transaction: the same rows as inserting
-        // them one by one, without a round trip to the database isolate per
-        // row, which made each rewrite of a full cache take seconds (T49C).
         var position = 0;
+        final conversationRows = <String, List<Object>>{};
+        for (final conversation in conversations) {
+          if (conversationRows.containsKey(conversation.id)) {
+            throw StateError('duplicate cached conversation');
+          }
+          conversationRows[conversation.id] = <Object>[
+            conversation.id,
+            position++,
+            conversation.payloadJson,
+          ];
+        }
+        final envelopeRows = <String, List<Object>>{};
+        for (final envelope in envelopes) {
+          if (envelopeRows.containsKey(envelope.id)) {
+            throw StateError('duplicate cached envelope');
+          }
+          envelopeRows[envelope.id] = <Object>[
+            envelope.id,
+            envelope.conversationId,
+            envelope.position,
+            envelope.payloadJson,
+          ];
+        }
+        final storedConversations = await (selectOnly(localConversations)
+              ..addColumns([localConversations.id]))
+            .map((row) => row.read(localConversations.id)!)
+            .get();
+        final storedEnvelopes = await (selectOnly(localCiphertextEnvelopes)
+              ..addColumns([localCiphertextEnvelopes.id]))
+            .map((row) => row.read(localCiphertextEnvelopes.id)!)
+            .get();
+        final conversationUpdates = <TableUpdate>[
+          TableUpdate.onTable(localConversations),
+        ];
+        final envelopeUpdates = <TableUpdate>[
+          TableUpdate.onTable(localCiphertextEnvelopes),
+        ];
+        // One batch of prepared statements: no round trip to the database
+        // isolate per row (T49C). An unchanged row fails the upsert's WHERE
+        // and is not written.
         await batch((batch) {
-          batch.insertAll(localConversations, <LocalConversationsCompanion>[
-            for (final conversation in conversations)
-              LocalConversationsCompanion.insert(
-                id: conversation.id,
-                position: position++,
-                payloadJson: conversation.payloadJson,
-              ),
-          ]);
-          batch.insertAll(
-              localCiphertextEnvelopes, <LocalCiphertextEnvelopesCompanion>[
-            for (final envelope in envelopes)
-              LocalCiphertextEnvelopesCompanion.insert(
-                id: envelope.id,
-                conversationId: envelope.conversationId,
-                position: envelope.position,
-                payloadJson: envelope.payloadJson,
-              ),
-          ]);
+          for (final id in storedConversations) {
+            if (conversationRows.containsKey(id)) continue;
+            batch.customStatement(
+                _deleteCachedConversation, <Object>[id], conversationUpdates);
+          }
+          for (final id in storedEnvelopes) {
+            if (envelopeRows.containsKey(id)) continue;
+            batch.customStatement(
+                _deleteCachedEnvelope, <Object>[id], envelopeUpdates);
+          }
+          for (final row in conversationRows.values) {
+            batch.customStatement(
+                _upsertCachedConversation, row, conversationUpdates);
+          }
+          for (final row in envelopeRows.values) {
+            batch.customStatement(_upsertCachedEnvelope, row, envelopeUpdates);
+          }
         });
         if (cursor != null) {
           await into(localSyncStates).insertOnConflictUpdate(

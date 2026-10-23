@@ -10,6 +10,7 @@ import 'package:private_messenger/push/push_service.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
+import 'goldens/golden_harness.dart' show veritraTestApp;
 import 'test_crypto_service.dart';
 
 void main() {
@@ -457,6 +458,72 @@ void main() {
     expect(state.localStoreFailure, isNull);
     state.dispose();
   });
+
+  test('a wrong key and a failed upgrade get their own recovery messages',
+      () async {
+    final localStore = _UnreadableStore(LocalStoreFailureKind.keyRejected);
+    final state = AppState(
+      apiClientFactory: (_) => throw UnimplementedError(),
+      cryptoService: TestOnlyCryptoService(),
+      localStore: localStore,
+      syncServiceFactory: (_, __) => FakeSyncService(),
+    );
+
+    await state.tryRestoreSession();
+    expect(state.localStoreFailure, LocalStoreFailureKind.keyRejected);
+    expect(state.recoveryMessage, state.l10n.recoveryKeyMissing);
+    expect(state.canResetLocalData, isTrue);
+
+    // A failed upgrade (a full disk, say) is not a wrong key: the message
+    // says to free space and retry, and no reset is offered or done.
+    localStore.kind = LocalStoreFailureKind.upgradeFailed;
+    await state.tryRestoreSession();
+    expect(state.lifecycle, SessionLifecycle.recoveryRequired);
+    expect(state.localStoreFailure, LocalStoreFailureKind.upgradeFailed);
+    expect(state.recoveryMessage, state.l10n.recoveryUpgradeFailed);
+    expect(state.recoveryMessage, isNot(state.l10n.recoveryKeyMissing));
+    expect(state.canResetLocalData, isFalse);
+    expect(state.canContinueWithoutRestore, isFalse);
+    await state.resetUnreadableLocalData(confirmed: true);
+    expect(localStore.quarantined, isFalse);
+    expect(state.lifecycle, SessionLifecycle.recoveryRequired);
+
+    // Once there is room again, a retry opens it.
+    localStore.kind = null;
+    await state.tryRestoreSession();
+    expect(state.lifecycle, SessionLifecycle.ready);
+    expect(state.localStoreFailure, isNull);
+    expect(localStore.quarantined, isFalse);
+    state.dispose();
+  });
+
+  for (final kind in <LocalStoreFailureKind>[
+    LocalStoreFailureKind.keyRejected,
+    LocalStoreFailureKind.upgradeFailed,
+  ]) {
+    testWidgets('the recovery screen for ${kind.name}', (tester) async {
+      final state = AppState(
+        apiClientFactory: (_) => throw UnimplementedError(),
+        cryptoService: TestOnlyCryptoService(),
+        localStore: _UnreadableStore(kind),
+        syncServiceFactory: (_, __) => FakeSyncService(),
+      );
+      await tester.runAsync(state.tryRestoreSession);
+      await tester.pumpWidget(veritraTestApp(state: state));
+      await tester.pumpAndSettle();
+
+      final upgrade = kind == LocalStoreFailureKind.upgradeFailed;
+      expect(find.text(state.l10n.recoveryUpgradeFailed),
+          upgrade ? findsOneWidget : findsNothing);
+      expect(find.text(state.l10n.recoveryKeyMissing),
+          upgrade ? findsNothing : findsOneWidget);
+      expect(find.text(state.l10n.shellRetryRestore), findsOneWidget);
+      expect(find.text(state.l10n.shellResetDevice),
+          upgrade ? findsNothing : findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      state.dispose();
+    });
+  }
 
   test('full outbox refuses before encryption and keeps all entries', () async {
     final localStore = MemoryLocalStore();
@@ -1153,13 +1220,16 @@ class _RepairApiClient extends FakeDeviceLinkApiClient {
 }
 
 class _UnreadableStore extends MemoryLocalStore {
+  _UnreadableStore([this.kind = LocalStoreFailureKind.keyMissing]);
+
+  LocalStoreFailureKind? kind;
   bool quarantined = false;
 
   @override
   Future<Session?> loadSession() async {
-    if (quarantined) return null;
-    throw const LocalStoreUnavailableException(
-        LocalStoreFailureKind.keyMissing);
+    final failure = kind;
+    if (quarantined || failure == null) return null;
+    throw LocalStoreUnavailableException(failure);
   }
 
   @override

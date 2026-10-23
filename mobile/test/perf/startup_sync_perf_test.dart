@@ -36,6 +36,10 @@ const int _burst = 500;
 final bool _fullBurst = Platform.environment['VERITRA_PERF_FULL'] == '1';
 final int _burstCacheConversations = _fullBurst ? _conversations : 50;
 
+/// One snapshot rewrite: its time, the rows it inserted, updated or deleted,
+/// and the database pages it wrote to the write-ahead log.
+typedef _RewriteRun = ({int micros, int rows, int pages});
+
 /// Counts the history reads the UI path makes.
 class _CountingStore extends SecureLocalStore {
   _CountingStore({
@@ -290,6 +294,107 @@ void main() {
     });
     expect(state.historyFor(longConversationId).messages, hasLength(_history));
     await _disposeQuietly(state);
+  });
+
+  test('snapshot rewrites of a full cache', () async {
+    final conversations = await populate();
+    final store = openStore();
+    final cached = (await store.loadSnapshot())!;
+    final database = databases.last;
+    // Rows inserted, updated or deleted on the database connection: exact,
+    // unlike the times.
+    Future<int> rowChanges() async => (await database
+            .customSelect('SELECT total_changes() AS changes')
+            .getSingle())
+        .read<int>('changes');
+
+    // Pages one write appends to the write-ahead log, which is emptied first.
+    Future<int> walFrames(String mode) async => (await database
+            .customSelect('PRAGMA wal_checkpoint($mode)')
+            .getSingle())
+        .read<int>('log');
+
+    var list = cached.conversations;
+    var messages = cached.messagesByConversation;
+    Future<_RewriteRun> write() async {
+      await walFrames('TRUNCATE');
+      final before = await rowChanges();
+      final watch = Stopwatch()..start();
+      await store.saveProjection(list, messages);
+      final micros = watch.elapsedMicroseconds;
+      return (
+        micros: micros,
+        rows: await rowChanges() - before,
+        pages: await walFrames('PASSIVE'),
+      );
+    }
+
+    double median(List<_RewriteRun> runs) {
+      final sorted = runs.map((run) => run.micros).toList()..sort();
+      return sorted[sorted.length ~/ 2] / 1000;
+    }
+
+    // What restore, a conversation refresh or opening a chat writes when
+    // nothing changed.
+    final unchanged = <_RewriteRun>[
+      for (var i = 0; i < 3; i++) await write(),
+    ];
+    // One new message at the head of a cached conversation, which also
+    // moves that conversation to the top of the list.
+    final newMessage = <_RewriteRun>[];
+    for (var i = 0; i < 3; i++) {
+      final id = 'conv_${(10 + i).toString().padLeft(4, '0')}';
+      list = <Conversation>[
+        list.firstWhere((item) => item.id == id),
+        ...list.where((item) => item.id != id),
+      ];
+      messages = <String, List<ReceivedMessageEnvelope>>{
+        ...messages,
+        id: <ReceivedMessageEnvelope>[
+          benchEnvelope(id, _envelopesPerConversation),
+          ...messages[id]!,
+        ],
+      };
+      newMessage.add(await write());
+    }
+    // Leaving a conversation drops it and its cached envelopes.
+    final left = <_RewriteRun>[];
+    for (var i = 0; i < 3; i++) {
+      final id = 'conv_${(100 + i).toString().padLeft(4, '0')}';
+      list = list.where((item) => item.id != id).toList(growable: false);
+      messages = <String, List<ReceivedMessageEnvelope>>{
+        for (final entry in messages.entries)
+          if (entry.key != id) entry.key: entry.value,
+      };
+      left.add(await write());
+    }
+    benchReport('snapshot rewrites, full cache', <String, Object>{
+      'unchanged_ms': median(unchanged),
+      'unchanged_rows': unchanged.last.rows,
+      'unchanged_pages': unchanged.last.pages,
+      'one_new_message_ms': median(newMessage),
+      'one_new_message_rows': newMessage.last.rows,
+      'one_new_message_pages': newMessage.last.pages,
+      'conversation_left_ms': median(left),
+      'conversation_left_rows': left.last.rows,
+      'conversation_left_pages': left.last.pages,
+    });
+    // Rewriting what is already stored writes nothing (T49C-3).
+    expect(unchanged.map((run) => run.rows), everyElement(0));
+
+    final stored = (await store.loadSnapshot())!;
+    expect(stored.conversations.map((item) => item.id),
+        list.map((item) => item.id));
+    expect(stored.messagesByConversation.keys,
+        unorderedEquals(messages.keys.where((id) => messages[id]!.isNotEmpty)));
+    for (final entry in messages.entries) {
+      expect(
+          stored.messagesByConversation[entry.key]?.map((item) => item.id) ??
+              const <String>[],
+          entry.value.take(200).map((item) => item.id));
+    }
+    expect(conversations, hasLength(_conversations));
+    await closeAll();
   });
 
   test('store reads and commits that scan the whole cache', () async {

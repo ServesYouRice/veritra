@@ -20,6 +20,7 @@ import UserNotifications
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    registerStorageChannel(engineBridge.pluginRegistry)
     guard let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "VeritraPush") else { return }
     FlutterEventChannel(
       name: "org.veritra.private_messenger/push_events",
@@ -90,6 +91,37 @@ import UserNotifications
       default:
         result(FlutterMethodNotImplemented)
       }
+    }
+  }
+
+  /// Keeps the encrypted local database out of iCloud and computer backups
+  /// (NSURLIsExcludedFromBackupKey). The Dart store sends its directory, so
+  /// WAL and SHM files created later are covered, and the files that exist
+  /// now. A copied database cannot be opened without its keychain key, which
+  /// is this-device-only; this keeps even that copy off other devices.
+  private func registerStorageChannel(_ registry: FlutterPluginRegistry) {
+    guard let registrar = registry.registrar(forPlugin: "VeritraStorage") else { return }
+    FlutterMethodChannel(
+      name: "org.veritra.private_messenger/storage",
+      binaryMessenger: registrar.messenger()
+    ).setMethodCallHandler { call, result in
+      guard call.method == "excludeFromBackup" else { result(FlutterMethodNotImplemented); return }
+      guard let arguments = call.arguments as? [String: Any],
+            let paths = arguments["paths"] as? [String], !paths.isEmpty else {
+        result(FlutterError(code: "invalid_arguments", message: "Paths are required", details: nil)); return
+      }
+      for path in paths where FileManager.default.fileExists(atPath: path) {
+        var url = URL(fileURLWithPath: path)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        do {
+          try url.setResourceValues(values)
+        } catch {
+          // No error description: it would name the file's path.
+          result(FlutterError(code: "exclude_failed", message: nil, details: nil)); return
+        }
+      }
+      result(nil)
     }
   }
 
