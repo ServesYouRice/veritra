@@ -14,6 +14,7 @@ import (
 
 	"private-messenger/server/internal/auth"
 	"private-messenger/server/internal/config"
+	"private-messenger/server/internal/httpapi"
 	"private-messenger/server/internal/storage"
 )
 
@@ -177,16 +178,74 @@ func TestAccountChargeRefundsOnlyItsOwnMinute(t *testing.T) {
 	if ok, _ := charge.Authenticated("acct_x"); !ok {
 		t.Fatal("repeated call refused")
 	}
-	if got := limiter.buckets[limiter.accountKey("acct_x", "192.0.2.1")].general; got != 1 {
+	if got := limiter.accountBuckets[limiter.accountKey("acct_x", "192.0.2.1")].general; got != 1 {
 		t.Fatalf("account count=%d want 1", got)
 	}
 	if limiter.accountKey("acct_x", "192.0.2.1") == limiter.accountKey("acct_x", "192.0.2.2") ||
 		limiter.accountKey("acct_x", "192.0.2.1") == limiter.accountKey("acct_y", "192.0.2.1") {
 		t.Fatal("account keys collide across addresses or accounts")
 	}
-	for key := range limiter.buckets {
-		if strings.Contains(key, "acct_x") || strings.Contains(key, "192.0.2") {
-			t.Fatalf("rate-limit table holds an identifier: %q", key)
+	for _, table := range []map[string]*bucket{limiter.buckets, limiter.accountBuckets} {
+		for key := range table {
+			if strings.Contains(key, "acct_x") || strings.Contains(key, "192.0.2") {
+				t.Fatalf("rate-limit table holds an identifier: %q", key)
+			}
 		}
+	}
+}
+
+// Account budgets have their own bounded table: one valid account seen
+// from very many addresses (each IPv6 /64 is one) fills only that table,
+// and evicting there never resets an address's credential budget.
+func TestAccountBucketsCannotEvictAddressBuckets(t *testing.T) {
+	limiter, err := newRateLimiter(httpapi.NewClientIdentityResolver(nil), rateLimits{general: 100, auth: 1, enrollment: 1, account: 100, signedIn: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := limiter.middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	login := func() int {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+		request.RemoteAddr = "192.0.2.50:4000"
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder.Code
+	}
+	if code := login(); code != http.StatusNoContent {
+		t.Fatalf("first login status=%d", code)
+	}
+	if code := login(); code != http.StatusTooManyRequests {
+		t.Fatalf("second login status=%d, want 429", code)
+	}
+	now := time.Now()
+	limiter.mu.Lock()
+	for i := 0; i < maxRateLimitEntries; i++ {
+		limiter.accountBuckets["filled-"+strconv.Itoa(i)] = &bucket{general: 1, reset: now.Add(time.Minute)}
+	}
+	addresses := len(limiter.buckets)
+	limiter.mu.Unlock()
+	// The same account from new /64s: each adds an account bucket, which
+	// evicts another account bucket, never an address bucket.
+	for i := 0; i < 50; i++ {
+		host := rateLimitHost(fmt.Sprintf("2001:db8:%x::1", i))
+		if ok, _ := (&accountCharge{limiter: limiter, host: host, address: &bucket{}}).Authenticated("acct_roaming"); !ok {
+			t.Fatalf("roaming request %d refused", i)
+		}
+	}
+	limiter.mu.Lock()
+	gotAccounts, gotAddresses := len(limiter.accountBuckets), len(limiter.buckets)
+	limiter.mu.Unlock()
+	if gotAccounts != maxRateLimitEntries || gotAddresses != addresses {
+		t.Fatalf("tables: accounts=%d addresses=%d, want %d and %d", gotAccounts, gotAddresses, maxRateLimitEntries, addresses)
+	}
+	if got := limiter.evictions.Load(); got != 50 {
+		t.Fatalf("evictions=%d want 50", got)
+	}
+	if code := login(); code != http.StatusTooManyRequests {
+		t.Fatalf("credential budget was reset under account-table pressure: status=%d", code)
+	}
+	if entries, _ := limiter.stats(); entries != maxRateLimitEntries+addresses {
+		t.Fatalf("stats entries=%d want both tables (%d)", entries, maxRateLimitEntries+addresses)
 	}
 }

@@ -121,7 +121,11 @@ session backoff scopes: the first two failures are unauthorized responses,
 the third starts a 1-second delay that progresses to 60 seconds, and entries
 expire after 15 minutes. The controls
 evict under bounded-table pressure and sweep expired state; they do not expose
-usernames, addresses, device IDs or tokens in metrics. Monitor
+usernames, addresses, device IDs or tokens in metrics. Address budgets and
+per-account budgets are kept in two tables of 65,536 entries each, so one
+account seen from many addresses (each IPv6 /64 counts as one) evicts only
+other account budgets, never an address's credential budget;
+`veritra_rate_limit_buckets` counts both tables. Monitor
 `veritra_rate_limit_buckets`, `veritra_rate_limit_evictions_total`,
 `veritra_login_backoff_entries` and
 `veritra_login_backoff_evictions_total` as aggregate pressure signals.

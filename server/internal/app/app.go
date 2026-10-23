@@ -1117,10 +1117,16 @@ type rateLimiter struct {
 	clientIdentities *httpapi.ClientIdentityResolver
 	limits           rateLimits
 
-	mu         sync.Mutex
-	buckets    map[string]*bucket
-	evictions  atomic.Int64
-	rejections [len(rateLimitScopes)]atomic.Int64
+	mu sync.Mutex
+	// buckets holds address buckets (every budget of one client address,
+	// the credential and enrollment ones included); accountBuckets holds
+	// account budgets at an address. They are bounded separately, so one
+	// account seen from many addresses (each IPv6 /64 is one) cannot evict
+	// other addresses' buckets and reset their credential budgets.
+	buckets        map[string]*bucket
+	accountBuckets map[string]*bucket
+	evictions      atomic.Int64
+	rejections     [len(rateLimitScopes)]atomic.Int64
 }
 
 // rateLimitScopes name the limit a rejected request hit, for metrics only.
@@ -1144,6 +1150,7 @@ type bucket struct {
 	reset      time.Time
 }
 
+// maxRateLimitEntries bounds each of the two bucket tables.
 const maxRateLimitEntries = 65536
 
 const rateLimitEvictionSampleSize = 32
@@ -1153,6 +1160,7 @@ func newRateLimiter(clientIdentities *httpapi.ClientIdentityResolver, limits rat
 		clientIdentities: clientIdentities,
 		limits:           limits,
 		buckets:          map[string]*bucket{},
+		accountBuckets:   map[string]*bucket{},
 	}
 	if _, err := rand.Read(rl.salt[:]); err != nil {
 		return nil, err
@@ -1169,9 +1177,11 @@ func (rl *rateLimiter) cleanupLoop(ctx context.Context) {
 			return
 		case now := <-ticker.C:
 			rl.mu.Lock()
-			for k, b := range rl.buckets {
-				if b.reset.Before(now) {
-					delete(rl.buckets, k)
+			for _, table := range []map[string]*bucket{rl.buckets, rl.accountBuckets} {
+				for k, b := range table {
+					if b.reset.Before(now) {
+						delete(table, k)
+					}
 				}
 			}
 			rl.mu.Unlock()
@@ -1179,18 +1189,19 @@ func (rl *rateLimiter) cleanupLoop(ctx context.Context) {
 	}
 }
 
-// bucketLocked returns key's bucket for the current minute, starting a new
-// one (and evicting under table pressure) when needed. rl.mu must be held.
-func (rl *rateLimiter) bucketLocked(key string, now time.Time) *bucket {
-	b, ok := rl.buckets[key]
+// bucketLocked returns key's bucket in table for the current minute,
+// starting a new one (and evicting from the same table under pressure)
+// when needed. rl.mu must be held.
+func (rl *rateLimiter) bucketLocked(table map[string]*bucket, key string, now time.Time) *bucket {
+	b, ok := table[key]
 	if ok && !b.reset.Before(now) {
 		return b
 	}
-	if !ok && len(rl.buckets) >= maxRateLimitEntries {
-		rl.evictOneLocked(now)
+	if !ok && len(table) >= maxRateLimitEntries {
+		rl.evictOneLocked(table, now)
 	}
 	b = &bucket{reset: now.Add(time.Minute)}
-	rl.buckets[key] = b
+	table[key] = b
 	return b
 }
 
@@ -1205,7 +1216,7 @@ func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
 		signedIn := !auth && !enrollment && httpapi.HasBearerToken(r)
 
 		rl.mu.Lock()
-		b := rl.bucketLocked(remoteHash(rl.salt[:], host), now)
+		b := rl.bucketLocked(rl.buckets, remoteHash(rl.salt[:], host), now)
 		b.general++
 		if auth {
 			b.auth++
@@ -1280,7 +1291,7 @@ func (c *accountCharge) Authenticated(accountID string) (bool, int) {
 	if c.address.general > 0 {
 		c.address.general--
 	}
-	b := rl.bucketLocked(rl.accountKey(accountID, c.host), now)
+	b := rl.bucketLocked(rl.accountBuckets, rl.accountKey(accountID, c.host), now)
 	b.general++
 	c.ok = b.general <= rl.limits.account
 	c.retryAfter = boundedRetryAfter(b.reset.Sub(now))
@@ -1356,17 +1367,17 @@ func rateLimitHost(host string) string {
 	return host
 }
 
-func (rl *rateLimiter) evictOneLocked(now time.Time) {
-	if len(rl.buckets) < maxRateLimitEntries {
+func (rl *rateLimiter) evictOneLocked(table map[string]*bucket, now time.Time) {
+	if len(table) < maxRateLimitEntries {
 		return
 	}
 	var candidate string
 	var candidateReset time.Time
 	sampled := 0
-	for key, b := range rl.buckets {
+	for key, b := range table {
 		if !b.reset.After(now) {
-			delete(rl.buckets, key)
-			if len(rl.buckets) < maxRateLimitEntries {
+			delete(table, key)
+			if len(table) < maxRateLimitEntries {
 				return
 			}
 			continue
@@ -1380,14 +1391,15 @@ func (rl *rateLimiter) evictOneLocked(now time.Time) {
 		}
 	}
 	if candidate != "" {
-		delete(rl.buckets, candidate)
+		delete(table, candidate)
 		rl.evictions.Add(1)
 	}
 }
 
+// stats reports the entries of both tables together and their evictions.
 func (rl *rateLimiter) stats() (entries int, evictions int64) {
 	rl.mu.Lock()
-	entries = len(rl.buckets)
+	entries = len(rl.buckets) + len(rl.accountBuckets)
 	rl.mu.Unlock()
 	return entries, rl.evictions.Load()
 }
