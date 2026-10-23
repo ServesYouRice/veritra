@@ -760,11 +760,19 @@ func (s *Store) ListSyncEvents(ctx context.Context, accountID, deviceID string, 
 	defer rows.Close()
 	var events []domain.SyncEvent
 	candidate := &syncCandidateScanner{rows: rows}
+	last := afterID
 	for len(events) < limit && rows.Next() {
 		event, err := scanSyncEvent(candidate)
 		if err != nil {
 			return nil, err
 		}
+		// The merge has no outer ORDER BY: it relies on SQLite emitting
+		// the queue in id order. Clients refuse a page out of order, so
+		// fail the page here rather than send one.
+		if event.ID <= last {
+			return nil, fmt.Errorf("sync merge emitted event %d after %d", event.ID, last)
+		}
+		last = event.ID
 		if candidate.visible {
 			events = append(events, event)
 		}

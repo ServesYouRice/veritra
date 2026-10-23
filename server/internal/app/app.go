@@ -1216,11 +1216,12 @@ func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
 		class := httpapi.ClassifyRoute(r.URL.Path)
 		auth := class == httpapi.CredentialRoute
 		enrollment := class == httpapi.EnrollmentRoute
-		// A session token on any other route is admitted on the address's
-		// signed-in budget alone, so requests without a session there
-		// cannot refuse it; accountCharge settles it once the token has
-		// been looked up.
-		signedIn := !auth && !enrollment && httpapi.HasBearerToken(r)
+		// A session token on an ordinary route is admitted on the
+		// address's signed-in budget alone, so requests without a session
+		// there cannot refuse it; accountCharge settles it once the token
+		// has been looked up. Public routes never look a token up, so one
+		// there would only buy the larger budget.
+		signedIn := class == httpapi.OrdinaryRoute && httpapi.HasBearerToken(r)
 
 		rl.mu.Lock()
 		b := rl.bucketLocked(rl.buckets, remoteHash(rl.salt[:], host), now)

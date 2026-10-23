@@ -95,9 +95,12 @@ session is charged to that account's own budget at the address, so people
 there do not use up each other's requests. A token that does not resolve
 (guessed, expired, revoked) is charged to the address's 240 instead, which
 it shares with anonymous requests and credential attempts, as before; past
-the 240 such a token is answered 429 rather than 401. A token on a route
-that never looks it up (health, setup status, a path with no route) is
-charged to the 240 after it is served. Credential and enrollment routes
+the 240 such a token is answered 429 rather than 401. The public routes,
+which never look a token up (`/livez`, `/healthz`, `/readyz`,
+`/api/v1/health`, `/setup`, `/api/v1/setup/status`), always use the 240,
+with or without a token: a junk token there buys nothing. A token on a
+path with no route is charged to the 240 after its 404, which costs no
+more than a 429 would. Credential and enrollment routes
 (setup, login, reauthentication, registration, recovery, device-link claim
 and claim status, and the setup, registration and device-link enrollment
 reservations) always use the address budgets, with or without a token.
@@ -124,10 +127,8 @@ The credential (10) and enrollment (5) budgets are fixed. The trade-offs:
   `SIGNED_IN_ADDRESS_PER_MINUTE` (1,200 by default) rather than by the 240:
   past the 240 a bad token is still refused, but after its lookup (one
   indexed read of a token hash). Session tokens are 256-bit random values,
-  so this rate does not make guessing feasible; it is a load bound. Requests
-  carrying a junk token on routes that never look it up are bounded the
-  same way. Raising `SIGNED_IN_ADDRESS_PER_MINUTE` for a large office
-  raises both.
+  so this rate does not make guessing feasible; it is a load bound.
+  Raising `SIGNED_IN_ADDRESS_PER_MINUTE` for a large office raises it.
 
 Set `SIGNED_IN_ADDRESS_PER_MINUTE` equal to `ACCOUNT_PER_MINUTE` to give a
 whole address no more than one account's budget; raise it for a large

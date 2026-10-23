@@ -15,9 +15,14 @@ const (
 	// EnrollmentRoute is a route that reserves an enrollment against an
 	// invite, setup or device-link code: 5 a minute per address.
 	EnrollmentRoute
+	// PublicRoute is a route that never looks a session token up (health,
+	// readiness, setup status): it stays on the address's general budget
+	// whatever Authorization header it carries.
+	PublicRoute
 )
 
-// credentialRoutes and enrollmentRoutes are exact routes in Register. The
+// credentialRoutes, enrollmentRoutes and publicRoutes are exact routes in
+// Register. The
 // mux reaches their handlers only for exactly these decoded paths: it
 // redirects a path that is not clean, and another spelling (a trailing
 // slash, an encoded slash) matches no route or one that answers 404.
@@ -35,6 +40,14 @@ var (
 		"/api/v1/register/enrollment":           true,
 		"/api/v1/device-links/claim-enrollment": true,
 	}
+	publicRoutes = map[string]bool{
+		"/livez":               true,
+		"/healthz":             true,
+		"/readyz":              true,
+		"/api/v1/health":       true,
+		"/setup":               true,
+		"/api/v1/setup/status": true,
+	}
 )
 
 // ClassifyRoute returns the budget for a request to urlPath (the decoded
@@ -49,6 +62,8 @@ func ClassifyRoute(urlPath string) RouteClass {
 		return CredentialRoute
 	case enrollmentRoutes[urlPath], strings.HasSuffix(urlPath, "/enrollment"):
 		return EnrollmentRoute
+	case publicRoutes[urlPath]:
+		return PublicRoute
 	}
 	if strings.HasPrefix(urlPath, deviceLinkPrefix) {
 		if parts := deviceLinkPathParts(urlPath); len(parts) == 2 && parts[1] == "claim-status" {

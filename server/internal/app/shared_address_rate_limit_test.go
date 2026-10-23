@@ -203,6 +203,39 @@ func TestSignedInRequestsUseTheirAccountBudget(t *testing.T) {
 	}
 }
 
+// A route that never looks a token up stays on the address's general
+// budget: any Authorization header there would otherwise buy the larger
+// signed-in budget for health and setup requests, each of which touches
+// the disk.
+func TestPublicRoutesIgnoreBearerTokens(t *testing.T) {
+	cfg := deploymentConfig(t)
+	cfg.RateLimits = config.RateLimits{AddressPerMinute: 60, AccountPerMinute: 60, SignedInAddressPerMinute: 300}
+	application, err := New(context.Background(), cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = application.Close() })
+	handler := application.Handler()
+	for _, path := range []string{"/livez", "/api/v1/health", "/api/v1/setup/status"} {
+		address := "203.0.113." + strconv.Itoa(len(path))
+		served := 0
+		for i := 0; i < 70; i++ {
+			request := httptest.NewRequest(http.MethodGet, path, nil)
+			request.RemoteAddr = address + ":40000"
+			request.Header.Set("Authorization", "Bearer junk-token-"+strconv.Itoa(i))
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code == http.StatusTooManyRequests {
+				break
+			}
+			served++
+		}
+		if served != 60 {
+			t.Fatalf("%s served %d junk-token requests from one address, want the general 60", path, served)
+		}
+	}
+}
+
 func TestAccountChargeSettlesOnce(t *testing.T) {
 	limiter, err := newRateLimiter(nil, rateLimits{general: 2, auth: 1, enrollment: 1, account: 2, signedIn: 10})
 	if err != nil {
