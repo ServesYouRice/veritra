@@ -255,6 +255,7 @@ def axml(
     package_attrs: tuple[tuple[str | None, str | None, str | None], ...] | None = None,
     repeat_debuggable: bool = False,
     extra_debuggable: str | None = None,
+    root_name: str = "manifest",
 ) -> bytes:
     """A compiled AndroidManifest.xml: <manifest package><uses-sdk
     minSdkVersion?><application debuggable?>.
@@ -274,7 +275,7 @@ def axml(
     attr_ids = [ATTR_DEBUGGABLE, ATTR_MIN_SDK] + ([ATTR_DEBUGGABLE] if extra_debuggable else [])
     strings = attr_names + ["package", "manifest", "application", "uses-sdk", "android", ANDROID_NS, package]
     package_specs = package_attrs if package_attrs is not None else ((None, package, package),)
-    for value in [part for spec in package_specs for part in spec] + [nested_manifest, wrapper]:
+    for value in [part for spec in package_specs for part in spec] + [nested_manifest, wrapper, root_name]:
         if value and value not in strings:
             strings.append(value)
     index = {value: position for position, value in enumerate(strings)}
@@ -317,13 +318,13 @@ def axml(
         late += string_pool([late_pool_package if value == package else value for value in strings])
     if late_map is not None:
         late += resource_map(late_map)
-    manifest = element("manifest", package_attributes)
+    manifest = element(root_name, package_attributes)
     if nested_manifest:
         manifest += element("manifest", [attribute(None, "package", nested_manifest, 0x03, index[nested_manifest])])
         manifest += end("manifest")
     if min_sdk is not None:
         manifest += element("uses-sdk", sdk_attrs) + end("uses-sdk")
-    tree = manifest + element("application", application_attrs) + end("application") + end("manifest")
+    tree = manifest + element("application", application_attrs) + end("application") + end(root_name)
     if wrapper:
         tree = element(wrapper, []) + tree + end(wrapper)
     body = head + namespace + late + tree
@@ -1388,6 +1389,7 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
         ("map-after-node.apk", axml(map_after_node=True)),
         ("nested-manifest.apk", axml(package="org.example.other", nested_manifest=APP_ID)),
         ("wrapped-manifest.apk", axml(wrapper="root")),
+        ("root-not-manifest.apk", axml(root_name="root")),
     ):
         expect_blocked(root, with_android(apk(name, manifest=manifest)), "signed android artifact is not a readable APK", no_signed)
     # debuggable is found by its resource ID, whatever its name string says.
