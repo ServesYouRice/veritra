@@ -725,7 +725,7 @@ func (s *Store) PruneOperationalRows(ctx context.Context, now time.Time) (int64,
 		return 0, err
 	}
 	defer tx.Rollback()
-	cutoff := formatTime(now.UTC().Add(-30 * 24 * time.Hour))
+	cutoff := formatTime(now.UTC().Add(-OperationalRowRetention))
 	queries := []struct {
 		query string
 		args  []interface{}
