@@ -71,8 +71,11 @@ class _VeritraAppState extends State<VeritraApp> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: Listenable.merge(<Listenable>[widget.state, _appearance]),
+    // Only the appearance rebuilds the root. AppState changes are heard by
+    // the shell and by each screen for the parts it shows (T49C-1), so a
+    // notification no longer rebuilds the Navigator and every route.
+    return ListenableBuilder(
+      listenable: _appearance,
       builder: (context, _) {
         return AppearanceScope(
           controller: _appearance,

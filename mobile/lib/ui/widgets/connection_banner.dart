@@ -4,6 +4,7 @@ import '../../core/app_state.dart';
 import '../../sync/sync_recovery.dart';
 import '../format.dart';
 import '../tokens.dart';
+import 'listenable_selector.dart';
 import '../../l10n/l10n.dart';
 
 /// Compact, persistent connection state for the app shell.
@@ -18,6 +19,26 @@ class ConnectionBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Rebuilds only when what it draws changes (T49C-1). Online it draws
+    // nothing, so a completed sync moving [AppState.lastSyncedAt] is no
+    // reason to rebuild; the recovery banner alone reads [AppState.busy].
+    return ListenableSelector<
+        (SyncRecovery?, ConnectionStatus, DateTime?, bool)>(
+      listenable: state,
+      select: () {
+        final recovery = state.syncRecovery;
+        final status = state.connectionStatus;
+        if (recovery != null) return (recovery, status, null, state.busy);
+        if (status == ConnectionStatus.online) {
+          return (null, status, null, false);
+        }
+        return (null, status, state.lastSyncedAt, false);
+      },
+      builder: (context, _, __) => _build(context),
+    );
+  }
+
+  Widget _build(BuildContext context) {
     final recovery = state.syncRecovery;
     if (recovery != null) {
       return _SyncRecoveryBanner(state: state, recovery: recovery);

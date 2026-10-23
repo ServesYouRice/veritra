@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart' show defaultTargetPlatform;
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -18,13 +18,15 @@ import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/empty_state.dart';
 import '../../ui/widgets/gated_explanation.dart';
+import '../../ui/widgets/listenable_selector.dart';
 import '../../ui/widgets/status_pill.dart';
 import 'attachment_views.dart';
 import 'chat_list_screen.dart';
 import 'conversation_details_screen.dart';
 
-/// Conversation detail screen. Pushed from the chat list; listens to the app
-/// state itself because pushed routes sit outside the root rebuild scope.
+/// Conversation detail screen. Pushed from the chat list, or the detail pane
+/// of the wide layout. It listens to the app state itself, and rebuilds only
+/// when something it shows changes (T49C-1).
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
     required this.state,
@@ -113,9 +115,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: widget.state,
-      builder: (context, _) {
+    return ListenableSelector<List<Object?>>(
+      listenable: widget.state,
+      select: () => _chatScreenSelection(widget.state, widget.conversationId),
+      equals: listEquals,
+      builder: (context, _, __) {
         final theme = Theme.of(context);
         final conversation = widget.state.conversations
             .where((item) => item.id == widget.conversationId)
@@ -467,6 +471,45 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
   }
+}
+
+/// Everything the open conversation reads from [AppState] (T49C-1). The chat
+/// rebuilds only when this changes, so a notification about another
+/// conversation, the device list or the connection leaves it alone.
+///
+/// Lists and models compare by identity: AppState replaces them instead of
+/// editing them in place. A new read from the state anywhere in this file's
+/// build methods must be added here, or that part of the chat stays stale.
+List<Object?> _chatScreenSelection(AppState state, String conversationId) {
+  final history = state.historyFor(conversationId);
+  final pending = state.pendingFor(conversationId);
+  final session = state.session;
+  return <Object?>[
+    state.conversations.where((item) => item.id == conversationId).firstOrNull,
+    state.messagesFor(conversationId),
+    // A conversation without loaded history gets a new empty one per call;
+    // every history without messages draws the same.
+    history.messages.isEmpty ? null : history,
+    state.membersFor(conversationId),
+    session?.accountId,
+    session?.deviceId,
+    state.l10n,
+    state.isMuted(conversationId),
+    state.mlsConversationFailed(conversationId),
+    state.isBusy(Ops.send),
+    state.isBusy(Ops.attachment),
+    state.attachmentsAvailable,
+    state.messageActionsAvailable,
+    state.isLoadingMessages(conversationId),
+    state.messageLoadError(conversationId),
+    state.hasMoreHistory(conversationId),
+    state.isLoadingOlder(conversationId),
+    for (final envelope in pending) ...<Object?>[
+      envelope,
+      state.outboxState(envelope.idempotencyKey),
+      state.outboxRecord(envelope.idempotencyKey),
+    ],
+  ];
 }
 
 class _MessageLoadError extends StatelessWidget {

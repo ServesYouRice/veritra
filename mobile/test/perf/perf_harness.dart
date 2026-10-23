@@ -21,15 +21,11 @@ import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/crypto/mls_commit_bundle.dart';
-import 'package:private_messenger/l10n/app_localizations.dart';
 import 'package:private_messenger/main.dart' show VeritraApp;
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
-import 'package:private_messenger/ui/about.dart' show veritraProductName;
-import 'package:private_messenger/ui/app_shell.dart';
 import 'package:private_messenger/ui/appearance.dart';
-import 'package:private_messenger/ui/theme.dart';
 
 const Session benchSession = Session(
   baseUrl: 'https://chat.example.org',
@@ -446,33 +442,6 @@ Widget benchApp(AppState state) => VeritraApp(
       state: state,
       appearance: AppearanceController(MemoryAppearanceStore(ThemeMode.light)),
     );
-
-/// A what-if root for the evidence file, never used by the app: the same
-/// MaterialApp as `main.dart`, but only the appearance controller rebuilds
-/// it, and the shell listens to [state] itself. It measures what the
-/// recommendation in `testing/evidence/benchmarks-t49c.md` would save.
-Widget scopedRootApp(AppState state) {
-  final appearance =
-      AppearanceController(MemoryAppearanceStore(ThemeMode.light));
-  return AnimatedBuilder(
-    animation: appearance,
-    builder: (context, _) => AppearanceScope(
-      controller: appearance,
-      child: MaterialApp(
-        title: veritraProductName,
-        theme: veritraLightTheme(),
-        darkTheme: veritraDarkTheme(),
-        themeMode: appearance.mode,
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: AnimatedBuilder(
-          animation: state,
-          builder: (context, _) => AppShell(state: state),
-        ),
-      ),
-    ),
-  );
-}
 
 void setBenchWindow(WidgetTester tester, Size size) {
   tester.view.physicalSize = size;

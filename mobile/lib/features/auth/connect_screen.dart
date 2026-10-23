@@ -133,6 +133,15 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Listens itself: the app root no longer rebuilds the shell's pages on
+    // each notification (T49C-1).
+    return ListenableBuilder(
+      listenable: widget.state,
+      builder: (context, _) => _build(context),
+    );
+  }
+
+  Widget _build(BuildContext context) {
     final theme = Theme.of(context);
     final pendingLink = widget.state.pendingDeviceLinkClaim?.deviceLink;
     return Scaffold(
