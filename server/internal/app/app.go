@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"private-messenger/server/internal/admission"
 	"private-messenger/server/internal/backupstatus"
 	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/httpapi"
@@ -41,7 +42,10 @@ type App struct {
 	loginBackoff *httpapi.LoginBackoff
 	metrics      *httpMetrics
 	ready        atomic.Bool
-	inflight     atomic.Int64
+	budget       *admission.Budget
+	// lowDisk is set by the capacity sampler when diskLow.
+	lowDisk  atomic.Bool
+	inflight atomic.Int64
 	// shutdownBudget and shutdownDrain default to ShutdownBudget and
 	// ShutdownDrain; tests shorten them.
 	shutdownBudget time.Duration
@@ -76,10 +80,12 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
 	}
+	cfg, storageSource := ResolveInstanceStorage(cfg)
 	store, err := storage.Open(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
+	logLimits(logger, store.Limits(), storageSource)
 	if err := store.Migrate(ctx, migrations.FS); err != nil {
 		_ = store.Close()
 		return nil, err
@@ -161,6 +167,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	metrics.pools = store.PoolStats
 	metrics.writerAcquire = store.WriterAcquire
 	metrics.hubStats = hub.Stats
+	metrics.admission = store.AdmissionCounters()
 	application := &App{
 		Config:       cfg,
 		Store:        store,
@@ -170,8 +177,10 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		limiter:      limiter,
 		loginBackoff: loginBackoff,
 		metrics:      metrics,
+		budget:       newBudget(store.Limits(), store.AdmissionCounters()),
 		Log:          logger,
 	}
+	metrics.lowDisk = application.lowDisk.Load
 	application.shutdownBudget = ShutdownBudget
 	application.shutdownDrain = ShutdownDrain
 	application.ready.Store(true)
@@ -190,7 +199,8 @@ func (a *App) Handler() http.Handler {
 	if a.Config.APNsTeamID != "" {
 		pushProviders = append(pushProviders, "apns")
 	}
-	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Push: a.Push, PushProviders: pushProviders, VAPIDPublicKey: a.Config.VAPIDPublicKey, TURNURLs: a.Config.TURNURLs, TURNSharedSecret: a.Config.TURNSharedSecret, Log: a.Log, SetupToken: a.Config.SetupToken, DefaultInstanceName: a.Config.InstanceName, PasswordCost: a.Config.PasswordCost, Messages: messaging.New(a.Store), ClientIdentities: a.limiter.clientIdentities, LoginBackoff: a.loginBackoff, Ready: a.ready.Load}
+	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Push: a.Push, PushProviders: pushProviders, VAPIDPublicKey: a.Config.VAPIDPublicKey, TURNURLs: a.Config.TURNURLs, TURNSharedSecret: a.Config.TURNSharedSecret, Log: a.Log, SetupToken: a.Config.SetupToken, DefaultInstanceName: a.Config.InstanceName, PasswordCost: a.Config.PasswordCost, Messages: messaging.New(a.Store), ClientIdentities: a.limiter.clientIdentities, LoginBackoff: a.loginBackoff, Ready: a.ready.Load,
+		Budget: a.budget, Admission: a.Store.AdmissionCounters(), LowDisk: a.lowDisk.Load}
 	api.Register(mux)
 	return a.trackInflight(securityHeaders(a.requestLogger(a.limiter.middleware(routeTimeouts(mux)))))
 }
@@ -267,9 +277,8 @@ func (a *App) Serve(ctx context.Context) error {
 		a.waitInflight(deadline)
 	}()
 	go a.runRetentionSweeper(serveCtx)
-	if a.Config.EnableMetrics {
-		go a.runCapacitySampler(serveCtx)
-	}
+	// Always sampled: the low-disk write guard reads it.
+	go a.runCapacitySampler(serveCtx)
 	go a.limiter.cleanupLoop(serveCtx)
 	go a.loginBackoff.CleanupLoop(serveCtx)
 	wakeWorkersDone := make(chan struct{})
@@ -792,6 +801,8 @@ type httpMetrics struct {
 	capacity            capacityMetrics
 	retentionSweptAt    atomic.Int64
 	retentionSweepNanos atomic.Int64
+	admission           *admission.Counters
+	lowDisk             func() bool
 }
 
 type pushDeliveryMetrics struct {
@@ -956,6 +967,9 @@ func (m *httpMetrics) handle(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprintf(w, "veritra_login_backoff_evictions_total %d\n", evictions)
 	}
 	m.writeCapacityMetrics(w)
+	if m.admission != nil {
+		writeAdmissionMetrics(w, m.admission, m.lowDisk != nil && m.lowDisk())
+	}
 }
 
 func newRequestID() string {

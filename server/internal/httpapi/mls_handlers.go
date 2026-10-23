@@ -50,7 +50,7 @@ func (a *API) createMLSMessage(w http.ResponseWriter, r *http.Request, principal
 			for _, member := range members {
 				accounts = append(accounts, member.AccountID)
 			}
-			a.publishCommittedEvent(accounts, realtime.Event{
+			a.publishCommittedEvent(r.Context(), accounts, realtime.Event{
 				Version: "v1", Type: "mls.message.created", ID: message.SyncEventID,
 				ConversationID: message.ConversationID,
 				Payload:        map[string]string{"mls_message_id": message.ID, "kind": message.Kind},
@@ -97,7 +97,7 @@ func (a *API) confirmMLSRevocation(w http.ResponseWriter, r *http.Request, princ
 			for _, member := range members {
 				accounts = append(accounts, member.AccountID)
 			}
-			a.publishCommittedEvent(accounts, realtime.Event{Version: "v1", Type: "mls.revocation.completed", ID: eventID,
+			a.publishCommittedEvent(r.Context(), accounts, realtime.Event{Version: "v1", Type: "mls.revocation.completed", ID: eventID,
 				ConversationID: conversationID, Payload: map[string]string{"device_id": revokedDeviceID}, CreatedAt: time.Now().UTC()})
 		}
 	}
@@ -193,7 +193,7 @@ func (a *API) createMLSCommitBundle(w http.ResponseWriter, r *http.Request, prin
 			for _, member := range members {
 				accounts = append(accounts, member.AccountID)
 			}
-			a.publishCommittedEvent(accounts, realtime.Event{
+			a.publishCommittedEvent(r.Context(), accounts, realtime.Event{
 				Version: "v1", Type: "mls.message.created", ID: result.Commit.SyncEventID,
 				ConversationID: conversationID,
 				Payload:        map[string]string{"mls_message_id": result.Commit.ID, "kind": "commit"},
@@ -207,7 +207,7 @@ func (a *API) createMLSCommitBundle(w http.ResponseWriter, r *http.Request, prin
 					accountID = added.AccountID
 				}
 			}
-			a.publishCommittedEvent([]string{accountID}, realtime.Event{
+			a.publishCommittedEvent(r.Context(), []string{accountID}, realtime.Event{
 				Version: "v1", Type: "mls.message.created", ID: welcome.SyncEventID,
 				ConversationID: conversationID,
 				Payload:        map[string]string{"mls_message_id": welcome.ID, "kind": "welcome"},

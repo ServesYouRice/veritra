@@ -12,6 +12,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"private-messenger/server/internal/admission"
+	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/domain"
 )
 
@@ -99,8 +101,13 @@ func (s *Store) CreateDeviceLink(ctx context.Context, accountID, deviceID string
 	if ttl <= 0 || ttl > 30*time.Minute {
 		ttl = 10 * time.Minute
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.DeviceLink{}, err
+	}
+	defer tx.Rollback()
 	var existingSigningKey []byte
-	if err := s.db.QueryRowContext(ctx, `SELECT signing_key FROM devices WHERE id = ? AND account_id = ? AND revoked_at IS NULL`, deviceID, accountID).Scan(&existingSigningKey); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT signing_key FROM devices WHERE id = ? AND account_id = ? AND revoked_at IS NULL`, deviceID, accountID).Scan(&existingSigningKey); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.DeviceLink{}, ErrUnauthorized
 		}
@@ -108,6 +115,19 @@ func (s *Store) CreateDeviceLink(ctx context.Context, accountID, deviceID string
 	}
 	if len(existingSigningKey) != 32 {
 		return domain.DeviceLink{}, ErrUnauthorized
+	}
+	// Refuse early when the account cannot take another device, and bound
+	// open links: a claimed link holds a key package but no device row yet.
+	if err := s.checkDevices(ctx, tx, accountID); err != nil {
+		return domain.DeviceLink{}, err
+	}
+	open, err := countRows(ctx, tx, `SELECT COUNT(*) FROM device_links WHERE account_id = ? AND state IN (?, ?) AND revoked_at IS NULL AND expires_at > ?`,
+		accountID, domain.DeviceLinkPending, domain.DeviceLinkClaimed, nowString())
+	if err != nil {
+		return domain.DeviceLink{}, err
+	}
+	if open >= config.PendingDeviceLinksPerAccount {
+		return domain.DeviceLink{}, s.refuse(admission.DeviceLinks, ErrDeviceLinkLimit)
 	}
 	id, err := domain.NewID("dlink")
 	if err != nil {
@@ -123,11 +143,14 @@ func (s *Store) CreateDeviceLink(ctx context.Context, accountID, deviceID string
 	}
 	createdAt := time.Now().UTC()
 	expiresAt := createdAt.Add(ttl)
-	_, err = s.db.ExecContext(ctx, `
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO device_links(id, code, account_id, created_by_device_id, state, verification_code, protocol_version, link_nonce, created_at, expires_at)
 		VALUES(?, ?, ?, ?, ?, '', ?, ?, ?, ?)`,
 		id, code, accountID, deviceID, domain.DeviceLinkPending, deviceLinkProtocolVersion, linkNonce, formatTime(createdAt), formatTime(expiresAt))
 	if err != nil {
+		return domain.DeviceLink{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return domain.DeviceLink{}, err
 	}
 	return domain.DeviceLink{
@@ -326,6 +349,9 @@ func (s *Store) approveDeviceLink(ctx context.Context, linkID, accountID string,
 	if strings.TrimSpace(deviceName) == "" || len(keyPackage) == 0 || len(link.ClaimedSigningKey) != 32 || link.ClaimedDeviceID == "" || authSecretHash == "" {
 		return domain.DeviceLink{}, domain.Device{}, 0, ErrDeviceLinkInvalid
 	}
+	if err := s.checkDevices(ctx, tx, accountID); err != nil {
+		return domain.DeviceLink{}, domain.Device{}, 0, err
+	}
 	now := nowString()
 	deviceID := link.ClaimedDeviceID
 	if _, err := tx.ExecContext(ctx, `INSERT INTO devices(id, account_id, name, key_package, signing_key, auth_secret_hash, created_at) VALUES(?, ?, ?, ?, ?, ?, ?)`, deviceID, accountID, deviceName, keyPackage, link.ClaimedSigningKey, authSecretHash, now); err != nil {
@@ -523,6 +549,18 @@ func (s *Store) CreateChannelWithConversation(ctx context.Context, communityID, 
 	if !domain.CanManageMembers(actorRole) {
 		return domain.Channel{}, domain.Conversation{}, ErrForbidden
 	}
+	// Other members' conversation counts are not checked here: one creator
+	// adds them to at most its own conversation limit of channels.
+	communityMembers, err := communityMemberCount(ctx, tx, communityID)
+	if err != nil {
+		return domain.Channel{}, domain.Conversation{}, err
+	}
+	if err := s.checkMembers(0, communityMembers); err != nil {
+		return domain.Channel{}, domain.Conversation{}, err
+	}
+	if err := s.checkOwnConversations(ctx, tx, createdBy, 1); err != nil {
+		return domain.Channel{}, domain.Conversation{}, err
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO channels(id, community_id, name, kind, created_at) VALUES(?, ?, ?, ?, ?)`, channelID, communityID, strings.TrimSpace(name), kind, createdAt); err != nil {
 		return domain.Channel{}, domain.Conversation{}, err
 	}
@@ -624,6 +662,11 @@ func (s *Store) ManageCommunityMember(ctx context.Context, communityID, actorAcc
 	}
 	if err == nil && domain.RoleRank(currentRole) >= domain.RoleRank(actorRole) {
 		return nil, ErrForbidden
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		if err := s.checkNewCommunityMember(ctx, tx, communityID, targetAccountID); err != nil {
+			return nil, err
+		}
 	}
 	createdAt := nowString()
 	membershipID, err := domain.NewID("mbr")
@@ -797,6 +840,17 @@ func (s *Store) CreateConversation(ctx context.Context, input CreateConversation
 			return domain.Conversation{}, err
 		}
 	}
+	if err := s.checkMembers(0, 1+len(input.MemberAccountIDs)); err != nil {
+		return domain.Conversation{}, err
+	}
+	if err := s.checkOwnConversations(ctx, tx, input.CreatedBy, 1); err != nil {
+		return domain.Conversation{}, err
+	}
+	for _, accountID := range input.MemberAccountIDs {
+		if err := s.checkOtherConversations(ctx, tx, accountID, 1); err != nil {
+			return domain.Conversation{}, err
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO conversations(id, kind, title, community_id, channel_id, created_by, retention_seconds, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, id, input.Kind, nullableString(input.Title), nullableString(input.CommunityID), nullableString(input.ChannelID), input.CreatedBy, nullableInt64(input.RetentionSeconds), createdAt); err != nil {
 		return domain.Conversation{}, err
 	}
@@ -871,6 +925,15 @@ func (s *Store) AddConversationMember(ctx context.Context, conversationID, accou
 	if kind == "dm" {
 		return ErrForbidden
 	}
+	var existing int
+	if existing, err = countRows(ctx, tx, `SELECT COUNT(*) FROM memberships WHERE conversation_id = ? AND account_id = ?`, conversationID, accountID); err != nil {
+		return err
+	}
+	if existing == 0 {
+		if err := s.checkNewConversationMember(ctx, tx, conversationID, accountID); err != nil {
+			return err
+		}
+	}
 	id, err := domain.NewID("mbr")
 	if err != nil {
 		return err
@@ -926,6 +989,11 @@ func (s *Store) ManageConversationMember(ctx context.Context, conversationID, ac
 	}
 	if err == nil && domain.RoleRank(currentRole) >= domain.RoleRank(actorRole) {
 		return 0, ErrForbidden
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		if err := s.checkNewConversationMember(ctx, tx, conversationID, targetAccountID); err != nil {
+			return 0, err
+		}
 	}
 	id, err := domain.NewID("mbr")
 	if err != nil {

@@ -417,7 +417,7 @@ func TestBlobQuotaAdmissionBoundaryUnchanged(t *testing.T) {
 	ctx := context.Background()
 	store := newBenchStore(t, ctx)
 	ds := seedBenchDataset(t, ctx, store, benchProfile{Name: "q", Accounts: 3})
-	const accountLimit int64 = 1 << 30
+	accountLimit := store.Limits().AccountStorageBytes
 	check := func(account string, incoming int64, want error) {
 		t.Helper()
 		tx, err := store.db.BeginTx(ctx, nil)
@@ -425,7 +425,7 @@ func TestBlobQuotaAdmissionBoundaryUnchanged(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer tx.Rollback()
-		if err := enforceBlobQuota(ctx, tx, account, incoming); err != want {
+		if err := store.enforceBlobQuota(ctx, tx, account, incoming); err != want {
 			t.Fatalf("incoming=%d err=%v want %v", incoming, err, want)
 		}
 	}
@@ -446,8 +446,8 @@ func TestBlobQuotaAdmissionBoundaryUnchanged(t *testing.T) {
 	}); err != ErrStorageQuota {
 		t.Fatalf("over-quota admission err=%v", err)
 	}
-	// Instance limit: other accounts fill the instance to 10 GiB - 5.
-	const instanceLimit int64 = 10 << 30
+	// Instance limit: other accounts fill the instance to its limit - 5.
+	instanceLimit := store.Limits().InstanceStorageBytes
 	exec := `INSERT INTO attachment_envelopes(id, owner_account_id, storage_key, ciphertext_sha256, size_bytes, crypto_metadata_json, created_at) VALUES(?, ?, ?, ?, ?, '{}', '2026-01-01T00:00:00Z')`
 	if _, err := store.db.ExecContext(ctx, exec, "att_fill", ds.Accounts[0], "blob_fill", fmt.Sprintf("%064x", 3), instanceLimit-5-(accountLimit-10)); err != nil {
 		t.Fatal(err)

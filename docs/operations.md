@@ -499,3 +499,56 @@ the `write_relabel_configs` example in `scrape-config.yml`.
 | `VeritraDataDiskLow` (critical) | Under 10% free where the database or blobs live | Free space now: lower `PRIVATE_MESSENGER_BACKUP_KEEP`, delete old local backups, grow the volume; writes fail when it is full |
 | `VeritraDataDiskFillsSoon` (warning) | Free space runs out within 3 days at the 24 h trend | Same as above, before it is urgent; check for an upload burst against the quota |
 | `VeritraWALLarge` (warning) | The SQLite WAL is over 256 MiB | A long read blocks checkpoints: look for a running export or backup copy; it shrinks after the next checkpoint |
+
+## Admission limits
+
+Card I49 (T49D). Per-account limits bound what one account can make the
+instance store or fan out. Each is an environment variable; a value out of
+range stops startup, and the server logs the resolved values at start
+(`admission_limits`). Defaults come from the tier S measurements in
+`testing/evidence/T47-capacity.md`. Stored limits are checked inside the
+write transaction, so concurrent requests cannot both take the last slot.
+
+| `PRIVATE_MESSENGER_LIMIT_...` | Default | Range | Counts | Refusal |
+|---|---|---|---|---|
+| `INSTANCE_STORAGE_MIB` | volume × 0.9 / (backup keep + 3), at most 10,240; 3,686 on the 40 GiB PVC | 64-16,777,216 | encrypted attachments and backups on the instance | 507 `storage_quota_exceeded` |
+| `ACCOUNT_STORAGE_MIB` | 512, never above the instance limit | 16-1,048,576 | the same, per account | 507 `storage_quota_exceeded` |
+| `ACCOUNT_BLOBS` | 10,000 | 100-1,000,000 | attachments and backups per account (each takes at least 4 KiB on disk) | 507 `storage_quota_exceeded` |
+| `DEVICES_PER_ACCOUNT` | 10 (the realtime hub allows 10 sockets per account) | 1-10 | active devices; also at most 3 open device links | 409 `device_limit_reached`, `device_link_limit_reached` |
+| `CONVERSATION_MEMBERS` | 100 | 2-1,000 | members of a group, a community and each of its channels | 409 `conversation_member_limit_reached` |
+| `CONVERSATIONS_PER_ACCOUNT` | 1,000 | 10-10,000 | conversations an account belongs to | 409 `conversation_limit_reached` to that account; adding an account that is full answers 403 `forbidden`, as a block does |
+| `DELIVERIES_PER_MINUTE` | 1,000 | 60-1,000,000, and at least 2 × (1 + members) | per account, each fan-out write counts 1 plus every account it is published to | 429 `write_rate_limited` with `Retry-After` |
+| `WRITE_MIB_PER_HOUR` | 64 | 16-65,536 | request bodies of those writes | 429 `write_rate_limited` |
+
+Why these defaults: a realtime delivery costs the server 4-10 ms of CPU;
+one account at 1,000 a minute (17/s) is about a third of the 47/s tier S
+served within its latency targets. A message counts 1 plus every member
+account it reaches (the sender's own included, for its other devices), so
+that is about 330 DMs a minute but 10 messages a minute into a full
+100-member group, after a burst of the same size; raise it for large busy
+groups. At 1,000 memberships a sync page
+costs 14-18 ms against 28-30 ms at 2,000. One 1 KiB message becomes 3.8 KiB
+of database, so 64 MiB an hour caps one account's database growth at about
+240 MiB an hour, while heavy text use writes about 1 MiB a day. The write
+budget is in memory: a restart refills it, and a bulk import through the
+API proceeds at its pace.
+
+**Write guard.** With less free space than the smaller of 5% and 2 GiB on
+the database or blob file system, the server answers new messages, MLS
+messages and uploads with 507 `server_storage_low`; reads continue.
+`VeritraDataDiskLow` pages at 10%.
+
+**Upgrading.** The instance storage limit used to be a fixed 10 GiB. On a
+small volume an instance already above the derived value keeps its data
+but refuses uploads; `messenger-server doctor` prints usage against the
+limit. Set `PRIVATE_MESSENGER_LIMIT_INSTANCE_STORAGE_MIB` when the blob
+directory shares its file system with other data: k3s `local-path` volumes
+live on the node's root disk, so set it from the PVC size (3,686 for 40 GiB
+with seven backups). The derivation reads `PRIVATE_MESSENGER_BACKUP_KEEP`;
+set the same value on the server if you change it for the backup job.
+
+| Alert | Means | First thing to do |
+|---|---|---|
+| `VeritraWritesRefusedLowDisk` (critical) | Under 5% (or 2 GiB) free; new messages and uploads get 507 | Free space now (see `VeritraDataDiskLow`); writes resume within 30 s of the next sample above the threshold |
+| `VeritraWriteBudgetRefusals` (warning) | An account keeps exceeding its fan-out or byte budget | Usually a misbehaving client or abuse; the account's other requests still work. Raise the limit only for a known heavy use such as a large busy group |
+| `VeritraStorageQuotaRefusals` (warning) | Uploads are refused by a storage quota | `doctor` shows instance usage; raise the account or instance limit only after sizing the volume with the disk budget above |

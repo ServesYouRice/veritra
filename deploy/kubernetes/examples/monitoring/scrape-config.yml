@@ -29,5 +29,5 @@ scrape_configs:
 #   - url: https://<your-stack>.grafana.net/api/prom/push
 #     write_relabel_configs:
 #       - source_labels: [__name__]
-#         regex: up|kube_.*|certmanager_.*|kubelet_volume_stats_.*|node_filesystem_.*|veritra_(backup_.*|process_start_time_seconds|go_memory_bytes|storage_.*|sqlite_pool_wait_seconds_total|sqlite_writer_acquire_duration_seconds_(bucket|count)|push_deliveries_total|push_backlog_oldest_job_timestamp_seconds|retention_.*|rate_limit_rejections_total|http_requests_total|http_responses_total)
+#         regex: up|kube_.*|certmanager_.*|kubelet_volume_stats_.*|node_filesystem_.*|veritra_(admission_.*|backup_.*|process_start_time_seconds|go_memory_bytes|storage_.*|sqlite_pool_wait_seconds_total|sqlite_writer_acquire_duration_seconds_(bucket|count)|push_deliveries_total|push_backlog_oldest_job_timestamp_seconds|retention_.*|rate_limit_rejections_total|http_requests_total|http_responses_total)
 #         action: keep

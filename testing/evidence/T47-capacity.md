@@ -31,6 +31,7 @@ scripts/capacity.sh s load -rate 1,4,8,16 -warmup 15s -duration 60s
 scripts/capacity.sh s restart -rate 4 -warmup 15s -duration 90s
 scripts/capacity.sh s backup -rate 4 -warmup 15s -duration 90s
 scripts/capacity.sh m load -rate 1,4,8 -warmup 15s -duration 60s
+scripts/capacity.sh m load -rate 1,2,4 -cold 0 -warmup 15s -duration 60s
 cd server && go test -race -run Scenario -v ./internal/app
 cd server && go test -run '^$' -bench MembershipsPerAccount -benchtime 20x ./internal/storage
 ```
@@ -121,3 +122,52 @@ Observations, not changed here: read-only transactions such as
 `ListConversationMembers` use the writer pool, so they count as writer
 waits; the per-address limit, not the server, bounds a busy household
 behind one NAT.
+
+## T49D: limits derived from the cost model
+
+| Limit | Default | Evidence |
+|---|---|---|
+| Instance storage | volume x 0.9 / (keep + 3), at most 10 GiB (3,686 MiB on the 40 GiB PVC) | the backup disk budget above; the former fixed 10 GiB needed about 100 GiB |
+| Account storage | 512 MiB (at most the instance limit) | about a seventh of the S instance budget |
+| Blobs per account | 10,000 | each blob takes at least 4 KiB; the flat blob directory scan is linear (T49: 179 ms at 100k) |
+| Devices per account | 10 | the hub's 10 sockets per account |
+| Open device links | 3 | a claimed link holds a key package before it has a device row |
+| Members per conversation | 100 | the existing create cap; 100 deliveries per message is 0.4-1 CPU-s on tier S |
+| Conversations per account | 1,000 | sync page 14-18 ms at 1,000 memberships, 28-30 ms at 2,000 |
+| Deliveries per account | 1,000 a minute | 17/s, a third of the 47/s tier S served within latency targets |
+| Stored bytes per account | 64 MiB an hour | 3.8x database growth per ciphertext byte: at most about 240 MiB an hour per account |
+| Write guard | refuse writes below the smaller of 5% and 2 GiB free | VeritraDataDiskLow pages at 10% first |
+
+**Tier S rerun with the limits on** (`-rate 4,16`): step 4 passed (send
+p99 10 ms, sync p99 12 ms, cold page p99 64 ms); step 16 again missed only
+on per-address 429s (28 of about 8,300 requests), none from the new write
+budget; no 5xx, 0 of 1,069 acknowledged messages missing. Seeding 20k
+messages took 2m25s instead of about 1 min: bulk writes through the API
+run at the per-account delivery budget (the tool waits on 429).
+
+Checks: `go test -race ./internal/admission ./internal/storage ./internal/httpapi
+./internal/app ./internal/config ./cmd/...` (limit boundaries, a refused
+approval leaves no device, eight concurrent writers for one free slot -> one
+wins, a full third party gives the same error as a block, a community add
+needs room in every channel, budget reservation under 200 parallel
+requests, settlement by published recipients, 429 with `Retry-After`, the
+disk guard, derived defaults and the startup log, `doctor`'s warning).
+Migration 0033 adds three indexes so each count reads only the account's or
+community's rows.
+
+**Strong review (advisor), adopted:** count blobs as well as bytes; bound
+open device links; refuse device links early and still allow removing a
+device; check the largest channel when a community grows; check the added
+account's conversation count but answer 403 as for a block; derive the
+instance default from the volume instead of cutting it to a fixed 3 GiB, log
+it and warn in `doctor`; cap devices at the hub's 10 sockets; require
+deliveries >= 2 x (1 + members); reserve before the transaction and settle
+after; meter edits, deletes, reactions, MLS messages and commits, calls,
+member changes and community adds; add a per-account bytes budget and a
+low-disk write guard. **Not adopted:** a limit on active invites (only
+owners and admins create them); communities per account (channel creation
+already counts against the creator's conversation limit); the client
+showing 507 to the user (mobile, not in this card). **Noted:** a community
+add refused because a channel the caller cannot see is full reveals that
+some channel is full, not which or whose; the per-address limit for
+households behind one NAT is a separate card.

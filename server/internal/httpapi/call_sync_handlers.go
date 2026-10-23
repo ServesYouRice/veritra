@@ -49,7 +49,7 @@ func (a *API) createCall(w http.ResponseWriter, r *http.Request, principal domai
 		return
 	}
 	members := a.conversationRecipientsForSender(r.Context(), req.ConversationID, principal.AccountID)
-	a.publishCommittedEvent(members, realtime.Event{Version: "v1", Type: "call.signaling", ID: eventID, ConversationID: req.ConversationID, Payload: call, CreatedAt: time.Now().UTC()})
+	a.publishCommittedEvent(r.Context(), members, realtime.Event{Version: "v1", Type: "call.signaling", ID: eventID, ConversationID: req.ConversationID, Payload: call, CreatedAt: time.Now().UTC()})
 	writeJSON(w, http.StatusCreated, call)
 }
 
@@ -95,7 +95,7 @@ func (a *API) callSubroute(w http.ResponseWriter, r *http.Request, principal dom
 		return
 	}
 	members := a.conversationRecipientsForSender(r.Context(), call.ConversationID, principal.AccountID)
-	a.publishCommittedEvent(members, realtime.Event{Version: "v1", Type: "call.state", ID: eventID, ConversationID: call.ConversationID, Payload: call, CreatedAt: time.Now().UTC()})
+	a.publishCommittedEvent(r.Context(), members, realtime.Event{Version: "v1", Type: "call.state", ID: eventID, ConversationID: call.ConversationID, Payload: call, CreatedAt: time.Now().UTC()})
 	writeJSON(w, http.StatusOK, call)
 }
 

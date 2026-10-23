@@ -140,6 +140,34 @@ tests:
               summary: No successful off-host restore drill in the last 35 days.
               runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
 
+  - interval: 1m
+    input_series:
+      - series: 'veritra_admission_low_disk{job="veritra-metrics"}'
+        values: '0 0 1 1'
+      # One account keeps hitting its delivery budget: 6 refusals a minute.
+      - series: 'veritra_admission_rejections_total{job="veritra-metrics", limit="deliveries"}'
+        values: '0+6x40'
+      - series: 'veritra_admission_rejections_total{job="veritra-metrics", limit="devices"}'
+        values: '0+6x40'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: VeritraWritesRefusedLowDisk
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: VeritraWritesRefusedLowDisk
+        exp_alerts:
+          - exp_labels: {severity: critical, job: veritra-metrics}
+            exp_annotations:
+              summary: Veritra is refusing writes because its disk is almost full.
+              runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#admission-limits
+      - eval_time: 35m
+        alertname: VeritraWriteBudgetRefusals
+        exp_alerts:
+          - exp_labels: {severity: warning, limit: deliveries}
+            exp_annotations:
+              summary: Writes are refused by the per-account deliveries budget.
+              runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#admission-limits
+
   - interval: 1h
     input_series:
       # Free space falls by 1 GiB a day from 2.5 GiB: full in about 2.5 days.

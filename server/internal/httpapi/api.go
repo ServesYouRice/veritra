@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"private-messenger/server/internal/admission"
 	"private-messenger/server/internal/auth"
 	"private-messenger/server/internal/domain"
 	"private-messenger/server/internal/messaging"
@@ -44,6 +45,12 @@ type API struct {
 	LoginBackoff        *LoginBackoff
 	Ready               func() bool
 	typing              typingLimiter
+	// Budget meters fan-out writes per account and Admission counts refusals;
+	// LowDisk reports a nearly full data file system (admission.go). All
+	// three are optional.
+	Budget    *admission.Budget
+	Admission *admission.Counters
+	LowDisk   func() bool
 }
 
 func (a *API) passwordCost() int {
@@ -83,19 +90,19 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/device-links", a.withRecentAuth(a.createDeviceLink))
 	mux.HandleFunc("POST /api/v1/device-links/claim-enrollment", a.reserveDeviceLinkEnrollment)
 	mux.HandleFunc("POST /api/v1/device-links/claim", a.claimDeviceLink)
-	mux.HandleFunc("POST /api/v1/communities", a.withAuth(a.createCommunity))
+	mux.HandleFunc("POST /api/v1/communities", a.withAuth(a.withWriteBudget(a.createCommunity)))
 	mux.HandleFunc("GET /api/v1/communities", a.withAuth(a.listCommunities))
-	mux.HandleFunc("POST /api/v1/conversations", a.withAuth(a.createConversation))
+	mux.HandleFunc("POST /api/v1/conversations", a.withAuth(a.withWriteBudget(a.createConversation)))
 	mux.HandleFunc("GET /api/v1/conversations", a.withAuth(a.listConversations))
 	mux.HandleFunc("POST /api/v1/conversations/{id}/key-packages/claim", a.withAuth(a.claimConversationKeyPackages))
-	mux.HandleFunc("POST /api/v1/conversations/{id}/mls/messages", a.withAuth(a.createMLSMessage))
-	mux.HandleFunc("POST /api/v1/conversations/{id}/mls/commits", a.withAuth(a.createMLSCommitBundle))
+	mux.HandleFunc("POST /api/v1/conversations/{id}/mls/messages", a.withAuth(a.withWriteBudget(a.createMLSMessage)))
+	mux.HandleFunc("POST /api/v1/conversations/{id}/mls/commits", a.withAuth(a.withWriteBudget(a.createMLSCommitBundle)))
 	mux.HandleFunc("GET /api/v1/mls/pending-changes", a.withAuth(a.listMLSPendingChanges))
 	mux.HandleFunc("GET /api/v1/mls/messages", a.withAuth(a.listMLSMessages))
 	mux.HandleFunc("GET /api/v1/mls/messages/{id}", a.withAuth(a.getMLSMessage))
 	mux.HandleFunc("GET /api/v1/mls/revocations", a.withAuth(a.listMLSRevocations))
-	mux.HandleFunc("POST /api/v1/conversations/{id}/mls/revocations/{device_id}/confirm", a.withAuth(a.confirmMLSRevocation))
-	mux.HandleFunc("POST /api/v1/messages/envelopes", a.withAuth(a.createMessageEnvelope))
+	mux.HandleFunc("POST /api/v1/conversations/{id}/mls/revocations/{device_id}/confirm", a.withAuth(a.withWriteBudget(a.confirmMLSRevocation)))
+	mux.HandleFunc("POST /api/v1/messages/envelopes", a.withAuth(a.withWriteBudget(a.createMessageEnvelope)))
 	mux.HandleFunc("POST /api/v1/attachments", a.withAuth(a.uploadAttachment))
 	mux.HandleFunc("GET /api/v1/attachments", a.withAuth(a.listAttachments))
 	mux.HandleFunc("POST /api/v1/push/subscriptions", a.withAuth(a.createPushSubscription))
@@ -103,10 +110,10 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/push/subscriptions/{id}", a.withAuth(a.deletePushSubscription))
 	mux.HandleFunc("GET /api/v1/push/subscriptions/me", a.withAuth(a.listDevicePushSubscriptions))
 	mux.HandleFunc("POST /api/v1/push/test", a.withAuth(a.sendTestPush))
-	mux.HandleFunc("POST /api/v1/calls", a.withAuth(a.createCall))
+	mux.HandleFunc("POST /api/v1/calls", a.withAuth(a.withWriteBudget(a.createCall)))
 	mux.HandleFunc("GET /api/v1/calls/config", a.withAuth(a.callConfig))
 	mux.HandleFunc("GET /api/v1/calls", a.withAuth(a.listCalls))
-	mux.HandleFunc("/api/v1/calls/", a.withAuth(a.callSubroute))
+	mux.HandleFunc("/api/v1/calls/", a.withAuth(a.withWriteBudget(a.callSubroute)))
 	mux.HandleFunc("GET /api/v1/sync/ws", a.syncWebSocket)
 	mux.HandleFunc("GET /api/v1/sync/events", a.withAuth(a.syncEvents))
 	mux.HandleFunc("GET /api/v1/search/metadata", a.withAuth(a.searchMetadata))
@@ -123,9 +130,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/backups", a.withAuth(a.listBackups))
 	mux.HandleFunc("/api/v1/attachments/", a.withAuth(a.attachmentSubroute))
 	mux.HandleFunc("/api/v1/backups/", a.withAuth(a.backupSubroute))
-	mux.HandleFunc("/api/v1/messages/", a.withAuth(a.messageSubroute))
-	mux.HandleFunc("/api/v1/conversations/", a.withAuth(a.conversationSubroute))
-	mux.HandleFunc("/api/v1/communities/", a.withAuth(a.communitySubroute))
+	mux.HandleFunc("/api/v1/messages/", a.withAuth(a.withWriteBudget(a.messageSubroute)))
+	mux.HandleFunc("/api/v1/conversations/", a.withAuth(a.withWriteBudget(a.conversationSubroute)))
+	mux.HandleFunc("/api/v1/communities/", a.withAuth(a.withWriteBudget(a.communitySubroute)))
 	mux.HandleFunc("/api/v1/device-links/", a.deviceLinkSubroute)
 }
 
@@ -448,6 +455,14 @@ func handleStorageError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_device_link")
 	case errors.Is(err, storage.ErrStorageQuota):
 		writeError(w, http.StatusInsufficientStorage, "storage_quota_exceeded")
+	case errors.Is(err, storage.ErrDeviceLimit):
+		writeError(w, http.StatusConflict, "device_limit_reached")
+	case errors.Is(err, storage.ErrDeviceLinkLimit):
+		writeError(w, http.StatusConflict, "device_link_limit_reached")
+	case errors.Is(err, storage.ErrConversationLimit):
+		writeError(w, http.StatusConflict, "conversation_limit_reached")
+	case errors.Is(err, storage.ErrConversationMemberLimit):
+		writeError(w, http.StatusConflict, "conversation_member_limit_reached")
 	default:
 		writeError(w, http.StatusInternalServerError, "storage_error")
 	}

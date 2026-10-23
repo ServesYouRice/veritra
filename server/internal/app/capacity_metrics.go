@@ -86,16 +86,23 @@ func (a *App) sampleCapacity(ctx context.Context) {
 			m.blobBytes.Store(coarseBytes(blobBytes))
 		}
 	}
+	low := false
 	for i, path := range []string{filepath.Dir(a.Config.DatabasePath), a.Config.StoragePath} {
 		gauge := &m.volumes[i]
-		avail, size, ok := filesystemUsage(path)
+		avail, size, ok := statFilesystem(path)
 		if !ok {
 			gauge.known.Store(false)
 			continue
 		}
+		if diskLow(avail, size) {
+			low = true
+		}
 		gauge.avail.Store(coarseBytes(int64(min(avail, math.MaxInt64))))
 		gauge.size.Store(coarseBytes(int64(min(size, math.MaxInt64))))
 		gauge.known.Store(true)
+	}
+	if a.lowDisk.Swap(low) != low {
+		a.Log.Warn("low_disk_write_guard", "active", low)
 	}
 	m.sampledAt.Store(time.Now().Unix())
 }

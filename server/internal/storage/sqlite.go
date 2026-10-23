@@ -18,6 +18,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"private-messenger/server/internal/admission"
 	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/domain"
 	"private-messenger/server/internal/opmetrics"
@@ -50,6 +51,10 @@ var (
 
 type Store struct {
 	db *dbRouter
+	// limits are the admission limits with defaults applied; admission
+	// counts their refusals (admission_store.go).
+	limits    config.Limits
+	admission *admission.Counters
 }
 
 type dbRouter struct {
@@ -124,7 +129,8 @@ func Open(ctx context.Context, cfg config.Config) (*Store, error) {
 	// Query calls use their own pool. SQLite's WAL mode gives those reads
 	// deferred transactions by default, while writes stay serialized through
 	// the single writer connection.
-	store := &Store{db: &dbRouter{reader: reader, writer: writer, writerAcquire: newWriterAcquireHistogram()}}
+	store := &Store{db: &dbRouter{reader: reader, writer: writer, writerAcquire: newWriterAcquireHistogram()},
+		limits: resolveLimits(cfg.Limits), admission: &admission.Counters{}}
 	return store, nil
 }
 

@@ -204,6 +204,34 @@ groups:
         annotations:
           summary: The Veritra retention sweep has not finished in 7 hours or leaves rows behind.
           runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
+  - name: veritra-admission
+    rules:
+      - alert: VeritraWritesRefusedLowDisk
+        # Below the smaller of 5% and 2 GiB free the server refuses new
+        # messages and uploads with 507 so SQLite and the backups keep room.
+        # VeritraDataDiskLow fires first on small volumes.
+        expr: veritra_admission_low_disk == 1
+        labels:
+          severity: critical
+        annotations:
+          summary: Veritra is refusing writes because its disk is almost full.
+          runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#admission-limits
+      - alert: VeritraWriteBudgetRefusals
+        # An account keeps exceeding its fan-out or stored-bytes budget.
+        expr: sum by (limit) (rate(veritra_admission_rejections_total{limit=~"deliveries|write_bytes"}[15m])) > 0.05
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Writes are refused by the per-account {{ $labels.limit }} budget.
+          runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#admission-limits
+      - alert: VeritraStorageQuotaRefusals
+        expr: sum by (limit) (increase(veritra_admission_rejections_total{limit=~"storage|blobs"}[1h])) > 10
+        labels:
+          severity: warning
+        annotations:
+          summary: Uploads are refused by the {{ $labels.limit }} quota.
+          runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#admission-limits
   - name: veritra-platform
     rules:
       - alert: VeritraCertificateExpiringSoon

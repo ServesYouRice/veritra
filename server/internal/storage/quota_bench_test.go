@@ -32,7 +32,7 @@ func BenchmarkQuotaSQL(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				err = enforceBlobQuota(ctx, tx, ds.HotAccount, 1<<20)
+				err = store.enforceBlobQuota(ctx, tx, ds.HotAccount, 1<<20)
 				_ = tx.Rollback()
 				if err != nil {
 					b.Fatal(err)

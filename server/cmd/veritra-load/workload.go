@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -326,18 +327,42 @@ func (w *world) seed(ctx context.Context, setupToken string, rng *mrand.Rand, pr
 		rngMu.Unlock()
 		var refs []string
 		if n >= p.History {
-			id, err := w.uploadAttachment(ctx, sender, conv.id, ip, p.AttachmentBytes)
-			if err != nil {
+			var id string
+			if err := retryRateLimited(ctx, func() error {
+				var err error
+				id, err = w.uploadAttachment(ctx, sender, conv.id, ip, p.AttachmentBytes)
+				return err
+			}); err != nil {
 				return err
 			}
 			refs = []string{id}
 		}
-		_, err := w.sendMessage(ctx, sender, conv.id, refs, ip)
-		return err
+		return retryRateLimited(ctx, func() error {
+			_, err := w.sendMessage(ctx, sender, conv.id, refs, ip)
+			return err
+		})
 	}); err != nil {
 		return fmt.Errorf("history: %w", err)
 	}
 	return nil
+}
+
+// retryRateLimited retries a seeding write refused with 429 (the server's
+// per-account write budget) after a growing pause. Seeding is not measured,
+// so it simply proceeds at the rate the server admits.
+func retryRateLimited(ctx context.Context, write func() error) error {
+	pause := time.Second
+	for attempt := 0; ; attempt++ {
+		err := write()
+		var refused statusError
+		if !errors.As(err, &refused) || refused.status != http.StatusTooManyRequests || attempt >= 30 {
+			return err
+		}
+		if !sleepCtx(ctx, pause) {
+			return ctx.Err()
+		}
+		pause = min(2*pause, 15*time.Second)
+	}
 }
 
 // planConversations pairs every account into at least one DM (a shuffled

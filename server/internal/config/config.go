@@ -40,6 +40,7 @@ type Config struct {
 	LogFormat        string
 	PasswordCost     int
 	SyncRetention    time.Duration
+	Limits           Limits
 }
 
 const (
@@ -64,6 +65,10 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	passwordCost, err := parsePasswordCost(os.Getenv("PRIVATE_MESSENGER_BCRYPT_COST"))
+	if err != nil {
+		return Config{}, err
+	}
+	limits, err := loadLimits()
 	if err != nil {
 		return Config{}, err
 	}
@@ -100,6 +105,7 @@ func Load() (Config, error) {
 		LogFormat:        strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_LOG_FORMAT", "text"))),
 		PasswordCost:     passwordCost,
 		SyncRetention:    30 * 24 * time.Hour,
+		Limits:           limits,
 	}
 	if cfg.Environment != "development" && cfg.Environment != "production" {
 		return Config{}, fmt.Errorf("PRIVATE_MESSENGER_ENV must be development or production")

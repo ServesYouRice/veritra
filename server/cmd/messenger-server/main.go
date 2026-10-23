@@ -259,6 +259,7 @@ func migrate(ctx context.Context, cfg config.Config, stdout io.Writer) error {
 }
 
 func doctor(ctx context.Context, cfg config.Config, stdout io.Writer) error {
+	cfg, limitSource := app.ResolveInstanceStorage(cfg)
 	store, err := storage.Open(ctx, cfg)
 	if err != nil {
 		return err
@@ -281,6 +282,7 @@ func doctor(ctx context.Context, cfg config.Config, stdout io.Writer) error {
 		return fmt.Errorf("blob storage readiness: %w", err)
 	}
 	fmt.Fprintln(stdout, "storage: ok")
+	reportStorageLimit(ctx, store, limitSource, stdout)
 	fmt.Fprintln(stdout, "telemetry: disabled")
 	if cfg.EnableMetrics {
 		fmt.Fprintln(stdout, "local metrics: /metrics")
@@ -289,6 +291,21 @@ func doctor(ctx context.Context, cfg config.Config, stdout io.Writer) error {
 	}
 	fmt.Fprintln(stdout, "message plaintext persistence: forbidden by schema/API")
 	return nil
+}
+
+// reportStorageLimit prints blob usage against the instance storage limit
+// (T49D) and warns when uploads are already refused, for example after an
+// upgrade lowered the default on a small volume.
+func reportStorageLimit(ctx context.Context, store *storage.Store, source string, stdout io.Writer) {
+	used, err := store.BlobUsageBytes(ctx)
+	if err != nil {
+		return
+	}
+	limit := store.Limits().InstanceStorageBytes
+	fmt.Fprintf(stdout, "encrypted storage: %d MiB of %d MiB instance limit (%s)\n", used>>20, limit>>20, source)
+	if used >= limit {
+		fmt.Fprintln(stdout, "warning: stored blobs reach the instance storage limit; uploads are refused until usage falls or PRIVATE_MESSENGER_LIMIT_INSTANCE_STORAGE_MIB is raised")
+	}
 }
 
 // healthcheck probes the locally running server over HTTP and exits non-zero on
