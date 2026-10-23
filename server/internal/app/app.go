@@ -44,7 +44,10 @@ type App struct {
 	// ShutdownDrain; tests shorten them.
 	shutdownBudget time.Duration
 	shutdownDrain  time.Duration
-	Log            *slog.Logger
+	// retentionBudget overrides retentionTimeBudget when set; tests lengthen
+	// it so slow race-instrumented runs exercise the batch ceiling.
+	retentionBudget time.Duration
+	Log             *slog.Logger
 }
 
 // Shutdown timing (card I46). The whole stop sequence fits inside
@@ -385,7 +388,7 @@ const (
 func (a *App) drainExpiredContent(ctx context.Context, now time.Time) {
 	started := time.Now()
 	var total int64
-	for batch := 0; batch < retentionMaxBatches && time.Since(started) < retentionTimeBudget; batch++ {
+	for batch := 0; batch < retentionMaxBatches && time.Since(started) < a.retentionTimeLimit(); batch++ {
 		if ctx.Err() != nil {
 			return
 		}
@@ -410,7 +413,7 @@ func (a *App) drainExpiredContent(ctx context.Context, now time.Time) {
 func (a *App) drainRetention(ctx context.Context, name string, prune func() (int64, error)) {
 	started := time.Now()
 	var total int64
-	for batch := 0; batch < retentionMaxBatches && time.Since(started) < retentionTimeBudget; batch++ {
+	for batch := 0; batch < retentionMaxBatches && time.Since(started) < a.retentionTimeLimit(); batch++ {
 		if ctx.Err() != nil {
 			return
 		}
@@ -430,6 +433,13 @@ func (a *App) drainRetention(ctx context.Context, name string, prune func() (int
 	if total > 0 {
 		a.Log.Info("retention_rows_pruned", "class", name, "removed", total)
 	}
+}
+
+func (a *App) retentionTimeLimit() time.Duration {
+	if a.retentionBudget > 0 {
+		return a.retentionBudget
+	}
+	return retentionTimeBudget
 }
 
 func retentionYield(ctx context.Context) bool {
@@ -659,7 +669,7 @@ func (a *App) updateRetentionMetrics(ctx context.Context, now time.Time) {
 func (a *App) reconcileBlobDeletions(ctx context.Context) {
 	started := time.Now()
 	failed := 0
-	for batch := 0; batch < retentionMaxBatches && time.Since(started) < retentionTimeBudget; batch++ {
+	for batch := 0; batch < retentionMaxBatches && time.Since(started) < a.retentionTimeLimit(); batch++ {
 		storageKeys, err := a.Store.PendingBlobDeletions(ctx, 500)
 		if err != nil {
 			a.Log.Warn("blob_cleanup_queue_read_failed")
