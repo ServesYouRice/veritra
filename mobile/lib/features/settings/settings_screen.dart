@@ -848,31 +848,31 @@ class _DeviceTile extends StatelessWidget {
         isCurrent ? Icons.phone_android : Icons.devices_other,
         color: revoked ? theme.disabledColor : null,
       ),
-      title: Row(
+      // A Wrap, not a Row: at 320 px or 200% text the pill no longer fits
+      // beside the name and drops below it instead of overflowing (T43C).
+      title: Wrap(
+        spacing: BoneSpacing.sm,
+        runSpacing: BoneSpacing.xs,
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: <Widget>[
-          Flexible(
-            child: Text(
-              device.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: revoked
-                  ? TextStyle(
-                      color: theme.disabledColor,
-                      decoration: TextDecoration.lineThrough,
-                    )
-                  : null,
-            ),
+          Text(
+            device.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: revoked
+                ? TextStyle(
+                    color: theme.disabledColor,
+                    decoration: TextDecoration.lineThrough,
+                  )
+                : null,
           ),
-          if (revoked) ...<Widget>[
-            const SizedBox(width: BoneSpacing.sm),
+          if (revoked)
             StatusPill(
               label: context.l10n.settingsDeviceRevoked,
               tone: StatusTone.error,
-            ),
-          ] else if (isCurrent) ...<Widget>[
-            const SizedBox(width: BoneSpacing.sm),
+            )
+          else if (isCurrent)
             StatusPill(label: context.l10n.settingsDeviceCurrent),
-          ],
         ],
       ),
       subtitle: Text(

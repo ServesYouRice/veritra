@@ -73,6 +73,10 @@ class StatusPill extends StatelessWidget {
       StatusTone.error => (scheme.error, onState, scheme.error),
     };
 
+    final text = Text(
+      uppercase ? label.toUpperCase() : label,
+      style: theme.textTheme.labelSmall?.copyWith(color: foreground),
+    );
     return Semantics(
       label: semanticsLabel ?? label,
       excludeSemantics: true,
@@ -86,19 +90,19 @@ class StatusPill extends StatelessWidget {
           borderRadius: BorderRadius.circular(BoneRadii.pill),
           border: Border.all(color: border),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            if (icon != null) ...<Widget>[
-              Icon(icon, size: 12, color: foreground),
-              const SizedBox(width: 4),
-            ],
-            Text(
-              uppercase ? label.toUpperCase() : label,
-              style: theme.textTheme.labelSmall?.copyWith(color: foreground),
-            ),
-          ],
-        ),
+        child: icon == null
+            // A bare Text, not a one-child Row: a Row gives its text
+            // unbounded width, so at 320 px or 200% text a pill overflowed
+            // its slot instead of wrapping (T43C).
+            ? text
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Icon(icon, size: 12, color: foreground),
+                  const SizedBox(width: 4),
+                  text,
+                ],
+              ),
       ),
     );
   }
