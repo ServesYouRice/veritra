@@ -739,31 +739,50 @@ func (s *Store) ListSyncEvents(ctx context.Context, accountID, deviceID string, 
 	// Only a cursor past the start can have expired, and only the oldest
 	// bound tells; the latest bound would cost as much again.
 	if afterID > 0 {
-		var oldest sql.NullInt64
-		if err := s.db.QueryRowContext(ctx, syncOldestQuery, accountID).Scan(&oldest); err != nil {
+		var expired bool
+		if err := s.db.QueryRowContext(ctx, syncCursorExpiredQuery, accountID, afterID).Scan(&expired); err != nil {
 			return nil, err
 		}
-		if oldest.Int64 > 0 && afterID < oldest.Int64-1 {
+		if expired {
 			return nil, ErrSyncCursorExpired
 		}
 	}
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, listSyncEventsQuery, accountID, afterID, deviceID, limit)
+	// The query streams candidates in id order and has no LIMIT, since
+	// hidden ones do not count towards the page: the page ends here, after
+	// limit visible events, and closing rows stops the merge.
+	rows, err := s.db.QueryContext(ctx, listSyncEventsQuery, accountID, afterID, deviceID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var events []domain.SyncEvent
-	for rows.Next() {
-		event, err := scanSyncEvent(rows)
+	candidate := &syncCandidateScanner{rows: rows}
+	for len(events) < limit && rows.Next() {
+		event, err := scanSyncEvent(candidate)
 		if err != nil {
 			return nil, err
 		}
-		events = append(events, event)
+		if candidate.visible {
+			events = append(events, event)
+		}
 	}
 	return events, rows.Err()
+}
+
+// syncCandidateScanner reads a listSyncEventsQuery row: the visible flag,
+// then the columns scanSyncEvent reads.
+type syncCandidateScanner struct {
+	rows    *sql.Rows
+	visible bool
+	dest    []interface{}
+}
+
+func (c *syncCandidateScanner) Scan(dest ...interface{}) error {
+	c.dest = append(append(c.dest[:0], &c.visible), dest...)
+	return c.rows.Scan(c.dest...)
 }
 
 // syncEventVisibleTo is true when the conversation event se may go to the
@@ -774,58 +793,63 @@ var syncEventVisibleTo = `(NOT (se.event_type = 'mls.message.created' OR se.even
 	   OR ` + mlsJoinFilterEventFor("?3") + `)
 	AND NOT ` + syncEventBlockedFor("?1")
 
-// listSyncEventsQuery returns the first ?4 events after ?2 that device ?3 of
-// account ?1 may see, in id order. Parameters: ?1 account, ?2 cursor,
-// ?3 device, ?4 limit.
+// listSyncEventsQuery streams, in id order, the events after ?2 that could
+// go to device ?3 of account ?1, each with a flag that says whether it may
+// see it. Parameters: ?1 account, ?2 cursor, ?3 device. ListSyncEvents
+// stops reading after a page of visible rows.
 //
-// Conversation events are merged per conversation (T49 follow-up). The
-// recursive CTE is a priority queue ordered by id: it starts with each
-// membership's first visible event after the cursor, and each row it takes
-// out queues the next visible event of the same conversation, found on
-// idx_sync_events_conversation. Its LIMIT stops the merge after ?4 rows, so
-// a page reads about memberships + ?4 events wherever the cursor is. The
-// former single scan walked every conversation event on the instance after
-// the cursor and checked each against the memberships, which read a whole
-// tail of history when the account's conversations were quiet there
-// (252 ms for a page from mid-history at the large benchmark).
+// It is a k-way merge (T49 follow-up). The recursive CTE is a priority
+// queue ordered by id with one chain per membership and one for the
+// account's own events: first_events seeds each chain with its first event
+// after the cursor, and each row taken out queues the next event of the
+// same chain, found on idx_sync_events_conversation or
+// idx_sync_events_account. Visibility (the MLS join cursor and blocks) is
+// computed for each row as it is queued and only flags it, so no chain
+// searches ahead for a visible event. A page therefore reads one probe per
+// membership plus the events of the account's conversations, and its own
+// events, inside the page's id range, hidden ones included, and nothing
+// past it. Filtering inside the chains made every page search a run of
+// hidden events forward from the cursor again, so paging past one was
+// quadratic (testing/evidence/benchmarks-t49.md). The former single scan
+// walked every conversation event on the instance after the cursor.
 //
-// first_events is MATERIALIZED so its subquery runs once per membership
-// (a flattened subquery would run it again for the IS NOT NULL test). The
+// SQLite runs candidates as a co-routine (EXPLAIN QUERY PLAN: CO-ROUTINE
+// candidates, then SCAN q), so the queue advances only as rows are read and
+// the caller's early close is what ends the merge; a LIMIT here would count
+// hidden rows. The CROSS JOIN keeps candidates the outer loop.
+//
+// first_events is MATERIALIZED so its subquery runs once per chain. The
 // unary + keeps account_id IS NULL off idx_sync_events_account.
 var listSyncEventsQuery = `
 	WITH RECURSIVE
-	first_events(id, conversation_id) AS MATERIALIZED (
+	first_events(id, chain) AS MATERIALIZED (
 	  SELECT (SELECT se.id FROM sync_events se
 	          WHERE se.conversation_id = m.conversation_id AND +se.account_id IS NULL AND se.id > ?2
-	            AND ` + syncEventVisibleTo + `
 	          ORDER BY se.id ASC LIMIT 1), m.conversation_id
 	  FROM memberships m WHERE m.account_id = ?1 AND m.conversation_id IS NOT NULL
-	),
-	conversation_events(id, conversation_id) AS (
-	  SELECT id, conversation_id FROM first_events WHERE id IS NOT NULL
 	  UNION ALL
-	  SELECT next_event.id, q.conversation_id
-	  FROM conversation_events q
-	  JOIN sync_events next_event ON next_event.id = (
-	    SELECT se.id FROM sync_events se
-	    WHERE se.conversation_id = q.conversation_id AND +se.account_id IS NULL AND se.id > q.id
-	      AND ` + syncEventVisibleTo + `
-	    ORDER BY se.id ASC LIMIT 1)
+	  SELECT (SELECT id FROM sync_events
+	          WHERE account_id = ?1 AND id > ?2 AND (device_id IS NULL OR device_id = ?3)
+	          ORDER BY id ASC LIMIT 1), NULL
+	),
+	candidates(id, chain, visible) AS (
+	  SELECT se.id, f.chain, CASE WHEN f.chain IS NULL THEN 1 ELSE (` + syncEventVisibleTo + `) END
+	  FROM first_events f JOIN sync_events se ON se.id = f.id
+	  UNION ALL
+	  SELECT se.id, q.chain, CASE WHEN q.chain IS NULL THEN 1 ELSE (` + syncEventVisibleTo + `) END
+	  FROM candidates q
+	  JOIN sync_events se ON se.id = CASE WHEN q.chain IS NULL
+	    THEN (SELECT n.id FROM sync_events n
+	          WHERE n.account_id = ?1 AND n.id > q.id AND (n.device_id IS NULL OR n.device_id = ?3)
+	          ORDER BY n.id ASC LIMIT 1)
+	    ELSE (SELECT n.id FROM sync_events n
+	          WHERE n.conversation_id = q.chain AND +n.account_id IS NULL AND n.id > q.id
+	          ORDER BY n.id ASC LIMIT 1) END
 	  ORDER BY 1
-	  LIMIT ?4
-	),
-	page(id) AS (
-	  SELECT id FROM conversation_events
-	  UNION ALL
-	  SELECT id FROM (
-	    SELECT id FROM sync_events
-	    WHERE account_id = ?1 AND id > ?2 AND (device_id IS NULL OR device_id = ?3)
-	    ORDER BY id ASC LIMIT ?4)
 	)
-	SELECT se.id, se.event_type, se.account_id, se.conversation_id, se.payload_json, se.created_at
-	FROM page JOIN sync_events se ON se.id = page.id
-	ORDER BY se.id ASC
-	LIMIT ?4`
+	SELECT q.visible, se.id, se.event_type, se.account_id, se.conversation_id,
+	       CASE WHEN q.visible THEN se.payload_json ELSE '' END, se.created_at
+	FROM candidates q CROSS JOIN sync_events se ON se.id = q.id`
 
 // syncEventBlockedFor is true when the conversation event se comes from an
 // account that blocker blocked. blocker is SQL text (a column or a
@@ -852,9 +876,19 @@ func syncEventBlockedFor(blocker string) string {
 // idx_sync_events_account, which would scan every conversation event.
 var syncBoundsQuery = `SELECT ` + syncOldestExpr + `, ` + syncLatestExpr
 
-// syncOldestQuery is the oldest half of syncBoundsQuery, which is all a
-// page needs to tell whether its cursor has expired.
-var syncOldestQuery = `SELECT ` + syncOldestExpr
+// syncCursorExpiredQuery is true when cursor ?2 of account ?1 is older than
+// the oldest event the account may see (syncOldestExpr) less one. That
+// bound walks each conversation from its start to its first unblocked
+// event, which is long when a blocked sender's events lead it. The usual
+// cursor is the last event of a page; while that event is still there and
+// counts towards the bound, the bound is at most the cursor, so one
+// primary-key read settles it and the CASE never evaluates the bound.
+var syncCursorExpiredQuery = `SELECT CASE WHEN EXISTS (
+	  SELECT 1 FROM sync_events se
+	  WHERE se.id = ?2 AND (se.account_id = ?1 OR (se.account_id IS NULL
+	    AND EXISTS (SELECT 1 FROM memberships m WHERE m.account_id = ?1 AND m.conversation_id = se.conversation_id)
+	    AND NOT ` + syncEventBlockedFor("?1") + `))
+	) THEN 0 ELSE COALESCE(?2 < ` + syncOldestExpr + ` - 1, 0) END`
 
 var syncOldestExpr = `
 	  (SELECT MIN(v) FROM (

@@ -14,6 +14,7 @@ import (
 
 	"private-messenger/server/internal/auth"
 	"private-messenger/server/internal/config"
+	"private-messenger/server/internal/httpapi"
 	"private-messenger/server/internal/storage"
 )
 
@@ -125,22 +126,67 @@ func TestSignedInRequestsUseTheirAccountBudget(t *testing.T) {
 
 	// Without a valid session, one address still gets five requests in
 	// all: unknown tokens and anonymous requests share that budget, and a
-	// valid session from the same address cannot be used to reset it.
+	// valid session from the same address cannot be used to reset it. But
+	// they no longer refuse the valid sessions there.
 	const guesser = "203.0.113.9"
+	guess := func(i int) *httptest.ResponseRecorder {
+		return send(guesser, http.MethodGet, "/api/v1/conversations", fmt.Sprintf("guessed-token-%040d", i))
+	}
 	for i := 0; i < 3; i++ {
-		if code := send(guesser, http.MethodGet, "/api/v1/conversations", fmt.Sprintf("guessed-token-%040d", i)).Code; code != http.StatusUnauthorized {
+		if code := guess(i).Code; code != http.StatusUnauthorized {
 			t.Fatalf("guess %d status=%d want 401", i+1, code)
 		}
 	}
 	expect("signed in beside the guesses", send(guesser, http.MethodGet, "/api/v1/conversations", tokens["b"]), false)
 	for i := 3; i < 5; i++ {
-		if code := send(guesser, http.MethodGet, "/api/v1/conversations", fmt.Sprintf("guessed-token-%040d", i)).Code; code != http.StatusUnauthorized {
+		if code := guess(i).Code; code != http.StatusUnauthorized {
 			t.Fatalf("guess %d status=%d want 401", i+1, code)
 		}
 	}
-	expect("sixth guess", send(guesser, http.MethodGet, "/api/v1/conversations", "guessed-token-final-0123456789abcdef"), true)
+	before := rejections()
+	expect("sixth guess", guess(5), true)
+	if after := rejections(); after["general"] != before["general"]+1 {
+		t.Fatalf("sixth guess rejected as %v -> %v, want general", before, after)
+	}
 	expect("anonymous after the guesses", send(guesser, http.MethodGet, "/api/v1/health", ""), true)
-	expect("valid session after the guesses", send(guesser, http.MethodGet, "/api/v1/conversations", tokens["c"]), true)
+	expect("valid session after the guesses", send(guesser, http.MethodGet, "/api/v1/conversations", tokens["c"]), false)
+	// Token lookups from one address stay bounded by its signed-in
+	// ceiling (12): 8 token requests so far, 4 more guesses fill it, and
+	// then any token is refused before it is looked up.
+	for i := 6; i < 10; i++ {
+		expect(fmt.Sprintf("guess %d past the general budget", i+1), guess(i), true)
+	}
+	before = rejections()
+	expect("guess past the signed-in ceiling", guess(10), true)
+	expect("valid session past the signed-in ceiling", send(guesser, http.MethodGet, "/api/v1/conversations", tokens["c"]), true)
+	if after := rejections(); after["signed_in"] != before["signed_in"]+2 || after["general"] != before["general"] {
+		t.Fatalf("ceiling rejections %v -> %v, want two signed_in", before, after)
+	}
+
+	// The review case: a device whose session expired retries in a loop
+	// behind a shared address. It uses up the address's budget for
+	// requests without a session, and is refused with Retry-After once it
+	// has, but its signed-in neighbours keep their own budgets.
+	const neighbours = "203.0.113.12"
+	for i := 0; i < 8; i++ {
+		code := send(neighbours, http.MethodGet, "/api/v1/sync/events", "expired-session-token-0123456789abcdef").Code
+		if want := map[bool]int{true: http.StatusUnauthorized, false: http.StatusTooManyRequests}[i < 5]; code != want {
+			t.Fatalf("expired retry %d status=%d want %d", i+1, code, want)
+		}
+	}
+	for _, name := range []string{"a", "b"} {
+		expect(name+" beside the retry loop", send(neighbours, http.MethodGet, "/api/v1/conversations", tokens[name]), false)
+	}
+	expect("signed-out neighbour beside the retry loop", send(neighbours, http.MethodGet, "/api/v1/health", ""), true)
+
+	// A token on a route that never looks it up is admitted on the
+	// signed-in ceiling and charged as a request without a session once
+	// served: it cannot add to the address's budget for those.
+	const junk = "203.0.113.13"
+	for i := 0; i < 5; i++ {
+		expect(fmt.Sprintf("junk token on a public route %d", i+1), send(junk, http.MethodGet, "/api/v1/health", "junk-token-0123456789abcdef0123"), false)
+	}
+	expect("anonymous after junk tokens", send(junk, http.MethodGet, "/api/v1/health", ""), true)
 
 	// Credential routes stay on the address budgets even with a valid
 	// session token: a recovery attempt is never moved to the account
@@ -150,43 +196,129 @@ func TestSignedInRequestsUseTheirAccountBudget(t *testing.T) {
 		expect(fmt.Sprintf("recovery %d", i+1), send(credential, http.MethodGet, "/api/v1/recovery", tokens["c"]), false)
 	}
 	expect("anonymous after recovery attempts", send(credential, http.MethodGet, "/api/v1/health", ""), true)
-	before := rejections()
+	before = rejections()
 	expect("sixth recovery", send(credential, http.MethodGet, "/api/v1/recovery", tokens["c"]), true)
 	if after := rejections(); after["account"] != before["account"] || after["general"] != before["general"]+1 {
 		t.Fatalf("sixth recovery rejected as %v -> %v, want general", before, after)
 	}
 }
 
-func TestAccountChargeRefundsOnlyItsOwnMinute(t *testing.T) {
+func TestAccountChargeSettlesOnce(t *testing.T) {
 	limiter, err := newRateLimiter(nil, rateLimits{general: 2, auth: 1, enrollment: 1, account: 2, signedIn: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now()
-	old := &bucket{general: 2, reset: now.Add(-time.Second)}
-	current := &bucket{general: 2, reset: now.Add(time.Minute)}
-	limiter.buckets[remoteHash(limiter.salt[:], "192.0.2.1")] = current
-	charge := &accountCharge{limiter: limiter, host: "192.0.2.1", address: old}
+	address := func() int {
+		if b := limiter.buckets[remoteHash(limiter.salt[:], "192.0.2.1")]; b != nil {
+			return b.general
+		}
+		return 0
+	}
+	charge := &accountCharge{limiter: limiter, host: "192.0.2.1"}
 	if ok, _ := charge.Authenticated("acct_x"); !ok {
 		t.Fatal("first account request refused")
 	}
-	if current.general != 2 {
-		t.Fatalf("a charge from an earlier minute refunded the current one: general=%d", current.general)
-	}
-	// A second call (for example withRecentAuth around withAuth) counts once.
+	// A second call (for example withRecentAuth around withAuth) counts
+	// once, and nothing later moves a settled request.
 	if ok, _ := charge.Authenticated("acct_x"); !ok {
 		t.Fatal("repeated call refused")
 	}
-	if got := limiter.buckets[limiter.accountKey("acct_x", "192.0.2.1")].general; got != 1 {
+	charge.settleUnused()
+	if ok, _ := charge.Unauthenticated(); !ok {
+		t.Fatal("unauthenticated after authenticated changed the outcome")
+	}
+	if got := limiter.accountBuckets[limiter.accountKey("acct_x", "192.0.2.1")].general; got != 1 {
 		t.Fatalf("account count=%d want 1", got)
+	}
+	if got := address(); got != 0 {
+		t.Fatalf("a valid session was charged to the address: general=%d", got)
+	}
+	// Tokens that do not resolve, and tokens a route never looked up,
+	// go to the address's general budget for the current minute.
+	unresolved := &accountCharge{limiter: limiter, host: "192.0.2.1"}
+	if ok, _ := unresolved.Unauthenticated(); !ok {
+		t.Fatal("first unresolved token refused")
+	}
+	(&accountCharge{limiter: limiter, host: "192.0.2.1"}).settleUnused()
+	if got := address(); got != 2 {
+		t.Fatalf("address general=%d want 2", got)
+	}
+	before := limiter.rejections[scopeGeneral].Load()
+	(&accountCharge{limiter: limiter, host: "192.0.2.1"}).settleUnused()
+	if got := limiter.rejections[scopeGeneral].Load(); got != before {
+		t.Fatal("a request already served was counted as refused")
+	}
+	if ok, retry := (&accountCharge{limiter: limiter, host: "192.0.2.1"}).Unauthenticated(); ok || retry < 1 || retry > 60 {
+		t.Fatalf("unresolved token past the general budget: ok=%v retry=%d", ok, retry)
+	}
+	if got := limiter.rejections[scopeGeneral].Load(); got != before+1 {
+		t.Fatalf("general rejections=%d want %d", got, before+1)
 	}
 	if limiter.accountKey("acct_x", "192.0.2.1") == limiter.accountKey("acct_x", "192.0.2.2") ||
 		limiter.accountKey("acct_x", "192.0.2.1") == limiter.accountKey("acct_y", "192.0.2.1") {
 		t.Fatal("account keys collide across addresses or accounts")
 	}
-	for key := range limiter.buckets {
-		if strings.Contains(key, "acct_x") || strings.Contains(key, "192.0.2") {
-			t.Fatalf("rate-limit table holds an identifier: %q", key)
+	for _, table := range []map[string]*bucket{limiter.buckets, limiter.accountBuckets} {
+		for key := range table {
+			if strings.Contains(key, "acct_x") || strings.Contains(key, "192.0.2") {
+				t.Fatalf("rate-limit table holds an identifier: %q", key)
+			}
 		}
+	}
+}
+
+// Account budgets have their own bounded table: one valid account seen
+// from very many addresses (each IPv6 /64 is one) fills only that table,
+// and evicting there never resets an address's credential budget.
+func TestAccountBucketsCannotEvictAddressBuckets(t *testing.T) {
+	limiter, err := newRateLimiter(httpapi.NewClientIdentityResolver(nil), rateLimits{general: 100, auth: 1, enrollment: 1, account: 100, signedIn: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := limiter.middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	login := func() int {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+		request.RemoteAddr = "192.0.2.50:4000"
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder.Code
+	}
+	if code := login(); code != http.StatusNoContent {
+		t.Fatalf("first login status=%d", code)
+	}
+	if code := login(); code != http.StatusTooManyRequests {
+		t.Fatalf("second login status=%d, want 429", code)
+	}
+	now := time.Now()
+	limiter.mu.Lock()
+	for i := 0; i < maxRateLimitEntries; i++ {
+		limiter.accountBuckets["filled-"+strconv.Itoa(i)] = &bucket{general: 1, reset: now.Add(time.Minute)}
+	}
+	addresses := len(limiter.buckets)
+	limiter.mu.Unlock()
+	// The same account from new /64s: each adds an account bucket, which
+	// evicts another account bucket, never an address bucket.
+	for i := 0; i < 50; i++ {
+		host := rateLimitHost(fmt.Sprintf("2001:db8:%x::1", i))
+		if ok, _ := (&accountCharge{limiter: limiter, host: host}).Authenticated("acct_roaming"); !ok {
+			t.Fatalf("roaming request %d refused", i)
+		}
+	}
+	limiter.mu.Lock()
+	gotAccounts, gotAddresses := len(limiter.accountBuckets), len(limiter.buckets)
+	limiter.mu.Unlock()
+	if gotAccounts != maxRateLimitEntries || gotAddresses != addresses {
+		t.Fatalf("tables: accounts=%d addresses=%d, want %d and %d", gotAccounts, gotAddresses, maxRateLimitEntries, addresses)
+	}
+	if got := limiter.evictions.Load(); got != 50 {
+		t.Fatalf("evictions=%d want 50", got)
+	}
+	if code := login(); code != http.StatusTooManyRequests {
+		t.Fatalf("credential budget was reset under account-table pressure: status=%d", code)
+	}
+	if entries, _ := limiter.stats(); entries != maxRateLimitEntries+addresses {
+		t.Fatalf("stats entries=%d want both tables (%d)", entries, maxRateLimitEntries+addresses)
 	}
 }

@@ -270,7 +270,9 @@ INDEX idx_sync_events_conversation (conversation_id=? AND id>?)`; a
 recursive CTE ordered by id (SQLite runs it as a priority queue, as a
 co-routine) takes the smallest and queues the next visible event of the same
 conversation on the same index, and stops after the page limit. A page
-reads about memberships + limit events wherever the cursor is. Account
+reads about memberships + limit events wherever the cursor is (not true
+when a conversation holds a long run of events the device may not see:
+see "Review follow-up" below). Account
 events come from `idx_sync_events_account` as before. The cursor check
 reads only the oldest bound, and none for a cursor of 0. No new index and
 no migration.
@@ -295,3 +297,87 @@ filter from the merge step makes it fail.
 **Still open (not changed):** the HTTP handler calls `SyncBounds` once more
 per page for the response's bounds (1.9 ms at large, 11-22 ms at
 1,000-2,000 memberships).
+
+## Review follow-up: sync pages past runs of hidden events
+
+**Finding (reproduced).** The merge above seeded and advanced each
+conversation with its next event the device may *see*. When a conversation
+holds a long run the device may not see (a device linked after the group's
+history and paging from 0, a device removed from the group, a blocked heavy
+sender), every page searched that run forward from the cursor again, so
+paging past it was quadratic. The reviewer's experiment (two groups,
+paging from 0, limit 100) on this host: 10k events per group 0.62 s for
+100 pages (single scan 0.07 s), 40k 9.1 s for 400 pages, worst page 60 ms
+(single scan 0.34 s).
+
+**Change.** `listSyncEventsQuery` queues each chain's next event whatever
+its visibility, computes visibility as a row is queued and only flags it,
+and streams rows in id order with no LIMIT; `ListSyncEvents` stops after
+`limit` visible rows and closing the rows ends the merge. Account events
+are one more chain, so a page is still one statement (one snapshot). A
+page now reads one probe per membership plus the events of the account's
+conversations and its own events inside the page's id range, hidden ones
+included, and nothing past it. EXPLAIN QUERY PLAN: `CO-ROUTINE candidates`
+(SETUP: `MATERIALIZE first_events`; RECURSIVE STEP: `SCAN q`, `SEARCH se
+USING INTEGER PRIMARY KEY`, next ids on `idx_sync_events_conversation
+(conversation_id=? AND id>?)` and `idx_sync_events_account (account_id=?
+AND id>?)`), then `SCAN q`: the queue advances only as rows are read.
+`TestListSyncEventsQueryStreams` fails if the plan materializes the merge.
+The cursor-age check also walked each conversation from its start to its
+first unblocked event on every page; it is now settled by the event at the
+cursor (a page's last event) when that still exists and counts towards the
+oldest bound, and falls back to the bound otherwise.
+
+**Benchmarks.** Same host for every column: 4 vCPU Intel Xeon, 16 GiB,
+go1.26.10, Linux 6.18 amd64. "Merge (b2e3ee9)" is the code before this
+change; "single scan" is the query before the merge (with `SyncBounds` per
+page, as `ListSyncEvents` then ran it).
+
+`BenchmarkSyncHiddenRun` (`sync_hidden_run_bench_test.go`): a hidden group
+and a visible conversation, n messages each, interleaved, plus a reaction
+and an account event every tenth step; page all from 0, limit 100; 3 runs
+of `go test -run NONE -bench SyncHiddenRun -benchtime 3x ./internal/storage`.
+
+| Mode, n per group | Pages | Single scan | Merge (b2e3ee9) | Now | Worst page now (before) |
+|---|---|---|---|---|---|
+| joined late, 10k | 120 | 0.12 s | 1.11 s | **0.22 s** | 6.4 ms (23 ms) |
+| removed, 10k | 121 | 0.13 s | 1.05 s | **0.22 s** | 6.1 ms (21 ms) |
+| blocked sender, 10k | 110 | 6.37 s | 5.54 s | **0.26 s** | 26 ms (85 ms) |
+| joined late, 40k | 480 | 0.48 s | 16.1 s | **0.90 s** | 10.5 ms (86 ms) |
+| removed, 40k | 481 | 0.48 s | 15.6 s | **0.88 s** | 9.3 ms (86 ms) |
+| blocked sender, 40k | 440 | 112 s | 88.9 s | **0.95 s** | 10.1 ms (319 ms) |
+
+Paging is linear now: about 1.9 ms a page at 10k and at 40k. Against the
+single scan it costs about 1.8x per page where the account has nothing
+else (the queue and the visibility subqueries per row; a fifth of a page is
+parsing the two statements). The blocked case was slow in both older
+shapes because of the cursor check (single scan: full `SyncBounds`).
+The reviewer's experiment, ported unchanged: 10k 0.13 s, 40k 0.58 s for 400
+pages, worst page 3.0 ms.
+
+Original benchmarks (`-bench 'SyncBounds|MembershipsPerAccount' -benchmem
+-count 2`, means):
+
+| Benchmark | Dataset | Merge (b2e3ee9) ns/op | Now ns/op | allocs/op |
+|---|---|---|---|---|
+| ListSyncEvents from 0, 100 | small / large | 1.82M / 2.77M | 1.30M / 2.38M | 1540 -> 1541 |
+| ListSyncEvents from mid, 100 | small / large | 1.27M / 2.45M | 0.98M / 2.12M | 1759 -> 1762 |
+| ListSyncEvents from mid, 100 | 200 / 1,000 / 2,000 memberships | 2.93M / 12.1M / 23.1M | 1.87M / 4.59M / 7.56M | 1659 -> 1662 |
+| SyncBounds | small / large | 0.47M / 1.97M | 0.50M / 1.98M (unchanged) | 38 |
+
+The membership rows gain most from the cursor check, which no longer
+probes every membership for the oldest bound.
+
+**Equivalence.** `TestSyncHiddenRunMatchesLegacy` compares every page with
+the legacy single-scan query for the three modes, for the affected device,
+the other member's device, no device and an unknown one, and again after
+pruning a quarter of the history (cursors every 7 ids across the pruned
+edge, one expired). `TestReadModelQueriesMatchLegacy` passes unchanged.
+
+**Still open (not changed).** `SyncBounds`, which the HTTP handler adds to
+every page, walks each conversation from both ends to its first unblocked
+event: 0.4-0.6 ms in the joined-late and removed datasets, but 61 ms (10k)
+and 282 ms (40k) when a group's edges are a blocked sender's run. Paging
+such an account over HTTP is still about 0.28 s a page. This predates the
+merge (T49A); bounding it needs the sender next to the event or cached
+bounds, i.e. a schema change.

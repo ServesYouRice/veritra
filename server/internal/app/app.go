@@ -1078,11 +1078,15 @@ func requestRoute(pattern string) string {
 }
 
 // Request budgets per minute (docs/operations.md, "Credential abuse
-// controls"). Every request is charged to its client address. A request
-// with a session token is charged there only until the token resolves:
-// then it moves to its account's budget at that address, so people behind
-// one router do not use up each other's requests. Credential and enrollment
-// routes always stay on the address budgets, whatever they carry.
+// controls"). A request without a session token is charged to its client
+// address's general budget. A request with one is admitted on the
+// address's signed-in budget, never the general one, and settled once its
+// token has been looked up: a valid session is charged to its account's
+// budget at that address, a token that does not resolve to the general
+// budget. So anonymous requests and stale tokens at an address cannot
+// refuse its signed-in people, while token lookups stay bounded per address
+// by the signed-in budget. Credential and enrollment routes always stay on
+// the address budgets, whatever they carry.
 type rateLimits struct {
 	// general: requests per address without a session that resolves.
 	general int
@@ -1117,10 +1121,16 @@ type rateLimiter struct {
 	clientIdentities *httpapi.ClientIdentityResolver
 	limits           rateLimits
 
-	mu         sync.Mutex
-	buckets    map[string]*bucket
-	evictions  atomic.Int64
-	rejections [len(rateLimitScopes)]atomic.Int64
+	mu sync.Mutex
+	// buckets holds address buckets (every budget of one client address,
+	// the credential and enrollment ones included); accountBuckets holds
+	// account budgets at an address. They are bounded separately, so one
+	// account seen from many addresses (each IPv6 /64 is one) cannot evict
+	// other addresses' buckets and reset their credential budgets.
+	buckets        map[string]*bucket
+	accountBuckets map[string]*bucket
+	evictions      atomic.Int64
+	rejections     [len(rateLimitScopes)]atomic.Int64
 }
 
 // rateLimitScopes name the limit a rejected request hit, for metrics only.
@@ -1144,6 +1154,7 @@ type bucket struct {
 	reset      time.Time
 }
 
+// maxRateLimitEntries bounds each of the two bucket tables.
 const maxRateLimitEntries = 65536
 
 const rateLimitEvictionSampleSize = 32
@@ -1153,6 +1164,7 @@ func newRateLimiter(clientIdentities *httpapi.ClientIdentityResolver, limits rat
 		clientIdentities: clientIdentities,
 		limits:           limits,
 		buckets:          map[string]*bucket{},
+		accountBuckets:   map[string]*bucket{},
 	}
 	if _, err := rand.Read(rl.salt[:]); err != nil {
 		return nil, err
@@ -1169,9 +1181,11 @@ func (rl *rateLimiter) cleanupLoop(ctx context.Context) {
 			return
 		case now := <-ticker.C:
 			rl.mu.Lock()
-			for k, b := range rl.buckets {
-				if b.reset.Before(now) {
-					delete(rl.buckets, k)
+			for _, table := range []map[string]*bucket{rl.buckets, rl.accountBuckets} {
+				for k, b := range table {
+					if b.reset.Before(now) {
+						delete(table, k)
+					}
 				}
 			}
 			rl.mu.Unlock()
@@ -1179,18 +1193,19 @@ func (rl *rateLimiter) cleanupLoop(ctx context.Context) {
 	}
 }
 
-// bucketLocked returns key's bucket for the current minute, starting a new
-// one (and evicting under table pressure) when needed. rl.mu must be held.
-func (rl *rateLimiter) bucketLocked(key string, now time.Time) *bucket {
-	b, ok := rl.buckets[key]
+// bucketLocked returns key's bucket in table for the current minute,
+// starting a new one (and evicting from the same table under pressure)
+// when needed. rl.mu must be held.
+func (rl *rateLimiter) bucketLocked(table map[string]*bucket, key string, now time.Time) *bucket {
+	b, ok := table[key]
 	if ok && !b.reset.Before(now) {
 		return b
 	}
-	if !ok && len(rl.buckets) >= maxRateLimitEntries {
-		rl.evictOneLocked(now)
+	if !ok && len(table) >= maxRateLimitEntries {
+		rl.evictOneLocked(table, now)
 	}
 	b = &bucket{reset: now.Add(time.Minute)}
-	rl.buckets[key] = b
+	table[key] = b
 	return b
 }
 
@@ -1198,23 +1213,27 @@ func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host := rateLimitHost(rl.clientIP(r))
 		now := time.Now()
-		auth := isAuthEndpoint(r.URL.Path)
-		enrollment := isEnrollmentEndpoint(r.URL.Path)
-		// A session token on any other route may move the request to its
-		// account's budget once it resolves (accountCharge).
+		class := httpapi.ClassifyRoute(r.URL.Path)
+		auth := class == httpapi.CredentialRoute
+		enrollment := class == httpapi.EnrollmentRoute
+		// A session token on any other route is admitted on the address's
+		// signed-in budget alone, so requests without a session there
+		// cannot refuse it; accountCharge settles it once the token has
+		// been looked up.
 		signedIn := !auth && !enrollment && httpapi.HasBearerToken(r)
 
 		rl.mu.Lock()
-		b := rl.bucketLocked(remoteHash(rl.salt[:], host), now)
-		b.general++
+		b := rl.bucketLocked(rl.buckets, remoteHash(rl.salt[:], host), now)
+		if signedIn {
+			b.signedIn++
+		} else {
+			b.general++
+		}
 		if auth {
 			b.auth++
 		}
 		if enrollment {
 			b.enrollment++
-		}
-		if signedIn {
-			b.signedIn++
 		}
 		scope := -1
 		switch {
@@ -1224,7 +1243,7 @@ func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
 			scope = scopeEnrollment
 		case signedIn && b.signedIn > rl.limits.signedIn:
 			scope = scopeSignedIn
-		case b.general > rl.limits.general:
+		case !signedIn && b.general > rl.limits.general:
 			scope = scopeGeneral
 		}
 		retryAfter := boundedRetryAfter(b.reset.Sub(now))
@@ -1240,54 +1259,84 @@ func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		request := r.WithContext(httpapi.WithRequestBudget(r.Context(), &accountCharge{limiter: rl, host: host, address: b}))
+		charge := &accountCharge{limiter: rl, host: host}
+		request := r.WithContext(httpapi.WithRequestBudget(r.Context(), charge))
 		// Copy the matched pattern back for the request logger, as
-		// routeTimeouts does, also when the handler aborts.
-		defer func() { r.Pattern = request.Pattern }()
+		// routeTimeouts does, and settle a token the route never looked
+		// up, also when the handler aborts.
+		defer func() {
+			r.Pattern = request.Pattern
+			charge.settleUnused()
+		}()
 		next.ServeHTTP(w, request)
 	})
 }
 
 // accountCharge is the httpapi.RequestBudget of one request with a session
-// token. The middleware charged it to the address's general budget, which
-// is where it stays when the token does not resolve: requests without a
-// valid session from one address stay within that budget, as before
-// per-account budgets.
+// token. The middleware admitted it on the address's signed-in budget;
+// the first of Authenticated, Unauthenticated or settleUnused decides
+// which other budget it is charged to.
 type accountCharge struct {
 	limiter *rateLimiter
 	host    string
-	address *bucket // the address's bucket for the minute the request came in
 
 	done       bool
 	ok         bool
 	retryAfter int
 }
 
-// Authenticated moves the request from the address's general budget to
-// the budget of accountID at the same address. Only the first call counts.
+// Authenticated charges the request to the budget of accountID at the
+// request's address.
 func (c *accountCharge) Authenticated(accountID string) (bool, int) {
 	rl := c.limiter
-	now := time.Now()
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
-	if c.done {
-		return c.ok, c.retryAfter
-	}
-	c.done = true
-	// The refund goes to the bucket of the minute that was charged; once
-	// that minute is over its bucket no longer counts, so a late refund
-	// never lowers a newer minute.
-	if c.address.general > 0 {
-		c.address.general--
-	}
-	b := rl.bucketLocked(rl.accountKey(accountID, c.host), now)
-	b.general++
-	c.ok = b.general <= rl.limits.account
-	c.retryAfter = boundedRetryAfter(b.reset.Sub(now))
-	if !c.ok {
-		rl.rejections[scopeAccount].Add(1)
+	if !c.done {
+		c.settleLocked(rl.accountBuckets, rl.accountKey(accountID, c.host), rl.limits.account, scopeAccount)
 	}
 	return c.ok, c.retryAfter
+}
+
+// Unauthenticated charges a request whose token did not resolve to the
+// address's general budget, as a request without a session: guessed and
+// stale tokens from one address share that budget with anonymous
+// requests, and once it is spent they are refused (after their lookup).
+func (c *accountCharge) Unauthenticated() (bool, int) {
+	rl := c.limiter
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	if !c.done {
+		c.settleLocked(rl.buckets, remoteHash(rl.salt[:], c.host), rl.limits.general, scopeGeneral)
+	}
+	return c.ok, c.retryAfter
+}
+
+// settleUnused charges a request whose route never looked its token up (a
+// public route, or no route) to the general budget once it has been
+// served, as one without a session.
+func (c *accountCharge) settleUnused() {
+	rl := c.limiter
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	if !c.done {
+		c.settleLocked(rl.buckets, remoteHash(rl.salt[:], c.host), rl.limits.general, -1)
+	}
+}
+
+// settleLocked charges key's general count in table for the current minute
+// against limit, counting a refusal under scope unless it is -1. rl.mu
+// must be held.
+func (c *accountCharge) settleLocked(table map[string]*bucket, key string, limit, scope int) {
+	rl := c.limiter
+	now := time.Now()
+	c.done = true
+	b := rl.bucketLocked(table, key, now)
+	b.general++
+	c.ok = b.general <= limit
+	c.retryAfter = boundedRetryAfter(b.reset.Sub(now))
+	if !c.ok && scope >= 0 {
+		rl.rejections[scope].Add(1)
+	}
 }
 
 // accountKey keys an account's budget at one client address. Like address
@@ -1300,23 +1349,6 @@ func (rl *rateLimiter) accountKey(accountID, host string) string {
 	_, _ = hasher.Write([]byte{0})
 	_, _ = hasher.Write([]byte(host))
 	return hex.EncodeToString(hasher.Sum(nil))
-}
-
-func isAuthEndpoint(path string) bool {
-	switch path {
-	case "/api/v1/setup/owner",
-		"/api/v1/auth/login",
-		"/api/v1/auth/reauth",
-		"/api/v1/register",
-		"/api/v1/recovery",
-		"/api/v1/device-links/claim":
-		return true
-	}
-	return strings.HasPrefix(path, "/api/v1/device-links/") && strings.HasSuffix(path, "/claim-status")
-}
-
-func isEnrollmentEndpoint(path string) bool {
-	return strings.HasSuffix(path, "/enrollment")
 }
 
 func (rl *rateLimiter) clientIP(r *http.Request) string {
@@ -1356,17 +1388,17 @@ func rateLimitHost(host string) string {
 	return host
 }
 
-func (rl *rateLimiter) evictOneLocked(now time.Time) {
-	if len(rl.buckets) < maxRateLimitEntries {
+func (rl *rateLimiter) evictOneLocked(table map[string]*bucket, now time.Time) {
+	if len(table) < maxRateLimitEntries {
 		return
 	}
 	var candidate string
 	var candidateReset time.Time
 	sampled := 0
-	for key, b := range rl.buckets {
+	for key, b := range table {
 		if !b.reset.After(now) {
-			delete(rl.buckets, key)
-			if len(rl.buckets) < maxRateLimitEntries {
+			delete(table, key)
+			if len(table) < maxRateLimitEntries {
 				return
 			}
 			continue
@@ -1380,14 +1412,15 @@ func (rl *rateLimiter) evictOneLocked(now time.Time) {
 		}
 	}
 	if candidate != "" {
-		delete(rl.buckets, candidate)
+		delete(table, candidate)
 		rl.evictions.Add(1)
 	}
 }
 
+// stats reports the entries of both tables together and their evictions.
 func (rl *rateLimiter) stats() (entries int, evictions int64) {
 	rl.mu.Lock()
-	entries = len(rl.buckets)
+	entries = len(rl.buckets) + len(rl.accountBuckets)
 	rl.mu.Unlock()
 	return entries, rl.evictions.Load()
 }
