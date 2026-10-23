@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -129,7 +130,7 @@ const legacyListSyncEventsQuery = `
 
 // legacyListSyncEvents is ListSyncEvents as it was: the cursor check on the
 // full bounds, then the single-scan query.
-func legacyListSyncEvents(t *testing.T, store *Store, accountID, deviceID string, afterID int64, limit int) ([]domain.SyncEvent, error) {
+func legacyListSyncEvents(t testing.TB, store *Store, accountID, deviceID string, afterID int64, limit int) ([]domain.SyncEvent, error) {
 	t.Helper()
 	ctx := context.Background()
 	oldest, _ := legacySyncBounds(t, store, accountID)
@@ -220,7 +221,7 @@ const legacyBlobUsageQuery = `SELECT COALESCE(SUM(size_bytes), 0) FROM (
 		UNION ALL SELECT account_id, size_bytes FROM backup_blobs
 	)`
 
-func legacySyncBounds(t *testing.T, store *Store, accountID string) (int64, int64) {
+func legacySyncBounds(t testing.TB, store *Store, accountID string) (int64, int64) {
 	t.Helper()
 	var oldest, latest sql.NullInt64
 	if err := store.db.QueryRowContext(context.Background(), legacySyncBoundsQuery, accountID, accountID).Scan(&oldest, &latest); err != nil {
@@ -464,6 +465,84 @@ func TestReadModelQueriesMatchLegacy(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkReadModelsMatch(t, store, ds)
+}
+
+// The review scenario for the sync merge: a long run of events the device
+// may not see in one group (it joined the MLS group after the history, was
+// removed before it, or blocked the sender) interleaved with a visible
+// conversation, reactions and account events, paged from 0. Pages match
+// the legacy query for the affected device, the other member's device
+// (never in the MLS group), no device and an unknown one.
+func TestSyncHiddenRunMatchesLegacy(t *testing.T) {
+	ctx := context.Background()
+	for _, mode := range []hiddenRunMode{hiddenJoinedLate, hiddenRemoved, hiddenBlocked} {
+		t.Run(string(mode), func(t *testing.T) {
+			store := newBenchStore(t, ctx)
+			ds := seedHiddenRun(t, ctx, store, 60, mode)
+			checkSyncEventsMatch(t, store, ds.Account, []string{ds.Device, "", "dev_unknown"}, true, true, ds.LastEventID/2)
+			checkSyncEventsMatch(t, store, "acct_hr_b", []string{"dev_hr_b"}, true, true, ds.LastEventID/2)
+			// The hidden run is really hidden: the device sees none (or, once
+			// removed, only the first) of the group's messages.
+			var hidden int
+			after := int64(0)
+			for {
+				page, err := store.ListSyncEvents(ctx, ds.Account, ds.Device, after, 100)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(page) == 0 {
+					break
+				}
+				for _, event := range page {
+					if event.ConversationID == "conv_hr_hidden" && event.Type == "message.envelope.created" {
+						hidden++
+					}
+				}
+				after = page[len(page)-1].ID
+			}
+			if want := map[hiddenRunMode]int{hiddenRemoved: 1}[mode]; hidden != want {
+				t.Fatalf("device saw %d hidden-run messages, want %d", hidden, want)
+			}
+		})
+	}
+}
+
+// The page bound rests on SQLite running the merge as a co-routine that
+// advances only as rows are read. Were it materialized, every page would
+// read all of the account's history after the cursor.
+func TestListSyncEventsQueryStreams(t *testing.T) {
+	ctx := context.Background()
+	store := newBenchStore(t, ctx)
+	ds := seedHiddenRun(t, ctx, store, 5, hiddenJoinedLate)
+	rows, err := store.db.QueryContext(ctx, "EXPLAIN QUERY PLAN "+listSyncEventsQuery, ds.Account, 0, ds.Device)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan = append(plan, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(plan, "\n")
+	if !strings.Contains(joined, "CO-ROUTINE candidates") || strings.Contains(joined, "MATERIALIZE candidates") {
+		t.Fatalf("sync merge is not streamed:\n%s", joined)
+	}
+	for _, want := range []string{
+		"SEARCH n USING INDEX idx_sync_events_conversation (conversation_id=? AND id>?)",
+		"SEARCH n USING INDEX idx_sync_events_account (account_id=? AND id>?)",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("plan lacks %q:\n%s", want, joined)
+		}
+	}
 }
 
 func blobUsage(t *testing.T, store *Store) (map[string]int64, int64, map[string]int64, int64) {
