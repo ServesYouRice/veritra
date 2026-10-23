@@ -110,7 +110,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 	case "restore":
 		return restore(cfg, fs.Args(), stdout)
 	case "verify-backup":
-		return verifyBackup(ctx, cfg, fs.Args(), stdout)
+		err := verifyBackup(ctx, cfg, fs.Args(), stdout)
+		if len(fs.Args()) == 1 {
+			recordStandaloneDrill(cfg, err == nil, time.Now(), stderr)
+		}
+		return err
 	case "scheduled-backup":
 		options, err := scheduledBackupOptionsFromEnv(cfg)
 		if err != nil {

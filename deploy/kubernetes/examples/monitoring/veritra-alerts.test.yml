@@ -1,0 +1,155 @@
+# promtool unit tests for veritra-alerts.rules.yml: alerts fire on the
+# condition, wait their `for`, and quiet instances do not page. Run locally:
+#   docker run --rm -v "$PWD:/rules:ro" -w /rules --entrypoint promtool \
+#     prom/prometheus:v3.5.0 test rules veritra-alerts.test.yml
+rule_files:
+  - veritra-alerts.rules.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      # 5% free on the database volume, 25% on the blob volume.
+      - series: 'veritra_storage_filesystem_avail_bytes{job="veritra-metrics", volume="database"}'
+        values: '1073741824x30'
+      - series: 'veritra_storage_filesystem_size_bytes{job="veritra-metrics", volume="database"}'
+        values: '21474836480x30'
+      - series: 'veritra_storage_filesystem_avail_bytes{job="veritra-metrics", volume="blobs"}'
+        values: '5368709120x30'
+      - series: 'veritra_storage_filesystem_size_bytes{job="veritra-metrics", volume="blobs"}'
+        values: '21474836480x30'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: VeritraDataDiskLow
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: VeritraDataDiskLow
+        exp_alerts:
+          - exp_labels: {severity: critical, job: veritra-metrics, volume: database}
+            exp_annotations:
+              summary: Less than 10% free on the Veritra database file system.
+              runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
+
+  - interval: 1m
+    input_series:
+      # One wake job queued at t=60 s for FCM and never delivered; APNs is
+      # just as old but keeps delivering.
+      - series: 'veritra_push_backlog_oldest_job_timestamp_seconds{job="veritra-metrics", provider="fcm"}'
+        values: '60x40'
+      - series: 'veritra_push_deliveries_total{job="veritra-metrics", provider="fcm", result="delivered"}'
+        values: '0x40'
+      - series: 'veritra_push_backlog_oldest_job_timestamp_seconds{job="veritra-metrics", provider="apns"}'
+        values: '60x40'
+      - series: 'veritra_push_deliveries_total{job="veritra-metrics", provider="apns", result="delivered"}'
+        values: '0+5x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: VeritraPushBacklogStalled
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: VeritraPushBacklogStalled
+        exp_alerts:
+          - exp_labels: {severity: warning, job: veritra-metrics, provider: fcm}
+            exp_annotations:
+              summary: fcm push wakes are queued but none are delivered.
+              runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
+
+  - interval: 1m
+    input_series:
+      # Web Push: every attempt fails. FCM: one failed attempt on a quiet
+      # instance, below the minimum of five.
+      - series: 'veritra_push_deliveries_total{job="veritra-metrics", provider="webpush", result="attempted"}'
+        values: '0+1x60'
+      - series: 'veritra_push_deliveries_total{job="veritra-metrics", provider="webpush", result="failed"}'
+        values: '0+1x60'
+      - series: 'veritra_push_deliveries_total{job="veritra-metrics", provider="fcm", result="attempted"}'
+        values: '0 1x60'
+      - series: 'veritra_push_deliveries_total{job="veritra-metrics", provider="fcm", result="failed"}'
+        values: '0 1x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: VeritraPushFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, provider: webpush}
+            exp_annotations:
+              summary: Most webpush push wakes fail.
+              runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
+
+  - interval: 1m
+    input_series:
+      # A quiet instance: one request a minute, all of them 5xx.
+      - series: 'veritra_http_requests_total{job="veritra-metrics"}'
+        values: '0+1x60'
+      - series: 'veritra_http_responses_total{job="veritra-metrics", status_class="5xx"}'
+        values: '0+1x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: VeritraHTTPErrorsHigh
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      # Ten requests a second, 5% of them 5xx.
+      - series: 'veritra_http_requests_total{job="veritra-metrics"}'
+        values: '0+600x60'
+      - series: 'veritra_http_responses_total{job="veritra-metrics", status_class="5xx"}'
+        values: '0+30x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: VeritraHTTPErrorsHigh
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: More than 2% of Veritra requests fail with a server error.
+              runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
+
+  - interval: 1m
+    input_series:
+      # No drill recorded yet: not a failure.
+      - series: 'veritra_backup_last_restore_drill_success{job="veritra-metrics", instance="a"}'
+        values: '0x10'
+      - series: 'veritra_backup_last_restore_drill_timestamp_seconds{job="veritra-metrics", instance="a"}'
+        values: '0x10'
+      # A recorded drill that failed.
+      - series: 'veritra_backup_last_restore_drill_success{job="veritra-metrics", instance="b"}'
+        values: '0x10'
+      - series: 'veritra_backup_last_restore_drill_timestamp_seconds{job="veritra-metrics", instance="b"}'
+        values: '100x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: VeritraLocalRestoreDrillFailed
+        exp_alerts:
+          - exp_labels: {severity: critical, job: veritra-metrics, instance: b}
+            exp_annotations:
+              summary: The last restore drill of a Veritra backup failed.
+              runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
+
+  - interval: 1m
+    input_series:
+      - series: 'up{job="veritra-metrics"}'
+        values: '1x120'
+    alert_rule_test:
+      # kube-state-metrics has never seen a successful drill.
+      - eval_time: 30m
+        alertname: VeritraRestoreDrillOverdue
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: VeritraRestoreDrillOverdue
+        exp_alerts:
+          - exp_labels: {severity: warning, namespace: veritra, cronjob: veritra-restore-drill}
+            exp_annotations:
+              summary: No successful off-host restore drill in the last 35 days.
+              runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
+
+  - interval: 1h
+    input_series:
+      # Free space falls by 1 GiB a day from 2.5 GiB: full in about 2.5 days.
+      - series: 'veritra_storage_filesystem_avail_bytes{job="veritra-metrics", volume="blobs"}'
+        values: '2684354560-44739243x48'
+    alert_rule_test:
+      - eval_time: 30h
+        alertname: VeritraDataDiskFillsSoon
+        exp_alerts:
+          - exp_labels: {severity: warning, job: veritra-metrics, volume: blobs}
+            exp_annotations:
+              summary: The Veritra blobs file system fills within 3 days at the current rate.
+              runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -39,6 +40,10 @@ type Hub struct {
 	perIP       map[string]int
 	draining    bool
 	total       int
+	// Aggregate counters for the private metrics endpoint (card I47).
+	dropped          atomic.Int64
+	rejectedLimit    atomic.Int64
+	rejectedDraining atomic.Int64
 }
 
 func NewHub() *Hub {
@@ -57,6 +62,7 @@ func (h *Hub) Register(accountID, deviceID, remoteIP string) (*Client, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.draining {
+		h.rejectedDraining.Add(1)
 		return nil, ErrHubDraining
 	}
 	accountClients := h.subscribers[accountID]
@@ -69,6 +75,7 @@ func (h *Hub) Register(accountID, deviceID, remoteIP string) (*Client, error) {
 	}
 	if h.total >= maxConnections || accountCount >= maxConnectionsPerAccount ||
 		deviceCount >= maxConnectionsPerDevice || ipCount >= maxConnectionsPerIP {
+		h.rejectedLimit.Add(1)
 		return nil, ErrConnectionLimit
 	}
 	client := &Client{accountID: accountID, deviceID: deviceID, remoteIP: remoteIP, send: make(chan []byte, 32)}
@@ -175,8 +182,23 @@ func (h *Hub) Publish(accountIDs []string, event Event) {
 	}
 	h.mu.RUnlock()
 	for _, client := range clients {
-		client.TrySend(payload)
+		if !client.TrySend(payload) {
+			h.dropped.Add(1)
+		}
 	}
+}
+
+// HubStats holds aggregate counters only: events dropped because a socket's
+// buffer was full (the client recovers them through /sync/events) and
+// registrations refused by a connection limit or while draining.
+type HubStats struct {
+	DroppedEvents    int64
+	RejectedLimit    int64
+	RejectedDraining int64
+}
+
+func (h *Hub) Stats() HubStats {
+	return HubStats{DroppedEvents: h.dropped.Load(), RejectedLimit: h.rejectedLimit.Load(), RejectedDraining: h.rejectedDraining.Load()}
 }
 
 type Client struct {
@@ -189,15 +211,20 @@ type Client struct {
 	closed    bool
 }
 
-func (c *Client) TrySend(payload []byte) {
+// TrySend queues payload without blocking. It reports false when the
+// socket's buffer was full and the event was dropped; a closed client is not
+// counted as a drop.
+func (c *Client) TrySend(payload []byte) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if c.closed {
-		return
+		return true
 	}
 	select {
 	case c.send <- payload:
+		return true
 	default:
+		return false
 	}
 }
 

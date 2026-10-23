@@ -20,6 +20,7 @@ import (
 
 	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/domain"
+	"private-messenger/server/internal/opmetrics"
 )
 
 var (
@@ -54,6 +55,9 @@ type Store struct {
 type dbRouter struct {
 	reader *sql.DB
 	writer *sql.DB
+	// writerAcquire times BeginTx on the one-connection writer pool, which
+	// is the wait for the instance's single SQLite writer (card I47).
+	writerAcquire *opmetrics.Histogram
 }
 
 func (db *dbRouter) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
@@ -69,7 +73,10 @@ func (db *dbRouter) QueryRowContext(ctx context.Context, query string, args ...i
 }
 
 func (db *dbRouter) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
-	return db.writer.BeginTx(ctx, opts)
+	started := time.Now()
+	tx, err := db.writer.BeginTx(ctx, opts)
+	db.writerAcquire.Observe(time.Since(started))
+	return tx, err
 }
 
 func (db *dbRouter) PingContext(ctx context.Context) error {
@@ -117,7 +124,7 @@ func Open(ctx context.Context, cfg config.Config) (*Store, error) {
 	// Query calls use their own pool. SQLite's WAL mode gives those reads
 	// deferred transactions by default, while writes stay serialized through
 	// the single writer connection.
-	store := &Store{db: &dbRouter{reader: reader, writer: writer}}
+	store := &Store{db: &dbRouter{reader: reader, writer: writer, writerAcquire: newWriterAcquireHistogram()}}
 	return store, nil
 }
 
