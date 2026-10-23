@@ -30,7 +30,7 @@ Client SDK (phase 3)██░░░░░░░░  outline only (docs/sdk.md)
 ## Done
 
 The former audit queue (I29–I51) is implemented and checked, apart from the
-rows marked in progress below and the items under [Open work](#open-work).
+items under [Open work](#open-work).
 The runtime sweep on 2026-10-23 ([`verification-2026-10-23.md`](testing/evidence/verification-2026-10-23.md))
 added tests for the acceptance criteria that had none and fixed what they found.
 
@@ -44,8 +44,8 @@ added tests for the acceptance criteria that had none and fixed what they found.
 | Verification sweep | I29–I38 tests added; retention metric and Caddy log leaks fixed; QA01/QA04 verified | [`verification-2026-10-23.md`](testing/evidence/verification-2026-10-23.md) |
 | Sync retry | A rate-limited catch-up honours `Retry-After` (was up to 2 min stalled) | `mobile/test/sync_recovery_test.dart` |
 | Reauth | A mistyped password in the reauth prompt no longer signs the user out | `mobile/test/app_state_test.dart` |
-| T47 observability | _in progress_ | |
-| T49D admission limits | _in progress_ | |
+| T47 observability | Capacity contract with host tiers S/M, privacy-safe metrics (writer wait, disk, data size, backup age, drill result, push timing), a load tool (`scripts/capacity.sh`, `cmd/veritra-load`), alert rules with promtool tests. Tier S passes at 4 msgs/device/min | [`T47-capacity.md`](testing/evidence/T47-capacity.md) |
+| T49D admission limits | Per-account limits enforced in the writer transaction: storage, blobs, devices, members, conversations, deliveries per minute, write MiB per hour; a write guard answers 507 when the disk is nearly full | [`T47-capacity.md`](testing/evidence/T47-capacity.md) |
 | T46 deploy smoke + k3s rehearsal | Hardened Compose smoke (`scripts/smoke-deploy.sh`, also run by the release command) and a throwaway k3s cluster: deploy, upgrade, rollback, backup, restore drill, full restore. Fixed TURN URL restart loop, VAPID subject, Traefik redirect, Caddy duplicate headers; `GOMEMLIMIT` set | [`T46-deploy-smoke.md`](testing/evidence/T46-deploy-smoke.md) |
 | QA02 iOS evidence schema | Simulator CI stays required but can never count as signed-iOS evidence; signed records bind platform, type, commit, digest and attested provenance | [`QA02-ios-evidence.md`](testing/evidence/QA02-ios-evidence.md) |
 | Mobile cache index (local schema 9) | Receiving a message with 10k cached rows 23 ms → 5 ms; the upgrade is now one transaction | [`benchmarks-t49c.md`](testing/evidence/benchmarks-t49c.md) |
@@ -67,6 +67,9 @@ and keep each change small.
 | T49C-4 | Chat-list scroll position, an unsent draft and the reply target are lost when switching tabs (wide layout) | Recommended: keep them |
 | T44C | A second app language | English only today; needs a native-speaker review |
 | T42B | Native incoming-call lifecycle (CallKit, PushKit, Android Telecom) | Deferred by D16/D20; design in [`docs/call-platform-design-proposal.md`](docs/call-platform-design-proposal.md) needs approval when it starts |
+| Capacity tier M | 250 accounts pass in steady state, but cold catch-ups from deep history miss the targets; a mid-history sync page still takes 252 ms (T49) | Fix the `ListSyncEvents` mid-cursor query, then rerun `scripts/capacity.sh` |
+| Long soak | The 2-hour soak was not run here (shared CPU) | Run `scripts/capacity.sh` on the owner's host |
+| Shared address | Families or offices behind one router share the 240 requests/minute per-address limit | Needs its own design (per-account budgets exist now) |
 | Downloads | An aborted download (integrity failure mid-stream) skips the normal request log line and metrics | A `blob_integrity_failed` warning is still logged |
 | Local DB upgrade | A failed upgrade (e.g. disk full) shows the wrong-key message | Nothing is lost; needs its own failure kind and UI string |
 | Deploy, untested here | Rollback across a schema change, a live R2 restore, cert-manager issuance, Flux reading the real `infra` repo | Try on the first real deployment |
@@ -99,7 +102,7 @@ proxy), one replica with `Recreate`, the data directory backed up to R2.
 | Kubernetes base (`deploy/kubernetes/base`) | ✅ One replica, `Recreate`, non-root, read-only root, no service-account token, network policy, backup and restore-drill CronJobs |
 | Local release command (`scripts/release-image.sh`) | ✅ Checks, govulncheck, cargo audit, Trivy, push by digest, writes the digest into `infra` |
 | Off-host backups to R2 | ✅ Built; first restore from R2 still to be tried |
-| Monitoring examples | ✅ Alert rules and private metrics scrape; T47 adds more (in progress) |
+| Monitoring examples | ✅ Alert rules (backup age, failed drill, disk, WAL, OOM, write refusals, provider failures, certificates) with promtool tests, private metrics scrape, keep-list for a hosted free tier |
 | Hardened smoke and k3s rehearsal | ✅ Passed with stand-ins (MinIO for R2, a local coturn); Flux example in `deploy/kubernetes/examples/` |
 | **Needed from the owner** | OVH VPS and its firewall, Cloudflare account, domain and a DNS-only record, a Cloudflare DNS token for cert-manager, an R2 bucket with a lock and a per-bucket token, the age key, a GHCR token with `write:packages`, where coturn runs, and **one permanent hostname** (clients bind device identity to it) |
 
@@ -134,6 +137,7 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 | **D35** (2026-10-23) | OpenMLS 0.9.2 (security patch over D13's 0.9.0) |
 | **D36** (2026-10-23) | Blob integrity: a SHA-256 per 64 KiB chunk recorded at upload; reads verify only the chunks they serve; old blobs get a full check once |
 | **D37** (2026-10-23) | Release policy v2: exactly one `ios` `signed-release` record from a workflow other than CI, verified by `gh attestation verify`; `simulator-debug` records are checked but never count |
+| **D38** (2026-10-23) | Admission limit defaults (tier S): 512 MiB and 10,000 blobs per account, 10 devices, 100 members per conversation, 1,000 conversations per account, 1,000 deliveries per minute, 64 MiB written per hour; instance storage = volume × 0.9 / (backups + 3), at most 10 GiB. All set with `PRIVATE_MESSENGER_LIMIT_*` |
 
 ## Roadmap
 
