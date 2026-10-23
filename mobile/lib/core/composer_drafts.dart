@@ -60,6 +60,15 @@ class ComposerDrafts {
     _replyTo.remove(conversationId);
   }
 
+  /// Forgets every conversation not in [conversationIds]: one that left the
+  /// conversation list another way (removed by an admin, or missing after a
+  /// refresh) takes its draft with it.
+  void retainOnly(Iterable<String> conversationIds) {
+    final keep = conversationIds.toSet();
+    _text.removeWhere((id, _) => !keep.contains(id));
+    _replyTo.removeWhere((id, _) => !keep.contains(id));
+  }
+
   /// Forgets every draft. Called whenever the session ends.
   void clear() {
     _text.clear();

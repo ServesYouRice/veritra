@@ -986,6 +986,9 @@ class AppState extends ChangeNotifier {
       return;
     }
     conversations = await client.conversations(current.token);
+    // The server's list is the truth: a conversation no longer in it (an
+    // admin removed this account, say) keeps no draft here.
+    composerDrafts.retainOnly(conversations.map((item) => item.id));
     conversationsLoaded = true;
     _opErrors.remove(Ops.conversations);
     if (persist) await _persistSnapshot();

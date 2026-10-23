@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/composer_drafts.dart';
+import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/features/chat/chat_list_screen.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
@@ -274,6 +275,44 @@ void main() {
     await state.logout();
     expect(state.connected, isFalse);
     expect(state.composerDrafts.isEmpty, isTrue);
+    state.dispose();
+  });
+
+  test('a conversation that leaves the list takes its draft with it', () async {
+    final store = MemoryLocalStore();
+    await store.saveSession(benchSession);
+    final api = BenchApi(conversationList: benchConversations(3));
+    final state = benchState(api: api, store: store);
+    await state.tryRestoreSession();
+    const removed = _otherConversationId;
+    expect(state.conversations.map((item) => item.id), contains(removed));
+    state.composerDrafts
+      ..setText(longConversationId, 'still wanted')
+      ..setReplyTarget(longConversationId, 'dev_peer:1')
+      ..setText(removed, 'for a conversation that goes away')
+      ..setReplyTarget(removed, 'dev_peer:2');
+
+    // An admin removed this account: the next list no longer has it.
+    api.conversationList = api.conversationList
+        .where((item) => item.id != removed)
+        .toList(growable: false);
+    await state.refreshConversations();
+
+    expect(
+        state.conversations.map((item) => item.id), isNot(contains(removed)));
+    expect(state.composerDrafts.textFor(removed), isEmpty);
+    expect(state.composerDrafts.replyTargetFor(removed), isNull);
+    expect(state.composerDrafts.textFor(longConversationId), 'still wanted');
+    expect(
+        state.composerDrafts.replyTargetFor(longConversationId), 'dev_peer:1');
+
+    // A refresh that fails keeps the last list, and with it every draft.
+    api
+      ..offline = true
+      ..conversationList = const <Conversation>[];
+    await state.refreshConversations();
+    expect(state.conversations, isNotEmpty);
+    expect(state.composerDrafts.textFor(longConversationId), 'still wanted');
     state.dispose();
   });
 
