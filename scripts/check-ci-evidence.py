@@ -67,17 +67,20 @@ def select_ci_evidence(
         jobs = jobs_payload.get("jobs") if isinstance(jobs_payload, dict) else None
         if not isinstance(jobs, list):
             continue
-        conclusions = {
-            str(job.get("name")): job.get("conclusion")
-            for job in jobs
-            if isinstance(job, dict)
-        }
-        if all(conclusions.get(job) == "success" for job in required_jobs):
+        conclusions: dict[str, list[object]] = {}
+        for job in jobs:
+            if isinstance(job, dict):
+                conclusions.setdefault(str(job.get("name")), []).append(job.get("conclusion"))
+        # Each required job must appear exactly once and succeed, so a skipped
+        # duplicate (such as a second mobile-ios) cannot hide behind a success.
+        # This evidence only reports job conclusions: mobile-ios is the debug
+        # simulator build and never stands in for signed-release evidence.
+        if all(conclusions.get(job) == ["success"] for job in required_jobs):
             return {
                 "run_id": int(run_id),
                 "head_sha": commit,
                 "conclusion": "success",
-                "jobs": {job: conclusions[job] for job in required_jobs},
+                "jobs": {job: "success" for job in required_jobs},
             }
     return None
 

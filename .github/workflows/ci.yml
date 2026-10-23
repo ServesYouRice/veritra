@@ -181,10 +181,16 @@ jobs:
         run: nm -gU mobile/build/ios/iphonesimulator/Runner.app/Runner* 2>/dev/null | grep -q '_pm_crypto_abi_version'
       - name: Package the simulator demo app
         run: ditto -c -k --keepParent mobile/build/ios/iphonesimulator/Runner.app veritra-demo-ios-simulator.zip
+      # QA02: this job stays required, but its output is typed simulator-debug
+      # evidence. check-release-evidence.py never accepts it as signed-release.
+      - name: Record the simulator build as simulator-debug evidence
+        run: python3 scripts/write-release-evidence.py --ios-simulator-record veritra-demo-ios-simulator.zip > veritra-demo-ios-simulator.evidence.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: veritra-demo-ios-simulator-${{ github.run_id }}
-          path: veritra-demo-ios-simulator.zip
+          path: |
+            veritra-demo-ios-simulator.zip
+            veritra-demo-ios-simulator.evidence.json
           if-no-files-found: error
           retention-days: 14
 
