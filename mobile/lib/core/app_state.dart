@@ -175,7 +175,9 @@ class AppState extends ChangeNotifier {
   final MobilePushService pushService;
 
   /// Strings for the messages AppState stores for the UI (errors, recovery
-  /// and probe text). English until the app adds another locale (T44C).
+  /// and probe text). `AppShell` sets it to the app's locale (T44C); English
+  /// before the shell first builds and where no shell is built. Text already
+  /// stored keeps its language. Push data never carries any of it.
   AppLocalizations l10n = englishL10n;
 
   Session? session;
