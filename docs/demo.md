@@ -138,3 +138,8 @@ delete, a group of three, adding a member to that group and removing
 another, and an app restart. It then stops the server,
 restarts an app offline, checks its history, queues a message, starts the
 server again and checks the message arrives. CI runs it on every push.
+
+`scripts/test-demo-e2e.ps1` is the Windows twin: the same test with the real
+Windows crypto DLL and a server on loopback. The `desktop-windows` CI job runs
+it (owner setup, invite, direct message, reply, edit, reaction, delete) before
+building the Windows demo app.
