@@ -1706,6 +1706,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'Sender could not be verified. Message hidden.';
 
   @override
+  String get chatMessageUnsupported =>
+      'This message needs a newer version of Veritra';
+
+  @override
+  String get chatMessageInvalid => 'A message could not be read';
+
+  @override
   String chatReactionCount(String reaction, int count) {
     final intl.NumberFormat countNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);

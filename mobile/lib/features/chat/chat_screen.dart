@@ -1195,7 +1195,12 @@ class _MessageBubble extends StatelessWidget {
     final unverifiable = local?.kind == LocalMessageKind.unverifiable;
     final isAttachment = local?.kind == LocalMessageKind.attachment;
     // An attachment row's body is its manifest list, never text to show.
-    final text = deleted || unverifiable || isAttachment ? null : local?.body;
+    final placeholder = _isPlaceholder;
+    // Placeholder rows hold no content to show; an unsupported row's body is
+    // raw JSON kept for a later version.
+    final text = deleted || unverifiable || isAttachment || placeholder
+        ? null
+        : local?.body;
     // Bone keeps sent bubbles **on tone**: a near-white accent tiled down a
     // whole column would blow out the plum ground the direction is built on
     // (`docs/design.md` §K). Mine and theirs separate by one tonal step
@@ -1211,6 +1216,15 @@ class _MessageBubble extends StatelessWidget {
           deleted, unverifiable, text),
     );
   }
+
+  bool get _isPlaceholder =>
+      local?.kind == LocalMessageKind.unsupported ||
+      local?.kind == LocalMessageKind.invalid;
+
+  String _placeholderLabel(AppLocalizations l10n) =>
+      local?.kind == LocalMessageKind.invalid
+          ? l10n.chatMessageInvalid
+          : l10n.chatMessageUnsupported;
 
   /// The attachments of an attachment message. Entries that fail to parse,
   /// or name another conversation, are left out rather than shown.
@@ -1249,6 +1263,7 @@ class _MessageBubble extends StatelessWidget {
     String? text,
   ) {
     final l10n = context.l10n;
+    final placeholder = _isPlaceholder;
     final time = formatTimeOfDay(context, message.createdAt);
     return Semantics(
       excludeSemantics: true,
@@ -1258,11 +1273,13 @@ class _MessageBubble extends StatelessWidget {
               ? l10n.chatDeletedSemantics(sender)
               : unverifiable
                   ? l10n.chatUnverifiedSemantics(time)
-                  : text != null
-                      ? l10n.chatMessageSemantics(sender, time, text)
-                      : local?.kind == LocalMessageKind.attachment
-                          ? l10n.chatAttachmentSemantics(sender, time)
-                          : l10n.chatEncryptedSemantics(sender, time)) +
+                  : placeholder
+                      ? _placeholderLabel(l10n)
+                      : text != null
+                          ? l10n.chatMessageSemantics(sender, time, text)
+                          : local?.kind == LocalMessageKind.attachment
+                              ? l10n.chatAttachmentSemantics(sender, time)
+                              : l10n.chatEncryptedSemantics(sender, time)) +
           (tick == null ? '' : ', ${messageTickLabel(l10n, tick!)}'),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -1334,6 +1351,28 @@ class _MessageBubble extends StatelessWidget {
                               l10n.chatSenderUnverified,
                               style: theme.textTheme.bodyMedium?.copyWith(
                                 color: scheme.error,
+                              ),
+                            ),
+                          ),
+                        ],
+                      )
+                    else if (placeholder)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          Icon(
+                              local?.kind == LocalMessageKind.invalid
+                                  ? Icons.warning_amber_outlined
+                                  : Icons.update_outlined,
+                              size: 16,
+                              color: scheme.onSurfaceVariant),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              _placeholderLabel(l10n),
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: scheme.onSurfaceVariant,
+                                fontStyle: FontStyle.italic,
                               ),
                             ),
                           ),

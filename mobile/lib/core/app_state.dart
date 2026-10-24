@@ -724,8 +724,11 @@ class AppState extends ChangeNotifier {
     };
     final byKey = <String, ReceivedMessageEnvelope>{};
     for (final envelope in envelopes) {
-      byKey[ConversationHistory.keyOf(
-          envelope.senderDeviceId, envelope.idempotencyKey)] = envelope;
+      // A placeholder row is keyed by its sync event, so ask the history
+      // which row an envelope belongs to before using its claimed key.
+      byKey[history.forEnvelope(envelope)?.key ??
+          ConversationHistory.keyOf(
+              envelope.senderDeviceId, envelope.idempotencyKey)] = envelope;
     }
     for (final local in history.messages) {
       if (local.kind == LocalMessageKind.action ||
@@ -738,7 +741,9 @@ class AppState extends ChangeNotifier {
         conversationId: conversationId,
         senderAccountId: local.senderAccountId,
         senderDeviceId: local.senderDeviceId,
-        idempotencyKey: local.key.substring(local.senderDeviceId.length + 1),
+        idempotencyKey: local.key.startsWith('${local.senderDeviceId}:')
+            ? local.key.substring(local.senderDeviceId.length + 1)
+            : local.key,
         ciphertext: const <int>[],
         cryptoProtocol: 'local-history',
         createdAt:
@@ -3040,7 +3045,11 @@ class AppState extends ChangeNotifier {
                 continue;
               }
             } else {
-              if (!_knownProjectionEvent(event.type)) {
+              // An unknown type outside the crypto namespaces only asks for
+              // a refresh, so it is skipped and the cursor moves past it
+              // (P5). Unknown crypto types still stop sync.
+              if (!_knownProjectionEvent(event.type) &&
+                  _failsClosedEvent(event.type)) {
                 throw SyncEventFailure(SyncFailureKind.unsupportedEvent,
                     eventId: event.id,
                     eventType: event.type,
@@ -3232,6 +3241,13 @@ class AppState extends ChangeNotifier {
       type == 'call.signaling' ||
       type == 'call.state';
 
+  /// Unknown events in these namespaces may carry or gate ciphertext, so sync
+  /// stops at them (I33, P5). Any other unknown type is skipped.
+  static bool _failsClosedEvent(String type) =>
+      type.startsWith('mls.') ||
+      type.startsWith('message.') ||
+      type.startsWith('call.');
+
   bool _knownProjectionEvent(String type) =>
       type.startsWith('device.') ||
       type.startsWith('conversation.') ||
@@ -3273,8 +3289,10 @@ class AppState extends ChangeNotifier {
         type == 'mls.revocation.completed') {
       return;
     }
-    throw SyncEventFailure(SyncFailureKind.unsupportedEvent,
-        eventId: event.id, eventType: type);
+    if (_failsClosedEvent(type)) {
+      throw SyncEventFailure(SyncFailureKind.unsupportedEvent,
+          eventId: event.id, eventType: type);
+    }
   }
 
   String? _messageIdFromSyncEvent(SyncEvent event) {

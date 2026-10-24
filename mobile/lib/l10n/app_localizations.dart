@@ -2841,6 +2841,18 @@ abstract class AppLocalizations {
   /// **'Sender could not be verified. Message hidden.'**
   String get chatSenderUnverified;
 
+  /// No description provided for @chatMessageUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'This message needs a newer version of Veritra'**
+  String get chatMessageUnsupported;
+
+  /// No description provided for @chatMessageInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'A message could not be read'**
+  String get chatMessageInvalid;
+
   /// No description provided for @chatReactionCount.
   ///
   /// In en, this message translates to:

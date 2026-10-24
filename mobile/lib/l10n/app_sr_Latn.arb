@@ -458,6 +458,8 @@
   "chatEncryptedSemantics": "Šifrovana poruka od {sender}, {time}",
   "chatMessageDeleted": "Poruka je obrisana",
   "chatSenderUnverified": "Pošiljalac nije mogao da se verifikuje. Poruka je skrivena.",
+  "chatMessageUnsupported": "Ova poruka zahteva noviju verziju aplikacije Veritra",
+  "chatMessageInvalid": "Jedna poruka nije mogla da se pročita",
   "chatReactionCount": "{reaction} {count}",
   "chatEdited": "izmenjeno",
   "chatTickSent": "Poslato",

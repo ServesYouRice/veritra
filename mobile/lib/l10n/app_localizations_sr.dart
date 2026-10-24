@@ -1721,6 +1721,13 @@ class AppLocalizationsSr extends AppLocalizations {
       'Пошиљалац није могао да се верификује. Порука је скривена.';
 
   @override
+  String get chatMessageUnsupported =>
+      'Ова порука захтева новију верзију апликације Veritra';
+
+  @override
+  String get chatMessageInvalid => 'Једна порука није могла да се прочита';
+
+  @override
   String chatReactionCount(String reaction, int count) {
     final intl.NumberFormat countNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -4033,6 +4040,13 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get chatSenderUnverified =>
       'Pošiljalac nije mogao da se verifikuje. Poruka je skrivena.';
+
+  @override
+  String get chatMessageUnsupported =>
+      'Ova poruka zahteva noviju verziju aplikacije Veritra';
+
+  @override
+  String get chatMessageInvalid => 'Jedna poruka nije mogla da se pročita';
 
   @override
   String chatReactionCount(String reaction, int count) {

@@ -42,6 +42,15 @@ abstract final class LocalMessageKind {
   /// (D25). Shown as a warning, never as the claimed sender's words.
   static const unverifiable = 'unverifiable';
 
+  /// Decrypted, but the payload was malformed or its context did not match
+  /// the envelope (W8 step 0, P1). Keyed by the sync event, holds no content.
+  static const invalid = 'invalid';
+
+  /// Decrypted and authentic, but from a newer app version or of a type this
+  /// one does not know. [LocalMessages.body] holds the inner JSON as decrypted
+  /// (encrypted database only), so a later version can read it.
+  static const unsupported = 'unsupported';
+
   /// An attachment manifest. [LocalMessages.body] holds the JSON list of
   /// attachment entries, including their keys, never text to show.
   static const attachment = 'attachment';

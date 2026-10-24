@@ -605,6 +605,8 @@
   "@chatEncryptedSemantics": {"placeholders": {"sender": {"type": "String"}, "time": {"type": "String"}}},
   "chatMessageDeleted": "Message deleted",
   "chatSenderUnverified": "Sender could not be verified. Message hidden.",
+  "chatMessageUnsupported": "This message needs a newer version of Veritra",
+  "chatMessageInvalid": "A message could not be read",
   "chatReactionCount": "{reaction} {count}",
   "@chatReactionCount": {"placeholders": {"reaction": {"type": "String"}, "count": {"type": "int", "format": "decimalPattern"}}},
   "chatEdited": "edited",
