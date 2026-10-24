@@ -184,13 +184,24 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   application message that decrypts but fails to decode is fatal: an
   unknown type, an unknown `v`, a bad body or a context mismatch. Sync stops
   there, and the rollback in `processApplicationMessage` restores the
-  ratchet, so every retry fails the same way. Any group member can stop
-  every other member's sync with one malformed message. Under v2, once MLS
-  decryption succeeds, the state and cursor always commit, and the message
-  becomes an `unsupported` or `invalid` placeholder row. Unknown non-crypto
-  sync event types are skipped rather than fatal. MLS-level failures keep
-  the I33 behaviour. The precedent is D25, which already commits a
-  sender-mismatched message as `unverifiable`.
+  ratchet, so every retry fails the same way. The sync cursor is global,
+  so one malformed message from any group member stops every conversation
+  on the receiving device. A DM peer can stall the call-signal path the
+  same way, for up to 7 days. Under v2 (rules P1–P6):
+  - once MLS decryption succeeds, the state and cursor always commit, and
+    the message becomes an `unsupported` or `invalid` placeholder row;
+  - placeholder rows are keyed by the sync event, not by the server's
+    idempotency key;
+  - the server's envelope fields are checked before decryption;
+  - a bad call signal is dropped after commit;
+  - unknown sync event types are skipped, unless they start with `mls.`,
+    `message.` or `call.`.
+
+  MLS-level failures keep the I33 behaviour. The precedent is D25, which
+  already commits a sender-mismatched message as `unverifiable`. Step 0
+  re-keys that row too.
+
+  An independent review approved both designs with changes, now applied.
 
 ## Proposed, not yet built: application payload v2 (W7)
 
@@ -203,79 +214,146 @@ local database.
 
 ### 1. Receive policy (W8 step 0, lands before any v2 sender)
 
-Today `AppPayloadCodec.decode` throws on an unknown `type`, a `v` other
-than 1, extra body fields or a context mismatch. `processApplicationMessage`
-then restores the previous MLS state, and sync stops at
-`applicationUndecryptable`. Decoding is deterministic, so the retry decrypts
-and fails again, and the conversation never moves on. v2 replaces this
-with one rule:
+**Today's failure.** `AppPayloadCodec.decode` throws on an unknown `type`,
+a `v` other than 1, extra body fields or a context mismatch.
+`processApplicationMessage` then restores the previous MLS state, and sync
+stops at `applicationUndecryptable`. Decoding is deterministic, so the
+retry decrypts and fails again, and the event never passes. The sync
+cursor is **global** (`local_sync_states` is a single row), so one bad
+message stops every conversation on the device, not just its own. Any
+member of any group can do this to every other member.
 
-> Once `device.decrypt` returns plaintext, the MLS transition and cursor
-> always commit, together with exactly one history row.
+Step 0 makes these six rules (P1–P6) true. W8 step 0 is safe to build only
+once all six hold:
 
-The row depends on what decoding finds. The checks run in this order:
+- **P1. Classification after a successful decrypt is total.** Once
+  `device.decrypt` returns plaintext, any exception raised before the
+  storage write produces an `invalid` row, and the MLS state and cursor
+  commit with it. That covers decoding, validation and building the
+  effects. Today's examples:
+  - `call_signal` inside a message envelope (the type check at
+    `native_crypto_service.dart` ~683, and `messageEffectsFor` ~903,
+    which throws for `callSignal`);
+  - any other type on the call path (~506).
 
-| Outcome | When | Row kind | Row body | Shown as |
+  Only storage and IO errors from the commit itself roll back and retry.
+  They are transient, and the ratchet is restored with them.
+- **P2. Check the server's envelope fields before decrypting.** Run
+  `_validateContext` (`app_payload.dart`) on the server-supplied
+  `conversation_id`, `sender_device_id` and `idempotency_key`
+  **before** `device.decrypt`. A failure is a malformed sync event under
+  I33: fail closed, with no ratchet step used. Afterwards, P1 compares the
+  decrypted context against these already-valid fields.
+- **P3. Key placeholder rows by the event, not the claimed sender.** An
+  `invalid` row's key is `invalid:<syncEventId>:<envelopeId>`, never
+  `messageKey(envelope…)`. The envelope's `idempotency_key` is
+  unauthenticated when the payload context fails, so the server could
+  otherwise pick a key that collides with a real message and block it,
+  because inserts are insert-or-ignore. The existing D25 `unverifiable`
+  row has the same flaw: step 0 keys it as
+  `unverifiable:<syncEventId>:<envelopeId>`.
+  An `unsupported` row keeps `messageKey()`. Its context check passed, so
+  its `action_id` is authenticated.
+- **P4. Call signals.** In `processCallSignal`, once decryption succeeds,
+  the MLS state and cursor commit. A bad or unexpected payload is dropped,
+  with no row and no signal. Today the rollback lets a DM peer stall the
+  other side's sync until the call expires and the tombstone rule applies
+  (up to 7 days).
+- **P5. Unknown sync events are decided by prefix.**
+  - An unknown type starting with `mls.`, `message.` or `call.` stops sync
+    (fail closed).
+  - Any other unknown type is skipped, and the cursor moves past it.
+
+  Such events carry no ciphertext and only ask for a refresh, so skipping
+  one cannot hide content. The rule applies in both places that throw
+  `unsupportedEvent` today:
+  - the `_knownProjectionEvent` gate in the sync loop (`app_state.dart`
+    ~3043);
+  - the final throw in `_refreshProjectionForSyncEvent` (~3245).
+
+  W11's `profile.updated` depends on this rule.
+- **P6. Unknown top-level keys are not rejected at `v` ≥ 2.** Only the
+  frozen keys below are required.
+
+**Outcomes after a successful decrypt.** The checks run in this order:
+
+| Outcome | When | Row key | Row body | Shown as |
 |---|---|---|---|---|
-| `invalid` | Framing or UTF-8/JSON broken; `v` not an integer ≥ 1; any of the four context fields missing or not equal to the envelope's (`conversation_id`, `sender_device_id`, `action_id`); or a **known** type at a **known** version whose required fields fail validation | `invalid` (new) | none | A warning: "A message could not be read". Never content |
-| `unsupported` | Context matches, and either `v` is above the highest version this app supports, or `v` is supported but the type is one this app does not know or has not turned on (reserved types, §4). The step-0 app supports only v1, so any `v: 2` there is `unsupported`. The W8 app supports v2 | `unsupported` (new) | The inner JSON exactly as decrypted (≤ 64 KiB, encrypted local database only), so that a later app version can reinterpret it. Reprocessing is a later decision; storing it now is the only chance, because MLS cannot decrypt the message twice | "This message needs a newer version of Veritra" |
-| known | Everything validates | As today | As today | As today |
+| `invalid` | Framing or UTF-8/JSON broken; `v` not an integer ≥ 1; a context field missing or not equal to the envelope's (`conversation_id`, `sender_device_id`, `action_id`, and `channel_id` per §2); a **known** type at a supported version whose required fields fail validation; or any other exception before the storage write (P1) | `invalid:<syncEventId>:<envelopeId>` | none | A warning: "A message could not be read". Never content |
+| `unsupported` | Context matches, and either `v` is above the highest version this app supports, or `v` is supported but the type is one this app does not know or has not turned on (reserved types, §4). The step-0 app supports only v1, so any `v: 2` there is `unsupported` | `messageKey()` | The inner JSON exactly as decrypted (≤ 64 KiB, encrypted local database only), so that a later app version can reinterpret it. Reprocessing is a later decision; storing it now is the only chance, because MLS cannot decrypt the message twice | "This message needs a newer version of Veritra", or **nothing** when the payload has `hidden: true` |
+| known | Everything validates | `messageKey()` | As today | As today |
 
-`invalid` and `unsupported` rows never produce effects. Neither counts as
-a target (§3), and neither raises a notification.
+**Rules for `unsupported` rows** (S3):
 
-What stays fail-closed under I33:
+- Each one expires with its envelope (W2), like any message.
+- The same author's `delete` may target one, which clears its raw JSON.
+- Delete for me clears it too.
+- W10 search never indexes the raw JSON.
+
+**What stays fail-closed under I33:**
 
 - MLS decryption failures;
 - control messages;
-- sync events that are missing or malformed;
+- sync events that are missing or malformed (including P2);
+- unknown `mls.`, `message.` and `call.` events (P5);
 - the expired-message tombstone rule.
 
-Sender mismatch stays as D25 (`unverifiable`). Call signals keep their own
-path (`processCallSignal`).
-
-Sync events get the same rule. `_refreshProjectionForSyncEvent` throws
-`unsupportedEvent` for an unknown type. In v2, an unknown type that is not
-a crypto event (outside `_isCryptoSyncEvent`) is skipped, and the cursor
-moves past it. Such events carry no ciphertext and only ask for a refresh,
-so skipping one cannot hide content. Unknown `message.envelope.*`,
-`mls.*` and `call.*` events still stop sync. W11's `profile.updated` event
-depends on this.
+`invalid` and `unsupported` rows never produce effects. Neither counts as
+a target, apart from the `delete` exception above, and neither raises a
+notification.
 
 **Frozen for every future version:**
 
-- framing: `VAP1`, a big-endian u32 length, the JSON, then random padding
-  to a 256-byte bucket, at most 64 KiB in all;
-- the six top-level keys: `v`, `type`, `conversation_id`,
+- **Framing:** `VAP1`, a big-endian u32 length, the JSON, then random
+  padding to a 256-byte bucket, at most 64 KiB in all.
+- **Required top-level keys:** `v`, `type`, `conversation_id`,
   `sender_device_id`, `action_id`, `body`.
+- **Optional top-level keys, frozen in meaning:**
+  - `channel_id` (§2): context-checked against the envelope.
+  - `hidden` (S2): `true` marks a control message that changes state
+    rather than adding a bubble. An app that classifies the message as
+    `unsupported` stores the row without showing it. Senders set it on
+    `pin`, `poll_vote`, `poll_close`, `admin_delete`, `profile_key` and
+    `group_profile_key`. It is ignored when the type is known.
 
-A future v3 may add body fields and types, but must keep these, so that a
-v2 app can still check context and classify a v3 message as `unsupported`.
+Step 0 already reads `channel_id` and `hidden`. Any `v` ≥ 2 may add
+top-level keys (P6) and body fields. A v3 must keep the frozen keys, so
+that a v2 app can still check context and classify a v3 message as
+`unsupported`.
 
 ### 2. Versions and compatibility
 
 - **Inner `v`.** A sender writes `v: 1` when the payload is a v1 type
   (`text`, `reply`, `edit`, `delete`, `reaction`, `attachment_manifest`,
-  `call_signal`) whose body uses only v1 fields. Anything else is `v: 2`.
-  A pre-W8 app can then still read plain messages from a W8 app. This
-  rule does not reach W11's profile-key sidecar (§5.7): after W11 most
-  posts are v2.
+  `call_signal`) whose body uses only v1 fields, and the conversation is
+  not `community_shared`. Anything else is `v: 2`. A pre-W8 app can then
+  still read plain messages from a W8 app. This rule does not reach W11's
+  profile-key sidecars (§5.7): after W11 most posts are v2.
 - **Decoding v1.** A v2 app decodes `v: 1` exactly as today: the closed
-  type set and exact field counts. Those failures are `invalid`.
-- **Decoding v2.** Required fields are validated, and **unknown body
-  fields are ignored**. A later additive field therefore needs no version
-  bump. A change that must not be ignored needs a new type or v3. In v2
-  the top-level object must have exactly the six frozen keys.
-- **Server-visible metadata.** `crypto_metadata.payload_version` becomes
-  the highest version the sending app supports (2), the same on every
-  envelope. It must **never** mirror the inner `v`; otherwise the server
-  could tell polls, pins or formatted text from plain text. Receivers
-  ignore this field. The server does not read it (checked:
-  `server/internal` never parses it).
+  type set, exact field counts, and exactly the six top-level keys. Those
+  failures are `invalid`.
+- **Decoding v2 and later.**
+  - Required fields are validated.
+  - **Unknown body fields and unknown top-level keys are ignored** (P6),
+    so a later additive field needs no version bump.
+  - A change that must not be ignored needs a new type or a new `v`.
+- **`channel_id` (S1, for C0).** v2 adds an optional top-level
+  `channel_id`.
+  - In a conversation of kind `community_shared` (C0) it is **required**
+    and must equal the envelope's `channel_id`.
+  - In any other conversation it must be **absent**.
+  - Either mismatch is `invalid`.
+- **Server-visible metadata.** `crypto_metadata.payload_version` stays the
+  constant **1** on every envelope. It names the `VAP1` framing, not the
+  inner `v` or the highest version the app supports. It must **never**
+  mirror the inner `v`; otherwise the server could tell polls, pins or
+  formatted text from plain text. Receivers ignore it, and the server does
+  not read it (checked: `server/internal` never parses it).
 - **Old apps.** No release exists, so there is no deployed base.
-  - A pre-W8 demo build receiving any `v: 2` payload still stops at that
-    message. Update every demo device when W8 lands.
-  - From W8 on, every newer version degrades to `unsupported` rows.
+  - A pre-step-0 demo build receiving any `v: 2` payload still stops at
+    that message. Update every demo device when step 0 lands.
+  - From step 0 on, every newer version degrades to `unsupported` rows,
+    hidden ones included.
   - No capability negotiation is needed.
 
 ### 3. Referencing a target message
@@ -290,18 +368,23 @@ used, so the server cannot redirect an action.
 A receiver applies a targeted effect only when a row exists with:
 
 1. `key == message_id`;
-2. `conversation_id ==` the action's own `conversation_id`. This is
-   **new**: `ReactionEffect` checks no conversation today, and edits and
-   deletes check only the sender account. W8 adds the check to every
+2. the same `conversation_id` as the action. In a `community_shared`
+   conversation the `channel_id` must match too. The conversation check
+   is **new**: `ReactionEffect` checks no conversation today, and edits
+   and deletes check only the sender account. W8 adds the check to every
    targeted effect, the existing ones included;
-3. a kind the action allows (table in §4). Today's targetable kinds are
-   `text` and `attachment`; v2 adds `poll`. `action`, `invalid`,
-   `unsupported` and `unverifiable` rows are never targets;
-4. `deleted_at` null **and** `hidden_at` null. A row deleted for this
-   device only (§6) is a target for nothing here. A later edit therefore
-   never writes its text back into the local database or the next backup.
-   Reactions, pins and votes on it are dropped on this device, not just
-   hidden. Other members' apps are unaffected.
+3. a kind the action allows (table in §4).
+   - Today's targetable kinds are `text` and `attachment`; v2 adds `poll`.
+   - `action`, `invalid`, `unsupported` and `unverifiable` rows are never
+     targets. The one exception: the same author's `delete` may target an
+     `unsupported` row (§1);
+4. `deleted_at` null **and** `hidden_at` null.
+   - A row deleted for this device only (§6) is a target for nothing here.
+     A later edit therefore never writes its text back into the local
+     database or the next backup.
+   - Reactions, pins and votes on it are dropped on this device, not just
+     hidden.
+   - Other members' apps are unaffected.
 
 If no such row exists, the effect is dropped and the action row is kept.
 This happens when the target is older than this device's membership, or
@@ -320,16 +403,24 @@ pins (and later its admin deletes) are accepted. That harms integrity
 group's MLS state, and then only the seam changes. "Moderator roles"
 means `owner`, `admin` and `moderator`.
 
+**Residual until C4 (S4).** Each device reads roles, and the conversation
+kind (DM, group or shared), from its cached server roster at the moment it
+processes the action. Two devices whose rosters differ can therefore
+disagree about whether, for example, a pin was allowed. Ordering is
+deterministic: `pinned_at` and every other "time" of an effect is the
+envelope's server `created_at`, and ties go by sync order. Only the role
+input can differ.
+
 | Type | v | Body (required; *optional*) | Who may send (checked by every receiver) | Effect |
 |---|---|---|---|---|
-| `text` | 1/2 | `text`; *`entities`*, *`mentions`*, *`forwarded`*, *`profile_key`* | Any member | Visible row, kind `text` |
-| `reply` | 1/2 | `text`, `reply_to_id`; *`entities`*, *`mentions`*, *`profile_key`* | Any member | Visible row with quote; `reply_to_id` resolved with the §3 rules for display only |
+| `text` | 1/2 | `text`; *`entities`*, *`mentions`*, *`forwarded`*, *`profile_key`*, *`group_profile_key`* | Any member | Visible row, kind `text` |
+| `reply` | 1/2 | `text`, `reply_to_id`; *`entities`*, *`mentions`*, *`profile_key`*, *`group_profile_key`* | Any member | Visible row with quote; `reply_to_id` resolved with the §3 rules for display only |
 | `edit` | 1/2 | `message_id`, `text`; *`entities`*, *`mentions`* | Target's author account | Replaces text, entities and mentions together. An edit **never** raises a mention alert |
-| `delete` | 1 | `message_id` | Target's author account | Clears body and reactions. Kinds widen to `text`, `attachment`, `poll`; clearing an attachment row also drops its keys. A poll's votes and pin go with it |
+| `delete` | 1 | `message_id` | Target's author account | Clears body and reactions. Kinds widen to `text`, `attachment`, `poll`, and `unsupported` (its raw JSON is cleared, §1); clearing an attachment row also drops its keys. A poll's votes and pin go with it |
 | `reaction` | 1 | `message_id`, `reaction` (≤ 32 UTF-16 units, empty clears) | Any member | As today, plus the conversation check |
-| `attachment_manifest` | 1/2 | `attachments` (≤ 32); *`forwarded`*, *`profile_key`* | Any member | Row kind `attachment` |
+| `attachment_manifest` | 1/2 | `attachments` (≤ 32); *`forwarded`*, *`profile_key`*, *`group_profile_key`* | Any member | Row kind `attachment` |
 | `pin` | 2 | `message_id`, `pinned` (bool); `duration_seconds` when `pinned` is true: 86400, 604800 or 2592000 | DM: either member. Group/channel: moderator roles | §5.4 |
-| `poll` | 2 | `question`, `options` (list of strings), `multiple_choice` (bool); *`profile_key`* | Any member | Row kind `poll` (new); body holds the poll JSON |
+| `poll` | 2 | `question`, `options` (list of strings), `multiple_choice` (bool); *`profile_key`*, *`group_profile_key`* | Any member | Row kind `poll` (new); body holds the poll JSON |
 | `poll_vote` | 2 | `message_id`, `choices` (list of option indexes; empty = retract) | Any member | §5.5 |
 | `poll_close` | 2 | `message_id` | The poll's author account | §5.5 |
 | `admin_delete` | 2 | `message_id` | Moderator roles; target in the same conversation, any author | **Reserved for C5:** handled as `unsupported` until C5 turns it on. Effect then: as `delete`, shown as "Removed by an admin" |
@@ -413,9 +504,10 @@ markup:
 ```
 
 - **Hops.** A forward is a **new** `text` or `attachment_manifest` payload
-  in each target conversation, with a new `action_id`. `hops` is the
-  source's `hops` plus 1 (0 if the source was not forwarded), capped at
-  255. Receivers clamp to 1..255.
+  in each target conversation, with a new `action_id`. The sender writes
+  `min(source hops + 1, 5)`, where the source's hops count as 0 if it was
+  not forwarded. A higher count would tell members more about a message's
+  path than the label needs. Receivers clamp to 1..5.
 - **Label.** `hops` 1–4 reads "Forwarded"; ≥ 5 reads "Forwarded many
   times".
 - **Nothing links to the source:** no original sender, source
@@ -432,6 +524,10 @@ markup:
 - **Limits, enforced by the sender's UI only** (a client cannot prove
   them to others): one forward action reaches at most 5 chats, and at
   most 1 chat when the source has `hops` ≥ 5.
+- **Residual (S5, for L2).** The server sees one upload per target chat,
+  with the same plaintext size bucket, in the same second as the forward.
+  It can link forwarded attachments by size and timing even though the
+  keys and ciphertext differ. Padding and send jitter belong to L2.
 
 #### 5.4 Pins
 
@@ -441,13 +537,16 @@ markup:
   never the sender's clock, and never later than the target's own
   `expires_at` (W2).
 - **Conflicts and limits.** Pins apply in sync order, and the last pin
-  action for a target wins. A conversation has at most **3** active pins;
-  a fourth evicts the oldest by `pinned_at`.
+  action for a target wins. `pinned_at` is the pin envelope's server
+  `created_at`, and ties go by sync order. A conversation has at most
+  **3** active pins; a `community_shared` conversation has at most 3 **per
+  channel**. A fourth evicts the oldest by `pinned_at`.
 - **Expiry and deletion.** Expired pins disappear from the pin bar when
   it is drawn, and are swept when the chat opens. Deleting the target,
   for everyone or for this device only, removes its pin here.
-- **Old apps.** A pin is an MLS payload, shared by every member. An old
-  app shows it as `unsupported` and never as a pin.
+- **Old apps.** A pin is an MLS payload, shared by every member. It is
+  sent with `hidden: true`, so an older app stores it as a hidden
+  `unsupported` row and shows nothing.
 
 #### 5.5 Polls and votes (B3)
 
@@ -483,13 +582,19 @@ reserved. The receiver rule is fixed now:
 - the target passes §3;
 - the effect is that of `delete`, with the row marked `removed_by_admin`.
 
-#### 5.7 Profile-key sidecar: `profile_key` field (reserved for W11)
+#### 5.7 Profile-key sidecars (reserved for W11)
 
-`text`, `reply`, `attachment_manifest` and `poll` may carry
-`"profile_key": {"key": "<base64, 32 bytes>", "key_id": "<32 hex>"}`. It
-is the sender account's current profile key, so that members who joined
-after the sender's last `profile_key` message still learn it. Until W11 it
-is ignored, like any unknown field. The rules are in W11.
+`text`, `reply`, `attachment_manifest` and `poll` may carry two optional
+body fields:
+
+- `"profile_key": {"key": "<base64, 32 bytes>", "key_id": "<32 hex>", "version": <int>}`.
+  The sender account's current profile key, so that members who joined
+  after its last `profile_key` message still learn it.
+- `"group_profile_key": {"key": …, "key_id": …, "version": <int>}`. The
+  conversation's group profile key. A device attaches it to its next post
+  after it has processed a commit that added devices (S13).
+
+Until W11 both are ignored, like any unknown field. The rules are in W11.
 
 ### 6. Local-only state (never an MLS payload, never sent to the server)
 
@@ -513,8 +618,8 @@ device" for star, archive and pinned chats.
 | `entities` / `mentions` | 256 / 50 entries |
 | Target key (`message_id`) | 128 characters (current keys are 85) |
 | Poll | question 300; 2–12 options of ≤ 100; `choices` ≤ 12 |
-| Active pins per conversation | 3 |
-| Forward | 5 chats per action; 1 when `hops` ≥ 5 |
+| Active pins per conversation | 3 (per channel in a `community_shared` conversation) |
+| Forward | 5 chats per action; 1 when `hops` ≥ 5; `hops` sent ≤ 5 |
 | Pinned chats | 5 |
 
 ### 8. Local storage when built: schema 10, backup plaintext v3
@@ -524,9 +629,9 @@ from history. They are tables applied in the MLS transaction:
 
 | Change | Detail |
 |---|---|
-| `local_messages`: new nullable columns | `hidden_at`, `forward_hops`, `format_json` (entities and mentions as received), `removed_by_admin` |
+| `local_messages`: new nullable columns | `hidden_at`, `forward_hops`, `format_json` (entities and mentions as received), `removed_by_admin`, `channel_id` (C0 shared groups), `sender_hidden` (an `unsupported` row whose payload had `hidden: true`) |
 | `local_messages`: new kinds | `poll`, `unsupported`, `invalid` |
-| `local_pins` | `conversation_id`, `target_key`, `pinned_by_account_id`, `pinned_at`, `expires_at`; PK (`conversation_id`, `target_key`) |
+| `local_pins` | `conversation_id`, `channel_id` (nullable), `target_key`, `pinned_by_account_id`, `pinned_at`, `expires_at`; PK (`conversation_id`, `target_key`) |
 | `local_poll_votes` | `poll_key`, `voter_account_id`, `choices_json`, `updated_at`; PK (`poll_key`, `voter_account_id`) |
 | `local_poll_state` | `poll_key` PK, `closed_at` |
 | New local-only tables | `local_starred`, `local_conversation_prefs` (§6) |
@@ -584,7 +689,7 @@ Decoding:
    **nothing** alerts. With any other sender account, nothing changes.
 7. `{H,"type":"text","body":{"text":"fwd","forwarded":{"hops":5}}}` gives
    `text` labelled "Forwarded many times".
-8. `{H,"type":"pin","body":{"message_id":"<T>","pinned":true,"duration_seconds":604800}}`
+8. `{H,"type":"pin","hidden":true,"body":{"message_id":"<T>","pinned":true,"duration_seconds":604800}}`
    from a `member` in a group: an `action` row, **no pin**.
 9. Vector 8 from an `admin`: pinned, expiring at envelope `created_at` + 7 d.
 10. `{H,"type":"pin","body":{"message_id":"<T>","pinned":true,"duration_seconds":12345}}`
@@ -602,18 +707,36 @@ Decoding:
     cursor advances, and the JSON is kept.
 16. Vector 1 with `"v":3` gives `unsupported`.
 17. Vector 1 with `"conversation_id":"conv_99999999999999999999999999999999"`
-    gives `invalid`. The cursor advances, and no text is kept.
+    gives `invalid`, keyed `invalid:<syncEventId>:<envelopeId>`. The cursor
+    advances, and no text is kept.
 18. Vector 1 with `"body":{"text":"hi","extra":1}` gives `invalid` (v1
     stays strict).
 19. `{H,"type":"text","body":{"text":"hi","future_field":true}}` gives
     `text` "hi" (v2 ignores unknown fields).
-20. `{H,"type":"admin_delete","body":{"message_id":"<T>"}}` before C5
-    gives `unsupported`.
+20. `{H,"type":"admin_delete","hidden":true,"body":{"message_id":"<T>"}}`
+    before C5 gives a hidden `unsupported` row.
+21. Vector 8 on a step-0 app gives a hidden `unsupported` row: nothing is
+    shown, and the cursor advances.
+22. `{H,"type":"text","channel_id":"chan_66666666666666666666666666666666","body":{"text":"hi"}}`
+    in a group that is not `community_shared` gives `invalid`.
+23. In a `community_shared` conversation whose envelope `channel_id` is
+    `chan_6666…`: vector 22 gives `text` "hi". The same vector with
+    `chan_7777…` gives `invalid`, and so does vector 1 (no `channel_id`).
+24. `{"v":1,"type":"call_signal",…,"body":{"signal":{}}}` arriving in a
+    **message** envelope gives `invalid` (P1). The cursor advances.
+25. `{H,"type":"text","future_top":1,"body":{"text":"hi"}}` gives `text`
+    "hi" (P6).
+26. An envelope whose server `sender_device_id` is 200 characters stops
+    sync **before** decryption (P2). The MLS state is unchanged.
+27. On the call path, a decrypted `text` payload is dropped (P4). The MLS
+    state and cursor commit, with no row and no signal.
+28. An `invalid` message whose envelope `idempotency_key` equals the
+    action ID of an existing row `<D>:<X>` leaves that row untouched (P3).
 
 Encoding: `encode()` writes the keys in this order:
 
 - top level: `v`, `type`, `conversation_id`, `sender_device_id`,
-  `action_id`, `body`;
+  `action_id`, then `channel_id` and `hidden` when present, then `body`;
 - body: the order of the "Body" column in §4.
 
 Dart's `jsonEncode` keeps insertion order, so vectors 1, 2, 7, 8 and 11
@@ -623,16 +746,23 @@ asserts the bytes between the header and the padding.
 Also required:
 
 - **sync tests:** an `unsupported` and an `invalid` message each commit
-  the MLS state and the cursor, and the next message in the same
-  conversation decrypts;
-- **an unknown projection event is skipped;**
+  the MLS state and the cursor, and the next message decrypts, in the
+  same conversation and in another one (the cursor is global);
+- **projection events:** an unknown projection event (`profile.updated`)
+  is skipped, and an unknown `mls.x`, `message.x` or `call.x` event stops
+  sync, through both gates (P5);
 - **`native_outbox_test.dart` (I31) covers every new type end to end.**
 
 ### 11. Build order
 
-1. **W8 step 0:** the receive policy (§1), the conversation check on
-   targets (§3), the `invalid` and `unsupported` kinds, and vectors 1 and
-   14–18. It can land alone.
+1. **W8 step 0:** It can land alone, and is safe to build once P1–P6 hold.
+   It covers:
+   - P1–P6 (§1);
+   - the re-keyed `unverifiable` row;
+   - reading `channel_id` and `hidden`;
+   - the conversation check on targets (§3);
+   - the `invalid` and `unsupported` kinds;
+   - vectors 1, 14–18, 21 and 24–28.
 2. **W8:** the v2 codec, formatting, mentions and the mute alert,
    forward, pins, star, delete for me, archive, pinned chats, schema 10,
    backup v3.
