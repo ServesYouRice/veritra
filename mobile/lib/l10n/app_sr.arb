@@ -595,5 +595,12 @@
   "pushTestRateLimited": "Сачекајте минут пре слања нове пробе.",
   "pushTestNotRegistered": "Овај уређај још није регистрован за push обавештења.",
   "pushTestFailed": "Проба није могла да се пошаље.",
-  "errorServerNotAllowed": "Ова верзија апликације не дозвољава адресу сервера {url}. Користите https:// адресу сервера."
+  "errorServerNotAllowed": "Ова верзија апликације не дозвољава адресу сервера {url}. Користите https:// адресу сервера.",
+  "attachmentTooLarge": "Датотека {fileName} је већа него што овај сервер дозвољава ({limit}).",
+  "attachmentEmptyFile": "Датотека {fileName} је празна и не може да се пошаље.",
+  "attachmentTooMany": "Највише {count} датотека може да чека на заједничко слање.",
+  "attachmentRemove": "Уклоните {fileName}",
+  "attachmentOpenFailed": "Датотека није могла да се отвори. Овај уређај можда нема апликацију за њу.",
+  "attachmentDropHint": "Отпустите датотеке да бисте их приложили",
+  "attachmentSentCount": "Шаље се датотека {done} од {total}"
 }

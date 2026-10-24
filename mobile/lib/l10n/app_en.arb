@@ -721,5 +721,17 @@
   "pushTestNotRegistered": "This device is not registered for push yet.",
   "pushTestFailed": "The test could not be sent.",
   "errorServerNotAllowed": "This build does not allow the server address {url}. Use an https:// server origin.",
-  "@errorServerNotAllowed": {"placeholders": {"url": {"type": "String"}}}
+  "@errorServerNotAllowed": {"placeholders": {"url": {"type": "String"}}},
+  "attachmentTooLarge": "{fileName} is larger than this server allows ({limit}).",
+  "@attachmentTooLarge": {"placeholders": {"fileName": {"type": "String"}, "limit": {"type": "String"}}},
+  "attachmentEmptyFile": "{fileName} is empty and cannot be sent.",
+  "@attachmentEmptyFile": {"placeholders": {"fileName": {"type": "String"}}},
+  "attachmentTooMany": "At most {count} files can wait to be sent together.",
+  "@attachmentTooMany": {"placeholders": {"count": {"type": "int"}}},
+  "attachmentRemove": "Remove {fileName}",
+  "@attachmentRemove": {"placeholders": {"fileName": {"type": "String"}}},
+  "attachmentOpenFailed": "The file could not be opened. This device may have no app for it.",
+  "attachmentDropHint": "Drop files to attach them",
+  "attachmentSentCount": "Sending file {done} of {total}",
+  "@attachmentSentCount": {"placeholders": {"done": {"type": "int"}, "total": {"type": "int"}}}
 }

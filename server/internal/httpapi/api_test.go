@@ -1477,3 +1477,39 @@ func TestRecoveryResumesFromTheClientsOffset(t *testing.T) {
 		t.Fatalf("skip-ahead status=%d", status)
 	}
 }
+
+func TestSetupStatusReportsAttachmentCap(t *testing.T) {
+	for name, limit := range map[string]int64{"default": 0, "operator": 5 << 20} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			application, err := app.New(context.Background(), config.Config{
+				Addr:         ":0",
+				DataDir:      dir,
+				DatabasePath: filepath.Join(dir, "private-messenger.db"),
+				StoragePath:  filepath.Join(dir, "blobs"),
+				Limits:       config.Limits{AttachmentBytes: limit},
+			}, nil)
+			if err != nil {
+				t.Fatalf("new app: %v", err)
+			}
+			t.Cleanup(func() { _ = application.Close() })
+			status, response := doJSON(t, application.Handler(), http.MethodGet, "/api/v1/setup/status", "", nil)
+			if status != http.StatusOK {
+				t.Fatalf("status=%d body=%s", status, response)
+			}
+			var decoded struct {
+				Max int64 `json:"max_attachment_bytes"`
+			}
+			if err := json.Unmarshal(response, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			want := limit
+			if want == 0 {
+				want = 48 << 20
+			}
+			if decoded.Max != want {
+				t.Fatalf("max_attachment_bytes=%d, want %d", decoded.Max, want)
+			}
+		})
+	}
+}

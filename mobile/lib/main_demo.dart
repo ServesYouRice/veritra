@@ -11,6 +11,8 @@ import 'crypto/attachment_crypto.dart';
 import 'crypto/backup_service.dart';
 import 'crypto/native_crypto_bindings.dart';
 import 'crypto/native_crypto_service.dart';
+import 'features/chat/attachment_views.dart' show purgeOpenedAttachments;
+import 'features/chat/composer_attachments.dart' show purgePastedImages;
 import 'main.dart' show VeritraApp;
 import 'push/push_service.dart';
 import 'storage/local_store.dart';
@@ -84,6 +86,8 @@ Future<void> main(List<String> args) async {
     ),
   );
   runApp(VeritraApp(state: state));
+  unawaited(purgeOpenedAttachments());
+  unawaited(purgePastedImages());
   unawaited(state.tryRestoreSession());
 }
 

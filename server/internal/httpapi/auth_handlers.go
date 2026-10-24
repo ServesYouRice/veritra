@@ -60,7 +60,7 @@ func (a *API) setupStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "setup_status_failed")
 		return
 	}
-	response := map[string]interface{}{"setup_required": required}
+	response := map[string]interface{}{"setup_required": required, "max_attachment_bytes": a.maxAttachmentBytes()}
 	if !required {
 		name, err := a.Store.InstanceName(r.Context())
 		if err != nil {

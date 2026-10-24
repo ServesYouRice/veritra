@@ -3440,6 +3440,48 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This build does not allow the server address {url}. Use an https:// server origin.'**
   String errorServerNotAllowed(String url);
+
+  /// No description provided for @attachmentTooLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'{fileName} is larger than this server allows ({limit}).'**
+  String attachmentTooLarge(String fileName, String limit);
+
+  /// No description provided for @attachmentEmptyFile.
+  ///
+  /// In en, this message translates to:
+  /// **'{fileName} is empty and cannot be sent.'**
+  String attachmentEmptyFile(String fileName);
+
+  /// No description provided for @attachmentTooMany.
+  ///
+  /// In en, this message translates to:
+  /// **'At most {count} files can wait to be sent together.'**
+  String attachmentTooMany(int count);
+
+  /// No description provided for @attachmentRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove {fileName}'**
+  String attachmentRemove(String fileName);
+
+  /// No description provided for @attachmentOpenFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The file could not be opened. This device may have no app for it.'**
+  String get attachmentOpenFailed;
+
+  /// No description provided for @attachmentDropHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Drop files to attach them'**
+  String get attachmentDropHint;
+
+  /// No description provided for @attachmentSentCount.
+  ///
+  /// In en, this message translates to:
+  /// **'Sending file {done} of {total}'**
+  String attachmentSentCount(int done, int total);
 }
 
 class _AppLocalizationsDelegate

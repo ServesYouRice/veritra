@@ -1,8 +1,12 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show MissingPluginException;
+import 'package:open_filex/open_filex.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../../core/app_state.dart';
 import '../../core/attachments.dart';
@@ -15,62 +19,8 @@ import '../../l10n/l10n.dart';
 bool get _canChooseSaveLocation =>
     Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
-/// Asks for a file and sends it as an encrypted attachment. Shows a
-/// confirmation first, since the file leaves the device once sent.
-Future<void> pickAndSendAttachment(
-  BuildContext context,
-  AppState state,
-  String conversationId,
-) async {
-  final XFile? file;
-  try {
-    file = await openFile();
-  } catch (_) {
-    if (context.mounted) {
-      _snack(context, context.l10n.attachmentPickUnavailable);
-    }
-    return;
-  }
-  if (file == null || !context.mounted) return;
-  final size = await file.length();
-  if (!context.mounted) return;
-  final name = safeAttachmentName(file.name);
-  final confirmed = await showDialog<bool>(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: Text(context.l10n.attachmentSendTitle),
-      content: Text(
-        context.l10n.attachmentSendMessage(name, formatFileSize(context, size)),
-      ),
-      actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(false),
-          child: Text(context.l10n.commonCancel),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.of(context).pop(true),
-          child: Text(context.l10n.attachmentSend),
-        ),
-      ],
-    ),
-  );
-  if (confirmed != true || !context.mounted) return;
-  final sent = await state.sendAttachment(
-    conversationId,
-    path: file.path,
-    fileName: file.name,
-    mediaType: file.mimeType,
-  );
-  if (!sent && context.mounted) {
-    _snack(
-      context,
-      state.errorFor(Ops.attachment) ?? context.l10n.attachmentSendFailed,
-    );
-  }
-}
-
-/// Opens an attachment: images in a viewer, other files through a save
-/// dialog where the platform has one.
+/// Opens an attachment: images in a viewer, other files in another app on
+/// phones, or through a save dialog on desktop.
 Future<void> openAttachment(
   BuildContext context,
   AppState state,
@@ -84,7 +34,78 @@ Future<void> openAttachment(
     );
     return;
   }
+  if (_opensInOtherApp) {
+    await openAttachmentExternally(context, state, entry);
+    return;
+  }
   await saveAttachmentAs(context, state, entry);
+}
+
+/// Phones hand a decrypted file to whichever app handles its type.
+bool get _opensInOtherApp => Platform.isAndroid || Platform.isIOS;
+
+/// Folder in the app cache that holds files decrypted for other apps.
+Future<Directory> _openedFilesDirectory() async {
+  final cache = await getTemporaryDirectory();
+  return Directory('${cache.path}${Platform.pathSeparator}veritra-open');
+}
+
+/// Deletes decrypted files left by earlier opens. Call at startup, and
+/// before each open; the viewer app may still be reading the file right
+/// after it launches, so a file is never deleted at once.
+Future<void> purgeOpenedAttachments() async {
+  try {
+    final directory = await _openedFilesDirectory();
+    if (await directory.exists()) await directory.delete(recursive: true);
+  } on FileSystemException {
+    // Best effort: the cache is cleared by the system.
+  } on MissingPluginException {
+    // No path provider (a test host).
+  }
+}
+
+/// How long a decrypted copy stays in the cache once another app has it.
+const Duration _openedFileLifetime = Duration(minutes: 10);
+
+/// Decrypts [entry] to a temporary file in the app cache and opens it with
+/// the system's handler for its type. The copy is deleted after
+/// [_openedFileLifetime], at the next open and at the next start.
+Future<void> openAttachmentExternally(
+  BuildContext context,
+  AppState state,
+  AttachmentEntry entry,
+) async {
+  final messenger = ScaffoldMessenger.of(context);
+  final l10n = context.l10n;
+  final File file;
+  try {
+    await purgeOpenedAttachments();
+    final directory = await _openedFilesDirectory();
+    await directory.create(recursive: true);
+    file = File('${directory.path}${Platform.pathSeparator}${entry.fileName}');
+    await state.saveAttachment(entry, file.path);
+  } catch (_) {
+    messenger
+        .showSnackBar(SnackBar(content: Text(l10n.attachmentDownloadFailed)));
+    return;
+  }
+  Timer(_openedFileLifetime, () async {
+    try {
+      if (await file.exists()) await file.delete();
+    } on FileSystemException {
+      // Purged at the next start instead.
+    }
+  });
+  final OpenResult result;
+  try {
+    result = await OpenFilex.open(file.path);
+  } catch (_) {
+    messenger.showSnackBar(SnackBar(content: Text(l10n.attachmentOpenFailed)));
+    return;
+  }
+  if (result.type != ResultType.done) {
+    messenger.showSnackBar(SnackBar(content: Text(l10n.attachmentOpenFailed)));
+  }
 }
 
 /// Decrypts an attachment into a place the user picks.

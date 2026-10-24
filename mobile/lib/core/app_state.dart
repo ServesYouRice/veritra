@@ -1808,6 +1808,25 @@ class AppState extends ChangeNotifier {
     await File(destinationPath).writeAsBytes(bytes, flush: true);
   }
 
+  /// The most plaintext bytes the server accepts for one attachment (the
+  /// operator's `PRIVATE_MESSENGER_LIMIT_ATTACHMENT_MIB`), as its setup
+  /// status reports it. An older server, or one that cannot be reached,
+  /// leaves the app's own ceiling.
+  Future<int> attachmentSizeLimit() async {
+    try {
+      final status = await api?.setupStatus();
+      final limit = status?['max_attachment_bytes'];
+      if (limit is int && limit > 0) {
+        return limit < maxPlaintextAttachmentBytes
+            ? limit
+            : maxPlaintextAttachmentBytes;
+      }
+    } catch (_) {
+      // The upload itself still enforces the cap.
+    }
+    return maxPlaintextAttachmentBytes;
+  }
+
   Future<bool> _sendPayload(
     String conversationId,
     AppPayloadType type,

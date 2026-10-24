@@ -2105,4 +2105,36 @@ class AppLocalizationsEn extends AppLocalizations {
   String errorServerNotAllowed(String url) {
     return 'This build does not allow the server address $url. Use an https:// server origin.';
   }
+
+  @override
+  String attachmentTooLarge(String fileName, String limit) {
+    return '$fileName is larger than this server allows ($limit).';
+  }
+
+  @override
+  String attachmentEmptyFile(String fileName) {
+    return '$fileName is empty and cannot be sent.';
+  }
+
+  @override
+  String attachmentTooMany(int count) {
+    return 'At most $count files can wait to be sent together.';
+  }
+
+  @override
+  String attachmentRemove(String fileName) {
+    return 'Remove $fileName';
+  }
+
+  @override
+  String get attachmentOpenFailed =>
+      'The file could not be opened. This device may have no app for it.';
+
+  @override
+  String get attachmentDropHint => 'Drop files to attach them';
+
+  @override
+  String attachmentSentCount(int done, int total) {
+    return 'Sending file $done of $total';
+  }
 }

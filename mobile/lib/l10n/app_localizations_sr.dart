@@ -2121,6 +2121,38 @@ class AppLocalizationsSr extends AppLocalizations {
   String errorServerNotAllowed(String url) {
     return 'Ова верзија апликације не дозвољава адресу сервера $url. Користите https:// адресу сервера.';
   }
+
+  @override
+  String attachmentTooLarge(String fileName, String limit) {
+    return 'Датотека $fileName је већа него што овај сервер дозвољава ($limit).';
+  }
+
+  @override
+  String attachmentEmptyFile(String fileName) {
+    return 'Датотека $fileName је празна и не може да се пошаље.';
+  }
+
+  @override
+  String attachmentTooMany(int count) {
+    return 'Највише $count датотека може да чека на заједничко слање.';
+  }
+
+  @override
+  String attachmentRemove(String fileName) {
+    return 'Уклоните $fileName';
+  }
+
+  @override
+  String get attachmentOpenFailed =>
+      'Датотека није могла да се отвори. Овај уређај можда нема апликацију за њу.';
+
+  @override
+  String get attachmentDropHint => 'Отпустите датотеке да бисте их приложили';
+
+  @override
+  String attachmentSentCount(int done, int total) {
+    return 'Шаље се датотека $done од $total';
+  }
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -4242,5 +4274,37 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String errorServerNotAllowed(String url) {
     return 'Ova verzija aplikacije ne dozvoljava adresu servera $url. Koristite https:// adresu servera.';
+  }
+
+  @override
+  String attachmentTooLarge(String fileName, String limit) {
+    return 'Datoteka $fileName je veća nego što ovaj server dozvoljava ($limit).';
+  }
+
+  @override
+  String attachmentEmptyFile(String fileName) {
+    return 'Datoteka $fileName je prazna i ne može da se pošalje.';
+  }
+
+  @override
+  String attachmentTooMany(int count) {
+    return 'Najviše $count datoteka može da čeka na zajedničko slanje.';
+  }
+
+  @override
+  String attachmentRemove(String fileName) {
+    return 'Uklonite $fileName';
+  }
+
+  @override
+  String get attachmentOpenFailed =>
+      'Datoteka nije mogla da se otvori. Ovaj uređaj možda nema aplikaciju za nju.';
+
+  @override
+  String get attachmentDropHint => 'Otpustite datoteke da biste ih priložili';
+
+  @override
+  String attachmentSentCount(int done, int total) {
+    return 'Šalje se datoteka $done od $total';
   }
 }
