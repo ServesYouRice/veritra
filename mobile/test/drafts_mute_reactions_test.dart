@@ -269,7 +269,8 @@ void main() {
       expect((await store.loadDrafts())['conv_1']?.text, 'hello again');
     });
 
-    test('drafts and mutes: a session expiry keeps drafts, sign-out wipes both', () async {
+    test('drafts and mutes: a session expiry keeps drafts, sign-out wipes both',
+        () async {
       final store = createStore();
       await store.saveDraft('conv_1', 'secret draft');
       await store.saveConversationMute('conv_1', muted: true);

@@ -148,6 +148,19 @@ def escape(codepoints):
     return "".join("\\u{%X}" % cp for cp in codepoints)
 
 
+def sources():
+    perl = subprocess.run(
+        ["perl", "-MUnicode::UCD", "-e",
+         'print "Perl $^V, Unicode ", Unicode::UCD::UnicodeVersion()'],
+        check=True, capture_output=True, text=True).stdout
+    tzdata = "tzdata unknown"
+    zi = pathlib.Path("/usr/share/zoneinfo/tzdata.zi")
+    if zi.exists():
+        first = zi.read_text(encoding="utf-8").splitlines()[0]
+        tzdata = "tzdata " + first.replace("# version", "").strip()
+    return perl + "; " + tzdata
+
+
 def main():
     out = subprocess.run(["perl", "-e", PERL], check=True, capture_output=True,
                          text=True).stdout
@@ -174,6 +187,8 @@ def main():
         "// The emoji the reaction picker offers (W6): Unicode names are English,",
         "// and groups approximate the CLDR groups. Any other emoji can still be",
         "// typed or pasted into the picker.",
+        "//",
+        "// Built from: " + sources() + ".",
         "",
         "/// One emoji and its Unicode name, lower case.",
         "class EmojiEntry {",

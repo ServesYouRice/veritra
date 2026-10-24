@@ -30,7 +30,9 @@ the crypto surface since the freeze is in [`crypto.md`](crypto.md).
   (except history, as before), a log, a push or a request. Expired messages
   (W2) are deleted from `local_messages`, their reactions and the index; the
   expiry is the server's `expires_at`, stamped when the message was decrypted or
-  first echoed, and it is not MLS-authenticated.
+  first echoed, and it is not MLS-authenticated. The only exceptions where
+  expiry is read from cached envelopes are the schema 10 upgrade and the
+  restore of a format 1 or 2 backup, once, for rows that predate the column.
 - Decrypted history (D22/D23) lives in `local_messages` and
   `local_message_reactions`, keyed by the authenticated
   `<sender_device_id>:<action_id>`. Edits and deletes apply only when the

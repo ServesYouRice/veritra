@@ -130,6 +130,9 @@ it missed.
 - Calls are not in the demo yet. Attachments work: phones open images only;
   desktops also save other files.
 - Cross-machine demos need HTTPS and are not covered yet.
+- A demo server database that already ran the first draft of the timed-mute
+  migration (`0035_mute_until`) needs a fresh database: that migration is now
+  `0036_mute_until`, after the receipts migration `0035`.
 
 ## Automated check
 

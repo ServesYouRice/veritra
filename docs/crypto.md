@@ -154,7 +154,11 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   no ABI or payload change. Decrypted rows are deleted only by their own
   expiry, a cached envelope only removes itself. The upgrade backfills the
   expiry from the cached envelopes and purges what has expired, in its one
-  transaction.
+  transaction. That migration backfill is the one place expiry is taken
+  from cached envelopes. Backups are format 3 from here on and carry message
+  expiry with the history; only a format 1 or 2 backup is backfilled on
+  restore, so a server cannot relist an envelope with a short expiry and have
+  an export and restore erase decrypted history.
 - **W6 (2026-10-24):** local schema 11 adds `local_drafts` and
   `local_conversation_mutes` (new tables only). No ABI change; the reaction
   payload is unchanged (`reaction` stays a string of at most 32 UTF-16 code

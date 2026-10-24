@@ -3,6 +3,8 @@
 // The emoji the reaction picker offers (W6): Unicode names are English,
 // and groups approximate the CLDR groups. Any other emoji can still be
 // typed or pasted into the picker.
+//
+// Built from: Perl v5.38.2, Unicode 15.0.0; tzdata 2026e.
 
 /// One emoji and its Unicode name, lower case.
 class EmojiEntry {
