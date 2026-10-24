@@ -90,6 +90,9 @@ func (s *Store) ConversationNotificationMute(ctx context.Context, conversationID
 	return domain.NotificationMute{Muted: true, Until: &end}, nil
 }
 
+// MaxMuteDuration bounds a timed mute; "always" is a mute without an end.
+const MaxMuteDuration = 366 * 24 * time.Hour
+
 // SetConversationNotificationMute mutes the conversation until [until], or
 // without an end when until is nil. Unmuting clears any end.
 func (s *Store) SetConversationNotificationMute(ctx context.Context, conversationID, accountID string, muted bool, until *time.Time) error {
@@ -102,6 +105,11 @@ func (s *Store) SetConversationNotificationMute(ctx context.Context, conversatio
 	}
 	var end any
 	if muted && until != nil {
+		// A timed mute ends in the future and within MaxMuteDuration.
+		now := time.Now()
+		if !until.After(now) || until.After(now.Add(MaxMuteDuration)) {
+			return ErrInvalidInput
+		}
 		end = until.UTC().Unix()
 	}
 	_, err = s.db.ExecContext(ctx, `INSERT INTO conversation_notification_preferences(account_id, conversation_id, muted, muted_until, updated_at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(account_id, conversation_id) DO UPDATE SET muted = excluded.muted, muted_until = excluded.muted_until, updated_at = excluded.updated_at`, accountID, conversationID, muted, end, nowString())

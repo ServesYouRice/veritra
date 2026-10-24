@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,9 +14,6 @@ import (
 	"private-messenger/server/internal/realtime"
 	"private-messenger/server/internal/storage"
 )
-
-// maxMuteDuration bounds a timed mute; "always" is a mute without an end.
-const maxMuteDuration = 366 * 24 * time.Hour
 
 func (a *API) createCommunity(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
 	var req createCommunityRequest
@@ -308,14 +306,13 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 		var until *time.Time
 		if *req.Muted && req.MutedUntil != nil {
 			end := req.MutedUntil.UTC().Truncate(time.Second)
-			now := time.Now()
-			if !end.After(now) || end.After(now.Add(maxMuteDuration)) {
-				writeError(w, http.StatusBadRequest, "muted_until_invalid")
-				return
-			}
 			until = &end
 		}
 		if err := a.Store.SetConversationNotificationMute(r.Context(), conversationID, principal.AccountID, *req.Muted, until); err != nil {
+			if errors.Is(err, storage.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "muted_until_invalid")
+				return
+			}
 			handleStorageError(w, err)
 			return
 		}

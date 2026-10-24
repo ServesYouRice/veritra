@@ -3,24 +3,24 @@
 
 The reaction picker needs "any emoji" without a new dependency, so the list is
 generated here from Perl's Unicode tables (the Emoji property and character
-names; Perl 5.38 ships Unicode 15.0) and the ISO 3166-1 country names in
-Debian's iso-codes. Run it again when Perl or iso-codes moves to a newer
-Unicode version:
+names; Perl 5.38 ships Unicode 15.0, under the Unicode License v3) and the
+ISO 3166-1 country names in tzdata's iso3166.tab (public domain). Run it again
+when Perl or tzdata moves to a newer version, then format the result:
 
     python3 scripts/gen-emoji-data.py
+    (cd mobile && dart format lib/features/chat/emoji_data.dart)
 
 Only single code point emoji, country flags and a short list of common ZWJ
 sequences are listed. Anything else can still be typed or pasted into the
 picker. Grouping is by code point range and approximates the CLDR groups.
 """
-import json
 import pathlib
 import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 OUT = ROOT / "mobile" / "lib" / "features" / "chat" / "emoji_data.dart"
-ISO = pathlib.Path("/usr/share/iso-codes/json/iso_3166-1.json")
+ISO = pathlib.Path("/usr/share/zoneinfo/iso3166.tab")
 
 PERL = r'''
 use charnames ':full';
@@ -159,11 +159,11 @@ def main():
         groups[group_of(cp)].append((sequence, name))
     for group, sequence, name in SEQUENCES:
         groups[group].append((sequence, name))
-    countries = json.loads(ISO.read_text())["3166-1"]
     flags = []
-    for country in countries:
-        code = country["alpha_2"]
-        name = country.get("common_name") or country["name"]
+    for line in ISO.read_text(encoding="utf-8").splitlines():
+        if not line or line.startswith("#"):
+            continue
+        code, name = line.split("\t")
         pair = [0x1F1E6 + ord(letter) - ord("A") for letter in code]
         flags.append((pair, "flag: " + name.lower()))
     groups["flags"].extend(sorted(flags, key=lambda item: item[1]))

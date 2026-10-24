@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -61,6 +62,13 @@ func TestTimedMuteEndsByItself(t *testing.T) {
 	}
 	if targets() != 1 {
 		t.Fatalf("an expired mute should wake the member again")
+	}
+
+	// An end must be in the future and not absurdly far.
+	for _, bad := range []time.Time{time.Now().Add(-time.Minute), time.Now().Add(MaxMuteDuration + time.Hour)} {
+		if err := store.SetConversationNotificationMute(ctx, group.ID, peer.Account.ID, true, &bad); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("mute until %v: err=%v, want ErrInvalidInput", bad, err)
+		}
 	}
 
 	// Always: no end.
