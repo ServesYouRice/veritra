@@ -215,7 +215,7 @@ jobs:
       - name: Install Linux desktop build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libsecret-1-dev liblzma-dev
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libsecret-1-dev liblzma-dev libnotify-dev libayatana-appindicator3-dev
       - name: Install pinned Rust
         run: rustup toolchain install 1.91.0 --profile minimal
       - name: Build the Linux crypto library
