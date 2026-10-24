@@ -133,6 +133,9 @@ it missed.
 - A demo server database that already ran the first draft of the timed-mute
   migration (`0035_mute_until`) needs a fresh database: that migration is now
   `0036_mute_until`, after the receipts migration `0035`.
+- A demo server database started from this branch before the receipts
+  migration was finalised (commit `d4059ef`) ran an earlier `0035` and also
+  needs a fresh database.
 
 ## Automated check
 

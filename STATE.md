@@ -14,7 +14,7 @@ in Git history at `d2d9eb8`. Evidence lives in [`testing/evidence/`](testing/evi
 | 🎯 Current focus | Chats on Windows first (D43), then Discord-style communities and the WhatsApp and Discord basics, privacy first (D44). Order and packages: [Build plan](#build-plan) |
 | 🔒 Public release | 🔴 **NO-GO by design.** Messaging stays off in release builds until the independent crypto review (G25) and signed-device evidence (G24) pass |
 | 🧪 Local demos (real encryption, labelled "unreviewed") | 🟢 Work: server + Linux app run here; Android, iOS, Windows, macOS build in CI |
-| 🧰 Local work queue | 🟢 Done, including the 2026-10-23 open-work round. What is left needs the owner or outside parties; see [Open work](#open-work) |
+| 🧰 Local work queue | 🟡 Build plan round 1 (2026-10-24) landed W2, W5, W6, W8 step 0, W9, W10, B4, B8, B9 and four designs; W1, W3, W4 wait for a run on a real Windows desktop. See [Build plan](#build-plan) and [Open work](#open-work) |
 | 🚀 First deployment (k3s, handbook plan) | 🟡 Repo side ready; needs the owner's accounts (see [Deployment](#deployment)) and branch protection on GitHub |
 | ✅ Checks | 🟢 Go, Rust, Flutter, contract, demo e2e, release-policy fixtures pass; CI runs on every PR |
 | 🌐 Languages | 🟡 English, and Serbian (Cyrillic and Latin) awaiting a native-speaker review |
@@ -160,6 +160,9 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 | **D43** (2026-10-24, owner) | First focus: one-to-one and group chats on Windows. It orders the work only; the release gates and D11/D12 still hold |
 | **D44** (2026-10-24, owner) | Communities work like Discord, and Veritra covers the basic features of both WhatsApp and Discord, with privacy first: everything stays end-to-end encrypted and [Stays out](#stays-out) still holds. A gap study sets the list |
 | **D45** (2026-10-24, owner) | Work runs on Claude Sonnet 5.5, which hands work to Claude Opus 5.5 when it is unsure or when a mistake would be costly (`AGENTS.md`, Model routing). The [Build plan](#build-plan) lists every missing feature as a package with its route |
+| **D46** (2026-10-24, owner) | New plugins approved: `tray_manager`, `window_manager`, `local_notifier`, `desktop_drop`, `pasteboard`, `open_filex` (pins and notices in `pubspec.yaml`, `THIRD_PARTY_NOTICES.md`). RUSTSEC-2026-0387 excepted under G27 |
+| **D47** (2026-10-24) | W5 stores delivery cursors and a shared read cursor on the server (migration 0035): when a member's device last caught up in a conversation, only in conversations of ≤ 20 members, never in channels. Turning read receipts off freezes the shared cursor |
+| **D48** (2026-10-24, coordinator, owner may veto) | A block hides receipts and delivery state in both directions. DMs and groups from strangers are requests. A fresh device (link, reinstall, restore) accepts only conversations it created; an upgrade accepts what existed. Drafts survive a session expiry and are wiped on sign-out or reset |
 
 ## Roadmap
 
@@ -218,10 +221,10 @@ dependency, with the licence review and `THIRD_PARTY_NOTICES.md` update that
 
 | ID | Package | Done when | Route |
 |---|---|---|---|
-| W1 ✅ | Windows run | The demo flow (owner, invite, DM, reply, edit, react, delete) runs on a Windows CI runner, and the owner has run it once by hand | Sonnet; the owner does the hand run — CI part done 2026-10-24: `scripts/test-demo-e2e.ps1` in the `desktop-windows` job; the owner's hand run is still open |
+| W1 🟡 | Windows run | The demo flow (owner, invite, DM, reply, edit, react, delete) runs on a Windows CI runner, and the owner has run it once by hand | Sonnet; the owner does the hand run — CI part done 2026-10-24: `scripts/test-demo-e2e.ps1` in the `desktop-windows` job; the owner's hand run is still open |
 | W2 ✅ | Disappearing messages leave devices | An expired message is gone from the local database, the chat and the chat list on every device, also after an offline restart. Today the app reads `expires_at` but never deletes its own copy | Opus review — 2026-10-24, local schema 10; Opus-reviewed, review fixes in |
-| W3 ✅ | Windows notifications | A message arriving while the window is in the background raises a Windows notification, made on the device after decryption; muted chats stay quiet; a setting hides the preview | Owner first (new plugin), then Sonnet — 2026-10-24 with `local_notifier` (owner approved); toasts not yet seen on a real Windows desktop |
-| W4 ✅ | Tray and one window | Closing the window keeps the app syncing from the tray; opening it again shows the running window instead of an error | Sonnet — 2026-10-24 with `tray_manager`/`window_manager`; single instance in the Windows runner |
+| W3 🟡 | Windows notifications | A message arriving while the window is in the background raises a Windows notification, made on the device after decryption; muted chats stay quiet; a setting hides the preview | Owner first (new plugin), then Sonnet — 2026-10-24 with `local_notifier` (owner approved); toasts not yet seen on a real Windows desktop |
+| W4 🟡 | Tray and one window | Closing the window keeps the app syncing from the tray; opening it again shows the running window instead of an error | Sonnet — 2026-10-24 with `tray_manager`/`window_manager`; single instance in the Windows runner |
 | W5 ✅ | Ticks and typing | Sent, delivered and read ticks and a typing line in DMs and small groups, from what the server already stores; one switch turns your own read receipts off | Sonnet — 2026-10-24, server migration 0035; Opus-reviewed, ticks only in conversations of ≤ 20 members |
 | W6 ✅ | Reactions, mute, drafts | Any emoji can react; mute for 8 hours, 1 week or always; drafts survive a restart, kept in the encrypted local database | Opus review — 2026-10-24, local schema 11, server migration 0036; Opus-reviewed, review fixes in |
 | W7 ✅ | Message actions design | One payload design for formatting, mentions, forward, pin, polls and other "messages about a message", recorded in `docs/crypto.md` with its payload version | Opus designs — designed 2026-10-24 in `docs/crypto.md` (payload v2), reviewed; step 0 (receive policy) built and Opus-reviewed |
