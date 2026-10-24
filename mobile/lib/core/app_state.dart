@@ -148,6 +148,8 @@ class Ops {
   static String conversation(String id) => 'conversation:$id';
 }
 
+enum RequestBucket { chat, request, hidden }
+
 class AppState extends ChangeNotifier {
   AppState({
     required this.apiClientFactory,
@@ -421,27 +423,61 @@ class AppState extends ChangeNotifier {
   bool isBlocked(String accountId) =>
       blockedAccounts.any((block) => block.accountId == accountId);
 
-  // Message requests (B8). A DM that someone else started with a peer this
-  // account has not accepted waits as a request: no read receipt, no
-  // attachment download. Acceptance is local; the set of accepted peers lives
-  // in the encrypted local settings, never on the server.
+  // Message requests (B8). A DM or group that someone else started, whose
+  // starter this account has not accepted, waits as a request: no read
+  // receipt, no attachment download, no notification. Acceptance is local to
+  // this device (syncing it across devices is later work); the accepted peers,
+  // accepted groups and declined conversations live in the encrypted local
+  // settings, never on the server.
+  //
+  // The server refuses to remove a member from a DM, so Delete and Block on a
+  // DM cannot leave it. They record the conversation as declined instead; it
+  // is hidden, and returns as a request only on newer activity from a peer
+  // who is not blocked.
   static const String _requestSettingName = 'message_requests';
   Set<String>? _acceptedPeers;
+  final Set<String> _acceptedGroups = <String>{};
+  final Map<String, DateTime> _declined = <String, DateTime>{};
 
-  bool isMessageRequest(Conversation conversation) {
-    final accepted = _acceptedPeers;
-    final peer = conversation.peerAccountId;
+  /// Whether the request state has been read. Until then nothing from a
+  /// stranger is treated as accepted, and the chat list shows no rows.
+  bool get requestStateLoaded => _acceptedPeers != null;
+
+  /// Where a conversation belongs: the chat list, the Requests section, or
+  /// nowhere (declined, or from a blocked account).
+  RequestBucket requestBucket(Conversation conversation) {
     final me = session?.accountId;
-    if (accepted == null ||
-        !conversation.isDm ||
-        peer == null ||
-        me == null ||
-        conversation.createdBy == null ||
-        conversation.createdBy == me) {
-      return false;
+    final creator = conversation.createdBy;
+    final isDm = conversation.isDm;
+    if (me == null ||
+        !(isDm || conversation.isGroup) ||
+        creator == null ||
+        creator == me) {
+      return RequestBucket.chat;
     }
-    return !accepted.contains(peer) && !isBlocked(peer);
+    final sender = isDm ? conversation.peerAccountId : creator;
+    if (sender == null) return RequestBucket.chat;
+    final accepted = _acceptedPeers;
+    if (accepted != null &&
+        (isDm
+            ? accepted.contains(sender)
+            : accepted.contains(creator) ||
+                _acceptedGroups.contains(conversation.id))) {
+      return RequestBucket.chat;
+    }
+    if (isBlocked(sender)) return RequestBucket.hidden;
+    final declinedAt = _declined[conversation.id];
+    if (declinedAt != null) {
+      final activity = conversation.lastActivityAt;
+      if (activity == null || !activity.isAfter(declinedAt)) {
+        return RequestBucket.hidden;
+      }
+    }
+    return RequestBucket.request;
   }
+
+  bool isMessageRequest(Conversation conversation) =>
+      requestBucket(conversation) == RequestBucket.request;
 
   bool isMessageRequestId(String conversationId) {
     final conversation =
@@ -449,13 +485,33 @@ class AppState extends ChangeNotifier {
     return conversation != null && isMessageRequest(conversation);
   }
 
-  /// Loads (or, on first run, creates) the accepted-peer set. Conversations
-  /// that already exist when this first runs are grandfathered in, so an
-  /// update never turns existing chats into requests.
-  Future<void> _loadRequestState() async {
+  bool _heldBack(String conversationId) {
+    final conversation =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    return conversation != null &&
+        requestBucket(conversation) != RequestBucket.chat;
+  }
+
+  /// Whether the conversation's content may be shown, read or fetched.
+  /// Unknown conversations are not.
+  bool conversationOpen(String conversationId) {
+    final conversation =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    return conversation != null &&
+        requestBucket(conversation) == RequestBucket.chat;
+  }
+
+  /// Loads (or, on first run, creates) the request state. Only an upgrade
+  /// ([grandfather]: an earlier local snapshot exists) accepts the
+  /// conversations already there, so an update never turns existing chats
+  /// into requests. A fresh device (link, reinstall, restore) starts with
+  /// only what this account created accepted.
+  Future<void> _loadRequestState({required bool grandfather}) async {
     final me = session?.accountId;
     if (me == null || _acceptedPeers != null) return;
     final accepted = <String>{};
+    final groups = <String>{};
+    final declined = <String, DateTime>{};
     var known = false;
     try {
       final raw = await localStore.loadSetting(_requestSettingName);
@@ -465,57 +521,137 @@ class AppState extends ChangeNotifier {
           known = true;
           final peers = decoded['accepted'];
           if (peers is List) accepted.addAll(peers.whereType<String>());
+          final acceptedGroups = decoded['groups'];
+          if (acceptedGroups is List) {
+            groups.addAll(acceptedGroups.whereType<String>());
+          }
+          final gone = decoded['declined'];
+          if (gone is Map) {
+            for (final entry in gone.entries) {
+              final at = DateTime.tryParse('${entry.value}');
+              if (entry.key is String && at != null) {
+                declined[entry.key as String] = at;
+              }
+            }
+          }
         }
       }
     } catch (_) {
       // An unreadable value is treated as first run.
     }
     if (!known) {
-      for (final conversation in conversations) {
-        final peer = conversation.peerAccountId;
-        if (conversation.isDm && peer != null) accepted.add(peer);
+      if (grandfather) {
+        for (final conversation in conversations) {
+          final peer = conversation.peerAccountId;
+          if (conversation.isDm && peer != null) accepted.add(peer);
+          if (conversation.isGroup) groups.add(conversation.id);
+        }
       }
-      await _saveRequestState(me, accepted);
+      await _saveRequestState(me, accepted, groups, declined);
     }
     _acceptedPeers = accepted;
+    _acceptedGroups
+      ..clear()
+      ..addAll(groups);
+    _declined
+      ..clear()
+      ..addAll(declined);
   }
 
-  Future<void> _saveRequestState(String me, Set<String> accepted) =>
+  Future<void> _persistRequestState() async {
+    final me = session?.accountId;
+    final accepted = _acceptedPeers;
+    if (me == null || accepted == null) return;
+    await _saveRequestState(me, accepted, _acceptedGroups, _declined);
+  }
+
+  Future<void> _saveRequestState(
+    String me,
+    Set<String> accepted,
+    Set<String> groups,
+    Map<String, DateTime> declined,
+  ) =>
       localStore.saveSetting(
         _requestSettingName,
         jsonEncode(<String, Object?>{
           'account': me,
           'accepted': accepted.toList()..sort(),
+          'groups': groups.toList()..sort(),
+          'declined': <String, String>{
+            for (final entry in declined.entries)
+              entry.key: entry.value.toUtc().toIso8601String(),
+          },
         }),
       );
 
-  Future<void> acceptMessageRequest(String conversationId) async {
-    final me = session?.accountId;
-    final peer = conversations
-        .where((c) => c.id == conversationId)
-        .firstOrNull
-        ?.peerAccountId;
+  String? _requestSender(Conversation conversation) =>
+      conversation.isDm ? conversation.peerAccountId : conversation.createdBy;
+
+  /// Accepts [conversation]'s sender (a DM's peer, or a group) and clears any
+  /// earlier decline. Starting or replying in a conversation counts as
+  /// accepting it.
+  Future<bool> _acceptConversation(Conversation conversation) async {
     final accepted = _acceptedPeers;
-    if (me == null || peer == null || accepted == null) return;
-    accepted.add(peer);
-    await _saveRequestState(me, accepted);
+    final sender = _requestSender(conversation);
+    if (accepted == null || sender == null || isBlocked(sender)) return false;
+    if (conversation.isGroup) {
+      _acceptedGroups.add(conversation.id);
+    } else {
+      accepted.add(sender);
+    }
+    _declined.remove(conversation.id);
+    await _persistRequestState();
     notifyListeners();
+    return true;
   }
 
-  /// Blocks the sender and leaves the conversation.
+  /// Accepts a request. False when nothing was accepted (unknown
+  /// conversation, state not loaded, or a blocked sender).
+  Future<bool> acceptMessageRequest(String conversationId) async {
+    final conversation =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    if (conversation == null) return false;
+    final wasRequest = isMessageRequest(conversation);
+    if (!await _acceptConversation(conversation)) return false;
+    if (wasRequest && selectedConversationId == conversationId) {
+      unawaited(loadMessages(conversationId));
+    }
+    return true;
+  }
+
+  Future<bool> _decline(Conversation conversation) async {
+    _declined[conversation.id] = DateTime.now().toUtc();
+    await _persistRequestState();
+    if (selectedConversationId == conversation.id) {
+      selectedConversationId = null;
+    }
+    notifyListeners();
+    return true;
+  }
+
+  /// Drops the request: a DM cannot be left (the server refuses), so it is
+  /// declined; a group is left for real.
+  Future<bool> _dropRequest(Conversation conversation) => conversation.isGroup
+      ? leaveConversation(conversation.id)
+      : _decline(conversation);
+
+  /// Blocks the sender, then drops the request.
   Future<bool> blockMessageRequest(String conversationId) async {
-    final peer = conversations
-        .where((c) => c.id == conversationId)
-        .firstOrNull
-        ?.peerAccountId;
-    if (peer == null) return false;
-    if (!await blockAccount(peer)) return false;
-    return leaveConversation(conversationId);
+    final conversation =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    final sender = conversation == null ? null : _requestSender(conversation);
+    if (conversation == null || sender == null) return false;
+    if (!await blockAccount(sender)) return false;
+    return _dropRequest(conversation);
   }
 
-  /// Leaves the conversation without blocking.
-  Future<bool> deleteMessageRequest(String conversationId) =>
-      leaveConversation(conversationId);
+  /// Drops the request without blocking.
+  Future<bool> deleteMessageRequest(String conversationId) async {
+    final conversation =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    if (conversation == null) return false;
+    return _dropRequest(conversation);
+  }
 
   List<ConversationMember> membersFor(String conversationId) =>
       membersByConversation[conversationId] ?? const <ConversationMember>[];
@@ -792,7 +928,7 @@ class AppState extends ChangeNotifier {
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
       if (cached != null) {
         conversations = cached.conversations;
-        await _loadRequestState();
+        await _loadRequestState(grandfather: true);
         messagesByConversation = cached.messagesByConversation;
         conversationsLoaded = true;
         notifyListeners();
@@ -1090,7 +1226,7 @@ class AppState extends ChangeNotifier {
       return;
     }
     conversations = await client.conversations(current.token);
-    await _loadRequestState();
+    await _loadRequestState(grandfather: false);
     // The server's list is the truth: a conversation no longer in it (an
     // admin removed this account, say) keeps no draft here.
     composerDrafts.retainOnly(conversations.map((item) => item.id));
@@ -1248,6 +1384,8 @@ class AppState extends ChangeNotifier {
     if (kind == 'dm' && memberAccountIds.length == 1) {
       final existing = existingDmWith(memberAccountIds.single);
       if (existing != null) {
+        // Starting a conversation with the peer accepts them.
+        await _acceptConversation(existing);
         selectConversation(existing.id);
         return existing;
       }
@@ -1271,6 +1409,8 @@ class AppState extends ChangeNotifier {
       final conversation = created!;
       await _setUpConversationGroup(conversation.id);
       conversations = <Conversation>[conversation, ...conversations];
+      // The server may hand back a DM the peer created first.
+      if (conversation.isDm) await _acceptConversation(conversation);
       selectedConversationId = conversation.id;
       messagesByConversation[conversation.id] = <ReceivedMessageEnvelope>[];
     });
@@ -1621,7 +1761,7 @@ class AppState extends ChangeNotifier {
       return;
     }
     // No read receipt for a request: the sender learns nothing until accepted.
-    if (isMessageRequestId(conversationId)) {
+    if (_heldBack(conversationId)) {
       return;
     }
     final messages = messagesByConversation[conversationId] ??
@@ -1863,15 +2003,22 @@ class AppState extends ChangeNotifier {
   /// Downloads one attachment's ciphertext and decrypts it in memory. The
   /// ciphertext and plaintext only touch disk as temporary files, which are
   /// removed before this returns.
-  Future<Uint8List> loadAttachment(AttachmentEntry entry) async {
+  Future<Uint8List> loadAttachment(
+    AttachmentEntry entry, {
+    required String conversationId,
+  }) async {
     final service = attachmentService;
     final current = session;
     final client = api;
     if (service == null || current == null || client == null) {
       throw StateError('attachments are unavailable');
     }
-    final entryConversation = entry.manifest['conversation_id'];
-    if (entryConversation is String && isMessageRequestId(entryConversation)) {
+    // The caller's conversation decides, not the manifest's claim; the
+    // manifest must still name the same conversation.
+    if (entry.manifest['conversation_id'] != conversationId) {
+      throw StateError('attachment belongs to another conversation');
+    }
+    if (!conversationOpen(conversationId)) {
       throw StateError('attachments wait until the request is accepted');
     }
     final directory = await service.workingDirectory();
@@ -1918,8 +2065,11 @@ class AppState extends ChangeNotifier {
   /// Decrypts one attachment into [destinationPath], a location the user
   /// chose.
   Future<void> saveAttachment(
-      AttachmentEntry entry, String destinationPath) async {
-    final bytes = await loadAttachment(entry);
+    AttachmentEntry entry,
+    String destinationPath, {
+    required String conversationId,
+  }) async {
+    final bytes = await loadAttachment(entry, conversationId: conversationId);
     await File(destinationPath).writeAsBytes(bytes, flush: true);
   }
 
@@ -1955,6 +2105,10 @@ class AppState extends ChangeNotifier {
           conversations.where((item) => item.id == conversationId).firstOrNull;
       if (current == null || client == null || conversation == null) {
         return;
+      }
+      // Replying counts as accepting.
+      if (isMessageRequest(conversation)) {
+        await _acceptConversation(conversation);
       }
       if (!await localStore.hasOutboxCapacity()) {
         throw const OutboxFullException();
@@ -2318,7 +2472,8 @@ class AppState extends ChangeNotifier {
   void selectConversation(String id) {
     selectedConversationId = id;
     notifyListeners();
-    unawaited(loadMessages(id));
+    // A request loads nothing until it is accepted.
+    if (!_heldBack(id)) unawaited(loadMessages(id));
   }
 
   Future<void> _startSync() async {
@@ -3257,6 +3412,8 @@ class AppState extends ChangeNotifier {
     blockedAccounts = <BlockedAccount>[];
     blocksLoaded = false;
     _acceptedPeers = null;
+    _acceptedGroups.clear();
+    _declined.clear();
     _mutedConversations.clear();
     _historyCursors.clear();
     _loadingOlder.clear();

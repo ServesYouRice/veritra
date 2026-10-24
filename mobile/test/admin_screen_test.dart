@@ -47,7 +47,7 @@ class _AdminApi extends ApiClient {
   @override
   Future<AdminPage<AdminAuditEvent>> listAdminAuditEvents(
     String token, {
-    String? after,
+    String? before,
     int limit = 50,
   }) async {
     return AdminPage<AdminAuditEvent>(<AdminAuditEvent>[
@@ -67,7 +67,7 @@ class _AdminApi extends ApiClient {
   }) async {
     statusCalls.add(suspended);
     if (needsReauth) {
-      throw ApiException(401, '{"error":"recent_auth_required"}');
+      throw ApiException(403, '{"error":"recent_auth_required"}');
     }
     bobSuspended = suspended;
   }
@@ -145,5 +145,52 @@ void main() {
     await tester.tap(find.text('Audit log'));
     await tester.pumpAndSettle();
     expect(find.text('account.status.updated'), findsOneWidget);
+  });
+
+  Future<void> openAs(
+    WidgetTester tester,
+    _AdminApi api, {
+    required String accountId,
+    required String role,
+  }) async {
+    final state = AppState(
+      apiClientFactory: (_) => api,
+      cryptoService: TestOnlyCryptoService(),
+      localStore: MemoryLocalStore(),
+      syncServiceFactory: (_, __) => _FakeSyncService(),
+    )
+      ..api = api
+      ..session = Session(
+        baseUrl: 'https://example.test',
+        token: 'token',
+        accountId: accountId,
+        deviceId: 'dev_current',
+        username: 'someone',
+        role: role,
+      );
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
+          AppLocalizations.delegate,
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: AdminScreen(state: state, reauthenticate: (_) async => true),
+      ),
+    );
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('an admin or a second owner cannot suspend an owner',
+      (tester) async {
+    // Rows: alice (owner) and bob (member).
+    await openAs(tester, _AdminApi(), accountId: 'acct_admin', role: 'admin');
+    expect(find.text('Suspend'), findsOneWidget);
+
+    await openAs(tester, _AdminApi(), accountId: 'acct_owner2', role: 'owner');
+    // Only the member row: an owner is not suspendable, even by an owner.
+    expect(find.text('Suspend'), findsOneWidget);
   });
 }

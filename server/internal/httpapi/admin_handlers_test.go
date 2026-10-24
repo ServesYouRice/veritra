@@ -1,8 +1,11 @@
 package httpapi_test
 
 import (
+	"bytes"
+	"database/sql"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"testing"
 )
 
@@ -73,5 +76,105 @@ func TestAdminAccountsSuspendReactivateAndAuditLog(t *testing.T) {
 	}
 	if updates != 2 {
 		t.Fatalf("status audit events=%d body=%s", updates, response)
+	}
+}
+
+func TestAdminAuditEventsNewestFirstPagesWithBefore(t *testing.T) {
+	handler, ownerToken, _ := newTestHandlerWithOwner(t)
+	_, memberID := registerMemberWithID(t, handler, ownerToken, "bob")
+	for _, want := range []string{"suspended", "active", "suspended"} {
+		if status, response := doJSON(t, handler, http.MethodPatch, "/api/v1/admin/accounts/"+memberID+"/status", ownerToken, map[string]string{"status": want}); status != http.StatusOK {
+			t.Fatalf("set %s status=%d body=%s", want, status, response)
+		}
+	}
+	type page struct {
+		Events []struct {
+			ID int64 `json:"id"`
+		} `json:"events"`
+		NextBefore int64 `json:"next_before"`
+		NextAfter  int64 `json:"next_after"`
+	}
+	fetch := func(path string) page {
+		t.Helper()
+		status, response := doJSON(t, handler, http.MethodGet, path, ownerToken, nil)
+		if status != http.StatusOK {
+			t.Fatalf("%s status=%d body=%s", path, status, response)
+		}
+		var decoded page
+		if err := json.Unmarshal(response, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		return decoded
+	}
+
+	oldest := fetch("/api/v1/admin/audit-events")
+	if len(oldest.Events) < 3 {
+		t.Fatalf("expected several events, got %d", len(oldest.Events))
+	}
+	for i := 1; i < len(oldest.Events); i++ {
+		if oldest.Events[i].ID <= oldest.Events[i-1].ID {
+			t.Fatalf("default order is not oldest first: %+v", oldest.Events)
+		}
+	}
+
+	first := fetch("/api/v1/admin/audit-events?order=desc&limit=2")
+	if len(first.Events) != 2 || first.Events[0].ID <= first.Events[1].ID || first.NextBefore != first.Events[1].ID || first.NextAfter != 0 {
+		t.Fatalf("first desc page=%+v", first)
+	}
+	if first.Events[0].ID != oldest.Events[len(oldest.Events)-1].ID {
+		t.Fatalf("desc does not start at the newest event: %+v", first)
+	}
+	next := fetch("/api/v1/admin/audit-events?order=desc&limit=2&before=" + strconv.FormatInt(first.NextBefore, 10))
+	if len(next.Events) == 0 {
+		t.Fatal("second desc page is empty")
+	}
+	for _, event := range next.Events {
+		if event.ID >= first.NextBefore {
+			t.Fatalf("second desc page repeats or skips: %+v", next)
+		}
+	}
+}
+
+func TestAdminSuspendRankAndRecentAuth(t *testing.T) {
+	handler, ownerToken, dbPath := newTestHandlerWithOwner(t)
+	adminToken, adminID := registerMemberWithID(t, handler, ownerToken, "adam")
+	_, secondOwnerID := registerMemberWithID(t, handler, ownerToken, "olga")
+	_, memberID := registerMemberWithID(t, handler, ownerToken, "bob")
+	ownerID := accountIDFromExport(t, handler, ownerToken)
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`UPDATE accounts SET role = 'admin' WHERE id = ?`, adminID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE accounts SET role = 'owner' WHERE id = ?`, secondOwnerID); err != nil {
+		t.Fatal(err)
+	}
+	suspend := func(token, target string) (int, []byte) {
+		return doJSON(t, handler, http.MethodPatch, "/api/v1/admin/accounts/"+target+"/status", token, map[string]string{"status": "suspended"})
+	}
+
+	// An admin cannot suspend an owner, and an owner cannot suspend another owner.
+	if status, response := suspend(adminToken, ownerID); status != http.StatusForbidden {
+		t.Fatalf("admin suspends owner status=%d body=%s", status, response)
+	}
+	if status, response := suspend(ownerToken, secondOwnerID); status != http.StatusForbidden {
+		t.Fatalf("owner suspends owner status=%d body=%s", status, response)
+	}
+	// An admin can suspend a member.
+	if status, response := suspend(adminToken, memberID); status != http.StatusOK {
+		t.Fatalf("admin suspends member status=%d body=%s", status, response)
+	}
+
+	// A stale sign-in is refused before anything changes.
+	if _, err := db.Exec(`UPDATE sessions SET recent_auth_at = NULL`); err != nil {
+		t.Fatal(err)
+	}
+	status, response := suspend(ownerToken, adminID)
+	if status != http.StatusForbidden || !bytes.Contains(response, []byte("recent_auth_required")) {
+		t.Fatalf("stale suspend status=%d body=%s", status, response)
 	}
 }

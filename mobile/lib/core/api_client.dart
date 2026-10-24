@@ -376,9 +376,11 @@ class ApiClient {
     );
   }
 
+  /// The audit log, newest first. [before] continues below an event id (the
+  /// previous page's cursor).
   Future<AdminPage<AdminAuditEvent>> listAdminAuditEvents(
     String token, {
-    String? after,
+    String? before,
     int limit = 50,
   }) async {
     final json = await _jsonRequest(
@@ -387,14 +389,15 @@ class ApiClient {
         path: '/api/v1/admin/audit-events',
         queryParameters: <String, String>{
           'limit': '$limit',
-          if (after != null && after.isNotEmpty) 'after': after,
+          'order': 'desc',
+          if (before != null && before.isNotEmpty) 'before': before,
         },
       ).toString(),
       token: token,
     );
     return AdminPage<AdminAuditEvent>(
       _rows(json, 'events', AdminAuditEvent.fromJson),
-      json['next_after']?.toString(),
+      json['next_before']?.toString(),
     );
   }
 

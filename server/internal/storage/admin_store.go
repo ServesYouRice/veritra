@@ -92,11 +92,20 @@ func (s *Store) AdminRevokeInvite(ctx context.Context, inviteID string) error {
 	return nil
 }
 
-func (s *Store) ListAdminAuditEvents(ctx context.Context, afterID int64, limit int) ([]domain.AdminAuditEvent, error) {
+// ListAdminAuditEvents pages the audit log. Oldest first continues after
+// afterID; newest first (newestFirst) continues below beforeID, where zero
+// starts at the newest event.
+func (s *Store) ListAdminAuditEvents(ctx context.Context, afterID, beforeID int64, newestFirst bool, limit int) ([]domain.AdminAuditEvent, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, actor_account_id, event_type, metadata_json, created_at FROM audit_events WHERE id > ? ORDER BY id LIMIT ?`, afterID, limit)
+	query := `SELECT id, actor_account_id, event_type, metadata_json, created_at FROM audit_events WHERE id > ? ORDER BY id LIMIT ?`
+	args := []interface{}{afterID, limit}
+	if newestFirst {
+		query = `SELECT id, actor_account_id, event_type, metadata_json, created_at FROM audit_events WHERE (? <= 0 OR id < ?) ORDER BY id DESC LIMIT ?`
+		args = []interface{}{beforeID, beforeID, limit}
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

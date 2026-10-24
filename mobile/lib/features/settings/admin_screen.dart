@@ -43,6 +43,11 @@ class _AdminScreenState extends State<AdminScreen> {
   bool _eventsLoaded = false;
   bool _loading = false;
   String? _error;
+  // A reload supersedes a load still in flight: the older answer is dropped
+  // rather than appended to the fresh list.
+  int _accountsGeneration = 0;
+  int _eventsGeneration = 0;
+  bool _eventsLoading = false;
 
   @override
   void initState() {
@@ -56,7 +61,9 @@ class _AdminScreenState extends State<AdminScreen> {
   Future<void> _loadAccounts({bool reset = false}) async {
     final client = widget.state.api;
     final token = _token;
-    if (client == null || token == null || _loading) return;
+    if (client == null || token == null) return;
+    if (_loading && !reset) return;
+    final generation = reset ? ++_accountsGeneration : _accountsGeneration;
     setState(() {
       _loading = true;
       _error = null;
@@ -66,7 +73,7 @@ class _AdminScreenState extends State<AdminScreen> {
         token,
         after: reset ? null : _accountsNext,
       );
-      if (!mounted) return;
+      if (!mounted || generation != _accountsGeneration) return;
       setState(() {
         if (reset) _accounts.clear();
         _accounts.addAll(page.rows);
@@ -74,9 +81,11 @@ class _AdminScreenState extends State<AdminScreen> {
         _accountsLoaded = true;
       });
     } catch (err) {
-      _fail(err);
+      if (generation == _accountsGeneration) _fail(err);
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && generation == _accountsGeneration) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -84,12 +93,15 @@ class _AdminScreenState extends State<AdminScreen> {
     final client = widget.state.api;
     final token = _token;
     if (client == null || token == null) return;
+    if (_eventsLoading && !reset) return;
+    final generation = reset ? ++_eventsGeneration : _eventsGeneration;
+    _eventsLoading = true;
     try {
       final page = await client.listAdminAuditEvents(
         token,
-        after: reset ? null : _eventsNext,
+        before: reset ? null : _eventsNext,
       );
-      if (!mounted) return;
+      if (!mounted || generation != _eventsGeneration) return;
       setState(() {
         if (reset) _events.clear();
         _events.addAll(page.rows);
@@ -97,7 +109,9 @@ class _AdminScreenState extends State<AdminScreen> {
         _eventsLoaded = true;
       });
     } catch (err) {
-      _fail(err);
+      if (generation == _eventsGeneration) _fail(err);
+    } finally {
+      if (generation == _eventsGeneration) _eventsLoading = false;
     }
   }
 
@@ -239,7 +253,11 @@ class _AdminScreenState extends State<AdminScreen> {
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
                     ),
-                    trailing: account.id == widget.state.session?.accountId
+                    // Only accounts of a lower rank than the signed-in one;
+                    // the server enforces the same rule.
+                    trailing: account.id == widget.state.session?.accountId ||
+                            roleRank(widget.state.session?.role) <=
+                                roleRank(account.role)
                         ? null
                         : TextButton(
                             onPressed: () => _toggle(account),

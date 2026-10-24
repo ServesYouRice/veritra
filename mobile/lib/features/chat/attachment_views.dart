@@ -24,21 +24,36 @@ bool get _canChooseSaveLocation =>
 Future<void> openAttachment(
   BuildContext context,
   AppState state,
-  AttachmentEntry entry,
-) async {
+  AttachmentEntry entry, {
+  required String conversationId,
+}) async {
   if (entry.isImage) {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => AttachmentImageScreen(state: state, entry: entry),
+        builder: (_) => AttachmentImageScreen(
+          state: state,
+          entry: entry,
+          conversationId: conversationId,
+        ),
       ),
     );
     return;
   }
   if (_opensInOtherApp) {
-    await openAttachmentExternally(context, state, entry);
+    await openAttachmentExternally(
+      context,
+      state,
+      entry,
+      conversationId: conversationId,
+    );
     return;
   }
-  await saveAttachmentAs(context, state, entry);
+  await saveAttachmentAs(
+    context,
+    state,
+    entry,
+    conversationId: conversationId,
+  );
 }
 
 /// Phones hand a decrypted file to whichever app handles its type.
@@ -73,8 +88,9 @@ const Duration _openedFileLifetime = Duration(minutes: 10);
 Future<void> openAttachmentExternally(
   BuildContext context,
   AppState state,
-  AttachmentEntry entry,
-) async {
+  AttachmentEntry entry, {
+  required String conversationId,
+}) async {
   final messenger = ScaffoldMessenger.of(context);
   final l10n = context.l10n;
   final File file;
@@ -83,7 +99,11 @@ Future<void> openAttachmentExternally(
     final directory = await _openedFilesDirectory();
     await directory.create(recursive: true);
     file = File('${directory.path}${Platform.pathSeparator}${entry.fileName}');
-    await state.saveAttachment(entry, file.path);
+    await state.saveAttachment(
+      entry,
+      file.path,
+      conversationId: conversationId,
+    );
   } catch (_) {
     messenger
         .showSnackBar(SnackBar(content: Text(l10n.attachmentDownloadFailed)));
@@ -112,8 +132,9 @@ Future<void> openAttachmentExternally(
 Future<void> saveAttachmentAs(
   BuildContext context,
   AppState state,
-  AttachmentEntry entry,
-) async {
+  AttachmentEntry entry, {
+  required String conversationId,
+}) async {
   if (!_canChooseSaveLocation) {
     _snack(context, context.l10n.attachmentDemoImagesOnly);
     return;
@@ -121,7 +142,11 @@ Future<void> saveAttachmentAs(
   final location = await getSaveLocation(suggestedName: entry.fileName);
   if (location == null || !context.mounted) return;
   try {
-    await state.saveAttachment(entry, location.path);
+    await state.saveAttachment(
+      entry,
+      location.path,
+      conversationId: conversationId,
+    );
     if (context.mounted) {
       _snack(context, context.l10n.attachmentSaved(entry.fileName));
     }
@@ -202,18 +227,23 @@ class AttachmentImageScreen extends StatefulWidget {
   const AttachmentImageScreen({
     required this.state,
     required this.entry,
+    required this.conversationId,
     super.key,
   });
 
   final AppState state;
   final AttachmentEntry entry;
+  final String conversationId;
 
   @override
   State<AttachmentImageScreen> createState() => _AttachmentImageScreenState();
 }
 
 class _AttachmentImageScreenState extends State<AttachmentImageScreen> {
-  late Future<Uint8List> _bytes = widget.state.loadAttachment(widget.entry);
+  late Future<Uint8List> _bytes = widget.state.loadAttachment(
+    widget.entry,
+    conversationId: widget.conversationId,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -225,8 +255,12 @@ class _AttachmentImageScreenState extends State<AttachmentImageScreen> {
             IconButton(
               tooltip: context.l10n.attachmentSave,
               icon: const Icon(Icons.download_outlined),
-              onPressed: () =>
-                  saveAttachmentAs(context, widget.state, widget.entry),
+              onPressed: () => saveAttachmentAs(
+                context,
+                widget.state,
+                widget.entry,
+                conversationId: widget.conversationId,
+              ),
             ),
         ],
       ),
@@ -242,7 +276,10 @@ class _AttachmentImageScreenState extends State<AttachmentImageScreen> {
                   const SizedBox(height: BoneSpacing.md),
                   OutlinedButton(
                     onPressed: () => setState(() {
-                      _bytes = widget.state.loadAttachment(widget.entry);
+                      _bytes = widget.state.loadAttachment(
+                        widget.entry,
+                        conversationId: widget.conversationId,
+                      );
                     }),
                     child: Text(context.l10n.commonRetry),
                   ),

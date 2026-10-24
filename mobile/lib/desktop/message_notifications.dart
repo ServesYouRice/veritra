@@ -158,6 +158,8 @@ class MessageNotifier {
         continue;
       }
       if (state.isBlocked(envelope.senderAccountId)) continue;
+      // A request stays silent until it is accepted (B8).
+      if (!state.conversationOpen(envelope.conversationId)) continue;
       if (_now().difference(envelope.createdAt) > freshness) continue;
       final local = state.historyFor(envelope.conversationId).forEnvelope(
             envelope,

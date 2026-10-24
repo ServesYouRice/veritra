@@ -162,6 +162,20 @@ void main() {
     expect(notifier.shown.single.body, 'secret words');
   });
 
+  test('a message request stays silent until it is accepted', () async {
+    state.conversations = <Conversation>[
+      Conversation(
+        id: 'conv_1',
+        kind: 'group',
+        title: 'Family',
+        createdBy: 'acct_stranger',
+      ),
+    ];
+    history(<LocalMessage>[_local('m1')]);
+    await messages.handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
+    expect(notifier.shown, isEmpty);
+  });
+
   test('nothing is shown while the window is in front', () async {
     shell.active = true;
     history(<LocalMessage>[_local('m1')]);

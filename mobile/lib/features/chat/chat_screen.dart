@@ -28,6 +28,7 @@ import 'chat_desktop.dart';
 import 'chat_list_screen.dart';
 import 'composer_attachments.dart';
 import 'conversation_details_screen.dart';
+import 'message_request_screen.dart';
 
 /// Conversation detail screen. Pushed from the chat list, or the detail pane
 /// of the wide layout. It listens to the app state itself, and rebuilds only
@@ -188,6 +189,16 @@ class _ChatScreenState extends State<ChatScreen> {
         final conversation = widget.state.conversations
             .where((item) => item.id == widget.conversationId)
             .firstOrNull;
+        // A request shows its own screen, whichever way it was opened (list,
+        // search, the wide pane). Accepting rebuilds into the chat.
+        if (conversation != null &&
+            widget.state.requestBucket(conversation) != RequestBucket.chat) {
+          return MessageRequestScreen(
+            state: widget.state,
+            conversation: conversation,
+            popOnResult: widget.showBackButton,
+          );
+        }
         final messages = widget.state.timelineFor(widget.conversationId);
         final pending = widget.state.pendingFor(widget.conversationId);
         final replyTarget = _replyTarget();
@@ -646,6 +657,10 @@ List<Object?> _chatScreenSelection(AppState state, String conversationId) {
   final session = state.session;
   return <Object?>[
     state.conversations.where((item) => item.id == conversationId).firstOrNull,
+    state.conversations
+        .where((item) => item.id == conversationId)
+        .map(state.requestBucket)
+        .firstOrNull,
     state.messagesFor(conversationId),
     // A conversation without loaded history gets a new empty one per call;
     // every history without messages draws the same.
@@ -857,7 +872,12 @@ class _MessageList extends StatelessWidget {
                   : () => onMessageActions!(local, mine),
               senderLabel: _senderLabel(senderAccountId),
               onOpenAttachment: state.attachmentsAvailable
-                  ? (entry) => openAttachment(context, state, entry)
+                  ? (entry) => openAttachment(
+                        context,
+                        state,
+                        entry,
+                        conversationId: conversationId,
+                      )
                   : null,
               // In a DM the app bar already says who the other person is;
               // only group and channel bubbles need a per-message sender.

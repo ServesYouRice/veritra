@@ -12,16 +12,19 @@ import '../../ui/widgets/large_title_bar.dart';
 /// request is accepted (B8): no messages, no attachments, no read receipt.
 ///
 /// Pops with true when the request was accepted, so the caller can open the
-/// conversation.
+/// conversation. Shown inside a chat pane instead, [popOnResult] is false and
+/// the pane rebuilds from the state.
 class MessageRequestScreen extends StatelessWidget {
   const MessageRequestScreen({
     required this.state,
     required this.conversation,
+    this.popOnResult = true,
     super.key,
   });
 
   final AppState state;
   final Conversation conversation;
+  final bool popOnResult;
 
   @override
   Widget build(BuildContext context) {
@@ -56,8 +59,11 @@ class MessageRequestScreen extends StatelessWidget {
           const SizedBox(height: BoneSpacing.xl),
           FilledButton(
             onPressed: () async {
-              await state.acceptMessageRequest(conversation.id);
-              if (context.mounted) Navigator.of(context).pop(true);
+              final accepted =
+                  await state.acceptMessageRequest(conversation.id);
+              if (accepted && popOnResult && context.mounted) {
+                Navigator.of(context).pop(true);
+              }
             },
             child: Text(l10n.requestAccept),
           ),
@@ -106,7 +112,7 @@ class MessageRequestScreen extends StatelessWidget {
 
   void _finish(BuildContext context, bool ok) {
     if (ok) {
-      Navigator.of(context).pop(false);
+      if (popOnResult) Navigator.of(context).pop(false);
       return;
     }
     final error = state.errorFor(Ops.members) ?? state.errorFor(Ops.blocks);

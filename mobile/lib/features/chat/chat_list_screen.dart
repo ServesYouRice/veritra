@@ -44,7 +44,16 @@ class ChatListScreen extends StatelessWidget {
 
   Widget _build(BuildContext context) {
     final theme = Theme.of(context);
-    final conversations = state.conversations;
+    // No rows until the request state is read, so no stranger's chat shows as
+    // a normal one and none flashes into Requests (B8).
+    final loaded = state.requestStateLoaded;
+    final conversations = state.conversations
+        .where(
+          (c) => loaded
+              ? state.requestBucket(c) != RequestBucket.hidden
+              : state.requestBucket(c) == RequestBucket.chat,
+        )
+        .toList(growable: false);
     // Strangers wait in a Requests section above the chats (B8).
     final requests =
         conversations.where(state.isMessageRequest).toList(growable: false);
@@ -276,8 +285,8 @@ List<Object?> _chatListSelection(AppState state, {required bool embedded}) {
     state.session?.accountId,
     embedded ? state.selectedConversationId : null,
     for (final conversation in conversations) state.isMuted(conversation.id),
-    for (final conversation in conversations)
-      state.isMessageRequest(conversation),
+    state.requestStateLoaded,
+    for (final conversation in conversations) state.requestBucket(conversation),
   ];
 }
 

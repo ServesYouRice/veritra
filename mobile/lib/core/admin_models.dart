@@ -67,6 +67,16 @@ class AdminAuditEvent {
 }
 
 /// One page of an admin listing plus the cursor for the next, if any.
+/// Server role order, highest first: an account can act only on accounts of
+/// a lower rank.
+int roleRank(String? role) => switch (role) {
+      'owner' => 4,
+      'admin' => 3,
+      'moderator' => 2,
+      'member' => 1,
+      _ => 0,
+    };
+
 class AdminPage<T> {
   const AdminPage(this.rows, this.nextAfter);
 

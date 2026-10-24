@@ -75,19 +75,28 @@ func (a *API) listAdminAuditEvents(w http.ResponseWriter, r *http.Request, princ
 	if !requireAdministrator(w, principal) {
 		return
 	}
-	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	query := r.URL.Query()
+	after, _ := strconv.ParseInt(query.Get("after"), 10, 64)
+	before, _ := strconv.ParseInt(query.Get("before"), 10, 64)
+	limit, _ := strconv.Atoi(query.Get("limit"))
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	events, err := a.Store.ListAdminAuditEvents(r.Context(), after, limit)
+	// order=desc lists newest first and pages with before; the default stays
+	// oldest first and pages with after.
+	newestFirst := query.Get("order") == "desc"
+	events, err := a.Store.ListAdminAuditEvents(r.Context(), after, before, newestFirst, limit)
 	if err != nil {
 		handleStorageError(w, err)
 		return
 	}
 	response := map[string]interface{}{"events": events}
 	if len(events) == limit && len(events) > 0 {
-		response["next_after"] = events[len(events)-1].ID
+		if newestFirst {
+			response["next_before"] = events[len(events)-1].ID
+		} else {
+			response["next_after"] = events[len(events)-1].ID
+		}
 	}
 	writeJSON(w, http.StatusOK, response)
 }
