@@ -39,8 +39,10 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Local agent config
-.claude/
+# Local agent config. The shared model routing (AGENTS.md) is tracked.
+.claude/*
+!.claude/settings.json
+!.claude/agents/
 
 # Operator secrets and local backups for deploy/docker-compose.yml (I46)
 deploy/secrets/

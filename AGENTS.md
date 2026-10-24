@@ -51,6 +51,13 @@ The release gate below is a safety rule, not a "do not build" list.
 4. Update `STATE.md` when its truth changes, and put measurements or evidence
    in `testing/evidence/`. Report changed files, checks, and blockers briefly.
 
+Report a change done only after a real check exercised it: the tests, the
+analyzer or type-checker, the build, or the changed command itself. A
+syntax-only check, or a check command that failed to start, does not count.
+Where a toolchain is missing locally (Flutter with no Docker, for example),
+push and let CI run it; a green CI run on the PR counts. Otherwise say which
+check you did not run and why.
+
 Use judgment and match nearby code. Historical audits, the old board, the
 audit consensus and task contracts live only in Git history (`docs/board.md`,
 `docs/audit-consensus.md`, `implementation/REMAINING_WORK.md` at `d2d9eb8`);
@@ -68,6 +75,38 @@ Get an independent second opinion (a review agent) before a security, MLS
 ordering, migration, recovery, credential, platform-policy, artifact-trust or
 release-gate decision. Use multiple agents only for independent,
 non-overlapping work; one coordinator owns `STATE.md`.
+
+## Model routing
+
+Sessions here run on Claude Sonnet 5.5 (`.claude/settings.json`), which does
+the reading, building, testing and routine review. Claude Opus 5.5 helps in two
+ways, because a second, stronger look costs less than a wrong design that
+ships.
+
+**The advisor** (`advisorModel`) sees this conversation and answers a quick
+question. Consult it when your confidence in an approach is below about 80%,
+when the same check has failed twice and you cannot explain why, and before
+you report a package done that changed more than one layer.
+
+**The `opus-expert` subagent** (`.claude/agents/opus-expert.md`) starts with a
+fresh context, so it gives an independent view and can take over whole pieces
+of work. Hand it:
+
+- every change in a second-opinion area above; it is that review agent;
+- packages the `STATE.md` build plan routes **Opus review** (it reviews your
+  change before it lands) or **Opus designs** (it writes the design first);
+- choices between designs that are hard to undo (payload or wire formats,
+  the crypto ABI, schemas, key handling).
+
+Brief it as you would a colleague who has not seen this session: the goal and
+package ID, the files that matter, what you tried and its output, the options
+you see, and your confidence. For a review, send the diff and the files it
+touches rather than your conclusion, so the review is not anchored on it. It
+answers with a decision or a patch, its reasons, its confidence and what to
+verify. Verify what it hands back the way you would your own work. When Opus
+is also unsure, or the question belongs to the owner (a dependency, an
+account, a product choice, anything external or release-related), ask the
+owner.
 
 ## Project gotchas
 
