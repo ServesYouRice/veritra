@@ -190,6 +190,9 @@ What the server keeps is message ids only, never content or times.
   accounts in a block with you in either direction. One member behind holds the
   tick back. A member who keeps read receipts off has a frozen shared cursor, so
   a group's read tick waits for them too.
+- **Blocks hide signals both ways**: with a block between two accounts, in
+  either direction, neither gets the other's delivery or read announcements
+  (realtime and `read_receipt.updated` in sync) nor their typing.
 - **Cursors in disappearing chats**: a member's own cursor
   (`read_receipts.message_id`) and the delivery cursor go with the message they
   point at (cascade), the shared cursor (`shared_message_id`) is cleared
