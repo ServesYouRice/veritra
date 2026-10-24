@@ -2646,6 +2646,11 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  Timer? _receiptsRefreshTimer;
+
+  /// Pause before delivery announcements are acted on (W5).
+  static const Duration receiptsRefreshDebounce = Duration(milliseconds: 500);
+
   /// Routes the realtime frames that are not stored events (W5): typing and
   /// delivery announcements. True when the frame was one of them.
   @visibleForTesting
@@ -2665,7 +2670,14 @@ class AppState extends ChangeNotifier {
     if (conversationId is! String) return true;
     if (type == 'delivery_receipt.updated') {
       if (conversationId == selectedConversationId) {
-        unawaited(refreshReceipts(conversationId));
+        // A busy group sends one per member per message: read the cursors
+        // once after the burst.
+        _receiptsRefreshTimer?.cancel();
+        _receiptsRefreshTimer = Timer(receiptsRefreshDebounce, () {
+          if (!_disposed && conversationId == selectedConversationId) {
+            unawaited(refreshReceipts(conversationId));
+          }
+        });
       }
       return true;
     }
@@ -4375,6 +4387,7 @@ class AppState extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _receiptsRefreshTimer?.cancel();
     typing.dispose();
     receipts.dispose();
     _sessionGeneration++;

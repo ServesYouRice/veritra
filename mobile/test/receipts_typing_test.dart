@@ -58,6 +58,26 @@ void main() {
           MessageTick.sent);
     });
 
+    test('a member who joined after the message is not asked', () {
+      final late = MemberReceipt(
+        accountId: 'late',
+        memberSince: created.add(const Duration(minutes: 1)),
+      );
+      final early = receipt('early', delivered: created, read: created);
+      expect(
+          tickForReceipts(<MemberReceipt>[early, late], created,
+              showRead: true),
+          MessageTick.read);
+      // A message sent after they joined does count them.
+      final newer = created.add(const Duration(minutes: 2));
+      expect(
+          tickForReceipts(<MemberReceipt>[
+            receipt('early', delivered: newer, read: newer),
+            late
+          ], newer, showRead: true),
+          MessageTick.sent);
+    });
+
     test('a group needs every other member', () {
       final receipts = <MemberReceipt>[
         receipt('a', delivered: created, read: created),
@@ -98,6 +118,7 @@ void main() {
       expect(rows[0].deliveredThrough,
           DateTime.utc(2026, 6, 2, 12, 30, 0, 123, 456));
       expect(rows[0].readThrough, DateTime.utc(2026, 6, 2, 12, 29));
+      expect(rows[0].memberSince, DateTime.utc(2026, 6, 1, 8));
       expect(rows[1].deliveredThrough, isNull);
       expect(rows[1].readThrough, isNull);
     });
@@ -175,18 +196,25 @@ void main() {
       );
     });
 
-    test('a delivery announcement reads the cursors again', () async {
+    test('delivery announcements are read once after a burst', () async {
       final api = _Api()
         ..receipts = <MemberReceipt>[
           receipt('acct_peer', delivered: created),
         ];
       final state = _state(api)..selectedConversationId = 'c1';
       addTearDown(state.dispose);
-      state.handleEphemeralFrame(<String, Object?>{
-        'type': 'delivery_receipt.updated',
-        'conversation_id': 'c1',
-      });
+      for (var i = 0; i < 5; i++) {
+        state.handleEphemeralFrame(<String, Object?>{
+          'type': 'delivery_receipt.updated',
+          'conversation_id': 'c1',
+        });
+      }
       await pumpEventQueue();
+      expect(api.receiptReads, 0, reason: 'waits for the burst to end');
+      await Future<void>.delayed(
+          AppState.receiptsRefreshDebounce + const Duration(milliseconds: 100));
+      await pumpEventQueue();
+      expect(api.receiptReads, 1);
       expect(state.receipts.receiptsFor('c1').single.accountId, 'acct_peer');
       expect(state.receipts.tickFor('c1', created, showRead: true),
           MessageTick.delivered);
@@ -469,6 +497,7 @@ class _Api extends ApiClient {
   List<MemberReceipt> receipts = <MemberReceipt>[];
   final List<String> typingSent = <String>[];
   final List<String> reads = <String>[];
+  int receiptReads = 0;
   bool serverReceiptSetting = true;
   bool failSetting = false;
 
@@ -483,8 +512,10 @@ class _Api extends ApiClient {
 
   @override
   Future<List<MemberReceipt>> listReceipts(
-          String token, String conversationId) async =>
-      receipts;
+      String token, String conversationId) async {
+    receiptReads++;
+    return receipts;
+  }
 
   @override
   Future<void> sendTyping(String token, String conversationId) async =>
