@@ -99,6 +99,30 @@ void main() {
         expect(await pair.store.loadSyncCursor(), pair.events);
       });
 
+      test('the author deletes an unsupported row and its raw JSON goes',
+          () async {
+        await pair.receive(
+            _frame(jsonEncode(<String, Object?>{
+              ..._head(2, 'u1'),
+              'type': 'sticker',
+              'body': <String, Object?>{'id': 'x'},
+            })),
+            actionId: 'u1');
+        await pair.receive(
+            _frame(jsonEncode(<String, Object?>{
+              ..._head(1, 'd1'),
+              'type': 'delete',
+              'body': <String, Object?>{
+                'message_id': messageKey(_senderDevice, 'u1')
+              },
+            })),
+            actionId: 'd1');
+        final row = (await pair.messages())
+            .singleWhere((m) => m.key == messageKey(_senderDevice, 'u1'));
+        expect(row.body, isNull);
+        expect(row.deletedAt, isNotNull);
+      });
+
       test('v1 stays strict and an unknown v1 type is unsupported', () async {
         await pair.receive(
             _frame(jsonEncode(<String, Object?>{

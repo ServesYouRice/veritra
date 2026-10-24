@@ -28,6 +28,7 @@ import 'chat_desktop.dart';
 import 'chat_list_screen.dart';
 import 'composer_attachments.dart';
 import 'conversation_details_screen.dart';
+import 'emoji_picker.dart';
 import 'message_request_screen.dart';
 import 'message_ticks.dart';
 import 'typing_line.dart';
@@ -41,11 +42,17 @@ class ChatScreen extends StatefulWidget {
     required this.state,
     required this.conversationId,
     this.showBackButton = true,
+    this.initialMessageKey,
     super.key,
   });
 
   final AppState state;
   final String conversationId;
+
+  /// The local key of a message to scroll to and highlight when the screen
+  /// opens, for a search result (W10). Ignored when this device no longer
+  /// holds it.
+  final String? initialMessageKey;
 
   /// False when the screen is the detail pane of the wide master-detail
   /// layout, where there is no route to pop back to.
@@ -80,6 +87,13 @@ class _ChatScreenState extends State<ChatScreen> {
   /// appears.
   static const double _awayThreshold = 480;
 
+  // Jump to a search result (W10).
+  final GlobalKey _jumpTarget = GlobalKey();
+  late String? _jumpKey = widget.initialMessageKey;
+  String? _highlightKey;
+  bool _jumping = false;
+  Timer? _highlightTimer;
+
   @override
   void initState() {
     super.initState();
@@ -88,7 +102,84 @@ class _ChatScreenState extends State<ChatScreen> {
     composer.addListener(_noticeTyping);
     scroll.addListener(_maybeLoadOlder);
     scroll.addListener(_trackLatest);
+    _scheduleJump();
   }
+
+  void _scheduleJump() {
+    if (_jumpKey == null || _jumping) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _runJump());
+  }
+
+  /// Where the message is in the reversed list, or null when it is not in
+  /// what the chat shows (yet).
+  int? _jumpIndex(String key) {
+    final history = widget.state.historyFor(widget.conversationId);
+    final shown = widget.state
+        .timelineFor(widget.conversationId)
+        .where((message) => !history.hides(message))
+        .toList(growable: false);
+    final at = shown.indexWhere((message) =>
+        ConversationHistory.keyOf(
+            message.senderDeviceId, message.idempotencyKey) ==
+        key);
+    return at < 0
+        ? null
+        : widget.state.pendingFor(widget.conversationId).length + at;
+  }
+
+  /// Scrolls until the message is built, then centres it. Rows have no fixed
+  /// height, so this starts near the top and walks back in time a screen at
+  /// a time: no row is shorter than [_minRowExtent], so the start is never
+  /// past the message.
+  Future<void> _runJump() async {
+    final key = _jumpKey;
+    if (key == null || _jumping || !mounted) return;
+    final index = _jumpIndex(key);
+    if (index == null) {
+      // Still loading: wait for the next change. Once loading is over the
+      // message is not held any more (expired, say), so stay put.
+      if (!widget.state.isLoadingMessages(widget.conversationId)) {
+        _jumpKey = null;
+      }
+      return;
+    }
+    _jumping = true;
+    try {
+      var offset = index * _minRowExtent;
+      for (var step = 0; step < 400; step++) {
+        if (!mounted || !scroll.hasClients) return;
+        final target = _jumpTarget.currentContext;
+        if (target != null) {
+          await Scrollable.ensureVisible(target, alignment: 0.4);
+          if (!mounted) return;
+          setState(() => _highlightKey = key);
+          _highlightTimer?.cancel();
+          _highlightTimer = Timer(const Duration(seconds: 2), () {
+            if (mounted) setState(() => _highlightKey = null);
+          });
+          return;
+        }
+        final position = scroll.position;
+        if (offset > position.maxScrollExtent) {
+          offset = position.maxScrollExtent;
+        }
+        scroll.jumpTo(offset);
+        await WidgetsBinding.instance.endOfFrame;
+        if (_jumpTarget.currentContext == null) {
+          if (offset >= scroll.position.maxScrollExtent &&
+              scroll.position.maxScrollExtent == position.maxScrollExtent) {
+            return;
+          }
+          offset += position.viewportDimension * 0.8;
+        }
+      }
+    } finally {
+      _jumping = false;
+      _jumpKey = null;
+    }
+  }
+
+  static const double _minRowExtent = 40;
 
   @override
   void didUpdateWidget(ChatScreen oldWidget) {
@@ -111,6 +202,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _highlightTimer?.cancel();
     composer.removeListener(_saveDraft);
     composer.removeListener(_noticeTyping);
     scroll.removeListener(_trackLatest);
@@ -224,6 +316,7 @@ class _ChatScreenState extends State<ChatScreen> {
         final messages = widget.state.timelineFor(widget.conversationId);
         final pending = widget.state.pendingFor(widget.conversationId);
         final replyTarget = _replyTarget();
+        if (_jumpKey != null) _scheduleJump();
         return ChatShortcuts(
           onEscape: _onEscape,
           onSearch: _openSearch,
@@ -439,6 +532,9 @@ class _ChatScreenState extends State<ChatScreen> {
                   controller: scroll,
                   messages: messages,
                   pending: pending,
+                  jumpTarget: _jumpTarget,
+                  jumpKey: _jumpKey ?? _highlightKey,
+                  highlighted: _highlightKey != null,
                   onMessageActions: widget.state.messageActionsAvailable
                       ? _showMessageActions
                       : null,
@@ -491,6 +587,11 @@ class _ChatScreenState extends State<ChatScreen> {
                       icon:
                           Text(reaction, style: const TextStyle(fontSize: 24)),
                     ),
+                  IconButton(
+                    tooltip: context.l10n.chatMoreReactions,
+                    onPressed: () => Navigator.of(sheetContext).pop('react:'),
+                    icon: const Icon(Icons.add_reaction_outlined),
+                  ),
                 ],
               ),
             ),
@@ -523,7 +624,13 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted || action == null) return;
     var sent = true;
     if (action.startsWith('react:')) {
-      final reaction = action.substring('react:'.length);
+      var reaction = action.substring('react:'.length);
+      if (reaction.isEmpty) {
+        // The "more" button: any emoji, from the picker or typed.
+        final picked = await showEmojiPicker(context);
+        if (!mounted || picked == null) return;
+        reaction = picked;
+      }
       final ownAccountId = state.session?.accountId;
       final alreadyMine = state
           .historyFor(conversationId)
@@ -767,8 +874,17 @@ class _MessageList extends StatelessWidget {
     required this.controller,
     required this.messages,
     required this.pending,
+    required this.jumpTarget,
+    this.jumpKey,
+    this.highlighted = false,
     this.onMessageActions,
   });
+
+  /// The key put on the message named by [jumpKey], so the screen can find it
+  /// once it is built (W10); [highlighted] tints it.
+  final GlobalKey jumpTarget;
+  final String? jumpKey;
+  final bool highlighted;
 
   final AppState state;
   final String conversationId;
@@ -875,7 +991,8 @@ class _MessageList extends StatelessWidget {
         final showDay = older == null ||
             formatDate(context, older.createdAt) !=
                 formatDate(context, message.createdAt);
-        return Column(
+        final isJumpTarget = jumpKey != null && local?.key == jumpKey;
+        final row = Column(
           children: <Widget>[
             if (showDay)
               _DaySeparator(label: formatDate(context, message.createdAt)),
@@ -920,6 +1037,22 @@ class _MessageList extends StatelessWidget {
               ),
             ),
           ],
+        );
+        if (!isJumpTarget) return row;
+        return KeyedSubtree(
+          key: jumpTarget,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: highlighted
+                  ? Theme.of(context)
+                      .colorScheme
+                      .primary
+                      .withValues(alpha: 0.14)
+                  : null,
+              borderRadius: BorderRadius.circular(BoneRadii.md),
+            ),
+            child: row,
+          ),
         );
       },
     );

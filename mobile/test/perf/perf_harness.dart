@@ -364,8 +364,9 @@ class BenchApi extends ApiClient {
   }
 
   @override
-  Future<bool> conversationMuted(String token, String conversationId) async =>
-      false;
+  Future<ConversationMute> conversationMute(
+          String token, String conversationId) async =>
+      const ConversationMute(muted: false);
 
   @override
   Future<void> markRead(

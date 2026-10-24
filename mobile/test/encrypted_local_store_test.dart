@@ -65,6 +65,33 @@ void main() {
     }
   });
 
+  /// Takes a schema 12 database back to the shape of schema 9, so a test can
+  /// run the real upgrade over it.
+  Future<void> dropExpiryColumns(EncryptedLocalDatabase database) async {
+    for (final trigger in <String>[
+      'local_messages_search_ai',
+      'local_messages_search_au',
+      'local_messages_search_ad',
+    ]) {
+      await database.customStatement('DROP TRIGGER IF EXISTS $trigger');
+    }
+    await database.customStatement('DROP TABLE IF EXISTS local_message_search');
+    await database
+        .customStatement('DROP INDEX IF EXISTS local_messages_search_id');
+    await database
+        .customStatement('ALTER TABLE local_messages DROP COLUMN search_id');
+    await database
+        .customStatement('DROP INDEX IF EXISTS local_messages_expires_at');
+    await database.customStatement(
+        'DROP INDEX IF EXISTS local_ciphertext_envelopes_expires_at');
+    await database
+        .customStatement('ALTER TABLE local_messages DROP COLUMN expires_at');
+    await database.customStatement(
+        'ALTER TABLE local_ciphertext_envelopes DROP COLUMN expires_at');
+    await database.customStatement('DROP TABLE local_drafts');
+    await database.customStatement('DROP TABLE local_conversation_mutes');
+  }
+
   SecureLocalStore createStore({MlsCommitFailureInjector? failureInjector}) =>
       SecureLocalStore(
         storage: secureStorage,
@@ -860,6 +887,7 @@ void main() {
       await database.customStatement(
           'ALTER TABLE local_mls_outbox_entries DROP COLUMN $column');
     }
+    await dropExpiryColumns(database);
     await database.customStatement('PRAGMA user_version = 7');
     await database.close();
     databases.removeLast();
@@ -902,11 +930,11 @@ void main() {
     return rows.map((row) => row.read<String>('detail')).join('\n');
   }
 
-  test('a new database has the envelope index on schema 9', () async {
+  test('a new database has the envelope index on schema 12', () async {
     final store = createStore();
     await store.saveSyncCursor(1);
     final database = databases.last;
-    expect(await userVersion(database), 9);
+    expect(await userVersion(database), 12);
     expect(await hasEnvelopeIndex(database), isTrue);
     expect(
         await tailLookupPlan(database),
@@ -935,6 +963,7 @@ void main() {
     );
     final database = databases.last;
     await database.customStatement('DROP INDEX $envelopeIndex');
+    await dropExpiryColumns(database);
     await database.customStatement('PRAGMA user_version = 8');
     expect(await tailLookupPlan(database), isNot(contains(envelopeIndex)));
     await database.close();
@@ -943,7 +972,7 @@ void main() {
     final upgraded = createStore();
     final snapshot = await upgraded.loadSnapshot();
     final reopened = databases.last;
-    expect(await userVersion(reopened), 9);
+    expect(await userVersion(reopened), 12);
     expect(await hasEnvelopeIndex(reopened), isTrue);
     expect(await tailLookupPlan(reopened), contains('INDEX $envelopeIndex'));
     expect(snapshot?.cursor, 1);
@@ -1007,6 +1036,7 @@ void main() {
     }
     await database.customStatement('DROP INDEX $envelopeIndex');
     await database.customStatement('CREATE TABLE $envelopeIndex (blocker)');
+    await dropExpiryColumns(database);
     await database.customStatement('PRAGMA user_version = 7');
     await database.close();
     databases.removeLast();
@@ -1040,7 +1070,7 @@ void main() {
     // With the cause gone, the next open runs the whole upgrade.
     final upgraded = openStore();
     expect((await upgraded.pendingMlsMessages()).single.attemptCount, 0);
-    expect(await userVersion(databases.last), 9);
+    expect(await userVersion(databases.last), 12);
     expect(await hasEnvelopeIndex(databases.last), isTrue);
   });
 
@@ -1060,6 +1090,7 @@ void main() {
     );
     final database = databases.last;
     await database.customStatement('DROP INDEX $envelopeIndex');
+    await dropExpiryColumns(database);
     await database.customStatement('PRAGMA user_version = 8');
     await database.customStatement('VACUUM');
     final pages = (await database.customSelect('PRAGMA page_count').getSingle())
@@ -1106,7 +1137,7 @@ void main() {
     final snapshot = await store.loadSnapshot();
     expect(snapshot?.cursor, 1);
     expect(snapshot?.messagesByConversation['conv_1'], hasLength(200));
-    expect(await userVersion(databases.last), 9);
+    expect(await userVersion(databases.last), 12);
     expect(await hasEnvelopeIndex(databases.last), isTrue);
   });
 

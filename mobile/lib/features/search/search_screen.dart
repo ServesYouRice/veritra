@@ -4,19 +4,28 @@ import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
 import '../../core/models.dart';
+import '../../storage/message_search.dart';
 import '../../ui/avatar.dart';
+import '../../ui/format.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/empty_state.dart';
 import '../../ui/widgets/status_pill.dart';
+import '../chat/chat_list_screen.dart'
+    show conversationAvatar, conversationTitle;
 import '../chat/chat_screen.dart';
 import '../../l10n/l10n.dart';
 
-/// Metadata-only search over what the server actually indexes: accounts by
-/// exact username, plus communities and channels by name. Message contents
-/// are ciphertext on the server and cannot be searched there by design, and
-/// account lookup stays exact-match so the user directory cannot be
-/// enumerated.
+/// Two searches, kept apart so a message search can never reach the server.
+///
+/// Messages (the default) searches the text this device holds, in the
+/// encrypted local database (W10): the query is never sent anywhere.
+///
+/// People and communities is the metadata search over what the server
+/// actually indexes: accounts by exact username, plus communities and
+/// channels by name. Message contents are ciphertext on the server and cannot
+/// be searched there by design, and account lookup stays exact-match so the
+/// user directory cannot be enumerated. Only this mode sends the query.
 class SearchScreen extends StatefulWidget {
   const SearchScreen({required this.state, super.key});
 
@@ -26,9 +35,13 @@ class SearchScreen extends StatefulWidget {
   State<SearchScreen> createState() => _SearchScreenState();
 }
 
+enum _SearchMode { messages, people }
+
 class _SearchScreenState extends State<SearchScreen> {
   final query = TextEditingController();
   Timer? _debounce;
+  _SearchMode mode = _SearchMode.messages;
+  List<MessageSearchHit> messageHits = <MessageSearchHit>[];
   List<MetadataSearchResult> results = <MetadataSearchResult>[];
   bool searching = false;
   bool searched = false;
@@ -43,7 +56,25 @@ class _SearchScreenState extends State<SearchScreen> {
 
   void _onChanged(String value) {
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 350), () => _search(value));
+    _debounce = Timer(
+      Duration(milliseconds: mode == _SearchMode.messages ? 150 : 350),
+      () => _search(value),
+    );
+  }
+
+  void _setMode(_SearchMode next) {
+    if (next == mode) return;
+    _generation++;
+    _debounce?.cancel();
+    setState(() {
+      mode = next;
+      searching = false;
+      searched = false;
+      results = <MetadataSearchResult>[];
+      messageHits = <MessageSearchHit>[];
+    });
+    // The text stays; the new mode searches it, and only then.
+    if (query.text.trim().isNotEmpty) unawaited(_search(query.text));
   }
 
   void _clear() {
@@ -52,6 +83,7 @@ class _SearchScreenState extends State<SearchScreen> {
     query.clear();
     setState(() {
       results = <MetadataSearchResult>[];
+      messageHits = <MessageSearchHit>[];
       searching = false;
       searched = false;
     });
@@ -63,8 +95,25 @@ class _SearchScreenState extends State<SearchScreen> {
     if (trimmed.isEmpty) {
       setState(() {
         results = <MetadataSearchResult>[];
+        messageHits = <MessageSearchHit>[];
         searched = false;
       });
+      return;
+    }
+    if (mode == _SearchMode.messages) {
+      try {
+        final hits = await widget.state.searchMessages(trimmed);
+        if (!mounted || generation != _generation) return;
+        setState(() {
+          messageHits = hits;
+          searched = true;
+        });
+      } catch (_) {
+        if (!mounted || generation != _generation) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.l10n.searchMessagesFailed)),
+        );
+      }
       return;
     }
     setState(() => searching = true);
@@ -128,8 +177,10 @@ class _SearchScreenState extends State<SearchScreen> {
               style: theme.textTheme.bodyMedium,
               decoration: InputDecoration(
                 // The server searches accounts, communities, and channels
-                // only. Promising chats and groups made search look broken.
-                hintText: context.l10n.searchHint,
+                // only; messages are searched here. Each hint says which.
+                hintText: mode == _SearchMode.messages
+                    ? context.l10n.searchMessagesHint
+                    : context.l10n.searchHint,
                 border: InputBorder.none,
                 enabledBorder: InputBorder.none,
                 focusedBorder: InputBorder.none,
@@ -159,87 +210,220 @@ class _SearchScreenState extends State<SearchScreen> {
               )
             : null,
       ),
-      body: !searched
-          ? EmptyState(
-              icon: Icons.search,
-              title: context.l10n.searchIntroTitle,
-              message: context.l10n.searchIntroMessage,
-            )
-          : results.isEmpty
-              ? EmptyState(
-                  icon: Icons.search_off,
-                  title: context.l10n.searchNoResultsTitle,
-                  message: context.l10n.searchNoResultsMessage,
-                )
-              : ListView.builder(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: BoneSpacing.sm,
-                    vertical: BoneSpacing.sm,
-                  ),
-                  itemCount: results.length,
-                  itemBuilder: (context, index) {
-                    final result = results[index];
-                    final action = _actionFor(result);
-                    final reason = _inertReason(result);
-                    final colors = avatarColorsFor(context, result.id);
-                    return MergeSemantics(
-                      child: ListTile(
-                        leading: ExcludeSemantics(
-                          child: Container(
-                            width: 40,
-                            height: 40,
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                              color: colors.fill,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: colors.ring),
-                            ),
-                            child: Icon(
-                              _iconForType(result.type),
-                              size: 18,
-                              color: colors.glyph,
-                            ),
+      body: Column(
+        children: <Widget>[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              BoneSpacing.gutter,
+              BoneSpacing.sm,
+              BoneSpacing.gutter,
+              BoneSpacing.xs,
+            ),
+            child: SegmentedButton<_SearchMode>(
+              showSelectedIcon: false,
+              segments: <ButtonSegment<_SearchMode>>[
+                ButtonSegment<_SearchMode>(
+                  value: _SearchMode.messages,
+                  label: Text(context.l10n.searchModeMessages),
+                  icon: const Icon(Icons.chat_bubble_outline),
+                ),
+                ButtonSegment<_SearchMode>(
+                  value: _SearchMode.people,
+                  label: Text(context.l10n.searchModePeople),
+                  icon: const Icon(Icons.groups_outlined),
+                ),
+              ],
+              selected: <_SearchMode>{mode},
+              onSelectionChanged: (selection) => _setMode(selection.single),
+            ),
+          ),
+          Expanded(
+            child: mode == _SearchMode.messages
+                ? _messageResults(context)
+                : _peopleResults(context),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _messageResults(BuildContext context) {
+    final theme = Theme.of(context);
+    if (!searched) {
+      return EmptyState(
+        icon: Icons.search,
+        title: context.l10n.searchMessagesIntroTitle,
+        message: context.l10n.searchMessagesIntroMessage,
+      );
+    }
+    if (messageHits.isEmpty) {
+      return EmptyState(
+        icon: Icons.search_off,
+        title: context.l10n.searchMessagesNoResultsTitle,
+        message: context.l10n.searchMessagesNoResultsMessage,
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(
+        horizontal: BoneSpacing.sm,
+        vertical: BoneSpacing.sm,
+      ),
+      itemCount: messageHits.length,
+      itemBuilder: (context, index) {
+        final hit = messageHits[index];
+        final conversation = widget.state.conversations
+            .where((item) => item.id == hit.conversationId)
+            .firstOrNull;
+        final title = conversation == null
+            ? context.l10n.searchTypeConversation
+            : conversationTitle(context.l10n, conversation);
+        return MergeSemantics(
+          child: ListTile(
+            leading: conversation == null
+                ? const Icon(Icons.chat_bubble_outline)
+                : conversationAvatar(context, conversation, radius: 20),
+            title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: Text.rich(
+              _snippetSpan(hit.snippet, theme.textTheme.bodyMedium),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            trailing: Text(
+              formatDateTime(
+                context,
+                DateTime.fromMillisecondsSinceEpoch(hit.createdAt, isUtc: true)
+                    .toLocal(),
+              ),
+              style: theme.textTheme.bodySmall,
+            ),
+            onTap: () => _openMessage(hit),
+          ),
+        );
+      },
+    );
+  }
+
+  /// The snippet with each match in bold.
+  static TextSpan _snippetSpan(String snippet, TextStyle? style) {
+    final spans = <InlineSpan>[];
+    var marked = false;
+    final buffer = StringBuffer();
+    void flush() {
+      if (buffer.isEmpty) return;
+      spans.add(TextSpan(
+        text: buffer.toString(),
+        style: marked ? const TextStyle(fontWeight: FontWeight.w700) : null,
+      ));
+      buffer.clear();
+    }
+
+    for (final unit in snippet.runes) {
+      final char = String.fromCharCode(unit);
+      if (char == snippetMatchStart || char == snippetMatchEnd) {
+        flush();
+        marked = char == snippetMatchStart;
+      } else {
+        buffer.write(char);
+      }
+    }
+    flush();
+    return TextSpan(style: style, children: spans);
+  }
+
+  void _openMessage(MessageSearchHit hit) {
+    widget.state.selectAndPrepare(hit.conversationId);
+    Navigator.of(context).push(sharedAxisRoute<void>(
+      (_) => ChatScreen(
+        state: widget.state,
+        conversationId: hit.conversationId,
+        initialMessageKey: hit.key,
+      ),
+    ));
+  }
+
+  Widget _peopleResults(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return !searched
+        ? EmptyState(
+            icon: Icons.search,
+            title: context.l10n.searchIntroTitle,
+            message: context.l10n.searchIntroMessage,
+          )
+        : results.isEmpty
+            ? EmptyState(
+                icon: Icons.search_off,
+                title: context.l10n.searchNoResultsTitle,
+                message: context.l10n.searchNoResultsMessage,
+              )
+            : ListView.builder(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: BoneSpacing.sm,
+                  vertical: BoneSpacing.sm,
+                ),
+                itemCount: results.length,
+                itemBuilder: (context, index) {
+                  final result = results[index];
+                  final action = _actionFor(result);
+                  final reason = _inertReason(result);
+                  final colors = avatarColorsFor(context, result.id);
+                  return MergeSemantics(
+                    child: ListTile(
+                      leading: ExcludeSemantics(
+                        child: Container(
+                          width: 40,
+                          height: 40,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: colors.fill,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: colors.ring),
+                          ),
+                          child: Icon(
+                            _iconForType(result.type),
+                            size: 18,
+                            color: colors.glyph,
                           ),
                         ),
-                        title: Row(
-                          children: <Widget>[
-                            Flexible(
-                              child: Text(
-                                result.label,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                      ),
+                      title: Row(
+                        children: <Widget>[
+                          Flexible(
+                            child: Text(
+                              result.label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: BoneSpacing.sm),
+                          StatusPill(label: _labelForType(result.type)),
+                        ],
+                      ),
+                      // Explains inert rows instead of leaving a dead tap
+                      // target unexplained; silent when the row works.
+                      subtitle: reason == null
+                          ? null
+                          : Text(
+                              reason,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: scheme.onSurfaceVariant,
                               ),
                             ),
-                            const SizedBox(width: BoneSpacing.sm),
-                            StatusPill(label: _labelForType(result.type)),
-                          ],
-                        ),
-                        // Explains inert rows instead of leaving a dead tap
-                        // target unexplained; silent when the row works.
-                        subtitle: reason == null
-                            ? null
-                            : Text(
-                                reason,
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: scheme.onSurfaceVariant,
-                                ),
-                              ),
-                        // Blocking from search is the quickest path away from
-                        // unwanted contact, so it lives beside the result.
-                        trailing: result.type == 'account'
-                            ? _AccountResultActions(
-                                state: widget.state,
-                                accountId: result.id,
-                                label: result.label,
-                              )
-                            : null,
-                        enabled: action != null,
-                        onTap: action,
-                      ),
-                    );
-                  },
-                ),
-    );
+                      // Blocking from search is the quickest path away from
+                      // unwanted contact, so it lives beside the result.
+                      trailing: result.type == 'account'
+                          ? _AccountResultActions(
+                              state: widget.state,
+                              accountId: result.id,
+                              label: result.label,
+                            )
+                          : null,
+                      enabled: action != null,
+                      onTap: action,
+                    ),
+                  );
+                },
+              );
   }
 
   VoidCallback? _actionFor(MetadataSearchResult result) {

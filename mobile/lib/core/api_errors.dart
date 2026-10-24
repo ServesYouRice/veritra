@@ -115,6 +115,7 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'message_id_required': ApiErrorKind.invalidRequest,
   'enabled_required': ApiErrorKind.invalidRequest,
   'muted_required': ApiErrorKind.invalidRequest,
+  'muted_until_invalid': ApiErrorKind.invalidRequest,
   'transcript_hash_required': ApiErrorKind.invalidRequest,
   'weak_password': ApiErrorKind.invalidRequest,
   // Rate limits and quotas on request volume.

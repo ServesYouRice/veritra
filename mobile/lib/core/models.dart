@@ -281,6 +281,37 @@ class ChannelCreation {
       );
 }
 
+/// How long a conversation stays muted (W6).
+enum MuteDuration {
+  off,
+  eightHours,
+  oneWeek,
+  always;
+
+  /// The length of a timed mute; null for [off] and [always].
+  Duration? get length => switch (this) {
+        MuteDuration.eightHours => const Duration(hours: 8),
+        MuteDuration.oneWeek => const Duration(days: 7),
+        _ => null,
+      };
+}
+
+/// A conversation's push mute. [until] is null for a mute without an end.
+class ConversationMute {
+  const ConversationMute({required this.muted, this.until});
+
+  final bool muted;
+  final DateTime? until;
+
+  factory ConversationMute.fromJson(Map<String, Object?> json) {
+    final until = json['muted_until'];
+    return ConversationMute(
+      muted: json['muted'] == true,
+      until: until is String ? DateTime.tryParse(until)?.toUtc() : null,
+    );
+  }
+}
+
 class Invite {
   Invite({
     required this.id,

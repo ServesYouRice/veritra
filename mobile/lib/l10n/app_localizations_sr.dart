@@ -2182,6 +2182,93 @@ class AppLocalizationsSr extends AppLocalizations {
   }
 
   @override
+  String get muteEightHours => '8 сати';
+
+  @override
+  String get muteOneWeek => '1 недељу';
+
+  @override
+  String get muteAlways => 'Док поново не укључим';
+
+  @override
+  String get muteStatusAlways => 'Утишано док поново не укључите обавештења.';
+
+  @override
+  String muteStatusUntil(String time) {
+    return 'Утишано до $time.';
+  }
+
+  @override
+  String get chatMoreReactions => 'Више реакција';
+
+  @override
+  String get emojiSearchHint =>
+      'Претражите по имену или унесите или налепите емоџи';
+
+  @override
+  String emojiUseTyped(String emoji) {
+    return 'Користи $emoji';
+  }
+
+  @override
+  String get emojiNoResults =>
+      'Нема емоџија са тим именом. Унесите или налепите га.';
+
+  @override
+  String get emojiGroupSmileys => 'Смајлији';
+
+  @override
+  String get emojiGroupPeople => 'Људи';
+
+  @override
+  String get emojiGroupAnimals => 'Животиње и природа';
+
+  @override
+  String get emojiGroupFood => 'Храна и пиће';
+
+  @override
+  String get emojiGroupTravel => 'Путовања и места';
+
+  @override
+  String get emojiGroupActivities => 'Активности';
+
+  @override
+  String get emojiGroupObjects => 'Предмети';
+
+  @override
+  String get emojiGroupSymbols => 'Симболи';
+
+  @override
+  String get emojiGroupFlags => 'Заставе';
+
+  @override
+  String get searchModeMessages => 'Поруке';
+
+  @override
+  String get searchModePeople => 'Људи и заједнице';
+
+  @override
+  String get searchMessagesHint => 'Претражите поруке на овом уређају…';
+
+  @override
+  String get searchMessagesIntroTitle => 'Претрага овог уређаја';
+
+  @override
+  String get searchMessagesIntroMessage =>
+      'Налази текст у порукама које овај уређај чува. Претрага се одвија овде и никада се не шаље серверу.';
+
+  @override
+  String get searchMessagesNoResultsTitle => 'Нема пронађених порука';
+
+  @override
+  String get searchMessagesNoResultsMessage =>
+      'Ништа на овом уређају не одговара. Поруке које су истекле или су обрисане нестају и из претраге.';
+
+  @override
+  String get searchMessagesFailed =>
+      'Претрага није могла да прочита локалну базу података.';
+
+  @override
   String attachmentTooLarge(String fileName, String limit) {
     return 'Датотека $fileName је већа него што овај сервер дозвољава ($limit).';
   }
@@ -4504,6 +4591,93 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String errorServerNotAllowed(String url) {
     return 'Ova verzija aplikacije ne dozvoljava adresu servera $url. Koristite https:// adresu servera.';
   }
+
+  @override
+  String get muteEightHours => '8 sati';
+
+  @override
+  String get muteOneWeek => '1 nedelju';
+
+  @override
+  String get muteAlways => 'Dok ponovo ne uključim';
+
+  @override
+  String get muteStatusAlways => 'Utišano dok ponovo ne uključite obaveštenja.';
+
+  @override
+  String muteStatusUntil(String time) {
+    return 'Utišano do $time.';
+  }
+
+  @override
+  String get chatMoreReactions => 'Više reakcija';
+
+  @override
+  String get emojiSearchHint =>
+      'Pretražite po imenu ili unesite ili nalepite emodži';
+
+  @override
+  String emojiUseTyped(String emoji) {
+    return 'Koristi $emoji';
+  }
+
+  @override
+  String get emojiNoResults =>
+      'Nema emodžija sa tim imenom. Unesite ili nalepite ga.';
+
+  @override
+  String get emojiGroupSmileys => 'Smajliji';
+
+  @override
+  String get emojiGroupPeople => 'Ljudi';
+
+  @override
+  String get emojiGroupAnimals => 'Životinje i priroda';
+
+  @override
+  String get emojiGroupFood => 'Hrana i piće';
+
+  @override
+  String get emojiGroupTravel => 'Putovanja i mesta';
+
+  @override
+  String get emojiGroupActivities => 'Aktivnosti';
+
+  @override
+  String get emojiGroupObjects => 'Predmeti';
+
+  @override
+  String get emojiGroupSymbols => 'Simboli';
+
+  @override
+  String get emojiGroupFlags => 'Zastave';
+
+  @override
+  String get searchModeMessages => 'Poruke';
+
+  @override
+  String get searchModePeople => 'Ljudi i zajednice';
+
+  @override
+  String get searchMessagesHint => 'Pretražite poruke na ovom uređaju…';
+
+  @override
+  String get searchMessagesIntroTitle => 'Pretraga ovog uređaja';
+
+  @override
+  String get searchMessagesIntroMessage =>
+      'Nalazi tekst u porukama koje ovaj uređaj čuva. Pretraga se odvija ovde i nikada se ne šalje serveru.';
+
+  @override
+  String get searchMessagesNoResultsTitle => 'Nema pronađenih poruka';
+
+  @override
+  String get searchMessagesNoResultsMessage =>
+      'Ništa na ovom uređaju ne odgovara. Poruke koje su istekle ili su obrisane nestaju i iz pretrage.';
+
+  @override
+  String get searchMessagesFailed =>
+      'Pretraga nije mogla da pročita lokalnu bazu podataka.';
 
   @override
   String attachmentTooLarge(String fileName, String limit) {

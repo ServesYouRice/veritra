@@ -2166,6 +2166,92 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get muteEightHours => 'For 8 hours';
+
+  @override
+  String get muteOneWeek => 'For 1 week';
+
+  @override
+  String get muteAlways => 'Until I turn it back on';
+
+  @override
+  String get muteStatusAlways => 'Muted until you turn it back on.';
+
+  @override
+  String muteStatusUntil(String time) {
+    return 'Muted until $time.';
+  }
+
+  @override
+  String get chatMoreReactions => 'More reactions';
+
+  @override
+  String get emojiSearchHint => 'Search by name, or type or paste an emoji';
+
+  @override
+  String emojiUseTyped(String emoji) {
+    return 'Use $emoji';
+  }
+
+  @override
+  String get emojiNoResults =>
+      'No emoji with that name. Type or paste one instead.';
+
+  @override
+  String get emojiGroupSmileys => 'Smileys';
+
+  @override
+  String get emojiGroupPeople => 'People';
+
+  @override
+  String get emojiGroupAnimals => 'Animals and nature';
+
+  @override
+  String get emojiGroupFood => 'Food and drink';
+
+  @override
+  String get emojiGroupTravel => 'Travel and places';
+
+  @override
+  String get emojiGroupActivities => 'Activities';
+
+  @override
+  String get emojiGroupObjects => 'Objects';
+
+  @override
+  String get emojiGroupSymbols => 'Symbols';
+
+  @override
+  String get emojiGroupFlags => 'Flags';
+
+  @override
+  String get searchModeMessages => 'Messages';
+
+  @override
+  String get searchModePeople => 'People and communities';
+
+  @override
+  String get searchMessagesHint => 'Search messages on this device…';
+
+  @override
+  String get searchMessagesIntroTitle => 'Search this device';
+
+  @override
+  String get searchMessagesIntroMessage =>
+      'Finds text in the messages this device holds. The search happens here and is never sent to the server.';
+
+  @override
+  String get searchMessagesNoResultsTitle => 'No messages found';
+
+  @override
+  String get searchMessagesNoResultsMessage =>
+      'Nothing on this device matches. Messages that expired or were deleted are gone from search too.';
+
+  @override
+  String get searchMessagesFailed =>
+      'The search could not read the local database.';
+
+  @override
   String attachmentTooLarge(String fileName, String limit) {
     return '$fileName is larger than this server allows ($limit).';
   }

@@ -455,9 +455,15 @@ class $LocalCiphertextEnvelopesTable extends LocalCiphertextEnvelopes
   late final GeneratedColumn<String> payloadJson = GeneratedColumn<String>(
       'payload_json', aliasedName, false,
       type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _expiresAtMeta =
+      const VerificationMeta('expiresAt');
+  @override
+  late final GeneratedColumn<int> expiresAt = GeneratedColumn<int>(
+      'expires_at', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns =>
-      [id, conversationId, position, payloadJson];
+      [id, conversationId, position, payloadJson, expiresAt];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -496,6 +502,10 @@ class $LocalCiphertextEnvelopesTable extends LocalCiphertextEnvelopes
     } else if (isInserting) {
       context.missing(_payloadJsonMeta);
     }
+    if (data.containsKey('expires_at')) {
+      context.handle(_expiresAtMeta,
+          expiresAt.isAcceptableOrUnknown(data['expires_at']!, _expiresAtMeta));
+    }
     return context;
   }
 
@@ -514,6 +524,8 @@ class $LocalCiphertextEnvelopesTable extends LocalCiphertextEnvelopes
           .read(DriftSqlType.int, data['${effectivePrefix}position'])!,
       payloadJson: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}payload_json'])!,
+      expiresAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}expires_at']),
     );
   }
 
@@ -529,11 +541,13 @@ class LocalCiphertextEnvelope extends DataClass
   final String conversationId;
   final int position;
   final String payloadJson;
+  final int? expiresAt;
   const LocalCiphertextEnvelope(
       {required this.id,
       required this.conversationId,
       required this.position,
-      required this.payloadJson});
+      required this.payloadJson,
+      this.expiresAt});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -541,6 +555,9 @@ class LocalCiphertextEnvelope extends DataClass
     map['conversation_id'] = Variable<String>(conversationId);
     map['position'] = Variable<int>(position);
     map['payload_json'] = Variable<String>(payloadJson);
+    if (!nullToAbsent || expiresAt != null) {
+      map['expires_at'] = Variable<int>(expiresAt);
+    }
     return map;
   }
 
@@ -550,6 +567,9 @@ class LocalCiphertextEnvelope extends DataClass
       conversationId: Value(conversationId),
       position: Value(position),
       payloadJson: Value(payloadJson),
+      expiresAt: expiresAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(expiresAt),
     );
   }
 
@@ -561,6 +581,7 @@ class LocalCiphertextEnvelope extends DataClass
       conversationId: serializer.fromJson<String>(json['conversationId']),
       position: serializer.fromJson<int>(json['position']),
       payloadJson: serializer.fromJson<String>(json['payloadJson']),
+      expiresAt: serializer.fromJson<int?>(json['expiresAt']),
     );
   }
   @override
@@ -571,6 +592,7 @@ class LocalCiphertextEnvelope extends DataClass
       'conversationId': serializer.toJson<String>(conversationId),
       'position': serializer.toJson<int>(position),
       'payloadJson': serializer.toJson<String>(payloadJson),
+      'expiresAt': serializer.toJson<int?>(expiresAt),
     };
   }
 
@@ -578,12 +600,14 @@ class LocalCiphertextEnvelope extends DataClass
           {String? id,
           String? conversationId,
           int? position,
-          String? payloadJson}) =>
+          String? payloadJson,
+          Value<int?> expiresAt = const Value.absent()}) =>
       LocalCiphertextEnvelope(
         id: id ?? this.id,
         conversationId: conversationId ?? this.conversationId,
         position: position ?? this.position,
         payloadJson: payloadJson ?? this.payloadJson,
+        expiresAt: expiresAt.present ? expiresAt.value : this.expiresAt,
       );
   LocalCiphertextEnvelope copyWithCompanion(
       LocalCiphertextEnvelopesCompanion data) {
@@ -595,6 +619,7 @@ class LocalCiphertextEnvelope extends DataClass
       position: data.position.present ? data.position.value : this.position,
       payloadJson:
           data.payloadJson.present ? data.payloadJson.value : this.payloadJson,
+      expiresAt: data.expiresAt.present ? data.expiresAt.value : this.expiresAt,
     );
   }
 
@@ -604,13 +629,15 @@ class LocalCiphertextEnvelope extends DataClass
           ..write('id: $id, ')
           ..write('conversationId: $conversationId, ')
           ..write('position: $position, ')
-          ..write('payloadJson: $payloadJson')
+          ..write('payloadJson: $payloadJson, ')
+          ..write('expiresAt: $expiresAt')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(id, conversationId, position, payloadJson);
+  int get hashCode =>
+      Object.hash(id, conversationId, position, payloadJson, expiresAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -618,7 +645,8 @@ class LocalCiphertextEnvelope extends DataClass
           other.id == this.id &&
           other.conversationId == this.conversationId &&
           other.position == this.position &&
-          other.payloadJson == this.payloadJson);
+          other.payloadJson == this.payloadJson &&
+          other.expiresAt == this.expiresAt);
 }
 
 class LocalCiphertextEnvelopesCompanion
@@ -627,12 +655,14 @@ class LocalCiphertextEnvelopesCompanion
   final Value<String> conversationId;
   final Value<int> position;
   final Value<String> payloadJson;
+  final Value<int?> expiresAt;
   final Value<int> rowid;
   const LocalCiphertextEnvelopesCompanion({
     this.id = const Value.absent(),
     this.conversationId = const Value.absent(),
     this.position = const Value.absent(),
     this.payloadJson = const Value.absent(),
+    this.expiresAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   LocalCiphertextEnvelopesCompanion.insert({
@@ -640,6 +670,7 @@ class LocalCiphertextEnvelopesCompanion
     required String conversationId,
     required int position,
     required String payloadJson,
+    this.expiresAt = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : id = Value(id),
         conversationId = Value(conversationId),
@@ -650,6 +681,7 @@ class LocalCiphertextEnvelopesCompanion
     Expression<String>? conversationId,
     Expression<int>? position,
     Expression<String>? payloadJson,
+    Expression<int>? expiresAt,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -657,6 +689,7 @@ class LocalCiphertextEnvelopesCompanion
       if (conversationId != null) 'conversation_id': conversationId,
       if (position != null) 'position': position,
       if (payloadJson != null) 'payload_json': payloadJson,
+      if (expiresAt != null) 'expires_at': expiresAt,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -666,12 +699,14 @@ class LocalCiphertextEnvelopesCompanion
       Value<String>? conversationId,
       Value<int>? position,
       Value<String>? payloadJson,
+      Value<int?>? expiresAt,
       Value<int>? rowid}) {
     return LocalCiphertextEnvelopesCompanion(
       id: id ?? this.id,
       conversationId: conversationId ?? this.conversationId,
       position: position ?? this.position,
       payloadJson: payloadJson ?? this.payloadJson,
+      expiresAt: expiresAt ?? this.expiresAt,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -691,6 +726,9 @@ class LocalCiphertextEnvelopesCompanion
     if (payloadJson.present) {
       map['payload_json'] = Variable<String>(payloadJson.value);
     }
+    if (expiresAt.present) {
+      map['expires_at'] = Variable<int>(expiresAt.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -704,6 +742,7 @@ class LocalCiphertextEnvelopesCompanion
           ..write('conversationId: $conversationId, ')
           ..write('position: $position, ')
           ..write('payloadJson: $payloadJson, ')
+          ..write('expiresAt: $expiresAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -3098,6 +3137,18 @@ class $LocalMessagesTable extends LocalMessages
   late final GeneratedColumn<String> state = GeneratedColumn<String>(
       'state', aliasedName, false,
       type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _expiresAtMeta =
+      const VerificationMeta('expiresAt');
+  @override
+  late final GeneratedColumn<int> expiresAt = GeneratedColumn<int>(
+      'expires_at', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _searchIdMeta =
+      const VerificationMeta('searchId');
+  @override
+  late final GeneratedColumn<int> searchId = GeneratedColumn<int>(
+      'search_id', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns => [
         key,
@@ -3111,7 +3162,9 @@ class $LocalMessagesTable extends LocalMessages
         createdAt,
         editedAt,
         deletedAt,
-        state
+        state,
+        expiresAt,
+        searchId
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -3193,6 +3246,14 @@ class $LocalMessagesTable extends LocalMessages
     } else if (isInserting) {
       context.missing(_stateMeta);
     }
+    if (data.containsKey('expires_at')) {
+      context.handle(_expiresAtMeta,
+          expiresAt.isAcceptableOrUnknown(data['expires_at']!, _expiresAtMeta));
+    }
+    if (data.containsKey('search_id')) {
+      context.handle(_searchIdMeta,
+          searchId.isAcceptableOrUnknown(data['search_id']!, _searchIdMeta));
+    }
     return context;
   }
 
@@ -3226,6 +3287,10 @@ class $LocalMessagesTable extends LocalMessages
           .read(DriftSqlType.int, data['${effectivePrefix}deleted_at']),
       state: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}state'])!,
+      expiresAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}expires_at']),
+      searchId: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}search_id']),
     );
   }
 
@@ -3248,6 +3313,13 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
   final int? editedAt;
   final int? deletedAt;
   final String state;
+  final int? expiresAt;
+
+  /// The row's number in the search index (W10, schema 12), set by the
+  /// database's triggers for text messages and never by the app. The index
+  /// cannot use `rowid`: a table keyed by text may renumber its rows when
+  /// vacuumed, which would leave deleted text in the index.
+  final int? searchId;
   const LocalMessage(
       {required this.key,
       this.serverMessageId,
@@ -3260,7 +3332,9 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       required this.createdAt,
       this.editedAt,
       this.deletedAt,
-      required this.state});
+      required this.state,
+      this.expiresAt,
+      this.searchId});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -3286,6 +3360,12 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       map['deleted_at'] = Variable<int>(deletedAt);
     }
     map['state'] = Variable<String>(state);
+    if (!nullToAbsent || expiresAt != null) {
+      map['expires_at'] = Variable<int>(expiresAt);
+    }
+    if (!nullToAbsent || searchId != null) {
+      map['search_id'] = Variable<int>(searchId);
+    }
     return map;
   }
 
@@ -3311,6 +3391,12 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
           ? const Value.absent()
           : Value(deletedAt),
       state: Value(state),
+      expiresAt: expiresAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(expiresAt),
+      searchId: searchId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(searchId),
     );
   }
 
@@ -3330,6 +3416,8 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       editedAt: serializer.fromJson<int?>(json['editedAt']),
       deletedAt: serializer.fromJson<int?>(json['deletedAt']),
       state: serializer.fromJson<String>(json['state']),
+      expiresAt: serializer.fromJson<int?>(json['expiresAt']),
+      searchId: serializer.fromJson<int?>(json['searchId']),
     );
   }
   @override
@@ -3348,6 +3436,8 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       'editedAt': serializer.toJson<int?>(editedAt),
       'deletedAt': serializer.toJson<int?>(deletedAt),
       'state': serializer.toJson<String>(state),
+      'expiresAt': serializer.toJson<int?>(expiresAt),
+      'searchId': serializer.toJson<int?>(searchId),
     };
   }
 
@@ -3363,7 +3453,9 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
           int? createdAt,
           Value<int?> editedAt = const Value.absent(),
           Value<int?> deletedAt = const Value.absent(),
-          String? state}) =>
+          String? state,
+          Value<int?> expiresAt = const Value.absent(),
+          Value<int?> searchId = const Value.absent()}) =>
       LocalMessage(
         key: key ?? this.key,
         serverMessageId: serverMessageId.present
@@ -3379,6 +3471,8 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
         editedAt: editedAt.present ? editedAt.value : this.editedAt,
         deletedAt: deletedAt.present ? deletedAt.value : this.deletedAt,
         state: state ?? this.state,
+        expiresAt: expiresAt.present ? expiresAt.value : this.expiresAt,
+        searchId: searchId.present ? searchId.value : this.searchId,
       );
   LocalMessage copyWithCompanion(LocalMessagesCompanion data) {
     return LocalMessage(
@@ -3402,6 +3496,8 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       editedAt: data.editedAt.present ? data.editedAt.value : this.editedAt,
       deletedAt: data.deletedAt.present ? data.deletedAt.value : this.deletedAt,
       state: data.state.present ? data.state.value : this.state,
+      expiresAt: data.expiresAt.present ? data.expiresAt.value : this.expiresAt,
+      searchId: data.searchId.present ? data.searchId.value : this.searchId,
     );
   }
 
@@ -3419,7 +3515,9 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
           ..write('createdAt: $createdAt, ')
           ..write('editedAt: $editedAt, ')
           ..write('deletedAt: $deletedAt, ')
-          ..write('state: $state')
+          ..write('state: $state, ')
+          ..write('expiresAt: $expiresAt, ')
+          ..write('searchId: $searchId')
           ..write(')'))
         .toString();
   }
@@ -3437,7 +3535,9 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       createdAt,
       editedAt,
       deletedAt,
-      state);
+      state,
+      expiresAt,
+      searchId);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -3453,7 +3553,9 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
           other.createdAt == this.createdAt &&
           other.editedAt == this.editedAt &&
           other.deletedAt == this.deletedAt &&
-          other.state == this.state);
+          other.state == this.state &&
+          other.expiresAt == this.expiresAt &&
+          other.searchId == this.searchId);
 }
 
 class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
@@ -3469,6 +3571,8 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
   final Value<int?> editedAt;
   final Value<int?> deletedAt;
   final Value<String> state;
+  final Value<int?> expiresAt;
+  final Value<int?> searchId;
   final Value<int> rowid;
   const LocalMessagesCompanion({
     this.key = const Value.absent(),
@@ -3483,6 +3587,8 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
     this.editedAt = const Value.absent(),
     this.deletedAt = const Value.absent(),
     this.state = const Value.absent(),
+    this.expiresAt = const Value.absent(),
+    this.searchId = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   LocalMessagesCompanion.insert({
@@ -3498,6 +3604,8 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
     this.editedAt = const Value.absent(),
     this.deletedAt = const Value.absent(),
     required String state,
+    this.expiresAt = const Value.absent(),
+    this.searchId = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : key = Value(key),
         conversationId = Value(conversationId),
@@ -3519,6 +3627,8 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
     Expression<int>? editedAt,
     Expression<int>? deletedAt,
     Expression<String>? state,
+    Expression<int>? expiresAt,
+    Expression<int>? searchId,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -3534,6 +3644,8 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
       if (editedAt != null) 'edited_at': editedAt,
       if (deletedAt != null) 'deleted_at': deletedAt,
       if (state != null) 'state': state,
+      if (expiresAt != null) 'expires_at': expiresAt,
+      if (searchId != null) 'search_id': searchId,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -3551,6 +3663,8 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
       Value<int?>? editedAt,
       Value<int?>? deletedAt,
       Value<String>? state,
+      Value<int?>? expiresAt,
+      Value<int?>? searchId,
       Value<int>? rowid}) {
     return LocalMessagesCompanion(
       key: key ?? this.key,
@@ -3565,6 +3679,8 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
       editedAt: editedAt ?? this.editedAt,
       deletedAt: deletedAt ?? this.deletedAt,
       state: state ?? this.state,
+      expiresAt: expiresAt ?? this.expiresAt,
+      searchId: searchId ?? this.searchId,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -3608,6 +3724,12 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
     if (state.present) {
       map['state'] = Variable<String>(state.value);
     }
+    if (expiresAt.present) {
+      map['expires_at'] = Variable<int>(expiresAt.value);
+    }
+    if (searchId.present) {
+      map['search_id'] = Variable<int>(searchId.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -3629,6 +3751,8 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
           ..write('editedAt: $editedAt, ')
           ..write('deletedAt: $deletedAt, ')
           ..write('state: $state, ')
+          ..write('expiresAt: $expiresAt, ')
+          ..write('searchId: $searchId, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -3917,6 +4041,497 @@ class LocalMessageReactionsCompanion
   }
 }
 
+class $LocalDraftsTable extends LocalDrafts
+    with TableInfo<$LocalDraftsTable, LocalDraft> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $LocalDraftsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _conversationIdMeta =
+      const VerificationMeta('conversationId');
+  @override
+  late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
+      'conversation_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _bodyMeta = const VerificationMeta('body');
+  @override
+  late final GeneratedColumn<String> body = GeneratedColumn<String>(
+      'body', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _replyToMeta =
+      const VerificationMeta('replyTo');
+  @override
+  late final GeneratedColumn<String> replyTo = GeneratedColumn<String>(
+      'reply_to', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _updatedAtMeta =
+      const VerificationMeta('updatedAt');
+  @override
+  late final GeneratedColumn<int> updatedAt = GeneratedColumn<int>(
+      'updated_at', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  @override
+  List<GeneratedColumn> get $columns =>
+      [conversationId, body, replyTo, updatedAt];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'local_drafts';
+  @override
+  VerificationContext validateIntegrity(Insertable<LocalDraft> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('conversation_id')) {
+      context.handle(
+          _conversationIdMeta,
+          conversationId.isAcceptableOrUnknown(
+              data['conversation_id']!, _conversationIdMeta));
+    } else if (isInserting) {
+      context.missing(_conversationIdMeta);
+    }
+    if (data.containsKey('body')) {
+      context.handle(
+          _bodyMeta, body.isAcceptableOrUnknown(data['body']!, _bodyMeta));
+    } else if (isInserting) {
+      context.missing(_bodyMeta);
+    }
+    if (data.containsKey('reply_to')) {
+      context.handle(_replyToMeta,
+          replyTo.isAcceptableOrUnknown(data['reply_to']!, _replyToMeta));
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(_updatedAtMeta,
+          updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta));
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {conversationId};
+  @override
+  LocalDraft map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return LocalDraft(
+      conversationId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}conversation_id'])!,
+      body: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}body'])!,
+      replyTo: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}reply_to']),
+      updatedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}updated_at'])!,
+    );
+  }
+
+  @override
+  $LocalDraftsTable createAlias(String alias) {
+    return $LocalDraftsTable(attachedDatabase, alias);
+  }
+}
+
+class LocalDraft extends DataClass implements Insertable<LocalDraft> {
+  final String conversationId;
+  final String body;
+
+  /// The local key of the message being replied to, if any.
+  final String? replyTo;
+  final int updatedAt;
+  const LocalDraft(
+      {required this.conversationId,
+      required this.body,
+      this.replyTo,
+      required this.updatedAt});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['conversation_id'] = Variable<String>(conversationId);
+    map['body'] = Variable<String>(body);
+    if (!nullToAbsent || replyTo != null) {
+      map['reply_to'] = Variable<String>(replyTo);
+    }
+    map['updated_at'] = Variable<int>(updatedAt);
+    return map;
+  }
+
+  LocalDraftsCompanion toCompanion(bool nullToAbsent) {
+    return LocalDraftsCompanion(
+      conversationId: Value(conversationId),
+      body: Value(body),
+      replyTo: replyTo == null && nullToAbsent
+          ? const Value.absent()
+          : Value(replyTo),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory LocalDraft.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return LocalDraft(
+      conversationId: serializer.fromJson<String>(json['conversationId']),
+      body: serializer.fromJson<String>(json['body']),
+      replyTo: serializer.fromJson<String?>(json['replyTo']),
+      updatedAt: serializer.fromJson<int>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'conversationId': serializer.toJson<String>(conversationId),
+      'body': serializer.toJson<String>(body),
+      'replyTo': serializer.toJson<String?>(replyTo),
+      'updatedAt': serializer.toJson<int>(updatedAt),
+    };
+  }
+
+  LocalDraft copyWith(
+          {String? conversationId,
+          String? body,
+          Value<String?> replyTo = const Value.absent(),
+          int? updatedAt}) =>
+      LocalDraft(
+        conversationId: conversationId ?? this.conversationId,
+        body: body ?? this.body,
+        replyTo: replyTo.present ? replyTo.value : this.replyTo,
+        updatedAt: updatedAt ?? this.updatedAt,
+      );
+  LocalDraft copyWithCompanion(LocalDraftsCompanion data) {
+    return LocalDraft(
+      conversationId: data.conversationId.present
+          ? data.conversationId.value
+          : this.conversationId,
+      body: data.body.present ? data.body.value : this.body,
+      replyTo: data.replyTo.present ? data.replyTo.value : this.replyTo,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalDraft(')
+          ..write('conversationId: $conversationId, ')
+          ..write('body: $body, ')
+          ..write('replyTo: $replyTo, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(conversationId, body, replyTo, updatedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is LocalDraft &&
+          other.conversationId == this.conversationId &&
+          other.body == this.body &&
+          other.replyTo == this.replyTo &&
+          other.updatedAt == this.updatedAt);
+}
+
+class LocalDraftsCompanion extends UpdateCompanion<LocalDraft> {
+  final Value<String> conversationId;
+  final Value<String> body;
+  final Value<String?> replyTo;
+  final Value<int> updatedAt;
+  final Value<int> rowid;
+  const LocalDraftsCompanion({
+    this.conversationId = const Value.absent(),
+    this.body = const Value.absent(),
+    this.replyTo = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  LocalDraftsCompanion.insert({
+    required String conversationId,
+    required String body,
+    this.replyTo = const Value.absent(),
+    required int updatedAt,
+    this.rowid = const Value.absent(),
+  })  : conversationId = Value(conversationId),
+        body = Value(body),
+        updatedAt = Value(updatedAt);
+  static Insertable<LocalDraft> custom({
+    Expression<String>? conversationId,
+    Expression<String>? body,
+    Expression<String>? replyTo,
+    Expression<int>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (conversationId != null) 'conversation_id': conversationId,
+      if (body != null) 'body': body,
+      if (replyTo != null) 'reply_to': replyTo,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  LocalDraftsCompanion copyWith(
+      {Value<String>? conversationId,
+      Value<String>? body,
+      Value<String?>? replyTo,
+      Value<int>? updatedAt,
+      Value<int>? rowid}) {
+    return LocalDraftsCompanion(
+      conversationId: conversationId ?? this.conversationId,
+      body: body ?? this.body,
+      replyTo: replyTo ?? this.replyTo,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (conversationId.present) {
+      map['conversation_id'] = Variable<String>(conversationId.value);
+    }
+    if (body.present) {
+      map['body'] = Variable<String>(body.value);
+    }
+    if (replyTo.present) {
+      map['reply_to'] = Variable<String>(replyTo.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<int>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalDraftsCompanion(')
+          ..write('conversationId: $conversationId, ')
+          ..write('body: $body, ')
+          ..write('replyTo: $replyTo, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $LocalConversationMutesTable extends LocalConversationMutes
+    with TableInfo<$LocalConversationMutesTable, LocalConversationMute> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $LocalConversationMutesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _conversationIdMeta =
+      const VerificationMeta('conversationId');
+  @override
+  late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
+      'conversation_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _mutedUntilMeta =
+      const VerificationMeta('mutedUntil');
+  @override
+  late final GeneratedColumn<int> mutedUntil = GeneratedColumn<int>(
+      'muted_until', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  @override
+  List<GeneratedColumn> get $columns => [conversationId, mutedUntil];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'local_conversation_mutes';
+  @override
+  VerificationContext validateIntegrity(
+      Insertable<LocalConversationMute> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('conversation_id')) {
+      context.handle(
+          _conversationIdMeta,
+          conversationId.isAcceptableOrUnknown(
+              data['conversation_id']!, _conversationIdMeta));
+    } else if (isInserting) {
+      context.missing(_conversationIdMeta);
+    }
+    if (data.containsKey('muted_until')) {
+      context.handle(
+          _mutedUntilMeta,
+          mutedUntil.isAcceptableOrUnknown(
+              data['muted_until']!, _mutedUntilMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {conversationId};
+  @override
+  LocalConversationMute map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return LocalConversationMute(
+      conversationId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}conversation_id'])!,
+      mutedUntil: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}muted_until']),
+    );
+  }
+
+  @override
+  $LocalConversationMutesTable createAlias(String alias) {
+    return $LocalConversationMutesTable(attachedDatabase, alias);
+  }
+}
+
+class LocalConversationMute extends DataClass
+    implements Insertable<LocalConversationMute> {
+  final String conversationId;
+
+  /// When the mute ends (epoch milliseconds); null mutes without an end.
+  final int? mutedUntil;
+  const LocalConversationMute({required this.conversationId, this.mutedUntil});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['conversation_id'] = Variable<String>(conversationId);
+    if (!nullToAbsent || mutedUntil != null) {
+      map['muted_until'] = Variable<int>(mutedUntil);
+    }
+    return map;
+  }
+
+  LocalConversationMutesCompanion toCompanion(bool nullToAbsent) {
+    return LocalConversationMutesCompanion(
+      conversationId: Value(conversationId),
+      mutedUntil: mutedUntil == null && nullToAbsent
+          ? const Value.absent()
+          : Value(mutedUntil),
+    );
+  }
+
+  factory LocalConversationMute.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return LocalConversationMute(
+      conversationId: serializer.fromJson<String>(json['conversationId']),
+      mutedUntil: serializer.fromJson<int?>(json['mutedUntil']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'conversationId': serializer.toJson<String>(conversationId),
+      'mutedUntil': serializer.toJson<int?>(mutedUntil),
+    };
+  }
+
+  LocalConversationMute copyWith(
+          {String? conversationId,
+          Value<int?> mutedUntil = const Value.absent()}) =>
+      LocalConversationMute(
+        conversationId: conversationId ?? this.conversationId,
+        mutedUntil: mutedUntil.present ? mutedUntil.value : this.mutedUntil,
+      );
+  LocalConversationMute copyWithCompanion(
+      LocalConversationMutesCompanion data) {
+    return LocalConversationMute(
+      conversationId: data.conversationId.present
+          ? data.conversationId.value
+          : this.conversationId,
+      mutedUntil:
+          data.mutedUntil.present ? data.mutedUntil.value : this.mutedUntil,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalConversationMute(')
+          ..write('conversationId: $conversationId, ')
+          ..write('mutedUntil: $mutedUntil')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(conversationId, mutedUntil);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is LocalConversationMute &&
+          other.conversationId == this.conversationId &&
+          other.mutedUntil == this.mutedUntil);
+}
+
+class LocalConversationMutesCompanion
+    extends UpdateCompanion<LocalConversationMute> {
+  final Value<String> conversationId;
+  final Value<int?> mutedUntil;
+  final Value<int> rowid;
+  const LocalConversationMutesCompanion({
+    this.conversationId = const Value.absent(),
+    this.mutedUntil = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  LocalConversationMutesCompanion.insert({
+    required String conversationId,
+    this.mutedUntil = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : conversationId = Value(conversationId);
+  static Insertable<LocalConversationMute> custom({
+    Expression<String>? conversationId,
+    Expression<int>? mutedUntil,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (conversationId != null) 'conversation_id': conversationId,
+      if (mutedUntil != null) 'muted_until': mutedUntil,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  LocalConversationMutesCompanion copyWith(
+      {Value<String>? conversationId,
+      Value<int?>? mutedUntil,
+      Value<int>? rowid}) {
+    return LocalConversationMutesCompanion(
+      conversationId: conversationId ?? this.conversationId,
+      mutedUntil: mutedUntil ?? this.mutedUntil,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (conversationId.present) {
+      map['conversation_id'] = Variable<String>(conversationId.value);
+    }
+    if (mutedUntil.present) {
+      map['muted_until'] = Variable<int>(mutedUntil.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalConversationMutesCompanion(')
+          ..write('conversationId: $conversationId, ')
+          ..write('mutedUntil: $mutedUntil, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$EncryptedLocalDatabase extends GeneratedDatabase {
   _$EncryptedLocalDatabase(QueryExecutor e) : super(e);
   $EncryptedLocalDatabaseManager get managers =>
@@ -3942,9 +4557,19 @@ abstract class _$EncryptedLocalDatabase extends GeneratedDatabase {
   late final $LocalMessagesTable localMessages = $LocalMessagesTable(this);
   late final $LocalMessageReactionsTable localMessageReactions =
       $LocalMessageReactionsTable(this);
+  late final $LocalDraftsTable localDrafts = $LocalDraftsTable(this);
+  late final $LocalConversationMutesTable localConversationMutes =
+      $LocalConversationMutesTable(this);
   late final Index localCiphertextEnvelopesConversationPosition = Index(
       'local_ciphertext_envelopes_conversation_position',
       'CREATE INDEX IF NOT EXISTS local_ciphertext_envelopes_conversation_position ON local_ciphertext_envelopes (conversation_id, position)');
+  late final Index localCiphertextEnvelopesExpiresAt = Index(
+      'local_ciphertext_envelopes_expires_at',
+      'CREATE INDEX IF NOT EXISTS local_ciphertext_envelopes_expires_at ON local_ciphertext_envelopes (expires_at) WHERE expires_at IS NOT NULL');
+  late final Index localMessagesExpiresAt = Index('local_messages_expires_at',
+      'CREATE INDEX IF NOT EXISTS local_messages_expires_at ON local_messages (expires_at) WHERE expires_at IS NOT NULL');
+  late final Index localMessagesSearchId = Index('local_messages_search_id',
+      'CREATE UNIQUE INDEX IF NOT EXISTS local_messages_search_id ON local_messages (search_id)');
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -3962,7 +4587,12 @@ abstract class _$EncryptedLocalDatabase extends GeneratedDatabase {
         localPeerVerifications,
         localMessages,
         localMessageReactions,
-        localCiphertextEnvelopesConversationPosition
+        localDrafts,
+        localConversationMutes,
+        localCiphertextEnvelopesConversationPosition,
+        localCiphertextEnvelopesExpiresAt,
+        localMessagesExpiresAt,
+        localMessagesSearchId
       ];
 }
 
@@ -4255,6 +4885,7 @@ typedef $$LocalCiphertextEnvelopesTableCreateCompanionBuilder
   required String conversationId,
   required int position,
   required String payloadJson,
+  Value<int?> expiresAt,
   Value<int> rowid,
 });
 typedef $$LocalCiphertextEnvelopesTableUpdateCompanionBuilder
@@ -4263,6 +4894,7 @@ typedef $$LocalCiphertextEnvelopesTableUpdateCompanionBuilder
   Value<String> conversationId,
   Value<int> position,
   Value<String> payloadJson,
+  Value<int?> expiresAt,
   Value<int> rowid,
 });
 
@@ -4287,6 +4919,9 @@ class $$LocalCiphertextEnvelopesTableFilterComposer
 
   ColumnFilters<String> get payloadJson => $composableBuilder(
       column: $table.payloadJson, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get expiresAt => $composableBuilder(
+      column: $table.expiresAt, builder: (column) => ColumnFilters(column));
 }
 
 class $$LocalCiphertextEnvelopesTableOrderingComposer
@@ -4310,6 +4945,9 @@ class $$LocalCiphertextEnvelopesTableOrderingComposer
 
   ColumnOrderings<String> get payloadJson => $composableBuilder(
       column: $table.payloadJson, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get expiresAt => $composableBuilder(
+      column: $table.expiresAt, builder: (column) => ColumnOrderings(column));
 }
 
 class $$LocalCiphertextEnvelopesTableAnnotationComposer
@@ -4332,6 +4970,9 @@ class $$LocalCiphertextEnvelopesTableAnnotationComposer
 
   GeneratedColumn<String> get payloadJson => $composableBuilder(
       column: $table.payloadJson, builder: (column) => column);
+
+  GeneratedColumn<int> get expiresAt =>
+      $composableBuilder(column: $table.expiresAt, builder: (column) => column);
 }
 
 class $$LocalCiphertextEnvelopesTableTableManager extends RootTableManager<
@@ -4369,6 +5010,7 @@ class $$LocalCiphertextEnvelopesTableTableManager extends RootTableManager<
             Value<String> conversationId = const Value.absent(),
             Value<int> position = const Value.absent(),
             Value<String> payloadJson = const Value.absent(),
+            Value<int?> expiresAt = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               LocalCiphertextEnvelopesCompanion(
@@ -4376,6 +5018,7 @@ class $$LocalCiphertextEnvelopesTableTableManager extends RootTableManager<
             conversationId: conversationId,
             position: position,
             payloadJson: payloadJson,
+            expiresAt: expiresAt,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -4383,6 +5026,7 @@ class $$LocalCiphertextEnvelopesTableTableManager extends RootTableManager<
             required String conversationId,
             required int position,
             required String payloadJson,
+            Value<int?> expiresAt = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               LocalCiphertextEnvelopesCompanion.insert(
@@ -4390,6 +5034,7 @@ class $$LocalCiphertextEnvelopesTableTableManager extends RootTableManager<
             conversationId: conversationId,
             position: position,
             payloadJson: payloadJson,
+            expiresAt: expiresAt,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
@@ -5751,6 +6396,8 @@ typedef $$LocalMessagesTableCreateCompanionBuilder = LocalMessagesCompanion
   Value<int?> editedAt,
   Value<int?> deletedAt,
   required String state,
+  Value<int?> expiresAt,
+  Value<int?> searchId,
   Value<int> rowid,
 });
 typedef $$LocalMessagesTableUpdateCompanionBuilder = LocalMessagesCompanion
@@ -5767,6 +6414,8 @@ typedef $$LocalMessagesTableUpdateCompanionBuilder = LocalMessagesCompanion
   Value<int?> editedAt,
   Value<int?> deletedAt,
   Value<String> state,
+  Value<int?> expiresAt,
+  Value<int?> searchId,
   Value<int> rowid,
 });
 
@@ -5818,6 +6467,12 @@ class $$LocalMessagesTableFilterComposer
 
   ColumnFilters<String> get state => $composableBuilder(
       column: $table.state, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get expiresAt => $composableBuilder(
+      column: $table.expiresAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get searchId => $composableBuilder(
+      column: $table.searchId, builder: (column) => ColumnFilters(column));
 }
 
 class $$LocalMessagesTableOrderingComposer
@@ -5868,6 +6523,12 @@ class $$LocalMessagesTableOrderingComposer
 
   ColumnOrderings<String> get state => $composableBuilder(
       column: $table.state, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get expiresAt => $composableBuilder(
+      column: $table.expiresAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get searchId => $composableBuilder(
+      column: $table.searchId, builder: (column) => ColumnOrderings(column));
 }
 
 class $$LocalMessagesTableAnnotationComposer
@@ -5914,6 +6575,12 @@ class $$LocalMessagesTableAnnotationComposer
 
   GeneratedColumn<String> get state =>
       $composableBuilder(column: $table.state, builder: (column) => column);
+
+  GeneratedColumn<int> get expiresAt =>
+      $composableBuilder(column: $table.expiresAt, builder: (column) => column);
+
+  GeneratedColumn<int> get searchId =>
+      $composableBuilder(column: $table.searchId, builder: (column) => column);
 }
 
 class $$LocalMessagesTableTableManager extends RootTableManager<
@@ -5956,6 +6623,8 @@ class $$LocalMessagesTableTableManager extends RootTableManager<
             Value<int?> editedAt = const Value.absent(),
             Value<int?> deletedAt = const Value.absent(),
             Value<String> state = const Value.absent(),
+            Value<int?> expiresAt = const Value.absent(),
+            Value<int?> searchId = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               LocalMessagesCompanion(
@@ -5971,6 +6640,8 @@ class $$LocalMessagesTableTableManager extends RootTableManager<
             editedAt: editedAt,
             deletedAt: deletedAt,
             state: state,
+            expiresAt: expiresAt,
+            searchId: searchId,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -5986,6 +6657,8 @@ class $$LocalMessagesTableTableManager extends RootTableManager<
             Value<int?> editedAt = const Value.absent(),
             Value<int?> deletedAt = const Value.absent(),
             required String state,
+            Value<int?> expiresAt = const Value.absent(),
+            Value<int?> searchId = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               LocalMessagesCompanion.insert(
@@ -6001,6 +6674,8 @@ class $$LocalMessagesTableTableManager extends RootTableManager<
             editedAt: editedAt,
             deletedAt: deletedAt,
             state: state,
+            expiresAt: expiresAt,
+            searchId: searchId,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
@@ -6204,6 +6879,315 @@ typedef $$LocalMessageReactionsTableProcessedTableManager
         ),
         LocalMessageReaction,
         PrefetchHooks Function()>;
+typedef $$LocalDraftsTableCreateCompanionBuilder = LocalDraftsCompanion
+    Function({
+  required String conversationId,
+  required String body,
+  Value<String?> replyTo,
+  required int updatedAt,
+  Value<int> rowid,
+});
+typedef $$LocalDraftsTableUpdateCompanionBuilder = LocalDraftsCompanion
+    Function({
+  Value<String> conversationId,
+  Value<String> body,
+  Value<String?> replyTo,
+  Value<int> updatedAt,
+  Value<int> rowid,
+});
+
+class $$LocalDraftsTableFilterComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalDraftsTable> {
+  $$LocalDraftsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get conversationId => $composableBuilder(
+      column: $table.conversationId,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get body => $composableBuilder(
+      column: $table.body, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get replyTo => $composableBuilder(
+      column: $table.replyTo, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get updatedAt => $composableBuilder(
+      column: $table.updatedAt, builder: (column) => ColumnFilters(column));
+}
+
+class $$LocalDraftsTableOrderingComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalDraftsTable> {
+  $$LocalDraftsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get conversationId => $composableBuilder(
+      column: $table.conversationId,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get body => $composableBuilder(
+      column: $table.body, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get replyTo => $composableBuilder(
+      column: $table.replyTo, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get updatedAt => $composableBuilder(
+      column: $table.updatedAt, builder: (column) => ColumnOrderings(column));
+}
+
+class $$LocalDraftsTableAnnotationComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalDraftsTable> {
+  $$LocalDraftsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get conversationId => $composableBuilder(
+      column: $table.conversationId, builder: (column) => column);
+
+  GeneratedColumn<String> get body =>
+      $composableBuilder(column: $table.body, builder: (column) => column);
+
+  GeneratedColumn<String> get replyTo =>
+      $composableBuilder(column: $table.replyTo, builder: (column) => column);
+
+  GeneratedColumn<int> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$LocalDraftsTableTableManager extends RootTableManager<
+    _$EncryptedLocalDatabase,
+    $LocalDraftsTable,
+    LocalDraft,
+    $$LocalDraftsTableFilterComposer,
+    $$LocalDraftsTableOrderingComposer,
+    $$LocalDraftsTableAnnotationComposer,
+    $$LocalDraftsTableCreateCompanionBuilder,
+    $$LocalDraftsTableUpdateCompanionBuilder,
+    (
+      LocalDraft,
+      BaseReferences<_$EncryptedLocalDatabase, $LocalDraftsTable, LocalDraft>
+    ),
+    LocalDraft,
+    PrefetchHooks Function()> {
+  $$LocalDraftsTableTableManager(
+      _$EncryptedLocalDatabase db, $LocalDraftsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$LocalDraftsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$LocalDraftsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$LocalDraftsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> conversationId = const Value.absent(),
+            Value<String> body = const Value.absent(),
+            Value<String?> replyTo = const Value.absent(),
+            Value<int> updatedAt = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalDraftsCompanion(
+            conversationId: conversationId,
+            body: body,
+            replyTo: replyTo,
+            updatedAt: updatedAt,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String conversationId,
+            required String body,
+            Value<String?> replyTo = const Value.absent(),
+            required int updatedAt,
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalDraftsCompanion.insert(
+            conversationId: conversationId,
+            body: body,
+            replyTo: replyTo,
+            updatedAt: updatedAt,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (
+                    e.readTable<$LocalDraftsTable, LocalDraft>(table),
+                    BaseReferences<_$EncryptedLocalDatabase, $LocalDraftsTable,
+                        LocalDraft>(db, table, e)
+                  ))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$LocalDraftsTableProcessedTableManager = ProcessedTableManager<
+    _$EncryptedLocalDatabase,
+    $LocalDraftsTable,
+    LocalDraft,
+    $$LocalDraftsTableFilterComposer,
+    $$LocalDraftsTableOrderingComposer,
+    $$LocalDraftsTableAnnotationComposer,
+    $$LocalDraftsTableCreateCompanionBuilder,
+    $$LocalDraftsTableUpdateCompanionBuilder,
+    (
+      LocalDraft,
+      BaseReferences<_$EncryptedLocalDatabase, $LocalDraftsTable, LocalDraft>
+    ),
+    LocalDraft,
+    PrefetchHooks Function()>;
+typedef $$LocalConversationMutesTableCreateCompanionBuilder
+    = LocalConversationMutesCompanion Function({
+  required String conversationId,
+  Value<int?> mutedUntil,
+  Value<int> rowid,
+});
+typedef $$LocalConversationMutesTableUpdateCompanionBuilder
+    = LocalConversationMutesCompanion Function({
+  Value<String> conversationId,
+  Value<int?> mutedUntil,
+  Value<int> rowid,
+});
+
+class $$LocalConversationMutesTableFilterComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalConversationMutesTable> {
+  $$LocalConversationMutesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get conversationId => $composableBuilder(
+      column: $table.conversationId,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get mutedUntil => $composableBuilder(
+      column: $table.mutedUntil, builder: (column) => ColumnFilters(column));
+}
+
+class $$LocalConversationMutesTableOrderingComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalConversationMutesTable> {
+  $$LocalConversationMutesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get conversationId => $composableBuilder(
+      column: $table.conversationId,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get mutedUntil => $composableBuilder(
+      column: $table.mutedUntil, builder: (column) => ColumnOrderings(column));
+}
+
+class $$LocalConversationMutesTableAnnotationComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalConversationMutesTable> {
+  $$LocalConversationMutesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get conversationId => $composableBuilder(
+      column: $table.conversationId, builder: (column) => column);
+
+  GeneratedColumn<int> get mutedUntil => $composableBuilder(
+      column: $table.mutedUntil, builder: (column) => column);
+}
+
+class $$LocalConversationMutesTableTableManager extends RootTableManager<
+    _$EncryptedLocalDatabase,
+    $LocalConversationMutesTable,
+    LocalConversationMute,
+    $$LocalConversationMutesTableFilterComposer,
+    $$LocalConversationMutesTableOrderingComposer,
+    $$LocalConversationMutesTableAnnotationComposer,
+    $$LocalConversationMutesTableCreateCompanionBuilder,
+    $$LocalConversationMutesTableUpdateCompanionBuilder,
+    (
+      LocalConversationMute,
+      BaseReferences<_$EncryptedLocalDatabase, $LocalConversationMutesTable,
+          LocalConversationMute>
+    ),
+    LocalConversationMute,
+    PrefetchHooks Function()> {
+  $$LocalConversationMutesTableTableManager(
+      _$EncryptedLocalDatabase db, $LocalConversationMutesTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$LocalConversationMutesTableFilterComposer(
+                  $db: db, $table: table),
+          createOrderingComposer: () =>
+              $$LocalConversationMutesTableOrderingComposer(
+                  $db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$LocalConversationMutesTableAnnotationComposer(
+                  $db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> conversationId = const Value.absent(),
+            Value<int?> mutedUntil = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalConversationMutesCompanion(
+            conversationId: conversationId,
+            mutedUntil: mutedUntil,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String conversationId,
+            Value<int?> mutedUntil = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalConversationMutesCompanion.insert(
+            conversationId: conversationId,
+            mutedUntil: mutedUntil,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (
+                    e.readTable<$LocalConversationMutesTable,
+                        LocalConversationMute>(table),
+                    BaseReferences<
+                        _$EncryptedLocalDatabase,
+                        $LocalConversationMutesTable,
+                        LocalConversationMute>(db, table, e)
+                  ))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$LocalConversationMutesTableProcessedTableManager
+    = ProcessedTableManager<
+        _$EncryptedLocalDatabase,
+        $LocalConversationMutesTable,
+        LocalConversationMute,
+        $$LocalConversationMutesTableFilterComposer,
+        $$LocalConversationMutesTableOrderingComposer,
+        $$LocalConversationMutesTableAnnotationComposer,
+        $$LocalConversationMutesTableCreateCompanionBuilder,
+        $$LocalConversationMutesTableUpdateCompanionBuilder,
+        (
+          LocalConversationMute,
+          BaseReferences<_$EncryptedLocalDatabase, $LocalConversationMutesTable,
+              LocalConversationMute>
+        ),
+        LocalConversationMute,
+        PrefetchHooks Function()>;
 
 class $EncryptedLocalDatabaseManager {
   final _$EncryptedLocalDatabase _db;
@@ -6234,4 +7218,9 @@ class $EncryptedLocalDatabaseManager {
       $$LocalMessagesTableTableManager(_db, _db.localMessages);
   $$LocalMessageReactionsTableTableManager get localMessageReactions =>
       $$LocalMessageReactionsTableTableManager(_db, _db.localMessageReactions);
+  $$LocalDraftsTableTableManager get localDrafts =>
+      $$LocalDraftsTableTableManager(_db, _db.localDrafts);
+  $$LocalConversationMutesTableTableManager get localConversationMutes =>
+      $$LocalConversationMutesTableTableManager(
+          _db, _db.localConversationMutes);
 }

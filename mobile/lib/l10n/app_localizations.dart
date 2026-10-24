@@ -3543,6 +3543,162 @@ abstract class AppLocalizations {
   /// **'This build does not allow the server address {url}. Use an https:// server origin.'**
   String errorServerNotAllowed(String url);
 
+  /// No description provided for @muteEightHours.
+  ///
+  /// In en, this message translates to:
+  /// **'For 8 hours'**
+  String get muteEightHours;
+
+  /// No description provided for @muteOneWeek.
+  ///
+  /// In en, this message translates to:
+  /// **'For 1 week'**
+  String get muteOneWeek;
+
+  /// No description provided for @muteAlways.
+  ///
+  /// In en, this message translates to:
+  /// **'Until I turn it back on'**
+  String get muteAlways;
+
+  /// No description provided for @muteStatusAlways.
+  ///
+  /// In en, this message translates to:
+  /// **'Muted until you turn it back on.'**
+  String get muteStatusAlways;
+
+  /// No description provided for @muteStatusUntil.
+  ///
+  /// In en, this message translates to:
+  /// **'Muted until {time}.'**
+  String muteStatusUntil(String time);
+
+  /// No description provided for @chatMoreReactions.
+  ///
+  /// In en, this message translates to:
+  /// **'More reactions'**
+  String get chatMoreReactions;
+
+  /// No description provided for @emojiSearchHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search by name, or type or paste an emoji'**
+  String get emojiSearchHint;
+
+  /// No description provided for @emojiUseTyped.
+  ///
+  /// In en, this message translates to:
+  /// **'Use {emoji}'**
+  String emojiUseTyped(String emoji);
+
+  /// No description provided for @emojiNoResults.
+  ///
+  /// In en, this message translates to:
+  /// **'No emoji with that name. Type or paste one instead.'**
+  String get emojiNoResults;
+
+  /// No description provided for @emojiGroupSmileys.
+  ///
+  /// In en, this message translates to:
+  /// **'Smileys'**
+  String get emojiGroupSmileys;
+
+  /// No description provided for @emojiGroupPeople.
+  ///
+  /// In en, this message translates to:
+  /// **'People'**
+  String get emojiGroupPeople;
+
+  /// No description provided for @emojiGroupAnimals.
+  ///
+  /// In en, this message translates to:
+  /// **'Animals and nature'**
+  String get emojiGroupAnimals;
+
+  /// No description provided for @emojiGroupFood.
+  ///
+  /// In en, this message translates to:
+  /// **'Food and drink'**
+  String get emojiGroupFood;
+
+  /// No description provided for @emojiGroupTravel.
+  ///
+  /// In en, this message translates to:
+  /// **'Travel and places'**
+  String get emojiGroupTravel;
+
+  /// No description provided for @emojiGroupActivities.
+  ///
+  /// In en, this message translates to:
+  /// **'Activities'**
+  String get emojiGroupActivities;
+
+  /// No description provided for @emojiGroupObjects.
+  ///
+  /// In en, this message translates to:
+  /// **'Objects'**
+  String get emojiGroupObjects;
+
+  /// No description provided for @emojiGroupSymbols.
+  ///
+  /// In en, this message translates to:
+  /// **'Symbols'**
+  String get emojiGroupSymbols;
+
+  /// No description provided for @emojiGroupFlags.
+  ///
+  /// In en, this message translates to:
+  /// **'Flags'**
+  String get emojiGroupFlags;
+
+  /// No description provided for @searchModeMessages.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages'**
+  String get searchModeMessages;
+
+  /// No description provided for @searchModePeople.
+  ///
+  /// In en, this message translates to:
+  /// **'People and communities'**
+  String get searchModePeople;
+
+  /// No description provided for @searchMessagesHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search messages on this device…'**
+  String get searchMessagesHint;
+
+  /// No description provided for @searchMessagesIntroTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Search this device'**
+  String get searchMessagesIntroTitle;
+
+  /// No description provided for @searchMessagesIntroMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Finds text in the messages this device holds. The search happens here and is never sent to the server.'**
+  String get searchMessagesIntroMessage;
+
+  /// No description provided for @searchMessagesNoResultsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'No messages found'**
+  String get searchMessagesNoResultsTitle;
+
+  /// No description provided for @searchMessagesNoResultsMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing on this device matches. Messages that expired or were deleted are gone from search too.'**
+  String get searchMessagesNoResultsMessage;
+
+  /// No description provided for @searchMessagesFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The search could not read the local database.'**
+  String get searchMessagesFailed;
+
   /// No description provided for @attachmentTooLarge.
   ///
   /// In en, this message translates to:

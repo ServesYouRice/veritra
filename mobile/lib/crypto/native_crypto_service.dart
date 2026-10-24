@@ -632,6 +632,7 @@ class NativeCryptoService implements MlsConversationCryptoService {
         body: body,
         createdAt: envelope.createdAt.millisecondsSinceEpoch,
         state: LocalMessageState.received,
+        expiresAt: envelope.expiresAt?.toUtc().millisecondsSinceEpoch,
       );
 
   @override
@@ -727,6 +728,7 @@ class NativeCryptoService implements MlsConversationCryptoService {
                   serverMessageId: envelope.id,
                   createdAt: envelope.createdAt.millisecondsSinceEpoch,
                   state: LocalMessageState.received,
+                  expiresAt: envelope.expiresAt?.toUtc().millisecondsSinceEpoch,
                 );
                 if (payload.type == AppPayloadType.text ||
                     payload.type == AppPayloadType.reply) {
@@ -901,6 +903,7 @@ List<MessageEffect> messageEffectsFor(
   required int createdAt,
   required String state,
   String? serverMessageId,
+  int? expiresAt,
 }) {
   final body = payload.body;
   InsertMessageEffect row(String kind, {String? text, String? replyTo}) =>
@@ -915,6 +918,7 @@ List<MessageEffect> messageEffectsFor(
         replyTo: replyTo,
         createdAt: createdAt,
         state: state,
+        expiresAt: expiresAt,
       );
   return switch (payload.type) {
     AppPayloadType.text => <MessageEffect>[
