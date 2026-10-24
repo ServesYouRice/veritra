@@ -130,6 +130,21 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   transaction deletes the rows that are gone and upserts the rest, writing
   a row only when its conversation, position or payload differs. The stored
   rows are the same as after the former full rewrite.
+- **W2 (2026-10-24):** local schema 10. `local_messages` and
+  `local_ciphertext_envelopes` gain `expires_at` (epoch milliseconds, indexed);
+  no ABI or payload change. Decrypted rows are deleted only by their own
+  expiry, a cached envelope only removes itself. The upgrade backfills the
+  expiry from the cached envelopes and purges what has expired, in its one
+  transaction.
+- **W6 (2026-10-24):** local schema 11 adds `local_drafts` and
+  `local_conversation_mutes` (new tables only). No ABI change; the reaction
+  payload is unchanged (`reaction` stays a string of at most 32 UTF-16 code
+  units, so any single emoji fits). Server migration 0035 adds
+  `muted_until`.
+- **W10 (2026-10-24):** local schema 12 adds `local_messages.search_id`, the
+  FTS5 table `local_message_search` and three triggers. No ABI or payload
+  change. A build without FTS5 searches by scanning `local_messages`.
+
 - **Local database upgrade failure (2026-10-23):** no schema change. An
   open that fails after the key has opened the file and a schema upgrade
   has started is reported as an upgrade failure, not `keyRejected`; a wrong
