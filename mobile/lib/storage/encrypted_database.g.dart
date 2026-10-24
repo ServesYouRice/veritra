@@ -3143,6 +3143,12 @@ class $LocalMessagesTable extends LocalMessages
   late final GeneratedColumn<int> expiresAt = GeneratedColumn<int>(
       'expires_at', aliasedName, true,
       type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _searchIdMeta =
+      const VerificationMeta('searchId');
+  @override
+  late final GeneratedColumn<int> searchId = GeneratedColumn<int>(
+      'search_id', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns => [
         key,
@@ -3157,7 +3163,8 @@ class $LocalMessagesTable extends LocalMessages
         editedAt,
         deletedAt,
         state,
-        expiresAt
+        expiresAt,
+        searchId
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -3243,6 +3250,10 @@ class $LocalMessagesTable extends LocalMessages
       context.handle(_expiresAtMeta,
           expiresAt.isAcceptableOrUnknown(data['expires_at']!, _expiresAtMeta));
     }
+    if (data.containsKey('search_id')) {
+      context.handle(_searchIdMeta,
+          searchId.isAcceptableOrUnknown(data['search_id']!, _searchIdMeta));
+    }
     return context;
   }
 
@@ -3278,6 +3289,8 @@ class $LocalMessagesTable extends LocalMessages
           .read(DriftSqlType.string, data['${effectivePrefix}state'])!,
       expiresAt: attachedDatabase.typeMapping
           .read(DriftSqlType.int, data['${effectivePrefix}expires_at']),
+      searchId: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}search_id']),
     );
   }
 
@@ -3301,6 +3314,12 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
   final int? deletedAt;
   final String state;
   final int? expiresAt;
+
+  /// The row's number in the search index (W10, schema 12), set by the
+  /// database's triggers for text messages and never by the app. The index
+  /// cannot use `rowid`: a table keyed by text may renumber its rows when
+  /// vacuumed, which would leave deleted text in the index.
+  final int? searchId;
   const LocalMessage(
       {required this.key,
       this.serverMessageId,
@@ -3314,7 +3333,8 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       this.editedAt,
       this.deletedAt,
       required this.state,
-      this.expiresAt});
+      this.expiresAt,
+      this.searchId});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -3342,6 +3362,9 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
     map['state'] = Variable<String>(state);
     if (!nullToAbsent || expiresAt != null) {
       map['expires_at'] = Variable<int>(expiresAt);
+    }
+    if (!nullToAbsent || searchId != null) {
+      map['search_id'] = Variable<int>(searchId);
     }
     return map;
   }
@@ -3371,6 +3394,9 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       expiresAt: expiresAt == null && nullToAbsent
           ? const Value.absent()
           : Value(expiresAt),
+      searchId: searchId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(searchId),
     );
   }
 
@@ -3391,6 +3417,7 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       deletedAt: serializer.fromJson<int?>(json['deletedAt']),
       state: serializer.fromJson<String>(json['state']),
       expiresAt: serializer.fromJson<int?>(json['expiresAt']),
+      searchId: serializer.fromJson<int?>(json['searchId']),
     );
   }
   @override
@@ -3410,6 +3437,7 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       'deletedAt': serializer.toJson<int?>(deletedAt),
       'state': serializer.toJson<String>(state),
       'expiresAt': serializer.toJson<int?>(expiresAt),
+      'searchId': serializer.toJson<int?>(searchId),
     };
   }
 
@@ -3426,7 +3454,8 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
           Value<int?> editedAt = const Value.absent(),
           Value<int?> deletedAt = const Value.absent(),
           String? state,
-          Value<int?> expiresAt = const Value.absent()}) =>
+          Value<int?> expiresAt = const Value.absent(),
+          Value<int?> searchId = const Value.absent()}) =>
       LocalMessage(
         key: key ?? this.key,
         serverMessageId: serverMessageId.present
@@ -3443,6 +3472,7 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
         deletedAt: deletedAt.present ? deletedAt.value : this.deletedAt,
         state: state ?? this.state,
         expiresAt: expiresAt.present ? expiresAt.value : this.expiresAt,
+        searchId: searchId.present ? searchId.value : this.searchId,
       );
   LocalMessage copyWithCompanion(LocalMessagesCompanion data) {
     return LocalMessage(
@@ -3467,6 +3497,7 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       deletedAt: data.deletedAt.present ? data.deletedAt.value : this.deletedAt,
       state: data.state.present ? data.state.value : this.state,
       expiresAt: data.expiresAt.present ? data.expiresAt.value : this.expiresAt,
+      searchId: data.searchId.present ? data.searchId.value : this.searchId,
     );
   }
 
@@ -3485,7 +3516,8 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
           ..write('editedAt: $editedAt, ')
           ..write('deletedAt: $deletedAt, ')
           ..write('state: $state, ')
-          ..write('expiresAt: $expiresAt')
+          ..write('expiresAt: $expiresAt, ')
+          ..write('searchId: $searchId')
           ..write(')'))
         .toString();
   }
@@ -3504,7 +3536,8 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       editedAt,
       deletedAt,
       state,
-      expiresAt);
+      expiresAt,
+      searchId);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -3521,7 +3554,8 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
           other.editedAt == this.editedAt &&
           other.deletedAt == this.deletedAt &&
           other.state == this.state &&
-          other.expiresAt == this.expiresAt);
+          other.expiresAt == this.expiresAt &&
+          other.searchId == this.searchId);
 }
 
 class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
@@ -3538,6 +3572,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
   final Value<int?> deletedAt;
   final Value<String> state;
   final Value<int?> expiresAt;
+  final Value<int?> searchId;
   final Value<int> rowid;
   const LocalMessagesCompanion({
     this.key = const Value.absent(),
@@ -3553,6 +3588,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
     this.deletedAt = const Value.absent(),
     this.state = const Value.absent(),
     this.expiresAt = const Value.absent(),
+    this.searchId = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   LocalMessagesCompanion.insert({
@@ -3569,6 +3605,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
     this.deletedAt = const Value.absent(),
     required String state,
     this.expiresAt = const Value.absent(),
+    this.searchId = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : key = Value(key),
         conversationId = Value(conversationId),
@@ -3591,6 +3628,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
     Expression<int>? deletedAt,
     Expression<String>? state,
     Expression<int>? expiresAt,
+    Expression<int>? searchId,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -3607,6 +3645,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
       if (deletedAt != null) 'deleted_at': deletedAt,
       if (state != null) 'state': state,
       if (expiresAt != null) 'expires_at': expiresAt,
+      if (searchId != null) 'search_id': searchId,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -3625,6 +3664,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
       Value<int?>? deletedAt,
       Value<String>? state,
       Value<int?>? expiresAt,
+      Value<int?>? searchId,
       Value<int>? rowid}) {
     return LocalMessagesCompanion(
       key: key ?? this.key,
@@ -3640,6 +3680,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
       deletedAt: deletedAt ?? this.deletedAt,
       state: state ?? this.state,
       expiresAt: expiresAt ?? this.expiresAt,
+      searchId: searchId ?? this.searchId,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -3686,6 +3727,9 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
     if (expiresAt.present) {
       map['expires_at'] = Variable<int>(expiresAt.value);
     }
+    if (searchId.present) {
+      map['search_id'] = Variable<int>(searchId.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -3708,6 +3752,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
           ..write('deletedAt: $deletedAt, ')
           ..write('state: $state, ')
           ..write('expiresAt: $expiresAt, ')
+          ..write('searchId: $searchId, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -4523,6 +4568,8 @@ abstract class _$EncryptedLocalDatabase extends GeneratedDatabase {
       'CREATE INDEX IF NOT EXISTS local_ciphertext_envelopes_expires_at ON local_ciphertext_envelopes (expires_at) WHERE expires_at IS NOT NULL');
   late final Index localMessagesExpiresAt = Index('local_messages_expires_at',
       'CREATE INDEX IF NOT EXISTS local_messages_expires_at ON local_messages (expires_at) WHERE expires_at IS NOT NULL');
+  late final Index localMessagesSearchId = Index('local_messages_search_id',
+      'CREATE UNIQUE INDEX IF NOT EXISTS local_messages_search_id ON local_messages (search_id)');
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -4544,7 +4591,8 @@ abstract class _$EncryptedLocalDatabase extends GeneratedDatabase {
         localConversationMutes,
         localCiphertextEnvelopesConversationPosition,
         localCiphertextEnvelopesExpiresAt,
-        localMessagesExpiresAt
+        localMessagesExpiresAt,
+        localMessagesSearchId
       ];
 }
 
@@ -6349,6 +6397,7 @@ typedef $$LocalMessagesTableCreateCompanionBuilder = LocalMessagesCompanion
   Value<int?> deletedAt,
   required String state,
   Value<int?> expiresAt,
+  Value<int?> searchId,
   Value<int> rowid,
 });
 typedef $$LocalMessagesTableUpdateCompanionBuilder = LocalMessagesCompanion
@@ -6366,6 +6415,7 @@ typedef $$LocalMessagesTableUpdateCompanionBuilder = LocalMessagesCompanion
   Value<int?> deletedAt,
   Value<String> state,
   Value<int?> expiresAt,
+  Value<int?> searchId,
   Value<int> rowid,
 });
 
@@ -6420,6 +6470,9 @@ class $$LocalMessagesTableFilterComposer
 
   ColumnFilters<int> get expiresAt => $composableBuilder(
       column: $table.expiresAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get searchId => $composableBuilder(
+      column: $table.searchId, builder: (column) => ColumnFilters(column));
 }
 
 class $$LocalMessagesTableOrderingComposer
@@ -6473,6 +6526,9 @@ class $$LocalMessagesTableOrderingComposer
 
   ColumnOrderings<int> get expiresAt => $composableBuilder(
       column: $table.expiresAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get searchId => $composableBuilder(
+      column: $table.searchId, builder: (column) => ColumnOrderings(column));
 }
 
 class $$LocalMessagesTableAnnotationComposer
@@ -6522,6 +6578,9 @@ class $$LocalMessagesTableAnnotationComposer
 
   GeneratedColumn<int> get expiresAt =>
       $composableBuilder(column: $table.expiresAt, builder: (column) => column);
+
+  GeneratedColumn<int> get searchId =>
+      $composableBuilder(column: $table.searchId, builder: (column) => column);
 }
 
 class $$LocalMessagesTableTableManager extends RootTableManager<
@@ -6565,6 +6624,7 @@ class $$LocalMessagesTableTableManager extends RootTableManager<
             Value<int?> deletedAt = const Value.absent(),
             Value<String> state = const Value.absent(),
             Value<int?> expiresAt = const Value.absent(),
+            Value<int?> searchId = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               LocalMessagesCompanion(
@@ -6581,6 +6641,7 @@ class $$LocalMessagesTableTableManager extends RootTableManager<
             deletedAt: deletedAt,
             state: state,
             expiresAt: expiresAt,
+            searchId: searchId,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -6597,6 +6658,7 @@ class $$LocalMessagesTableTableManager extends RootTableManager<
             Value<int?> deletedAt = const Value.absent(),
             required String state,
             Value<int?> expiresAt = const Value.absent(),
+            Value<int?> searchId = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               LocalMessagesCompanion.insert(
@@ -6613,6 +6675,7 @@ class $$LocalMessagesTableTableManager extends RootTableManager<
             deletedAt: deletedAt,
             state: state,
             expiresAt: expiresAt,
+            searchId: searchId,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0

@@ -3548,6 +3548,54 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Flags'**
   String get emojiGroupFlags;
+
+  /// No description provided for @searchModeMessages.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages'**
+  String get searchModeMessages;
+
+  /// No description provided for @searchModePeople.
+  ///
+  /// In en, this message translates to:
+  /// **'People and communities'**
+  String get searchModePeople;
+
+  /// No description provided for @searchMessagesHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search messages on this device…'**
+  String get searchMessagesHint;
+
+  /// No description provided for @searchMessagesIntroTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Search this device'**
+  String get searchMessagesIntroTitle;
+
+  /// No description provided for @searchMessagesIntroMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Finds text in the messages this device holds. The search happens here and is never sent to the server.'**
+  String get searchMessagesIntroMessage;
+
+  /// No description provided for @searchMessagesNoResultsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'No messages found'**
+  String get searchMessagesNoResultsTitle;
+
+  /// No description provided for @searchMessagesNoResultsMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing on this device matches. Messages that expired or were deleted are gone from search too.'**
+  String get searchMessagesNoResultsMessage;
+
+  /// No description provided for @searchMessagesFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The search could not read the local database.'**
+  String get searchMessagesFailed;
 }
 
 class _AppLocalizationsDelegate

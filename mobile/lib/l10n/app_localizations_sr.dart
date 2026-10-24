@@ -2181,6 +2181,33 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get emojiGroupFlags => 'Заставе';
+
+  @override
+  String get searchModeMessages => 'Поруке';
+
+  @override
+  String get searchModePeople => 'Људи и заједнице';
+
+  @override
+  String get searchMessagesHint => 'Претражите поруке на овом уређају…';
+
+  @override
+  String get searchMessagesIntroTitle => 'Претрага овог уређаја';
+
+  @override
+  String get searchMessagesIntroMessage =>
+      'Налази текст у порукама које овај уређај чува. Претрага се одвија овде и никада се не шаље серверу.';
+
+  @override
+  String get searchMessagesNoResultsTitle => 'Нема пронађених порука';
+
+  @override
+  String get searchMessagesNoResultsMessage =>
+      'Ништа на овом уређају не одговара. Поруке које су истекле или су обрисане нестају и из претраге.';
+
+  @override
+  String get searchMessagesFailed =>
+      'Претрага није могла да прочита локалну базу података.';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -4363,4 +4390,31 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get emojiGroupFlags => 'Zastave';
+
+  @override
+  String get searchModeMessages => 'Poruke';
+
+  @override
+  String get searchModePeople => 'Ljudi i zajednice';
+
+  @override
+  String get searchMessagesHint => 'Pretražite poruke na ovom uređaju…';
+
+  @override
+  String get searchMessagesIntroTitle => 'Pretraga ovog uređaja';
+
+  @override
+  String get searchMessagesIntroMessage =>
+      'Nalazi tekst u porukama koje ovaj uređaj čuva. Pretraga se odvija ovde i nikada se ne šalje serveru.';
+
+  @override
+  String get searchMessagesNoResultsTitle => 'Nema pronađenih poruka';
+
+  @override
+  String get searchMessagesNoResultsMessage =>
+      'Ništa na ovom uređaju ne odgovara. Poruke koje su istekle ili su obrisane nestaju i iz pretrage.';
+
+  @override
+  String get searchMessagesFailed =>
+      'Pretraga nije mogla da pročita lokalnu bazu podataka.';
 }

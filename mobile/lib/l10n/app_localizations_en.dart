@@ -2164,4 +2164,31 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get emojiGroupFlags => 'Flags';
+
+  @override
+  String get searchModeMessages => 'Messages';
+
+  @override
+  String get searchModePeople => 'People and communities';
+
+  @override
+  String get searchMessagesHint => 'Search messages on this device…';
+
+  @override
+  String get searchMessagesIntroTitle => 'Search this device';
+
+  @override
+  String get searchMessagesIntroMessage =>
+      'Finds text in the messages this device holds. The search happens here and is never sent to the server.';
+
+  @override
+  String get searchMessagesNoResultsTitle => 'No messages found';
+
+  @override
+  String get searchMessagesNoResultsMessage =>
+      'Nothing on this device matches. Messages that expired or were deleted are gone from search too.';
+
+  @override
+  String get searchMessagesFailed =>
+      'The search could not read the local database.';
 }

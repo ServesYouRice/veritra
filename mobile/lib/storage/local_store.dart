@@ -11,6 +11,7 @@ import '../core/models.dart';
 import '../sync/sync_recovery.dart';
 import 'backup_exclusion.dart';
 import 'encrypted_database.dart';
+import 'message_search.dart';
 
 final Map<String, Future<void>> _databaseOpenTails = <String, Future<void>>{};
 final Map<String, Future<void>> _databaseWriteTails = <String, Future<void>>{};
@@ -411,6 +412,11 @@ abstract class LocalStore {
   Future<List<LocalMessageReaction>> loadReactions(String conversationId);
   Future<void> clearCachedState({bool preserveOutbox = false});
   Future<void> clear();
+
+  /// Message text this device holds that contains every word of [query],
+  /// newest first (W10). Answered from the encrypted local database; nothing
+  /// about the query reaches the server.
+  Future<List<MessageSearchHit>> searchMessages(String query, {int limit = 50});
 
   /// Unsent composer drafts by conversation. They are message text before
   /// encryption: kept only in the encrypted database, never in a backup, and
@@ -910,6 +916,11 @@ class MemoryLocalStore implements LocalStore {
   }
 
   @override
+  Future<List<MessageSearchHit>> searchMessages(String query,
+          {int limit = 50}) async =>
+      _history.search(query, limit);
+
+  @override
   Future<Map<String, StoredDraft>> loadDrafts() async =>
       Map<String, StoredDraft>.of(_drafts);
 
@@ -1126,6 +1137,31 @@ class _MemoryMessageHistory {
     });
     _reactions.removeWhere((_, item) => removed.contains(item.targetKey));
     return touched;
+  }
+
+  List<MessageSearchHit> search(String query, int limit) {
+    final terms = searchTerms(query);
+    if (terms.isEmpty) return const <MessageSearchHit>[];
+    final found = _messages.values.where((item) =>
+        item.kind == LocalMessageKind.text &&
+        item.body != null &&
+        item.deletedAt == null &&
+        terms.every(item.body!.toLowerCase().contains));
+    final sorted = found.toList()
+      ..sort((a, b) {
+        final byTime = b.createdAt.compareTo(a.createdAt);
+        return byTime != 0 ? byTime : b.key.compareTo(a.key);
+      });
+    return [
+      for (final item in sorted.take(limit))
+        MessageSearchHit(
+          key: item.key,
+          conversationId: item.conversationId,
+          senderAccountId: item.senderAccountId,
+          createdAt: item.createdAt,
+          snippet: snippetFor(item.body!, terms),
+        ),
+    ];
   }
 
   DateTime? nextExpiry() {
@@ -1740,6 +1776,11 @@ class SecureLocalStore implements LocalStore {
           String conversationId, String peerAccountId) =>
       _database().then((database) =>
           database.readPeerVerification(conversationId, peerAccountId));
+
+  @override
+  Future<List<MessageSearchHit>> searchMessages(String query,
+          {int limit = 50}) async =>
+      (await _database()).searchMessages(query, limit: limit);
 
   @override
   Future<Map<String, StoredDraft>> loadDrafts() async => {

@@ -21,6 +21,7 @@ import 'attachments.dart';
 import 'client_config.dart';
 import 'composer_drafts.dart';
 import 'errors.dart';
+import '../storage/message_search.dart';
 import 'message_history.dart';
 import '../storage/encrypted_database.dart' show LocalMessageKind;
 import 'models.dart';
@@ -1461,6 +1462,11 @@ class AppState extends ChangeNotifier {
       await _refreshConversations(notify: false);
     });
   }
+
+  /// Messages this device holds that match [query] (W10). Answered from the
+  /// encrypted local database: no request is made and nothing is sent.
+  Future<List<MessageSearchHit>> searchMessages(String query) =>
+      localStore.searchMessages(query);
 
   /// Best-effort read of the server's mute. Silent on failure: an unknown
   /// mute state must not block opening a conversation.

@@ -613,5 +613,13 @@
   "emojiGroupActivities": "Активности",
   "emojiGroupObjects": "Предмети",
   "emojiGroupSymbols": "Симболи",
-  "emojiGroupFlags": "Заставе"
+  "emojiGroupFlags": "Заставе",
+  "searchModeMessages": "Поруке",
+  "searchModePeople": "Људи и заједнице",
+  "searchMessagesHint": "Претражите поруке на овом уређају…",
+  "searchMessagesIntroTitle": "Претрага овог уређаја",
+  "searchMessagesIntroMessage": "Налази текст у порукама које овај уређај чува. Претрага се одвија овде и никада се не шаље серверу.",
+  "searchMessagesNoResultsTitle": "Нема пронађених порука",
+  "searchMessagesNoResultsMessage": "Ништа на овом уређају не одговара. Поруке које су истекле или су обрисане нестају и из претраге.",
+  "searchMessagesFailed": "Претрага није могла да прочита локалну базу података."
 }

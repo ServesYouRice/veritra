@@ -253,6 +253,18 @@ void main() {
     final database = databases.last;
     // Rebuild a schema 9 database: no expiry columns, rows as version 9 wrote
     // them (expiry only inside the envelope JSON).
+    for (final trigger in <String>[
+      'local_messages_search_ai',
+      'local_messages_search_au',
+      'local_messages_search_ad',
+    ]) {
+      await database.customStatement('DROP TRIGGER IF EXISTS $trigger');
+    }
+    await database.customStatement('DROP TABLE IF EXISTS local_message_search');
+    await database
+        .customStatement('DROP INDEX IF EXISTS local_messages_search_id');
+    await database
+        .customStatement('ALTER TABLE local_messages DROP COLUMN search_id');
     await database
         .customStatement('DROP INDEX IF EXISTS local_messages_expires_at');
     await database.customStatement(
@@ -299,7 +311,7 @@ void main() {
     final reopened = databases.last;
     final version =
         await reopened.customSelect('PRAGMA user_version').getSingle();
-    expect(version.read<int>('user_version'), 11);
+    expect(version.read<int>('user_version'), 12);
     // The surviving row got its expiry from its envelope.
     final next = await upgraded.nextMessageExpiry();
     expect(next?.millisecondsSinceEpoch, future.millisecondsSinceEpoch);

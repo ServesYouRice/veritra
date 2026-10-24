@@ -741,5 +741,13 @@
   "emojiGroupActivities": "Activities",
   "emojiGroupObjects": "Objects",
   "emojiGroupSymbols": "Symbols",
-  "emojiGroupFlags": "Flags"
+  "emojiGroupFlags": "Flags",
+  "searchModeMessages": "Messages",
+  "searchModePeople": "People and communities",
+  "searchMessagesHint": "Search messages on this device…",
+  "searchMessagesIntroTitle": "Search this device",
+  "searchMessagesIntroMessage": "Finds text in the messages this device holds. The search happens here and is never sent to the server.",
+  "searchMessagesNoResultsTitle": "No messages found",
+  "searchMessagesNoResultsMessage": "Nothing on this device matches. Messages that expired or were deleted are gone from search too.",
+  "searchMessagesFailed": "The search could not read the local database."
 }

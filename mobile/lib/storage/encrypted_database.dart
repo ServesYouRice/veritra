@@ -5,6 +5,8 @@ import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:drift/isolate.dart' show DriftRemoteException;
 
+import 'message_search.dart';
+
 part 'encrypted_database.g.dart';
 
 enum MlsCommitStage {
@@ -253,6 +255,8 @@ class LocalPeerVerifications extends Table {
 /// is deleted once that time passes (W2, schema 10).
 @TableIndex.sql('CREATE INDEX IF NOT EXISTS local_messages_expires_at '
     'ON local_messages (expires_at) WHERE expires_at IS NOT NULL')
+@TableIndex.sql('CREATE UNIQUE INDEX IF NOT EXISTS local_messages_search_id '
+    'ON local_messages (search_id)')
 class LocalMessages extends Table {
   TextColumn get key => text()();
   TextColumn get serverMessageId => text().nullable().unique()();
@@ -267,6 +271,12 @@ class LocalMessages extends Table {
   IntColumn get deletedAt => integer().nullable()();
   TextColumn get state => text()();
   IntColumn get expiresAt => integer().nullable()();
+
+  /// The row's number in the search index (W10, schema 12), set by the
+  /// database's triggers for text messages and never by the app. The index
+  /// cannot use `rowid`: a table keyed by text may renumber its rows when
+  /// vacuumed, which would leave deleted text in the index.
+  IntColumn get searchId => integer().nullable()();
 
   @override
   Set<Column<Object>> get primaryKey => {key};
@@ -335,7 +345,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   static const lastBackupName = 'backup.last_created_at';
 
   @override
-  int get schemaVersion => 11;
+  int get schemaVersion => 12;
 
   /// Whether opening this database started a schema upgrade. Upgrades run
   /// only after the key has opened the file, so an open that fails after
@@ -349,6 +359,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   MigrationStrategy get migration => MigrationStrategy(
         onCreate: (migrator) async {
           await migrator.createAll();
+          await _createSearchIndex();
           await into(localSyncStates).insert(
             LocalSyncStatesCompanion.insert(singleton: const Value(1)),
           );
@@ -423,6 +434,12 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               // W6: drafts and conversation mutes. New tables only.
               await migrator.createTable(localDrafts);
               await migrator.createTable(localConversationMutes);
+            }
+            if (from < 12) {
+              // W10: the on-device message search index.
+              await migrator.addColumn(localMessages, localMessages.searchId);
+              await migrator.createIndex(localMessagesSearchId);
+              if (await _createSearchIndex()) await _rebuildSearchIndex();
             }
             // Drift writes the version again after this returns, outside the
             // transaction; writing it here too closes that gap.
@@ -612,7 +629,10 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localMessages).go();
         await delete(localMessageReactions).go();
         for (final message in history) {
-          await into(localMessages).insert(message);
+          // The index numbers are this database's own (W10): the insert
+          // trigger assigns them, and a backup's would collide.
+          await into(localMessages).insert(
+              message.toCompanion(false).copyWith(searchId: const Value(null)));
         }
         for (final reaction in reactions) {
           await into(localMessageReactions).insert(reaction);
@@ -1725,6 +1745,133 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         <Object?>[expiresAt, id],
       );
     }
+  }
+
+  // ---- on-device message search (W10) ----------------------------------
+
+  static const _searchTable = 'local_message_search';
+
+  /// Creates the full-text index and the triggers that keep it equal to the
+  /// text of `local_messages` through every insert, edit, delete, expiry
+  /// purge and wipe. Returns false, leaving search to the plain scan in
+  /// [searchMessages], when this SQLite build has no FTS5.
+  Future<bool> _createSearchIndex() async {
+    try {
+      await customStatement('CREATE VIRTUAL TABLE IF NOT EXISTS $_searchTable '
+          "USING fts5(body, tokenize = 'unicode61 remove_diacritics 2')");
+    } catch (_) {
+      // No FTS5 in this build; the app searches by scanning instead.
+      return false;
+    }
+    // Deleted text is erased from the index at once, not at the next merge.
+    await customStatement(
+        "INSERT INTO $_searchTable($_searchTable, rank) VALUES('secure-delete', 1)");
+    await customStatement('''
+CREATE TRIGGER IF NOT EXISTS local_messages_search_ai
+AFTER INSERT ON local_messages
+WHEN new.kind = 'text' AND new.body IS NOT NULL
+BEGIN
+  UPDATE local_messages
+    SET search_id = (SELECT COALESCE(MAX(search_id), 0) + 1 FROM local_messages)
+    WHERE key = new.key;
+  INSERT INTO $_searchTable(rowid, body)
+    SELECT search_id, body FROM local_messages WHERE key = new.key;
+END''');
+    await customStatement('''
+CREATE TRIGGER IF NOT EXISTS local_messages_search_au
+AFTER UPDATE OF body, kind ON local_messages
+BEGIN
+  DELETE FROM $_searchTable WHERE rowid = old.search_id;
+  UPDATE local_messages
+    SET search_id = (SELECT COALESCE(MAX(search_id), 0) + 1 FROM local_messages)
+    WHERE key = new.key AND search_id IS NULL
+      AND new.kind = 'text' AND new.body IS NOT NULL;
+  INSERT INTO $_searchTable(rowid, body)
+    SELECT search_id, body FROM local_messages
+    WHERE key = new.key AND kind = 'text' AND body IS NOT NULL
+      AND search_id IS NOT NULL;
+END''');
+    await customStatement('''
+CREATE TRIGGER IF NOT EXISTS local_messages_search_ad
+AFTER DELETE ON local_messages
+BEGIN
+  DELETE FROM $_searchTable WHERE rowid = old.search_id;
+END''');
+    return true;
+  }
+
+  /// Indexes every text message already stored (the upgrade to schema 12).
+  Future<void> _rebuildSearchIndex() async {
+    await customStatement("DELETE FROM $_searchTable");
+    await customStatement('UPDATE local_messages SET search_id = NULL');
+    await customStatement("UPDATE local_messages SET search_id = rowid "
+        "WHERE kind = 'text' AND body IS NOT NULL");
+    await customStatement('INSERT INTO $_searchTable(rowid, body) '
+        'SELECT search_id, body FROM local_messages '
+        'WHERE search_id IS NOT NULL');
+  }
+
+  Future<bool> get _hasSearchIndex async => (await customSelect(
+        "SELECT 1 FROM sqlite_master WHERE name = '$_searchTable'",
+      ).get())
+          .isNotEmpty;
+
+  /// Messages whose text contains every word of [query] (the last word may be
+  /// the start of a longer one), newest first, at most [limit]. Words match
+  /// without regard to case and accents. Nothing leaves the database.
+  Future<List<MessageSearchHit>> searchMessages(String query,
+      {int limit = 50}) async {
+    final terms = searchTerms(query);
+    if (terms.isEmpty) return const <MessageSearchHit>[];
+    if (await _hasSearchIndex) {
+      final rows = await customSelect(
+        'SELECT m.key AS key, m.conversation_id AS conversation_id, '
+        'm.sender_account_id AS sender, m.created_at AS created_at, '
+        "snippet($_searchTable, 0, '$snippetMatchStart', '$snippetMatchEnd', "
+        "'…', 16) AS snippet "
+        'FROM $_searchTable JOIN local_messages m ON m.search_id = '
+        '$_searchTable.rowid '
+        'WHERE $_searchTable MATCH ? AND m.kind = \'text\' '
+        'AND m.deleted_at IS NULL '
+        'ORDER BY m.created_at DESC, m.key DESC LIMIT ?',
+        variables: [Variable<String>(ftsQueryFor(terms)), Variable<int>(limit)],
+      ).get();
+      return [
+        for (final row in rows)
+          MessageSearchHit(
+            key: row.read<String>('key'),
+            conversationId: row.read<String>('conversation_id'),
+            senderAccountId: row.read<String>('sender'),
+            createdAt: row.read<int>('created_at'),
+            snippet: row.read<String>('snippet'),
+          ),
+      ];
+    }
+    // No FTS5: scan the decrypted rows inside the encrypted database.
+    final rows = await (select(localMessages)
+          ..where((table) =>
+              table.kind.equals(LocalMessageKind.text) &
+              table.body.isNotNull() &
+              table.deletedAt.isNull())
+          ..orderBy([
+            (table) => OrderingTerm.desc(table.createdAt),
+            (table) => OrderingTerm.desc(table.key),
+          ]))
+        .get();
+    final hits = <MessageSearchHit>[];
+    for (final row in rows) {
+      final text = row.body!.toLowerCase();
+      if (!terms.every(text.contains)) continue;
+      hits.add(MessageSearchHit(
+        key: row.key,
+        conversationId: row.conversationId,
+        senderAccountId: row.senderAccountId,
+        createdAt: row.createdAt,
+        snippet: snippetFor(row.body!, terms),
+      ));
+      if (hits.length == limit) break;
+    }
+    return hits;
   }
 
   Future<void> saveDraft({
