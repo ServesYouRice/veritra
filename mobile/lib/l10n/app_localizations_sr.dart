@@ -1889,6 +1889,14 @@ class AppLocalizationsSr extends AppLocalizations {
       'Синхронизација је заустављена. Покушајте поново.';
 
   @override
+  String get syncErrorLocalStorage =>
+      'Овај уређај није могао да чита или пише у своје локално складиште. Поруке су паузиране да ниједна не би била прескочена. Ослободите простор или поново покрените апликацију, па покушајте поново.';
+
+  @override
+  String get syncErrorStorageBusy =>
+      'Складиште овог уређаја је заузето или пуно. Синхронизација ће ускоро покушати поново.';
+
+  @override
   String get apiErrorSessionInvalid =>
       'Ваша сесија више није важећа. Пријавите се поново.';
 
@@ -2147,6 +2155,10 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get recoveryUpgradeError =>
       'Овај уређај није могао да ажурира складиште порука за ову верзију апликације Veritra. Ништа није промењено нити обрисано. Покушајте поново. Ако и даље не успева, можете да ресетујете овај уређај и поново га повежете.';
+
+  @override
+  String get recoverySqliteFeatureMissing =>
+      'Ова верзија апликације Veritra не може да отвори своје складиште порука: у машини базе података недостаје подршка за шифровање или претрагу. Ваши подаци нису промењени нити обрисани. Инсталирајте верзију апликације Veritra која их подржава.';
 
   @override
   String get errorPasswordLoginNeedsLink =>
@@ -4301,6 +4313,14 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Sinhronizacija je zaustavljena. Pokušajte ponovo.';
 
   @override
+  String get syncErrorLocalStorage =>
+      'Ovaj uređaj nije mogao da čita ili piše u svoje lokalno skladište. Poruke su pauzirane da nijedna ne bi bila preskočena. Oslobodite prostor ili ponovo pokrenite aplikaciju, pa pokušajte ponovo.';
+
+  @override
+  String get syncErrorStorageBusy =>
+      'Skladište ovog uređaja je zauzeto ili puno. Sinhronizacija će uskoro pokušati ponovo.';
+
+  @override
   String get apiErrorSessionInvalid =>
       'Vaša sesija više nije važeća. Prijavite se ponovo.';
 
@@ -4562,6 +4582,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get recoveryUpgradeError =>
       'Ovaj uređaj nije mogao da ažurira skladište poruka za ovu verziju aplikacije Veritra. Ništa nije promenjeno niti obrisano. Pokušajte ponovo. Ako i dalje ne uspeva, možete da resetujete ovaj uređaj i ponovo ga povežete.';
+
+  @override
+  String get recoverySqliteFeatureMissing =>
+      'Ova verzija aplikacije Veritra ne može da otvori svoje skladište poruka: u mašini baze podataka nedostaje podrška za šifrovanje ili pretragu. Vaši podaci nisu promenjeni niti obrisani. Instalirajte verziju aplikacije Veritra koja ih podržava.';
 
   @override
   String get errorPasswordLoginNeedsLink =>

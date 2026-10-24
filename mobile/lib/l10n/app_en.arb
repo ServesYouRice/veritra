@@ -657,6 +657,8 @@
   "syncErrorUnsupportedEvent": "The server sent an update this app version does not know. Update the app, then try again.",
   "syncErrorCryptoUnavailable": "Encryption is unavailable in this build, so encrypted updates cannot be applied.",
   "syncErrorStopped": "Sync stopped. Try again.",
+  "syncErrorLocalStorage": "This device could not read or write its local storage. Messages are paused so none are skipped. Free up space or restart the app, then try again.",
+  "syncErrorStorageBusy": "This device's storage is busy or full. Sync will try again shortly.",
 
   "apiErrorSessionInvalid": "Your session is no longer valid. Sign in again.",
   "apiErrorInvalidCredentials": "Sign-in failed. Check your username and password.",
@@ -733,6 +735,8 @@
   "@recoveryUpgradeStillFull": {"description": "Recovery screen message when the storage upgrade failed for lack of space again after a retry. The reset it mentions moves the old data aside and needs confirmation."},
   "recoveryUpgradeError": "This device could not update its message storage for this version of Veritra. Nothing has been changed or deleted. Retry. If it keeps failing, you can reset this device and link it again.",
   "@recoveryUpgradeError": {"description": "Recovery screen message when the encrypted local database opened with its key but upgrading or opening it for the app's new version failed for a reason other than a full device (for example, a damaged file). The reset it mentions moves the old data aside and needs confirmation."},
+  "recoverySqliteFeatureMissing": "This build of Veritra cannot open its message storage: the database engine lacks encryption or search support. Your data has not been changed or deleted. Install a Veritra build that supports them.",
+  "@recoverySqliteFeatureMissing": {"description": "Recovery screen message when the SQLite library in this build has no encryption cipher or no FTS5 search support. The database and key are untouched; retrying or resetting cannot help."},
   "errorPasswordLoginNeedsLink": "Password login requires this device to be linked first.",
   "attachmentSendFailedState": "The attachment could not be sent.",
   "errorRelinkRequired": "This device must be linked again.",

@@ -38,6 +38,11 @@ enum SyncFailureKind {
 
   /// This build has no MLS service, so it cannot apply MLS events.
   cryptoUnavailable,
+
+  /// Local storage failed in a way that does not pass by itself (damaged or
+  /// unreadable database, a refused write). Nothing was lost: the event is
+  /// applied again once the device storage works. Relinking would not fix it.
+  localStorage,
 }
 
 /// A typed failure raised while applying one sync event.
@@ -116,6 +121,8 @@ class SyncRecovery {
           SyncRecoveryChoice.restoreBackup,
           SyncRecoveryChoice.relink,
         ];
+      case SyncFailureKind.localStorage:
+        return const <SyncRecoveryChoice>[SyncRecoveryChoice.retry];
       case SyncFailureKind.transient:
       case SyncFailureKind.auth:
       case SyncFailureKind.mlsControlMissing:
@@ -150,6 +157,8 @@ class SyncRecovery {
         return l10n.syncErrorUnsupportedEvent;
       case SyncFailureKind.cryptoUnavailable:
         return l10n.syncErrorCryptoUnavailable;
+      case SyncFailureKind.localStorage:
+        return l10n.syncErrorLocalStorage;
       case SyncFailureKind.transient:
       case SyncFailureKind.auth:
         return l10n.syncErrorStopped;

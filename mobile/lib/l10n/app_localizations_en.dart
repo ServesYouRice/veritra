@@ -1872,6 +1872,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String get syncErrorStopped => 'Sync stopped. Try again.';
 
   @override
+  String get syncErrorLocalStorage =>
+      'This device could not read or write its local storage. Messages are paused so none are skipped. Free up space or restart the app, then try again.';
+
+  @override
+  String get syncErrorStorageBusy =>
+      'This device\'s storage is busy or full. Sync will try again shortly.';
+
+  @override
   String get apiErrorSessionInvalid =>
       'Your session is no longer valid. Sign in again.';
 
@@ -2130,6 +2138,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get recoveryUpgradeError =>
       'This device could not update its message storage for this version of Veritra. Nothing has been changed or deleted. Retry. If it keeps failing, you can reset this device and link it again.';
+
+  @override
+  String get recoverySqliteFeatureMissing =>
+      'This build of Veritra cannot open its message storage: the database engine lacks encryption or search support. Your data has not been changed or deleted. Install a Veritra build that supports them.';
 
   @override
   String get errorPasswordLoginNeedsLink =>

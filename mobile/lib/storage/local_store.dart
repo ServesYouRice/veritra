@@ -63,6 +63,11 @@ enum LocalStoreFailureKind {
   /// A retry runs it again; if that keeps failing, only the confirmed
   /// [LocalStore.quarantineUnreadableDatabase] moves the database aside.
   upgradeFailed,
+
+  /// This build's SQLite lacks the encryption cipher or FTS5 (the search
+  /// index). The database and key are fine and are not touched; neither a
+  /// retry nor a reset can help, only a build with the feature.
+  sqliteFeatureMissing,
 }
 
 /// The local database stays closed and untouched. Nothing is reset without
@@ -253,7 +258,14 @@ class LocalBackupData {
     this.history = const <LocalMessage>[],
     this.reactions = const <LocalMessageReaction>[],
     this.formatVersion = backupFormatVersion,
+    this.expiryBackfillIds = const <String>{},
   });
+
+  /// Server ids of history entries whose JSON has no `expiresAt` key at all
+  /// (a backup from before expiry travelled with the history, even when it
+  /// says version 2). Only these get their expiry from the cached envelope;
+  /// an entry that carries the key, null or not, is taken as it is.
+  final Set<String> expiryBackfillIds;
 
   /// The backup format this was read from, or the current one for a backup
   /// being written (3: message expiry travels with the history).
@@ -421,7 +433,12 @@ abstract class LocalStore {
   /// Decrypted history for one conversation, oldest first (D23).
   Future<List<LocalMessage>> loadMessages(String conversationId);
   Future<List<LocalMessageReaction>> loadReactions(String conversationId);
-  Future<void> clearCachedState({bool preserveOutbox = false});
+
+  /// Drops what the server can send again. [keepDrafts] is set only when the
+  /// session expired (the person signs in again to the same drafts); sign-out
+  /// and relinking leave it unset and delete them.
+  Future<void> clearCachedState(
+      {bool preserveOutbox = false, bool keepDrafts = false});
   Future<void> clear();
 
   /// Message text this device holds that contains every word of [query],
@@ -841,16 +858,20 @@ class MemoryLocalStore implements LocalStore {
     if (activeSession == null || state == null) {
       throw StateError('complete authenticated crypto state is required');
     }
+    final now = DateTime.now().toUtc();
+    final nowMs = now.millisecondsSinceEpoch;
     return _encodeBackup(LocalBackupData(
       session: activeSession,
       cursor: _syncCursor,
       conversations: _snapshot?.conversations ?? const <Conversation>[],
-      messages: _snapshot?.messagesByConversation ??
-          const <String, List<ReceivedMessageEnvelope>>{},
+      messages: _withoutExpired(_snapshot?.messagesByConversation, now),
       outbox: List<MessageEnvelope>.from(_outbox),
       mlsOutbox: _mlsOutbox.values.toList(growable: false),
       cryptoState: _copyCryptoState(state),
-      history: _history.allMessages(),
+      history: _history
+          .allMessages()
+          .where((item) => item.expiresAt == null || item.expiresAt! > nowMs)
+          .toList(growable: false),
       reactions: _history.allReactions(),
     ));
   }
@@ -902,10 +923,11 @@ class MemoryLocalStore implements LocalStore {
   }
 
   @override
-  Future<void> clearCachedState({bool preserveOutbox = false}) async {
+  Future<void> clearCachedState(
+      {bool preserveOutbox = false, bool keepDrafts = false}) async {
     _syncCursor = 0;
     _snapshot = null;
-    _drafts.clear();
+    if (!keepDrafts) _drafts.clear();
     _mutes.clear();
     if (!preserveOutbox) {
       _outbox.clear();
@@ -1736,16 +1758,21 @@ class SecureLocalStore implements LocalStore {
     if (activeSession == null || state == null) {
       throw StateError('complete authenticated crypto state is required');
     }
+    // Rows past their expiry are not written to the backup, even when the
+    // purge has not removed them yet (W2).
+    final now = DateTime.now().toUtc();
+    final nowMs = now.millisecondsSinceEpoch;
     return _encodeBackup(LocalBackupData(
       session: activeSession,
       cursor: await loadSyncCursor(),
       conversations: snapshot?.conversations ?? const <Conversation>[],
-      messages: snapshot?.messagesByConversation ??
-          const <String, List<ReceivedMessageEnvelope>>{},
+      messages: _withoutExpired(snapshot?.messagesByConversation, now),
       outbox: await pendingEnvelopes(),
       mlsOutbox: await pendingMlsMessages(),
       cryptoState: state,
-      history: await (await _database()).readAllMessages(),
+      history: (await (await _database()).readAllMessages())
+          .where((item) => item.expiresAt == null || item.expiresAt! > nowMs)
+          .toList(growable: false),
       reactions: await (await _database()).readAllReactions(),
     ));
   }
@@ -1802,7 +1829,7 @@ class SecureLocalStore implements LocalStore {
       cursor: backup.cursor,
       history: backup.history,
       reactions: backup.reactions,
-      backfillExpiry: backup.formatVersion <= 2,
+      backfillExpiryFor: backup.expiryBackfillIds,
     );
   }
 
@@ -1882,8 +1909,10 @@ class SecureLocalStore implements LocalStore {
       (await _database()).readReactions(conversationId);
 
   @override
-  Future<void> clearCachedState({bool preserveOutbox = false}) async {
-    await (await _database()).clearCachedState(preserveOutbox: preserveOutbox);
+  Future<void> clearCachedState(
+      {bool preserveOutbox = false, bool keepDrafts = false}) async {
+    await (await _database()).clearCachedState(
+        preserveOutbox: preserveOutbox, keepDrafts: keepDrafts);
   }
 
   @override
@@ -2058,6 +2087,14 @@ class SecureLocalStore implements LocalStore {
         database = _databaseFactory(databaseFile, key);
         await database.readCursor();
       } catch (error) {
+        if (isSqliteFeatureUnavailable(error)) {
+          // A fact about this build, not about the file or the key.
+          try {
+            await database?.close();
+          } catch (_) {}
+          throw const LocalStoreUnavailableException(
+              LocalStoreFailureKind.sqliteFeatureMissing);
+        }
         if (!databaseExists) rethrow;
         if (database != null && database.upgradeStarted) {
           // The key opened the file and the upgrade rolled back. Drift
@@ -2437,6 +2474,19 @@ StoredCryptoState? _cryptoStateFrom(Object? raw) {
   }
 }
 
+/// [messages] without the envelopes whose expiry has passed at [now].
+Map<String, List<ReceivedMessageEnvelope>> _withoutExpired(
+  Map<String, List<ReceivedMessageEnvelope>>? messages,
+  DateTime now,
+) =>
+    <String, List<ReceivedMessageEnvelope>>{
+      for (final entry in (messages ?? const {}).entries)
+        entry.key: entry.value
+            .where((item) =>
+                item.expiresAt == null || item.expiresAt!.isAfter(now))
+            .toList(growable: false),
+    };
+
 StoredCryptoState _copyCryptoState(StoredCryptoState state) =>
     StoredCryptoState(
       counter: state.counter,
@@ -2493,12 +2543,18 @@ LocalBackupData _decodeBackup(List<int> encoded) {
     if (version is! int || version < 1 || version > backupFormatVersion) {
       throw const FormatException('unsupported backup version');
     }
+    final expiryBackfillIds = <String>{};
     final history = version == 1
         ? const <LocalMessage>[]
-        : (root['history'] as List)
-            .map((item) =>
-                LocalMessage.fromJson(Map<String, dynamic>.from(item as Map)))
-            .toList(growable: false);
+        : (root['history'] as List).map((item) {
+            final json = Map<String, dynamic>.from(item as Map);
+            final message = LocalMessage.fromJson(json);
+            final serverId = message.serverMessageId;
+            if (serverId != null && !json.containsKey('expiresAt')) {
+              expiryBackfillIds.add(serverId);
+            }
+            return message;
+          }).toList(growable: false);
     final reactions = version == 1
         ? const <LocalMessageReaction>[]
         : (root['reactions'] as List)
@@ -2554,7 +2610,8 @@ LocalBackupData _decodeBackup(List<int> encoded) {
         cryptoState: crypto,
         history: history,
         reactions: reactions,
-        formatVersion: version);
+        formatVersion: version,
+        expiryBackfillIds: expiryBackfillIds);
   } catch (error) {
     if (error is FormatException) rethrow;
     throw const FormatException('invalid backup encoding');

@@ -4,8 +4,6 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:drift/drift.dart' show DriftWrappedException;
-import 'package:drift/native.dart' show SqliteException;
 import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -25,7 +23,8 @@ import 'composer_drafts.dart';
 import 'errors.dart';
 import '../storage/message_search.dart';
 import 'message_history.dart';
-import '../storage/encrypted_database.dart' show LocalMessageKind;
+import '../storage/encrypted_database.dart'
+    show LocalMessageKind, localStorageErrorCode;
 import 'models.dart';
 import 'receipts_state.dart';
 import 'typing_state.dart';
@@ -987,10 +986,7 @@ class AppState extends ChangeNotifier {
         _outboxStates[envelope.idempotencyKey] = OutboxDeliveryState.failed;
       }
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
-      composerDrafts.load({
-        for (final entry in (await localStore.loadDrafts()).entries)
-          entry.key: (text: entry.value.text, replyTo: entry.value.replyTo),
-      });
+      await _reloadStoredDrafts();
       _mutes
         ..clear()
         ..addAll(await localStore.loadConversationMutes());
@@ -1012,7 +1008,9 @@ class AppState extends ChangeNotifier {
       } on ApiException catch (err) {
         if (err.statusCode == 401) {
           await _clearLocalSession(
-              preserveDeviceIdentity: true, preserveOutbox: true);
+              preserveDeviceIdentity: true,
+              keepDrafts: true,
+              preserveOutbox: true);
           return;
         }
         // Keep the encrypted cache available while offline.
@@ -1072,6 +1070,8 @@ class AppState extends ChangeNotifier {
             : l10n.recoveryUpgradeFailed;
       case LocalStoreFailureKind.upgradeFailed:
         return l10n.recoveryUpgradeError;
+      case LocalStoreFailureKind.sqliteFeatureMissing:
+        return l10n.recoverySqliteFeatureMissing;
     }
   }
 
@@ -1093,7 +1093,8 @@ class AppState extends ChangeNotifier {
     if (failure == LocalStoreFailureKind.upgradeStorageFull) {
       return _storageFullFailures > 1;
     }
-    return true;
+    // Moving the database aside would not give this build the feature.
+    return failure != LocalStoreFailureKind.sqliteFeatureMissing;
   }
 
   void continueWithoutRestore() {
@@ -1184,11 +1185,22 @@ class AppState extends ChangeNotifier {
         deviceSecret: deviceSecret,
       );
       await localStore.saveSession(session!);
+      await _reloadStoredDrafts();
       await _mlsCrypto?.activateSession(session!);
       await localStore.saveSyncCursor(0);
       await _refreshConversations(notify: true);
       await _refreshDevices();
       _startSync();
+    });
+  }
+
+  /// Puts the drafts kept through a session expiry back into the composer.
+  /// A different identity never reaches here with drafts: saving its session
+  /// deletes them.
+  Future<void> _reloadStoredDrafts() async {
+    composerDrafts.load({
+      for (final entry in (await localStore.loadDrafts()).entries)
+        entry.key: (text: entry.value.text, replyTo: entry.value.replyTo),
     });
   }
 
@@ -1217,7 +1229,9 @@ class AppState extends ChangeNotifier {
         await _enqueueSessionTransition(() async {
           if (!identical(session, current)) return;
           await _clearLocalSession(
-              preserveDeviceIdentity: true, preserveOutbox: true);
+              preserveDeviceIdentity: true,
+              keepDrafts: true,
+              preserveOutbox: true);
         });
       }
       _opErrors[op] = describeError(err, l10n);
@@ -3304,6 +3318,7 @@ class AppState extends ChangeNotifier {
       if (err is ApiException && err.statusCode == 401) {
         await _clearLocalSession(
             preserveDeviceIdentity: true,
+            keepDrafts: true,
             preserveOutbox: true,
             drainSyncOwner: false);
         return;
@@ -3320,7 +3335,9 @@ class AppState extends ChangeNotifier {
       // whatever the user last tapped. Writing it to the shared [error] made
       // unrelated screens report it as their own failure, so it goes to
       // [syncError] and the offline banner instead.
-      syncError = describeError(err, l10n);
+      syncError = _isTransientStorageError(err)
+          ? l10n.syncErrorStorageBusy
+          : describeError(err, l10n);
       _setConnectionStatus(ConnectionStatus.offline);
       notifyListeners();
       _scheduleCatchUpRetry(
@@ -3366,6 +3383,9 @@ class AppState extends ChangeNotifier {
         (err.serverCode == 'device_recovery_required' ||
             err.serverCode == 'full_resync_required')) {
       return const SyncEventFailure(SyncFailureKind.cursorExpired);
+    }
+    if (_isDurableStorageError(err)) {
+      return const SyncEventFailure(SyncFailureKind.localStorage);
     }
     // Anything else happened outside one event's processing (a page or a
     // projection refresh failed) and is retried on the next wake. Event
@@ -3421,18 +3441,39 @@ class AppState extends ChangeNotifier {
     });
   }
 
+  /// SQLite codes that pass by themselves: BUSY, LOCKED, NOMEM, IOERR, FULL.
+  static const _transientSqliteCodes = <int>{5, 6, 7, 10, 13};
+
+  /// Errno values (and Windows codes) that pass: no space, I/O error, busy,
+  /// out of memory or handles, quota.
+  static const _transientFileErrors = <int>{5, 11, 12, 16, 24, 28, 122, 112};
+
+  static bool _isTransientStorageError(Object err) {
+    final code = localStorageErrorCode(err);
+    if (code != null) return _transientSqliteCodes.contains(code);
+    if (err is FileSystemException) {
+      return _transientFileErrors.contains(err.osError?.errorCode);
+    }
+    return false;
+  }
+
+  /// A local storage failure that will not pass by itself: another SQLite
+  /// code (constraint, corrupt, not a database...) or a file error that is
+  /// not a transient one.
+  static bool _isDurableStorageError(Object err) =>
+      (localStorageErrorCode(err) != null || err is FileSystemException) &&
+      !_isTransientStorageError(err);
+
   static bool _isTransientSyncError(Object err) {
     if (err is ApiException) {
       return err.statusCode == 408 ||
           err.statusCode == 429 ||
           err.statusCode >= 500;
     }
-    // A failed local commit is storage trouble, not a bad message: the commit
-    // rolled back with the ratchet, so a retry is safe (P1).
-    if (err is DriftWrappedException) return true;
-    return err is SqliteException ||
-        err is FileSystemException ||
-        err is SocketException ||
+    // A failed local commit that can pass (busy, full, I/O) rolled back with
+    // the ratchet, so a retry is safe (P1). Other storage errors are durable.
+    if (_isTransientStorageError(err)) return true;
+    return err is SocketException ||
         err is TimeoutException ||
         err is HttpException ||
         err is HandshakeException;
@@ -3534,6 +3575,9 @@ class AppState extends ChangeNotifier {
           await mls.processMlsMessage(message);
         } catch (err) {
           if (_isTransientSyncError(err)) rethrow;
+          if (_isDurableStorageError(err)) {
+            throw failure(SyncFailureKind.localStorage);
+          }
           throw failure(err is FormatException
               ? SyncFailureKind.mlsControlMalformed
               : SyncFailureKind.mlsState);
@@ -3576,6 +3620,9 @@ class AppState extends ChangeNotifier {
           await mls.processApplicationMessage(resolved, event.id);
         } catch (err) {
           if (_isTransientSyncError(err)) rethrow;
+          if (_isDurableStorageError(err)) {
+            throw failure(SyncFailureKind.localStorage);
+          }
           if (_provenExpired(resolved.expiresAt)) {
             await _commitExpiredTombstone(event, id);
             return null;
@@ -3600,6 +3647,9 @@ class AppState extends ChangeNotifier {
           signal = await mls.processCallSignal(call, event.id);
         } catch (err) {
           if (_isTransientSyncError(err)) rethrow;
+          if (_isDurableStorageError(err)) {
+            throw failure(SyncFailureKind.localStorage);
+          }
           if (_provenExpired(call.expiresAt)) {
             await _commitExpiredTombstone(event, call.id);
             return null;
@@ -3706,6 +3756,9 @@ class AppState extends ChangeNotifier {
     bool preserveDeviceIdentity = false,
     bool preserveOutbox = false,
     bool drainSyncOwner = true,
+    // Set only when the server rejected the session (401): the same person
+    // signs in again to their drafts. Sign-out and relinking wipe them.
+    bool keepDrafts = false,
   }) async {
     _sessionGeneration++;
     _cancelDraftTimers();
@@ -3742,7 +3795,8 @@ class AppState extends ChangeNotifier {
         deviceSecret: current.deviceSecret,
         role: current.role,
       ));
-      await localStore.clearCachedState(preserveOutbox: preserveOutbox);
+      await localStore.clearCachedState(
+          preserveOutbox: preserveOutbox, keepDrafts: keepDrafts);
     } else {
       await localStore.clear();
     }
@@ -3826,8 +3880,17 @@ class AppState extends ChangeNotifier {
     _purgingExpired = true;
     final generation = _sessionGeneration;
     try {
-      final touched = await localStore.purgeExpiredMessages();
-      _expiryBackoff = Duration.zero;
+      Set<String> touched;
+      try {
+        touched = await localStore.purgeExpiredMessages();
+        _expiryBackoff = Duration.zero;
+      } catch (_) {
+        // The delete is retried with a growing pause, on resume and on
+        // restart. The lists below are still pruned, so expired text leaves
+        // an open chat even while the database delete keeps failing.
+        touched = <String>{};
+        _expiryBackoff = _nextExpiryBackoff(_expiryBackoff);
+      }
       if (generation != _sessionGeneration || session == null) return;
       final now = DateTime.now().toUtc();
       var changed = touched.isNotEmpty;
@@ -3855,8 +3918,8 @@ class AppState extends ChangeNotifier {
         notifyListeners();
       }
     } catch (_) {
-      // Retried with a growing pause, on resume and on restart; never blocks
-      // the app. Reads already hide what has expired.
+      // Reloading a history failed; reads already hide what has expired, and
+      // the next purge tries again. Never blocks the app.
       _expiryBackoff = _nextExpiryBackoff(_expiryBackoff);
     } finally {
       _purgingExpired = false;
@@ -3954,6 +4017,7 @@ class AppState extends ChangeNotifier {
         if (err is ApiException && err.statusCode == 401) {
           await _clearLocalSession(
               preserveDeviceIdentity: true,
+              keepDrafts: true,
               preserveOutbox: true,
               drainSyncOwner: false);
           break;
@@ -4122,6 +4186,7 @@ class AppState extends ChangeNotifier {
           if (err is ApiException && err.statusCode == 401) {
             await _clearLocalSession(
                 preserveDeviceIdentity: true,
+                keepDrafts: true,
                 preserveOutbox: true,
                 drainSyncOwner: false);
             return;
@@ -4414,7 +4479,9 @@ class AppState extends ChangeNotifier {
       } catch (err) {
         if (err is ApiException && err.statusCode == 401) {
           await _clearLocalSession(
-              preserveDeviceIdentity: true, preserveOutbox: true);
+              preserveDeviceIdentity: true,
+              keepDrafts: true,
+              preserveOutbox: true);
         }
         _opErrors[op] = describeError(err, l10n);
       } finally {
@@ -4440,7 +4507,9 @@ class AppState extends ChangeNotifier {
             err.statusCode == 401 &&
             err.serverCode != 'invalid_credentials') {
           await _clearLocalSession(
-              preserveDeviceIdentity: true, preserveOutbox: true);
+              preserveDeviceIdentity: true,
+              keepDrafts: true,
+              preserveOutbox: true);
         }
         error = describeError(err, l10n);
       } finally {
