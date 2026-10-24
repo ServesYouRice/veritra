@@ -110,6 +110,20 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsSectionAppearance => 'Appearance';
 
   @override
+  String get settingsSectionPrivacy => 'Privacy';
+
+  @override
+  String get settingsReadReceiptsTitle => 'Read receipts';
+
+  @override
+  String get settingsReadReceiptsDetail =>
+      'Applies to all your devices. When off, you send no read receipts and you do not see when others have read your messages. Sent and delivered ticks stay.';
+
+  @override
+  String get settingsReadReceiptsFailed =>
+      'The setting could not be changed. Check your connection and try again.';
+
+  @override
   String get settingsSectionAbout => 'About';
 
   @override
@@ -1686,6 +1700,28 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get chatEdited => 'edited';
+
+  @override
+  String get chatTickSent => 'Sent';
+
+  @override
+  String get chatTickDelivered => 'Delivered';
+
+  @override
+  String get chatTickRead => 'Read';
+
+  @override
+  String chatTypingOne(String name) {
+    return '$name is typing…';
+  }
+
+  @override
+  String chatTypingTwo(String first, String second) {
+    return '$first and $second are typing…';
+  }
+
+  @override
+  String get chatTypingMany => 'Several people are typing…';
 
   @override
   String chatReplyingTo(String preview) {

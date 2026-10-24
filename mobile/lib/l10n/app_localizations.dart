@@ -285,6 +285,30 @@ abstract class AppLocalizations {
   /// **'Appearance'**
   String get settingsSectionAppearance;
 
+  /// No description provided for @settingsSectionPrivacy.
+  ///
+  /// In en, this message translates to:
+  /// **'Privacy'**
+  String get settingsSectionPrivacy;
+
+  /// No description provided for @settingsReadReceiptsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Read receipts'**
+  String get settingsReadReceiptsTitle;
+
+  /// No description provided for @settingsReadReceiptsDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Applies to all your devices. When off, you send no read receipts and you do not see when others have read your messages. Sent and delivered ticks stay.'**
+  String get settingsReadReceiptsDetail;
+
+  /// No description provided for @settingsReadReceiptsFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The setting could not be changed. Check your connection and try again.'**
+  String get settingsReadReceiptsFailed;
+
   /// No description provided for @settingsSectionAbout.
   ///
   /// In en, this message translates to:
@@ -2798,6 +2822,42 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'edited'**
   String get chatEdited;
+
+  /// No description provided for @chatTickSent.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent'**
+  String get chatTickSent;
+
+  /// No description provided for @chatTickDelivered.
+  ///
+  /// In en, this message translates to:
+  /// **'Delivered'**
+  String get chatTickDelivered;
+
+  /// No description provided for @chatTickRead.
+  ///
+  /// In en, this message translates to:
+  /// **'Read'**
+  String get chatTickRead;
+
+  /// No description provided for @chatTypingOne.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} is typing…'**
+  String chatTypingOne(String name);
+
+  /// No description provided for @chatTypingTwo.
+  ///
+  /// In en, this message translates to:
+  /// **'{first} and {second} are typing…'**
+  String chatTypingTwo(String first, String second);
+
+  /// No description provided for @chatTypingMany.
+  ///
+  /// In en, this message translates to:
+  /// **'Several people are typing…'**
+  String get chatTypingMany;
 
   /// No description provided for @chatReplyingTo.
   ///

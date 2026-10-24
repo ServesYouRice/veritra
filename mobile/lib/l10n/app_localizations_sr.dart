@@ -111,6 +111,20 @@ class AppLocalizationsSr extends AppLocalizations {
   String get settingsSectionAppearance => 'Изглед';
 
   @override
+  String get settingsSectionPrivacy => 'Приватност';
+
+  @override
+  String get settingsReadReceiptsTitle => 'Потврде о читању';
+
+  @override
+  String get settingsReadReceiptsDetail =>
+      'Важи за све ваше уређаје. Када је искључено, не шаљете потврде о читању и не видите када су други прочитали ваше поруке. Ознаке послато и достављено остају.';
+
+  @override
+  String get settingsReadReceiptsFailed =>
+      'Подешавање није могло да се промени. Проверите везу и покушајте поново.';
+
+  @override
   String get settingsSectionAbout => 'О апликацији';
 
   @override
@@ -1703,6 +1717,28 @@ class AppLocalizationsSr extends AppLocalizations {
   String get chatEdited => 'измењено';
 
   @override
+  String get chatTickSent => 'Послато';
+
+  @override
+  String get chatTickDelivered => 'Достављено';
+
+  @override
+  String get chatTickRead => 'Прочитано';
+
+  @override
+  String chatTypingOne(String name) {
+    return '$name куца…';
+  }
+
+  @override
+  String chatTypingTwo(String first, String second) {
+    return '$first и $second куцају…';
+  }
+
+  @override
+  String get chatTypingMany => 'Неколико особа куца…';
+
+  @override
   String chatReplyingTo(String preview) {
     return 'Одговор на: $preview';
   }
@@ -2228,6 +2264,20 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get settingsSectionAppearance => 'Izgled';
+
+  @override
+  String get settingsSectionPrivacy => 'Privatnost';
+
+  @override
+  String get settingsReadReceiptsTitle => 'Potvrde o čitanju';
+
+  @override
+  String get settingsReadReceiptsDetail =>
+      'Važi za sve vaše uređaje. Kada je isključeno, ne šaljete potvrde o čitanju i ne vidite kada su drugi pročitali vaše poruke. Oznake poslato i dostavljeno ostaju.';
+
+  @override
+  String get settingsReadReceiptsFailed =>
+      'Podešavanje nije moglo da se promeni. Proverite vezu i pokušajte ponovo.';
 
   @override
   String get settingsSectionAbout => 'O aplikaciji';
@@ -3820,6 +3870,28 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get chatEdited => 'izmenjeno';
+
+  @override
+  String get chatTickSent => 'Poslato';
+
+  @override
+  String get chatTickDelivered => 'Dostavljeno';
+
+  @override
+  String get chatTickRead => 'Pročitano';
+
+  @override
+  String chatTypingOne(String name) {
+    return '$name kuca…';
+  }
+
+  @override
+  String chatTypingTwo(String first, String second) {
+    return '$first i $second kucaju…';
+  }
+
+  @override
+  String get chatTypingMany => 'Nekoliko osoba kuca…';
 
   @override
   String chatReplyingTo(String preview) {

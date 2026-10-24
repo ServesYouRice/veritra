@@ -11,6 +11,7 @@ import 'backup_screen.dart';
 import '../../core/models.dart';
 import '../../ui/about.dart';
 import '../../ui/appearance.dart';
+import 'read_receipts_tile.dart';
 import '../../ui/avatar.dart';
 import '../../ui/confirm.dart';
 import '../../ui/format.dart';
@@ -281,6 +282,15 @@ class SettingsScreen extends StatelessWidget {
                     leading: const Icon(Icons.video_call_outlined),
                     title: Text(l10n.settingsCallsComingSoon),
                     subtitle: Text(l10n.settingsCallsComingSoonDetail),
+                  ),
+                ],
+              ),
+              SectionHeader(l10n.settingsSectionPrivacy),
+              TileGroup(
+                children: <Widget>[
+                  ReadReceiptsTile(
+                    preferences: state.receiptPreferences,
+                    onChanged: state.setSendReadReceipts,
                   ),
                 ],
               ),

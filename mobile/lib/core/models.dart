@@ -840,3 +840,28 @@ class Session {
   final String? deviceSecret;
   final String? role;
 }
+
+/// What one other member's delivery and read cursors cover in a conversation
+/// (W5). Each time is the `created_at` of the newest message the cursor
+/// reaches, so a message is covered when its own time is not later. Null means
+/// no such cursor, or, for [readThrough], that the member keeps read receipts
+/// off.
+class MemberReceipt {
+  MemberReceipt({
+    required this.accountId,
+    this.deliveredThrough,
+    this.readThrough,
+  });
+
+  final String accountId;
+  final DateTime? deliveredThrough;
+  final DateTime? readThrough;
+
+  factory MemberReceipt.fromJson(Map<String, Object?> json) {
+    return MemberReceipt(
+      accountId: json['account_id'] as String,
+      deliveredThrough: _parseStrictOptionalTime(json['delivered_through']),
+      readThrough: _parseStrictOptionalTime(json['read_through']),
+    );
+  }
+}
