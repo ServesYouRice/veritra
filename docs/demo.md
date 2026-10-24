@@ -126,7 +126,8 @@ it missed.
   Stage 5 (D28). A device sees messages from the moment it joined, not
   earlier ones. Groups created before Stage 5 cannot change members; start a
   new group.
-- Attachments and calls are not in the demo yet.
+- Calls are not in the demo yet. Attachments work: phones open images only;
+  desktops also save other files.
 - Cross-machine demos need HTTPS and are not covered yet.
 
 ## Automated check
