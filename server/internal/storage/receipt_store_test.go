@@ -9,6 +9,15 @@ import (
 	"private-messenger/server/internal/domain"
 )
 
+// recordDelivered is the two steps the server runs around a sync response.
+func recordDelivered(ctx context.Context, store *Store, accountID string, events []domain.SyncEvent) ([]DeliveryAdvance, error) {
+	candidates, err := store.DeliveryCandidates(ctx, accountID, events)
+	if err != nil {
+		return nil, err
+	}
+	return store.ApplyDeliveries(ctx, accountID, candidates)
+}
+
 func createdEvent(t *testing.T, conversationID string, message domain.MessageEnvelope) domain.SyncEvent {
 	t.Helper()
 	payload, err := json.Marshal(messageSyncEventPayload(message))
@@ -50,12 +59,12 @@ func TestDeliveryCursorsStopPastTheMemberCap(t *testing.T) {
 		t.Fatalf("save message: %v", err)
 	}
 	event := createdEvent(t, conversation.ID, message)
-	advanced, err := store.RecordDelivered(ctx, members[0].Account.ID, []domain.SyncEvent{event})
+	advanced, err := recordDelivered(ctx, store, members[0].Account.ID, []domain.SyncEvent{event})
 	if err != nil || len(advanced) != 1 {
 		t.Fatalf("at the cap: advanced=%v err=%v", advanced, err)
 	}
 	// The same page again moves nothing.
-	if advanced, err = store.RecordDelivered(ctx, members[0].Account.ID, []domain.SyncEvent{event}); err != nil || len(advanced) != 0 {
+	if advanced, err = recordDelivered(ctx, store, members[0].Account.ID, []domain.SyncEvent{event}); err != nil || len(advanced) != 0 {
 		t.Fatalf("repeat: advanced=%v err=%v", advanced, err)
 	}
 	// One more member and the group is over the cap.
@@ -63,7 +72,7 @@ func TestDeliveryCursorsStopPastTheMemberCap(t *testing.T) {
 	if err := store.AddConversationMember(ctx, conversation.ID, extra.Account.ID, domain.RoleMember); err != nil {
 		t.Fatalf("add extra member: %v", err)
 	}
-	if advanced, err = store.RecordDelivered(ctx, members[1].Account.ID, []domain.SyncEvent{event}); err != nil || len(advanced) != 0 {
+	if advanced, err = recordDelivered(ctx, store, members[1].Account.ID, []domain.SyncEvent{event}); err != nil || len(advanced) != 0 {
 		t.Fatalf("over the cap: advanced=%v err=%v", advanced, err)
 	}
 	if receipts, err := store.ConversationReceipts(ctx, conversation.ID, owner.Account.ID); err != nil || len(receipts) != 0 {

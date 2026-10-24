@@ -45,6 +45,8 @@ type API struct {
 	LoginBackoff        *LoginBackoff
 	Ready               func() bool
 	typing              typingLimiter
+	deliveryOnce        sync.Once
+	deliverySlots       chan struct{}
 	passwordsOnce       sync.Once
 	passwords           *auth.Passwords
 	// Budget meters fan-out writes per account and Admission counts refusals;

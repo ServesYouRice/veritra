@@ -270,6 +270,15 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
 		}
+		// No typing line in channels or past ReceiptMaxMembers members; the
+		// signal is dropped without fan-out.
+		if applies, err := a.Store.ReceiptsApply(r.Context(), conversationID); err != nil {
+			writeError(w, http.StatusInternalServerError, "typing_publish_failed")
+			return
+		} else if !applies {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		if !a.allowTyping(principal.AccountID, conversationID, time.Now()) {
 			w.Header().Set("Retry-After", "1")
 			writeError(w, http.StatusTooManyRequests, "typing_rate_limited")
