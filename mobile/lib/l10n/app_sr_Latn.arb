@@ -557,5 +557,21 @@
   "pushTestRateLimited": "Sačekajte minut pre slanja nove probe.",
   "pushTestNotRegistered": "Ovaj uređaj još nije registrovan za push obaveštenja.",
   "pushTestFailed": "Proba nije mogla da se pošalje.",
-  "errorServerNotAllowed": "Ova verzija aplikacije ne dozvoljava adresu servera {url}. Koristite https:// adresu servera."
+  "errorServerNotAllowed": "Ova verzija aplikacije ne dozvoljava adresu servera {url}. Koristite https:// adresu servera.",
+  "settingsAdmin": "Administracija",
+  "settingsAdminDetail": "Nalozi i dnevnik revizije",
+  "adminAccountsTab": "Nalozi",
+  "adminAuditTab": "Dnevnik revizije",
+  "adminSuspend": "Suspenduj",
+  "adminUnsuspend": "Ponovo aktiviraj",
+  "adminSuspendTitle": "Suspendovati ovaj nalog?",
+  "adminSuspendMessage": "@{username} će biti odjavljen svuda i neće moći da se prijavi dok ne aktivirate nalog ponovo.",
+  "adminUnsuspendTitle": "Ponovo aktivirati ovaj nalog?",
+  "adminUnsuspendMessage": "@{username} će ponovo moći da se prijavi.",
+  "adminSuspendedPill": "Suspendovan",
+  "adminAccountSummary": "{role} · {devices, plural, one{{devices} uređaj} few{{devices} uređaja} other{{devices} uređaja}} · {storage}",
+  "adminEventBy": "Izvršio: {actor}",
+  "adminLoadMore": "Učitaj još",
+  "adminNoAccounts": "Nema naloga",
+  "adminNoEvents": "Još nema događaja revizije"
 }

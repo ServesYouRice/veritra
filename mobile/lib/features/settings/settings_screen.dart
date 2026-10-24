@@ -20,6 +20,7 @@ import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/status_pill.dart';
 import '../../ui/widgets/tile_group.dart';
+import 'admin_screen.dart';
 import 'blocked_accounts_screen.dart';
 import 'device_link_screen.dart';
 import 'invite_screen.dart';
@@ -111,6 +112,24 @@ class SettingsScreen extends StatelessWidget {
                           Navigator.of(context).push(
                             sharedAxisRoute<void>(
                               (_) => InviteScreen(state: state),
+                            ),
+                          );
+                        }
+                      },
+                    ),
+                  if (isAdmin)
+                    ListTile(
+                      leading: const Icon(Icons.admin_panel_settings_outlined),
+                      title: Text(l10n.settingsAdmin),
+                      subtitle: Text(l10n.settingsAdminDetail),
+                      onTap: () async {
+                        if (await _reauthenticate(context) && context.mounted) {
+                          Navigator.of(context).push(
+                            sharedAxisRoute<void>(
+                              (_) => AdminScreen(
+                                state: state,
+                                reauthenticate: _reauthenticate,
+                              ),
                             ),
                           );
                         }

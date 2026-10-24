@@ -3440,6 +3440,102 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This build does not allow the server address {url}. Use an https:// server origin.'**
   String errorServerNotAllowed(String url);
+
+  /// No description provided for @settingsAdmin.
+  ///
+  /// In en, this message translates to:
+  /// **'Administration'**
+  String get settingsAdmin;
+
+  /// No description provided for @settingsAdminDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Accounts and audit log'**
+  String get settingsAdminDetail;
+
+  /// No description provided for @adminAccountsTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Accounts'**
+  String get adminAccountsTab;
+
+  /// No description provided for @adminAuditTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Audit log'**
+  String get adminAuditTab;
+
+  /// No description provided for @adminSuspend.
+  ///
+  /// In en, this message translates to:
+  /// **'Suspend'**
+  String get adminSuspend;
+
+  /// No description provided for @adminUnsuspend.
+  ///
+  /// In en, this message translates to:
+  /// **'Reactivate'**
+  String get adminUnsuspend;
+
+  /// No description provided for @adminSuspendTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Suspend this account?'**
+  String get adminSuspendTitle;
+
+  /// No description provided for @adminSuspendMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'@{username} will be signed out everywhere and cannot sign in until you reactivate the account.'**
+  String adminSuspendMessage(String username);
+
+  /// No description provided for @adminUnsuspendTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Reactivate this account?'**
+  String get adminUnsuspendTitle;
+
+  /// No description provided for @adminUnsuspendMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'@{username} will be able to sign in again.'**
+  String adminUnsuspendMessage(String username);
+
+  /// No description provided for @adminSuspendedPill.
+  ///
+  /// In en, this message translates to:
+  /// **'Suspended'**
+  String get adminSuspendedPill;
+
+  /// No description provided for @adminAccountSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'{role} · {devices, plural, =1{1 device} other{{devices} devices}} · {storage}'**
+  String adminAccountSummary(String role, int devices, String storage);
+
+  /// No description provided for @adminEventBy.
+  ///
+  /// In en, this message translates to:
+  /// **'By {actor}'**
+  String adminEventBy(String actor);
+
+  /// No description provided for @adminLoadMore.
+  ///
+  /// In en, this message translates to:
+  /// **'Load more'**
+  String get adminLoadMore;
+
+  /// No description provided for @adminNoAccounts.
+  ///
+  /// In en, this message translates to:
+  /// **'No accounts'**
+  String get adminNoAccounts;
+
+  /// No description provided for @adminNoEvents.
+  ///
+  /// In en, this message translates to:
+  /// **'No audit events yet'**
+  String get adminNoEvents;
 }
 
 class _AppLocalizationsDelegate

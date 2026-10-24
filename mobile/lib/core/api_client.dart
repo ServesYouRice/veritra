@@ -5,6 +5,7 @@ import 'dart:math' show max;
 import 'dart:typed_data';
 
 import '../crypto/mls_commit_bundle.dart';
+import 'admin_models.dart';
 import 'api_errors.dart';
 import 'models.dart';
 
@@ -337,6 +338,64 @@ class ApiClient {
 
   Future<void> revokeInvite(String token, String inviteId) async {
     await _jsonRequest('DELETE', '/api/v1/invites/$inviteId', token: token);
+  }
+
+  Future<AdminPage<AdminAccount>> listAdminAccounts(
+    String token, {
+    String? after,
+    int limit = 50,
+  }) async {
+    final json = await _jsonRequest(
+      'GET',
+      Uri(
+        path: '/api/v1/admin/accounts',
+        queryParameters: <String, String>{
+          'limit': '$limit',
+          if (after != null && after.isNotEmpty) 'after': after,
+        },
+      ).toString(),
+      token: token,
+    );
+    return AdminPage<AdminAccount>(
+      _rows(json, 'accounts', AdminAccount.fromJson),
+      json['next_after']?.toString(),
+    );
+  }
+
+  /// Suspends or reactivates an account. Needs a recent reauthentication.
+  Future<void> setAdminAccountStatus(
+    String token,
+    String accountId, {
+    required bool suspended,
+  }) async {
+    await _jsonRequest(
+      'PATCH',
+      '/api/v1/admin/accounts/${Uri.encodeComponent(accountId)}/status',
+      token: token,
+      body: <String, Object?>{'status': suspended ? 'suspended' : 'active'},
+    );
+  }
+
+  Future<AdminPage<AdminAuditEvent>> listAdminAuditEvents(
+    String token, {
+    String? after,
+    int limit = 50,
+  }) async {
+    final json = await _jsonRequest(
+      'GET',
+      Uri(
+        path: '/api/v1/admin/audit-events',
+        queryParameters: <String, String>{
+          'limit': '$limit',
+          if (after != null && after.isNotEmpty) 'after': after,
+        },
+      ).toString(),
+      token: token,
+    );
+    return AdminPage<AdminAuditEvent>(
+      _rows(json, 'events', AdminAuditEvent.fromJson),
+      json['next_after']?.toString(),
+    );
   }
 
   Future<List<Community>> listCommunities(String token) async {

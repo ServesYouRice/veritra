@@ -595,5 +595,21 @@
   "pushTestRateLimited": "Сачекајте минут пре слања нове пробе.",
   "pushTestNotRegistered": "Овај уређај још није регистрован за push обавештења.",
   "pushTestFailed": "Проба није могла да се пошаље.",
-  "errorServerNotAllowed": "Ова верзија апликације не дозвољава адресу сервера {url}. Користите https:// адресу сервера."
+  "errorServerNotAllowed": "Ова верзија апликације не дозвољава адресу сервера {url}. Користите https:// адресу сервера.",
+  "settingsAdmin": "Администрација",
+  "settingsAdminDetail": "Налози и дневник ревизије",
+  "adminAccountsTab": "Налози",
+  "adminAuditTab": "Дневник ревизије",
+  "adminSuspend": "Суспендуј",
+  "adminUnsuspend": "Поново активирај",
+  "adminSuspendTitle": "Суспендовати овај налог?",
+  "adminSuspendMessage": "@{username} ће бити одјављен свуда и неће моћи да се пријави док не активирате налог поново.",
+  "adminUnsuspendTitle": "Поново активирати овај налог?",
+  "adminUnsuspendMessage": "@{username} ће поново моћи да се пријави.",
+  "adminSuspendedPill": "Суспендован",
+  "adminAccountSummary": "{role} · {devices, plural, one{{devices} уређај} few{{devices} уређаја} other{{devices} уређаја}} · {storage}",
+  "adminEventBy": "Извршио: {actor}",
+  "adminLoadMore": "Учитај још",
+  "adminNoAccounts": "Нема налога",
+  "adminNoEvents": "Још нема догађаја ревизије"
 }

@@ -2121,6 +2121,69 @@ class AppLocalizationsSr extends AppLocalizations {
   String errorServerNotAllowed(String url) {
     return 'Ова верзија апликације не дозвољава адресу сервера $url. Користите https:// адресу сервера.';
   }
+
+  @override
+  String get settingsAdmin => 'Администрација';
+
+  @override
+  String get settingsAdminDetail => 'Налози и дневник ревизије';
+
+  @override
+  String get adminAccountsTab => 'Налози';
+
+  @override
+  String get adminAuditTab => 'Дневник ревизије';
+
+  @override
+  String get adminSuspend => 'Суспендуј';
+
+  @override
+  String get adminUnsuspend => 'Поново активирај';
+
+  @override
+  String get adminSuspendTitle => 'Суспендовати овај налог?';
+
+  @override
+  String adminSuspendMessage(String username) {
+    return '@$username ће бити одјављен свуда и неће моћи да се пријави док не активирате налог поново.';
+  }
+
+  @override
+  String get adminUnsuspendTitle => 'Поново активирати овај налог?';
+
+  @override
+  String adminUnsuspendMessage(String username) {
+    return '@$username ће поново моћи да се пријави.';
+  }
+
+  @override
+  String get adminSuspendedPill => 'Суспендован';
+
+  @override
+  String adminAccountSummary(String role, int devices, String storage) {
+    String _temp0 = intl.Intl.pluralLogic(
+      devices,
+      locale: localeName,
+      other: '$devices уређаја',
+      few: '$devices уређаја',
+      one: '$devices уређај',
+    );
+    return '$role · $_temp0 · $storage';
+  }
+
+  @override
+  String adminEventBy(String actor) {
+    return 'Извршио: $actor';
+  }
+
+  @override
+  String get adminLoadMore => 'Учитај још';
+
+  @override
+  String get adminNoAccounts => 'Нема налога';
+
+  @override
+  String get adminNoEvents => 'Још нема догађаја ревизије';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -4243,4 +4306,67 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String errorServerNotAllowed(String url) {
     return 'Ova verzija aplikacije ne dozvoljava adresu servera $url. Koristite https:// adresu servera.';
   }
+
+  @override
+  String get settingsAdmin => 'Administracija';
+
+  @override
+  String get settingsAdminDetail => 'Nalozi i dnevnik revizije';
+
+  @override
+  String get adminAccountsTab => 'Nalozi';
+
+  @override
+  String get adminAuditTab => 'Dnevnik revizije';
+
+  @override
+  String get adminSuspend => 'Suspenduj';
+
+  @override
+  String get adminUnsuspend => 'Ponovo aktiviraj';
+
+  @override
+  String get adminSuspendTitle => 'Suspendovati ovaj nalog?';
+
+  @override
+  String adminSuspendMessage(String username) {
+    return '@$username će biti odjavljen svuda i neće moći da se prijavi dok ne aktivirate nalog ponovo.';
+  }
+
+  @override
+  String get adminUnsuspendTitle => 'Ponovo aktivirati ovaj nalog?';
+
+  @override
+  String adminUnsuspendMessage(String username) {
+    return '@$username će ponovo moći da se prijavi.';
+  }
+
+  @override
+  String get adminSuspendedPill => 'Suspendovan';
+
+  @override
+  String adminAccountSummary(String role, int devices, String storage) {
+    String _temp0 = intl.Intl.pluralLogic(
+      devices,
+      locale: localeName,
+      other: '$devices uređaja',
+      few: '$devices uređaja',
+      one: '$devices uređaj',
+    );
+    return '$role · $_temp0 · $storage';
+  }
+
+  @override
+  String adminEventBy(String actor) {
+    return 'Izvršio: $actor';
+  }
+
+  @override
+  String get adminLoadMore => 'Učitaj još';
+
+  @override
+  String get adminNoAccounts => 'Nema naloga';
+
+  @override
+  String get adminNoEvents => 'Još nema događaja revizije';
 }

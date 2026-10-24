@@ -2105,4 +2105,66 @@ class AppLocalizationsEn extends AppLocalizations {
   String errorServerNotAllowed(String url) {
     return 'This build does not allow the server address $url. Use an https:// server origin.';
   }
+
+  @override
+  String get settingsAdmin => 'Administration';
+
+  @override
+  String get settingsAdminDetail => 'Accounts and audit log';
+
+  @override
+  String get adminAccountsTab => 'Accounts';
+
+  @override
+  String get adminAuditTab => 'Audit log';
+
+  @override
+  String get adminSuspend => 'Suspend';
+
+  @override
+  String get adminUnsuspend => 'Reactivate';
+
+  @override
+  String get adminSuspendTitle => 'Suspend this account?';
+
+  @override
+  String adminSuspendMessage(String username) {
+    return '@$username will be signed out everywhere and cannot sign in until you reactivate the account.';
+  }
+
+  @override
+  String get adminUnsuspendTitle => 'Reactivate this account?';
+
+  @override
+  String adminUnsuspendMessage(String username) {
+    return '@$username will be able to sign in again.';
+  }
+
+  @override
+  String get adminSuspendedPill => 'Suspended';
+
+  @override
+  String adminAccountSummary(String role, int devices, String storage) {
+    String _temp0 = intl.Intl.pluralLogic(
+      devices,
+      locale: localeName,
+      other: '$devices devices',
+      one: '1 device',
+    );
+    return '$role · $_temp0 · $storage';
+  }
+
+  @override
+  String adminEventBy(String actor) {
+    return 'By $actor';
+  }
+
+  @override
+  String get adminLoadMore => 'Load more';
+
+  @override
+  String get adminNoAccounts => 'No accounts';
+
+  @override
+  String get adminNoEvents => 'No audit events yet';
 }
