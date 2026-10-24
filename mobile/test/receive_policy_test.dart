@@ -11,6 +11,9 @@ import 'dart:typed_data';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/features/chat/chat_screen.dart'
+    show quotedPreview;
+import 'package:private_messenger/l10n/app_localizations_en.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
@@ -121,6 +124,96 @@ void main() {
             .singleWhere((m) => m.key == messageKey(_senderDevice, 'u1'));
         expect(row.body, isNull);
         expect(row.deletedAt, isNotNull);
+      });
+
+      test('a signal from a sibling device (wrong sender account) is dropped',
+          () async {
+        final before = (await pair.store.loadCryptoState())!.counter;
+        final dropped = await pair.callSignal(
+            _frame(jsonEncode(<String, Object?>{
+              ..._head(1, 'sib'),
+              'type': 'callSignal',
+              'body': <String, Object?>{'signal': <String, Object?>{}},
+            })),
+            actionId: 'sib',
+            createdBy: 'acct_carol');
+        expect(dropped, isNull);
+        expect(await pair.store.loadSyncCursor(), pair.events);
+        expect((await pair.store.loadCryptoState())!.counter, before + 1);
+        expect(await pair.messages(), isEmpty);
+        final next = await pair.callSignal(
+            _frame(jsonEncode(<String, Object?>{
+              ..._head(1, 'ok'),
+              'type': 'callSignal',
+              'body': <String, Object?>{
+                'signal': <String, Object?>{'k': 2}
+              },
+            })),
+            actionId: 'ok');
+        expect(next, <String, Object?>{'k': 2});
+      });
+
+      test('reactions apply only to live text or attachment rows', () async {
+        await pair.receive(_frame(_payload('text', 'live', actionId: 't1')),
+            actionId: 't1');
+        await pair.receive(_frame(_payload('text', 'gone', actionId: 't2')),
+            actionId: 't2');
+        await pair.receive(_frame(_reaction('t2-delete', 'delete', 't2')),
+            actionId: 't2-delete');
+        await pair.receive(
+            _frame(jsonEncode(<String, Object?>{
+              ..._head(2, 'u2'),
+              'type': 'sticker',
+              'body': <String, Object?>{},
+            })),
+            actionId: 'u2');
+        for (final target in <String>['t1', 't2', 'u2', 'missing']) {
+          await pair.receive(
+              _frame(
+                  _reaction('r-$target', 'reaction', target, reaction: '👍')),
+              actionId: 'r-$target');
+        }
+        final reactions = await pair.store.loadReactions(_conversation);
+        expect(reactions.map((r) => r.targetKey),
+            <String>[messageKey(_senderDevice, 't1')]);
+      });
+
+      test('deleting a hidden unsupported row keeps it hidden', () async {
+        await pair.receive(
+            _frame(jsonEncode(<String, Object?>{
+              ..._head(2, 'h1'),
+              'type': 'pin',
+              'hidden': true,
+              'body': <String, Object?>{'message_id': 'x'},
+            })),
+            actionId: 'h1');
+        await pair.receive(_frame(_reaction('h-del', 'delete', 'h1')),
+            actionId: 'h-del');
+        final row = (await pair.messages())
+            .singleWhere((m) => m.key == messageKey(_senderDevice, 'h1'));
+        expect(row.deletedAt, isNotNull);
+        expect(row.body, '{"hidden":true}');
+      });
+
+      test('a reply to a placeholder row never quotes its JSON', () {
+        final l10n = AppLocalizationsEn();
+        LocalMessage row(String kind, {String? body}) => LocalMessage(
+            key: 'k',
+            conversationId: _conversation,
+            senderAccountId: 'acct_alice',
+            senderDeviceId: _senderDevice,
+            kind: kind,
+            body: body,
+            createdAt: 0,
+            state: LocalMessageState.received);
+        expect(
+            quotedPreview(
+                l10n, row(LocalMessageKind.unsupported, body: '{"v":2}')),
+            l10n.chatMessageUnsupported);
+        expect(quotedPreview(l10n, row(LocalMessageKind.invalid)),
+            l10n.chatMessageInvalid);
+        expect(quotedPreview(l10n, row(LocalMessageKind.unverifiable)),
+            l10n.chatMessageInvalid);
       });
 
       test('v1 stays strict and an unknown v1 type is unsupported', () async {
@@ -237,6 +330,49 @@ void main() {
       });
     });
   }
+  group('a storage failure after an invalid payload (Drift)', skip: skip, () {
+    test('rolls everything back, and the retry commits the same row', () async {
+      final directory =
+          await Directory.systemTemp.createTemp('veritra-policy-inject-');
+      addTearDown(() => directory.delete(recursive: true));
+      FlutterSecureStorage.setMockInitialValues(<String, String>{});
+      var armed = false;
+      final store = SecureLocalStore(
+        storage: const FlutterSecureStorage(),
+        directoryProvider: () async => directory,
+        mlsCommitFailureInjector: (stage) async {
+          if (armed && stage == MlsCommitStage.afterMessageEffects) {
+            armed = false;
+            throw StateError('injected storage failure');
+          }
+        },
+      );
+      final pair = await _Pair.start(
+          NativeCryptoBindings.open(
+              configured ?? fail('set VERITRA_CRYPTO_LIBRARY')),
+          store);
+      addTearDown(pair.dispose);
+      armed = true;
+      final counter = (await store.loadCryptoState())!.counter;
+      final cursor = await store.loadSyncCursor();
+      final item = pair.envelope(
+          pair.alice.encrypt(_conversation, Uint8List(256)), 'auto');
+      await expectLater(pair.bob.processApplicationMessage(item, cursor + 1),
+          throwsA(anything));
+      expect((await store.loadCryptoState())!.counter, counter);
+      expect(await store.loadSyncCursor(), cursor);
+      expect(await pair.messages(), isEmpty);
+
+      await pair.bob.processApplicationMessage(item, cursor + 1);
+      pair.events = cursor + 1;
+      final rows = await pair.messages();
+      expect(rows.single.kind, LocalMessageKind.invalid);
+      expect(rows.single.key, 'invalid:${cursor + 1}:${item.id}');
+      expect(await store.loadSyncCursor(), cursor + 1);
+      expect(
+          (await pair.receive(_frame(_payload('text', 'next')))).text, 'next');
+    });
+  });
 }
 
 Map<String, Object?> _head(int version, String actionId,
@@ -254,6 +390,17 @@ String _payload(String type, String text,
       ..._head(1, actionId, conversationId: conversationId),
       'type': type,
       'body': <String, Object?>{'text': text},
+    });
+
+String _reaction(String actionId, String type, String target,
+        {String? reaction}) =>
+    jsonEncode(<String, Object?>{
+      ..._head(1, actionId),
+      'type': type,
+      'body': <String, Object?>{
+        'message_id': messageKey(_senderDevice, target),
+        if (reaction != null) 'reaction': reaction,
+      },
     });
 
 /// VAP1, a big-endian u32 length, the JSON, zero padding to 256 bytes.
@@ -347,11 +494,11 @@ class _Pair {
   }
 
   Future<Map<String, Object?>?> callSignal(Uint8List framed,
-      {String actionId = 'auto'}) {
+      {String actionId = 'auto', String createdBy = 'acct_alice'}) {
     final call = CallSession(
       id: 'call_1',
       conversationId: _conversation,
-      createdBy: 'acct_alice',
+      createdBy: createdBy,
       invitedAccountId: 'acct_bob',
       state: 'ringing',
       version: 1,

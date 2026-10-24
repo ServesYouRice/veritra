@@ -4,6 +4,8 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:drift/drift.dart' show DriftWrappedException;
+import 'package:drift/native.dart' show SqliteException;
 import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -3425,7 +3427,12 @@ class AppState extends ChangeNotifier {
           err.statusCode == 429 ||
           err.statusCode >= 500;
     }
-    return err is SocketException ||
+    // A failed local commit is storage trouble, not a bad message: the commit
+    // rolled back with the ratchet, so a retry is safe (P1).
+    if (err is DriftWrappedException) return true;
+    return err is SqliteException ||
+        err is FileSystemException ||
+        err is SocketException ||
         err is TimeoutException ||
         err is HttpException ||
         err is HandshakeException;

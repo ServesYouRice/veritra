@@ -1108,13 +1108,23 @@ class _MemoryMessageHistory {
             continue;
           }
           _messages[effect.targetKey] = target.copyWith(
-            body: const Value(null),
+            body: Value(target.kind == LocalMessageKind.unsupported
+                ? bodyAfterUnsupportedDelete(target.body)
+                : null),
             deletedAt: Value(effect.at),
           );
           _reactions
               .removeWhere((_, item) => item.targetKey == effect.targetKey);
         case ReactionEffect():
           final id = '${effect.targetKey}\u0000${effect.reactorAccountId}';
+          final reactionTarget = _messages[effect.targetKey];
+          if (effect.reaction.isNotEmpty &&
+              (reactionTarget == null ||
+                  reactionTarget.deletedAt != null ||
+                  (reactionTarget.kind != LocalMessageKind.text &&
+                      reactionTarget.kind != LocalMessageKind.attachment))) {
+            continue;
+          }
           if (effect.reaction.isEmpty) {
             _reactions.remove(id);
           } else {

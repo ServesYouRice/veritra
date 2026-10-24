@@ -32,6 +32,21 @@ sealed class MessageEffect {
   const MessageEffect();
 }
 
+/// The body an `unsupported` row keeps after its author deletes it (S3): the
+/// raw JSON goes, but a `hidden` marker stays so the row does not turn into a
+/// visible "Message deleted".
+String? bodyAfterUnsupportedDelete(String? rawJson) {
+  if (rawJson == null) return null;
+  try {
+    final decoded = jsonDecode(rawJson);
+    return decoded is Map && decoded['hidden'] == true
+        ? '{"hidden":true}'
+        : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 /// Kinds stored in [LocalMessages.kind].
 abstract final class LocalMessageKind {
   /// A visible message with [LocalMessages.body] text.
@@ -1634,6 +1649,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             editedAt: Value(effect.at),
           ));
         case DeleteMessageEffect():
+          final existing = await (select(localMessages)
+                ..where((table) => table.key.equals(effect.targetKey)))
+              .getSingleOrNull();
           final deleted = await (update(localMessages)
                 ..where((table) =>
                     table.key.equals(effect.targetKey) &
@@ -1645,7 +1663,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
                       LocalMessageKind.unsupported,
                     ])))
               .write(LocalMessagesCompanion(
-            body: const Value(null),
+            body: Value(existing?.kind == LocalMessageKind.unsupported
+                ? bodyAfterUnsupportedDelete(existing?.body)
+                : null),
             deletedAt: Value(effect.at),
           ));
           if (deleted > 0) {
@@ -1654,6 +1674,17 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
                 .go();
           }
         case ReactionEffect():
+          // Only a live text or attachment row can carry a reaction.
+          final target = await (select(localMessages)
+                ..where((table) => table.key.equals(effect.targetKey)))
+              .getSingleOrNull();
+          if (effect.reaction.isNotEmpty &&
+              (target == null ||
+                  target.deletedAt != null ||
+                  (target.kind != LocalMessageKind.text &&
+                      target.kind != LocalMessageKind.attachment))) {
+            continue;
+          }
           if (effect.reaction.isEmpty) {
             await (delete(localMessageReactions)
                   ..where((table) =>

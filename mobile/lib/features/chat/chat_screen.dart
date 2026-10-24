@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:file_selector/file_selector.dart' show XFile;
-import 'package:flutter/foundation.dart' show defaultTargetPlatform, listEquals;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, listEquals, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -402,7 +403,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                     if (replyTarget != null)
                       _ReplyBar(
-                        preview: _replyPreview(context.l10n, replyTarget),
+                        preview: quotedPreview(context.l10n, replyTarget),
                         onCancel: () => _setReplyTarget(null),
                       ),
                     if (widget.state.attachmentsAvailable)
@@ -1009,7 +1010,7 @@ class _MessageList extends StatelessWidget {
                 local: local,
                 replyPreview: local?.replyTo == null
                     ? null
-                    : _replyPreview(context.l10n, replyTarget),
+                    : quotedPreview(context.l10n, replyTarget),
                 reactions: local == null
                     ? const <({String reaction, int count, bool mine})>[]
                     : history.reactionsFor(local.key,
@@ -1059,8 +1060,18 @@ class _MessageList extends StatelessWidget {
   }
 }
 
-String _replyPreview(AppLocalizations l10n, LocalMessage? target) {
+@visibleForTesting
+String quotedPreview(AppLocalizations l10n, LocalMessage? target) {
   if (target == null) return l10n.chatReplyEarlier;
+  // Their bodies are raw JSON or empty, never text to quote.
+  if (target.kind == LocalMessageKind.unsupported && target.deletedAt == null) {
+    return l10n.chatMessageUnsupported;
+  }
+  if ((target.kind == LocalMessageKind.invalid ||
+          target.kind == LocalMessageKind.unverifiable) &&
+      target.deletedAt == null) {
+    return l10n.chatMessageInvalid;
+  }
   if (target.deletedAt != null || target.body == null) {
     return l10n.chatReplyDeleted;
   }
