@@ -611,5 +611,17 @@
   "adminEventBy": "Извршио: {actor}",
   "adminLoadMore": "Учитај још",
   "adminNoAccounts": "Нема налога",
-  "adminNoEvents": "Још нема догађаја ревизије"
+  "adminNoEvents": "Још нема догађаја ревизије",
+  "requestsSection": "Захтеви ({count})",
+  "requestsTitle": "Захтев за поруку",
+  "requestFrom": "{name} жели да вам пише",
+  "requestUnknownSender": "Неко кога не познајете",
+  "requestExplanation": "Ништа од ове особе се не приказује нити преузима, и она не може да види да сте нешто прочитали, док не прихватите.",
+  "requestAccept": "Прихвати",
+  "requestBlock": "Блокирај",
+  "requestDelete": "Обриши",
+  "requestBlockTitle": "Блокирати ову особу?",
+  "requestBlockMessage": "{name} више неће моћи да вам пише, а овај разговор ће бити уклоњен.",
+  "requestDeleteTitle": "Обрисати овај захтев?",
+  "requestDeleteMessage": "Разговор се уклања са овог уређаја. Пошиљалац није обавештен."
 }

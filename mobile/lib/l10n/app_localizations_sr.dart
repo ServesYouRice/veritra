@@ -2184,6 +2184,54 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get adminNoEvents => 'Још нема догађаја ревизије';
+
+  @override
+  String requestsSection(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    return 'Захтеви ($countString)';
+  }
+
+  @override
+  String get requestsTitle => 'Захтев за поруку';
+
+  @override
+  String requestFrom(String name) {
+    return '$name жели да вам пише';
+  }
+
+  @override
+  String get requestUnknownSender => 'Неко кога не познајете';
+
+  @override
+  String get requestExplanation =>
+      'Ништа од ове особе се не приказује нити преузима, и она не може да види да сте нешто прочитали, док не прихватите.';
+
+  @override
+  String get requestAccept => 'Прихвати';
+
+  @override
+  String get requestBlock => 'Блокирај';
+
+  @override
+  String get requestDelete => 'Обриши';
+
+  @override
+  String get requestBlockTitle => 'Блокирати ову особу?';
+
+  @override
+  String requestBlockMessage(String name) {
+    return '$name више неће моћи да вам пише, а овај разговор ће бити уклоњен.';
+  }
+
+  @override
+  String get requestDeleteTitle => 'Обрисати овај захтев?';
+
+  @override
+  String get requestDeleteMessage =>
+      'Разговор се уклања са овог уређаја. Пошиљалац није обавештен.';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -4369,4 +4417,52 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get adminNoEvents => 'Još nema događaja revizije';
+
+  @override
+  String requestsSection(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    return 'Zahtevi ($countString)';
+  }
+
+  @override
+  String get requestsTitle => 'Zahtev za poruku';
+
+  @override
+  String requestFrom(String name) {
+    return '$name želi da vam piše';
+  }
+
+  @override
+  String get requestUnknownSender => 'Neko koga ne poznajete';
+
+  @override
+  String get requestExplanation =>
+      'Ništa od ove osobe se ne prikazuje niti preuzima, i ona ne može da vidi da ste nešto pročitali, dok ne prihvatite.';
+
+  @override
+  String get requestAccept => 'Prihvati';
+
+  @override
+  String get requestBlock => 'Blokiraj';
+
+  @override
+  String get requestDelete => 'Obriši';
+
+  @override
+  String get requestBlockTitle => 'Blokirati ovu osobu?';
+
+  @override
+  String requestBlockMessage(String name) {
+    return '$name više neće moći da vam piše, a ovaj razgovor će biti uklonjen.';
+  }
+
+  @override
+  String get requestDeleteTitle => 'Obrisati ovaj zahtev?';
+
+  @override
+  String get requestDeleteMessage =>
+      'Razgovor se uklanja sa ovog uređaja. Pošiljalac nije obavešten.';
 }

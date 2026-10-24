@@ -3536,6 +3536,78 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No audit events yet'**
   String get adminNoEvents;
+
+  /// No description provided for @requestsSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Requests ({count})'**
+  String requestsSection(int count);
+
+  /// No description provided for @requestsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Message request'**
+  String get requestsTitle;
+
+  /// No description provided for @requestFrom.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} wants to message you'**
+  String requestFrom(String name);
+
+  /// No description provided for @requestUnknownSender.
+  ///
+  /// In en, this message translates to:
+  /// **'Someone you do not know'**
+  String get requestUnknownSender;
+
+  /// No description provided for @requestExplanation.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing from this person is shown or downloaded, and they cannot see that you read anything, until you accept.'**
+  String get requestExplanation;
+
+  /// No description provided for @requestAccept.
+  ///
+  /// In en, this message translates to:
+  /// **'Accept'**
+  String get requestAccept;
+
+  /// No description provided for @requestBlock.
+  ///
+  /// In en, this message translates to:
+  /// **'Block'**
+  String get requestBlock;
+
+  /// No description provided for @requestDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get requestDelete;
+
+  /// No description provided for @requestBlockTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Block this person?'**
+  String get requestBlockTitle;
+
+  /// No description provided for @requestBlockMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} will no longer be able to message you, and this conversation will be removed.'**
+  String requestBlockMessage(String name);
+
+  /// No description provided for @requestDeleteTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete this request?'**
+  String get requestDeleteTitle;
+
+  /// No description provided for @requestDeleteMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The conversation is removed from this device. The sender is not told.'**
+  String get requestDeleteMessage;
 }
 
 class _AppLocalizationsDelegate

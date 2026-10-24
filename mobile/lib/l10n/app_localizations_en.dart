@@ -2167,4 +2167,52 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get adminNoEvents => 'No audit events yet';
+
+  @override
+  String requestsSection(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    return 'Requests ($countString)';
+  }
+
+  @override
+  String get requestsTitle => 'Message request';
+
+  @override
+  String requestFrom(String name) {
+    return '$name wants to message you';
+  }
+
+  @override
+  String get requestUnknownSender => 'Someone you do not know';
+
+  @override
+  String get requestExplanation =>
+      'Nothing from this person is shown or downloaded, and they cannot see that you read anything, until you accept.';
+
+  @override
+  String get requestAccept => 'Accept';
+
+  @override
+  String get requestBlock => 'Block';
+
+  @override
+  String get requestDelete => 'Delete';
+
+  @override
+  String get requestBlockTitle => 'Block this person?';
+
+  @override
+  String requestBlockMessage(String name) {
+    return '$name will no longer be able to message you, and this conversation will be removed.';
+  }
+
+  @override
+  String get requestDeleteTitle => 'Delete this request?';
+
+  @override
+  String get requestDeleteMessage =>
+      'The conversation is removed from this device. The sender is not told.';
 }

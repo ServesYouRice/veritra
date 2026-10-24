@@ -741,5 +741,20 @@
   "@adminEventBy": {"placeholders": {"actor": {"type": "String"}}},
   "adminLoadMore": "Load more",
   "adminNoAccounts": "No accounts",
-  "adminNoEvents": "No audit events yet"
+  "adminNoEvents": "No audit events yet",
+  "requestsSection": "Requests ({count})",
+  "@requestsSection": {"placeholders": {"count": {"type": "int", "format": "decimalPattern"}}},
+  "requestsTitle": "Message request",
+  "requestFrom": "{name} wants to message you",
+  "@requestFrom": {"placeholders": {"name": {"type": "String"}}},
+  "requestUnknownSender": "Someone you do not know",
+  "requestExplanation": "Nothing from this person is shown or downloaded, and they cannot see that you read anything, until you accept.",
+  "requestAccept": "Accept",
+  "requestBlock": "Block",
+  "requestDelete": "Delete",
+  "requestBlockTitle": "Block this person?",
+  "requestBlockMessage": "{name} will no longer be able to message you, and this conversation will be removed.",
+  "@requestBlockMessage": {"placeholders": {"name": {"type": "String"}}},
+  "requestDeleteTitle": "Delete this request?",
+  "requestDeleteMessage": "The conversation is removed from this device. The sender is not told."
 }

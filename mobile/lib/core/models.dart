@@ -85,6 +85,7 @@ class Conversation {
     this.currentRole,
     this.peerAccountId,
     this.peerUsername,
+    this.createdBy,
   });
 
   final String id;
@@ -105,6 +106,8 @@ class Conversation {
   // Server-authored display metadata, never a cryptographic identity claim.
   final String? peerAccountId;
   final String? peerUsername;
+  // Account that started the conversation; decides whether a DM is a request.
+  final String? createdBy;
 
   bool get isDm => kind == 'dm';
   bool get isGroup => kind == 'group';
@@ -128,6 +131,7 @@ class Conversation {
       currentRole: json['current_role'] as String?,
       peerAccountId: _nonEmpty(json['peer_account_id']),
       peerUsername: _nonEmpty(json['peer_username']),
+      createdBy: _nonEmpty(json['created_by']),
     );
   }
 
@@ -145,6 +149,7 @@ class Conversation {
       currentRole: currentRole,
       peerAccountId: peerAccountId,
       peerUsername: peerUsername,
+      createdBy: createdBy,
     );
   }
 
@@ -163,6 +168,7 @@ class Conversation {
         if (currentRole != null) 'current_role': currentRole,
         if (peerAccountId != null) 'peer_account_id': peerAccountId,
         if (peerUsername != null) 'peer_username': peerUsername,
+        if (createdBy != null) 'created_by': createdBy,
       };
 }
 
