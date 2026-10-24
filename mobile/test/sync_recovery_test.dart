@@ -332,21 +332,46 @@ void main() {
     harness.dispose();
   });
 
-  test('an unknown event type stops sync as unsupported', () async {
+  test('an unknown event outside mls., message. and call. is skipped (P5)',
+      () async {
     final api = _ScriptedApi()
       ..events = <SyncEvent>[
         SyncEvent(
           id: 3,
-          type: 'future.event',
+          type: 'foo.bar',
+          createdAt: DateTime.utc(2026, 9, 24),
+        ),
+        SyncEvent(
+          id: 4,
+          type: 'profile.updated',
           createdAt: DateTime.utc(2026, 9, 24),
         ),
       ];
     final harness = await _Harness.start(api);
-    await harness.waitFor(() => harness.state.syncRecovery != null);
-    expect(harness.state.syncRecovery!.kind, SyncFailureKind.unsupportedEvent);
-    expect(await harness.store.loadSyncCursor(), 0);
+    await harness
+        .waitFor(() async => await harness.store.loadSyncCursor() == 4);
+    expect(harness.state.syncRecovery, isNull);
     harness.dispose();
   });
+
+  for (final type in <String>['mls.foo', 'message.foo', 'call.foo']) {
+    test('an unknown $type event stops sync as unsupported (P5)', () async {
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[
+          SyncEvent(
+            id: 3,
+            type: type,
+            createdAt: DateTime.utc(2026, 9, 24),
+          ),
+        ];
+      final harness = await _Harness.start(api);
+      await harness.waitFor(() => harness.state.syncRecovery != null);
+      expect(
+          harness.state.syncRecovery!.kind, SyncFailureKind.unsupportedEvent);
+      expect(await harness.store.loadSyncCursor(), 0);
+      harness.dispose();
+    });
+  }
 
   test('recovery records round-trip and reject damaged values', () {
     final recovery = SyncRecovery(

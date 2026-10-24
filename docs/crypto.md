@@ -209,6 +209,18 @@ Stage 1. Every later change is listed here for the G25 reviewer.
 
   An independent review approved both designs with changes, now applied.
 
+- **W8 step 0 built (2026-10-24): receive policy, P1-P6.** No schema or ABI
+  change: `invalid` and `unsupported` are new values of the existing
+  message `kind` column (the raw JSON of an `unsupported` row goes in
+  `body`). A payload that decrypts is now always classified
+  (`AppPayloadCodec.classify`), so the MLS state and cursor commit; envelope
+  fields are checked before decrypt; `invalid:` and `unverifiable:` rows are
+  keyed `<kind>:<syncEventId>:<envelopeId>`; bad call signals are dropped
+  after commit; unknown sync events are skipped unless they start with
+  `mls.`, `message.` or `call.`. Covered by `receive_policy_test.dart` (both
+  stores) and `sync_recovery_test.dart`. Built as `v` 1 only; the type names
+  on the wire are the Dart enum names (`callSignal`, `attachmentManifest`).
+
 ## Proposed, not yet built: application payload v2 (W7)
 
 **Status: proposed, not yet built.** This is the W7 design. W8 (message
