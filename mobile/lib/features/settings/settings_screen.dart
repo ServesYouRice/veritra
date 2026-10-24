@@ -9,6 +9,7 @@ import '../../l10n/l10n.dart';
 import '../../push/push_service.dart';
 import 'backup_screen.dart';
 import '../../core/models.dart';
+import '../../desktop/message_notifications.dart';
 import '../../ui/about.dart';
 import '../../ui/appearance.dart';
 import '../../ui/avatar.dart';
@@ -39,6 +40,7 @@ class SettingsScreen extends StatelessWidget {
         final session = state.session;
         final isAdmin = session?.role == 'owner' || session?.role == 'admin';
         final appearance = AppearanceScope.maybeOf(context);
+        final notifications = NotificationSettingsScope.maybeOf(context);
         final l10n = context.l10n;
         return Scaffold(
           appBar: LargeTitleBar(
@@ -284,6 +286,21 @@ class SettingsScreen extends StatelessWidget {
                   ),
                 ],
               ),
+              if (notifications != null) ...<Widget>[
+                SectionHeader(l10n.settingsSectionNotifications),
+                TileGroup(
+                  children: <Widget>[
+                    SwitchListTile(
+                      secondary: const Icon(Icons.notifications_outlined),
+                      title: Text(l10n.settingsHideNotificationPreview),
+                      subtitle:
+                          Text(l10n.settingsHideNotificationPreviewDetail),
+                      value: notifications.hidePreview,
+                      onChanged: notifications.setHidePreview,
+                    ),
+                  ],
+                ),
+              ],
               if (appearance != null) ...<Widget>[
                 SectionHeader(l10n.settingsSectionAppearance),
                 _AppearanceRow(controller: appearance),

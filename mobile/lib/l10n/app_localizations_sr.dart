@@ -111,6 +111,22 @@ class AppLocalizationsSr extends AppLocalizations {
   String get settingsSectionAppearance => 'Изглед';
 
   @override
+  String get settingsHideNotificationPreview => 'Сакриј преглед поруке';
+
+  @override
+  String get settingsHideNotificationPreviewDetail =>
+      'Обавештења приказују „Нова порука“ без пошиљаоца и текста.';
+
+  @override
+  String get notificationNewMessage => 'Нова порука';
+
+  @override
+  String get trayOpen => 'Отвори';
+
+  @override
+  String get trayQuit => 'Затвори апликацију';
+
+  @override
   String get settingsSectionAbout => 'О апликацији';
 
   @override
@@ -2228,6 +2244,22 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get settingsSectionAppearance => 'Izgled';
+
+  @override
+  String get settingsHideNotificationPreview => 'Sakrij pregled poruke';
+
+  @override
+  String get settingsHideNotificationPreviewDetail =>
+      'Obaveštenja prikazuju „Nova poruka“ bez pošiljaoca i teksta.';
+
+  @override
+  String get notificationNewMessage => 'Nova poruka';
+
+  @override
+  String get trayOpen => 'Otvori';
+
+  @override
+  String get trayQuit => 'Zatvori aplikaciju';
 
   @override
   String get settingsSectionAbout => 'O aplikaciji';

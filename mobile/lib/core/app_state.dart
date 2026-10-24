@@ -410,6 +410,11 @@ class AppState extends ChangeNotifier {
   bool hasMoreHistory(String conversationId) =>
       _historyCursors[conversationId] != null;
 
+  /// Heard with each batch of received messages once they are decrypted,
+  /// stored and shown. The desktop shell uses it to raise notifications
+  /// (W3); it gets copies and cannot change the list.
+  void Function(List<ReceivedMessageEnvelope> received)? onMessagesPublished;
+
   bool isMuted(String conversationId) =>
       _mutedConversations.contains(conversationId);
 
@@ -1430,18 +1435,22 @@ class AppState extends ChangeNotifier {
 
   /// Best-effort read of the server's mute flag. Silent on failure: an
   /// unknown mute state must not block opening a conversation.
-  Future<void> loadConversationMuted(String conversationId) async {
+  ///
+  /// Returns whether the flag was read.
+  Future<bool> loadConversationMuted(String conversationId) async {
     final current = session;
     final client = api;
     if (current == null || client == null) {
-      return;
+      return false;
     }
     try {
       final muted =
           await client.conversationMuted(current.token, conversationId);
       _setMutedLocally(conversationId, muted);
+      return true;
     } catch (_) {
       // Leave the last known value; the toggle still reports its own errors.
+      return false;
     }
   }
 
@@ -3012,6 +3021,7 @@ class AppState extends ChangeNotifier {
       _mergeReceivedEnvelopes(received);
       _history.addAll(histories);
       notifyListeners();
+      onMessagesPublished?.call(List<ReceivedMessageEnvelope>.of(received));
     }
     received.clear();
   }
