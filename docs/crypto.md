@@ -114,7 +114,7 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   downloads may resume from any offset the server has sent, and the
   capability is still consumed only when a transfer reaches the end.
 - **Stage 1 follow-up, attachments (2026-09-25):** no ABI change. Demo
-  builds now send and receive the existing `attachment_manifest` payload.
+  builds now send and receive the existing `attachmentManifest` payload.
   Each entry is the attachment crypto manifest (random per-file key, nonce
   prefix, chunking, `conversation_id` and `action_id` context, file name,
   media type, plaintext size) plus the server attachment `id` and
@@ -218,6 +218,10 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   - unknown sync event types are skipped, unless they start with `mls.`,
     `message.` or `call.`.
 
+  Step 0 does not stop undecryptable MLS ciphertext from halting the
+  global cursor: an MLS decryption failure stays fail-closed by design, and
+  a later design has to decide how to isolate it.
+
   MLS-level failures keep the I33 behaviour. The precedent is D25, which
   already commits a sender-mismatched message as `unverifiable`. Step 0
   re-keys that row too.
@@ -234,7 +238,15 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   after commit; unknown sync events are skipped unless they start with
   `mls.`, `message.` or `call.`. Covered by `receive_policy_test.dart` (both
   stores) and `sync_recovery_test.dart`. Built as `v` 1 only; the type names
-  on the wire are the Dart enum names (`callSignal`, `attachmentManifest`).
+  on the wire are the Dart enum names (`callSignal`, `attachmentManifest`),
+  see §2. Also: a call signal whose sender account the receiver guessed
+  wrong (a caller's other device) is dropped after commit; a reaction
+  applies only to a live `text` or `attachment` row (both stores); a failed
+  local commit (SQLite or file error) is retried, not reported as
+  undecryptable. Residual: placeholder rows set `server_message_id` to the
+  envelope's ID, which the server controls; a repeat of an ID is ignored by
+  the insert, so a server that reuses an envelope ID can make a later row
+  for it be dropped (an availability harm, no content).
 
 ## Proposed, not yet built: application payload v2 (W7)
 
@@ -264,7 +276,7 @@ once all six hold:
   storage write produces an `invalid` row, and the MLS state and cursor
   commit with it. That covers decoding, validation and building the
   effects. Today's examples:
-  - `call_signal` inside a message envelope (the type check at
+  - `callSignal` inside a message envelope (the type check at
     `native_crypto_service.dart` ~683, and `messageEffectsFor` ~903,
     which throws for `callSignal`);
   - any other type on the call path (~506).
@@ -357,14 +369,34 @@ that a v2 app can still check context and classify a v3 message as
 ### 2. Versions and compatibility
 
 - **Inner `v`.** A sender writes `v: 1` when the payload is a v1 type
-  (`text`, `reply`, `edit`, `delete`, `reaction`, `attachment_manifest`,
-  `call_signal`) whose body uses only v1 fields, and the conversation is
+  (`text`, `reply`, `edit`, `delete`, `reaction`, `attachmentManifest`,
+  `callSignal`) whose body uses only v1 fields, and the conversation is
   not `community_shared`. Anything else is `v: 2`. A pre-W8 app can then
   still read plain messages from a W8 app. This rule does not reach W11's
   profile-key sidecars (§5.7): after W11 most posts are v2.
 - **Decoding v1.** A v2 app decodes `v: 1` exactly as today: the closed
-  type set, exact field counts, and exactly the six top-level keys. Those
-  failures are `invalid`.
+  type set, exact field counts, and exactly the six top-level keys. A known
+  type that fails those checks, or a v1 payload with other top-level keys,
+  is `invalid`. A v1 type this app does not know is `unsupported` (see the
+  outcomes table in §1).
+- **Wire type names.** The string in `type` is the Dart enum name today,
+  not snake_case. The sender and receiver code is unchanged, and this table
+  is the contract:
+
+  | Type | Wire string |
+  |---|---|
+  | text | `text` |
+  | reply | `reply` |
+  | edit | `edit` |
+  | delete | `delete` |
+  | reaction | `reaction` |
+  | attachment manifest | `attachmentManifest` |
+  | call signal | `callSignal` |
+
+  Open: the names of the new v2 types (`poll_vote`, `admin_delete`,
+  `profile_key` and the rest, written in snake_case in this document)
+  must be settled, in one convention, before any v2 sender ships. Changing
+  an existing wire string would break every device.
 - **Decoding v2 and later.**
   - Required fields are validated.
   - **Unknown body fields and unknown top-level keys are ignored** (P6),
@@ -451,7 +483,7 @@ input can differ.
 | `edit` | 1/2 | `message_id`, `text`; *`entities`*, *`mentions`* | Target's author account | Replaces text, entities and mentions together. An edit **never** raises a mention alert |
 | `delete` | 1 | `message_id` | Target's author account | Clears body and reactions. Kinds widen to `text`, `attachment`, `poll`, and `unsupported` (its raw JSON is cleared, §1); clearing an attachment row also drops its keys. A poll's votes and pin go with it |
 | `reaction` | 1 | `message_id`, `reaction` (≤ 32 UTF-16 units, empty clears) | Any member | As today, plus the conversation check |
-| `attachment_manifest` | 1/2 | `attachments` (≤ 32); *`forwarded`*, *`profile_key`*, *`group_profile_key`* | Any member | Row kind `attachment` |
+| `attachmentManifest` | 1/2 | `attachments` (≤ 32); *`forwarded`*, *`profile_key`*, *`group_profile_key`* | Any member | Row kind `attachment` |
 | `pin` | 2 | `message_id`, `pinned` (bool); `duration_seconds` when `pinned` is true: 86400, 604800 or 2592000 | DM: either member. Group/channel: moderator roles | §5.4 |
 | `poll` | 2 | `question`, `options` (list of strings), `multiple_choice` (bool); *`profile_key`*, *`group_profile_key`* | Any member | Row kind `poll` (new); body holds the poll JSON |
 | `poll_vote` | 2 | `message_id`, `choices` (list of option indexes; empty = retract) | Any member | §5.5 |
@@ -459,7 +491,7 @@ input can differ.
 | `admin_delete` | 2 | `message_id` | Moderator roles; target in the same conversation, any author | **Reserved for C5:** handled as `unsupported` until C5 turns it on. Effect then: as `delete`, shown as "Removed by an admin" |
 | `profile_key` | 2 | See [W11](designs/W11-profiles.md#mls-payloads) | Only the subject account's own devices | **Reserved for W11** |
 | `group_profile_key` | 2 | See [W11](designs/W11-profiles.md#mls-payloads) | Any member | **Reserved for W11** |
-| `call_signal` | 1 | Unchanged | Unchanged | Unchanged |
+| `callSignal` | 1 | Unchanged | Unchanged | Unchanged |
 
 A "reserved" type has a fixed name and body now. Until its package turns
 it on, a receiver treats it as `unsupported`, and a sender never sends it.
@@ -536,7 +568,7 @@ markup:
 "forwarded": {"hops": 1}
 ```
 
-- **Hops.** A forward is a **new** `text` or `attachment_manifest` payload
+- **Hops.** A forward is a **new** `text` or `attachmentManifest` payload
   in each target conversation, with a new `action_id`. The sender writes
   `min(source hops + 1, 5)`, where the source's hops count as 0 if it was
   not forwarded. A higher count would tell members more about a message's
@@ -617,7 +649,7 @@ reserved. The receiver rule is fixed now:
 
 #### 5.7 Profile-key sidecars (reserved for W11)
 
-`text`, `reply`, `attachment_manifest` and `poll` may carry two optional
+`text`, `reply`, `attachmentManifest` and `poll` may carry two optional
 body fields:
 
 - `"profile_key": {"key": "<base64, 32 bytes>", "key_id": "<32 hex>", "version": <int>}`.
@@ -755,7 +787,7 @@ Decoding:
 23. In a `community_shared` conversation whose envelope `channel_id` is
     `chan_6666…`: vector 22 gives `text` "hi". The same vector with
     `chan_7777…` gives `invalid`, and so does vector 1 (no `channel_id`).
-24. `{"v":1,"type":"call_signal",…,"body":{"signal":{}}}` arriving in a
+24. `{"v":1,"type":"callSignal",…,"body":{"signal":{}}}` arriving in a
     **message** envelope gives `invalid` (P1). The cursor advances.
 25. `{H,"type":"text","future_top":1,"body":{"text":"hi"}}` gives `text`
     "hi" (P6).

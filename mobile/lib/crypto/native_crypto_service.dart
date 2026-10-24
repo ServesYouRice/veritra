@@ -496,19 +496,29 @@ class NativeCryptoService implements MlsConversationCryptoService {
             ? call.invitedAccountId
             : call.createdBy;
         try {
-          final plaintext = _requiredDevice().decrypt(
-            call.conversationId,
-            base64Decode(encoded),
-            senderAccountId: senderAccountId,
-            senderDeviceId: senderDeviceId,
-          );
+          List<int>? plaintext;
+          try {
+            plaintext = _requiredDevice().decrypt(
+              call.conversationId,
+              base64Decode(encoded),
+              senderAccountId: senderAccountId,
+              senderDeviceId: senderDeviceId,
+            );
+          } on NativeCryptoException catch (error) {
+            // The server also delivers a caller's signals to the caller's
+            // other devices, where the guessed sender account is wrong. The
+            // ratchet already advanced, so commit and drop the signal (P4).
+            if (error.kind != NativeCryptoError.senderMismatch) rethrow;
+          }
           // Once decryption succeeds the ratchet has moved, so the state and
           // cursor always commit (P4). A payload that is not a valid call
           // signal is dropped: no row and no signal.
-          final outcome = AppPayloadCodec().classify(plaintext,
-              conversationId: call.conversationId,
-              senderDeviceId: senderDeviceId,
-              actionId: actionId);
+          final outcome = plaintext == null
+              ? const InvalidAppPayload()
+              : AppPayloadCodec().classify(plaintext,
+                  conversationId: call.conversationId,
+                  senderDeviceId: senderDeviceId,
+                  actionId: actionId);
           await localStore.commitMlsTransition(MlsStateTransition(
               messageId: marker,
               conversationId: call.conversationId,
@@ -648,6 +658,9 @@ class NativeCryptoService implements MlsConversationCryptoService {
         // step: a malformed event stops sync with nothing consumed (P2).
         AppPayloadCodec.validateContext(envelope.conversationId,
             envelope.senderDeviceId, envelope.idempotencyKey);
+        if (envelope.id.isEmpty || envelope.id.length > 128) {
+          throw const FormatException('invalid message envelope id');
+        }
         final marker = 'application:$syncEventId:${envelope.id}';
         if (await localStore.hasProcessedMlsMessage(marker)) return null;
         final previous = await _requiredState();
