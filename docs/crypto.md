@@ -58,6 +58,19 @@ Before production message sending:
 - add MLS test vectors
 - obtain independent protocol and mobile-binding review
 
+## Proposed designs
+
+Proposed, not yet built. Nothing below changes the ABI, payloads or schema
+until the package that builds it lands and adds its change-log entry.
+
+- [K0: one long-lived key](designs/K0-long-lived-key.md): a recovery key
+  only the user holds; backups sealed to its public half; one history
+  container for backups (K1) and new-device bundles (K2); restores create
+  a new device instead of cloning MLS state. Proposes ABI v7 (additive).
+- [C0: community group layout](designs/C0-community-groups.md): one shared
+  MLS group for a community's open channels plus one per private channel,
+  with a measured join cost ([evidence](../testing/evidence/C0-community-groups.md)).
+
 ## Change log since the Stage 1 freeze
 
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
