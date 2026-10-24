@@ -20,8 +20,12 @@ APPROVED_CARGO_AUDIT_VERSION = "0.22.2"
 # hpke-rs-libcrux backend; it is never built (audit-rust.sh fails if it
 # enters the build graph). The fix needs hpke-rs 0.8, which no released
 # openmls_rust_crypto accepts yet. Remove both IDs when one does.
+# Owner-approved on 2026-10-24: RUSTSEC-2026-0387 (crypto-bigint 0.5.5) is in
+# the NIST-curve arithmetic that elliptic-curve 0.13 brings in; Veritra pins an
+# X25519/Ed25519 suite, so it never runs on our keys. Remove it when the
+# OpenMLS stack moves to elliptic-curve 0.14.
 APPROVED_EXCEPTION_IDS: frozenset = frozenset(
-    {"RUSTSEC-2026-0330", "RUSTSEC-2026-0331"}
+    {"RUSTSEC-2026-0330", "RUSTSEC-2026-0331", "RUSTSEC-2026-0387"}
 )
 POLICY_FIELDS = {
     "version",

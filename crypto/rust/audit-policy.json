@@ -13,6 +13,11 @@
       "id": "RUSTSEC-2026-0331",
       "scope": "libcrux-kem 0.0.9 via hpke-rs-libcrux 0.7.0 (lockfile only)",
       "rationale": "Locked but never built: hpke-rs 0.7 names the optional hpke-rs-libcrux backend (=0.7.0, which pins libcrux-kem =0.0.9) in its std feature. The fix needs hpke-rs 0.8; no released openmls_rust_crypto accepts it yet. Approved by the owner on 2026-10-22."
+    },
+    {
+      "id": "RUSTSEC-2026-0387",
+      "scope": "crypto-bigint 0.5.5 via elliptic-curve 0.13 (p256, p384, k256 under openmls_rust_crypto 0.6.0, hpke-rs-rust-crypto 0.7.0, openmls_basic_credential 0.6.0)",
+      "rationale": "Built but never run on Veritra keys: the timing issues sit in the NIST-curve arithmetic, and Veritra pins MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519 (audit-rust.sh fails if the pin changes). The fix needs crypto-bigint 0.7.6+, i.e. elliptic-curve 0.14, which no released OpenMLS stack accepts yet. Approved by the owner on 2026-10-24."
     }
   ]
 }
