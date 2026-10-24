@@ -44,15 +44,6 @@ func NewLocalStore(root string) (*LocalStore, error) {
 	}, nil
 }
 
-func syncDirectory(path string) error {
-	dir, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return dir.Sync()
-}
-
 // CleanupTemporaryFiles removes stale partial uploads left by interrupted
 // writes while retaining fresh files that may still be in progress.
 func (s *LocalStore) CleanupTemporaryFiles(ctx context.Context, olderThan time.Time) (int, error) {
