@@ -675,6 +675,10 @@ class AppState extends ChangeNotifier {
       // The local database opened, so a run of failed upgrades is over.
       _storageFullFailures = 0;
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
+      // Expired messages go even from a device that is signed out: it keeps
+      // its history for the next sign-in (W2).
+      await localStore.purgeExpiredMessages();
+      if (!_lifecycleGenerationActive(transitionGeneration)) return;
       if (stored == null) {
         lifecycle = SessionLifecycle.ready;
         notifyListeners();
@@ -704,10 +708,6 @@ class AppState extends ChangeNotifier {
       for (final envelope in pendingOutbox) {
         _outboxStates[envelope.idempotencyKey] = OutboxDeliveryState.failed;
       }
-      if (!_lifecycleGenerationActive(transitionGeneration)) return;
-      // Expired messages leave this device before any chat shows, also when
-      // the app was closed past their expiry and there is no network (W2).
-      await localStore.purgeExpiredMessages();
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
       composerDrafts.load({
         for (final entry in (await localStore.loadDrafts()).entries)

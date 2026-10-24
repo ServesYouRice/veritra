@@ -322,6 +322,151 @@ void main() {
     expect(gone.read<int>('n'), 0);
   });
 
+  test('a server cannot erase history by relisting a message as expired',
+      () async {
+    final store = createStore();
+    await seedState(store);
+    await saveList(store);
+    await receive(store, id: 'old', body: 'old text');
+    // The listing endpoint is not authenticated: it names the same message
+    // with a short expiry.
+    final forged = _envelope('old',
+        expiresAt: DateTime.now().toUtc().subtract(const Duration(minutes: 1)));
+    await store.saveProjection(
+      <Conversation>[Conversation(id: 'conv_1', kind: 'group')],
+      <String, List<ReceivedMessageEnvelope>>{
+        'conv_1': <ReceivedMessageEnvelope>[forged],
+      },
+    );
+    await store.purgeExpiredMessages();
+    expect(await bodies(store), <String>['old text']);
+  });
+
+  test('only the first echo of an own message sets its expiry', () async {
+    final store = createStore();
+    await seedState(store);
+    await saveList(store);
+    await databases.last.applyMessageEffects(<MessageEffect>[
+      const InsertMessageEffect(
+        key: 'dev_own:mine',
+        conversationId: 'conv_1',
+        senderAccountId: 'acct_own',
+        senderDeviceId: 'dev_own',
+        kind: LocalMessageKind.text,
+        body: 'my words',
+        createdAt: 1,
+        state: LocalMessageState.pending,
+      ),
+    ]);
+    ReceivedMessageEnvelope echo(DateTime? expiresAt) =>
+        ReceivedMessageEnvelope(
+          id: 'srv_mine',
+          conversationId: 'conv_1',
+          senderAccountId: 'acct_own',
+          senderDeviceId: 'dev_own',
+          idempotencyKey: 'mine',
+          ciphertext: const <int>[1],
+          cryptoProtocol: 'mls10-openmls-v1',
+          createdAt: DateTime.utc(2026, 10, 24),
+          expiresAt: expiresAt,
+        );
+    final later = DateTime.now().toUtc().add(const Duration(days: 1));
+    await store.commitSyncEvent(SyncEventCommit(
+      eventKey: 'sync:1',
+      conversationId: 'conv_1',
+      expectedCursor: 0,
+      cursor: 1,
+      envelope: echo(later),
+      ownMessageKey: 'dev_own:mine',
+    ));
+    // A replayed or forged echo cannot move it, nor shorten it.
+    await store.commitSyncEvent(SyncEventCommit(
+      eventKey: 'sync:2',
+      conversationId: 'conv_1',
+      expectedCursor: 1,
+      cursor: 2,
+      envelope: echo(DateTime.now().toUtc().subtract(const Duration(hours: 1))),
+      ownMessageKey: 'dev_own:mine',
+    ));
+    await store.purgeExpiredMessages();
+    expect(await bodies(store), <String>['my words']);
+    expect((await store.nextMessageExpiry())?.millisecondsSinceEpoch,
+        later.millisecondsSinceEpoch);
+  });
+
+  test('a backup from before schema 10 expires through its envelopes',
+      () async {
+    final store = createStore();
+    await seedState(store);
+    await saveList(store);
+    final database = databases.last;
+    final past = DateTime.now().toUtc().subtract(const Duration(hours: 1));
+    await database.restoreBackupState(
+      sessionJson: '{}',
+      conversations: const [],
+      envelopes: [
+        (
+          id: 'old',
+          conversationId: 'conv_1',
+          position: 0,
+          payloadJson: jsonEncode(_envelope('old', expiresAt: past).toJson()),
+        ),
+      ],
+      outbox: const [],
+      mlsOutbox: const [],
+      cryptoState: (
+        counter: 1,
+        stateKey: List<int>.filled(32, 1),
+        sealedState: <int>[1]
+      ),
+      cursor: 0,
+      history: [
+        // A version 2 backup carries no expiry for the message.
+        LocalMessage(
+          key: 'dev_peer:old',
+          serverMessageId: 'old',
+          conversationId: 'conv_1',
+          senderAccountId: 'acct_peer',
+          senderDeviceId: 'dev_peer',
+          kind: LocalMessageKind.text,
+          body: 'old text',
+          createdAt: 1,
+          state: LocalMessageState.received,
+        ),
+      ],
+    );
+    expect(await bodies(store), isEmpty);
+    expect(await envelopeIds(store), isEmpty);
+  });
+
+  test('a signed-out device still deletes what expired', () async {
+    final store = MemoryLocalStore();
+    await store.saveSession(const Session(
+      baseUrl: 'https://localhost:8080',
+      token: '',
+      accountId: 'acct_own',
+      deviceId: 'dev_own',
+    ));
+    await seedState(store);
+    await saveList(store);
+    await receive(store,
+        id: 'gone',
+        expiresAt:
+            DateTime.now().toUtc().add(const Duration(milliseconds: 100)));
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    expect(await bodies(store), hasLength(1));
+    final state = AppState(
+      apiClientFactory: (_) => _OfflineApiClient(),
+      cryptoService: TestOnlyCryptoService(),
+      localStore: store,
+      syncServiceFactory: (_, __) => _IdleSyncService(),
+    );
+    await state.tryRestoreSession();
+    expect(state.connected, isFalse);
+    expect(await bodies(store), isEmpty);
+    state.dispose();
+  });
+
   test('the memory store purges the same way', () async {
     final store = MemoryLocalStore();
     await seedState(store);

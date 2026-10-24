@@ -661,6 +661,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
                   payloadJson: item.payloadJson,
                   expiresAt: Value(envelopeExpiryMillis(item.payloadJson))));
         }
+        // A backup from before schema 10 has no message expiry; take it from
+        // the backup's own envelopes, then purge.
+        await _backfillExpiry();
         await _purgeExpiredInTransaction(
             DateTime.now().toUtc().millisecondsSinceEpoch);
         final queuedAt = DateTime.now().microsecondsSinceEpoch;
@@ -1140,14 +1143,22 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         if (ownMessageKey != null && envelope != null) {
           // The server echoed a message this device sent: link the local
           // record to its server ID and mark it delivered.
+          // The server stamps the expiry when it accepts the message, so the
+          // sender learns it from the first echo only (W2). Later echoes
+          // cannot add, move or clear it.
+          await (update(localMessages)
+                ..where((table) =>
+                    table.key.equals(ownMessageKey) &
+                    table.serverMessageId.isNull() &
+                    table.expiresAt.isNull()))
+              .write(LocalMessagesCompanion(
+            expiresAt: Value(envelopeExpiryMillis(envelope.payloadJson)),
+          ));
           await (update(localMessages)
                 ..where((table) => table.key.equals(ownMessageKey)))
               .write(LocalMessagesCompanion(
             serverMessageId: Value(envelope.id),
             state: const Value(LocalMessageState.sent),
-            // The server stamps the expiry when it accepts the message, so
-            // the sender learns it only from this echo (W2).
-            expiresAt: Value(envelopeExpiryMillis(envelope.payloadJson)),
           ));
         }
         final previousCursor = await (select(localSyncStates)
@@ -1657,61 +1668,42 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     return fromEnvelopes < fromMessages ? fromEnvelopes : fromMessages;
   }
 
+  /// Deletes what has expired. Decrypted rows go only by their own expiry,
+  /// which was set when the message was decrypted or, for this device's own
+  /// message, by its first server echo. A cached envelope is only a copy of
+  /// what the server listed and was never authenticated, so an expired one
+  /// removes just itself: a server cannot erase older history by listing a
+  /// message again with a short expiry.
   Future<Set<String>> _purgeExpiredInTransaction(int nowMs) async {
     final conversations = <String>{};
-    final keys = <String>[];
-    final serverIds = <String>[];
     final expiredEnvelopes = await (select(localCiphertextEnvelopes)
           ..where((table) =>
               table.expiresAt.isNotNull() &
               table.expiresAt.isSmallerOrEqualValue(nowMs)))
         .get();
+    for (final chunk in _chunks([for (final row in expiredEnvelopes) row.id])) {
+      await (delete(localCiphertextEnvelopes)
+            ..where((table) => table.id.isIn(chunk)))
+          .go();
+    }
     for (final row in expiredEnvelopes) {
       conversations.add(row.conversationId);
-      serverIds.add(row.id);
-      final key = envelopeMessageKey(row.payloadJson);
-      if (key != null) keys.add(key);
     }
     final expiredMessages = await (select(localMessages)
           ..where((table) =>
               table.expiresAt.isNotNull() &
               table.expiresAt.isSmallerOrEqualValue(nowMs)))
         .get();
+    final keys = <String>[];
     for (final row in expiredMessages) {
       conversations.add(row.conversationId);
       keys.add(row.key);
     }
-    // The envelope names the message by sender device and action ID, so a row
-    // without an expiry of its own (restored from an older backup, say) goes
-    // with its envelope.
     for (final chunk in _chunks(keys)) {
-      final rows = await (select(localMessages)
-            ..where((table) => table.key.isIn(chunk)))
-          .get();
-      for (final row in rows) {
-        conversations.add(row.conversationId);
-      }
       await (delete(localMessageReactions)
             ..where((table) => table.targetKey.isIn(chunk)))
           .go();
       await (delete(localMessages)..where((table) => table.key.isIn(chunk)))
-          .go();
-    }
-    for (final chunk in _chunks(serverIds)) {
-      final rows = await (select(localMessages)
-            ..where((table) => table.serverMessageId.isIn(chunk)))
-          .get();
-      for (final row in rows) {
-        conversations.add(row.conversationId);
-        await (delete(localMessageReactions)
-              ..where((table) => table.targetKey.equals(row.key)))
-            .go();
-      }
-      await (delete(localMessages)
-            ..where((table) => table.serverMessageId.isIn(chunk)))
-          .go();
-      await (delete(localCiphertextEnvelopes)
-            ..where((table) => table.id.isIn(chunk)))
           .go();
     }
     return conversations;
@@ -1741,7 +1733,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         <Object?>[expiresAt, id],
       );
       await customStatement(
-        'UPDATE local_messages SET expires_at = ? WHERE server_message_id = ?',
+        'UPDATE local_messages SET expires_at = ? '
+        'WHERE server_message_id = ? AND expires_at IS NULL',
         <Object?>[expiresAt, id],
       );
     }
@@ -2035,21 +2028,6 @@ int? envelopeExpiryMillis(String payloadJson) {
     final raw = decoded['expires_at'];
     if (raw is! String) return null;
     return DateTime.tryParse(raw)?.toUtc().millisecondsSinceEpoch;
-  } on FormatException {
-    return null;
-  }
-}
-
-/// The local history key (`<sender_device_id>:<idempotency_key>`) of a cached
-/// envelope's JSON, or null when it cannot be read.
-String? envelopeMessageKey(String payloadJson) {
-  try {
-    final decoded = jsonDecode(payloadJson);
-    if (decoded is! Map) return null;
-    final device = decoded['sender_device_id'];
-    final key = decoded['idempotency_key'];
-    if (device is! String || key is! String) return null;
-    return '$device:$key';
   } on FormatException {
     return null;
   }

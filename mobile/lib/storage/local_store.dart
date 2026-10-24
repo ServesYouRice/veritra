@@ -959,7 +959,6 @@ class MemoryLocalStore implements LocalStore {
   Future<Set<String>> purgeExpiredMessages({DateTime? now}) async {
     final at = (now ?? DateTime.now()).toUtc();
     final touched = <String>{};
-    final expiredKeys = <String>{};
     final snapshot = _snapshot;
     if (snapshot != null) {
       final kept = <String, List<ReceivedMessageEnvelope>>{};
@@ -968,7 +967,6 @@ class MemoryLocalStore implements LocalStore {
         for (final envelope in entry.value) {
           if (_expired(envelope.expiresAt, at)) {
             touched.add(entry.key);
-            expiredKeys.add(messageKeyOfEnvelope(envelope));
           } else {
             live.add(envelope);
           }
@@ -981,8 +979,7 @@ class MemoryLocalStore implements LocalStore {
         messagesByConversation: kept,
       );
     }
-    touched
-        .addAll(_history.purgeExpired(at.millisecondsSinceEpoch, expiredKeys));
+    touched.addAll(_history.purgeExpired(at.millisecondsSinceEpoch));
     return touched;
   }
 
@@ -1117,18 +1114,22 @@ class _MemoryMessageHistory {
     _messages[key] = target.copyWith(
       serverMessageId: Value(serverMessageId),
       state: LocalMessageState.sent,
-      expiresAt: Value(expiresAt),
+      // Only the first echo sets the expiry (W2).
+      expiresAt: Value(
+          target.serverMessageId == null && target.expiresAt == null
+              ? expiresAt
+              : target.expiresAt),
     );
   }
 
-  /// Removes messages past their expiry, or named in [expiredKeys], with
-  /// their reactions. Returns the conversations that lost a row.
-  Set<String> purgeExpired(int nowMs, Set<String> expiredKeys) {
+  /// Removes messages past their own expiry, with their reactions. Returns
+  /// the conversations that lost a row.
+  Set<String> purgeExpired(int nowMs) {
     final touched = <String>{};
     final removed = <String>{};
     _messages.removeWhere((key, item) {
       final at = item.expiresAt;
-      final gone = expiredKeys.contains(key) || (at != null && at <= nowMs);
+      final gone = at != null && at <= nowMs;
       if (gone) {
         touched.add(item.conversationId);
         removed.add(key);
@@ -2619,7 +2620,3 @@ void _validateLocalMlsState(
     throw StateError('stale local MLS transition');
   }
 }
-
-/// The local history key of a server envelope (D22).
-String messageKeyOfEnvelope(ReceivedMessageEnvelope envelope) =>
-    '${envelope.senderDeviceId}:${envelope.idempotencyKey}';
