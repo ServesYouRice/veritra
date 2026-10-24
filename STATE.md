@@ -89,6 +89,7 @@ and keep each change small.
 | Automatic user backups | A backup runs only when the user taps **Make a backup**, and nothing reminds them. Phone cloud backups exclude the app's data on purpose, so a lost device without a backup loses its history | Each backup issues a new one-use recovery code, so scheduled backups need a long-lived backup key the user saves once. Design it with a review agent (recovery is a credential decision) |
 | Community membership in the app | The server adds community members (`POST /api/v1/communities/{id}/members`), but the app has no screen for it and no way to join: search finds a community, then says to join it, with nothing to tap | Part of D44 |
 | Announcement channels | `announcement` is a stored label only: members can still post, and the app always creates `private` channels | Part of D44 |
+| Disappearing messages stay on devices | The timer deletes envelopes from the server only; the app parses `expires_at` but never removes the decrypted copy from its local database. The settings text says "deleted from the server", so it is honest, but it is not what WhatsApp users expect | Delete expired messages on every device (local store and caches), with tests |
 
 ## Release gates
 
