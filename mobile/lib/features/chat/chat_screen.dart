@@ -28,6 +28,9 @@ import 'chat_desktop.dart';
 import 'chat_list_screen.dart';
 import 'composer_attachments.dart';
 import 'conversation_details_screen.dart';
+import 'message_ticks.dart';
+import 'typing_line.dart';
+import '../../core/receipts_state.dart' show MessageTick;
 
 /// Conversation detail screen. Pushed from the chat list, or the detail pane
 /// of the wide layout. It listens to the app state itself, and rebuilds only
@@ -80,6 +83,8 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     composer.addListener(_saveDraft);
+    _lastTypedText = composer.text;
+    composer.addListener(_noticeTyping);
     scroll.addListener(_maybeLoadOlder);
     scroll.addListener(_trackLatest);
   }
@@ -94,8 +99,11 @@ class _ChatScreenState extends State<ChatScreen> {
     // The same screen now shows another conversation: its own draft, never
     // the previous one's. The previous draft is already saved.
     composer.removeListener(_saveDraft);
+    composer.removeListener(_noticeTyping);
     composer.value = _draftValue(widget.conversationId);
+    _lastTypedText = composer.text;
     composer.addListener(_saveDraft);
+    composer.addListener(_noticeTyping);
     _replyingTo = _drafts.replyTargetFor(widget.conversationId);
     unawaited(_attachments.clear());
   }
@@ -103,6 +111,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     composer.removeListener(_saveDraft);
+    composer.removeListener(_noticeTyping);
     scroll.removeListener(_trackLatest);
     scroll.removeListener(_maybeLoadOlder);
     scroll.dispose();
@@ -121,6 +130,19 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _saveDraft() => _drafts.setText(widget.conversationId, composer.text);
+
+  /// The text as of the last typing check, so a cursor move or a draft being
+  /// restored is not taken for typing.
+  String _lastTypedText = '';
+
+  /// Tells the others you are typing (W5), once the text really changed and
+  /// is not empty. [AppState.notifyTyping] throttles and gates by size.
+  void _noticeTyping() {
+    final text = composer.text;
+    if (text == _lastTypedText) return;
+    _lastTypedText = text;
+    if (text.isNotEmpty) widget.state.notifyTyping(widget.conversationId);
+  }
 
   void _setReplyTarget(String? messageKey) {
     _drafts.setReplyTarget(widget.conversationId, messageKey);
@@ -270,6 +292,10 @@ class _ChatScreenState extends State<ChatScreen> {
                     if (conversation != null &&
                         widget.state.mlsConversationFailed(conversation.id))
                       const _PausedConversationNotice(),
+                    TypingLine(
+                      state: widget.state,
+                      conversationId: widget.conversationId,
+                    ),
                     if (replyTarget != null)
                       _ReplyBar(
                         preview: _replyPreview(context.l10n, replyTarget),
@@ -838,30 +864,40 @@ class _MessageList extends StatelessWidget {
           children: <Widget>[
             if (showDay)
               _DaySeparator(label: formatDate(context, message.createdAt)),
-            _MessageBubble(
-              message: message,
-              local: local,
-              replyPreview: local?.replyTo == null
-                  ? null
-                  : _replyPreview(context.l10n, replyTarget),
-              reactions: local == null
-                  ? const <({String reaction, int count, bool mine})>[]
-                  : history.reactionsFor(local.key,
-                      ownAccountId: state.session?.accountId),
-              mine: mine,
-              onActions: onMessageActions == null ||
-                      local == null ||
-                      local.kind != LocalMessageKind.text ||
-                      local.deletedAt != null
-                  ? null
-                  : () => onMessageActions!(local, mine),
-              senderLabel: _senderLabel(senderAccountId),
-              onOpenAttachment: state.attachmentsAvailable
-                  ? (entry) => openAttachment(context, state, entry)
-                  : null,
-              // In a DM the app bar already says who the other person is;
-              // only group and channel bubbles need a per-message sender.
-              showSender: !mine && !_isDm,
+            MessageTickBuilder(
+              state: state,
+              conversationId: conversationId,
+              createdAt: message.createdAt,
+              enabled: mine &&
+                  message.deletedAt == null &&
+                  local?.deletedAt == null &&
+                  state.ticksApply(conversationId),
+              builder: (context, tick) => _MessageBubble(
+                message: message,
+                local: local,
+                replyPreview: local?.replyTo == null
+                    ? null
+                    : _replyPreview(context.l10n, replyTarget),
+                reactions: local == null
+                    ? const <({String reaction, int count, bool mine})>[]
+                    : history.reactionsFor(local.key,
+                        ownAccountId: state.session?.accountId),
+                mine: mine,
+                tick: tick,
+                onActions: onMessageActions == null ||
+                        local == null ||
+                        local.kind != LocalMessageKind.text ||
+                        local.deletedAt != null
+                    ? null
+                    : () => onMessageActions!(local, mine),
+                senderLabel: _senderLabel(senderAccountId),
+                onOpenAttachment: state.attachmentsAvailable
+                    ? (entry) => openAttachment(context, state, entry)
+                    : null,
+                // In a DM the app bar already says who the other person is;
+                // only group and channel bubbles need a per-message sender.
+                showSender: !mine && !_isDm,
+              ),
             ),
           ],
         );
@@ -1103,9 +1139,13 @@ class _MessageBubble extends StatelessWidget {
     this.local,
     this.replyPreview,
     this.reactions = const <({String reaction, int count, bool mine})>[],
+    this.tick,
     this.onActions,
     this.onOpenAttachment,
   });
+
+  /// Sent, delivered or read, for a message of yours; null otherwise.
+  final MessageTick? tick;
 
   /// Opens the reply/edit/delete/react menu; null when none apply.
   final VoidCallback? onActions;
@@ -1194,15 +1234,16 @@ class _MessageBubble extends StatelessWidget {
       excludeSemantics: true,
       onLongPress: onActions,
       onLongPressHint: onActions == null ? null : l10n.chatMessageActions,
-      label: deleted
-          ? l10n.chatDeletedSemantics(sender)
-          : unverifiable
-              ? l10n.chatUnverifiedSemantics(time)
-              : text != null
-                  ? l10n.chatMessageSemantics(sender, time, text)
-                  : local?.kind == LocalMessageKind.attachment
-                      ? l10n.chatAttachmentSemantics(sender, time)
-                      : l10n.chatEncryptedSemantics(sender, time),
+      label: (deleted
+              ? l10n.chatDeletedSemantics(sender)
+              : unverifiable
+                  ? l10n.chatUnverifiedSemantics(time)
+                  : text != null
+                      ? l10n.chatMessageSemantics(sender, time, text)
+                      : local?.kind == LocalMessageKind.attachment
+                          ? l10n.chatAttachmentSemantics(sender, time)
+                          : l10n.chatEncryptedSemantics(sender, time)) +
+          (tick == null ? '' : ', ${messageTickLabel(l10n, tick!)}'),
       child: LayoutBuilder(
         builder: (context, constraints) {
           // Taken from the layout rather than the window so the bubble is
@@ -1357,6 +1398,10 @@ class _MessageBubble extends StatelessWidget {
           const SizedBox(width: 4),
         ],
         Text(parts.join(' · '), style: theme.textTheme.labelSmall),
+        if (tick != null) ...<Widget>[
+          const SizedBox(width: 4),
+          MessageTickIcon(tick: tick!),
+        ],
       ],
     );
   }

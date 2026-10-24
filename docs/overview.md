@@ -171,6 +171,46 @@ sequenceDiagram
     Note over S: server never holds a key
 ```
 
+### Ticks, typing and read receipts (W5)
+
+What the server keeps is ids and times only, never content.
+
+- **Sent** (one tick): the server accepted the message.
+- **Delivered** (two ticks): a device of the recipient fetched the message's
+  sync event. The server records one `delivery_receipts` cursor per account and
+  conversation when it serves a `/sync/events` page, and announces the move in
+  realtime (`delivery_receipt.updated`, never stored). This is new metadata:
+  when a recipient's device last caught up in a conversation.
+- **Read** (two ticks in the accent): the recipient's `read_receipts` cursor
+  reaches the message. A read cursor also counts as delivered.
+- **Group rule**: delivered and read mean every other member, excluding you and
+  accounts you blocked. One member behind holds the tick back. A member who
+  keeps read receipts off has no visible read cursor, so a group's read tick
+  waits for them too. In disappearing chats the cursors go with the message
+  (they cascade), so the tick falls back to what remains.
+- `GET /conversations/{id}/read-receipts` returns the other members' cursors as
+  `delivered_through` / `read_through` (the `created_at` of the newest covered
+  message). The client compares them with its own messages' `created_at`.
+- **Size limit**: ticks exist in DMs and groups of up to 20 members
+  (`storage.ReceiptMaxMembers`), never in community channels. Past that the
+  server keeps no delivery cursors and lists no receipts, because each
+  delivery is announced to every member (growth with the square of the member
+  count), and the app shows no ticks.
+- **Read receipts switch** (Settings, Privacy; on by default). It belongs to the
+  account (`accounts.send_read_receipts`, `GET`/`PUT /account/read-receipts`),
+  so every linked device follows it, and each session start adopts the
+  server's value. Off: the server turns every read receipt of the account
+  private, whatever a device sends. A private cursor serves the account's own
+  unread count only: no sync event, no realtime event, never listed to other
+  members. The app also hides everyone's read state (like WhatsApp) and shows
+  delivery ticks only. Turning it back on shares the cursor again at the next
+  read.
+- **Typing line** ("X is typing…", DMs and conversations up to 20 members):
+  `POST /conversations/{id}/typing` publishes an ephemeral `typing.updated`
+  realtime event (conversation id and account id only; never stored; one per
+  two seconds per account and conversation, else 429). A typer expires after
+  five seconds of silence.
+
 ---
 
 ## 5. Hosting options

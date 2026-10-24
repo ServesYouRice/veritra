@@ -82,6 +82,8 @@ void main() {
     testWidgets('settings exposes About and the license page', (tester) async {
       await tester.pumpWidget(_App(state: _state()));
       await tester.scrollUntilVisible(find.text('Open-source licenses'), 200);
+      await tester.ensureVisible(find.text('Open-source licenses'));
+      await tester.pumpAndSettle();
       expect(find.text('About Veritra'), findsOneWidget);
       expect(
         find.text('Version $veritraVersion · AGPL-3.0-or-later'),
@@ -99,6 +101,8 @@ void main() {
     ) async {
       await tester.pumpWidget(_App(state: _state()));
       await tester.scrollUntilVisible(find.text('About Veritra'), 200);
+      await tester.ensureVisible(find.text('About Veritra'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('About Veritra'));
       await tester.pumpAndSettle();
       expect(find.byType(AboutDialog), findsOneWidget);

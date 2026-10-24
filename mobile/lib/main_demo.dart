@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'core/api_client.dart';
 import 'core/app_state.dart';
 import 'core/client_config.dart';
+import 'core/receipts_state.dart';
 import 'core/transport_policy.dart';
 import 'crypto/attachment_crypto.dart';
 import 'desktop/desktop_services.dart';
@@ -71,6 +72,7 @@ Future<void> main(List<String> args) async {
       },
     ),
     attachmentService: AttachmentCryptoService(bindings),
+    receiptPreferences: ReceiptPreferences(SecureReceiptPreferenceStore()),
     syncServiceFactory: (baseUrl, token) =>
         WebSocketSyncService(baseUrl: baseUrl, token: token),
     pushService: Platform.isAndroid || Platform.isIOS

@@ -1015,6 +1015,61 @@ class ApiClient {
     );
   }
 
+  /// Moves the read cursor for the caller's own unread count only: the server
+  /// announces nothing and lists it to nobody (read receipts switched off).
+  Future<void> markReadPrivate(
+    String token,
+    String conversationId,
+    String messageId,
+  ) async {
+    await _jsonRequest(
+      'POST',
+      '/api/v1/conversations/$conversationId/read-receipts',
+      token: token,
+      body: <String, Object?>{'message_id': messageId, 'private': true},
+    );
+  }
+
+  /// Whether this account shares read receipts; the switch is per account, so
+  /// every linked device honours it.
+  Future<bool> readReceiptsEnabled(String token) async {
+    final json = await _jsonRequest('GET', '/api/v1/account/read-receipts',
+        token: token);
+    return json['enabled'] != false;
+  }
+
+  Future<void> setReadReceiptsEnabled(String token, bool enabled) async {
+    await _jsonRequest(
+      'PUT',
+      '/api/v1/account/read-receipts',
+      token: token,
+      body: <String, Object?>{'enabled': enabled},
+    );
+  }
+
+  /// The other members' delivery and read cursors (W5).
+  Future<List<MemberReceipt>> listReceipts(
+    String token,
+    String conversationId,
+  ) async {
+    final json = await _jsonRequest(
+      'GET',
+      '/api/v1/conversations/$conversationId/read-receipts',
+      token: token,
+    );
+    return _rows(json, 'receipts', MemberReceipt.fromJson);
+  }
+
+  /// Ephemeral typing signal: nothing is stored, and the server admits about
+  /// one per two seconds per conversation (429 otherwise).
+  Future<void> sendTyping(String token, String conversationId) async {
+    await _jsonRequest(
+      'POST',
+      '/api/v1/conversations/$conversationId/typing',
+      token: token,
+    );
+  }
+
   Future<String> registerWebPush(
     String token, {
     required String endpoint,
