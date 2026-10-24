@@ -455,9 +455,15 @@ class $LocalCiphertextEnvelopesTable extends LocalCiphertextEnvelopes
   late final GeneratedColumn<String> payloadJson = GeneratedColumn<String>(
       'payload_json', aliasedName, false,
       type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _expiresAtMeta =
+      const VerificationMeta('expiresAt');
+  @override
+  late final GeneratedColumn<int> expiresAt = GeneratedColumn<int>(
+      'expires_at', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns =>
-      [id, conversationId, position, payloadJson];
+      [id, conversationId, position, payloadJson, expiresAt];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -496,6 +502,10 @@ class $LocalCiphertextEnvelopesTable extends LocalCiphertextEnvelopes
     } else if (isInserting) {
       context.missing(_payloadJsonMeta);
     }
+    if (data.containsKey('expires_at')) {
+      context.handle(_expiresAtMeta,
+          expiresAt.isAcceptableOrUnknown(data['expires_at']!, _expiresAtMeta));
+    }
     return context;
   }
 
@@ -514,6 +524,8 @@ class $LocalCiphertextEnvelopesTable extends LocalCiphertextEnvelopes
           .read(DriftSqlType.int, data['${effectivePrefix}position'])!,
       payloadJson: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}payload_json'])!,
+      expiresAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}expires_at']),
     );
   }
 
@@ -529,11 +541,13 @@ class LocalCiphertextEnvelope extends DataClass
   final String conversationId;
   final int position;
   final String payloadJson;
+  final int? expiresAt;
   const LocalCiphertextEnvelope(
       {required this.id,
       required this.conversationId,
       required this.position,
-      required this.payloadJson});
+      required this.payloadJson,
+      this.expiresAt});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -541,6 +555,9 @@ class LocalCiphertextEnvelope extends DataClass
     map['conversation_id'] = Variable<String>(conversationId);
     map['position'] = Variable<int>(position);
     map['payload_json'] = Variable<String>(payloadJson);
+    if (!nullToAbsent || expiresAt != null) {
+      map['expires_at'] = Variable<int>(expiresAt);
+    }
     return map;
   }
 
@@ -550,6 +567,9 @@ class LocalCiphertextEnvelope extends DataClass
       conversationId: Value(conversationId),
       position: Value(position),
       payloadJson: Value(payloadJson),
+      expiresAt: expiresAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(expiresAt),
     );
   }
 
@@ -561,6 +581,7 @@ class LocalCiphertextEnvelope extends DataClass
       conversationId: serializer.fromJson<String>(json['conversationId']),
       position: serializer.fromJson<int>(json['position']),
       payloadJson: serializer.fromJson<String>(json['payloadJson']),
+      expiresAt: serializer.fromJson<int?>(json['expiresAt']),
     );
   }
   @override
@@ -571,6 +592,7 @@ class LocalCiphertextEnvelope extends DataClass
       'conversationId': serializer.toJson<String>(conversationId),
       'position': serializer.toJson<int>(position),
       'payloadJson': serializer.toJson<String>(payloadJson),
+      'expiresAt': serializer.toJson<int?>(expiresAt),
     };
   }
 
@@ -578,12 +600,14 @@ class LocalCiphertextEnvelope extends DataClass
           {String? id,
           String? conversationId,
           int? position,
-          String? payloadJson}) =>
+          String? payloadJson,
+          Value<int?> expiresAt = const Value.absent()}) =>
       LocalCiphertextEnvelope(
         id: id ?? this.id,
         conversationId: conversationId ?? this.conversationId,
         position: position ?? this.position,
         payloadJson: payloadJson ?? this.payloadJson,
+        expiresAt: expiresAt.present ? expiresAt.value : this.expiresAt,
       );
   LocalCiphertextEnvelope copyWithCompanion(
       LocalCiphertextEnvelopesCompanion data) {
@@ -595,6 +619,7 @@ class LocalCiphertextEnvelope extends DataClass
       position: data.position.present ? data.position.value : this.position,
       payloadJson:
           data.payloadJson.present ? data.payloadJson.value : this.payloadJson,
+      expiresAt: data.expiresAt.present ? data.expiresAt.value : this.expiresAt,
     );
   }
 
@@ -604,13 +629,15 @@ class LocalCiphertextEnvelope extends DataClass
           ..write('id: $id, ')
           ..write('conversationId: $conversationId, ')
           ..write('position: $position, ')
-          ..write('payloadJson: $payloadJson')
+          ..write('payloadJson: $payloadJson, ')
+          ..write('expiresAt: $expiresAt')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(id, conversationId, position, payloadJson);
+  int get hashCode =>
+      Object.hash(id, conversationId, position, payloadJson, expiresAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -618,7 +645,8 @@ class LocalCiphertextEnvelope extends DataClass
           other.id == this.id &&
           other.conversationId == this.conversationId &&
           other.position == this.position &&
-          other.payloadJson == this.payloadJson);
+          other.payloadJson == this.payloadJson &&
+          other.expiresAt == this.expiresAt);
 }
 
 class LocalCiphertextEnvelopesCompanion
@@ -627,12 +655,14 @@ class LocalCiphertextEnvelopesCompanion
   final Value<String> conversationId;
   final Value<int> position;
   final Value<String> payloadJson;
+  final Value<int?> expiresAt;
   final Value<int> rowid;
   const LocalCiphertextEnvelopesCompanion({
     this.id = const Value.absent(),
     this.conversationId = const Value.absent(),
     this.position = const Value.absent(),
     this.payloadJson = const Value.absent(),
+    this.expiresAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   LocalCiphertextEnvelopesCompanion.insert({
@@ -640,6 +670,7 @@ class LocalCiphertextEnvelopesCompanion
     required String conversationId,
     required int position,
     required String payloadJson,
+    this.expiresAt = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : id = Value(id),
         conversationId = Value(conversationId),
@@ -650,6 +681,7 @@ class LocalCiphertextEnvelopesCompanion
     Expression<String>? conversationId,
     Expression<int>? position,
     Expression<String>? payloadJson,
+    Expression<int>? expiresAt,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -657,6 +689,7 @@ class LocalCiphertextEnvelopesCompanion
       if (conversationId != null) 'conversation_id': conversationId,
       if (position != null) 'position': position,
       if (payloadJson != null) 'payload_json': payloadJson,
+      if (expiresAt != null) 'expires_at': expiresAt,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -666,12 +699,14 @@ class LocalCiphertextEnvelopesCompanion
       Value<String>? conversationId,
       Value<int>? position,
       Value<String>? payloadJson,
+      Value<int?>? expiresAt,
       Value<int>? rowid}) {
     return LocalCiphertextEnvelopesCompanion(
       id: id ?? this.id,
       conversationId: conversationId ?? this.conversationId,
       position: position ?? this.position,
       payloadJson: payloadJson ?? this.payloadJson,
+      expiresAt: expiresAt ?? this.expiresAt,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -691,6 +726,9 @@ class LocalCiphertextEnvelopesCompanion
     if (payloadJson.present) {
       map['payload_json'] = Variable<String>(payloadJson.value);
     }
+    if (expiresAt.present) {
+      map['expires_at'] = Variable<int>(expiresAt.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -704,6 +742,7 @@ class LocalCiphertextEnvelopesCompanion
           ..write('conversationId: $conversationId, ')
           ..write('position: $position, ')
           ..write('payloadJson: $payloadJson, ')
+          ..write('expiresAt: $expiresAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -3098,6 +3137,12 @@ class $LocalMessagesTable extends LocalMessages
   late final GeneratedColumn<String> state = GeneratedColumn<String>(
       'state', aliasedName, false,
       type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _expiresAtMeta =
+      const VerificationMeta('expiresAt');
+  @override
+  late final GeneratedColumn<int> expiresAt = GeneratedColumn<int>(
+      'expires_at', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns => [
         key,
@@ -3111,7 +3156,8 @@ class $LocalMessagesTable extends LocalMessages
         createdAt,
         editedAt,
         deletedAt,
-        state
+        state,
+        expiresAt
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -3193,6 +3239,10 @@ class $LocalMessagesTable extends LocalMessages
     } else if (isInserting) {
       context.missing(_stateMeta);
     }
+    if (data.containsKey('expires_at')) {
+      context.handle(_expiresAtMeta,
+          expiresAt.isAcceptableOrUnknown(data['expires_at']!, _expiresAtMeta));
+    }
     return context;
   }
 
@@ -3226,6 +3276,8 @@ class $LocalMessagesTable extends LocalMessages
           .read(DriftSqlType.int, data['${effectivePrefix}deleted_at']),
       state: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}state'])!,
+      expiresAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}expires_at']),
     );
   }
 
@@ -3248,6 +3300,7 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
   final int? editedAt;
   final int? deletedAt;
   final String state;
+  final int? expiresAt;
   const LocalMessage(
       {required this.key,
       this.serverMessageId,
@@ -3260,7 +3313,8 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       required this.createdAt,
       this.editedAt,
       this.deletedAt,
-      required this.state});
+      required this.state,
+      this.expiresAt});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -3286,6 +3340,9 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       map['deleted_at'] = Variable<int>(deletedAt);
     }
     map['state'] = Variable<String>(state);
+    if (!nullToAbsent || expiresAt != null) {
+      map['expires_at'] = Variable<int>(expiresAt);
+    }
     return map;
   }
 
@@ -3311,6 +3368,9 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
           ? const Value.absent()
           : Value(deletedAt),
       state: Value(state),
+      expiresAt: expiresAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(expiresAt),
     );
   }
 
@@ -3330,6 +3390,7 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       editedAt: serializer.fromJson<int?>(json['editedAt']),
       deletedAt: serializer.fromJson<int?>(json['deletedAt']),
       state: serializer.fromJson<String>(json['state']),
+      expiresAt: serializer.fromJson<int?>(json['expiresAt']),
     );
   }
   @override
@@ -3348,6 +3409,7 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       'editedAt': serializer.toJson<int?>(editedAt),
       'deletedAt': serializer.toJson<int?>(deletedAt),
       'state': serializer.toJson<String>(state),
+      'expiresAt': serializer.toJson<int?>(expiresAt),
     };
   }
 
@@ -3363,7 +3425,8 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
           int? createdAt,
           Value<int?> editedAt = const Value.absent(),
           Value<int?> deletedAt = const Value.absent(),
-          String? state}) =>
+          String? state,
+          Value<int?> expiresAt = const Value.absent()}) =>
       LocalMessage(
         key: key ?? this.key,
         serverMessageId: serverMessageId.present
@@ -3379,6 +3442,7 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
         editedAt: editedAt.present ? editedAt.value : this.editedAt,
         deletedAt: deletedAt.present ? deletedAt.value : this.deletedAt,
         state: state ?? this.state,
+        expiresAt: expiresAt.present ? expiresAt.value : this.expiresAt,
       );
   LocalMessage copyWithCompanion(LocalMessagesCompanion data) {
     return LocalMessage(
@@ -3402,6 +3466,7 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       editedAt: data.editedAt.present ? data.editedAt.value : this.editedAt,
       deletedAt: data.deletedAt.present ? data.deletedAt.value : this.deletedAt,
       state: data.state.present ? data.state.value : this.state,
+      expiresAt: data.expiresAt.present ? data.expiresAt.value : this.expiresAt,
     );
   }
 
@@ -3419,7 +3484,8 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
           ..write('createdAt: $createdAt, ')
           ..write('editedAt: $editedAt, ')
           ..write('deletedAt: $deletedAt, ')
-          ..write('state: $state')
+          ..write('state: $state, ')
+          ..write('expiresAt: $expiresAt')
           ..write(')'))
         .toString();
   }
@@ -3437,7 +3503,8 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       createdAt,
       editedAt,
       deletedAt,
-      state);
+      state,
+      expiresAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -3453,7 +3520,8 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
           other.createdAt == this.createdAt &&
           other.editedAt == this.editedAt &&
           other.deletedAt == this.deletedAt &&
-          other.state == this.state);
+          other.state == this.state &&
+          other.expiresAt == this.expiresAt);
 }
 
 class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
@@ -3469,6 +3537,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
   final Value<int?> editedAt;
   final Value<int?> deletedAt;
   final Value<String> state;
+  final Value<int?> expiresAt;
   final Value<int> rowid;
   const LocalMessagesCompanion({
     this.key = const Value.absent(),
@@ -3483,6 +3552,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
     this.editedAt = const Value.absent(),
     this.deletedAt = const Value.absent(),
     this.state = const Value.absent(),
+    this.expiresAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   LocalMessagesCompanion.insert({
@@ -3498,6 +3568,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
     this.editedAt = const Value.absent(),
     this.deletedAt = const Value.absent(),
     required String state,
+    this.expiresAt = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : key = Value(key),
         conversationId = Value(conversationId),
@@ -3519,6 +3590,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
     Expression<int>? editedAt,
     Expression<int>? deletedAt,
     Expression<String>? state,
+    Expression<int>? expiresAt,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -3534,6 +3606,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
       if (editedAt != null) 'edited_at': editedAt,
       if (deletedAt != null) 'deleted_at': deletedAt,
       if (state != null) 'state': state,
+      if (expiresAt != null) 'expires_at': expiresAt,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -3551,6 +3624,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
       Value<int?>? editedAt,
       Value<int?>? deletedAt,
       Value<String>? state,
+      Value<int?>? expiresAt,
       Value<int>? rowid}) {
     return LocalMessagesCompanion(
       key: key ?? this.key,
@@ -3565,6 +3639,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
       editedAt: editedAt ?? this.editedAt,
       deletedAt: deletedAt ?? this.deletedAt,
       state: state ?? this.state,
+      expiresAt: expiresAt ?? this.expiresAt,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -3608,6 +3683,9 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
     if (state.present) {
       map['state'] = Variable<String>(state.value);
     }
+    if (expiresAt.present) {
+      map['expires_at'] = Variable<int>(expiresAt.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -3629,6 +3707,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
           ..write('editedAt: $editedAt, ')
           ..write('deletedAt: $deletedAt, ')
           ..write('state: $state, ')
+          ..write('expiresAt: $expiresAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -3945,6 +4024,11 @@ abstract class _$EncryptedLocalDatabase extends GeneratedDatabase {
   late final Index localCiphertextEnvelopesConversationPosition = Index(
       'local_ciphertext_envelopes_conversation_position',
       'CREATE INDEX IF NOT EXISTS local_ciphertext_envelopes_conversation_position ON local_ciphertext_envelopes (conversation_id, position)');
+  late final Index localCiphertextEnvelopesExpiresAt = Index(
+      'local_ciphertext_envelopes_expires_at',
+      'CREATE INDEX IF NOT EXISTS local_ciphertext_envelopes_expires_at ON local_ciphertext_envelopes (expires_at) WHERE expires_at IS NOT NULL');
+  late final Index localMessagesExpiresAt = Index('local_messages_expires_at',
+      'CREATE INDEX IF NOT EXISTS local_messages_expires_at ON local_messages (expires_at) WHERE expires_at IS NOT NULL');
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -3962,7 +4046,9 @@ abstract class _$EncryptedLocalDatabase extends GeneratedDatabase {
         localPeerVerifications,
         localMessages,
         localMessageReactions,
-        localCiphertextEnvelopesConversationPosition
+        localCiphertextEnvelopesConversationPosition,
+        localCiphertextEnvelopesExpiresAt,
+        localMessagesExpiresAt
       ];
 }
 
@@ -4255,6 +4341,7 @@ typedef $$LocalCiphertextEnvelopesTableCreateCompanionBuilder
   required String conversationId,
   required int position,
   required String payloadJson,
+  Value<int?> expiresAt,
   Value<int> rowid,
 });
 typedef $$LocalCiphertextEnvelopesTableUpdateCompanionBuilder
@@ -4263,6 +4350,7 @@ typedef $$LocalCiphertextEnvelopesTableUpdateCompanionBuilder
   Value<String> conversationId,
   Value<int> position,
   Value<String> payloadJson,
+  Value<int?> expiresAt,
   Value<int> rowid,
 });
 
@@ -4287,6 +4375,9 @@ class $$LocalCiphertextEnvelopesTableFilterComposer
 
   ColumnFilters<String> get payloadJson => $composableBuilder(
       column: $table.payloadJson, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get expiresAt => $composableBuilder(
+      column: $table.expiresAt, builder: (column) => ColumnFilters(column));
 }
 
 class $$LocalCiphertextEnvelopesTableOrderingComposer
@@ -4310,6 +4401,9 @@ class $$LocalCiphertextEnvelopesTableOrderingComposer
 
   ColumnOrderings<String> get payloadJson => $composableBuilder(
       column: $table.payloadJson, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get expiresAt => $composableBuilder(
+      column: $table.expiresAt, builder: (column) => ColumnOrderings(column));
 }
 
 class $$LocalCiphertextEnvelopesTableAnnotationComposer
@@ -4332,6 +4426,9 @@ class $$LocalCiphertextEnvelopesTableAnnotationComposer
 
   GeneratedColumn<String> get payloadJson => $composableBuilder(
       column: $table.payloadJson, builder: (column) => column);
+
+  GeneratedColumn<int> get expiresAt =>
+      $composableBuilder(column: $table.expiresAt, builder: (column) => column);
 }
 
 class $$LocalCiphertextEnvelopesTableTableManager extends RootTableManager<
@@ -4369,6 +4466,7 @@ class $$LocalCiphertextEnvelopesTableTableManager extends RootTableManager<
             Value<String> conversationId = const Value.absent(),
             Value<int> position = const Value.absent(),
             Value<String> payloadJson = const Value.absent(),
+            Value<int?> expiresAt = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               LocalCiphertextEnvelopesCompanion(
@@ -4376,6 +4474,7 @@ class $$LocalCiphertextEnvelopesTableTableManager extends RootTableManager<
             conversationId: conversationId,
             position: position,
             payloadJson: payloadJson,
+            expiresAt: expiresAt,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -4383,6 +4482,7 @@ class $$LocalCiphertextEnvelopesTableTableManager extends RootTableManager<
             required String conversationId,
             required int position,
             required String payloadJson,
+            Value<int?> expiresAt = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               LocalCiphertextEnvelopesCompanion.insert(
@@ -4390,6 +4490,7 @@ class $$LocalCiphertextEnvelopesTableTableManager extends RootTableManager<
             conversationId: conversationId,
             position: position,
             payloadJson: payloadJson,
+            expiresAt: expiresAt,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
@@ -5751,6 +5852,7 @@ typedef $$LocalMessagesTableCreateCompanionBuilder = LocalMessagesCompanion
   Value<int?> editedAt,
   Value<int?> deletedAt,
   required String state,
+  Value<int?> expiresAt,
   Value<int> rowid,
 });
 typedef $$LocalMessagesTableUpdateCompanionBuilder = LocalMessagesCompanion
@@ -5767,6 +5869,7 @@ typedef $$LocalMessagesTableUpdateCompanionBuilder = LocalMessagesCompanion
   Value<int?> editedAt,
   Value<int?> deletedAt,
   Value<String> state,
+  Value<int?> expiresAt,
   Value<int> rowid,
 });
 
@@ -5818,6 +5921,9 @@ class $$LocalMessagesTableFilterComposer
 
   ColumnFilters<String> get state => $composableBuilder(
       column: $table.state, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get expiresAt => $composableBuilder(
+      column: $table.expiresAt, builder: (column) => ColumnFilters(column));
 }
 
 class $$LocalMessagesTableOrderingComposer
@@ -5868,6 +5974,9 @@ class $$LocalMessagesTableOrderingComposer
 
   ColumnOrderings<String> get state => $composableBuilder(
       column: $table.state, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get expiresAt => $composableBuilder(
+      column: $table.expiresAt, builder: (column) => ColumnOrderings(column));
 }
 
 class $$LocalMessagesTableAnnotationComposer
@@ -5914,6 +6023,9 @@ class $$LocalMessagesTableAnnotationComposer
 
   GeneratedColumn<String> get state =>
       $composableBuilder(column: $table.state, builder: (column) => column);
+
+  GeneratedColumn<int> get expiresAt =>
+      $composableBuilder(column: $table.expiresAt, builder: (column) => column);
 }
 
 class $$LocalMessagesTableTableManager extends RootTableManager<
@@ -5956,6 +6068,7 @@ class $$LocalMessagesTableTableManager extends RootTableManager<
             Value<int?> editedAt = const Value.absent(),
             Value<int?> deletedAt = const Value.absent(),
             Value<String> state = const Value.absent(),
+            Value<int?> expiresAt = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               LocalMessagesCompanion(
@@ -5971,6 +6084,7 @@ class $$LocalMessagesTableTableManager extends RootTableManager<
             editedAt: editedAt,
             deletedAt: deletedAt,
             state: state,
+            expiresAt: expiresAt,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -5986,6 +6100,7 @@ class $$LocalMessagesTableTableManager extends RootTableManager<
             Value<int?> editedAt = const Value.absent(),
             Value<int?> deletedAt = const Value.absent(),
             required String state,
+            Value<int?> expiresAt = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               LocalMessagesCompanion.insert(
@@ -6001,6 +6116,7 @@ class $$LocalMessagesTableTableManager extends RootTableManager<
             editedAt: editedAt,
             deletedAt: deletedAt,
             state: state,
+            expiresAt: expiresAt,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0

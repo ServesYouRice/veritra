@@ -402,6 +402,13 @@ abstract class LocalStore {
   Future<void> clearCachedState({bool preserveOutbox = false});
   Future<void> clear();
 
+  /// Deletes every message, reaction and cached envelope whose server expiry
+  /// has passed (W2) and returns the conversations that lost a row.
+  Future<Set<String>> purgeExpiredMessages({DateTime? now});
+
+  /// When the next stored message expires, if any does.
+  Future<DateTime?> nextMessageExpiry();
+
   /// The confirmed destructive reset for a database that cannot be opened
   /// (I39). The unreadable database is moved aside with its key, never
   /// deleted, and the next open starts a new, empty identity.
@@ -618,10 +625,13 @@ class MemoryLocalStore implements LocalStore {
     for (final entry in nextMessages.entries) {
       entry.value.removeWhere((message) => deletedIds.contains(message.id));
     }
+    final now = DateTime.now().toUtc();
     for (final envelope in transition.upsertedEnvelopes) {
       final messages =
           nextMessages[envelope.conversationId] ??= <ReceivedMessageEnvelope>[];
       messages.removeWhere((message) => message.id == envelope.id);
+      // Arrived already expired (W2): consumed, never stored.
+      if (_expired(envelope.expiresAt, now)) continue;
       messages.add(envelope);
     }
     _history.apply(transition.messageEffects);
@@ -654,9 +664,14 @@ class MemoryLocalStore implements LocalStore {
       final messages =
           nextMessages[envelope.conversationId] ??= <ReceivedMessageEnvelope>[];
       messages.removeWhere((item) => item.id == envelope.id);
-      messages.add(envelope);
+      if (!_expired(envelope.expiresAt, DateTime.now().toUtc())) {
+        messages.add(envelope);
+      }
       final ownKey = commit.ownMessageKey;
-      if (ownKey != null) _history.markSent(ownKey, envelope.id);
+      if (ownKey != null) {
+        _history.markSent(ownKey, envelope.id,
+            expiresAt: envelope.expiresAt?.toUtc().millisecondsSinceEpoch);
+      }
     }
     _processedMlsMessages.add(commit.eventKey);
     _syncCursor = commit.cursor;
@@ -860,6 +875,59 @@ class MemoryLocalStore implements LocalStore {
     await clear();
   }
 
+  static bool _expired(DateTime? expiresAt, DateTime now) =>
+      expiresAt != null && !expiresAt.isAfter(now);
+
+  @override
+  Future<Set<String>> purgeExpiredMessages({DateTime? now}) async {
+    final at = (now ?? DateTime.now()).toUtc();
+    final touched = <String>{};
+    final expiredKeys = <String>{};
+    final snapshot = _snapshot;
+    if (snapshot != null) {
+      final kept = <String, List<ReceivedMessageEnvelope>>{};
+      for (final entry in snapshot.messagesByConversation.entries) {
+        final live = <ReceivedMessageEnvelope>[];
+        for (final envelope in entry.value) {
+          if (_expired(envelope.expiresAt, at)) {
+            touched.add(entry.key);
+            expiredKeys.add(messageKeyOfEnvelope(envelope));
+          } else {
+            live.add(envelope);
+          }
+        }
+        kept[entry.key] = live;
+      }
+      _snapshot = CachedSnapshot(
+        cursor: snapshot.cursor,
+        conversations: snapshot.conversations,
+        messagesByConversation: kept,
+      );
+    }
+    touched.addAll(_history.purgeExpired(
+        at.millisecondsSinceEpoch, expiredKeys));
+    return touched;
+  }
+
+  @override
+  Future<DateTime?> nextMessageExpiry() async {
+    DateTime? next;
+    for (final list
+        in _snapshot?.messagesByConversation.values ??
+            const <List<ReceivedMessageEnvelope>>[]) {
+      for (final envelope in list) {
+        final at = envelope.expiresAt;
+        if (at != null && (next == null || at.isBefore(next))) next = at;
+      }
+    }
+    final fromHistory = _history.nextExpiry();
+    if (fromHistory != null &&
+        (next == null || fromHistory.isBefore(next))) {
+      next = fromHistory;
+    }
+    return next;
+  }
+
   @override
   Future<List<LocalMessage>> loadMessages(String conversationId) async =>
       _history.messages(conversationId);
@@ -904,6 +972,11 @@ class _MemoryMessageHistory {
       switch (effect) {
         case InsertMessageEffect():
           if (_messages.containsKey(effect.key)) continue;
+          if (effect.expiresAt != null &&
+              effect.expiresAt! <=
+                  DateTime.now().toUtc().millisecondsSinceEpoch) {
+            continue;
+          }
           if (effect.serverMessageId != null &&
               _messages.values.any(
                   (item) => item.serverMessageId == effect.serverMessageId)) {
@@ -920,6 +993,7 @@ class _MemoryMessageHistory {
             replyTo: effect.replyTo,
             createdAt: effect.createdAt,
             state: effect.state,
+            expiresAt: effect.expiresAt,
           );
         case EditMessageEffect():
           final target = _messages[effect.targetKey];
@@ -962,13 +1036,43 @@ class _MemoryMessageHistory {
     }
   }
 
-  void markSent(String key, String serverMessageId) {
+  void markSent(String key, String serverMessageId, {int? expiresAt}) {
     final target = _messages[key];
     if (target == null) return;
     _messages[key] = target.copyWith(
       serverMessageId: Value(serverMessageId),
       state: LocalMessageState.sent,
+      expiresAt: Value(expiresAt),
     );
+  }
+
+  /// Removes messages past their expiry, or named in [expiredKeys], with
+  /// their reactions. Returns the conversations that lost a row.
+  Set<String> purgeExpired(int nowMs, Set<String> expiredKeys) {
+    final touched = <String>{};
+    final removed = <String>{};
+    _messages.removeWhere((key, item) {
+      final at = item.expiresAt;
+      final gone = expiredKeys.contains(key) || (at != null && at <= nowMs);
+      if (gone) {
+        touched.add(item.conversationId);
+        removed.add(key);
+      }
+      return gone;
+    });
+    _reactions.removeWhere((_, item) => removed.contains(item.targetKey));
+    return touched;
+  }
+
+  DateTime? nextExpiry() {
+    int? next;
+    for (final item in _messages.values) {
+      final at = item.expiresAt;
+      if (at != null && (next == null || at < next)) next = at;
+    }
+    return next == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(next, isUtc: true);
   }
 
   List<LocalMessage> messages(String conversationId) {
@@ -1572,6 +1676,18 @@ class SecureLocalStore implements LocalStore {
           String conversationId, String peerAccountId) =>
       _database().then((database) =>
           database.readPeerVerification(conversationId, peerAccountId));
+
+  @override
+  Future<Set<String>> purgeExpiredMessages({DateTime? now}) async =>
+      (await _database()).purgeExpired(now: now);
+
+  @override
+  Future<DateTime?> nextMessageExpiry() async {
+    final next = await (await _database()).nextExpiry();
+    return next == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(next, isUtc: true);
+  }
 
   @override
   Future<List<LocalMessage>> loadMessages(String conversationId) async =>
@@ -2366,3 +2482,7 @@ void _validateLocalMlsState(
     throw StateError('stale local MLS transition');
   }
 }
+
+/// The local history key of a server envelope (D22).
+String messageKeyOfEnvelope(ReceivedMessageEnvelope envelope) =>
+    '${envelope.senderDeviceId}:${envelope.idempotencyKey}';

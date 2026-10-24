@@ -269,6 +269,8 @@ class AppState extends ChangeNotifier {
   bool _flushMlsOutboxRequested = false;
   Timer? _mlsOutboxRetryTimer;
   Timer? _catchUpRetryTimer;
+  Timer? _expiryTimer;
+  bool _purgingExpired = false;
   int _catchUpRetryAttempt = 0;
   final Set<String> _failedMlsConversations = <String>{};
   final Map<String, DateTime> _mlsPendingSeen = <String, DateTime>{};
@@ -687,6 +689,10 @@ class AppState extends ChangeNotifier {
         _outboxStates[envelope.idempotencyKey] = OutboxDeliveryState.failed;
       }
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
+      // Expired messages leave this device before any chat shows, also when
+      // the app was closed past their expiry and there is no network (W2).
+      await localStore.purgeExpiredMessages();
+      if (!_lifecycleGenerationActive(transitionGeneration)) return;
       final cached = await localStore.loadSnapshot();
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
       if (cached != null) {
@@ -710,6 +716,7 @@ class AppState extends ChangeNotifier {
         // Keep the encrypted cache available while offline.
       }
       _startSync();
+      unawaited(_scheduleExpiryPurge());
       lifecycle = SessionLifecycle.ready;
       notifyListeners();
     } catch (error) {
@@ -2430,6 +2437,8 @@ class AppState extends ChangeNotifier {
 
   Future<void> _resumeForegroundSync() async {
     if (session == null || api == null) return;
+    // Timers do not run while the app is suspended.
+    await purgeExpiredMessages();
     await _observePendingWake();
     await _catchUpSyncEvents();
     await _flushMlsOutbox();
@@ -3012,6 +3021,7 @@ class AppState extends ChangeNotifier {
       _mergeReceivedEnvelopes(received);
       _history.addAll(histories);
       notifyListeners();
+      unawaited(_scheduleExpiryPurge());
     }
     received.clear();
   }
@@ -3020,7 +3030,10 @@ class AppState extends ChangeNotifier {
   /// envelope replaces any earlier one with its ID.
   void _mergeReceivedEnvelopes(List<ReceivedMessageEnvelope> envelopes) {
     final incoming = <String, Map<String, ReceivedMessageEnvelope>>{};
+    final now = DateTime.now().toUtc();
     for (final envelope in envelopes) {
+      // Already expired on arrival: never shown (W2).
+      if (_envelopeExpired(envelope, now)) continue;
       (incoming[envelope.conversationId] ??=
           <String, ReceivedMessageEnvelope>{})[envelope.id] = envelope;
     }
@@ -3104,6 +3117,8 @@ class AppState extends ChangeNotifier {
     _outboxRetryTimer = null;
     _mlsOutboxRetryTimer?.cancel();
     _mlsOutboxRetryTimer = null;
+    _expiryTimer?.cancel();
+    _expiryTimer = null;
     _cancelCatchUpRetry();
     _failedMlsConversations.clear();
     _mlsPendingSeen.clear();
@@ -3141,6 +3156,79 @@ class AppState extends ChangeNotifier {
       return;
     }
     await localStore.saveProjection(conversations, messagesByConversation);
+    unawaited(_scheduleExpiryPurge());
+  }
+
+  static bool _envelopeExpired(ReceivedMessageEnvelope envelope, DateTime now) {
+    final at = envelope.expiresAt;
+    return at != null && !at.isAfter(now);
+  }
+
+  /// Deletes what has expired from the encrypted database, then from the
+  /// lists the screens read, and arms the timer for the next expiry (W2).
+  Future<void> purgeExpiredMessages() async {
+    if (session == null || _purgingExpired) return;
+    _purgingExpired = true;
+    final generation = _sessionGeneration;
+    try {
+      final touched = await localStore.purgeExpiredMessages();
+      if (generation != _sessionGeneration || session == null) return;
+      final now = DateTime.now().toUtc();
+      var changed = touched.isNotEmpty;
+      final next = <String, List<ReceivedMessageEnvelope>>{};
+      for (final entry in messagesByConversation.entries) {
+        final live = entry.value
+            .where((envelope) => !_envelopeExpired(envelope, now))
+            .toList(growable: false);
+        if (live.length != entry.value.length) {
+          changed = true;
+          touched.add(entry.key);
+        }
+        next[entry.key] = live;
+      }
+      if (changed) {
+        messagesByConversation = next;
+        if (_mlsCrypto != null) {
+          for (final id in touched) {
+            if (_history.containsKey(id) || id == selectedConversationId) {
+              _history[id] = await _loadHistory(id);
+            }
+          }
+        }
+        if (generation != _sessionGeneration) return;
+        notifyListeners();
+      }
+    } catch (_) {
+      // Retried on the next timer, resume or restart; never blocks the app.
+    } finally {
+      _purgingExpired = false;
+    }
+    await _scheduleExpiryPurge();
+  }
+
+  Future<void> _scheduleExpiryPurge() async {
+    if (session == null || _disposed) return;
+    final generation = _sessionGeneration;
+    final DateTime? next;
+    try {
+      next = await localStore.nextMessageExpiry();
+    } catch (_) {
+      return;
+    }
+    if (generation != _sessionGeneration || _disposed) return;
+    _expiryTimer?.cancel();
+    _expiryTimer = null;
+    if (next == null) return;
+    var delay = next.difference(DateTime.now().toUtc());
+    if (delay < const Duration(milliseconds: 500)) {
+      delay = const Duration(milliseconds: 500);
+    }
+    // Timers beyond a day are re-armed by resume and by the next write.
+    if (delay > const Duration(days: 1)) delay = const Duration(days: 1);
+    _expiryTimer = Timer(delay, () {
+      _expiryTimer = null;
+      unawaited(purgeExpiredMessages());
+    });
   }
 
   Future<void> _flushOutbox() async {
@@ -3723,6 +3811,8 @@ class AppState extends ChangeNotifier {
     _outboxRetryTimer = null;
     _mlsOutboxRetryTimer?.cancel();
     _mlsOutboxRetryTimer = null;
+    _expiryTimer?.cancel();
+    _expiryTimer = null;
     _cancelCatchUpRetry();
     unawaited(_syncSubscription?.cancel());
     unawaited(sync?.dispose());

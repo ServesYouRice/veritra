@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:drift/drift.dart';
@@ -66,6 +67,7 @@ final class InsertMessageEffect extends MessageEffect {
     this.serverMessageId,
     this.body,
     this.replyTo,
+    this.expiresAt,
   });
 
   final String key;
@@ -78,6 +80,11 @@ final class InsertMessageEffect extends MessageEffect {
   final String? replyTo;
   final int createdAt;
   final String state;
+
+  /// When the server's retention for this message ends (milliseconds since
+  /// the epoch), if it set one (W2). A message that is already expired is not
+  /// stored at all.
+  final int? expiresAt;
 }
 
 /// Replaces the text of [targetKey], only if [editorAccountId] sent it.
@@ -140,17 +147,24 @@ class LocalConversations extends Table {
   Set<Column<Object>> get primaryKey => {id};
 }
 
+/// Schema 10 (W2): [expiresAt] is the envelope's `expires_at` in epoch
+/// milliseconds, kept beside the JSON so the expiry sweep can use an index.
+///
 /// Schema 9 (T49C): the index serves the tail lookup every received message
 /// commits (`WHERE conversation_id = ? ORDER BY position DESC LIMIT 1`) and
 /// the ordered snapshot read, which otherwise scan and sort the whole cache.
 @TableIndex.sql('CREATE INDEX IF NOT EXISTS '
     'local_ciphertext_envelopes_conversation_position '
     'ON local_ciphertext_envelopes (conversation_id, position)')
+@TableIndex.sql('CREATE INDEX IF NOT EXISTS '
+    'local_ciphertext_envelopes_expires_at '
+    'ON local_ciphertext_envelopes (expires_at) WHERE expires_at IS NOT NULL')
 class LocalCiphertextEnvelopes extends Table {
   TextColumn get id => text()();
   TextColumn get conversationId => text()();
   IntColumn get position => integer()();
   TextColumn get payloadJson => text()();
+  IntColumn get expiresAt => integer().nullable()();
 
   @override
   Set<Column<Object>> get primaryKey => {id};
@@ -235,7 +249,10 @@ class LocalPeerVerifications extends Table {
 }
 
 /// Decrypted history. Encrypted at rest by the database cipher, never sent
-/// anywhere, and kept across cache refreshes (D23).
+/// anywhere, and kept across cache refreshes (D23). A row with [expiresAt]
+/// is deleted once that time passes (W2, schema 10).
+@TableIndex.sql('CREATE INDEX IF NOT EXISTS local_messages_expires_at '
+    'ON local_messages (expires_at) WHERE expires_at IS NOT NULL')
 class LocalMessages extends Table {
   TextColumn get key => text()();
   TextColumn get serverMessageId => text().nullable().unique()();
@@ -249,6 +266,7 @@ class LocalMessages extends Table {
   IntColumn get editedAt => integer().nullable()();
   IntColumn get deletedAt => integer().nullable()();
   TextColumn get state => text()();
+  IntColumn get expiresAt => integer().nullable()();
 
   @override
   Set<Column<Object>> get primaryKey => {key};
@@ -287,7 +305,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   static const lastBackupName = 'backup.last_created_at';
 
   @override
-  int get schemaVersion => 9;
+  int get schemaVersion => 10;
 
   /// Whether opening this database started a schema upgrade. Upgrades run
   /// only after the key has opened the file, so an open that fails after
@@ -358,6 +376,19 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               // schema 8 never names it.
               await migrator
                   .createIndex(localCiphertextEnvelopesConversationPosition);
+            }
+            if (from < 10) {
+              // W2: expiry beside the ciphertext envelopes and the decrypted
+              // messages, so expired rows can be found and deleted.
+              await migrator.addColumn(
+                  localCiphertextEnvelopes, localCiphertextEnvelopes.expiresAt);
+              await migrator.addColumn(localMessages, localMessages.expiresAt);
+              await migrator
+                  .createIndex(localCiphertextEnvelopesExpiresAt);
+              await migrator.createIndex(localMessagesExpiresAt);
+              await _backfillExpiry();
+              await _purgeExpiredInTransaction(
+                  DateTime.now().toUtc().millisecondsSinceEpoch);
             }
             // Drift writes the version again after this returns, outside the
             // transaction; writing it here too closes that gap.
@@ -571,8 +602,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
                   id: item.id,
                   conversationId: item.conversationId,
                   position: item.position,
-                  payloadJson: item.payloadJson));
+                  payloadJson: item.payloadJson,
+                  expiresAt: Value(envelopeExpiryMillis(item.payloadJson))));
         }
+        await _purgeExpiredInTransaction(
+            DateTime.now().toUtc().millisecondsSinceEpoch);
         final queuedAt = DateTime.now().microsecondsSinceEpoch;
         for (final item in outbox) {
           await into(localOutboxEntries).insert(
@@ -629,10 +663,12 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
       'WHERE position IS NOT excluded.position '
       'OR payload_json IS NOT excluded.payload_json';
   static const _upsertCachedEnvelope = 'INSERT INTO local_ciphertext_envelopes '
-      '(id, conversation_id, position, payload_json) VALUES (?, ?, ?, ?) '
+      '(id, conversation_id, position, payload_json, expires_at) '
+      'VALUES (?, ?, ?, ?, ?) '
       'ON CONFLICT (id) DO UPDATE SET '
       'conversation_id = excluded.conversation_id, '
-      'position = excluded.position, payload_json = excluded.payload_json '
+      'position = excluded.position, payload_json = excluded.payload_json, '
+      'expires_at = excluded.expires_at '
       'WHERE conversation_id IS NOT excluded.conversation_id '
       'OR position IS NOT excluded.position '
       'OR payload_json IS NOT excluded.payload_json';
@@ -675,16 +711,22 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             conversation.payloadJson,
           ];
         }
-        final envelopeRows = <String, List<Object>>{};
+        final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+        final envelopeRows = <String, List<Object?>>{};
         for (final envelope in envelopes) {
           if (envelopeRows.containsKey(envelope.id)) {
             throw StateError('duplicate cached envelope');
           }
-          envelopeRows[envelope.id] = <Object>[
+          // An expired envelope is not cached (W2); the delete pass below
+          // removes any stored copy.
+          final expiresAt = envelopeExpiryMillis(envelope.payloadJson);
+          if (expiresAt != null && expiresAt <= nowMs) continue;
+          envelopeRows[envelope.id] = <Object?>[
             envelope.id,
             envelope.conversationId,
             envelope.position,
             envelope.payloadJson,
+            expiresAt,
           ];
         }
         final storedConversations = await (selectOnly(localConversations)
@@ -971,7 +1013,17 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
                 ..where((table) => table.id.equals(id)))
               .go();
         }
+        final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
         for (final envelope in upsertedEnvelopes) {
+          final expiresAt = envelopeExpiryMillis(envelope.payloadJson);
+          if (expiresAt != null && expiresAt <= nowMs) {
+            // Arrived already expired (W2): never stored. The MLS state above
+            // still advances, because the message was consumed.
+            await (delete(localCiphertextEnvelopes)
+                  ..where((table) => table.id.equals(envelope.id)))
+                .go();
+            continue;
+          }
           final existing = await (select(localCiphertextEnvelopes)
                 ..where((table) => table.id.equals(envelope.id)))
               .getSingleOrNull();
@@ -991,6 +1043,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               conversationId: envelope.conversationId,
               position: position,
               payloadJson: envelope.payloadJson,
+              expiresAt: Value(expiresAt),
             ),
           );
         }
@@ -1036,6 +1089,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               .write(LocalMessagesCompanion(
             serverMessageId: Value(envelope.id),
             state: const Value(LocalMessageState.sent),
+            // The server stamps the expiry when it accepts the message, so
+            // the sender learns it only from this echo (W2).
+            expiresAt: Value(envelopeExpiryMillis(envelope.payloadJson)),
           ));
         }
         final previousCursor = await (select(localSyncStates)
@@ -1045,7 +1101,16 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             cursor <= expectedCursor) {
           throw StateError('stale sync event commit');
         }
-        if (envelope != null) {
+        final envelopeExpiry = envelope == null
+            ? null
+            : envelopeExpiryMillis(envelope.payloadJson);
+        if (envelope != null &&
+            envelopeExpiry != null &&
+            envelopeExpiry <= DateTime.now().toUtc().millisecondsSinceEpoch) {
+          await (delete(localCiphertextEnvelopes)
+                ..where((table) => table.id.equals(envelope.id)))
+              .go();
+        } else if (envelope != null) {
           final existing = await (select(localCiphertextEnvelopes)
                 ..where((table) => table.id.equals(envelope.id)))
               .getSingleOrNull();
@@ -1065,6 +1130,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               conversationId: envelope.conversationId,
               position: position,
               payloadJson: envelope.payloadJson,
+              expiresAt: Value(envelopeExpiry),
             ),
           );
         }
@@ -1425,6 +1491,12 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     for (final effect in effects) {
       switch (effect) {
         case InsertMessageEffect():
+          final expiresAt = effect.expiresAt;
+          if (expiresAt != null &&
+              expiresAt <= DateTime.now().toUtc().millisecondsSinceEpoch) {
+            // Already expired when it arrived (W2): never stored.
+            continue;
+          }
           await into(localMessages).insert(
             LocalMessagesCompanion.insert(
               key: effect.key,
@@ -1437,6 +1509,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               replyTo: Value(effect.replyTo),
               createdAt: effect.createdAt,
               state: effect.state,
+              expiresAt: Value(effect.expiresAt),
             ),
             mode: InsertMode.insertOrIgnore,
           );
@@ -1484,6 +1557,121 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             );
           }
       }
+    }
+  }
+
+  /// Deletes every message, reaction and cached envelope whose expiry has
+  /// passed, in one transaction (W2). Returns the conversations that lost a
+  /// row.
+  Future<Set<String>> purgeExpired({DateTime? now}) => transaction(
+        () => _purgeExpiredInTransaction(
+            (now ?? DateTime.now()).toUtc().millisecondsSinceEpoch),
+      );
+
+  /// The earliest expiry still stored (epoch milliseconds), if any.
+  Future<int?> nextExpiry() async {
+    final envelopeExpiry = localCiphertextEnvelopes.expiresAt.min();
+    final messageExpiry = localMessages.expiresAt.min();
+    final fromEnvelopes = await (selectOnly(localCiphertextEnvelopes)
+          ..addColumns([envelopeExpiry]))
+        .map((row) => row.read(envelopeExpiry))
+        .getSingle();
+    final fromMessages = await (selectOnly(localMessages)
+          ..addColumns([messageExpiry]))
+        .map((row) => row.read(messageExpiry))
+        .getSingle();
+    if (fromEnvelopes == null) return fromMessages;
+    if (fromMessages == null) return fromEnvelopes;
+    return fromEnvelopes < fromMessages ? fromEnvelopes : fromMessages;
+  }
+
+  Future<Set<String>> _purgeExpiredInTransaction(int nowMs) async {
+    final conversations = <String>{};
+    final keys = <String>[];
+    final serverIds = <String>[];
+    final expiredEnvelopes = await (select(localCiphertextEnvelopes)
+          ..where((table) =>
+              table.expiresAt.isNotNull() &
+              table.expiresAt.isSmallerOrEqualValue(nowMs)))
+        .get();
+    for (final row in expiredEnvelopes) {
+      conversations.add(row.conversationId);
+      serverIds.add(row.id);
+      final key = envelopeMessageKey(row.payloadJson);
+      if (key != null) keys.add(key);
+    }
+    final expiredMessages = await (select(localMessages)
+          ..where((table) =>
+              table.expiresAt.isNotNull() &
+              table.expiresAt.isSmallerOrEqualValue(nowMs)))
+        .get();
+    for (final row in expiredMessages) {
+      conversations.add(row.conversationId);
+      keys.add(row.key);
+    }
+    // The envelope names the message by sender device and action ID, so a row
+    // without an expiry of its own (restored from an older backup, say) goes
+    // with its envelope.
+    for (final chunk in _chunks(keys)) {
+      final rows = await (select(localMessages)
+            ..where((table) => table.key.isIn(chunk)))
+          .get();
+      for (final row in rows) {
+        conversations.add(row.conversationId);
+      }
+      await (delete(localMessageReactions)
+            ..where((table) => table.targetKey.isIn(chunk)))
+          .go();
+      await (delete(localMessages)..where((table) => table.key.isIn(chunk)))
+          .go();
+    }
+    for (final chunk in _chunks(serverIds)) {
+      final rows = await (select(localMessages)
+            ..where((table) => table.serverMessageId.isIn(chunk)))
+          .get();
+      for (final row in rows) {
+        conversations.add(row.conversationId);
+        await (delete(localMessageReactions)
+              ..where((table) => table.targetKey.equals(row.key)))
+            .go();
+      }
+      await (delete(localMessages)
+            ..where((table) => table.serverMessageId.isIn(chunk)))
+          .go();
+      await (delete(localCiphertextEnvelopes)
+            ..where((table) => table.id.isIn(chunk)))
+          .go();
+    }
+    return conversations;
+  }
+
+  static Iterable<List<String>> _chunks(List<String> values) sync* {
+    // SQLite caps bound variables; stay well below the old 999 limit.
+    for (var start = 0; start < values.length; start += 500) {
+      yield values.sublist(
+          start, start + 500 > values.length ? values.length : start + 500);
+    }
+  }
+
+  /// Fills the schema 10 expiry columns from what older versions stored.
+  /// Messages whose envelope already left the cache keep no expiry.
+  Future<void> _backfillExpiry() async {
+    final rows = await customSelect(
+      'SELECT id, payload_json FROM local_ciphertext_envelopes '
+      "WHERE payload_json LIKE '%\"expires_at\"%'",
+    ).get();
+    for (final row in rows) {
+      final expiresAt = envelopeExpiryMillis(row.read<String>('payload_json'));
+      if (expiresAt == null) continue;
+      final id = row.read<String>('id');
+      await customStatement(
+        'UPDATE local_ciphertext_envelopes SET expires_at = ? WHERE id = ?',
+        <Object?>[expiresAt, id],
+      );
+      await customStatement(
+        'UPDATE local_messages SET expires_at = ? WHERE server_message_id = ?',
+        <Object?>[expiresAt, id],
+      );
     }
   }
 
@@ -1588,4 +1776,34 @@ bool _isStorageFull(Object? error, int depth) {
       _isStorageFull(cause, depth + 1) || _isStorageFull(exception, depth + 1),
     _ => false,
   };
+}
+
+
+/// The `expires_at` of a cached envelope's JSON, in epoch milliseconds, or
+/// null when it has none or cannot be read (W2).
+int? envelopeExpiryMillis(String payloadJson) {
+  try {
+    final decoded = jsonDecode(payloadJson);
+    if (decoded is! Map) return null;
+    final raw = decoded['expires_at'];
+    if (raw is! String) return null;
+    return DateTime.tryParse(raw)?.toUtc().millisecondsSinceEpoch;
+  } on FormatException {
+    return null;
+  }
+}
+
+/// The local history key (`<sender_device_id>:<idempotency_key>`) of a cached
+/// envelope's JSON, or null when it cannot be read.
+String? envelopeMessageKey(String payloadJson) {
+  try {
+    final decoded = jsonDecode(payloadJson);
+    if (decoded is! Map) return null;
+    final device = decoded['sender_device_id'];
+    final key = decoded['idempotency_key'];
+    if (device is! String || key is! String) return null;
+    return '$device:$key';
+  } on FormatException {
+    return null;
+  }
 }
