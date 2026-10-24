@@ -285,6 +285,36 @@ abstract class AppLocalizations {
   /// **'Appearance'**
   String get settingsSectionAppearance;
 
+  /// No description provided for @settingsHideNotificationPreview.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide message preview'**
+  String get settingsHideNotificationPreview;
+
+  /// No description provided for @settingsHideNotificationPreviewDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications say \"New message\" and show no sender or text.'**
+  String get settingsHideNotificationPreviewDetail;
+
+  /// No description provided for @notificationNewMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'New message'**
+  String get notificationNewMessage;
+
+  /// No description provided for @trayOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Open'**
+  String get trayOpen;
+
+  /// No description provided for @trayQuit.
+  ///
+  /// In en, this message translates to:
+  /// **'Quit'**
+  String get trayQuit;
+
   /// No description provided for @settingsSectionAbout.
   ///
   /// In en, this message translates to:

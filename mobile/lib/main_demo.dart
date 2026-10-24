@@ -8,6 +8,7 @@ import 'core/app_state.dart';
 import 'core/client_config.dart';
 import 'core/transport_policy.dart';
 import 'crypto/attachment_crypto.dart';
+import 'desktop/desktop_services.dart';
 import 'crypto/backup_service.dart';
 import 'crypto/native_crypto_bindings.dart';
 import 'crypto/native_crypto_service.dart';
@@ -83,7 +84,8 @@ Future<void> main(List<String> args) async {
           Platform.isWindows || Platform.isLinux || Platform.isMacOS,
     ),
   );
-  runApp(VeritraApp(state: state));
+  final desktop = await DesktopServices.startIfSupported(state);
+  runApp(VeritraApp(state: state, desktop: desktop));
   unawaited(state.tryRestoreSession());
 }
 

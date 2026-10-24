@@ -110,6 +110,22 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsSectionAppearance => 'Appearance';
 
   @override
+  String get settingsHideNotificationPreview => 'Hide message preview';
+
+  @override
+  String get settingsHideNotificationPreviewDetail =>
+      'Notifications say \"New message\" and show no sender or text.';
+
+  @override
+  String get notificationNewMessage => 'New message';
+
+  @override
+  String get trayOpen => 'Open';
+
+  @override
+  String get trayQuit => 'Quit';
+
+  @override
   String get settingsSectionAbout => 'About';
 
   @override
