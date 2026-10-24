@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../core/models.dart';
 import '../sync/sync_recovery.dart';
+import 'backup_exclusion.dart';
 import 'encrypted_database.dart';
 
 final Map<String, Future<void>> _databaseOpenTails = <String, Future<void>>{};
@@ -47,6 +48,20 @@ enum LocalStoreFailureKind {
 
   /// Writing a new key could not be confirmed.
   keyWriteFailed,
+
+  /// The key opened the database, but upgrading it to this app version
+  /// failed because the device is full or could not write (SQLite reported
+  /// `SQLITE_FULL` or `SQLITE_IOERR`). The upgrade rolled back; the database
+  /// and its key are as they were, and a retry after freeing space runs it
+  /// again.
+  upgradeStorageFull,
+
+  /// The key opened the database, but upgrading or opening it for this app
+  /// version failed for another reason, for example a damaged page or a step
+  /// that cannot complete. The upgrade rolled back and nothing was changed.
+  /// A retry runs it again; if that keeps failing, only the confirmed
+  /// [LocalStore.quarantineUnreadableDatabase] moves the database aside.
+  upgradeFailed,
 }
 
 /// The local database stays closed and untouched. Nothing is reset without
@@ -60,7 +75,9 @@ class LocalStoreUnavailableException implements Exception {
   bool get retryable =>
       kind == LocalStoreFailureKind.profileLocked ||
       kind == LocalStoreFailureKind.keyUnavailable ||
-      kind == LocalStoreFailureKind.keyWriteFailed;
+      kind == LocalStoreFailureKind.keyWriteFailed ||
+      kind == LocalStoreFailureKind.upgradeStorageFull ||
+      kind == LocalStoreFailureKind.upgradeFailed;
 
   @override
   String toString() => 'LocalStoreUnavailableException(${kind.name})';
@@ -986,6 +1003,7 @@ class SecureLocalStore implements LocalStore {
     Future<Directory> Function()? directoryProvider,
     LocalDatabaseFactory? databaseFactory,
     MlsCommitFailureInjector? mlsCommitFailureInjector,
+    BackupExclusion? backupExclusion,
     String namespace = '',
   })  : assert(RegExp(r'^[a-z0-9-]{0,40}$').hasMatch(namespace)),
         _namespace = namespace,
@@ -1008,7 +1026,9 @@ class SecureLocalStore implements LocalStore {
         _directoryProvider =
             directoryProvider ?? getApplicationSupportDirectory,
         _databaseFactory = databaseFactory ?? openEncryptedLocalDatabase,
-        _mlsCommitFailureInjector = mlsCommitFailureInjector;
+        _mlsCommitFailureInjector = mlsCommitFailureInjector,
+        _backupExclusion = backupExclusion ??
+            (Platform.isIOS ? PlatformBackupExclusion.exclude : null);
 
   static const _legacyRecordKey = 'veritra.account_state.v2';
   static const _databaseKey = 'veritra.database_key.v1';
@@ -1033,6 +1053,7 @@ class SecureLocalStore implements LocalStore {
   final Future<Directory> Function() _directoryProvider;
   final LocalDatabaseFactory _databaseFactory;
   final MlsCommitFailureInjector? _mlsCommitFailureInjector;
+  final BackupExclusion? _backupExclusion;
   Future<EncryptedLocalDatabase>? _openingDatabase;
   String? _databasePath;
   String? _syncLeaseKey;
@@ -1707,6 +1728,10 @@ class SecureLocalStore implements LocalStore {
     final lock = await lockFile.open(mode: FileMode.append);
     await lock.lock(FileLock.exclusive);
     try {
+      // Before anything can fail: a database from an older build that this
+      // one cannot open is excluded too, and a new database file is created
+      // in a directory that is already excluded.
+      await _excludeFromBackup(directory);
       // A reset interrupted by a crash is finished before anything else.
       await _completeReset(directory);
       final String? keyHex;
@@ -1729,22 +1754,57 @@ class SecureLocalStore implements LocalStore {
             LocalStoreFailureKind.keyMalformed);
       }
       final key = keyHex ?? await _createKey();
-      final EncryptedLocalDatabase database;
+      EncryptedLocalDatabase? database;
       try {
         database = _databaseFactory(databaseFile, key);
         await database.readCursor();
-      } catch (_) {
+      } catch (error) {
         if (!databaseExists) rethrow;
+        if (database != null && database.upgradeStarted) {
+          // The key opened the file and the upgrade rolled back. Drift
+          // refuses any further use of this handle, so close it; a retry
+          // opens a new one. Nothing is deleted or reset.
+          try {
+            await database.close();
+          } catch (_) {
+            // It is unusable either way.
+          }
+          throw LocalStoreUnavailableException(isStorageFullError(error)
+              ? LocalStoreFailureKind.upgradeStorageFull
+              : LocalStoreFailureKind.upgradeFailed);
+        }
         // SQLite cannot tell a wrong key from a damaged file. Either way the
         // file is left exactly as it is.
         throw const LocalStoreUnavailableException(
             LocalStoreFailureKind.keyRejected);
       }
       await _migrateLegacyRecord(database);
+      // Again now that the database, WAL and SHM files exist.
+      await _excludeFromBackup(directory);
       return database;
     } finally {
       await lock.unlock();
       await lock.close();
+    }
+  }
+
+  /// Keeps the profile directory (and with it every later WAL, SHM, lock
+  /// and quarantined copy) and the database files out of platform backups.
+  /// Runs before and after each open; the platform skips paths that do not
+  /// exist yet and tries every path even when one fails. Best effort: the
+  /// database cannot be opened elsewhere without its device-only key, so a
+  /// failure here does not stop the app.
+  Future<void> _excludeFromBackup(Directory directory) async {
+    final exclude = _backupExclusion;
+    if (exclude == null) return;
+    try {
+      await exclude(<String>[
+        directory.path,
+        for (final name in _databaseFileNames)
+          '${directory.path}${Platform.pathSeparator}$name',
+      ]);
+    } catch (_) {
+      // Retried on the next open.
     }
   }
 

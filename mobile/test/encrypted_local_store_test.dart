@@ -1,10 +1,18 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:drift/drift.dart' show OrderingTerm, Variable;
+import 'package:drift/drift.dart'
+    show
+        CouldNotRollBackException,
+        DriftWrappedException,
+        OrderingTerm,
+        Variable;
+import 'package:drift/native.dart' show NativeDatabase, SqliteException;
+import 'package:flutter/services.dart' show MethodCall;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/storage/backup_exclusion.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_recovery.dart';
@@ -111,6 +119,122 @@ void main() {
       deviceId: 'dev_2',
     ));
     expect(await reopened.loadSyncRecovery(), isNull);
+  });
+
+  test('each open keeps the profile and its database out of backups', () async {
+    // What happened, in order: each exclusion with whether the database
+    // file existed when the platform was asked, and each open.
+    final events = <String>[];
+    final excluded = <List<String>>[];
+    SecureLocalStore openStore({
+      String namespace = '',
+      bool failing = false,
+    }) =>
+        SecureLocalStore(
+          storage: secureStorage,
+          directoryProvider: () async => directory,
+          namespace: namespace,
+          backupExclusion: (paths) async {
+            excluded.add(paths);
+            events.add(File(paths.last).existsSync()
+                ? 'exclude existing'
+                : 'exclude before the file');
+            if (failing) throw StateError('platform refused');
+          },
+          databaseFactory: (file, keyHex) {
+            events.add('open');
+            final database = openEncryptedLocalDatabase(file, keyHex);
+            databases.add(database);
+            return database;
+          },
+        );
+
+    await openStore().saveSyncCursor(3);
+    final root = directory.path;
+    final rootPaths = <String>[
+      root,
+      '$root/veritra-local.db-wal',
+      '$root/veritra-local.db-shm',
+      '$root/veritra-local.db',
+    ];
+    expect(excluded, <List<String>>[rootPaths, rootPaths]);
+    // On first launch the directory is excluded before the new database is
+    // created in it, and the files get the mark once they exist; the
+    // directory covers WAL and SHM files created later.
+    expect(events,
+        <String>['exclude before the file', 'open', 'exclude existing']);
+    expect(File('$root/veritra-local.db').existsSync(), isTrue);
+    expect(File('$root/veritra-local.db-wal').existsSync(), isTrue);
+
+    final demo = '$root/profiles/demo';
+    await openStore(namespace: 'demo').saveSyncCursor(1);
+    expect(excluded.last.first, demo);
+    expect(excluded.last.last, '$demo/veritra-local.db');
+
+    // Defence in depth only: a platform failure does not block the store.
+    for (final database in databases) {
+      await database.close();
+    }
+    databases.clear();
+    events.clear();
+    expect(await openStore(failing: true).loadSyncCursor(), 3);
+    expect(events, <String>['exclude existing', 'open', 'exclude existing']);
+  });
+
+  test('a database this build cannot open is still kept out of backups',
+      () async {
+    await createStore().saveSyncCursor(3);
+    await databases.removeLast().close();
+    // A database from an older build, say, that this key does not open.
+    await secureStorage.write(key: 'veritra.database_key.v1', value: 'ab' * 32);
+    final excluded = <List<String>>[];
+    final store = SecureLocalStore(
+      storage: secureStorage,
+      directoryProvider: () async => directory,
+      backupExclusion: (paths) async {
+        expect(File(paths.last).existsSync(), isTrue);
+        excluded.add(paths);
+      },
+      databaseFactory: (file, keyHex) {
+        final database = openEncryptedLocalDatabase(file, keyHex);
+        databases.add(database);
+        return database;
+      },
+    );
+    await expectLater(store.loadSyncCursor(),
+        throwsA(_storeFailure(LocalStoreFailureKind.keyRejected)));
+    expect(excluded, hasLength(1));
+    expect(excluded.single.first, directory.path);
+    expect(excluded.single, contains('${directory.path}/veritra-local.db'));
+
+    // So is one whose key is gone: that open fails before any database.
+    await secureStorage.delete(key: 'veritra.database_key.v1');
+    await expectLater(store.loadSyncCursor(),
+        throwsA(_storeFailure(LocalStoreFailureKind.keyMissing)));
+    expect(excluded, hasLength(2));
+  });
+
+  test('iOS backup exclusion goes through the Runner storage channel',
+      () async {
+    final calls = <MethodCall>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(PlatformBackupExclusion.channel,
+            (call) async {
+      calls.add(call);
+      return null;
+    });
+    addTearDown(() => TestDefaultBinaryMessengerBinding
+        .instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(PlatformBackupExclusion.channel, null));
+
+    await PlatformBackupExclusion.exclude(
+        <String>['/a', '/a/veritra-local.db']);
+    expect(PlatformBackupExclusion.channel.name,
+        'org.veritra.private_messenger/storage');
+    expect(calls.single.method, 'excludeFromBackup');
+    expect(calls.single.arguments, <String, Object?>{
+      'paths': <String>['/a', '/a/veritra-local.db'],
+    });
   });
 
   test('a namespaced store keeps its own database and key', () async {
@@ -382,8 +506,19 @@ void main() {
       },
     );
 
-    // The same envelope ID twice violates the key on the second insert;
-    // the rows written before it must roll back with it.
+    Future<void> expectFirstSnapshot() async {
+      final snapshot = (await store.loadSnapshot())!;
+      expect(snapshot.conversations.map((item) => item.id),
+          <String>['conv_2', 'conv_1']);
+      expect(snapshot.messagesByConversation['conv_1']!.map((item) => item.id),
+          <String>['msg_b', 'msg_a']);
+      expect(snapshot.messagesByConversation['conv_2']!.map((item) => item.id),
+          <String>['msg_c']);
+      expect(snapshot.messagesByConversation.keys,
+          unorderedEquals(<String>['conv_1', 'conv_2']));
+    }
+
+    // The same envelope ID twice is refused before anything is written.
     await expectLater(
       store.saveProjection(
         <Conversation>[
@@ -395,18 +530,160 @@ void main() {
           'conv_4': <ReceivedMessageEnvelope>[envelope('msg_x', 'conv_4')],
         },
       ),
-      throwsA(anything),
+      throwsStateError,
     );
+    await expectFirstSnapshot();
 
+    // A failure at the last write (the new envelope) rolls back the deletes
+    // and reorders the same rewrite made before it.
+    final database = databases.last;
+    await database
+        .customStatement('CREATE TEMP TRIGGER fail_msg_x BEFORE INSERT ON '
+            "local_ciphertext_envelopes WHEN NEW.id = 'msg_x' "
+            "BEGIN SELECT RAISE(ABORT, 'injected'); END");
+    final next = <Conversation>[Conversation(id: 'conv_1', kind: 'group')];
+    final nextMessages = <String, List<ReceivedMessageEnvelope>>{
+      'conv_1': <ReceivedMessageEnvelope>[
+        envelope('msg_x', 'conv_1'),
+        envelope('msg_a', 'conv_1'),
+        envelope('msg_b', 'conv_1'),
+      ],
+    };
+    await expectLater(
+        store.saveProjection(next, nextMessages), throwsA(anything));
+    await expectFirstSnapshot();
+
+    await database.customStatement('DROP TRIGGER fail_msg_x');
+    await store.saveProjection(next, nextMessages);
     final snapshot = (await store.loadSnapshot())!;
-    expect(snapshot.conversations.map((item) => item.id),
-        <String>['conv_2', 'conv_1']);
+    expect(snapshot.conversations.map((item) => item.id), <String>['conv_1']);
+    expect(snapshot.messagesByConversation.keys, <String>['conv_1']);
     expect(snapshot.messagesByConversation['conv_1']!.map((item) => item.id),
-        <String>['msg_b', 'msg_a']);
-    expect(snapshot.messagesByConversation['conv_2']!.map((item) => item.id),
-        <String>['msg_c']);
-    expect(snapshot.messagesByConversation.keys,
-        unorderedEquals(<String>['conv_1', 'conv_2']));
+        <String>['msg_x', 'msg_a', 'msg_b']);
+  });
+
+  test('a snapshot rewrite writes only the rows that changed', () async {
+    final store = createStore();
+    await store.saveSession(const Session(
+      baseUrl: 'https://example.test',
+      token: 'token',
+      accountId: 'acct_1',
+      deviceId: 'dev_1',
+    ));
+    ReceivedMessageEnvelope envelope(String id, String conversationId,
+            {int ciphertext = 1}) =>
+        ReceivedMessageEnvelope(
+          id: id,
+          conversationId: conversationId,
+          senderAccountId: 'acct_1',
+          senderDeviceId: 'dev_1',
+          idempotencyKey: 'key_$id',
+          ciphertext: <int>[ciphertext],
+          cryptoProtocol: 'mls10-openmls-v1',
+          createdAt: DateTime.utc(2026, 7, 29),
+        );
+    final database = databases.last;
+    Future<int> rowChanges() async => (await database
+            .customSelect('SELECT total_changes() AS changes')
+            .getSingle())
+        .read<int>('changes');
+    Future<int> write(List<Conversation> conversations,
+        Map<String, List<ReceivedMessageEnvelope>> messages,
+        {int? cursor}) async {
+      final before = await rowChanges();
+      if (cursor == null) {
+        await store.saveProjection(conversations, messages);
+      } else {
+        await store.saveSnapshot(conversations, messages, cursor);
+      }
+      return await rowChanges() - before;
+    }
+
+    Future<void> expectStored(List<Conversation> conversations,
+        Map<String, List<ReceivedMessageEnvelope>> messages) async {
+      final snapshot = (await store.loadSnapshot())!;
+      expect(snapshot.conversations.map((item) => jsonEncode(item.toJson())),
+          conversations.map((item) => jsonEncode(item.toJson())));
+      expect(
+          snapshot.messagesByConversation.keys, unorderedEquals(messages.keys));
+      for (final entry in messages.entries) {
+        expect(
+            snapshot.messagesByConversation[entry.key]!
+                .map((item) => jsonEncode(item.toJson())),
+            entry.value.map((item) => jsonEncode(item.toJson())));
+      }
+    }
+
+    var conversations = <Conversation>[
+      Conversation(id: 'conv_1', kind: 'group'),
+      Conversation(id: 'conv_2', kind: 'group'),
+      Conversation(id: 'conv_3', kind: 'dm'),
+    ];
+    var messages = <String, List<ReceivedMessageEnvelope>>{
+      'conv_1': <ReceivedMessageEnvelope>[
+        envelope('msg_2', 'conv_1'),
+        envelope('msg_1', 'conv_1'),
+      ],
+      'conv_2': <ReceivedMessageEnvelope>[envelope('msg_3', 'conv_2')],
+      'conv_3': <ReceivedMessageEnvelope>[envelope('msg_4', 'conv_3')],
+    };
+    expect(await write(conversations, messages, cursor: 3), 3 + 4 + 1);
+    await expectStored(conversations, messages);
+
+    // Nothing changed: no row is written (the cursor row still is).
+    expect(await write(conversations, messages, cursor: 3), 1);
+    expect(await write(conversations, messages), 0);
+    await expectStored(conversations, messages);
+
+    // A new message at the head moves its conversation to the top and the
+    // conversation's older rows down one position.
+    conversations = <Conversation>[
+      conversations[1],
+      conversations[0],
+      conversations[2],
+    ];
+    messages = <String, List<ReceivedMessageEnvelope>>{
+      ...messages,
+      'conv_2': <ReceivedMessageEnvelope>[
+        envelope('msg_5', 'conv_2'),
+        envelope('msg_3', 'conv_2'),
+      ],
+    };
+    // conv_2 and conv_1 swap positions; msg_5 is new and msg_3 moves.
+    expect(await write(conversations, messages), 2 + 2);
+    await expectStored(conversations, messages);
+
+    // A changed payload, an envelope that moved conversation, a renamed
+    // conversation and a conversation that left with its envelopes.
+    conversations = <Conversation>[
+      conversations[0],
+      Conversation(id: 'conv_1', kind: 'group', title: 'Renamed'),
+    ];
+    messages = <String, List<ReceivedMessageEnvelope>>{
+      'conv_1': <ReceivedMessageEnvelope>[
+        envelope('msg_2', 'conv_1', ciphertext: 2),
+        envelope('msg_1', 'conv_1'),
+        envelope('msg_4', 'conv_1'),
+      ],
+      'conv_2': messages['conv_2']!,
+    };
+    // conv_3 deleted, conv_1 updated; msg_2 updated, msg_4 moved.
+    expect(await write(conversations, messages), 2 + 2);
+    await expectStored(conversations, messages);
+
+    // An empty projection empties both tables.
+    expect(
+        await write(const <Conversation>[],
+            const <String, List<ReceivedMessageEnvelope>>{}),
+        2 + 5);
+    expect(await store.loadSnapshot(), isNull);
+    expect(
+        (await database
+                .customSelect('SELECT COUNT(*) AS rows FROM '
+                    'local_ciphertext_envelopes')
+                .getSingle())
+            .read<int>('rows'),
+        0);
   });
 
   test('wrong database key fails closed', () async {
@@ -734,11 +1011,14 @@ void main() {
     await database.close();
     databases.removeLast();
 
-    // The open fails the way any unreadable database does, and the file is
-    // left alone.
+    // The open fails as an upgrade failure, not as a wrong key, and the file
+    // and its key are left alone. It is not a full device, so it is not
+    // reported as one.
     await expectLater(openStore().pendingMlsMessages(),
-        throwsA(_storeFailure(LocalStoreFailureKind.keyRejected)));
+        throwsA(_storeFailure(LocalStoreFailureKind.upgradeFailed)));
     await databases.removeLast().close();
+    expect(
+        await secureStorage.read(key: 'veritra.database_key.v1'), databaseKey);
 
     // Nothing of the earlier version 8 step stayed behind.
     final raw = sqlite3.open(databaseFile.path);
@@ -762,6 +1042,107 @@ void main() {
     expect((await upgraded.pendingMlsMessages()).single.attemptCount, 0);
     expect(await userVersion(databases.last), 9);
     expect(await hasEnvelopeIndex(databases.last), isTrue);
+  });
+
+  /// A version 8 database with cached rows, compacted so that creating the
+  /// envelope index needs new pages. Returns its page count.
+  Future<int> seedVersion8() async {
+    final store = createStore();
+    await store.saveSnapshot(
+      <Conversation>[Conversation(id: 'conv_1', kind: 'group')],
+      <String, List<ReceivedMessageEnvelope>>{
+        'conv_1': <ReceivedMessageEnvelope>[
+          for (var index = 0; index < 200; index++)
+            _receivedEnvelope(id: 'msg_$index'),
+        ],
+      },
+      1,
+    );
+    final database = databases.last;
+    await database.customStatement('DROP INDEX $envelopeIndex');
+    await database.customStatement('PRAGMA user_version = 8');
+    await database.customStatement('VACUUM');
+    final pages = (await database.customSelect('PRAGMA page_count').getSingle())
+        .read<int>('page_count');
+    await database.close();
+    databases.removeLast();
+    return pages;
+  }
+
+  test('a full disk during the upgrade is reported as a full device', () async {
+    final pages = await seedVersion8();
+    final original =
+        File('${directory.path}/veritra-local.db').readAsBytesSync();
+    final key = await secureStorage.read(key: 'veritra.database_key.v1');
+    // The file may not grow: what a full disk does to the index's pages.
+    var diskFull = true;
+    final store = SecureLocalStore(
+      storage: secureStorage,
+      directoryProvider: () async => directory,
+      databaseFactory: (file, keyHex) {
+        final database = diskFull
+            ? _openWithoutRoom(file, keyHex, pages)
+            : openEncryptedLocalDatabase(file, keyHex);
+        databases.add(database);
+        return database;
+      },
+    );
+
+    await expectLater(
+        store.loadSnapshot(),
+        throwsA(allOf(
+            _storeFailure(LocalStoreFailureKind.upgradeStorageFull),
+            isA<LocalStoreUnavailableException>()
+                .having((error) => error.retryable, 'retryable', isTrue))));
+    // Nothing was changed, moved, deleted or reset.
+    await expectDatabaseUnchanged(original);
+    expect(await secureStorage.read(key: 'veritra.database_key.v1'), key);
+    expect(
+        directory.listSync().where((item) => item.path.contains('unreadable-')),
+        isEmpty);
+
+    // With room again, a retry on the same store completes the upgrade.
+    diskFull = false;
+    final snapshot = await store.loadSnapshot();
+    expect(snapshot?.cursor, 1);
+    expect(snapshot?.messagesByConversation['conv_1'], hasLength(200));
+    expect(await userVersion(databases.last), 9);
+    expect(await hasEnvelopeIndex(databases.last), isTrue);
+  });
+
+  test('only a full device or an I/O error counts as a full device', () {
+    SqliteException sqlite(int code) =>
+        SqliteException(extendedResultCode: code, message: 'test');
+    // SQLITE_FULL, SQLITE_IOERR and an extended code (SQLITE_IOERR_WRITE).
+    for (final code in <int>[13, 10, 778]) {
+      expect(isStorageFullError(sqlite(code)), isTrue, reason: '$code');
+      expect(
+          isStorageFullError(
+              DriftWrappedException(message: 'wrapped', cause: sqlite(code))),
+          isTrue);
+    }
+    expect(
+        isStorageFullError(CouldNotRollBackException(
+            StateError('step'), StackTrace.empty, sqlite(10))),
+        isTrue);
+    // SQLITE_ERROR, SQLITE_CORRUPT, SQLITE_NOTADB and anything else.
+    for (final code in <int>[1, 11, 26]) {
+      expect(isStorageFullError(sqlite(code)), isFalse, reason: '$code');
+    }
+    expect(isStorageFullError(StateError('disk is full')), isFalse);
+    expect(isStorageFullError(DriftWrappedException(message: 'no cause')),
+        isFalse);
+  });
+
+  test('a wrong key on a database that needs an upgrade is a wrong key',
+      () async {
+    await seedVersion8();
+    final original =
+        File('${directory.path}/veritra-local.db').readAsBytesSync();
+    await secureStorage.write(key: 'veritra.database_key.v1', value: 'ab' * 32);
+    await expectLater(createStore().loadSnapshot(),
+        throwsA(_storeFailure(LocalStoreFailureKind.keyRejected)));
+    await expectDatabaseUnchanged(original);
   });
 
   test('crypto state and cursor roll back together', () async {
@@ -917,6 +1298,23 @@ ReceivedMessageEnvelope _receivedEnvelope({
       cryptoProtocol: 'mls10-openmls-v1',
       createdAt: DateTime.utc(2026, 7, 29),
     );
+
+/// Opens [file] exactly as [openEncryptedLocalDatabase] does, but caps it at
+/// [maxPages] pages, so any write that needs a new page fails with
+/// SQLITE_FULL, as on a full disk.
+EncryptedLocalDatabase _openWithoutRoom(
+        File file, String keyHex, int maxPages) =>
+    EncryptedLocalDatabase(NativeDatabase.createInBackground(
+      file,
+      setup: (rawDatabase) {
+        rawDatabase.execute("PRAGMA cipher = 'chacha20'");
+        rawDatabase.execute("PRAGMA hexkey = '$keyHex'");
+        rawDatabase.execute('PRAGMA busy_timeout = 5000');
+        rawDatabase.select('SELECT count(*) FROM sqlite_master');
+        rawDatabase.execute('PRAGMA journal_mode = WAL');
+        rawDatabase.execute('PRAGMA max_page_count = $maxPages');
+      },
+    ));
 
 MlsStateTransition _nextTransition() => MlsStateTransition(
       messageId: 'mls_message_2',

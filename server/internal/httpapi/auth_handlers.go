@@ -640,11 +640,10 @@ func (a *API) claimDeviceLink(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) deviceLinkSubroute(w http.ResponseWriter, r *http.Request) {
-	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/device-links/"), "/"), "/")
+	parts := deviceLinkPathParts(r.URL.Path)
 	if len(parts) == 1 && parts[0] != "" && r.Method == http.MethodGet {
-		principal, err := a.principalFromRequest(r)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, "unauthorized")
+		principal, ok := a.authenticate(w, r)
+		if !ok {
 			return
 		}
 		link, err := a.Store.DeviceLinkForAccount(r.Context(), parts[0], principal.AccountID)
@@ -662,9 +661,8 @@ func (a *API) deviceLinkSubroute(w http.ResponseWriter, r *http.Request) {
 	linkID := parts[0]
 	switch {
 	case parts[1] == "approve" && r.Method == http.MethodPost:
-		principal, err := a.principalFromRequest(r)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, "unauthorized")
+		principal, ok := a.authenticate(w, r)
+		if !ok {
 			return
 		}
 		if !recentlyAuthenticated(principal) {

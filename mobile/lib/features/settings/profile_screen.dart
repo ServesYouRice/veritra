@@ -15,8 +15,17 @@ class ProfileScreen extends StatelessWidget {
 
   final AppState state;
 
+  /// A pushed route: it listens to the state itself, since the app root no
+  /// longer rebuilds every route on each notification (T49C-1).
   @override
   Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: state,
+      builder: (context, _) => _build(context),
+    );
+  }
+
+  Widget _build(BuildContext context) {
     final theme = Theme.of(context);
     final l10n = context.l10n;
     final session = state.session;

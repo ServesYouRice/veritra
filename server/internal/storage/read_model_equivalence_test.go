@@ -3,8 +3,10 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -86,12 +88,140 @@ const legacyListConversationsPageQuery = `
 		ORDER BY activity_at DESC, id DESC
 		LIMIT ?`
 
+// legacyListSyncEventsQuery is the single-scan page query before the
+// per-conversation merge (T49 follow-up), with the MLS join filter as it was
+// then. Parameters: after, account, device, after, account, device, limit.
+const legacyListSyncEventsQuery = `
+		SELECT id, event_type, account_id, conversation_id, payload_json, created_at
+		FROM (
+			SELECT id, event_type, account_id, conversation_id, payload_json, created_at
+			FROM sync_events
+			WHERE id > ? AND account_id = ? AND (device_id IS NULL OR device_id = ?)
+			UNION ALL
+			SELECT se.id, se.event_type, se.account_id, se.conversation_id, se.payload_json, se.created_at
+			FROM sync_events se
+			JOIN memberships m ON m.conversation_id = se.conversation_id
+			WHERE se.id > ? AND se.account_id IS NULL AND m.account_id = ?
+			  AND (NOT (se.event_type = 'mls.message.created' OR se.event_type LIKE 'message.envelope.%'
+			            OR se.event_type LIKE 'call.%')
+			       OR (
+	NOT EXISTS (SELECT 1 FROM conversation_mls_groups jg WHERE jg.conversation_id = se.conversation_id)
+	OR EXISTS (SELECT 1 FROM conversation_mls_devices jd
+		WHERE jd.conversation_id = se.conversation_id AND jd.device_id = ?
+		AND se.id > jd.joined_after_event_id
+		AND (jd.removed_after_event_id IS NULL OR se.id <= jd.removed_after_event_id)
+		AND (se.event_type NOT LIKE 'message.envelope.%'
+			OR json_type(se.payload_json, '$.envelope.crypto_metadata.mls_epoch') IS NOT 'integer'
+			OR json_extract(se.payload_json, '$.envelope.crypto_metadata.mls_epoch') >= jd.joined_epoch))
+))
+			  AND NOT EXISTS (
+			    SELECT 1 FROM account_blocks b
+			    WHERE b.blocker_account_id = m.account_id
+			      AND b.blocked_account_id = CASE
+			        WHEN se.event_type LIKE 'message.%' THEN (SELECT sender_account_id FROM message_envelopes WHERE id = json_extract(se.payload_json, '$.message_id'))
+			        WHEN se.event_type LIKE 'reaction.%' OR se.event_type = 'read_receipt.updated' THEN json_extract(se.payload_json, '$.account_id')
+			        WHEN se.event_type LIKE 'call.%' THEN json_extract(se.payload_json, '$.created_by')
+			        ELSE NULL
+			      END
+			  )
+		) visible_events
+		ORDER BY id ASC
+		LIMIT ?`
+
+// legacyListSyncEvents is ListSyncEvents as it was: the cursor check on the
+// full bounds, then the single-scan query.
+func legacyListSyncEvents(t testing.TB, store *Store, accountID, deviceID string, afterID int64, limit int) ([]domain.SyncEvent, error) {
+	t.Helper()
+	ctx := context.Background()
+	oldest, _ := legacySyncBounds(t, store, accountID)
+	if afterID > 0 && oldest > 0 && afterID < oldest-1 {
+		return nil, ErrSyncCursorExpired
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows, err := store.db.QueryContext(ctx, legacyListSyncEventsQuery, afterID, accountID, deviceID, afterID, accountID, deviceID, limit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var events []domain.SyncEvent
+	for rows.Next() {
+		event, err := scanSyncEvent(rows)
+		if err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return events, nil
+}
+
+func checkSyncPage(t *testing.T, store *Store, accountID, deviceID string, afterID int64, limit int) []domain.SyncEvent {
+	t.Helper()
+	got, gotErr := store.ListSyncEvents(context.Background(), accountID, deviceID, afterID, limit)
+	want, wantErr := legacyListSyncEvents(t, store, accountID, deviceID, afterID, limit)
+	if !errors.Is(gotErr, wantErr) {
+		t.Fatalf("sync page %s/%q after %d limit %d: err %v want %v", accountID, deviceID, afterID, limit, gotErr, wantErr)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("sync page %s/%q after %d limit %d differs:\n got %d events %v\nwant %d events %v",
+			accountID, deviceID, afterID, limit, len(got), pageEventIDs(got), len(want), pageEventIDs(want))
+	}
+	return got
+}
+
+func pageEventIDs(events []domain.SyncEvent) []int64 {
+	ids := make([]int64, len(events))
+	for i, event := range events {
+		ids[i] = event.ID
+	}
+	return ids
+}
+
+// checkSyncEventsMatch pages through the account's whole stream with the
+// new and the legacy query and compares every page, then tries cursors that
+// are not page ends: the middle of history, before the oldest event, past
+// the newest, and the limit normalisation.
+func checkSyncEventsMatch(t *testing.T, store *Store, accountID string, devices []string, paged, requireEvents bool, mid int64) {
+	t.Helper()
+	var maxID int64
+	if err := store.db.QueryRowContext(context.Background(), `SELECT COALESCE(MAX(id), 0) FROM sync_events`).Scan(&maxID); err != nil {
+		t.Fatal(err)
+	}
+	for _, device := range devices {
+		if paged {
+			after, pages, seen := int64(0), 0, 0
+			for {
+				page := checkSyncPage(t, store, accountID, device, after, 7)
+				if len(page) == 0 {
+					break
+				}
+				pages++
+				seen += len(page)
+				after = page[len(page)-1].ID
+			}
+			if requireEvents && pages < 2 {
+				t.Fatalf("%s/%q: %d events in %d pages; paging would be vacuous", accountID, device, seen, pages)
+			}
+			for _, limit := range []int{-1, 0, 1, 200, 201} {
+				checkSyncPage(t, store, accountID, device, mid, limit)
+			}
+		}
+		for _, after := range []int64{0, 1, mid / 2, mid, mid + 1, maxID - 3, maxID, maxID + 5} {
+			checkSyncPage(t, store, accountID, device, after, 50)
+		}
+	}
+}
+
 const legacyBlobUsageQuery = `SELECT COALESCE(SUM(size_bytes), 0) FROM (
 		SELECT owner_account_id AS account_id, size_bytes FROM attachment_envelopes
 		UNION ALL SELECT account_id, size_bytes FROM backup_blobs
 	)`
 
-func legacySyncBounds(t *testing.T, store *Store, accountID string) (int64, int64) {
+func legacySyncBounds(t testing.TB, store *Store, accountID string) (int64, int64) {
 	t.Helper()
 	var oldest, latest sql.NullInt64
 	if err := store.db.QueryRowContext(context.Background(), legacySyncBoundsQuery, accountID, accountID).Scan(&oldest, &latest); err != nil {
@@ -205,16 +335,48 @@ func seedEquivalenceEdges(t *testing.T, store *Store, ds benchDataset) {
 	// MLS join cursors on the hot conversation do not change bounds.
 	exec(`INSERT INTO conversation_mls_groups(conversation_id, epoch, updated_at) VALUES(?, 3, '2026-03-01T00:00:00Z')`, ds.HotConv)
 	exec(`INSERT INTO conversation_mls_devices(conversation_id, device_id, account_id, joined_after_event_id, joined_epoch) VALUES(?, ?, ?, 40, 2)`, ds.HotConv, ds.HotDevice, ds.HotAccount)
+
+	// Sync pages: a second device of the hot account that joined the hot
+	// group later and was removed again, encrypted events that name an
+	// epoch before and after the hot device's join epoch, MLS and call
+	// events, and Welcomes for each device. They interleave with the edge
+	// conversation's events above.
+	var last int64
+	if err := store.db.QueryRowContext(ctx, `SELECT MAX(id) FROM sync_events`).Scan(&last); err != nil {
+		t.Fatal(err)
+	}
+	exec(`INSERT INTO conversation_mls_devices(conversation_id, device_id, account_id, joined_after_event_id, joined_epoch, removed_after_event_id) VALUES(?, 'dev_hot_2', ?, 60, 3, ?)`,
+		ds.HotConv, ds.HotAccount, last+4)
+	hotEvent := func(eventType, payload string) {
+		exec(`INSERT INTO sync_events(event_type, account_id, conversation_id, payload_json, created_at) VALUES(?, NULL, ?, ?, '2026-03-05T00:00:00Z')`, eventType, ds.HotConv, payload)
+	}
+	hotEvent("message.envelope.created", `{"message_id":"msg_epoch_1","envelope":{"crypto_metadata":{"mls_epoch":1}}}`)
+	hotEvent("message.envelope.created", `{"message_id":"msg_epoch_4","envelope":{"crypto_metadata":{"mls_epoch":4}}}`)
+	hotEvent("mls.message.created", `{"message_id":"mls_1"}`)
+	exec(`INSERT INTO sync_events(event_type, account_id, conversation_id, device_id, payload_json, created_at) VALUES('mls.welcome', ?, ?, ?, '{}', '2026-03-05T00:00:00Z')`, ds.HotAccount, ds.HotConv, ds.HotDevice)
+	exec(`INSERT INTO sync_events(event_type, account_id, conversation_id, device_id, payload_json, created_at) VALUES('mls.welcome', ?, ?, 'dev_hot_2', '{}', '2026-03-05T00:00:00Z')`, ds.HotAccount, ds.HotConv)
+	hotEvent("call.created", fmt.Sprintf(`{"created_by":%q}`, ds.Accounts[2]))
+	hotEvent("message.envelope.created", `{"message_id":"msg_epoch_x","envelope":{"crypto_metadata":{"mls_epoch":"3"}}}`)
+	addEvent("conversation.updated", `{}`)
+	hotEvent("conversation.updated", `{}`)
 }
 
-func checkReadModelsMatch(t *testing.T, store *Store, accounts []string) {
+func checkReadModelsMatch(t *testing.T, store *Store, ds benchDataset) {
 	t.Helper()
 	ctx := context.Background()
 	now := nowString()
-	for i, account := range append(accounts, "acct_unknown") {
+	for i, account := range append(ds.Accounts[:len(ds.Accounts):len(ds.Accounts)], "acct_unknown") {
 		// Paging and cursor checks on the hot account and three blockers;
 		// whole-list checks on everyone (keeps the race run short).
 		paged := i < 4
+		devices := []string{"dev_unknown"}
+		if i < len(ds.Devices) {
+			devices[0] = ds.Devices[i]
+		}
+		if paged {
+			devices = append(devices, "dev_hot_2", "")
+		}
+		checkSyncEventsMatch(t, store, account, devices, paged, i == 0, ds.MidEventID)
 		_, oldest, latest, err := store.SyncBounds(ctx, account)
 		if err != nil {
 			t.Fatal(err)
@@ -266,7 +428,7 @@ func TestReadModelQueriesMatchLegacy(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM account_blocks`).Scan(&blockedHidden); err != nil || blockedHidden < 10 {
 		t.Fatalf("blocks=%d err=%v", blockedHidden, err)
 	}
-	checkReadModelsMatch(t, store, ds.Accounts)
+	checkReadModelsMatch(t, store, ds)
 	for _, c := range newConversationsPage(t, store, ds.HotAccount, 1000, "", nowString()) {
 		unreadSum += c.UnreadCount
 	}
@@ -289,20 +451,110 @@ func TestReadModelQueriesMatchLegacy(t *testing.T) {
 	if _, _, err := store.PruneExpiredContent(ctx, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	checkReadModelsMatch(t, store, ds.Accounts)
+	checkReadModelsMatch(t, store, ds)
 	if _, err := store.db.ExecContext(ctx, `DELETE FROM sync_events WHERE id <= ?`, ds.MidEventID/2); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.ExecContext(ctx, `DELETE FROM read_receipts WHERE rowid % 2 = 0`); err != nil {
 		t.Fatal(err)
 	}
-	checkReadModelsMatch(t, store, ds.Accounts)
+	checkReadModelsMatch(t, store, ds)
 
 	// Account deletion removes memberships; bounds and lists follow.
 	if err := store.DeleteAccount(ctx, ds.Accounts[2]); err != nil {
 		t.Fatal(err)
 	}
-	checkReadModelsMatch(t, store, ds.Accounts)
+	checkReadModelsMatch(t, store, ds)
+}
+
+// The review scenario for the sync merge: a long run of events the device
+// may not see in one group (it joined the MLS group after the history, was
+// removed before it, or blocked the sender) interleaved with a visible
+// conversation, reactions and account events, paged from 0. Pages match
+// the legacy query for the affected device, the other member's device
+// (never in the MLS group), no device and an unknown one.
+func TestSyncHiddenRunMatchesLegacy(t *testing.T) {
+	ctx := context.Background()
+	for _, mode := range []hiddenRunMode{hiddenJoinedLate, hiddenRemoved, hiddenBlocked} {
+		t.Run(string(mode), func(t *testing.T) {
+			store := newBenchStore(t, ctx)
+			ds := seedHiddenRun(t, ctx, store, 60, mode)
+			checkSyncEventsMatch(t, store, ds.Account, []string{ds.Device, "", "dev_unknown"}, true, true, ds.LastEventID/2)
+			checkSyncEventsMatch(t, store, "acct_hr_b", []string{"dev_hr_b"}, true, true, ds.LastEventID/2)
+			// The hidden run is really hidden: the device sees none (or, once
+			// removed, only the first) of the group's messages.
+			var hidden int
+			after := int64(0)
+			for {
+				page, err := store.ListSyncEvents(ctx, ds.Account, ds.Device, after, 100)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(page) == 0 {
+					break
+				}
+				for _, event := range page {
+					if event.ConversationID == "conv_hr_hidden" && event.Type == "message.envelope.created" {
+						hidden++
+					}
+				}
+				after = page[len(page)-1].ID
+			}
+			if want := map[hiddenRunMode]int{hiddenRemoved: 1}[mode]; hidden != want {
+				t.Fatalf("device saw %d hidden-run messages, want %d", hidden, want)
+			}
+			// After retention, cursors into the pruned range expire as
+			// before, whether or not the event at the cursor counts.
+			if _, err := store.db.ExecContext(ctx, `DELETE FROM sync_events WHERE id <= ?`, ds.LastEventID/4); err != nil {
+				t.Fatal(err)
+			}
+			checkSyncEventsMatch(t, store, ds.Account, []string{ds.Device}, true, true, ds.LastEventID/2)
+			for after := int64(1); after <= ds.LastEventID+1; after += 7 {
+				checkSyncPage(t, store, ds.Account, ds.Device, after, 5)
+			}
+			if _, err := store.ListSyncEvents(ctx, ds.Account, ds.Device, 1, 5); !errors.Is(err, ErrSyncCursorExpired) {
+				t.Fatalf("cursor in the pruned range: err=%v, want expired", err)
+			}
+		})
+	}
+}
+
+// The page bound rests on SQLite running the merge as a co-routine that
+// advances only as rows are read. Were it materialized, every page would
+// read all of the account's history after the cursor.
+func TestListSyncEventsQueryStreams(t *testing.T) {
+	ctx := context.Background()
+	store := newBenchStore(t, ctx)
+	ds := seedHiddenRun(t, ctx, store, 5, hiddenJoinedLate)
+	rows, err := store.db.QueryContext(ctx, "EXPLAIN QUERY PLAN "+listSyncEventsQuery, ds.Account, 0, ds.Device)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan = append(plan, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(plan, "\n")
+	if !strings.Contains(joined, "CO-ROUTINE candidates") || strings.Contains(joined, "MATERIALIZE candidates") {
+		t.Fatalf("sync merge is not streamed:\n%s", joined)
+	}
+	for _, want := range []string{
+		"SEARCH n USING INDEX idx_sync_events_conversation (conversation_id=? AND id>?)",
+		"SEARCH n USING INDEX idx_sync_events_account (account_id=? AND id>?)",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("plan lacks %q:\n%s", want, joined)
+		}
+	}
 }
 
 func blobUsage(t *testing.T, store *Store) (map[string]int64, int64, map[string]int64, int64) {

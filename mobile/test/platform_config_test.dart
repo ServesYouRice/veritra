@@ -48,6 +48,79 @@ void main() {
     expect(linkScreen, isNot(contains('link.linkUri')));
   });
 
+  test('Android keeps all app data out of backups and device transfers', () {
+    // Android 12+ device-to-device transfer ignores allowBackup="false";
+    // only the data extraction rules keep data out of it.
+    final manifest =
+        File('android/app/src/main/AndroidManifest.xml').readAsStringSync();
+    expect(manifest, contains('android:allowBackup="false"'));
+    expect(manifest,
+        contains('android:dataExtractionRules="@xml/data_extraction_rules"'));
+    expect(manifest, contains('android:fullBackupContent="@xml/backup_rules"'));
+
+    const domains = <String>[
+      'root',
+      'file',
+      'database',
+      'sharedpref',
+      'external',
+      'device_root',
+      'device_file',
+      'device_database',
+      'device_sharedpref',
+    ];
+    final excludeAll = <String>[
+      for (final domain in domains) '<exclude domain="$domain" path="." />',
+    ];
+    String section(String xml, String tag) {
+      final start = xml.indexOf('<$tag>');
+      final end = xml.indexOf('</$tag>');
+      expect(start, isNonNegative, reason: tag);
+      expect(end, greaterThan(start), reason: tag);
+      return xml.substring(start, end);
+    }
+
+    final rules = File('android/app/src/main/res/xml/data_extraction_rules.xml')
+        .readAsStringSync();
+    final legacy = File('android/app/src/main/res/xml/backup_rules.xml')
+        .readAsStringSync();
+    for (final (name, body) in <(String, String)>[
+      ('cloud-backup', section(rules, 'cloud-backup')),
+      ('device-transfer', section(rules, 'device-transfer')),
+      ('full-backup-content', section(legacy, 'full-backup-content')),
+    ]) {
+      for (final exclude in excludeAll) {
+        expect(body, contains(exclude), reason: name);
+      }
+      // An include would bring files back in.
+      expect(body, isNot(contains('<include')), reason: name);
+    }
+  });
+
+  test('iOS excludes the local database from backups through the Runner', () {
+    final delegate = File('ios/Runner/AppDelegate.swift').readAsStringSync();
+    final dart = File('lib/storage/backup_exclusion.dart').readAsStringSync();
+    const channel = 'org.veritra.private_messenger/storage';
+    expect(delegate, contains('name: "$channel"'));
+    expect(dart, contains("MethodChannel('$channel')"));
+    expect(delegate, contains('call.method == "excludeFromBackup"'));
+    expect(dart, contains("'excludeFromBackup'"));
+    expect(delegate, contains('values.isExcludedFromBackup = true'));
+    expect(delegate,
+        contains('registerStorageChannel(engineBridge.pluginRegistry)'));
+    // Every path is tried: a failure is counted inside the loop, never
+    // returned from it, and reported once after it.
+    final handler = delegate.substring(
+        delegate.indexOf('for path in paths where'),
+        delegate.indexOf('func onListen('));
+    final loop = handler.substring(0, handler.indexOf('if failures > 0'));
+    expect(loop, contains('failures += 1'));
+    expect(loop, isNot(contains('return')));
+    expect(loop, isNot(contains('result(')));
+    expect(handler.substring(loop.length),
+        contains('FlutterError(code: "exclude_failed"'));
+  });
+
   test('iOS declares why device-link QR scanning needs the camera', () {
     final infoPlist = File('ios/Runner/Info.plist').readAsStringSync();
 

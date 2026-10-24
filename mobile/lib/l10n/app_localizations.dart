@@ -6,6 +6,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/intl.dart' as intl;
 
 import 'app_localizations_en.dart';
+import 'app_localizations_sr.dart';
 
 // ignore_for_file: type=lint
 
@@ -92,7 +93,11 @@ abstract class AppLocalizations {
   ];
 
   /// A list of this localizations delegate's supported locales.
-  static const List<Locale> supportedLocales = <Locale>[Locale('en')];
+  static const List<Locale> supportedLocales = <Locale>[
+    Locale('en'),
+    Locale('sr'),
+    Locale.fromSubtags(languageCode: 'sr', scriptCode: 'Latn')
+  ];
 
   /// Dismisses a dialog without doing anything.
   ///
@@ -3358,6 +3363,24 @@ abstract class AppLocalizations {
   /// **'The reset did not finish. Nothing was deleted. Retry.'**
   String get recoveryResetFailed;
 
+  /// Recovery screen message when the encrypted local database opened with its key but upgrading it to the app's new version failed because the device is full or could not write. The database is unchanged; retrying after freeing storage completes the upgrade.
+  ///
+  /// In en, this message translates to:
+  /// **'This device could not update its message storage for this version of Veritra, for example because the device is full. Nothing has been changed or deleted. Free up some space, then retry.'**
+  String get recoveryUpgradeFailed;
+
+  /// Recovery screen message when the storage upgrade failed for lack of space again after a retry. The reset it mentions moves the old data aside and needs confirmation.
+  ///
+  /// In en, this message translates to:
+  /// **'This device still could not update its message storage. Nothing has been changed or deleted. Free up more space and retry, or reset this device and link it again.'**
+  String get recoveryUpgradeStillFull;
+
+  /// Recovery screen message when the encrypted local database opened with its key but upgrading or opening it for the app's new version failed for a reason other than a full device (for example, a damaged file). The reset it mentions moves the old data aside and needs confirmation.
+  ///
+  /// In en, this message translates to:
+  /// **'This device could not update its message storage for this version of Veritra. Nothing has been changed or deleted. Retry. If it keeps failing, you can reset this device and link it again.'**
+  String get recoveryUpgradeError;
+
   /// No description provided for @errorPasswordLoginNeedsLink.
   ///
   /// In en, this message translates to:
@@ -3430,17 +3453,31 @@ class _AppLocalizationsDelegate
 
   @override
   bool isSupported(Locale locale) =>
-      <String>['en'].contains(locale.languageCode);
+      <String>['en', 'sr'].contains(locale.languageCode);
 
   @override
   bool shouldReload(_AppLocalizationsDelegate old) => false;
 }
 
 AppLocalizations lookupAppLocalizations(Locale locale) {
+  // Lookup logic when language+script codes are specified.
+  switch (locale.languageCode) {
+    case 'sr':
+      {
+        switch (locale.scriptCode) {
+          case 'Latn':
+            return AppLocalizationsSrLatn();
+        }
+        break;
+      }
+  }
+
   // Lookup logic when only language code is specified.
   switch (locale.languageCode) {
     case 'en':
       return AppLocalizationsEn();
+    case 'sr':
+      return AppLocalizationsSr();
   }
 
   throw FlutterError(

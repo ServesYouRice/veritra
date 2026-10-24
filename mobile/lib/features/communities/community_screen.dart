@@ -25,6 +25,15 @@ class CommunityScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Listens itself: the app root no longer rebuilds every page on each
+    // notification (T49C-1).
+    return ListenableBuilder(
+      listenable: state,
+      builder: (context, _) => _build(context),
+    );
+  }
+
+  Widget _build(BuildContext context) {
     final channelConversations =
         state.conversations.where((c) => c.isChannel).toList();
     final hasContent =

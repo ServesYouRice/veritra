@@ -417,6 +417,37 @@ measured them) and 200% text scale, where this dense direction will hurt first.
 The redacted bars scale their height with the text scaler for that reason; the
 pills and rows have not been checked at all.
 
+## Languages
+
+The app follows the device language: English (`mobile/lib/l10n/app_en.arb`, the
+template), Serbian in Cyrillic (`app_sr.arb`) and Serbian in Latin script
+(`app_sr_Latn.arb`). Anything else falls back to English. iOS lists the same
+languages under `CFBundleLocalizations` in `mobile/ios/Runner/Info.plist`.
+
+**Serbian is a machine-assisted draft awaiting a native-speaker review**
+(card T44C). The reviewer checks only `app_sr.arb`, the Cyrillic file, against
+`app_en.arb`. It addresses the user with the formal "ви" (`Унесите`,
+`Покушајте поново`); button labels use the short imperative, as Flutter's own
+Serbian Material strings do (`Откажи`, `Копирај`). Security text (encryption,
+keys, safety numbers, recovery, device verification, the demo build's
+"unreviewed encryption" label) must keep the English meaning exactly; never
+soften a warning.
+
+Never edit `app_sr_Latn.arb` by hand. It is the transliteration of the Cyrillic
+file; after changing `app_sr.arb`, run:
+
+```sh
+python3 scripts/l10n-sr-latn.py
+cd mobile && flutter gen-l10n
+```
+
+`scripts/l10n-sr-latn_test.py` (in `scripts/test.sh` and CI) fails when the
+Latin file is stale, and `mobile/test/l10n_locales_test.dart` fails when a
+locale misses a message, a placeholder or a Serbian plural form (`one`, `few`,
+`other`). The generated `mobile/lib/l10n/app_localizations*.dart` files are
+committed. The one notification the Android app shows is native text and stays
+English.
+
 ## App icon
 
 The Android `mipmap-*/ic_launcher.png` set and the fifteen images in

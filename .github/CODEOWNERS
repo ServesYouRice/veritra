@@ -1,0 +1,33 @@
+# The release gate and what it trusts (docs/security-review.md). Without
+# these, a normally reviewed pull request could drop the approvals rule or
+# change a signing pin, and the next approval would land unreviewed by the
+# owner. This only binds once branch protection on main requires review from
+# code owners.
+
+# This file.
+/.github/CODEOWNERS @ServesYouRice
+
+# Workflows: release.yml runs the gate; ci.yml produces its CI evidence.
+/.github/workflows/ @ServesYouRice
+
+# Release policy, its signing pins, and the approvals.
+/release/ @ServesYouRice
+
+# Scripts the release gate runs, and their tests.
+/scripts/check-release-evidence.py @ServesYouRice
+/scripts/check-release-evidence_test.py @ServesYouRice
+/scripts/write-release-evidence.py @ServesYouRice
+/scripts/write-release-evidence_test.py @ServesYouRice
+/scripts/check-ci-evidence.py @ServesYouRice
+/scripts/check-ci-evidence_test.py @ServesYouRice
+/scripts/release-readiness.sh @ServesYouRice
+/scripts/release-image.sh @ServesYouRice
+/scripts/check-go-toolchain.sh @ServesYouRice
+/scripts/check-rust-audit-expiry.sh @ServesYouRice
+/scripts/check-rust-audit-policy.py @ServesYouRice
+/scripts/check-demo-boundary.sh @ServesYouRice
+/scripts/audit-rust.sh @ServesYouRice
+/scripts/smoke-deploy.sh @ServesYouRice
+
+# The G27 advisory exceptions the gate checks for expiry.
+/crypto/rust/audit-policy.json @ServesYouRice

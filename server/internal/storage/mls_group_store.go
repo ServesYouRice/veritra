@@ -546,25 +546,28 @@ func (s *Store) ClaimDeviceKeyPackages(ctx context.Context, conversationID, requ
 	return result, nil
 }
 
-// mlsJoinFilter limits a conversation's encrypted events to the devices in
+// mlsJoinFilterEventFor limits a conversation's encrypted events to the devices in
 // its group, from their join cursor on (card I51). Groups without a
-// recorded roster are not filtered. The query binds the device ID once.
+// recorded roster are not filtered. device is SQL text (a column or a
+// positional parameter) for the device ID, never a value.
 //
 // An application envelope also names the epoch it was encrypted in; one from
 // an epoch before the device joined is withheld even when it was stored
 // later, because the device cannot decrypt it.
-const mlsJoinFilterEvent = `(
+func mlsJoinFilterEventFor(device string) string {
+	return `(
 	NOT EXISTS (SELECT 1 FROM conversation_mls_groups jg WHERE jg.conversation_id = se.conversation_id)
 	OR EXISTS (SELECT 1 FROM conversation_mls_devices jd
-		WHERE jd.conversation_id = se.conversation_id AND jd.device_id = ?
+		WHERE jd.conversation_id = se.conversation_id AND jd.device_id = ` + device + `
 		AND se.id > jd.joined_after_event_id
 		AND (jd.removed_after_event_id IS NULL OR se.id <= jd.removed_after_event_id)
 		AND (se.event_type NOT LIKE 'message.envelope.%'
 			OR json_type(se.payload_json, '$.envelope.crypto_metadata.mls_epoch') IS NOT 'integer'
 			OR json_extract(se.payload_json, '$.envelope.crypto_metadata.mls_epoch') >= jd.joined_epoch))
 )`
+}
 
-// mlsJoinFilterMessage is mlsJoinFilterEvent for conversation_mls_messages
+// mlsJoinFilterMessage is mlsJoinFilterEventFor for conversation_mls_messages
 // rows (alias mm), keyed by their sync event.
 const mlsJoinFilterMessage = `(
 	NOT EXISTS (SELECT 1 FROM conversation_mls_groups jg WHERE jg.conversation_id = mm.conversation_id)

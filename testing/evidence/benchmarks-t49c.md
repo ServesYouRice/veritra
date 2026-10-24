@@ -118,7 +118,8 @@ coverage 60.53% (floor 43%); goldens pass with `TZ=UTC`.
    1,233 elements, with frames 13-30% shorter in most of ten paired runs. Not done: `main.dart` is a
    release-gate file, and pushed routes other than `ChatScreen` may rely on
    the cascade for updates, so each needs an audit first. A further step is
-   to stop rebuilding the hidden list.
+   to stop rebuilding the hidden list. *Fixed (T49C-1), both steps: see
+   "After: scoped listeners and kept tab state" below.*
 2. **Every received message's commit scans the ciphertext cache.**
    `commitMlsTransition` finds the next envelope position with `WHERE
    conversation_id = ? ORDER BY position DESC LIMIT 1` on
@@ -138,7 +139,7 @@ coverage 60.53% (floor 43%); goldens pass with `TZ=UTC`.
    wide layout, switching destinations drops an unsent composer draft and
    reply target. Selection is kept. Keeping scroll offsets (page storage) or
    drafts (held outside the chat widget) is a product decision; the draft
-   loss loses user text.
+   loss loses user text. *Fixed (T49C-4), all three kept: see below.*
 5. **No action:** per-bubble linear lookups (DM check over the conversation
    list, sender name over the roster) and `timelineFor`'s merge and sort per
    chat build showed no measurable effect at 2,000 conversations and 500
@@ -193,3 +194,120 @@ changes and not done here:
 
 The app's own encrypted backup is a logical export, so this change does not
 affect it.
+
+## After: scoped listeners and kept tab state
+
+Measured misses 1 (T49C-1, commit `78faf94`) and 4 (T49C-4, commit
+`9aa7153`), fixed. Same host and command as above (`flutter test -j 1 test/perf/render_perf_test.dart`), 2026-10-23,
+load average 1.0-3.6, medians of three runs. "Before" is `138891c`'s `lib/`,
+run the same day. Both ran with `pubspec.yaml`/`pubspec.lock` from
+`6d188b1^`: the intl 0.20.3 bump in `6d188b1` does not resolve with Flutter
+3.44.0 (`flutter_localizations` pins intl 0.20.2).
+
+**What changed (T49C-1).** The root in `main.dart` listens only to the
+appearance controller; the lines that pick the crypto service are untouched.
+Each part of the UI listens for what it draws, through
+`ListenableSelector` (`lib/ui/widgets/listenable_selector.dart`, no new
+dependency): it reads a selection after every notification and rebuilds only
+when the selection changed. `AppShell` selects the lifecycle and whether a
+session exists; the wide layout's detail pane the selected conversation; the
+connection banner what it draws; the chat list its conversations, loaded
+flag, account, selection and mute flags; the open chat everything its build
+reads for that conversation (its envelopes, decrypted history, roster,
+pending sends and their states, busy and error flags). AppState replaces its
+lists instead of editing them, so lists compare by identity. Screens that
+relied on the root rebuilding every route now listen themselves
+(`ConnectScreen`, `CommunityScreen`, `SearchScreen`, `ProfileScreen`, the
+recovery screen); the others already did, and no sheet or dialog reads the
+state in its build except through its own listener. The what-if root
+(`scopedRootApp`) is gone from the harness.
+
+| Scenario | Dataset | Before | After |
+|---|---|---|---|
+| One AppState notification, chat list open | 200 conversations | 21.6 ms, 854 elements | **0.05 ms, 0 elements** |
+| One AppState notification, chat open | 2,000 messages | 34.1 ms, 1,233 elements | **0.05 ms, 0 elements** |
+| One new message via sync, chat list open | same | 2 frames, 31.5 ms, 854 elements | **1 frame, 5.2 ms, 0 elements** |
+| One new message via sync, chat open | same | 3 frames, 52.8 ms, 1,233 elements | **3 frames, 37.7 ms, 352 elements** |
+| Tab switch, first frame (list at 3,000 px) | 1,000 conversations | median 36.0 ms, p90 64.2 | 43.2 ms, p90 152 |
+| Tab switch, state kept | - | selection yes; list offset no; wide draft no | **selection, list offset, draft and reply target** |
+| Chat-list scroll / chat scroll | 1,000 conv / 2,000 msgs | 4,039 / 1,293 elements | same |
+
+With a chat open, a new message in it now rebuilds the chat (1 message list,
+1 composer, 6 bubbles) and nothing else: not `MaterialApp`, the shell or the
+15 rows of the list hidden under it. A notification that changes nothing
+visible rebuilds nothing. The chat list did not change for a message in this
+benchmark, because new messages do not change the conversation list until it
+is refreshed.
+
+**Regression test.** `test/scoped_rebuild_test.dart` opens a chat through its
+row, in the phone layout (pushed route) and the wide layout (detail pane),
+and fails if a bare notification, a device-list refresh, going offline or a
+message synced into another conversation rebuilds `MaterialApp`,
+`ChatScreen`, the message list, a bubble or the composer. It also checks
+that a message in the open conversation still reaches the screen and that
+the shell still follows the session lifecycle. Checked against both ways it
+could regress: with the old root listener it fails on `MaterialApp`, with a
+chat that rebuilds on every notification it fails on the message list.
+
+**Tab state (T49C-4).** The chat list's `ListView` has a `PageStorageKey`
+(per account), so its offset survives another destination replacing it, in
+every layout. Unsent text and the reply target are held per conversation in
+`AppState.composerDrafts` (`lib/core/composer_drafts.dart`), which outlives
+the chat widget: switching destinations, switching conversations in the wide
+layout, or leaving a pushed chat and opening it again keeps them. Drafts are
+memory only: never written to the local database or the outbox, never sent,
+never logged (`toString` prints counts), and cleared when the session ends
+(`_clearLocalSession` and the restore-failure path) or the conversation is
+left. A send that was accepted clears its draft even if the chat closed
+meanwhile, so sent text never returns as a draft. Tests:
+`test/tab_state_test.dart` (wide layout: list offset, draft, reply target,
+per-conversation drafts, nothing stored or sent, sign-out clears).
+
+*Cost:* returning to a list scrolled 3,000 px lays out the rows above the
+offset once (about 45 rows; the list has no fixed row extent), which is the
+p90 rise in the tab-switch row. The median is within this host's noise, and
+the cost is proportional to the offset, paid only on the return frame.
+*Rollback:* revert; no data or schema change.
+
+## After: incremental snapshot writes (T49C-3)
+
+Measured miss 3, fixed without a schema change (local schema stays 9).
+`replaceSnapshot` no longer deletes both cache tables and inserts every
+row. In the same single transaction it reads the stored IDs, deletes the
+rows that are gone and upserts the rest with
+`ON CONFLICT (id) DO UPDATE ... WHERE <a column differs>`, so an unchanged
+row is compared and left alone. The rows afterwards are exactly those of a
+full rewrite (same IDs, positions, payloads and order); a repeated ID is
+refused before anything is written, as the full rewrite refused it. A
+failure part-way still rolls back the deletes and updates before it (test
+with an injected trigger in `encrypted_local_store_test.dart`).
+
+Same host and commands as above, 2026-10-23, load average 1.5-2.6, a second
+Flutter job sharing the host. Medians of three runs; "before" is this
+branch's tests against `138891c`'s `lib/`. Rows are SQLite
+`total_changes()`; pages are the frames the write appended to an emptied
+write-ahead log (4 KiB each). Both are exact. New scenario: `snapshot
+rewrites of a full cache` in `startup_sync_perf_test.dart`.
+
+| Scenario | Dataset | Before | After |
+|---|---|---|---|
+| Rewrite, nothing changed (restore, refresh, open) | 10,180 cached | 286 ms, 21,360 rows, 1,878 pages (7.3 MiB) | **163 ms, 0 rows, 0 pages** |
+| Rewrite after one new message (conversation moves to the top) | same | 265 ms, 21,365 rows, 1,879 pages | **128 ms, 34 rows, 8 pages** |
+| Rewrite after leaving one conversation (20 envelopes) | same | 255 ms, 21,261 rows, 1,873 pages | **152 ms, 418 rows, 29 pages** |
+| Online restore (includes a rewrite) | same | 458 ms | **289 ms** |
+| Open conversation (`loadMessages`, two rewrites) | same | 270 ms | **189 ms** |
+| One snapshot rewrite (existing scenario) | same | 250 ms | **141 ms** |
+| Cold start restore, sync burst, commit per message | - | unchanged (no snapshot write on these paths) | same |
+
+Leaving a conversation still updates the positions of every conversation
+listed after it (about 400 small rows). What remains of the time is CPU
+work proportional to the cache: encoding each cached envelope to JSON
+(about 40 ms at 10k rows) and sending and comparing it in the database
+isolate (about 100 ms). The disk work is gone: an unchanged rewrite used to
+write 7.3 MiB to the write-ahead log, with `secure_delete` zeroing the
+freed pages, and checkpoint it back; on phone flash that write and its
+fsync are the larger cost, which this host does not show. Skipping the
+encode for unchanged conversations would need an in-memory record of what
+is stored, which other writers (`commitMlsTransition`, `commitSyncEvent`,
+another store on the same file) can make stale; not done, the database
+stays the only record. Rollback: revert; no data or schema change.

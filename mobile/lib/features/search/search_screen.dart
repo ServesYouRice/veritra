@@ -93,6 +93,15 @@ class _SearchScreenState extends State<SearchScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // A pushed route: the results' actions and block state follow the app
+    // state, which the root no longer rebuilds routes for (T49C-1).
+    return ListenableBuilder(
+      listenable: widget.state,
+      builder: (context, _) => _build(context),
+    );
+  }
+
+  Widget _build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     return Scaffold(

@@ -114,11 +114,19 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		return nil, err
 	}
 	clientIdentities := httpapi.NewClientIdentityResolver(cfg.TrustedProxies)
-	limiter, err := newRateLimiter(clientIdentities, 240, 10, 5)
+	requestLimits := rateLimitsFromConfig(cfg.RateLimits)
+	limiter, err := newRateLimiter(clientIdentities, requestLimits)
 	if err != nil {
 		_ = store.Close()
 		return nil, err
 	}
+	logger.Info("rate_limits",
+		"address_per_minute", requestLimits.general,
+		"account_per_minute", requestLimits.account,
+		"signed_in_address_per_minute", requestLimits.signedIn,
+		"credential_per_minute", requestLimits.auth,
+		"enrollment_per_minute", requestLimits.enrollment,
+	)
 	loginBackoff, err := httpapi.NewLoginBackoff()
 	if err != nil {
 		_ = store.Close()
@@ -343,11 +351,12 @@ func routeTimeouts(next http.Handler) http.Handler {
 		ctx, cancel := context.WithTimeout(r.Context(), deadline)
 		defer cancel()
 		request := r.WithContext(ctx)
-		next.ServeHTTP(w, request)
 		// ServeMux records the matched pattern on the request it receives. Copy
 		// it back so outer metrics/logging middleware cannot fall back to a raw
-		// URL path merely because this timeout wrapper added a context.
-		r.Pattern = request.Pattern
+		// URL path merely because this timeout wrapper added a context. The
+		// defer also covers a handler that aborts with a panic.
+		defer func() { r.Pattern = request.Pattern }()
+		next.ServeHTTP(w, request)
 	})
 }
 
@@ -778,21 +787,47 @@ func (a *App) requestLogger(next http.Handler) http.Handler {
 		requestID := newRequestID()
 		w.Header().Set("X-Request-ID", requestID)
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		completed := false
+		// A handler that does not return normally was aborted: a download
+		// stopped by a failed integrity check (panic(http.ErrAbortHandler)),
+		// or a panic net/http recovers. It still gets its log line and
+		// metrics. Nothing is recovered here, so the panic keeps its value
+		// and stack and net/http still breaks the connection.
+		defer func() {
+			if completed {
+				return
+			}
+			status := rec.status
+			if !rec.wroteHeader {
+				status = 0 // no status line reached the client
+			}
+			a.metrics.aborted.Add(1)
+			a.logRequest(r, requestID, status, start, "outcome", "aborted")
+		}()
 		next.ServeHTTP(rec, r)
-		a.metrics.record(r.Pattern, rec.status, time.Since(start))
-		a.Log.Info("http_request",
-			"request_id", requestID,
-			"method", r.Method,
-			"route", requestRoute(r.Pattern),
-			"status", rec.status,
-			"duration_ms", time.Since(start).Milliseconds(),
-		)
+		completed = true
+		a.logRequest(r, requestID, rec.status, start)
 	})
+}
+
+// logRequest records the request's metrics and writes its log line: the
+// matched route pattern, never the raw path, and no headers or body.
+func (a *App) logRequest(r *http.Request, requestID string, status int, start time.Time, extra ...any) {
+	elapsed := time.Since(start)
+	a.metrics.record(r.Pattern, status, elapsed)
+	a.Log.Info("http_request", append([]any{
+		"request_id", requestID,
+		"method", r.Method,
+		"route", requestRoute(r.Pattern),
+		"status", status,
+		"duration_ms", elapsed.Milliseconds(),
+	}, extra...)...)
 }
 
 type httpMetrics struct {
 	total               atomic.Int64
 	active              atomic.Int64
+	aborted             atomic.Int64
 	statusClass         [6]atomic.Int64
 	routes              sync.Map
 	realtimeConnections func() int
@@ -886,6 +921,11 @@ func (m *httpMetrics) handle(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "veritra_http_requests_total %d\n", m.total.Load())
 	_, _ = fmt.Fprint(w, "# TYPE veritra_http_active_requests gauge\n")
 	_, _ = fmt.Fprintf(w, "veritra_http_active_requests %d\n", m.active.Load())
+	// Requests whose handler stopped without returning, such as a download
+	// cut off by a failed integrity check. They are also in the counts
+	// above, with the status they had sent (none: no status class).
+	_, _ = fmt.Fprint(w, "# TYPE veritra_http_aborted_requests_total counter\n")
+	_, _ = fmt.Fprintf(w, "veritra_http_aborted_requests_total %d\n", m.aborted.Load())
 	_, _ = fmt.Fprint(w, "# TYPE veritra_http_responses_total counter\n")
 	for class := 1; class <= 5; class++ {
 		_, _ = fmt.Fprintf(w, "veritra_http_responses_total{status_class=%q} %d\n", strconv.Itoa(class)+"xx", m.statusClass[class].Load())
@@ -992,12 +1032,20 @@ func newRequestID() string {
 
 type statusRecorder struct {
 	http.ResponseWriter
-	status int
+	status      int
+	wroteHeader bool
 }
 
 func (r *statusRecorder) WriteHeader(status int) {
 	r.status = status
+	r.wroteHeader = true
 	r.ResponseWriter.WriteHeader(status)
+}
+
+func (r *statusRecorder) Write(p []byte) (int, error) {
+	// A body write sends an implicit 200 status line first.
+	r.wroteHeader = true
+	return r.ResponseWriter.Write(p)
 }
 
 func (r *statusRecorder) Unwrap() http.ResponseWriter {
@@ -1010,11 +1058,14 @@ func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 		return nil, nil, errors.New("hijacking unsupported")
 	}
 	r.status = http.StatusSwitchingProtocols
+	r.wroteHeader = true
 	return hijacker.Hijack()
 }
 
 func (r *statusRecorder) Flush() {
 	if flusher, ok := r.ResponseWriter.(http.Flusher); ok {
+		// Flushing sends the status line (an implicit 200) if none was.
+		r.wroteHeader = true
 		flusher.Flush()
 	}
 }
@@ -1026,40 +1077,94 @@ func requestRoute(pattern string) string {
 	return pattern
 }
 
+// Request budgets per minute (docs/operations.md, "Credential abuse
+// controls"). A request without a session token is charged to its client
+// address's general budget. A request with one is admitted on the
+// address's signed-in budget, never the general one, and settled once its
+// token has been looked up: a valid session is charged to its account's
+// budget at that address, a token that does not resolve to the general
+// budget. So anonymous requests and stale tokens at an address cannot
+// refuse its signed-in people, while token lookups stay bounded per address
+// by the signed-in budget. Credential and enrollment routes always stay on
+// the address budgets, whatever they carry.
+type rateLimits struct {
+	// general: requests per address without a session that resolves.
+	general int
+	// auth and enrollment: credential and enrollment routes per address.
+	auth       int
+	enrollment int
+	// account: requests with a valid session, per account and address.
+	account int
+	// signedIn: requests carrying a session token, per address.
+	signedIn int
+}
+
+// The credential and enrollment budgets bound guessing; they are fixed.
+const (
+	credentialRequestsPerMinute = 10
+	enrollmentRequestsPerMinute = 5
+)
+
+func rateLimitsFromConfig(limits config.RateLimits) rateLimits {
+	limits = limits.WithDefaults()
+	return rateLimits{
+		general:    limits.AddressPerMinute,
+		auth:       credentialRequestsPerMinute,
+		enrollment: enrollmentRequestsPerMinute,
+		account:    limits.AccountPerMinute,
+		signedIn:   limits.SignedInAddressPerMinute,
+	}
+}
+
 type rateLimiter struct {
 	salt             [16]byte
 	clientIdentities *httpapi.ClientIdentityResolver
-	generalLimit     int
-	authLimit        int
-	enrollmentLimit  int
+	limits           rateLimits
 
-	mu         sync.Mutex
-	buckets    map[string]*bucket
-	evictions  atomic.Int64
-	rejections [len(rateLimitScopes)]atomic.Int64
+	mu sync.Mutex
+	// buckets holds address buckets (every budget of one client address,
+	// the credential and enrollment ones included); accountBuckets holds
+	// account budgets at an address. They are bounded separately, so one
+	// account seen from many addresses (each IPv6 /64 is one) cannot evict
+	// other addresses' buckets and reset their credential budgets.
+	buckets        map[string]*bucket
+	accountBuckets map[string]*bucket
+	evictions      atomic.Int64
+	rejections     [len(rateLimitScopes)]atomic.Int64
 }
 
 // rateLimitScopes name the limit a rejected request hit, for metrics only.
-var rateLimitScopes = [...]string{"general", "auth", "enrollment"}
+var rateLimitScopes = [...]string{"general", "auth", "enrollment", "account", "signed_in"}
 
+const (
+	scopeGeneral = iota
+	scopeAuth
+	scopeEnrollment
+	scopeAccount
+	scopeSignedIn
+)
+
+// bucket counts one key's requests in its current minute. An address key
+// uses every field; an account key (account and address) uses general.
 type bucket struct {
 	general    int
 	auth       int
 	enrollment int
+	signedIn   int
 	reset      time.Time
 }
 
+// maxRateLimitEntries bounds each of the two bucket tables.
 const maxRateLimitEntries = 65536
 
 const rateLimitEvictionSampleSize = 32
 
-func newRateLimiter(clientIdentities *httpapi.ClientIdentityResolver, general, auth, enrollment int) (*rateLimiter, error) {
+func newRateLimiter(clientIdentities *httpapi.ClientIdentityResolver, limits rateLimits) (*rateLimiter, error) {
 	rl := &rateLimiter{
 		clientIdentities: clientIdentities,
-		generalLimit:     general,
-		authLimit:        auth,
-		enrollmentLimit:  enrollment,
+		limits:           limits,
 		buckets:          map[string]*bucket{},
+		accountBuckets:   map[string]*bucket{},
 	}
 	if _, err := rand.Read(rl.salt[:]); err != nil {
 		return nil, err
@@ -1076,9 +1181,11 @@ func (rl *rateLimiter) cleanupLoop(ctx context.Context) {
 			return
 		case now := <-ticker.C:
 			rl.mu.Lock()
-			for k, b := range rl.buckets {
-				if b.reset.Before(now) {
-					delete(rl.buckets, k)
+			for _, table := range []map[string]*bucket{rl.buckets, rl.accountBuckets} {
+				for k, b := range table {
+					if b.reset.Before(now) {
+						delete(table, k)
+					}
 				}
 			}
 			rl.mu.Unlock()
@@ -1086,73 +1193,163 @@ func (rl *rateLimiter) cleanupLoop(ctx context.Context) {
 	}
 }
 
+// bucketLocked returns key's bucket in table for the current minute,
+// starting a new one (and evicting from the same table under pressure)
+// when needed. rl.mu must be held.
+func (rl *rateLimiter) bucketLocked(table map[string]*bucket, key string, now time.Time) *bucket {
+	b, ok := table[key]
+	if ok && !b.reset.Before(now) {
+		return b
+	}
+	if !ok && len(table) >= maxRateLimitEntries {
+		rl.evictOneLocked(table, now)
+	}
+	b = &bucket{reset: now.Add(time.Minute)}
+	table[key] = b
+	return b
+}
+
 func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		clientIP := rl.clientIP(r)
-		key := remoteHash(rl.salt[:], clientIP)
+		host := rateLimitHost(rl.clientIP(r))
 		now := time.Now()
-		auth := isAuthEndpoint(r.URL.Path)
-		enrollment := isEnrollmentEndpoint(r.URL.Path)
+		class := httpapi.ClassifyRoute(r.URL.Path)
+		auth := class == httpapi.CredentialRoute
+		enrollment := class == httpapi.EnrollmentRoute
+		// A session token on an ordinary route is admitted on the
+		// address's signed-in budget alone, so requests without a session
+		// there cannot refuse it; accountCharge settles it once the token
+		// has been looked up. Public routes never look a token up, so one
+		// there would only buy the larger budget.
+		signedIn := class == httpapi.OrdinaryRoute && httpapi.HasBearerToken(r)
 
 		rl.mu.Lock()
-		b, ok := rl.buckets[key]
-		if !ok || b.reset.Before(now) {
-			if !ok {
-				if len(rl.buckets) >= maxRateLimitEntries {
-					rl.evictOneLocked(now)
-				}
-				b = &bucket{reset: now.Add(time.Minute)}
-				rl.buckets[key] = b
-			} else {
-				b = &bucket{reset: now.Add(time.Minute)}
-				rl.buckets[key] = b
-			}
+		b := rl.bucketLocked(rl.buckets, remoteHash(rl.salt[:], host), now)
+		if signedIn {
+			b.signedIn++
+		} else {
+			b.general++
 		}
-		b.general++
 		if auth {
 			b.auth++
 		}
 		if enrollment {
 			b.enrollment++
 		}
-		overGeneral := b.general > rl.generalLimit
-		overAuth := auth && b.auth > rl.authLimit
-		overEnrollment := enrollment && b.enrollment > rl.enrollmentLimit
+		scope := -1
+		switch {
+		case auth && b.auth > rl.limits.auth:
+			scope = scopeAuth
+		case enrollment && b.enrollment > rl.limits.enrollment:
+			scope = scopeEnrollment
+		case signedIn && b.signedIn > rl.limits.signedIn:
+			scope = scopeSignedIn
+		case !signedIn && b.general > rl.limits.general:
+			scope = scopeGeneral
+		}
 		retryAfter := boundedRetryAfter(b.reset.Sub(now))
 		rl.mu.Unlock()
 
-		if overGeneral || overAuth || overEnrollment {
-			switch {
-			case overAuth:
-				rl.rejections[1].Add(1)
-			case overEnrollment:
-				rl.rejections[2].Add(1)
-			default:
-				rl.rejections[0].Add(1)
-			}
+		if scope >= 0 {
+			rl.rejections[scope].Add(1)
 			w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 			http.Error(w, "rate limited", http.StatusTooManyRequests)
 			return
 		}
-		next.ServeHTTP(w, r)
+		if !signedIn {
+			next.ServeHTTP(w, r)
+			return
+		}
+		charge := &accountCharge{limiter: rl, host: host}
+		request := r.WithContext(httpapi.WithRequestBudget(r.Context(), charge))
+		// Copy the matched pattern back for the request logger, as
+		// routeTimeouts does, and settle a token the route never looked
+		// up, also when the handler aborts.
+		defer func() {
+			r.Pattern = request.Pattern
+			charge.settleUnused()
+		}()
+		next.ServeHTTP(w, request)
 	})
 }
 
-func isAuthEndpoint(path string) bool {
-	switch path {
-	case "/api/v1/setup/owner",
-		"/api/v1/auth/login",
-		"/api/v1/auth/reauth",
-		"/api/v1/register",
-		"/api/v1/recovery",
-		"/api/v1/device-links/claim":
-		return true
-	}
-	return strings.HasPrefix(path, "/api/v1/device-links/") && strings.HasSuffix(path, "/claim-status")
+// accountCharge is the httpapi.RequestBudget of one request with a session
+// token. The middleware admitted it on the address's signed-in budget;
+// the first of Authenticated, Unauthenticated or settleUnused decides
+// which other budget it is charged to.
+type accountCharge struct {
+	limiter *rateLimiter
+	host    string
+
+	done       bool
+	ok         bool
+	retryAfter int
 }
 
-func isEnrollmentEndpoint(path string) bool {
-	return strings.HasSuffix(path, "/enrollment")
+// Authenticated charges the request to the budget of accountID at the
+// request's address.
+func (c *accountCharge) Authenticated(accountID string) (bool, int) {
+	rl := c.limiter
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	if !c.done {
+		c.settleLocked(rl.accountBuckets, rl.accountKey(accountID, c.host), rl.limits.account, scopeAccount)
+	}
+	return c.ok, c.retryAfter
+}
+
+// Unauthenticated charges a request whose token did not resolve to the
+// address's general budget, as a request without a session: guessed and
+// stale tokens from one address share that budget with anonymous
+// requests, and once it is spent they are refused (after their lookup).
+func (c *accountCharge) Unauthenticated() (bool, int) {
+	rl := c.limiter
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	if !c.done {
+		c.settleLocked(rl.buckets, remoteHash(rl.salt[:], c.host), rl.limits.general, scopeGeneral)
+	}
+	return c.ok, c.retryAfter
+}
+
+// settleUnused charges a request whose route never looked its token up (a
+// public route, or no route) to the general budget once it has been
+// served, as one without a session.
+func (c *accountCharge) settleUnused() {
+	rl := c.limiter
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	if !c.done {
+		c.settleLocked(rl.buckets, remoteHash(rl.salt[:], c.host), rl.limits.general, -1)
+	}
+}
+
+// settleLocked charges key's general count in table for the current minute
+// against limit, counting a refusal under scope unless it is -1. rl.mu
+// must be held.
+func (c *accountCharge) settleLocked(table map[string]*bucket, key string, limit, scope int) {
+	rl := c.limiter
+	now := time.Now()
+	c.done = true
+	b := rl.bucketLocked(table, key, now)
+	b.general++
+	c.ok = b.general <= limit
+	c.retryAfter = boundedRetryAfter(b.reset.Sub(now))
+	if !c.ok && scope >= 0 {
+		rl.rejections[scope].Add(1)
+	}
+}
+
+// accountKey keys an account's budget at one client address. Like address
+// keys it is a salted hash, so the table holds no identifiers.
+func (rl *rateLimiter) accountKey(accountID, host string) string {
+	hasher := sha256.New()
+	_, _ = hasher.Write(rl.salt[:])
+	_, _ = hasher.Write([]byte("account\x00"))
+	_, _ = hasher.Write([]byte(accountID))
+	_, _ = hasher.Write([]byte{0})
+	_, _ = hasher.Write([]byte(host))
+	return hex.EncodeToString(hasher.Sum(nil))
 }
 
 func (rl *rateLimiter) clientIP(r *http.Request) string {
@@ -1192,17 +1389,17 @@ func rateLimitHost(host string) string {
 	return host
 }
 
-func (rl *rateLimiter) evictOneLocked(now time.Time) {
-	if len(rl.buckets) < maxRateLimitEntries {
+func (rl *rateLimiter) evictOneLocked(table map[string]*bucket, now time.Time) {
+	if len(table) < maxRateLimitEntries {
 		return
 	}
 	var candidate string
 	var candidateReset time.Time
 	sampled := 0
-	for key, b := range rl.buckets {
+	for key, b := range table {
 		if !b.reset.After(now) {
-			delete(rl.buckets, key)
-			if len(rl.buckets) < maxRateLimitEntries {
+			delete(table, key)
+			if len(table) < maxRateLimitEntries {
 				return
 			}
 			continue
@@ -1216,14 +1413,15 @@ func (rl *rateLimiter) evictOneLocked(now time.Time) {
 		}
 	}
 	if candidate != "" {
-		delete(rl.buckets, candidate)
+		delete(table, candidate)
 		rl.evictions.Add(1)
 	}
 }
 
+// stats reports the entries of both tables together and their evictions.
 func (rl *rateLimiter) stats() (entries int, evictions int64) {
 	rl.mu.Lock()
-	entries = len(rl.buckets)
+	entries = len(rl.buckets) + len(rl.accountBuckets)
 	rl.mu.Unlock()
 	return entries, rl.evictions.Load()
 }

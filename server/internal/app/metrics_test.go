@@ -45,7 +45,7 @@ func TestRequestLoggerUsesMatchedPatternAndNeverRawPath(t *testing.T) {
 
 func TestHTTPMetricsExposeBoundedOperationalSignals(t *testing.T) {
 	metrics := newHTTPMetrics()
-	limiter, err := newRateLimiter(nil, 100, 10, 5)
+	limiter, err := newRateLimiter(nil, rateLimits{general: 100, auth: 10, enrollment: 5, account: 100, signedIn: 500})
 	if err != nil {
 		t.Fatalf("new limiter: %v", err)
 	}

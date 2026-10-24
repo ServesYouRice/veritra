@@ -13,9 +13,10 @@ in Git history at `d2d9eb8`. Evidence lives in [`testing/evidence/`](testing/evi
 |---|---|
 | 🔒 Public release | 🔴 **NO-GO by design.** Messaging stays off in release builds until the independent crypto review (G25) and signed-device evidence (G24) pass |
 | 🧪 Local demos (real encryption, labelled "unreviewed") | 🟢 Work: server + Linux app run here; Android, iOS, Windows, macOS build in CI |
-| 🧰 Local work queue (former `implementation/`) | 🟢 Done. See [Open work](#open-work) for what is left |
-| 🚀 First deployment (k3s, handbook plan) | 🟡 Repo side ready; needs the owner's accounts (see [Deployment](#deployment)) |
+| 🧰 Local work queue | 🟢 Done, including the 2026-10-23 open-work round. What is left needs the owner or outside parties; see [Open work](#open-work) |
+| 🚀 First deployment (k3s, handbook plan) | 🟡 Repo side ready; needs the owner's accounts (see [Deployment](#deployment)) and branch protection on GitHub |
 | ✅ Checks | 🟢 Go, Rust, Flutter, contract, demo e2e, release-policy fixtures pass; CI runs on every PR |
+| 🌐 Languages | 🟡 English, and Serbian (Cyrillic and Latin) awaiting a native-speaker review |
 
 ```
 Demo foundation     ██████████  done
@@ -49,6 +50,19 @@ added tests for the acceptance criteria that had none and fixed what they found.
 | T46 deploy smoke + k3s rehearsal | Hardened Compose smoke (`scripts/smoke-deploy.sh`, also run by the release command) and a throwaway k3s cluster: deploy, upgrade, rollback, backup, restore drill, full restore. Fixed TURN URL restart loop, VAPID subject, Traefik redirect, Caddy duplicate headers; `GOMEMLIMIT` set | [`T46-deploy-smoke.md`](testing/evidence/T46-deploy-smoke.md) |
 | QA02 iOS evidence schema | Simulator CI stays required but can never count as signed-iOS evidence; signed records bind platform, type, commit, digest and attested provenance | [`QA02-ios-evidence.md`](testing/evidence/QA02-ios-evidence.md) |
 | Mobile cache index (local schema 9) | Receiving a message with 10k cached rows 23 ms → 5 ms; the upgrade is now one transaction | [`benchmarks-t49c.md`](testing/evidence/benchmarks-t49c.md) |
+| Sync from mid-history (capacity tier M) | `ListSyncEvents` merges per-conversation chains and stops after a page of visible events: 172 ms → 2.1 ms per mid-history page; paging past hidden runs is linear (40k events: 16 s → 0.9 s). Tier M now rates 4 msgs/device/min with cold catch-ups (was 2) | [`benchmarks-t49.md`](testing/evidence/benchmarks-t49.md), [`T47-capacity.md`](testing/evidence/T47-capacity.md) |
+| Aborted downloads | A download cut by an integrity failure keeps its `http_request` line (`outcome=aborted`) and counts in `veritra_http_aborted_requests_total` | `server/internal/app/aborted_request_test.go` |
+| Shared address | Signed-in requests have per-account budgets at an address (D39), so one household member no longer starves the others | [`docs/operations.md`](docs/operations.md#credential-abuse-controls) |
+| T49C-1 scoped rebuilds | One state change with a chat open rebuilt 1,233 elements; now 0. A new message in the open chat rebuilds the chat only (352). Release-gate lines unchanged | [`benchmarks-t49c.md`](testing/evidence/benchmarks-t49c.md) |
+| T49C-4 tab state | Chat-list offset, unsent drafts and reply targets survive tab switches; drafts stay in memory only | `mobile/test/tab_state_test.dart` |
+| T49C-3 snapshot writes | Unchanged rewrite of 10k cached rows 286 ms and 7.3 MiB WAL → 163 ms and nothing written; schema stays 9 | [`benchmarks-t49c.md`](testing/evidence/benchmarks-t49c.md) |
+| Local DB upgrade failures | A full disk (`upgradeStorageFull`) and other upgrade errors (`upgradeFailed`) get their own messages; a repeated failure offers the confirmed quarantine reset, so no one is stuck | `mobile/test/app_state_test.dart`, [`docs/crypto.md`](docs/crypto.md) |
+| Device transfer | Android `dataExtractionRules`/`fullBackupContent` exclude app data; iOS excludes the database files from backup before and after each open. Not built here (no Android SDK, no Xcode) | `mobile/test/platform_config_test.dart` |
+| I31 native outbox | Every payload type goes outbox → HTTP → native decrypt on a second member; fails (not skips) in CI without the library | `mobile/test/native_outbox_test.dart` |
+| Release approvals | Approvals live in `release/approvals/<candidate>/`, read from the default-branch tip, landing alone after the candidate (D40) | [`release-approvals-android-i31.md`](testing/evidence/release-approvals-android-i31.md) |
+| Android signed release | One Android `signed-release` APK required (D41); CI's APK is `emulator-debug` and never counts; refused until the release certificate is pinned | same |
+| T44C Serbian | `app_sr.arb` (Cyrillic, formal "ви") and a generated `app_sr_Latn.arb`; a check keeps them in step | [`docs/design.md`](docs/design.md) |
+| Dependency fixes | intl held at 0.20.2 for Flutter 3.44.0 (the #90 bump broke `flutter pub get`); ctutils 0.4.5 for RUSTSEC-2026-0385 | CI |
 
 Earlier work (I01–I28, the Stage 0–5 demo work, T43C, T44A–C, T46 base,
 T48A/B, T49A/B misses 1–5) is recorded in Git history and in the evidence
@@ -61,21 +75,16 @@ and keep each change small.
 
 | Item | What | Notes |
 |---|---|---|
-| I31 | A test that sends MLS payloads through the real native library from the outbox | Only gap left in the sweep |
-| T49C-1 | The whole app rebuilds on every state change (1,233 elements with a chat open) | Needs a scoped listener in `main.dart`; touches the release-gate file, so review the gate lines stay as they are |
-| T49C-3 | The cached ciphertext snapshot is rewritten in full on restore/open | Storage design change |
-| T49C-4 | Chat-list scroll position, an unsent draft and the reply target are lost when switching tabs (wide layout) | Recommended: keep them |
-| T44C | A second app language | English only today; needs a native-speaker review |
-| T42B | Native incoming-call lifecycle (CallKit, PushKit, Android Telecom) | Deferred by D16/D20; design in [`docs/call-platform-design-proposal.md`](docs/call-platform-design-proposal.md) needs approval when it starts |
-| Capacity tier M | 250 accounts pass in steady state, but cold catch-ups from deep history miss the targets; a mid-history sync page still takes 252 ms (T49) | Fix the `ListSyncEvents` mid-cursor query, then rerun `scripts/capacity.sh` |
-| Long soak | The 2-hour soak was not run here (shared CPU) | Run `scripts/capacity.sh` on the owner's host |
-| Shared address | Families or offices behind one router share the 240 requests/minute per-address limit | Needs its own design (per-account budgets exist now) |
-| Downloads | An aborted download (integrity failure mid-stream) skips the normal request log line and metrics | A `blob_integrity_failed` warning is still logged |
-| Local DB upgrade | A failed upgrade (e.g. disk full) shows the wrong-key message | Nothing is lost; needs its own failure kind and UI string |
+| T42B | Native incoming-call lifecycle (CallKit, PushKit, Android Telecom) | Deferred by D16/D20; design in [`docs/call-platform-design-proposal.md`](docs/call-platform-design-proposal.md) needs the owner's approval when it starts |
+| Long soak and tier M on real hardware | The 2-hour soak was not run here (shared CPU); tier M was rerun on a quieter shared host | Run `scripts/capacity.sh` on the owner's host |
 | Deploy, untested here | Rollback across a schema change, a live R2 restore, cert-manager issuance, Flux reading the real `infra` repo | Try on the first real deployment |
-| Release approvals | An approval file cannot contain the SHA of the commit it is committed in; `release.yml` needs another way to receive approvals | Found during QA02 |
-| Android signed release | The release policy has no signed-release record for Android yet | Mirror the QA02 iOS schema |
-| Device transfer | Android 12+ device transfer ignores `allowBackup="false"` without `dataExtractionRules`; iOS backups include the database file | A copied file cannot be opened without its device-only key; still worth excluding |
+| Serbian review | `mobile/lib/l10n/app_sr.arb` is a machine-assisted draft | A native speaker reviews the Cyrillic file; `scripts/l10n-sr-latn.py` regenerates the Latin one. Android notification text and the iOS camera prompt are native strings and stay English |
+| Signing pins | The policy refuses every signed-release record until its pins are set: `android.release_certificate_sha256`, `ios.team_id`, `ios.bundle_id` | Pin them once the signing accounts and keys exist ([`docs/security-review.md`](docs/security-review.md)) |
+| Branch protection | `main` and `v*` tags are unprotected, so the approval design's "protected default branch" does not hold yet | Owner: protect `main` and `v*` tags and require code-owner review (`.github/CODEOWNERS` covers the release policy, approvals, workflows and gate scripts) |
+| Unbuilt platform code | The backup-exclusion XML and Swift were read, not built; the APK checker is tested only on synthetic APKs | Build in CI or on a Mac; check against a real signed APK |
+| Sync bounds per page | The sync handler still calls `SyncBounds` on every page: about 250-280 ms per page for a group whose edges are a blocked sender's run (40k events) | Stored bounds (a schema change), or compute them only for the 409 answer (the app ignores them in a 200) |
+| Hidden tail on every poll | The page after the last visible event re-reads every hidden event behind it (removed device, blocked sender: about 200-300 ms at 40k hidden events per poll). Older than this round; the old single scan read more | Return a next cursor (the last row read) in the sync response; needs an API change on both sides |
+| Full disk during setup | A disk that fills before the migration starts still shows the wrong-key message | Pre-existing; nothing is lost |
 
 ## Release gates
 
@@ -104,7 +113,7 @@ proxy), one replica with `Recreate`, the data directory backed up to R2.
 | Off-host backups to R2 | ✅ Built; first restore from R2 still to be tried |
 | Monitoring examples | ✅ Alert rules (backup age, failed drill, disk, WAL, OOM, write refusals, provider failures, certificates) with promtool tests, private metrics scrape, keep-list for a hosted free tier |
 | Hardened smoke and k3s rehearsal | ✅ Passed with stand-ins (MinIO for R2, a local coturn); Flux example in `deploy/kubernetes/examples/` |
-| **Needed from the owner** | OVH VPS and its firewall, Cloudflare account, domain and a DNS-only record, a Cloudflare DNS token for cert-manager, an R2 bucket with a lock and a per-bucket token, the age key, a GHCR token with `write:packages`, where coturn runs, and **one permanent hostname** (clients bind device identity to it) |
+| **Needed from the owner** | OVH VPS and its firewall, Cloudflare account, domain and a DNS-only record, a Cloudflare DNS token for cert-manager, an R2 bucket with a lock and a per-bucket token, the age key, a GHCR token with `write:packages`, where coturn runs, **one permanent hostname** (clients bind device identity to it), and GitHub branch protection for `main` and `v*` tags with code-owner review |
 
 Details: [`docs/operations.md`](docs/operations.md).
 
@@ -138,6 +147,10 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 | **D36** (2026-10-23) | Blob integrity: a SHA-256 per 64 KiB chunk recorded at upload; reads verify only the chunks they serve; old blobs get a full check once |
 | **D37** (2026-10-23) | Release policy v2: exactly one `ios` `signed-release` record from a workflow other than CI, verified by `gh attestation verify`; `simulator-debug` records are checked but never count |
 | **D38** (2026-10-23) | Admission limit defaults (tier S): 512 MiB and 10,000 blobs per account, 10 devices, 100 members per conversation, 1,000 conversations per account, 1,000 deliveries per minute, 64 MiB written per hour; instance storage = volume × 0.9 / (backups + 3), at most 10 GiB. All set with `PRIVATE_MESSENGER_LIMIT_*` |
+| **D39** (2026-10-23) | Request budgets: a request with a session token is admitted on the address's signed-in budget (1,200/min) and then charged to its account at that address (240/min); a token that does not resolve is charged to the general per-address budget (240/min); credential (10) and enrollment (5) routes, and the public health and setup routes, always use address budgets. Account buckets have their own table. All set with `PRIVATE_MESSENGER_RATE_LIMIT_*` |
+| **D40** (2026-10-23) | Release approvals: `release/approvals/<candidate>/{production-crypto,independent-review}.json`, read from the default-branch tip that contains the candidate; each lands alone after it; git is read without replace refs or grafts; manifest schema 3 |
+| **D41** (2026-10-23) | Android release evidence mirrors D37: exactly one `android` `signed-release` APK (v2 and v3 signatures, one signer matching the pinned certificate, `minSdkVersion` ≥ 24, not debuggable), attested outside CI; `emulator-debug` records are checked but never count. iOS records also need the pinned team and bundle IDs. APK and IPA zips are refused on comments, duplicate names or a second end record |
+| **D42** (2026-10-23, owner) | Second language: Serbian. Cyrillic `sr` is the reviewed source; Latin `sr_Latn` is generated from it |
 
 ## Roadmap
 
@@ -169,7 +182,7 @@ owner picks them.
    Store, F-Droid and desktop, produced locally.
 7. **Optional storage backends** (PostgreSQL, S3-compatible) behind the
    existing interfaces, for larger instances.
-8. **A second app language**, reviewed by a native speaker.
+8. **A native-speaker review** of the Serbian translation.
 
 ## Stays out
 

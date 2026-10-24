@@ -19,6 +19,7 @@ import '../sync/sync_service.dart';
 import 'api_client.dart';
 import 'attachments.dart';
 import 'client_config.dart';
+import 'composer_drafts.dart';
 import 'errors.dart';
 import 'message_history.dart';
 import '../storage/encrypted_database.dart' show LocalMessageKind;
@@ -174,7 +175,9 @@ class AppState extends ChangeNotifier {
   final MobilePushService pushService;
 
   /// Strings for the messages AppState stores for the UI (errors, recovery
-  /// and probe text). English until the app adds another locale (T44C).
+  /// and probe text). `AppShell` sets it to the app's locale (T44C); English
+  /// before the shell first builds and where no shell is built. Text already
+  /// stored keeps its language. Push data never carries any of it.
   AppLocalizations l10n = englishL10n;
 
   Session? session;
@@ -202,6 +205,10 @@ class AppState extends ChangeNotifier {
   final Map<String, PendingEnvelopeRecord> _outboxRecords =
       <String, PendingEnvelopeRecord>{};
   String? selectedConversationId;
+
+  /// Unsent composer text and reply targets, in memory only (T49C-4). Not
+  /// part of what [notifyListeners] reports; cleared when the session ends.
+  final ComposerDrafts composerDrafts = ComposerDrafts();
   DeviceLink? activeDeviceLink;
   DeviceLinkClaim? pendingDeviceLinkClaim;
   String? error;
@@ -647,6 +654,8 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     try {
       final stored = await localStore.loadSession();
+      // The local database opened, so a run of failed upgrades is over.
+      _storageFullFailures = 0;
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
       if (stored == null) {
         lifecycle = SessionLifecycle.ready;
@@ -717,15 +726,23 @@ class AppState extends ChangeNotifier {
       conversationsLoaded = false;
       messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
       _history.clear();
+      composerDrafts.clear();
       lifecycle = SessionLifecycle.recoveryRequired;
       localStoreFailure =
           error is LocalStoreUnavailableException ? error.kind : null;
+      _storageFullFailures =
+          localStoreFailure == LocalStoreFailureKind.upgradeStorageFull
+              ? _storageFullFailures + 1
+              : 0;
       recoveryMessage = error is LocalStoreUnavailableException
           ? _localStoreFailureMessage(error.kind)
           : l10n.recoveryRestoreFailed;
       notifyListeners();
     }
   }
+
+  /// Restores in a row whose upgrade failed for lack of space.
+  int _storageFullFailures = 0;
 
   String _localStoreFailureMessage(LocalStoreFailureKind kind) {
     switch (kind) {
@@ -738,6 +755,12 @@ class AppState extends ChangeNotifier {
       case LocalStoreFailureKind.keyMalformed:
       case LocalStoreFailureKind.keyRejected:
         return l10n.recoveryKeyMissing;
+      case LocalStoreFailureKind.upgradeStorageFull:
+        return _storageFullFailures > 1
+            ? l10n.recoveryUpgradeStillFull
+            : l10n.recoveryUpgradeFailed;
+      case LocalStoreFailureKind.upgradeFailed:
+        return l10n.recoveryUpgradeError;
     }
   }
 
@@ -747,6 +770,20 @@ class AppState extends ChangeNotifier {
   /// Signing in cannot work while the local database is unreadable, so the
   /// recovery screen offers it only for other restore failures.
   bool get canContinueWithoutRestore => localStoreFailure == null;
+
+  /// A reset moves the database and its key aside (it never deletes them),
+  /// so it is always reachable and the user is never stuck. An upgrade that
+  /// ran out of space leaves a readable database, though, and freeing space
+  /// and retrying is the fix: the reset is offered for it only once a retry
+  /// has failed the same way again.
+  bool get canResetLocalData {
+    final failure = localStoreFailure;
+    if (failure == null) return false;
+    if (failure == LocalStoreFailureKind.upgradeStorageFull) {
+      return _storageFullFailures > 1;
+    }
+    return true;
+  }
 
   void continueWithoutRestore() {
     if (lifecycle != SessionLifecycle.recoveryRequired ||
@@ -766,8 +803,7 @@ class AppState extends ChangeNotifier {
       throw ArgumentError.value(confirmed, 'confirmed',
           'resetting local data needs explicit confirmation');
     }
-    if (lifecycle != SessionLifecycle.recoveryRequired ||
-        localStoreFailure == null) {
+    if (lifecycle != SessionLifecycle.recoveryRequired || !canResetLocalData) {
       return;
     }
     await _enqueueSessionTransition(() async {
@@ -776,6 +812,7 @@ class AppState extends ChangeNotifier {
       try {
         await localStore.quarantineUnreadableDatabase(confirmed: true);
         localStoreFailure = null;
+        _storageFullFailures = 0;
         recoveryMessage = null;
         lifecycle = SessionLifecycle.ready;
       } catch (err) {
@@ -951,6 +988,9 @@ class AppState extends ChangeNotifier {
       return;
     }
     conversations = await client.conversations(current.token);
+    // The server's list is the truth: a conversation no longer in it (an
+    // admin removed this account, say) keeps no draft here.
+    composerDrafts.retainOnly(conversations.map((item) => item.id));
     conversationsLoaded = true;
     _opErrors.remove(Ops.conversations);
     if (persist) await _persistSnapshot();
@@ -1334,6 +1374,7 @@ class AppState extends ChangeNotifier {
       };
       _historyCursors.remove(conversationId);
       _mutedConversations.remove(conversationId);
+      composerDrafts.remove(conversationId);
       if (selectedConversationId == conversationId) {
         selectedConversationId = null;
       }
@@ -3055,6 +3096,7 @@ class AppState extends ChangeNotifier {
     devices = <Device>[];
     messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
     _history.clear();
+    composerDrafts.clear();
     pendingOutbox = <MessageEnvelope>[];
     _outboxStates.clear();
     _outboxRecords.clear();

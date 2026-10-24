@@ -24,11 +24,13 @@ IMAGE = "ghcr.io/veritra/messenger-server"
 DIGEST = "sha256:1111222233334444555566667777888899990000aaaabbbbccccddddeeeeffff"
 GO_VERSION = "1.25.12\n"
 
+APPROVALS_COMMIT = "89abcdef0123456789abcdef0123456789abcdef"
+
 POLICY = {
-    "schema_version": 2,
+    "schema_version": 3,
     "approvals": {
-        "production_crypto": {"path": "release/approvals/crypto.json"},
-        "security_review": {"path": "release/approvals/review.json"},
+        "production_crypto": {"path": "release/approvals/{commit}/crypto.json"},
+        "security_review": {"path": "release/approvals/{commit}/review.json"},
     },
 }
 
@@ -47,8 +49,8 @@ CI_EVIDENCE = {
 }
 
 MOCK_APPROVALS = {
-    "release/approvals/crypto.json": {"approved": True, "reviewer": "crypto-team"},
-    "release/approvals/review.json": {"approved": True, "reviewer": "sec-team"},
+    f"release/approvals/{COMMIT}/crypto.json": {"digest": "sha256:" + "c" * 64, "record": {"reviewer": "crypto-team"}},
+    f"release/approvals/{COMMIT}/review.json": {"digest": "sha256:" + "d" * 64, "record": {"reviewer": "sec-team"}},
 }
 
 MOBILE = [{"platform": "ios", "artifact_type": "signed-release", "digest": "sha256:" + "b" * 64}]
@@ -64,6 +66,7 @@ def build(**overrides: object) -> dict[str, object]:
         "go_version": GO_VERSION,
         "approval_loader": lambda p: MOCK_APPROVALS[p],
         "mobile_artifacts": MOBILE,
+        "approvals_commit": APPROVALS_COMMIT,
     }
     args.update(overrides)
     return writer.build_manifest(**args)
@@ -86,11 +89,13 @@ def test_build_manifest() -> None:
     expect_value_error("empty image", image="")
     expect_value_error("empty digest", digest="")
 
-    # 3. Invalid approvals structure in policy
-    expect_value_error("non-dict approvals", policy={"schema_version": 2, "approvals": "not a dict"})
+    # 3. Invalid approvals structure in policy, or no approvals commit
+    expect_value_error("non-dict approvals", policy={"schema_version": 3, "approvals": "not a dict"})
     expect_value_error(
-        "missing approval path", policy={"schema_version": 2, "approvals": {"bad": {"no_path": 1}}}
+        "missing approval path", policy={"schema_version": 3, "approvals": {"bad": {"no_path": 1}}}
     )
+    for bad_approvals in ["", "short", APPROVALS_COMMIT.upper(), APPROVALS_COMMIT + "0"]:
+        expect_value_error(f"approvals commit {bad_approvals!r}", approvals_commit=bad_approvals)
 
     # 4. Mobile artifact evidence must be a list of records (QA02)
     for bad_mobile in [None, {}, "records", [1], [MOBILE[0], "x"]]:
@@ -98,7 +103,7 @@ def test_build_manifest() -> None:
 
     # 5. Valid manifest construction and field propagation
     manifest = build()
-    assert manifest["schema_version"] == 2
+    assert manifest["schema_version"] == 3
     assert manifest["candidate_commit"] == COMMIT
     assert manifest["binary_commit"] == COMMIT
     assert manifest["ci_run_id"] == 987654321
@@ -111,8 +116,14 @@ def test_build_manifest() -> None:
         "toolchain": "1.25.12",
     }
     assert manifest["mobile_artifacts"] == MOBILE
-    assert manifest["production_crypto"] == MOCK_APPROVALS["release/approvals/crypto.json"]
-    assert manifest["security_review"] == MOCK_APPROVALS["release/approvals/review.json"]
+    # Approvals are read at paths keyed by the candidate, from the
+    # approvals commit, and recorded with it.
+    assert manifest["approvals"] == {
+        "commit": APPROVALS_COMMIT,
+        "production_crypto": MOCK_APPROVALS[f"release/approvals/{COMMIT}/crypto.json"],
+        "security_review": MOCK_APPROVALS[f"release/approvals/{COMMIT}/review.json"],
+    }
+    assert "production_crypto" not in manifest
 
     # 6. CI job evidence cannot inject mobile records: only the separate
     # mobile artifact file reaches the manifest.
@@ -173,6 +184,40 @@ def test_simulator_record() -> None:
         shutil.rmtree(temp)
 
 
+def test_emulator_record() -> None:
+    temp = Path(tempfile.mkdtemp(prefix="veritra-emu-record-"))
+    try:
+        artifact = temp / "app-debug.apk"
+        artifact.write_bytes(b"synthetic debug apk")
+        record = writer.emulator_record(COMMIT, "4243", artifact)
+        assert record["platform"] == "android"
+        assert record["artifact_type"] == "emulator-debug"
+        assert record["file"] == "app-debug.apk"
+        assert record["signing"] == {"status": "debug"}
+        assert record["build"] == {"sdk": "android", "configuration": "debug", "entry_point": "lib/main_demo.dart"}
+        assert record["provenance"]["job"] == "mobile"
+        assert record["provenance"]["workflow"] == ".github/workflows/ci.yml"
+        assert record["commit"] == record["provenance"]["source_commit"] == COMMIT
+        assert record["digest"] == "sha256:" + hashlib.sha256(b"synthetic debug apk").hexdigest()
+        for bad_run in ["", "x", "１２３"]:
+            try:
+                writer.emulator_record(COMMIT, bad_run, artifact)
+                raise AssertionError(f"expected emulator run id {bad_run!r} to fail")
+            except ValueError:
+                pass
+
+        env = dict(os.environ, GITHUB_SHA=COMMIT, GITHUB_RUN_ID="4243")
+        command = [sys.executable, str(MODULE_PATH), "--android-emulator-record", str(artifact)]
+        result = subprocess.run(command, text=True, capture_output=True, check=False, env=env)
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == record
+        # One debug record per call: both flags together are refused.
+        result = subprocess.run(command + ["--ios-simulator-record", str(artifact)], text=True, capture_output=True, check=False, env=env)
+        assert result.returncode != 0 and not result.stdout
+    finally:
+        shutil.rmtree(temp)
+
+
 def test_missing_mobile_evidence_fails_closed() -> None:
     temp = Path(tempfile.mkdtemp(prefix="veritra-writer-"))
     try:
@@ -196,8 +241,40 @@ def test_missing_mobile_evidence_fails_closed() -> None:
         shutil.rmtree(temp)
 
 
+def test_approvals_commit_is_required() -> None:
+    temp = Path(tempfile.mkdtemp(prefix="veritra-writer-"))
+    try:
+        ci_file = temp / "ci-evidence.json"
+        ci_file.write_text(json.dumps(CI_EVIDENCE), encoding="utf-8")
+        mobile_file = temp / "mobile-artifacts.json"
+        mobile_file.write_text(json.dumps({"artifacts": MOBILE}), encoding="utf-8")
+        base = {key: value for key, value in os.environ.items() if key != "RELEASE_APPROVALS_COMMIT"}
+        env = dict(
+            base,
+            RELEASE_COMMIT=COMMIT,
+            CI_EVIDENCE_FILE=str(ci_file),
+            MOBILE_ARTIFACTS_FILE=str(mobile_file),
+            CONTAINER_IMAGE=IMAGE,
+            CONTAINER_DIGEST=DIGEST,
+        )
+        for approvals_commit in (None, "", "f" * 40):
+            if approvals_commit is not None:
+                env["RELEASE_APPROVALS_COMMIT"] = approvals_commit
+            result = subprocess.run(
+                [sys.executable, str(MODULE_PATH)], text=True, capture_output=True, check=False, env=env
+            )
+            assert result.returncode != 0, result.stdout
+            assert not result.stdout
+            expected = "approval is missing" if approvals_commit else "RELEASE_APPROVALS_COMMIT must be"
+            assert expected in result.stderr, result.stderr
+    finally:
+        shutil.rmtree(temp)
+
+
 if __name__ == "__main__":
     test_build_manifest()
     test_simulator_record()
+    test_emulator_record()
     test_missing_mobile_evidence_fails_closed()
+    test_approvals_commit_is_required()
     print("Release evidence manifest construction tests passed")

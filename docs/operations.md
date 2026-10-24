@@ -83,14 +83,71 @@ HTTPS-only, and release builds (`main.dart`) never accept cleartext. See
 
 ## Credential abuse controls
 
-The per-source limiter allows 240 general requests/minute, 10 credential
+The per-source limiter allows 240 general requests/minute (requests
+without a valid session; see below for signed-in ones), 10 credential
 requests/minute (including login and reauthentication), and 5 enrollment
-requests/minute. IPv6 sources are grouped by /64. Login and reauthentication
-also use bounded account, source/device and session backoff scopes: the first
-two failures are unauthorized responses, the third starts a 1-second delay that
-progresses to 60 seconds, and entries expire after 15 minutes. The controls
+requests/minute. IPv6 sources are grouped by /64.
+
+People behind one router (a household, an office, a carrier NAT) share
+one source address. A request with a session token is admitted on that
+address's signed-in budget only. Once the token has been looked up, a valid
+session is charged to that account's own budget at the address, so people
+there do not use up each other's requests. A token that does not resolve
+(guessed, expired, revoked) is charged to the address's 240 instead, which
+it shares with anonymous requests and credential attempts, as before; past
+the 240 such a token is answered 429 rather than 401. The public routes,
+which never look a token up (`/livez`, `/healthz`, `/readyz`,
+`/api/v1/health`, `/setup`, `/api/v1/setup/status`), always use the 240,
+with or without a token: a junk token there buys nothing. A token on a
+path with no route is charged to the 240 after its 404, which costs no
+more than a 429 would. Credential and enrollment routes
+(setup, login, reauthentication, registration, recovery, device-link claim
+and claim status, and the setup, registration and device-link enrollment
+reservations) always use the address budgets, with or without a token.
+
+| `PRIVATE_MESSENGER_RATE_LIMIT_...` | Default | Range | Counts per minute |
+|---|---|---|---|
+| `ADDRESS_PER_MINUTE` | 240 | 60-100,000 | requests from one address without a session that resolves, including credential and enrollment routes |
+| `ACCOUNT_PER_MINUTE` | 240 | 60-100,000 | requests with a valid session, per account at one address (an account on several networks gets this at each, as before) |
+| `SIGNED_IN_ADDRESS_PER_MINUTE` | 1,200 | 60-1,000,000, at least `ACCOUNT_PER_MINUTE` | all requests carrying a session token from one address, valid or not, every account together |
+
+The credential (10) and enrollment (5) budgets are fixed. The trade-offs:
+
+- One address with valid sessions of five or more accounts can send up to
+  1,200 signed-in requests a minute instead of 240 in all; a single account
+  still gets 240 at an address.
+- Anonymous requests and stale tokens cannot refuse the signed-in people
+  at an address. A device stuck retrying with an expired session uses up
+  the address's 240 (so signed-out neighbours there wait, as with any
+  anonymous flood), but neighbours with a valid session keep their own
+  budgets. Only the shared signed-in ceiling is common to all of them, and
+  tokens that do not resolve count against it too, so a retry loop has to
+  send 1,200 requests a minute to refuse its neighbours.
+- In return, the number of token lookups from one address is bounded by
+  `SIGNED_IN_ADDRESS_PER_MINUTE` (1,200 by default) rather than by the 240:
+  past the 240 a bad token is still refused, but after its lookup (one
+  indexed read of a token hash). Session tokens are 256-bit random values,
+  so this rate does not make guessing feasible; it is a load bound.
+  Raising `SIGNED_IN_ADDRESS_PER_MINUTE` for a large office raises it.
+
+Set `SIGNED_IN_ADDRESS_PER_MINUTE` equal to `ACCOUNT_PER_MINUTE` to give a
+whole address no more than one account's budget; raise it for a large
+office. A refusal is 429 with `Retry-After`;
+`veritra_rate_limit_rejections_total` counts it by scope (`general`,
+`auth`, `enrollment`, `account`, `signed_in`). Realtime sockets have their
+own fixed limits (20 per address, 10 per account). The server logs the
+resolved values at start (`rate_limits`).
+
+Login and reauthentication also use bounded account, source/device and
+session backoff scopes: the first two failures are unauthorized responses,
+the third starts a 1-second delay that progresses to 60 seconds, and entries
+expire after 15 minutes. The controls
 evict under bounded-table pressure and sweep expired state; they do not expose
-usernames, addresses, device IDs or tokens in metrics. Monitor
+usernames, addresses, device IDs or tokens in metrics. Address budgets and
+per-account budgets are kept in two tables of 65,536 entries each, so one
+account seen from many addresses (each IPv6 /64 counts as one) evicts only
+other account budgets, never an address's credential budget;
+`veritra_rate_limit_buckets` counts both tables. Monitor
 `veritra_rate_limit_buckets`, `veritra_rate_limit_evictions_total`,
 `veritra_login_backoff_entries` and
 `veritra_login_backoff_evictions_total` as aggregate pressure signals.
@@ -534,6 +591,12 @@ Downloads verify each 64 KiB chunk of an encrypted blob before sending it,
 so damage in a part nobody requests is not noticed by downloads. The backup
 job hashes every blob in full and fails on a mismatch: a passing daily backup
 is also the full blob check. A damaged blob logs `blob_integrity_failed`.
+When the damage is past the first chunk served, the response has already
+started and the server breaks the transfer: its `http_request` log line then
+carries `outcome=aborted` with the status it had sent, and
+`veritra_http_aborted_requests_total` counts it (the request also counts in
+the usual totals; a request aborted before its status line has status 0 and
+no status class).
 
 ## Restore safety
 
@@ -580,12 +643,12 @@ local SSD.
 | Tier | Container | Volume | Synthetic dataset | Rated busy hour |
 |---|---|---|---|---|
 | S | 1 vCPU, 1 GiB | 40 GiB (the shipped PVC) | 50 accounts, 25 DMs and 15 groups of 5, 20k messages, 200 attachments | 50 accounts (75 clients) at 4 messages per device per minute, about 3 messages/s |
-| M | 2 vCPU, 2 GiB | 100 GiB | 250 accounts, 125 DMs and 75 groups of 5, 100k messages, 1,000 attachments | 250 accounts (375 clients) at 2 messages per device per minute, about 7 messages/s, while few devices catch up from deep history (below) |
+| M | 2 vCPU, 2 GiB | 100 GiB | 250 accounts, 125 DMs and 75 groups of 5, 100k messages, 1,000 attachments | 250 accounts (375 clients) at 4 messages per device per minute, about 13 messages/s, with a fifth of the devices catching up from deep history |
 
 On tier M, a device that catches up from the middle of a 100k-event history
-spends 0.1-0.5 s per sync page; with a fifth of the devices doing that in
-the busy hour, sync p95 exceeds the target at every load step. That is the
-open `ListSyncEvents` cursor follow-up from T49, not a limit of the tier.
+spends about 10-15 ms per sync page (p99 under 100 ms up to 8 messages per
+device per minute); before the T49 cursor follow-up it was 0.1-0.5 s and
+missed every step.
 
 "Rated" is half the highest load at which every target below held. The
 workload model: every device keeps its sync socket open; sends follow a
@@ -612,11 +675,13 @@ that is ten times the live data: the 40 GiB volume holds about 3.6 GiB of
 live data with 10% free. Lower the keep count or grow the volume before
 raising storage quotas.
 
-**Per-address limit.** The general limit is 240 requests a minute per
-client address. At the S rating a device and its companion use about 40
-together; at four times that rate they reach the limit before the server
-slows, so a household of very active devices behind one NAT hits it first
-(`veritra_rate_limit_rejections_total`).
+**Request limits.** Signed-in requests are limited to 240 a minute per
+account at one client address, and 1,200 for all accounts at one address
+(see [Credential abuse controls](#credential-abuse-controls)). At the S
+rating a device and its companion use about 40 together; at four times
+that rate one very active account reaches its 240 before the server slows
+(`veritra_rate_limit_rejections_total`), but other people behind the same
+router keep their own budgets.
 
 **Measure your own host.** `scripts/capacity.sh s load -rate 1,4,8,16`
 (also `m`, and the `backup` and `restart` scenarios) runs the server in a

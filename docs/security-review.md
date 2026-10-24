@@ -105,6 +105,114 @@ identifiers or signing material.
 | LAN TLS with a private CA (T48B) | Pending hardware | Pending hardware |
 | TalkBack/VoiceOver/large text/reduced motion | Pending hardware | Pending hardware |
 
+### Signed artifact evidence
+
+The release needs exactly one `signed-release` record per platform
+(`veritra-mobile-artifact/1`, decision D37), built from the candidate by a
+workflow other than CI, staged with its file for `release.yml`, and attested
+there with `gh attestation verify`. The debug builds hosted CI makes are
+recorded and checked, but never count: iOS `simulator-debug` (job
+`mobile-ios`) and Android `emulator-debug` (the demo APK, job `mobile`).
+
+| Platform | Signed file | Structural checks in `check-release-evidence.py` |
+|---|---|---|
+| iOS | `.ipa` | One `Payload/*.app`, iphoneos plist whose `CFBundleIdentifier` is the pinned `ios.bundle_id`, arm64 iOS Mach-O with a code signature, distribution profile (`get-task-allow=false`) whose `TeamIdentifier` is exactly the pinned `ios.team_id` and whose `application-identifier` is `<team>.<bundle>` (and `com.apple.developer.team-identifier`, when present, the team). The same zip rules as Android: no comment, one end record, no ZIP64 or multi-disk records, no duplicate entry names |
+| Android | `.apk` (not `.aab`) | `org.veritra.private_messenger` (the no-namespace `package` attribute, raw string equal to the typed one, as Android reads it), not debuggable, `minSdkVersion` 24 or later (older releases verify only v1), arm64 crypto library, an APK Signature Scheme v2 block (Android 7.0-8.1 never read v3) and any v3 blocks, each with exactly one signer whose certificate SHA-256 is the pinned `android.release_certificate_sha256` (the record's `signing.certificate_sha256` must name it too) and is not the Android debug certificate. Archives a lenient parser could read differently from Android are refused: a zip comment, a second end-of-central-directory signature, ZIP64 or multi-disk records, duplicate entry names, and a manifest with a second (or late) string pool or resource map, a `manifest` element that is not the single root, or two attributes of one name or resource ID in an element |
+
+Both bind the platform, type, candidate commit, the file's sha256 and the
+provenance (workflow, job, run, source commit). A signed file with the same
+digest as a debug build blocks. The checks are structural; the signed build
+runs `codesign --verify` or `apksigner verify`, and the attestation proves
+which workflow and commit made the file. Signing-key rotation (several
+certificates) is not accepted yet.
+
+#### Pinning the Android release certificate
+
+`release/release-policy.json` holds `"android": {"release_certificate_sha256": null}`.
+While it is null, the checker refuses every Android `signed-release` record
+("pin the release certificate first"), so the release stays blocked. The
+owner pins the certificate of the key that signs the G24 release APK once,
+before the candidate is frozen:
+
+1. Read its SHA-256 from a signed APK with
+   `apksigner verify --print-certs app-release.apk` ("Signer #1 certificate
+   SHA-256 digest"), or from the keystore with
+   `keytool -list -v -keystore release.jks -alias <alias>` (the `SHA256:`
+   line, with the colons removed and the letters lower-cased).
+2. Write it as 64 lowercase hex characters, for example
+   `"release_certificate_sha256": "3f2a…"` (all 64), in a reviewed pull
+   request to `main`. Anything else (upper case, colons, a `sha256:` prefix,
+   extra keys) blocks every gate.
+3. Freeze the candidate after that merge. The checker reads the policy from
+   the candidate tree, so the pin is part of what the approvals review.
+
+Changing the key means changing the pin the same way.
+
+#### Pinning the iOS team and bundle IDs
+
+`release/release-policy.json` also holds `"ios": {"team_id": null, "bundle_id": null}`.
+While either is null, the checker refuses every iOS `signed-release` record
+("pin first"). The owner sets both in the same reviewed pull request as the
+Android pin, before the candidate is frozen:
+
+- `team_id`: the 10-character Apple Developer Team ID (upper-case letters
+  and digits), shown under Membership in the developer account, or as
+  `TeamIdentifier` in the distribution profile
+  (`security cms -D -i profile.mobileprovision`).
+- `bundle_id`: the app's bundle ID, `PRODUCT_BUNDLE_IDENTIFIER` of the
+  Runner target (`org.veritra.privateMessenger` in the Xcode project today),
+  which must also be the profile's explicit App ID; wildcard profiles fail.
+
+A real export has not been run through these checks yet. G24 must confirm on
+its first signed `.ipa` that Xcode writes no zip comment or ZIP64 records.
+
+## Recording an approval
+
+An approval file cannot sit in the commit it approves: it would have to
+contain that commit's own SHA. So the frozen candidate is merged to `main`
+first, and each approval lands later, in its own pull request, at
+`release/approvals/<candidate sha>/production-crypto.json` or
+`independent-review.json`:
+
+```json
+{
+  "schema": "veritra-release-approval/1",
+  "approval": "independent_review",
+  "status": "approved",
+  "reviewed_commit": "<candidate sha>",
+  "reviewed_tree": "<output of: git rev-parse CANDIDATE^{tree}>",
+  "reviewer": "<name>",
+  "reviewer_is_author": false
+}
+```
+
+`production_crypto` also has `"behavior_test": "pass"`. No other keys are
+allowed. The release tag points at the candidate. `release.yml` reads the
+approvals from the tip of the default branch, never from the tag or a pull
+request, and `scripts/check-release-evidence.py` blocks unless:
+
+- that tip descends from the candidate;
+- each approval names the candidate and its tree;
+- each approval has a non-empty `reviewer` and `reviewer_is_author` exactly
+  `false`, and the `reviewer` is not the candidate commit's git author (the
+  whole field equal to its name, or its email as one word of the field, as
+  in `Name <email>`; ignoring case, raw and after `.mailmap`);
+- the change that put each approval on `main` (a merged pull request counts
+  as one change) came after the candidate and touched nothing outside
+  `release/approvals/<candidate sha>/`.
+
+The reviewer checks are self-declared: `reviewer` is free text and git
+author names and emails are whatever the committer configured. They catch an
+author approving under their own recorded identity, not a false name; the
+real control is who may merge to `main`.
+
+Git is read with replace refs and grafts disabled (`GIT_NO_REPLACE_OBJECTS=1`,
+`GIT_GRAFT_FILE` pointed at a path that cannot exist), so local history
+rewrites cannot make an unrelated commit descend from the candidate.
+
+The published release evidence records the approvals commit and the sha256
+of each approval file.
+
 ## Findings log
 
 Record each independent finding with its ID, severity, affected revision and

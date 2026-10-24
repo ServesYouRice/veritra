@@ -142,10 +142,16 @@ jobs:
       - name: Build the Android demo APK
         run: flutter build apk --debug --target-platform android-arm64,android-x64 -t lib/main_demo.dart --dart-define=VERITRA_DEMO=true
         working-directory: mobile
+      # Its output is typed emulator-debug evidence. check-release-evidence.py
+      # never accepts it as an Android signed-release.
+      - name: Record the demo APK as emulator-debug evidence
+        run: python3 scripts/write-release-evidence.py --android-emulator-record mobile/build/app/outputs/flutter-apk/app-debug.apk > mobile/build/app/outputs/flutter-apk/app-debug.evidence.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: veritra-demo-android-${{ github.run_id }}
-          path: mobile/build/app/outputs/flutter-apk/app-debug.apk
+          path: |
+            mobile/build/app/outputs/flutter-apk/app-debug.apk
+            mobile/build/app/outputs/flutter-apk/app-debug.evidence.json
           if-no-files-found: error
           retention-days: 14
 
@@ -346,6 +352,7 @@ jobs:
           python3 scripts/check-ci-evidence_test.py
           python3 scripts/write-release-evidence_test.py
           python3 scripts/check-coverage_test.py
+          python3 scripts/l10n-sr-latn_test.py
 
   vulnerabilities:
     runs-on: ubuntu-latest

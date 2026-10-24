@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
@@ -7,6 +8,7 @@ import '../../ui/format.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/empty_state.dart';
+import '../../ui/widgets/listenable_selector.dart';
 import '../../ui/widgets/status_pill.dart';
 import '../search/search_screen.dart';
 import 'chat_screen.dart';
@@ -27,6 +29,18 @@ class ChatListScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Rebuilds only when a row could change (T49C-1): the list is often
+    // hidden under an open conversation, and a notification about anything
+    // else used to rebuild every visible row.
+    return ListenableSelector<List<Object?>>(
+      listenable: state,
+      select: () => _chatListSelection(state, embedded: embedded),
+      equals: listEquals,
+      builder: (context, _, __) => _build(context),
+    );
+  }
+
+  Widget _build(BuildContext context) {
     final theme = Theme.of(context);
     final conversations = state.conversations;
     return Scaffold(
@@ -89,6 +103,12 @@ class ChatListScreen extends StatelessWidget {
             // by a tinted ground, which is what removes the most recognisably
             // default surface in the app (`docs/design.md` §3).
             : ListView.builder(
+                // Keeps the scroll offset when another destination replaces
+                // the list and it comes back (T49C-4). Per account, so a
+                // different account's list starts at the top.
+                key: PageStorageKey<String>(
+                  'chat-list:${state.session?.accountId}',
+                ),
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.fromLTRB(
                   BoneSpacing.sm,
@@ -188,6 +208,22 @@ class ChatListScreen extends StatelessWidget {
       }
     }
   }
+}
+
+/// Everything [ChatListScreen] reads from [AppState] (T49C-1); the list
+/// rebuilds only when this changes. Lists and models compare by identity:
+/// AppState replaces them instead of editing them in place. A new read from
+/// the state in the list or its rows must be added here, or the row stays
+/// stale.
+List<Object?> _chatListSelection(AppState state, {required bool embedded}) {
+  final conversations = state.conversations;
+  return <Object?>[
+    conversations,
+    state.conversationsLoaded,
+    state.session?.accountId,
+    embedded ? state.selectedConversationId : null,
+    for (final conversation in conversations) state.isMuted(conversation.id),
+  ];
 }
 
 class _ConversationTile extends StatelessWidget {
