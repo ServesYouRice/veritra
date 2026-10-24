@@ -11,7 +11,7 @@ in Git history at `d2d9eb8`. Evidence lives in [`testing/evidence/`](testing/evi
 
 | Area | State |
 |---|---|
-| 🎯 Current focus | Chats on Windows first (D43), then Discord-style communities and the WhatsApp and Discord basics, privacy first (D44) |
+| 🎯 Current focus | Chats on Windows first (D43), then Discord-style communities and the WhatsApp and Discord basics, privacy first (D44). Order and packages: [Build plan](#build-plan) |
 | 🔒 Public release | 🔴 **NO-GO by design.** Messaging stays off in release builds until the independent crypto review (G25) and signed-device evidence (G24) pass |
 | 🧪 Local demos (real encryption, labelled "unreviewed") | 🟢 Work: server + Linux app run here; Android, iOS, Windows, macOS build in CI |
 | 🧰 Local work queue | 🟢 Done, including the 2026-10-23 open-work round. What is left needs the owner or outside parties; see [Open work](#open-work) |
@@ -72,7 +72,8 @@ files.
 ## Open work
 
 Local work that needs no outside party. Pick one, confirm it against the code,
-and keep each change small.
+and keep each change small. Missing product features are packages in the
+[Build plan](#build-plan).
 
 | Item | What | Notes |
 |---|---|---|
@@ -86,10 +87,6 @@ and keep each change small.
 | Sync bounds per page | The sync handler still calls `SyncBounds` on every page: about 250-280 ms per page for a group whose edges are a blocked sender's run (40k events) | Stored bounds (a schema change), or compute them only for the 409 answer (the app ignores them in a 200) |
 | Hidden tail on every poll | The page after the last visible event re-reads every hidden event behind it (removed device, blocked sender: about 200-300 ms at 40k hidden events per poll). Older than this round; the old single scan read more | Return a next cursor (the last row read) in the sync response; needs an API change on both sides |
 | Full disk during setup | A disk that fills before the migration starts still shows the wrong-key message | Pre-existing; nothing is lost |
-| Automatic user backups | A backup runs only when the user taps **Make a backup**, and nothing reminds them. Phone cloud backups exclude the app's data on purpose, so a lost device without a backup loses its history | Each backup issues a new one-use recovery code, so scheduled backups need a long-lived backup key the user saves once. Design it with a review agent (recovery is a credential decision) |
-| Community membership in the app | The server adds community members (`POST /api/v1/communities/{id}/members`), but the app has no screen for it and no way to join: search finds a community, then says to join it, with nothing to tap | Part of D44 |
-| Announcement channels | `announcement` is a stored label only: members can still post, and the app always creates `private` channels | Part of D44 |
-| Disappearing messages stay on devices | The timer deletes envelopes from the server only; the app parses `expires_at` but never removes the decrypted copy from its local database. The settings text says "deleted from the server", so it is honest, but it is not what WhatsApp users expect | Delete expired messages on every device (local store and caches), with tests |
 
 ## Release gates
 
@@ -158,6 +155,7 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 | **D42** (2026-10-23, owner) | Second language: Serbian. Cyrillic `sr` is the reviewed source; Latin `sr_Latn` is generated from it |
 | **D43** (2026-10-24, owner) | First focus: one-to-one and group chats on Windows. It orders the work only; the release gates and D11/D12 still hold |
 | **D44** (2026-10-24, owner) | Communities work like Discord, and Veritra covers the basic features of both WhatsApp and Discord, with privacy first: everything stays end-to-end encrypted and [Stays out](#stays-out) still holds. A gap study sets the list |
+| **D45** (2026-10-24, owner) | Work runs on Claude Sonnet 5.5, which hands work to Claude Opus 5.5 when it is unsure or when a mistake would be costly (`AGENTS.md`, Model routing). The [Build plan](#build-plan) lists every missing feature as a package with its route |
 
 ## Roadmap
 
@@ -169,34 +167,98 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 
 ## Recommended next
 
-The gaps worth filling, most valuable first. The owner picked the first one
-(D43); the rest are recommendations until the owner picks them.
+The owner picked the build plan's order (D43, D44); the other items are
+recommendations until the owner picks them.
 
-1. **Chats on Windows** (D43): run the Windows demo by hand, then close what
-   one-to-one and group chat there still lacks, desktop notifications first
-   (the app says they are not available yet).
+1. **Build plan, phase 1:** chats on Windows (W1-W12, K0-K2).
 2. **Book the independent crypto review.** It gates every release. NLnet's
    open call for privacy work closes **2026-11-03** and may fund it.
-3. **Discord-style communities and the WhatsApp/Discord basics** (D44):
-   joining and member management in the app, enforced announcement channels,
-   history for new members, then the gap study's list.
-4. **Automatic user backups** (see [Open work](#open-work)).
-5. **First real deployment** on the handbook's platform, with a restore from
+3. **Build plan, phase 2:** communities like Discord (C0-C8).
+4. **First real deployment** on the handbook's platform, with a restore from
    R2 tried before anyone relies on it.
-6. **Run the demos on emulators** (Android) and a Mac (iOS, macOS) once each;
+5. **Run the demos on emulators** (Android) and a Mac (iOS, macOS) once each;
    only Linux has been run by hand.
-7. **Product features the handbook promotes** (now required work, not
-   "maybe later"): passkeys, multiple accounts, profiles and avatars, local
-   (on-device) message search, link previews, voice notes, moderation
-   reports, drafts, and post-quantum readiness when OpenMLS ships a reviewed
-   PQ suite.
-8. **Call UI** for one-to-one calls in release builds (server side exists;
-   demo calls are foreground-only) and the native call lifecycle (T42B).
-9. **Release engineering:** signed, reproducible builds for Play, the App
+6. **Build plan, phase 3:** the remaining basics (B1-B9).
+7. **Release engineering:** signed, reproducible builds for Play, the App
    Store, F-Droid and desktop, produced locally.
-10. **Optional storage backends** (PostgreSQL, S3-compatible) behind the
-    existing interfaces, for larger instances.
-11. **A native-speaker review** of the Serbian translation.
+8. **Post-quantum readiness** when OpenMLS ships a reviewed PQ suite.
+9. **Optional storage backends** (PostgreSQL, S3-compatible) behind the
+   existing interfaces, for larger instances.
+10. **A native-speaker review** of the Serbian translation.
+
+## Build plan
+
+Every feature the 2026-10-24 status review and gap study found missing, as
+packages in build order. Pick the first open package whose dependencies are
+done, confirm it against the code, and build it as one complete change. A
+package is done when its line is true, its tests pass, and `scripts/test` and
+`scripts/lint` pass; then mark it ✅ here. Each line says what the user gets,
+so a package can be checked without reading its code.
+
+Route says who does what (D45; `AGENTS.md`, Model routing):
+
+| Route | Meaning |
+|---|---|
+| **Sonnet** | Sonnet builds it and hands work to Opus only if it becomes unsure |
+| **Opus review** | Sonnet builds it; Opus reviews the change before it lands, because it is a second-opinion area in `AGENTS.md` |
+| **Opus designs** | Opus writes the design first (in the PR, or in `docs/crypto.md` for anything that changes the protocol), Sonnet builds it, Opus reviews it |
+| **Owner first** | The owner says yes before work starts: a new dependency, an account, or a product choice |
+
+### Phase 1: chats on Windows (D43)
+
+| ID | Package | Done when | Route |
+|---|---|---|---|
+| W1 | Windows run | The demo flow (owner, invite, DM, reply, edit, react, delete) runs on a Windows CI runner, and the owner has run it once by hand | Sonnet; the owner does the hand run |
+| W2 | Disappearing messages leave devices | An expired message is gone from the local database, the chat and the chat list on every device, also after an offline restart. Today the app reads `expires_at` but never deletes its own copy | Opus review |
+| W3 | Windows notifications | A message arriving while the window is in the background raises a Windows notification, made on the device after decryption; muted chats stay quiet; a setting hides the preview | Owner first (new plugin), then Sonnet |
+| W4 | Tray and one window | Closing the window keeps the app syncing from the tray; opening it again shows the running window instead of an error | Sonnet |
+| W5 | Ticks and typing | Sent, delivered and read ticks and a typing line in DMs and small groups, from what the server already stores; one switch turns your own read receipts off | Sonnet |
+| W6 | Reactions, mute, drafts | Any emoji can react; mute for 8 hours, 1 week or always; drafts survive a restart, kept in the encrypted local database | Opus review |
+| W7 | Message actions design | One payload design for formatting, mentions, forward, pin, polls and other "messages about a message", recorded in `docs/crypto.md` with its payload version | Opus designs |
+| W8 | Message actions | Formatting, @mentions that alert even in a muted chat, forward with a label and limits, pin with an expiry, star, delete for me, archive and pinned chats, all on the W7 design | Sonnet |
+| W9 | Desktop feel | Right-click menus, shortcuts (Esc, Up to edit, Ctrl+F), drag-and-drop and paste of files, several files per send | Sonnet |
+| W10 | Search on the device | Search finds message text this device holds, through an index inside the encrypted local database; nothing reaches the server | Opus review |
+| W11 | Profiles | A display name and photo for people, a name and photo for groups, all encrypted, with the key given only to contacts and group members | Opus designs |
+| K0 | One long-lived key | One reviewed design for the key that automatic backups, history on a new device, community history and search over old messages all rely on, so they do not end up with four key schemes | Opus designs |
+| K1 | Automatic backups | After saving one recovery key once, the app backs up daily without a tap, replaces the old copy, asks now and then to confirm the key, and can keep a second copy where the user picks | Opus designs (after K0) |
+| K2 | History on a new device | A newly linked device receives the old device's history as one encrypted bundle, or restores it from a backup | Opus designs (after K0) |
+| W12 | Windows release path | A signed Windows installer, an update channel, and a documented HTTPS setup so a second PC can connect | Owner first (signing account) |
+
+### Phase 2: communities like Discord (D44)
+
+| ID | Package | Done when | Route |
+|---|---|---|---|
+| C0 | Community group layout | A recorded decision, with a measured join cost, on how communities map to MLS groups. The gap study recommends one shared group for open channels plus one per private channel | Opus designs |
+| C1 | Join and manage members | Invite links whose secret stays after the `#`, join requests an admin approves, leave, remove, and member lists with usernames, all in the app | Opus review |
+| C2 | Announcement channels | Only allowed roles can post: members' apps drop other posts and the server refuses them | Opus review |
+| C3 | Private channels and community info | Channels only some roles can see; community, channel and category names, topics and icons stored encrypted, so the server sees IDs only | Opus designs |
+| C4 | Custom roles | Roles with permission switches and per-channel overrides, kept in each group's encrypted state and checked by every app | Opus designs |
+| C5 | Moderation | Kick, ban with no rejoin, timeout, slow mode, deleting others' messages, an audit log, and pausing invites | Opus review |
+| C6 | Reports to moderators | A member reports a message to a moderators-only channel with a proof that it is genuine (message franking) | Opus designs |
+| C7 | History for new members | Each channel sets at creation whether newcomers read old posts; members hand over a channel history key; a new key when someone leaves; posts are signed | Opus designs (after K0, C0) |
+| C8 | Bigger communities | The 100-member limit rises in steps, each with a measurement in `testing/evidence/` | Sonnet |
+
+### Phase 3: the remaining basics
+
+| ID | Package | Done when | Route |
+|---|---|---|---|
+| B1 | Voice notes | Record, send as an encrypted file and play inline; any transcript is made on the device | Owner first (recorder plugin) |
+| B2 | Link previews | The sender's app makes the preview and sends it inside the encrypted message; receivers and the server never fetch it; off for unknown sites by default | Opus review |
+| B3 | Polls | Polls and votes as encrypted messages on the W7 design; apps count the votes | Sonnet |
+| B4 | Files | Several files per send, a size cap the operator sets, and phones open more than images | Sonnet |
+| B5 | One-to-one calls | A call screen in demo builds on the existing call service, with media through the relay by default to hide addresses | Opus review |
+| B6 | Group calls and voice rooms | Encrypted voice rooms and screen share modelled on Discord's DAVE: MLS keys, SFrame frames, a forwarding server that cannot read them | Opus designs |
+| B7 | Passkeys and accounts | Passkey sign-in and an in-app account switcher | Opus designs |
+| B8 | Safe defaults | Messages from strangers wait as requests, and nothing from them downloads by itself | Sonnet |
+| B9 | Admin screen | Owners list and suspend accounts and read the audit log, on the existing admin API | Opus review |
+
+### Later
+
+| ID | Package | Done when | Route |
+|---|---|---|---|
+| L1 | More features | Threads and forums, events, bots, stickers and GIFs, stories, broadcast channels, scheduled messages, translation: each becomes its own package when picked | Per package |
+| L2 | Server learns less | Padded message sizes, fewer address and time logs, sealed-sender delivery, reproducible signed server builds | Opus designs |
+| L3 | Confidential-cloud mode | A server proof hook, switched off, then an optional documented setup that never claims to be operator-proof | Opus designs |
 
 ## Stays out
 

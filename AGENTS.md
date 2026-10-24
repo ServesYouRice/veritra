@@ -69,6 +69,32 @@ ordering, migration, recovery, credential, platform-policy, artifact-trust or
 release-gate decision. Use multiple agents only for independent,
 non-overlapping work; one coordinator owns `STATE.md`.
 
+## Model routing
+
+Sessions here run on Claude Sonnet 5.5 (`.claude/settings.json`), which does
+the reading, building, testing and routine review. Claude Opus 5.5 is the
+`opus-expert` subagent (`.claude/agents/opus-expert.md`). Hand it work when a
+mistake would be costly or you are unsure, because a second, stronger look
+costs less than a wrong design that ships:
+
+- The change is in a second-opinion area above. Opus is that review agent.
+- The package's route in the `STATE.md` build plan is **Opus review** or
+  **Opus designs**.
+- You are choosing between designs that are hard to undo (payload or wire
+  formats, the crypto ABI, schemas, key handling), or your confidence in a
+  decision is below about 80%.
+- The same check has failed twice and you cannot explain why.
+
+Brief Opus as you would a colleague who has not seen this session: the goal
+and package ID, the files that matter, what you tried and its output, the
+options you see, and your confidence. For a review, send the diff and the
+files it touches rather than your conclusion, so the review is not anchored on
+it. Opus answers with a decision or a patch, its reasons, its confidence and
+what to verify. Verify what it hands back the way you would your own work.
+When Opus is also unsure, or the question belongs to the owner (a dependency,
+an account, a product choice, anything external or release-related), ask the
+owner.
+
 ## Project gotchas
 
 - `PM_CRYPTO_UNAVAILABLE` and `UnavailableCryptoService` are intentional gates.
