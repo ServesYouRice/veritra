@@ -94,7 +94,9 @@ The JSON has its keys in this order:
 ```
 
 - `photo` is `null` when there is no photo.
-- `kind` is `account` or `group`.
+- `kind` is exactly `account` or `conversation`. A group's record uses
+  `conversation`. The same two literals are used in the AEAD context, the
+  server's `subject_kind`, the local tables and `profile.updated`.
 - `subject_id` is the account or conversation ID.
 - **`revision`** must equal the server `version` this upload will become:
   the `If-Match` version plus 1, or 1 for the first upload. It binds the
@@ -108,7 +110,10 @@ Encryption, using the existing attachment chunk AEAD (AES-256-GCM,
 - `nonce_prefix` = 8 fresh random bytes for every upload;
 - `chunk_index` = 0;
 - `context` = UTF-8 of `"veritra-profile-v1\0" + kind + "\0" + subject_id + "\0" + key_id`,
-  about 100 bytes (the ABI allows up to 512).
+  where `\0` is one zero byte. The context is 97 bytes for an account
+  and 102 bytes for a group; the ABI allows up to 512. Exactly:
+  - an account: `veritra-profile-v1␀account␀acct_<32 hex>␀<key_id>`;
+  - a group: `veritra-profile-v1␀conversation␀conv_<32 hex>␀<key_id>`.
 
 The stored blob is `VPE1` + `nonce_prefix` + the ciphertext with its tag.
 The context binds the subject and the key ID. The server therefore cannot
@@ -134,6 +139,15 @@ the ABI.
 - ciphertext‖tag =
   `fc7a5cd9f965944bfcbabb3b1d92aa76d7cb852c04739c5201dbd239ccdf8504a3c24810043b`
 - Changing the subject to `acct_2222…` must fail to decrypt.
+- **Group vector:** the same key, nonce, key_id and plaintext, with kind
+  `conversation` and subject `conv_55555555555555555555555555555555`.
+  - context (102 bytes) =
+    `766572697472612d70726f66696c652d763100636f6e766572736174696f6e00636f6e765f3535353535353535353535353535353535353535353535353535353535353535003031323334353637383961626364656630313233343536373839616263646566`
+  - ciphertext‖tag =
+    `fc7a5cd9f965944bfcbabb3b1d92aa76d7cb852c0473dc6436df9259cc1d6c76862a3c786d0f`
+  - The first 22 bytes match the account vector, because the key and nonce
+    are the same; only the tag differs. Real uploads never reuse a nonce
+    prefix.
 
 ## Photos
 

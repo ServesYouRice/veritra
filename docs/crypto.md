@@ -205,7 +205,7 @@ The row depends on what decoding finds. The checks run in this order:
 | Outcome | When | Row kind | Row body | Shown as |
 |---|---|---|---|---|
 | `invalid` | Framing or UTF-8/JSON broken; `v` not an integer ≥ 1; any of the four context fields missing or not equal to the envelope's (`conversation_id`, `sender_device_id`, `action_id`); or a **known** type at a **known** version whose required fields fail validation | `invalid` (new) | none | A warning: "A message could not be read". Never content |
-| `unsupported` | Context matches, and either `v` > 2, or `v` = 2 with a type this app does not know or has not turned on (reserved types, §4) | `unsupported` (new) | The inner JSON exactly as decrypted (≤ 64 KiB, encrypted local database only), so that a later app version can reinterpret it. Reprocessing is a later decision; storing it now is the only chance, because MLS cannot decrypt the message twice | "This message needs a newer version of Veritra" |
+| `unsupported` | Context matches, and either `v` is above the highest version this app supports, or `v` is supported but the type is one this app does not know or has not turned on (reserved types, §4). The step-0 app supports only v1, so any `v: 2` there is `unsupported`. The W8 app supports v2 | `unsupported` (new) | The inner JSON exactly as decrypted (≤ 64 KiB, encrypted local database only), so that a later app version can reinterpret it. Reprocessing is a later decision; storing it now is the only chance, because MLS cannot decrypt the message twice | "This message needs a newer version of Veritra" |
 | known | Everything validates | As today | As today | As today |
 
 `invalid` and `unsupported` rows never produce effects. Neither counts as
@@ -284,8 +284,11 @@ A receiver applies a targeted effect only when a row exists with:
 3. a kind the action allows (table in §4). Today's targetable kinds are
    `text` and `attachment`; v2 adds `poll`. `action`, `invalid`,
    `unsupported` and `unverifiable` rows are never targets;
-4. `deleted_at` null. Local delete-for-me (§6) does not count as deleted
-   for others' actions; it only hides the row here.
+4. `deleted_at` null **and** `hidden_at` null. A row deleted for this
+   device only (§6) is a target for nothing here. A later edit therefore
+   never writes its text back into the local database or the next backup.
+   Reactions, pins and votes on it are dropped on this device, not just
+   hidden. Other members' apps are unaffected.
 
 If no such row exists, the effect is dropped and the action row is kept.
 This happens when the target is older than this device's membership, or
@@ -480,7 +483,7 @@ is ignored, like any unknown field. The rules are in W11.
 | Feature | Stored as | Notes |
 |---|---|---|
 | Star | `local_starred(message_key PK, starred_at)` | Removed when the target is deleted or hidden |
-| Delete for me | `local_messages.hidden_at` set; body and attachment manifest cleared on this device | Any visible row, also others' messages. Its reactions, pin and poll are hidden here only. Others still see it |
+| Delete for me | `local_messages.hidden_at` set; body, attachment manifest, and its reactions, pin and votes cleared on this device | Any visible row, also others' messages. Later effects on it are dropped (§3). Others still see it |
 | Archive chat | `local_conversation_prefs(conversation_id PK, archived_at, pinned_at)` | An archived chat stays archived when a new message arrives (owner may change, see below) |
 | Pinned chats | Same table, `pinned_at` | At most 5, ordered by `pinned_at` |
 
@@ -547,7 +550,7 @@ u32 length, the bytes, zero padding to 256. It decodes with this context:
   IDs
 - `<M>` = `acct_44444444444444444444444444444444`, a member of `<C>`
 
-`H` is the five-key head, followed by `"type":…`:
+`H` is the four-key head, followed by `"type":…`:
 `"v":2,"conversation_id":"<C>","sender_device_id":"<D>","action_id":"<A>"`.
 
 Decoding:
@@ -579,9 +582,9 @@ Decoding:
     gives an `action` row and no vote (index out of range).
 13. `{H,"type":"poll_vote","body":{"message_id":"<P>","choices":[0,1]}}`
     on this single-choice poll: no vote.
-14. `{H,"type":"reaction","body":{"message_id":"<T2>","reaction":"👍"}}`
+14. `{"v":1,"type":"reaction","conversation_id":"<C>","sender_device_id":"<D>","action_id":"<A>","body":{"message_id":"<T2>","reaction":"👍"}}`
     gives an `action` row and **no reaction** (a cross-conversation
-    target; it fails on today's code).
+    target; it fails on today's code). It is v1, so step 0 can run it.
 15. `{H,"type":"sticker","body":{"id":"x"}}` gives `unsupported`. The
     cursor advances, and the JSON is kept.
 16. Vector 1 with `"v":3` gives `unsupported`.
