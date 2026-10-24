@@ -1110,6 +1110,16 @@ func (s *Store) RemoveConversationMember(ctx context.Context, conversationID, ac
 	if removed != 1 {
 		return MembershipRemovalEvents{}, ErrNotFound
 	}
+	// Cursors of a member who is gone must not come back if they are added
+	// again later.
+	for _, query := range []string{
+		`DELETE FROM delivery_receipts WHERE conversation_id = ? AND account_id = ?`,
+		`DELETE FROM read_receipts WHERE conversation_id = ? AND account_id = ?`,
+	} {
+		if _, err := tx.ExecContext(ctx, query, conversationID, targetAccountID); err != nil {
+			return MembershipRemovalEvents{}, err
+		}
+	}
 	eventType := "membership.removed"
 	if actorAccountID == targetAccountID {
 		eventType = "membership.left"

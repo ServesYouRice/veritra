@@ -302,9 +302,6 @@ func (s *Store) markRead(ctx context.Context, conversationID, accountID, message
 			private = true
 		}
 	}
-	if private {
-		eventType = ""
-	}
 	var count int
 	now := nowString()
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM message_envelopes WHERE id = ? AND conversation_id = ? AND (expires_at IS NULL OR expires_at > ?)`, messageID, conversationID, now).Scan(&count); err != nil {
@@ -316,25 +313,42 @@ func (s *Store) markRead(ctx context.Context, conversationID, accountID, message
 	// Guard against rewinding the read cursor: only advance to a message
 	// whose created_at is at or after the currently-recorded one.
 	if _, err = tx.ExecContext(ctx, `
-		INSERT INTO read_receipts(account_id, conversation_id, message_id, read_at, private)
-		VALUES(?, ?, ?, ?, ?)
+		INSERT INTO read_receipts(account_id, conversation_id, message_id, read_at, shared_message_id)
+		VALUES(?1, ?2, ?3, ?4, NULL)
 		ON CONFLICT(account_id, conversation_id) DO UPDATE SET
 			message_id = excluded.message_id,
-			read_at = excluded.read_at,
-			private = excluded.private
+			read_at = excluded.read_at
 		WHERE read_receipts.message_id IS NULL
 		   OR (excluded.message_id != read_receipts.message_id
 		       AND (SELECT created_at FROM message_envelopes WHERE id = excluded.message_id) >=
-		           (SELECT created_at FROM message_envelopes WHERE id = read_receipts.message_id))
-		   OR (excluded.message_id = read_receipts.message_id
-		       AND read_receipts.private = 1 AND excluded.private = 0)`,
-		accountID, conversationID, messageID, now, private); err != nil {
+		           (SELECT created_at FROM message_envelopes WHERE id = read_receipts.message_id))`,
+		accountID, conversationID, messageID, now); err != nil {
 		return 0, err
 	}
-	payload := map[string]string{"account_id": accountID, "message_id": messageID}
-	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, nil, conversationID, payload, now)
-	if err != nil {
-		return 0, err
+	var eventID int64
+	if !private {
+		// The cursor other members see moves only for a shared read, and only
+		// forward; an announcement follows only when it moved.
+		result, err := tx.ExecContext(ctx, `
+			UPDATE read_receipts SET shared_message_id = ?3
+			WHERE account_id = ?1 AND conversation_id = ?2
+			  AND (shared_message_id IS NULL
+			       OR (shared_message_id != ?3
+			           AND (SELECT created_at FROM message_envelopes WHERE id = ?3) >=
+			               (SELECT created_at FROM message_envelopes WHERE id = shared_message_id)))`,
+			accountID, conversationID, messageID)
+		if err != nil {
+			return 0, err
+		}
+		if moved, err := result.RowsAffected(); err != nil {
+			return 0, err
+		} else if moved > 0 {
+			payload := map[string]string{"account_id": accountID, "message_id": messageID}
+			eventID, err = insertOptionalSyncEvent(ctx, tx, eventType, nil, conversationID, payload, now)
+			if err != nil {
+				return 0, err
+			}
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
