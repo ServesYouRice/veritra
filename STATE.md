@@ -5,12 +5,13 @@ standing decisions and the release gates. It replaces `docs/board.md`,
 `docs/audit-consensus.md` and `implementation/REMAINING_WORK.md`, which remain
 in Git history at `d2d9eb8`. Evidence lives in [`testing/evidence/`](testing/evidence/).
 
-**Updated 2026-10-23.**
+**Updated 2026-10-24.**
 
 ## At a glance
 
 | Area | State |
 |---|---|
+| 🎯 Current focus | Chats on Windows first (D43), then Discord-style communities and the WhatsApp and Discord basics, privacy first (D44) |
 | 🔒 Public release | 🔴 **NO-GO by design.** Messaging stays off in release builds until the independent crypto review (G25) and signed-device evidence (G24) pass |
 | 🧪 Local demos (real encryption, labelled "unreviewed") | 🟢 Work: server + Linux app run here; Android, iOS, Windows, macOS build in CI |
 | 🧰 Local work queue | 🟢 Done, including the 2026-10-23 open-work round. What is left needs the owner or outside parties; see [Open work](#open-work) |
@@ -85,6 +86,10 @@ and keep each change small.
 | Sync bounds per page | The sync handler still calls `SyncBounds` on every page: about 250-280 ms per page for a group whose edges are a blocked sender's run (40k events) | Stored bounds (a schema change), or compute them only for the 409 answer (the app ignores them in a 200) |
 | Hidden tail on every poll | The page after the last visible event re-reads every hidden event behind it (removed device, blocked sender: about 200-300 ms at 40k hidden events per poll). Older than this round; the old single scan read more | Return a next cursor (the last row read) in the sync response; needs an API change on both sides |
 | Full disk during setup | A disk that fills before the migration starts still shows the wrong-key message | Pre-existing; nothing is lost |
+| Automatic user backups | A backup runs only when the user taps **Make a backup**, and nothing reminds them. Phone cloud backups exclude the app's data on purpose, so a lost device without a backup loses its history | Each backup issues a new one-use recovery code, so scheduled backups need a long-lived backup key the user saves once. Design it with a review agent (recovery is a credential decision) |
+| Community membership in the app | The server adds community members (`POST /api/v1/communities/{id}/members`), but the app has no screen for it and no way to join: search finds a community, then says to join it, with nothing to tap | Part of D44 |
+| Announcement channels | `announcement` is a stored label only: members can still post, and the app always creates `private` channels | Part of D44 |
+| Disappearing messages stay on devices | The timer deletes envelopes from the server only; the app parses `expires_at` but never removes the decrypted copy from its local database. The settings text says "deleted from the server", so it is honest, but it is not what WhatsApp users expect | Delete expired messages on every device (local store and caches), with tests |
 
 ## Release gates
 
@@ -151,6 +156,8 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 | **D40** (2026-10-23) | Release approvals: `release/approvals/<candidate>/{production-crypto,independent-review}.json`, read from the default-branch tip that contains the candidate; each lands alone after it; git is read without replace refs or grafts; manifest schema 3 |
 | **D41** (2026-10-23) | Android release evidence mirrors D37: exactly one `android` `signed-release` APK (v2 and v3 signatures, one signer matching the pinned certificate, `minSdkVersion` ≥ 24, not debuggable), attested outside CI; `emulator-debug` records are checked but never count. iOS records also need the pinned team and bundle IDs. APK and IPA zips are refused on comments, duplicate names or a second end record |
 | **D42** (2026-10-23, owner) | Second language: Serbian. Cyrillic `sr` is the reviewed source; Latin `sr_Latn` is generated from it |
+| **D43** (2026-10-24, owner) | First focus: one-to-one and group chats on Windows. It orders the work only; the release gates and D11/D12 still hold |
+| **D44** (2026-10-24, owner) | Communities work like Discord, and Veritra covers the basic features of both WhatsApp and Discord, with privacy first: everything stays end-to-end encrypted and [Stays out](#stays-out) still holds. A gap study sets the list |
 
 ## Roadmap
 
@@ -162,27 +169,34 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 
 ## Recommended next
 
-The gaps worth filling, most valuable first. All are recommendations until the
-owner picks them.
+The gaps worth filling, most valuable first. The owner picked the first one
+(D43); the rest are recommendations until the owner picks them.
 
-1. **Book the independent crypto review.** It gates every release. NLnet's
+1. **Chats on Windows** (D43): run the Windows demo by hand, then close what
+   one-to-one and group chat there still lacks, desktop notifications first
+   (the app says they are not available yet).
+2. **Book the independent crypto review.** It gates every release. NLnet's
    open call for privacy work closes **2026-11-03** and may fund it.
-2. **First real deployment** on the handbook's platform, with a restore from
+3. **Discord-style communities and the WhatsApp/Discord basics** (D44):
+   joining and member management in the app, enforced announcement channels,
+   history for new members, then the gap study's list.
+4. **Automatic user backups** (see [Open work](#open-work)).
+5. **First real deployment** on the handbook's platform, with a restore from
    R2 tried before anyone relies on it.
-3. **Run the demos on emulators** (Android) and a Mac (iOS, macOS) once each;
+6. **Run the demos on emulators** (Android) and a Mac (iOS, macOS) once each;
    only Linux has been run by hand.
-4. **Product features the handbook promotes** (now required work, not
+7. **Product features the handbook promotes** (now required work, not
    "maybe later"): passkeys, multiple accounts, profiles and avatars, local
    (on-device) message search, link previews, voice notes, moderation
    reports, drafts, and post-quantum readiness when OpenMLS ships a reviewed
    PQ suite.
-5. **Call UI** for one-to-one calls in release builds (server side exists;
+8. **Call UI** for one-to-one calls in release builds (server side exists;
    demo calls are foreground-only) and the native call lifecycle (T42B).
-6. **Release engineering:** signed, reproducible builds for Play, the App
+9. **Release engineering:** signed, reproducible builds for Play, the App
    Store, F-Droid and desktop, produced locally.
-7. **Optional storage backends** (PostgreSQL, S3-compatible) behind the
-   existing interfaces, for larger instances.
-8. **A native-speaker review** of the Serbian translation.
+10. **Optional storage backends** (PostgreSQL, S3-compatible) behind the
+    existing interfaces, for larger instances.
+11. **A native-speaker review** of the Serbian translation.
 
 ## Stays out
 
