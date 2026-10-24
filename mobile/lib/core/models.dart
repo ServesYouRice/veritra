@@ -855,17 +855,23 @@ class Session {
 class MemberReceipt {
   MemberReceipt({
     required this.accountId,
+    this.memberSince,
     this.deliveredThrough,
     this.readThrough,
   });
 
   final String accountId;
+
+  /// When the member joined. Messages sent before it were not theirs to
+  /// receive, so a tick ignores the member for them.
+  final DateTime? memberSince;
   final DateTime? deliveredThrough;
   final DateTime? readThrough;
 
   factory MemberReceipt.fromJson(Map<String, Object?> json) {
     return MemberReceipt(
       accountId: json['account_id'] as String,
+      memberSince: _parseStrictOptionalTime(json['member_since']),
       deliveredThrough: _parseStrictOptionalTime(json['delivered_through']),
       readThrough: _parseStrictOptionalTime(json['read_through']),
     );

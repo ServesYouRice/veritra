@@ -50,7 +50,8 @@ class ReceiptsState extends ChangeNotifier {
   /// delivery cursor that reaches it, and read when every other member has
   /// read it. One member who has not is enough to hold it back, so a tick
   /// never promises more than "everyone". With nobody else to ask (nothing
-  /// loaded, or everyone else left or blocked) it stays at sent.
+  /// loaded, or everyone else left or blocked) it stays at sent. A member
+  /// who joined after the message was sent is not asked.
   ///
   /// [showRead] is false when the reader keeps their own read receipts off:
   /// like WhatsApp, they then see no read state either, only delivery. A
@@ -71,6 +72,10 @@ MessageTick tickForReceipts(
   DateTime createdAt, {
   required bool showRead,
 }) {
+  // A member who joined after the message was not among its recipients.
+  receipts = receipts
+      .where((r) => r.memberSince == null || !r.memberSince!.isAfter(createdAt))
+      .toList(growable: false);
   if (receipts.isEmpty) return MessageTick.sent;
   bool covers(DateTime? through) =>
       through != null && !through.isBefore(createdAt);
