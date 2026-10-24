@@ -53,6 +53,9 @@ type API struct {
 	Budget    *admission.Budget
 	Admission *admission.Counters
 	LowDisk   func() bool
+	// MaxAttachmentBytes is the operator's per-file cap (plaintext); zero
+	// means the default. The setup status tells clients, the upload enforces it.
+	MaxAttachmentBytes int64
 }
 
 // passwordService returns the account password verifier. PasswordCost is the

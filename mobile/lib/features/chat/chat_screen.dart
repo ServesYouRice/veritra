@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:file_selector/file_selector.dart' show XFile;
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -21,8 +22,11 @@ import '../../ui/widgets/empty_state.dart';
 import '../../ui/widgets/gated_explanation.dart';
 import '../../ui/widgets/listenable_selector.dart';
 import '../../ui/widgets/status_pill.dart';
+import '../search/search_screen.dart';
 import 'attachment_views.dart';
+import 'chat_desktop.dart';
 import 'chat_list_screen.dart';
+import 'composer_attachments.dart';
 import 'conversation_details_screen.dart';
 
 /// Conversation detail screen. Pushed from the chat list, or the detail pane
@@ -54,6 +58,9 @@ class _ChatScreenState extends State<ChatScreen> {
   late final TextEditingController composer =
       TextEditingController.fromValue(_draftValue(widget.conversationId));
   final scroll = ScrollController();
+
+  /// Files waiting to be sent from this conversation (W9, B4).
+  final _attachments = ComposerAttachments();
 
   /// The key of the message the next send replies to, if any. The message
   /// itself is read from the current history ([_replyTarget]), never kept.
@@ -90,6 +97,7 @@ class _ChatScreenState extends State<ChatScreen> {
     composer.value = _draftValue(widget.conversationId);
     composer.addListener(_saveDraft);
     _replyingTo = _drafts.replyTargetFor(widget.conversationId);
+    unawaited(_attachments.clear());
   }
 
   @override
@@ -99,6 +107,8 @@ class _ChatScreenState extends State<ChatScreen> {
     scroll.removeListener(_maybeLoadOlder);
     scroll.dispose();
     composer.dispose();
+    unawaited(_attachments.clear());
+    _attachments.dispose();
     super.dispose();
   }
 
@@ -181,99 +191,167 @@ class _ChatScreenState extends State<ChatScreen> {
         final messages = widget.state.timelineFor(widget.conversationId);
         final pending = widget.state.pendingFor(widget.conversationId);
         final replyTarget = _replyTarget();
-        return Scaffold(
-          appBar: AppBar(
-            automaticallyImplyLeading: widget.showBackButton,
-            titleSpacing: widget.showBackButton ? 0 : BoneSpacing.gutter,
-            title: conversation == null
-                ? Text(context.l10n.searchTypeConversation)
-                : Row(
-                    children: <Widget>[
-                      conversationAvatar(
-                        context,
-                        conversation,
-                        radius: 17,
-                        // Only the pushed layout: see conversationAvatar.
-                        hero: widget.showBackButton,
+        return ChatShortcuts(
+          onEscape: _onEscape,
+          onSearch: _openSearch,
+          child: Focus(
+            autofocus: true,
+            child: Scaffold(
+              appBar: AppBar(
+                automaticallyImplyLeading: widget.showBackButton,
+                titleSpacing: widget.showBackButton ? 0 : BoneSpacing.gutter,
+                title: conversation == null
+                    ? Text(context.l10n.searchTypeConversation)
+                    : Row(
+                        children: <Widget>[
+                          conversationAvatar(
+                            context,
+                            conversation,
+                            radius: 17,
+                            // Only the pushed layout: see conversationAvatar.
+                            hero: widget.showBackButton,
+                          ),
+                          const SizedBox(width: BoneSpacing.md),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: <Widget>[
+                                Text(
+                                  conversationTitle(context.l10n, conversation),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                // The subtitle line is the honest one-word status
+                                // of the thread, in the micro style.
+                                Text(
+                                  widget.state.isMuted(conversation.id)
+                                      ? context.l10n.chatStatusMutedEncrypted
+                                      : context.l10n.chatStatusEncrypted,
+                                  style: theme.textTheme.labelSmall,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: BoneSpacing.md),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: <Widget>[
-                            Text(
-                              conversationTitle(context.l10n, conversation),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            // The subtitle line is the honest one-word status
-                            // of the thread, in the micro style.
-                            Text(
-                              widget.state.isMuted(conversation.id)
-                                  ? context.l10n.chatStatusMutedEncrypted
-                                  : context.l10n.chatStatusEncrypted,
-                              style: theme.textTheme.labelSmall,
-                            ),
-                          ],
+                actions: <Widget>[
+                  if (conversation != null)
+                    IconButton(
+                      tooltip: context.l10n.chatListDetails,
+                      onPressed: () => Navigator.of(context).push(
+                        sharedAxisRoute<void>(
+                          (_) => ConversationDetailsScreen(
+                            state: widget.state,
+                            conversationId: conversation.id,
+                          ),
                         ),
                       ),
-                    ],
-                  ),
-            actions: <Widget>[
-              if (conversation != null)
-                IconButton(
-                  tooltip: context.l10n.chatListDetails,
-                  onPressed: () => Navigator.of(context).push(
-                    sharedAxisRoute<void>(
-                      (_) => ConversationDetailsScreen(
-                        state: widget.state,
-                        conversationId: conversation.id,
-                      ),
+                      icon: const Icon(Icons.info_outline),
                     ),
-                  ),
-                  icon: const Icon(Icons.info_outline),
-                ),
-              const SizedBox(width: BoneSpacing.sm),
-            ],
-          ),
-          body: Column(
-            children: <Widget>[
-              Expanded(
-                child: conversation == null
-                    ? EmptyState(
-                        icon: Icons.forum_outlined,
-                        title: context.l10n.shellNoConversationTitle,
-                        message: context.l10n.chatNoConversationMessage,
-                      )
-                    : _messagesPane(conversation.id, messages, pending),
+                  const SizedBox(width: BoneSpacing.sm),
+                ],
               ),
-              if (conversation != null &&
-                  widget.state.mlsConversationFailed(conversation.id))
-                const _PausedConversationNotice(),
-              if (replyTarget != null)
-                _ReplyBar(
-                  preview: _replyPreview(context.l10n, replyTarget),
-                  onCancel: () => _setReplyTarget(null),
+              body: ChatDropZone(
+                enabled:
+                    conversation != null && widget.state.attachmentsAvailable,
+                onFiles: _addFiles,
+                child: Column(
+                  children: <Widget>[
+                    Expanded(
+                      child: conversation == null
+                          ? EmptyState(
+                              icon: Icons.forum_outlined,
+                              title: context.l10n.shellNoConversationTitle,
+                              message: context.l10n.chatNoConversationMessage,
+                            )
+                          : _messagesPane(conversation.id, messages, pending),
+                    ),
+                    if (conversation != null &&
+                        widget.state.mlsConversationFailed(conversation.id))
+                      const _PausedConversationNotice(),
+                    if (replyTarget != null)
+                      _ReplyBar(
+                        preview: _replyPreview(context.l10n, replyTarget),
+                        onCancel: () => _setReplyTarget(null),
+                      ),
+                    if (widget.state.attachmentsAvailable)
+                      AttachmentTray(tray: _attachments),
+                    _Composer(
+                      enabled: conversation != null,
+                      controller: composer,
+                      // Scoped to the send operation: an unrelated background task
+                      // no longer disables the composer.
+                      busy: widget.state.isBusy(Ops.send),
+                      onSend: _send,
+                      attaching: widget.state.isBusy(Ops.attachment),
+                      onAttach: widget.state.attachmentsAvailable
+                          ? () => pickAttachmentFiles(
+                              context, widget.state, _attachments)
+                          : null,
+                      onPasteFiles: widget.state.attachmentsAvailable
+                          ? _pasteFiles
+                          : null,
+                      onEditLast: widget.state.messageActionsAvailable
+                          ? _editLast
+                          : null,
+                    ),
+                  ],
                 ),
-              _Composer(
-                enabled: conversation != null,
-                controller: composer,
-                // Scoped to the send operation: an unrelated background task
-                // no longer disables the composer.
-                busy: widget.state.isBusy(Ops.send),
-                onSend: _send,
-                attaching: widget.state.isBusy(Ops.attachment),
-                onAttach: widget.state.attachmentsAvailable
-                    ? () => pickAndSendAttachment(
-                        context, widget.state, widget.conversationId)
-                    : null,
               ),
-            ],
+            ),
           ),
         );
       },
     );
+  }
+
+  /// Esc: first drops a reply in progress, then leaves the chat when it is
+  /// a pushed screen (the wide layout's detail pane has nowhere to go).
+  void _onEscape() {
+    if (_replyingTo != null) {
+      _setReplyTarget(null);
+    } else if (widget.showBackButton) {
+      Navigator.of(context).maybePop();
+    }
+  }
+
+  /// Ctrl+F: the search screen, as the chat list's search button opens it.
+  void _openSearch() {
+    Navigator.of(context).push(
+      sharedAxisRoute<void>((_) => SearchScreen(state: widget.state)),
+    );
+  }
+
+  Future<void> _addFiles(List<XFile> files, {Set<String>? temporary}) =>
+      addAttachmentFiles(context, widget.state, _attachments, files,
+          temporaryPaths: temporary ?? const <String>{});
+
+  /// Ctrl+V with files or an image on the clipboard; false means the
+  /// clipboard held neither and the text paste goes ahead.
+  Future<bool> _pasteFiles() async {
+    final clipboard = await readClipboardFiles();
+    if (clipboard.files.isEmpty || !mounted) return false;
+    await _addFiles(clipboard.files, temporary: clipboard.temporary);
+    return true;
+  }
+
+  /// Up in an empty composer edits your newest message, as in other chats.
+  Future<void> _editLast() async {
+    final state = widget.state;
+    final history = state.historyFor(widget.conversationId);
+    final ownAccountId = state.session?.accountId;
+    for (final envelope in state.timelineFor(widget.conversationId)) {
+      final local = history.forEnvelope(envelope);
+      if (local == null ||
+          local.kind != LocalMessageKind.text ||
+          local.deletedAt != null ||
+          local.senderAccountId != ownAccountId) {
+        continue;
+      }
+      await _editMessage(local);
+      return;
+    }
   }
 
   /// Message area for the selected conversation. Failures get an explicit
@@ -422,9 +500,8 @@ class _ChatScreenState extends State<ChatScreen> {
     } else if (action == 'copy') {
       await Clipboard.setData(ClipboardData(text: message.body ?? ''));
     } else if (action == 'edit') {
-      final text = await _editDialog(message.body ?? '');
-      if (text == null || text.trim().isEmpty || text == message.body) return;
-      sent = await state.editMessage(conversationId, message.key, text.trim());
+      await _editMessage(message);
+      return;
     } else if (action == 'delete') {
       final confirmed = await showDialog<bool>(
         context: context,
@@ -452,6 +529,19 @@ class _ChatScreenState extends State<ChatScreen> {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(error)));
       }
+    }
+  }
+
+  Future<void> _editMessage(LocalMessage message) async {
+    final text = await _editDialog(message.body ?? '');
+    if (!mounted || text == null || text.trim().isEmpty) return;
+    if (text == message.body) return;
+    final sent = await widget.state
+        .editMessage(widget.conversationId, message.key, text.trim());
+    final error = widget.state.errorFor(Ops.send);
+    if (!sent && mounted && error != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error)));
     }
   }
 
@@ -498,12 +588,19 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _send() async {
+    final state = widget.state;
+    final conversationId = widget.conversationId;
+    // Each waiting file goes first, as its own encrypted attachment.
+    if (_attachments.isNotEmpty) {
+      if (state.isBusy(Ops.attachment)) return;
+      final sentFiles = await sendPendingAttachments(
+          context, state, conversationId, _attachments);
+      if (!sentFiles || !mounted) return;
+    }
     final text = composer.text.trim();
     if (text.isEmpty) {
       return;
     }
-    final state = widget.state;
-    final conversationId = widget.conversationId;
     final replyingTo = _replyTarget()?.key;
     final sent = replyingTo == null
         ? await state.sendMessageTo(conversationId, text)
@@ -1375,6 +1472,8 @@ class _Composer extends StatelessWidget {
     required this.onSend,
     this.onAttach,
     this.attaching = false,
+    this.onPasteFiles,
+    this.onEditLast,
   });
 
   final bool enabled;
@@ -1386,11 +1485,41 @@ class _Composer extends StatelessWidget {
   final VoidCallback? onAttach;
   final bool attaching;
 
+  /// Ctrl+V attaches files or an image from the clipboard (desktop); the
+  /// result is false when it held none.
+  final Future<bool> Function()? onPasteFiles;
+
+  /// Up in an empty field edits the newest own message.
+  final VoidCallback? onEditLast;
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<TextEditingValue>(
       valueListenable: controller,
       builder: (context, value, _) => _build(context, value.text),
+    );
+  }
+
+  /// Desktop input extras around the field: paste of files, Up to edit.
+  Widget _wrapDesktopInput(Widget field) {
+    final paste = onPasteFiles;
+    final editLast = onEditLast;
+    return Focus(
+      canRequestFocus: false,
+      skipTraversal: true,
+      onKeyEvent: (node, event) {
+        if (editLast != null &&
+            event is KeyDownEvent &&
+            event.logicalKey == LogicalKeyboardKey.arrowUp &&
+            controller.text.isEmpty) {
+          editLast();
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: paste == null
+          ? field
+          : PasteFilesInterceptor(onPaste: paste, child: field),
     );
   }
 
@@ -1453,7 +1582,7 @@ class _Composer extends StatelessWidget {
                         if (canSend) onSend();
                       },
                   },
-                  child: TextField(
+                  child: _wrapDesktopInput(TextField(
                     controller: controller,
                     enabled: enabled,
                     minLines: 1,
@@ -1498,7 +1627,7 @@ class _Composer extends StatelessWidget {
                           ? context.l10n.validationMessageTooLong
                           : null,
                     ),
-                  ),
+                  )),
                 ),
               ),
               const SizedBox(width: BoneSpacing.xs),

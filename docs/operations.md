@@ -745,6 +745,7 @@ write transaction, so concurrent requests cannot both take the last slot.
 | `CONVERSATIONS_PER_ACCOUNT` | 1,000 | 10-10,000 | conversations an account belongs to | 409 `conversation_limit_reached` to that account; adding an account that is full answers 403 `forbidden`, as a block does |
 | `DELIVERIES_PER_MINUTE` | 1,000 | 60-1,000,000, and at least 2 × (1 + members) | per account, each fan-out write counts 1 plus every account it is published to | 429 `write_rate_limited` with `Retry-After` |
 | `WRITE_MIB_PER_HOUR` | 64 | 16-65,536 | request bodies of those writes | 429 `write_rate_limited` |
+| `ATTACHMENT_MIB` | 48 | 1-48 | the largest file one attachment may hold (plaintext; the upload route allows the chunk framing on top) | 413 `upload_too_large` |
 
 Why these defaults: a realtime delivery costs the server 4-10 ms of CPU;
 one account at 1,000 a minute (17/s) is about a third of the 47/s tier S
@@ -758,6 +759,12 @@ of database, so 64 MiB an hour caps one account's database growth at about
 240 MiB an hour, while heavy text use writes about 1 MiB a day. The write
 budget is in memory: a restart refills it, and a bulk import through the
 API proceeds at its pace.
+
+**Attachment size cap.** `PRIVATE_MESSENGER_LIMIT_ATTACHMENT_MIB` is the
+per-file cap. The server reports it to apps as `max_attachment_bytes` in
+`GET /api/v1/setup/status`, and the app refuses a larger file before it
+encrypts or uploads anything. 48 is the most the app can encrypt, so the
+setting can only lower it.
 
 **Write guard.** With less free space than the smaller of 5% and 2 GiB on
 the database or blob file system, the server answers new messages, MLS

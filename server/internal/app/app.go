@@ -211,7 +211,7 @@ func (a *App) Handler() http.Handler {
 		pushProviders = append(pushProviders, "apns")
 	}
 	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Push: a.Push, PushProviders: pushProviders, VAPIDPublicKey: a.Config.VAPIDPublicKey, TURNURLs: a.Config.TURNURLs, TURNSharedSecret: a.Config.TURNSharedSecret, Log: a.Log, SetupToken: a.Config.SetupToken, DefaultInstanceName: a.Config.InstanceName, PasswordCost: a.Config.PasswordCost, Messages: messaging.New(a.Store), ClientIdentities: a.limiter.clientIdentities, LoginBackoff: a.loginBackoff, Ready: a.ready.Load,
-		Budget: a.budget, Admission: a.Store.AdmissionCounters(), LowDisk: a.lowDisk.Load}
+		Budget: a.budget, Admission: a.Store.AdmissionCounters(), LowDisk: a.lowDisk.Load, MaxAttachmentBytes: a.Store.Limits().AttachmentBytes}
 	api.Register(mux)
 	return a.trackInflight(securityHeaders(a.requestLogger(a.limiter.middleware(routeTimeouts(mux)))))
 }

@@ -15,7 +15,7 @@ func TestLimitsDefaultWhenUnset(t *testing.T) {
 	}
 	got := cfg.Limits.WithDefaults()
 	want := Limits{AccountStorageBytes: 512 << 20, AccountBlobs: 10000, DevicesPerAccount: 10, ConversationMembers: 100,
-		ConversationsPerAccount: 1000, DeliveriesPerMinute: 1000, WriteBytesPerHour: 64 << 20}
+		ConversationsPerAccount: 1000, DeliveriesPerMinute: 1000, WriteBytesPerHour: 64 << 20, AttachmentBytes: 48 << 20}
 	if got != want {
 		t.Fatalf("defaults = %+v, want %+v", got, want)
 	}
@@ -41,6 +41,7 @@ func TestLimitsParseAndBound(t *testing.T) {
 		"PRIVATE_MESSENGER_LIMIT_ACCOUNT_STORAGE_MIB":       "8",
 		"PRIVATE_MESSENGER_LIMIT_CONVERSATIONS_PER_ACCOUNT": "many",
 		"PRIVATE_MESSENGER_LIMIT_WRITE_MIB_PER_HOUR":        "-1",
+		"PRIVATE_MESSENGER_LIMIT_ATTACHMENT_MIB":            "49",
 	} {
 		t.Run(key, func(t *testing.T) {
 			t.Setenv(key, value)
@@ -82,5 +83,19 @@ func TestDeriveInstanceStorage(t *testing.T) {
 		if got := DeriveInstanceStorage(tc.volume, tc.keep); got != tc.want {
 			t.Fatalf("DeriveInstanceStorage(%d, %d) = %d MiB, want %d MiB", tc.volume>>20, tc.keep, got>>20, tc.want>>20)
 		}
+	}
+}
+
+func TestAttachmentLimit(t *testing.T) {
+	t.Setenv("PRIVATE_MESSENGER_LIMIT_ATTACHMENT_MIB", "10")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Limits.AttachmentBytes != 10<<20 {
+		t.Fatalf("attachment limit = %d", cfg.Limits.AttachmentBytes)
+	}
+	if got, want := MaxAttachmentCiphertext(10<<20), int64(10<<20+10*20); got != want {
+		t.Fatalf("ciphertext bound = %d, want %d", got, want)
 	}
 }
