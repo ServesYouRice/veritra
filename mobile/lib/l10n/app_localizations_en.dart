@@ -2105,4 +2105,63 @@ class AppLocalizationsEn extends AppLocalizations {
   String errorServerNotAllowed(String url) {
     return 'This build does not allow the server address $url. Use an https:// server origin.';
   }
+
+  @override
+  String get muteEightHours => 'For 8 hours';
+
+  @override
+  String get muteOneWeek => 'For 1 week';
+
+  @override
+  String get muteAlways => 'Until I turn it back on';
+
+  @override
+  String get muteStatusAlways => 'Muted until you turn it back on.';
+
+  @override
+  String muteStatusUntil(String time) {
+    return 'Muted until $time.';
+  }
+
+  @override
+  String get chatMoreReactions => 'More reactions';
+
+  @override
+  String get emojiSearchHint => 'Search by name, or type or paste an emoji';
+
+  @override
+  String emojiUseTyped(String emoji) {
+    return 'Use $emoji';
+  }
+
+  @override
+  String get emojiNoResults =>
+      'No emoji with that name. Type or paste one instead.';
+
+  @override
+  String get emojiGroupSmileys => 'Smileys';
+
+  @override
+  String get emojiGroupPeople => 'People';
+
+  @override
+  String get emojiGroupAnimals => 'Animals and nature';
+
+  @override
+  String get emojiGroupFood => 'Food and drink';
+
+  @override
+  String get emojiGroupTravel => 'Travel and places';
+
+  @override
+  String get emojiGroupActivities => 'Activities';
+
+  @override
+  String get emojiGroupObjects => 'Objects';
+
+  @override
+  String get emojiGroupSymbols => 'Symbols';
+
+  @override
+  String get emojiGroupFlags => 'Flags';
 }

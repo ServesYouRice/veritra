@@ -13,6 +13,7 @@ import '../../ui/widgets/status_pill.dart';
 import '../search/search_screen.dart';
 import 'chat_screen.dart';
 import 'conversation_details_screen.dart';
+import 'mute_sheet.dart';
 import 'new_conversation_sheet.dart';
 import '../../ui/widgets/refresh_action.dart';
 import '../../l10n/l10n.dart';
@@ -199,7 +200,13 @@ class ChatListScreen extends StatelessWidget {
       );
       return;
     }
-    final ok = await state.setConversationMuted(conversation.id, !muted);
+    var duration = MuteDuration.off;
+    if (!muted) {
+      final chosen = await chooseMuteDuration(context);
+      if (chosen == null || !context.mounted) return;
+      duration = chosen;
+    }
+    final ok = await state.setConversationMute(conversation.id, duration);
     if (!ok && context.mounted) {
       final error = state.errorFor(Ops.mute);
       if (error != null) {

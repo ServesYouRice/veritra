@@ -318,6 +318,16 @@ class LocalSyncLease {
   String get key => '$origin\u0000$accountId\u0000$deviceId\u0000$generation';
 }
 
+/// An unsent composer draft read back from the local database (W6).
+class StoredDraft {
+  const StoredDraft({required this.text, this.replyTo});
+
+  final String text;
+
+  /// The local key of the message being replied to.
+  final String? replyTo;
+}
+
 abstract class LocalStore {
   Future<void> saveSession(Session session);
   Future<Session?> loadSession();
@@ -402,6 +412,19 @@ abstract class LocalStore {
   Future<void> clearCachedState({bool preserveOutbox = false});
   Future<void> clear();
 
+  /// Unsent composer drafts by conversation. They are message text before
+  /// encryption: kept only in the encrypted database, never in a backup, and
+  /// wiped with the rest of the data (W6).
+  Future<Map<String, StoredDraft>> loadDrafts();
+  Future<void> saveDraft(String conversationId, String text, {String? replyTo});
+  Future<void> deleteDraft(String conversationId);
+
+  /// This device's copy of conversation mutes: the end of each mute, or null
+  /// for one without an end. Mutes that have ended are not returned (W6).
+  Future<Map<String, DateTime?>> loadConversationMutes();
+  Future<void> saveConversationMute(String conversationId,
+      {required bool muted, DateTime? until});
+
   /// Deletes every message, reaction and cached envelope whose server expiry
   /// has passed (W2) and returns the conversations that lost a row.
   Future<Set<String>> purgeExpiredMessages({DateTime? now});
@@ -431,6 +454,8 @@ class MemoryLocalStore implements LocalStore {
   String? _syncLeaseKey;
   SyncRecovery? _syncRecovery;
   DateTime? _lastBackupAt;
+  final Map<String, StoredDraft> _drafts = <String, StoredDraft>{};
+  final Map<String, DateTime?> _mutes = <String, DateTime?>{};
 
   @override
   Future<void> saveLastBackupAt(DateTime at) async =>
@@ -751,6 +776,13 @@ class MemoryLocalStore implements LocalStore {
     }
     _cryptoState = _copyCryptoState(transition.state);
     _history.apply(transition.messageEffects);
+    final sentText = transition.draftText;
+    final draft = _drafts[transition.envelope.conversationId];
+    if (sentText != null &&
+        draft != null &&
+        draft.text.trim() == sentText.trim()) {
+      _drafts.remove(transition.envelope.conversationId);
+    }
     _outbox.add(transition.envelope);
     _outboxRecords[transition.envelope.idempotencyKey] = PendingEnvelopeRecord(
         envelope: transition.envelope,
@@ -847,6 +879,8 @@ class MemoryLocalStore implements LocalStore {
   Future<void> clearCachedState({bool preserveOutbox = false}) async {
     _syncCursor = 0;
     _snapshot = null;
+    _drafts.clear();
+    _mutes.clear();
     if (!preserveOutbox) {
       _outbox.clear();
       _outboxRecords.clear();
@@ -873,6 +907,38 @@ class MemoryLocalStore implements LocalStore {
       throw ArgumentError.value(confirmed, 'confirmed');
     }
     await clear();
+  }
+
+  @override
+  Future<Map<String, StoredDraft>> loadDrafts() async =>
+      Map<String, StoredDraft>.of(_drafts);
+
+  @override
+  Future<void> saveDraft(String conversationId, String text,
+      {String? replyTo}) async {
+    _drafts[conversationId] = StoredDraft(text: text, replyTo: replyTo);
+  }
+
+  @override
+  Future<void> deleteDraft(String conversationId) async {
+    _drafts.remove(conversationId);
+  }
+
+  @override
+  Future<Map<String, DateTime?>> loadConversationMutes() async {
+    final now = DateTime.now().toUtc();
+    _mutes.removeWhere((_, until) => until != null && !until.isAfter(now));
+    return Map<String, DateTime?>.of(_mutes);
+  }
+
+  @override
+  Future<void> saveConversationMute(String conversationId,
+      {required bool muted, DateTime? until}) async {
+    if (muted) {
+      _mutes[conversationId] = until?.toUtc();
+    } else {
+      _mutes.remove(conversationId);
+    }
   }
 
   static bool _expired(DateTime? expiresAt, DateTime now) =>
@@ -904,25 +970,23 @@ class MemoryLocalStore implements LocalStore {
         messagesByConversation: kept,
       );
     }
-    touched.addAll(_history.purgeExpired(
-        at.millisecondsSinceEpoch, expiredKeys));
+    touched
+        .addAll(_history.purgeExpired(at.millisecondsSinceEpoch, expiredKeys));
     return touched;
   }
 
   @override
   Future<DateTime?> nextMessageExpiry() async {
     DateTime? next;
-    for (final list
-        in _snapshot?.messagesByConversation.values ??
-            const <List<ReceivedMessageEnvelope>>[]) {
+    for (final list in _snapshot?.messagesByConversation.values ??
+        const <List<ReceivedMessageEnvelope>>[]) {
       for (final envelope in list) {
         final at = envelope.expiresAt;
         if (at != null && (next == null || at.isBefore(next))) next = at;
       }
     }
     final fromHistory = _history.nextExpiry();
-    if (fromHistory != null &&
-        (next == null || fromHistory.isBefore(next))) {
+    if (fromHistory != null && (next == null || fromHistory.isBefore(next))) {
       next = fromHistory;
     }
     return next;
@@ -1676,6 +1740,38 @@ class SecureLocalStore implements LocalStore {
           String conversationId, String peerAccountId) =>
       _database().then((database) =>
           database.readPeerVerification(conversationId, peerAccountId));
+
+  @override
+  Future<Map<String, StoredDraft>> loadDrafts() async => {
+        for (final row in await (await _database()).readDrafts())
+          row.conversationId: StoredDraft(text: row.body, replyTo: row.replyTo),
+      };
+
+  @override
+  Future<void> saveDraft(String conversationId, String text,
+          {String? replyTo}) async =>
+      (await _database()).saveDraft(
+          conversationId: conversationId, body: text, replyTo: replyTo);
+
+  @override
+  Future<void> deleteDraft(String conversationId) async =>
+      (await _database()).deleteDraft(conversationId);
+
+  @override
+  Future<Map<String, DateTime?>> loadConversationMutes() async => {
+        for (final row in await (await _database())
+            .readMutes(DateTime.now().toUtc().millisecondsSinceEpoch))
+          row.conversationId: row.mutedUntil == null
+              ? null
+              : DateTime.fromMillisecondsSinceEpoch(row.mutedUntil!,
+                  isUtc: true),
+      };
+
+  @override
+  Future<void> saveConversationMute(String conversationId,
+          {required bool muted, DateTime? until}) async =>
+      (await _database()).saveMute(conversationId,
+          muted: muted, mutedUntil: until?.toUtc().millisecondsSinceEpoch);
 
   @override
   Future<Set<String>> purgeExpiredMessages({DateTime? now}) async =>

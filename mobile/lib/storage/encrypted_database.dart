@@ -282,6 +282,34 @@ class LocalMessageReactions extends Table {
   Set<Column<Object>> get primaryKey => {targetKey, reactorAccountId};
 }
 
+/// An unsent composer draft, kept so it survives a restart (W6, schema 11).
+/// It is message text before encryption, so it lives only in this database,
+/// goes in no backup and is deleted when the message is sent or the data is
+/// wiped.
+class LocalDrafts extends Table {
+  TextColumn get conversationId => text()();
+  TextColumn get body => text()();
+
+  /// The local key of the message being replied to, if any.
+  TextColumn get replyTo => text().nullable()();
+  IntColumn get updatedAt => integer()();
+
+  @override
+  Set<Column<Object>> get primaryKey => {conversationId};
+}
+
+/// This device's copy of a conversation mute (W6, schema 11). The server holds
+/// the same mute for push; the copy lets the list and the expiry work offline.
+class LocalConversationMutes extends Table {
+  TextColumn get conversationId => text()();
+
+  /// When the mute ends (epoch milliseconds); null mutes without an end.
+  IntColumn get mutedUntil => integer().nullable()();
+
+  @override
+  Set<Column<Object>> get primaryKey => {conversationId};
+}
+
 @DriftDatabase(tables: [
   LocalAccounts,
   LocalConversations,
@@ -295,6 +323,8 @@ class LocalMessageReactions extends Table {
   LocalPeerVerifications,
   LocalMessages,
   LocalMessageReactions,
+  LocalDrafts,
+  LocalConversationMutes,
 ])
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   EncryptedLocalDatabase(super.executor);
@@ -305,7 +335,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   static const lastBackupName = 'backup.last_created_at';
 
   @override
-  int get schemaVersion => 10;
+  int get schemaVersion => 11;
 
   /// Whether opening this database started a schema upgrade. Upgrades run
   /// only after the key has opened the file, so an open that fails after
@@ -383,12 +413,16 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               await migrator.addColumn(
                   localCiphertextEnvelopes, localCiphertextEnvelopes.expiresAt);
               await migrator.addColumn(localMessages, localMessages.expiresAt);
-              await migrator
-                  .createIndex(localCiphertextEnvelopesExpiresAt);
+              await migrator.createIndex(localCiphertextEnvelopesExpiresAt);
               await migrator.createIndex(localMessagesExpiresAt);
               await _backfillExpiry();
               await _purgeExpiredInTransaction(
                   DateTime.now().toUtc().millisecondsSinceEpoch);
+            }
+            if (from < 11) {
+              // W6: drafts and conversation mutes. New tables only.
+              await migrator.createTable(localDrafts);
+              await migrator.createTable(localConversationMutes);
             }
             // Drift writes the version again after this returns, outside the
             // transaction; writing it here too closes that gap.
@@ -571,6 +605,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localMlsTransitions).go();
         await delete(localMlsOutboxEntries).go();
         await delete(localPeerVerifications).go();
+        await delete(localDrafts).go();
+        await delete(localConversationMutes).go();
         // Decrypted history travels in the backup (D27, I45); a version 1
         // backup without it restores an empty history.
         await delete(localMessages).go();
@@ -1288,6 +1324,18 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         if (draftText != null) {
           await _writeMetadataInTransaction(
               _outboxDraftName(idempotencyKey), draftText);
+          // The composer draft this message was sent from goes in the same
+          // transaction, so a crash cannot leave a sent message and its draft
+          // (W6). A draft edited since is a different draft and stays.
+          final draft = await (select(localDrafts)
+                ..where((table) => table.conversationId.equals(conversationId)))
+              .getSingleOrNull();
+          if (draft != null && draft.body.trim() == draftText.trim()) {
+            await (delete(localDrafts)
+                  ..where(
+                      (table) => table.conversationId.equals(conversationId)))
+                .go();
+          }
         }
         await _applyMessageEffects(messageEffects);
       });
@@ -1431,6 +1479,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
       transaction(() async {
         await delete(localCiphertextEnvelopes).go();
         await delete(localConversations).go();
+        await delete(localDrafts).go();
+        await delete(localConversationMutes).go();
         if (!preserveOutbox) {
           await delete(localOutboxEntries).go();
           await customStatement('DELETE FROM local_metadata WHERE name LIKE ?',
@@ -1453,6 +1503,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localPeerVerifications).go();
         await delete(localMessages).go();
         await delete(localMessageReactions).go();
+        await delete(localDrafts).go();
+        await delete(localConversationMutes).go();
         await into(localSyncStates).insertOnConflictUpdate(
           LocalSyncStatesCompanion.insert(singleton: const Value(1)),
         );
@@ -1675,6 +1727,55 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     }
   }
 
+  Future<void> saveDraft({
+    required String conversationId,
+    required String body,
+    required String? replyTo,
+  }) =>
+      into(localDrafts).insertOnConflictUpdate(
+        LocalDraftsCompanion.insert(
+          conversationId: conversationId,
+          body: body,
+          replyTo: Value(replyTo),
+          updatedAt: DateTime.now().toUtc().millisecondsSinceEpoch,
+        ),
+      );
+
+  Future<void> deleteDraft(String conversationId) => (delete(localDrafts)
+        ..where((table) => table.conversationId.equals(conversationId)))
+      .go();
+
+  Future<List<LocalDraft>> readDrafts() => select(localDrafts).get();
+
+  /// Remembers a mute until [mutedUntil] (epoch milliseconds), or without an
+  /// end when it is null. [muted] false forgets it.
+  Future<void> saveMute(String conversationId,
+      {required bool muted, int? mutedUntil}) async {
+    if (!muted) {
+      await (delete(localConversationMutes)
+            ..where((table) => table.conversationId.equals(conversationId)))
+          .go();
+      return;
+    }
+    await into(localConversationMutes).insertOnConflictUpdate(
+      LocalConversationMutesCompanion.insert(
+        conversationId: conversationId,
+        mutedUntil: Value(mutedUntil),
+      ),
+    );
+  }
+
+  /// Mutes still in force at [nowMs]; ended ones are deleted on the way.
+  Future<List<LocalConversationMute>> readMutes(int nowMs) =>
+      transaction(() async {
+        await (delete(localConversationMutes)
+              ..where((table) =>
+                  table.mutedUntil.isNotNull() &
+                  table.mutedUntil.isSmallerOrEqualValue(nowMs)))
+            .go();
+        return select(localConversationMutes).get();
+      });
+
   Future<String?> readMetadata(String name) async {
     final row = await (select(localMetadata)
           ..where((table) => table.name.equals(name)))
@@ -1777,7 +1878,6 @@ bool _isStorageFull(Object? error, int depth) {
     _ => false,
   };
 }
-
 
 /// The `expires_at` of a cached envelope's JSON, in epoch milliseconds, or
 /// null when it has none or cannot be read (W2).

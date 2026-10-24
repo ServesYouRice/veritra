@@ -844,29 +844,37 @@ class ApiClient {
     );
   }
 
-  Future<bool> conversationMuted(String token, String conversationId) async {
+  Future<ConversationMute> conversationMute(
+      String token, String conversationId) async {
     final json = await _jsonRequest(
       'GET',
       '/api/v1/conversations/${Uri.encodeComponent(conversationId)}'
           '/notifications',
       token: token,
     );
-    return json['muted'] == true;
+    return ConversationMute.fromJson(json);
   }
 
-  Future<bool> setConversationMuted(
+  /// Mutes or unmutes push for the conversation. [until] ends a mute by
+  /// itself; without it a mute has no end.
+  Future<ConversationMute> setConversationMute(
     String token,
-    String conversationId,
-    bool muted,
-  ) async {
+    String conversationId, {
+    required bool muted,
+    DateTime? until,
+  }) async {
     final json = await _jsonRequest(
       'PUT',
       '/api/v1/conversations/${Uri.encodeComponent(conversationId)}'
           '/notifications',
       token: token,
-      body: <String, Object?>{'muted': muted},
+      body: <String, Object?>{
+        'muted': muted,
+        if (muted && until != null)
+          'muted_until': until.toUtc().toIso8601String(),
+      },
     );
-    return json['muted'] == true;
+    return ConversationMute.fromJson(json);
   }
 
   Future<List<BlockedAccount>> listBlocks(String token) async {

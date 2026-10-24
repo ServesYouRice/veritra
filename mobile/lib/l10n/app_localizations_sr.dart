@@ -2121,6 +2121,66 @@ class AppLocalizationsSr extends AppLocalizations {
   String errorServerNotAllowed(String url) {
     return 'Ова верзија апликације не дозвољава адресу сервера $url. Користите https:// адресу сервера.';
   }
+
+  @override
+  String get muteEightHours => '8 сати';
+
+  @override
+  String get muteOneWeek => '1 недељу';
+
+  @override
+  String get muteAlways => 'Док поново не укључим';
+
+  @override
+  String get muteStatusAlways => 'Утишано док поново не укључите обавештења.';
+
+  @override
+  String muteStatusUntil(String time) {
+    return 'Утишано до $time.';
+  }
+
+  @override
+  String get chatMoreReactions => 'Више реакција';
+
+  @override
+  String get emojiSearchHint =>
+      'Претражите по имену или унесите или налепите емоџи';
+
+  @override
+  String emojiUseTyped(String emoji) {
+    return 'Користи $emoji';
+  }
+
+  @override
+  String get emojiNoResults =>
+      'Нема емоџија са тим именом. Унесите или налепите га.';
+
+  @override
+  String get emojiGroupSmileys => 'Смајлији';
+
+  @override
+  String get emojiGroupPeople => 'Људи';
+
+  @override
+  String get emojiGroupAnimals => 'Животиње и природа';
+
+  @override
+  String get emojiGroupFood => 'Храна и пиће';
+
+  @override
+  String get emojiGroupTravel => 'Путовања и места';
+
+  @override
+  String get emojiGroupActivities => 'Активности';
+
+  @override
+  String get emojiGroupObjects => 'Предмети';
+
+  @override
+  String get emojiGroupSymbols => 'Симболи';
+
+  @override
+  String get emojiGroupFlags => 'Заставе';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -4243,4 +4303,64 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String errorServerNotAllowed(String url) {
     return 'Ova verzija aplikacije ne dozvoljava adresu servera $url. Koristite https:// adresu servera.';
   }
+
+  @override
+  String get muteEightHours => '8 sati';
+
+  @override
+  String get muteOneWeek => '1 nedelju';
+
+  @override
+  String get muteAlways => 'Dok ponovo ne uključim';
+
+  @override
+  String get muteStatusAlways => 'Utišano dok ponovo ne uključite obaveštenja.';
+
+  @override
+  String muteStatusUntil(String time) {
+    return 'Utišano do $time.';
+  }
+
+  @override
+  String get chatMoreReactions => 'Više reakcija';
+
+  @override
+  String get emojiSearchHint =>
+      'Pretražite po imenu ili unesite ili nalepite emodži';
+
+  @override
+  String emojiUseTyped(String emoji) {
+    return 'Koristi $emoji';
+  }
+
+  @override
+  String get emojiNoResults =>
+      'Nema emodžija sa tim imenom. Unesite ili nalepite ga.';
+
+  @override
+  String get emojiGroupSmileys => 'Smajliji';
+
+  @override
+  String get emojiGroupPeople => 'Ljudi';
+
+  @override
+  String get emojiGroupAnimals => 'Životinje i priroda';
+
+  @override
+  String get emojiGroupFood => 'Hrana i piće';
+
+  @override
+  String get emojiGroupTravel => 'Putovanja i mesta';
+
+  @override
+  String get emojiGroupActivities => 'Aktivnosti';
+
+  @override
+  String get emojiGroupObjects => 'Predmeti';
+
+  @override
+  String get emojiGroupSymbols => 'Simboli';
+
+  @override
+  String get emojiGroupFlags => 'Zastave';
 }

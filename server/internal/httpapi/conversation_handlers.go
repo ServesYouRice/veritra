@@ -14,6 +14,9 @@ import (
 	"private-messenger/server/internal/storage"
 )
 
+// maxMuteDuration bounds a timed mute; "always" is a mute without an end.
+const maxMuteDuration = 366 * 24 * time.Hour
+
 func (a *API) createCommunity(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
 	var req createCommunityRequest
 	if !decodeJSON(w, r, &req) {
@@ -283,15 +286,17 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 		a.Hub.Publish(members, realtime.Event{Version: "v1", Type: "typing.updated", ConversationID: conversationID, Payload: map[string]string{"account_id": principal.AccountID}, CreatedAt: time.Now().UTC()})
 		w.WriteHeader(http.StatusNoContent)
 	case parts[1] == "notifications" && r.Method == http.MethodGet:
-		muted, err := a.Store.ConversationNotificationsMuted(r.Context(), conversationID, principal.AccountID)
+		mute, err := a.Store.ConversationNotificationMute(r.Context(), conversationID, principal.AccountID)
 		if err != nil {
 			handleStorageError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]bool{"muted": muted})
+		writeJSON(w, http.StatusOK, mute)
 	case parts[1] == "notifications" && (r.Method == http.MethodPut || r.Method == http.MethodPatch):
 		var req struct {
 			Muted *bool `json:"muted"`
+			// MutedUntil ends the mute by itself; omit it to mute without an end.
+			MutedUntil *time.Time `json:"muted_until"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
@@ -300,11 +305,21 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 			writeError(w, http.StatusBadRequest, "muted_required")
 			return
 		}
-		if err := a.Store.SetConversationNotificationsMuted(r.Context(), conversationID, principal.AccountID, *req.Muted); err != nil {
+		var until *time.Time
+		if *req.Muted && req.MutedUntil != nil {
+			end := req.MutedUntil.UTC().Truncate(time.Second)
+			now := time.Now()
+			if !end.After(now) || end.After(now.Add(maxMuteDuration)) {
+				writeError(w, http.StatusBadRequest, "muted_until_invalid")
+				return
+			}
+			until = &end
+		}
+		if err := a.Store.SetConversationNotificationMute(r.Context(), conversationID, principal.AccountID, *req.Muted, until); err != nil {
 			handleStorageError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]bool{"muted": *req.Muted})
+		writeJSON(w, http.StatusOK, domain.NotificationMute{Muted: *req.Muted, Until: until})
 	case parts[1] == "read-receipts" && r.Method == http.MethodPost:
 		var req struct {
 			MessageID string `json:"message_id"`

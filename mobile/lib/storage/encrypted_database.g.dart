@@ -3996,6 +3996,497 @@ class LocalMessageReactionsCompanion
   }
 }
 
+class $LocalDraftsTable extends LocalDrafts
+    with TableInfo<$LocalDraftsTable, LocalDraft> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $LocalDraftsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _conversationIdMeta =
+      const VerificationMeta('conversationId');
+  @override
+  late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
+      'conversation_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _bodyMeta = const VerificationMeta('body');
+  @override
+  late final GeneratedColumn<String> body = GeneratedColumn<String>(
+      'body', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _replyToMeta =
+      const VerificationMeta('replyTo');
+  @override
+  late final GeneratedColumn<String> replyTo = GeneratedColumn<String>(
+      'reply_to', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _updatedAtMeta =
+      const VerificationMeta('updatedAt');
+  @override
+  late final GeneratedColumn<int> updatedAt = GeneratedColumn<int>(
+      'updated_at', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  @override
+  List<GeneratedColumn> get $columns =>
+      [conversationId, body, replyTo, updatedAt];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'local_drafts';
+  @override
+  VerificationContext validateIntegrity(Insertable<LocalDraft> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('conversation_id')) {
+      context.handle(
+          _conversationIdMeta,
+          conversationId.isAcceptableOrUnknown(
+              data['conversation_id']!, _conversationIdMeta));
+    } else if (isInserting) {
+      context.missing(_conversationIdMeta);
+    }
+    if (data.containsKey('body')) {
+      context.handle(
+          _bodyMeta, body.isAcceptableOrUnknown(data['body']!, _bodyMeta));
+    } else if (isInserting) {
+      context.missing(_bodyMeta);
+    }
+    if (data.containsKey('reply_to')) {
+      context.handle(_replyToMeta,
+          replyTo.isAcceptableOrUnknown(data['reply_to']!, _replyToMeta));
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(_updatedAtMeta,
+          updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta));
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {conversationId};
+  @override
+  LocalDraft map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return LocalDraft(
+      conversationId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}conversation_id'])!,
+      body: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}body'])!,
+      replyTo: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}reply_to']),
+      updatedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}updated_at'])!,
+    );
+  }
+
+  @override
+  $LocalDraftsTable createAlias(String alias) {
+    return $LocalDraftsTable(attachedDatabase, alias);
+  }
+}
+
+class LocalDraft extends DataClass implements Insertable<LocalDraft> {
+  final String conversationId;
+  final String body;
+
+  /// The local key of the message being replied to, if any.
+  final String? replyTo;
+  final int updatedAt;
+  const LocalDraft(
+      {required this.conversationId,
+      required this.body,
+      this.replyTo,
+      required this.updatedAt});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['conversation_id'] = Variable<String>(conversationId);
+    map['body'] = Variable<String>(body);
+    if (!nullToAbsent || replyTo != null) {
+      map['reply_to'] = Variable<String>(replyTo);
+    }
+    map['updated_at'] = Variable<int>(updatedAt);
+    return map;
+  }
+
+  LocalDraftsCompanion toCompanion(bool nullToAbsent) {
+    return LocalDraftsCompanion(
+      conversationId: Value(conversationId),
+      body: Value(body),
+      replyTo: replyTo == null && nullToAbsent
+          ? const Value.absent()
+          : Value(replyTo),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory LocalDraft.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return LocalDraft(
+      conversationId: serializer.fromJson<String>(json['conversationId']),
+      body: serializer.fromJson<String>(json['body']),
+      replyTo: serializer.fromJson<String?>(json['replyTo']),
+      updatedAt: serializer.fromJson<int>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'conversationId': serializer.toJson<String>(conversationId),
+      'body': serializer.toJson<String>(body),
+      'replyTo': serializer.toJson<String?>(replyTo),
+      'updatedAt': serializer.toJson<int>(updatedAt),
+    };
+  }
+
+  LocalDraft copyWith(
+          {String? conversationId,
+          String? body,
+          Value<String?> replyTo = const Value.absent(),
+          int? updatedAt}) =>
+      LocalDraft(
+        conversationId: conversationId ?? this.conversationId,
+        body: body ?? this.body,
+        replyTo: replyTo.present ? replyTo.value : this.replyTo,
+        updatedAt: updatedAt ?? this.updatedAt,
+      );
+  LocalDraft copyWithCompanion(LocalDraftsCompanion data) {
+    return LocalDraft(
+      conversationId: data.conversationId.present
+          ? data.conversationId.value
+          : this.conversationId,
+      body: data.body.present ? data.body.value : this.body,
+      replyTo: data.replyTo.present ? data.replyTo.value : this.replyTo,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalDraft(')
+          ..write('conversationId: $conversationId, ')
+          ..write('body: $body, ')
+          ..write('replyTo: $replyTo, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(conversationId, body, replyTo, updatedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is LocalDraft &&
+          other.conversationId == this.conversationId &&
+          other.body == this.body &&
+          other.replyTo == this.replyTo &&
+          other.updatedAt == this.updatedAt);
+}
+
+class LocalDraftsCompanion extends UpdateCompanion<LocalDraft> {
+  final Value<String> conversationId;
+  final Value<String> body;
+  final Value<String?> replyTo;
+  final Value<int> updatedAt;
+  final Value<int> rowid;
+  const LocalDraftsCompanion({
+    this.conversationId = const Value.absent(),
+    this.body = const Value.absent(),
+    this.replyTo = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  LocalDraftsCompanion.insert({
+    required String conversationId,
+    required String body,
+    this.replyTo = const Value.absent(),
+    required int updatedAt,
+    this.rowid = const Value.absent(),
+  })  : conversationId = Value(conversationId),
+        body = Value(body),
+        updatedAt = Value(updatedAt);
+  static Insertable<LocalDraft> custom({
+    Expression<String>? conversationId,
+    Expression<String>? body,
+    Expression<String>? replyTo,
+    Expression<int>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (conversationId != null) 'conversation_id': conversationId,
+      if (body != null) 'body': body,
+      if (replyTo != null) 'reply_to': replyTo,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  LocalDraftsCompanion copyWith(
+      {Value<String>? conversationId,
+      Value<String>? body,
+      Value<String?>? replyTo,
+      Value<int>? updatedAt,
+      Value<int>? rowid}) {
+    return LocalDraftsCompanion(
+      conversationId: conversationId ?? this.conversationId,
+      body: body ?? this.body,
+      replyTo: replyTo ?? this.replyTo,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (conversationId.present) {
+      map['conversation_id'] = Variable<String>(conversationId.value);
+    }
+    if (body.present) {
+      map['body'] = Variable<String>(body.value);
+    }
+    if (replyTo.present) {
+      map['reply_to'] = Variable<String>(replyTo.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<int>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalDraftsCompanion(')
+          ..write('conversationId: $conversationId, ')
+          ..write('body: $body, ')
+          ..write('replyTo: $replyTo, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $LocalConversationMutesTable extends LocalConversationMutes
+    with TableInfo<$LocalConversationMutesTable, LocalConversationMute> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $LocalConversationMutesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _conversationIdMeta =
+      const VerificationMeta('conversationId');
+  @override
+  late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
+      'conversation_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _mutedUntilMeta =
+      const VerificationMeta('mutedUntil');
+  @override
+  late final GeneratedColumn<int> mutedUntil = GeneratedColumn<int>(
+      'muted_until', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  @override
+  List<GeneratedColumn> get $columns => [conversationId, mutedUntil];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'local_conversation_mutes';
+  @override
+  VerificationContext validateIntegrity(
+      Insertable<LocalConversationMute> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('conversation_id')) {
+      context.handle(
+          _conversationIdMeta,
+          conversationId.isAcceptableOrUnknown(
+              data['conversation_id']!, _conversationIdMeta));
+    } else if (isInserting) {
+      context.missing(_conversationIdMeta);
+    }
+    if (data.containsKey('muted_until')) {
+      context.handle(
+          _mutedUntilMeta,
+          mutedUntil.isAcceptableOrUnknown(
+              data['muted_until']!, _mutedUntilMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {conversationId};
+  @override
+  LocalConversationMute map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return LocalConversationMute(
+      conversationId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}conversation_id'])!,
+      mutedUntil: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}muted_until']),
+    );
+  }
+
+  @override
+  $LocalConversationMutesTable createAlias(String alias) {
+    return $LocalConversationMutesTable(attachedDatabase, alias);
+  }
+}
+
+class LocalConversationMute extends DataClass
+    implements Insertable<LocalConversationMute> {
+  final String conversationId;
+
+  /// When the mute ends (epoch milliseconds); null mutes without an end.
+  final int? mutedUntil;
+  const LocalConversationMute({required this.conversationId, this.mutedUntil});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['conversation_id'] = Variable<String>(conversationId);
+    if (!nullToAbsent || mutedUntil != null) {
+      map['muted_until'] = Variable<int>(mutedUntil);
+    }
+    return map;
+  }
+
+  LocalConversationMutesCompanion toCompanion(bool nullToAbsent) {
+    return LocalConversationMutesCompanion(
+      conversationId: Value(conversationId),
+      mutedUntil: mutedUntil == null && nullToAbsent
+          ? const Value.absent()
+          : Value(mutedUntil),
+    );
+  }
+
+  factory LocalConversationMute.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return LocalConversationMute(
+      conversationId: serializer.fromJson<String>(json['conversationId']),
+      mutedUntil: serializer.fromJson<int?>(json['mutedUntil']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'conversationId': serializer.toJson<String>(conversationId),
+      'mutedUntil': serializer.toJson<int?>(mutedUntil),
+    };
+  }
+
+  LocalConversationMute copyWith(
+          {String? conversationId,
+          Value<int?> mutedUntil = const Value.absent()}) =>
+      LocalConversationMute(
+        conversationId: conversationId ?? this.conversationId,
+        mutedUntil: mutedUntil.present ? mutedUntil.value : this.mutedUntil,
+      );
+  LocalConversationMute copyWithCompanion(
+      LocalConversationMutesCompanion data) {
+    return LocalConversationMute(
+      conversationId: data.conversationId.present
+          ? data.conversationId.value
+          : this.conversationId,
+      mutedUntil:
+          data.mutedUntil.present ? data.mutedUntil.value : this.mutedUntil,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalConversationMute(')
+          ..write('conversationId: $conversationId, ')
+          ..write('mutedUntil: $mutedUntil')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(conversationId, mutedUntil);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is LocalConversationMute &&
+          other.conversationId == this.conversationId &&
+          other.mutedUntil == this.mutedUntil);
+}
+
+class LocalConversationMutesCompanion
+    extends UpdateCompanion<LocalConversationMute> {
+  final Value<String> conversationId;
+  final Value<int?> mutedUntil;
+  final Value<int> rowid;
+  const LocalConversationMutesCompanion({
+    this.conversationId = const Value.absent(),
+    this.mutedUntil = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  LocalConversationMutesCompanion.insert({
+    required String conversationId,
+    this.mutedUntil = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : conversationId = Value(conversationId);
+  static Insertable<LocalConversationMute> custom({
+    Expression<String>? conversationId,
+    Expression<int>? mutedUntil,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (conversationId != null) 'conversation_id': conversationId,
+      if (mutedUntil != null) 'muted_until': mutedUntil,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  LocalConversationMutesCompanion copyWith(
+      {Value<String>? conversationId,
+      Value<int?>? mutedUntil,
+      Value<int>? rowid}) {
+    return LocalConversationMutesCompanion(
+      conversationId: conversationId ?? this.conversationId,
+      mutedUntil: mutedUntil ?? this.mutedUntil,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (conversationId.present) {
+      map['conversation_id'] = Variable<String>(conversationId.value);
+    }
+    if (mutedUntil.present) {
+      map['muted_until'] = Variable<int>(mutedUntil.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalConversationMutesCompanion(')
+          ..write('conversationId: $conversationId, ')
+          ..write('mutedUntil: $mutedUntil, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$EncryptedLocalDatabase extends GeneratedDatabase {
   _$EncryptedLocalDatabase(QueryExecutor e) : super(e);
   $EncryptedLocalDatabaseManager get managers =>
@@ -4021,6 +4512,9 @@ abstract class _$EncryptedLocalDatabase extends GeneratedDatabase {
   late final $LocalMessagesTable localMessages = $LocalMessagesTable(this);
   late final $LocalMessageReactionsTable localMessageReactions =
       $LocalMessageReactionsTable(this);
+  late final $LocalDraftsTable localDrafts = $LocalDraftsTable(this);
+  late final $LocalConversationMutesTable localConversationMutes =
+      $LocalConversationMutesTable(this);
   late final Index localCiphertextEnvelopesConversationPosition = Index(
       'local_ciphertext_envelopes_conversation_position',
       'CREATE INDEX IF NOT EXISTS local_ciphertext_envelopes_conversation_position ON local_ciphertext_envelopes (conversation_id, position)');
@@ -4046,6 +4540,8 @@ abstract class _$EncryptedLocalDatabase extends GeneratedDatabase {
         localPeerVerifications,
         localMessages,
         localMessageReactions,
+        localDrafts,
+        localConversationMutes,
         localCiphertextEnvelopesConversationPosition,
         localCiphertextEnvelopesExpiresAt,
         localMessagesExpiresAt
@@ -6320,6 +6816,315 @@ typedef $$LocalMessageReactionsTableProcessedTableManager
         ),
         LocalMessageReaction,
         PrefetchHooks Function()>;
+typedef $$LocalDraftsTableCreateCompanionBuilder = LocalDraftsCompanion
+    Function({
+  required String conversationId,
+  required String body,
+  Value<String?> replyTo,
+  required int updatedAt,
+  Value<int> rowid,
+});
+typedef $$LocalDraftsTableUpdateCompanionBuilder = LocalDraftsCompanion
+    Function({
+  Value<String> conversationId,
+  Value<String> body,
+  Value<String?> replyTo,
+  Value<int> updatedAt,
+  Value<int> rowid,
+});
+
+class $$LocalDraftsTableFilterComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalDraftsTable> {
+  $$LocalDraftsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get conversationId => $composableBuilder(
+      column: $table.conversationId,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get body => $composableBuilder(
+      column: $table.body, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get replyTo => $composableBuilder(
+      column: $table.replyTo, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get updatedAt => $composableBuilder(
+      column: $table.updatedAt, builder: (column) => ColumnFilters(column));
+}
+
+class $$LocalDraftsTableOrderingComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalDraftsTable> {
+  $$LocalDraftsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get conversationId => $composableBuilder(
+      column: $table.conversationId,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get body => $composableBuilder(
+      column: $table.body, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get replyTo => $composableBuilder(
+      column: $table.replyTo, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get updatedAt => $composableBuilder(
+      column: $table.updatedAt, builder: (column) => ColumnOrderings(column));
+}
+
+class $$LocalDraftsTableAnnotationComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalDraftsTable> {
+  $$LocalDraftsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get conversationId => $composableBuilder(
+      column: $table.conversationId, builder: (column) => column);
+
+  GeneratedColumn<String> get body =>
+      $composableBuilder(column: $table.body, builder: (column) => column);
+
+  GeneratedColumn<String> get replyTo =>
+      $composableBuilder(column: $table.replyTo, builder: (column) => column);
+
+  GeneratedColumn<int> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$LocalDraftsTableTableManager extends RootTableManager<
+    _$EncryptedLocalDatabase,
+    $LocalDraftsTable,
+    LocalDraft,
+    $$LocalDraftsTableFilterComposer,
+    $$LocalDraftsTableOrderingComposer,
+    $$LocalDraftsTableAnnotationComposer,
+    $$LocalDraftsTableCreateCompanionBuilder,
+    $$LocalDraftsTableUpdateCompanionBuilder,
+    (
+      LocalDraft,
+      BaseReferences<_$EncryptedLocalDatabase, $LocalDraftsTable, LocalDraft>
+    ),
+    LocalDraft,
+    PrefetchHooks Function()> {
+  $$LocalDraftsTableTableManager(
+      _$EncryptedLocalDatabase db, $LocalDraftsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$LocalDraftsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$LocalDraftsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$LocalDraftsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> conversationId = const Value.absent(),
+            Value<String> body = const Value.absent(),
+            Value<String?> replyTo = const Value.absent(),
+            Value<int> updatedAt = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalDraftsCompanion(
+            conversationId: conversationId,
+            body: body,
+            replyTo: replyTo,
+            updatedAt: updatedAt,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String conversationId,
+            required String body,
+            Value<String?> replyTo = const Value.absent(),
+            required int updatedAt,
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalDraftsCompanion.insert(
+            conversationId: conversationId,
+            body: body,
+            replyTo: replyTo,
+            updatedAt: updatedAt,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (
+                    e.readTable<$LocalDraftsTable, LocalDraft>(table),
+                    BaseReferences<_$EncryptedLocalDatabase, $LocalDraftsTable,
+                        LocalDraft>(db, table, e)
+                  ))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$LocalDraftsTableProcessedTableManager = ProcessedTableManager<
+    _$EncryptedLocalDatabase,
+    $LocalDraftsTable,
+    LocalDraft,
+    $$LocalDraftsTableFilterComposer,
+    $$LocalDraftsTableOrderingComposer,
+    $$LocalDraftsTableAnnotationComposer,
+    $$LocalDraftsTableCreateCompanionBuilder,
+    $$LocalDraftsTableUpdateCompanionBuilder,
+    (
+      LocalDraft,
+      BaseReferences<_$EncryptedLocalDatabase, $LocalDraftsTable, LocalDraft>
+    ),
+    LocalDraft,
+    PrefetchHooks Function()>;
+typedef $$LocalConversationMutesTableCreateCompanionBuilder
+    = LocalConversationMutesCompanion Function({
+  required String conversationId,
+  Value<int?> mutedUntil,
+  Value<int> rowid,
+});
+typedef $$LocalConversationMutesTableUpdateCompanionBuilder
+    = LocalConversationMutesCompanion Function({
+  Value<String> conversationId,
+  Value<int?> mutedUntil,
+  Value<int> rowid,
+});
+
+class $$LocalConversationMutesTableFilterComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalConversationMutesTable> {
+  $$LocalConversationMutesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get conversationId => $composableBuilder(
+      column: $table.conversationId,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get mutedUntil => $composableBuilder(
+      column: $table.mutedUntil, builder: (column) => ColumnFilters(column));
+}
+
+class $$LocalConversationMutesTableOrderingComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalConversationMutesTable> {
+  $$LocalConversationMutesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get conversationId => $composableBuilder(
+      column: $table.conversationId,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get mutedUntil => $composableBuilder(
+      column: $table.mutedUntil, builder: (column) => ColumnOrderings(column));
+}
+
+class $$LocalConversationMutesTableAnnotationComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalConversationMutesTable> {
+  $$LocalConversationMutesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get conversationId => $composableBuilder(
+      column: $table.conversationId, builder: (column) => column);
+
+  GeneratedColumn<int> get mutedUntil => $composableBuilder(
+      column: $table.mutedUntil, builder: (column) => column);
+}
+
+class $$LocalConversationMutesTableTableManager extends RootTableManager<
+    _$EncryptedLocalDatabase,
+    $LocalConversationMutesTable,
+    LocalConversationMute,
+    $$LocalConversationMutesTableFilterComposer,
+    $$LocalConversationMutesTableOrderingComposer,
+    $$LocalConversationMutesTableAnnotationComposer,
+    $$LocalConversationMutesTableCreateCompanionBuilder,
+    $$LocalConversationMutesTableUpdateCompanionBuilder,
+    (
+      LocalConversationMute,
+      BaseReferences<_$EncryptedLocalDatabase, $LocalConversationMutesTable,
+          LocalConversationMute>
+    ),
+    LocalConversationMute,
+    PrefetchHooks Function()> {
+  $$LocalConversationMutesTableTableManager(
+      _$EncryptedLocalDatabase db, $LocalConversationMutesTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$LocalConversationMutesTableFilterComposer(
+                  $db: db, $table: table),
+          createOrderingComposer: () =>
+              $$LocalConversationMutesTableOrderingComposer(
+                  $db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$LocalConversationMutesTableAnnotationComposer(
+                  $db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> conversationId = const Value.absent(),
+            Value<int?> mutedUntil = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalConversationMutesCompanion(
+            conversationId: conversationId,
+            mutedUntil: mutedUntil,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String conversationId,
+            Value<int?> mutedUntil = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalConversationMutesCompanion.insert(
+            conversationId: conversationId,
+            mutedUntil: mutedUntil,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (
+                    e.readTable<$LocalConversationMutesTable,
+                        LocalConversationMute>(table),
+                    BaseReferences<
+                        _$EncryptedLocalDatabase,
+                        $LocalConversationMutesTable,
+                        LocalConversationMute>(db, table, e)
+                  ))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$LocalConversationMutesTableProcessedTableManager
+    = ProcessedTableManager<
+        _$EncryptedLocalDatabase,
+        $LocalConversationMutesTable,
+        LocalConversationMute,
+        $$LocalConversationMutesTableFilterComposer,
+        $$LocalConversationMutesTableOrderingComposer,
+        $$LocalConversationMutesTableAnnotationComposer,
+        $$LocalConversationMutesTableCreateCompanionBuilder,
+        $$LocalConversationMutesTableUpdateCompanionBuilder,
+        (
+          LocalConversationMute,
+          BaseReferences<_$EncryptedLocalDatabase, $LocalConversationMutesTable,
+              LocalConversationMute>
+        ),
+        LocalConversationMute,
+        PrefetchHooks Function()>;
 
 class $EncryptedLocalDatabaseManager {
   final _$EncryptedLocalDatabase _db;
@@ -6350,4 +7155,9 @@ class $EncryptedLocalDatabaseManager {
       $$LocalMessagesTableTableManager(_db, _db.localMessages);
   $$LocalMessageReactionsTableTableManager get localMessageReactions =>
       $$LocalMessageReactionsTableTableManager(_db, _db.localMessageReactions);
+  $$LocalDraftsTableTableManager get localDrafts =>
+      $$LocalDraftsTableTableManager(_db, _db.localDrafts);
+  $$LocalConversationMutesTableTableManager get localConversationMutes =>
+      $$LocalConversationMutesTableTableManager(
+          _db, _db.localConversationMutes);
 }

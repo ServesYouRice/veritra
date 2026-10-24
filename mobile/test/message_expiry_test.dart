@@ -109,9 +109,8 @@ void main() {
   Future<List<String>> envelopeIds(LocalStore store) async {
     final snapshot = await store.loadSnapshot();
     return [
-      for (final item
-          in snapshot?.messagesByConversation['conv_1'] ??
-              const <ReceivedMessageEnvelope>[])
+      for (final item in snapshot?.messagesByConversation['conv_1'] ??
+          const <ReceivedMessageEnvelope>[])
         item.id,
     ];
   }
@@ -245,7 +244,7 @@ void main() {
     expect(await envelopeIds(reopened), <String>['kept']);
   });
 
-  test('the 9 to 10 upgrade backfills expiry and deletes expired rows',
+  test('the upgrade from schema 9 backfills expiry and deletes expired rows',
       () async {
     final store = createStore();
     await seedState(store);
@@ -287,18 +286,20 @@ void main() {
         <Object?>['dev_peer:${entry.$1}', entry.$1, '${entry.$1} text'],
       );
     }
+    await database.customStatement('DROP TABLE local_drafts');
+    await database.customStatement('DROP TABLE local_conversation_mutes');
     await database.customStatement('PRAGMA user_version = 9');
     await database.close();
     databases.removeLast();
 
     final upgraded = createStore();
-    expect(await bodies(upgraded),
-        unorderedEquals(['plain text', 'fresh text']));
+    expect(
+        await bodies(upgraded), unorderedEquals(['plain text', 'fresh text']));
     expect(await envelopeIds(upgraded), unorderedEquals(['plain', 'fresh']));
     final reopened = databases.last;
     final version =
         await reopened.customSelect('PRAGMA user_version').getSingle();
-    expect(version.read<int>('user_version'), 10);
+    expect(version.read<int>('user_version'), 11);
     // The surviving row got its expiry from its envelope.
     final next = await upgraded.nextMessageExpiry();
     expect(next?.millisecondsSinceEpoch, future.millisecondsSinceEpoch);
@@ -376,9 +377,7 @@ void main() {
           unorderedEquals(<String>['soon', 'live']));
       var notified = 0;
       state.addListener(() => notified++);
-      for (var i = 0;
-          i < 40 && state.messagesFor('conv_1').length != 1;
-          i++) {
+      for (var i = 0; i < 40 && state.messagesFor('conv_1').length != 1; i++) {
         await Future<void>.delayed(const Duration(milliseconds: 100));
       }
       expect(state.messagesFor('conv_1').map((e) => e.id), <String>['live']);

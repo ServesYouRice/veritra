@@ -483,11 +483,18 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(state.isMuted('conv_1'), isFalse);
-      await tester.tap(find.byType(SwitchListTile));
+      await tester.tap(find.text('Mute notifications'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('For 8 hours'));
       await tester.pumpAndSettle();
 
       expect(api.mutedConversations['conv_1'], isTrue);
+      expect(api.lastMuteUntil, isNotNull);
+      expect(state.mutedUntil('conv_1'), isNotNull);
       expect(state.isMuted('conv_1'), isTrue);
+      // A timed mute arms a timer that a test may not leave pending.
+      await state.setConversationMute('conv_1', MuteDuration.off);
+      expect(state.isMuted('conv_1'), isFalse);
     });
   });
 
@@ -745,6 +752,7 @@ class _FakeApi extends ApiClient {
   List<String> unblocked = <String>[];
   List<String> createdConversations = <String>[];
   Map<String, bool> mutedConversations = <String, bool>{};
+  DateTime? lastMuteUntil;
   bool failMemberWrites = false;
   Completer<void>? holdSend;
 
@@ -800,17 +808,20 @@ class _FakeApi extends ApiClient {
   }
 
   @override
-  Future<bool> conversationMuted(String token, String conversationId) async =>
-      mutedConversations[conversationId] ?? false;
+  Future<ConversationMute> conversationMute(
+          String token, String conversationId) async =>
+      ConversationMute(muted: mutedConversations[conversationId] ?? false);
 
   @override
-  Future<bool> setConversationMuted(
+  Future<ConversationMute> setConversationMute(
     String token,
-    String conversationId,
-    bool muted,
-  ) async {
+    String conversationId, {
+    required bool muted,
+    DateTime? until,
+  }) async {
     mutedConversations[conversationId] = muted;
-    return muted;
+    lastMuteUntil = until;
+    return ConversationMute(muted: muted, until: until);
   }
 
   @override

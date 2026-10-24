@@ -24,6 +24,7 @@ import '../../ui/widgets/status_pill.dart';
 import 'attachment_views.dart';
 import 'chat_list_screen.dart';
 import 'conversation_details_screen.dart';
+import 'emoji_picker.dart';
 
 /// Conversation detail screen. Pushed from the chat list, or the detail pane
 /// of the wide layout. It listens to the app state itself, and rebuilds only
@@ -376,6 +377,11 @@ class _ChatScreenState extends State<ChatScreen> {
                       icon:
                           Text(reaction, style: const TextStyle(fontSize: 24)),
                     ),
+                  IconButton(
+                    tooltip: context.l10n.chatMoreReactions,
+                    onPressed: () => Navigator.of(sheetContext).pop('react:'),
+                    icon: const Icon(Icons.add_reaction_outlined),
+                  ),
                 ],
               ),
             ),
@@ -408,7 +414,13 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted || action == null) return;
     var sent = true;
     if (action.startsWith('react:')) {
-      final reaction = action.substring('react:'.length);
+      var reaction = action.substring('react:'.length);
+      if (reaction.isEmpty) {
+        // The "more" button: any emoji, from the picker or typed.
+        final picked = await showEmojiPicker(context);
+        if (!mounted || picked == null) return;
+        reaction = picked;
+      }
       final ownAccountId = state.session?.accountId;
       final alreadyMine = state
           .historyFor(conversationId)

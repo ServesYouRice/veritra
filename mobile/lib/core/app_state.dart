@@ -158,7 +158,9 @@ class AppState extends ChangeNotifier {
     this.backupService,
     this.attachmentService,
     this.config = ClientConfig.production,
-  }) : pushService = pushService ?? DisabledMobilePushService();
+  }) : pushService = pushService ?? DisabledMobilePushService() {
+    composerDrafts.onChanged = _draftChanged;
+  }
 
   /// Encrypted backup and restore (card I45). Null in builds without the
   /// MLS service, where there is nothing to back up.
@@ -242,7 +244,11 @@ class AppState extends ChangeNotifier {
       <String, List<ConversationMember>>{};
   List<BlockedAccount> blockedAccounts = <BlockedAccount>[];
   bool blocksLoaded = false;
-  final Set<String> _mutedConversations = <String>{};
+  // Muted conversations with the end of each mute; null means no end. A mute
+  // whose end has passed no longer counts (W6).
+  final Map<String, DateTime?> _mutes = <String, DateTime?>{};
+  Timer? _muteTimer;
+  final Map<String, Timer> _draftTimers = <String, Timer>{};
 
   ConnectionStatus connectionStatus = ConnectionStatus.connecting;
   DateTime? lastSyncedAt;
@@ -299,6 +305,7 @@ class AppState extends ChangeNotifier {
   void handleAppLifecycleState(AppLifecycleState state) {
     final wasForeground = _isForeground;
     _lifecycleState = state;
+    if (state != AppLifecycleState.resumed) flushDrafts();
     if (state == AppLifecycleState.resumed ||
         (!wasForeground && _isForeground)) {
       unawaited(_resumeForegroundSync());
@@ -412,8 +419,16 @@ class AppState extends ChangeNotifier {
   bool hasMoreHistory(String conversationId) =>
       _historyCursors[conversationId] != null;
 
-  bool isMuted(String conversationId) =>
-      _mutedConversations.contains(conversationId);
+  bool isMuted(String conversationId) {
+    if (!_mutes.containsKey(conversationId)) return false;
+    final until = _mutes[conversationId];
+    return until == null || until.isAfter(DateTime.now());
+  }
+
+  /// When the current mute of [conversationId] ends; null when it is not muted
+  /// or the mute has no end.
+  DateTime? mutedUntil(String conversationId) =>
+      isMuted(conversationId) ? _mutes[conversationId] : null;
 
   bool isBlocked(String accountId) =>
       blockedAccounts.any((block) => block.accountId == accountId);
@@ -692,6 +707,15 @@ class AppState extends ChangeNotifier {
       // Expired messages leave this device before any chat shows, also when
       // the app was closed past their expiry and there is no network (W2).
       await localStore.purgeExpiredMessages();
+      if (!_lifecycleGenerationActive(transitionGeneration)) return;
+      composerDrafts.load({
+        for (final entry in (await localStore.loadDrafts()).entries)
+          entry.key: (text: entry.value.text, replyTo: entry.value.replyTo),
+      });
+      _mutes
+        ..clear()
+        ..addAll(await localStore.loadConversationMutes());
+      _armMuteTimer();
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
       final cached = await localStore.loadSnapshot();
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
@@ -1380,7 +1404,10 @@ class AppState extends ChangeNotifier {
           if (entry.key != conversationId) entry.key: entry.value,
       };
       _historyCursors.remove(conversationId);
-      _mutedConversations.remove(conversationId);
+      _mutes.remove(conversationId);
+      unawaited(localStore
+          .saveConversationMute(conversationId, muted: false)
+          .catchError((Object _) {}));
       composerDrafts.remove(conversationId);
       if (selectedConversationId == conversationId) {
         selectedConversationId = null;
@@ -1435,8 +1462,8 @@ class AppState extends ChangeNotifier {
     });
   }
 
-  /// Best-effort read of the server's mute flag. Silent on failure: an
-  /// unknown mute state must not block opening a conversation.
+  /// Best-effort read of the server's mute. Silent on failure: an unknown
+  /// mute state must not block opening a conversation.
   Future<void> loadConversationMuted(String conversationId) async {
     final current = session;
     final client = api;
@@ -1444,37 +1471,134 @@ class AppState extends ChangeNotifier {
       return;
     }
     try {
-      final muted =
-          await client.conversationMuted(current.token, conversationId);
-      _setMutedLocally(conversationId, muted);
+      final mute = await client.conversationMute(current.token, conversationId);
+      _setMuteLocally(conversationId, mute);
     } catch (_) {
-      // Leave the last known value; the toggle still reports its own errors.
+      // Leave the last known value; the control still reports its own errors.
     }
   }
 
-  Future<bool> setConversationMuted(String conversationId, bool muted) {
+  Future<bool> setConversationMuted(String conversationId, bool muted) =>
+      setConversationMute(
+          conversationId, muted ? MuteDuration.always : MuteDuration.off);
+
+  /// Mutes push for [duration] (or unmutes with [MuteDuration.off]). The
+  /// server ends a timed mute by itself, and so does this device.
+  Future<bool> setConversationMute(
+      String conversationId, MuteDuration duration) {
     return _runScoped(Ops.mute, () async {
       final current = session;
       final client = api;
       if (current == null || client == null) {
         return;
       }
-      final applied = await client.setConversationMuted(
+      final length = duration.length;
+      final applied = await client.setConversationMute(
         current.token,
         conversationId,
-        muted,
+        muted: duration != MuteDuration.off,
+        until: length == null ? null : DateTime.now().toUtc().add(length),
       );
-      _setMutedLocally(conversationId, applied);
+      _setMuteLocally(conversationId, applied);
     });
   }
 
-  void _setMutedLocally(String conversationId, bool muted) {
-    final changed = muted
-        ? _mutedConversations.add(conversationId)
-        : _mutedConversations.remove(conversationId);
-    if (changed) {
+  void _setMuteLocally(String conversationId, ConversationMute mute) {
+    final before = _mutes.containsKey(conversationId)
+        ? (_mutes[conversationId], true)
+        : (null, false);
+    if (mute.muted) {
+      _mutes[conversationId] = mute.until;
+    } else {
+      _mutes.remove(conversationId);
+    }
+    final after = _mutes.containsKey(conversationId)
+        ? (_mutes[conversationId], true)
+        : (null, false);
+    if (before != after) {
+      unawaited(localStore
+          .saveConversationMute(conversationId,
+              muted: mute.muted, until: mute.until)
+          .catchError((Object _) {}));
+      _armMuteTimer();
       notifyListeners();
     }
+  }
+
+  /// Wakes the screens when the next timed mute ends, so a chat list never
+  /// shows a mute that is over.
+  void _armMuteTimer() {
+    _muteTimer?.cancel();
+    _muteTimer = null;
+    final now = DateTime.now();
+    DateTime? next;
+    for (final until in _mutes.values) {
+      if (until != null && until.isAfter(now)) {
+        if (next == null || until.isBefore(next)) next = until;
+      }
+    }
+    if (next == null) return;
+    var delay = next.difference(now) + const Duration(milliseconds: 250);
+    if (delay > const Duration(days: 1)) delay = const Duration(days: 1);
+    _muteTimer = Timer(delay, () {
+      _muteTimer = null;
+      _mutes.removeWhere(
+          (_, until) => until != null && !until.isAfter(DateTime.now()));
+      _armMuteTimer();
+      notifyListeners();
+    });
+  }
+
+  // ---- drafts (W6) ---------------------------------------------------------
+
+  void _draftChanged(String conversationId) {
+    _draftTimers.remove(conversationId)?.cancel();
+    if (session == null) return;
+    final empty = composerDrafts.textFor(conversationId).isEmpty &&
+        composerDrafts.replyTargetFor(conversationId) == null;
+    if (empty) {
+      // Deleting needs no debounce, and must not wait behind a stale write.
+      unawaited(_persistDraft(conversationId));
+      return;
+    }
+    _draftTimers[conversationId] = Timer(const Duration(milliseconds: 500), () {
+      _draftTimers.remove(conversationId);
+      unawaited(_persistDraft(conversationId));
+    });
+  }
+
+  Future<void> _persistDraft(String conversationId) async {
+    if (session == null) return;
+    final generation = _sessionGeneration;
+    final text = composerDrafts.textFor(conversationId);
+    final replyTo = composerDrafts.replyTargetFor(conversationId);
+    try {
+      if (text.isEmpty && replyTo == null) {
+        await localStore.deleteDraft(conversationId);
+      } else {
+        if (generation != _sessionGeneration) return;
+        await localStore.saveDraft(conversationId, text, replyTo: replyTo);
+      }
+    } catch (_) {
+      // A draft that cannot be saved is still in memory; never block typing.
+    }
+  }
+
+  /// Writes pending drafts now. Called when the app leaves the foreground,
+  /// because a process that is stopped there may never run its timers.
+  void flushDrafts() {
+    final pending = _draftTimers.keys.toList(growable: false);
+    for (final id in pending) {
+      _draftTimers.remove(id)?.cancel();
+      unawaited(_persistDraft(id));
+    }
+  }
+
+  void _cancelDraftTimers() {
+    for (final timer in _draftTimers.values) {
+      timer.cancel();
+    }
+    _draftTimers.clear();
   }
 
   Future<void> setConversationRetention(
@@ -3061,6 +3185,7 @@ class AppState extends ChangeNotifier {
     bool drainSyncOwner = true,
   }) async {
     _sessionGeneration++;
+    _cancelDraftTimers();
     final previousOwner = _syncOwner;
     _syncOwner = null;
     previousOwner?.dispose();
@@ -3136,7 +3261,9 @@ class AppState extends ChangeNotifier {
     membersByConversation = <String, List<ConversationMember>>{};
     blockedAccounts = <BlockedAccount>[];
     blocksLoaded = false;
-    _mutedConversations.clear();
+    _mutes.clear();
+    _muteTimer?.cancel();
+    _muteTimer = null;
     _historyCursors.clear();
     _loadingOlder.clear();
     _busyOps.clear();
@@ -3813,6 +3940,9 @@ class AppState extends ChangeNotifier {
     _mlsOutboxRetryTimer = null;
     _expiryTimer?.cancel();
     _expiryTimer = null;
+    _muteTimer?.cancel();
+    _muteTimer = null;
+    _cancelDraftTimers();
     _cancelCatchUpRetry();
     unawaited(_syncSubscription?.cancel());
     unawaited(sync?.dispose());

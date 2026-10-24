@@ -58,23 +58,41 @@ func (s *Store) ListBlockedAccounts(ctx context.Context, blockerAccountID string
 	return blocks, rows.Err()
 }
 
-func (s *Store) ConversationNotificationsMuted(ctx context.Context, conversationID, accountID string) (bool, error) {
+// ConversationNotificationMute reports whether the account's push for the
+// conversation is muted now. A timed mute that has ended reads as unmuted.
+func (s *Store) ConversationNotificationMute(ctx context.Context, conversationID, accountID string) (domain.NotificationMute, error) {
 	member, err := s.IsConversationMember(ctx, conversationID, accountID)
 	if err != nil || !member {
 		if err != nil {
-			return false, err
+			return domain.NotificationMute{}, err
 		}
-		return false, ErrNotMember
+		return domain.NotificationMute{}, ErrNotMember
 	}
 	var muted bool
-	err = s.db.QueryRowContext(ctx, `SELECT muted FROM conversation_notification_preferences WHERE account_id = ? AND conversation_id = ?`, accountID, conversationID).Scan(&muted)
+	var until sql.NullInt64
+	err = s.db.QueryRowContext(ctx, `SELECT muted, muted_until FROM conversation_notification_preferences WHERE account_id = ? AND conversation_id = ?`, accountID, conversationID).Scan(&muted, &until)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return domain.NotificationMute{}, nil
 	}
-	return muted, err
+	if err != nil {
+		return domain.NotificationMute{}, err
+	}
+	if !muted {
+		return domain.NotificationMute{}, nil
+	}
+	if !until.Valid {
+		return domain.NotificationMute{Muted: true}, nil
+	}
+	end := time.Unix(until.Int64, 0).UTC()
+	if !end.After(time.Now()) {
+		return domain.NotificationMute{}, nil
+	}
+	return domain.NotificationMute{Muted: true, Until: &end}, nil
 }
 
-func (s *Store) SetConversationNotificationsMuted(ctx context.Context, conversationID, accountID string, muted bool) error {
+// SetConversationNotificationMute mutes the conversation until [until], or
+// without an end when until is nil. Unmuting clears any end.
+func (s *Store) SetConversationNotificationMute(ctx context.Context, conversationID, accountID string, muted bool, until *time.Time) error {
 	member, err := s.IsConversationMember(ctx, conversationID, accountID)
 	if err != nil {
 		return err
@@ -82,7 +100,11 @@ func (s *Store) SetConversationNotificationsMuted(ctx context.Context, conversat
 	if !member {
 		return ErrNotMember
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO conversation_notification_preferences(account_id, conversation_id, muted, updated_at) VALUES(?, ?, ?, ?) ON CONFLICT(account_id, conversation_id) DO UPDATE SET muted = excluded.muted, updated_at = excluded.updated_at`, accountID, conversationID, muted, nowString())
+	var end any
+	if muted && until != nil {
+		end = until.UTC().Unix()
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO conversation_notification_preferences(account_id, conversation_id, muted, muted_until, updated_at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(account_id, conversation_id) DO UPDATE SET muted = excluded.muted, muted_until = excluded.muted_until, updated_at = excluded.updated_at`, accountID, conversationID, muted, end, nowString())
 	return err
 }
 

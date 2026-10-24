@@ -65,7 +65,7 @@ void main() {
     }
   });
 
-  /// Takes a schema 10 database back to the shape of schema 9, so a test can
+  /// Takes a schema 11 database back to the shape of schema 9, so a test can
   /// run the real upgrade over it.
   Future<void> dropExpiryColumns(EncryptedLocalDatabase database) async {
     await database
@@ -76,6 +76,8 @@ void main() {
         .customStatement('ALTER TABLE local_messages DROP COLUMN expires_at');
     await database.customStatement(
         'ALTER TABLE local_ciphertext_envelopes DROP COLUMN expires_at');
+    await database.customStatement('DROP TABLE local_drafts');
+    await database.customStatement('DROP TABLE local_conversation_mutes');
   }
 
   SecureLocalStore createStore({MlsCommitFailureInjector? failureInjector}) =>
@@ -916,11 +918,11 @@ void main() {
     return rows.map((row) => row.read<String>('detail')).join('\n');
   }
 
-  test('a new database has the envelope index on schema 10', () async {
+  test('a new database has the envelope index on schema 11', () async {
     final store = createStore();
     await store.saveSyncCursor(1);
     final database = databases.last;
-    expect(await userVersion(database), 10);
+    expect(await userVersion(database), 11);
     expect(await hasEnvelopeIndex(database), isTrue);
     expect(
         await tailLookupPlan(database),
@@ -958,7 +960,7 @@ void main() {
     final upgraded = createStore();
     final snapshot = await upgraded.loadSnapshot();
     final reopened = databases.last;
-    expect(await userVersion(reopened), 10);
+    expect(await userVersion(reopened), 11);
     expect(await hasEnvelopeIndex(reopened), isTrue);
     expect(await tailLookupPlan(reopened), contains('INDEX $envelopeIndex'));
     expect(snapshot?.cursor, 1);
@@ -1056,7 +1058,7 @@ void main() {
     // With the cause gone, the next open runs the whole upgrade.
     final upgraded = openStore();
     expect((await upgraded.pendingMlsMessages()).single.attemptCount, 0);
-    expect(await userVersion(databases.last), 10);
+    expect(await userVersion(databases.last), 11);
     expect(await hasEnvelopeIndex(databases.last), isTrue);
   });
 
@@ -1123,7 +1125,7 @@ void main() {
     final snapshot = await store.loadSnapshot();
     expect(snapshot?.cursor, 1);
     expect(snapshot?.messagesByConversation['conv_1'], hasLength(200));
-    expect(await userVersion(databases.last), 10);
+    expect(await userVersion(databases.last), 11);
     expect(await hasEnvelopeIndex(databases.last), isTrue);
   });
 
