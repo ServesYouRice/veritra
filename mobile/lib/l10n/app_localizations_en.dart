@@ -2153,4 +2153,114 @@ class AppLocalizationsEn extends AppLocalizations {
   String attachmentSentCount(int done, int total) {
     return 'Sending file $done of $total';
   }
+
+  @override
+  String get settingsAdmin => 'Administration';
+
+  @override
+  String get settingsAdminDetail => 'Accounts and audit log';
+
+  @override
+  String get adminAccountsTab => 'Accounts';
+
+  @override
+  String get adminAuditTab => 'Audit log';
+
+  @override
+  String get adminSuspend => 'Suspend';
+
+  @override
+  String get adminUnsuspend => 'Reactivate';
+
+  @override
+  String get adminSuspendTitle => 'Suspend this account?';
+
+  @override
+  String adminSuspendMessage(String username) {
+    return '@$username will be signed out everywhere and cannot sign in until you reactivate the account.';
+  }
+
+  @override
+  String get adminUnsuspendTitle => 'Reactivate this account?';
+
+  @override
+  String adminUnsuspendMessage(String username) {
+    return '@$username will be able to sign in again.';
+  }
+
+  @override
+  String get adminSuspendedPill => 'Suspended';
+
+  @override
+  String adminAccountSummary(String role, int devices, String storage) {
+    String _temp0 = intl.Intl.pluralLogic(
+      devices,
+      locale: localeName,
+      other: '$devices devices',
+      one: '1 device',
+    );
+    return '$role · $_temp0 · $storage';
+  }
+
+  @override
+  String adminEventBy(String actor) {
+    return 'By $actor';
+  }
+
+  @override
+  String get adminLoadMore => 'Load more';
+
+  @override
+  String get adminNoAccounts => 'No accounts';
+
+  @override
+  String get adminNoEvents => 'No audit events yet';
+
+  @override
+  String requestsSection(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    return 'Requests ($countString)';
+  }
+
+  @override
+  String get requestsTitle => 'Message request';
+
+  @override
+  String requestFrom(String name) {
+    return '$name wants to message you';
+  }
+
+  @override
+  String get requestUnknownSender => 'Someone you do not know';
+
+  @override
+  String get requestExplanation =>
+      'Nothing from this person is shown or downloaded, and they cannot see that you read anything, until you accept.';
+
+  @override
+  String get requestAccept => 'Accept';
+
+  @override
+  String get requestBlock => 'Block';
+
+  @override
+  String get requestDelete => 'Delete';
+
+  @override
+  String get requestBlockTitle => 'Block this person?';
+
+  @override
+  String requestBlockMessage(String name) {
+    return '$name will no longer be able to message you, and this conversation will be removed.';
+  }
+
+  @override
+  String get requestDeleteTitle => 'Delete this request?';
+
+  @override
+  String get requestDeleteMessage =>
+      'The conversation is removed from this device. The sender is not told.';
 }

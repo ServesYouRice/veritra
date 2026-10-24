@@ -3512,6 +3512,174 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Sending file {done} of {total}'**
   String attachmentSentCount(int done, int total);
+
+  /// No description provided for @settingsAdmin.
+  ///
+  /// In en, this message translates to:
+  /// **'Administration'**
+  String get settingsAdmin;
+
+  /// No description provided for @settingsAdminDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Accounts and audit log'**
+  String get settingsAdminDetail;
+
+  /// No description provided for @adminAccountsTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Accounts'**
+  String get adminAccountsTab;
+
+  /// No description provided for @adminAuditTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Audit log'**
+  String get adminAuditTab;
+
+  /// No description provided for @adminSuspend.
+  ///
+  /// In en, this message translates to:
+  /// **'Suspend'**
+  String get adminSuspend;
+
+  /// No description provided for @adminUnsuspend.
+  ///
+  /// In en, this message translates to:
+  /// **'Reactivate'**
+  String get adminUnsuspend;
+
+  /// No description provided for @adminSuspendTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Suspend this account?'**
+  String get adminSuspendTitle;
+
+  /// No description provided for @adminSuspendMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'@{username} will be signed out everywhere and cannot sign in until you reactivate the account.'**
+  String adminSuspendMessage(String username);
+
+  /// No description provided for @adminUnsuspendTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Reactivate this account?'**
+  String get adminUnsuspendTitle;
+
+  /// No description provided for @adminUnsuspendMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'@{username} will be able to sign in again.'**
+  String adminUnsuspendMessage(String username);
+
+  /// No description provided for @adminSuspendedPill.
+  ///
+  /// In en, this message translates to:
+  /// **'Suspended'**
+  String get adminSuspendedPill;
+
+  /// No description provided for @adminAccountSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'{role} · {devices, plural, =1{1 device} other{{devices} devices}} · {storage}'**
+  String adminAccountSummary(String role, int devices, String storage);
+
+  /// No description provided for @adminEventBy.
+  ///
+  /// In en, this message translates to:
+  /// **'By {actor}'**
+  String adminEventBy(String actor);
+
+  /// No description provided for @adminLoadMore.
+  ///
+  /// In en, this message translates to:
+  /// **'Load more'**
+  String get adminLoadMore;
+
+  /// No description provided for @adminNoAccounts.
+  ///
+  /// In en, this message translates to:
+  /// **'No accounts'**
+  String get adminNoAccounts;
+
+  /// No description provided for @adminNoEvents.
+  ///
+  /// In en, this message translates to:
+  /// **'No audit events yet'**
+  String get adminNoEvents;
+
+  /// No description provided for @requestsSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Requests ({count})'**
+  String requestsSection(int count);
+
+  /// No description provided for @requestsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Message request'**
+  String get requestsTitle;
+
+  /// No description provided for @requestFrom.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} wants to message you'**
+  String requestFrom(String name);
+
+  /// No description provided for @requestUnknownSender.
+  ///
+  /// In en, this message translates to:
+  /// **'Someone you do not know'**
+  String get requestUnknownSender;
+
+  /// No description provided for @requestExplanation.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing from this person is shown or downloaded, and they cannot see that you read anything, until you accept.'**
+  String get requestExplanation;
+
+  /// No description provided for @requestAccept.
+  ///
+  /// In en, this message translates to:
+  /// **'Accept'**
+  String get requestAccept;
+
+  /// No description provided for @requestBlock.
+  ///
+  /// In en, this message translates to:
+  /// **'Block'**
+  String get requestBlock;
+
+  /// No description provided for @requestDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get requestDelete;
+
+  /// No description provided for @requestBlockTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Block this person?'**
+  String get requestBlockTitle;
+
+  /// No description provided for @requestBlockMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} will no longer be able to message you, and this conversation will be removed.'**
+  String requestBlockMessage(String name);
+
+  /// No description provided for @requestDeleteTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete this request?'**
+  String get requestDeleteTitle;
+
+  /// No description provided for @requestDeleteMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The conversation is removed from this device. The sender is not told.'**
+  String get requestDeleteMessage;
 }
 
 class _AppLocalizationsDelegate

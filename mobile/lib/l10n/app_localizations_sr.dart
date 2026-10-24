@@ -2169,6 +2169,117 @@ class AppLocalizationsSr extends AppLocalizations {
   String attachmentSentCount(int done, int total) {
     return 'Шаље се датотека $done од $total';
   }
+
+  @override
+  String get settingsAdmin => 'Администрација';
+
+  @override
+  String get settingsAdminDetail => 'Налози и дневник ревизије';
+
+  @override
+  String get adminAccountsTab => 'Налози';
+
+  @override
+  String get adminAuditTab => 'Дневник ревизије';
+
+  @override
+  String get adminSuspend => 'Суспендуј';
+
+  @override
+  String get adminUnsuspend => 'Поново активирај';
+
+  @override
+  String get adminSuspendTitle => 'Суспендовати овај налог?';
+
+  @override
+  String adminSuspendMessage(String username) {
+    return '@$username ће бити одјављен свуда и неће моћи да се пријави док не активирате налог поново.';
+  }
+
+  @override
+  String get adminUnsuspendTitle => 'Поново активирати овај налог?';
+
+  @override
+  String adminUnsuspendMessage(String username) {
+    return '@$username ће поново моћи да се пријави.';
+  }
+
+  @override
+  String get adminSuspendedPill => 'Суспендован';
+
+  @override
+  String adminAccountSummary(String role, int devices, String storage) {
+    String _temp0 = intl.Intl.pluralLogic(
+      devices,
+      locale: localeName,
+      other: '$devices уређаја',
+      few: '$devices уређаја',
+      one: '$devices уређај',
+    );
+    return '$role · $_temp0 · $storage';
+  }
+
+  @override
+  String adminEventBy(String actor) {
+    return 'Извршио: $actor';
+  }
+
+  @override
+  String get adminLoadMore => 'Учитај још';
+
+  @override
+  String get adminNoAccounts => 'Нема налога';
+
+  @override
+  String get adminNoEvents => 'Још нема догађаја ревизије';
+
+  @override
+  String requestsSection(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    return 'Захтеви ($countString)';
+  }
+
+  @override
+  String get requestsTitle => 'Захтев за поруку';
+
+  @override
+  String requestFrom(String name) {
+    return '$name жели да вам пише';
+  }
+
+  @override
+  String get requestUnknownSender => 'Неко кога не познајете';
+
+  @override
+  String get requestExplanation =>
+      'Ништа од ове особе се не приказује нити преузима, и она не може да види да сте нешто прочитали, док не прихватите.';
+
+  @override
+  String get requestAccept => 'Прихвати';
+
+  @override
+  String get requestBlock => 'Блокирај';
+
+  @override
+  String get requestDelete => 'Обриши';
+
+  @override
+  String get requestBlockTitle => 'Блокирати ову особу?';
+
+  @override
+  String requestBlockMessage(String name) {
+    return '$name више неће моћи да вам пише, а овај разговор ће бити уклоњен.';
+  }
+
+  @override
+  String get requestDeleteTitle => 'Обрисати овај захтев?';
+
+  @override
+  String get requestDeleteMessage =>
+      'Разговор се уклања са овог уређаја. Пошиљалац није обавештен.';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -4339,4 +4450,115 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String attachmentSentCount(int done, int total) {
     return 'Šalje se datoteka $done od $total';
   }
+
+  @override
+  String get settingsAdmin => 'Administracija';
+
+  @override
+  String get settingsAdminDetail => 'Nalozi i dnevnik revizije';
+
+  @override
+  String get adminAccountsTab => 'Nalozi';
+
+  @override
+  String get adminAuditTab => 'Dnevnik revizije';
+
+  @override
+  String get adminSuspend => 'Suspenduj';
+
+  @override
+  String get adminUnsuspend => 'Ponovo aktiviraj';
+
+  @override
+  String get adminSuspendTitle => 'Suspendovati ovaj nalog?';
+
+  @override
+  String adminSuspendMessage(String username) {
+    return '@$username će biti odjavljen svuda i neće moći da se prijavi dok ne aktivirate nalog ponovo.';
+  }
+
+  @override
+  String get adminUnsuspendTitle => 'Ponovo aktivirati ovaj nalog?';
+
+  @override
+  String adminUnsuspendMessage(String username) {
+    return '@$username će ponovo moći da se prijavi.';
+  }
+
+  @override
+  String get adminSuspendedPill => 'Suspendovan';
+
+  @override
+  String adminAccountSummary(String role, int devices, String storage) {
+    String _temp0 = intl.Intl.pluralLogic(
+      devices,
+      locale: localeName,
+      other: '$devices uređaja',
+      few: '$devices uređaja',
+      one: '$devices uređaj',
+    );
+    return '$role · $_temp0 · $storage';
+  }
+
+  @override
+  String adminEventBy(String actor) {
+    return 'Izvršio: $actor';
+  }
+
+  @override
+  String get adminLoadMore => 'Učitaj još';
+
+  @override
+  String get adminNoAccounts => 'Nema naloga';
+
+  @override
+  String get adminNoEvents => 'Još nema događaja revizije';
+
+  @override
+  String requestsSection(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    return 'Zahtevi ($countString)';
+  }
+
+  @override
+  String get requestsTitle => 'Zahtev za poruku';
+
+  @override
+  String requestFrom(String name) {
+    return '$name želi da vam piše';
+  }
+
+  @override
+  String get requestUnknownSender => 'Neko koga ne poznajete';
+
+  @override
+  String get requestExplanation =>
+      'Ništa od ove osobe se ne prikazuje niti preuzima, i ona ne može da vidi da ste nešto pročitali, dok ne prihvatite.';
+
+  @override
+  String get requestAccept => 'Prihvati';
+
+  @override
+  String get requestBlock => 'Blokiraj';
+
+  @override
+  String get requestDelete => 'Obriši';
+
+  @override
+  String get requestBlockTitle => 'Blokirati ovu osobu?';
+
+  @override
+  String requestBlockMessage(String name) {
+    return '$name više neće moći da vam piše, a ovaj razgovor će biti uklonjen.';
+  }
+
+  @override
+  String get requestDeleteTitle => 'Obrisati ovaj zahtev?';
+
+  @override
+  String get requestDeleteMessage =>
+      'Razgovor se uklanja sa ovog uređaja. Pošiljalac nije obavešten.';
 }
