@@ -184,6 +184,10 @@ group.
 1. **May the server know which channel a post is in?** It does today.
    Option 2 keeps that, and it is what lets the server refuse non-admin
    posts (C2) and apply per-channel retention. Hiding it (option 3)
-   moves C2 enforcement into the apps only.
+   moves C2 enforcement into the apps only. Note that once C4 keeps
+   custom roles inside each group's encrypted state, the server can
+   enforce posting rights only for its own coarse roles (owner, admin,
+   moderator, member), never for custom ones. That weakens the case for a clear
+   `channel_id`, though retention and history paging still use it.
 2. **Should a busy open channel be able to opt into its own group** (see
    above)? Or should that wait for a C8 measurement?

@@ -127,6 +127,11 @@ History container **v3**:
 
 ## Where each piece lives
 
+K0 puts **nothing new in secure storage.** No device holds a secret that
+opens a backup, so there is nothing for Keystore, Keychain, DPAPI or
+Secret Service to guard beyond today's D01 database key and the sealed
+MLS state key.
+
 | Piece | Where | Never |
 |---|---|---|
 | RK entropy | With the user (paper, password manager). In memory only while shown, confirmed or used to restore; wiped after | Secure storage, the local DB, a backup, the server, logs |
@@ -186,17 +191,28 @@ check that `rk_id` matches the server's record.
 **All devices lost (K1 restore).**
 
 1. The user enters the server, username, password and RK.
-2. The app derives `L` and calls a new **recovery enrollment** route. The
-   server checks the password (Argon2id, D34) and `SHA-256(L)`, charges
-   the credential budget (D39), and enrolls a **new device** the same way
-   registration does.
+2. The app derives `L` and calls a new **recovery enrollment** route.
+   Under owner option (a) below, the server checks the password
+   (Argon2id, D34) and `SHA-256(L)`. It charges the credential budget
+   (D39) and enrolls a **new device** the same way registration does.
 3. It audits `device.recovered`, and every remaining device shows a
    notice.
-4. The app lists this account's backups (device, date, size), opens the
+4. **Lost devices.** The route offers "sign out every other device". It
+   is on by default and cannot be turned off when the user says every
+   device is lost. The server revokes those devices (the existing
+   `DELETE /devices/{id}` path) and queues their removal from every group
+   (the I51 revocation flow), so a stolen device stops getting new
+   messages. A notice alone is not enough.
+5. **The account-devices group.** If no other device of the account is
+   still active, no member is left to add the new device. The server then
+   lets the recovered device recreate that group at a fresh epoch 0, and
+   drops the old group's state. If another device is still active, that
+   device adds the new one as usual.
+6. The app lists this account's backups (device, date, size), opens the
    one the user picks with RK, and imports it.
-5. Other members' apps add the new device by reconcile. The account's
+7. Other members' apps add the new device by reconcile. The account's
    safety numbers change, as for any new device.
-6. Messages sent between the backup and the restore are lost to this
+8. Messages sent between the backup and the restore are lost to this
    device. The server withholds them by design, and no old device is
    left to bundle them.
 
@@ -253,7 +269,7 @@ K1 therefore restores **history only**, into a new device.
 | Malicious server | Can serve an older backup, or withhold one | AAD binds account, device and header, so it cannot forge or move one. The restore screen shows the backup's date and device. Rollback on a fresh device cannot be detected otherwise; accepted |
 | Lost or stolen locked device | Secure storage and the D01 database | It holds no key that opens any backup. The user revokes it; nothing needs rotating |
 | Compromised unlocked device | Its own history, `rk_pub`, live messages | It cannot read other devices' backups. It could push a forged `rk_pub` only with the password (reauth), and every device shows a notice |
-| Someone with the RK paper | Nothing without the password | Restore and download need password and `L`; replace RK |
+| Someone with the RK paper | Under option (a): nothing without the password. Under option (b): the account and its history | Under (a), restore and download need password and `L`. In either case, replace RK |
 | Future quantum attacker with stored ciphertext plus `rk_pub` from a captured device | Could break the X25519 seal | Residual. Move to an ML-KEM hybrid when one is reviewed (STATE.md, post-quantum readiness) |
 | Shoulder-surfing during setup | RK | Shown once, with a confirm step; replaceable |
 
@@ -329,8 +345,10 @@ K1 therefore restores **history only**, into a new device.
      account; backups only help with a device link. This keeps today's
      trust surface.
 
-   This is a credential decision and needs your yes and an independent
-   review.
+   Whichever you pick, recovery enrollment signs out every other device
+   by default when the user says all of them are lost (see the restore
+   flow). This is a credential decision and needs your yes and an
+   independent review.
 2. **Passphrase instead of a random key?** It is easier to remember, but
    needs Argon2 on the client, a new crate (licence review,
    `THIRD_PARTY_NOTICES.md`), and still invites weak choices. The
