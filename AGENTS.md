@@ -51,6 +51,13 @@ The release gate below is a safety rule, not a "do not build" list.
 4. Update `STATE.md` when its truth changes, and put measurements or evidence
    in `testing/evidence/`. Report changed files, checks, and blockers briefly.
 
+Report a change done only after a real check exercised it: the tests, the
+analyzer or type-checker, the build, or the changed command itself. A
+syntax-only check, or a check command that failed to start, does not count.
+Where a toolchain is missing locally (Flutter with no Docker, for example),
+push and let CI run it; a green CI run on the PR counts. Otherwise say which
+check you did not run and why.
+
 Use judgment and match nearby code. Historical audits, the old board, the
 audit consensus and task contracts live only in Git history (`docs/board.md`,
 `docs/audit-consensus.md`, `implementation/REMAINING_WORK.md` at `d2d9eb8`);

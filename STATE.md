@@ -192,7 +192,8 @@ Every feature the 2026-10-24 status review and gap study found missing, as
 packages in build order. Pick the first open package whose dependencies are
 done, confirm it against the code, and build it as one complete change. A
 package is done when its line is true, its tests pass, and `scripts/test` and
-`scripts/lint` pass; then mark it ✅ here. Each line says what the user gets,
+`scripts/lint` pass (or CI is green on the PR where a toolchain is missing
+locally); then mark it ✅ here. Each line says what the user gets,
 so a package can be checked without reading its code.
 
 Route says who does what (D45; `AGENTS.md`, Model routing):
@@ -203,6 +204,11 @@ Route says who does what (D45; `AGENTS.md`, Model routing):
 | **Opus review** | Sonnet builds it; Opus reviews the change before it lands, because it is a second-opinion area in `AGENTS.md` |
 | **Opus designs** | Opus writes the design first (in the PR, or in `docs/crypto.md` for anything that changes the protocol), Sonnet builds it, Opus reviews it |
 | **Owner first** | The owner says yes before work starts: a new dependency, an account, or a product choice |
+
+Whatever the route, a package that turns out to need a new dependency (a
+Flutter plugin, a Go module, a crate) waits for the owner's yes on that
+dependency, with the licence review and `THIRD_PARTY_NOTICES.md` update that
+`AGENTS.md` asks for.
 
 ### Phase 1: chats on Windows (D43)
 
@@ -229,12 +235,12 @@ Route says who does what (D45; `AGENTS.md`, Model routing):
 | ID | Package | Done when | Route |
 |---|---|---|---|
 | C0 | Community group layout | A recorded decision, with a measured join cost, on how communities map to MLS groups. The gap study recommends one shared group for open channels plus one per private channel | Opus designs |
-| C1 | Join and manage members | Invite links whose secret stays after the `#`, join requests an admin approves, leave, remove, and member lists with usernames, all in the app | Opus review |
-| C2 | Announcement channels | Only allowed roles can post: members' apps drop other posts and the server refuses them | Opus review |
+| C1 | Join and manage members | For groups and communities: invite links whose secret stays after the `#`, join requests an admin approves, leave, remove, rename, and member lists with usernames, all in the app | Opus review |
+| C2 | Admin-only posting | In announcement channels and in groups set to admins only, only allowed roles can post: members' apps drop other posts and the server refuses them | Opus review |
 | C3 | Private channels and community info | Channels only some roles can see; community, channel and category names, topics and icons stored encrypted, so the server sees IDs only | Opus designs |
 | C4 | Custom roles | Roles with permission switches and per-channel overrides, kept in each group's encrypted state and checked by every app | Opus designs |
-| C5 | Moderation | Kick, ban with no rejoin, timeout, slow mode, deleting others' messages, an audit log, and pausing invites | Opus review |
-| C6 | Reports to moderators | A member reports a message to a moderators-only channel with a proof that it is genuine (message franking) | Opus designs |
+| C5 | Moderation | Kick, ban with no rejoin, timeout, slow mode, admins deleting others' messages (in groups too), an audit log, and pausing invites | Opus review |
+| C6 | Reports | A member reports a message with a proof that it is genuine (message franking): in a community to its moderators, and from a DM or group to the instance owner | Opus designs |
 | C7 | History for new members | Each channel sets at creation whether newcomers read old posts; members hand over a channel history key; a new key when someone leaves; posts are signed | Opus designs (after K0, C0) |
 | C8 | Bigger communities | The 100-member limit rises in steps, each with a measurement in `testing/evidence/` | Sonnet |
 
