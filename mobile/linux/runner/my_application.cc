@@ -1,5 +1,7 @@
 #include "my_application.h"
 
+#include <string.h>
+
 #include <flutter_linux/flutter_linux.h>
 #ifdef GDK_WINDOWING_X11
 #include <gdk/gdkx.h>
@@ -10,6 +12,7 @@
 struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
+  GtkWindow* window;
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
@@ -22,8 +25,17 @@ static void first_frame_cb(MyApplication* self, FlView* view) {
 // Implements GApplication::activate.
 static void my_application_activate(GApplication* application) {
   MyApplication* self = MY_APPLICATION(application);
+  // A second launch is forwarded here by GApplication. Show the running
+  // window, which may be hidden in the tray, instead of opening another.
+  if (self->window != nullptr) {
+    gtk_window_present(self->window);
+    return;
+  }
   GtkWindow* window =
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
+  self->window = window;
+  g_object_add_weak_pointer(G_OBJECT(window),
+                            reinterpret_cast<gpointer*>(&self->window));
 
   // Use a header bar when running in GNOME as this is the common style used
   // by applications and is the setup most users will be using (e.g. Ubuntu
@@ -96,6 +108,28 @@ static gboolean my_application_local_command_line(GApplication* application,
   // Strip out the first argument as it is the binary name.
   self->dart_entrypoint_arguments = g_strdupv(*arguments + 1);
 
+  // One instance per demo profile (--profile=name or --profile name). The
+  // name is checked again by the app; here it only has to be safe in a D-Bus
+  // name, so anything else keeps the default ID.
+  for (int i = 0; self->dart_entrypoint_arguments[i] != nullptr; i++) {
+    const gchar* arg = self->dart_entrypoint_arguments[i];
+    const gchar* value = nullptr;
+    if (g_str_has_prefix(arg, "--profile=")) {
+      value = arg + strlen("--profile=");
+    } else if (g_strcmp0(arg, "--profile") == 0) {
+      value = self->dart_entrypoint_arguments[i + 1];
+    }
+    if (value == nullptr) continue;
+    gboolean valid = value[0] != '\0' && strlen(value) <= 20;
+    for (const gchar* c = value; valid && *c != '\0'; c++) {
+      valid = g_ascii_islower(*c) || g_ascii_isdigit(*c);
+    }
+    if (valid) {
+      g_autofree gchar* id = g_strdup_printf("%s.p%s", APPLICATION_ID, value);
+      g_application_set_application_id(application, id);
+    }
+  }
+
   g_autoptr(GError) error = nullptr;
   if (!g_application_register(application, nullptr, &error)) {
     g_warning("Failed to register: %s", error->message);
@@ -154,5 +188,5 @@ MyApplication* my_application_new() {
 
   return MY_APPLICATION(g_object_new(my_application_get_type(),
                                      "application-id", APPLICATION_ID, "flags",
-                                     G_APPLICATION_NON_UNIQUE, nullptr));
+                                     G_APPLICATION_DEFAULT_FLAGS, nullptr));
 }

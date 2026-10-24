@@ -262,15 +262,23 @@ func (s *Store) deleteReaction(ctx context.Context, messageID, accountID, eventT
 }
 
 func (s *Store) MarkRead(ctx context.Context, conversationID, accountID, messageID string) error {
-	_, err := s.markRead(ctx, conversationID, accountID, messageID, "")
+	_, err := s.markRead(ctx, conversationID, accountID, messageID, "", false)
+	return err
+}
+
+// MarkReadPrivate moves the account's read cursor for its own unread count
+// only: no sync event is written, and the cursor is never listed to other
+// members (the account keeps read receipts off).
+func (s *Store) MarkReadPrivate(ctx context.Context, conversationID, accountID, messageID string) error {
+	_, err := s.markRead(ctx, conversationID, accountID, messageID, "", true)
 	return err
 }
 
 func (s *Store) MarkReadWithSyncEvent(ctx context.Context, conversationID, accountID, messageID string) (int64, error) {
-	return s.markRead(ctx, conversationID, accountID, messageID, "read_receipt.updated")
+	return s.markRead(ctx, conversationID, accountID, messageID, "read_receipt.updated", false)
 }
 
-func (s *Store) markRead(ctx context.Context, conversationID, accountID, messageID, eventType string) (int64, error) {
+func (s *Store) markRead(ctx context.Context, conversationID, accountID, messageID, eventType string, private bool) (int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -283,6 +291,20 @@ func (s *Store) markRead(ctx context.Context, conversationID, accountID, message
 	if !member {
 		return 0, ErrNotMember
 	}
+	if !private {
+		// An account that switched read receipts off shares none, from any
+		// of its devices: the cursor stays private and nothing is announced.
+		var sends bool
+		if err := tx.QueryRowContext(ctx, `SELECT send_read_receipts != 0 FROM accounts WHERE id = ?`, accountID).Scan(&sends); err != nil {
+			return 0, err
+		}
+		if !sends {
+			private = true
+		}
+	}
+	if private {
+		eventType = ""
+	}
 	var count int
 	now := nowString()
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM message_envelopes WHERE id = ? AND conversation_id = ? AND (expires_at IS NULL OR expires_at > ?)`, messageID, conversationID, now).Scan(&count); err != nil {
@@ -294,16 +316,19 @@ func (s *Store) markRead(ctx context.Context, conversationID, accountID, message
 	// Guard against rewinding the read cursor: only advance to a message
 	// whose created_at is at or after the currently-recorded one.
 	if _, err = tx.ExecContext(ctx, `
-		INSERT INTO read_receipts(account_id, conversation_id, message_id, read_at)
-		VALUES(?, ?, ?, ?)
+		INSERT INTO read_receipts(account_id, conversation_id, message_id, read_at, private)
+		VALUES(?, ?, ?, ?, ?)
 		ON CONFLICT(account_id, conversation_id) DO UPDATE SET
 			message_id = excluded.message_id,
-			read_at = excluded.read_at
+			read_at = excluded.read_at,
+			private = excluded.private
 		WHERE read_receipts.message_id IS NULL
 		   OR (excluded.message_id != read_receipts.message_id
 		       AND (SELECT created_at FROM message_envelopes WHERE id = excluded.message_id) >=
-		           (SELECT created_at FROM message_envelopes WHERE id = read_receipts.message_id))`,
-		accountID, conversationID, messageID, now); err != nil {
+		           (SELECT created_at FROM message_envelopes WHERE id = read_receipts.message_id))
+		   OR (excluded.message_id = read_receipts.message_id
+		       AND read_receipts.private = 1 AND excluded.private = 0)`,
+		accountID, conversationID, messageID, now, private); err != nil {
 		return 0, err
 	}
 	payload := map[string]string{"account_id": accountID, "message_id": messageID}

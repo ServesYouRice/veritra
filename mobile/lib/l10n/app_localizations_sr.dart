@@ -111,6 +111,36 @@ class AppLocalizationsSr extends AppLocalizations {
   String get settingsSectionAppearance => 'Изглед';
 
   @override
+  String get settingsHideNotificationPreview => 'Сакриј преглед поруке';
+
+  @override
+  String get settingsHideNotificationPreviewDetail =>
+      'Обавештења приказују „Нова порука“ без пошиљаоца и текста.';
+
+  @override
+  String get notificationNewMessage => 'Нова порука';
+
+  @override
+  String get trayOpen => 'Отвори';
+
+  @override
+  String get trayQuit => 'Затвори апликацију';
+
+  @override
+  String get settingsSectionPrivacy => 'Приватност';
+
+  @override
+  String get settingsReadReceiptsTitle => 'Потврде о читању';
+
+  @override
+  String get settingsReadReceiptsDetail =>
+      'Важи за све ваше уређаје. Када је искључено, не шаљете потврде о читању и не видите када су други прочитали ваше поруке. Ознаке послато и достављено остају.';
+
+  @override
+  String get settingsReadReceiptsFailed =>
+      'Подешавање није могло да се промени. Проверите везу и покушајте поново.';
+
+  @override
   String get settingsSectionAbout => 'О апликацији';
 
   @override
@@ -1703,6 +1733,28 @@ class AppLocalizationsSr extends AppLocalizations {
   String get chatEdited => 'измењено';
 
   @override
+  String get chatTickSent => 'Послато';
+
+  @override
+  String get chatTickDelivered => 'Достављено';
+
+  @override
+  String get chatTickRead => 'Прочитано';
+
+  @override
+  String chatTypingOne(String name) {
+    return '$name куца…';
+  }
+
+  @override
+  String chatTypingTwo(String first, String second) {
+    return '$first и $second куцају…';
+  }
+
+  @override
+  String get chatTypingMany => 'Неколико особа куца…';
+
+  @override
   String chatReplyingTo(String preview) {
     return 'Одговор на: $preview';
   }
@@ -2208,6 +2260,149 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get searchMessagesFailed =>
       'Претрага није могла да прочита локалну базу података.';
+
+  @override
+  String attachmentTooLarge(String fileName, String limit) {
+    return 'Датотека $fileName је већа него што овај сервер дозвољава ($limit).';
+  }
+
+  @override
+  String attachmentEmptyFile(String fileName) {
+    return 'Датотека $fileName је празна и не може да се пошаље.';
+  }
+
+  @override
+  String attachmentTooMany(int count) {
+    return 'Највише $count датотека може да чека на заједничко слање.';
+  }
+
+  @override
+  String attachmentRemove(String fileName) {
+    return 'Уклоните $fileName';
+  }
+
+  @override
+  String get attachmentOpenFailed =>
+      'Датотека није могла да се отвори. Овај уређај можда нема апликацију за њу.';
+
+  @override
+  String get attachmentDropHint => 'Отпустите датотеке да бисте их приложили';
+
+  @override
+  String attachmentSentCount(int done, int total) {
+    return 'Шаље се датотека $done од $total';
+  }
+
+  @override
+  String get settingsAdmin => 'Администрација';
+
+  @override
+  String get settingsAdminDetail => 'Налози и дневник ревизије';
+
+  @override
+  String get adminAccountsTab => 'Налози';
+
+  @override
+  String get adminAuditTab => 'Дневник ревизије';
+
+  @override
+  String get adminSuspend => 'Суспендуј';
+
+  @override
+  String get adminUnsuspend => 'Поново активирај';
+
+  @override
+  String get adminSuspendTitle => 'Суспендовати овај налог?';
+
+  @override
+  String adminSuspendMessage(String username) {
+    return '@$username ће бити одјављен свуда и неће моћи да се пријави док не активирате налог поново.';
+  }
+
+  @override
+  String get adminUnsuspendTitle => 'Поново активирати овај налог?';
+
+  @override
+  String adminUnsuspendMessage(String username) {
+    return '@$username ће поново моћи да се пријави.';
+  }
+
+  @override
+  String get adminSuspendedPill => 'Суспендован';
+
+  @override
+  String adminAccountSummary(String role, int devices, String storage) {
+    String _temp0 = intl.Intl.pluralLogic(
+      devices,
+      locale: localeName,
+      other: '$devices уређаја',
+      few: '$devices уређаја',
+      one: '$devices уређај',
+    );
+    return '$role · $_temp0 · $storage';
+  }
+
+  @override
+  String adminEventBy(String actor) {
+    return 'Извршио: $actor';
+  }
+
+  @override
+  String get adminLoadMore => 'Учитај још';
+
+  @override
+  String get adminNoAccounts => 'Нема налога';
+
+  @override
+  String get adminNoEvents => 'Још нема догађаја ревизије';
+
+  @override
+  String requestsSection(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    return 'Захтеви ($countString)';
+  }
+
+  @override
+  String get requestsTitle => 'Захтев за поруку';
+
+  @override
+  String requestFrom(String name) {
+    return '$name жели да вам пише';
+  }
+
+  @override
+  String get requestUnknownSender => 'Неко кога не познајете';
+
+  @override
+  String get requestExplanation =>
+      'Ништа од ове особе се не приказује нити преузима, и она не може да види да сте нешто прочитали, док не прихватите.';
+
+  @override
+  String get requestAccept => 'Прихвати';
+
+  @override
+  String get requestBlock => 'Блокирај';
+
+  @override
+  String get requestDelete => 'Обриши';
+
+  @override
+  String get requestBlockTitle => 'Блокирати ову особу?';
+
+  @override
+  String requestBlockMessage(String name) {
+    return '$name више неће моћи да вам пише, а овај разговор ће бити уклоњен.';
+  }
+
+  @override
+  String get requestDeleteTitle => 'Обрисати овај захтев?';
+
+  @override
+  String get requestDeleteMessage =>
+      'Разговор се уклања са овог уређаја. Пошиљалац није обавештен.';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -2315,6 +2510,36 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get settingsSectionAppearance => 'Izgled';
+
+  @override
+  String get settingsHideNotificationPreview => 'Sakrij pregled poruke';
+
+  @override
+  String get settingsHideNotificationPreviewDetail =>
+      'Obaveštenja prikazuju „Nova poruka“ bez pošiljaoca i teksta.';
+
+  @override
+  String get notificationNewMessage => 'Nova poruka';
+
+  @override
+  String get trayOpen => 'Otvori';
+
+  @override
+  String get trayQuit => 'Zatvori aplikaciju';
+
+  @override
+  String get settingsSectionPrivacy => 'Privatnost';
+
+  @override
+  String get settingsReadReceiptsTitle => 'Potvrde o čitanju';
+
+  @override
+  String get settingsReadReceiptsDetail =>
+      'Važi za sve vaše uređaje. Kada je isključeno, ne šaljete potvrde o čitanju i ne vidite kada su drugi pročitali vaše poruke. Oznake poslato i dostavljeno ostaju.';
+
+  @override
+  String get settingsReadReceiptsFailed =>
+      'Podešavanje nije moglo da se promeni. Proverite vezu i pokušajte ponovo.';
 
   @override
   String get settingsSectionAbout => 'O aplikaciji';
@@ -3909,6 +4134,28 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get chatEdited => 'izmenjeno';
 
   @override
+  String get chatTickSent => 'Poslato';
+
+  @override
+  String get chatTickDelivered => 'Dostavljeno';
+
+  @override
+  String get chatTickRead => 'Pročitano';
+
+  @override
+  String chatTypingOne(String name) {
+    return '$name kuca…';
+  }
+
+  @override
+  String chatTypingTwo(String first, String second) {
+    return '$first i $second kucaju…';
+  }
+
+  @override
+  String get chatTypingMany => 'Nekoliko osoba kuca…';
+
+  @override
   String chatReplyingTo(String preview) {
     return 'Odgovor na: $preview';
   }
@@ -4417,4 +4664,147 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get searchMessagesFailed =>
       'Pretraga nije mogla da pročita lokalnu bazu podataka.';
+
+  @override
+  String attachmentTooLarge(String fileName, String limit) {
+    return 'Datoteka $fileName je veća nego što ovaj server dozvoljava ($limit).';
+  }
+
+  @override
+  String attachmentEmptyFile(String fileName) {
+    return 'Datoteka $fileName je prazna i ne može da se pošalje.';
+  }
+
+  @override
+  String attachmentTooMany(int count) {
+    return 'Najviše $count datoteka može da čeka na zajedničko slanje.';
+  }
+
+  @override
+  String attachmentRemove(String fileName) {
+    return 'Uklonite $fileName';
+  }
+
+  @override
+  String get attachmentOpenFailed =>
+      'Datoteka nije mogla da se otvori. Ovaj uređaj možda nema aplikaciju za nju.';
+
+  @override
+  String get attachmentDropHint => 'Otpustite datoteke da biste ih priložili';
+
+  @override
+  String attachmentSentCount(int done, int total) {
+    return 'Šalje se datoteka $done od $total';
+  }
+
+  @override
+  String get settingsAdmin => 'Administracija';
+
+  @override
+  String get settingsAdminDetail => 'Nalozi i dnevnik revizije';
+
+  @override
+  String get adminAccountsTab => 'Nalozi';
+
+  @override
+  String get adminAuditTab => 'Dnevnik revizije';
+
+  @override
+  String get adminSuspend => 'Suspenduj';
+
+  @override
+  String get adminUnsuspend => 'Ponovo aktiviraj';
+
+  @override
+  String get adminSuspendTitle => 'Suspendovati ovaj nalog?';
+
+  @override
+  String adminSuspendMessage(String username) {
+    return '@$username će biti odjavljen svuda i neće moći da se prijavi dok ne aktivirate nalog ponovo.';
+  }
+
+  @override
+  String get adminUnsuspendTitle => 'Ponovo aktivirati ovaj nalog?';
+
+  @override
+  String adminUnsuspendMessage(String username) {
+    return '@$username će ponovo moći da se prijavi.';
+  }
+
+  @override
+  String get adminSuspendedPill => 'Suspendovan';
+
+  @override
+  String adminAccountSummary(String role, int devices, String storage) {
+    String _temp0 = intl.Intl.pluralLogic(
+      devices,
+      locale: localeName,
+      other: '$devices uređaja',
+      few: '$devices uređaja',
+      one: '$devices uređaj',
+    );
+    return '$role · $_temp0 · $storage';
+  }
+
+  @override
+  String adminEventBy(String actor) {
+    return 'Izvršio: $actor';
+  }
+
+  @override
+  String get adminLoadMore => 'Učitaj još';
+
+  @override
+  String get adminNoAccounts => 'Nema naloga';
+
+  @override
+  String get adminNoEvents => 'Još nema događaja revizije';
+
+  @override
+  String requestsSection(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    return 'Zahtevi ($countString)';
+  }
+
+  @override
+  String get requestsTitle => 'Zahtev za poruku';
+
+  @override
+  String requestFrom(String name) {
+    return '$name želi da vam piše';
+  }
+
+  @override
+  String get requestUnknownSender => 'Neko koga ne poznajete';
+
+  @override
+  String get requestExplanation =>
+      'Ništa od ove osobe se ne prikazuje niti preuzima, i ona ne može da vidi da ste nešto pročitali, dok ne prihvatite.';
+
+  @override
+  String get requestAccept => 'Prihvati';
+
+  @override
+  String get requestBlock => 'Blokiraj';
+
+  @override
+  String get requestDelete => 'Obriši';
+
+  @override
+  String get requestBlockTitle => 'Blokirati ovu osobu?';
+
+  @override
+  String requestBlockMessage(String name) {
+    return '$name više neće moći da vam piše, a ovaj razgovor će biti uklonjen.';
+  }
+
+  @override
+  String get requestDeleteTitle => 'Obrisati ovaj zahtev?';
+
+  @override
+  String get requestDeleteMessage =>
+      'Razgovor se uklanja sa ovog uređaja. Pošiljalac nije obavešten.';
 }

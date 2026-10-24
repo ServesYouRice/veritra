@@ -52,6 +52,10 @@ void main() {
     final hello = await alice.waitFor(conv, (m) => m.body == 'hello alice');
     expect(hello.senderAccountId, owner.accountId);
 
+    // A DM from the owner waits as a request until alice accepts it.
+    expect(alice.state.isMessageRequestId(conv), isTrue);
+    expect(await alice.state.acceptMessageRequest(conv), isTrue);
+
     expect(await alice.state.replyTo(conv, hello.key, 'hi owner'), isTrue);
     final reply = await owner.waitFor(conv, (m) => m.body == 'hi owner');
     expect(reply.replyTo, hello.key);
@@ -86,7 +90,8 @@ void main() {
         AttachmentEntry.listFromBody(attachment.body, conversationId: conv)
             .single;
     expect(entry.fileName, 'photo.png');
-    expect(await alice.state.loadAttachment(entry), photo.readAsBytesSync());
+    expect(await alice.state.loadAttachment(entry, conversationId: conv),
+        photo.readAsBytesSync());
 
     // A group of three.
     final bob = await owner.invite('bob');
@@ -100,6 +105,11 @@ void main() {
     expect(await owner.state.sendMessageTo(group!.id, 'hello group'), isTrue);
     await alice.waitFor(group.id, (m) => m.body == 'hello group');
     await bob.waitFor(group.id, (m) => m.body == 'hello group');
+    // A group from an accepted peer (alice took the owner's DM) is a chat; to
+    // bob, a stranger's group is a request, and replying accepts it.
+    expect(alice.state.isMessageRequestId(group.id), isFalse);
+    expect(bob.state.isMessageRequestId(group.id), isTrue);
+    expect(await bob.state.acceptMessageRequest(group.id), isTrue);
     expect(await bob.state.sendMessageTo(group.id, 'bob here'), isTrue);
     await owner.waitFor(group.id, (m) => m.body == 'bob here');
     await alice.waitFor(group.id, (m) => m.body == 'bob here');

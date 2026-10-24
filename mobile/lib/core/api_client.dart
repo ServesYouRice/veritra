@@ -5,6 +5,7 @@ import 'dart:math' show max;
 import 'dart:typed_data';
 
 import '../crypto/mls_commit_bundle.dart';
+import 'admin_models.dart';
 import 'api_errors.dart';
 import 'models.dart';
 
@@ -337,6 +338,67 @@ class ApiClient {
 
   Future<void> revokeInvite(String token, String inviteId) async {
     await _jsonRequest('DELETE', '/api/v1/invites/$inviteId', token: token);
+  }
+
+  Future<AdminPage<AdminAccount>> listAdminAccounts(
+    String token, {
+    String? after,
+    int limit = 50,
+  }) async {
+    final json = await _jsonRequest(
+      'GET',
+      Uri(
+        path: '/api/v1/admin/accounts',
+        queryParameters: <String, String>{
+          'limit': '$limit',
+          if (after != null && after.isNotEmpty) 'after': after,
+        },
+      ).toString(),
+      token: token,
+    );
+    return AdminPage<AdminAccount>(
+      _rows(json, 'accounts', AdminAccount.fromJson),
+      json['next_after']?.toString(),
+    );
+  }
+
+  /// Suspends or reactivates an account. Needs a recent reauthentication.
+  Future<void> setAdminAccountStatus(
+    String token,
+    String accountId, {
+    required bool suspended,
+  }) async {
+    await _jsonRequest(
+      'PATCH',
+      '/api/v1/admin/accounts/${Uri.encodeComponent(accountId)}/status',
+      token: token,
+      body: <String, Object?>{'status': suspended ? 'suspended' : 'active'},
+    );
+  }
+
+  /// The audit log, newest first. [before] continues below an event id (the
+  /// previous page's cursor).
+  Future<AdminPage<AdminAuditEvent>> listAdminAuditEvents(
+    String token, {
+    String? before,
+    int limit = 50,
+  }) async {
+    final json = await _jsonRequest(
+      'GET',
+      Uri(
+        path: '/api/v1/admin/audit-events',
+        queryParameters: <String, String>{
+          'limit': '$limit',
+          'order': 'desc',
+          if (before != null && before.isNotEmpty) 'before': before,
+        },
+      ).toString(),
+      token: token,
+    );
+    return AdminPage<AdminAuditEvent>(
+      _rows(json, 'events', AdminAuditEvent.fromJson),
+      json['next_before']?.toString(),
+    );
   }
 
   Future<List<Community>> listCommunities(String token) async {
@@ -961,6 +1023,61 @@ class ApiClient {
       '/api/v1/conversations/$conversationId/read-receipts',
       token: token,
       body: <String, Object?>{'message_id': messageId},
+    );
+  }
+
+  /// Moves the read cursor for the caller's own unread count only: the server
+  /// announces nothing and lists it to nobody (read receipts switched off).
+  Future<void> markReadPrivate(
+    String token,
+    String conversationId,
+    String messageId,
+  ) async {
+    await _jsonRequest(
+      'POST',
+      '/api/v1/conversations/$conversationId/read-receipts',
+      token: token,
+      body: <String, Object?>{'message_id': messageId, 'private': true},
+    );
+  }
+
+  /// Whether this account shares read receipts; the switch is per account, so
+  /// every linked device honours it.
+  Future<bool> readReceiptsEnabled(String token) async {
+    final json = await _jsonRequest('GET', '/api/v1/account/read-receipts',
+        token: token);
+    return json['enabled'] != false;
+  }
+
+  Future<void> setReadReceiptsEnabled(String token, bool enabled) async {
+    await _jsonRequest(
+      'PUT',
+      '/api/v1/account/read-receipts',
+      token: token,
+      body: <String, Object?>{'enabled': enabled},
+    );
+  }
+
+  /// The other members' delivery and read cursors (W5).
+  Future<List<MemberReceipt>> listReceipts(
+    String token,
+    String conversationId,
+  ) async {
+    final json = await _jsonRequest(
+      'GET',
+      '/api/v1/conversations/$conversationId/read-receipts',
+      token: token,
+    );
+    return _rows(json, 'receipts', MemberReceipt.fromJson);
+  }
+
+  /// Ephemeral typing signal: nothing is stored, and the server admits about
+  /// one per two seconds per conversation (429 otherwise).
+  Future<void> sendTyping(String token, String conversationId) async {
+    await _jsonRequest(
+      'POST',
+      '/api/v1/conversations/$conversationId/typing',
+      token: token,
     );
   }
 

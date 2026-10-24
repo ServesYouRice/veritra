@@ -25,6 +25,8 @@ import '../storage/message_search.dart';
 import 'message_history.dart';
 import '../storage/encrypted_database.dart' show LocalMessageKind;
 import 'models.dart';
+import 'receipts_state.dart';
+import 'typing_state.dart';
 import '../l10n/l10n.dart';
 
 typedef ApiClientFactory = ApiClient Function(String baseUrl);
@@ -149,6 +151,8 @@ class Ops {
   static String conversation(String id) => 'conversation:$id';
 }
 
+enum RequestBucket { chat, request, hidden }
+
 class AppState extends ChangeNotifier {
   AppState({
     required this.apiClientFactory,
@@ -159,9 +163,23 @@ class AppState extends ChangeNotifier {
     this.backupService,
     this.attachmentService,
     this.config = ClientConfig.production,
-  }) : pushService = pushService ?? DisabledMobilePushService() {
+    ReceiptPreferences? receiptPreferences,
+  })  : pushService = pushService ?? DisabledMobilePushService(),
+        receiptPreferences = receiptPreferences ??
+            ReceiptPreferences(MemoryReceiptPreferenceStore()) {
     composerDrafts.onChanged = _draftChanged;
+    // Read the saved switch now so the settings screen shows it at once.
+    unawaited(this.receiptPreferences.loaded);
   }
+
+  /// The "send read receipts" switch (W5).
+  final ReceiptPreferences receiptPreferences;
+
+  /// Delivery and read cursors of the other members (W5).
+  final ReceiptsState receipts = ReceiptsState();
+
+  /// Who is typing (W5). Ephemeral, memory only.
+  final TypingState typing = TypingState();
 
   /// Encrypted backup and restore (card I45). Null in builds without the
   /// MLS service, where there is nothing to back up.
@@ -420,6 +438,11 @@ class AppState extends ChangeNotifier {
   bool hasMoreHistory(String conversationId) =>
       _historyCursors[conversationId] != null;
 
+  /// Heard with each batch of received messages once they are decrypted,
+  /// stored and shown. The desktop shell uses it to raise notifications
+  /// (W3); it gets copies and cannot change the list.
+  void Function(List<ReceivedMessageEnvelope> received)? onMessagesPublished;
+
   bool isMuted(String conversationId) {
     if (!_mutes.containsKey(conversationId)) return false;
     final until = _mutes[conversationId];
@@ -433,6 +456,236 @@ class AppState extends ChangeNotifier {
 
   bool isBlocked(String accountId) =>
       blockedAccounts.any((block) => block.accountId == accountId);
+
+  // Message requests (B8). A DM or group that someone else started, whose
+  // starter this account has not accepted, waits as a request: no read
+  // receipt, no attachment download, no notification. Acceptance is local to
+  // this device (syncing it across devices is later work); the accepted peers,
+  // accepted groups and declined conversations live in the encrypted local
+  // settings, never on the server.
+  //
+  // The server refuses to remove a member from a DM, so Delete and Block on a
+  // DM cannot leave it. They record the conversation as declined instead; it
+  // is hidden, and returns as a request only on newer activity from a peer
+  // who is not blocked.
+  static const String _requestSettingName = 'message_requests';
+  Set<String>? _acceptedPeers;
+  final Set<String> _acceptedGroups = <String>{};
+  final Map<String, DateTime> _declined = <String, DateTime>{};
+
+  /// Whether the request state has been read. Until then nothing from a
+  /// stranger is treated as accepted, and the chat list shows no rows.
+  bool get requestStateLoaded => _acceptedPeers != null;
+
+  /// Where a conversation belongs: the chat list, the Requests section, or
+  /// nowhere (declined, or from a blocked account).
+  RequestBucket requestBucket(Conversation conversation) {
+    final me = session?.accountId;
+    final creator = conversation.createdBy;
+    final isDm = conversation.isDm;
+    if (me == null ||
+        !(isDm || conversation.isGroup) ||
+        creator == null ||
+        creator == me) {
+      return RequestBucket.chat;
+    }
+    final sender = isDm ? conversation.peerAccountId : creator;
+    if (sender == null) return RequestBucket.chat;
+    final accepted = _acceptedPeers;
+    if (accepted != null &&
+        (isDm
+            ? accepted.contains(sender)
+            : accepted.contains(creator) ||
+                _acceptedGroups.contains(conversation.id))) {
+      return RequestBucket.chat;
+    }
+    if (isBlocked(sender)) return RequestBucket.hidden;
+    final declinedAt = _declined[conversation.id];
+    if (declinedAt != null) {
+      final activity = conversation.lastActivityAt;
+      if (activity == null || !activity.isAfter(declinedAt)) {
+        return RequestBucket.hidden;
+      }
+    }
+    return RequestBucket.request;
+  }
+
+  bool isMessageRequest(Conversation conversation) =>
+      requestBucket(conversation) == RequestBucket.request;
+
+  bool isMessageRequestId(String conversationId) {
+    final conversation =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    return conversation != null && isMessageRequest(conversation);
+  }
+
+  bool _heldBack(String conversationId) {
+    final conversation =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    return conversation != null &&
+        requestBucket(conversation) != RequestBucket.chat;
+  }
+
+  /// Whether the conversation's content may be shown, read or fetched.
+  /// Unknown conversations are not.
+  bool conversationOpen(String conversationId) {
+    final conversation =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    return conversation != null &&
+        requestBucket(conversation) == RequestBucket.chat;
+  }
+
+  /// Loads (or, on first run, creates) the request state. Only an upgrade
+  /// ([grandfather]: an earlier local snapshot exists) accepts the
+  /// conversations already there, so an update never turns existing chats
+  /// into requests. A fresh device (link, reinstall, restore) starts with
+  /// only what this account created accepted.
+  Future<void> _loadRequestState({required bool grandfather}) async {
+    final me = session?.accountId;
+    if (me == null || _acceptedPeers != null) return;
+    final accepted = <String>{};
+    final groups = <String>{};
+    final declined = <String, DateTime>{};
+    var known = false;
+    try {
+      final raw = await localStore.loadSetting(_requestSettingName);
+      if (raw != null) {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map && decoded['account'] == me) {
+          known = true;
+          final peers = decoded['accepted'];
+          if (peers is List) accepted.addAll(peers.whereType<String>());
+          final acceptedGroups = decoded['groups'];
+          if (acceptedGroups is List) {
+            groups.addAll(acceptedGroups.whereType<String>());
+          }
+          final gone = decoded['declined'];
+          if (gone is Map) {
+            for (final entry in gone.entries) {
+              final at = DateTime.tryParse('${entry.value}');
+              if (entry.key is String && at != null) {
+                declined[entry.key as String] = at;
+              }
+            }
+          }
+        }
+      }
+    } catch (_) {
+      // An unreadable value is treated as first run.
+    }
+    if (!known) {
+      if (grandfather) {
+        for (final conversation in conversations) {
+          final peer = conversation.peerAccountId;
+          if (conversation.isDm && peer != null) accepted.add(peer);
+          if (conversation.isGroup) groups.add(conversation.id);
+        }
+      }
+      await _saveRequestState(me, accepted, groups, declined);
+    }
+    _acceptedPeers = accepted;
+    _acceptedGroups
+      ..clear()
+      ..addAll(groups);
+    _declined
+      ..clear()
+      ..addAll(declined);
+  }
+
+  Future<void> _persistRequestState() async {
+    final me = session?.accountId;
+    final accepted = _acceptedPeers;
+    if (me == null || accepted == null) return;
+    await _saveRequestState(me, accepted, _acceptedGroups, _declined);
+  }
+
+  Future<void> _saveRequestState(
+    String me,
+    Set<String> accepted,
+    Set<String> groups,
+    Map<String, DateTime> declined,
+  ) =>
+      localStore.saveSetting(
+        _requestSettingName,
+        jsonEncode(<String, Object?>{
+          'account': me,
+          'accepted': accepted.toList()..sort(),
+          'groups': groups.toList()..sort(),
+          'declined': <String, String>{
+            for (final entry in declined.entries)
+              entry.key: entry.value.toUtc().toIso8601String(),
+          },
+        }),
+      );
+
+  String? _requestSender(Conversation conversation) =>
+      conversation.isDm ? conversation.peerAccountId : conversation.createdBy;
+
+  /// Accepts [conversation]'s sender (a DM's peer, or a group) and clears any
+  /// earlier decline. Starting or replying in a conversation counts as
+  /// accepting it.
+  Future<bool> _acceptConversation(Conversation conversation) async {
+    final accepted = _acceptedPeers;
+    final sender = _requestSender(conversation);
+    if (accepted == null || sender == null || isBlocked(sender)) return false;
+    if (conversation.isGroup) {
+      _acceptedGroups.add(conversation.id);
+    } else {
+      accepted.add(sender);
+    }
+    _declined.remove(conversation.id);
+    await _persistRequestState();
+    notifyListeners();
+    return true;
+  }
+
+  /// Accepts a request. False when nothing was accepted (unknown
+  /// conversation, state not loaded, or a blocked sender).
+  Future<bool> acceptMessageRequest(String conversationId) async {
+    final conversation =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    if (conversation == null) return false;
+    final wasRequest = isMessageRequest(conversation);
+    if (!await _acceptConversation(conversation)) return false;
+    if (wasRequest && selectedConversationId == conversationId) {
+      unawaited(loadMessages(conversationId));
+    }
+    return true;
+  }
+
+  Future<bool> _decline(Conversation conversation) async {
+    _declined[conversation.id] = DateTime.now().toUtc();
+    await _persistRequestState();
+    if (selectedConversationId == conversation.id) {
+      selectedConversationId = null;
+    }
+    notifyListeners();
+    return true;
+  }
+
+  /// Drops the request: a DM cannot be left (the server refuses), so it is
+  /// declined; a group is left for real.
+  Future<bool> _dropRequest(Conversation conversation) => conversation.isGroup
+      ? leaveConversation(conversation.id)
+      : _decline(conversation);
+
+  /// Blocks the sender, then drops the request.
+  Future<bool> blockMessageRequest(String conversationId) async {
+    final conversation =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    final sender = conversation == null ? null : _requestSender(conversation);
+    if (conversation == null || sender == null) return false;
+    if (!await blockAccount(sender)) return false;
+    return _dropRequest(conversation);
+  }
+
+  /// Drops the request without blocking.
+  Future<bool> deleteMessageRequest(String conversationId) async {
+    final conversation =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    if (conversation == null) return false;
+    return _dropRequest(conversation);
+  }
 
   List<ConversationMember> membersFor(String conversationId) =>
       membersByConversation[conversationId] ?? const <ConversationMember>[];
@@ -722,6 +975,7 @@ class AppState extends ChangeNotifier {
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
       if (cached != null) {
         conversations = cached.conversations;
+        await _loadRequestState(grandfather: true);
         messagesByConversation = cached.messagesByConversation;
         conversationsLoaded = true;
         notifyListeners();
@@ -1020,6 +1274,7 @@ class AppState extends ChangeNotifier {
       return;
     }
     conversations = await client.conversations(current.token);
+    await _loadRequestState(grandfather: false);
     // The server's list is the truth: a conversation no longer in it (an
     // admin removed this account, say) keeps no draft here.
     composerDrafts.retainOnly(conversations.map((item) => item.id));
@@ -1070,6 +1325,12 @@ class AppState extends ChangeNotifier {
       conversationId: <ReceivedMessageEnvelope>[...page.messages, ...older],
     };
     _historyCursors[conversationId] = page.nextBefore;
+    // A message that just landed ends its sender's "typing…" line.
+    final newest = page.messages.firstOrNull;
+    if (newest != null &&
+        DateTime.now().difference(newest.createdAt) < typingExpiry) {
+      typing.stoppedTyping(conversationId, newest.senderAccountId);
+    }
     if (persist) await _persistSnapshot();
   }
 
@@ -1177,6 +1438,8 @@ class AppState extends ChangeNotifier {
     if (kind == 'dm' && memberAccountIds.length == 1) {
       final existing = existingDmWith(memberAccountIds.single);
       if (existing != null) {
+        // Starting a conversation with the peer accepts them.
+        await _acceptConversation(existing);
         selectConversation(existing.id);
         return existing;
       }
@@ -1200,6 +1463,8 @@ class AppState extends ChangeNotifier {
       final conversation = created!;
       await _setUpConversationGroup(conversation.id);
       conversations = <Conversation>[conversation, ...conversations];
+      // The server may hand back a DM the peer created first.
+      if (conversation.isDm) await _acceptConversation(conversation);
       selectedConversationId = conversation.id;
       messagesByConversation[conversation.id] = <ReceivedMessageEnvelope>[];
     });
@@ -1470,17 +1735,21 @@ class AppState extends ChangeNotifier {
 
   /// Best-effort read of the server's mute. Silent on failure: an unknown
   /// mute state must not block opening a conversation.
-  Future<void> loadConversationMuted(String conversationId) async {
+  ///
+  /// Returns whether the mute was read.
+  Future<bool> loadConversationMuted(String conversationId) async {
     final current = session;
     final client = api;
     if (current == null || client == null) {
-      return;
+      return false;
     }
     try {
       final mute = await client.conversationMute(current.token, conversationId);
       _setMuteLocally(conversationId, mute);
+      return true;
     } catch (_) {
       // Leave the last known value; the control still reports its own errors.
+      return false;
     }
   }
 
@@ -1650,13 +1919,25 @@ class AppState extends ChangeNotifier {
     if (current == null || client == null) {
       return;
     }
+    // No read receipt for a request: the sender learns nothing until accepted.
+    if (_heldBack(conversationId)) {
+      return;
+    }
     final messages = messagesByConversation[conversationId] ??
         const <ReceivedMessageEnvelope>[];
     if (messages.isEmpty) {
       return;
     }
     try {
-      await client.markRead(current.token, conversationId, messages.first.id);
+      // With the switch off the receipt is private: the server keeps this
+      // account's own cursor for the unread count and shares nothing.
+      await receiptPreferences.loaded;
+      if (receiptPreferences.sendReadReceipts) {
+        await client.markRead(current.token, conversationId, messages.first.id);
+      } else {
+        await client.markReadPrivate(
+            current.token, conversationId, messages.first.id);
+      }
       // Clear the unread badge immediately rather than waiting for the next
       // conversation refresh; the receipt has landed server-side.
       var changed = false;
@@ -1889,12 +2170,23 @@ class AppState extends ChangeNotifier {
   /// Downloads one attachment's ciphertext and decrypts it in memory. The
   /// ciphertext and plaintext only touch disk as temporary files, which are
   /// removed before this returns.
-  Future<Uint8List> loadAttachment(AttachmentEntry entry) async {
+  Future<Uint8List> loadAttachment(
+    AttachmentEntry entry, {
+    required String conversationId,
+  }) async {
     final service = attachmentService;
     final current = session;
     final client = api;
     if (service == null || current == null || client == null) {
       throw StateError('attachments are unavailable');
+    }
+    // The caller's conversation decides, not the manifest's claim; the
+    // manifest must still name the same conversation.
+    if (entry.manifest['conversation_id'] != conversationId) {
+      throw StateError('attachment belongs to another conversation');
+    }
+    if (!conversationOpen(conversationId)) {
+      throw StateError('attachments wait until the request is accepted');
     }
     final directory = await service.workingDirectory();
     final base = '${directory.path}${Platform.pathSeparator}'
@@ -1940,9 +2232,31 @@ class AppState extends ChangeNotifier {
   /// Decrypts one attachment into [destinationPath], a location the user
   /// chose.
   Future<void> saveAttachment(
-      AttachmentEntry entry, String destinationPath) async {
-    final bytes = await loadAttachment(entry);
+    AttachmentEntry entry,
+    String destinationPath, {
+    required String conversationId,
+  }) async {
+    final bytes = await loadAttachment(entry, conversationId: conversationId);
     await File(destinationPath).writeAsBytes(bytes, flush: true);
+  }
+
+  /// The most plaintext bytes the server accepts for one attachment (the
+  /// operator's `PRIVATE_MESSENGER_LIMIT_ATTACHMENT_MIB`), as its setup
+  /// status reports it. An older server, or one that cannot be reached,
+  /// leaves the app's own ceiling.
+  Future<int> attachmentSizeLimit() async {
+    try {
+      final status = await api?.setupStatus();
+      final limit = status?['max_attachment_bytes'];
+      if (limit is int && limit > 0) {
+        return limit < maxPlaintextAttachmentBytes
+            ? limit
+            : maxPlaintextAttachmentBytes;
+      }
+    } catch (_) {
+      // The upload itself still enforces the cap.
+    }
+    return maxPlaintextAttachmentBytes;
   }
 
   Future<bool> _sendPayload(
@@ -1958,6 +2272,10 @@ class AppState extends ChangeNotifier {
           conversations.where((item) => item.id == conversationId).firstOrNull;
       if (current == null || client == null || conversation == null) {
         return;
+      }
+      // Replying counts as accepting.
+      if (isMessageRequest(conversation)) {
+        await _acceptConversation(conversation);
       }
       if (!await localStore.hasOutboxCapacity()) {
         throw const OutboxFullException();
@@ -2321,7 +2639,116 @@ class AppState extends ChangeNotifier {
   void selectConversation(String id) {
     selectedConversationId = id;
     notifyListeners();
-    unawaited(loadMessages(id));
+    // A request loads nothing until it is accepted.
+    if (!_heldBack(id)) {
+      unawaited(loadMessages(id));
+      unawaited(refreshReceipts(id));
+    }
+  }
+
+  /// Routes the realtime frames that are not stored events (W5): typing and
+  /// delivery announcements. True when the frame was one of them.
+  @visibleForTesting
+  bool handleEphemeralFrame(Map<String, Object?> frame) {
+    final type = frame['type'];
+    final conversationId = frame['conversation_id'];
+    if (type == 'sync.connected') {
+      // Delivery announcements are never stored, so any sent while the socket
+      // was down are read again here. The catch-up still runs.
+      final selected = selectedConversationId;
+      if (selected != null) unawaited(refreshReceipts(selected));
+      return false;
+    }
+    if (type != 'typing.updated' && type != 'delivery_receipt.updated') {
+      return false;
+    }
+    if (conversationId is! String) return true;
+    if (type == 'delivery_receipt.updated') {
+      if (conversationId == selectedConversationId) {
+        unawaited(refreshReceipts(conversationId));
+      }
+      return true;
+    }
+    final payload = frame['payload'];
+    final accountId = payload is Map ? payload['account_id'] : null;
+    if (accountId is String && accountId != session?.accountId) {
+      typing.remoteTyping(conversationId, accountId);
+    }
+    return true;
+  }
+
+  /// Adopts the account's read-receipts switch from the server, so a change
+  /// made on another linked device shows here. Best effort.
+  Future<void> refreshReadReceiptsSetting() async {
+    final current = session;
+    final client = api;
+    if (current == null || client == null) return;
+    try {
+      final enabled = await client.readReceiptsEnabled(current.token);
+      if (_disposed || !_sameSession(current)) return;
+      await receiptPreferences.setSendReadReceipts(enabled);
+    } catch (_) {
+      // The saved choice on this device stands.
+    }
+  }
+
+  /// Flips the account's read-receipts switch (every linked device follows).
+  /// False when the server could not be told; the switch then stays as it was.
+  Future<bool> setSendReadReceipts(bool enabled) async {
+    final current = session;
+    final client = api;
+    if (current == null || client == null) return false;
+    try {
+      await client.setReadReceiptsEnabled(current.token, enabled);
+    } catch (_) {
+      return false;
+    }
+    await receiptPreferences.setSendReadReceipts(enabled);
+    return true;
+  }
+
+  /// Whether ticks are offered in [conversationId]: DMs and groups up to
+  /// [tickMaxMembers], never community channels.
+  bool ticksApply(String conversationId) {
+    final conversation =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    if (conversation == null || conversation.isChannel) return false;
+    final members = membersFor(conversationId).length;
+    return members <= tickMaxMembers;
+  }
+
+  /// Reads the other members' delivery and read cursors. Best effort: the
+  /// ticks simply stay as they were when it fails.
+  Future<void> refreshReceipts(String conversationId) async {
+    final current = session;
+    final client = api;
+    if (current == null || client == null) return;
+    try {
+      final list = await client.listReceipts(current.token, conversationId);
+      if (_disposed || !_sameSession(current)) return;
+      receipts.set(conversationId, list);
+    } catch (_) {
+      // Advisory only.
+    }
+  }
+
+  /// Tells the other members this account is typing in [conversationId].
+  /// Throttled, skipped in conversations too large for a typing line, and
+  /// never retried: a missed signal is simply a missed signal.
+  void notifyTyping(String conversationId) {
+    final current = session;
+    final client = api;
+    if (current == null || client == null) return;
+    final known = membersFor(conversationId).length;
+    final members =
+        known > 0 ? known : receipts.receiptsFor(conversationId).length + 1;
+    if (members < 2 || members > typingMaxMembers) return;
+    if (!typing.takeSendSlot(conversationId)) return;
+    unawaited(
+      client
+          .sendTyping(current.token, conversationId)
+          .catchError((Object _) {}),
+    );
   }
 
   Future<void> _startSync() async {
@@ -2376,7 +2803,9 @@ class AppState extends ChangeNotifier {
     sync = syncServiceFactory(current.baseUrl, current.token);
     _setConnectionStatus(ConnectionStatus.connecting);
     _syncSubscription = sync!.events.listen(
-      (_) {
+      (frame) {
+        // Ephemeral frames carry nothing to catch up on.
+        if (handleEphemeralFrame(frame)) return;
         unawaited(_catchUpSyncEvents());
         unawaited(_flushMlsOutbox());
       },
@@ -2396,6 +2825,7 @@ class AppState extends ChangeNotifier {
     unawaited(refreshInvites());
     unawaited(refreshCommunities());
     unawaited(refreshBlocks());
+    unawaited(refreshReadReceiptsSetting());
     unawaited(_startPush());
   }
 
@@ -2971,6 +3401,9 @@ class AppState extends ChangeNotifier {
     if (type.startsWith('reaction.') || type == 'read_receipt.updated') {
       if (event.conversationId == selectedConversationId) {
         await refreshSelectedMessages(notify: false, persist: false);
+        if (type == 'read_receipt.updated') {
+          unawaited(refreshReceipts(event.conversationId!));
+        }
       }
       return;
     }
@@ -3152,6 +3585,7 @@ class AppState extends ChangeNotifier {
       _history.addAll(histories);
       notifyListeners();
       unawaited(_scheduleExpiryPurge());
+      onMessagesPublished?.call(List<ReceivedMessageEnvelope>.of(received));
     }
     received.clear();
   }
@@ -3241,6 +3675,8 @@ class AppState extends ChangeNotifier {
     messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
     _history.clear();
     composerDrafts.clear();
+    receipts.clear();
+    typing.clear();
     pendingOutbox = <MessageEnvelope>[];
     _outboxStates.clear();
     _outboxRecords.clear();
@@ -3270,6 +3706,9 @@ class AppState extends ChangeNotifier {
     _mutes.clear();
     _muteTimer?.cancel();
     _muteTimer = null;
+    _acceptedPeers = null;
+    _acceptedGroups.clear();
+    _declined.clear();
     _historyCursors.clear();
     _loadingOlder.clear();
     _busyOps.clear();
@@ -3936,6 +4375,8 @@ class AppState extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    typing.dispose();
+    receipts.dispose();
     _sessionGeneration++;
     _syncOwner?.dispose();
     unawaited(_syncOwner?.cancelAndDrain());

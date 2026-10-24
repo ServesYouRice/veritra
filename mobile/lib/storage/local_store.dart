@@ -368,6 +368,10 @@ abstract class LocalStore {
   /// When this device last made an encrypted backup (card I45).
   Future<void> saveLastBackupAt(DateTime at);
   Future<DateTime?> loadLastBackupAt();
+
+  /// Small local settings (the encrypted `local_metadata` key-value table).
+  Future<String?> loadSetting(String name);
+  Future<void> saveSetting(String name, String value);
   Future<void> acquireSyncLease(LocalSyncLease lease);
   Future<void> releaseSyncLease(LocalSyncLease lease);
   Future<bool> hasProcessedMlsMessage(String messageId);
@@ -469,6 +473,15 @@ class MemoryLocalStore implements LocalStore {
 
   @override
   Future<DateTime?> loadLastBackupAt() async => _lastBackupAt;
+
+  final Map<String, String> _settings = <String, String>{};
+
+  @override
+  Future<String?> loadSetting(String name) async => _settings[name];
+
+  @override
+  Future<void> saveSetting(String name, String value) async =>
+      _settings[name] = value;
 
   @override
   Future<void> saveSyncRecovery(SyncRecovery? recovery) async {
@@ -1273,6 +1286,14 @@ class SecureLocalStore implements LocalStore {
           EncryptedLocalDatabase.syncRecoveryName, recovery.encode());
     }
   }
+
+  @override
+  Future<String?> loadSetting(String name) async =>
+      (await _database()).readMetadata('setting:$name');
+
+  @override
+  Future<void> saveSetting(String name, String value) async =>
+      (await _database()).writeMetadata('setting:$name', value);
 
   @override
   Future<void> saveLastBackupAt(DateTime at) async =>

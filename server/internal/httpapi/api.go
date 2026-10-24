@@ -53,6 +53,9 @@ type API struct {
 	Budget    *admission.Budget
 	Admission *admission.Counters
 	LowDisk   func() bool
+	// MaxAttachmentBytes is the operator's per-file cap (plaintext); zero
+	// means the default. The setup status tells clients, the upload enforces it.
+	MaxAttachmentBytes int64
 }
 
 // passwordService returns the account password verifier. PasswordCost is the
@@ -123,6 +126,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/search/metadata", a.withAuth(a.searchMetadata))
 	mux.HandleFunc("GET /api/v1/account/export", a.withRecentAuth(a.exportAccount))
 	mux.HandleFunc("DELETE /api/v1/account", a.withRecentAuth(a.deleteAccount))
+	mux.HandleFunc("GET /api/v1/account/read-receipts", a.withAuth(a.getReadReceiptsSetting))
+	mux.HandleFunc("PUT /api/v1/account/read-receipts", a.withAuth(a.putReadReceiptsSetting))
 	mux.HandleFunc("GET /api/v1/account/blocks", a.withAuth(a.listAccountBlocks))
 	mux.HandleFunc("PUT /api/v1/account/blocks/{id}", a.withAuth(a.blockAccount))
 	mux.HandleFunc("DELETE /api/v1/account/blocks/{id}", a.withAuth(a.unblockAccount))

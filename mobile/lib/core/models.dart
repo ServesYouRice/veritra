@@ -85,6 +85,7 @@ class Conversation {
     this.currentRole,
     this.peerAccountId,
     this.peerUsername,
+    this.createdBy,
   });
 
   final String id;
@@ -105,6 +106,8 @@ class Conversation {
   // Server-authored display metadata, never a cryptographic identity claim.
   final String? peerAccountId;
   final String? peerUsername;
+  // Account that started the conversation; decides whether a DM is a request.
+  final String? createdBy;
 
   bool get isDm => kind == 'dm';
   bool get isGroup => kind == 'group';
@@ -128,6 +131,7 @@ class Conversation {
       currentRole: json['current_role'] as String?,
       peerAccountId: _nonEmpty(json['peer_account_id']),
       peerUsername: _nonEmpty(json['peer_username']),
+      createdBy: _nonEmpty(json['created_by']),
     );
   }
 
@@ -145,6 +149,7 @@ class Conversation {
       currentRole: currentRole,
       peerAccountId: peerAccountId,
       peerUsername: peerUsername,
+      createdBy: createdBy,
     );
   }
 
@@ -163,6 +168,7 @@ class Conversation {
         if (currentRole != null) 'current_role': currentRole,
         if (peerAccountId != null) 'peer_account_id': peerAccountId,
         if (peerUsername != null) 'peer_username': peerUsername,
+        if (createdBy != null) 'created_by': createdBy,
       };
 }
 
@@ -870,4 +876,29 @@ class Session {
   final String? username;
   final String? deviceSecret;
   final String? role;
+}
+
+/// What one other member's delivery and read cursors cover in a conversation
+/// (W5). Each time is the `created_at` of the newest message the cursor
+/// reaches, so a message is covered when its own time is not later. Null means
+/// no such cursor, or, for [readThrough], that the member keeps read receipts
+/// off.
+class MemberReceipt {
+  MemberReceipt({
+    required this.accountId,
+    this.deliveredThrough,
+    this.readThrough,
+  });
+
+  final String accountId;
+  final DateTime? deliveredThrough;
+  final DateTime? readThrough;
+
+  factory MemberReceipt.fromJson(Map<String, Object?> json) {
+    return MemberReceipt(
+      accountId: json['account_id'] as String,
+      deliveredThrough: _parseStrictOptionalTime(json['delivered_through']),
+      readThrough: _parseStrictOptionalTime(json['read_through']),
+    );
+  }
 }

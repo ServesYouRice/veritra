@@ -9,8 +9,10 @@ import '../../l10n/l10n.dart';
 import '../../push/push_service.dart';
 import 'backup_screen.dart';
 import '../../core/models.dart';
+import '../../desktop/message_notifications.dart';
 import '../../ui/about.dart';
 import '../../ui/appearance.dart';
+import 'read_receipts_tile.dart';
 import '../../ui/avatar.dart';
 import '../../ui/confirm.dart';
 import '../../ui/format.dart';
@@ -20,6 +22,7 @@ import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/status_pill.dart';
 import '../../ui/widgets/tile_group.dart';
+import 'admin_screen.dart';
 import 'blocked_accounts_screen.dart';
 import 'device_link_screen.dart';
 import 'invite_screen.dart';
@@ -39,6 +42,7 @@ class SettingsScreen extends StatelessWidget {
         final session = state.session;
         final isAdmin = session?.role == 'owner' || session?.role == 'admin';
         final appearance = AppearanceScope.maybeOf(context);
+        final notifications = NotificationSettingsScope.maybeOf(context);
         final l10n = context.l10n;
         return Scaffold(
           appBar: LargeTitleBar(
@@ -111,6 +115,24 @@ class SettingsScreen extends StatelessWidget {
                           Navigator.of(context).push(
                             sharedAxisRoute<void>(
                               (_) => InviteScreen(state: state),
+                            ),
+                          );
+                        }
+                      },
+                    ),
+                  if (isAdmin)
+                    ListTile(
+                      leading: const Icon(Icons.admin_panel_settings_outlined),
+                      title: Text(l10n.settingsAdmin),
+                      subtitle: Text(l10n.settingsAdminDetail),
+                      onTap: () async {
+                        if (await _reauthenticate(context) && context.mounted) {
+                          Navigator.of(context).push(
+                            sharedAxisRoute<void>(
+                              (_) => AdminScreen(
+                                state: state,
+                                reauthenticate: _reauthenticate,
+                              ),
                             ),
                           );
                         }
@@ -281,6 +303,30 @@ class SettingsScreen extends StatelessWidget {
                     leading: const Icon(Icons.video_call_outlined),
                     title: Text(l10n.settingsCallsComingSoon),
                     subtitle: Text(l10n.settingsCallsComingSoonDetail),
+                  ),
+                ],
+              ),
+              if (notifications != null) ...<Widget>[
+                SectionHeader(l10n.settingsSectionNotifications),
+                TileGroup(
+                  children: <Widget>[
+                    SwitchListTile(
+                      secondary: const Icon(Icons.notifications_outlined),
+                      title: Text(l10n.settingsHideNotificationPreview),
+                      subtitle:
+                          Text(l10n.settingsHideNotificationPreviewDetail),
+                      value: notifications.hidePreview,
+                      onChanged: notifications.setHidePreview,
+                    ),
+                  ],
+                ),
+              ],
+              SectionHeader(l10n.settingsSectionPrivacy),
+              TileGroup(
+                children: <Widget>[
+                  ReadReceiptsTile(
+                    preferences: state.receiptPreferences,
+                    onChanged: state.setSendReadReceipts,
                   ),
                 ],
               ),

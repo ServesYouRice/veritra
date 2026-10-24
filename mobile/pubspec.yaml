@@ -20,6 +20,14 @@ dependencies:
   flutter_webrtc: 1.6.2+hotfix.3
   sqlite3: 3.5.2
   file_selector: 1.1.0
+  # Desktop shell (W3, W4). Newer tray_manager releases need Flutter 3.47.
+  tray_manager: 0.5.3
+  window_manager: 0.5.2
+  local_notifier: 0.1.6
+  # Composer files (W9, B4). desktop_drop 0.9 needs Flutter 3.47.
+  desktop_drop: 0.8.4
+  pasteboard: 0.6.0
+  open_filex: 5.0.0
   # Pinned to the version flutter_localizations requires in Flutter 3.44.0;
   # the generated lib/l10n code imports it directly.
   intl: 0.20.2
@@ -38,3 +46,5 @@ hooks:
 flutter:
   generate: true
   uses-material-design: true
+  assets:
+    - assets/tray/

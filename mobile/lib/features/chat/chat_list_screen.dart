@@ -9,11 +9,13 @@ import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/empty_state.dart';
 import '../../ui/widgets/listenable_selector.dart';
+import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/status_pill.dart';
 import '../search/search_screen.dart';
 import 'chat_screen.dart';
 import 'conversation_details_screen.dart';
 import 'mute_sheet.dart';
+import 'message_request_screen.dart';
 import 'new_conversation_sheet.dart';
 import '../../ui/widgets/refresh_action.dart';
 import '../../l10n/l10n.dart';
@@ -43,7 +45,23 @@ class ChatListScreen extends StatelessWidget {
 
   Widget _build(BuildContext context) {
     final theme = Theme.of(context);
-    final conversations = state.conversations;
+    // No rows until the request state is read, so no stranger's chat shows as
+    // a normal one and none flashes into Requests (B8).
+    final loaded = state.requestStateLoaded;
+    final conversations = state.conversations
+        .where(
+          (c) => loaded
+              ? state.requestBucket(c) != RequestBucket.hidden
+              : state.requestBucket(c) == RequestBucket.chat,
+        )
+        .toList(growable: false);
+    // Strangers wait in a Requests section above the chats (B8).
+    final requests =
+        conversations.where(state.isMessageRequest).toList(growable: false);
+    final chats = conversations
+        .where((c) => !state.isMessageRequest(c))
+        .toList(growable: false);
+    final requestRows = requests.isEmpty ? 0 : requests.length + 1;
     return Scaffold(
       appBar: AppBar(
         // A display-sized title is most of what stops the screen reading as
@@ -117,9 +135,31 @@ class ChatListScreen extends StatelessWidget {
                   BoneSpacing.sm,
                   96,
                 ),
-                itemCount: conversations.length,
+                itemCount: requestRows + chats.length,
                 itemBuilder: (context, index) {
-                  final conversation = conversations[index];
+                  if (index == 0 && requests.isNotEmpty) {
+                    return SectionHeader(
+                      context.l10n.requestsSection(requests.length),
+                      padding: const EdgeInsets.fromLTRB(
+                        BoneSpacing.sm,
+                        BoneSpacing.xs,
+                        BoneSpacing.sm,
+                        BoneSpacing.xs,
+                      ),
+                    );
+                  }
+                  if (index < requestRows) {
+                    final request = requests[index - 1];
+                    return _ConversationTile(
+                      conversation: request,
+                      muted: false,
+                      selected: false,
+                      hero: false,
+                      onActions: () {},
+                      onTap: () => _openRequest(context, request),
+                    );
+                  }
+                  final conversation = chats[index - requestRows];
                   return _ConversationTile(
                     conversation: conversation,
                     muted: state.isMuted(conversation.id),
@@ -148,6 +188,28 @@ class ChatListScreen extends StatelessWidget {
                   );
                 },
               ),
+      ),
+    );
+  }
+
+  /// A request opens its own screen, never the conversation: nothing is
+  /// loaded, read or acknowledged until the user accepts.
+  Future<void> _openRequest(BuildContext context, Conversation request) async {
+    final accepted = await Navigator.of(context).push<bool>(
+      sharedAxisRoute<bool>(
+        (_) => MessageRequestScreen(state: state, conversation: request),
+      ),
+    );
+    if (accepted != true || !context.mounted) {
+      return;
+    }
+    state.selectAndPrepare(request.id);
+    if (embedded) {
+      return;
+    }
+    await Navigator.of(context).push(
+      sharedAxisRoute<void>(
+        (_) => ChatScreen(state: state, conversationId: request.id),
       ),
     );
   }
@@ -230,6 +292,8 @@ List<Object?> _chatListSelection(AppState state, {required bool embedded}) {
     state.session?.accountId,
     embedded ? state.selectedConversationId : null,
     for (final conversation in conversations) state.isMuted(conversation.id),
+    state.requestStateLoaded,
+    for (final conversation in conversations) state.requestBucket(conversation),
   ];
 }
 

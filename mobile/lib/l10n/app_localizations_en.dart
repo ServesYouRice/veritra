@@ -110,6 +110,36 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsSectionAppearance => 'Appearance';
 
   @override
+  String get settingsHideNotificationPreview => 'Hide message preview';
+
+  @override
+  String get settingsHideNotificationPreviewDetail =>
+      'Notifications say \"New message\" and show no sender or text.';
+
+  @override
+  String get notificationNewMessage => 'New message';
+
+  @override
+  String get trayOpen => 'Open';
+
+  @override
+  String get trayQuit => 'Quit';
+
+  @override
+  String get settingsSectionPrivacy => 'Privacy';
+
+  @override
+  String get settingsReadReceiptsTitle => 'Read receipts';
+
+  @override
+  String get settingsReadReceiptsDetail =>
+      'Applies to all your devices. When off, you send no read receipts and you do not see when others have read your messages. Sent and delivered ticks stay.';
+
+  @override
+  String get settingsReadReceiptsFailed =>
+      'The setting could not be changed. Check your connection and try again.';
+
+  @override
   String get settingsSectionAbout => 'About';
 
   @override
@@ -1688,6 +1718,28 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatEdited => 'edited';
 
   @override
+  String get chatTickSent => 'Sent';
+
+  @override
+  String get chatTickDelivered => 'Delivered';
+
+  @override
+  String get chatTickRead => 'Read';
+
+  @override
+  String chatTypingOne(String name) {
+    return '$name is typing…';
+  }
+
+  @override
+  String chatTypingTwo(String first, String second) {
+    return '$first and $second are typing…';
+  }
+
+  @override
+  String get chatTypingMany => 'Several people are typing…';
+
+  @override
   String chatReplyingTo(String preview) {
     return 'Replying to: $preview';
   }
@@ -2191,4 +2243,146 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get searchMessagesFailed =>
       'The search could not read the local database.';
+
+  @override
+  String attachmentTooLarge(String fileName, String limit) {
+    return '$fileName is larger than this server allows ($limit).';
+  }
+
+  @override
+  String attachmentEmptyFile(String fileName) {
+    return '$fileName is empty and cannot be sent.';
+  }
+
+  @override
+  String attachmentTooMany(int count) {
+    return 'At most $count files can wait to be sent together.';
+  }
+
+  @override
+  String attachmentRemove(String fileName) {
+    return 'Remove $fileName';
+  }
+
+  @override
+  String get attachmentOpenFailed =>
+      'The file could not be opened. This device may have no app for it.';
+
+  @override
+  String get attachmentDropHint => 'Drop files to attach them';
+
+  @override
+  String attachmentSentCount(int done, int total) {
+    return 'Sending file $done of $total';
+  }
+
+  @override
+  String get settingsAdmin => 'Administration';
+
+  @override
+  String get settingsAdminDetail => 'Accounts and audit log';
+
+  @override
+  String get adminAccountsTab => 'Accounts';
+
+  @override
+  String get adminAuditTab => 'Audit log';
+
+  @override
+  String get adminSuspend => 'Suspend';
+
+  @override
+  String get adminUnsuspend => 'Reactivate';
+
+  @override
+  String get adminSuspendTitle => 'Suspend this account?';
+
+  @override
+  String adminSuspendMessage(String username) {
+    return '@$username will be signed out everywhere and cannot sign in until you reactivate the account.';
+  }
+
+  @override
+  String get adminUnsuspendTitle => 'Reactivate this account?';
+
+  @override
+  String adminUnsuspendMessage(String username) {
+    return '@$username will be able to sign in again.';
+  }
+
+  @override
+  String get adminSuspendedPill => 'Suspended';
+
+  @override
+  String adminAccountSummary(String role, int devices, String storage) {
+    String _temp0 = intl.Intl.pluralLogic(
+      devices,
+      locale: localeName,
+      other: '$devices devices',
+      one: '1 device',
+    );
+    return '$role · $_temp0 · $storage';
+  }
+
+  @override
+  String adminEventBy(String actor) {
+    return 'By $actor';
+  }
+
+  @override
+  String get adminLoadMore => 'Load more';
+
+  @override
+  String get adminNoAccounts => 'No accounts';
+
+  @override
+  String get adminNoEvents => 'No audit events yet';
+
+  @override
+  String requestsSection(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    return 'Requests ($countString)';
+  }
+
+  @override
+  String get requestsTitle => 'Message request';
+
+  @override
+  String requestFrom(String name) {
+    return '$name wants to message you';
+  }
+
+  @override
+  String get requestUnknownSender => 'Someone you do not know';
+
+  @override
+  String get requestExplanation =>
+      'Nothing from this person is shown or downloaded, and they cannot see that you read anything, until you accept.';
+
+  @override
+  String get requestAccept => 'Accept';
+
+  @override
+  String get requestBlock => 'Block';
+
+  @override
+  String get requestDelete => 'Delete';
+
+  @override
+  String get requestBlockTitle => 'Block this person?';
+
+  @override
+  String requestBlockMessage(String name) {
+    return '$name will no longer be able to message you, and this conversation will be removed.';
+  }
+
+  @override
+  String get requestDeleteTitle => 'Delete this request?';
+
+  @override
+  String get requestDeleteMessage =>
+      'The conversation is removed from this device. The sender is not told.';
 }

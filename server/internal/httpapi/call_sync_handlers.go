@@ -168,6 +168,7 @@ func (a *API) syncEvents(w http.ResponseWriter, r *http.Request, principal domai
 		writeError(w, http.StatusInternalServerError, "sync_events_failed")
 		return
 	}
+	a.recordDelivered(r.Context(), principal.AccountID, events)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"events": events, "sync_epoch": epoch, "oldest_event_id": oldest, "latest_event_id": latest})
 }
 

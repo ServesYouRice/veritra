@@ -77,7 +77,8 @@ The connect screen fills in the URL for you.
 ### Linux notes
 
 - Packages (Debian/Ubuntu): `clang cmake ninja-build pkg-config libgtk-3-dev
-  libsecret-1-dev liblzma-dev`.
+  libsecret-1-dev liblzma-dev libnotify-dev
+  libayatana-appindicator3-dev`.
 - The app keeps its database key in the Secret Service keyring (GNOME
   Keyring or KWallet). A normal desktop session has one. Without it the app
   opens its recovery screen instead of starting.
@@ -126,7 +127,8 @@ it missed.
   Stage 5 (D28). A device sees messages from the moment it joined, not
   earlier ones. Groups created before Stage 5 cannot change members; start a
   new group.
-- Attachments and calls are not in the demo yet.
+- Calls are not in the demo yet. Attachments work: phones open images only;
+  desktops also save other files.
 - Cross-machine demos need HTTPS and are not covered yet.
 
 ## Automated check
@@ -137,3 +139,8 @@ delete, a group of three, adding a member to that group and removing
 another, and an app restart. It then stops the server,
 restarts an app offline, checks its history, queues a message, starts the
 server again and checks the message arrives. CI runs it on every push.
+
+`scripts/test-demo-e2e.ps1` is the Windows twin: the same test with the real
+Windows crypto DLL and a server on loopback. The `desktop-windows` CI job runs
+it (owner setup, invite, direct message, reply, edit, reaction, delete) before
+building the Windows demo app.
