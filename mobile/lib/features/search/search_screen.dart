@@ -73,8 +73,10 @@ class _SearchScreenState extends State<SearchScreen> {
       results = <MetadataSearchResult>[];
       messageHits = <MessageSearchHit>[];
     });
-    // The text stays; the new mode searches it, and only then.
-    if (query.text.trim().isNotEmpty) unawaited(_search(query.text));
+    // What was typed for one search is never carried into the other: words
+    // typed to find a message must not be sent as a server query. Leaving
+    // Messages for People clears the field; the user types a new query.
+    query.clear();
   }
 
   void _clear() {

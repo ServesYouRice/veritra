@@ -917,13 +917,13 @@ class ApiClient {
     return ConversationMute.fromJson(json);
   }
 
-  /// Mutes or unmutes push for the conversation. [until] ends a mute by
+  /// Mutes or unmutes push for the conversation. [forDuration] ends a mute by
   /// itself; without it a mute has no end.
   Future<ConversationMute> setConversationMute(
     String token,
     String conversationId, {
     required bool muted,
-    DateTime? until,
+    Duration? forDuration,
   }) async {
     final json = await _jsonRequest(
       'PUT',
@@ -932,8 +932,10 @@ class ApiClient {
       token: token,
       body: <String, Object?>{
         'muted': muted,
-        if (muted && until != null)
-          'muted_until': until.toUtc().toIso8601String(),
+        // A length, not a time of day: the server counts from its own clock,
+        // so a device whose clock is off still mutes for the length asked.
+        if (muted && forDuration != null)
+          'muted_for_seconds': forDuration.inSeconds,
       },
     );
     return ConversationMute.fromJson(json);

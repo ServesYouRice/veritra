@@ -239,6 +239,8 @@ class OutgoingApplicationStateTransition {
   final List<MessageEffect> messageEffects;
 }
 
+const int backupFormatVersion = 3;
+
 class LocalBackupData {
   const LocalBackupData({
     required this.session,
@@ -250,7 +252,12 @@ class LocalBackupData {
     required this.cryptoState,
     this.history = const <LocalMessage>[],
     this.reactions = const <LocalMessageReaction>[],
+    this.formatVersion = backupFormatVersion,
   });
+
+  /// The backup format this was read from, or the current one for a backup
+  /// being written (3: message expiry travels with the history).
+  final int formatVersion;
 
   /// Decrypted history (D27). Empty in a version 1 backup.
   final List<LocalMessage> history;
@@ -1157,7 +1164,9 @@ class _MemoryMessageHistory {
   List<MessageSearchHit> search(String query, int limit) {
     final terms = searchTerms(query);
     if (terms.isEmpty) return const <MessageSearchHit>[];
+    final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
     final found = _messages.values.where((item) =>
+        (item.expiresAt == null || item.expiresAt! > nowMs) &&
         item.kind == LocalMessageKind.text &&
         item.body != null &&
         item.deletedAt == null &&
@@ -1191,8 +1200,11 @@ class _MemoryMessageHistory {
   }
 
   List<LocalMessage> messages(String conversationId) {
+    final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
     final result = _messages.values
-        .where((item) => item.conversationId == conversationId)
+        .where((item) =>
+            item.conversationId == conversationId &&
+            (item.expiresAt == null || item.expiresAt! > nowMs))
         .toList();
     result.sort((a, b) {
       final byTime = a.createdAt.compareTo(b.createdAt);
@@ -1780,6 +1792,7 @@ class SecureLocalStore implements LocalStore {
       cursor: backup.cursor,
       history: backup.history,
       reactions: backup.reactions,
+      backfillExpiry: backup.formatVersion <= 2,
     );
   }
 
@@ -2423,7 +2436,7 @@ StoredCryptoState _copyCryptoState(StoredCryptoState state) =>
 
 List<int> _encodeBackup(LocalBackupData data) => utf8.encode(jsonEncode(
       <String, Object?>{
-        'version': 2,
+        'version': backupFormatVersion,
         // Decrypted history (D27). Local only: the backup is encrypted with
         // a key the server never sees.
         'history': data.history.map((item) => item.toJson()).toList(),
@@ -2467,7 +2480,7 @@ LocalBackupData _decodeBackup(List<int> encoded) {
     final root = Map<String, Object?>.from(
         jsonDecode(utf8.decode(encoded, allowMalformed: false)) as Map);
     final version = root['version'];
-    if (version != 1 && version != 2) {
+    if (version is! int || version < 1 || version > backupFormatVersion) {
       throw const FormatException('unsupported backup version');
     }
     final history = version == 1
@@ -2530,7 +2543,8 @@ LocalBackupData _decodeBackup(List<int> encoded) {
         mlsOutbox: mlsOutbox,
         cryptoState: crypto,
         history: history,
-        reactions: reactions);
+        reactions: reactions,
+        formatVersion: version);
   } catch (error) {
     if (error is FormatException) rethrow;
     throw const FormatException('invalid backup encoding');

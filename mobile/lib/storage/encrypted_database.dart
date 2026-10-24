@@ -387,7 +387,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             if (from < 3) {
               await migrator.createTable(localMlsOutboxEntries);
             }
-            if (from < 4) {
+            // A table created earlier in this same run already has the current
+            // columns, so a later step may only add to one that existed before.
+            if (from < 4 && from >= 3) {
               await migrator.addColumn(
                 localMlsOutboxEntries,
                 localMlsOutboxEntries.revocationDeviceId,
@@ -410,7 +412,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               await migrator.createTable(localMessages);
               await migrator.createTable(localMessageReactions);
             }
-            if (from < 8) {
+            if (from < 8 && from >= 3) {
               // Durable delivery state for MLS control messages (I34).
               await migrator.addColumn(
                   localMlsOutboxEntries, localMlsOutboxEntries.attemptCount);
@@ -432,7 +434,10 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               // messages, so expired rows can be found and deleted.
               await migrator.addColumn(
                   localCiphertextEnvelopes, localCiphertextEnvelopes.expiresAt);
-              await migrator.addColumn(localMessages, localMessages.expiresAt);
+              if (from >= 7) {
+                await migrator.addColumn(
+                    localMessages, localMessages.expiresAt);
+              }
               await migrator.createIndex(localCiphertextEnvelopesExpiresAt);
               await migrator.createIndex(localMessagesExpiresAt);
               await _backfillExpiry();
@@ -446,9 +451,12 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             }
             if (from < 12) {
               // W10: the on-device message search index.
-              await migrator.addColumn(localMessages, localMessages.searchId);
+              if (from >= 7) {
+                await migrator.addColumn(localMessages, localMessages.searchId);
+              }
               await migrator.createIndex(localMessagesSearchId);
-              if (await _createSearchIndex()) await _rebuildSearchIndex();
+              await _createSearchIndex();
+              await _rebuildSearchIndex();
             }
             // Drift writes the version again after this returns, outside the
             // transaction; writing it here too closes that gap.
@@ -467,6 +475,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   }) =>
       transaction(() async {
         if (clearIdentityState) {
+          await delete(localDrafts).go();
+          await delete(localConversationMutes).go();
           await delete(localCiphertextEnvelopes).go();
           await delete(localConversations).go();
           await delete(localOutboxEntries).go();
@@ -626,6 +636,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required int cursor,
     List<LocalMessage> history = const <LocalMessage>[],
     List<LocalMessageReaction> reactions = const <LocalMessageReaction>[],
+    // Only a backup from before format 3 lacks message expiry. A newer one
+    // carries it, and the envelopes in it are never trusted to set it.
+    bool backfillExpiry = false,
   }) =>
       transaction(() async {
         await delete(localMlsTransitions).go();
@@ -670,9 +683,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
                   payloadJson: item.payloadJson,
                   expiresAt: Value(envelopeExpiryMillis(item.payloadJson))));
         }
-        // A backup from before schema 10 has no message expiry; take it from
-        // the backup's own envelopes, then purge.
-        await _backfillExpiry();
+        if (backfillExpiry) await _backfillExpiry();
         await _purgeExpiredInTransaction(
             DateTime.now().toUtc().millisecondsSinceEpoch);
         final queuedAt = DateTime.now().microsecondsSinceEpoch;
@@ -1519,7 +1530,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
       transaction(() async {
         await delete(localCiphertextEnvelopes).go();
         await delete(localConversations).go();
-        await delete(localDrafts).go();
+        // Drafts stay: this runs when a session expires, and the user signs
+        // in again to the same drafts. Explicit sign-out wipes them.
         await delete(localConversationMutes).go();
         if (!preserveOutbox) {
           await delete(localOutboxEntries).go();
@@ -1560,7 +1572,12 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
 
   Future<List<LocalMessage>> readMessages(String conversationId) =>
       (select(localMessages)
-            ..where((table) => table.conversationId.equals(conversationId))
+            ..where((table) =>
+                table.conversationId.equals(conversationId) &
+                // Expired text never shows, even if its delete failed (W2).
+                (table.expiresAt.isNull() |
+                    table.expiresAt.isBiggerThanValue(
+                        DateTime.now().toUtc().millisecondsSinceEpoch)))
             ..orderBy([
               (table) => OrderingTerm.asc(table.createdAt),
               (table) => OrderingTerm.asc(table.key),
@@ -1760,19 +1777,16 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
 
   /// Creates the full-text index and the triggers that keep it equal to the
   /// text of `local_messages` through every insert, edit, delete, expiry
-  /// purge and wipe. Returns false, leaving search to the plain scan in
-  /// [searchMessages], when this SQLite build has no FTS5.
-  Future<bool> _createSearchIndex() async {
-    try {
-      await customStatement('CREATE VIRTUAL TABLE IF NOT EXISTS $_searchTable '
-          "USING fts5(body, tokenize = 'unicode61 remove_diacritics 2')");
-    } catch (_) {
-      // No FTS5 in this build; the app searches by scanning instead.
-      return false;
-    }
+  /// purge and wipe. FTS5 is required: a failure here fails the whole open or
+  /// upgrade, which rolls back and is reported like any other (a full disk as
+  /// `upgradeStorageFull`), so a database never settles at this schema
+  /// without its index.
+  Future<void> _createSearchIndex() async {
+    await customStatement('CREATE VIRTUAL TABLE IF NOT EXISTS $_searchTable '
+        "USING fts5(body, tokenize = 'unicode61 remove_diacritics 2')");
     // Deleted text is erased from the index at once, not at the next merge.
-    await customStatement(
-        "INSERT INTO $_searchTable($_searchTable, rank) VALUES('secure-delete', 1)");
+    await customStatement("INSERT INTO $_searchTable($_searchTable, rank) "
+        "VALUES('secure-delete', 1)");
     await customStatement('''
 CREATE TRIGGER IF NOT EXISTS local_messages_search_ai
 AFTER INSERT ON local_messages
@@ -1804,7 +1818,6 @@ AFTER DELETE ON local_messages
 BEGIN
   DELETE FROM $_searchTable WHERE rowid = old.search_id;
 END''');
-    return true;
   }
 
   /// Indexes every text message already stored (the upgrade to schema 12).
@@ -1818,11 +1831,6 @@ END''');
         'WHERE search_id IS NOT NULL');
   }
 
-  Future<bool> get _hasSearchIndex async => (await customSelect(
-        "SELECT 1 FROM sqlite_master WHERE name = '$_searchTable'",
-      ).get())
-          .isNotEmpty;
-
   /// Messages whose text contains every word of [query] (the last word may be
   /// the start of a longer one), newest first, at most [limit]. Words match
   /// without regard to case and accents. Nothing leaves the database.
@@ -1830,7 +1838,7 @@ END''');
       {int limit = 50}) async {
     final terms = searchTerms(query);
     if (terms.isEmpty) return const <MessageSearchHit>[];
-    if (await _hasSearchIndex) {
+    {
       final rows = await customSelect(
         'SELECT m.key AS key, m.conversation_id AS conversation_id, '
         'm.sender_account_id AS sender, m.created_at AS created_at, '
@@ -1840,8 +1848,13 @@ END''');
         '$_searchTable.rowid '
         'WHERE $_searchTable MATCH ? AND m.kind = \'text\' '
         'AND m.deleted_at IS NULL '
+        'AND (m.expires_at IS NULL OR m.expires_at > ?) '
         'ORDER BY m.created_at DESC, m.key DESC LIMIT ?',
-        variables: [Variable<String>(ftsQueryFor(terms)), Variable<int>(limit)],
+        variables: [
+          Variable<String>(ftsQueryFor(terms)),
+          Variable<int>(DateTime.now().toUtc().millisecondsSinceEpoch),
+          Variable<int>(limit),
+        ],
       ).get();
       return [
         for (final row in rows)
@@ -1854,31 +1867,6 @@ END''');
           ),
       ];
     }
-    // No FTS5: scan the decrypted rows inside the encrypted database.
-    final rows = await (select(localMessages)
-          ..where((table) =>
-              table.kind.equals(LocalMessageKind.text) &
-              table.body.isNotNull() &
-              table.deletedAt.isNull())
-          ..orderBy([
-            (table) => OrderingTerm.desc(table.createdAt),
-            (table) => OrderingTerm.desc(table.key),
-          ]))
-        .get();
-    final hits = <MessageSearchHit>[];
-    for (final row in rows) {
-      final text = row.body!.toLowerCase();
-      if (!terms.every(text.contains)) continue;
-      hits.add(MessageSearchHit(
-        key: row.key,
-        conversationId: row.conversationId,
-        senderAccountId: row.senderAccountId,
-        createdAt: row.createdAt,
-        snippet: snippetFor(row.body!, terms),
-      ));
-      if (hits.length == limit) break;
-    }
-    return hits;
   }
 
   Future<void> saveDraft({
@@ -1995,6 +1983,8 @@ EncryptedLocalDatabase openEncryptedLocalDatabase(File file, String keyHex) {
         rawDatabase.execute("PRAGMA cipher = 'chacha20'");
         rawDatabase.execute("PRAGMA hexkey = '$keyHex'");
         rawDatabase.execute('PRAGMA busy_timeout = 5000');
+        // Before any migration runs, not only once Drift has opened.
+        rawDatabase.execute('PRAGMA secure_delete = ON');
         final cipherRows = rawDatabase.select('PRAGMA cipher');
         final cipher = cipherRows.isEmpty
             ? null

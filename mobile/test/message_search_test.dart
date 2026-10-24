@@ -334,24 +334,24 @@ void main() {
           await found(upgraded, 'index'), <String>['dev_peer:c', 'dev_peer:a']);
     });
 
-    test('without FTS5 the same search scans the stored text', () async {
+    test('text past its expiry is hidden even if its delete never ran',
+        () async {
       final store = createStore();
       final database = await open(store);
       await database.applyMessageEffects(<MessageEffect>[
-        message('a', 'Station at noon', at: 1),
-        message('b', 'no match here', at: 2),
+        message('kept', 'visible phrase'),
       ]);
-      for (final trigger in <String>[
-        'local_messages_search_ai',
-        'local_messages_search_au',
-        'local_messages_search_ad',
-      ]) {
-        await database.customStatement('DROP TRIGGER $trigger');
-      }
-      await database.customStatement('DROP TABLE local_message_search');
-      final hits = await store.searchMessages('station');
-      expect(hits.map((hit) => hit.key), <String>['dev_peer:a']);
-      expect(hits.single.snippet, '\u0001Station\u0002 at noon');
+      // A row that outlived its expiry, as after a failed purge.
+      await database.customStatement(
+        'INSERT INTO local_messages (key, conversation_id, '
+        'sender_account_id, sender_device_id, kind, body, created_at, state, '
+        "expires_at) VALUES ('dev_peer:old', 'conv_1', 'acct_peer', "
+        "'dev_peer', 'text', 'stale phrase', 1, 'received', ?)",
+        <Object?>[DateTime.now().millisecondsSinceEpoch - 1000],
+      );
+      expect(await found(store, 'phrase'), <String>['dev_peer:kept']);
+      expect((await store.loadMessages('conv_1')).map((item) => item.key),
+          <String>['dev_peer:kept']);
     });
   });
 
@@ -554,12 +554,19 @@ void main() {
       expect(api.metadataQueries, isEmpty,
           reason: 'message text must stay on this device');
 
-      // Only the other mode asks the server, and only after it is chosen.
+      // Switching mode never carries the words over to the server: the field
+      // is cleared and nothing is asked until something new is typed.
       await tester.tap(find.text('People and communities'));
       await tester.pumpAndSettle();
       await tester.pump(const Duration(milliseconds: 400));
       await tester.pumpAndSettle();
-      expect(api.metadataQueries, <String>['swordfish']);
+      expect(api.metadataQueries, isEmpty);
+      expect(tester.widget<TextField>(find.byType(TextField)).controller!.text,
+          isEmpty);
+      await tester.enterText(find.byType(TextField), 'alice');
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+      expect(api.metadataQueries, <String>['alice']);
       state.dispose();
     });
 

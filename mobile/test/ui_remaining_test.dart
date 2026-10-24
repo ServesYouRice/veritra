@@ -817,8 +817,10 @@ class _FakeApi extends ApiClient {
     String token,
     String conversationId, {
     required bool muted,
-    DateTime? until,
+    Duration? forDuration,
   }) async {
+    final until =
+        forDuration == null ? null : DateTime.now().toUtc().add(forDuration);
     mutedConversations[conversationId] = muted;
     lastMuteUntil = until;
     return ConversationMute(muted: muted, until: until);

@@ -296,6 +296,18 @@ class AppState extends ChangeNotifier {
   Timer? _catchUpRetryTimer;
   Timer? _expiryTimer;
   bool _purgingExpired = false;
+  Duration _expiryBackoff = Duration.zero;
+
+  static Duration _nextExpiryBackoff(Duration current) {
+    if (current < const Duration(seconds: 1)) {
+      return const Duration(seconds: 1);
+    }
+    final doubled = current * 2;
+    return doubled > const Duration(minutes: 5)
+        ? const Duration(minutes: 5)
+        : doubled;
+  }
+
   int _catchUpRetryAttempt = 0;
   final Set<String> _failedMlsConversations = <String>{};
   final Map<String, DateTime> _mlsPendingSeen = <String, DateTime>{};
@@ -935,7 +947,13 @@ class AppState extends ChangeNotifier {
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
       // Expired messages go even from a device that is signed out: it keeps
       // its history for the next sign-in (W2).
-      await localStore.purgeExpiredMessages();
+      try {
+        await localStore.purgeExpiredMessages();
+      } catch (_) {
+        // Best effort: expired text is hidden on read even if this delete
+        // failed, and the timer retries. Never a reason for recovery mode.
+        _expiryBackoff = _nextExpiryBackoff(_expiryBackoff);
+      }
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
       if (stored == null) {
         lifecycle = SessionLifecycle.ready;
@@ -1777,7 +1795,7 @@ class AppState extends ChangeNotifier {
         current.token,
         conversationId,
         muted: duration != MuteDuration.off,
-        until: length == null ? null : DateTime.now().toUtc().add(length),
+        forDuration: length,
       );
       _setMuteLocally(conversationId, applied);
     });
@@ -3802,6 +3820,7 @@ class AppState extends ChangeNotifier {
     final generation = _sessionGeneration;
     try {
       final touched = await localStore.purgeExpiredMessages();
+      _expiryBackoff = Duration.zero;
       if (generation != _sessionGeneration || session == null) return;
       final now = DateTime.now().toUtc();
       var changed = touched.isNotEmpty;
@@ -3829,7 +3848,9 @@ class AppState extends ChangeNotifier {
         notifyListeners();
       }
     } catch (_) {
-      // Retried on the next timer, resume or restart; never blocks the app.
+      // Retried with a growing pause, on resume and on restart; never blocks
+      // the app. Reads already hide what has expired.
+      _expiryBackoff = _nextExpiryBackoff(_expiryBackoff);
     } finally {
       _purgingExpired = false;
     }
@@ -3853,6 +3874,7 @@ class AppState extends ChangeNotifier {
     if (delay < const Duration(milliseconds: 500)) {
       delay = const Duration(milliseconds: 500);
     }
+    if (delay < _expiryBackoff) delay = _expiryBackoff;
     // Timers beyond a day are re-armed by resume and by the next write.
     if (delay > const Duration(days: 1)) delay = const Duration(days: 1);
     _expiryTimer = Timer(delay, () {

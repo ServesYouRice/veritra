@@ -304,6 +304,10 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 			Muted *bool `json:"muted"`
 			// MutedUntil ends the mute by itself; omit it to mute without an end.
 			MutedUntil *time.Time `json:"muted_until"`
+			// MutedForSeconds counts from the server's clock, so a device
+			// with a wrong clock still mutes for the length it asked. It wins
+			// over MutedUntil.
+			MutedForSeconds *int64 `json:"muted_for_seconds"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
@@ -313,7 +317,14 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 			return
 		}
 		var until *time.Time
-		if *req.Muted && req.MutedUntil != nil {
+		if *req.Muted && req.MutedForSeconds != nil {
+			if *req.MutedForSeconds <= 0 || *req.MutedForSeconds > int64(storage.MaxMuteDuration/time.Second) {
+				writeError(w, http.StatusBadRequest, "muted_until_invalid")
+				return
+			}
+			end := time.Now().UTC().Add(time.Duration(*req.MutedForSeconds) * time.Second).Truncate(time.Second)
+			until = &end
+		} else if *req.Muted && req.MutedUntil != nil {
 			end := req.MutedUntil.UTC().Truncate(time.Second)
 			until = &end
 		}

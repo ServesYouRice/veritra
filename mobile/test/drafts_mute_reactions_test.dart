@@ -269,12 +269,14 @@ void main() {
       expect((await store.loadDrafts())['conv_1']?.text, 'hello again');
     });
 
-    test('drafts and mutes are wiped with the data, soft or hard', () async {
+    test('drafts and mutes: a session expiry keeps drafts, sign-out wipes both', () async {
       final store = createStore();
       await store.saveDraft('conv_1', 'secret draft');
       await store.saveConversationMute('conv_1', muted: true);
+      // A session that expired keeps the drafts for the next sign-in; the
+      // mute copies are refetched from the server.
       await store.clearCachedState(preserveOutbox: true);
-      expect(await store.loadDrafts(), isEmpty);
+      expect(await store.loadDrafts(), hasLength(1));
       expect(await store.loadConversationMutes(), isEmpty);
 
       await store.saveDraft('conv_1', 'secret draft');
@@ -475,8 +477,10 @@ class _MuteApi extends ApiClient {
     String token,
     String conversationId, {
     required bool muted,
-    DateTime? until,
+    Duration? forDuration,
   }) async {
+    final until =
+        forDuration == null ? null : DateTime.now().toUtc().add(forDuration);
     lastMuted = muted;
     lastUntil = until;
     return ConversationMute(muted: muted, until: muted ? until : null);

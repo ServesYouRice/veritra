@@ -1100,6 +1100,145 @@ void main() {
     return pages;
   }
 
+  Future<void> dropSearchIndex(EncryptedLocalDatabase database) async {
+    for (final trigger in <String>[
+      'local_messages_search_ai',
+      'local_messages_search_au',
+      'local_messages_search_ad',
+    ]) {
+      await database.customStatement('DROP TRIGGER IF EXISTS $trigger');
+    }
+    await database.customStatement('DROP TABLE IF EXISTS local_message_search');
+    await database
+        .customStatement('DROP INDEX IF EXISTS local_messages_search_id');
+    await database
+        .customStatement('ALTER TABLE local_messages DROP COLUMN search_id');
+  }
+
+  Future<void> insertTextMessages(
+      EncryptedLocalDatabase database, int count) async {
+    await database.applyMessageEffects(<MessageEffect>[
+      for (var index = 0; index < count; index++)
+        InsertMessageEffect(
+          key: 'dev_peer:m$index',
+          conversationId: 'conv_1',
+          senderAccountId: 'acct_peer',
+          senderDeviceId: 'dev_peer',
+          kind: LocalMessageKind.text,
+          body: 'searchable words number $index',
+          createdAt: index,
+          state: LocalMessageState.received,
+        ),
+    ]);
+  }
+
+  test('an upgrade from schema 6 builds every later table once', () async {
+    final store = createStore();
+    await store.saveSyncCursor(1);
+    final database = databases.last;
+    await insertTextMessages(database, 3);
+    await dropExpiryColumns(database);
+    await database.customStatement('DROP TABLE local_messages');
+    await database.customStatement('DROP TABLE local_message_reactions');
+    for (final column in <String>[
+      'attempt_count',
+      'next_attempt_at',
+      'failure_class',
+      'terminal',
+    ]) {
+      await database.customStatement(
+          'ALTER TABLE local_mls_outbox_entries DROP COLUMN $column');
+    }
+    await database.customStatement('PRAGMA user_version = 6');
+    await database.close();
+    databases.removeLast();
+
+    final upgraded = createStore();
+    expect(await upgraded.loadSyncCursor(), 1);
+    final reopened = databases.last;
+    expect(await userVersion(reopened), 12);
+    await reopened.applyMessageEffects(<MessageEffect>[
+      const InsertMessageEffect(
+        key: 'dev_peer:new',
+        conversationId: 'conv_1',
+        senderAccountId: 'acct_peer',
+        senderDeviceId: 'dev_peer',
+        kind: LocalMessageKind.text,
+        body: 'after the upgrade',
+        createdAt: 1,
+        state: LocalMessageState.received,
+      ),
+    ]);
+    expect(
+        (await upgraded.searchMessages('upgrade')).single.key, 'dev_peer:new');
+    expect(await upgraded.pendingMlsMessages(), isEmpty);
+  });
+
+  test('an upgrade from schema 2 builds every later table once', () async {
+    final store = createStore();
+    await store.saveSyncCursor(1);
+    final database = databases.last;
+    await dropExpiryColumns(database);
+    await database.customStatement('DROP TABLE local_messages');
+    await database.customStatement('DROP TABLE local_message_reactions');
+    await database.customStatement('DROP TABLE local_peer_verifications');
+    await database.customStatement('DROP TABLE local_mls_outbox_entries');
+    for (final column in <String>[
+      'attempt_count',
+      'next_attempt_at',
+      'failure_class',
+      'terminal',
+    ]) {
+      await database.customStatement(
+          'ALTER TABLE local_outbox_entries DROP COLUMN $column');
+    }
+    await database.customStatement('PRAGMA user_version = 2');
+    await database.close();
+    databases.removeLast();
+
+    final upgraded = createStore();
+    expect(await upgraded.loadSyncCursor(), 1);
+    expect(await userVersion(databases.last), 12);
+  });
+
+  test(
+      'the search index is required: a full disk fails the 11 to 12 upgrade '
+      'and a retry completes it', () async {
+    final store = createStore();
+    await store.saveSyncCursor(1);
+    final database = databases.last;
+    await insertTextMessages(database, 400);
+    await dropSearchIndex(database);
+    await database.customStatement('PRAGMA user_version = 11');
+    await database.customStatement('VACUUM');
+    final pages = (await database.customSelect('PRAGMA page_count').getSingle())
+        .read<int>('page_count');
+    await database.close();
+    databases.removeLast();
+    final original =
+        File('${directory.path}/veritra-local.db').readAsBytesSync();
+
+    var diskFull = true;
+    final constrained = SecureLocalStore(
+      storage: secureStorage,
+      directoryProvider: () async => directory,
+      databaseFactory: (file, keyHex) {
+        final opened = diskFull
+            ? _openWithoutRoom(file, keyHex, pages)
+            : openEncryptedLocalDatabase(file, keyHex);
+        databases.add(opened);
+        return opened;
+      },
+    );
+    await expectLater(constrained.searchMessages('words'),
+        throwsA(_storeFailure(LocalStoreFailureKind.upgradeStorageFull)));
+    await expectDatabaseUnchanged(original);
+
+    diskFull = false;
+    expect(await constrained.searchMessages('words'), hasLength(50));
+    expect(await userVersion(databases.last), 12);
+  });
+
   test('a full disk during the upgrade is reported as a full device', () async {
     final pages = await seedVersion8();
     final original =

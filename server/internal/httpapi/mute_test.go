@@ -38,6 +38,23 @@ func TestConversationMuteDurations(t *testing.T) {
 	if err := json.Unmarshal(response, &got); err != nil || status != http.StatusOK || !got.Muted || got.Until == nil || !got.Until.Equal(until) {
 		t.Fatalf("get status=%d body=%s", status, response)
 	}
+	// A length counts from the server's clock.
+	status, response = doJSON(t, handler, http.MethodPut, path, token, map[string]interface{}{"muted": true, "muted_for_seconds": 7 * 24 * 3600})
+	if status != http.StatusOK {
+		t.Fatalf("mute 1 week status=%d body=%s", status, response)
+	}
+	var week struct {
+		Until *time.Time `json:"muted_until"`
+	}
+	if err := json.Unmarshal(response, &week); err != nil || week.Until == nil || time.Until(*week.Until) < 6*24*time.Hour || time.Until(*week.Until) > 8*24*time.Hour {
+		t.Fatalf("1 week body=%s", response)
+	}
+	for _, seconds := range []int64{0, -5, 400 * 24 * 3600} {
+		status, response = doJSON(t, handler, http.MethodPut, path, token, map[string]interface{}{"muted": true, "muted_for_seconds": seconds})
+		if status != http.StatusBadRequest || !bytes.Contains(response, []byte("muted_until_invalid")) {
+			t.Fatalf("seconds %d: status=%d body=%s", seconds, status, response)
+		}
+	}
 	for name, value := range map[string]string{
 		"past":    time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
 		"too far": time.Now().Add(400 * 24 * time.Hour).UTC().Format(time.RFC3339),

@@ -237,7 +237,13 @@ void main() {
 
     // A new process: the stored rows are expired by now, nothing has purged.
     final reopened = createStore();
-    expect(await bodies(reopened), contains('gone text'));
+    // Reads already hide it; the row is still in the table until the purge.
+    expect(await bodies(reopened), <String>['kept text']);
+    final stored = await databases.last
+        .customSelect("SELECT count(*) AS n FROM local_messages "
+            "WHERE body = 'gone text'")
+        .getSingle();
+    expect(stored.read<int>('n'), 1);
     final touched = await reopened.purgeExpiredMessages();
     expect(touched, <String>{'conv_1'});
     expect(await bodies(reopened), <String>['kept text']);
@@ -420,6 +426,7 @@ void main() {
         sealedState: <int>[1]
       ),
       cursor: 0,
+      backfillExpiry: true,
       history: [
         // A version 2 backup carries no expiry for the message.
         LocalMessage(
@@ -439,6 +446,46 @@ void main() {
     expect(await envelopeIds(store), isEmpty);
   });
 
+  test('a current backup keeps history a relisted envelope calls expired',
+      () async {
+    final store = createStore();
+    await seedState(store);
+    await store.saveSession(const Session(
+      baseUrl: 'https://localhost:8080',
+      token: 'token',
+      accountId: 'acct_own',
+      deviceId: 'dev_own',
+    ));
+    await saveList(store);
+    await receive(store, id: 'old', body: 'old text');
+    // The server relists the message with a short expiry; the app caches it.
+    await databases.last.customStatement(
+      'INSERT OR REPLACE INTO local_ciphertext_envelopes '
+      '(id, conversation_id, position, payload_json, expires_at) '
+      "VALUES ('old', 'conv_1', 0, ?, ?)",
+      <Object?>[
+        jsonEncode(_envelope('old',
+                expiresAt:
+                    DateTime.now().toUtc().subtract(const Duration(hours: 1)))
+            .toJson()),
+        DateTime.now().millisecondsSinceEpoch - 3600000,
+      ],
+    );
+    final exported = await store.exportBackup();
+
+    // Format 3 restores history as it is: envelopes never set its expiry.
+    await store.restoreBackup(exported);
+    expect(await bodies(store), <String>['old text']);
+
+    // A format 2 backup predates message expiry and still takes it from its
+    // envelopes (the one-time backfill).
+    final legacy =
+        Map<String, Object?>.from(jsonDecode(utf8.decode(exported)) as Map)
+          ..['version'] = 2;
+    await store.restoreBackup(utf8.encode(jsonEncode(legacy)));
+    expect(await bodies(store), isEmpty);
+  });
+
   test('a signed-out device still deletes what expired', () async {
     final store = MemoryLocalStore();
     await store.saveSession(const Session(
@@ -454,7 +501,7 @@ void main() {
         expiresAt:
             DateTime.now().toUtc().add(const Duration(milliseconds: 100)));
     await Future<void>.delayed(const Duration(milliseconds: 250));
-    expect(await bodies(store), hasLength(1));
+    expect(await store.nextMessageExpiry(), isNotNull);
     final state = AppState(
       apiClientFactory: (_) => _OfflineApiClient(),
       cryptoService: TestOnlyCryptoService(),
@@ -463,7 +510,7 @@ void main() {
     );
     await state.tryRestoreSession();
     expect(state.connected, isFalse);
-    expect(await bodies(store), isEmpty);
+    expect(await store.nextMessageExpiry(), isNull);
     state.dispose();
   });
 
