@@ -1081,6 +1081,10 @@ class AppLocalizationsSr extends AppLocalizations {
   String get deviceLinkApprove => 'Одобри';
 
   @override
+  String get deviceLinkApproveHint =>
+      'Унесите осмоцифрени код приказан на новом уређају. Никада не користите код који вам је неко послао или прочитао.';
+
+  @override
   String get bannerQueued =>
       'Поруке које шаљете остају у реду чекања на овом уређају.';
 
@@ -3487,6 +3491,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get deviceLinkApprove => 'Odobri';
+
+  @override
+  String get deviceLinkApproveHint =>
+      'Unesite osmocifreni kod prikazan na novom uređaju. Nikada ne koristite kod koji vam je neko poslao ili pročitao.';
 
   @override
   String get bannerQueued =>

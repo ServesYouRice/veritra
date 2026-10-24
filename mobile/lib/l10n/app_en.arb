@@ -405,6 +405,7 @@
   "deviceLinkRefreshStatus": "Refresh status",
   "deviceLinkApproveDevice": "Approve device",
   "deviceLinkApprove": "Approve",
+  "deviceLinkApproveHint": "Enter the 8-digit code shown on the new device. Never use a code you were sent or read out to you.",
 
   "bannerQueued": "Messages you send stay queued on this device.",
   "bannerReconnecting": "Reconnecting to the server…",

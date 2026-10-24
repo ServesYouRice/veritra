@@ -1893,6 +1893,12 @@ abstract class AppLocalizations {
   /// **'Approve'**
   String get deviceLinkApprove;
 
+  /// No description provided for @deviceLinkApproveHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter the 8-digit code shown on the new device. Never use a code you were sent or read out to you.'**
+  String get deviceLinkApproveHint;
+
   /// No description provided for @bannerQueued.
   ///
   /// In en, this message translates to:

@@ -27,6 +27,9 @@ String? deviceLinkQrPayload(String? code) {
   ).toString();
 }
 
+/// Digits in the safety code the new device shows.
+const deviceLinkCodeLength = 8;
+
 class DeviceLinkScreen extends StatelessWidget {
   const DeviceLinkScreen({required this.state, super.key});
 
@@ -135,11 +138,6 @@ class DeviceLinkScreen extends StatelessWidget {
                       copyable: true,
                     ),
                     _LinkValueTile(
-                      icon: Icons.verified_outlined,
-                      title: l10n.connectVerificationTitle,
-                      value: link.verificationCode,
-                    ),
-                    _LinkValueTile(
                       icon: Icons.timer_outlined,
                       title: l10n.inviteExpires,
                       value: formatDateTime(context, link.expiresAt),
@@ -193,7 +191,15 @@ class DeviceLinkScreen extends StatelessWidget {
               controller: controller,
               autofocus: true,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(hintText: '000000'),
+              maxLength: deviceLinkCodeLength,
+              inputFormatters: <TextInputFormatter>[
+                FilteringTextInputFormatter.digitsOnly,
+              ],
+              decoration: InputDecoration(
+                hintText: '0' * deviceLinkCodeLength,
+                helperText: context.l10n.deviceLinkApproveHint,
+                helperMaxLines: 3,
+              ),
             ),
             actions: <Widget>[
               TextButton(
@@ -209,7 +215,7 @@ class DeviceLinkScreen extends StatelessWidget {
         },
       );
       final trimmed = code?.trim();
-      if (trimmed == null || trimmed.isEmpty) {
+      if (trimmed == null || trimmed.length != deviceLinkCodeLength) {
         return;
       }
       await state.approveActiveDeviceLink(trimmed);

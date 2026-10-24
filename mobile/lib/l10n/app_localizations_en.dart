@@ -1071,6 +1071,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get deviceLinkApprove => 'Approve';
 
   @override
+  String get deviceLinkApproveHint =>
+      'Enter the 8-digit code shown on the new device. Never use a code you were sent or read out to you.';
+
+  @override
   String get bannerQueued => 'Messages you send stay queued on this device.';
 
   @override

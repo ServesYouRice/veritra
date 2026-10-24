@@ -225,6 +225,45 @@ void main() {
     expect(state.activeDeviceLink?.verificationCode, isNot('654321'));
   });
 
+  for (final (name, makeApi) in <(String, FakeDeviceLinkApiClient Function())>[
+    (
+      'a missing transcript hash',
+      () => FakeDeviceLinkApiClient(omitTranscript: true)
+    ),
+    (
+      'a different transcript hash',
+      () => FakeDeviceLinkApiClient(transcriptByte: 8)
+    ),
+    ('a different nonce', () => FakeDeviceLinkApiClient(refreshNonceByte: 2)),
+    (
+      'a different account',
+      () => FakeDeviceLinkApiClient(refreshAccountId: 'acct_other')
+    ),
+  ]) {
+    test('device link refresh with $name fails closed', () async {
+      final api = makeApi();
+      final state = AppState(
+        apiClientFactory: (_) => api,
+        cryptoService: TestOnlyCryptoService(),
+        localStore: MemoryLocalStore(),
+        syncServiceFactory: (_, __) => FakeSyncService(),
+      )
+        ..api = api
+        ..session = const Session(
+          baseUrl: 'https://localhost:8080',
+          token: 'owner-token',
+        );
+      await state.createDeviceLink();
+      await state.refreshActiveDeviceLink();
+      expect(state.error, isNotNull);
+      expect(state.activeDeviceLink?.verificationCode, isEmpty);
+      expect(state.activeDeviceLink?.transcriptHash, isNull);
+      expect(state.activeDeviceLink?.linkNonce, List<int>.filled(32, 1));
+      await state.approveActiveDeviceLink('654321');
+      expect(state.activeDeviceLink?.state, isNot('approved'));
+    });
+  }
+
   test('app state refreshes encrypted messages for selected conversation',
       () async {
     final api = FakeDeviceLinkApiClient();
@@ -1033,10 +1072,17 @@ class _OutboxApiClient extends ApiClient {
 }
 
 class FakeDeviceLinkApiClient extends ApiClient {
-  FakeDeviceLinkApiClient({this.transcriptByte = 7})
-      : super(baseUrl: 'https://localhost:8080');
+  FakeDeviceLinkApiClient({
+    this.transcriptByte = 7,
+    this.omitTranscript = false,
+    this.refreshNonceByte = 1,
+    this.refreshAccountId = 'acct_owner',
+  }) : super(baseUrl: 'https://localhost:8080');
 
   final int transcriptByte;
+  final bool omitTranscript;
+  final int refreshNonceByte;
+  final String refreshAccountId;
 
   @override
   Future<DeviceLink> createDeviceLink(String token) async {
@@ -1045,7 +1091,11 @@ class FakeDeviceLinkApiClient extends ApiClient {
 
   @override
   Future<DeviceLink> deviceLink(String token, String linkId) async {
-    return _link(state: 'claimed', claimedDeviceName: 'linked tablet');
+    return _link(
+      state: 'claimed',
+      claimedDeviceName: 'linked tablet',
+      refresh: true,
+    );
   }
 
   @override
@@ -1240,6 +1290,7 @@ class FakeDeviceLinkApiClient extends ApiClient {
     String? code,
     String? approvedDeviceId,
     String? claimedDeviceName,
+    bool refresh = false,
   }) {
     return DeviceLink(
       id: 'dlink_1',
@@ -1250,15 +1301,16 @@ class FakeDeviceLinkApiClient extends ApiClient {
       linkUri: code == null ? null : 'veritra://device-link?code=$code',
       claimedDeviceName: claimedDeviceName,
       approvedDeviceId: approvedDeviceId,
-      accountId: 'acct_owner',
+      accountId: refresh ? refreshAccountId : 'acct_owner',
       createdByDeviceId: 'dev_owner',
       protocolVersion: 'veritra-device-link-v1',
-      linkNonce: List<int>.filled(32, 1),
+      linkNonce: List<int>.filled(32, refresh ? refreshNonceByte : 1),
       existingSigningKey: List<int>.filled(32, 2),
       claimedDeviceId: state == 'pending' ? null : 'dev_linked',
       claimedSigningKey: state == 'pending' ? null : List<int>.filled(32, 9),
-      transcriptHash:
-          state == 'pending' ? null : List<int>.filled(32, transcriptByte),
+      transcriptHash: state == 'pending' || (refresh && omitTranscript)
+          ? null
+          : List<int>.filled(32, transcriptByte),
     );
   }
 }

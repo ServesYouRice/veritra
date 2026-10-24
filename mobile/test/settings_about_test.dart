@@ -210,6 +210,24 @@ void main() {
   });
 
   group('device-link URI', () {
+    testWidgets('the approving device never renders the safety code', (
+      tester,
+    ) async {
+      final state = _state()
+        ..activeDeviceLink = DeviceLink(
+          id: 'dl_1',
+          state: 'claimed',
+          verificationCode: '12345678',
+          expiresAt: DateTime.utc(2030),
+          code: 'PAIRCODE',
+        );
+      await tester.pumpWidget(
+        MaterialApp(home: DeviceLinkScreen(state: state)),
+      );
+      expect(find.textContaining('12345678'), findsNothing);
+      expect(find.text('VERIFICATION CODE'), findsNothing);
+    });
+
     test('the QR payload is built locally and round-trips the scanner', () {
       final payload = deviceLinkQrPayload(' AB CD+1 ')!;
       expect(payload, startsWith('veritra://device-link?code='));

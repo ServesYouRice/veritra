@@ -326,6 +326,7 @@
   "deviceLinkRefreshStatus": "Освежи статус",
   "deviceLinkApproveDevice": "Одобри уређај",
   "deviceLinkApprove": "Одобри",
+  "deviceLinkApproveHint": "Унесите осмоцифрени код приказан на новом уређају. Никада не користите код који вам је неко послао или прочитао.",
 
   "bannerQueued": "Поруке које шаљете остају у реду чекања на овом уређају.",
   "bannerReconnecting": "Поновно повезивање са сервером…",

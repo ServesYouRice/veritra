@@ -2381,48 +2381,76 @@ class AppState extends ChangeNotifier {
       if (current == null || client == null || link == null) {
         return;
       }
-      final refreshed = await client.deviceLink(current.token, link.id);
-      var merged = DeviceLink(
-        id: refreshed.id,
-        state: refreshed.state,
-        verificationCode: link.verificationCode,
-        expiresAt: refreshed.expiresAt,
-        code: link.code ?? refreshed.code,
-        linkUri: link.linkUri ?? refreshed.linkUri,
-        claimedDeviceName: refreshed.claimedDeviceName,
-        approvedDeviceId: refreshed.approvedDeviceId,
-        accountId: refreshed.accountId,
-        createdByDeviceId: refreshed.createdByDeviceId,
-        protocolVersion: refreshed.protocolVersion,
-        linkNonce: refreshed.linkNonce,
-        existingSigningKey: refreshed.existingSigningKey,
-        claimedDeviceId: refreshed.claimedDeviceId,
-        claimedSigningKey: refreshed.claimedSigningKey,
-        transcriptHash: link.transcriptHash ?? refreshed.transcriptHash,
-      );
-      if (refreshed.state == 'claimed' &&
-          refreshed.accountId != null &&
-          refreshed.protocolVersion != null &&
-          refreshed.linkNonce?.length == 32 &&
-          refreshed.claimedDeviceId != null &&
-          refreshed.claimedSigningKey?.length == 32) {
-        final verification = await cryptoService.deriveDeviceLinkVerification(
-          accountId: refreshed.accountId!,
-          protocolVersion: refreshed.protocolVersion!,
-          linkNonce: refreshed.linkNonce!,
-          peerDeviceId: refreshed.claimedDeviceId!,
-          peerSigningKey: refreshed.claimedSigningKey!,
-          localIsExistingDevice: true,
-        );
-        if (refreshed.transcriptHash != null &&
-            !_constantTimeBytesEqual(
-                verification.transcriptHash, refreshed.transcriptHash!)) {
-          throw StateError('Device-link transcript was substituted');
-        }
-        merged = _deviceLinkWithVerification(merged, verification);
+      try {
+        activeDeviceLink = await _refreshedDeviceLink(current, client, link);
+      } catch (_) {
+        // Fail closed: whatever was verified before no longer stands, so
+        // approval is impossible until a refresh passes every check.
+        activeDeviceLink = _deviceLinkWithoutVerification(link);
+        rethrow;
       }
-      activeDeviceLink = merged;
     });
+  }
+
+  /// The link after a status refresh. The account and nonce are the ones
+  /// this device received when it created the link; the server cannot swap
+  /// them later, and its relayed transcript hash must match the one derived
+  /// here.
+  Future<DeviceLink> _refreshedDeviceLink(
+      Session current, ApiClient client, DeviceLink link) async {
+    final accountId = link.accountId;
+    final linkNonce = link.linkNonce;
+    if (accountId == null || linkNonce == null || linkNonce.length != 32) {
+      throw StateError('Device-link transcript context is incomplete');
+    }
+    final refreshed = await client.deviceLink(current.token, link.id);
+    if ((refreshed.accountId != null && refreshed.accountId != accountId) ||
+        (refreshed.linkNonce != null &&
+            !_constantTimeBytesEqual(linkNonce, refreshed.linkNonce!))) {
+      throw StateError('Device-link transcript was substituted');
+    }
+    var merged = DeviceLink(
+      id: refreshed.id,
+      state: refreshed.state,
+      verificationCode: link.verificationCode,
+      expiresAt: refreshed.expiresAt,
+      code: link.code ?? refreshed.code,
+      linkUri: link.linkUri ?? refreshed.linkUri,
+      claimedDeviceName: refreshed.claimedDeviceName,
+      approvedDeviceId: refreshed.approvedDeviceId,
+      accountId: accountId,
+      createdByDeviceId: refreshed.createdByDeviceId,
+      protocolVersion: refreshed.protocolVersion,
+      linkNonce: linkNonce,
+      existingSigningKey: refreshed.existingSigningKey,
+      claimedDeviceId: refreshed.claimedDeviceId,
+      claimedSigningKey: refreshed.claimedSigningKey,
+      transcriptHash: link.transcriptHash ?? refreshed.transcriptHash,
+    );
+    if (refreshed.state == 'claimed') {
+      if (refreshed.protocolVersion == null ||
+          refreshed.claimedDeviceId == null ||
+          refreshed.claimedSigningKey?.length != 32) {
+        throw StateError('Device-link transcript context is incomplete');
+      }
+      final relayedHash = refreshed.transcriptHash;
+      if (relayedHash == null) {
+        throw StateError('Device-link transcript hash is missing');
+      }
+      final verification = await cryptoService.deriveDeviceLinkVerification(
+        accountId: accountId,
+        protocolVersion: refreshed.protocolVersion!,
+        linkNonce: linkNonce,
+        peerDeviceId: refreshed.claimedDeviceId!,
+        peerSigningKey: refreshed.claimedSigningKey!,
+        localIsExistingDevice: true,
+      );
+      if (!_constantTimeBytesEqual(verification.transcriptHash, relayedHash)) {
+        throw StateError('Device-link transcript was substituted');
+      }
+      merged = _deviceLinkWithVerification(merged, verification);
+    }
+    return merged;
   }
 
   Future<void> claimDeviceLink(String baseUrl, String code) async {
@@ -4452,6 +4480,27 @@ DeviceLink _deviceLinkWithVerification(
     claimedDeviceId: link.claimedDeviceId,
     claimedSigningKey: link.claimedSigningKey,
     transcriptHash: verification.transcriptHash,
+  );
+}
+
+DeviceLink _deviceLinkWithoutVerification(DeviceLink link) {
+  return DeviceLink(
+    id: link.id,
+    state: link.state,
+    verificationCode: '',
+    expiresAt: link.expiresAt,
+    code: link.code,
+    linkUri: link.linkUri,
+    claimedDeviceName: link.claimedDeviceName,
+    approvedDeviceId: link.approvedDeviceId,
+    accountId: link.accountId,
+    createdByDeviceId: link.createdByDeviceId,
+    protocolVersion: link.protocolVersion,
+    linkNonce: link.linkNonce,
+    existingSigningKey: link.existingSigningKey,
+    claimedDeviceId: link.claimedDeviceId,
+    claimedSigningKey: link.claimedSigningKey,
+    transcriptHash: null,
   );
 }
 

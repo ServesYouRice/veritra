@@ -300,6 +300,7 @@
   "deviceLinkRefreshStatus": "Osveži status",
   "deviceLinkApproveDevice": "Odobri uređaj",
   "deviceLinkApprove": "Odobri",
+  "deviceLinkApproveHint": "Unesite osmocifreni kod prikazan na novom uređaju. Nikada ne koristite kod koji vam je neko poslao ili pročitao.",
   "bannerQueued": "Poruke koje šaljete ostaju u redu čekanja na ovom uređaju.",
   "bannerReconnecting": "Ponovno povezivanje sa serverom…",
   "bannerLastSynced": "Poslednja sinhronizacija: {time}.",
