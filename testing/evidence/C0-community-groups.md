@@ -12,10 +12,11 @@ Measured 2026-10-24 on `main` at `dbce0f2` with the crate's own code paths
 ```text
 cd crypto/rust
 cargo test --locked --release --test c0_join_cost -- --ignored --nocapture --test-threads 1
+# or one measurement: ... --test c0_join_cost removal_cost_after_self_updates -- --ignored ...
 ```
 
-- Test: `crypto/rust/tests/c0_join_cost.rs`. Its quick case (10 leaves)
-  runs in every `cargo test`.
+- Test: `crypto/rust/tests/c0_join_cost.rs`. Its two quick cases (10 and
+  16 leaves) run in every `cargo test`.
 - Machine: 4 vCPU Intel Xeon on a shared cloud host. Release profile, rustc
   1.91.0, one test thread. On a shared CPU the absolute times can move by
   about 2x; the bytes are exact.
@@ -31,9 +32,10 @@ cargo test --locked --release --test c0_join_cost -- --ignored --nocapture --tes
     commit. The new device then decrypts a message, which proves the join
     worked.
   - **Cold remove.** The creator removes the devices it just added, one
-    commit each. An add-only commit leaves parent nodes blank, so these
-    path-carrying commits encrypt to whole subtrees. This is the worst
-    case, right after a bulk build.
+    commit each. An add-only commit carries no update path, so parent
+    nodes stay blank, and these path-carrying commits encrypt to whole
+    subtrees. Every join is add-only, so this cold tree is the **normal**
+    case for a group that only grows, not a rare worst case.
   - **Warm remove.** A fresh group of the same size gives every member a
     state. Every even leaf commits one self-update, which every member
     processes, so no parent node is blank. Then one removal is made.
@@ -105,3 +107,39 @@ open channels and 5 private channels of 200 leaves.
 With 50 joins a day in community L, one group per channel costs every
 existing device about 11 s of CPU and 0.9 MB a day for joins alone. The
 shared layout costs about 0.4 s and 29 KB.
+
+## Removal after k self-updates (cold tree)
+
+`removal_cost_after_self_updates`, measured 2026-10-24 on the same host.
+
+- **Method.** The tree is built cold with one bulk commit. Then k members,
+  in a fixed random order, each commit one self-update, and every member
+  holding a state processes it. At each checkpoint the creator stages one
+  removal of a member that never updated, reads its size, and drops it
+  (`clear_pending_commit`), so the tree is unchanged.
+- **Egress** is the removal commit times the other devices: the server
+  sends every commit to every member device.
+
+| Leaves | Self-updates done | Removal stage ms | Removal commit B | Removal egress B | Last self-update commit B |
+|---:|---:|---:|---:|---:|---:|
+| 200 | 0 | 9.98 | 16,957 | 3,374,443 | - |
+| 200 | 1 | 11.18 | 14,395 | 2,864,605 | 17,213 |
+| 200 | 10 | 2.82 | 2,619 | 521,181 | 4,155 |
+| 200 | 50 | 2.16 | 2,107 | 419,293 | 2,107 |
+| 200 | 100 | 2.35 | 1,595 | 317,405 | 1,851 |
+| 1000 | 0 | 25.80 | 82,749 | 82,666,251 | - |
+| 1000 | 1 | 17.96 | 61,757 | 61,695,243 | 82,749 |
+| 1000 | 10 | 12.43 | 20,029 | 20,008,971 | 19,517 |
+| 1000 | 50 | 8.71 | 4,667 | 4,662,333 | 5,179 |
+| 1000 | 100 | 10.15 | 2,875 | 2,872,125 | 3,131 |
+
+Reading:
+
+- **Cold egress is the dominant cost.** One cold removal at 1,000 leaves
+  is about 83 MB of server egress. After 10 self-updates it is 20 MB, and
+  after 100 it is 2.9 MB.
+- **The first self-updates are expensive.** They cost as much as a cold
+  removal (83 KB), and fall quickly after that.
+- This supports the C0 rule that every member device commits one
+  self-update after joining, and again on a timer. C8 should repeat this
+  table at each size step.

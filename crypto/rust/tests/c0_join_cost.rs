@@ -2,17 +2,20 @@
 //!
 //! Sizes count leaves (devices), not accounts: one account may hold up to ten
 //! devices (D38). The group is built the way the app builds it today: the
-//! creator adds every device in one staged commit (card I51), which leaves
-//! the tree's parent nodes blank. The first commits that carry an update path
-//! (a removal, a self-update) then encrypt to whole subtrees, so the "cold"
-//! removal numbers are the worst case. The "warm" numbers come from a tree in
-//! which every even leaf has committed once, which fills every parent node.
+//! creator adds every device in one staged commit (card I51). Add-only
+//! commits carry no update path, so parent nodes stay blank and new leaves
+//! sit unmerged. This "cold" tree is the normal case, not a rare one: every
+//! join is an add-only commit. A commit that carries a path (a removal, a
+//! self-update) then encrypts to whole subtrees. The "warm" numbers come from
+//! a tree in which every even leaf has committed once, which fills every
+//! parent node. `removal_cost_after_self_updates` measures the steps between:
+//! a cold tree after k members have each committed one self-update.
 //!
 //! The quick case runs in `cargo test`. The measured sizes are ignored there
 //! and run in release, with output:
 //!
 //! ```text
-//! cargo test --release --test c0_join_cost -- --ignored --nocapture --test-threads 1
+//! cargo test --locked --release --test c0_join_cost -- --ignored --nocapture --test-threads 1
 //! ```
 //!
 //! Results are recorded in `testing/evidence/C0-community-groups.md`.
@@ -388,4 +391,130 @@ fn join_cost_by_group_size() {
     ] {
         print_report(&measure(leaves, rounds, warm));
     }
+}
+
+/// A fixed shuffle (xorshift), so every run picks the same members.
+fn shuffled(count: usize) -> Vec<usize> {
+    let mut order = (0..count).collect::<Vec<_>>();
+    let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
+    for index in (1..count).rev() {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        order.swap(index, (state % (index as u64 + 1)) as usize);
+    }
+    order
+}
+
+/// Stages (and then drops) the removal of one member, so the tree is left
+/// as it was. Returns the stage time and the commit size.
+fn staged_removal_size(group: &mut Group, leaving: &Member) -> (Duration, usize) {
+    let started = Instant::now();
+    let staged = group
+        .creator
+        .device
+        .stage_membership_commit(&mut group.creator_group, &[], &[leaving.identity()])
+        .unwrap();
+    let stage = started.elapsed();
+    group
+        .creator
+        .device
+        .clear_pending_commit(&mut group.creator_group)
+        .unwrap();
+    (stage, staged.commit.len())
+}
+
+/// Builds a cold tree of `leaves` devices, then lets members, in a fixed
+/// random order, each commit one self-update. At each checkpoint it stages
+/// one removal and prints its size, and the size of the last self-update.
+fn removal_after_self_updates(leaves: usize, checkpoints: &[usize]) {
+    let (mut group, welcome) = build_group(leaves);
+    let max_updates = *checkpoints.iter().max().unwrap();
+    // The last member never updates; it is the one whose removal is staged.
+    let leaving = group.others.pop().unwrap();
+    let order = shuffled(group.others.len());
+    let updaters = order[..max_updates].to_vec();
+    let mut states = updaters
+        .iter()
+        .map(|&index| {
+            group.others[index]
+                .device
+                .join_group(GROUP_ID, &welcome)
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let mut done = 0;
+    let mut last_update_bytes = 0;
+    for &checkpoint in checkpoints {
+        while done < checkpoint {
+            let member = &group.others[updaters[done]];
+            let commit = member.device.self_update(&mut states[done]).unwrap();
+            member
+                .device
+                .merge_pending_commit(&mut states[done])
+                .unwrap();
+            last_update_bytes = commit.len();
+            for (other, state) in states.iter_mut().enumerate() {
+                if other != done {
+                    group.others[updaters[other]]
+                        .device
+                        .process_commit(state, &commit)
+                        .unwrap();
+                }
+            }
+            group
+                .creator
+                .device
+                .process_commit(&mut group.creator_group, &commit)
+                .unwrap();
+            done += 1;
+        }
+        let (stage, bytes) = staged_removal_size(&mut group, &leaving);
+        let update = if checkpoint == 0 {
+            "-".to_string()
+        } else {
+            last_update_bytes.to_string()
+        };
+        println!(
+            "| {leaves} | {checkpoint} | {} | {bytes} | {} | {update} |",
+            ms(stage),
+            bytes * (leaves - 1),
+        );
+    }
+}
+
+#[test]
+fn removal_cost_quick_case_shrinks_after_self_updates() {
+    let (mut group, welcome) = build_group(16);
+    let leaving = group.others.pop().unwrap();
+    let (_, cold) = staged_removal_size(&mut group, &leaving);
+    let mut state = group.others[0]
+        .device
+        .join_group(GROUP_ID, &welcome)
+        .unwrap();
+    let commit = group.others[0].device.self_update(&mut state).unwrap();
+    group.others[0]
+        .device
+        .merge_pending_commit(&mut state)
+        .unwrap();
+    group
+        .creator
+        .device
+        .process_commit(&mut group.creator_group, &commit)
+        .unwrap();
+    let (_, after) = staged_removal_size(&mut group, &leaving);
+    assert!(cold > 0 && after > 0);
+    assert!(after <= cold);
+}
+
+#[test]
+#[ignore = "measurement: run in release with --ignored --nocapture"]
+fn removal_cost_after_self_updates() {
+    println!(
+        "| leaves | self-updates done | removal stage ms | removal commit B \
+         | removal egress B (commit x other devices) | last self-update commit B |"
+    );
+    println!("|---|---|---|---|---|---|");
+    removal_after_self_updates(200, &[0, 1, 10, 50, 100]);
+    removal_after_self_updates(1000, &[0, 1, 10, 50, 100]);
 }

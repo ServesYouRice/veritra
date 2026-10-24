@@ -66,10 +66,16 @@ until the package that builds it lands and adds its change-log entry.
 - [K0: one long-lived key](designs/K0-long-lived-key.md): a recovery key
   only the user holds; backups sealed to its public half; one history
   container for backups (K1) and new-device bundles (K2); restores create
-  a new device instead of cloning MLS state. Proposes ABI v7 (additive).
+  a new device instead of cloning MLS state. Proposes ABI v7 (additive)
+  and device-link protocol v2: a QR-only link secret keys the SAS (today's
+  8-digit SAS can be ground by a malicious server) and the K2 hand-off.
 - [C0: community group layout](designs/C0-community-groups.md): one shared
   MLS group for a community's open channels plus one per private channel,
   with a measured join cost ([evidence](../testing/evidence/C0-community-groups.md)).
+  It needs `channel_id` as a reserved top-level context key in the W7
+  payload: required in `community_shared` conversations, absent elsewhere,
+  and invalid on a mismatch with the envelope. It must land before any W8
+  sender.
 
 ## Change log since the Stage 1 freeze
 
