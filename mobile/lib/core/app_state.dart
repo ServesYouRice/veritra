@@ -24,6 +24,8 @@ import 'errors.dart';
 import 'message_history.dart';
 import '../storage/encrypted_database.dart' show LocalMessageKind;
 import 'models.dart';
+import 'receipts_state.dart';
+import 'typing_state.dart';
 import '../l10n/l10n.dart';
 
 typedef ApiClientFactory = ApiClient Function(String baseUrl);
@@ -160,7 +162,22 @@ class AppState extends ChangeNotifier {
     this.backupService,
     this.attachmentService,
     this.config = ClientConfig.production,
-  }) : pushService = pushService ?? DisabledMobilePushService();
+    ReceiptPreferences? receiptPreferences,
+  })  : pushService = pushService ?? DisabledMobilePushService(),
+        receiptPreferences = receiptPreferences ??
+            ReceiptPreferences(MemoryReceiptPreferenceStore()) {
+    // Read the saved switch now so the settings screen shows it at once.
+    unawaited(this.receiptPreferences.loaded);
+  }
+
+  /// The "send read receipts" switch (W5).
+  final ReceiptPreferences receiptPreferences;
+
+  /// Delivery and read cursors of the other members (W5).
+  final ReceiptsState receipts = ReceiptsState();
+
+  /// Who is typing (W5). Ephemeral, memory only.
+  final TypingState typing = TypingState();
 
   /// Encrypted backup and restore (card I45). Null in builds without the
   /// MLS service, where there is nothing to back up.
@@ -1277,6 +1294,12 @@ class AppState extends ChangeNotifier {
       conversationId: <ReceivedMessageEnvelope>[...page.messages, ...older],
     };
     _historyCursors[conversationId] = page.nextBefore;
+    // A message that just landed ends its sender's "typing…" line.
+    final newest = page.messages.firstOrNull;
+    if (newest != null &&
+        DateTime.now().difference(newest.createdAt) < typingExpiry) {
+      typing.stoppedTyping(conversationId, newest.senderAccountId);
+    }
     if (persist) await _persistSnapshot();
   }
 
@@ -1770,7 +1793,15 @@ class AppState extends ChangeNotifier {
       return;
     }
     try {
-      await client.markRead(current.token, conversationId, messages.first.id);
+      // With the switch off the receipt is private: the server keeps this
+      // account's own cursor for the unread count and shares nothing.
+      await receiptPreferences.loaded;
+      if (receiptPreferences.sendReadReceipts) {
+        await client.markRead(current.token, conversationId, messages.first.id);
+      } else {
+        await client.markReadPrivate(
+            current.token, conversationId, messages.first.id);
+      }
       // Clear the unread badge immediately rather than waiting for the next
       // conversation refresh; the receipt has landed server-side.
       var changed = false;
@@ -2473,7 +2504,115 @@ class AppState extends ChangeNotifier {
     selectedConversationId = id;
     notifyListeners();
     // A request loads nothing until it is accepted.
-    if (!_heldBack(id)) unawaited(loadMessages(id));
+    if (!_heldBack(id)) {
+      unawaited(loadMessages(id));
+      unawaited(refreshReceipts(id));
+    }
+  }
+
+  /// Routes the realtime frames that are not stored events (W5): typing and
+  /// delivery announcements. True when the frame was one of them.
+  @visibleForTesting
+  bool handleEphemeralFrame(Map<String, Object?> frame) {
+    final type = frame['type'];
+    final conversationId = frame['conversation_id'];
+    if (type == 'sync.connected') {
+      // Delivery announcements are never stored, so any sent while the socket
+      // was down are read again here. The catch-up still runs.
+      final selected = selectedConversationId;
+      if (selected != null) unawaited(refreshReceipts(selected));
+      return false;
+    }
+    if (type != 'typing.updated' && type != 'delivery_receipt.updated') {
+      return false;
+    }
+    if (conversationId is! String) return true;
+    if (type == 'delivery_receipt.updated') {
+      if (conversationId == selectedConversationId) {
+        unawaited(refreshReceipts(conversationId));
+      }
+      return true;
+    }
+    final payload = frame['payload'];
+    final accountId = payload is Map ? payload['account_id'] : null;
+    if (accountId is String && accountId != session?.accountId) {
+      typing.remoteTyping(conversationId, accountId);
+    }
+    return true;
+  }
+
+  /// Adopts the account's read-receipts switch from the server, so a change
+  /// made on another linked device shows here. Best effort.
+  Future<void> refreshReadReceiptsSetting() async {
+    final current = session;
+    final client = api;
+    if (current == null || client == null) return;
+    try {
+      final enabled = await client.readReceiptsEnabled(current.token);
+      if (_disposed || !_sameSession(current)) return;
+      await receiptPreferences.setSendReadReceipts(enabled);
+    } catch (_) {
+      // The saved choice on this device stands.
+    }
+  }
+
+  /// Flips the account's read-receipts switch (every linked device follows).
+  /// False when the server could not be told; the switch then stays as it was.
+  Future<bool> setSendReadReceipts(bool enabled) async {
+    final current = session;
+    final client = api;
+    if (current == null || client == null) return false;
+    try {
+      await client.setReadReceiptsEnabled(current.token, enabled);
+    } catch (_) {
+      return false;
+    }
+    await receiptPreferences.setSendReadReceipts(enabled);
+    return true;
+  }
+
+  /// Whether ticks are offered in [conversationId]: DMs and groups up to
+  /// [tickMaxMembers], never community channels.
+  bool ticksApply(String conversationId) {
+    final conversation =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    if (conversation == null || conversation.isChannel) return false;
+    final members = membersFor(conversationId).length;
+    return members <= tickMaxMembers;
+  }
+
+  /// Reads the other members' delivery and read cursors. Best effort: the
+  /// ticks simply stay as they were when it fails.
+  Future<void> refreshReceipts(String conversationId) async {
+    final current = session;
+    final client = api;
+    if (current == null || client == null) return;
+    try {
+      final list = await client.listReceipts(current.token, conversationId);
+      if (_disposed || !_sameSession(current)) return;
+      receipts.set(conversationId, list);
+    } catch (_) {
+      // Advisory only.
+    }
+  }
+
+  /// Tells the other members this account is typing in [conversationId].
+  /// Throttled, skipped in conversations too large for a typing line, and
+  /// never retried: a missed signal is simply a missed signal.
+  void notifyTyping(String conversationId) {
+    final current = session;
+    final client = api;
+    if (current == null || client == null) return;
+    final known = membersFor(conversationId).length;
+    final members =
+        known > 0 ? known : receipts.receiptsFor(conversationId).length + 1;
+    if (members < 2 || members > typingMaxMembers) return;
+    if (!typing.takeSendSlot(conversationId)) return;
+    unawaited(
+      client
+          .sendTyping(current.token, conversationId)
+          .catchError((Object _) {}),
+    );
   }
 
   Future<void> _startSync() async {
@@ -2528,7 +2667,9 @@ class AppState extends ChangeNotifier {
     sync = syncServiceFactory(current.baseUrl, current.token);
     _setConnectionStatus(ConnectionStatus.connecting);
     _syncSubscription = sync!.events.listen(
-      (_) {
+      (frame) {
+        // Ephemeral frames carry nothing to catch up on.
+        if (handleEphemeralFrame(frame)) return;
         unawaited(_catchUpSyncEvents());
         unawaited(_flushMlsOutbox());
       },
@@ -2548,6 +2689,7 @@ class AppState extends ChangeNotifier {
     unawaited(refreshInvites());
     unawaited(refreshCommunities());
     unawaited(refreshBlocks());
+    unawaited(refreshReadReceiptsSetting());
     unawaited(_startPush());
   }
 
@@ -3121,6 +3263,9 @@ class AppState extends ChangeNotifier {
     if (type.startsWith('reaction.') || type == 'read_receipt.updated') {
       if (event.conversationId == selectedConversationId) {
         await refreshSelectedMessages(notify: false, persist: false);
+        if (type == 'read_receipt.updated') {
+          unawaited(refreshReceipts(event.conversationId!));
+        }
       }
       return;
     }
@@ -3387,6 +3532,8 @@ class AppState extends ChangeNotifier {
     messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
     _history.clear();
     composerDrafts.clear();
+    receipts.clear();
+    typing.clear();
     pendingOutbox = <MessageEnvelope>[];
     _outboxStates.clear();
     _outboxRecords.clear();
@@ -4008,6 +4155,8 @@ class AppState extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    typing.dispose();
+    receipts.dispose();
     _sessionGeneration++;
     _syncOwner?.dispose();
     unawaited(_syncOwner?.cancelAndDrain());

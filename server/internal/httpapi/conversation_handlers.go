@@ -305,9 +305,19 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"muted": *req.Muted})
+	case parts[1] == "read-receipts" && r.Method == http.MethodGet:
+		receipts, err := a.Store.ConversationReceipts(r.Context(), conversationID, principal.AccountID)
+		if err != nil {
+			handleStorageError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"receipts": receipts})
 	case parts[1] == "read-receipts" && r.Method == http.MethodPost:
 		var req struct {
 			MessageID string `json:"message_id"`
+			// Private keeps the cursor for the caller's own unread count:
+			// nothing is announced and no other member can see it.
+			Private bool `json:"private"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
@@ -316,9 +326,23 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 			writeError(w, http.StatusBadRequest, "message_id_required")
 			return
 		}
+		if req.Private {
+			if err := a.Store.MarkReadPrivate(r.Context(), conversationID, principal.AccountID, req.MessageID); err != nil {
+				handleStorageError(w, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		eventID, err := a.Store.MarkReadWithSyncEvent(r.Context(), conversationID, principal.AccountID, req.MessageID)
 		if err != nil {
 			handleStorageError(w, err)
+			return
+		}
+		if eventID == 0 {
+			// The account keeps read receipts off: the cursor moved for its
+			// own unread count and nothing is announced.
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		payload := map[string]string{"account_id": principal.AccountID, "message_id": req.MessageID}

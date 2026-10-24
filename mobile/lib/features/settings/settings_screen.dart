@@ -12,6 +12,7 @@ import '../../core/models.dart';
 import '../../desktop/message_notifications.dart';
 import '../../ui/about.dart';
 import '../../ui/appearance.dart';
+import 'read_receipts_tile.dart';
 import '../../ui/avatar.dart';
 import '../../ui/confirm.dart';
 import '../../ui/format.dart';
@@ -320,6 +321,15 @@ class SettingsScreen extends StatelessWidget {
                   ],
                 ),
               ],
+              SectionHeader(l10n.settingsSectionPrivacy),
+              TileGroup(
+                children: <Widget>[
+                  ReadReceiptsTile(
+                    preferences: state.receiptPreferences,
+                    onChanged: state.setSendReadReceipts,
+                  ),
+                ],
+              ),
               if (appearance != null) ...<Widget>[
                 SectionHeader(l10n.settingsSectionAppearance),
                 _AppearanceRow(controller: appearance),
