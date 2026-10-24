@@ -12,7 +12,7 @@ credential decisions) before K1 or K2 starts.
 - **The recovery key pair.** RK yields a key pair. A device keeps its
   public half (`rk_pub`) only if it got it in one of two ways: the user
   typed RK into it, or a hand-off bound to the device-link safety code
-  (SAS) delivered it. Every backup is sealed to `rk_pub`. So no device, not
+  (SAS) and the QR-only link secret delivered it. Every backup is sealed to `rk_pub`. So no device, not
   even a stolen or revoked one, can open a backup; only the person holding
   RK can.
 - **`rk_pub` is an integrity secret.** HPKE base mode has no sender
@@ -20,9 +20,9 @@ credential decisions) before K1 or K2 starts.
   restores. That is why `rk_pub` never goes to the server, and never
   reaches a device by a path the server controls.
 - **Fresh keys for live transfers.** A history bundle for a newly linked
-  device uses a fresh key per transfer. The key is sealed to a
-  transfer key that the device-link SAS checks, and signed with the old
-  device's credential key.
+  device uses a fresh key per transfer. That key is sealed to a transfer
+  key in the device-link transcript, keyed to a link secret that travels
+  only in the QR code, and signed with the old device's credential key.
 - **One container format** for K1 backups and K2 bundles. Only the
   source of the file key differs.
 - **Nothing extra for C7 and W10.** C7 channel history keys travel inside
@@ -191,6 +191,7 @@ so the encrypted DB is enough.
 | `SHA-256(L)`, current `rk_id` | The server, on the account | — |
 | Backup ciphertext | The server, plus optionally a second copy as a file where the user picks (K1) | — |
 | FK | In memory while making or opening one container; inside one hand-off | Stored anywhere |
+| Link secret `s` | The old device's QR and manual code, and the new device's memory, until the hand-off is opened | The server |
 | Transfer private key | The sealed MLS provider state of the new device, until the hand-off is opened or the link expires | Anywhere after that |
 | Channel history keys (C7) | The encrypted local DB; inside containers | The server in clear |
 | Search index (W10) | The encrypted local DB | Containers, the server |
@@ -199,39 +200,78 @@ so the encrypted DB is enough.
 
 ### Linked device, old device present (K2)
 
-The device-link protocol moves to `veritra-device-link-v2`, and the
-transcript gains one field: the new device's fresh X25519 transfer
-public key, appended after `new_signing_public_key`. The SAS the user
-compares therefore covers it. Then:
+**Today's SAS protects only one direction, and the server can grind it.**
 
-1. After approval, the old device builds a `bundle` container under a
-   fresh FK. It uploads the container as an ordinary blob (ciphertext
-   only).
-2. The old device makes a hand-off of `{blob_id, sha256, FK,
+- **One direction only.** The user types the new device's 8-digit code into
+  the old device (`approveActiveDeviceLink`). The new device just waits for
+  the server to say "approved" (`completeDeviceLinkClaim`).
+- **The server can grind it.** Every transcript input is known to the
+  server or chosen by it: the server makes `link_nonce`, and it relays
+  both signing keys. So a malicious server can substitute a key for each
+  device and grind its substitute until the two 8-digit codes match,
+  about 10^8 key generations, a few minutes of CPU.
+- **The QR channel is the fix.** The one thing the server cannot touch is
+  the QR code that the new device scans from the old device's screen.
+
+**Link protocol v2** (`veritra-device-link-v2`) uses that channel:
+
+- **A link secret.** The old device makes a 16-byte link secret `s` and
+  puts it only in the QR payload (`veritra://device-link?code=…&s=…`), and
+  in the manual code. It never goes to the server: the app sends the
+  server only `code`.
+- **The transfer key.** The transcript gains one field, the new device's
+  fresh X25519 transfer public key, after `new_signing_public_key`.
+- **A keyed SAS.** The SAS becomes
+  `HMAC-SHA256(HKDF(s, "veritra-link-sas-v2"), transcript)[0..4] mod 10^8`.
+  A server without `s` cannot grind it: it gets one guess per link.
+- **The new device authenticates the old one through `s`,** not through a
+  key the server relayed (below). So it needs no second typed code.
+
+Then:
+
+1. **Bundle.** After approval, the old device builds a `bundle` container
+   under a fresh FK and uploads it as an ordinary blob (ciphertext only).
+2. **Hand-off.** The old device makes a hand-off of `{blob_id, sha256, FK,
    nonce_prefix, rk_pub, rk_id}`:
    - HPKE-sealed to the transfer key, with `info` =
-     `"veritra-k2-handoff-v1" | transcript_hash`;
-   - signed with its credential key over
+     `"veritra-k2-handoff-v1" | HKDF(s, "veritra-link-handoff-v2") | transcript_hash`.
+     Because `info` holds an `s`-derived secret, only a sealer that knows
+     `s` makes a hand-off that opens.
+   - Also signed with its credential key over
      `"veritra-k2-handoff-sig-v1" | transcript_hash | enc | ciphertext`.
-3. The old device posts the hand-off to the device link. The server keeps
-   it next to the link (ciphertext only) and deletes it when the new
-   device fetches it, or when the link expires.
-4. The new device checks the signature against
-   `existing_signing_public_key` from the transcript it has already
-   SAS-checked. It opens the hand-off and downloads the blob. It checks
-   `sha256`, decrypts and merges, because it may already hold newer
-   messages.
-5. The new device stores `rk_pub` only if `rk_id` matches. It wipes FK and
-   the transfer private key, and the blob is deleted.
+3. **Delivery.** The old device posts the hand-off to the link. The server
+   keeps the ciphertext under its own lifetime, which starts at approval
+   (for example 7 days; K2 picks the value). It is not tied to the claim
+   window, so a large bundle or an offline new device still works. The
+   server deletes it when the new device fetches it or that lifetime ends.
+4. **Opening.** The new device opens the hand-off, which proves the sender
+   knew `s`. It checks the signature against `existing_signing_public_key`,
+   downloads the blob, checks `sha256`, decrypts and merges. It merges
+   rather than replaces, because it may already hold newer messages.
+5. **Clean-up.** The new device stores `rk_pub` only if `rk_id` matches. It
+   wipes FK, `s` and the transfer private key, and the blob is deleted.
 
-A device the server inserts never saw the SAS, so it gets nothing. If
-the hand-off never arrives, the new device can ask the user to type RK
+What this stops:
+
+- **A ghost device** the server inserts never scanned the QR. It has no
+  `s`, so it gets nothing.
+- **A server that lies to the new device** ("approved", a fake old key)
+  cannot make a hand-off that opens.
+
+If the hand-off never arrives, the new device can ask the user to type RK
 (for `rk_pub` only). The history then has to come from a K1 restore.
 
+**K2 server work.**
+
+- `device_links` gains the new device's transfer public key and the
+  hand-off ciphertext with its expiry. That is a schema change.
+- A hand-off post route (the approving device only) and a fetch route
+  (the claim token only).
+- The server never receives `s`.
+
 **Alternative considered:** a two-device MLS group whose add checks the
-leaf's signature key against the SAS-checked key. That needs an
-add-with-expected-key check in the ABI. The hand-off above needs fewer new
-parts.
+leaf's signature key against the key the link verified. That needs an
+add-with-expected-key check in the ABI, and still needs the keyed SAS.
 
 ### All devices lost (K1 restore)
 
@@ -339,7 +379,7 @@ therefore restores **history only**, into a new device.
 |---|---|---|
 | Server operator, or a breach of the server and its R2 backups | Backup ciphertext, padded sizes, upload times, `rk_id`, `SHA-256(L)` | No key material. 240-bit RK, so no offline guessing |
 | Malicious server forging history | Would need `rk_pub` to seal a backup that opens | `rk_pub` is never on the server or on a server-controlled path. The restore checks the header's source device against the server record, and restored rows are marked |
-| Malicious server inserting a ghost device | Pending changes add it to MLS groups (a residual of trust-on-first-use, not of K0) | It gets no bundle or `rk_pub`: the hand-off is SAS-bound and signed |
+| Malicious server inserting a ghost device, or lying to the new device during a link | Pending changes add a ghost to MLS groups (a residual of trust-on-first-use, not of K0) | Neither gets a bundle or `rk_pub` in, because the hand-off is keyed to the QR-only link secret `s`. Link v2 also stops the server grinding today's 8-digit SAS |
 | Malicious server rolling back | Can serve an older backup, or withhold one | The AAD binds account, device and header. The restore screen shows date and device. Rollback on a fresh device cannot be detected otherwise; accepted |
 | Lost or stolen locked device | Secure storage and the D01 DB | It holds nothing that opens a backup. The user revokes it; nothing rotates |
 | Compromised unlocked device | Its own history, `rk_pub`, live messages | It cannot read any backup. With `rk_pub` it could forge a backup for its own account; that is accepted, since it already holds that account's live access |
@@ -434,10 +474,15 @@ therefore restores **history only**, into a new device.
 3. **Backups on by default** at onboarding (a skippable prompt to save
    RK), or opt-in in Settings?
 4. **Retire the clone-restore** once K2 ships?
+5. **The manual link code gets longer.** The link secret `s` adds about 26
+   base32 characters to the manual code (the QR is unchanged for the
+   user). Accept that? The alternative is to allow K2 hand-offs only for
+   links made by QR scan.
 
 ## Done when (for K0)
 
 K0 is done when this design is reviewed and the owner has answered the
 questions above. K1 then builds ABI v7 with test vectors, and adds a
 `docs/crypto.md` change-log entry for the ABI, link protocol v2 and the
-container.
+container. Link v2 also fixes today's server-grindable SAS, so it is
+worth building before K2, as its own package.

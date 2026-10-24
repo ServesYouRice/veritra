@@ -176,9 +176,16 @@ Per join of one device:
 - **Why.** In a 1,000-leaf cold tree, a removal is 83 KB. It falls to 20 KB
   after 10 such updates and to 2.9 KB after 100
   ([evidence](../../testing/evidence/C0-community-groups.md)).
-- **Cost.** One extra commit per join. The first few updates in a cold
-  tree are as large as a cold removal, so batched joins should stagger
-  them.
+- **Cost.** One extra path-carrying commit per join, sent to every
+  device:
+  - **Warm tree.** About 3.1 KB, so about 3.1 MB of egress per join at
+    1,000 leaves, against 0.57 MB for the add commit itself.
+  - **Cold tree.** The first self-updates cost as much as a cold removal,
+    about 83 MB of egress each at 1,000 leaves.
+
+  So the rule pays off only when removals are frequent relative to joins.
+  C8 measures the real ratio and may make the timer adaptive (update when
+  removals are frequent). Batched joins should stagger their updates.
 - **C8's job.** Measure the timer period, and removal bytes and egress at
   each size step.
 
