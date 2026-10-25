@@ -274,9 +274,14 @@ void main() {
       final store = createStore();
       await store.saveDraft('conv_1', 'secret draft');
       await store.saveConversationMute('conv_1', muted: true);
+      // Clearing the cache for a sign-out drops the drafts with it.
+      await store.clearCachedState(preserveOutbox: true);
+      expect(await store.loadDrafts(), isEmpty);
+
+      await store.saveDraft('conv_1', 'secret draft');
       // A session that expired keeps the drafts for the next sign-in; the
       // mute copies are refetched from the server.
-      await store.clearCachedState(preserveOutbox: true);
+      await store.clearCachedState(preserveOutbox: true, keepDrafts: true);
       expect(await store.loadDrafts(), hasLength(1));
       expect(await store.loadConversationMutes(), isEmpty);
 
@@ -308,6 +313,95 @@ void main() {
       mutes = await store.loadConversationMutes();
       expect(mutes.keys, <String>['always']);
     });
+  });
+
+  group('drafts through sign-out and session expiry', () {
+    late Directory directory;
+    late List<EncryptedLocalDatabase> databases;
+
+    setUp(() async {
+      FlutterSecureStorage.setMockInitialValues(<String, String>{});
+      directory = await Directory.systemTemp.createTemp('veritra-drafts-app-');
+      databases = <EncryptedLocalDatabase>[];
+    });
+
+    tearDown(() async {
+      for (final database in databases) {
+        await database.close();
+      }
+      if (await directory.exists()) await directory.delete(recursive: true);
+    });
+
+    final stores =
+        <String, LocalStore Function(List<EncryptedLocalDatabase>, Directory)>{
+      'memory store': (_, __) => MemoryLocalStore(),
+      'encrypted store': (databases, directory) => SecureLocalStore(
+            storage: const FlutterSecureStorage(),
+            directoryProvider: () async => directory,
+            databaseFactory: (file, keyHex) {
+              final database = openEncryptedLocalDatabase(file, keyHex);
+              databases.add(database);
+              return database;
+            },
+          ),
+    };
+
+    for (final entry in stores.entries) {
+      Future<(AppState, LocalStore, _MuteApi)> start() async {
+        final store = entry.value(databases, directory);
+        await store.saveSession(const Session(
+          baseUrl: 'https://localhost:8080',
+          token: 'token',
+          accountId: 'acct_own',
+          deviceId: 'dev_own',
+          deviceSecret: 'secret',
+        ));
+        await store.saveDraft('conv_1', 'unsent words', replyTo: 'dev:3');
+        final api = _MuteApi();
+        final state = AppState(
+          apiClientFactory: (_) => api,
+          cryptoService: TestOnlyCryptoService(),
+          localStore: store,
+          syncServiceFactory: (_, __) => _IdleSync(),
+        );
+        await state.tryRestoreSession();
+        expect(state.composerDrafts.textFor('conv_1'), 'unsent words');
+        return (state, store, api);
+      }
+
+      test('${entry.key}: signing out deletes the drafts', () async {
+        final (state, store, _) = await start();
+        await state.logout();
+        expect(await store.loadDrafts(), isEmpty);
+        expect(state.composerDrafts.textFor('conv_1'), isEmpty);
+        state.dispose();
+      });
+
+      test(
+          '${entry.key}: a rejected session keeps the drafts and the next '
+          'sign-in puts them back in the composer', () async {
+        final (state, store, api) = await start();
+        api.rejectToken = true;
+        await state.refreshConversations();
+        await Future<void>.delayed(Duration.zero);
+        expect(state.session, isNull);
+        expect(state.composerDrafts.textFor('conv_1'), isEmpty);
+        expect((await store.loadDrafts())['conv_1']?.text, 'unsent words');
+
+        api.rejectToken = false;
+        await state.login('https://localhost:8080', 'me', 'password');
+        expect(state.session, isNotNull);
+        expect(state.composerDrafts.textFor('conv_1'), 'unsent words');
+        expect(state.composerDrafts.replyTargetFor('conv_1'), 'dev:3');
+        // Typing continues from the restored text and is saved over it.
+        state.composerDrafts.setText('conv_1', 'unsent words, more');
+        state.flushDrafts();
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(
+            (await store.loadDrafts())['conv_1']?.text, 'unsent words, more');
+        state.dispose();
+      });
+    }
   });
 
   group('app state', () {
@@ -460,10 +554,31 @@ class _MuteApi extends ApiClient {
   bool? lastMuted;
   DateTime? lastUntil;
   ConversationMute? nextMute;
+  bool rejectToken = false;
 
   @override
-  Future<List<Conversation>> conversations(String token) async =>
-      <Conversation>[Conversation(id: 'conv_1', kind: 'group')];
+  Future<List<Conversation>> conversations(String token) async {
+    if (rejectToken) throw ApiException(401, '{"error":"unauthorized"}');
+    return <Conversation>[Conversation(id: 'conv_1', kind: 'group')];
+  }
+
+  @override
+  Future<Session> login({
+    required String username,
+    required String password,
+    required String deviceId,
+    required String deviceSecret,
+  }) async =>
+      Session(
+        baseUrl: baseUrl,
+        token: 'token_2',
+        accountId: 'acct_own',
+        deviceId: deviceId,
+        deviceSecret: deviceSecret,
+      );
+
+  @override
+  Future<void> logout(String token) async {}
 
   @override
   Future<List<Device>> devices(String token) async => <Device>[];

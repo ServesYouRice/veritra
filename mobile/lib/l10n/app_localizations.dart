@@ -3075,6 +3075,18 @@ abstract class AppLocalizations {
   /// **'Sync stopped. Try again.'**
   String get syncErrorStopped;
 
+  /// No description provided for @syncErrorLocalStorage.
+  ///
+  /// In en, this message translates to:
+  /// **'This device could not read or write its local storage. Messages are paused so none are skipped. Free up space or restart the app, then try again.'**
+  String get syncErrorLocalStorage;
+
+  /// No description provided for @syncErrorStorageBusy.
+  ///
+  /// In en, this message translates to:
+  /// **'This device\'s storage is busy or full. Sync will try again shortly.'**
+  String get syncErrorStorageBusy;
+
   /// No description provided for @apiErrorSessionInvalid.
   ///
   /// In en, this message translates to:
@@ -3488,6 +3500,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This device could not update its message storage for this version of Veritra. Nothing has been changed or deleted. Retry. If it keeps failing, you can reset this device and link it again.'**
   String get recoveryUpgradeError;
+
+  /// Recovery screen message when the SQLite library in this build has no encryption cipher or no FTS5 search support. The database and key are untouched; retrying or resetting cannot help.
+  ///
+  /// In en, this message translates to:
+  /// **'This build of Veritra cannot open its message storage: the database engine lacks encryption or search support. Your data has not been changed or deleted. Install a Veritra build that supports them.'**
+  String get recoverySqliteFeatureMissing;
 
   /// No description provided for @errorPasswordLoginNeedsLink.
   ///

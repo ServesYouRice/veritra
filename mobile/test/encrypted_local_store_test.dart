@@ -12,6 +12,7 @@ import 'package:flutter/services.dart' show MethodCall;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:sqlite3/common.dart' show CommonDatabase;
 import 'package:private_messenger/storage/backup_exclusion.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
@@ -1201,6 +1202,146 @@ void main() {
     expect(await userVersion(databases.last), 12);
   });
 
+  test('an upgrade from schema 3 keeps its rows and builds every later table',
+      () async {
+    final store = createStore();
+    await store.saveSyncCursor(1);
+    final database = databases.last;
+    await dropExpiryColumns(database);
+    await database.customStatement('DROP TABLE local_messages');
+    await database.customStatement('DROP TABLE local_message_reactions');
+    await database.customStatement('DROP TABLE local_peer_verifications');
+    for (final column in <String>[
+      'revocation_device_id',
+      'attempt_count',
+      'next_attempt_at',
+      'failure_class',
+      'terminal',
+    ]) {
+      await database.customStatement(
+          'ALTER TABLE local_mls_outbox_entries DROP COLUMN $column');
+    }
+    for (final column in <String>[
+      'attempt_count',
+      'next_attempt_at',
+      'failure_class',
+      'terminal',
+    ]) {
+      await database.customStatement(
+          'ALTER TABLE local_outbox_entries DROP COLUMN $column');
+    }
+    // Rows exactly as a schema 3 build wrote them.
+    await database.customStatement('INSERT INTO local_outbox_entries '
+        '(idempotency_key, conversation_id, queued_at, payload_json) '
+        "VALUES ('idem_1', 'conv_1', 1, '{}')");
+    await database.customStatement(
+        'INSERT INTO local_mls_outbox_entries (idempotency_key, '
+        'conversation_id, kind, recipient_device_id, payload, state_counter, '
+        "queued_at) VALUES ('mls_1', 'conv_1', 'welcome', 'dev_2', x'0102', 1, 1)");
+    await database.customStatement('PRAGMA user_version = 3');
+    await database.close();
+    databases.removeLast();
+
+    final upgraded = createStore();
+    expect(await upgraded.loadSyncCursor(), 1);
+    final reopened = databases.last;
+    expect(await userVersion(reopened), 12);
+    // The old rows are there with the new columns at their defaults.
+    final outbox = await reopened
+        .customSelect(
+            'SELECT attempt_count, terminal FROM local_outbox_entries')
+        .getSingle();
+    expect(outbox.read<int>('attempt_count'), 0);
+    expect(outbox.read<int>('terminal'), 0);
+    final pending = await upgraded.pendingMlsMessages();
+    expect(pending.single.idempotencyKey, 'mls_1');
+    expect(pending.single.revocationDeviceId, isNull);
+    // The later tables, the expiry columns, drafts and search all exist.
+    await upgraded.saveDraft('conv_1', 'after the upgrade');
+    expect((await upgraded.loadDrafts())['conv_1']?.text, 'after the upgrade');
+    await reopened.applyMessageEffects(<MessageEffect>[
+      const InsertMessageEffect(
+        key: 'dev_peer:new',
+        conversationId: 'conv_1',
+        senderAccountId: 'acct_peer',
+        senderDeviceId: 'dev_peer',
+        kind: LocalMessageKind.text,
+        body: 'after the upgrade',
+        createdAt: 1,
+        state: LocalMessageState.received,
+      ),
+    ]);
+    expect(
+        (await upgraded.searchMessages('upgrade')).single.key, 'dev_peer:new');
+    final verifications = await reopened
+        .customSelect('SELECT count(*) AS n FROM local_peer_verifications')
+        .getSingle();
+    expect(verifications.read<int>('n'), 0);
+    expect(await upgraded.nextMessageExpiry(), isNull);
+  });
+
+  group('SQLite features (W10)', () {
+    test('FTS5 missing is its own failure, not a rejected key', () async {
+      final original = await seedAndClose();
+      final key = await secureStorage.read(key: 'veritra.database_key.v1');
+      final store = SecureLocalStore(
+        storage: secureStorage,
+        directoryProvider: () async => directory,
+        databaseFactory: (file, keyHex) {
+          final opened = _openWithoutFts5(file, keyHex);
+          databases.add(opened);
+          return opened;
+        },
+      );
+      await expectLater(
+          store.loadSyncCursor(),
+          throwsA(allOf(
+              _storeFailure(LocalStoreFailureKind.sqliteFeatureMissing),
+              isA<LocalStoreUnavailableException>()
+                  .having((error) => error.retryable, 'retryable', isFalse))));
+      // Nothing was moved, deleted or reset.
+      await expectDatabaseUnchanged(original);
+      expect(await secureStorage.read(key: 'veritra.database_key.v1'), key);
+      expect(
+          directory
+              .listSync()
+              .where((item) => item.path.contains('unreadable-')),
+          isEmpty);
+    });
+
+    test('FTS5 missing on a new profile is the same failure', () async {
+      final store = SecureLocalStore(
+        storage: secureStorage,
+        directoryProvider: () async => directory,
+        databaseFactory: (file, keyHex) {
+          final opened = _openWithoutFts5(file, keyHex);
+          databases.add(opened);
+          return opened;
+        },
+      );
+      await expectLater(store.loadSyncCursor(),
+          throwsA(_storeFailure(LocalStoreFailureKind.sqliteFeatureMissing)));
+    });
+
+    test('the check passes on this build and fails on an injected answer', () {
+      final db = sqlite3.openInMemory();
+      addTearDown(db.close);
+      db.execute("PRAGMA cipher = 'chacha20'");
+      requireSqliteFeatures(db);
+      expect(
+          () => requireSqliteFeatures(db,
+              compileOptionUsed: (_, option) => option != 'ENABLE_FTS5'),
+          throwsA(isA<SqliteFeatureUnavailable>()
+              .having((error) => error.feature, 'feature', 'fts5')));
+      expect(
+          isSqliteFeatureUnavailable(DriftWrappedException(
+              message: 'wrapped',
+              cause: const SqliteFeatureUnavailable('fts5'))),
+          isTrue);
+      expect(isSqliteFeatureUnavailable(StateError('x')), isFalse);
+    });
+  });
+
   test(
       'the search index is required: a full disk fails the 11 to 12 upgrade '
       'and a retry completes it', () async {
@@ -1485,6 +1626,21 @@ EncryptedLocalDatabase _openWithoutRoom(
         rawDatabase.execute('PRAGMA max_page_count = $maxPages');
       },
     ));
+
+/// Opens like [openEncryptedLocalDatabase] on a SQLite build without FTS5.
+/// The answer is faked inside the background isolate, as a real build would
+/// give it, so the error reaches the app the way a real one does.
+EncryptedLocalDatabase _openWithoutFts5(File file, String keyHex) =>
+    EncryptedLocalDatabase(NativeDatabase.createInBackground(
+      file,
+      setup: (rawDatabase) {
+        rawDatabase.execute("PRAGMA cipher = 'chacha20'");
+        rawDatabase.execute("PRAGMA hexkey = '$keyHex'");
+        requireSqliteFeatures(rawDatabase, compileOptionUsed: _noFts5);
+      },
+    ));
+
+bool _noFts5(CommonDatabase db, String option) => option != 'ENABLE_FTS5';
 
 MlsStateTransition _nextTransition() => MlsStateTransition(
       messageId: 'mls_message_2',

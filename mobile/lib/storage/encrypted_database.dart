@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:drift/isolate.dart' show DriftRemoteException;
+import 'package:sqlite3/common.dart' show CommonDatabase;
 
 import 'message_search.dart';
 
@@ -651,9 +652,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required int cursor,
     List<LocalMessage> history = const <LocalMessage>[],
     List<LocalMessageReaction> reactions = const <LocalMessageReaction>[],
-    // Only a backup from before format 3 lacks message expiry. A newer one
-    // carries it, and the envelopes in it are never trusted to set it.
-    bool backfillExpiry = false,
+    // Only history entries whose JSON lacks the expiry key (a backup from
+    // before it travelled with the history) take it from their envelope. An
+    // entry that carries the key is taken as it is, and the envelopes in the
+    // backup never set it.
+    Set<String> backfillExpiryFor = const <String>{},
   }) =>
       transaction(() async {
         await delete(localMlsTransitions).go();
@@ -698,7 +701,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
                   payloadJson: item.payloadJson,
                   expiresAt: Value(envelopeExpiryMillis(item.payloadJson))));
         }
-        if (backfillExpiry) await _backfillExpiry();
+        if (backfillExpiryFor.isNotEmpty) {
+          await _backfillExpiry(onlyMessages: backfillExpiryFor);
+        }
         await _purgeExpiredInTransaction(
             DateTime.now().toUtc().millisecondsSinceEpoch);
         final queuedAt = DateTime.now().microsecondsSinceEpoch;
@@ -1541,12 +1546,14 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     );
   }
 
-  Future<void> clearCachedState({bool preserveOutbox = false}) =>
+  Future<void> clearCachedState(
+          {bool preserveOutbox = false, bool keepDrafts = false}) =>
       transaction(() async {
         await delete(localCiphertextEnvelopes).go();
         await delete(localConversations).go();
-        // Drafts stay: this runs when a session expires, and the user signs
-        // in again to the same drafts. Explicit sign-out wipes them.
+        // Drafts stay only when a session expires ([keepDrafts]): the person
+        // signs in again to the same drafts. Explicit sign-out wipes them.
+        if (!keepDrafts) await delete(localDrafts).go();
         await delete(localConversationMutes).go();
         if (!preserveOutbox) {
           await delete(localOutboxEntries).go();
@@ -1781,7 +1788,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
 
   /// Fills the schema 10 expiry columns from what older versions stored.
   /// Messages whose envelope already left the cache keep no expiry.
-  Future<void> _backfillExpiry() async {
+  ///
+  /// With [onlyMessages], only the messages with those server ids are filled.
+  Future<void> _backfillExpiry({Set<String>? onlyMessages}) async {
     final rows = await customSelect(
       'SELECT id, payload_json FROM local_ciphertext_envelopes '
       "WHERE payload_json LIKE '%\"expires_at\"%'",
@@ -1794,6 +1803,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         'UPDATE local_ciphertext_envelopes SET expires_at = ? WHERE id = ?',
         <Object?>[expiresAt, id],
       );
+      if (onlyMessages != null && !onlyMessages.contains(id)) continue;
       await customStatement(
         'UPDATE local_messages SET expires_at = ? '
         'WHERE server_message_id = ? AND expires_at IS NULL',
@@ -2016,13 +2026,7 @@ EncryptedLocalDatabase openEncryptedLocalDatabase(File file, String keyHex) {
         rawDatabase.execute('PRAGMA busy_timeout = 5000');
         // Before any migration runs, not only once Drift has opened.
         rawDatabase.execute('PRAGMA secure_delete = ON');
-        final cipherRows = rawDatabase.select('PRAGMA cipher');
-        final cipher = cipherRows.isEmpty
-            ? null
-            : cipherRows.first.values.first.toString();
-        if (cipher != 'chacha20') {
-          throw StateError('SQLite encryption cipher is unavailable');
-        }
+        requireSqliteFeatures(rawDatabase);
         // PRAGMA key accepts any input. The first schema read proves that the
         // key can authenticate the encrypted database before Drift uses it.
         rawDatabase.select('SELECT count(*) FROM sqlite_master');
@@ -2032,25 +2036,86 @@ EncryptedLocalDatabase openEncryptedLocalDatabase(File file, String keyHex) {
   );
 }
 
+/// The SQLite build lacks something Veritra needs. This is a property of the
+/// build, not of the database file: the file is fine, the key is fine, and
+/// neither a retry nor a reset can help.
+class SqliteFeatureUnavailable implements Exception {
+  const SqliteFeatureUnavailable(this.feature);
+
+  /// `cipher` or `fts5`.
+  final String feature;
+
+  @override
+  String toString() => 'SqliteFeatureUnavailable($feature)';
+}
+
+/// Throws [SqliteFeatureUnavailable] unless the cipher is active and FTS5 is
+/// compiled in (W10 search needs it). [compileOptionUsed] is injectable so a
+/// test can stand in for an FTS5-less SQLite.
+void requireSqliteFeatures(
+  CommonDatabase db, {
+  bool Function(CommonDatabase db, String option)? compileOptionUsed,
+}) {
+  final cipherRows = db.select('PRAGMA cipher');
+  final cipher =
+      cipherRows.isEmpty ? null : cipherRows.first.values.first.toString();
+  if (cipher != 'chacha20') {
+    throw const SqliteFeatureUnavailable('cipher');
+  }
+  final used = (compileOptionUsed ?? _compileOptionUsed)(db, 'ENABLE_FTS5');
+  if (!used) throw const SqliteFeatureUnavailable('fts5');
+}
+
+bool _compileOptionUsed(CommonDatabase db, String option) {
+  final rows = db.select('SELECT sqlite_compileoption_used(?)', [option]);
+  return rows.isNotEmpty && rows.first.values.first == 1;
+}
+
+/// Whether [error], or an error it wraps, is a [SqliteFeatureUnavailable].
+bool isSqliteFeatureUnavailable(Object? error, [int depth = 0]) {
+  if (error == null || depth > 8) return false;
+  return switch (error) {
+    SqliteFeatureUnavailable() => true,
+    DriftRemoteException(:final remoteCause) =>
+      isSqliteFeatureUnavailable(remoteCause, depth + 1),
+    DriftWrappedException(:final cause) =>
+      isSqliteFeatureUnavailable(cause, depth + 1),
+    CouldNotRollBackException(:final cause, :final exception) =>
+      isSqliteFeatureUnavailable(cause, depth + 1) ||
+          isSqliteFeatureUnavailable(exception, depth + 1),
+    _ => false,
+  };
+}
+
 /// Whether [error], or an error it wraps, is SQLite reporting a full device
 /// (`SQLITE_FULL`) or a failed read or write (`SQLITE_IOERR`). Errors from
 /// the background isolate arrive wrapped, several layers deep.
-bool isStorageFullError(Object error) => _isStorageFull(error, 0);
+bool isStorageFullError(Object error) {
+  final code = localStorageErrorCode(error);
+  return code == _sqliteFull || code == _sqliteIoErr;
+}
 
 const _sqliteIoErr = 10;
 const _sqliteFull = 13;
 
-bool _isStorageFull(Object? error, int depth) {
-  if (error == null || depth > 8) return false;
+/// The primary SQLite result code (extended codes masked to the low byte) of
+/// [error] or the error it wraps, or null when no SQLite error is inside. The
+/// encrypted database runs on a background isolate, so real failures arrive as
+/// `DriftRemoteException(remoteCause: SqliteException)`, sometimes inside a
+/// `DriftWrappedException` or a failed rollback.
+int? localStorageErrorCode(Object? error) => _storageErrorCode(error, 0);
+
+int? _storageErrorCode(Object? error, int depth) {
+  if (error == null || depth > 8) return null;
   return switch (error) {
-    SqliteException(:final resultCode) =>
-      resultCode == _sqliteFull || resultCode == _sqliteIoErr,
+    SqliteException(:final extendedResultCode) => extendedResultCode & 0xff,
     DriftRemoteException(:final remoteCause) =>
-      _isStorageFull(remoteCause, depth + 1),
-    DriftWrappedException(:final cause) => _isStorageFull(cause, depth + 1),
+      _storageErrorCode(remoteCause, depth + 1),
+    DriftWrappedException(:final cause) => _storageErrorCode(cause, depth + 1),
     CouldNotRollBackException(:final cause, :final exception) =>
-      _isStorageFull(cause, depth + 1) || _isStorageFull(exception, depth + 1),
-    _ => false,
+      _storageErrorCode(cause, depth + 1) ??
+          _storageErrorCode(exception, depth + 1),
+    _ => null,
   };
 }
 

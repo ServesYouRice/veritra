@@ -2,11 +2,16 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/widgets.dart';
+import 'package:drift/drift.dart'
+    show CouldNotRollBackException, DriftWrappedException;
+import 'package:drift/native.dart' show SqliteException;
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
+import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_recovery.dart';
 import 'package:private_messenger/sync/sync_service.dart';
@@ -390,6 +395,122 @@ void main() {
     expect(SyncRecovery.decode('not json'), isNull);
     expect(SyncRecovery.decode(null), isNull);
   });
+
+  group('local storage failures on the real encrypted database (B1)', () {
+    late Directory directory;
+    late List<EncryptedLocalDatabase> databases;
+
+    setUp(() async {
+      FlutterSecureStorage.setMockInitialValues(<String, String>{});
+      directory = await Directory.systemTemp.createTemp('veritra-sync-store-');
+      databases = <EncryptedLocalDatabase>[];
+    });
+
+    tearDown(() async {
+      for (final database in databases) {
+        await database.close();
+      }
+      if (await directory.exists()) await directory.delete(recursive: true);
+    });
+
+    test('a constraint failure is durable: retry only, no relink', () async {
+      final api = _ScriptedApi()..events = <SyncEvent>[_envelopeEvent(4, 'm')];
+      // Open the database before the harness starts syncing.
+      final store = SecureLocalStore(
+        storage: const FlutterSecureStorage(),
+        directoryProvider: () async => directory,
+        databaseFactory: (file, keyHex) {
+          final database = openEncryptedLocalDatabase(file, keyHex);
+          databases.add(database);
+          return database;
+        },
+      );
+      await store.saveSession(_session);
+      await databases.last.customStatement(
+          'CREATE TRIGGER fail_commit BEFORE INSERT ON local_mls_transitions '
+          "BEGIN SELECT RAISE(ABORT, 'refused'); END");
+      final harness = await _Harness.start(api, store: store);
+
+      await harness.waitFor(() => harness.state.syncRecovery != null);
+      final recovery = harness.state.syncRecovery!;
+      expect(recovery.kind, SyncFailureKind.localStorage);
+      expect(recovery.eventId, 4);
+      expect(recovery.choices, <SyncRecoveryChoice>[SyncRecoveryChoice.retry]);
+      expect(harness.state.syncError, harness.state.l10n.syncErrorLocalStorage);
+      expect(await harness.store.loadSyncCursor(), 0);
+      expect((await harness.store.loadSyncRecovery())!.kind,
+          SyncFailureKind.localStorage);
+
+      await databases.last.customStatement('DROP TRIGGER fail_commit');
+      await harness.state.retrySyncRecovery();
+      await harness
+          .waitFor(() async => await harness.store.loadSyncCursor() == 4);
+      expect(harness.state.syncRecovery, isNull);
+      harness.dispose();
+    });
+
+    test('a full database is transient: storage text, no recovery record',
+        () async {
+      final api = _ScriptedApi()..events = <SyncEvent>[_envelopeEvent(4, 'm')];
+      final store = SecureLocalStore(
+        storage: const FlutterSecureStorage(),
+        directoryProvider: () async => directory,
+        databaseFactory: (file, keyHex) {
+          final database = openEncryptedLocalDatabase(file, keyHex);
+          databases.add(database);
+          return database;
+        },
+      );
+      await store.saveSession(_session);
+      final database = databases.last;
+      final pages =
+          (await database.customSelect('PRAGMA page_count').getSingle())
+              .read<int>('page_count');
+      // No room to grow: the trigger's insert needs hundreds of new pages and
+      // SQLite reports SQLITE_FULL from inside the background isolate.
+      await database.customStatement('PRAGMA max_page_count = $pages');
+      await database.customStatement(
+          'CREATE TRIGGER fill_up BEFORE INSERT ON local_mls_transitions '
+          "BEGIN INSERT INTO local_metadata (name, value) "
+          "VALUES ('pad', hex(zeroblob(2000000))); END");
+      final harness = await _Harness.start(api, store: store);
+
+      await harness.waitFor(() =>
+          harness.state.syncError == harness.state.l10n.syncErrorStorageBusy);
+      expect(harness.state.syncRecovery, isNull);
+      expect(await harness.store.loadSyncRecovery(), isNull);
+      expect(harness.state.deviceRecoveryRequired, isFalse);
+      expect(await harness.store.loadSyncCursor(), 0);
+
+      // Room again: the next catch-up applies the same event.
+      await database.customStatement('DROP TRIGGER fill_up');
+      await database.customStatement('PRAGMA max_page_count = 1000000');
+      harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await harness
+          .waitFor(() async => await harness.store.loadSyncCursor() == 4);
+      await harness.waitFor(() => harness.state.syncError == null);
+      // The resume also flushes the outbox on the database; let it finish
+      // before the database closes.
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      harness.dispose();
+    });
+
+    test('the unwrapped SQLite code decides: transient set only', () {
+      SqliteException sqlite(int code) =>
+          SqliteException(extendedResultCode: code, message: 'test');
+      expect(localStorageErrorCode(sqlite(2067)), 19);
+      expect(localStorageErrorCode(sqlite(1802)), 10);
+      expect(localStorageErrorCode(StateError('x')), isNull);
+      expect(
+          localStorageErrorCode(
+              DriftWrappedException(message: 'w', cause: sqlite(13))),
+          13);
+      expect(
+          localStorageErrorCode(CouldNotRollBackException(
+              StateError('step'), StackTrace.empty, sqlite(5))),
+          5);
+    });
+  });
 }
 
 const _session = Session(
@@ -461,11 +582,10 @@ class _Harness {
   _Harness(this.state, this.store, this.crypto);
 
   final AppState state;
-  final MemoryLocalStore store;
+  final LocalStore store;
   final _FakeMlsCrypto crypto;
 
-  static Future<_Harness> start(_ScriptedApi api,
-      {MemoryLocalStore? store}) async {
+  static Future<_Harness> start(_ScriptedApi api, {LocalStore? store}) async {
     final local = store ?? MemoryLocalStore();
     if (store == null) await local.saveSession(_session);
     final crypto = _FakeMlsCrypto(local);
@@ -604,7 +724,7 @@ class _ScriptedApi extends ApiClient {
 class _FakeMlsCrypto implements MlsConversationCryptoService {
   _FakeMlsCrypto(this.store);
 
-  final MemoryLocalStore store;
+  final LocalStore store;
   final Set<String> rejectedMls = <String>{};
   final List<String> processedMls = <String>[];
   final List<String> applied = <String>[];
