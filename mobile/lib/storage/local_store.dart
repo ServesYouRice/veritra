@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:drift/drift.dart' show Value;
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -2163,6 +2164,18 @@ class SecureLocalStore implements LocalStore {
   /// Holds an OS lock on the profile directory for the life of the process,
   /// so a second window on the same profile fails at open instead of both
   /// advancing the same MLS state.
+  /// Releases every profile lock this process holds. Tests call it before
+  /// removing a profile directory, which Windows refuses while a lock file
+  /// is open.
+  @visibleForTesting
+  static Future<void> releaseInstanceLocks() async {
+    final handles = _instanceLocks.values.toList();
+    _instanceLocks.clear();
+    for (final handle in handles) {
+      await handle.close();
+    }
+  }
+
   static Future<void> _holdInstanceLock(Directory directory) async {
     final path =
         '${directory.path}${Platform.pathSeparator}veritra-instance.lock';

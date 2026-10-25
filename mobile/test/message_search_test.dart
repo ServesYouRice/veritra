@@ -61,6 +61,7 @@ void main() {
       for (final database in databases) {
         await database.close();
       }
+      await SecureLocalStore.releaseInstanceLocks();
       await _deleteTempDirectory(directory);
     });
 
