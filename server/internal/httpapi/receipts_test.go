@@ -204,7 +204,9 @@ func TestReceiptsListMemberSince(t *testing.T) {
 	}
 }
 
-// A block hides cursors in both directions, in the listing.
+// A block hides cursors in both directions, in the listing. The cursors
+// exist (an unblocked viewer, the owner, sees both), so the hidden listing is
+// not an empty one.
 func TestReceiptsBlockHidesCursorsBothWays(t *testing.T) {
 	handler, ownerToken, _ := newTestHandlerWithOwner(t)
 	aToken, aID := registerMemberWithID(t, handler, ownerToken, "alice")
@@ -217,9 +219,32 @@ func TestReceiptsBlockHidesCursorsBothWays(t *testing.T) {
 		t.Fatalf("block %d %s", status, body)
 	}
 	createMessage(t, handler, aToken, conversationID, "from-alice", []byte("a"))
-	createMessage(t, handler, ownerToken, conversationID, "from-owner", []byte("o"))
+	fromOwner := createMessage(t, handler, ownerToken, conversationID, "from-owner", []byte("o"))
 	doJSON(t, handler, http.MethodGet, "/api/v1/sync/events?after=0", bToken, nil)
 	doJSON(t, handler, http.MethodGet, "/api/v1/sync/events?after=0", aToken, nil)
+	readPath := "/api/v1/conversations/" + conversationID + "/read-receipts"
+	for _, token := range []string{aToken, bToken} {
+		if status, body := doJSON(t, handler, http.MethodPost, readPath, token, map[string]interface{}{"message_id": fromOwner}); status != http.StatusNoContent {
+			t.Fatalf("read %d %s", status, body)
+		}
+	}
+	// Wait until the owner sees a delivery and a read cursor for both.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		seen := 0
+		for _, r := range getReceipts(t, handler, ownerToken, conversationID).Receipts {
+			if r.DeliveredThrough != nil && r.ReadThrough != nil {
+				seen++
+			}
+		}
+		if seen == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("owner never saw both cursors: %+v", getReceipts(t, handler, ownerToken, conversationID))
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	for name, token := range map[string]string{"alice": aToken, "bob": bToken} {
 		other := bID
 		if name == "bob" {

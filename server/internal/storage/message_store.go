@@ -859,11 +859,13 @@ var listSyncEventsQuery = `
 	       CASE WHEN q.visible THEN se.payload_json ELSE '' END, se.created_at
 	FROM candidates q CROSS JOIN sync_events se ON se.id = q.id`
 
-// syncEventBlockedFor is true when the conversation event se comes from an
-// account that blocker blocked. blocker is SQL text (a column or a
-// positional parameter), never a value.
+// syncEventBlockedFor is true when the conversation event se is hidden from
+// blocker: it comes from an account that blocker blocked or, for a read
+// receipt (D48: a block hides receipts in both directions), from an account
+// that blocked blocker. blocker is SQL text (a column or a positional
+// parameter), never a value.
 func syncEventBlockedFor(blocker string) string {
-	return `EXISTS (
+	return `(EXISTS (
 		SELECT 1 FROM account_blocks b
 		WHERE b.blocker_account_id = ` + blocker + `
 		  AND b.blocked_account_id = CASE
@@ -872,7 +874,11 @@ func syncEventBlockedFor(blocker string) string {
 		    WHEN se.event_type LIKE 'call.%' THEN json_extract(se.payload_json, '$.created_by')
 		    ELSE NULL
 		  END
-	)`
+	) OR (se.event_type = 'read_receipt.updated' AND EXISTS (
+		SELECT 1 FROM account_blocks rb
+		WHERE rb.blocker_account_id = json_extract(se.payload_json, '$.account_id')
+		  AND rb.blocked_account_id = ` + blocker + `
+	)))`
 }
 
 // syncBoundsQuery returns the lowest and highest sync event id the account

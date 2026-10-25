@@ -328,14 +328,18 @@ func (s *Store) markRead(ctx context.Context, conversationID, accountID, message
 	var eventID int64
 	if !private {
 		// The cursor other members see moves only for a shared read, and only
-		// forward; an announcement follows only when it moved.
+		// forward (by created_at, then id); an announcement follows only when
+		// it moved. When the announced message is gone (the column was set to
+		// NULL), nothing is known to compare with: the cursor then moves only
+		// to the account's own read cursor, which the upsert above has just
+		// advanced, so it never goes behind what the account has read.
 		result, err := tx.ExecContext(ctx, `
 			UPDATE read_receipts SET shared_message_id = ?3
 			WHERE account_id = ?1 AND conversation_id = ?2
-			  AND (shared_message_id IS NULL
+			  AND ((shared_message_id IS NULL AND (message_id IS NULL OR message_id = ?3))
 			       OR (shared_message_id != ?3
-			           AND (SELECT created_at FROM message_envelopes WHERE id = ?3) >=
-			               (SELECT created_at FROM message_envelopes WHERE id = shared_message_id)))`,
+			           AND ((SELECT created_at FROM message_envelopes WHERE id = ?3), ?3) >
+			               ((SELECT created_at FROM message_envelopes WHERE id = shared_message_id), shared_message_id)))`,
 			accountID, conversationID, messageID)
 		if err != nil {
 			return 0, err

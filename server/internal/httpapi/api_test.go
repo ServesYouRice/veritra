@@ -813,6 +813,13 @@ func TestSingleMessageRepairIsScopedAndIncludesOldDeleteMarkers(t *testing.T) {
 
 func newTestHandlerWithOwner(t *testing.T) (http.Handler, string, string) {
 	t.Helper()
+	_, handler, token, dbPath := newTestAppWithOwner(t)
+	return handler, token, dbPath
+}
+
+// newTestAppWithOwner also returns the app, for tests that watch its hub.
+func newTestAppWithOwner(t *testing.T) (*app.App, http.Handler, string, string) {
+	t.Helper()
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "private-messenger.db")
 	application, err := app.New(context.Background(), config.Config{
@@ -847,7 +854,7 @@ func newTestHandlerWithOwner(t *testing.T) (http.Handler, string, string) {
 	if err := json.Unmarshal(response, &decoded); err != nil {
 		t.Fatalf("decode setup response: %v", err)
 	}
-	return handler, decoded.Token, dbPath
+	return application, handler, decoded.Token, dbPath
 }
 
 func newTestHandlerWithOwnerDevice(t *testing.T) (http.Handler, string, string) {

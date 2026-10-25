@@ -285,7 +285,8 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 			writeError(w, http.StatusTooManyRequests, "typing_rate_limited")
 			return
 		}
-		members, err := a.Store.ConversationRecipientsForSender(r.Context(), conversationID, principal.AccountID)
+		// D48: a block hides typing in both directions.
+		members, err := a.Store.ReceiptRecipients(r.Context(), conversationID, principal.AccountID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "typing_publish_failed")
 			return
@@ -378,7 +379,9 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 			return
 		}
 		payload := map[string]string{"account_id": principal.AccountID, "message_id": req.MessageID}
-		members := a.conversationRecipientsForSender(r.Context(), conversationID, principal.AccountID)
+		// D48: a block hides read receipts in both directions. The reader's
+		// own devices still get it.
+		members := a.receiptRecipientsWithSelf(r.Context(), conversationID, principal.AccountID)
 		a.publishCommittedEvent(r.Context(), members, realtime.Event{Version: "v1", Type: "read_receipt.updated", ID: eventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
 		w.WriteHeader(http.StatusNoContent)
 	case parts[1] == "retention" && (r.Method == http.MethodPut || r.Method == http.MethodPatch):
@@ -639,6 +642,18 @@ func (a *API) conversationRecipientsForSender(ctx context.Context, conversationI
 		return nil
 	}
 	return members
+}
+
+// receiptRecipientsWithSelf lists who is told about a receipt of accountID:
+// the members not in a block with it, in either direction, and accountID
+// itself (its other devices).
+func (a *API) receiptRecipientsWithSelf(ctx context.Context, conversationID, accountID string) []string {
+	members, err := a.Store.ReceiptRecipients(ctx, conversationID, accountID)
+	if err != nil {
+		a.warn("conversation_recipient_list_failed", "conversation_id", conversationID, "err", err)
+		return nil
+	}
+	return append(members, accountID)
 }
 
 func (a *API) recordAuditEvent(ctx context.Context, actorAccountID *string, eventType string, metadata interface{}) {

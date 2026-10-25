@@ -15,7 +15,7 @@ import (
 
 // T49A/T49B: the rewritten sync-bounds, conversation-list and quota queries
 // must return exactly what the original queries returned. The originals are
-// kept here verbatim as the reference.
+// kept here as the reference (with D48's reverse read-receipt block added).
 
 const legacySyncBoundsQuery = `
 		SELECT MIN(id), MAX(id) FROM (
@@ -34,6 +34,11 @@ const legacySyncBoundsQuery = `
 			        ELSE NULL
 			      END
 			  )
+			  AND NOT (se.event_type = 'read_receipt.updated' AND EXISTS (
+			    SELECT 1 FROM account_blocks rb
+			    WHERE rb.blocker_account_id = json_extract(se.payload_json, '$.account_id')
+			      AND rb.blocked_account_id = m.account_id
+			  ))
 		)`
 
 const legacyListConversationsPageQuery = `
@@ -124,6 +129,11 @@ const legacyListSyncEventsQuery = `
 			        ELSE NULL
 			      END
 			  )
+			  AND NOT (se.event_type = 'read_receipt.updated' AND EXISTS (
+			    SELECT 1 FROM account_blocks rb
+			    WHERE rb.blocker_account_id = json_extract(se.payload_json, '$.account_id')
+			      AND rb.blocked_account_id = m.account_id
+			  ))
 		) visible_events
 		ORDER BY id ASC
 		LIMIT ?`
@@ -280,6 +290,9 @@ func seedEquivalenceEdges(t *testing.T, store *Store, ds benchDataset) {
 			ds.Accounts[i], ds.Accounts[(i*7)%n])
 	}
 	exec(`INSERT OR IGNORE INTO account_blocks(blocker_account_id, blocked_account_id, created_at) VALUES(?, ?, '2026-02-01T00:00:00Z')`, ds.HotAccount, ds.Accounts[1])
+	// Accounts[2] blocked the hot account: its read receipts are hidden from
+	// the hot account too (D48), though the hot account blocked nobody there.
+	exec(`INSERT OR IGNORE INTO account_blocks(blocker_account_id, blocked_account_id, created_at) VALUES(?, ?, '2026-02-01T00:00:00Z')`, ds.Accounts[2], ds.HotAccount)
 	exec(`UPDATE message_envelopes SET deleted_at = '2026-02-01T00:00:00Z' WHERE rowid % 11 = 0`)
 	exec(`UPDATE message_envelopes SET expires_at = '2020-01-01T00:00:00Z' WHERE rowid % 13 = 0`)
 	exec(`UPDATE message_envelopes SET expires_at = '2099-01-01T00:00:00Z' WHERE rowid % 17 = 0`)
