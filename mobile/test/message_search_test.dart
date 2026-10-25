@@ -61,7 +61,7 @@ void main() {
       for (final database in databases) {
         await database.close();
       }
-      if (await directory.exists()) await directory.delete(recursive: true);
+      await _deleteTempDirectory(directory);
     });
 
     SecureLocalStore createStore() => SecureLocalStore(
@@ -653,5 +653,20 @@ class _IdleSync implements SyncService {
   @override
   Future<void> dispose() async {
     await _controller.close();
+  }
+}
+
+/// Windows can hold a closed database file open for a moment longer, so the
+/// temporary directory is removed with a few short retries.
+Future<void> _deleteTempDirectory(Directory directory) async {
+  for (var attempt = 0;; attempt++) {
+    if (!await directory.exists()) return;
+    try {
+      await directory.delete(recursive: true);
+      return;
+    } on FileSystemException {
+      if (attempt >= 20) rethrow;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
   }
 }
