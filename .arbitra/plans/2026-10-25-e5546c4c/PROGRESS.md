@@ -1,0 +1,278 @@
+# Progress
+
+Tick a task when it is done and verified; note anything left open under it.
+
+- [ ] 01 `TASK-001` Make FFI owned-buffer zeroization reliable and wipe intermediate copies
+- [ ] 02 `TASK-002` Separate MLS ciphertext ceiling from plaintext ceiling in the FFI
+- [ ] 03 `TASK-003` Enforce unique device identities in the roster and remove every leaf of a revoked identity
+- [ ] 04 `TASK-004` Inspect incoming commits structurally before merging in process_commit
+- [ ] 05 `TASK-005` Validate Welcome sender and ratchet-tree roster before persisting a joined group
+- [ ] 06 `TASK-006` Authorize committers, inviters and identity-key bindings against the section-52f8711c03564f2607ba13c6/Q-002 trust anchor
+- [ ] 07 `TASK-007` Remove the raw-bytes signing oracle on the MLS identity key
+- [ ] 08 `TASK-008` Reject past-epoch application messages from senders no longer in the roster
+- [ ] 09 `TASK-009` Distinguish unsupported sealed-state format from corruption
+- [ ] 10 `TASK-010` Add commit-then-reveal to device linking and document real SAS strength
+- [ ] 11 `TASK-011` Dispatch push bridge events to Flutter on the main thread
+- [ ] 12 `TASK-012` Persist push endpoint rotations until the app acknowledges a successful re-registration
+- [ ] 13 `TASK-013` Invalidate pending push registration callbacks on unregister
+- [ ] 14 `TASK-014` Disable automatic redirects on all ApiClient requests so custom secret headers are never forwarded
+- [ ] 15 `TASK-015` Add an injectable WebRTC seam and test harness for NativeCallService, and release media on failed call setup
+- [ ] 16 `TASK-016` Install ICE and track handlers before negotiation, buffer early candidates, and replay remote streams to late subscribers
+- [ ] 17 `TASK-017` Serialize inbound call signals in arrival order and route inbound errors to an observable stream
+- [ ] 18 `TASK-018` Adopt call sessions monotonically and retry version conflicts for ICE, answer and reject
+- [ ] 19 `TASK-019` Route end() through the outbound queue and keep hang-up retryable
+- [ ] 20 `TASK-020` Tear down local calls on remote end or reject and stop late signals refilling pending maps
+- [ ] 21 `TASK-021` Enforce relay-only ICE with TURN validation and relay-only candidate signalling
+- [ ] 22 `TASK-022` Send visible localized APNs alerts for new encrypted events and suppress the duplicate local notification on iOS
+- [ ] 23 `TASK-023` Bound streamed uploads by progress and abort on timeout; add idle timeout to download body streams
+- [ ] 24 `TASK-024` Validate 206/Content-Range for resumed backup downloads
+- [ ] 25 `TASK-025` Use the ciphertext response cap (with shrinking) for account export and MLS send
+- [ ] 26 `TASK-026` Deliver logout revocation on an open client in logout() and relinkAfterSyncRecovery()
+- [ ] 27 `TASK-027` Guard conversation/community/invite refresh results by session ownership
+- [ ] 28 `TASK-028` Durable, crash-safe recovery of MLS key-package supply (initial publication and replenishment deficit)
+- [ ] 29 `TASK-029` Back off restaging after commit bundles refused with 400/403/422, and wake reconciliation when the backoff expires
+- [ ] 30 `TASK-030` Schedule a retry when MLS outbox local finalization or retry scheduling fails
+- [ ] 31 `TASK-031` Keep committed-but-unpublished received envelopes for a later catch-up
+- [ ] 32 `TASK-032` Stop one peer's undecryptable content from halting all device sync (per section-6ba03bc2d29a86718c5d8ad7/Q-001 policy)
+- [ ] 33 `TASK-033` Fail closed when the message-request setting cannot be read or decoded
+- [ ] 34 `TASK-034` Handle storage errors from loadSyncRecovery and saveSyncRecovery inside _runOwnedCatchUp
+- [ ] 35 `TASK-035` Isolate failures per revocation and per membership change in the MLS catch-up step
+- [ ] 36 `TASK-036` Coalesce projection refreshes per contiguous run of non-crypto sync events
+- [ ] 37 `TASK-037` Make _startSync failures observable and recoverable
+- [ ] 38 `TASK-038` Report restoreFromBackup failure when the restored session does not come up
+- [ ] 39 `TASK-039` Hold sends after a member removal until the MLS removal commit is applied
+- [ ] 40 `TASK-040` Keep the deepest history cursor across newest-page refreshes when pages overlap
+- [ ] 41 `TASK-041` Send read receipts only for a conversation still selected and in the foreground
+- [ ] 42 `TASK-042` Contain storage failures in the application outbox flush and retry scheduler
+- [ ] 43 `TASK-043` Move account export paging and manual-retry flushing off the shared session queue, with session-ownership checks after every await
+- [ ] 44 `TASK-044` Authenticate the backup header and final chunk in BackupService (new backup format)
+- [ ] 45 `TASK-045` Retry recovery correctly after an HTTP 416 range rejection
+- [ ] 46 `TASK-046` Make the 'read receipts off' preference fail closed and retry failed loads
+- [ ] 47 `TASK-047` Give each native output buffer a single owner in NativeCryptoBindings._take
+- [ ] 48 `TASK-048` Add a key commitment to the device-link SAS flow (gated on section-52f8711c03564f2607ba13c6/Q-001)
+- [ ] 49 `TASK-049` Harden safeAttachmentName against bidi, format and C1 characters and Windows-invalid names
+- [ ] 50 `TASK-050` Sweep orphaned attachment working files after an interrupted encryption or decryption
+- [ ] 51 `TASK-051` Re-check revocation state after draining before creating a revocation commit
+- [ ] 52 `TASK-052` Classify durable non-API MLS outbox failures as terminal and label them accurately
+- [ ] 53 `TASK-053` Hide stale history and retry after an expiry history reload fails
+- [ ] 54 `TASK-054` Stop startConversation from re-creating the MLS group and resetting state for an existing DM
+- [ ] 55 `TASK-055` Start sync after login or createOwner even when a step after authentication fails
+- [ ] 56 `TASK-056` Bind markPeerVerified to the safety number the user compared
+- [ ] 57 `TASK-057` Treat an already-resolved commit bundle as complete in NativeCryptoService.completeCommitBundle
+- [ ] 58 `TASK-058` Apply the agreed policy for MLS sync events that can never succeed
+- [ ] 59 `TASK-059` Undo close-to-tray when PluginDesktopShell tray setup fails
+- [ ] 60 `TASK-060` Fail closed on notification previews until the saved choice is known
+- [ ] 61 `TASK-061` Drop in-flight notifications when the session changes or the notifier detaches
+- [ ] 62 `TASK-062` Capture all connect-screen inputs together and allow one submission at a time
+- [ ] 63 `TASK-063` React to URL text changes only, not caret or selection moves
+- [ ] 64 `TASK-064` Give each externally opened attachment copy its own path and expiry
+- [ ] 65 `TASK-065` Bound decoded size of peer-supplied images in AttachmentImageScreen
+- [ ] 66 `TASK-066` Paste clipboard text before a clipboard image in the desktop composer
+- [ ] 67 `TASK-067` Expose attachment open actions in chat bubble semantics
+- [ ] 68 `TASK-068` Truncate quotedPreview by grapheme cluster
+- [ ] 69 `TASK-069` Recheck mount and scroll attachment after each await in ChatScreen._runJump
+- [ ] 70 `TASK-070` Respect tray removal during in-flight attachment sends and guard against concurrent sends
+- [ ] 71 `TASK-071` Store pasted clipboard images in a per-user, instance-scoped directory and purge only that scope
+- [ ] 72 `TASK-072` Restore the semantic tap action on emoji grid items
+- [ ] 73 `TASK-073` Fix SafetyNumberScreen async lifecycle and report verification save failures truthfully
+- [ ] 74 `TASK-074` Bind peer verification to the safety number the user actually compared
+- [ ] 75 `TASK-075` Keep SafetyNumberScreen's number and status current while it is open
+- [ ] 76 `TASK-076` Add an in-flight guard to account-result taps on the search screen
+- [ ] 77 `TASK-077` Give the admin accounts and audit tabs separate error and loaded state
+- [ ] 78 `TASK-078` Never lose the one-time backup recovery code on navigation, and block system-back dismissal of its dialog
+- [ ] 79 `TASK-079` Never delete the database key in _completeReset unless an archived copy was written and verified
+- [ ] 80 `TASK-080` Run quarantineUnreadableDatabase, including cache invalidation and close, under the same serialization and profile locks as opening
+- [ ] 81 `TASK-081` Populate expires_at for legacy-imported envelopes and backfill already-migrated databases
+- [ ] 82 `TASK-082` Contain and classify legacy-record migration failures during database open
+- [ ] 83 `TASK-083` Make SecureLocalStore.exportBackup read one consistent snapshot
+- [ ] 84 `TASK-084` Preserve MLS outbox delivery state through backup export and restore
+- [ ] 85 `TASK-085` Do not allow a backup replace without confirmation while backup status is unknown
+- [ ] 86 `TASK-086` Show invite revoke and refresh failures on InviteScreen
+- [ ] 87 `TASK-087` Do not show push as active while notification permission is not granted
+- [ ] 88 `TASK-088` Keep surrogate pairs intact in snippetFor
+- [ ] 89 `TASK-089` Detect half-open realtime WebSocket connections with a client pingInterval
+- [ ] 90 `TASK-090` Make the recovery screen scroll so every action stays reachable
+- [ ] 91 `TASK-091` Give the NavigationBar selected icon and label sufficient contrast
+- [ ] 92 `TASK-092` AccountPicker: invalidate stale lookups on edit and selection, and enforce maxSelection in _add
+- [ ] 93 `TASK-093` Contract test: derive owner SAS from server-relayed claimant key and derive claimant verification once
+- [ ] 94 `TASK-094` Device-link app-state fakes: strict transcript binding, dishonest server SAS, and claimer-side rejection tests
+- [ ] 95 `TASK-095` Crypto-state rollback test: reject a strictly lower counter and verify the stored state survives
+- [ ] 96 `TASK-096` Make the account-export auth-secret leak check load-bearing with a server test that seeds a push subscription
+- [ ] 97 `TASK-097` Attachment crypto: tests for chunk-index sequence, key/nonce-prefix freshness and chunk reorder or duplication
+- [ ] 98 `TASK-098` Fail instead of skipping native attachment and backup tests in require-native mode, and run them in the test script
+- [ ] 99 `TASK-099` loadAttachment: honest test naming, failure-path cleanup tests, and a sweep of stale staged plaintext
+- [ ] 100 `TASK-100` Demo e2e: add a Bob catch-up barrier before asserting he never received 'without bob'
+- [ ] 101 `TASK-101` Desktop notifier: make the unreadable-mute case reach the mute lookup and assert it
+- [ ] 102 `TASK-102` Mute-clearing test: store a mute before each clear and assert both clear paths
+- [ ] 103 `TASK-103` Drafts: cover a debounced, unflushed edit at sign-out and at session expiry
+- [ ] 104 `TASK-104` Make the MLS rollback test assert the surviving messages, not just the absence of msg_2
+- [ ] 105 `TASK-105` Make the hard-coded string guard scan whole files and cover the missing string parameters
+- [ ] 106 `TASK-106` Stop trusting server-stamped expiry without an authenticated source (gated on section-26579cea45f35cfc5617fb36/UQ-1)
+- [ ] 107 `TASK-107` Exercise the attachment manifest binding past the request gate
+- [ ] 108 `TASK-108` Strengthen message search tests: backfill kind filter and a full-coverage server spy
+- [ ] 109 `TASK-109` Fail, do not skip, native crypto tests in CI when VERITRA_CRYPTO_LIBRARY is unset
+- [ ] 110 `TASK-110` Prove self-update keeps groups in sync and removal revokes decryption in the native bindings test
+- [ ] 111 `TASK-111` Deliver the winning commit in the race test and complete the bundle after the own-commit echo
+- [ ] 112 `TASK-112` Verify device removal: epochs and the removed device's loss of decryption
+- [ ] 113 `TASK-113` Replace the fixed 300 ms sleep in startup perf teardown with completion of AppState's enclosing background operations
+- [ ] 114 `TASK-114` Add a regression test that a mismatched 8-digit device-link code is never approved
+- [ ] 115 `TASK-115` Constrain the 320dp/200% text accessibility test to a real 320-logical-pixel layout
+- [ ] 116 `TASK-116` Characterize the release crypto state with tests and leave the production-engine decision to section-c0f810f71b16f6684b576132/UQ-001
+- [ ] 117 `TASK-117` Fail closed on bad crypto build provenance and record whether the source tree was dirty
+- [ ] 118 `TASK-118` Collect crypto build artifacts from the directory cargo actually built into
+- [ ] 119 `TASK-119` Query CI evidence by commit SHA instead of scanning the last 20 runs
+- [ ] 120 `TASK-120` Merge duplicate Go coverprofile blocks before computing coverage
+- [ ] 121 `TASK-121` Base the Dart license gate on the resolved package configuration and fail on an empty inventory
+- [ ] 122 `TASK-122` Close the demo-boundary scan bypasses: imports, tear-offs, named constructors and unanchored exemptions
+- [ ] 123 `TASK-123` Add opt-in registry verification that the pinned golang digest belongs to golang:${GO_VERSION}
+- [ ] 124 `TASK-124` Detect all common dynamic Gradle versions across every Android build file and fail closed
+- [ ] 125 `TASK-125` Require an https services.gradle.org wrapper URL and a distribution checksum, and validate the wrapper JAR
+- [ ] 126 `TASK-126` Build the release image from the captured commit and re-verify HEAD after checks
+- [ ] 127 `TASK-127` Refuse server releases of commits not on the protected default branch
+- [ ] 128 `TASK-128` Read Android minSdkVersion as Android does: signed, by resource ID, only from manifest-level uses-sdk
+- [ ] 129 `TASK-129` Require IPA central directory to sit exactly where the end record says
+- [ ] 130 `TASK-130` Reject APKs whose v2 signing block names the pinned certificate but does not verify
+- [ ] 131 `TASK-131` Bind the release policy and checkout to the candidate in the adversarial fixture
+- [ ] 132 `TASK-132` Enforce cargo-audit exception scope over the full audited lockfile graph instead of graph-wide ignores
+- [ ] 133 `TASK-133` Fail the Go lint stage when gofmt itself fails
+- [ ] 134 `TASK-134` Bound each readiness probe by the remaining readiness deadline
+- [ ] 135 `TASK-135` Prevent verify.sh from leaving a stale pass summary
+- [ ] 136 `TASK-136` Make build_manifest fail on missing, empty or incomplete approvals
+- [ ] 137 `TASK-137` Bind release policy and Go toolchain in write-release-evidence.py to the candidate commit
+- [ ] 138 `TASK-138` Validate the container digest format and stop presenting copied commits as measured provenance
+- [ ] 139 `TASK-139` Read the restore journal only after taking the restore lock in recoverInterruptedRestore
+- [ ] 140 `TASK-140` Enforce path containment in journalMatches
+- [ ] 141 `TASK-141` Keep restore staging while a journal still references it, and let recovery tolerate missing staging
+- [ ] 142 `TASK-142` Make rollBackRestore settle the database before its WAL/SHM, and stop at the first failure
+- [ ] 143 `TASK-143` Stage blobs on the blob directory's filesystem and sync the blob parent during restore and rollback
+- [ ] 144 `TASK-144` Share one backup-manifest size limit between backup and restore, and bound the manifest read
+- [ ] 145 `TASK-145` Bound the password-file read and fix the Windows permission check in resetOwnerPassword
+- [ ] 146 `TASK-146` Take the data-directory and resource locks for every offline writer command, including restore
+- [ ] 147 `TASK-147` Keep local scheduled-backup retention bounded when a run fails after creating its backup
+- [ ] 148 `TASK-148` Refuse HTTP redirects in the veritra-load API client so the local-target guard cannot be bypassed
+- [ ] 149 `TASK-149` Surface response-body transport errors in apiClient.do's discard path
+- [ ] 150 `TASK-150` Suppress per-step server deltas when the metrics baseline scrape fails or is partial
+- [ ] 151 `TASK-151` Generate open-loop, untruncated Poisson send arrivals and report the offered rate per step
+- [ ] 152 `TASK-152` Attribute operations still in flight at window end to their step
+- [ ] 153 `TASK-153` Replace the unbounded pending map with a bounded delivery tracker that records lost realtime deliveries
+- [ ] 154 `TASK-154` Give each client device its own download queue, include queue delay, and record dropped downloads
+- [ ] 155 `TASK-155` Record failures of the initial sync-cursor request in runCatchUp
+- [ ] 156 `TASK-156` Report only verified messages as checked and propagate cancellation from verify
+- [ ] 157 `TASK-157` Provision a separately linked device for each companion client
+- [ ] 158 `TASK-158` Stop admission.Budget eviction from forgiving depleted account quotas or detaching buckets with outstanding tickets
+- [ ] 159 `TASK-159` Keep the low-disk write guard active when a filesystem probe fails
+- [ ] 160 `TASK-160` Stop rate limiter eviction from resetting live credential and enrollment budgets
+- [ ] 161 `TASK-161` Bound the stored bcrypt cost before verification
+- [ ] 162 `TASK-162` Apply the chosen password-verification timing policy across stored hash profiles without creating a password-outcome oracle
+- [ ] 163 `TASK-163` Serialize backup-status writers and make replacement atomic and durable
+- [ ] 164 `TASK-164` Apply the decided policy when PRIVATE_MESSENGER_ENV is unset
+- [ ] 165 `TASK-165` Resolve DataDir/backups symlinks before ownership checks
+- [ ] 166 `TASK-166` Reject non-regular secret files without blocking on open
+- [ ] 167 `TASK-167` Commit admin status changes and invite revocations atomically with their audit rows
+- [ ] 168 `TASK-168` Restore one-time-use semantics for the recovery capability
+- [ ] 169 `TASK-169` Add HTTP tests that non-authors and non-members cannot edit or delete messages
+- [ ] 170 `TASK-170` Prevent targeted key-package exhaustion through non-consensual conversations
+- [ ] 171 `TASK-171` Make the plaintext-at-rest and metadata-search non-disclosure assertions able to fail
+- [ ] 172 `TASK-173` Stop mapping transient TouchSession failures to 401 in withAuth
+- [ ] 173 `TASK-176` Prevent third parties from locking a known user out of login via the username-only backoff key
+- [ ] 174 `TASK-178` Return the device-link transcript from the consuming transaction in claim-status
+- [ ] 175 `TASK-172` Structurally validate device key packages on setup, registration, device-link claim and key-package publish
+- [ ] 176 `TASK-174` Re-validate the session after WebSocket hub registration to close the revocation race
+- [ ] 177 `TASK-175` Aggregate IPv6 clients to /64 for the realtime per-IP connection limit
+- [ ] 178 `TASK-177` Make login backoff eviction respect accumulated failure counts
+- [ ] 179 `TASK-179` Bound multi-range requests on attachment and backup downloads
+- [ ] 180 `TASK-180` Count recovery transfer progress only after a successful flush
+- [ ] 181 `TASK-181` Charge key-package claims to the write budget and gate no-list claims
+- [ ] 182 `TASK-182` Requeue delivery advances when ApplyDeliveries fails
+- [ ] 183 `TASK-183` Keep the furthest pending delivery cursor when coalescing in recordDeliveredAsync
+- [ ] 184 `TASK-184` Classify FCM answers as gone only for an UNREGISTERED error detail
+- [ ] 185 `TASK-185` Reject non-P-256 APNs keys at construction and make ES256 signing panic-free
+- [ ] 186 `TASK-186` Parse APNs reason exactly and stop retiring subscriptions on BadDeviceToken
+- [ ] 187 `TASK-187` Refuse shared-address-space and other non-global special-purpose ranges in publicOnlyDialer
+- [ ] 188 `TASK-188` Key the realtime per-IP socket cap by IPv6 /64 prefix and make IPv4 handling explicit
+- [ ] 189 `TASK-189` Give the WebSocket ping round trip a budget larger than one outbound write, with liveness renewed only by inbound frames
+- [ ] 190 `TASK-191` Fail exportAssociatedData when a category query stops early (rows.Err)
+- [ ] 191 `TASK-190` Scrub the remaining account-owned data in DeleteAccountData and check blobRows.Err
+- [ ] 192 `TASK-192` Stop re-reading every associated-data category on every export message page
+- [ ] 193 `TASK-193` Stop failing blob deletions from starving newer ones and clamp the batch limit
+- [ ] 194 `TASK-194` Require community membership when ManageConversationMember adds a member to a community channel
+- [ ] 195 `TASK-195` Check rows.Err() in community membership propagation loops
+- [ ] 196 `TASK-196` Check rows.Err() in key-package claim and device-revocation target loops
+- [ ] 197 `TASK-197` Apply per-member conversation admission when creating a channel conversation
+- [ ] 198 `TASK-198` Reject community member management across account blocks
+- [ ] 199 `TASK-199` Tie-break the unread-count bound on (created_at, id)
+- [ ] 200 `TASK-200` Make conversation-list pagination use an immutable keyset cursor
+- [ ] 201 `TASK-201` Prevent approved device links from orphaning devices at link expiry
+- [ ] 202 `TASK-202` Scope device-less push subscriptions with a NULL-safe device match
+- [ ] 203 `TASK-203` Disable a push target only if it still matches the failed registration
+- [ ] 204 `TASK-204` Enforce state_counter monotonicity and capability rotation for device-less backups
+- [ ] 205 `TASK-205` Refuse transitions on expired call sessions
+- [ ] 206 `TASK-206` Let a live recovery lease holder renew and complete past the initial lease and capability deadline
+- [ ] 207 `TASK-207` Make syncEventBlockedFor fail closed for message events whose envelope row is gone
+- [ ] 208 `TASK-208` Stop replaying expired or removed envelope payloads from sync_events and redact them at rest
+- [ ] 209 `TASK-209` Opt-in bounded sync paging: report the scanned-through cursor, accept it in expiry checks, and page across budget-limited results in the AppState catch-up owner
+- [ ] 210 `TASK-210` Exclude blocking accounts from the realtime recipient snapshot of new envelopes
+- [ ] 211 `TASK-211` Require current conversation membership for message edit and delete
+- [ ] 212 `TASK-212` Release attachment links, orphaned attachments and blobs when a message is deleted
+- [ ] 213 `TASK-213` Emit mls.revocation.completed whenever a revocation reaches completed
+- [ ] 214 `TASK-214` Refuse plain removal of a device whose revocation is pending
+- [ ] 215 `TASK-215` Make ListMLSPendingChanges deterministic, per-kind capped, claimable-first and truncation-aware
+- [ ] 216 `TASK-216` Bound key-package consumption by a single conversation member
+- [ ] 217 `TASK-217` Drop push-wake jobs that have become ineligible and keep them out of metrics
+- [ ] 218 `TASK-218` Include orphaned attachments and aged sync_events in RetentionBacklog
+- [ ] 219 `TASK-219` Check rows.Err() in ValidateDatabaseFile and ListDatabaseBlobReferences
+- [ ] 220 `TASK-220` Make the first-run migration checksum column and legacy backfill atomic and restartable
+- [ ] 221 `TASK-221` Make restore and reset-owner-password detect a running server on a WAL database, and stop the probe creating files
+- [ ] 222 `TASK-222` Make the plaintext-at-rest assertion in TestInviteDeviceAndEncryptedEnvelopeFlow falsifiable and WAL-aware
+- [ ] 223 `TASK-223` Make TestExpiredInviteCannotRegister exercise invite expiry with specific errors
+- [ ] 224 `TASK-224` Test that a new backup revokes an outstanding, unconsumed recovery capability
+- [ ] 225 `TASK-225` Make LocalStore.Delete durable with a directory sync
+- [ ] 226 `TASK-226` Keep CleanupTemporaryFiles sweeping when listed .tmp files disappear
+- [ ] 227 `TASK-227` Index message_envelopes.reply_to_id and thread_root_id in a new migration
+
+## Unsure, after the tasks (optional)
+
+The audit could not settle these, and most such reports do not hold. Check one only when the tasks are done, and change nothing for it unless a test or a run shows the defect.
+
+- [ ] check 01 `C-17a32b51cecf` Wall-clock ordering can reorder dependent MLS transitions
+- [ ] check 02 `C-875dbe0d9a3f` Key-package admission checks only self-asserted BasicCredential bytes, never an expected signing key
+- [ ] check 03 `C-a03d6368fdc7` Clearing identity state does not reset the sync cursor (upsert leaves cursor untouched)
+- [ ] check 04 `C-f540ea390b9c` Generic channel-conversation creation grants owner rights to ordinary community members
+- [ ] check 05 `C-63bf811ce17f` Owner bootstrap is authorized by loopback client IP when no setup token is configured
+- [ ] check 06 `C-9824727d48f3` Schema-10 upgrade helpers run against local_messages before the schema-12 search_id column exists
+- [ ] check 07 `C-b99a3708b9f6` Client-supplied X-Forwarded-For overrides the trusted proxy's X-Real-IP
+- [ ] check 08 `C-c79ea170975d` Backup export can combine incompatible database revisions
+- [ ] check 09 `C-d41479b0cac4` Initial schema creation can leave an unreopenable partial database
+- [ ] check 10 `C-d51e56be4898` Ignored server-ID collisions can consume MLS state without saving plaintext
+- [ ] check 11 `C-da65d79b0ce1` Session issuance can race password-reset revocation
+- [ ] check 12 `C-1193b73013e5` Revoked-invite registration check can pass because the request lacks an enrollment proof, not because the invite was revoked
+- [ ] check 13 `C-26f52f15830a` readSnapshotJson reads conversations, envelopes and cursor in separate non-transactional queries
+- [ ] check 14 `C-f008c5512a8b` Font-change handling dereferences the controller outside its lifetime guard
+- [ ] check 15 `C-1051f6167c97` Failed opens leave the database handle open on the keyRejected and new-database paths, which can block quarantine on Windows
+- [ ] check 16 `C-1419e82f2dcd` Draining a queued revocation can trigger another commit
+- [ ] check 17 `C-362f5a93b11d` Unauthenticated register performs the expensive anonymous password hash before validating enrollment or invite
+- [ ] check 18 `C-45dba6029e35` ClaimDeviceKeyPackages lets any group device consume key packages of co-member devices already in the group, without limit
+- [ ] check 19 `C-48323ecaa688` Welcome group-ID validation occurs after the stateful join
+- [ ] check 20 `C-49fac2e75e37` IDs interpolated unencoded into authenticated request paths allow dot-segment and query injection
+- [ ] check 21 `C-572d3de039a9` Desktop Enter-to-send shortcut does not check for active IME composition
+- [ ] check 22 `C-59172da4f1fb` JSON key casing can bypass backup counter validation
+- [ ] check 23 `C-5b3a9b001fbc` Lease-fencing test cannot detect writes leaked by the fenced writer
+- [ ] check 24 `C-7121f7bb1452` Backups carry the bearer token, device secret, and the sealed MLS state together with its key, so a backup can clone the device
+- [ ] check 25 `C-7bad26b22132` Overlapping preference saves can persist an older privacy choice
+- [ ] check 26 `C-8eb6c45ffd50` Blob cleanup fallback reuses the deletion's exhausted deadline
+- [ ] check 27 `C-973d380c02c5` Legacy add_member, self_update and remove_member merge commits locally before the delivery service accepts them
+- [ ] check 28 `C-9ba096eeb276` release-readiness.sh skips the full evidence verification when no evidence file is present, yet still reports that all gates passed
+- [ ] check 29 `C-a118300d899c` Approvals commit is not checked to be on the protected branch or descended from the candidate, and approval paths need not be candidate-keyed
+- [ ] check 30 `C-a6c5810ae85d` Release-entry crypto boundary check is textual and limited to main.dart, so transitive wiring of native crypto goes undetected
+- [ ] check 31 `C-b5dfd921d890` createEnrollmentCredential swaps in a fresh device but keeps the old `_deviceCounter`, so stored MLS state can be overwritten
+- [ ] check 32 `C-bbb8fe5d93f3` stageCommit can leave an orphaned native pending commit when post-stage validation fails
+- [ ] check 33 `C-c10536ccbdc0` Returning false from didFinishLaunching does not stop launch on crypto ABI mismatch
+- [ ] check 34 `C-c20d1ce84e57` _heldBack treats unknown conversations as not held back, so read receipts and fetches can reach request senders
+- [ ] check 35 `C-c44b77f41078` writeCursor and writeCryptoState overwrite the sync cursor without lease or monotonicity checks
+- [ ] check 36 `C-c50026c8a635` join_group checks the group id only after into_group, and never checks for an existing local group
+- [ ] check 37 `C-c7c5faecddbb` Whole-state sealing has hard caps that make every later seal fail once exceeded
+- [ ] check 38 `C-d0ba626ecdd7` localStorage sync failure offers only Retry, leaving a damaged database with no in-app way out
+- [ ] check 39 `C-d613befe2497` Device identities are not enforced unique, and member_index silently picks the first match
+- [ ] check 40 `C-e0c5500ff016` Own-device commit events trust the server's sender and idempotency key, and are skipped silently when no outbox entry matches
+- [ ] check 41 `C-f4bf51f0c756` Destructive relink runs after the confirmation dialog without re-checking that recovery still requires it
+- [ ] check 42 `C-f50be9e4a731` Any active group device can evict any other device from the server roster, and evicted devices cannot recover
