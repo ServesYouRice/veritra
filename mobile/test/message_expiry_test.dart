@@ -679,7 +679,7 @@ void main() {
     });
 
     test('a running app drops a message when its time comes', () async {
-      final soon = DateTime.now().toUtc().add(const Duration(seconds: 1));
+      final soon = DateTime.now().toUtc().add(const Duration(seconds: 3));
       await start(<ReceivedMessageEnvelope>[
         _envelope('soon', expiresAt: soon),
         _envelope('live'),
@@ -689,7 +689,13 @@ void main() {
           unorderedEquals(<String>['soon', 'live']));
       var notified = 0;
       state.addListener(() => notified++);
-      for (var i = 0; i < 40 && state.messagesFor('conv_1').length != 1; i++) {
+      // The chat hides the message first; the database row goes with the
+      // purge that follows.
+      for (var i = 0;
+          i < 100 &&
+              (state.messagesFor('conv_1').length != 1 ||
+                  await store.nextMessageExpiry() != null);
+          i++) {
         await Future<void>.delayed(const Duration(milliseconds: 100));
       }
       expect(state.messagesFor('conv_1').map((e) => e.id), <String>['live']);
