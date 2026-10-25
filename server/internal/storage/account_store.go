@@ -45,13 +45,15 @@ func (s *Store) exportAssociatedData(ctx context.Context, accountID string) (map
 		"invites":                  `SELECT json_object('id', id, 'max_uses', max_uses, 'uses', uses, 'expires_at', expires_at, 'created_at', created_at, 'revoked_at', revoked_at) FROM invites WHERE created_by = ? ORDER BY created_at, id`,
 		"attachments":              `SELECT json_object('id', id, 'conversation_id', conversation_id, 'ciphertext_sha256', ciphertext_sha256, 'size_bytes', size_bytes, 'crypto_metadata', json(crypto_metadata_json), 'created_at', created_at) FROM attachment_envelopes WHERE owner_account_id = ? ORDER BY created_at, id`,
 		"reactions":                `SELECT json_object('id', id, 'message_id', message_id, 'ciphertext_hex', hex(reaction_ciphertext), 'created_at', created_at) FROM reactions WHERE account_id = ? ORDER BY created_at, id`,
-		"read_receipts":            `SELECT json_object('conversation_id', conversation_id, 'message_id', message_id, 'read_at', read_at) FROM read_receipts WHERE account_id = ? ORDER BY read_at, conversation_id`,
+		"read_receipts":            `SELECT json_object('conversation_id', conversation_id, 'message_id', message_id, 'read_at', read_at, 'shared_message_id', shared_message_id) FROM read_receipts WHERE account_id = ? ORDER BY read_at, conversation_id`,
+		"delivery_receipts":        `SELECT json_object('conversation_id', conversation_id, 'message_id', message_id) FROM delivery_receipts WHERE account_id = ? ORDER BY conversation_id`,
+		"receipt_preferences":      `SELECT json_object('send_read_receipts', json(CASE WHEN send_read_receipts = 1 THEN 'true' ELSE 'false' END)) FROM accounts WHERE id = ?`,
 		"push_subscriptions":       `SELECT json_object('id', id, 'device_id', device_id, 'provider', provider, 'endpoint', endpoint, 'public_key', public_key, 'created_at', created_at, 'disabled_at', disabled_at) FROM push_subscriptions WHERE account_id = ? ORDER BY created_at, id`,
 		"backups":                  `SELECT json_object('id', id, 'device_id', device_id, 'ciphertext_sha256', ciphertext_sha256, 'size_bytes', size_bytes, 'key_derivation_metadata', json(key_derivation_metadata_json), 'created_at', created_at) FROM backup_blobs WHERE account_id = ? ORDER BY created_at, id`,
 		"calls":                    `SELECT json_object('id', id, 'conversation_id', conversation_id, 'invited_account_id', invited_account_id, 'state', state, 'version', version, 'metadata', json(metadata_json), 'created_at', created_at, 'ended_at', ended_at, 'expires_at', expires_at) FROM call_sessions WHERE created_by = ? ORDER BY created_at, id`,
 		"device_key_packages":      `SELECT json_object('id', kp.id, 'device_id', kp.device_id, 'key_package_hex', hex(kp.key_package), 'ciphersuite', kp.ciphersuite, 'created_at', kp.created_at, 'expires_at', kp.expires_at, 'claimed_at', kp.claimed_at, 'claimed_by_device_id', kp.claimed_by_device_id) FROM device_key_packages kp JOIN devices d ON d.id = kp.device_id WHERE d.account_id = ? ORDER BY kp.created_at, kp.id`,
 		"account_blocks":           `SELECT json_object('account_id', blocked_account_id, 'created_at', created_at) FROM account_blocks WHERE blocker_account_id = ? ORDER BY created_at, blocked_account_id`,
-		"notification_preferences": `SELECT json_object('conversation_id', conversation_id, 'muted', json(muted), 'updated_at', updated_at) FROM conversation_notification_preferences WHERE account_id = ? ORDER BY conversation_id`,
+		"notification_preferences": `SELECT json_object('conversation_id', conversation_id, 'muted', json(muted), 'muted_until', muted_until, 'updated_at', updated_at) FROM conversation_notification_preferences WHERE account_id = ? ORDER BY conversation_id`,
 	}
 	categories := make(map[string][]json.RawMessage, len(queries))
 	for name, query := range queries {
@@ -144,6 +146,7 @@ func (s *Store) DeleteAccountData(ctx context.Context, accountID string) ([]stri
 		`DELETE FROM memberships WHERE account_id = ?`,
 		`DELETE FROM reactions WHERE account_id = ?`,
 		`DELETE FROM read_receipts WHERE account_id = ?`,
+		`DELETE FROM delivery_receipts WHERE account_id = ?`,
 		`DELETE FROM push_subscriptions WHERE account_id = ?`,
 		`DELETE FROM device_links WHERE account_id = ?`,
 		`DELETE FROM attachment_envelopes WHERE owner_account_id = ?`,

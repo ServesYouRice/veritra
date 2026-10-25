@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:drift/drift.dart' show Value;
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -11,6 +12,7 @@ import '../core/models.dart';
 import '../sync/sync_recovery.dart';
 import 'backup_exclusion.dart';
 import 'encrypted_database.dart';
+import 'message_search.dart';
 
 final Map<String, Future<void>> _databaseOpenTails = <String, Future<void>>{};
 final Map<String, Future<void>> _databaseWriteTails = <String, Future<void>>{};
@@ -62,6 +64,11 @@ enum LocalStoreFailureKind {
   /// A retry runs it again; if that keeps failing, only the confirmed
   /// [LocalStore.quarantineUnreadableDatabase] moves the database aside.
   upgradeFailed,
+
+  /// This build's SQLite lacks the encryption cipher or FTS5 (the search
+  /// index). The database and key are fine and are not touched; neither a
+  /// retry nor a reset can help, only a build with the feature.
+  sqliteFeatureMissing,
 }
 
 /// The local database stays closed and untouched. Nothing is reset without
@@ -238,6 +245,8 @@ class OutgoingApplicationStateTransition {
   final List<MessageEffect> messageEffects;
 }
 
+const int backupFormatVersion = 3;
+
 class LocalBackupData {
   const LocalBackupData({
     required this.session,
@@ -249,7 +258,19 @@ class LocalBackupData {
     required this.cryptoState,
     this.history = const <LocalMessage>[],
     this.reactions = const <LocalMessageReaction>[],
+    this.formatVersion = backupFormatVersion,
+    this.expiryBackfillIds = const <String>{},
   });
+
+  /// Server ids of history entries whose JSON has no `expiresAt` key at all
+  /// (a backup from before expiry travelled with the history, even when it
+  /// says version 2). Only these get their expiry from the cached envelope;
+  /// an entry that carries the key, null or not, is taken as it is.
+  final Set<String> expiryBackfillIds;
+
+  /// The backup format this was read from, or the current one for a backup
+  /// being written (3: message expiry travels with the history).
+  final int formatVersion;
 
   /// Decrypted history (D27). Empty in a version 1 backup.
   final List<LocalMessage> history;
@@ -318,6 +339,16 @@ class LocalSyncLease {
   String get key => '$origin\u0000$accountId\u0000$deviceId\u0000$generation';
 }
 
+/// An unsent composer draft read back from the local database (W6).
+class StoredDraft {
+  const StoredDraft({required this.text, this.replyTo});
+
+  final String text;
+
+  /// The local key of the message being replied to.
+  final String? replyTo;
+}
+
 abstract class LocalStore {
   Future<void> saveSession(Session session);
   Future<Session?> loadSession();
@@ -357,6 +388,10 @@ abstract class LocalStore {
   /// When this device last made an encrypted backup (card I45).
   Future<void> saveLastBackupAt(DateTime at);
   Future<DateTime?> loadLastBackupAt();
+
+  /// Small local settings (the encrypted `local_metadata` key-value table).
+  Future<String?> loadSetting(String name);
+  Future<void> saveSetting(String name, String value);
   Future<void> acquireSyncLease(LocalSyncLease lease);
   Future<void> releaseSyncLease(LocalSyncLease lease);
   Future<bool> hasProcessedMlsMessage(String messageId);
@@ -399,8 +434,38 @@ abstract class LocalStore {
   /// Decrypted history for one conversation, oldest first (D23).
   Future<List<LocalMessage>> loadMessages(String conversationId);
   Future<List<LocalMessageReaction>> loadReactions(String conversationId);
-  Future<void> clearCachedState({bool preserveOutbox = false});
+
+  /// Drops what the server can send again. [keepDrafts] is set only when the
+  /// session expired (the person signs in again to the same drafts); sign-out
+  /// and relinking leave it unset and delete them.
+  Future<void> clearCachedState(
+      {bool preserveOutbox = false, bool keepDrafts = false});
   Future<void> clear();
+
+  /// Message text this device holds that contains every word of [query],
+  /// newest first (W10). Answered from the encrypted local database; nothing
+  /// about the query reaches the server.
+  Future<List<MessageSearchHit>> searchMessages(String query, {int limit = 50});
+
+  /// Unsent composer drafts by conversation. They are message text before
+  /// encryption: kept only in the encrypted database, never in a backup, and
+  /// wiped with the rest of the data (W6).
+  Future<Map<String, StoredDraft>> loadDrafts();
+  Future<void> saveDraft(String conversationId, String text, {String? replyTo});
+  Future<void> deleteDraft(String conversationId);
+
+  /// This device's copy of conversation mutes: the end of each mute, or null
+  /// for one without an end. Mutes that have ended are not returned (W6).
+  Future<Map<String, DateTime?>> loadConversationMutes();
+  Future<void> saveConversationMute(String conversationId,
+      {required bool muted, DateTime? until});
+
+  /// Deletes every message, reaction and cached envelope whose server expiry
+  /// has passed (W2) and returns the conversations that lost a row.
+  Future<Set<String>> purgeExpiredMessages({DateTime? now});
+
+  /// When the next stored message expires, if any does.
+  Future<DateTime?> nextMessageExpiry();
 
   /// The confirmed destructive reset for a database that cannot be opened
   /// (I39). The unreadable database is moved aside with its key, never
@@ -424,6 +489,8 @@ class MemoryLocalStore implements LocalStore {
   String? _syncLeaseKey;
   SyncRecovery? _syncRecovery;
   DateTime? _lastBackupAt;
+  final Map<String, StoredDraft> _drafts = <String, StoredDraft>{};
+  final Map<String, DateTime?> _mutes = <String, DateTime?>{};
 
   @override
   Future<void> saveLastBackupAt(DateTime at) async =>
@@ -431,6 +498,15 @@ class MemoryLocalStore implements LocalStore {
 
   @override
   Future<DateTime?> loadLastBackupAt() async => _lastBackupAt;
+
+  final Map<String, String> _settings = <String, String>{};
+
+  @override
+  Future<String?> loadSetting(String name) async => _settings[name];
+
+  @override
+  Future<void> saveSetting(String name, String value) async =>
+      _settings[name] = value;
 
   @override
   Future<void> saveSyncRecovery(SyncRecovery? recovery) async {
@@ -618,10 +694,13 @@ class MemoryLocalStore implements LocalStore {
     for (final entry in nextMessages.entries) {
       entry.value.removeWhere((message) => deletedIds.contains(message.id));
     }
+    final now = DateTime.now().toUtc();
     for (final envelope in transition.upsertedEnvelopes) {
       final messages =
           nextMessages[envelope.conversationId] ??= <ReceivedMessageEnvelope>[];
       messages.removeWhere((message) => message.id == envelope.id);
+      // Arrived already expired (W2): consumed, never stored.
+      if (_expired(envelope.expiresAt, now)) continue;
       messages.add(envelope);
     }
     _history.apply(transition.messageEffects);
@@ -654,9 +733,14 @@ class MemoryLocalStore implements LocalStore {
       final messages =
           nextMessages[envelope.conversationId] ??= <ReceivedMessageEnvelope>[];
       messages.removeWhere((item) => item.id == envelope.id);
-      messages.add(envelope);
+      if (!_expired(envelope.expiresAt, DateTime.now().toUtc())) {
+        messages.add(envelope);
+      }
       final ownKey = commit.ownMessageKey;
-      if (ownKey != null) _history.markSent(ownKey, envelope.id);
+      if (ownKey != null) {
+        _history.markSent(ownKey, envelope.id,
+            expiresAt: envelope.expiresAt?.toUtc().millisecondsSinceEpoch);
+      }
     }
     _processedMlsMessages.add(commit.eventKey);
     _syncCursor = commit.cursor;
@@ -736,6 +820,13 @@ class MemoryLocalStore implements LocalStore {
     }
     _cryptoState = _copyCryptoState(transition.state);
     _history.apply(transition.messageEffects);
+    final sentText = transition.draftText;
+    final draft = _drafts[transition.envelope.conversationId];
+    if (sentText != null &&
+        draft != null &&
+        draft.text.trim() == sentText.trim()) {
+      _drafts.remove(transition.envelope.conversationId);
+    }
     _outbox.add(transition.envelope);
     _outboxRecords[transition.envelope.idempotencyKey] = PendingEnvelopeRecord(
         envelope: transition.envelope,
@@ -768,16 +859,20 @@ class MemoryLocalStore implements LocalStore {
     if (activeSession == null || state == null) {
       throw StateError('complete authenticated crypto state is required');
     }
+    final now = DateTime.now().toUtc();
+    final nowMs = now.millisecondsSinceEpoch;
     return _encodeBackup(LocalBackupData(
       session: activeSession,
       cursor: _syncCursor,
       conversations: _snapshot?.conversations ?? const <Conversation>[],
-      messages: _snapshot?.messagesByConversation ??
-          const <String, List<ReceivedMessageEnvelope>>{},
+      messages: _withoutExpired(_snapshot?.messagesByConversation, now),
       outbox: List<MessageEnvelope>.from(_outbox),
       mlsOutbox: _mlsOutbox.values.toList(growable: false),
       cryptoState: _copyCryptoState(state),
-      history: _history.allMessages(),
+      history: _history
+          .allMessages()
+          .where((item) => item.expiresAt == null || item.expiresAt! > nowMs)
+          .toList(growable: false),
       reactions: _history.allReactions(),
     ));
   }
@@ -829,9 +924,12 @@ class MemoryLocalStore implements LocalStore {
   }
 
   @override
-  Future<void> clearCachedState({bool preserveOutbox = false}) async {
+  Future<void> clearCachedState(
+      {bool preserveOutbox = false, bool keepDrafts = false}) async {
     _syncCursor = 0;
     _snapshot = null;
+    if (!keepDrafts) _drafts.clear();
+    _mutes.clear();
     if (!preserveOutbox) {
       _outbox.clear();
       _outboxRecords.clear();
@@ -858,6 +956,91 @@ class MemoryLocalStore implements LocalStore {
       throw ArgumentError.value(confirmed, 'confirmed');
     }
     await clear();
+  }
+
+  @override
+  Future<List<MessageSearchHit>> searchMessages(String query,
+          {int limit = 50}) async =>
+      _history.search(query, limit);
+
+  @override
+  Future<Map<String, StoredDraft>> loadDrafts() async =>
+      Map<String, StoredDraft>.of(_drafts);
+
+  @override
+  Future<void> saveDraft(String conversationId, String text,
+      {String? replyTo}) async {
+    _drafts[conversationId] = StoredDraft(text: text, replyTo: replyTo);
+  }
+
+  @override
+  Future<void> deleteDraft(String conversationId) async {
+    _drafts.remove(conversationId);
+  }
+
+  @override
+  Future<Map<String, DateTime?>> loadConversationMutes() async {
+    final now = DateTime.now().toUtc();
+    _mutes.removeWhere((_, until) => until != null && !until.isAfter(now));
+    return Map<String, DateTime?>.of(_mutes);
+  }
+
+  @override
+  Future<void> saveConversationMute(String conversationId,
+      {required bool muted, DateTime? until}) async {
+    if (muted) {
+      _mutes[conversationId] = until?.toUtc();
+    } else {
+      _mutes.remove(conversationId);
+    }
+  }
+
+  static bool _expired(DateTime? expiresAt, DateTime now) =>
+      expiresAt != null && !expiresAt.isAfter(now);
+
+  @override
+  Future<Set<String>> purgeExpiredMessages({DateTime? now}) async {
+    final at = (now ?? DateTime.now()).toUtc();
+    final touched = <String>{};
+    final snapshot = _snapshot;
+    if (snapshot != null) {
+      final kept = <String, List<ReceivedMessageEnvelope>>{};
+      for (final entry in snapshot.messagesByConversation.entries) {
+        final live = <ReceivedMessageEnvelope>[];
+        for (final envelope in entry.value) {
+          if (_expired(envelope.expiresAt, at)) {
+            touched.add(entry.key);
+          } else {
+            live.add(envelope);
+          }
+        }
+        kept[entry.key] = live;
+      }
+      _snapshot = CachedSnapshot(
+        cursor: snapshot.cursor,
+        conversations: snapshot.conversations,
+        messagesByConversation: kept,
+      );
+    }
+    touched.addAll(_history.purgeExpired(at.millisecondsSinceEpoch));
+    return touched;
+  }
+
+  @override
+  Future<DateTime?> nextMessageExpiry() async {
+    DateTime? next;
+    for (final list in _snapshot?.messagesByConversation.values ??
+        const <List<ReceivedMessageEnvelope>>[]) {
+      for (final envelope in list) {
+        final at = envelope.expiresAt;
+        if (at != null && (next == null || at.isBefore(next))) next = at;
+      }
+    }
+    final fromHistory = _history.nextExpiry();
+    if (fromHistory != null && (next == null || fromHistory.isBefore(next))) {
+      next = fromHistory;
+    }
+    return next;
   }
 
   @override
@@ -904,6 +1087,11 @@ class _MemoryMessageHistory {
       switch (effect) {
         case InsertMessageEffect():
           if (_messages.containsKey(effect.key)) continue;
+          if (effect.expiresAt != null &&
+              effect.expiresAt! <=
+                  DateTime.now().toUtc().millisecondsSinceEpoch) {
+            continue;
+          }
           if (effect.serverMessageId != null &&
               _messages.values.any(
                   (item) => item.serverMessageId == effect.serverMessageId)) {
@@ -920,6 +1108,7 @@ class _MemoryMessageHistory {
             replyTo: effect.replyTo,
             createdAt: effect.createdAt,
             state: effect.state,
+            expiresAt: effect.expiresAt,
           );
         case EditMessageEffect():
           final target = _messages[effect.targetKey];
@@ -937,17 +1126,28 @@ class _MemoryMessageHistory {
           final target = _messages[effect.targetKey];
           if (target == null ||
               target.senderAccountId != effect.deleterAccountId ||
-              target.kind != LocalMessageKind.text) {
+              (target.kind != LocalMessageKind.text &&
+                  target.kind != LocalMessageKind.unsupported)) {
             continue;
           }
           _messages[effect.targetKey] = target.copyWith(
-            body: const Value(null),
+            body: Value(target.kind == LocalMessageKind.unsupported
+                ? bodyAfterUnsupportedDelete(target.body)
+                : null),
             deletedAt: Value(effect.at),
           );
           _reactions
               .removeWhere((_, item) => item.targetKey == effect.targetKey);
         case ReactionEffect():
           final id = '${effect.targetKey}\u0000${effect.reactorAccountId}';
+          final reactionTarget = _messages[effect.targetKey];
+          if (effect.reaction.isNotEmpty &&
+              (reactionTarget == null ||
+                  reactionTarget.deletedAt != null ||
+                  (reactionTarget.kind != LocalMessageKind.text &&
+                      reactionTarget.kind != LocalMessageKind.attachment))) {
+            continue;
+          }
           if (effect.reaction.isEmpty) {
             _reactions.remove(id);
           } else {
@@ -962,18 +1162,82 @@ class _MemoryMessageHistory {
     }
   }
 
-  void markSent(String key, String serverMessageId) {
+  void markSent(String key, String serverMessageId, {int? expiresAt}) {
     final target = _messages[key];
     if (target == null) return;
     _messages[key] = target.copyWith(
       serverMessageId: Value(serverMessageId),
       state: LocalMessageState.sent,
+      // Only the first echo sets the expiry (W2).
+      expiresAt: Value(
+          target.serverMessageId == null && target.expiresAt == null
+              ? expiresAt
+              : target.expiresAt),
     );
   }
 
+  /// Removes messages past their own expiry, with their reactions. Returns
+  /// the conversations that lost a row.
+  Set<String> purgeExpired(int nowMs) {
+    final touched = <String>{};
+    final removed = <String>{};
+    _messages.removeWhere((key, item) {
+      final at = item.expiresAt;
+      final gone = at != null && at <= nowMs;
+      if (gone) {
+        touched.add(item.conversationId);
+        removed.add(key);
+      }
+      return gone;
+    });
+    _reactions.removeWhere((_, item) => removed.contains(item.targetKey));
+    return touched;
+  }
+
+  List<MessageSearchHit> search(String query, int limit) {
+    final terms = searchTerms(query);
+    if (terms.isEmpty) return const <MessageSearchHit>[];
+    final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+    final found = _messages.values.where((item) =>
+        (item.expiresAt == null || item.expiresAt! > nowMs) &&
+        item.kind == LocalMessageKind.text &&
+        item.body != null &&
+        item.deletedAt == null &&
+        terms.every(item.body!.toLowerCase().contains));
+    final sorted = found.toList()
+      ..sort((a, b) {
+        final byTime = b.createdAt.compareTo(a.createdAt);
+        return byTime != 0 ? byTime : b.key.compareTo(a.key);
+      });
+    return [
+      for (final item in sorted.take(limit))
+        MessageSearchHit(
+          key: item.key,
+          conversationId: item.conversationId,
+          senderAccountId: item.senderAccountId,
+          createdAt: item.createdAt,
+          snippet: snippetFor(item.body!, terms),
+        ),
+    ];
+  }
+
+  DateTime? nextExpiry() {
+    int? next;
+    for (final item in _messages.values) {
+      final at = item.expiresAt;
+      if (at != null && (next == null || at < next)) next = at;
+    }
+    return next == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(next, isUtc: true);
+  }
+
   List<LocalMessage> messages(String conversationId) {
+    final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
     final result = _messages.values
-        .where((item) => item.conversationId == conversationId)
+        .where((item) =>
+            item.conversationId == conversationId &&
+            (item.expiresAt == null || item.expiresAt! > nowMs))
         .toList();
     result.sort((a, b) {
       final byTime = a.createdAt.compareTo(b.createdAt);
@@ -1068,6 +1332,14 @@ class SecureLocalStore implements LocalStore {
           EncryptedLocalDatabase.syncRecoveryName, recovery.encode());
     }
   }
+
+  @override
+  Future<String?> loadSetting(String name) async =>
+      (await _database()).readMetadata('setting:$name');
+
+  @override
+  Future<void> saveSetting(String name, String value) async =>
+      (await _database()).writeMetadata('setting:$name', value);
 
   @override
   Future<void> saveLastBackupAt(DateTime at) async =>
@@ -1487,16 +1759,21 @@ class SecureLocalStore implements LocalStore {
     if (activeSession == null || state == null) {
       throw StateError('complete authenticated crypto state is required');
     }
+    // Rows past their expiry are not written to the backup, even when the
+    // purge has not removed them yet (W2).
+    final now = DateTime.now().toUtc();
+    final nowMs = now.millisecondsSinceEpoch;
     return _encodeBackup(LocalBackupData(
       session: activeSession,
       cursor: await loadSyncCursor(),
       conversations: snapshot?.conversations ?? const <Conversation>[],
-      messages: snapshot?.messagesByConversation ??
-          const <String, List<ReceivedMessageEnvelope>>{},
+      messages: _withoutExpired(snapshot?.messagesByConversation, now),
       outbox: await pendingEnvelopes(),
       mlsOutbox: await pendingMlsMessages(),
       cryptoState: state,
-      history: await (await _database()).readAllMessages(),
+      history: (await (await _database()).readAllMessages())
+          .where((item) => item.expiresAt == null || item.expiresAt! > nowMs)
+          .toList(growable: false),
       reactions: await (await _database()).readAllReactions(),
     ));
   }
@@ -1553,6 +1830,7 @@ class SecureLocalStore implements LocalStore {
       cursor: backup.cursor,
       history: backup.history,
       reactions: backup.reactions,
+      backfillExpiryFor: backup.expiryBackfillIds,
     );
   }
 
@@ -1574,6 +1852,55 @@ class SecureLocalStore implements LocalStore {
           database.readPeerVerification(conversationId, peerAccountId));
 
   @override
+  Future<List<MessageSearchHit>> searchMessages(String query,
+          {int limit = 50}) async =>
+      (await _database()).searchMessages(query, limit: limit);
+
+  @override
+  Future<Map<String, StoredDraft>> loadDrafts() async => {
+        for (final row in await (await _database()).readDrafts())
+          row.conversationId: StoredDraft(text: row.body, replyTo: row.replyTo),
+      };
+
+  @override
+  Future<void> saveDraft(String conversationId, String text,
+          {String? replyTo}) async =>
+      (await _database()).saveDraft(
+          conversationId: conversationId, body: text, replyTo: replyTo);
+
+  @override
+  Future<void> deleteDraft(String conversationId) async =>
+      (await _database()).deleteDraft(conversationId);
+
+  @override
+  Future<Map<String, DateTime?>> loadConversationMutes() async => {
+        for (final row in await (await _database())
+            .readMutes(DateTime.now().toUtc().millisecondsSinceEpoch))
+          row.conversationId: row.mutedUntil == null
+              ? null
+              : DateTime.fromMillisecondsSinceEpoch(row.mutedUntil!,
+                  isUtc: true),
+      };
+
+  @override
+  Future<void> saveConversationMute(String conversationId,
+          {required bool muted, DateTime? until}) async =>
+      (await _database()).saveMute(conversationId,
+          muted: muted, mutedUntil: until?.toUtc().millisecondsSinceEpoch);
+
+  @override
+  Future<Set<String>> purgeExpiredMessages({DateTime? now}) async =>
+      (await _database()).purgeExpired(now: now);
+
+  @override
+  Future<DateTime?> nextMessageExpiry() async {
+    final next = await (await _database()).nextExpiry();
+    return next == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(next, isUtc: true);
+  }
+
+  @override
   Future<List<LocalMessage>> loadMessages(String conversationId) async =>
       (await _database()).readMessages(conversationId);
 
@@ -1583,8 +1910,10 @@ class SecureLocalStore implements LocalStore {
       (await _database()).readReactions(conversationId);
 
   @override
-  Future<void> clearCachedState({bool preserveOutbox = false}) async {
-    await (await _database()).clearCachedState(preserveOutbox: preserveOutbox);
+  Future<void> clearCachedState(
+      {bool preserveOutbox = false, bool keepDrafts = false}) async {
+    await (await _database()).clearCachedState(
+        preserveOutbox: preserveOutbox, keepDrafts: keepDrafts);
   }
 
   @override
@@ -1759,6 +2088,14 @@ class SecureLocalStore implements LocalStore {
         database = _databaseFactory(databaseFile, key);
         await database.readCursor();
       } catch (error) {
+        if (isSqliteFeatureUnavailable(error)) {
+          // A fact about this build, not about the file or the key.
+          try {
+            await database?.close();
+          } catch (_) {}
+          throw const LocalStoreUnavailableException(
+              LocalStoreFailureKind.sqliteFeatureMissing);
+        }
         if (!databaseExists) rethrow;
         if (database != null && database.upgradeStarted) {
           // The key opened the file and the upgrade rolled back. Drift
@@ -1827,6 +2164,18 @@ class SecureLocalStore implements LocalStore {
   /// Holds an OS lock on the profile directory for the life of the process,
   /// so a second window on the same profile fails at open instead of both
   /// advancing the same MLS state.
+  /// Releases every profile lock this process holds. Tests call it before
+  /// removing a profile directory, which Windows refuses while a lock file
+  /// is open.
+  @visibleForTesting
+  static Future<void> releaseInstanceLocks() async {
+    final handles = _instanceLocks.values.toList();
+    _instanceLocks.clear();
+    for (final handle in handles) {
+      await handle.close();
+    }
+  }
+
   static Future<void> _holdInstanceLock(Directory directory) async {
     final path =
         '${directory.path}${Platform.pathSeparator}veritra-instance.lock';
@@ -2138,6 +2487,19 @@ StoredCryptoState? _cryptoStateFrom(Object? raw) {
   }
 }
 
+/// [messages] without the envelopes whose expiry has passed at [now].
+Map<String, List<ReceivedMessageEnvelope>> _withoutExpired(
+  Map<String, List<ReceivedMessageEnvelope>>? messages,
+  DateTime now,
+) =>
+    <String, List<ReceivedMessageEnvelope>>{
+      for (final entry in (messages ?? const {}).entries)
+        entry.key: entry.value
+            .where((item) =>
+                item.expiresAt == null || item.expiresAt!.isAfter(now))
+            .toList(growable: false),
+    };
+
 StoredCryptoState _copyCryptoState(StoredCryptoState state) =>
     StoredCryptoState(
       counter: state.counter,
@@ -2147,7 +2509,7 @@ StoredCryptoState _copyCryptoState(StoredCryptoState state) =>
 
 List<int> _encodeBackup(LocalBackupData data) => utf8.encode(jsonEncode(
       <String, Object?>{
-        'version': 2,
+        'version': backupFormatVersion,
         // Decrypted history (D27). Local only: the backup is encrypted with
         // a key the server never sees.
         'history': data.history.map((item) => item.toJson()).toList(),
@@ -2191,15 +2553,21 @@ LocalBackupData _decodeBackup(List<int> encoded) {
     final root = Map<String, Object?>.from(
         jsonDecode(utf8.decode(encoded, allowMalformed: false)) as Map);
     final version = root['version'];
-    if (version != 1 && version != 2) {
+    if (version is! int || version < 1 || version > backupFormatVersion) {
       throw const FormatException('unsupported backup version');
     }
+    final expiryBackfillIds = <String>{};
     final history = version == 1
         ? const <LocalMessage>[]
-        : (root['history'] as List)
-            .map((item) =>
-                LocalMessage.fromJson(Map<String, dynamic>.from(item as Map)))
-            .toList(growable: false);
+        : (root['history'] as List).map((item) {
+            final json = Map<String, dynamic>.from(item as Map);
+            final message = LocalMessage.fromJson(json);
+            final serverId = message.serverMessageId;
+            if (serverId != null && !json.containsKey('expiresAt')) {
+              expiryBackfillIds.add(serverId);
+            }
+            return message;
+          }).toList(growable: false);
     final reactions = version == 1
         ? const <LocalMessageReaction>[]
         : (root['reactions'] as List)
@@ -2254,7 +2622,9 @@ LocalBackupData _decodeBackup(List<int> encoded) {
         mlsOutbox: mlsOutbox,
         cryptoState: crypto,
         history: history,
-        reactions: reactions);
+        reactions: reactions,
+        formatVersion: version,
+        expiryBackfillIds: expiryBackfillIds);
   } catch (error) {
     if (error is FormatException) rethrow;
     throw const FormatException('invalid backup encoding');

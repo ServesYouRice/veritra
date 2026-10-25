@@ -21,9 +21,13 @@ import 'attachments.dart';
 import 'client_config.dart';
 import 'composer_drafts.dart';
 import 'errors.dart';
+import '../storage/message_search.dart';
 import 'message_history.dart';
-import '../storage/encrypted_database.dart' show LocalMessageKind;
+import '../storage/encrypted_database.dart'
+    show LocalMessageKind, localStorageErrorCode;
 import 'models.dart';
+import 'receipts_state.dart';
+import 'typing_state.dart';
 import '../l10n/l10n.dart';
 
 typedef ApiClientFactory = ApiClient Function(String baseUrl);
@@ -148,6 +152,8 @@ class Ops {
   static String conversation(String id) => 'conversation:$id';
 }
 
+enum RequestBucket { chat, request, hidden }
+
 class AppState extends ChangeNotifier {
   AppState({
     required this.apiClientFactory,
@@ -158,7 +164,23 @@ class AppState extends ChangeNotifier {
     this.backupService,
     this.attachmentService,
     this.config = ClientConfig.production,
-  }) : pushService = pushService ?? DisabledMobilePushService();
+    ReceiptPreferences? receiptPreferences,
+  })  : pushService = pushService ?? DisabledMobilePushService(),
+        receiptPreferences = receiptPreferences ??
+            ReceiptPreferences(MemoryReceiptPreferenceStore()) {
+    composerDrafts.onChanged = _draftChanged;
+    // Read the saved switch now so the settings screen shows it at once.
+    unawaited(this.receiptPreferences.loaded);
+  }
+
+  /// The "send read receipts" switch (W5).
+  final ReceiptPreferences receiptPreferences;
+
+  /// Delivery and read cursors of the other members (W5).
+  final ReceiptsState receipts = ReceiptsState();
+
+  /// Who is typing (W5). Ephemeral, memory only.
+  final TypingState typing = TypingState();
 
   /// Encrypted backup and restore (card I45). Null in builds without the
   /// MLS service, where there is nothing to back up.
@@ -242,7 +264,11 @@ class AppState extends ChangeNotifier {
       <String, List<ConversationMember>>{};
   List<BlockedAccount> blockedAccounts = <BlockedAccount>[];
   bool blocksLoaded = false;
-  final Set<String> _mutedConversations = <String>{};
+  // Muted conversations with the end of each mute; null means no end. A mute
+  // whose end has passed no longer counts (W6).
+  final Map<String, DateTime?> _mutes = <String, DateTime?>{};
+  Timer? _muteTimer;
+  final Map<String, Timer> _draftTimers = <String, Timer>{};
 
   ConnectionStatus connectionStatus = ConnectionStatus.connecting;
   DateTime? lastSyncedAt;
@@ -269,6 +295,20 @@ class AppState extends ChangeNotifier {
   bool _flushMlsOutboxRequested = false;
   Timer? _mlsOutboxRetryTimer;
   Timer? _catchUpRetryTimer;
+  Timer? _expiryTimer;
+  bool _purgingExpired = false;
+  Duration _expiryBackoff = Duration.zero;
+
+  static Duration _nextExpiryBackoff(Duration current) {
+    if (current < const Duration(seconds: 1)) {
+      return const Duration(seconds: 1);
+    }
+    final doubled = current * 2;
+    return doubled > const Duration(minutes: 5)
+        ? const Duration(minutes: 5)
+        : doubled;
+  }
+
   int _catchUpRetryAttempt = 0;
   final Set<String> _failedMlsConversations = <String>{};
   final Map<String, DateTime> _mlsPendingSeen = <String, DateTime>{};
@@ -297,6 +337,7 @@ class AppState extends ChangeNotifier {
   void handleAppLifecycleState(AppLifecycleState state) {
     final wasForeground = _isForeground;
     _lifecycleState = state;
+    if (state != AppLifecycleState.resumed) flushDrafts();
     if (state == AppLifecycleState.resumed ||
         (!wasForeground && _isForeground)) {
       unawaited(_resumeForegroundSync());
@@ -410,11 +451,254 @@ class AppState extends ChangeNotifier {
   bool hasMoreHistory(String conversationId) =>
       _historyCursors[conversationId] != null;
 
-  bool isMuted(String conversationId) =>
-      _mutedConversations.contains(conversationId);
+  /// Heard with each batch of received messages once they are decrypted,
+  /// stored and shown. The desktop shell uses it to raise notifications
+  /// (W3); it gets copies and cannot change the list.
+  void Function(List<ReceivedMessageEnvelope> received)? onMessagesPublished;
+
+  bool isMuted(String conversationId) {
+    if (!_mutes.containsKey(conversationId)) return false;
+    final until = _mutes[conversationId];
+    return until == null || until.isAfter(DateTime.now());
+  }
+
+  /// When the current mute of [conversationId] ends; null when it is not muted
+  /// or the mute has no end.
+  DateTime? mutedUntil(String conversationId) =>
+      isMuted(conversationId) ? _mutes[conversationId] : null;
 
   bool isBlocked(String accountId) =>
       blockedAccounts.any((block) => block.accountId == accountId);
+
+  // Message requests (B8). A DM or group that someone else started, whose
+  // starter this account has not accepted, waits as a request: no read
+  // receipt, no attachment download, no notification. Acceptance is local to
+  // this device (syncing it across devices is later work); the accepted peers,
+  // accepted groups and declined conversations live in the encrypted local
+  // settings, never on the server.
+  //
+  // The server refuses to remove a member from a DM, so Delete and Block on a
+  // DM cannot leave it. They record the conversation as declined instead; it
+  // is hidden, and returns as a request only on newer activity from a peer
+  // who is not blocked.
+  static const String _requestSettingName = 'message_requests';
+  Set<String>? _acceptedPeers;
+  final Set<String> _acceptedGroups = <String>{};
+  final Map<String, DateTime> _declined = <String, DateTime>{};
+
+  /// Whether the request state has been read. Until then nothing from a
+  /// stranger is treated as accepted, and the chat list shows no rows.
+  bool get requestStateLoaded => _acceptedPeers != null;
+
+  /// Where a conversation belongs: the chat list, the Requests section, or
+  /// nowhere (declined, or from a blocked account).
+  RequestBucket requestBucket(Conversation conversation) {
+    final me = session?.accountId;
+    final creator = conversation.createdBy;
+    final isDm = conversation.isDm;
+    if (me == null ||
+        !(isDm || conversation.isGroup) ||
+        creator == null ||
+        creator == me) {
+      return RequestBucket.chat;
+    }
+    final sender = isDm ? conversation.peerAccountId : creator;
+    if (sender == null) return RequestBucket.chat;
+    final accepted = _acceptedPeers;
+    if (accepted != null &&
+        (isDm
+            ? accepted.contains(sender)
+            : accepted.contains(creator) ||
+                _acceptedGroups.contains(conversation.id))) {
+      return RequestBucket.chat;
+    }
+    if (isBlocked(sender)) return RequestBucket.hidden;
+    final declinedAt = _declined[conversation.id];
+    if (declinedAt != null) {
+      final activity = conversation.lastActivityAt;
+      if (activity == null || !activity.isAfter(declinedAt)) {
+        return RequestBucket.hidden;
+      }
+    }
+    return RequestBucket.request;
+  }
+
+  bool isMessageRequest(Conversation conversation) =>
+      requestBucket(conversation) == RequestBucket.request;
+
+  bool isMessageRequestId(String conversationId) {
+    final conversation =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    return conversation != null && isMessageRequest(conversation);
+  }
+
+  bool _heldBack(String conversationId) {
+    final conversation =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    return conversation != null &&
+        requestBucket(conversation) != RequestBucket.chat;
+  }
+
+  /// Whether the conversation's content may be shown, read or fetched.
+  /// Unknown conversations are not.
+  bool conversationOpen(String conversationId) {
+    final conversation =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    return conversation != null &&
+        requestBucket(conversation) == RequestBucket.chat;
+  }
+
+  /// Loads (or, on first run, creates) the request state. Only an upgrade
+  /// ([grandfather]: an earlier local snapshot exists) accepts the
+  /// conversations already there, so an update never turns existing chats
+  /// into requests. A fresh device (link, reinstall, restore) starts with
+  /// only what this account created accepted.
+  Future<void> _loadRequestState({required bool grandfather}) async {
+    final me = session?.accountId;
+    if (me == null || _acceptedPeers != null) return;
+    final accepted = <String>{};
+    final groups = <String>{};
+    final declined = <String, DateTime>{};
+    var known = false;
+    try {
+      final raw = await localStore.loadSetting(_requestSettingName);
+      if (raw != null) {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map && decoded['account'] == me) {
+          known = true;
+          final peers = decoded['accepted'];
+          if (peers is List) accepted.addAll(peers.whereType<String>());
+          final acceptedGroups = decoded['groups'];
+          if (acceptedGroups is List) {
+            groups.addAll(acceptedGroups.whereType<String>());
+          }
+          final gone = decoded['declined'];
+          if (gone is Map) {
+            for (final entry in gone.entries) {
+              final at = DateTime.tryParse('${entry.value}');
+              if (entry.key is String && at != null) {
+                declined[entry.key as String] = at;
+              }
+            }
+          }
+        }
+      }
+    } catch (_) {
+      // An unreadable value is treated as first run.
+    }
+    if (!known) {
+      if (grandfather) {
+        for (final conversation in conversations) {
+          final peer = conversation.peerAccountId;
+          if (conversation.isDm && peer != null) accepted.add(peer);
+          if (conversation.isGroup) groups.add(conversation.id);
+        }
+      }
+      await _saveRequestState(me, accepted, groups, declined);
+    }
+    _acceptedPeers = accepted;
+    _acceptedGroups
+      ..clear()
+      ..addAll(groups);
+    _declined
+      ..clear()
+      ..addAll(declined);
+  }
+
+  Future<void> _persistRequestState() async {
+    final me = session?.accountId;
+    final accepted = _acceptedPeers;
+    if (me == null || accepted == null) return;
+    await _saveRequestState(me, accepted, _acceptedGroups, _declined);
+  }
+
+  Future<void> _saveRequestState(
+    String me,
+    Set<String> accepted,
+    Set<String> groups,
+    Map<String, DateTime> declined,
+  ) =>
+      localStore.saveSetting(
+        _requestSettingName,
+        jsonEncode(<String, Object?>{
+          'account': me,
+          'accepted': accepted.toList()..sort(),
+          'groups': groups.toList()..sort(),
+          'declined': <String, String>{
+            for (final entry in declined.entries)
+              entry.key: entry.value.toUtc().toIso8601String(),
+          },
+        }),
+      );
+
+  String? _requestSender(Conversation conversation) =>
+      conversation.isDm ? conversation.peerAccountId : conversation.createdBy;
+
+  /// Accepts [conversation]'s sender (a DM's peer, or a group) and clears any
+  /// earlier decline. Starting or replying in a conversation counts as
+  /// accepting it.
+  Future<bool> _acceptConversation(Conversation conversation) async {
+    final accepted = _acceptedPeers;
+    final sender = _requestSender(conversation);
+    if (accepted == null || sender == null || isBlocked(sender)) return false;
+    if (conversation.isGroup) {
+      _acceptedGroups.add(conversation.id);
+    } else {
+      accepted.add(sender);
+    }
+    _declined.remove(conversation.id);
+    await _persistRequestState();
+    notifyListeners();
+    return true;
+  }
+
+  /// Accepts a request. False when nothing was accepted (unknown
+  /// conversation, state not loaded, or a blocked sender).
+  Future<bool> acceptMessageRequest(String conversationId) async {
+    final conversation =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    if (conversation == null) return false;
+    final wasRequest = isMessageRequest(conversation);
+    if (!await _acceptConversation(conversation)) return false;
+    if (wasRequest && selectedConversationId == conversationId) {
+      unawaited(loadMessages(conversationId));
+    }
+    return true;
+  }
+
+  Future<bool> _decline(Conversation conversation) async {
+    _declined[conversation.id] = DateTime.now().toUtc();
+    await _persistRequestState();
+    if (selectedConversationId == conversation.id) {
+      selectedConversationId = null;
+    }
+    notifyListeners();
+    return true;
+  }
+
+  /// Drops the request: a DM cannot be left (the server refuses), so it is
+  /// declined; a group is left for real.
+  Future<bool> _dropRequest(Conversation conversation) => conversation.isGroup
+      ? leaveConversation(conversation.id)
+      : _decline(conversation);
+
+  /// Blocks the sender, then drops the request.
+  Future<bool> blockMessageRequest(String conversationId) async {
+    final conversation =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    final sender = conversation == null ? null : _requestSender(conversation);
+    if (conversation == null || sender == null) return false;
+    if (!await blockAccount(sender)) return false;
+    return _dropRequest(conversation);
+  }
+
+  /// Drops the request without blocking.
+  Future<bool> deleteMessageRequest(String conversationId) async {
+    final conversation =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    if (conversation == null) return false;
+    return _dropRequest(conversation);
+  }
 
   List<ConversationMember> membersFor(String conversationId) =>
       membersByConversation[conversationId] ?? const <ConversationMember>[];
@@ -470,8 +754,11 @@ class AppState extends ChangeNotifier {
     };
     final byKey = <String, ReceivedMessageEnvelope>{};
     for (final envelope in envelopes) {
-      byKey[ConversationHistory.keyOf(
-          envelope.senderDeviceId, envelope.idempotencyKey)] = envelope;
+      // A placeholder row is keyed by its sync event, so ask the history
+      // which row an envelope belongs to before using its claimed key.
+      byKey[history.forEnvelope(envelope)?.key ??
+          ConversationHistory.keyOf(
+              envelope.senderDeviceId, envelope.idempotencyKey)] = envelope;
     }
     for (final local in history.messages) {
       if (local.kind == LocalMessageKind.action ||
@@ -484,7 +771,9 @@ class AppState extends ChangeNotifier {
         conversationId: conversationId,
         senderAccountId: local.senderAccountId,
         senderDeviceId: local.senderDeviceId,
-        idempotencyKey: local.key.substring(local.senderDeviceId.length + 1),
+        idempotencyKey: local.key.startsWith('${local.senderDeviceId}:')
+            ? local.key.substring(local.senderDeviceId.length + 1)
+            : local.key,
         ciphertext: const <int>[],
         cryptoProtocol: 'local-history',
         createdAt:
@@ -657,6 +946,16 @@ class AppState extends ChangeNotifier {
       // The local database opened, so a run of failed upgrades is over.
       _storageFullFailures = 0;
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
+      // Expired messages go even from a device that is signed out: it keeps
+      // its history for the next sign-in (W2).
+      try {
+        await localStore.purgeExpiredMessages();
+      } catch (_) {
+        // Best effort: expired text is hidden on read even if this delete
+        // failed, and the timer retries. Never a reason for recovery mode.
+        _expiryBackoff = _nextExpiryBackoff(_expiryBackoff);
+      }
+      if (!_lifecycleGenerationActive(transitionGeneration)) return;
       if (stored == null) {
         lifecycle = SessionLifecycle.ready;
         notifyListeners();
@@ -687,10 +986,17 @@ class AppState extends ChangeNotifier {
         _outboxStates[envelope.idempotencyKey] = OutboxDeliveryState.failed;
       }
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
+      await _reloadStoredDrafts();
+      _mutes
+        ..clear()
+        ..addAll(await localStore.loadConversationMutes());
+      _armMuteTimer();
+      if (!_lifecycleGenerationActive(transitionGeneration)) return;
       final cached = await localStore.loadSnapshot();
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
       if (cached != null) {
         conversations = cached.conversations;
+        await _loadRequestState(grandfather: true);
         messagesByConversation = cached.messagesByConversation;
         conversationsLoaded = true;
         notifyListeners();
@@ -702,7 +1008,9 @@ class AppState extends ChangeNotifier {
       } on ApiException catch (err) {
         if (err.statusCode == 401) {
           await _clearLocalSession(
-              preserveDeviceIdentity: true, preserveOutbox: true);
+              preserveDeviceIdentity: true,
+              keepDrafts: true,
+              preserveOutbox: true);
           return;
         }
         // Keep the encrypted cache available while offline.
@@ -710,6 +1018,7 @@ class AppState extends ChangeNotifier {
         // Keep the encrypted cache available while offline.
       }
       _startSync();
+      unawaited(_scheduleExpiryPurge());
       lifecycle = SessionLifecycle.ready;
       notifyListeners();
     } catch (error) {
@@ -761,6 +1070,8 @@ class AppState extends ChangeNotifier {
             : l10n.recoveryUpgradeFailed;
       case LocalStoreFailureKind.upgradeFailed:
         return l10n.recoveryUpgradeError;
+      case LocalStoreFailureKind.sqliteFeatureMissing:
+        return l10n.recoverySqliteFeatureMissing;
     }
   }
 
@@ -782,7 +1093,8 @@ class AppState extends ChangeNotifier {
     if (failure == LocalStoreFailureKind.upgradeStorageFull) {
       return _storageFullFailures > 1;
     }
-    return true;
+    // Moving the database aside would not give this build the feature.
+    return failure != LocalStoreFailureKind.sqliteFeatureMissing;
   }
 
   void continueWithoutRestore() {
@@ -873,11 +1185,22 @@ class AppState extends ChangeNotifier {
         deviceSecret: deviceSecret,
       );
       await localStore.saveSession(session!);
+      await _reloadStoredDrafts();
       await _mlsCrypto?.activateSession(session!);
       await localStore.saveSyncCursor(0);
       await _refreshConversations(notify: true);
       await _refreshDevices();
       _startSync();
+    });
+  }
+
+  /// Puts the drafts kept through a session expiry back into the composer.
+  /// A different identity never reaches here with drafts: saving its session
+  /// deletes them.
+  Future<void> _reloadStoredDrafts() async {
+    composerDrafts.load({
+      for (final entry in (await localStore.loadDrafts()).entries)
+        entry.key: (text: entry.value.text, replyTo: entry.value.replyTo),
     });
   }
 
@@ -906,7 +1229,9 @@ class AppState extends ChangeNotifier {
         await _enqueueSessionTransition(() async {
           if (!identical(session, current)) return;
           await _clearLocalSession(
-              preserveDeviceIdentity: true, preserveOutbox: true);
+              preserveDeviceIdentity: true,
+              keepDrafts: true,
+              preserveOutbox: true);
         });
       }
       _opErrors[op] = describeError(err, l10n);
@@ -988,6 +1313,7 @@ class AppState extends ChangeNotifier {
       return;
     }
     conversations = await client.conversations(current.token);
+    await _loadRequestState(grandfather: false);
     // The server's list is the truth: a conversation no longer in it (an
     // admin removed this account, say) keeps no draft here.
     composerDrafts.retainOnly(conversations.map((item) => item.id));
@@ -1038,6 +1364,12 @@ class AppState extends ChangeNotifier {
       conversationId: <ReceivedMessageEnvelope>[...page.messages, ...older],
     };
     _historyCursors[conversationId] = page.nextBefore;
+    // A message that just landed ends its sender's "typing…" line.
+    final newest = page.messages.firstOrNull;
+    if (newest != null &&
+        DateTime.now().difference(newest.createdAt) < typingExpiry) {
+      typing.stoppedTyping(conversationId, newest.senderAccountId);
+    }
     if (persist) await _persistSnapshot();
   }
 
@@ -1145,6 +1477,8 @@ class AppState extends ChangeNotifier {
     if (kind == 'dm' && memberAccountIds.length == 1) {
       final existing = existingDmWith(memberAccountIds.single);
       if (existing != null) {
+        // Starting a conversation with the peer accepts them.
+        await _acceptConversation(existing);
         selectConversation(existing.id);
         return existing;
       }
@@ -1168,6 +1502,8 @@ class AppState extends ChangeNotifier {
       final conversation = created!;
       await _setUpConversationGroup(conversation.id);
       conversations = <Conversation>[conversation, ...conversations];
+      // The server may hand back a DM the peer created first.
+      if (conversation.isDm) await _acceptConversation(conversation);
       selectedConversationId = conversation.id;
       messagesByConversation[conversation.id] = <ReceivedMessageEnvelope>[];
     });
@@ -1373,7 +1709,10 @@ class AppState extends ChangeNotifier {
           if (entry.key != conversationId) entry.key: entry.value,
       };
       _historyCursors.remove(conversationId);
-      _mutedConversations.remove(conversationId);
+      _mutes.remove(conversationId);
+      unawaited(localStore
+          .saveConversationMute(conversationId, muted: false)
+          .catchError((Object _) {}));
       composerDrafts.remove(conversationId);
       if (selectedConversationId == conversationId) {
         selectedConversationId = null;
@@ -1428,46 +1767,152 @@ class AppState extends ChangeNotifier {
     });
   }
 
-  /// Best-effort read of the server's mute flag. Silent on failure: an
-  /// unknown mute state must not block opening a conversation.
-  Future<void> loadConversationMuted(String conversationId) async {
+  /// Messages this device holds that match [query] (W10). Answered from the
+  /// encrypted local database: no request is made and nothing is sent.
+  Future<List<MessageSearchHit>> searchMessages(String query) =>
+      localStore.searchMessages(query);
+
+  /// Best-effort read of the server's mute. Silent on failure: an unknown
+  /// mute state must not block opening a conversation.
+  ///
+  /// Returns whether the mute was read.
+  Future<bool> loadConversationMuted(String conversationId) async {
     final current = session;
     final client = api;
     if (current == null || client == null) {
-      return;
+      return false;
     }
     try {
-      final muted =
-          await client.conversationMuted(current.token, conversationId);
-      _setMutedLocally(conversationId, muted);
+      final mute = await client.conversationMute(current.token, conversationId);
+      _setMuteLocally(conversationId, mute);
+      return true;
     } catch (_) {
-      // Leave the last known value; the toggle still reports its own errors.
+      // Leave the last known value; the control still reports its own errors.
+      return false;
     }
   }
 
-  Future<bool> setConversationMuted(String conversationId, bool muted) {
+  Future<bool> setConversationMuted(String conversationId, bool muted) =>
+      setConversationMute(
+          conversationId, muted ? MuteDuration.always : MuteDuration.off);
+
+  /// Mutes push for [duration] (or unmutes with [MuteDuration.off]). The
+  /// server ends a timed mute by itself, and so does this device.
+  Future<bool> setConversationMute(
+      String conversationId, MuteDuration duration) {
     return _runScoped(Ops.mute, () async {
       final current = session;
       final client = api;
       if (current == null || client == null) {
         return;
       }
-      final applied = await client.setConversationMuted(
+      final length = duration.length;
+      final applied = await client.setConversationMute(
         current.token,
         conversationId,
-        muted,
+        muted: duration != MuteDuration.off,
+        forDuration: length,
       );
-      _setMutedLocally(conversationId, applied);
+      _setMuteLocally(conversationId, applied);
     });
   }
 
-  void _setMutedLocally(String conversationId, bool muted) {
-    final changed = muted
-        ? _mutedConversations.add(conversationId)
-        : _mutedConversations.remove(conversationId);
-    if (changed) {
+  void _setMuteLocally(String conversationId, ConversationMute mute) {
+    final before = _mutes.containsKey(conversationId)
+        ? (_mutes[conversationId], true)
+        : (null, false);
+    if (mute.muted) {
+      _mutes[conversationId] = mute.until;
+    } else {
+      _mutes.remove(conversationId);
+    }
+    final after = _mutes.containsKey(conversationId)
+        ? (_mutes[conversationId], true)
+        : (null, false);
+    if (before != after) {
+      unawaited(localStore
+          .saveConversationMute(conversationId,
+              muted: mute.muted, until: mute.until)
+          .catchError((Object _) {}));
+      _armMuteTimer();
       notifyListeners();
     }
+  }
+
+  /// Wakes the screens when the next timed mute ends, so a chat list never
+  /// shows a mute that is over.
+  void _armMuteTimer() {
+    _muteTimer?.cancel();
+    _muteTimer = null;
+    final now = DateTime.now();
+    DateTime? next;
+    for (final until in _mutes.values) {
+      if (until != null && until.isAfter(now)) {
+        if (next == null || until.isBefore(next)) next = until;
+      }
+    }
+    if (next == null) return;
+    var delay = next.difference(now) + const Duration(milliseconds: 250);
+    if (delay > const Duration(days: 1)) delay = const Duration(days: 1);
+    _muteTimer = Timer(delay, () {
+      _muteTimer = null;
+      _mutes.removeWhere(
+          (_, until) => until != null && !until.isAfter(DateTime.now()));
+      _armMuteTimer();
+      notifyListeners();
+    });
+  }
+
+  // ---- drafts (W6) ---------------------------------------------------------
+
+  void _draftChanged(String conversationId) {
+    _draftTimers.remove(conversationId)?.cancel();
+    if (session == null) return;
+    final empty = composerDrafts.textFor(conversationId).isEmpty &&
+        composerDrafts.replyTargetFor(conversationId) == null;
+    if (empty) {
+      // Deleting needs no debounce, and must not wait behind a stale write.
+      unawaited(_persistDraft(conversationId));
+      return;
+    }
+    _draftTimers[conversationId] = Timer(const Duration(milliseconds: 500), () {
+      _draftTimers.remove(conversationId);
+      unawaited(_persistDraft(conversationId));
+    });
+  }
+
+  Future<void> _persistDraft(String conversationId) async {
+    if (session == null) return;
+    final generation = _sessionGeneration;
+    final text = composerDrafts.textFor(conversationId);
+    final replyTo = composerDrafts.replyTargetFor(conversationId);
+    try {
+      if (text.isEmpty && replyTo == null) {
+        await localStore.deleteDraft(conversationId);
+      } else {
+        if (generation != _sessionGeneration) return;
+        await localStore.saveDraft(conversationId, text, replyTo: replyTo);
+      }
+    } catch (_) {
+      // A draft that cannot be saved is still in memory; never block typing.
+    }
+  }
+
+  /// Writes pending drafts now. Called when the app leaves the foreground,
+  /// because a process that is stopped there may never run its timers.
+  void flushDrafts() {
+    final pending = _draftTimers.keys.toList(growable: false);
+    for (final id in pending) {
+      _draftTimers.remove(id)?.cancel();
+      unawaited(_persistDraft(id));
+    }
+  }
+
+  void _cancelDraftTimers() {
+    for (final timer in _draftTimers.values) {
+      timer.cancel();
+    }
+    _draftTimers.clear();
   }
 
   Future<void> setConversationRetention(
@@ -1513,13 +1958,25 @@ class AppState extends ChangeNotifier {
     if (current == null || client == null) {
       return;
     }
+    // No read receipt for a request: the sender learns nothing until accepted.
+    if (_heldBack(conversationId)) {
+      return;
+    }
     final messages = messagesByConversation[conversationId] ??
         const <ReceivedMessageEnvelope>[];
     if (messages.isEmpty) {
       return;
     }
     try {
-      await client.markRead(current.token, conversationId, messages.first.id);
+      // With the switch off the receipt is private: the server keeps this
+      // account's own cursor for the unread count and shares nothing.
+      await receiptPreferences.loaded;
+      if (receiptPreferences.sendReadReceipts) {
+        await client.markRead(current.token, conversationId, messages.first.id);
+      } else {
+        await client.markReadPrivate(
+            current.token, conversationId, messages.first.id);
+      }
       // Clear the unread badge immediately rather than waiting for the next
       // conversation refresh; the receipt has landed server-side.
       var changed = false;
@@ -1752,12 +2209,23 @@ class AppState extends ChangeNotifier {
   /// Downloads one attachment's ciphertext and decrypts it in memory. The
   /// ciphertext and plaintext only touch disk as temporary files, which are
   /// removed before this returns.
-  Future<Uint8List> loadAttachment(AttachmentEntry entry) async {
+  Future<Uint8List> loadAttachment(
+    AttachmentEntry entry, {
+    required String conversationId,
+  }) async {
     final service = attachmentService;
     final current = session;
     final client = api;
     if (service == null || current == null || client == null) {
       throw StateError('attachments are unavailable');
+    }
+    // The caller's conversation decides, not the manifest's claim; the
+    // manifest must still name the same conversation.
+    if (entry.manifest['conversation_id'] != conversationId) {
+      throw StateError('attachment belongs to another conversation');
+    }
+    if (!conversationOpen(conversationId)) {
+      throw StateError('attachments wait until the request is accepted');
     }
     final directory = await service.workingDirectory();
     final base = '${directory.path}${Platform.pathSeparator}'
@@ -1803,9 +2271,31 @@ class AppState extends ChangeNotifier {
   /// Decrypts one attachment into [destinationPath], a location the user
   /// chose.
   Future<void> saveAttachment(
-      AttachmentEntry entry, String destinationPath) async {
-    final bytes = await loadAttachment(entry);
+    AttachmentEntry entry,
+    String destinationPath, {
+    required String conversationId,
+  }) async {
+    final bytes = await loadAttachment(entry, conversationId: conversationId);
     await File(destinationPath).writeAsBytes(bytes, flush: true);
+  }
+
+  /// The most plaintext bytes the server accepts for one attachment (the
+  /// operator's `PRIVATE_MESSENGER_LIMIT_ATTACHMENT_MIB`), as its setup
+  /// status reports it. An older server, or one that cannot be reached,
+  /// leaves the app's own ceiling.
+  Future<int> attachmentSizeLimit() async {
+    try {
+      final status = await api?.setupStatus();
+      final limit = status?['max_attachment_bytes'];
+      if (limit is int && limit > 0) {
+        return limit < maxPlaintextAttachmentBytes
+            ? limit
+            : maxPlaintextAttachmentBytes;
+      }
+    } catch (_) {
+      // The upload itself still enforces the cap.
+    }
+    return maxPlaintextAttachmentBytes;
   }
 
   Future<bool> _sendPayload(
@@ -1821,6 +2311,10 @@ class AppState extends ChangeNotifier {
           conversations.where((item) => item.id == conversationId).firstOrNull;
       if (current == null || client == null || conversation == null) {
         return;
+      }
+      // Replying counts as accepting.
+      if (isMessageRequest(conversation)) {
+        await _acceptConversation(conversation);
       }
       if (!await localStore.hasOutboxCapacity()) {
         throw const OutboxFullException();
@@ -1888,7 +2382,10 @@ class AppState extends ChangeNotifier {
       if (!membershipChangesAvailable) {
         throw StateError('device linking is not available in this build');
       }
-      activeDeviceLink = await client.createDeviceLink(current.token);
+      activeDeviceLink = null;
+      final created = await client.createDeviceLink(current.token);
+      _requireLinkAccount(current, created);
+      activeDeviceLink = _deviceLinkWithoutVerification(created);
     });
   }
 
@@ -1900,15 +2397,20 @@ class AppState extends ChangeNotifier {
       if (current == null || client == null || link == null) {
         return;
       }
-      if (link.verificationCode.isEmpty ||
+      _requireLinkAccount(current, link);
+      if (link.state != 'claimed' ||
+          link.verificationCode.isEmpty ||
           verificationCode.trim() != link.verificationCode ||
           link.transcriptHash?.length != 32) {
         throw StateError('Device-link verification did not match locally');
       }
-      activeDeviceLink = await client.approveDeviceLink(
-        current.token,
-        link.id,
-        link.transcriptHash!,
+      // Strip the result: approving again needs a fresh verified refresh.
+      activeDeviceLink = _deviceLinkWithoutVerification(
+        await client.approveDeviceLink(
+          current.token,
+          link.id,
+          link.transcriptHash!,
+        ),
       );
     });
   }
@@ -1921,48 +2423,87 @@ class AppState extends ChangeNotifier {
       if (current == null || client == null || link == null) {
         return;
       }
-      final refreshed = await client.deviceLink(current.token, link.id);
-      var merged = DeviceLink(
-        id: refreshed.id,
-        state: refreshed.state,
-        verificationCode: link.verificationCode,
-        expiresAt: refreshed.expiresAt,
-        code: link.code ?? refreshed.code,
-        linkUri: link.linkUri ?? refreshed.linkUri,
-        claimedDeviceName: refreshed.claimedDeviceName,
-        approvedDeviceId: refreshed.approvedDeviceId,
-        accountId: refreshed.accountId,
-        createdByDeviceId: refreshed.createdByDeviceId,
-        protocolVersion: refreshed.protocolVersion,
-        linkNonce: refreshed.linkNonce,
-        existingSigningKey: refreshed.existingSigningKey,
-        claimedDeviceId: refreshed.claimedDeviceId,
-        claimedSigningKey: refreshed.claimedSigningKey,
-        transcriptHash: link.transcriptHash ?? refreshed.transcriptHash,
-      );
-      if (refreshed.state == 'claimed' &&
-          refreshed.accountId != null &&
-          refreshed.protocolVersion != null &&
-          refreshed.linkNonce?.length == 32 &&
-          refreshed.claimedDeviceId != null &&
-          refreshed.claimedSigningKey?.length == 32) {
-        final verification = await cryptoService.deriveDeviceLinkVerification(
-          accountId: refreshed.accountId!,
-          protocolVersion: refreshed.protocolVersion!,
-          linkNonce: refreshed.linkNonce!,
-          peerDeviceId: refreshed.claimedDeviceId!,
-          peerSigningKey: refreshed.claimedSigningKey!,
-          localIsExistingDevice: true,
-        );
-        if (refreshed.transcriptHash != null &&
-            !_constantTimeBytesEqual(
-                verification.transcriptHash, refreshed.transcriptHash!)) {
-          throw StateError('Device-link transcript was substituted');
-        }
-        merged = _deviceLinkWithVerification(merged, verification);
+      try {
+        activeDeviceLink = await _refreshedDeviceLink(current, client, link);
+      } catch (_) {
+        // Fail closed: whatever was verified before no longer stands, so
+        // approval is impossible until a refresh passes every check.
+        activeDeviceLink = _deviceLinkWithoutVerification(link);
+        rethrow;
       }
-      activeDeviceLink = merged;
     });
+  }
+
+  /// The link after a status refresh. The account and nonce are the ones
+  /// this device received when it created the link; the server cannot swap
+  /// them later, and its relayed transcript hash must match the one derived
+  /// here.
+  Future<DeviceLink> _refreshedDeviceLink(
+      Session current, ApiClient client, DeviceLink link) async {
+    final accountId = link.accountId;
+    final linkNonce = link.linkNonce;
+    if (accountId == null || linkNonce == null || linkNonce.length != 32) {
+      throw StateError('Device-link transcript context is incomplete');
+    }
+    _requireLinkAccount(current, link);
+    final refreshed = await client.deviceLink(current.token, link.id);
+    if (refreshed.id != link.id) {
+      throw StateError('Device-link transcript was substituted');
+    }
+    if ((refreshed.accountId != null && refreshed.accountId != accountId) ||
+        (refreshed.linkNonce != null &&
+            !_constantTimeBytesEqual(linkNonce, refreshed.linkNonce!))) {
+      throw StateError('Device-link transcript was substituted');
+    }
+    var merged = DeviceLink(
+      id: link.id,
+      state: refreshed.state,
+      verificationCode: '',
+      expiresAt: refreshed.expiresAt,
+      code: link.code ?? refreshed.code,
+      linkUri: link.linkUri ?? refreshed.linkUri,
+      claimedDeviceName: refreshed.claimedDeviceName,
+      approvedDeviceId: refreshed.approvedDeviceId,
+      accountId: accountId,
+      createdByDeviceId: refreshed.createdByDeviceId,
+      protocolVersion: refreshed.protocolVersion,
+      linkNonce: linkNonce,
+      existingSigningKey: refreshed.existingSigningKey,
+      claimedDeviceId: refreshed.claimedDeviceId,
+      claimedSigningKey: refreshed.claimedSigningKey,
+      transcriptHash: null,
+    );
+    if (refreshed.state == 'claimed') {
+      if (refreshed.protocolVersion == null ||
+          refreshed.claimedDeviceId == null ||
+          refreshed.claimedSigningKey?.length != 32) {
+        throw StateError('Device-link transcript context is incomplete');
+      }
+      final relayedHash = refreshed.transcriptHash;
+      if (relayedHash == null) {
+        throw StateError('Device-link transcript hash is missing');
+      }
+      final verification = await cryptoService.deriveDeviceLinkVerification(
+        accountId: accountId,
+        protocolVersion: refreshed.protocolVersion!,
+        linkNonce: linkNonce,
+        peerDeviceId: refreshed.claimedDeviceId!,
+        peerSigningKey: refreshed.claimedSigningKey!,
+        localIsExistingDevice: true,
+      );
+      if (!_constantTimeBytesEqual(verification.transcriptHash, relayedHash)) {
+        throw StateError('Device-link transcript was substituted');
+      }
+      merged = _deviceLinkWithVerification(merged, verification);
+    }
+    return merged;
+  }
+
+  void _requireLinkAccount(Session current, DeviceLink link) {
+    final sessionAccount = current.accountId;
+    if (sessionAccount != null && sessionAccount != link.accountId) {
+      throw StateError('Device-link account does not match this session');
+    }
   }
 
   Future<void> claimDeviceLink(String baseUrl, String code) async {
@@ -2184,7 +2725,128 @@ class AppState extends ChangeNotifier {
   void selectConversation(String id) {
     selectedConversationId = id;
     notifyListeners();
-    unawaited(loadMessages(id));
+    // A request loads nothing until it is accepted.
+    if (!_heldBack(id)) {
+      unawaited(loadMessages(id));
+      unawaited(refreshReceipts(id));
+    }
+  }
+
+  Timer? _receiptsRefreshTimer;
+
+  /// Pause before delivery announcements are acted on (W5).
+  static const Duration receiptsRefreshDebounce = Duration(milliseconds: 500);
+
+  /// Routes the realtime frames that are not stored events (W5): typing and
+  /// delivery announcements. True when the frame was one of them.
+  @visibleForTesting
+  bool handleEphemeralFrame(Map<String, Object?> frame) {
+    final type = frame['type'];
+    final conversationId = frame['conversation_id'];
+    if (type == 'sync.connected') {
+      // Delivery announcements are never stored, so any sent while the socket
+      // was down are read again here. The catch-up still runs.
+      final selected = selectedConversationId;
+      if (selected != null) unawaited(refreshReceipts(selected));
+      return false;
+    }
+    if (type != 'typing.updated' && type != 'delivery_receipt.updated') {
+      return false;
+    }
+    if (conversationId is! String) return true;
+    if (type == 'delivery_receipt.updated') {
+      if (conversationId == selectedConversationId) {
+        // A busy group sends one per member per message: read the cursors
+        // once after the burst.
+        _receiptsRefreshTimer?.cancel();
+        _receiptsRefreshTimer = Timer(receiptsRefreshDebounce, () {
+          if (!_disposed && conversationId == selectedConversationId) {
+            unawaited(refreshReceipts(conversationId));
+          }
+        });
+      }
+      return true;
+    }
+    final payload = frame['payload'];
+    final accountId = payload is Map ? payload['account_id'] : null;
+    if (accountId is String && accountId != session?.accountId) {
+      typing.remoteTyping(conversationId, accountId);
+    }
+    return true;
+  }
+
+  /// Adopts the account's read-receipts switch from the server, so a change
+  /// made on another linked device shows here. Best effort.
+  Future<void> refreshReadReceiptsSetting() async {
+    final current = session;
+    final client = api;
+    if (current == null || client == null) return;
+    try {
+      final enabled = await client.readReceiptsEnabled(current.token);
+      if (_disposed || !_sameSession(current)) return;
+      await receiptPreferences.setSendReadReceipts(enabled);
+    } catch (_) {
+      // The saved choice on this device stands.
+    }
+  }
+
+  /// Flips the account's read-receipts switch (every linked device follows).
+  /// False when the server could not be told; the switch then stays as it was.
+  Future<bool> setSendReadReceipts(bool enabled) async {
+    final current = session;
+    final client = api;
+    if (current == null || client == null) return false;
+    try {
+      await client.setReadReceiptsEnabled(current.token, enabled);
+    } catch (_) {
+      return false;
+    }
+    await receiptPreferences.setSendReadReceipts(enabled);
+    return true;
+  }
+
+  /// Whether ticks are offered in [conversationId]: DMs and groups up to
+  /// [tickMaxMembers], never community channels.
+  bool ticksApply(String conversationId) {
+    final conversation =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    if (conversation == null || conversation.isChannel) return false;
+    final members = membersFor(conversationId).length;
+    return members <= tickMaxMembers;
+  }
+
+  /// Reads the other members' delivery and read cursors. Best effort: the
+  /// ticks simply stay as they were when it fails.
+  Future<void> refreshReceipts(String conversationId) async {
+    final current = session;
+    final client = api;
+    if (current == null || client == null) return;
+    try {
+      final list = await client.listReceipts(current.token, conversationId);
+      if (_disposed || !_sameSession(current)) return;
+      receipts.set(conversationId, list);
+    } catch (_) {
+      // Advisory only.
+    }
+  }
+
+  /// Tells the other members this account is typing in [conversationId].
+  /// Throttled, skipped in conversations too large for a typing line, and
+  /// never retried: a missed signal is simply a missed signal.
+  void notifyTyping(String conversationId) {
+    final current = session;
+    final client = api;
+    if (current == null || client == null) return;
+    final known = membersFor(conversationId).length;
+    final members =
+        known > 0 ? known : receipts.receiptsFor(conversationId).length + 1;
+    if (members < 2 || members > typingMaxMembers) return;
+    if (!typing.takeSendSlot(conversationId)) return;
+    unawaited(
+      client
+          .sendTyping(current.token, conversationId)
+          .catchError((Object _) {}),
+    );
   }
 
   Future<void> _startSync() async {
@@ -2239,7 +2901,9 @@ class AppState extends ChangeNotifier {
     sync = syncServiceFactory(current.baseUrl, current.token);
     _setConnectionStatus(ConnectionStatus.connecting);
     _syncSubscription = sync!.events.listen(
-      (_) {
+      (frame) {
+        // Ephemeral frames carry nothing to catch up on.
+        if (handleEphemeralFrame(frame)) return;
         unawaited(_catchUpSyncEvents());
         unawaited(_flushMlsOutbox());
       },
@@ -2259,6 +2923,7 @@ class AppState extends ChangeNotifier {
     unawaited(refreshInvites());
     unawaited(refreshCommunities());
     unawaited(refreshBlocks());
+    unawaited(refreshReadReceiptsSetting());
     unawaited(_startPush());
   }
 
@@ -2430,6 +3095,8 @@ class AppState extends ChangeNotifier {
 
   Future<void> _resumeForegroundSync() async {
     if (session == null || api == null) return;
+    // Timers do not run while the app is suspended.
+    await purgeExpiredMessages();
     await _observePendingWake();
     await _catchUpSyncEvents();
     await _flushMlsOutbox();
@@ -2609,7 +3276,11 @@ class AppState extends ChangeNotifier {
                 continue;
               }
             } else {
-              if (!_knownProjectionEvent(event.type)) {
+              // An unknown type outside the crypto namespaces only asks for
+              // a refresh, so it is skipped and the cursor moves past it
+              // (P5). Unknown crypto types still stop sync.
+              if (!_knownProjectionEvent(event.type) &&
+                  _failsClosedEvent(event.type)) {
                 throw SyncEventFailure(SyncFailureKind.unsupportedEvent,
                     eventId: event.id,
                     eventType: event.type,
@@ -2666,6 +3337,7 @@ class AppState extends ChangeNotifier {
       if (err is ApiException && err.statusCode == 401) {
         await _clearLocalSession(
             preserveDeviceIdentity: true,
+            keepDrafts: true,
             preserveOutbox: true,
             drainSyncOwner: false);
         return;
@@ -2682,7 +3354,9 @@ class AppState extends ChangeNotifier {
       // whatever the user last tapped. Writing it to the shared [error] made
       // unrelated screens report it as their own failure, so it goes to
       // [syncError] and the offline banner instead.
-      syncError = describeError(err, l10n);
+      syncError = _isTransientStorageError(err)
+          ? l10n.syncErrorStorageBusy
+          : describeError(err, l10n);
       _setConnectionStatus(ConnectionStatus.offline);
       notifyListeners();
       _scheduleCatchUpRetry(
@@ -2728,6 +3402,9 @@ class AppState extends ChangeNotifier {
         (err.serverCode == 'device_recovery_required' ||
             err.serverCode == 'full_resync_required')) {
       return const SyncEventFailure(SyncFailureKind.cursorExpired);
+    }
+    if (_isDurableStorageError(err)) {
+      return const SyncEventFailure(SyncFailureKind.localStorage);
     }
     // Anything else happened outside one event's processing (a page or a
     // projection refresh failed) and is retried on the next wake. Event
@@ -2783,12 +3460,38 @@ class AppState extends ChangeNotifier {
     });
   }
 
+  /// SQLite codes that pass by themselves: BUSY, LOCKED, NOMEM, IOERR, FULL.
+  static const _transientSqliteCodes = <int>{5, 6, 7, 10, 13};
+
+  /// Errno values (and Windows codes) that pass: no space, I/O error, busy,
+  /// out of memory or handles, quota.
+  static const _transientFileErrors = <int>{5, 11, 12, 16, 24, 28, 122, 112};
+
+  static bool _isTransientStorageError(Object err) {
+    final code = localStorageErrorCode(err);
+    if (code != null) return _transientSqliteCodes.contains(code);
+    if (err is FileSystemException) {
+      return _transientFileErrors.contains(err.osError?.errorCode);
+    }
+    return false;
+  }
+
+  /// A local storage failure that will not pass by itself: another SQLite
+  /// code (constraint, corrupt, not a database...) or a file error that is
+  /// not a transient one.
+  static bool _isDurableStorageError(Object err) =>
+      (localStorageErrorCode(err) != null || err is FileSystemException) &&
+      !_isTransientStorageError(err);
+
   static bool _isTransientSyncError(Object err) {
     if (err is ApiException) {
       return err.statusCode == 408 ||
           err.statusCode == 429 ||
           err.statusCode >= 500;
     }
+    // A failed local commit that can pass (busy, full, I/O) rolled back with
+    // the ratchet, so a retry is safe (P1). Other storage errors are durable.
+    if (_isTransientStorageError(err)) return true;
     return err is SocketException ||
         err is TimeoutException ||
         err is HttpException ||
@@ -2800,6 +3503,13 @@ class AppState extends ChangeNotifier {
       type.startsWith('message.envelope.') ||
       type == 'call.signaling' ||
       type == 'call.state';
+
+  /// Unknown events in these namespaces may carry or gate ciphertext, so sync
+  /// stops at them (I33, P5). Any other unknown type is skipped.
+  static bool _failsClosedEvent(String type) =>
+      type.startsWith('mls.') ||
+      type.startsWith('message.') ||
+      type.startsWith('call.');
 
   bool _knownProjectionEvent(String type) =>
       type.startsWith('device.') ||
@@ -2832,6 +3542,9 @@ class AppState extends ChangeNotifier {
     if (type.startsWith('reaction.') || type == 'read_receipt.updated') {
       if (event.conversationId == selectedConversationId) {
         await refreshSelectedMessages(notify: false, persist: false);
+        if (type == 'read_receipt.updated') {
+          unawaited(refreshReceipts(event.conversationId!));
+        }
       }
       return;
     }
@@ -2839,8 +3552,10 @@ class AppState extends ChangeNotifier {
         type == 'mls.revocation.completed') {
       return;
     }
-    throw SyncEventFailure(SyncFailureKind.unsupportedEvent,
-        eventId: event.id, eventType: type);
+    if (_failsClosedEvent(type)) {
+      throw SyncEventFailure(SyncFailureKind.unsupportedEvent,
+          eventId: event.id, eventType: type);
+    }
   }
 
   String? _messageIdFromSyncEvent(SyncEvent event) {
@@ -2879,6 +3594,9 @@ class AppState extends ChangeNotifier {
           await mls.processMlsMessage(message);
         } catch (err) {
           if (_isTransientSyncError(err)) rethrow;
+          if (_isDurableStorageError(err)) {
+            throw failure(SyncFailureKind.localStorage);
+          }
           throw failure(err is FormatException
               ? SyncFailureKind.mlsControlMalformed
               : SyncFailureKind.mlsState);
@@ -2921,6 +3639,9 @@ class AppState extends ChangeNotifier {
           await mls.processApplicationMessage(resolved, event.id);
         } catch (err) {
           if (_isTransientSyncError(err)) rethrow;
+          if (_isDurableStorageError(err)) {
+            throw failure(SyncFailureKind.localStorage);
+          }
           if (_provenExpired(resolved.expiresAt)) {
             await _commitExpiredTombstone(event, id);
             return null;
@@ -2945,6 +3666,9 @@ class AppState extends ChangeNotifier {
           signal = await mls.processCallSignal(call, event.id);
         } catch (err) {
           if (_isTransientSyncError(err)) rethrow;
+          if (_isDurableStorageError(err)) {
+            throw failure(SyncFailureKind.localStorage);
+          }
           if (_provenExpired(call.expiresAt)) {
             await _commitExpiredTombstone(event, call.id);
             return null;
@@ -3012,6 +3736,8 @@ class AppState extends ChangeNotifier {
       _mergeReceivedEnvelopes(received);
       _history.addAll(histories);
       notifyListeners();
+      unawaited(_scheduleExpiryPurge());
+      onMessagesPublished?.call(List<ReceivedMessageEnvelope>.of(received));
     }
     received.clear();
   }
@@ -3020,7 +3746,10 @@ class AppState extends ChangeNotifier {
   /// envelope replaces any earlier one with its ID.
   void _mergeReceivedEnvelopes(List<ReceivedMessageEnvelope> envelopes) {
     final incoming = <String, Map<String, ReceivedMessageEnvelope>>{};
+    final now = DateTime.now().toUtc();
     for (final envelope in envelopes) {
+      // Already expired on arrival: never shown (W2).
+      if (_envelopeExpired(envelope, now)) continue;
       (incoming[envelope.conversationId] ??=
           <String, ReceivedMessageEnvelope>{})[envelope.id] = envelope;
     }
@@ -3046,8 +3775,12 @@ class AppState extends ChangeNotifier {
     bool preserveDeviceIdentity = false,
     bool preserveOutbox = false,
     bool drainSyncOwner = true,
+    // Set only when the server rejected the session (401): the same person
+    // signs in again to their drafts. Sign-out and relinking wipe them.
+    bool keepDrafts = false,
   }) async {
     _sessionGeneration++;
+    _cancelDraftTimers();
     final previousOwner = _syncOwner;
     _syncOwner = null;
     previousOwner?.dispose();
@@ -3081,7 +3814,8 @@ class AppState extends ChangeNotifier {
         deviceSecret: current.deviceSecret,
         role: current.role,
       ));
-      await localStore.clearCachedState(preserveOutbox: preserveOutbox);
+      await localStore.clearCachedState(
+          preserveOutbox: preserveOutbox, keepDrafts: keepDrafts);
     } else {
       await localStore.clear();
     }
@@ -3097,6 +3831,8 @@ class AppState extends ChangeNotifier {
     messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
     _history.clear();
     composerDrafts.clear();
+    receipts.clear();
+    typing.clear();
     pendingOutbox = <MessageEnvelope>[];
     _outboxStates.clear();
     _outboxRecords.clear();
@@ -3104,6 +3840,8 @@ class AppState extends ChangeNotifier {
     _outboxRetryTimer = null;
     _mlsOutboxRetryTimer?.cancel();
     _mlsOutboxRetryTimer = null;
+    _expiryTimer?.cancel();
+    _expiryTimer = null;
     _cancelCatchUpRetry();
     _failedMlsConversations.clear();
     _mlsPendingSeen.clear();
@@ -3121,7 +3859,12 @@ class AppState extends ChangeNotifier {
     membersByConversation = <String, List<ConversationMember>>{};
     blockedAccounts = <BlockedAccount>[];
     blocksLoaded = false;
-    _mutedConversations.clear();
+    _mutes.clear();
+    _muteTimer?.cancel();
+    _muteTimer = null;
+    _acceptedPeers = null;
+    _acceptedGroups.clear();
+    _declined.clear();
     _historyCursors.clear();
     _loadingOlder.clear();
     _busyOps.clear();
@@ -3141,6 +3884,92 @@ class AppState extends ChangeNotifier {
       return;
     }
     await localStore.saveProjection(conversations, messagesByConversation);
+    unawaited(_scheduleExpiryPurge());
+  }
+
+  static bool _envelopeExpired(ReceivedMessageEnvelope envelope, DateTime now) {
+    final at = envelope.expiresAt;
+    return at != null && !at.isAfter(now);
+  }
+
+  /// Deletes what has expired from the encrypted database, then from the
+  /// lists the screens read, and arms the timer for the next expiry (W2).
+  Future<void> purgeExpiredMessages() async {
+    if (session == null || _purgingExpired) return;
+    _purgingExpired = true;
+    final generation = _sessionGeneration;
+    try {
+      Set<String> touched;
+      try {
+        touched = await localStore.purgeExpiredMessages();
+        _expiryBackoff = Duration.zero;
+      } catch (_) {
+        // The delete is retried with a growing pause, on resume and on
+        // restart. The lists below are still pruned, so expired text leaves
+        // an open chat even while the database delete keeps failing.
+        touched = <String>{};
+        _expiryBackoff = _nextExpiryBackoff(_expiryBackoff);
+      }
+      if (generation != _sessionGeneration || session == null) return;
+      final now = DateTime.now().toUtc();
+      var changed = touched.isNotEmpty;
+      final next = <String, List<ReceivedMessageEnvelope>>{};
+      for (final entry in messagesByConversation.entries) {
+        final live = entry.value
+            .where((envelope) => !_envelopeExpired(envelope, now))
+            .toList(growable: false);
+        if (live.length != entry.value.length) {
+          changed = true;
+          touched.add(entry.key);
+        }
+        next[entry.key] = live;
+      }
+      if (changed) {
+        messagesByConversation = next;
+        if (_mlsCrypto != null) {
+          for (final id in touched) {
+            if (_history.containsKey(id) || id == selectedConversationId) {
+              _history[id] = await _loadHistory(id);
+            }
+          }
+        }
+        if (generation != _sessionGeneration) return;
+        notifyListeners();
+      }
+    } catch (_) {
+      // Reloading a history failed; reads already hide what has expired, and
+      // the next purge tries again. Never blocks the app.
+      _expiryBackoff = _nextExpiryBackoff(_expiryBackoff);
+    } finally {
+      _purgingExpired = false;
+    }
+    await _scheduleExpiryPurge();
+  }
+
+  Future<void> _scheduleExpiryPurge() async {
+    if (session == null || _disposed) return;
+    final generation = _sessionGeneration;
+    final DateTime? next;
+    try {
+      next = await localStore.nextMessageExpiry();
+    } catch (_) {
+      return;
+    }
+    if (generation != _sessionGeneration || _disposed) return;
+    _expiryTimer?.cancel();
+    _expiryTimer = null;
+    if (next == null) return;
+    var delay = next.difference(DateTime.now().toUtc());
+    if (delay < const Duration(milliseconds: 500)) {
+      delay = const Duration(milliseconds: 500);
+    }
+    if (delay < _expiryBackoff) delay = _expiryBackoff;
+    // Timers beyond a day are re-armed by resume and by the next write.
+    if (delay > const Duration(days: 1)) delay = const Duration(days: 1);
+    _expiryTimer = Timer(delay, () {
+      _expiryTimer = null;
+      unawaited(purgeExpiredMessages());
+    });
   }
 
   Future<void> _flushOutbox() async {
@@ -3207,6 +4036,7 @@ class AppState extends ChangeNotifier {
         if (err is ApiException && err.statusCode == 401) {
           await _clearLocalSession(
               preserveDeviceIdentity: true,
+              keepDrafts: true,
               preserveOutbox: true,
               drainSyncOwner: false);
           break;
@@ -3375,6 +4205,7 @@ class AppState extends ChangeNotifier {
           if (err is ApiException && err.statusCode == 401) {
             await _clearLocalSession(
                 preserveDeviceIdentity: true,
+                keepDrafts: true,
                 preserveOutbox: true,
                 drainSyncOwner: false);
             return;
@@ -3667,7 +4498,9 @@ class AppState extends ChangeNotifier {
       } catch (err) {
         if (err is ApiException && err.statusCode == 401) {
           await _clearLocalSession(
-              preserveDeviceIdentity: true, preserveOutbox: true);
+              preserveDeviceIdentity: true,
+              keepDrafts: true,
+              preserveOutbox: true);
         }
         _opErrors[op] = describeError(err, l10n);
       } finally {
@@ -3693,7 +4526,9 @@ class AppState extends ChangeNotifier {
             err.statusCode == 401 &&
             err.serverCode != 'invalid_credentials') {
           await _clearLocalSession(
-              preserveDeviceIdentity: true, preserveOutbox: true);
+              preserveDeviceIdentity: true,
+              keepDrafts: true,
+              preserveOutbox: true);
         }
         error = describeError(err, l10n);
       } finally {
@@ -3715,6 +4550,9 @@ class AppState extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _receiptsRefreshTimer?.cancel();
+    typing.dispose();
+    receipts.dispose();
     _sessionGeneration++;
     _syncOwner?.dispose();
     unawaited(_syncOwner?.cancelAndDrain());
@@ -3723,6 +4561,11 @@ class AppState extends ChangeNotifier {
     _outboxRetryTimer = null;
     _mlsOutboxRetryTimer?.cancel();
     _mlsOutboxRetryTimer = null;
+    _expiryTimer?.cancel();
+    _expiryTimer = null;
+    _muteTimer?.cancel();
+    _muteTimer = null;
+    _cancelDraftTimers();
     _cancelCatchUpRetry();
     unawaited(_syncSubscription?.cancel());
     unawaited(sync?.dispose());
@@ -3754,6 +4597,27 @@ DeviceLink _deviceLinkWithVerification(
     claimedDeviceId: link.claimedDeviceId,
     claimedSigningKey: link.claimedSigningKey,
     transcriptHash: verification.transcriptHash,
+  );
+}
+
+DeviceLink _deviceLinkWithoutVerification(DeviceLink link) {
+  return DeviceLink(
+    id: link.id,
+    state: link.state,
+    verificationCode: '',
+    expiresAt: link.expiresAt,
+    code: link.code,
+    linkUri: link.linkUri,
+    claimedDeviceName: link.claimedDeviceName,
+    approvedDeviceId: link.approvedDeviceId,
+    accountId: link.accountId,
+    createdByDeviceId: link.createdByDeviceId,
+    protocolVersion: link.protocolVersion,
+    linkNonce: link.linkNonce,
+    existingSigningKey: link.existingSigningKey,
+    claimedDeviceId: link.claimedDeviceId,
+    claimedSigningKey: link.claimedSigningKey,
+    transcriptHash: null,
   );
 }
 

@@ -112,6 +112,8 @@ void main() {
       await tester.pump();
       expect(find.text(englishL10n.validationMessageTooLong), findsNothing);
       expect(_sendButton(tester).onPressed, isNotNull);
+      // The draft is saved after a pause; a test may not leave that timer.
+      state.flushDrafts();
     });
 
     testWidgets('the unavailable attachment reason is reachable by focus',
@@ -198,6 +200,11 @@ void main() {
     expect(find.textContaining('Search'), findsNothing);
 
     await tester.tap(find.text('Mute notifications'));
+    await tester.pumpAndSettle();
+    // Muting asks for how long first.
+    expect(find.text('For 8 hours'), findsOneWidget);
+    expect(find.text('For 1 week'), findsOneWidget);
+    await tester.tap(find.text('Until I turn it back on'));
     await tester.pumpAndSettle();
     expect(api.mutedConversations['conv_1'], isTrue);
     expect(state.isMuted('conv_1'), isTrue);
@@ -329,17 +336,21 @@ class _FakeApi extends ApiClient {
   }
 
   @override
-  Future<bool> conversationMuted(String token, String conversationId) async =>
-      mutedConversations[conversationId] ?? false;
+  Future<ConversationMute> conversationMute(
+          String token, String conversationId) async =>
+      ConversationMute(muted: mutedConversations[conversationId] ?? false);
 
   @override
-  Future<bool> setConversationMuted(
+  Future<ConversationMute> setConversationMute(
     String token,
-    String conversationId,
-    bool muted,
-  ) async {
+    String conversationId, {
+    required bool muted,
+    Duration? forDuration,
+  }) async {
+    final until =
+        forDuration == null ? null : DateTime.now().toUtc().add(forDuration);
     mutedConversations[conversationId] = muted;
-    return muted;
+    return ConversationMute(muted: muted, until: until);
   }
 
   @override

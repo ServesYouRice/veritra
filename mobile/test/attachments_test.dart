@@ -150,7 +150,7 @@ void main() {
     final entry = AttachmentEntry.tryParse(
         _entry(cipher: api.download.length, plain: 5))!;
 
-    final bytes = await state.loadAttachment(entry);
+    final bytes = await state.loadAttachment(entry, conversationId: 'conv_1');
 
     expect(bytes, <int>[104, 101, 108, 108, 111]);
     expect(crypto.decryptedCiphertext, api.download);
@@ -166,7 +166,8 @@ void main() {
     final entry = AttachmentEntry.tryParse(
         _entry(cipher: api.download.length + 1, plain: 5))!;
 
-    await expectLater(state.loadAttachment(entry), throwsFormatException);
+    await expectLater(state.loadAttachment(entry, conversationId: 'conv_1'),
+        throwsFormatException);
     expect(crypto.decryptedCiphertext, isNull);
     expect(tempDir.listSync().where((item) => item.path.contains('.veritra-')),
         isEmpty);

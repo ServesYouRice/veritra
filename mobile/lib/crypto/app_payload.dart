@@ -34,6 +34,34 @@ class DecryptedAppPayload {
   final Map<String, Object?> body;
 }
 
+/// What a decrypted application payload turned out to be (W8 step 0, P1).
+/// Classification is total: [AppPayloadCodec.classify] never throws.
+sealed class AppPayloadOutcome {
+  const AppPayloadOutcome();
+}
+
+/// A payload this app understands, fully validated.
+final class DecodedAppPayload extends AppPayloadOutcome {
+  const DecodedAppPayload(this.payload);
+
+  final DecryptedAppPayload payload;
+}
+
+/// Authentic (its context matched) but newer than, or unknown to, this app.
+/// [rawJson] is the inner JSON exactly as decrypted, kept for a later app
+/// version; [hidden] is the sender's `hidden: true` flag.
+final class UnsupportedAppPayload extends AppPayloadOutcome {
+  const UnsupportedAppPayload({required this.rawJson, required this.hidden});
+
+  final String rawJson;
+  final bool hidden;
+}
+
+/// Broken framing, JSON or context, or a known type with a bad body.
+final class InvalidAppPayload extends AppPayloadOutcome {
+  const InvalidAppPayload();
+}
+
 /// Encodes only client-visible content. The complete padded value is protected
 /// by MLS; duplicated routing fields are checked after decryption so ciphertext
 /// cannot be replayed into a different conversation, device, or action row.
@@ -49,7 +77,7 @@ class AppPayloadCodec {
     required String actionId,
     required Map<String, Object?> body,
   }) {
-    _validateContext(conversationId, senderDeviceId, actionId);
+    validateContext(conversationId, senderDeviceId, actionId);
     _validateBody(type, body);
     final encoded = utf8.encode(jsonEncode(<String, Object?>{
       'v': appPayloadVersion,
@@ -81,7 +109,7 @@ class AppPayloadCodec {
     required String senderDeviceId,
     required String actionId,
   }) {
-    _validateContext(conversationId, senderDeviceId, actionId);
+    validateContext(conversationId, senderDeviceId, actionId);
     if (padded.length < _paddingBucket ||
         padded.length > _maxPayloadBytes ||
         padded.length % _paddingBucket != 0 ||
@@ -125,7 +153,9 @@ class AppPayloadCodec {
     return DecryptedAppPayload(type: type, actionId: actionId, body: body);
   }
 
-  void _validateContext(
+  /// Checks the envelope fields the server supplied (P2). The decrypted
+  /// context is compared against these afterwards.
+  static void validateContext(
       String conversationId, String deviceId, String actionId) {
     if (conversationId.isEmpty ||
         deviceId.isEmpty ||
@@ -134,6 +164,72 @@ class AppPayloadCodec {
         deviceId.length > 128 ||
         actionId.length > 128) {
       throw const FormatException('invalid application payload context');
+    }
+  }
+
+  /// Decodes like [decode] but never throws (P1). Run it only on a context
+  /// already checked with [validateContext].
+  ///
+  /// This app supports only `v` 1: a `v` above it, or an unknown type at
+  /// `v` 1, is [UnsupportedAppPayload]. v1 stays strict (exactly the six
+  /// top-level keys); later versions may add top-level keys (P6).
+  AppPayloadOutcome classify(
+    List<int> padded, {
+    required String conversationId,
+    required String senderDeviceId,
+    required String actionId,
+  }) {
+    try {
+      if (padded.length < _paddingBucket ||
+          padded.length > _maxPayloadBytes ||
+          padded.length % _paddingBucket != 0 ||
+          !_constantTimePrefix(padded, _magic)) {
+        return const InvalidAppPayload();
+      }
+      final length = ByteData.sublistView(Uint8List.fromList(padded))
+          .getUint32(4, Endian.big);
+      if (length <= 0 || length > padded.length - _headerLength) {
+        return const InvalidAppPayload();
+      }
+      final rawJson = utf8.decode(
+        padded.sublist(_headerLength, _headerLength + length),
+        allowMalformed: false,
+      );
+      final decoded = jsonDecode(rawJson);
+      if (decoded is! Map) return const InvalidAppPayload();
+      final map = Map<String, Object?>.from(decoded);
+      final version = map['v'];
+      if (version is! int ||
+          version < 1 ||
+          map['conversation_id'] != conversationId ||
+          map['sender_device_id'] != senderDeviceId ||
+          map['action_id'] != actionId ||
+          map['type'] is! String ||
+          map['body'] is! Map ||
+          // No conversation here is a community channel yet, so a
+          // `channel_id` can only be wrong (S1).
+          map.containsKey('channel_id')) {
+        return const InvalidAppPayload();
+      }
+      if (version > appPayloadVersion) {
+        return UnsupportedAppPayload(
+            rawJson: rawJson, hidden: map['hidden'] == true);
+      }
+      if (map.length != _v1Keys.length || !map.keys.every(_v1Keys.contains)) {
+        return const InvalidAppPayload();
+      }
+      final type = AppPayloadType.values
+          .where((candidate) => candidate.name == map['type'])
+          .firstOrNull;
+      if (type == null) {
+        return UnsupportedAppPayload(rawJson: rawJson, hidden: false);
+      }
+      final body = Map<String, Object?>.from(map['body'] as Map);
+      _validateBody(type, body);
+      return DecodedAppPayload(
+          DecryptedAppPayload(type: type, actionId: actionId, body: body));
+    } catch (_) {
+      return const InvalidAppPayload();
     }
   }
 
@@ -162,6 +258,15 @@ class AppPayloadCodec {
     if (!valid) throw const FormatException('invalid application payload body');
   }
 }
+
+const Set<String> _v1Keys = <String>{
+  'v',
+  'type',
+  'conversation_id',
+  'sender_device_id',
+  'action_id',
+  'body',
+};
 
 bool _constantTimePrefix(List<int> value, List<int> expected) {
   if (value.length < expected.length) return false;

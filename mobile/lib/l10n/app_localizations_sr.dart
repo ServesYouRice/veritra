@@ -111,6 +111,36 @@ class AppLocalizationsSr extends AppLocalizations {
   String get settingsSectionAppearance => 'Изглед';
 
   @override
+  String get settingsHideNotificationPreview => 'Сакриј преглед поруке';
+
+  @override
+  String get settingsHideNotificationPreviewDetail =>
+      'Обавештења приказују „Нова порука“ без пошиљаоца и текста.';
+
+  @override
+  String get notificationNewMessage => 'Нова порука';
+
+  @override
+  String get trayOpen => 'Отвори';
+
+  @override
+  String get trayQuit => 'Затвори апликацију';
+
+  @override
+  String get settingsSectionPrivacy => 'Приватност';
+
+  @override
+  String get settingsReadReceiptsTitle => 'Потврде о читању';
+
+  @override
+  String get settingsReadReceiptsDetail =>
+      'Важи за све ваше уређаје. Када је искључено, не шаљете потврде о читању и не видите када су други прочитали ваше поруке. Ознаке послато и достављено остају.';
+
+  @override
+  String get settingsReadReceiptsFailed =>
+      'Подешавање није могло да се промени. Проверите везу и покушајте поново.';
+
+  @override
   String get settingsSectionAbout => 'О апликацији';
 
   @override
@@ -1051,6 +1081,10 @@ class AppLocalizationsSr extends AppLocalizations {
   String get deviceLinkApprove => 'Одобри';
 
   @override
+  String get deviceLinkApproveHint =>
+      'Унесите осмоцифрени код приказан на новом уређају. Никада не користите код који вам је неко послао или прочитао.';
+
+  @override
   String get bannerQueued =>
       'Поруке које шаљете остају у реду чекања на овом уређају.';
 
@@ -1691,6 +1725,13 @@ class AppLocalizationsSr extends AppLocalizations {
       'Пошиљалац није могао да се верификује. Порука је скривена.';
 
   @override
+  String get chatMessageUnsupported =>
+      'Ова порука захтева новију верзију апликације Veritra';
+
+  @override
+  String get chatMessageInvalid => 'Једна порука није могла да се прочита';
+
+  @override
   String chatReactionCount(String reaction, int count) {
     final intl.NumberFormat countNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -1701,6 +1742,28 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get chatEdited => 'измењено';
+
+  @override
+  String get chatTickSent => 'Послато';
+
+  @override
+  String get chatTickDelivered => 'Достављено';
+
+  @override
+  String get chatTickRead => 'Прочитано';
+
+  @override
+  String chatTypingOne(String name) {
+    return '$name куца…';
+  }
+
+  @override
+  String chatTypingTwo(String first, String second) {
+    return '$first и $second куцају…';
+  }
+
+  @override
+  String get chatTypingMany => 'Неколико особа куца…';
 
   @override
   String chatReplyingTo(String preview) {
@@ -1824,6 +1887,14 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get syncErrorStopped =>
       'Синхронизација је заустављена. Покушајте поново.';
+
+  @override
+  String get syncErrorLocalStorage =>
+      'Овај уређај није могао да чита или пише у своје локално складиште. Поруке су паузиране да ниједна не би била прескочена. Ослободите простор или поново покрените апликацију, па покушајте поново.';
+
+  @override
+  String get syncErrorStorageBusy =>
+      'Складиште овог уређаја је заузето или пуно. Синхронизација ће ускоро покушати поново.';
 
   @override
   String get apiErrorSessionInvalid =>
@@ -2086,6 +2157,10 @@ class AppLocalizationsSr extends AppLocalizations {
       'Овај уређај није могао да ажурира складиште порука за ову верзију апликације Veritra. Ништа није промењено нити обрисано. Покушајте поново. Ако и даље не успева, можете да ресетујете овај уређај и поново га повежете.';
 
   @override
+  String get recoverySqliteFeatureMissing =>
+      'Ова верзија апликације Veritra не може да отвори своје складиште порука: у машини базе података недостаје подршка за шифровање или претрагу. Ваши подаци нису промењени нити обрисани. Инсталирајте верзију апликације Veritra која их подржава.';
+
+  @override
   String get errorPasswordLoginNeedsLink =>
       'За пријаву лозинком овај уређај прво мора бити повезан.';
 
@@ -2121,6 +2196,236 @@ class AppLocalizationsSr extends AppLocalizations {
   String errorServerNotAllowed(String url) {
     return 'Ова верзија апликације не дозвољава адресу сервера $url. Користите https:// адресу сервера.';
   }
+
+  @override
+  String get muteEightHours => '8 сати';
+
+  @override
+  String get muteOneWeek => '1 недељу';
+
+  @override
+  String get muteAlways => 'Док поново не укључим';
+
+  @override
+  String get muteStatusAlways => 'Утишано док поново не укључите обавештења.';
+
+  @override
+  String muteStatusUntil(String time) {
+    return 'Утишано до $time.';
+  }
+
+  @override
+  String get chatMoreReactions => 'Више реакција';
+
+  @override
+  String get emojiSearchHint =>
+      'Претражите по имену или унесите или налепите емоџи';
+
+  @override
+  String emojiUseTyped(String emoji) {
+    return 'Користи $emoji';
+  }
+
+  @override
+  String get emojiNoResults =>
+      'Нема емоџија са тим именом. Унесите или налепите га.';
+
+  @override
+  String get emojiGroupSmileys => 'Смајлији';
+
+  @override
+  String get emojiGroupPeople => 'Људи';
+
+  @override
+  String get emojiGroupAnimals => 'Животиње и природа';
+
+  @override
+  String get emojiGroupFood => 'Храна и пиће';
+
+  @override
+  String get emojiGroupTravel => 'Путовања и места';
+
+  @override
+  String get emojiGroupActivities => 'Активности';
+
+  @override
+  String get emojiGroupObjects => 'Предмети';
+
+  @override
+  String get emojiGroupSymbols => 'Симболи';
+
+  @override
+  String get emojiGroupFlags => 'Заставе';
+
+  @override
+  String get searchModeMessages => 'Поруке';
+
+  @override
+  String get searchModePeople => 'Људи и заједнице';
+
+  @override
+  String get searchMessagesHint => 'Претражите поруке на овом уређају…';
+
+  @override
+  String get searchMessagesIntroTitle => 'Претрага овог уређаја';
+
+  @override
+  String get searchMessagesIntroMessage =>
+      'Налази текст у порукама које овај уређај чува. Претрага се одвија овде и никада се не шаље серверу.';
+
+  @override
+  String get searchMessagesNoResultsTitle => 'Нема пронађених порука';
+
+  @override
+  String get searchMessagesNoResultsMessage =>
+      'Ништа на овом уређају не одговара. Поруке које су истекле или су обрисане нестају и из претраге.';
+
+  @override
+  String get searchMessagesFailed =>
+      'Претрага није могла да прочита локалну базу података.';
+
+  @override
+  String attachmentTooLarge(String fileName, String limit) {
+    return 'Датотека $fileName је већа него што овај сервер дозвољава ($limit).';
+  }
+
+  @override
+  String attachmentEmptyFile(String fileName) {
+    return 'Датотека $fileName је празна и не може да се пошаље.';
+  }
+
+  @override
+  String attachmentTooMany(int count) {
+    return 'Највише $count датотека може да чека на заједничко слање.';
+  }
+
+  @override
+  String attachmentRemove(String fileName) {
+    return 'Уклоните $fileName';
+  }
+
+  @override
+  String get attachmentOpenFailed =>
+      'Датотека није могла да се отвори. Овај уређај можда нема апликацију за њу.';
+
+  @override
+  String get attachmentDropHint => 'Отпустите датотеке да бисте их приложили';
+
+  @override
+  String attachmentSentCount(int done, int total) {
+    return 'Шаље се датотека $done од $total';
+  }
+
+  @override
+  String get settingsAdmin => 'Администрација';
+
+  @override
+  String get settingsAdminDetail => 'Налози и дневник ревизије';
+
+  @override
+  String get adminAccountsTab => 'Налози';
+
+  @override
+  String get adminAuditTab => 'Дневник ревизије';
+
+  @override
+  String get adminSuspend => 'Суспендуј';
+
+  @override
+  String get adminUnsuspend => 'Поново активирај';
+
+  @override
+  String get adminSuspendTitle => 'Суспендовати овај налог?';
+
+  @override
+  String adminSuspendMessage(String username) {
+    return '@$username ће бити одјављен свуда и неће моћи да се пријави док не активирате налог поново.';
+  }
+
+  @override
+  String get adminUnsuspendTitle => 'Поново активирати овај налог?';
+
+  @override
+  String adminUnsuspendMessage(String username) {
+    return '@$username ће поново моћи да се пријави.';
+  }
+
+  @override
+  String get adminSuspendedPill => 'Суспендован';
+
+  @override
+  String adminAccountSummary(String role, int devices, String storage) {
+    String _temp0 = intl.Intl.pluralLogic(
+      devices,
+      locale: localeName,
+      other: '$devices уређаја',
+      few: '$devices уређаја',
+      one: '$devices уређај',
+    );
+    return '$role · $_temp0 · $storage';
+  }
+
+  @override
+  String adminEventBy(String actor) {
+    return 'Извршио: $actor';
+  }
+
+  @override
+  String get adminLoadMore => 'Учитај још';
+
+  @override
+  String get adminNoAccounts => 'Нема налога';
+
+  @override
+  String get adminNoEvents => 'Још нема догађаја ревизије';
+
+  @override
+  String requestsSection(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    return 'Захтеви ($countString)';
+  }
+
+  @override
+  String get requestsTitle => 'Захтев за поруку';
+
+  @override
+  String requestFrom(String name) {
+    return '$name жели да вам пише';
+  }
+
+  @override
+  String get requestUnknownSender => 'Неко кога не познајете';
+
+  @override
+  String get requestExplanation =>
+      'Ништа од ове особе се не приказује нити преузима, и она не може да види да сте нешто прочитали, док не прихватите.';
+
+  @override
+  String get requestAccept => 'Прихвати';
+
+  @override
+  String get requestBlock => 'Блокирај';
+
+  @override
+  String get requestDelete => 'Обриши';
+
+  @override
+  String get requestBlockTitle => 'Блокирати ову особу?';
+
+  @override
+  String requestBlockMessage(String name) {
+    return '$name више неће моћи да вам пише, а овај разговор ће бити уклоњен.';
+  }
+
+  @override
+  String get requestDeleteTitle => 'Обрисати овај захтев?';
+
+  @override
+  String get requestDeleteMessage =>
+      'Разговор се уклања са овог уређаја. Пошиљалац није обавештен.';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -2228,6 +2533,36 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get settingsSectionAppearance => 'Izgled';
+
+  @override
+  String get settingsHideNotificationPreview => 'Sakrij pregled poruke';
+
+  @override
+  String get settingsHideNotificationPreviewDetail =>
+      'Obaveštenja prikazuju „Nova poruka“ bez pošiljaoca i teksta.';
+
+  @override
+  String get notificationNewMessage => 'Nova poruka';
+
+  @override
+  String get trayOpen => 'Otvori';
+
+  @override
+  String get trayQuit => 'Zatvori aplikaciju';
+
+  @override
+  String get settingsSectionPrivacy => 'Privatnost';
+
+  @override
+  String get settingsReadReceiptsTitle => 'Potvrde o čitanju';
+
+  @override
+  String get settingsReadReceiptsDetail =>
+      'Važi za sve vaše uređaje. Kada je isključeno, ne šaljete potvrde o čitanju i ne vidite kada su drugi pročitali vaše poruke. Oznake poslato i dostavljeno ostaju.';
+
+  @override
+  String get settingsReadReceiptsFailed =>
+      'Podešavanje nije moglo da se promeni. Proverite vezu i pokušajte ponovo.';
 
   @override
   String get settingsSectionAbout => 'O aplikaciji';
@@ -3170,6 +3505,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get deviceLinkApprove => 'Odobri';
 
   @override
+  String get deviceLinkApproveHint =>
+      'Unesite osmocifreni kod prikazan na novom uređaju. Nikada ne koristite kod koji vam je neko poslao ili pročitao.';
+
+  @override
   String get bannerQueued =>
       'Poruke koje šaljete ostaju u redu čekanja na ovom uređaju.';
 
@@ -3810,6 +4149,13 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Pošiljalac nije mogao da se verifikuje. Poruka je skrivena.';
 
   @override
+  String get chatMessageUnsupported =>
+      'Ova poruka zahteva noviju verziju aplikacije Veritra';
+
+  @override
+  String get chatMessageInvalid => 'Jedna poruka nije mogla da se pročita';
+
+  @override
   String chatReactionCount(String reaction, int count) {
     final intl.NumberFormat countNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -3820,6 +4166,28 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get chatEdited => 'izmenjeno';
+
+  @override
+  String get chatTickSent => 'Poslato';
+
+  @override
+  String get chatTickDelivered => 'Dostavljeno';
+
+  @override
+  String get chatTickRead => 'Pročitano';
+
+  @override
+  String chatTypingOne(String name) {
+    return '$name kuca…';
+  }
+
+  @override
+  String chatTypingTwo(String first, String second) {
+    return '$first i $second kucaju…';
+  }
+
+  @override
+  String get chatTypingMany => 'Nekoliko osoba kuca…';
 
   @override
   String chatReplyingTo(String preview) {
@@ -3943,6 +4311,14 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get syncErrorStopped =>
       'Sinhronizacija je zaustavljena. Pokušajte ponovo.';
+
+  @override
+  String get syncErrorLocalStorage =>
+      'Ovaj uređaj nije mogao da čita ili piše u svoje lokalno skladište. Poruke su pauzirane da nijedna ne bi bila preskočena. Oslobodite prostor ili ponovo pokrenite aplikaciju, pa pokušajte ponovo.';
+
+  @override
+  String get syncErrorStorageBusy =>
+      'Skladište ovog uređaja je zauzeto ili puno. Sinhronizacija će uskoro pokušati ponovo.';
 
   @override
   String get apiErrorSessionInvalid =>
@@ -4208,6 +4584,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Ovaj uređaj nije mogao da ažurira skladište poruka za ovu verziju aplikacije Veritra. Ništa nije promenjeno niti obrisano. Pokušajte ponovo. Ako i dalje ne uspeva, možete da resetujete ovaj uređaj i ponovo ga povežete.';
 
   @override
+  String get recoverySqliteFeatureMissing =>
+      'Ova verzija aplikacije Veritra ne može da otvori svoje skladište poruka: u mašini baze podataka nedostaje podrška za šifrovanje ili pretragu. Vaši podaci nisu promenjeni niti obrisani. Instalirajte verziju aplikacije Veritra koja ih podržava.';
+
+  @override
   String get errorPasswordLoginNeedsLink =>
       'Za prijavu lozinkom ovaj uređaj prvo mora biti povezan.';
 
@@ -4243,4 +4623,234 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String errorServerNotAllowed(String url) {
     return 'Ova verzija aplikacije ne dozvoljava adresu servera $url. Koristite https:// adresu servera.';
   }
+
+  @override
+  String get muteEightHours => '8 sati';
+
+  @override
+  String get muteOneWeek => '1 nedelju';
+
+  @override
+  String get muteAlways => 'Dok ponovo ne uključim';
+
+  @override
+  String get muteStatusAlways => 'Utišano dok ponovo ne uključite obaveštenja.';
+
+  @override
+  String muteStatusUntil(String time) {
+    return 'Utišano do $time.';
+  }
+
+  @override
+  String get chatMoreReactions => 'Više reakcija';
+
+  @override
+  String get emojiSearchHint =>
+      'Pretražite po imenu ili unesite ili nalepite emodži';
+
+  @override
+  String emojiUseTyped(String emoji) {
+    return 'Koristi $emoji';
+  }
+
+  @override
+  String get emojiNoResults =>
+      'Nema emodžija sa tim imenom. Unesite ili nalepite ga.';
+
+  @override
+  String get emojiGroupSmileys => 'Smajliji';
+
+  @override
+  String get emojiGroupPeople => 'Ljudi';
+
+  @override
+  String get emojiGroupAnimals => 'Životinje i priroda';
+
+  @override
+  String get emojiGroupFood => 'Hrana i piće';
+
+  @override
+  String get emojiGroupTravel => 'Putovanja i mesta';
+
+  @override
+  String get emojiGroupActivities => 'Aktivnosti';
+
+  @override
+  String get emojiGroupObjects => 'Predmeti';
+
+  @override
+  String get emojiGroupSymbols => 'Simboli';
+
+  @override
+  String get emojiGroupFlags => 'Zastave';
+
+  @override
+  String get searchModeMessages => 'Poruke';
+
+  @override
+  String get searchModePeople => 'Ljudi i zajednice';
+
+  @override
+  String get searchMessagesHint => 'Pretražite poruke na ovom uređaju…';
+
+  @override
+  String get searchMessagesIntroTitle => 'Pretraga ovog uređaja';
+
+  @override
+  String get searchMessagesIntroMessage =>
+      'Nalazi tekst u porukama koje ovaj uređaj čuva. Pretraga se odvija ovde i nikada se ne šalje serveru.';
+
+  @override
+  String get searchMessagesNoResultsTitle => 'Nema pronađenih poruka';
+
+  @override
+  String get searchMessagesNoResultsMessage =>
+      'Ništa na ovom uređaju ne odgovara. Poruke koje su istekle ili su obrisane nestaju i iz pretrage.';
+
+  @override
+  String get searchMessagesFailed =>
+      'Pretraga nije mogla da pročita lokalnu bazu podataka.';
+
+  @override
+  String attachmentTooLarge(String fileName, String limit) {
+    return 'Datoteka $fileName je veća nego što ovaj server dozvoljava ($limit).';
+  }
+
+  @override
+  String attachmentEmptyFile(String fileName) {
+    return 'Datoteka $fileName je prazna i ne može da se pošalje.';
+  }
+
+  @override
+  String attachmentTooMany(int count) {
+    return 'Najviše $count datoteka može da čeka na zajedničko slanje.';
+  }
+
+  @override
+  String attachmentRemove(String fileName) {
+    return 'Uklonite $fileName';
+  }
+
+  @override
+  String get attachmentOpenFailed =>
+      'Datoteka nije mogla da se otvori. Ovaj uređaj možda nema aplikaciju za nju.';
+
+  @override
+  String get attachmentDropHint => 'Otpustite datoteke da biste ih priložili';
+
+  @override
+  String attachmentSentCount(int done, int total) {
+    return 'Šalje se datoteka $done od $total';
+  }
+
+  @override
+  String get settingsAdmin => 'Administracija';
+
+  @override
+  String get settingsAdminDetail => 'Nalozi i dnevnik revizije';
+
+  @override
+  String get adminAccountsTab => 'Nalozi';
+
+  @override
+  String get adminAuditTab => 'Dnevnik revizije';
+
+  @override
+  String get adminSuspend => 'Suspenduj';
+
+  @override
+  String get adminUnsuspend => 'Ponovo aktiviraj';
+
+  @override
+  String get adminSuspendTitle => 'Suspendovati ovaj nalog?';
+
+  @override
+  String adminSuspendMessage(String username) {
+    return '@$username će biti odjavljen svuda i neće moći da se prijavi dok ne aktivirate nalog ponovo.';
+  }
+
+  @override
+  String get adminUnsuspendTitle => 'Ponovo aktivirati ovaj nalog?';
+
+  @override
+  String adminUnsuspendMessage(String username) {
+    return '@$username će ponovo moći da se prijavi.';
+  }
+
+  @override
+  String get adminSuspendedPill => 'Suspendovan';
+
+  @override
+  String adminAccountSummary(String role, int devices, String storage) {
+    String _temp0 = intl.Intl.pluralLogic(
+      devices,
+      locale: localeName,
+      other: '$devices uređaja',
+      few: '$devices uređaja',
+      one: '$devices uređaj',
+    );
+    return '$role · $_temp0 · $storage';
+  }
+
+  @override
+  String adminEventBy(String actor) {
+    return 'Izvršio: $actor';
+  }
+
+  @override
+  String get adminLoadMore => 'Učitaj još';
+
+  @override
+  String get adminNoAccounts => 'Nema naloga';
+
+  @override
+  String get adminNoEvents => 'Još nema događaja revizije';
+
+  @override
+  String requestsSection(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    return 'Zahtevi ($countString)';
+  }
+
+  @override
+  String get requestsTitle => 'Zahtev za poruku';
+
+  @override
+  String requestFrom(String name) {
+    return '$name želi da vam piše';
+  }
+
+  @override
+  String get requestUnknownSender => 'Neko koga ne poznajete';
+
+  @override
+  String get requestExplanation =>
+      'Ništa od ove osobe se ne prikazuje niti preuzima, i ona ne može da vidi da ste nešto pročitali, dok ne prihvatite.';
+
+  @override
+  String get requestAccept => 'Prihvati';
+
+  @override
+  String get requestBlock => 'Blokiraj';
+
+  @override
+  String get requestDelete => 'Obriši';
+
+  @override
+  String get requestBlockTitle => 'Blokirati ovu osobu?';
+
+  @override
+  String requestBlockMessage(String name) {
+    return '$name više neće moći da vam piše, a ovaj razgovor će biti uklonjen.';
+  }
+
+  @override
+  String get requestDeleteTitle => 'Obrisati ovaj zahtev?';
+
+  @override
+  String get requestDeleteMessage =>
+      'Razgovor se uklanja sa ovog uređaja. Pošiljalac nije obavešten.';
 }

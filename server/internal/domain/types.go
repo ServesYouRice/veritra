@@ -45,6 +45,13 @@ type Account struct {
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 }
 
+// NotificationMute is a member's push mute for one conversation. Until is
+// nil for a mute without an end.
+type NotificationMute struct {
+	Muted bool       `json:"muted"`
+	Until *time.Time `json:"muted_until,omitempty"`
+}
+
 type AccountBlock struct {
 	AccountID string    `json:"account_id"`
 	Username  string    `json:"username,omitempty"`

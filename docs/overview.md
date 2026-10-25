@@ -171,6 +171,59 @@ sequenceDiagram
     Note over S: server never holds a key
 ```
 
+### Ticks, typing and read receipts (W5)
+
+What the server keeps is message ids only, never content or times.
+
+- **Sent** (one tick): the server accepted the message.
+- **Delivered** (two ticks): a device of the recipient fetched the message's
+  sync event. The server keeps one `delivery_receipts` cursor (a message id)
+  per account and conversation. It writes it just after serving a
+  `/sync/events` page, off the request, only when the cursor would move, and
+  announces the move in realtime (`delivery_receipt.updated`, never stored).
+  This is new metadata: how far a recipient's device has caught up in a
+  conversation.
+- **Read** (two ticks in the accent): the recipient's shared read cursor
+  reaches the message. A read cursor also counts as delivered.
+- **Group rule**: delivered and read mean every other member who was in the
+  conversation when the message was sent (`member_since`), excluding you and
+  accounts in a block with you in either direction. One member behind holds the
+  tick back. A member who keeps read receipts off has a frozen shared cursor, so
+  a group's read tick waits for them too.
+- **Blocks hide signals both ways**: with a block between two accounts, in
+  either direction, neither gets the other's delivery or read announcements
+  (realtime and `read_receipt.updated` in sync) nor their typing.
+- **Cursors in disappearing chats**: a member's own cursor
+  (`read_receipts.message_id`) and the delivery cursor go with the message they
+  point at (cascade), the shared cursor (`shared_message_id`) is cleared
+  (`SET NULL`); the tick then falls back to what remains. Removing a member
+  deletes their cursors.
+- `GET /conversations/{id}/read-receipts` returns the other members as
+  `member_since`, `delivered_through` and `read_through` (the `created_at` of
+  the newest covered message). The client compares them with its own messages'
+  `created_at`.
+- **Size limit**: ticks and the typing line exist in DMs and groups of up to
+  20 members (`storage.ReceiptMaxMembers`), never in community channels. Past
+  that the server keeps no delivery cursors, lists no receipts and drops typing
+  signals, because each delivery is announced to every member (growth with the
+  square of the member count), and the app shows neither.
+- **Read receipts switch** (Settings, Privacy; on by default). It belongs to the
+  account (`accounts.send_read_receipts`, `GET`/`PUT /account/read-receipts`),
+  so every linked device follows it, and each session start adopts the
+  server's value. A read always moves the account's own cursor
+  (`read_receipts.message_id`, for the unread count). Only a read made while
+  the switch is on moves the shared cursor others see, forward only, and only
+  then is `read_receipt.updated` emitted. Switching off therefore freezes what
+  others see, where it was: nothing vanishes and nothing new is shown. The app
+  also hides everyone's read state (like WhatsApp) and shows delivery ticks
+  only. The change is forward-only: a server binary from before migration 0035
+  ignores the switch.
+- **Typing line** ("X is typing…"): `POST /conversations/{id}/typing` publishes
+  an ephemeral `typing.updated` realtime event (conversation id and account id
+  only; never stored; one per two seconds per account and conversation, else
+  429; recipients exclude accounts that blocked the sender). A typer expires
+  after five seconds of silence.
+
 ---
 
 ## 5. Hosting options

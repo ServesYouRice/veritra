@@ -172,7 +172,8 @@ void main() {
     );
 
     await state.claimDeviceLink('https://localhost:8080', 'PAIRCODE');
-    expect(state.pendingDeviceLinkClaim?.deviceLink.verificationCode, '654321');
+    expect(
+        state.pendingDeviceLinkClaim?.deviceLink.verificationCode, '65432101');
     expect(state.session, isNull);
 
     await state.completeDeviceLinkClaim();
@@ -201,29 +202,116 @@ void main() {
     expect(state.activeDeviceLink?.claimedDeviceName, 'linked tablet');
     expect(state.activeDeviceLink?.code, 'PAIRCODE');
 
-    await state.approveActiveDeviceLink('654321');
+    await state.approveActiveDeviceLink('65432101');
     expect(state.activeDeviceLink?.state, 'approved');
     expect(state.activeDeviceLink?.approvedDeviceId, 'dev_linked');
   });
 
-  test('device link rejects a server-substituted transcript', () async {
-    final api = FakeDeviceLinkApiClient(transcriptByte: 8);
-    final state = AppState(
-      apiClientFactory: (_) => api,
-      cryptoService: TestOnlyCryptoService(),
-      localStore: MemoryLocalStore(),
-      syncServiceFactory: (_, __) => FakeSyncService(),
-    )
-      ..api = api
+  AppState linkOwnerState(FakeDeviceLinkApiClient api) => AppState(
+        apiClientFactory: (_) => api,
+        cryptoService: TestOnlyCryptoService(),
+        localStore: MemoryLocalStore(),
+        syncServiceFactory: (_, __) => FakeSyncService(),
+      )
+        ..api = api
+        ..session = const Session(
+          baseUrl: 'https://localhost:8080',
+          token: 'owner-token',
+        );
+
+  test('device link ignores a server-sent code at parse time', () {
+    final link = DeviceLink.fromJson(<String, Object?>{
+      'id': 'dlink_1',
+      'state': 'claimed',
+      'expires_at': '2026-05-29T12:00:00Z',
+      'verification_code': '12345678',
+    });
+    expect(link.verificationCode, isEmpty);
+  });
+
+  test('approve before the first refresh refuses a server-chosen code',
+      () async {
+    final api = FakeDeviceLinkApiClient()..createCarriesVerification = true;
+    final state = linkOwnerState(api);
+    await state.createDeviceLink();
+    expect(state.activeDeviceLink?.verificationCode, isEmpty);
+    expect(state.activeDeviceLink?.transcriptHash, isNull);
+    await state.approveActiveDeviceLink('65432101');
+    expect(state.error, contains('did not match'));
+    expect(state.activeDeviceLink?.state, 'pending');
+  });
+
+  test('a non-claimed refresh keeps no code or hash', () async {
+    final api = FakeDeviceLinkApiClient();
+    final state = linkOwnerState(api);
+    await state.createDeviceLink();
+    await state.refreshActiveDeviceLink();
+    expect(state.activeDeviceLink?.verificationCode, '65432101');
+    api.refreshState = 'pending';
+    await state.refreshActiveDeviceLink();
+    expect(state.activeDeviceLink?.state, 'pending');
+    expect(state.activeDeviceLink?.verificationCode, isEmpty);
+    expect(state.activeDeviceLink?.transcriptHash, isNull);
+    await state.approveActiveDeviceLink('65432101');
+    expect(state.activeDeviceLink?.state, isNot('approved'));
+  });
+
+  test('an approve response cannot be approved again without a refresh',
+      () async {
+    final api = FakeDeviceLinkApiClient()..approveCarriesVerification = true;
+    final state = linkOwnerState(api);
+    await state.createDeviceLink();
+    await state.refreshActiveDeviceLink();
+    await state.approveActiveDeviceLink('65432101');
+    expect(state.activeDeviceLink?.state, 'claimed');
+    expect(state.activeDeviceLink?.verificationCode, isEmpty);
+    expect(state.activeDeviceLink?.transcriptHash, isNull);
+    await state.approveActiveDeviceLink('65432101');
+    expect(state.error, contains('did not match'));
+    await state.refreshActiveDeviceLink();
+    expect(state.activeDeviceLink?.verificationCode, '65432101');
+  });
+
+  test('a link for another account than the session fails closed', () async {
+    final api = FakeDeviceLinkApiClient();
+    final state = linkOwnerState(api)
       ..session = const Session(
         baseUrl: 'https://localhost:8080',
         token: 'owner-token',
+        accountId: 'acct_other',
       );
     await state.createDeviceLink();
-    await state.refreshActiveDeviceLink();
-    expect(state.error, contains('substituted'));
-    expect(state.activeDeviceLink?.verificationCode, isNot('654321'));
+    expect(state.error, contains('account'));
+    expect(state.activeDeviceLink, isNull);
   });
+
+  for (final (name, mutate)
+      in <(String, void Function(FakeDeviceLinkApiClient))>[
+    ('a missing transcript hash', (api) => api.omitTranscript = true),
+    ('a different transcript hash', (api) => api.transcriptByte = 8),
+    ('a different nonce', (api) => api.refreshNonceByte = 2),
+    ('a different account', (api) => api.refreshAccountId = 'acct_other'),
+  ]) {
+    test('device link refresh with $name fails closed', () async {
+      final api = FakeDeviceLinkApiClient();
+      final state = linkOwnerState(api);
+      await state.createDeviceLink();
+      await state.refreshActiveDeviceLink();
+      expect(state.error, isNull);
+      expect(state.activeDeviceLink?.verificationCode, '65432101');
+      expect(state.activeDeviceLink?.transcriptHash, hasLength(32));
+
+      mutate(api);
+      await state.refreshActiveDeviceLink();
+      expect(state.error, isNotNull);
+      expect(state.activeDeviceLink?.verificationCode, isEmpty);
+      expect(state.activeDeviceLink?.transcriptHash, isNull);
+      expect(state.activeDeviceLink?.linkNonce, List<int>.filled(32, 1));
+      expect(state.activeDeviceLink?.accountId, 'acct_owner');
+      await state.approveActiveDeviceLink('65432101');
+      expect(state.activeDeviceLink?.state, isNot('approved'));
+    });
+  }
 
   test('app state refreshes encrypted messages for selected conversation',
       () async {
@@ -1033,19 +1121,48 @@ class _OutboxApiClient extends ApiClient {
 }
 
 class FakeDeviceLinkApiClient extends ApiClient {
-  FakeDeviceLinkApiClient({this.transcriptByte = 7})
-      : super(baseUrl: 'https://localhost:8080');
+  FakeDeviceLinkApiClient({
+    this.transcriptByte = 7,
+    this.omitTranscript = false,
+    this.refreshNonceByte = 1,
+    this.refreshAccountId = 'acct_owner',
+  }) : super(baseUrl: 'https://localhost:8080');
 
-  final int transcriptByte;
+  int transcriptByte;
+  bool omitTranscript;
+  int refreshNonceByte;
+  String refreshAccountId;
+  // Dishonest-server switches: a code and hash the server picked itself.
+  bool createCarriesVerification = false;
+  bool approveCarriesVerification = false;
+  String refreshState = 'claimed';
 
   @override
   Future<DeviceLink> createDeviceLink(String token) async {
-    return _link(state: 'pending', code: 'PAIRCODE');
+    final link = _link(state: 'pending', code: 'PAIRCODE');
+    return createCarriesVerification ? _withServerVerification(link) : link;
   }
+
+  DeviceLink _withServerVerification(DeviceLink link) => DeviceLink(
+        id: link.id,
+        state: link.state,
+        verificationCode: '65432101',
+        expiresAt: link.expiresAt,
+        code: link.code,
+        linkUri: link.linkUri,
+        accountId: link.accountId,
+        protocolVersion: link.protocolVersion,
+        linkNonce: link.linkNonce,
+        transcriptHash: List<int>.filled(32, 7),
+      );
 
   @override
   Future<DeviceLink> deviceLink(String token, String linkId) async {
-    return _link(state: 'claimed', claimedDeviceName: 'linked tablet');
+    return _link(
+      state: refreshState,
+      claimedDeviceName: 'linked tablet',
+      refresh: true,
+    );
   }
 
   @override
@@ -1152,6 +1269,9 @@ class FakeDeviceLinkApiClient extends ApiClient {
     if (transcriptHash.length != 32 || transcriptHash.first != 7) {
       throw StateError('verification mismatch');
     }
+    if (approveCarriesVerification) {
+      return _withServerVerification(_link(state: 'claimed', code: 'PAIRCODE'));
+    }
     return _link(
       state: 'approved',
       code: 'PAIRCODE',
@@ -1240,25 +1360,27 @@ class FakeDeviceLinkApiClient extends ApiClient {
     String? code,
     String? approvedDeviceId,
     String? claimedDeviceName,
+    bool refresh = false,
   }) {
     return DeviceLink(
       id: 'dlink_1',
       state: state,
-      verificationCode: state == 'pending' ? '' : '654321',
+      verificationCode: state == 'pending' ? '' : '65432101',
       expiresAt: DateTime.parse('2026-05-29T12:00:00Z'),
       code: code,
       linkUri: code == null ? null : 'veritra://device-link?code=$code',
       claimedDeviceName: claimedDeviceName,
       approvedDeviceId: approvedDeviceId,
-      accountId: 'acct_owner',
+      accountId: refresh ? refreshAccountId : 'acct_owner',
       createdByDeviceId: 'dev_owner',
       protocolVersion: 'veritra-device-link-v1',
-      linkNonce: List<int>.filled(32, 1),
+      linkNonce: List<int>.filled(32, refresh ? refreshNonceByte : 1),
       existingSigningKey: List<int>.filled(32, 2),
       claimedDeviceId: state == 'pending' ? null : 'dev_linked',
       claimedSigningKey: state == 'pending' ? null : List<int>.filled(32, 9),
-      transcriptHash:
-          state == 'pending' ? null : List<int>.filled(32, transcriptByte),
+      transcriptHash: state == 'pending' || (refresh && omitTranscript)
+          ? null
+          : List<int>.filled(32, transcriptByte),
     );
   }
 }

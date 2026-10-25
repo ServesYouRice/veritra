@@ -1,8 +1,12 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:drift/isolate.dart' show DriftRemoteException;
+import 'package:sqlite3/common.dart' show CommonDatabase;
+
+import 'message_search.dart';
 
 part 'encrypted_database.g.dart';
 
@@ -29,6 +33,21 @@ sealed class MessageEffect {
   const MessageEffect();
 }
 
+/// The body an `unsupported` row keeps after its author deletes it (S3): the
+/// raw JSON goes, but a `hidden` marker stays so the row does not turn into a
+/// visible "Message deleted".
+String? bodyAfterUnsupportedDelete(String? rawJson) {
+  if (rawJson == null) return null;
+  try {
+    final decoded = jsonDecode(rawJson);
+    return decoded is Map && decoded['hidden'] == true
+        ? '{"hidden":true}'
+        : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 /// Kinds stored in [LocalMessages.kind].
 abstract final class LocalMessageKind {
   /// A visible message with [LocalMessages.body] text.
@@ -41,6 +60,15 @@ abstract final class LocalMessageKind {
   /// Decrypted, but its MLS sender was not the sender the server claimed
   /// (D25). Shown as a warning, never as the claimed sender's words.
   static const unverifiable = 'unverifiable';
+
+  /// Decrypted, but the payload was malformed or its context did not match
+  /// the envelope (W8 step 0, P1). Keyed by the sync event, holds no content.
+  static const invalid = 'invalid';
+
+  /// Decrypted and authentic, but from a newer app version or of a type this
+  /// one does not know. [LocalMessages.body] holds the inner JSON as decrypted
+  /// (encrypted database only), so a later version can read it.
+  static const unsupported = 'unsupported';
 
   /// An attachment manifest. [LocalMessages.body] holds the JSON list of
   /// attachment entries, including their keys, never text to show.
@@ -66,6 +94,7 @@ final class InsertMessageEffect extends MessageEffect {
     this.serverMessageId,
     this.body,
     this.replyTo,
+    this.expiresAt,
   });
 
   final String key;
@@ -78,6 +107,11 @@ final class InsertMessageEffect extends MessageEffect {
   final String? replyTo;
   final int createdAt;
   final String state;
+
+  /// When the server's retention for this message ends (milliseconds since
+  /// the epoch), if it set one (W2). A message that is already expired is not
+  /// stored at all.
+  final int? expiresAt;
 }
 
 /// Replaces the text of [targetKey], only if [editorAccountId] sent it.
@@ -140,17 +174,24 @@ class LocalConversations extends Table {
   Set<Column<Object>> get primaryKey => {id};
 }
 
+/// Schema 10 (W2): [expiresAt] is the envelope's `expires_at` in epoch
+/// milliseconds, kept beside the JSON so the expiry sweep can use an index.
+///
 /// Schema 9 (T49C): the index serves the tail lookup every received message
 /// commits (`WHERE conversation_id = ? ORDER BY position DESC LIMIT 1`) and
 /// the ordered snapshot read, which otherwise scan and sort the whole cache.
 @TableIndex.sql('CREATE INDEX IF NOT EXISTS '
     'local_ciphertext_envelopes_conversation_position '
     'ON local_ciphertext_envelopes (conversation_id, position)')
+@TableIndex.sql('CREATE INDEX IF NOT EXISTS '
+    'local_ciphertext_envelopes_expires_at '
+    'ON local_ciphertext_envelopes (expires_at) WHERE expires_at IS NOT NULL')
 class LocalCiphertextEnvelopes extends Table {
   TextColumn get id => text()();
   TextColumn get conversationId => text()();
   IntColumn get position => integer()();
   TextColumn get payloadJson => text()();
+  IntColumn get expiresAt => integer().nullable()();
 
   @override
   Set<Column<Object>> get primaryKey => {id};
@@ -235,7 +276,12 @@ class LocalPeerVerifications extends Table {
 }
 
 /// Decrypted history. Encrypted at rest by the database cipher, never sent
-/// anywhere, and kept across cache refreshes (D23).
+/// anywhere, and kept across cache refreshes (D23). A row with [expiresAt]
+/// is deleted once that time passes (W2, schema 10).
+@TableIndex.sql('CREATE INDEX IF NOT EXISTS local_messages_expires_at '
+    'ON local_messages (expires_at) WHERE expires_at IS NOT NULL')
+@TableIndex.sql('CREATE UNIQUE INDEX IF NOT EXISTS local_messages_search_id '
+    'ON local_messages (search_id)')
 class LocalMessages extends Table {
   TextColumn get key => text()();
   TextColumn get serverMessageId => text().nullable().unique()();
@@ -249,6 +295,13 @@ class LocalMessages extends Table {
   IntColumn get editedAt => integer().nullable()();
   IntColumn get deletedAt => integer().nullable()();
   TextColumn get state => text()();
+  IntColumn get expiresAt => integer().nullable()();
+
+  /// The row's number in the search index (W10, schema 12), set by the
+  /// database's triggers for text messages and never by the app. The index
+  /// cannot use `rowid`: a table keyed by text may renumber its rows when
+  /// vacuumed, which would leave deleted text in the index.
+  IntColumn get searchId => integer().nullable()();
 
   @override
   Set<Column<Object>> get primaryKey => {key};
@@ -264,6 +317,34 @@ class LocalMessageReactions extends Table {
   Set<Column<Object>> get primaryKey => {targetKey, reactorAccountId};
 }
 
+/// An unsent composer draft, kept so it survives a restart (W6, schema 11).
+/// It is message text before encryption, so it lives only in this database,
+/// goes in no backup and is deleted when the message is sent or the data is
+/// wiped.
+class LocalDrafts extends Table {
+  TextColumn get conversationId => text()();
+  TextColumn get body => text()();
+
+  /// The local key of the message being replied to, if any.
+  TextColumn get replyTo => text().nullable()();
+  IntColumn get updatedAt => integer()();
+
+  @override
+  Set<Column<Object>> get primaryKey => {conversationId};
+}
+
+/// This device's copy of a conversation mute (W6, schema 11). The server holds
+/// the same mute for push; the copy lets the list and the expiry work offline.
+class LocalConversationMutes extends Table {
+  TextColumn get conversationId => text()();
+
+  /// When the mute ends (epoch milliseconds); null mutes without an end.
+  IntColumn get mutedUntil => integer().nullable()();
+
+  @override
+  Set<Column<Object>> get primaryKey => {conversationId};
+}
+
 @DriftDatabase(tables: [
   LocalAccounts,
   LocalConversations,
@@ -277,6 +358,8 @@ class LocalMessageReactions extends Table {
   LocalPeerVerifications,
   LocalMessages,
   LocalMessageReactions,
+  LocalDrafts,
+  LocalConversationMutes,
 ])
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   EncryptedLocalDatabase(super.executor);
@@ -287,7 +370,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   static const lastBackupName = 'backup.last_created_at';
 
   @override
-  int get schemaVersion => 9;
+  int get schemaVersion => 12;
 
   /// Whether opening this database started a schema upgrade. Upgrades run
   /// only after the key has opened the file, so an open that fails after
@@ -301,6 +384,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   MigrationStrategy get migration => MigrationStrategy(
         onCreate: (migrator) async {
           await migrator.createAll();
+          await _createSearchIndex();
           await into(localSyncStates).insert(
             LocalSyncStatesCompanion.insert(singleton: const Value(1)),
           );
@@ -319,7 +403,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             if (from < 3) {
               await migrator.createTable(localMlsOutboxEntries);
             }
-            if (from < 4) {
+            // A table created earlier in this same run already has the current
+            // columns, so a later step may only add to one that existed before.
+            if (from < 4 && from >= 3) {
               await migrator.addColumn(
                 localMlsOutboxEntries,
                 localMlsOutboxEntries.revocationDeviceId,
@@ -342,7 +428,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               await migrator.createTable(localMessages);
               await migrator.createTable(localMessageReactions);
             }
-            if (from < 8) {
+            if (from < 8 && from >= 3) {
               // Durable delivery state for MLS control messages (I34).
               await migrator.addColumn(
                   localMlsOutboxEntries, localMlsOutboxEntries.attemptCount);
@@ -358,6 +444,35 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               // schema 8 never names it.
               await migrator
                   .createIndex(localCiphertextEnvelopesConversationPosition);
+            }
+            if (from < 10) {
+              // W2: expiry beside the ciphertext envelopes and the decrypted
+              // messages, so expired rows can be found and deleted.
+              await migrator.addColumn(
+                  localCiphertextEnvelopes, localCiphertextEnvelopes.expiresAt);
+              if (from >= 7) {
+                await migrator.addColumn(
+                    localMessages, localMessages.expiresAt);
+              }
+              await migrator.createIndex(localCiphertextEnvelopesExpiresAt);
+              await migrator.createIndex(localMessagesExpiresAt);
+              await _backfillExpiry();
+              await _purgeExpiredInTransaction(
+                  DateTime.now().toUtc().millisecondsSinceEpoch);
+            }
+            if (from < 11) {
+              // W6: drafts and conversation mutes. New tables only.
+              await migrator.createTable(localDrafts);
+              await migrator.createTable(localConversationMutes);
+            }
+            if (from < 12) {
+              // W10: the on-device message search index.
+              if (from >= 7) {
+                await migrator.addColumn(localMessages, localMessages.searchId);
+              }
+              await migrator.createIndex(localMessagesSearchId);
+              await _createSearchIndex();
+              await _rebuildSearchIndex();
             }
             // Drift writes the version again after this returns, outside the
             // transaction; writing it here too closes that gap.
@@ -376,6 +491,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   }) =>
       transaction(() async {
         if (clearIdentityState) {
+          await delete(localDrafts).go();
+          await delete(localConversationMutes).go();
           await delete(localCiphertextEnvelopes).go();
           await delete(localConversations).go();
           await delete(localOutboxEntries).go();
@@ -535,17 +652,27 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required int cursor,
     List<LocalMessage> history = const <LocalMessage>[],
     List<LocalMessageReaction> reactions = const <LocalMessageReaction>[],
+    // Only history entries whose JSON lacks the expiry key (a backup from
+    // before it travelled with the history) take it from their envelope. An
+    // entry that carries the key is taken as it is, and the envelopes in the
+    // backup never set it.
+    Set<String> backfillExpiryFor = const <String>{},
   }) =>
       transaction(() async {
         await delete(localMlsTransitions).go();
         await delete(localMlsOutboxEntries).go();
         await delete(localPeerVerifications).go();
+        await delete(localDrafts).go();
+        await delete(localConversationMutes).go();
         // Decrypted history travels in the backup (D27, I45); a version 1
         // backup without it restores an empty history.
         await delete(localMessages).go();
         await delete(localMessageReactions).go();
         for (final message in history) {
-          await into(localMessages).insert(message);
+          // The index numbers are this database's own (W10): the insert
+          // trigger assigns them, and a backup's would collide.
+          await into(localMessages).insert(
+              message.toCompanion(false).copyWith(searchId: const Value(null)));
         }
         for (final reaction in reactions) {
           await into(localMessageReactions).insert(reaction);
@@ -571,8 +698,14 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
                   id: item.id,
                   conversationId: item.conversationId,
                   position: item.position,
-                  payloadJson: item.payloadJson));
+                  payloadJson: item.payloadJson,
+                  expiresAt: Value(envelopeExpiryMillis(item.payloadJson))));
         }
+        if (backfillExpiryFor.isNotEmpty) {
+          await _backfillExpiry(onlyMessages: backfillExpiryFor);
+        }
+        await _purgeExpiredInTransaction(
+            DateTime.now().toUtc().millisecondsSinceEpoch);
         final queuedAt = DateTime.now().microsecondsSinceEpoch;
         for (final item in outbox) {
           await into(localOutboxEntries).insert(
@@ -629,10 +762,12 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
       'WHERE position IS NOT excluded.position '
       'OR payload_json IS NOT excluded.payload_json';
   static const _upsertCachedEnvelope = 'INSERT INTO local_ciphertext_envelopes '
-      '(id, conversation_id, position, payload_json) VALUES (?, ?, ?, ?) '
+      '(id, conversation_id, position, payload_json, expires_at) '
+      'VALUES (?, ?, ?, ?, ?) '
       'ON CONFLICT (id) DO UPDATE SET '
       'conversation_id = excluded.conversation_id, '
-      'position = excluded.position, payload_json = excluded.payload_json '
+      'position = excluded.position, payload_json = excluded.payload_json, '
+      'expires_at = excluded.expires_at '
       'WHERE conversation_id IS NOT excluded.conversation_id '
       'OR position IS NOT excluded.position '
       'OR payload_json IS NOT excluded.payload_json';
@@ -675,16 +810,22 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             conversation.payloadJson,
           ];
         }
-        final envelopeRows = <String, List<Object>>{};
+        final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+        final envelopeRows = <String, List<Object?>>{};
         for (final envelope in envelopes) {
           if (envelopeRows.containsKey(envelope.id)) {
             throw StateError('duplicate cached envelope');
           }
-          envelopeRows[envelope.id] = <Object>[
+          // An expired envelope is not cached (W2); the delete pass below
+          // removes any stored copy.
+          final expiresAt = envelopeExpiryMillis(envelope.payloadJson);
+          if (expiresAt != null && expiresAt <= nowMs) continue;
+          envelopeRows[envelope.id] = <Object?>[
             envelope.id,
             envelope.conversationId,
             envelope.position,
             envelope.payloadJson,
+            expiresAt,
           ];
         }
         final storedConversations = await (selectOnly(localConversations)
@@ -971,7 +1112,17 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
                 ..where((table) => table.id.equals(id)))
               .go();
         }
+        final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
         for (final envelope in upsertedEnvelopes) {
+          final expiresAt = envelopeExpiryMillis(envelope.payloadJson);
+          if (expiresAt != null && expiresAt <= nowMs) {
+            // Arrived already expired (W2): never stored. The MLS state above
+            // still advances, because the message was consumed.
+            await (delete(localCiphertextEnvelopes)
+                  ..where((table) => table.id.equals(envelope.id)))
+                .go();
+            continue;
+          }
           final existing = await (select(localCiphertextEnvelopes)
                 ..where((table) => table.id.equals(envelope.id)))
               .getSingleOrNull();
@@ -991,6 +1142,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               conversationId: envelope.conversationId,
               position: position,
               payloadJson: envelope.payloadJson,
+              expiresAt: Value(expiresAt),
             ),
           );
         }
@@ -1031,6 +1183,17 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         if (ownMessageKey != null && envelope != null) {
           // The server echoed a message this device sent: link the local
           // record to its server ID and mark it delivered.
+          // The server stamps the expiry when it accepts the message, so the
+          // sender learns it from the first echo only (W2). Later echoes
+          // cannot add, move or clear it.
+          await (update(localMessages)
+                ..where((table) =>
+                    table.key.equals(ownMessageKey) &
+                    table.serverMessageId.isNull() &
+                    table.expiresAt.isNull()))
+              .write(LocalMessagesCompanion(
+            expiresAt: Value(envelopeExpiryMillis(envelope.payloadJson)),
+          ));
           await (update(localMessages)
                 ..where((table) => table.key.equals(ownMessageKey)))
               .write(LocalMessagesCompanion(
@@ -1045,7 +1208,16 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             cursor <= expectedCursor) {
           throw StateError('stale sync event commit');
         }
-        if (envelope != null) {
+        final envelopeExpiry = envelope == null
+            ? null
+            : envelopeExpiryMillis(envelope.payloadJson);
+        if (envelope != null &&
+            envelopeExpiry != null &&
+            envelopeExpiry <= DateTime.now().toUtc().millisecondsSinceEpoch) {
+          await (delete(localCiphertextEnvelopes)
+                ..where((table) => table.id.equals(envelope.id)))
+              .go();
+        } else if (envelope != null) {
           final existing = await (select(localCiphertextEnvelopes)
                 ..where((table) => table.id.equals(envelope.id)))
               .getSingleOrNull();
@@ -1065,6 +1237,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               conversationId: envelope.conversationId,
               position: position,
               payloadJson: envelope.payloadJson,
+              expiresAt: Value(envelopeExpiry),
             ),
           );
         }
@@ -1222,6 +1395,18 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         if (draftText != null) {
           await _writeMetadataInTransaction(
               _outboxDraftName(idempotencyKey), draftText);
+          // The composer draft this message was sent from goes in the same
+          // transaction, so a crash cannot leave a sent message and its draft
+          // (W6). A draft edited since is a different draft and stays.
+          final draft = await (select(localDrafts)
+                ..where((table) => table.conversationId.equals(conversationId)))
+              .getSingleOrNull();
+          if (draft != null && draft.body.trim() == draftText.trim()) {
+            await (delete(localDrafts)
+                  ..where(
+                      (table) => table.conversationId.equals(conversationId)))
+                .go();
+          }
         }
         await _applyMessageEffects(messageEffects);
       });
@@ -1361,10 +1546,15 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     );
   }
 
-  Future<void> clearCachedState({bool preserveOutbox = false}) =>
+  Future<void> clearCachedState(
+          {bool preserveOutbox = false, bool keepDrafts = false}) =>
       transaction(() async {
         await delete(localCiphertextEnvelopes).go();
         await delete(localConversations).go();
+        // Drafts stay only when a session expires ([keepDrafts]): the person
+        // signs in again to the same drafts. Explicit sign-out wipes them.
+        if (!keepDrafts) await delete(localDrafts).go();
+        await delete(localConversationMutes).go();
         if (!preserveOutbox) {
           await delete(localOutboxEntries).go();
           await customStatement('DELETE FROM local_metadata WHERE name LIKE ?',
@@ -1387,6 +1577,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localPeerVerifications).go();
         await delete(localMessages).go();
         await delete(localMessageReactions).go();
+        await delete(localDrafts).go();
+        await delete(localConversationMutes).go();
         await into(localSyncStates).insertOnConflictUpdate(
           LocalSyncStatesCompanion.insert(singleton: const Value(1)),
         );
@@ -1402,7 +1594,12 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
 
   Future<List<LocalMessage>> readMessages(String conversationId) =>
       (select(localMessages)
-            ..where((table) => table.conversationId.equals(conversationId))
+            ..where((table) =>
+                table.conversationId.equals(conversationId) &
+                // Expired text never shows, even if its delete failed (W2).
+                (table.expiresAt.isNull() |
+                    table.expiresAt.isBiggerThanValue(
+                        DateTime.now().toUtc().millisecondsSinceEpoch)))
             ..orderBy([
               (table) => OrderingTerm.asc(table.createdAt),
               (table) => OrderingTerm.asc(table.key),
@@ -1425,6 +1622,12 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     for (final effect in effects) {
       switch (effect) {
         case InsertMessageEffect():
+          final expiresAt = effect.expiresAt;
+          if (expiresAt != null &&
+              expiresAt <= DateTime.now().toUtc().millisecondsSinceEpoch) {
+            // Already expired when it arrived (W2): never stored.
+            continue;
+          }
           await into(localMessages).insert(
             LocalMessagesCompanion.insert(
               key: effect.key,
@@ -1437,6 +1640,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               replyTo: Value(effect.replyTo),
               createdAt: effect.createdAt,
               state: effect.state,
+              expiresAt: Value(effect.expiresAt),
             ),
             mode: InsertMode.insertOrIgnore,
           );
@@ -1452,13 +1656,23 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             editedAt: Value(effect.at),
           ));
         case DeleteMessageEffect():
+          final existing = await (select(localMessages)
+                ..where((table) => table.key.equals(effect.targetKey)))
+              .getSingleOrNull();
           final deleted = await (update(localMessages)
                 ..where((table) =>
                     table.key.equals(effect.targetKey) &
                     table.senderAccountId.equals(effect.deleterAccountId) &
-                    table.kind.equals(LocalMessageKind.text)))
+                    // The author may also delete an unsupported row, which
+                    // clears its raw JSON (S3).
+                    table.kind.isIn(const <String>[
+                      LocalMessageKind.text,
+                      LocalMessageKind.unsupported,
+                    ])))
               .write(LocalMessagesCompanion(
-            body: const Value(null),
+            body: Value(existing?.kind == LocalMessageKind.unsupported
+                ? bodyAfterUnsupportedDelete(existing?.body)
+                : null),
             deletedAt: Value(effect.at),
           ));
           if (deleted > 0) {
@@ -1467,6 +1681,17 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
                 .go();
           }
         case ReactionEffect():
+          // Only a live text or attachment row can carry a reaction.
+          final target = await (select(localMessages)
+                ..where((table) => table.key.equals(effect.targetKey)))
+              .getSingleOrNull();
+          if (effect.reaction.isNotEmpty &&
+              (target == null ||
+                  target.deletedAt != null ||
+                  (target.kind != LocalMessageKind.text &&
+                      target.kind != LocalMessageKind.attachment))) {
+            continue;
+          }
           if (effect.reaction.isEmpty) {
             await (delete(localMessageReactions)
                   ..where((table) =>
@@ -1486,6 +1711,253 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
       }
     }
   }
+
+  /// Deletes every message, reaction and cached envelope whose expiry has
+  /// passed, in one transaction (W2). Returns the conversations that lost a
+  /// row.
+  Future<Set<String>> purgeExpired({DateTime? now}) => transaction(
+        () => _purgeExpiredInTransaction(
+            (now ?? DateTime.now()).toUtc().millisecondsSinceEpoch),
+      );
+
+  /// The earliest expiry still stored (epoch milliseconds), if any.
+  Future<int?> nextExpiry() async {
+    final envelopeExpiry = localCiphertextEnvelopes.expiresAt.min();
+    final messageExpiry = localMessages.expiresAt.min();
+    final fromEnvelopes = await (selectOnly(localCiphertextEnvelopes)
+          ..addColumns([envelopeExpiry]))
+        .map((row) => row.read(envelopeExpiry))
+        .getSingle();
+    final fromMessages = await (selectOnly(localMessages)
+          ..addColumns([messageExpiry]))
+        .map((row) => row.read(messageExpiry))
+        .getSingle();
+    if (fromEnvelopes == null) return fromMessages;
+    if (fromMessages == null) return fromEnvelopes;
+    return fromEnvelopes < fromMessages ? fromEnvelopes : fromMessages;
+  }
+
+  /// Deletes what has expired. Decrypted rows go only by their own expiry,
+  /// which was set when the message was decrypted or, for this device's own
+  /// message, by its first server echo. A cached envelope is only a copy of
+  /// what the server listed and was never authenticated, so an expired one
+  /// removes just itself: a server cannot erase older history by listing a
+  /// message again with a short expiry.
+  Future<Set<String>> _purgeExpiredInTransaction(int nowMs) async {
+    final conversations = <String>{};
+    final expiredEnvelopes = await (select(localCiphertextEnvelopes)
+          ..where((table) =>
+              table.expiresAt.isNotNull() &
+              table.expiresAt.isSmallerOrEqualValue(nowMs)))
+        .get();
+    for (final chunk in _chunks([for (final row in expiredEnvelopes) row.id])) {
+      await (delete(localCiphertextEnvelopes)
+            ..where((table) => table.id.isIn(chunk)))
+          .go();
+    }
+    for (final row in expiredEnvelopes) {
+      conversations.add(row.conversationId);
+    }
+    final expiredMessages = await (select(localMessages)
+          ..where((table) =>
+              table.expiresAt.isNotNull() &
+              table.expiresAt.isSmallerOrEqualValue(nowMs)))
+        .get();
+    final keys = <String>[];
+    for (final row in expiredMessages) {
+      conversations.add(row.conversationId);
+      keys.add(row.key);
+    }
+    for (final chunk in _chunks(keys)) {
+      await (delete(localMessageReactions)
+            ..where((table) => table.targetKey.isIn(chunk)))
+          .go();
+      await (delete(localMessages)..where((table) => table.key.isIn(chunk)))
+          .go();
+    }
+    return conversations;
+  }
+
+  static Iterable<List<String>> _chunks(List<String> values) sync* {
+    // SQLite caps bound variables; stay well below the old 999 limit.
+    for (var start = 0; start < values.length; start += 500) {
+      yield values.sublist(
+          start, start + 500 > values.length ? values.length : start + 500);
+    }
+  }
+
+  /// Fills the schema 10 expiry columns from what older versions stored.
+  /// Messages whose envelope already left the cache keep no expiry.
+  ///
+  /// With [onlyMessages], only the messages with those server ids are filled.
+  Future<void> _backfillExpiry({Set<String>? onlyMessages}) async {
+    final rows = await customSelect(
+      'SELECT id, payload_json FROM local_ciphertext_envelopes '
+      "WHERE payload_json LIKE '%\"expires_at\"%'",
+    ).get();
+    for (final row in rows) {
+      final expiresAt = envelopeExpiryMillis(row.read<String>('payload_json'));
+      if (expiresAt == null) continue;
+      final id = row.read<String>('id');
+      await customStatement(
+        'UPDATE local_ciphertext_envelopes SET expires_at = ? WHERE id = ?',
+        <Object?>[expiresAt, id],
+      );
+      if (onlyMessages != null && !onlyMessages.contains(id)) continue;
+      await customStatement(
+        'UPDATE local_messages SET expires_at = ? '
+        'WHERE server_message_id = ? AND expires_at IS NULL',
+        <Object?>[expiresAt, id],
+      );
+    }
+  }
+
+  // ---- on-device message search (W10) ----------------------------------
+
+  static const _searchTable = 'local_message_search';
+
+  /// Creates the full-text index and the triggers that keep it equal to the
+  /// text of `local_messages` through every insert, edit, delete, expiry
+  /// purge and wipe. FTS5 is required: a failure here fails the whole open or
+  /// upgrade, which rolls back and is reported like any other (a full disk as
+  /// `upgradeStorageFull`), so a database never settles at this schema
+  /// without its index.
+  Future<void> _createSearchIndex() async {
+    await customStatement('CREATE VIRTUAL TABLE IF NOT EXISTS $_searchTable '
+        "USING fts5(body, tokenize = 'unicode61 remove_diacritics 2')");
+    // Deleted text is erased from the index at once, not at the next merge.
+    await customStatement("INSERT INTO $_searchTable($_searchTable, rank) "
+        "VALUES('secure-delete', 1)");
+    await customStatement('''
+CREATE TRIGGER IF NOT EXISTS local_messages_search_ai
+AFTER INSERT ON local_messages
+WHEN new.kind = 'text' AND new.body IS NOT NULL
+BEGIN
+  UPDATE local_messages
+    SET search_id = (SELECT COALESCE(MAX(search_id), 0) + 1 FROM local_messages)
+    WHERE key = new.key;
+  INSERT INTO $_searchTable(rowid, body)
+    SELECT search_id, body FROM local_messages WHERE key = new.key;
+END''');
+    await customStatement('''
+CREATE TRIGGER IF NOT EXISTS local_messages_search_au
+AFTER UPDATE OF body, kind ON local_messages
+BEGIN
+  DELETE FROM $_searchTable WHERE rowid = old.search_id;
+  UPDATE local_messages
+    SET search_id = (SELECT COALESCE(MAX(search_id), 0) + 1 FROM local_messages)
+    WHERE key = new.key AND search_id IS NULL
+      AND new.kind = 'text' AND new.body IS NOT NULL;
+  INSERT INTO $_searchTable(rowid, body)
+    SELECT search_id, body FROM local_messages
+    WHERE key = new.key AND kind = 'text' AND body IS NOT NULL
+      AND search_id IS NOT NULL;
+END''');
+    await customStatement('''
+CREATE TRIGGER IF NOT EXISTS local_messages_search_ad
+AFTER DELETE ON local_messages
+BEGIN
+  DELETE FROM $_searchTable WHERE rowid = old.search_id;
+END''');
+  }
+
+  /// Indexes every text message already stored (the upgrade to schema 12).
+  Future<void> _rebuildSearchIndex() async {
+    await customStatement("DELETE FROM $_searchTable");
+    await customStatement('UPDATE local_messages SET search_id = NULL');
+    await customStatement("UPDATE local_messages SET search_id = rowid "
+        "WHERE kind = 'text' AND body IS NOT NULL");
+    await customStatement('INSERT INTO $_searchTable(rowid, body) '
+        'SELECT search_id, body FROM local_messages '
+        'WHERE search_id IS NOT NULL');
+  }
+
+  /// Messages whose text contains every word of [query] (the last word may be
+  /// the start of a longer one), newest first, at most [limit]. Words match
+  /// without regard to case and accents. Nothing leaves the database.
+  Future<List<MessageSearchHit>> searchMessages(String query,
+      {int limit = 50}) async {
+    final terms = searchTerms(query);
+    if (terms.isEmpty) return const <MessageSearchHit>[];
+    {
+      final rows = await customSelect(
+        'SELECT m.key AS key, m.conversation_id AS conversation_id, '
+        'm.sender_account_id AS sender, m.created_at AS created_at, '
+        "snippet($_searchTable, 0, '$snippetMatchStart', '$snippetMatchEnd', "
+        "'…', 16) AS snippet "
+        'FROM $_searchTable JOIN local_messages m ON m.search_id = '
+        '$_searchTable.rowid '
+        'WHERE $_searchTable MATCH ? AND m.kind = \'text\' '
+        'AND m.deleted_at IS NULL '
+        'AND (m.expires_at IS NULL OR m.expires_at > ?) '
+        'ORDER BY m.created_at DESC, m.key DESC LIMIT ?',
+        variables: [
+          Variable<String>(ftsQueryFor(terms)),
+          Variable<int>(DateTime.now().toUtc().millisecondsSinceEpoch),
+          Variable<int>(limit),
+        ],
+      ).get();
+      return [
+        for (final row in rows)
+          MessageSearchHit(
+            key: row.read<String>('key'),
+            conversationId: row.read<String>('conversation_id'),
+            senderAccountId: row.read<String>('sender'),
+            createdAt: row.read<int>('created_at'),
+            snippet: row.read<String>('snippet'),
+          ),
+      ];
+    }
+  }
+
+  Future<void> saveDraft({
+    required String conversationId,
+    required String body,
+    required String? replyTo,
+  }) =>
+      into(localDrafts).insertOnConflictUpdate(
+        LocalDraftsCompanion.insert(
+          conversationId: conversationId,
+          body: body,
+          replyTo: Value(replyTo),
+          updatedAt: DateTime.now().toUtc().millisecondsSinceEpoch,
+        ),
+      );
+
+  Future<void> deleteDraft(String conversationId) => (delete(localDrafts)
+        ..where((table) => table.conversationId.equals(conversationId)))
+      .go();
+
+  Future<List<LocalDraft>> readDrafts() => select(localDrafts).get();
+
+  /// Remembers a mute until [mutedUntil] (epoch milliseconds), or without an
+  /// end when it is null. [muted] false forgets it.
+  Future<void> saveMute(String conversationId,
+      {required bool muted, int? mutedUntil}) async {
+    if (!muted) {
+      await (delete(localConversationMutes)
+            ..where((table) => table.conversationId.equals(conversationId)))
+          .go();
+      return;
+    }
+    await into(localConversationMutes).insertOnConflictUpdate(
+      LocalConversationMutesCompanion.insert(
+        conversationId: conversationId,
+        mutedUntil: Value(mutedUntil),
+      ),
+    );
+  }
+
+  /// Mutes still in force at [nowMs]; ended ones are deleted on the way.
+  Future<List<LocalConversationMute>> readMutes(int nowMs) =>
+      transaction(() async {
+        await (delete(localConversationMutes)
+              ..where((table) =>
+                  table.mutedUntil.isNotNull() &
+                  table.mutedUntil.isSmallerOrEqualValue(nowMs)))
+            .go();
+        return select(localConversationMutes).get();
+      });
 
   Future<String?> readMetadata(String name) async {
     final row = await (select(localMetadata)
@@ -1552,13 +2024,9 @@ EncryptedLocalDatabase openEncryptedLocalDatabase(File file, String keyHex) {
         rawDatabase.execute("PRAGMA cipher = 'chacha20'");
         rawDatabase.execute("PRAGMA hexkey = '$keyHex'");
         rawDatabase.execute('PRAGMA busy_timeout = 5000');
-        final cipherRows = rawDatabase.select('PRAGMA cipher');
-        final cipher = cipherRows.isEmpty
-            ? null
-            : cipherRows.first.values.first.toString();
-        if (cipher != 'chacha20') {
-          throw StateError('SQLite encryption cipher is unavailable');
-        }
+        // Before any migration runs, not only once Drift has opened.
+        rawDatabase.execute('PRAGMA secure_delete = ON');
+        requireSqliteFeatures(rawDatabase);
         // PRAGMA key accepts any input. The first schema read proves that the
         // key can authenticate the encrypted database before Drift uses it.
         rawDatabase.select('SELECT count(*) FROM sqlite_master');
@@ -1568,24 +2036,99 @@ EncryptedLocalDatabase openEncryptedLocalDatabase(File file, String keyHex) {
   );
 }
 
+/// The SQLite build lacks something Veritra needs. This is a property of the
+/// build, not of the database file: the file is fine, the key is fine, and
+/// neither a retry nor a reset can help.
+class SqliteFeatureUnavailable implements Exception {
+  const SqliteFeatureUnavailable(this.feature);
+
+  /// `cipher` or `fts5`.
+  final String feature;
+
+  @override
+  String toString() => 'SqliteFeatureUnavailable($feature)';
+}
+
+/// Throws [SqliteFeatureUnavailable] unless the cipher is active and FTS5 is
+/// compiled in (W10 search needs it). [compileOptionUsed] is injectable so a
+/// test can stand in for an FTS5-less SQLite.
+void requireSqliteFeatures(
+  CommonDatabase db, {
+  bool Function(CommonDatabase db, String option)? compileOptionUsed,
+}) {
+  final cipherRows = db.select('PRAGMA cipher');
+  final cipher =
+      cipherRows.isEmpty ? null : cipherRows.first.values.first.toString();
+  if (cipher != 'chacha20') {
+    throw const SqliteFeatureUnavailable('cipher');
+  }
+  final used = (compileOptionUsed ?? _compileOptionUsed)(db, 'ENABLE_FTS5');
+  if (!used) throw const SqliteFeatureUnavailable('fts5');
+}
+
+bool _compileOptionUsed(CommonDatabase db, String option) {
+  final rows = db.select('SELECT sqlite_compileoption_used(?)', [option]);
+  return rows.isNotEmpty && rows.first.values.first == 1;
+}
+
+/// Whether [error], or an error it wraps, is a [SqliteFeatureUnavailable].
+bool isSqliteFeatureUnavailable(Object? error, [int depth = 0]) {
+  if (error == null || depth > 8) return false;
+  return switch (error) {
+    SqliteFeatureUnavailable() => true,
+    DriftRemoteException(:final remoteCause) =>
+      isSqliteFeatureUnavailable(remoteCause, depth + 1),
+    DriftWrappedException(:final cause) =>
+      isSqliteFeatureUnavailable(cause, depth + 1),
+    CouldNotRollBackException(:final cause, :final exception) =>
+      isSqliteFeatureUnavailable(cause, depth + 1) ||
+          isSqliteFeatureUnavailable(exception, depth + 1),
+    _ => false,
+  };
+}
+
 /// Whether [error], or an error it wraps, is SQLite reporting a full device
 /// (`SQLITE_FULL`) or a failed read or write (`SQLITE_IOERR`). Errors from
 /// the background isolate arrive wrapped, several layers deep.
-bool isStorageFullError(Object error) => _isStorageFull(error, 0);
+bool isStorageFullError(Object error) {
+  final code = localStorageErrorCode(error);
+  return code == _sqliteFull || code == _sqliteIoErr;
+}
 
 const _sqliteIoErr = 10;
 const _sqliteFull = 13;
 
-bool _isStorageFull(Object? error, int depth) {
-  if (error == null || depth > 8) return false;
+/// The primary SQLite result code (extended codes masked to the low byte) of
+/// [error] or the error it wraps, or null when no SQLite error is inside. The
+/// encrypted database runs on a background isolate, so real failures arrive as
+/// `DriftRemoteException(remoteCause: SqliteException)`, sometimes inside a
+/// `DriftWrappedException` or a failed rollback.
+int? localStorageErrorCode(Object? error) => _storageErrorCode(error, 0);
+
+int? _storageErrorCode(Object? error, int depth) {
+  if (error == null || depth > 8) return null;
   return switch (error) {
-    SqliteException(:final resultCode) =>
-      resultCode == _sqliteFull || resultCode == _sqliteIoErr,
+    SqliteException(:final extendedResultCode) => extendedResultCode & 0xff,
     DriftRemoteException(:final remoteCause) =>
-      _isStorageFull(remoteCause, depth + 1),
-    DriftWrappedException(:final cause) => _isStorageFull(cause, depth + 1),
+      _storageErrorCode(remoteCause, depth + 1),
+    DriftWrappedException(:final cause) => _storageErrorCode(cause, depth + 1),
     CouldNotRollBackException(:final cause, :final exception) =>
-      _isStorageFull(cause, depth + 1) || _isStorageFull(exception, depth + 1),
-    _ => false,
+      _storageErrorCode(cause, depth + 1) ??
+          _storageErrorCode(exception, depth + 1),
+    _ => null,
   };
+}
+
+/// The `expires_at` of a cached envelope's JSON, in epoch milliseconds, or
+/// null when it has none or cannot be read (W2).
+int? envelopeExpiryMillis(String payloadJson) {
+  try {
+    final decoded = jsonDecode(payloadJson);
+    if (decoded is! Map) return null;
+    final raw = decoded['expires_at'];
+    if (raw is! String) return null;
+    return DateTime.tryParse(raw)?.toUtc().millisecondsSinceEpoch;
+  } on FormatException {
+    return null;
+  }
 }

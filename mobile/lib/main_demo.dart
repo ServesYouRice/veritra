@@ -6,11 +6,15 @@ import 'package:flutter/material.dart';
 import 'core/api_client.dart';
 import 'core/app_state.dart';
 import 'core/client_config.dart';
+import 'core/receipts_state.dart';
 import 'core/transport_policy.dart';
 import 'crypto/attachment_crypto.dart';
+import 'desktop/desktop_services.dart';
 import 'crypto/backup_service.dart';
 import 'crypto/native_crypto_bindings.dart';
 import 'crypto/native_crypto_service.dart';
+import 'features/chat/attachment_views.dart' show purgeOpenedAttachments;
+import 'features/chat/composer_attachments.dart' show purgePastedImages;
 import 'main.dart' show VeritraApp;
 import 'push/push_service.dart';
 import 'storage/local_store.dart';
@@ -68,6 +72,7 @@ Future<void> main(List<String> args) async {
       },
     ),
     attachmentService: AttachmentCryptoService(bindings),
+    receiptPreferences: ReceiptPreferences(SecureReceiptPreferenceStore()),
     syncServiceFactory: (baseUrl, token) =>
         WebSocketSyncService(baseUrl: baseUrl, token: token),
     pushService: Platform.isAndroid || Platform.isIOS
@@ -83,7 +88,10 @@ Future<void> main(List<String> args) async {
           Platform.isWindows || Platform.isLinux || Platform.isMacOS,
     ),
   );
-  runApp(VeritraApp(state: state));
+  final desktop = await DesktopServices.startIfSupported(state);
+  runApp(VeritraApp(state: state, desktop: desktop));
+  unawaited(purgeOpenedAttachments());
+  unawaited(purgePastedImages());
   unawaited(state.tryRestoreSession());
 }
 

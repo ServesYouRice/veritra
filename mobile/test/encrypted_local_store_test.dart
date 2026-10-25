@@ -12,6 +12,7 @@ import 'package:flutter/services.dart' show MethodCall;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:sqlite3/common.dart' show CommonDatabase;
 import 'package:private_messenger/storage/backup_exclusion.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
@@ -64,6 +65,33 @@ void main() {
       await directory.delete(recursive: true);
     }
   });
+
+  /// Takes a schema 12 database back to the shape of schema 9, so a test can
+  /// run the real upgrade over it.
+  Future<void> dropExpiryColumns(EncryptedLocalDatabase database) async {
+    for (final trigger in <String>[
+      'local_messages_search_ai',
+      'local_messages_search_au',
+      'local_messages_search_ad',
+    ]) {
+      await database.customStatement('DROP TRIGGER IF EXISTS $trigger');
+    }
+    await database.customStatement('DROP TABLE IF EXISTS local_message_search');
+    await database
+        .customStatement('DROP INDEX IF EXISTS local_messages_search_id');
+    await database
+        .customStatement('ALTER TABLE local_messages DROP COLUMN search_id');
+    await database
+        .customStatement('DROP INDEX IF EXISTS local_messages_expires_at');
+    await database.customStatement(
+        'DROP INDEX IF EXISTS local_ciphertext_envelopes_expires_at');
+    await database
+        .customStatement('ALTER TABLE local_messages DROP COLUMN expires_at');
+    await database.customStatement(
+        'ALTER TABLE local_ciphertext_envelopes DROP COLUMN expires_at');
+    await database.customStatement('DROP TABLE local_drafts');
+    await database.customStatement('DROP TABLE local_conversation_mutes');
+  }
 
   SecureLocalStore createStore({MlsCommitFailureInjector? failureInjector}) =>
       SecureLocalStore(
@@ -860,6 +888,7 @@ void main() {
       await database.customStatement(
           'ALTER TABLE local_mls_outbox_entries DROP COLUMN $column');
     }
+    await dropExpiryColumns(database);
     await database.customStatement('PRAGMA user_version = 7');
     await database.close();
     databases.removeLast();
@@ -902,11 +931,11 @@ void main() {
     return rows.map((row) => row.read<String>('detail')).join('\n');
   }
 
-  test('a new database has the envelope index on schema 9', () async {
+  test('a new database has the envelope index on schema 12', () async {
     final store = createStore();
     await store.saveSyncCursor(1);
     final database = databases.last;
-    expect(await userVersion(database), 9);
+    expect(await userVersion(database), 12);
     expect(await hasEnvelopeIndex(database), isTrue);
     expect(
         await tailLookupPlan(database),
@@ -935,6 +964,7 @@ void main() {
     );
     final database = databases.last;
     await database.customStatement('DROP INDEX $envelopeIndex');
+    await dropExpiryColumns(database);
     await database.customStatement('PRAGMA user_version = 8');
     expect(await tailLookupPlan(database), isNot(contains(envelopeIndex)));
     await database.close();
@@ -943,7 +973,7 @@ void main() {
     final upgraded = createStore();
     final snapshot = await upgraded.loadSnapshot();
     final reopened = databases.last;
-    expect(await userVersion(reopened), 9);
+    expect(await userVersion(reopened), 12);
     expect(await hasEnvelopeIndex(reopened), isTrue);
     expect(await tailLookupPlan(reopened), contains('INDEX $envelopeIndex'));
     expect(snapshot?.cursor, 1);
@@ -1007,6 +1037,7 @@ void main() {
     }
     await database.customStatement('DROP INDEX $envelopeIndex');
     await database.customStatement('CREATE TABLE $envelopeIndex (blocker)');
+    await dropExpiryColumns(database);
     await database.customStatement('PRAGMA user_version = 7');
     await database.close();
     databases.removeLast();
@@ -1040,7 +1071,7 @@ void main() {
     // With the cause gone, the next open runs the whole upgrade.
     final upgraded = openStore();
     expect((await upgraded.pendingMlsMessages()).single.attemptCount, 0);
-    expect(await userVersion(databases.last), 9);
+    expect(await userVersion(databases.last), 12);
     expect(await hasEnvelopeIndex(databases.last), isTrue);
   });
 
@@ -1060,6 +1091,7 @@ void main() {
     );
     final database = databases.last;
     await database.customStatement('DROP INDEX $envelopeIndex');
+    await dropExpiryColumns(database);
     await database.customStatement('PRAGMA user_version = 8');
     await database.customStatement('VACUUM');
     final pages = (await database.customSelect('PRAGMA page_count').getSingle())
@@ -1068,6 +1100,285 @@ void main() {
     databases.removeLast();
     return pages;
   }
+
+  Future<void> dropSearchIndex(EncryptedLocalDatabase database) async {
+    for (final trigger in <String>[
+      'local_messages_search_ai',
+      'local_messages_search_au',
+      'local_messages_search_ad',
+    ]) {
+      await database.customStatement('DROP TRIGGER IF EXISTS $trigger');
+    }
+    await database.customStatement('DROP TABLE IF EXISTS local_message_search');
+    await database
+        .customStatement('DROP INDEX IF EXISTS local_messages_search_id');
+    await database
+        .customStatement('ALTER TABLE local_messages DROP COLUMN search_id');
+  }
+
+  Future<void> insertTextMessages(
+      EncryptedLocalDatabase database, int count) async {
+    await database.applyMessageEffects(<MessageEffect>[
+      for (var index = 0; index < count; index++)
+        InsertMessageEffect(
+          key: 'dev_peer:m$index',
+          conversationId: 'conv_1',
+          senderAccountId: 'acct_peer',
+          senderDeviceId: 'dev_peer',
+          kind: LocalMessageKind.text,
+          body: 'searchable words number $index',
+          createdAt: index,
+          state: LocalMessageState.received,
+        ),
+    ]);
+  }
+
+  test('an upgrade from schema 6 builds every later table once', () async {
+    final store = createStore();
+    await store.saveSyncCursor(1);
+    final database = databases.last;
+    await insertTextMessages(database, 3);
+    await dropExpiryColumns(database);
+    await database.customStatement('DROP TABLE local_messages');
+    await database.customStatement('DROP TABLE local_message_reactions');
+    for (final column in <String>[
+      'attempt_count',
+      'next_attempt_at',
+      'failure_class',
+      'terminal',
+    ]) {
+      await database.customStatement(
+          'ALTER TABLE local_mls_outbox_entries DROP COLUMN $column');
+    }
+    await database.customStatement('PRAGMA user_version = 6');
+    await database.close();
+    databases.removeLast();
+
+    final upgraded = createStore();
+    expect(await upgraded.loadSyncCursor(), 1);
+    final reopened = databases.last;
+    expect(await userVersion(reopened), 12);
+    await reopened.applyMessageEffects(<MessageEffect>[
+      const InsertMessageEffect(
+        key: 'dev_peer:new',
+        conversationId: 'conv_1',
+        senderAccountId: 'acct_peer',
+        senderDeviceId: 'dev_peer',
+        kind: LocalMessageKind.text,
+        body: 'after the upgrade',
+        createdAt: 1,
+        state: LocalMessageState.received,
+      ),
+    ]);
+    expect(
+        (await upgraded.searchMessages('upgrade')).single.key, 'dev_peer:new');
+    expect(await upgraded.pendingMlsMessages(), isEmpty);
+  });
+
+  test('an upgrade from schema 2 builds every later table once', () async {
+    final store = createStore();
+    await store.saveSyncCursor(1);
+    final database = databases.last;
+    await dropExpiryColumns(database);
+    await database.customStatement('DROP TABLE local_messages');
+    await database.customStatement('DROP TABLE local_message_reactions');
+    await database.customStatement('DROP TABLE local_peer_verifications');
+    await database.customStatement('DROP TABLE local_mls_outbox_entries');
+    for (final column in <String>[
+      'attempt_count',
+      'next_attempt_at',
+      'failure_class',
+      'terminal',
+    ]) {
+      await database.customStatement(
+          'ALTER TABLE local_outbox_entries DROP COLUMN $column');
+    }
+    await database.customStatement('PRAGMA user_version = 2');
+    await database.close();
+    databases.removeLast();
+
+    final upgraded = createStore();
+    expect(await upgraded.loadSyncCursor(), 1);
+    expect(await userVersion(databases.last), 12);
+  });
+
+  test('an upgrade from schema 3 keeps its rows and builds every later table',
+      () async {
+    final store = createStore();
+    await store.saveSyncCursor(1);
+    final database = databases.last;
+    await dropExpiryColumns(database);
+    await database.customStatement('DROP TABLE local_messages');
+    await database.customStatement('DROP TABLE local_message_reactions');
+    await database.customStatement('DROP TABLE local_peer_verifications');
+    for (final column in <String>[
+      'revocation_device_id',
+      'attempt_count',
+      'next_attempt_at',
+      'failure_class',
+      'terminal',
+    ]) {
+      await database.customStatement(
+          'ALTER TABLE local_mls_outbox_entries DROP COLUMN $column');
+    }
+    for (final column in <String>[
+      'attempt_count',
+      'next_attempt_at',
+      'failure_class',
+      'terminal',
+    ]) {
+      await database.customStatement(
+          'ALTER TABLE local_outbox_entries DROP COLUMN $column');
+    }
+    // Rows exactly as a schema 3 build wrote them.
+    await database.customStatement('INSERT INTO local_outbox_entries '
+        '(idempotency_key, conversation_id, queued_at, payload_json) '
+        "VALUES ('idem_1', 'conv_1', 1, '{}')");
+    await database.customStatement(
+        'INSERT INTO local_mls_outbox_entries (idempotency_key, '
+        'conversation_id, kind, recipient_device_id, payload, state_counter, '
+        "queued_at) VALUES ('mls_1', 'conv_1', 'welcome', 'dev_2', x'0102', 1, 1)");
+    await database.customStatement('PRAGMA user_version = 3');
+    await database.close();
+    databases.removeLast();
+
+    final upgraded = createStore();
+    expect(await upgraded.loadSyncCursor(), 1);
+    final reopened = databases.last;
+    expect(await userVersion(reopened), 12);
+    // The old rows are there with the new columns at their defaults.
+    final outbox = await reopened
+        .customSelect(
+            'SELECT attempt_count, terminal FROM local_outbox_entries')
+        .getSingle();
+    expect(outbox.read<int>('attempt_count'), 0);
+    expect(outbox.read<int>('terminal'), 0);
+    final pending = await upgraded.pendingMlsMessages();
+    expect(pending.single.idempotencyKey, 'mls_1');
+    expect(pending.single.revocationDeviceId, isNull);
+    // The later tables, the expiry columns, drafts and search all exist.
+    await upgraded.saveDraft('conv_1', 'after the upgrade');
+    expect((await upgraded.loadDrafts())['conv_1']?.text, 'after the upgrade');
+    await reopened.applyMessageEffects(<MessageEffect>[
+      const InsertMessageEffect(
+        key: 'dev_peer:new',
+        conversationId: 'conv_1',
+        senderAccountId: 'acct_peer',
+        senderDeviceId: 'dev_peer',
+        kind: LocalMessageKind.text,
+        body: 'after the upgrade',
+        createdAt: 1,
+        state: LocalMessageState.received,
+      ),
+    ]);
+    expect(
+        (await upgraded.searchMessages('upgrade')).single.key, 'dev_peer:new');
+    final verifications = await reopened
+        .customSelect('SELECT count(*) AS n FROM local_peer_verifications')
+        .getSingle();
+    expect(verifications.read<int>('n'), 0);
+    expect(await upgraded.nextMessageExpiry(), isNull);
+  });
+
+  group('SQLite features (W10)', () {
+    test('FTS5 missing is its own failure, not a rejected key', () async {
+      final original = await seedAndClose();
+      final key = await secureStorage.read(key: 'veritra.database_key.v1');
+      final store = SecureLocalStore(
+        storage: secureStorage,
+        directoryProvider: () async => directory,
+        databaseFactory: (file, keyHex) {
+          final opened = _openWithoutFts5(file, keyHex);
+          databases.add(opened);
+          return opened;
+        },
+      );
+      await expectLater(
+          store.loadSyncCursor(),
+          throwsA(allOf(
+              _storeFailure(LocalStoreFailureKind.sqliteFeatureMissing),
+              isA<LocalStoreUnavailableException>()
+                  .having((error) => error.retryable, 'retryable', isFalse))));
+      // Nothing was moved, deleted or reset.
+      await expectDatabaseUnchanged(original);
+      expect(await secureStorage.read(key: 'veritra.database_key.v1'), key);
+      expect(
+          directory
+              .listSync()
+              .where((item) => item.path.contains('unreadable-')),
+          isEmpty);
+    });
+
+    test('FTS5 missing on a new profile is the same failure', () async {
+      final store = SecureLocalStore(
+        storage: secureStorage,
+        directoryProvider: () async => directory,
+        databaseFactory: (file, keyHex) {
+          final opened = _openWithoutFts5(file, keyHex);
+          databases.add(opened);
+          return opened;
+        },
+      );
+      await expectLater(store.loadSyncCursor(),
+          throwsA(_storeFailure(LocalStoreFailureKind.sqliteFeatureMissing)));
+    });
+
+    test('the check passes on this build and fails on an injected answer', () {
+      final db = sqlite3.openInMemory();
+      addTearDown(db.close);
+      db.execute("PRAGMA cipher = 'chacha20'");
+      requireSqliteFeatures(db);
+      expect(
+          () => requireSqliteFeatures(db,
+              compileOptionUsed: (_, option) => option != 'ENABLE_FTS5'),
+          throwsA(isA<SqliteFeatureUnavailable>()
+              .having((error) => error.feature, 'feature', 'fts5')));
+      expect(
+          isSqliteFeatureUnavailable(DriftWrappedException(
+              message: 'wrapped',
+              cause: const SqliteFeatureUnavailable('fts5'))),
+          isTrue);
+      expect(isSqliteFeatureUnavailable(StateError('x')), isFalse);
+    });
+  });
+
+  test(
+      'the search index is required: a full disk fails the 11 to 12 upgrade '
+      'and a retry completes it', () async {
+    final store = createStore();
+    await store.saveSyncCursor(1);
+    final database = databases.last;
+    await insertTextMessages(database, 400);
+    await dropSearchIndex(database);
+    await database.customStatement('PRAGMA user_version = 11');
+    await database.customStatement('VACUUM');
+    final pages = (await database.customSelect('PRAGMA page_count').getSingle())
+        .read<int>('page_count');
+    await database.close();
+    databases.removeLast();
+    final original =
+        File('${directory.path}/veritra-local.db').readAsBytesSync();
+
+    var diskFull = true;
+    final constrained = SecureLocalStore(
+      storage: secureStorage,
+      directoryProvider: () async => directory,
+      databaseFactory: (file, keyHex) {
+        final opened = diskFull
+            ? _openWithoutRoom(file, keyHex, pages)
+            : openEncryptedLocalDatabase(file, keyHex);
+        databases.add(opened);
+        return opened;
+      },
+    );
+    await expectLater(constrained.searchMessages('words'),
+        throwsA(_storeFailure(LocalStoreFailureKind.upgradeStorageFull)));
+    await expectDatabaseUnchanged(original);
+
+    diskFull = false;
+    expect(await constrained.searchMessages('words'), hasLength(50));
+    expect(await userVersion(databases.last), 12);
+  });
 
   test('a full disk during the upgrade is reported as a full device', () async {
     final pages = await seedVersion8();
@@ -1106,7 +1417,7 @@ void main() {
     final snapshot = await store.loadSnapshot();
     expect(snapshot?.cursor, 1);
     expect(snapshot?.messagesByConversation['conv_1'], hasLength(200));
-    expect(await userVersion(databases.last), 9);
+    expect(await userVersion(databases.last), 12);
     expect(await hasEnvelopeIndex(databases.last), isTrue);
   });
 
@@ -1315,6 +1626,21 @@ EncryptedLocalDatabase _openWithoutRoom(
         rawDatabase.execute('PRAGMA max_page_count = $maxPages');
       },
     ));
+
+/// Opens like [openEncryptedLocalDatabase] on a SQLite build without FTS5.
+/// The answer is faked inside the background isolate, as a real build would
+/// give it, so the error reaches the app the way a real one does.
+EncryptedLocalDatabase _openWithoutFts5(File file, String keyHex) =>
+    EncryptedLocalDatabase(NativeDatabase.createInBackground(
+      file,
+      setup: (rawDatabase) {
+        rawDatabase.execute("PRAGMA cipher = 'chacha20'");
+        rawDatabase.execute("PRAGMA hexkey = '$keyHex'");
+        requireSqliteFeatures(rawDatabase, compileOptionUsed: _noFts5);
+      },
+    ));
+
+bool _noFts5(CommonDatabase db, String option) => option != 'ENABLE_FTS5';
 
 MlsStateTransition _nextTransition() => MlsStateTransition(
       messageId: 'mls_message_2',

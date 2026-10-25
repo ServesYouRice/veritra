@@ -262,15 +262,23 @@ func (s *Store) deleteReaction(ctx context.Context, messageID, accountID, eventT
 }
 
 func (s *Store) MarkRead(ctx context.Context, conversationID, accountID, messageID string) error {
-	_, err := s.markRead(ctx, conversationID, accountID, messageID, "")
+	_, err := s.markRead(ctx, conversationID, accountID, messageID, "", false)
+	return err
+}
+
+// MarkReadPrivate moves the account's read cursor for its own unread count
+// only: no sync event is written, and the cursor is never listed to other
+// members (the account keeps read receipts off).
+func (s *Store) MarkReadPrivate(ctx context.Context, conversationID, accountID, messageID string) error {
+	_, err := s.markRead(ctx, conversationID, accountID, messageID, "", true)
 	return err
 }
 
 func (s *Store) MarkReadWithSyncEvent(ctx context.Context, conversationID, accountID, messageID string) (int64, error) {
-	return s.markRead(ctx, conversationID, accountID, messageID, "read_receipt.updated")
+	return s.markRead(ctx, conversationID, accountID, messageID, "read_receipt.updated", false)
 }
 
-func (s *Store) markRead(ctx context.Context, conversationID, accountID, messageID, eventType string) (int64, error) {
+func (s *Store) markRead(ctx context.Context, conversationID, accountID, messageID, eventType string, private bool) (int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -283,6 +291,17 @@ func (s *Store) markRead(ctx context.Context, conversationID, accountID, message
 	if !member {
 		return 0, ErrNotMember
 	}
+	if !private {
+		// An account that switched read receipts off shares none, from any
+		// of its devices: the cursor stays private and nothing is announced.
+		var sends bool
+		if err := tx.QueryRowContext(ctx, `SELECT send_read_receipts != 0 FROM accounts WHERE id = ?`, accountID).Scan(&sends); err != nil {
+			return 0, err
+		}
+		if !sends {
+			private = true
+		}
+	}
 	var count int
 	now := nowString()
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM message_envelopes WHERE id = ? AND conversation_id = ? AND (expires_at IS NULL OR expires_at > ?)`, messageID, conversationID, now).Scan(&count); err != nil {
@@ -294,8 +313,8 @@ func (s *Store) markRead(ctx context.Context, conversationID, accountID, message
 	// Guard against rewinding the read cursor: only advance to a message
 	// whose created_at is at or after the currently-recorded one.
 	if _, err = tx.ExecContext(ctx, `
-		INSERT INTO read_receipts(account_id, conversation_id, message_id, read_at)
-		VALUES(?, ?, ?, ?)
+		INSERT INTO read_receipts(account_id, conversation_id, message_id, read_at, shared_message_id)
+		VALUES(?1, ?2, ?3, ?4, NULL)
 		ON CONFLICT(account_id, conversation_id) DO UPDATE SET
 			message_id = excluded.message_id,
 			read_at = excluded.read_at
@@ -306,10 +325,34 @@ func (s *Store) markRead(ctx context.Context, conversationID, accountID, message
 		accountID, conversationID, messageID, now); err != nil {
 		return 0, err
 	}
-	payload := map[string]string{"account_id": accountID, "message_id": messageID}
-	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, nil, conversationID, payload, now)
-	if err != nil {
-		return 0, err
+	var eventID int64
+	if !private {
+		// The cursor other members see moves only for a shared read, and only
+		// forward (by created_at, then id); an announcement follows only when
+		// it moved. When the announced message is gone (the column was set to
+		// NULL), nothing is known to compare with: the cursor then moves only
+		// to the account's own read cursor, which the upsert above has just
+		// advanced, so it never goes behind what the account has read.
+		result, err := tx.ExecContext(ctx, `
+			UPDATE read_receipts SET shared_message_id = ?3
+			WHERE account_id = ?1 AND conversation_id = ?2
+			  AND ((shared_message_id IS NULL AND (message_id IS NULL OR message_id = ?3))
+			       OR (shared_message_id != ?3
+			           AND ((SELECT created_at FROM message_envelopes WHERE id = ?3), ?3) >
+			               ((SELECT created_at FROM message_envelopes WHERE id = shared_message_id), shared_message_id)))`,
+			accountID, conversationID, messageID)
+		if err != nil {
+			return 0, err
+		}
+		if moved, err := result.RowsAffected(); err != nil {
+			return 0, err
+		} else if moved > 0 {
+			payload := map[string]string{"account_id": accountID, "message_id": messageID}
+			eventID, err = insertOptionalSyncEvent(ctx, tx, eventType, nil, conversationID, payload, now)
+			if err != nil {
+				return 0, err
+			}
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
@@ -404,7 +447,7 @@ func (s *Store) PushTargetsForConversation(ctx context.Context, conversationID, 
 		JOIN memberships m ON m.account_id = ps.account_id
 		WHERE m.conversation_id = ? AND ps.account_id <> ? AND ps.provider IN ('webpush', 'fcm', 'apns') AND ps.disabled_at IS NULL
 		  AND NOT EXISTS (SELECT 1 FROM account_blocks b WHERE b.blocker_account_id = ps.account_id AND b.blocked_account_id = ?)
-		  AND NOT EXISTS (SELECT 1 FROM conversation_notification_preferences p WHERE p.account_id = ps.account_id AND p.conversation_id = ? AND p.muted = 1)
+		  AND NOT EXISTS (SELECT 1 FROM conversation_notification_preferences p WHERE p.account_id = ps.account_id AND p.conversation_id = ? AND p.muted = 1 AND (p.muted_until IS NULL OR p.muted_until > CAST(strftime('%s', 'now') AS INTEGER)))
 		ORDER BY ps.id
 		LIMIT 500`, conversationID, excludeAccountID, excludeAccountID, conversationID)
 	if err != nil {

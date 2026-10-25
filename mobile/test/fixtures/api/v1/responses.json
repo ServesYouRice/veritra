@@ -55,6 +55,21 @@
     ],
     "next_before": "msg_1"
   },
+  "receipts_page": {
+    "receipts": [
+      {
+        "account_id": "acct_peer",
+        "member_since": "2026-06-01T08:00:00Z",
+        "delivered_through": "2026-06-02T12:30:00.123456789Z",
+        "read_through": "2026-06-02T12:29:00Z"
+      },
+      {
+        "account_id": "acct_other",
+        "delivered_through": null,
+        "read_through": null
+      }
+    ]
+  },
   "sync_events": {
     "events": [
       {

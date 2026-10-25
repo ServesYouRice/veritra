@@ -20,7 +20,19 @@ the crypto surface since the freeze is in [`crypto.md`](crypto.md).
 - Local state uses SQLite3MC ChaCha20 with a random 256-bit key in platform
   secure storage (Windows DPAPI and the Linux Secret Service on desktop, D26).
   MLS state, rollback counter, affected ciphertext rows, decrypted history,
-  dedupe marker, and sync cursor commit atomically. Local schema v8.
+  dedupe marker, and sync cursor commit atomically. Local schema v12.
+- Other readable copies, all inside the same encrypted database and nowhere
+  else: unsent composer drafts (`local_drafts`, W6; deleted in the transaction
+  that queues the message), the full-text index of message text
+  (`local_message_search`, W10; FTS5 with secure-delete, kept equal to
+  `local_messages` by triggers, so an edit, delete, expiry or wipe leaves it at
+  once) and the device's copy of conversation mutes. None goes in a backup
+  (except history, as before), a log, a push or a request. Expired messages
+  (W2) are deleted from `local_messages`, their reactions and the index; the
+  expiry is the server's `expires_at`, stamped when the message was decrypted or
+  first echoed, and it is not MLS-authenticated. The only exceptions where
+  expiry is read from cached envelopes are the schema 10 upgrade and the
+  restore of a format 1 or 2 backup, once, for rows that predate the column.
 - Decrypted history (D22/D23) lives in `local_messages` and
   `local_message_reactions`, keyed by the authenticated
   `<sender_device_id>:<action_id>`. Edits and deletes apply only when the

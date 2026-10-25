@@ -168,7 +168,11 @@ func (a *API) syncEvents(w http.ResponseWriter, r *http.Request, principal domai
 		writeError(w, http.StatusInternalServerError, "sync_events_failed")
 		return
 	}
+	// Only reads here; a delivery that has to be written happens after the
+	// response, off this goroutine.
+	candidates := a.deliveryCandidates(r.Context(), principal.AccountID, events)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"events": events, "sync_epoch": epoch, "oldest_event_id": oldest, "latest_event_id": latest})
+	a.recordDeliveredAsync(principal.AccountID, candidates)
 }
 
 func (a *API) searchMetadata(w http.ResponseWriter, r *http.Request, principal domain.Principal) {

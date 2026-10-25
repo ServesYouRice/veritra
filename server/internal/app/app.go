@@ -46,6 +46,9 @@ type App struct {
 	// lowDisk is set by the capacity sampler when diskLow.
 	lowDisk  atomic.Bool
 	inflight atomic.Int64
+	// api is the handler set built by Handler; Serve waits for its delivery
+	// writes before storage closes.
+	api *httpapi.API
 	// shutdownBudget and shutdownDrain default to ShutdownBudget and
 	// ShutdownDrain; tests shorten them.
 	shutdownBudget time.Duration
@@ -211,8 +214,9 @@ func (a *App) Handler() http.Handler {
 		pushProviders = append(pushProviders, "apns")
 	}
 	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Push: a.Push, PushProviders: pushProviders, VAPIDPublicKey: a.Config.VAPIDPublicKey, TURNURLs: a.Config.TURNURLs, TURNSharedSecret: a.Config.TURNSharedSecret, Log: a.Log, SetupToken: a.Config.SetupToken, DefaultInstanceName: a.Config.InstanceName, PasswordCost: a.Config.PasswordCost, Messages: messaging.New(a.Store), ClientIdentities: a.limiter.clientIdentities, LoginBackoff: a.loginBackoff, Ready: a.ready.Load,
-		Budget: a.budget, Admission: a.Store.AdmissionCounters(), LowDisk: a.lowDisk.Load}
+		Budget: a.budget, Admission: a.Store.AdmissionCounters(), LowDisk: a.lowDisk.Load, MaxAttachmentBytes: a.Store.Limits().AttachmentBytes}
 	api.Register(mux)
+	a.api = api
 	return a.trackInflight(securityHeaders(a.requestLogger(a.limiter.middleware(routeTimeouts(mux)))))
 }
 
@@ -324,6 +328,11 @@ func (a *App) Serve(ctx context.Context) error {
 	select {
 	case <-wakeWorkersDone:
 	case <-workerWait.C:
+	}
+	// Delivery writes queued by the last sync pages finish (or time out)
+	// before the caller closes storage.
+	if a.api != nil {
+		a.api.WaitDeliveryWrites(deadline)
 	}
 	if errors.Is(err, http.ErrServerClosed) && ctx.Err() != nil {
 		return nil

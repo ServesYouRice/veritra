@@ -21,6 +21,10 @@ type Limits struct {
 	ConversationsPerAccount int
 	DeliveriesPerMinute     int
 	WriteBytesPerHour       int64
+	// AttachmentBytes is the largest file (plaintext) one attachment may
+	// hold; the upload route accepts that plus the chunk framing, see
+	// MaxAttachmentCiphertext.
+	AttachmentBytes int64
 }
 
 const mib = 1 << 20
@@ -36,6 +40,8 @@ const (
 	DefaultConversationsPerAcct  = 1000
 	DefaultDeliveriesPerMinute   = 1000
 	DefaultWriteMiBPerHour       = 64
+	DefaultAttachmentMiB         = 48 // what the app encrypts at most
+	MaxAttachmentMiB             = 48
 	PendingDeviceLinksPerAccount = 3
 )
 
@@ -55,6 +61,7 @@ var limitSettings = []limitSetting{
 	{"PRIVATE_MESSENGER_LIMIT_CONVERSATIONS_PER_ACCOUNT", 10, 10_000, 1, func(l *Limits, v int64) { l.ConversationsPerAccount = int(v) }},
 	{"PRIVATE_MESSENGER_LIMIT_DELIVERIES_PER_MINUTE", 60, 1_000_000, 1, func(l *Limits, v int64) { l.DeliveriesPerMinute = int(v) }},
 	{"PRIVATE_MESSENGER_LIMIT_WRITE_MIB_PER_HOUR", 16, 65_536, mib, func(l *Limits, v int64) { l.WriteBytesPerHour = v }},
+	{"PRIVATE_MESSENGER_LIMIT_ATTACHMENT_MIB", 1, MaxAttachmentMiB, mib, func(l *Limits, v int64) { l.AttachmentBytes = v }},
 }
 
 func loadLimits() (Limits, error) {
@@ -100,7 +107,18 @@ func (l Limits) WithDefaults() Limits {
 	if l.WriteBytesPerHour == 0 {
 		l.WriteBytesPerHour = DefaultWriteMiBPerHour * mib
 	}
+	if l.AttachmentBytes == 0 {
+		l.AttachmentBytes = DefaultAttachmentMiB * mib
+	}
 	return l
+}
+
+// MaxAttachmentCiphertext is the most ciphertext the upload route accepts
+// for a file of at most plaintext bytes: the app seals 1 MiB chunks, each
+// with a 4-byte length and a 16-byte tag (mobile attachment_crypto.dart).
+func MaxAttachmentCiphertext(plaintext int64) int64 {
+	chunks := (plaintext + mib - 1) / mib
+	return plaintext + chunks*(4+16)
 }
 
 // Validate checks the relations between limits. A message to a full

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/domain"
 	"private-messenger/server/internal/push"
 	"private-messenger/server/internal/storage"
@@ -47,7 +48,7 @@ func (a *API) uploadAttachment(w http.ResponseWriter, r *http.Request, principal
 		writeError(w, http.StatusBadRequest, "invalid_crypto_metadata")
 		return
 	}
-	blob, err := a.Blobs.PutEncryptedBlob(r.Context(), http.MaxBytesReader(w, r.Body, 50<<20))
+	blob, err := a.Blobs.PutEncryptedBlob(r.Context(), http.MaxBytesReader(w, r.Body, config.MaxAttachmentCiphertext(a.maxAttachmentBytes())))
 	if err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
@@ -677,4 +678,12 @@ func (a *API) deletePushSubscription(w http.ResponseWriter, r *http.Request, pri
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// maxAttachmentBytes is the operator's per-file cap, or the default.
+func (a *API) maxAttachmentBytes() int64 {
+	if a.MaxAttachmentBytes > 0 {
+		return a.MaxAttachmentBytes
+	}
+	return config.DefaultAttachmentMiB << 20
 }

@@ -56,7 +56,7 @@ func enqueuePushWakeJobs(ctx context.Context, tx *sql.Tx, eventID int64, convers
 		  )
 		  AND NOT EXISTS (
 			SELECT 1 FROM conversation_notification_preferences p
-			WHERE p.account_id = ps.account_id AND p.conversation_id = ? AND p.muted = 1
+			WHERE p.account_id = ps.account_id AND p.conversation_id = ? AND p.muted = 1 AND (p.muted_until IS NULL OR p.muted_until > CAST(strftime('%s', 'now') AS INTEGER))
 		  )
 		ON CONFLICT(sync_event_id, recipient_account_id, subscription_id) DO NOTHING`,
 		eventID, conversationID, senderAccountID, createdAt, createdAt, expiresAt,
@@ -126,7 +126,7 @@ func (s *Store) ClaimPushWakeJobs(ctx context.Context, provider string, limit in
 		  )
 		  AND NOT EXISTS (
 			SELECT 1 FROM conversation_notification_preferences p
-			WHERE p.account_id = w.recipient_account_id AND p.conversation_id = w.conversation_id AND p.muted = 1
+			WHERE p.account_id = w.recipient_account_id AND p.conversation_id = w.conversation_id AND p.muted = 1 AND (p.muted_until IS NULL OR p.muted_until > CAST(strftime('%s', 'now') AS INTEGER))
 		  )
 		  AND w.expires_at > ?
 		  AND w.next_attempt_at <= ?
@@ -236,7 +236,7 @@ func (s *Store) RefreshPushWakeJob(ctx context.Context, job PushWakeJob, now tim
 		  )
 		  AND NOT EXISTS (
 			SELECT 1 FROM conversation_notification_preferences p
-			WHERE p.account_id = w.recipient_account_id AND p.conversation_id = w.conversation_id AND p.muted = 1
+			WHERE p.account_id = w.recipient_account_id AND p.conversation_id = w.conversation_id AND p.muted = 1 AND (p.muted_until IS NULL OR p.muted_until > CAST(strftime('%s', 'now') AS INTEGER))
 		  )`,
 		job.EventID, job.RecipientAccountID, job.SubscriptionID, job.LeaseToken, formatTime(now.UTC())).Scan(
 		&fresh.EventID, &fresh.RecipientAccountID, &fresh.SubscriptionID, &fresh.Provider, &fresh.Endpoint,

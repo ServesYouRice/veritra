@@ -110,6 +110,36 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsSectionAppearance => 'Appearance';
 
   @override
+  String get settingsHideNotificationPreview => 'Hide message preview';
+
+  @override
+  String get settingsHideNotificationPreviewDetail =>
+      'Notifications say \"New message\" and show no sender or text.';
+
+  @override
+  String get notificationNewMessage => 'New message';
+
+  @override
+  String get trayOpen => 'Open';
+
+  @override
+  String get trayQuit => 'Quit';
+
+  @override
+  String get settingsSectionPrivacy => 'Privacy';
+
+  @override
+  String get settingsReadReceiptsTitle => 'Read receipts';
+
+  @override
+  String get settingsReadReceiptsDetail =>
+      'Applies to all your devices. When off, you send no read receipts and you do not see when others have read your messages. Sent and delivered ticks stay.';
+
+  @override
+  String get settingsReadReceiptsFailed =>
+      'The setting could not be changed. Check your connection and try again.';
+
+  @override
   String get settingsSectionAbout => 'About';
 
   @override
@@ -1041,6 +1071,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get deviceLinkApprove => 'Approve';
 
   @override
+  String get deviceLinkApproveHint =>
+      'Enter the 8-digit code shown on the new device. Never use a code you were sent or read out to you.';
+
+  @override
   String get bannerQueued => 'Messages you send stay queued on this device.';
 
   @override
@@ -1676,6 +1710,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'Sender could not be verified. Message hidden.';
 
   @override
+  String get chatMessageUnsupported =>
+      'This message needs a newer version of Veritra';
+
+  @override
+  String get chatMessageInvalid => 'A message could not be read';
+
+  @override
   String chatReactionCount(String reaction, int count) {
     final intl.NumberFormat countNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -1686,6 +1727,28 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get chatEdited => 'edited';
+
+  @override
+  String get chatTickSent => 'Sent';
+
+  @override
+  String get chatTickDelivered => 'Delivered';
+
+  @override
+  String get chatTickRead => 'Read';
+
+  @override
+  String chatTypingOne(String name) {
+    return '$name is typing…';
+  }
+
+  @override
+  String chatTypingTwo(String first, String second) {
+    return '$first and $second are typing…';
+  }
+
+  @override
+  String get chatTypingMany => 'Several people are typing…';
 
   @override
   String chatReplyingTo(String preview) {
@@ -1807,6 +1870,14 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get syncErrorStopped => 'Sync stopped. Try again.';
+
+  @override
+  String get syncErrorLocalStorage =>
+      'This device could not read or write its local storage. Messages are paused so none are skipped. Free up space or restart the app, then try again.';
+
+  @override
+  String get syncErrorStorageBusy =>
+      'This device\'s storage is busy or full. Sync will try again shortly.';
 
   @override
   String get apiErrorSessionInvalid =>
@@ -2069,6 +2140,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'This device could not update its message storage for this version of Veritra. Nothing has been changed or deleted. Retry. If it keeps failing, you can reset this device and link it again.';
 
   @override
+  String get recoverySqliteFeatureMissing =>
+      'This build of Veritra cannot open its message storage: the database engine lacks encryption or search support. Your data has not been changed or deleted. Install a Veritra build that supports them.';
+
+  @override
   String get errorPasswordLoginNeedsLink =>
       'Password login requires this device to be linked first.';
 
@@ -2105,4 +2180,232 @@ class AppLocalizationsEn extends AppLocalizations {
   String errorServerNotAllowed(String url) {
     return 'This build does not allow the server address $url. Use an https:// server origin.';
   }
+
+  @override
+  String get muteEightHours => 'For 8 hours';
+
+  @override
+  String get muteOneWeek => 'For 1 week';
+
+  @override
+  String get muteAlways => 'Until I turn it back on';
+
+  @override
+  String get muteStatusAlways => 'Muted until you turn it back on.';
+
+  @override
+  String muteStatusUntil(String time) {
+    return 'Muted until $time.';
+  }
+
+  @override
+  String get chatMoreReactions => 'More reactions';
+
+  @override
+  String get emojiSearchHint => 'Search by name, or type or paste an emoji';
+
+  @override
+  String emojiUseTyped(String emoji) {
+    return 'Use $emoji';
+  }
+
+  @override
+  String get emojiNoResults =>
+      'No emoji with that name. Type or paste one instead.';
+
+  @override
+  String get emojiGroupSmileys => 'Smileys';
+
+  @override
+  String get emojiGroupPeople => 'People';
+
+  @override
+  String get emojiGroupAnimals => 'Animals and nature';
+
+  @override
+  String get emojiGroupFood => 'Food and drink';
+
+  @override
+  String get emojiGroupTravel => 'Travel and places';
+
+  @override
+  String get emojiGroupActivities => 'Activities';
+
+  @override
+  String get emojiGroupObjects => 'Objects';
+
+  @override
+  String get emojiGroupSymbols => 'Symbols';
+
+  @override
+  String get emojiGroupFlags => 'Flags';
+
+  @override
+  String get searchModeMessages => 'Messages';
+
+  @override
+  String get searchModePeople => 'People and communities';
+
+  @override
+  String get searchMessagesHint => 'Search messages on this device…';
+
+  @override
+  String get searchMessagesIntroTitle => 'Search this device';
+
+  @override
+  String get searchMessagesIntroMessage =>
+      'Finds text in the messages this device holds. The search happens here and is never sent to the server.';
+
+  @override
+  String get searchMessagesNoResultsTitle => 'No messages found';
+
+  @override
+  String get searchMessagesNoResultsMessage =>
+      'Nothing on this device matches. Messages that expired or were deleted are gone from search too.';
+
+  @override
+  String get searchMessagesFailed =>
+      'The search could not read the local database.';
+
+  @override
+  String attachmentTooLarge(String fileName, String limit) {
+    return '$fileName is larger than this server allows ($limit).';
+  }
+
+  @override
+  String attachmentEmptyFile(String fileName) {
+    return '$fileName is empty and cannot be sent.';
+  }
+
+  @override
+  String attachmentTooMany(int count) {
+    return 'At most $count files can wait to be sent together.';
+  }
+
+  @override
+  String attachmentRemove(String fileName) {
+    return 'Remove $fileName';
+  }
+
+  @override
+  String get attachmentOpenFailed =>
+      'The file could not be opened. This device may have no app for it.';
+
+  @override
+  String get attachmentDropHint => 'Drop files to attach them';
+
+  @override
+  String attachmentSentCount(int done, int total) {
+    return 'Sending file $done of $total';
+  }
+
+  @override
+  String get settingsAdmin => 'Administration';
+
+  @override
+  String get settingsAdminDetail => 'Accounts and audit log';
+
+  @override
+  String get adminAccountsTab => 'Accounts';
+
+  @override
+  String get adminAuditTab => 'Audit log';
+
+  @override
+  String get adminSuspend => 'Suspend';
+
+  @override
+  String get adminUnsuspend => 'Reactivate';
+
+  @override
+  String get adminSuspendTitle => 'Suspend this account?';
+
+  @override
+  String adminSuspendMessage(String username) {
+    return '@$username will be signed out everywhere and cannot sign in until you reactivate the account.';
+  }
+
+  @override
+  String get adminUnsuspendTitle => 'Reactivate this account?';
+
+  @override
+  String adminUnsuspendMessage(String username) {
+    return '@$username will be able to sign in again.';
+  }
+
+  @override
+  String get adminSuspendedPill => 'Suspended';
+
+  @override
+  String adminAccountSummary(String role, int devices, String storage) {
+    String _temp0 = intl.Intl.pluralLogic(
+      devices,
+      locale: localeName,
+      other: '$devices devices',
+      one: '1 device',
+    );
+    return '$role · $_temp0 · $storage';
+  }
+
+  @override
+  String adminEventBy(String actor) {
+    return 'By $actor';
+  }
+
+  @override
+  String get adminLoadMore => 'Load more';
+
+  @override
+  String get adminNoAccounts => 'No accounts';
+
+  @override
+  String get adminNoEvents => 'No audit events yet';
+
+  @override
+  String requestsSection(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    return 'Requests ($countString)';
+  }
+
+  @override
+  String get requestsTitle => 'Message request';
+
+  @override
+  String requestFrom(String name) {
+    return '$name wants to message you';
+  }
+
+  @override
+  String get requestUnknownSender => 'Someone you do not know';
+
+  @override
+  String get requestExplanation =>
+      'Nothing from this person is shown or downloaded, and they cannot see that you read anything, until you accept.';
+
+  @override
+  String get requestAccept => 'Accept';
+
+  @override
+  String get requestBlock => 'Block';
+
+  @override
+  String get requestDelete => 'Delete';
+
+  @override
+  String get requestBlockTitle => 'Block this person?';
+
+  @override
+  String requestBlockMessage(String name) {
+    return '$name will no longer be able to message you, and this conversation will be removed.';
+  }
+
+  @override
+  String get requestDeleteTitle => 'Delete this request?';
+
+  @override
+  String get requestDeleteMessage =>
+      'The conversation is removed from this device. The sender is not told.';
 }

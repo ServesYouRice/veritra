@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart' show defaultTargetPlatform, listEquals;
+import 'package:file_selector/file_selector.dart' show XFile;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, listEquals, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -21,9 +23,17 @@ import '../../ui/widgets/empty_state.dart';
 import '../../ui/widgets/gated_explanation.dart';
 import '../../ui/widgets/listenable_selector.dart';
 import '../../ui/widgets/status_pill.dart';
+import '../search/search_screen.dart';
 import 'attachment_views.dart';
+import 'chat_desktop.dart';
 import 'chat_list_screen.dart';
+import 'composer_attachments.dart';
 import 'conversation_details_screen.dart';
+import 'emoji_picker.dart';
+import 'message_request_screen.dart';
+import 'message_ticks.dart';
+import 'typing_line.dart';
+import '../../core/receipts_state.dart' show MessageTick;
 
 /// Conversation detail screen. Pushed from the chat list, or the detail pane
 /// of the wide layout. It listens to the app state itself, and rebuilds only
@@ -33,11 +43,17 @@ class ChatScreen extends StatefulWidget {
     required this.state,
     required this.conversationId,
     this.showBackButton = true,
+    this.initialMessageKey,
     super.key,
   });
 
   final AppState state;
   final String conversationId;
+
+  /// The local key of a message to scroll to and highlight when the screen
+  /// opens, for a search result (W10). Ignored when this device no longer
+  /// holds it.
+  final String? initialMessageKey;
 
   /// False when the screen is the detail pane of the wide master-detail
   /// layout, where there is no route to pop back to.
@@ -55,6 +71,9 @@ class _ChatScreenState extends State<ChatScreen> {
       TextEditingController.fromValue(_draftValue(widget.conversationId));
   final scroll = ScrollController();
 
+  /// Files waiting to be sent from this conversation (W9, B4).
+  final _attachments = ComposerAttachments();
+
   /// The key of the message the next send replies to, if any. The message
   /// itself is read from the current history ([_replyTarget]), never kept.
   late String? _replyingTo = _drafts.replyTargetFor(widget.conversationId);
@@ -69,13 +88,99 @@ class _ChatScreenState extends State<ChatScreen> {
   /// appears.
   static const double _awayThreshold = 480;
 
+  // Jump to a search result (W10).
+  final GlobalKey _jumpTarget = GlobalKey();
+  late String? _jumpKey = widget.initialMessageKey;
+  String? _highlightKey;
+  bool _jumping = false;
+  Timer? _highlightTimer;
+
   @override
   void initState() {
     super.initState();
     composer.addListener(_saveDraft);
+    _lastTypedText = composer.text;
+    composer.addListener(_noticeTyping);
     scroll.addListener(_maybeLoadOlder);
     scroll.addListener(_trackLatest);
+    _scheduleJump();
   }
+
+  void _scheduleJump() {
+    if (_jumpKey == null || _jumping) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _runJump());
+  }
+
+  /// Where the message is in the reversed list, or null when it is not in
+  /// what the chat shows (yet).
+  int? _jumpIndex(String key) {
+    final history = widget.state.historyFor(widget.conversationId);
+    final shown = widget.state
+        .timelineFor(widget.conversationId)
+        .where((message) => !history.hides(message))
+        .toList(growable: false);
+    final at = shown.indexWhere((message) =>
+        ConversationHistory.keyOf(
+            message.senderDeviceId, message.idempotencyKey) ==
+        key);
+    return at < 0
+        ? null
+        : widget.state.pendingFor(widget.conversationId).length + at;
+  }
+
+  /// Scrolls until the message is built, then centres it. Rows have no fixed
+  /// height, so this starts near the top and walks back in time a screen at
+  /// a time: no row is shorter than [_minRowExtent], so the start is never
+  /// past the message.
+  Future<void> _runJump() async {
+    final key = _jumpKey;
+    if (key == null || _jumping || !mounted) return;
+    final index = _jumpIndex(key);
+    if (index == null) {
+      // Still loading: wait for the next change. Once loading is over the
+      // message is not held any more (expired, say), so stay put.
+      if (!widget.state.isLoadingMessages(widget.conversationId)) {
+        _jumpKey = null;
+      }
+      return;
+    }
+    _jumping = true;
+    try {
+      var offset = index * _minRowExtent;
+      for (var step = 0; step < 400; step++) {
+        if (!mounted || !scroll.hasClients) return;
+        final target = _jumpTarget.currentContext;
+        if (target != null) {
+          await Scrollable.ensureVisible(target, alignment: 0.4);
+          if (!mounted) return;
+          setState(() => _highlightKey = key);
+          _highlightTimer?.cancel();
+          _highlightTimer = Timer(const Duration(seconds: 2), () {
+            if (mounted) setState(() => _highlightKey = null);
+          });
+          return;
+        }
+        final position = scroll.position;
+        if (offset > position.maxScrollExtent) {
+          offset = position.maxScrollExtent;
+        }
+        scroll.jumpTo(offset);
+        await WidgetsBinding.instance.endOfFrame;
+        if (_jumpTarget.currentContext == null) {
+          if (offset >= scroll.position.maxScrollExtent &&
+              scroll.position.maxScrollExtent == position.maxScrollExtent) {
+            return;
+          }
+          offset += position.viewportDimension * 0.8;
+        }
+      }
+    } finally {
+      _jumping = false;
+      _jumpKey = null;
+    }
+  }
+
+  static const double _minRowExtent = 40;
 
   @override
   void didUpdateWidget(ChatScreen oldWidget) {
@@ -87,18 +192,26 @@ class _ChatScreenState extends State<ChatScreen> {
     // The same screen now shows another conversation: its own draft, never
     // the previous one's. The previous draft is already saved.
     composer.removeListener(_saveDraft);
+    composer.removeListener(_noticeTyping);
     composer.value = _draftValue(widget.conversationId);
+    _lastTypedText = composer.text;
     composer.addListener(_saveDraft);
+    composer.addListener(_noticeTyping);
     _replyingTo = _drafts.replyTargetFor(widget.conversationId);
+    unawaited(_attachments.clear());
   }
 
   @override
   void dispose() {
+    _highlightTimer?.cancel();
     composer.removeListener(_saveDraft);
+    composer.removeListener(_noticeTyping);
     scroll.removeListener(_trackLatest);
     scroll.removeListener(_maybeLoadOlder);
     scroll.dispose();
     composer.dispose();
+    unawaited(_attachments.clear());
+    _attachments.dispose();
     super.dispose();
   }
 
@@ -111,6 +224,19 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _saveDraft() => _drafts.setText(widget.conversationId, composer.text);
+
+  /// The text as of the last typing check, so a cursor move or a draft being
+  /// restored is not taken for typing.
+  String _lastTypedText = '';
+
+  /// Tells the others you are typing (W5), once the text really changed and
+  /// is not empty. [AppState.notifyTyping] throttles and gates by size.
+  void _noticeTyping() {
+    final text = composer.text;
+    if (text == _lastTypedText) return;
+    _lastTypedText = text;
+    if (text.isNotEmpty) widget.state.notifyTyping(widget.conversationId);
+  }
 
   void _setReplyTarget(String? messageKey) {
     _drafts.setReplyTarget(widget.conversationId, messageKey);
@@ -178,102 +304,185 @@ class _ChatScreenState extends State<ChatScreen> {
         final conversation = widget.state.conversations
             .where((item) => item.id == widget.conversationId)
             .firstOrNull;
+        // A request shows its own screen, whichever way it was opened (list,
+        // search, the wide pane). Accepting rebuilds into the chat.
+        if (conversation != null &&
+            widget.state.requestBucket(conversation) != RequestBucket.chat) {
+          return MessageRequestScreen(
+            state: widget.state,
+            conversation: conversation,
+            popOnResult: widget.showBackButton,
+          );
+        }
         final messages = widget.state.timelineFor(widget.conversationId);
         final pending = widget.state.pendingFor(widget.conversationId);
         final replyTarget = _replyTarget();
-        return Scaffold(
-          appBar: AppBar(
-            automaticallyImplyLeading: widget.showBackButton,
-            titleSpacing: widget.showBackButton ? 0 : BoneSpacing.gutter,
-            title: conversation == null
-                ? Text(context.l10n.searchTypeConversation)
-                : Row(
-                    children: <Widget>[
-                      conversationAvatar(
-                        context,
-                        conversation,
-                        radius: 17,
-                        // Only the pushed layout: see conversationAvatar.
-                        hero: widget.showBackButton,
+        if (_jumpKey != null) _scheduleJump();
+        return ChatShortcuts(
+          onEscape: _onEscape,
+          onSearch: _openSearch,
+          child: Focus(
+            autofocus: true,
+            child: Scaffold(
+              appBar: AppBar(
+                automaticallyImplyLeading: widget.showBackButton,
+                titleSpacing: widget.showBackButton ? 0 : BoneSpacing.gutter,
+                title: conversation == null
+                    ? Text(context.l10n.searchTypeConversation)
+                    : Row(
+                        children: <Widget>[
+                          conversationAvatar(
+                            context,
+                            conversation,
+                            radius: 17,
+                            // Only the pushed layout: see conversationAvatar.
+                            hero: widget.showBackButton,
+                          ),
+                          const SizedBox(width: BoneSpacing.md),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: <Widget>[
+                                Text(
+                                  conversationTitle(context.l10n, conversation),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                // The subtitle line is the honest one-word status
+                                // of the thread, in the micro style.
+                                Text(
+                                  widget.state.isMuted(conversation.id)
+                                      ? context.l10n.chatStatusMutedEncrypted
+                                      : context.l10n.chatStatusEncrypted,
+                                  style: theme.textTheme.labelSmall,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: BoneSpacing.md),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: <Widget>[
-                            Text(
-                              conversationTitle(context.l10n, conversation),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            // The subtitle line is the honest one-word status
-                            // of the thread, in the micro style.
-                            Text(
-                              widget.state.isMuted(conversation.id)
-                                  ? context.l10n.chatStatusMutedEncrypted
-                                  : context.l10n.chatStatusEncrypted,
-                              style: theme.textTheme.labelSmall,
-                            ),
-                          ],
+                actions: <Widget>[
+                  if (conversation != null)
+                    IconButton(
+                      tooltip: context.l10n.chatListDetails,
+                      onPressed: () => Navigator.of(context).push(
+                        sharedAxisRoute<void>(
+                          (_) => ConversationDetailsScreen(
+                            state: widget.state,
+                            conversationId: conversation.id,
+                          ),
                         ),
                       ),
-                    ],
-                  ),
-            actions: <Widget>[
-              if (conversation != null)
-                IconButton(
-                  tooltip: context.l10n.chatListDetails,
-                  onPressed: () => Navigator.of(context).push(
-                    sharedAxisRoute<void>(
-                      (_) => ConversationDetailsScreen(
-                        state: widget.state,
-                        conversationId: conversation.id,
-                      ),
+                      icon: const Icon(Icons.info_outline),
                     ),
-                  ),
-                  icon: const Icon(Icons.info_outline),
-                ),
-              const SizedBox(width: BoneSpacing.sm),
-            ],
-          ),
-          body: Column(
-            children: <Widget>[
-              Expanded(
-                child: conversation == null
-                    ? EmptyState(
-                        icon: Icons.forum_outlined,
-                        title: context.l10n.shellNoConversationTitle,
-                        message: context.l10n.chatNoConversationMessage,
-                      )
-                    : _messagesPane(conversation.id, messages, pending),
+                  const SizedBox(width: BoneSpacing.sm),
+                ],
               ),
-              if (conversation != null &&
-                  widget.state.mlsConversationFailed(conversation.id))
-                const _PausedConversationNotice(),
-              if (replyTarget != null)
-                _ReplyBar(
-                  preview: _replyPreview(context.l10n, replyTarget),
-                  onCancel: () => _setReplyTarget(null),
+              body: ChatDropZone(
+                enabled:
+                    conversation != null && widget.state.attachmentsAvailable,
+                onFiles: _addFiles,
+                child: Column(
+                  children: <Widget>[
+                    Expanded(
+                      child: conversation == null
+                          ? EmptyState(
+                              icon: Icons.forum_outlined,
+                              title: context.l10n.shellNoConversationTitle,
+                              message: context.l10n.chatNoConversationMessage,
+                            )
+                          : _messagesPane(conversation.id, messages, pending),
+                    ),
+                    if (conversation != null &&
+                        widget.state.mlsConversationFailed(conversation.id))
+                      const _PausedConversationNotice(),
+                    TypingLine(
+                      state: widget.state,
+                      conversationId: widget.conversationId,
+                    ),
+                    if (replyTarget != null)
+                      _ReplyBar(
+                        preview: quotedPreview(context.l10n, replyTarget),
+                        onCancel: () => _setReplyTarget(null),
+                      ),
+                    if (widget.state.attachmentsAvailable)
+                      AttachmentTray(tray: _attachments),
+                    _Composer(
+                      enabled: conversation != null,
+                      controller: composer,
+                      // Scoped to the send operation: an unrelated background task
+                      // no longer disables the composer.
+                      busy: widget.state.isBusy(Ops.send),
+                      onSend: _send,
+                      attaching: widget.state.isBusy(Ops.attachment),
+                      onAttach: widget.state.attachmentsAvailable
+                          ? () => pickAttachmentFiles(
+                              context, widget.state, _attachments)
+                          : null,
+                      onPasteFiles: widget.state.attachmentsAvailable
+                          ? _pasteFiles
+                          : null,
+                      onEditLast: widget.state.messageActionsAvailable
+                          ? _editLast
+                          : null,
+                    ),
+                  ],
                 ),
-              _Composer(
-                enabled: conversation != null,
-                controller: composer,
-                // Scoped to the send operation: an unrelated background task
-                // no longer disables the composer.
-                busy: widget.state.isBusy(Ops.send),
-                onSend: _send,
-                attaching: widget.state.isBusy(Ops.attachment),
-                onAttach: widget.state.attachmentsAvailable
-                    ? () => pickAndSendAttachment(
-                        context, widget.state, widget.conversationId)
-                    : null,
               ),
-            ],
+            ),
           ),
         );
       },
     );
+  }
+
+  /// Esc: first drops a reply in progress, then leaves the chat when it is
+  /// a pushed screen (the wide layout's detail pane has nowhere to go).
+  void _onEscape() {
+    if (_replyingTo != null) {
+      _setReplyTarget(null);
+    } else if (widget.showBackButton) {
+      Navigator.of(context).maybePop();
+    }
+  }
+
+  /// Ctrl+F: the search screen, as the chat list's search button opens it.
+  void _openSearch() {
+    Navigator.of(context).push(
+      sharedAxisRoute<void>((_) => SearchScreen(state: widget.state)),
+    );
+  }
+
+  Future<void> _addFiles(List<XFile> files, {Set<String>? temporary}) =>
+      addAttachmentFiles(context, widget.state, _attachments, files,
+          temporaryPaths: temporary ?? const <String>{});
+
+  /// Ctrl+V with files or an image on the clipboard; false means the
+  /// clipboard held neither and the text paste goes ahead.
+  Future<bool> _pasteFiles() async {
+    final clipboard = await readClipboardFiles();
+    if (clipboard.files.isEmpty || !mounted) return false;
+    await _addFiles(clipboard.files, temporary: clipboard.temporary);
+    return true;
+  }
+
+  /// Up in an empty composer edits your newest message, as in other chats.
+  Future<void> _editLast() async {
+    final state = widget.state;
+    final history = state.historyFor(widget.conversationId);
+    final ownAccountId = state.session?.accountId;
+    for (final envelope in state.timelineFor(widget.conversationId)) {
+      final local = history.forEnvelope(envelope);
+      if (local == null ||
+          local.kind != LocalMessageKind.text ||
+          local.deletedAt != null ||
+          local.senderAccountId != ownAccountId) {
+        continue;
+      }
+      await _editMessage(local);
+      return;
+    }
   }
 
   /// Message area for the selected conversation. Failures get an explicit
@@ -324,6 +533,9 @@ class _ChatScreenState extends State<ChatScreen> {
                   controller: scroll,
                   messages: messages,
                   pending: pending,
+                  jumpTarget: _jumpTarget,
+                  jumpKey: _jumpKey ?? _highlightKey,
+                  highlighted: _highlightKey != null,
                   onMessageActions: widget.state.messageActionsAvailable
                       ? _showMessageActions
                       : null,
@@ -376,6 +588,11 @@ class _ChatScreenState extends State<ChatScreen> {
                       icon:
                           Text(reaction, style: const TextStyle(fontSize: 24)),
                     ),
+                  IconButton(
+                    tooltip: context.l10n.chatMoreReactions,
+                    onPressed: () => Navigator.of(sheetContext).pop('react:'),
+                    icon: const Icon(Icons.add_reaction_outlined),
+                  ),
                 ],
               ),
             ),
@@ -408,7 +625,13 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted || action == null) return;
     var sent = true;
     if (action.startsWith('react:')) {
-      final reaction = action.substring('react:'.length);
+      var reaction = action.substring('react:'.length);
+      if (reaction.isEmpty) {
+        // The "more" button: any emoji, from the picker or typed.
+        final picked = await showEmojiPicker(context);
+        if (!mounted || picked == null) return;
+        reaction = picked;
+      }
       final ownAccountId = state.session?.accountId;
       final alreadyMine = state
           .historyFor(conversationId)
@@ -422,9 +645,8 @@ class _ChatScreenState extends State<ChatScreen> {
     } else if (action == 'copy') {
       await Clipboard.setData(ClipboardData(text: message.body ?? ''));
     } else if (action == 'edit') {
-      final text = await _editDialog(message.body ?? '');
-      if (text == null || text.trim().isEmpty || text == message.body) return;
-      sent = await state.editMessage(conversationId, message.key, text.trim());
+      await _editMessage(message);
+      return;
     } else if (action == 'delete') {
       final confirmed = await showDialog<bool>(
         context: context,
@@ -452,6 +674,19 @@ class _ChatScreenState extends State<ChatScreen> {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(error)));
       }
+    }
+  }
+
+  Future<void> _editMessage(LocalMessage message) async {
+    final text = await _editDialog(message.body ?? '');
+    if (!mounted || text == null || text.trim().isEmpty) return;
+    if (text == message.body) return;
+    final sent = await widget.state
+        .editMessage(widget.conversationId, message.key, text.trim());
+    final error = widget.state.errorFor(Ops.send);
+    if (!sent && mounted && error != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error)));
     }
   }
 
@@ -498,12 +733,19 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _send() async {
+    final state = widget.state;
+    final conversationId = widget.conversationId;
+    // Each waiting file goes first, as its own encrypted attachment.
+    if (_attachments.isNotEmpty) {
+      if (state.isBusy(Ops.attachment)) return;
+      final sentFiles = await sendPendingAttachments(
+          context, state, conversationId, _attachments);
+      if (!sentFiles || !mounted) return;
+    }
     final text = composer.text.trim();
     if (text.isEmpty) {
       return;
     }
-    final state = widget.state;
-    final conversationId = widget.conversationId;
     final replyingTo = _replyTarget()?.key;
     final sent = replyingTo == null
         ? await state.sendMessageTo(conversationId, text)
@@ -549,6 +791,10 @@ List<Object?> _chatScreenSelection(AppState state, String conversationId) {
   final session = state.session;
   return <Object?>[
     state.conversations.where((item) => item.id == conversationId).firstOrNull,
+    state.conversations
+        .where((item) => item.id == conversationId)
+        .map(state.requestBucket)
+        .firstOrNull,
     state.messagesFor(conversationId),
     // A conversation without loaded history gets a new empty one per call;
     // every history without messages draws the same.
@@ -629,8 +875,17 @@ class _MessageList extends StatelessWidget {
     required this.controller,
     required this.messages,
     required this.pending,
+    required this.jumpTarget,
+    this.jumpKey,
+    this.highlighted = false,
     this.onMessageActions,
   });
+
+  /// The key put on the message named by [jumpKey], so the screen can find it
+  /// once it is built (W10); [highlighted] tints it.
+  final GlobalKey jumpTarget;
+  final String? jumpKey;
+  final bool highlighted;
 
   final AppState state;
   final String conversationId;
@@ -737,44 +992,86 @@ class _MessageList extends StatelessWidget {
         final showDay = older == null ||
             formatDate(context, older.createdAt) !=
                 formatDate(context, message.createdAt);
-        return Column(
+        final isJumpTarget = jumpKey != null && local?.key == jumpKey;
+        final row = Column(
           children: <Widget>[
             if (showDay)
               _DaySeparator(label: formatDate(context, message.createdAt)),
-            _MessageBubble(
-              message: message,
-              local: local,
-              replyPreview: local?.replyTo == null
-                  ? null
-                  : _replyPreview(context.l10n, replyTarget),
-              reactions: local == null
-                  ? const <({String reaction, int count, bool mine})>[]
-                  : history.reactionsFor(local.key,
-                      ownAccountId: state.session?.accountId),
-              mine: mine,
-              onActions: onMessageActions == null ||
-                      local == null ||
-                      local.kind != LocalMessageKind.text ||
-                      local.deletedAt != null
-                  ? null
-                  : () => onMessageActions!(local, mine),
-              senderLabel: _senderLabel(senderAccountId),
-              onOpenAttachment: state.attachmentsAvailable
-                  ? (entry) => openAttachment(context, state, entry)
-                  : null,
-              // In a DM the app bar already says who the other person is;
-              // only group and channel bubbles need a per-message sender.
-              showSender: !mine && !_isDm,
+            MessageTickBuilder(
+              state: state,
+              conversationId: conversationId,
+              createdAt: message.createdAt,
+              enabled: mine &&
+                  message.deletedAt == null &&
+                  local?.deletedAt == null &&
+                  state.ticksApply(conversationId),
+              builder: (context, tick) => _MessageBubble(
+                message: message,
+                local: local,
+                replyPreview: local?.replyTo == null
+                    ? null
+                    : quotedPreview(context.l10n, replyTarget),
+                reactions: local == null
+                    ? const <({String reaction, int count, bool mine})>[]
+                    : history.reactionsFor(local.key,
+                        ownAccountId: state.session?.accountId),
+                mine: mine,
+                tick: tick,
+                onActions: onMessageActions == null ||
+                        local == null ||
+                        local.kind != LocalMessageKind.text ||
+                        local.deletedAt != null
+                    ? null
+                    : () => onMessageActions!(local, mine),
+                senderLabel: _senderLabel(senderAccountId),
+                onOpenAttachment: state.attachmentsAvailable
+                    ? (entry) => openAttachment(
+                          context,
+                          state,
+                          entry,
+                          conversationId: conversationId,
+                        )
+                    : null,
+                // In a DM the app bar already says who the other person is;
+                // only group and channel bubbles need a per-message sender.
+                showSender: !mine && !_isDm,
+              ),
             ),
           ],
+        );
+        if (!isJumpTarget) return row;
+        return KeyedSubtree(
+          key: jumpTarget,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: highlighted
+                  ? Theme.of(context)
+                      .colorScheme
+                      .primary
+                      .withValues(alpha: 0.14)
+                  : null,
+              borderRadius: BorderRadius.circular(BoneRadii.md),
+            ),
+            child: row,
+          ),
         );
       },
     );
   }
 }
 
-String _replyPreview(AppLocalizations l10n, LocalMessage? target) {
+@visibleForTesting
+String quotedPreview(AppLocalizations l10n, LocalMessage? target) {
   if (target == null) return l10n.chatReplyEarlier;
+  // Their bodies are raw JSON or empty, never text to quote.
+  if (target.kind == LocalMessageKind.unsupported && target.deletedAt == null) {
+    return l10n.chatMessageUnsupported;
+  }
+  if ((target.kind == LocalMessageKind.invalid ||
+          target.kind == LocalMessageKind.unverifiable) &&
+      target.deletedAt == null) {
+    return l10n.chatMessageInvalid;
+  }
   if (target.deletedAt != null || target.body == null) {
     return l10n.chatReplyDeleted;
   }
@@ -1006,9 +1303,13 @@ class _MessageBubble extends StatelessWidget {
     this.local,
     this.replyPreview,
     this.reactions = const <({String reaction, int count, bool mine})>[],
+    this.tick,
     this.onActions,
     this.onOpenAttachment,
   });
+
+  /// Sent, delivered or read, for a message of yours; null otherwise.
+  final MessageTick? tick;
 
   /// Opens the reply/edit/delete/react menu; null when none apply.
   final VoidCallback? onActions;
@@ -1038,7 +1339,12 @@ class _MessageBubble extends StatelessWidget {
     final unverifiable = local?.kind == LocalMessageKind.unverifiable;
     final isAttachment = local?.kind == LocalMessageKind.attachment;
     // An attachment row's body is its manifest list, never text to show.
-    final text = deleted || unverifiable || isAttachment ? null : local?.body;
+    final placeholder = _isPlaceholder;
+    // Placeholder rows hold no content to show; an unsupported row's body is
+    // raw JSON kept for a later version.
+    final text = deleted || unverifiable || isAttachment || placeholder
+        ? null
+        : local?.body;
     // Bone keeps sent bubbles **on tone**: a near-white accent tiled down a
     // whole column would blow out the plum ground the direction is built on
     // (`docs/design.md` §K). Mine and theirs separate by one tonal step
@@ -1054,6 +1360,15 @@ class _MessageBubble extends StatelessWidget {
           deleted, unverifiable, text),
     );
   }
+
+  bool get _isPlaceholder =>
+      local?.kind == LocalMessageKind.unsupported ||
+      local?.kind == LocalMessageKind.invalid;
+
+  String _placeholderLabel(AppLocalizations l10n) =>
+      local?.kind == LocalMessageKind.invalid
+          ? l10n.chatMessageInvalid
+          : l10n.chatMessageUnsupported;
 
   /// The attachments of an attachment message. Entries that fail to parse,
   /// or name another conversation, are left out rather than shown.
@@ -1092,20 +1407,24 @@ class _MessageBubble extends StatelessWidget {
     String? text,
   ) {
     final l10n = context.l10n;
+    final placeholder = _isPlaceholder;
     final time = formatTimeOfDay(context, message.createdAt);
     return Semantics(
       excludeSemantics: true,
       onLongPress: onActions,
       onLongPressHint: onActions == null ? null : l10n.chatMessageActions,
-      label: deleted
-          ? l10n.chatDeletedSemantics(sender)
-          : unverifiable
-              ? l10n.chatUnverifiedSemantics(time)
-              : text != null
-                  ? l10n.chatMessageSemantics(sender, time, text)
-                  : local?.kind == LocalMessageKind.attachment
-                      ? l10n.chatAttachmentSemantics(sender, time)
-                      : l10n.chatEncryptedSemantics(sender, time),
+      label: (deleted
+              ? l10n.chatDeletedSemantics(sender)
+              : unverifiable
+                  ? l10n.chatUnverifiedSemantics(time)
+                  : placeholder
+                      ? _placeholderLabel(l10n)
+                      : text != null
+                          ? l10n.chatMessageSemantics(sender, time, text)
+                          : local?.kind == LocalMessageKind.attachment
+                              ? l10n.chatAttachmentSemantics(sender, time)
+                              : l10n.chatEncryptedSemantics(sender, time)) +
+          (tick == null ? '' : ', ${messageTickLabel(l10n, tick!)}'),
       child: LayoutBuilder(
         builder: (context, constraints) {
           // Taken from the layout rather than the window so the bubble is
@@ -1176,6 +1495,28 @@ class _MessageBubble extends StatelessWidget {
                               l10n.chatSenderUnverified,
                               style: theme.textTheme.bodyMedium?.copyWith(
                                 color: scheme.error,
+                              ),
+                            ),
+                          ),
+                        ],
+                      )
+                    else if (placeholder)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          Icon(
+                              local?.kind == LocalMessageKind.invalid
+                                  ? Icons.warning_amber_outlined
+                                  : Icons.update_outlined,
+                              size: 16,
+                              color: scheme.onSurfaceVariant),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              _placeholderLabel(l10n),
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: scheme.onSurfaceVariant,
+                                fontStyle: FontStyle.italic,
                               ),
                             ),
                           ),
@@ -1260,6 +1601,10 @@ class _MessageBubble extends StatelessWidget {
           const SizedBox(width: 4),
         ],
         Text(parts.join(' · '), style: theme.textTheme.labelSmall),
+        if (tick != null) ...<Widget>[
+          const SizedBox(width: 4),
+          MessageTickIcon(tick: tick!),
+        ],
       ],
     );
   }
@@ -1375,6 +1720,8 @@ class _Composer extends StatelessWidget {
     required this.onSend,
     this.onAttach,
     this.attaching = false,
+    this.onPasteFiles,
+    this.onEditLast,
   });
 
   final bool enabled;
@@ -1386,11 +1733,41 @@ class _Composer extends StatelessWidget {
   final VoidCallback? onAttach;
   final bool attaching;
 
+  /// Ctrl+V attaches files or an image from the clipboard (desktop); the
+  /// result is false when it held none.
+  final Future<bool> Function()? onPasteFiles;
+
+  /// Up in an empty field edits the newest own message.
+  final VoidCallback? onEditLast;
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<TextEditingValue>(
       valueListenable: controller,
       builder: (context, value, _) => _build(context, value.text),
+    );
+  }
+
+  /// Desktop input extras around the field: paste of files, Up to edit.
+  Widget _wrapDesktopInput(Widget field) {
+    final paste = onPasteFiles;
+    final editLast = onEditLast;
+    return Focus(
+      canRequestFocus: false,
+      skipTraversal: true,
+      onKeyEvent: (node, event) {
+        if (editLast != null &&
+            event is KeyDownEvent &&
+            event.logicalKey == LogicalKeyboardKey.arrowUp &&
+            controller.text.isEmpty) {
+          editLast();
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: paste == null
+          ? field
+          : PasteFilesInterceptor(onPaste: paste, child: field),
     );
   }
 
@@ -1453,7 +1830,7 @@ class _Composer extends StatelessWidget {
                         if (canSend) onSend();
                       },
                   },
-                  child: TextField(
+                  child: _wrapDesktopInput(TextField(
                     controller: controller,
                     enabled: enabled,
                     minLines: 1,
@@ -1498,7 +1875,7 @@ class _Composer extends StatelessWidget {
                           ? context.l10n.validationMessageTooLong
                           : null,
                     ),
-                  ),
+                  )),
                 ),
               ),
               const SizedBox(width: BoneSpacing.xs),

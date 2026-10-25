@@ -215,7 +215,7 @@ jobs:
       - name: Install Linux desktop build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libsecret-1-dev liblzma-dev
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libsecret-1-dev liblzma-dev libnotify-dev libayatana-appindicator3-dev
       - name: Install pinned Rust
         run: rustup toolchain install 1.91.0 --profile minimal
       - name: Build the Linux crypto library
@@ -244,12 +244,22 @@ jobs:
           channel: stable
           flutter-version: "3.44.0"
           cache: true
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .go-version
       - name: Install pinned Rust
         run: rustup toolchain install 1.91.0 --profile minimal
       - name: Build the Windows crypto library
         run: ./scripts/build-desktop-crypto.ps1
         shell: pwsh
       - run: flutter pub get --enforce-lockfile
+        working-directory: mobile
+      - name: Run the demo flow against a loopback server with the Windows crypto DLL
+        run: ./scripts/test-demo-e2e.ps1
+        shell: pwsh
+      # The local schema 12 upgrade requires FTS5 in the bundled SQLite3MC.
+      - name: Check the Windows SQLite build has FTS5 and the encrypted search index
+        run: flutter test test/message_search_test.dart
         working-directory: mobile
       - name: Build the Windows demo app
         run: flutter build windows --release -t lib/main_demo.dart --dart-define=VERITRA_DEMO=true

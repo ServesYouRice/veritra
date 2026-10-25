@@ -285,6 +285,60 @@ abstract class AppLocalizations {
   /// **'Appearance'**
   String get settingsSectionAppearance;
 
+  /// No description provided for @settingsHideNotificationPreview.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide message preview'**
+  String get settingsHideNotificationPreview;
+
+  /// No description provided for @settingsHideNotificationPreviewDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications say \"New message\" and show no sender or text.'**
+  String get settingsHideNotificationPreviewDetail;
+
+  /// No description provided for @notificationNewMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'New message'**
+  String get notificationNewMessage;
+
+  /// No description provided for @trayOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Open'**
+  String get trayOpen;
+
+  /// No description provided for @trayQuit.
+  ///
+  /// In en, this message translates to:
+  /// **'Quit'**
+  String get trayQuit;
+
+  /// No description provided for @settingsSectionPrivacy.
+  ///
+  /// In en, this message translates to:
+  /// **'Privacy'**
+  String get settingsSectionPrivacy;
+
+  /// No description provided for @settingsReadReceiptsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Read receipts'**
+  String get settingsReadReceiptsTitle;
+
+  /// No description provided for @settingsReadReceiptsDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Applies to all your devices. When off, you send no read receipts and you do not see when others have read your messages. Sent and delivered ticks stay.'**
+  String get settingsReadReceiptsDetail;
+
+  /// No description provided for @settingsReadReceiptsFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The setting could not be changed. Check your connection and try again.'**
+  String get settingsReadReceiptsFailed;
+
   /// No description provided for @settingsSectionAbout.
   ///
   /// In en, this message translates to:
@@ -1839,6 +1893,12 @@ abstract class AppLocalizations {
   /// **'Approve'**
   String get deviceLinkApprove;
 
+  /// No description provided for @deviceLinkApproveHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter the 8-digit code shown on the new device. Never use a code you were sent or read out to you.'**
+  String get deviceLinkApproveHint;
+
   /// No description provided for @bannerQueued.
   ///
   /// In en, this message translates to:
@@ -2787,6 +2847,18 @@ abstract class AppLocalizations {
   /// **'Sender could not be verified. Message hidden.'**
   String get chatSenderUnverified;
 
+  /// No description provided for @chatMessageUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'This message needs a newer version of Veritra'**
+  String get chatMessageUnsupported;
+
+  /// No description provided for @chatMessageInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'A message could not be read'**
+  String get chatMessageInvalid;
+
   /// No description provided for @chatReactionCount.
   ///
   /// In en, this message translates to:
@@ -2798,6 +2870,42 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'edited'**
   String get chatEdited;
+
+  /// No description provided for @chatTickSent.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent'**
+  String get chatTickSent;
+
+  /// No description provided for @chatTickDelivered.
+  ///
+  /// In en, this message translates to:
+  /// **'Delivered'**
+  String get chatTickDelivered;
+
+  /// No description provided for @chatTickRead.
+  ///
+  /// In en, this message translates to:
+  /// **'Read'**
+  String get chatTickRead;
+
+  /// No description provided for @chatTypingOne.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} is typing…'**
+  String chatTypingOne(String name);
+
+  /// No description provided for @chatTypingTwo.
+  ///
+  /// In en, this message translates to:
+  /// **'{first} and {second} are typing…'**
+  String chatTypingTwo(String first, String second);
+
+  /// No description provided for @chatTypingMany.
+  ///
+  /// In en, this message translates to:
+  /// **'Several people are typing…'**
+  String get chatTypingMany;
 
   /// No description provided for @chatReplyingTo.
   ///
@@ -2966,6 +3074,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Sync stopped. Try again.'**
   String get syncErrorStopped;
+
+  /// No description provided for @syncErrorLocalStorage.
+  ///
+  /// In en, this message translates to:
+  /// **'This device could not read or write its local storage. Messages are paused so none are skipped. Free up space or restart the app, then try again.'**
+  String get syncErrorLocalStorage;
+
+  /// No description provided for @syncErrorStorageBusy.
+  ///
+  /// In en, this message translates to:
+  /// **'This device\'s storage is busy or full. Sync will try again shortly.'**
+  String get syncErrorStorageBusy;
 
   /// No description provided for @apiErrorSessionInvalid.
   ///
@@ -3381,6 +3501,12 @@ abstract class AppLocalizations {
   /// **'This device could not update its message storage for this version of Veritra. Nothing has been changed or deleted. Retry. If it keeps failing, you can reset this device and link it again.'**
   String get recoveryUpgradeError;
 
+  /// Recovery screen message when the SQLite library in this build has no encryption cipher or no FTS5 search support. The database and key are untouched; retrying or resetting cannot help.
+  ///
+  /// In en, this message translates to:
+  /// **'This build of Veritra cannot open its message storage: the database engine lacks encryption or search support. Your data has not been changed or deleted. Install a Veritra build that supports them.'**
+  String get recoverySqliteFeatureMissing;
+
   /// No description provided for @errorPasswordLoginNeedsLink.
   ///
   /// In en, this message translates to:
@@ -3440,6 +3566,372 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This build does not allow the server address {url}. Use an https:// server origin.'**
   String errorServerNotAllowed(String url);
+
+  /// No description provided for @muteEightHours.
+  ///
+  /// In en, this message translates to:
+  /// **'For 8 hours'**
+  String get muteEightHours;
+
+  /// No description provided for @muteOneWeek.
+  ///
+  /// In en, this message translates to:
+  /// **'For 1 week'**
+  String get muteOneWeek;
+
+  /// No description provided for @muteAlways.
+  ///
+  /// In en, this message translates to:
+  /// **'Until I turn it back on'**
+  String get muteAlways;
+
+  /// No description provided for @muteStatusAlways.
+  ///
+  /// In en, this message translates to:
+  /// **'Muted until you turn it back on.'**
+  String get muteStatusAlways;
+
+  /// No description provided for @muteStatusUntil.
+  ///
+  /// In en, this message translates to:
+  /// **'Muted until {time}.'**
+  String muteStatusUntil(String time);
+
+  /// No description provided for @chatMoreReactions.
+  ///
+  /// In en, this message translates to:
+  /// **'More reactions'**
+  String get chatMoreReactions;
+
+  /// No description provided for @emojiSearchHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search by name, or type or paste an emoji'**
+  String get emojiSearchHint;
+
+  /// No description provided for @emojiUseTyped.
+  ///
+  /// In en, this message translates to:
+  /// **'Use {emoji}'**
+  String emojiUseTyped(String emoji);
+
+  /// No description provided for @emojiNoResults.
+  ///
+  /// In en, this message translates to:
+  /// **'No emoji with that name. Type or paste one instead.'**
+  String get emojiNoResults;
+
+  /// No description provided for @emojiGroupSmileys.
+  ///
+  /// In en, this message translates to:
+  /// **'Smileys'**
+  String get emojiGroupSmileys;
+
+  /// No description provided for @emojiGroupPeople.
+  ///
+  /// In en, this message translates to:
+  /// **'People'**
+  String get emojiGroupPeople;
+
+  /// No description provided for @emojiGroupAnimals.
+  ///
+  /// In en, this message translates to:
+  /// **'Animals and nature'**
+  String get emojiGroupAnimals;
+
+  /// No description provided for @emojiGroupFood.
+  ///
+  /// In en, this message translates to:
+  /// **'Food and drink'**
+  String get emojiGroupFood;
+
+  /// No description provided for @emojiGroupTravel.
+  ///
+  /// In en, this message translates to:
+  /// **'Travel and places'**
+  String get emojiGroupTravel;
+
+  /// No description provided for @emojiGroupActivities.
+  ///
+  /// In en, this message translates to:
+  /// **'Activities'**
+  String get emojiGroupActivities;
+
+  /// No description provided for @emojiGroupObjects.
+  ///
+  /// In en, this message translates to:
+  /// **'Objects'**
+  String get emojiGroupObjects;
+
+  /// No description provided for @emojiGroupSymbols.
+  ///
+  /// In en, this message translates to:
+  /// **'Symbols'**
+  String get emojiGroupSymbols;
+
+  /// No description provided for @emojiGroupFlags.
+  ///
+  /// In en, this message translates to:
+  /// **'Flags'**
+  String get emojiGroupFlags;
+
+  /// No description provided for @searchModeMessages.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages'**
+  String get searchModeMessages;
+
+  /// No description provided for @searchModePeople.
+  ///
+  /// In en, this message translates to:
+  /// **'People and communities'**
+  String get searchModePeople;
+
+  /// No description provided for @searchMessagesHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search messages on this device…'**
+  String get searchMessagesHint;
+
+  /// No description provided for @searchMessagesIntroTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Search this device'**
+  String get searchMessagesIntroTitle;
+
+  /// No description provided for @searchMessagesIntroMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Finds text in the messages this device holds. The search happens here and is never sent to the server.'**
+  String get searchMessagesIntroMessage;
+
+  /// No description provided for @searchMessagesNoResultsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'No messages found'**
+  String get searchMessagesNoResultsTitle;
+
+  /// No description provided for @searchMessagesNoResultsMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing on this device matches. Messages that expired or were deleted are gone from search too.'**
+  String get searchMessagesNoResultsMessage;
+
+  /// No description provided for @searchMessagesFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The search could not read the local database.'**
+  String get searchMessagesFailed;
+
+  /// No description provided for @attachmentTooLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'{fileName} is larger than this server allows ({limit}).'**
+  String attachmentTooLarge(String fileName, String limit);
+
+  /// No description provided for @attachmentEmptyFile.
+  ///
+  /// In en, this message translates to:
+  /// **'{fileName} is empty and cannot be sent.'**
+  String attachmentEmptyFile(String fileName);
+
+  /// No description provided for @attachmentTooMany.
+  ///
+  /// In en, this message translates to:
+  /// **'At most {count} files can wait to be sent together.'**
+  String attachmentTooMany(int count);
+
+  /// No description provided for @attachmentRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove {fileName}'**
+  String attachmentRemove(String fileName);
+
+  /// No description provided for @attachmentOpenFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The file could not be opened. This device may have no app for it.'**
+  String get attachmentOpenFailed;
+
+  /// No description provided for @attachmentDropHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Drop files to attach them'**
+  String get attachmentDropHint;
+
+  /// No description provided for @attachmentSentCount.
+  ///
+  /// In en, this message translates to:
+  /// **'Sending file {done} of {total}'**
+  String attachmentSentCount(int done, int total);
+
+  /// No description provided for @settingsAdmin.
+  ///
+  /// In en, this message translates to:
+  /// **'Administration'**
+  String get settingsAdmin;
+
+  /// No description provided for @settingsAdminDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Accounts and audit log'**
+  String get settingsAdminDetail;
+
+  /// No description provided for @adminAccountsTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Accounts'**
+  String get adminAccountsTab;
+
+  /// No description provided for @adminAuditTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Audit log'**
+  String get adminAuditTab;
+
+  /// No description provided for @adminSuspend.
+  ///
+  /// In en, this message translates to:
+  /// **'Suspend'**
+  String get adminSuspend;
+
+  /// No description provided for @adminUnsuspend.
+  ///
+  /// In en, this message translates to:
+  /// **'Reactivate'**
+  String get adminUnsuspend;
+
+  /// No description provided for @adminSuspendTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Suspend this account?'**
+  String get adminSuspendTitle;
+
+  /// No description provided for @adminSuspendMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'@{username} will be signed out everywhere and cannot sign in until you reactivate the account.'**
+  String adminSuspendMessage(String username);
+
+  /// No description provided for @adminUnsuspendTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Reactivate this account?'**
+  String get adminUnsuspendTitle;
+
+  /// No description provided for @adminUnsuspendMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'@{username} will be able to sign in again.'**
+  String adminUnsuspendMessage(String username);
+
+  /// No description provided for @adminSuspendedPill.
+  ///
+  /// In en, this message translates to:
+  /// **'Suspended'**
+  String get adminSuspendedPill;
+
+  /// No description provided for @adminAccountSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'{role} · {devices, plural, =1{1 device} other{{devices} devices}} · {storage}'**
+  String adminAccountSummary(String role, int devices, String storage);
+
+  /// No description provided for @adminEventBy.
+  ///
+  /// In en, this message translates to:
+  /// **'By {actor}'**
+  String adminEventBy(String actor);
+
+  /// No description provided for @adminLoadMore.
+  ///
+  /// In en, this message translates to:
+  /// **'Load more'**
+  String get adminLoadMore;
+
+  /// No description provided for @adminNoAccounts.
+  ///
+  /// In en, this message translates to:
+  /// **'No accounts'**
+  String get adminNoAccounts;
+
+  /// No description provided for @adminNoEvents.
+  ///
+  /// In en, this message translates to:
+  /// **'No audit events yet'**
+  String get adminNoEvents;
+
+  /// No description provided for @requestsSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Requests ({count})'**
+  String requestsSection(int count);
+
+  /// No description provided for @requestsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Message request'**
+  String get requestsTitle;
+
+  /// No description provided for @requestFrom.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} wants to message you'**
+  String requestFrom(String name);
+
+  /// No description provided for @requestUnknownSender.
+  ///
+  /// In en, this message translates to:
+  /// **'Someone you do not know'**
+  String get requestUnknownSender;
+
+  /// No description provided for @requestExplanation.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing from this person is shown or downloaded, and they cannot see that you read anything, until you accept.'**
+  String get requestExplanation;
+
+  /// No description provided for @requestAccept.
+  ///
+  /// In en, this message translates to:
+  /// **'Accept'**
+  String get requestAccept;
+
+  /// No description provided for @requestBlock.
+  ///
+  /// In en, this message translates to:
+  /// **'Block'**
+  String get requestBlock;
+
+  /// No description provided for @requestDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get requestDelete;
+
+  /// No description provided for @requestBlockTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Block this person?'**
+  String get requestBlockTitle;
+
+  /// No description provided for @requestBlockMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} will no longer be able to message you, and this conversation will be removed.'**
+  String requestBlockMessage(String name);
+
+  /// No description provided for @requestDeleteTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete this request?'**
+  String get requestDeleteTitle;
+
+  /// No description provided for @requestDeleteMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The conversation is removed from this device. The sender is not told.'**
+  String get requestDeleteMessage;
 }
 
 class _AppLocalizationsDelegate

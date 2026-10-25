@@ -14,6 +14,7 @@ import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/status_pill.dart';
 import '../../ui/widgets/tile_group.dart';
 import 'chat_list_screen.dart';
+import 'mute_sheet.dart';
 import 'safety_number_screen.dart';
 import '../../l10n/l10n.dart';
 
@@ -140,14 +141,19 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
               SectionHeader(l10n.settingsSectionNotifications),
               TileGroup(
                 children: <Widget>[
-                  SwitchListTile(
-                    secondary: const Icon(Icons.notifications_off_outlined),
+                  ListTile(
+                    leading: Icon(
+                      state.isMuted(conversationId)
+                          ? Icons.notifications_off_outlined
+                          : Icons.notifications_outlined,
+                    ),
                     title: Text(l10n.chatListMute),
-                    subtitle: Text(l10n.detailsMuteDetail),
-                    value: state.isMuted(conversationId),
-                    onChanged: state.isBusy(Ops.mute)
-                        ? null
-                        : (value) => _setMuted(context, value),
+                    subtitle: Text(
+                      _muteStatus(context, l10n),
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    enabled: !state.isBusy(Ops.mute),
+                    onTap: () => _chooseMute(context),
                   ),
                 ],
               ),
@@ -330,8 +336,21 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
   static String _retentionWeek(AppLocalizations l10n) => l10n.durationDays(7);
   static String _retentionMonth(AppLocalizations l10n) => l10n.durationDays(30);
 
-  Future<void> _setMuted(BuildContext context, bool muted) async {
-    final ok = await state.setConversationMuted(conversationId, muted);
+  String _muteStatus(BuildContext context, AppLocalizations l10n) {
+    if (!state.isMuted(conversationId)) return l10n.detailsMuteDetail;
+    final until = state.mutedUntil(conversationId);
+    return until == null
+        ? l10n.muteStatusAlways
+        : l10n.muteStatusUntil(formatDateTime(context, until.toLocal()));
+  }
+
+  Future<void> _chooseMute(BuildContext context) async {
+    final duration = await chooseMuteDuration(
+      context,
+      muted: state.isMuted(conversationId),
+    );
+    if (duration == null || !context.mounted) return;
+    final ok = await state.setConversationMute(conversationId, duration);
     if (!context.mounted || ok) {
       return;
     }

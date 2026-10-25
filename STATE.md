@@ -14,7 +14,7 @@ in Git history at `d2d9eb8`. Evidence lives in [`testing/evidence/`](testing/evi
 | 🎯 Current focus | Chats on Windows first (D43), then Discord-style communities and the WhatsApp and Discord basics, privacy first (D44). Order and packages: [Build plan](#build-plan) |
 | 🔒 Public release | 🔴 **NO-GO by design.** Messaging stays off in release builds until the independent crypto review (G25) and signed-device evidence (G24) pass |
 | 🧪 Local demos (real encryption, labelled "unreviewed") | 🟢 Work: server + Linux app run here; Android, iOS, Windows, macOS build in CI |
-| 🧰 Local work queue | 🟢 Done, including the 2026-10-23 open-work round. What is left needs the owner or outside parties; see [Open work](#open-work) |
+| 🧰 Local work queue | 🟡 Build plan round 1 (2026-10-24) landed W2, W5, W6, W8 step 0, W9, W10, B4, B8, B9 and four designs; W1, W3, W4 wait for a run on a real Windows desktop. See [Build plan](#build-plan) and [Open work](#open-work) |
 | 🚀 First deployment (k3s, handbook plan) | 🟡 Repo side ready; needs the owner's accounts (see [Deployment](#deployment)) and branch protection on GitHub |
 | ✅ Checks | 🟢 Go, Rust, Flutter, contract, demo e2e, release-policy fixtures pass; CI runs on every PR |
 | 🌐 Languages | 🟡 English, and Serbian (Cyrillic and Latin) awaiting a native-speaker review |
@@ -87,6 +87,9 @@ and keep each change small. Missing product features are packages in the
 | Sync bounds per page | The sync handler still calls `SyncBounds` on every page: about 250-280 ms per page for a group whose edges are a blocked sender's run (40k events) | Stored bounds (a schema change), or compute them only for the 409 answer (the app ignores them in a 200) |
 | Hidden tail on every poll | The page after the last visible event re-reads every hidden event behind it (removed device, blocked sender: about 200-300 ms at 40k hidden events per poll). Older than this round; the old single scan read more | Return a next cursor (the last row read) in the sync response; needs an API change on both sides |
 | Full disk during setup | A disk that fills before the migration starts still shows the wrong-key message | Pre-existing; nothing is lost |
+| Clone-restore twin | After an I45 restore the original device can keep running as the same MLS member; its repeated generations stop every receiver's global sync and can fork groups. Confirmed by two reviews on 2026-10-24 | Until K2 replaces clone-restore, tell users to stop using the old device; K0 restores into a new device |
+| Drafts after re-sign-in | After a session expiry and sign-in as the same identity, stored drafts reload only on the next app start; typing first overwrites the stored draft | Reload drafts on sign-in |
+| Owner questions from the designs | K0: random key or passphrase, retire clone-restore (recovery path, waiting period and backup default decided in D49). L0: typed code length (option A recommended). W7: mentions in muted chats on phones, archive behaviour, pin limits and who may pin. W11: profile key rotation trigger, 404 revealing a block, group profile editors, refusing plaintext group titles. C0: may the server know a post's channel, own group for busy channels | Listed in each design's open questions |
 
 ## Release gates
 
@@ -97,7 +100,7 @@ replace `UnavailableCryptoService` before G25.
 |---|---|---|
 | **G24** signed-device evidence | Signed Android/iOS builds of one frozen commit; the two-device matrix in [`docs/security-review.md`](docs/security-review.md#signed-device-matrix-g24) | ⏳ Needs devices, signing accounts, push credentials, a TURN server |
 | **G25** independent review | A human reviewer with the brief in [`docs/security-review.md`](docs/security-review.md); fix and retest critical/high findings | ⏳ No reviewer assigned |
-| **G27** upstream advisory | RUSTSEC-2026-0330/0331 (libcrux-kem, locked but never built) are excepted until **2026-12-31** | ⏳ Waits for an `openmls_rust_crypto` release on hpke-rs 0.8 (0.6.0 is still the latest) |
+| **G27** upstream advisory | RUSTSEC-2026-0330/0331 (libcrux-kem, locked but never built) and RUSTSEC-2026-0387 (crypto-bigint 0.5.5 in the NIST-curve code; Veritra's X25519/Ed25519 suite never runs it) are excepted until **2026-12-31** | ⏳ Waits for an `openmls_rust_crypto` release on hpke-rs 0.8 (0.6.0 is still the latest) |
 
 `scripts/release-readiness.sh` stays blocked until all three pass.
 
@@ -139,7 +142,7 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 | D22/D23/D25 | Message actions are MLS payloads; decrypted text persists at decrypt time; sender credential bound to the envelope (ABI v5) |
 | D26 | Desktop key storage: Windows DPAPI, Linux Secret Service |
 | D28 | Membership changes are staged commits accepted only on the current epoch (ABI v6) |
-| D29 | G27 exceptions for RUSTSEC-2026-0330/0331 until 2026-12-31 |
+| D29 | G27 exceptions for RUSTSEC-2026-0330/0331 until 2026-12-31; RUSTSEC-2026-0387 added on 2026-10-24 (owner) to the same deadline |
 | D30 | `flutter_localizations` + `intl` 0.20.2 for localization |
 | **D31** (2026-10-23, owner) | Keep GitHub Actions as a free safety net for checks; deploying stays local (release command → `infra` → Flux) |
 | **D32** (2026-10-23, owner) | Board, consensus and task queue replaced by this file; review brief moved to `docs/security-review.md` |
@@ -156,6 +159,10 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 | **D43** (2026-10-24, owner) | First focus: one-to-one and group chats on Windows. It orders the work only; the release gates and D11/D12 still hold |
 | **D44** (2026-10-24, owner) | Communities work like Discord, and Veritra covers the basic features of both WhatsApp and Discord, with privacy first: everything stays end-to-end encrypted and [Stays out](#stays-out) still holds. A gap study sets the list |
 | **D45** (2026-10-24, owner) | Work runs on Claude Sonnet 5.5, which hands work to Claude Opus 5.5 when it is unsure or when a mistake would be costly (`AGENTS.md`, Model routing). The [Build plan](#build-plan) lists every missing feature as a package with its route |
+| **D46** (2026-10-24, owner) | New plugins approved: `tray_manager`, `window_manager`, `local_notifier`, `desktop_drop`, `pasteboard`, `open_filex` (pins and notices in `pubspec.yaml`, `THIRD_PARTY_NOTICES.md`). RUSTSEC-2026-0387 excepted under G27 |
+| **D47** (2026-10-24) | W5 stores delivery cursors and a shared read cursor on the server (migration 0035): when a member's device last caught up in a conversation, only in conversations of ≤ 20 members, never in channels. Turning read receipts off freezes the shared cursor |
+| **D48** (2026-10-24, coordinator, owner may veto) | A block hides receipts and delivery state in both directions. DMs and groups from strangers are requests. A fresh device (link, reinstall, restore) accepts only conversations it created; an upgrade accepts what existed. Drafts survive a session expiry and are wiped on sign-out or reset |
+| **D49** (2026-10-25, owner) | K0 answers: recovery after losing every device needs the password **and** the recovery key; a recovery waits (and can be cancelled from an active device) when a device was active recently; automatic backups are on by default. The generated emoji data (Unicode License v3) is accepted |
 
 ## Roadmap
 
@@ -214,27 +221,29 @@ dependency, with the licence review and `THIRD_PARTY_NOTICES.md` update that
 
 | ID | Package | Done when | Route |
 |---|---|---|---|
-| W1 | Windows run | The demo flow (owner, invite, DM, reply, edit, react, delete) runs on a Windows CI runner, and the owner has run it once by hand | Sonnet; the owner does the hand run |
-| W2 | Disappearing messages leave devices | An expired message is gone from the local database, the chat and the chat list on every device, also after an offline restart. Today the app reads `expires_at` but never deletes its own copy | Opus review |
-| W3 | Windows notifications | A message arriving while the window is in the background raises a Windows notification, made on the device after decryption; muted chats stay quiet; a setting hides the preview | Owner first (new plugin), then Sonnet |
-| W4 | Tray and one window | Closing the window keeps the app syncing from the tray; opening it again shows the running window instead of an error | Sonnet |
-| W5 | Ticks and typing | Sent, delivered and read ticks and a typing line in DMs and small groups, from what the server already stores; one switch turns your own read receipts off | Sonnet |
-| W6 | Reactions, mute, drafts | Any emoji can react; mute for 8 hours, 1 week or always; drafts survive a restart, kept in the encrypted local database | Opus review |
-| W7 | Message actions design | One payload design for formatting, mentions, forward, pin, polls and other "messages about a message", recorded in `docs/crypto.md` with its payload version | Opus designs |
+| W1 🟡 | Windows run | The demo flow (owner, invite, DM, reply, edit, react, delete) runs on a Windows CI runner, and the owner has run it once by hand | Sonnet; the owner does the hand run — CI part done 2026-10-24: `scripts/test-demo-e2e.ps1` in the `desktop-windows` job; the owner's hand run is still open |
+| W2 ✅ | Disappearing messages leave devices | An expired message is gone from the local database, the chat and the chat list on every device, also after an offline restart. Today the app reads `expires_at` but never deletes its own copy | Opus review — 2026-10-24, local schema 10; Opus-reviewed, review fixes in |
+| W3 🟡 | Windows notifications | A message arriving while the window is in the background raises a Windows notification, made on the device after decryption; muted chats stay quiet; a setting hides the preview | Owner first (new plugin), then Sonnet — 2026-10-24 with `local_notifier` (owner approved); toasts not yet seen on a real Windows desktop |
+| W4 🟡 | Tray and one window | Closing the window keeps the app syncing from the tray; opening it again shows the running window instead of an error | Sonnet — 2026-10-24 with `tray_manager`/`window_manager`; single instance in the Windows runner |
+| W5 ✅ | Ticks and typing | Sent, delivered and read ticks and a typing line in DMs and small groups, from what the server already stores; one switch turns your own read receipts off | Sonnet — 2026-10-24, server migration 0035; Opus-reviewed, ticks only in conversations of ≤ 20 members |
+| W6 ✅ | Reactions, mute, drafts | Any emoji can react; mute for 8 hours, 1 week or always; drafts survive a restart, kept in the encrypted local database | Opus review — 2026-10-24, local schema 11, server migration 0036; Opus-reviewed, review fixes in |
+| W7 ✅ | Message actions design | One payload design for formatting, mentions, forward, pin, polls and other "messages about a message", recorded in `docs/crypto.md` with its payload version | Opus designs — designed 2026-10-24 in `docs/crypto.md` (payload v2), reviewed; step 0 (receive policy) built and Opus-reviewed |
 | W8 | Message actions | Formatting, @mentions that alert even in a muted chat, forward with a label and limits, pin with an expiry, star, delete for me, archive and pinned chats, all on the W7 design | Sonnet |
-| W9 | Desktop feel | Right-click menus, shortcuts (Esc, Up to edit, Ctrl+F), drag-and-drop and paste of files, several files per send | Sonnet |
-| W10 | Search on the device | Search finds message text this device holds, through an index inside the encrypted local database; nothing reaches the server | Opus review |
-| W11 | Profiles | A display name and photo for people, a name and photo for groups, all encrypted, with the key given only to contacts and group members | Opus designs |
-| K0 | One long-lived key | One reviewed design for the key that automatic backups, history on a new device, community history and search over old messages all rely on, so they do not end up with four key schemes | Opus designs |
+| W9 ✅ | Desktop feel | Right-click menus, shortcuts (Esc, Up to edit, Ctrl+F), drag-and-drop and paste of files, several files per send | Sonnet — 2026-10-24 with `desktop_drop`/`pasteboard`; several files go as consecutive messages |
+| W10 ✅ | Search on the device | Search finds message text this device holds, through an index inside the encrypted local database; nothing reaches the server | Opus review — 2026-10-24, local schema 12, FTS5 inside the encrypted database; Opus-reviewed, review fixes in |
+| W11 ✅ | Profiles | A display name and photo for people, a name and photo for groups, all encrypted, with the key given only to contacts and group members | Opus designs — designed 2026-10-24 in `docs/designs/W11-profiles.md`, reviewed |
+| K0 ✅ | One long-lived key | One reviewed design for the key that automatic backups, history on a new device, community history and search over old messages all rely on, so they do not end up with four key schemes | Opus designs — designed 2026-10-24 in `docs/designs/K0-long-lived-key.md`, reviewed; owner questions open |
 | K1 | Automatic backups | After saving one recovery key once, the app backs up daily without a tap, replaces the old copy, asks now and then to confirm the key, and can keep a second copy where the user picks | Opus designs (after K0) |
 | K2 | History on a new device | A newly linked device receives the old device's history as one encrypted bundle, or restores it from a backup | Opus designs (after K0) |
 | W12 | Windows release path | A signed Windows installer, an update channel, and a documented HTTPS setup so a second PC can connect | Owner first (signing account) |
+| L0 | Device link v2 | The safety code and a link-confirmation tag are keyed by a secret that travels only in the QR or typed code, so a server cannot substitute the new device; the old device refuses a missing tag. Needed before K2 or anything gated on link approval. Brief and option A (code derived from the secret) in the 2026-10-24 review notes of `docs/designs/K0-long-lived-key.md` | Opus designs |
+| L1 | Approved-device list | Existing devices sign the list of approved devices and other members check it before adding one, so a server cannot add a hidden device to an account (today it can; it then reads new messages, never history) | Opus designs (after L0); owner scope |
 
 ### Phase 2: communities like Discord (D44)
 
 | ID | Package | Done when | Route |
 |---|---|---|---|
-| C0 | Community group layout | A recorded decision, with a measured join cost, on how communities map to MLS groups. The gap study recommends one shared group for open channels plus one per private channel | Opus designs |
+| C0 ✅ | Community group layout | A recorded decision, with a measured join cost, on how communities map to MLS groups. The gap study recommends one shared group for open channels plus one per private channel | Opus designs — decided 2026-10-24 in `docs/designs/C0-community-groups.md` with measured cost in `testing/evidence/C0-community-groups.md` |
 | C1 | Join and manage members | For groups and communities: invite links whose secret stays after the `#`, join requests an admin approves, leave, remove, rename, and member lists with usernames, all in the app | Opus review |
 | C2 | Admin-only posting | In announcement channels and in groups set to admins only, only allowed roles can post: members' apps drop other posts and the server refuses them | Opus review |
 | C3 | Private channels and community info | Channels only some roles can see; community, channel and category names, topics and icons stored encrypted, so the server sees IDs only | Opus designs |
@@ -251,12 +260,12 @@ dependency, with the licence review and `THIRD_PARTY_NOTICES.md` update that
 | B1 | Voice notes | Record, send as an encrypted file and play inline; any transcript is made on the device | Owner first (recorder plugin) |
 | B2 | Link previews | The sender's app makes the preview and sends it inside the encrypted message; receivers and the server never fetch it; off for unknown sites by default | Opus review |
 | B3 | Polls | Polls and votes as encrypted messages on the W7 design; apps count the votes | Sonnet |
-| B4 | Files | Several files per send, a size cap the operator sets, and phones open more than images | Sonnet |
+| B4 ✅ | Files | Several files per send, a size cap the operator sets, and phones open more than images | Sonnet — 2026-10-24 with `open_filex`; `PRIVATE_MESSENGER_LIMIT_ATTACHMENT_MIB` |
 | B5 | One-to-one calls | A call screen in demo builds on the existing call service, with media through the relay by default to hide addresses | Opus review |
 | B6 | Group calls and voice rooms | Encrypted voice rooms and screen share modelled on Discord's DAVE: MLS keys, SFrame frames, a forwarding server that cannot read them | Opus designs |
 | B7 | Passkeys and accounts | Passkey sign-in and an in-app account switcher | Opus designs |
-| B8 | Safe defaults | Messages from strangers wait as requests, and nothing from them downloads by itself | Sonnet |
-| B9 | Admin screen | Owners list and suspend accounts and read the audit log, on the existing admin API | Opus review |
+| B8 ✅ | Safe defaults | Messages from strangers wait as requests, and nothing from them downloads by itself | Sonnet — 2026-10-24, DMs and groups from strangers; acceptance is per device; Opus-reviewed |
+| B9 ✅ | Admin screen | Owners list and suspend accounts and read the audit log, on the existing admin API | Opus review — 2026-10-24; Opus-reviewed |
 
 ### Later
 

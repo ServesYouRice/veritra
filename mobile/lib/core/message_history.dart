@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import '../storage/encrypted_database.dart'
     show LocalMessage, LocalMessageKind, LocalMessageReaction;
 import 'models.dart';
@@ -14,10 +16,22 @@ class ConversationHistory {
     required this.conversationId,
     required List<LocalMessage> messages,
     required List<LocalMessageReaction> reactions,
-  }) : _byKey = <String, LocalMessage>{
+  })  : _byKey = <String, LocalMessage>{
           for (final message in messages)
             if (message.conversationId == conversationId) message.key: message,
+        },
+        _byServerId = <String, LocalMessage>{
+          for (final message in messages)
+            if (message.conversationId == conversationId &&
+                message.serverMessageId != null)
+              message.serverMessageId!: message,
         } {
+    for (final message in _byKey.values) {
+      if (message.kind == LocalMessageKind.unsupported &&
+          _isHiddenPayload(message.body)) {
+        _hiddenKeys.add(message.key);
+      }
+    }
     for (final reaction in reactions) {
       if (!_byKey.containsKey(reaction.targetKey)) continue;
       (_reactions[reaction.targetKey] ??= <LocalMessageReaction>[])
@@ -29,10 +43,17 @@ class ConversationHistory {
   }
 
   ConversationHistory.empty(this.conversationId)
-      : _byKey = const <String, LocalMessage>{};
+      : _byKey = const <String, LocalMessage>{},
+        _byServerId = const <String, LocalMessage>{};
 
   final String conversationId;
   final Map<String, LocalMessage> _byKey;
+
+  /// Rows by the server envelope that produced them. Placeholder rows are
+  /// keyed by sync event, not by the envelope's claimed idempotency key
+  /// (P3), so this is how their envelope finds them.
+  final Map<String, LocalMessage> _byServerId;
+  final Set<String> _hiddenKeys = <String>{};
   final Map<String, List<LocalMessageReaction>> _reactions =
       <String, List<LocalMessageReaction>>{};
 
@@ -46,13 +67,30 @@ class ConversationHistory {
 
   LocalMessage? forEnvelope(ReceivedMessageEnvelope envelope) {
     if (envelope.conversationId != conversationId) return null;
-    return _byKey[keyOf(envelope.senderDeviceId, envelope.idempotencyKey)];
+    return _byServerId[envelope.id] ??
+        _byKey[keyOf(envelope.senderDeviceId, envelope.idempotencyKey)];
   }
 
   /// Edit, delete and reaction envelopes change another message; they are
   /// not drawn as bubbles of their own.
-  bool hides(ReceivedMessageEnvelope envelope) =>
-      forEnvelope(envelope)?.kind == LocalMessageKind.action;
+  /// An unsupported control message the sender marked `hidden` is stored but
+  /// never drawn (S2).
+  bool hides(ReceivedMessageEnvelope envelope) {
+    final local = forEnvelope(envelope);
+    return local != null &&
+        (local.kind == LocalMessageKind.action ||
+            _hiddenKeys.contains(local.key));
+  }
+
+  static bool _isHiddenPayload(String? rawJson) {
+    if (rawJson == null) return false;
+    try {
+      final decoded = jsonDecode(rawJson);
+      return decoded is Map && decoded['hidden'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
 
   /// Reactions on [key], grouped by emoji with a count, oldest first.
   List<({String reaction, int count, bool mine})> reactionsFor(

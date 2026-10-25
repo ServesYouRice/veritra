@@ -471,6 +471,10 @@ class NativeCryptoService implements MlsConversationCryptoService {
             metadata['version'] != 1) {
           throw const FormatException('invalid encrypted call signal');
         }
+        // The server's envelope fields are checked before the ratchet can
+        // step (P2).
+        AppPayloadCodec.validateContext(
+            call.conversationId, senderDeviceId, actionId);
         final marker = 'call:$syncEventId:${call.id}:$actionId';
         if (await localStore.hasProcessedMlsMessage(marker)) return null;
         final previous = await _requiredState();
@@ -492,19 +496,29 @@ class NativeCryptoService implements MlsConversationCryptoService {
             ? call.invitedAccountId
             : call.createdBy;
         try {
-          final plaintext = _requiredDevice().decrypt(
-            call.conversationId,
-            base64Decode(encoded),
-            senderAccountId: senderAccountId,
-            senderDeviceId: senderDeviceId,
-          );
-          final payload = AppPayloadCodec().decode(plaintext,
-              conversationId: call.conversationId,
+          List<int>? plaintext;
+          try {
+            plaintext = _requiredDevice().decrypt(
+              call.conversationId,
+              base64Decode(encoded),
+              senderAccountId: senderAccountId,
               senderDeviceId: senderDeviceId,
-              actionId: actionId);
-          if (payload.type != AppPayloadType.callSignal) {
-            throw const FormatException('unexpected call payload type');
+            );
+          } on NativeCryptoException catch (error) {
+            // The server also delivers a caller's signals to the caller's
+            // other devices, where the guessed sender account is wrong. The
+            // ratchet already advanced, so commit and drop the signal (P4).
+            if (error.kind != NativeCryptoError.senderMismatch) rethrow;
           }
+          // Once decryption succeeds the ratchet has moved, so the state and
+          // cursor always commit (P4). A payload that is not a valid call
+          // signal is dropped: no row and no signal.
+          final outcome = plaintext == null
+              ? const InvalidAppPayload()
+              : AppPayloadCodec().classify(plaintext,
+                  conversationId: call.conversationId,
+                  senderDeviceId: senderDeviceId,
+                  actionId: actionId);
           await localStore.commitMlsTransition(MlsStateTransition(
               messageId: marker,
               conversationId: call.conversationId,
@@ -512,7 +526,12 @@ class NativeCryptoService implements MlsConversationCryptoService {
               expectedCursor: cursor,
               state: _sealNext(previous),
               cursor: syncEventId));
-          return Map<String, Object?>.from(payload.body['signal'] as Map);
+          if (outcome is DecodedAppPayload &&
+              outcome.payload.type == AppPayloadType.callSignal) {
+            return Map<String, Object?>.from(
+                outcome.payload.body['signal'] as Map);
+          }
+          return null;
         } catch (_) {
           await _restorePrevious(previous);
           rethrow;
@@ -603,6 +622,29 @@ class NativeCryptoService implements MlsConversationCryptoService {
         }
       });
 
+  /// The `invalid` row for an undecodable message. Keyed by the sync event,
+  /// never by the envelope's idempotency key (P3).
+  InsertMessageEffect _invalidRow(
+          ReceivedMessageEnvelope envelope, int syncEventId) =>
+      _placeholderRow(envelope, 'invalid:$syncEventId:${envelope.id}',
+          LocalMessageKind.invalid);
+
+  InsertMessageEffect _placeholderRow(
+          ReceivedMessageEnvelope envelope, String key, String kind,
+          {String? body}) =>
+      InsertMessageEffect(
+        key: key,
+        serverMessageId: envelope.id,
+        conversationId: envelope.conversationId,
+        senderAccountId: envelope.senderAccountId,
+        senderDeviceId: envelope.senderDeviceId,
+        kind: kind,
+        body: body,
+        createdAt: envelope.createdAt.millisecondsSinceEpoch,
+        state: LocalMessageState.received,
+        expiresAt: envelope.expiresAt?.toUtc().millisecondsSinceEpoch,
+      );
+
   @override
   Future<List<int>?> processApplicationMessage(
     ReceivedMessageEnvelope envelope,
@@ -611,6 +653,13 @@ class NativeCryptoService implements MlsConversationCryptoService {
       _serial(() async {
         if (envelope.cryptoProtocol != 'mls10-openmls-v1') {
           throw StateError('unsupported message crypto protocol');
+        }
+        // The server's envelope fields are checked before the ratchet can
+        // step: a malformed event stops sync with nothing consumed (P2).
+        AppPayloadCodec.validateContext(envelope.conversationId,
+            envelope.senderDeviceId, envelope.idempotencyKey);
+        if (envelope.id.isEmpty || envelope.id.length > 128) {
+          throw const FormatException('invalid message envelope id');
         }
         final marker = 'application:$syncEventId:${envelope.id}';
         if (await localStore.hasProcessedMlsMessage(marker)) return null;
@@ -657,30 +706,63 @@ class NativeCryptoService implements MlsConversationCryptoService {
               cursor: syncEventId,
               upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
               messageEffects: <MessageEffect>[
-                InsertMessageEffect(
-                  key: messageKey(
-                      envelope.senderDeviceId, envelope.idempotencyKey),
-                  serverMessageId: envelope.id,
-                  conversationId: envelope.conversationId,
-                  senderAccountId: envelope.senderAccountId,
-                  senderDeviceId: envelope.senderDeviceId,
-                  kind: LocalMessageKind.unverifiable,
-                  createdAt: envelope.createdAt.millisecondsSinceEpoch,
-                  state: LocalMessageState.received,
-                ),
+                // Keyed by the sync event: the claimed idempotency key is
+                // not authenticated (P3).
+                _placeholderRow(
+                    envelope,
+                    'unverifiable:$syncEventId:${envelope.id}',
+                    LocalMessageKind.unverifiable),
               ],
             ));
             return null;
           }
-          final payload = AppPayloadCodec().decode(
-            plaintext,
-            conversationId: envelope.conversationId,
-            senderDeviceId: envelope.senderDeviceId,
-            actionId: envelope.idempotencyKey,
-          );
-          if (!_messageTypes.contains(payload.type) &&
-              payload.type != AppPayloadType.attachmentManifest) {
-            throw const FormatException('unexpected message payload type');
+          // From here the ratchet has moved: whatever the payload is, the
+          // MLS state and the cursor commit with it (P1). Only a storage
+          // error from the commit itself rolls back.
+          List<MessageEffect> effects;
+          List<int>? text;
+          try {
+            final outcome = AppPayloadCodec().classify(
+              plaintext,
+              conversationId: envelope.conversationId,
+              senderDeviceId: envelope.senderDeviceId,
+              actionId: envelope.idempotencyKey,
+            );
+            switch (outcome) {
+              case DecodedAppPayload(:final payload):
+                if (!_messageTypes.contains(payload.type)) {
+                  throw const FormatException('unexpected message type');
+                }
+                effects = messageEffectsFor(
+                  payload,
+                  conversationId: envelope.conversationId,
+                  senderAccountId: envelope.senderAccountId,
+                  senderDeviceId: envelope.senderDeviceId,
+                  serverMessageId: envelope.id,
+                  createdAt: envelope.createdAt.millisecondsSinceEpoch,
+                  state: LocalMessageState.received,
+                  expiresAt: envelope.expiresAt?.toUtc().millisecondsSinceEpoch,
+                );
+                if (payload.type == AppPayloadType.text ||
+                    payload.type == AppPayloadType.reply) {
+                  text = utf8.encode(payload.body['text'] as String);
+                }
+              case UnsupportedAppPayload():
+                effects = <MessageEffect>[
+                  _placeholderRow(
+                    envelope,
+                    messageKey(
+                        envelope.senderDeviceId, envelope.idempotencyKey),
+                    LocalMessageKind.unsupported,
+                    body: outcome.rawJson,
+                  ),
+                ];
+              case InvalidAppPayload():
+                effects = <MessageEffect>[_invalidRow(envelope, syncEventId)];
+            }
+          } catch (_) {
+            effects = <MessageEffect>[_invalidRow(envelope, syncEventId)];
+            text = null;
           }
           await localStore.commitMlsTransition(MlsStateTransition(
             messageId: marker,
@@ -690,21 +772,9 @@ class NativeCryptoService implements MlsConversationCryptoService {
             state: _sealNext(previous),
             cursor: syncEventId,
             upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
-            messageEffects: messageEffectsFor(
-              payload,
-              conversationId: envelope.conversationId,
-              senderAccountId: envelope.senderAccountId,
-              senderDeviceId: envelope.senderDeviceId,
-              serverMessageId: envelope.id,
-              createdAt: envelope.createdAt.millisecondsSinceEpoch,
-              state: LocalMessageState.received,
-            ),
+            messageEffects: effects,
           ));
-          if (payload.type != AppPayloadType.text &&
-              payload.type != AppPayloadType.reply) {
-            return null;
-          }
-          return utf8.encode(payload.body['text'] as String);
+          return text;
         } catch (_) {
           await _restorePrevious(previous);
           rethrow;
@@ -846,6 +916,7 @@ List<MessageEffect> messageEffectsFor(
   required int createdAt,
   required String state,
   String? serverMessageId,
+  int? expiresAt,
 }) {
   final body = payload.body;
   InsertMessageEffect row(String kind, {String? text, String? replyTo}) =>
@@ -860,6 +931,7 @@ List<MessageEffect> messageEffectsFor(
         replyTo: replyTo,
         createdAt: createdAt,
         state: state,
+        expiresAt: expiresAt,
       );
   return switch (payload.type) {
     AppPayloadType.text => <MessageEffect>[

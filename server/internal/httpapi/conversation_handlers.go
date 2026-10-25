@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -270,12 +271,22 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
 		}
+		// No typing line in channels or past ReceiptMaxMembers members; the
+		// signal is dropped without fan-out.
+		if applies, err := a.Store.ReceiptsApply(r.Context(), conversationID); err != nil {
+			writeError(w, http.StatusInternalServerError, "typing_publish_failed")
+			return
+		} else if !applies {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		if !a.allowTyping(principal.AccountID, conversationID, time.Now()) {
 			w.Header().Set("Retry-After", "1")
 			writeError(w, http.StatusTooManyRequests, "typing_rate_limited")
 			return
 		}
-		members, err := a.Store.ConversationRecipientsForSender(r.Context(), conversationID, principal.AccountID)
+		// D48: a block hides typing in both directions.
+		members, err := a.Store.ReceiptRecipients(r.Context(), conversationID, principal.AccountID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "typing_publish_failed")
 			return
@@ -283,15 +294,21 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 		a.Hub.Publish(members, realtime.Event{Version: "v1", Type: "typing.updated", ConversationID: conversationID, Payload: map[string]string{"account_id": principal.AccountID}, CreatedAt: time.Now().UTC()})
 		w.WriteHeader(http.StatusNoContent)
 	case parts[1] == "notifications" && r.Method == http.MethodGet:
-		muted, err := a.Store.ConversationNotificationsMuted(r.Context(), conversationID, principal.AccountID)
+		mute, err := a.Store.ConversationNotificationMute(r.Context(), conversationID, principal.AccountID)
 		if err != nil {
 			handleStorageError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]bool{"muted": muted})
+		writeJSON(w, http.StatusOK, mute)
 	case parts[1] == "notifications" && (r.Method == http.MethodPut || r.Method == http.MethodPatch):
 		var req struct {
 			Muted *bool `json:"muted"`
+			// MutedUntil ends the mute by itself; omit it to mute without an end.
+			MutedUntil *time.Time `json:"muted_until"`
+			// MutedForSeconds counts from the server's clock, so a device
+			// with a wrong clock still mutes for the length it asked. It wins
+			// over MutedUntil.
+			MutedForSeconds *int64 `json:"muted_for_seconds"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
@@ -300,14 +317,40 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 			writeError(w, http.StatusBadRequest, "muted_required")
 			return
 		}
-		if err := a.Store.SetConversationNotificationsMuted(r.Context(), conversationID, principal.AccountID, *req.Muted); err != nil {
+		var until *time.Time
+		if *req.Muted && req.MutedForSeconds != nil {
+			if *req.MutedForSeconds <= 0 || *req.MutedForSeconds > int64(storage.MaxMuteDuration/time.Second) {
+				writeError(w, http.StatusBadRequest, "muted_until_invalid")
+				return
+			}
+			end := time.Now().UTC().Add(time.Duration(*req.MutedForSeconds) * time.Second).Truncate(time.Second)
+			until = &end
+		} else if *req.Muted && req.MutedUntil != nil {
+			end := req.MutedUntil.UTC().Truncate(time.Second)
+			until = &end
+		}
+		if err := a.Store.SetConversationNotificationMute(r.Context(), conversationID, principal.AccountID, *req.Muted, until); err != nil {
+			if errors.Is(err, storage.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "muted_until_invalid")
+				return
+			}
 			handleStorageError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]bool{"muted": *req.Muted})
+		writeJSON(w, http.StatusOK, domain.NotificationMute{Muted: *req.Muted, Until: until})
+	case parts[1] == "read-receipts" && r.Method == http.MethodGet:
+		receipts, err := a.Store.ConversationReceipts(r.Context(), conversationID, principal.AccountID)
+		if err != nil {
+			handleStorageError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"receipts": receipts})
 	case parts[1] == "read-receipts" && r.Method == http.MethodPost:
 		var req struct {
 			MessageID string `json:"message_id"`
+			// Private keeps the cursor for the caller's own unread count:
+			// nothing is announced and no other member can see it.
+			Private bool `json:"private"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
@@ -316,13 +359,29 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 			writeError(w, http.StatusBadRequest, "message_id_required")
 			return
 		}
+		if req.Private {
+			if err := a.Store.MarkReadPrivate(r.Context(), conversationID, principal.AccountID, req.MessageID); err != nil {
+				handleStorageError(w, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		eventID, err := a.Store.MarkReadWithSyncEvent(r.Context(), conversationID, principal.AccountID, req.MessageID)
 		if err != nil {
 			handleStorageError(w, err)
 			return
 		}
+		if eventID == 0 {
+			// The account keeps read receipts off: the cursor moved for its
+			// own unread count and nothing is announced.
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		payload := map[string]string{"account_id": principal.AccountID, "message_id": req.MessageID}
-		members := a.conversationRecipientsForSender(r.Context(), conversationID, principal.AccountID)
+		// D48: a block hides read receipts in both directions. The reader's
+		// own devices still get it.
+		members := a.receiptRecipientsWithSelf(r.Context(), conversationID, principal.AccountID)
 		a.publishCommittedEvent(r.Context(), members, realtime.Event{Version: "v1", Type: "read_receipt.updated", ID: eventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
 		w.WriteHeader(http.StatusNoContent)
 	case parts[1] == "retention" && (r.Method == http.MethodPut || r.Method == http.MethodPatch):
@@ -583,6 +642,18 @@ func (a *API) conversationRecipientsForSender(ctx context.Context, conversationI
 		return nil
 	}
 	return members
+}
+
+// receiptRecipientsWithSelf lists who is told about a receipt of accountID:
+// the members not in a block with it, in either direction, and accountID
+// itself (its other devices).
+func (a *API) receiptRecipientsWithSelf(ctx context.Context, conversationID, accountID string) []string {
+	members, err := a.Store.ReceiptRecipients(ctx, conversationID, accountID)
+	if err != nil {
+		a.warn("conversation_recipient_list_failed", "conversation_id", conversationID, "err", err)
+		return nil
+	}
+	return append(members, accountID)
 }
 
 func (a *API) recordAuditEvent(ctx context.Context, actorAccountID *string, eventType string, metadata interface{}) {

@@ -85,6 +85,7 @@ class Conversation {
     this.currentRole,
     this.peerAccountId,
     this.peerUsername,
+    this.createdBy,
   });
 
   final String id;
@@ -105,6 +106,8 @@ class Conversation {
   // Server-authored display metadata, never a cryptographic identity claim.
   final String? peerAccountId;
   final String? peerUsername;
+  // Account that started the conversation; decides whether a DM is a request.
+  final String? createdBy;
 
   bool get isDm => kind == 'dm';
   bool get isGroup => kind == 'group';
@@ -128,6 +131,7 @@ class Conversation {
       currentRole: json['current_role'] as String?,
       peerAccountId: _nonEmpty(json['peer_account_id']),
       peerUsername: _nonEmpty(json['peer_username']),
+      createdBy: _nonEmpty(json['created_by']),
     );
   }
 
@@ -145,6 +149,7 @@ class Conversation {
       currentRole: currentRole,
       peerAccountId: peerAccountId,
       peerUsername: peerUsername,
+      createdBy: createdBy,
     );
   }
 
@@ -163,6 +168,7 @@ class Conversation {
         if (currentRole != null) 'current_role': currentRole,
         if (peerAccountId != null) 'peer_account_id': peerAccountId,
         if (peerUsername != null) 'peer_username': peerUsername,
+        if (createdBy != null) 'created_by': createdBy,
       };
 }
 
@@ -273,6 +279,37 @@ class ChannelCreation {
           Map<String, Object?>.from(json['conversation']! as Map),
         ),
       );
+}
+
+/// How long a conversation stays muted (W6).
+enum MuteDuration {
+  off,
+  eightHours,
+  oneWeek,
+  always;
+
+  /// The length of a timed mute; null for [off] and [always].
+  Duration? get length => switch (this) {
+        MuteDuration.eightHours => const Duration(hours: 8),
+        MuteDuration.oneWeek => const Duration(days: 7),
+        _ => null,
+      };
+}
+
+/// A conversation's push mute. [until] is null for a mute without an end.
+class ConversationMute {
+  const ConversationMute({required this.muted, this.until});
+
+  final bool muted;
+  final DateTime? until;
+
+  factory ConversationMute.fromJson(Map<String, Object?> json) {
+    final until = json['muted_until'];
+    return ConversationMute(
+      muted: json['muted'] == true,
+      until: until is String ? DateTime.tryParse(until)?.toUtc() : null,
+    );
+  }
 }
 
 class Invite {
@@ -711,7 +748,9 @@ class DeviceLink {
     return DeviceLink(
       id: json['id'] as String,
       state: json['state'] as String,
-      verificationCode: json['verification_code'] as String? ?? '',
+      // The server never supplies a code; it is derived locally from the
+      // verified transcript, so any server-sent value is ignored.
+      verificationCode: '',
       expiresAt: _parseRequiredTime(json['expires_at']),
       code: json['code'] as String?,
       linkUri: json['link_uri'] as String?,
@@ -839,4 +878,35 @@ class Session {
   final String? username;
   final String? deviceSecret;
   final String? role;
+}
+
+/// What one other member's delivery and read cursors cover in a conversation
+/// (W5). Each time is the `created_at` of the newest message the cursor
+/// reaches, so a message is covered when its own time is not later. Null means
+/// no such cursor, or, for [readThrough], that the member keeps read receipts
+/// off.
+class MemberReceipt {
+  MemberReceipt({
+    required this.accountId,
+    this.memberSince,
+    this.deliveredThrough,
+    this.readThrough,
+  });
+
+  final String accountId;
+
+  /// When the member joined. Messages sent before it were not theirs to
+  /// receive, so a tick ignores the member for them.
+  final DateTime? memberSince;
+  final DateTime? deliveredThrough;
+  final DateTime? readThrough;
+
+  factory MemberReceipt.fromJson(Map<String, Object?> json) {
+    return MemberReceipt(
+      accountId: json['account_id'] as String,
+      memberSince: _parseStrictOptionalTime(json['member_since']),
+      deliveredThrough: _parseStrictOptionalTime(json['delivered_through']),
+      readThrough: _parseStrictOptionalTime(json['read_through']),
+    );
+  }
 }
