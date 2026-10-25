@@ -89,8 +89,7 @@ and keep each change small. Missing product features are packages in the
 | Full disk during setup | A disk that fills before the migration starts still shows the wrong-key message | Pre-existing; nothing is lost |
 | Clone-restore twin | After an I45 restore the original device can keep running as the same MLS member; its repeated generations stop every receiver's global sync and can fork groups. Confirmed by two reviews on 2026-10-24 | Until K2 replaces clone-restore, tell users to stop using the old device; K0 restores into a new device |
 | Drafts after re-sign-in | After a session expiry and sign-in as the same identity, stored drafts reload only on the next app start; typing first overwrites the stored draft | Reload drafts on sign-in |
-| Owner: generated emoji data | The W6 picker's emoji list is generated from Unicode data (Unicode License v3, notice in `THIRD_PARTY_NOTICES.md`) and tzdata | Owner confirms, as for a new dependency |
-| Owner questions from the designs | K0: recovery path (password + key recommended), waiting period, random key or passphrase, backups on by default, retire clone-restore. L0: typed code length (option A recommended). W7: mentions in muted chats on phones, archive behaviour, pin limits and who may pin. W11: profile key rotation trigger, 404 revealing a block, group profile editors, refusing plaintext group titles. C0: may the server know a post's channel, own group for busy channels | Listed in each design's open questions |
+| Owner questions from the designs | K0: random key or passphrase, retire clone-restore (recovery path, waiting period and backup default decided in D49). L0: typed code length (option A recommended). W7: mentions in muted chats on phones, archive behaviour, pin limits and who may pin. W11: profile key rotation trigger, 404 revealing a block, group profile editors, refusing plaintext group titles. C0: may the server know a post's channel, own group for busy channels | Listed in each design's open questions |
 
 ## Release gates
 
@@ -163,6 +162,7 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 | **D46** (2026-10-24, owner) | New plugins approved: `tray_manager`, `window_manager`, `local_notifier`, `desktop_drop`, `pasteboard`, `open_filex` (pins and notices in `pubspec.yaml`, `THIRD_PARTY_NOTICES.md`). RUSTSEC-2026-0387 excepted under G27 |
 | **D47** (2026-10-24) | W5 stores delivery cursors and a shared read cursor on the server (migration 0035): when a member's device last caught up in a conversation, only in conversations of ≤ 20 members, never in channels. Turning read receipts off freezes the shared cursor |
 | **D48** (2026-10-24, coordinator, owner may veto) | A block hides receipts and delivery state in both directions. DMs and groups from strangers are requests. A fresh device (link, reinstall, restore) accepts only conversations it created; an upgrade accepts what existed. Drafts survive a session expiry and are wiped on sign-out or reset |
+| **D49** (2026-10-25, owner) | K0 answers: recovery after losing every device needs the password **and** the recovery key; a recovery waits (and can be cancelled from an active device) when a device was active recently; automatic backups are on by default. The generated emoji data (Unicode License v3) is accepted |
 
 ## Roadmap
 
