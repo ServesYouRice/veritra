@@ -2382,7 +2382,10 @@ class AppState extends ChangeNotifier {
       if (!membershipChangesAvailable) {
         throw StateError('device linking is not available in this build');
       }
-      activeDeviceLink = await client.createDeviceLink(current.token);
+      activeDeviceLink = null;
+      final created = await client.createDeviceLink(current.token);
+      _requireLinkAccount(current, created);
+      activeDeviceLink = _deviceLinkWithoutVerification(created);
     });
   }
 
@@ -2394,15 +2397,20 @@ class AppState extends ChangeNotifier {
       if (current == null || client == null || link == null) {
         return;
       }
-      if (link.verificationCode.isEmpty ||
+      _requireLinkAccount(current, link);
+      if (link.state != 'claimed' ||
+          link.verificationCode.isEmpty ||
           verificationCode.trim() != link.verificationCode ||
           link.transcriptHash?.length != 32) {
         throw StateError('Device-link verification did not match locally');
       }
-      activeDeviceLink = await client.approveDeviceLink(
-        current.token,
-        link.id,
-        link.transcriptHash!,
+      // Strip the result: approving again needs a fresh verified refresh.
+      activeDeviceLink = _deviceLinkWithoutVerification(
+        await client.approveDeviceLink(
+          current.token,
+          link.id,
+          link.transcriptHash!,
+        ),
       );
     });
   }
@@ -2437,16 +2445,20 @@ class AppState extends ChangeNotifier {
     if (accountId == null || linkNonce == null || linkNonce.length != 32) {
       throw StateError('Device-link transcript context is incomplete');
     }
+    _requireLinkAccount(current, link);
     final refreshed = await client.deviceLink(current.token, link.id);
+    if (refreshed.id != link.id) {
+      throw StateError('Device-link transcript was substituted');
+    }
     if ((refreshed.accountId != null && refreshed.accountId != accountId) ||
         (refreshed.linkNonce != null &&
             !_constantTimeBytesEqual(linkNonce, refreshed.linkNonce!))) {
       throw StateError('Device-link transcript was substituted');
     }
     var merged = DeviceLink(
-      id: refreshed.id,
+      id: link.id,
       state: refreshed.state,
-      verificationCode: link.verificationCode,
+      verificationCode: '',
       expiresAt: refreshed.expiresAt,
       code: link.code ?? refreshed.code,
       linkUri: link.linkUri ?? refreshed.linkUri,
@@ -2459,7 +2471,7 @@ class AppState extends ChangeNotifier {
       existingSigningKey: refreshed.existingSigningKey,
       claimedDeviceId: refreshed.claimedDeviceId,
       claimedSigningKey: refreshed.claimedSigningKey,
-      transcriptHash: link.transcriptHash ?? refreshed.transcriptHash,
+      transcriptHash: null,
     );
     if (refreshed.state == 'claimed') {
       if (refreshed.protocolVersion == null ||
@@ -2485,6 +2497,13 @@ class AppState extends ChangeNotifier {
       merged = _deviceLinkWithVerification(merged, verification);
     }
     return merged;
+  }
+
+  void _requireLinkAccount(Session current, DeviceLink link) {
+    final sessionAccount = current.accountId;
+    if (sessionAccount != null && sessionAccount != link.accountId) {
+      throw StateError('Device-link account does not match this session');
+    }
   }
 
   Future<void> claimDeviceLink(String baseUrl, String code) async {

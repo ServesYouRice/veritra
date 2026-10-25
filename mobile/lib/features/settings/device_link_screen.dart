@@ -160,7 +160,11 @@ class DeviceLinkScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 FilledButton.icon(
-                  onPressed: state.busy ? null : () => _approve(context),
+                  onPressed: state.busy ||
+                          link.state != 'claimed' ||
+                          link.verificationCode.isEmpty
+                      ? null
+                      : () => _approve(context),
                   icon: const Icon(Icons.verified_user_outlined),
                   label: Text(l10n.deviceLinkApproveDevice),
                 ),
@@ -180,48 +184,70 @@ class DeviceLinkScreen extends StatelessWidget {
   }
 
   Future<void> _approve(BuildContext context) async {
-    final controller = TextEditingController();
-    try {
-      final code = await showDialog<String>(
-        context: context,
-        builder: (context) {
-          return AlertDialog(
-            title: Text(context.l10n.connectVerificationTitle),
-            content: TextField(
-              controller: controller,
-              autofocus: true,
-              keyboardType: TextInputType.number,
-              maxLength: deviceLinkCodeLength,
-              inputFormatters: <TextInputFormatter>[
-                FilteringTextInputFormatter.digitsOnly,
-              ],
-              decoration: InputDecoration(
-                hintText: '0' * deviceLinkCodeLength,
-                helperText: context.l10n.deviceLinkApproveHint,
-                helperMaxLines: 3,
-              ),
-            ),
-            actions: <Widget>[
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: Text(context.l10n.commonCancel),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.of(context).pop(controller.text),
-                child: Text(context.l10n.deviceLinkApprove),
-              ),
-            ],
-          );
-        },
-      );
-      final trimmed = code?.trim();
-      if (trimmed == null || trimmed.length != deviceLinkCodeLength) {
-        return;
-      }
-      await state.approveActiveDeviceLink(trimmed);
-    } finally {
-      controller.dispose();
+    final code = await showDialog<String>(
+      context: context,
+      builder: (context) => const _ApproveCodeDialog(),
+    );
+    final trimmed = code?.trim();
+    if (trimmed == null || trimmed.length != deviceLinkCodeLength) {
+      return;
     }
+    await state.approveActiveDeviceLink(trimmed);
+  }
+}
+
+/// Asks for the code shown on the new device. Approve stays disabled until
+/// every digit is typed, and the dialog owns (and disposes) its controller.
+class _ApproveCodeDialog extends StatefulWidget {
+  const _ApproveCodeDialog();
+
+  @override
+  State<_ApproveCodeDialog> createState() => _ApproveCodeDialogState();
+}
+
+class _ApproveCodeDialogState extends State<_ApproveCodeDialog> {
+  final controller = TextEditingController();
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(context.l10n.connectVerificationTitle),
+      content: TextField(
+        controller: controller,
+        autofocus: true,
+        keyboardType: TextInputType.number,
+        maxLength: deviceLinkCodeLength,
+        inputFormatters: <TextInputFormatter>[
+          FilteringTextInputFormatter.digitsOnly,
+        ],
+        decoration: InputDecoration(
+          hintText: '0' * deviceLinkCodeLength,
+          helperText: context.l10n.deviceLinkApproveHint,
+          helperMaxLines: 3,
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(context.l10n.commonCancel),
+        ),
+        ValueListenableBuilder<TextEditingValue>(
+          valueListenable: controller,
+          builder: (context, value, _) => FilledButton(
+            onPressed: value.text.trim().length == deviceLinkCodeLength
+                ? () => Navigator.of(context).pop(controller.text)
+                : null,
+            child: Text(context.l10n.deviceLinkApprove),
+          ),
+        ),
+      ],
+    );
   }
 }
 
