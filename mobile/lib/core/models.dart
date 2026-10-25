@@ -748,7 +748,9 @@ class DeviceLink {
     return DeviceLink(
       id: json['id'] as String,
       state: json['state'] as String,
-      verificationCode: json['verification_code'] as String? ?? '',
+      // The server never supplies a code; it is derived locally from the
+      // verified transcript, so any server-sent value is ignored.
+      verificationCode: '',
       expiresAt: _parseRequiredTime(json['expires_at']),
       code: json['code'] as String?,
       linkUri: json['link_uri'] as String?,

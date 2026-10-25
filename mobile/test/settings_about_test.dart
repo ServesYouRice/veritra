@@ -228,6 +228,69 @@ void main() {
       expect(find.text('VERIFICATION CODE'), findsNothing);
     });
 
+    testWidgets('approve needs a claimed link and exactly 8 typed digits', (
+      tester,
+    ) async {
+      final api = _ApproveApi();
+      final state = _state()
+        ..api = api
+        ..activeDeviceLink = DeviceLink(
+          id: 'dl_1',
+          state: 'claimed',
+          verificationCode: '12345678',
+          expiresAt: DateTime.utc(2030),
+          code: 'PAIRCODE',
+          accountId: 'acct_0123456789abcdef',
+          transcriptHash: List<int>.filled(32, 7),
+        );
+      await tester.pumpWidget(
+        MaterialApp(home: DeviceLinkScreen(state: state)),
+      );
+      final approveButton = find.widgetWithText(
+        FilledButton,
+        'Approve device',
+      );
+      await tester.ensureVisible(approveButton);
+      await tester.tap(approveButton);
+      await tester.pumpAndSettle();
+
+      final dialogApprove = find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(FilledButton),
+      );
+      await tester.enterText(find.byType(TextField), '1234567');
+      await tester.pump();
+      expect(tester.widget<FilledButton>(dialogApprove).onPressed, isNull);
+      expect(api.approvals, 0);
+
+      await tester.enterText(find.byType(TextField), '12345678');
+      await tester.pump();
+      expect(tester.widget<FilledButton>(dialogApprove).onPressed, isNotNull);
+      await tester.tap(dialogApprove);
+      await tester.pumpAndSettle();
+      expect(api.approvals, 1);
+    });
+
+    testWidgets('approve is disabled without a verified code', (tester) async {
+      final state = _state()
+        ..activeDeviceLink = DeviceLink(
+          id: 'dl_1',
+          state: 'claimed',
+          verificationCode: '',
+          expiresAt: DateTime.utc(2030),
+          code: 'PAIRCODE',
+        );
+      await tester.pumpWidget(
+        MaterialApp(home: DeviceLinkScreen(state: state)),
+      );
+      final approveButton = find.widgetWithText(
+        FilledButton,
+        'Approve device',
+      );
+      await tester.ensureVisible(approveButton);
+      expect(tester.widget<FilledButton>(approveButton).onPressed, isNull);
+    });
+
     test('the QR payload is built locally and round-trips the scanner', () {
       final payload = deviceLinkQrPayload(' AB CD+1 ')!;
       expect(payload, startsWith('veritra://device-link?code='));
@@ -311,6 +374,25 @@ class _Api extends ApiClient {
 
   @override
   Future<void> logout(String token) async {}
+}
+
+class _ApproveApi extends _Api {
+  int approvals = 0;
+
+  @override
+  Future<DeviceLink> approveDeviceLink(
+    String token,
+    String linkId,
+    List<int> transcriptHash,
+  ) async {
+    approvals++;
+    return DeviceLink(
+      id: linkId,
+      state: 'approved',
+      verificationCode: '',
+      expiresAt: DateTime.utc(2030),
+    );
+  }
 }
 
 class _SlowStore implements AppearanceStore {

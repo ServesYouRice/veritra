@@ -37,7 +37,7 @@ class TestOnlyCryptoService implements CryptoService {
   }) async {
     return DeviceLinkVerification(
       transcriptHash: List<int>.filled(32, 7),
-      sas: '654321',
+      sas: '65432101',
     );
   }
 }
