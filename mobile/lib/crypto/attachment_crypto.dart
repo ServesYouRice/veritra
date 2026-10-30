@@ -59,10 +59,64 @@ class AttachmentCryptoService {
     required String mediaType,
     AttachmentCancellationToken? cancellation,
   }) async {
+    cancellation?.throwIfCancelled();
+    final input = await File(sourcePath).open(mode: FileMode.read);
+    try {
+      return await _encryptChunks(
+        size: await input.length(),
+        readChunk: (length) => _readExact(
+            input, length, 'attachment source changed during encryption'),
+        atEnd: () async => await input.readByte() == -1,
+        conversationId: conversationId,
+        attachmentActionId: attachmentActionId,
+        fileName: fileName,
+        mediaType: mediaType,
+        cancellation: cancellation,
+      );
+    } finally {
+      await input.close();
+    }
+  }
+
+  /// For a decrypted forward already held in memory. Only ciphertext is
+  /// written to a temporary file; no plaintext source file is created.
+  Future<PreparedEncryptedAttachment> encryptBytes({
+    required Uint8List plaintext,
+    required String conversationId,
+    required String attachmentActionId,
+    required String fileName,
+    required String mediaType,
+    AttachmentCancellationToken? cancellation,
+  }) {
+    var offset = 0;
+    return _encryptChunks(
+      size: plaintext.length,
+      readChunk: (length) async {
+        final chunk = Uint8List.sublistView(plaintext, offset, offset + length);
+        offset += length;
+        return chunk;
+      },
+      atEnd: () async => offset == plaintext.length,
+      conversationId: conversationId,
+      attachmentActionId: attachmentActionId,
+      fileName: fileName,
+      mediaType: mediaType,
+      cancellation: cancellation,
+    );
+  }
+
+  Future<PreparedEncryptedAttachment> _encryptChunks({
+    required int size,
+    required Future<List<int>> Function(int length) readChunk,
+    required Future<bool> Function() atEnd,
+    required String conversationId,
+    required String attachmentActionId,
+    required String fileName,
+    required String mediaType,
+    AttachmentCancellationToken? cancellation,
+  }) async {
     final context = _attachmentContext(conversationId, attachmentActionId);
     cancellation?.throwIfCancelled();
-    final source = File(sourcePath);
-    RandomAccessFile? input;
     RandomAccessFile? sink;
     File? output;
     var ownsOutput = false;
@@ -70,8 +124,6 @@ class AttachmentCryptoService {
     var chunks = 0;
     var total = 0;
     try {
-      input = await source.open(mode: FileMode.read);
-      final size = await input.length();
       if (size <= 0 || size > maxPlaintextAttachmentBytes) {
         throw const FileSystemException(
             'attachment size is outside allowed bounds');
@@ -88,11 +140,7 @@ class AttachmentCryptoService {
       while (total < size) {
         cancellation?.throwIfCancelled();
         final expectedLength = min(attachmentChunkSize, size - total);
-        final plaintext = await _readExact(
-          input,
-          expectedLength,
-          'attachment source changed during encryption',
-        );
+        final plaintext = await readChunk(expectedLength);
         cancellation?.throwIfCancelled();
         final encrypted = bindings.encryptAttachmentChunk(
           key: key,
@@ -111,9 +159,7 @@ class AttachmentCryptoService {
         total += plaintext.length;
         chunks++;
       }
-      if (await input.readByte() != -1 ||
-          total != size ||
-          chunks != expectedChunks) {
+      if (!await atEnd() || total != size || chunks != expectedChunks) {
         throw const FileSystemException(
             'attachment source changed during encryption');
       }
@@ -149,7 +195,6 @@ class AttachmentCryptoService {
       }
       rethrow;
     } finally {
-      await input?.close();
       key?.fillRange(0, key.length, 0);
     }
   }
@@ -163,69 +208,28 @@ class AttachmentCryptoService {
     cancellation?.throwIfCancelled();
     final parsed = _parseAttachmentManifest(manifest);
     final key = parsed.key;
-    RandomAccessFile? input;
     RandomAccessFile? output;
     RandomAccessFile? authenticatedInput;
     final partial = File('$destinationPath.part');
     final destination = File(destinationPath);
     var ownsPartial = false;
     var ownsDestination = false;
-    var written = 0;
     try {
       await _requireAbsent(destination.path);
       await _requireAbsent(partial.path);
-      input = await File(ciphertextPath).open(mode: FileMode.read);
-      if (await input.length() != parsed.ciphertextSize) {
-        throw const FormatException('attachment framing mismatch');
-      }
       await partial.create(exclusive: true);
       ownsPartial = true;
       output = await partial.open(mode: FileMode.write);
-      for (var index = 0; index < parsed.chunkCount; index++) {
-        cancellation?.throwIfCancelled();
-        final expectedPlaintextLength =
-            min(attachmentChunkSize, parsed.plaintextSize - written);
-        final expectedCiphertextLength = expectedPlaintextLength + 16;
-        final header = await _readExact(
-          input,
-          4,
-          'truncated attachment',
-        );
-        final length = ByteData.sublistView(Uint8List.fromList(header))
-            .getUint32(0, Endian.big);
-        if (length != expectedCiphertextLength) {
-          throw const FormatException('invalid attachment chunk length');
-        }
-        final encrypted = await _readExact(
-          input,
-          length,
-          'truncated attachment',
-        );
-        cancellation?.throwIfCancelled();
-        final plaintext = bindings.decryptAttachmentChunk(
-          key: key,
-          noncePrefix: parsed.noncePrefix,
-          chunkIndex: index,
-          context: parsed.context,
-          ciphertext: encrypted,
-        );
-        if (plaintext.length != expectedPlaintextLength) {
-          throw const FormatException('attachment size mismatch');
-        }
-        cancellation?.throwIfCancelled();
-        written += plaintext.length;
-        await output.writeFrom(plaintext);
-      }
-      if ((await input.readByte()) != -1 || written != parsed.plaintextSize) {
-        throw const FormatException('attachment framing mismatch');
-      }
+      await _decryptChunks(
+          ciphertextPath: ciphertextPath,
+          parsed: parsed,
+          writeChunk: output.writeFrom,
+          cancellation: cancellation);
       cancellation?.throwIfCancelled();
       await output.flush();
       await output.setPosition(0);
       authenticatedInput = output;
       output = null;
-      await input.close();
-      input = null;
 
       await destination.create(exclusive: true);
       ownsDestination = true;
@@ -259,8 +263,81 @@ class AttachmentCryptoService {
       if (ownsPartial && await partial.exists()) await partial.delete();
       rethrow;
     } finally {
-      await input?.close();
       key.fillRange(0, key.length, 0);
+    }
+  }
+
+  /// Publishes an authenticated attachment directly into memory. A failure
+  /// wipes the partial result, and no plaintext file is ever created.
+  Future<Uint8List> decryptBytes(
+      {required String ciphertextPath,
+      required Map<String, Object?> manifest,
+      AttachmentCancellationToken? cancellation}) async {
+    cancellation?.throwIfCancelled();
+    final parsed = _parseAttachmentManifest(manifest);
+    final plaintext = Uint8List(parsed.plaintextSize);
+    var offset = 0;
+    try {
+      await _decryptChunks(
+          ciphertextPath: ciphertextPath,
+          parsed: parsed,
+          cancellation: cancellation,
+          writeChunk: (chunk) async {
+            plaintext.setRange(offset, offset + chunk.length, chunk);
+            offset += chunk.length;
+          });
+      return plaintext;
+    } catch (_) {
+      plaintext.fillRange(0, plaintext.length, 0);
+      rethrow;
+    } finally {
+      parsed.key.fillRange(0, parsed.key.length, 0);
+    }
+  }
+
+  Future<void> _decryptChunks(
+      {required String ciphertextPath,
+      required _AttachmentManifest parsed,
+      required Future<void> Function(List<int>) writeChunk,
+      AttachmentCancellationToken? cancellation}) async {
+    final input = await File(ciphertextPath).open(mode: FileMode.read);
+    var written = 0;
+    try {
+      if (await input.length() != parsed.ciphertextSize)
+        throw const FormatException('attachment framing mismatch');
+      for (var index = 0; index < parsed.chunkCount; index++) {
+        cancellation?.throwIfCancelled();
+        final expectedPlaintextLength =
+            min(attachmentChunkSize, parsed.plaintextSize - written);
+        final header = await _readExact(input, 4, 'truncated attachment');
+        final length = ByteData.sublistView(Uint8List.fromList(header))
+            .getUint32(0, Endian.big);
+        if (length != expectedPlaintextLength + 16)
+          throw const FormatException('invalid attachment chunk length');
+        final encrypted =
+            await _readExact(input, length, 'truncated attachment');
+        cancellation?.throwIfCancelled();
+        final plaintext = bindings.decryptAttachmentChunk(
+            key: parsed.key,
+            noncePrefix: parsed.noncePrefix,
+            chunkIndex: index,
+            context: parsed.context,
+            ciphertext: encrypted);
+        try {
+          if (plaintext.length != expectedPlaintextLength)
+            throw const FormatException('attachment size mismatch');
+          cancellation?.throwIfCancelled();
+          await writeChunk(plaintext);
+          written += plaintext.length;
+        } finally {
+          plaintext.fillRange(0, plaintext.length, 0);
+        }
+      }
+      if (await input.readByte() != -1 || written != parsed.plaintextSize)
+        throw const FormatException('attachment framing mismatch');
+      cancellation?.throwIfCancelled();
+    } finally {
+      await input.close();
     }
   }
 }

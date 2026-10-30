@@ -9,6 +9,8 @@ import 'crypto/crypto_service.dart';
 import 'desktop/desktop_services.dart';
 import 'l10n/app_localizations.dart';
 import 'push/push_service.dart';
+import 'push/wake_worker_bridge.dart';
+import 'push/wake_launch_coordinator.dart';
 import 'storage/local_store.dart';
 import 'sync/sync_service.dart';
 import 'ui/about.dart';
@@ -18,21 +20,47 @@ import 'ui/theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final state = AppState(
-    apiClientFactory: (baseUrl) => ApiClient(baseUrl: baseUrl),
-    cryptoService: UnavailableCryptoService(),
-    localStore: SecureLocalStore(),
-    syncServiceFactory: (baseUrl, token) =>
-        WebSocketSyncService(baseUrl: baseUrl, token: token),
-    pushService: PlatformMobilePushService(),
-    receiptPreferences: ReceiptPreferences(SecureReceiptPreferenceStore()),
+  final bridge = PlatformWakeWorkerBridge();
+  final launch = WakeLaunchCoordinator(
+    bridge: bridge,
+    profile: 'release', // Fixed alias for the existing empty store namespace.
+    onUi: () async {
+      final state = AppState(
+        apiClientFactory: (baseUrl) => ApiClient(baseUrl: baseUrl),
+        cryptoService: UnavailableCryptoService(),
+        localStore: SecureLocalStore(),
+        syncServiceFactory: (baseUrl, token) =>
+            WebSocketSyncService(baseUrl: baseUrl, token: token),
+        pushService: PlatformMobilePushService(),
+        receiptPreferences: ReceiptPreferences(SecureReceiptPreferenceStore()),
+      );
+      // Restore is represented by an explicit startup state while the app shell
+      // remains mounted; failures enter recovery instead of flashing logout or
+      // resetting the durable cursor.
+      final desktop = await DesktopServices.startIfSupported(state);
+      runApp(VeritraApp(state: state, desktop: desktop));
+      unawaited(state.tryRestoreSession());
+    },
+    // Unavailable production crypto never installs a background worker or
+    // constructs protected storage on a cold wake. Actual UI may start later.
+    onUiError: () => runApp(const StartupFailureApp()),
   );
-  // Restore is represented by an explicit startup state while the app shell
-  // remains mounted; failures enter recovery instead of flashing logout or
-  // resetting the durable cursor.
-  final desktop = await DesktopServices.startIfSupported(state);
-  runApp(VeritraApp(state: state, desktop: desktop));
-  unawaited(state.tryRestoreSession());
+  await launch.start();
+}
+
+/// A sanitized startup failure; no platform diagnostic, path or secret appears.
+class StartupFailureApp extends StatelessWidget {
+  const StartupFailureApp({super.key});
+  @override
+  Widget build(BuildContext context) => MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Builder(
+            builder: (context) => Scaffold(
+                    body: Center(
+                  child: Text(AppLocalizations.of(context)!.errorGeneric),
+                ))),
+      );
 }
 
 class VeritraApp extends StatefulWidget {

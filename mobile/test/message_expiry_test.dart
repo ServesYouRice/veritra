@@ -13,6 +13,7 @@ import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
 import 'test_crypto_service.dart';
+import 'schema_fixtures.dart';
 
 /// W2: an expired message leaves this device's database, chat and chat list,
 /// also when the app was closed past the expiry and starts offline.
@@ -32,6 +33,7 @@ void main() {
     for (final database in databases) {
       await database.close();
     }
+    await SecureLocalStore.releaseInstanceLocks();
     if (await directory.exists()) await directory.delete(recursive: true);
   });
 
@@ -307,6 +309,7 @@ void main() {
     }
     await database.customStatement('DROP TABLE local_drafts');
     await database.customStatement('DROP TABLE local_conversation_mutes');
+    await stripW8Schema(database);
     await database.customStatement('PRAGMA user_version = 9');
     await database.close();
     databases.removeLast();
@@ -318,7 +321,8 @@ void main() {
     final reopened = databases.last;
     final version =
         await reopened.customSelect('PRAGMA user_version').getSingle();
-    expect(version.read<int>('user_version'), 12);
+    expect(version.read<int>('user_version'),
+        EncryptedLocalDatabase.currentSchemaVersion);
     // The surviving row got its expiry from its envelope.
     final next = await upgraded.nextMessageExpiry();
     expect(next?.millisecondsSinceEpoch, future.millisecondsSinceEpoch);

@@ -7,6 +7,9 @@ import 'package:ffi/ffi.dart';
 
 import '../core/models.dart';
 
+part 'k2_native_controls.dart';
+part 'k2_native_streams.dart';
+
 final class _PmByteSlice extends Struct {
   external Pointer<Uint8> data;
 
@@ -84,10 +87,16 @@ typedef _DeviceLinkTranscriptNative = Int32 Function(
     _PmByteSlice,
     _PmByteSlice,
     _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
     Uint8,
     Pointer<_PmOwnedBuffer>);
 typedef _DeviceLinkTranscriptDart = int Function(
     Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
     _PmByteSlice,
     _PmByteSlice,
     _PmByteSlice,
@@ -153,6 +162,9 @@ typedef _AttachmentChunkNative = Int32 Function(_PmByteSlice, _PmByteSlice,
 typedef _AttachmentChunkDart = int Function(_PmByteSlice, _PmByteSlice, int,
     _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
 
+typedef _LocatorNative = Int32 Function(_PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _LocatorDart = int Function(_PmByteSlice, Pointer<_PmOwnedBuffer>);
+
 class NativeCryptoBindings {
   NativeCryptoBindings._(DynamicLibrary library)
       : _abiVersion =
@@ -175,6 +187,9 @@ class NativeCryptoBindings {
         _signingKey =
             library.lookupFunction<_HandleOutputNative, _HandleOutputDart>(
                 'pm_crypto_device_signing_public_key'),
+        _deviceLinkLocator =
+            library.lookupFunction<_LocatorNative, _LocatorDart>(
+                'pm_crypto_device_link_locator'),
         _deviceLinkTranscript = library.lookupFunction<
             _DeviceLinkTranscriptNative,
             _DeviceLinkTranscriptDart>('pm_crypto_device_link_transcript_hash'),
@@ -222,9 +237,27 @@ class NativeCryptoBindings {
             _AttachmentChunkDart>('pm_crypto_attachment_encrypt_chunk'),
         _attachmentDecrypt = library.lookupFunction<_AttachmentChunkNative,
             _AttachmentChunkDart>('pm_crypto_attachment_decrypt_chunk') {
-    if (_abiVersion() != 6) {
+    if (_abiVersion() != 8) {
       throw const NativeCryptoException(NativeCryptoError.abiMismatch);
     }
+    _k2Controls = {
+      for (final entry in const {
+        1: 'receive_begin',
+        2: 'source_accept',
+        3: 'inspect',
+        4: 'enrollment_proof',
+        5: 'source_confirm',
+        6: 'source_approval_request',
+        7: 'apply_approval',
+        8: 'source_posted',
+        9: 'importing',
+        10: 'forget',
+        11: 'expire',
+      }.entries)
+        entry.key: library.lookupFunction<_HandleSliceOutputNative,
+            _HandleSliceOutputDart>('pm_crypto_k2_${entry.value}'),
+    };
+    _k2Streams = _K2StreamBindings(library);
     _deviceFinalizer = NativeFinalizer(library
         .lookup<NativeFunction<_DeviceDestroyNative>>(
             'pm_crypto_device_destroy')
@@ -233,6 +266,8 @@ class NativeCryptoBindings {
 
   static const _ok = 0;
   final _AbiVersionDart _abiVersion;
+  late final Map<int, _HandleSliceOutputDart> _k2Controls;
+  late final _K2StreamBindings _k2Streams;
   final _DeviceCreateDart _deviceCreate;
   final _DeviceDestroyDart _deviceDestroy;
   final _BufferFreeDart _bufferFree;
@@ -240,6 +275,17 @@ class NativeCryptoBindings {
   final _RestoreDart _restore;
   final _HandleOutputDart _signingKey;
   final _DeviceLinkTranscriptDart _deviceLinkTranscript;
+  final _LocatorDart _deviceLinkLocator;
+
+  String deviceLinkLocator(List<int> secret) {
+    _bounded(secret, 16, exact: true);
+    final bytes = _withSlice(Uint8List.fromList(secret),
+        (slice) => _output((out) => _deviceLinkLocator(slice, out)));
+    if (bytes.length != 32)
+      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+    return bytes.map((b) => b.toRadixString(16).padLeft(2, "0")).join();
+  }
+
   final _HandleSliceOutputDart _signChallenge;
   final _HandleOutputDart _createKeyPackage;
   final _SealDart _seal;
@@ -576,6 +622,20 @@ class NativeCryptoDevice implements Finalizable {
     return _handle;
   }
 
+  _K2Reader _k2Control(_K2Writer request) {
+    final bytes = request.bytes();
+    try {
+      _bindings._bounded(bytes, 64 * 1024);
+      final result = _bindings._withSlice(
+          bytes,
+          (slice) => _bindings._output((out) => _bindings
+              ._k2Controls[request.operation]!(_liveHandle, slice, out)));
+      return _K2Reader(Uint8List.fromList(result), request.operation);
+    } finally {
+      bytes.fillRange(0, bytes.length, 0);
+    }
+  }
+
   EnrollmentCredential createEnrollmentCredential(List<int> challenge) {
     _bindings._bounded(challenge, 4096);
     return _bindings.createEnrollmentCredential(_liveHandle, challenge);
@@ -586,18 +646,27 @@ class NativeCryptoDevice implements Finalizable {
 
   DeviceLinkVerification deriveDeviceLinkVerification({
     required String protocolVersion,
+    required String serverOrigin,
+    required String linkId,
+    required List<int> linkSecret,
     required String peerDeviceId,
     required List<int> peerSigningKey,
     required List<int> linkNonce,
     required bool localIsExistingDevice,
   }) {
     _bindings._bounded(protocolVersion.codeUnits, 64);
+    _bindings._bounded(serverOrigin.codeUnits, 2048);
+    _bindings._bounded(linkId.codeUnits, 128);
+    _bindings._bounded(linkSecret, 16, exact: true);
     _bindings._bounded(peerDeviceId.codeUnits, 128);
     _bindings._bounded(peerSigningKey, 32, exact: true);
     _bindings._bounded(linkNonce, 32, exact: true);
     final transcriptHash = _bindings._withByteLists(
       [
         protocolVersion.codeUnits,
+        serverOrigin.codeUnits,
+        linkId.codeUnits,
+        linkSecret,
         peerDeviceId.codeUnits,
         peerSigningKey,
         linkNonce
@@ -608,17 +677,22 @@ class NativeCryptoDevice implements Finalizable {
           slices[1],
           slices[2],
           slices[3],
+          slices[4],
+          slices[5],
+          slices[6],
           localIsExistingDevice ? 1 : 0,
           out)),
     );
-    if (transcriptHash.length != 32) {
+    if (transcriptHash.length != 100) {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
     }
     final sasValue = ByteData.sublistView(Uint8List.fromList(transcriptHash))
-            .getUint32(0, Endian.big) %
+            .getUint32(96, Endian.big) %
         100000000;
     return DeviceLinkVerification(
-      transcriptHash: transcriptHash,
+      transcriptHash: transcriptHash.sublist(0, 32),
+      claimTag: transcriptHash.sublist(32, 64),
+      approvalTag: transcriptHash.sublist(64, 96),
       sas: sasValue.toString().padLeft(8, '0'),
     );
   }

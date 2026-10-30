@@ -3,12 +3,17 @@ import 'dart:io';
 
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
-import 'package:drift/isolate.dart' show DriftRemoteException;
+import 'package:drift/isolate.dart' show DriftRemoteException, DriftIsolate;
 import 'package:sqlite3/common.dart' show CommonDatabase;
+import 'package:sqlite3/sqlite3.dart' show sqlite3, OpenMode;
 
 import 'message_search.dart';
+import 'history_snapshot.dart';
+import 'notice_outbox.dart';
+import '../core/models.dart' show Conversation, Session;
 
 part 'encrypted_database.g.dart';
+part 'notice_outbox_sql.dart';
 
 enum MlsCommitStage {
   afterValidation,
@@ -80,6 +85,9 @@ abstract final class LocalMessageState {
   static const pending = 'pending';
   static const sent = 'sent';
   static const received = 'received';
+
+  /// Imported own-device snapshot state, never delivery or original MLS proof.
+  static const restored = 'restored';
 }
 
 final class InsertMessageEffect extends MessageEffect {
@@ -95,6 +103,10 @@ final class InsertMessageEffect extends MessageEffect {
     this.body,
     this.replyTo,
     this.expiresAt,
+    this.formatJson,
+    this.forwardHops,
+    this.channelId,
+    this.senderHidden = false,
   });
 
   final String key;
@@ -112,6 +124,10 @@ final class InsertMessageEffect extends MessageEffect {
   /// the epoch), if it set one (W2). A message that is already expired is not
   /// stored at all.
   final int? expiresAt;
+  final String? formatJson;
+  final int? forwardHops;
+  final String? channelId;
+  final bool senderHidden;
 }
 
 /// Replaces the text of [targetKey], only if [editorAccountId] sent it.
@@ -121,12 +137,18 @@ final class EditMessageEffect extends MessageEffect {
     required this.editorAccountId,
     required this.body,
     required this.at,
+    this.conversationId,
+    this.formatJson,
+    this.channelId,
   });
 
   final String targetKey;
   final String editorAccountId;
   final String body;
   final int at;
+  final String? conversationId;
+  final String? formatJson;
+  final String? channelId;
 }
 
 /// Deletes the text of [targetKey], only if [deleterAccountId] sent it.
@@ -135,11 +157,15 @@ final class DeleteMessageEffect extends MessageEffect {
     required this.targetKey,
     required this.deleterAccountId,
     required this.at,
+    this.conversationId,
+    this.channelId,
   });
 
   final String targetKey;
   final String deleterAccountId;
   final int at;
+  final String? conversationId;
+  final String? channelId;
 }
 
 /// Sets or, with an empty [reaction], clears one account's reaction.
@@ -149,12 +175,34 @@ final class ReactionEffect extends MessageEffect {
     required this.reactorAccountId,
     required this.reaction,
     required this.at,
+    this.conversationId,
+    this.channelId,
   });
 
   final String targetKey;
   final String reactorAccountId;
   final String reaction;
   final int at;
+  final String? conversationId;
+  final String? channelId;
+}
+
+final class PinMessageEffect extends MessageEffect {
+  const PinMessageEffect(
+      {required this.conversationId,
+      required this.targetKey,
+      required this.accountId,
+      required this.at,
+      required this.pinned,
+      this.durationSeconds,
+      this.channelId,
+      this.pendingActionKey});
+  final String conversationId, targetKey, accountId;
+  final int at;
+  final bool pinned;
+  final int? durationSeconds;
+  final String? channelId;
+  final String? pendingActionKey;
 }
 
 class LocalAccounts extends Table {
@@ -302,6 +350,11 @@ class LocalMessages extends Table {
   /// cannot use `rowid`: a table keyed by text may renumber its rows when
   /// vacuumed, which would leave deleted text in the index.
   IntColumn get searchId => integer().nullable()();
+  IntColumn get hiddenAt => integer().nullable()();
+  TextColumn get formatJson => text().nullable()();
+  IntColumn get forwardHops => integer().nullable()();
+  TextColumn get channelId => text().nullable()();
+  BoolColumn get senderHidden => boolean().nullable()();
 
   @override
   Set<Column<Object>> get primaryKey => {key};
@@ -315,6 +368,45 @@ class LocalMessageReactions extends Table {
 
   @override
   Set<Column<Object>> get primaryKey => {targetKey, reactorAccountId};
+}
+
+class LocalPins extends Table {
+  TextColumn get conversationId => text()();
+  TextColumn get channelId => text().nullable()();
+  TextColumn get targetKey => text()();
+  TextColumn get pinnedByAccountId => text()();
+  IntColumn get pinnedAt => integer()();
+  IntColumn get appliedOrder => integer().withDefault(const Constant(0))();
+  IntColumn get expiresAt => integer()();
+  @override
+  Set<Column<Object>> get primaryKey => {conversationId, targetKey};
+}
+
+class LocalPendingPins extends Table {
+  TextColumn get actionKey => text()();
+  TextColumn get conversationId => text()();
+  TextColumn get channelId => text().nullable()();
+  TextColumn get targetKey => text()();
+  TextColumn get accountId => text()();
+  BoolColumn get pinned => boolean()();
+  IntColumn get durationSeconds => integer().nullable()();
+  @override
+  Set<Column<Object>> get primaryKey => {actionKey};
+}
+
+class LocalStarred extends Table {
+  TextColumn get messageKey => text()();
+  IntColumn get starredAt => integer()();
+  @override
+  Set<Column<Object>> get primaryKey => {messageKey};
+}
+
+class LocalConversationPrefs extends Table {
+  TextColumn get conversationId => text()();
+  IntColumn get archivedAt => integer().nullable()();
+  IntColumn get pinnedAt => integer().nullable()();
+  @override
+  Set<Column<Object>> get primaryKey => {conversationId};
 }
 
 /// An unsent composer draft, kept so it survives a restart (W6, schema 11).
@@ -360,17 +452,194 @@ class LocalConversationMutes extends Table {
   LocalMessageReactions,
   LocalDrafts,
   LocalConversationMutes,
+  LocalPins,
+  LocalPendingPins,
+  LocalStarred,
+  LocalConversationPrefs,
 ])
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
-  EncryptedLocalDatabase(super.executor);
+  EncryptedLocalDatabase(super.executor, {this.requireExistingSchema = false});
+
+  static const currentSchemaVersion = 15;
+  final bool requireExistingSchema;
 
   static const outboxDraftPrefix = 'outbox.draft.';
   static const syncLeaseName = 'sync.owner.lease';
   static const syncRecoveryName = 'sync.recovery';
   static const lastBackupName = 'backup.last_created_at';
 
+  static const historyTables = [
+    'local_history_conversations',
+    'local_history_imports',
+    'local_history_provenance',
+    'local_history_deferred_effects',
+    'local_history_quarantine',
+    'local_history_counter'
+  ];
+
+  Future<void> _createHistoryNamespace() async {
+    await customStatement('CREATE TABLE local_history_conversations '
+        '(id TEXT PRIMARY KEY NOT NULL, payload_json TEXT NOT NULL)');
+    await customStatement('CREATE TABLE local_history_imports '
+        '(identity TEXT PRIMARY KEY NOT NULL, payload_json TEXT NOT NULL)');
+    await customStatement('CREATE TABLE local_history_provenance '
+        '(message_key TEXT PRIMARY KEY NOT NULL, payload_json TEXT NOT NULL)');
+    await customStatement('CREATE TABLE local_history_counter '
+        '(singleton INTEGER PRIMARY KEY CHECK(singleton = 1), value INTEGER NOT NULL CHECK(value >= 0), effect_order INTEGER NOT NULL DEFAULT 0)');
+    await customStatement('CREATE TABLE local_history_deferred_effects '
+        '(identity TEXT PRIMARY KEY NOT NULL, target_key TEXT NOT NULL, payload_json TEXT NOT NULL)');
+    await customStatement(
+        'CREATE INDEX local_history_deferred_target ON local_history_deferred_effects(target_key)');
+    await customStatement('CREATE TABLE local_history_quarantine '
+        '(identity TEXT PRIMARY KEY NOT NULL, payload_json TEXT NOT NULL)');
+  }
+
+  Future<HistoryNamespace> readHistoryNamespace() async {
+    final ns = HistoryNamespace();
+    for (final row
+        in await customSelect('SELECT * FROM local_history_conversations')
+            .get()) {
+      final c = HistoryConversation.fromJson(
+          jsonDecode(row.read<String>('payload_json')));
+      ns.conversations[c.id] = c;
+    }
+    for (final row
+        in await customSelect('SELECT * FROM local_history_imports').get()) {
+      ns.imports[row.read<String>('identity')] = Map<String, Object?>.from(
+          jsonDecode(row.read<String>('payload_json')) as Map);
+    }
+    for (final row
+        in await customSelect('SELECT * FROM local_history_provenance').get()) {
+      ns.provenance[row.read<String>('message_key')] =
+          Map<String, Object?>.from(
+              jsonDecode(row.read<String>('payload_json')) as Map);
+    }
+    final counter = await customSelect(
+            'SELECT value, effect_order FROM local_history_counter WHERE singleton = 1')
+        .getSingleOrNull();
+    ns.counter = counter?.read<int>('value') ?? 0;
+    ns.effectOrder = counter?.read<int>('effect_order') ?? 0;
+    for (final row
+        in await customSelect('SELECT * FROM local_history_deferred_effects')
+            .get()) {
+      ns.deferred[row.read<String>('identity')] =
+          DeferredHistoryEffect.fromJson(
+              jsonDecode(row.read<String>('payload_json')));
+    }
+    for (final row
+        in await customSelect('SELECT * FROM local_history_quarantine').get()) {
+      ns.quarantine[row.read<String>('identity')] = Map<String, Object?>.from(
+          jsonDecode(row.read<String>('payload_json')) as Map);
+    }
+    return ns;
+  }
+
+  Future<void> _clearHistoryNamespace() async {
+    for (final table in historyTables) {
+      await customStatement('DELETE FROM $table');
+    }
+  }
+
+  Future<void> writeHistoryNamespace(HistoryNamespace ns) async {
+    await _clearHistoryNamespace();
+    for (final c in ns.conversations.values) {
+      await customStatement(
+          'INSERT INTO local_history_conversations VALUES (?,?)',
+          [c.id, jsonEncode(c.toJson())]);
+    }
+    for (final e in ns.imports.entries) {
+      await customStatement('INSERT INTO local_history_imports VALUES (?,?)',
+          [e.key, jsonEncode(e.value)]);
+    }
+    for (final e in ns.provenance.entries) {
+      await customStatement('INSERT INTO local_history_provenance VALUES (?,?)',
+          [e.key, jsonEncode(e.value)]);
+    }
+    await customStatement('INSERT INTO local_history_counter VALUES (1,?,?)',
+        [ns.counter, ns.effectOrder]);
+    for (final e in ns.deferred.entries) {
+      await customStatement(
+          'INSERT INTO local_history_deferred_effects VALUES (?,?,?)',
+          [e.key, e.value.targetKey, jsonEncode(e.value.toJson())]);
+    }
+    for (final e in ns.quarantine.entries) {
+      await customStatement('INSERT INTO local_history_quarantine VALUES (?,?)',
+          [e.key, jsonEncode(e.value)]);
+    }
+  }
+
+  Future<List<int>> exportHistorySnapshot(
+          Session? Function(String?) decodeSession) =>
+      transaction(() async {
+        final session = decodeSession(await readSessionJson());
+        if (session == null)
+          throw StateError('history export requires a session');
+        final conversations = (await select(localConversations).get())
+            .map((c) => Conversation.fromJson(
+                Map<String, Object?>.from(jsonDecode(c.payloadJson) as Map)))
+            .toList();
+        final ns = await readHistoryNamespace();
+        final snapshot = captureHistory(
+            session: session,
+            namespace: ns,
+            conversations: conversations,
+            messages: await readAllMessages(),
+            reactions: await readAllReactions(),
+            pins: await select(localPins).get(),
+            starred: {
+              for (final s in await select(localStarred).get())
+                s.messageKey: s.starredAt
+            },
+            preferences: await readConversationPrefs(),
+            now: DateTime.now().millisecondsSinceEpoch);
+        final encoded = snapshot.encode();
+        ns.counter = snapshot.counter;
+        await writeHistoryNamespace(ns);
+        return encoded;
+      });
+
+  Future<void> importHistorySnapshot(
+          HistorySnapshot snapshot,
+          HistoryImportContext context,
+          Session? Function(String?) decodeSession) =>
+      transaction(() async {
+        final session = decodeSession(await readSessionJson());
+        context.checkSession(session);
+        final live = (await select(localConversations).get())
+            .map((c) => Conversation.fromJson(
+                Map<String, Object?>.from(jsonDecode(c.payloadJson) as Map)))
+            .toList();
+        final merge = mergeHistory(
+            snapshot: snapshot,
+            context: context,
+            namespace: await readHistoryNamespace(),
+            liveConversations: live,
+            existing: await readAllMessages(),
+            existingPins: await select(localPins).get(),
+            existingPreferences: await readConversationPrefs(),
+            now: DateTime.now().millisecondsSinceEpoch);
+        for (final m in merge.messages) {
+          await into(localMessages).insert(
+              m.toCompanion(false).copyWith(searchId: const Value(null)));
+        }
+        for (final r in merge.reactions) {
+          await into(localMessageReactions).insert(r);
+        }
+        for (final p in merge.pins) {
+          await into(localPins).insert(p);
+        }
+        for (final s in merge.starred.entries) {
+          await into(localStarred).insert(LocalStarredCompanion.insert(
+              messageKey: s.key, starredAt: s.value));
+        }
+        for (final p in merge.preferences) {
+          await into(localConversationPrefs).insert(p);
+        }
+        await writeHistoryNamespace(merge.namespace);
+      });
+
   @override
-  int get schemaVersion => 12;
+  int get schemaVersion => currentSchemaVersion;
 
   /// Whether opening this database started a schema upgrade. Upgrades run
   /// only after the key has opened the file, so an open that fails after
@@ -383,7 +652,10 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   @override
   MigrationStrategy get migration => MigrationStrategy(
         onCreate: (migrator) async {
+          if (requireExistingSchema) throw const ExistingDatabaseUnavailable();
           await migrator.createAll();
+          await _createHistoryNamespace();
+          await _createNoticeOutbox();
           await _createSearchIndex();
           await into(localSyncStates).insert(
             LocalSyncStatesCompanion.insert(singleton: const Value(1)),
@@ -395,8 +667,33 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         // has no effect inside it, so a future table rebuild that needs it off
         // must set it before the transaction.
         onUpgrade: (migrator, from, to) async {
+          if (requireExistingSchema) throw const ExistingDatabaseUnavailable();
           _upgradeStarted = true;
           await transaction(() async {
+            if (from < 15) await _createNoticeOutbox();
+            if (from < 14) await _createHistoryNamespace();
+            // Older expiry/backfill steps read through current generated rows.
+            // Install all new message columns before those reads can run.
+            if (from < 13) {
+              if (from >= 7) {
+                await migrator.addColumn(localMessages, localMessages.hiddenAt);
+                await migrator.addColumn(
+                    localMessages, localMessages.formatJson);
+                await migrator.addColumn(
+                    localMessages, localMessages.forwardHops);
+                await migrator.addColumn(
+                    localMessages, localMessages.channelId);
+                await migrator.addColumn(
+                    localMessages, localMessages.senderHidden);
+              }
+              await migrator.createTable(localPins);
+              await migrator.createTable(localPendingPins);
+              await migrator.createTable(localStarred);
+              await migrator.createTable(localConversationPrefs);
+            }
+            if (from < 12 && from >= 7) {
+              await migrator.addColumn(localMessages, localMessages.searchId);
+            }
             if (from < 2) {
               await migrator.createTable(localMlsTransitions);
             }
@@ -467,9 +764,6 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             }
             if (from < 12) {
               // W10: the on-device message search index.
-              if (from >= 7) {
-                await migrator.addColumn(localMessages, localMessages.searchId);
-              }
               await migrator.createIndex(localMessagesSearchId);
               await _createSearchIndex();
               await _rebuildSearchIndex();
@@ -490,6 +784,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     bool clearIdentityState = false,
   }) =>
       transaction(() async {
+        if (sessionJson == null || clearIdentityState)
+          await clearNoticeOutbox();
         if (clearIdentityState) {
           await delete(localDrafts).go();
           await delete(localConversationMutes).go();
@@ -499,7 +795,12 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           await delete(localMlsTransitions).go();
           await delete(localMlsOutboxEntries).go();
           await delete(localPeerVerifications).go();
+          await _clearHistoryNamespace();
           await delete(localMessages).go();
+          await delete(localPins).go();
+          await delete(localPendingPins).go();
+          await delete(localStarred).go();
+          await delete(localConversationPrefs).go();
           await delete(localMessageReactions).go();
           await customStatement('DELETE FROM local_metadata WHERE name LIKE ?',
               <Object?>['$outboxDraftPrefix%']);
@@ -550,6 +851,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required int cursor,
   }) =>
       transaction(() async {
+        await clearNoticeOutbox();
         await delete(localCiphertextEnvelopes).go();
         await delete(localConversations).go();
         await delete(localOutboxEntries).go();
@@ -652,6 +954,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required int cursor,
     List<LocalMessage> history = const <LocalMessage>[],
     List<LocalMessageReaction> reactions = const <LocalMessageReaction>[],
+    List<LocalPin> pins = const [],
+    List<LocalPendingPin> pendingPins = const [],
+    Map<String, int> starred = const {},
+    List<LocalConversationPref> conversationPrefs = const [],
+    HistoryNamespace? historyNamespace,
     // Only history entries whose JSON lacks the expiry key (a backup from
     // before it travelled with the history) take it from their envelope. An
     // entry that carries the key is taken as it is, and the envelopes in the
@@ -659,6 +966,20 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     Set<String> backfillExpiryFor = const <String>{},
   }) =>
       transaction(() async {
+        await clearNoticeOutbox();
+        final previousSession = await readSessionJson();
+        final replacementNamespace =
+            historyNamespace?.copy() ?? HistoryNamespace();
+        if (previousSession != null) {
+          final previous = jsonDecode(previousSession) as Map;
+          final replacement = jsonDecode(sessionJson) as Map;
+          if (['base_url', 'account_id', 'device_id'].every((key) =>
+              previous[key] != null && previous[key] == replacement[key])) {
+            final retained = (await readHistoryNamespace()).counter;
+            if (replacementNamespace.counter < retained)
+              replacementNamespace.counter = retained;
+          }
+        }
         await delete(localMlsTransitions).go();
         await delete(localMlsOutboxEntries).go();
         await delete(localPeerVerifications).go();
@@ -666,16 +987,35 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localConversationMutes).go();
         // Decrypted history travels in the backup (D27, I45); a version 1
         // backup without it restores an empty history.
+        await _clearHistoryNamespace();
         await delete(localMessages).go();
         await delete(localMessageReactions).go();
+        await delete(localPins).go();
+        await delete(localPendingPins).go();
+        await delete(localStarred).go();
+        await delete(localConversationPrefs).go();
         for (final message in history) {
           // The index numbers are this database's own (W10): the insert
           // trigger assigns them, and a backup's would collide.
           await into(localMessages).insert(
               message.toCompanion(false).copyWith(searchId: const Value(null)));
         }
+        await writeHistoryNamespace(replacementNamespace);
         for (final reaction in reactions) {
           await into(localMessageReactions).insert(reaction);
+        }
+        for (final pin in pins) {
+          await into(localPins).insert(pin);
+        }
+        for (final pin in pendingPins) {
+          await into(localPendingPins).insert(pin);
+        }
+        for (final entry in starred.entries) {
+          await into(localStarred).insert(LocalStarredCompanion.insert(
+              messageKey: entry.key, starredAt: entry.value));
+        }
+        for (final pref in conversationPrefs) {
+          await into(localConversationPrefs).insert(pref);
         }
         await delete(localOutboxEntries).go();
         await delete(localCiphertextEnvelopes).go();
@@ -1066,11 +1406,14 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         upsertedEnvelopes,
     required List<String> deletedEnvelopeIds,
     List<MessageEffect> messageEffects = const <MessageEffect>[],
+    List<LocalNoticeReference> noticeReferences = const [],
     MlsCommitFailureInjector? failureInjector,
     String? leaseKey,
     String? resolvedMlsOutboxKey,
+    void Function()? checkCanCommit,
   }) =>
       transaction(() async {
+        checkCanCommit?.call();
         await _assertSyncLeaseInTransaction(leaseKey);
         if (resolvedMlsOutboxKey != null) {
           await (delete(localMlsOutboxEntries)
@@ -1097,6 +1440,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           throw StateError('stale or incomplete MLS state transition');
         }
         await failureInjector?.call(MlsCommitStage.afterValidation);
+        checkCanCommit?.call();
         await into(localCryptoStates).insertOnConflictUpdate(
           LocalCryptoStatesCompanion.insert(
             singleton: const Value(1),
@@ -1147,7 +1491,16 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           );
         }
         await failureInjector?.call(MlsCommitStage.afterEnvelopes);
+        final previousNoticeKeys = <String>{};
+        for (final ref in noticeReferences) {
+          final previous = await (select(localMessages)
+                ..where((t) => t.key.equals(ref.messageKey)))
+              .getSingleOrNull();
+          if (previous != null) previousNoticeKeys.add(ref.messageKey);
+        }
         await _applyMessageEffects(messageEffects);
+        await captureLocalNoticeReferences(
+            noticeReferences, previousNoticeKeys, cursor, nowMs);
         await failureInjector?.call(MlsCommitStage.afterMessageEffects);
         await into(localMlsTransitions).insert(
           LocalMlsTransitionsCompanion.insert(
@@ -1159,10 +1512,12 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         );
         await failureInjector?.call(MlsCommitStage.afterMarker);
         await failureInjector?.call(MlsCommitStage.beforeCursor);
+        checkCanCommit?.call();
         await into(localSyncStates).insertOnConflictUpdate(
           LocalSyncStatesCompanion.insert(
               singleton: const Value(1), cursor: Value(cursor)),
         );
+        checkCanCommit?.call();
       });
 
   Future<void> commitSyncEvent({
@@ -1172,15 +1527,45 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required int cursor,
     ({String id, String conversationId, String payloadJson})? envelope,
     String? ownMessageKey,
+    bool allowOwnPinEffect = false,
     String? leaseKey,
+    void Function()? checkCanCommit,
   }) =>
       transaction(() async {
+        checkCanCommit?.call();
         await _assertSyncLeaseInTransaction(leaseKey);
         final processed = await (select(localMlsTransitions)
               ..where((table) => table.messageId.equals(eventKey)))
             .getSingleOrNull();
         if (processed != null) return;
         if (ownMessageKey != null && envelope != null) {
+          final echo = jsonDecode(envelope.payloadJson) as Map;
+          final echoMetadata = echo['crypto_metadata'];
+          final channel =
+              echoMetadata is Map ? echoMetadata['channel_id'] : null;
+          final command = await (select(localPendingPins)
+                ..where((t) => t.actionKey.equals(ownMessageKey)))
+              .getSingleOrNull();
+          if (command != null &&
+              command.conversationId == conversationId &&
+              command.channelId == channel) {
+            final serverTime = DateTime.parse(echo['created_at'] as String)
+                .millisecondsSinceEpoch;
+            if (allowOwnPinEffect)
+              await _applyMessageEffects([
+                PinMessageEffect(
+                    conversationId: command.conversationId,
+                    channelId: command.channelId,
+                    targetKey: command.targetKey,
+                    accountId: command.accountId,
+                    at: serverTime,
+                    pinned: command.pinned,
+                    durationSeconds: command.durationSeconds)
+              ]);
+            await (delete(localPendingPins)
+                  ..where((t) => t.actionKey.equals(ownMessageKey)))
+                .go();
+          }
           // The server echoed a message this device sent: link the local
           // record to its server ID and mark it delivered.
           // The server stamps the expiry when it accepts the message, so the
@@ -1189,13 +1574,22 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           await (update(localMessages)
                 ..where((table) =>
                     table.key.equals(ownMessageKey) &
+                    table.conversationId.equals(conversationId) &
+                    (channel == null
+                        ? table.channelId.isNull()
+                        : table.channelId.equals(channel as String)) &
                     table.serverMessageId.isNull() &
                     table.expiresAt.isNull()))
               .write(LocalMessagesCompanion(
             expiresAt: Value(envelopeExpiryMillis(envelope.payloadJson)),
           ));
           await (update(localMessages)
-                ..where((table) => table.key.equals(ownMessageKey)))
+                ..where((table) =>
+                    table.key.equals(ownMessageKey) &
+                    table.conversationId.equals(conversationId) &
+                    (channel == null
+                        ? table.channelId.isNull()
+                        : table.channelId.equals(channel as String))))
               .write(LocalMessagesCompanion(
             serverMessageId: Value(envelope.id),
             state: const Value(LocalMessageState.sent),
@@ -1208,6 +1602,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             cursor <= expectedCursor) {
           throw StateError('stale sync event commit');
         }
+        checkCanCommit?.call();
         final envelopeExpiry = envelope == null
             ? null
             : envelopeExpiryMillis(envelope.payloadJson);
@@ -1256,6 +1651,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           LocalSyncStatesCompanion.insert(
               singleton: const Value(1), cursor: Value(cursor)),
         );
+        checkCanCommit?.call();
       });
 
   Future<bool> hasProcessedMlsMessage(String messageId) async {
@@ -1549,6 +1945,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   Future<void> clearCachedState(
           {bool preserveOutbox = false, bool keepDrafts = false}) =>
       transaction(() async {
+        await clearNoticeOutbox();
         await delete(localCiphertextEnvelopes).go();
         await delete(localConversations).go();
         // Drafts stay only when a session expires ([keepDrafts]): the person
@@ -1566,6 +1963,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
       });
 
   Future<void> clearAll() => transaction(() async {
+        await clearNoticeOutbox();
         await delete(localCiphertextEnvelopes).go();
         await delete(localConversations).go();
         await delete(localOutboxEntries).go();
@@ -1575,9 +1973,14 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localMlsTransitions).go();
         await delete(localMlsOutboxEntries).go();
         await delete(localPeerVerifications).go();
+        await _clearHistoryNamespace();
         await delete(localMessages).go();
         await delete(localMessageReactions).go();
         await delete(localDrafts).go();
+        await delete(localPins).go();
+        await delete(localPendingPins).go();
+        await delete(localStarred).go();
+        await delete(localConversationPrefs).go();
         await delete(localConversationMutes).go();
         await into(localSyncStates).insertOnConflictUpdate(
           LocalSyncStatesCompanion.insert(singleton: const Value(1)),
@@ -1619,6 +2022,13 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
       transaction(() => _applyMessageEffects(effects));
 
   Future<void> _applyMessageEffects(List<MessageEffect> effects) async {
+    HistoryNamespace? historyNamespace;
+    Future<HistoryNamespace> history() async =>
+        historyNamespace ??= await readHistoryNamespace();
+    final sessionJson = await readSessionJson();
+    final accountId = sessionJson == null
+        ? null
+        : (jsonDecode(sessionJson) as Map)['account_id'] as String?;
     for (final effect in effects) {
       switch (effect) {
         case InsertMessageEffect():
@@ -1628,54 +2038,114 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             // Already expired when it arrived (W2): never stored.
             continue;
           }
+          final collisions = await (select(localMessages)
+                ..where((t) =>
+                    t.key.equals(effect.key) |
+                    (effect.serverMessageId == null
+                        ? const Constant(false)
+                        : t.serverMessageId.equals(effect.serverMessageId!))))
+              .get();
+          final deferred = await customSelect(
+              'SELECT 1 FROM local_history_deferred_effects WHERE target_key = ? LIMIT 1',
+              variables: [Variable.withString(effect.key)]).getSingleOrNull();
+          var message = historyMessageFromInsert(effect);
+          if (collisions.any((m) => m.state == LocalMessageState.restored) ||
+              deferred != null) {
+            final ns = await history();
+            final merged =
+                reconcileDirectHistory(ns, collisions, message, accountId);
+            for (final key in merged.removed) {
+              await _removeMessageExtras(key);
+              await (delete(localMessageReactions)
+                    ..where((t) => t.targetKey.equals(key)))
+                  .go();
+              await (delete(localMessages)..where((t) => t.key.equals(key)))
+                  .go();
+            }
+            if (merged.message == null) continue;
+            for (final old in collisions) {
+              await (delete(localMessages)..where((t) => t.key.equals(old.key)))
+                  .go();
+            }
+            message = merged.message!;
+          }
           await into(localMessages).insert(
-            LocalMessagesCompanion.insert(
-              key: effect.key,
-              serverMessageId: Value(effect.serverMessageId),
-              conversationId: effect.conversationId,
-              senderAccountId: effect.senderAccountId,
-              senderDeviceId: effect.senderDeviceId,
-              kind: effect.kind,
-              body: Value(effect.body),
-              replyTo: Value(effect.replyTo),
-              createdAt: effect.createdAt,
-              state: effect.state,
-              expiresAt: Value(effect.expiresAt),
-            ),
-            mode: InsertMode.insertOrIgnore,
-          );
+              message.toCompanion(false).copyWith(searchId: const Value(null)),
+              mode: InsertMode.insertOrIgnore);
         case EditMessageEffect():
-          await (update(localMessages)
+          final target = await (select(localMessages)
+                ..where((t) => t.key.equals(effect.targetKey)))
+              .getSingleOrNull();
+          if (target == null) {
+            if (accountId != null && effect.conversationId != null)
+              deferHistoryEffect(await history(), effect, accountId);
+            continue;
+          }
+          final changed = await (update(localMessages)
                 ..where((table) =>
                     table.key.equals(effect.targetKey) &
                     table.senderAccountId.equals(effect.editorAccountId) &
+                    (effect.conversationId == null
+                        ? const Constant(true)
+                        : table.conversationId.equals(effect.conversationId!)) &
+                    (effect.channelId == null
+                        ? table.channelId.isNull()
+                        : table.channelId.equals(effect.channelId!)) &
+                    (table.expiresAt.isNull() |
+                        table.expiresAt.isBiggerThanValue(
+                            DateTime.now().millisecondsSinceEpoch)) &
                     table.kind.equals(LocalMessageKind.text) &
+                    table.hiddenAt.isNull() &
                     table.deletedAt.isNull()))
               .write(LocalMessagesCompanion(
             body: Value(effect.body),
             editedAt: Value(effect.at),
+            formatJson: Value(effect.formatJson),
           ));
+          if (changed > 0 && target.state == LocalMessageState.restored)
+            markLiveHistoryEffect(await history(), effect, effect.targetKey);
         case DeleteMessageEffect():
           final existing = await (select(localMessages)
                 ..where((table) => table.key.equals(effect.targetKey)))
               .getSingleOrNull();
+          if (existing == null) {
+            if (accountId != null && effect.conversationId != null)
+              deferHistoryEffect(await history(), effect, accountId);
+            continue;
+          }
           final deleted = await (update(localMessages)
                 ..where((table) =>
                     table.key.equals(effect.targetKey) &
                     table.senderAccountId.equals(effect.deleterAccountId) &
+                    (effect.conversationId == null
+                        ? const Constant(true)
+                        : table.conversationId.equals(effect.conversationId!)) &
+                    (effect.channelId == null
+                        ? table.channelId.isNull()
+                        : table.channelId.equals(effect.channelId!)) &
+                    table.hiddenAt.isNull() &
+                    table.deletedAt.isNull() &
+                    (table.expiresAt.isNull() |
+                        table.expiresAt.isBiggerThanValue(
+                            DateTime.now().millisecondsSinceEpoch)) &
                     // The author may also delete an unsupported row, which
                     // clears its raw JSON (S3).
                     table.kind.isIn(const <String>[
                       LocalMessageKind.text,
+                      LocalMessageKind.attachment,
                       LocalMessageKind.unsupported,
                     ])))
               .write(LocalMessagesCompanion(
-            body: Value(existing?.kind == LocalMessageKind.unsupported
-                ? bodyAfterUnsupportedDelete(existing?.body)
+            body: Value(existing.kind == LocalMessageKind.unsupported
+                ? bodyAfterUnsupportedDelete(existing.body)
                 : null),
             deletedAt: Value(effect.at),
+            formatJson: const Value(null),
           ));
           if (deleted > 0) {
+            if (existing.state == LocalMessageState.restored)
+              markLiveHistoryEffect(await history(), effect, effect.targetKey);
+            await _removeMessageExtras(effect.targetKey);
             await (delete(localMessageReactions)
                   ..where((table) => table.targetKey.equals(effect.targetKey)))
                 .go();
@@ -1685,9 +2155,19 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           final target = await (select(localMessages)
                 ..where((table) => table.key.equals(effect.targetKey)))
               .getSingleOrNull();
+          if (target == null ||
+              target.hiddenAt != null ||
+              target.deletedAt != null ||
+              target.channelId != effect.channelId ||
+              (target.expiresAt != null &&
+                  target.expiresAt! <= DateTime.now().millisecondsSinceEpoch) ||
+              (effect.conversationId != null &&
+                  target.conversationId != effect.conversationId)) continue;
           if (effect.reaction.isNotEmpty &&
-              (target == null ||
-                  target.deletedAt != null ||
+              (target.deletedAt != null ||
+                  target.hiddenAt != null ||
+                  (effect.conversationId != null &&
+                      target.conversationId != effect.conversationId) ||
                   (target.kind != LocalMessageKind.text &&
                       target.kind != LocalMessageKind.attachment))) {
             continue;
@@ -1708,9 +2188,151 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               ),
             );
           }
+        case PinMessageEffect():
+          if (effect.pendingActionKey != null) {
+            await into(localPendingPins).insertOnConflictUpdate(
+                LocalPendingPinsCompanion.insert(
+                    actionKey: effect.pendingActionKey!,
+                    conversationId: effect.conversationId,
+                    channelId: Value(effect.channelId),
+                    targetKey: effect.targetKey,
+                    accountId: effect.accountId,
+                    pinned: effect.pinned,
+                    durationSeconds: Value(effect.durationSeconds)));
+            continue;
+          }
+          final target = await (select(localMessages)
+                ..where((t) => t.key.equals(effect.targetKey)))
+              .getSingleOrNull();
+          if (target == null ||
+              target.conversationId != effect.conversationId ||
+              target.channelId != effect.channelId ||
+              target.hiddenAt != null ||
+              target.deletedAt != null ||
+              (target.expiresAt != null &&
+                  target.expiresAt! <= DateTime.now().millisecondsSinceEpoch) ||
+              !const [LocalMessageKind.text, LocalMessageKind.attachment]
+                  .contains(target.kind)) continue;
+          await (delete(localPins)
+                ..where((t) =>
+                    t.targetKey.equals(effect.targetKey) &
+                    t.conversationId.equals(effect.conversationId)))
+              .go();
+          if (!effect.pinned) continue;
+          var expiry = effect.at + effect.durationSeconds! * 1000;
+          if (target.expiresAt != null && expiry > target.expiresAt!)
+            expiry = target.expiresAt!;
+          final now = DateTime.now().toUtc().millisecondsSinceEpoch;
+          if (expiry <= now) continue;
+          final orderExpression = localPins.appliedOrder.max();
+          final order = await (selectOnly(localPins)
+                ..addColumns([orderExpression]))
+              .map((r) => r.read(orderExpression))
+              .getSingle();
+          await into(localPins).insert(LocalPinsCompanion.insert(
+              conversationId: effect.conversationId,
+              channelId: Value(effect.channelId),
+              targetKey: effect.targetKey,
+              pinnedByAccountId: effect.accountId,
+              pinnedAt: effect.at,
+              appliedOrder: Value((order ?? 0) + 1),
+              expiresAt: expiry));
+          final scoped = await (select(localPins)
+                ..where((t) =>
+                    t.conversationId.equals(effect.conversationId) &
+                    (effect.channelId == null
+                        ? t.channelId.isNull()
+                        : t.channelId.equals(effect.channelId!)))
+                ..orderBy([
+                  (t) => OrderingTerm.desc(t.pinnedAt),
+                  (t) => OrderingTerm.desc(t.appliedOrder)
+                ]))
+              .get();
+          for (final old in scoped.skip(3)) {
+            await (delete(localPins)
+                  ..where((t) =>
+                      t.conversationId.equals(old.conversationId) &
+                      t.targetKey.equals(old.targetKey)))
+                .go();
+          }
       }
     }
+    if (historyNamespace != null)
+      await writeHistoryNamespace(historyNamespace!);
   }
+
+  Future<void> _removeMessageExtras(String key) async {
+    await (delete(localPendingPins)..where((t) => t.targetKey.equals(key)))
+        .go();
+    await (delete(localPins)..where((t) => t.targetKey.equals(key))).go();
+    await (delete(localStarred)..where((t) => t.messageKey.equals(key))).go();
+  }
+
+  Future<void> hideMessage(String conversationId, String key, int at) =>
+      transaction(() async {
+        final changed = await (update(localMessages)
+              ..where((t) =>
+                  t.key.equals(key) & t.conversationId.equals(conversationId)))
+            .write(LocalMessagesCompanion(
+                hiddenAt: Value(at),
+                body: const Value(null),
+                formatJson: const Value(null),
+                replyTo: const Value(null)));
+        if (changed == 0) return;
+        await (delete(localMessageReactions)
+              ..where((t) => t.targetKey.equals(key)))
+            .go();
+        await _removeMessageExtras(key);
+      });
+
+  Future<List<LocalPin>> readPins(String conversationId) async {
+    await (delete(localPins)
+          ..where((t) => t.expiresAt.isSmallerOrEqualValue(
+              DateTime.now().toUtc().millisecondsSinceEpoch)))
+        .go();
+    return (select(localPins)
+          ..where((t) => t.conversationId.equals(conversationId))
+          ..orderBy([
+            (t) => OrderingTerm.desc(t.pinnedAt),
+            (t) => OrderingTerm.desc(t.appliedOrder)
+          ]))
+        .get();
+  }
+
+  Future<Set<String>> readStarred() async =>
+      {for (final row in await select(localStarred).get()) row.messageKey};
+  Future<void> setStarred(String key, bool value, int at) =>
+      transaction(() async {
+        final target = await (select(localMessages)
+              ..where((t) => t.key.equals(key)))
+            .getSingleOrNull();
+        if (target == null ||
+            target.hiddenAt != null ||
+            target.deletedAt != null) return;
+        if (value) {
+          await into(localStarred).insertOnConflictUpdate(
+              LocalStarredCompanion.insert(messageKey: key, starredAt: at));
+        } else {
+          await (delete(localStarred)..where((t) => t.messageKey.equals(key)))
+              .go();
+        }
+      });
+  Future<List<LocalConversationPref>> readConversationPrefs() =>
+      select(localConversationPrefs).get();
+  Future<void> saveConversationPref(LocalConversationPref pref) =>
+      transaction(() async {
+        if (pref.pinnedAt != null) {
+          final pinned = await (select(localConversationPrefs)
+                ..where((t) =>
+                    t.pinnedAt.isNotNull() &
+                    t.conversationId.isNotValue(pref.conversationId)))
+              .get();
+          if (pinned.length >= 5)
+            throw StateError('At most five chats can be pinned on this device');
+        }
+        await into(localConversationPrefs)
+            .insertOnConflictUpdate(pref.toCompanion(false));
+      });
 
   /// Deletes every message, reaction and cached envelope whose expiry has
   /// passed, in one transaction (W2). Returns the conversations that lost a
@@ -1765,6 +2387,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         .get();
     final keys = <String>[];
     for (final row in expiredMessages) {
+      await _removeMessageExtras(row.key);
       conversations.add(row.conversationId);
       keys.add(row.key);
     }
@@ -2013,6 +2636,81 @@ END''');
       });
 }
 
+/// Background work can use an installed current database, never create or
+/// migrate one. This exception deliberately carries no file or key material.
+class ExistingDatabaseUnavailable implements Exception {
+  const ExistingDatabaseUnavailable();
+  @override
+  String toString() => 'existing encrypted state unavailable';
+}
+
+class _ExistingDatabaseExecutor extends LazyDatabase {
+  _ExistingDatabaseExecutor(super.opener, this.didOpen);
+  final bool Function() didOpen;
+
+  @override
+  Future<void> close() async {
+    try {
+      await super.close();
+    } catch (_) {
+      // LazyDatabase.close rethrows a failed opener. Our opener has already
+      // closed its raw handle (or failed before allocating it); propagating
+      // that old error again strands Drift's isolate shutdown handshake.
+      if (didOpen()) rethrow;
+    }
+  }
+}
+
+void _setupEncryptedDatabase(CommonDatabase rawDatabase, String keyHex,
+    {bool existingOnly = false}) {
+  rawDatabase.execute("PRAGMA cipher = 'chacha20'");
+  rawDatabase.execute("PRAGMA hexkey = '$keyHex'");
+  rawDatabase.execute('PRAGMA busy_timeout = 5000');
+  requireSqliteFeatures(rawDatabase);
+  rawDatabase.select('SELECT count(*) FROM sqlite_master');
+  if (existingOnly &&
+      rawDatabase.select('PRAGMA user_version').first.values.first !=
+          EncryptedLocalDatabase.currentSchemaVersion) {
+    throw const ExistingDatabaseUnavailable();
+  }
+  rawDatabase.execute('PRAGMA secure_delete = ON');
+  rawDatabase.execute('PRAGMA journal_mode = WAL');
+}
+
+/// Use SQLite READWRITE without CREATE in the owning isolate. Drift's regular
+/// createInBackground opens with CREATE and creates missing parent directories,
+/// so a preflight exists() check alone cannot enforce this boundary.
+EncryptedLocalDatabase openExistingEncryptedLocalDatabase(
+    File file, String keyHex) {
+  if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(keyHex)) {
+    throw const ExistingDatabaseUnavailable();
+  }
+  final path = file.absolute.path;
+  return EncryptedLocalDatabase(
+    DatabaseConnection.delayed(() async {
+      final isolate = await DriftIsolate.spawn(() {
+        // Complete Drift's isolate handshake before opening. A throw from
+        // the spawn opener itself can otherwise strand the connecting client.
+        var didOpen = false;
+        return DatabaseConnection(_ExistingDatabaseExecutor(() async {
+          final raw = sqlite3.open(path, mode: OpenMode.readWrite);
+          try {
+            _setupEncryptedDatabase(raw, keyHex, existingOnly: true);
+            final executor = NativeDatabase.opened(raw);
+            didOpen = true;
+            return executor;
+          } catch (_) {
+            raw.close();
+            rethrow;
+          }
+        }, () => didOpen));
+      });
+      return isolate.connect(singleClientMode: true);
+    }()),
+    requireExistingSchema: true,
+  );
+}
+
 EncryptedLocalDatabase openEncryptedLocalDatabase(File file, String keyHex) {
   if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(keyHex)) {
     throw StateError('invalid encrypted database key');
@@ -2021,16 +2719,7 @@ EncryptedLocalDatabase openEncryptedLocalDatabase(File file, String keyHex) {
     NativeDatabase.createInBackground(
       file,
       setup: (rawDatabase) {
-        rawDatabase.execute("PRAGMA cipher = 'chacha20'");
-        rawDatabase.execute("PRAGMA hexkey = '$keyHex'");
-        rawDatabase.execute('PRAGMA busy_timeout = 5000');
-        // Before any migration runs, not only once Drift has opened.
-        rawDatabase.execute('PRAGMA secure_delete = ON');
-        requireSqliteFeatures(rawDatabase);
-        // PRAGMA key accepts any input. The first schema read proves that the
-        // key can authenticate the encrypted database before Drift uses it.
-        rawDatabase.select('SELECT count(*) FROM sqlite_master');
-        rawDatabase.execute('PRAGMA journal_mode = WAL');
+        _setupEncryptedDatabase(rawDatabase, keyHex);
       },
     ),
   );

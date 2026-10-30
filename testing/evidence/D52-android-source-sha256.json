@@ -1,0 +1,12 @@
+{
+  "mobile/android/app/src/main/AndroidManifest.xml": "7b28dd2436a181c82f3176ea549b55f541e0e8d112f00c3167f65692fbcd8f00",
+  "mobile/android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java": "30b9a32d5345e92b9844d9687ee2581b2c28aad2ce745d384ab20b7c95f06acd",
+  "mobile/android/app/src/main/java/org/veritra/private_messenger/WakeRules.java": "d4a05ac0e57bb48352d16aa4bf56b1a822973e3cf329259af43bad0feb76ed00",
+  "mobile/android/app/src/main/kotlin/org/veritra/private_messenger/MainActivity.kt": "d81656df9fe75ad4addb5965945bfe532eb6e99dd03d0a12d702351e578fb95a",
+  "mobile/android/app/src/main/kotlin/org/veritra/private_messenger/SharedFlutterEngine.kt": "f0098cf8837e6c600272c493229c280d71f63bdd1bed85bd47749f66209f4da6",
+  "mobile/android/app/src/main/kotlin/org/veritra/private_messenger/VeritraFirebaseMessagingService.kt": "3c276ed5e8bc0174c6fd59c239000f1ac8c9555a5ea858a9ea88505661e7a0d7",
+  "mobile/android/app/src/main/kotlin/org/veritra/private_messenger/VeritraPushService.kt": "6ec0111cf213c07b1a26e35477cfe072873bb307b880f82dcb04dd3ba65b5644",
+  "mobile/android/app/src/main/kotlin/org/veritra/private_messenger/VeritraWakeJobService.kt": "a0baaeee2b2a9b0a0c2272688c40d141b01178b940627e4ba4c9a37d27a8cbc1",
+  "mobile/android/app/src/main/kotlin/org/veritra/private_messenger/WakeMarkerStore.kt": "32ba67b39d0bcfe8b03d7c4a904c92a1ddd793e704c4e83fabee10afe16982f6",
+  "mobile/android/app/src/main/kotlin/org/veritra/private_messenger/WakeWorkerCoordinator.kt": "ca2d74e325f322b26b7f0f1a9ba3f541dc5afb55b15b7877c42c2e97e2026c27"
+}

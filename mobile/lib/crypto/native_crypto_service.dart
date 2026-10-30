@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import '../core/models.dart';
+import '../core/server_origin.dart';
 import '../storage/encrypted_database.dart'
     show
         DeleteMessageEffect,
@@ -12,13 +13,19 @@ import '../storage/encrypted_database.dart'
         LocalMessageState,
         MessageEffect,
         ReactionEffect;
+import '../storage/encrypted_database.dart' show PinMessageEffect;
 import '../storage/local_store.dart';
 import 'app_payload.dart';
+import 'message_format.dart';
 import 'crypto_service.dart';
 import 'mls_commit_bundle.dart';
 import 'native_crypto_bindings.dart';
 
-class NativeCryptoService implements MlsConversationCryptoService {
+class NativeCryptoService
+    implements
+        BoundedMlsConversationCryptoService,
+        ConversationAuthorityConsumer,
+        NoticeCaptureConsumer {
   NativeCryptoService({
     required this.bindings,
     required this.localStore,
@@ -26,12 +33,45 @@ class NativeCryptoService implements MlsConversationCryptoService {
 
   final NativeCryptoBindings bindings;
   final LocalStore localStore;
+  @override
+  set conversationAuthority(ConversationAuthority value) => _authority = value;
+  ConversationAuthority? _authority;
   NativeCryptoDevice? _device;
 
   /// The rollback counter of the state [_device] holds in memory.
   int? _deviceCounter;
   String? _accountId;
   String? _deviceId;
+  String? _noticeOrigin;
+  bool _noticeCaptureEnabled = false;
+  int _noticeCaptureGeneration = 0;
+
+  @override
+  bool get noticeCaptureEnabled => _noticeCaptureEnabled;
+  @override
+  set noticeCaptureEnabled(bool enabled) {
+    if (enabled &&
+        (_noticeOrigin == null ||
+            _accountId == null ||
+            _deviceId == null ||
+            _pendingEnrollment)) {
+      throw StateError('notice capture requires an active existing identity');
+    }
+    if (_noticeCaptureEnabled != enabled) {
+      _noticeCaptureEnabled = enabled;
+      _noticeCaptureGeneration++;
+    }
+  }
+
+  void _adoptNoticeOrigin(String origin, String accountId, String deviceId) {
+    if (_noticeOrigin != origin ||
+        _accountId != accountId ||
+        _deviceId != deviceId) {
+      noticeCaptureEnabled = false;
+    }
+    _noticeOrigin = origin;
+  }
+
   bool _pendingEnrollment = false;
   Future<void> _operationTail = Future<void>.value();
 
@@ -40,6 +80,8 @@ class NativeCryptoService implements MlsConversationCryptoService {
     EnrollmentReservation reservation,
   ) =>
       _serial(() async {
+        noticeCaptureEnabled = false;
+        _noticeOrigin = null;
         _device?.close();
         final device = bindings.createDevice(
           reservation.accountId,
@@ -54,6 +96,7 @@ class NativeCryptoService implements MlsConversationCryptoService {
 
   @override
   Future<void> activateSession(Session session) => _serial(() async {
+        final origin = canonicalizeServerOrigin(session.baseUrl);
         final accountId = session.accountId;
         final deviceId = session.deviceId;
         if (accountId == null ||
@@ -93,9 +136,56 @@ class NativeCryptoService implements MlsConversationCryptoService {
           _device = restored.device;
           _deviceCounter = restored.counter;
         }
+        _adoptNoticeOrigin(origin, accountId, deviceId);
         _accountId = accountId;
         _deviceId = deviceId;
         _pendingEnrollment = false;
+      });
+
+  @override
+  Future<void> activateExistingSessionBounded(Session session,
+          {required void Function() checkCanCommit}) =>
+      _serial(() async {
+        checkCanCommit();
+        final origin = canonicalizeServerOrigin(session.baseUrl);
+        final accountId = session.accountId;
+        final deviceId = session.deviceId;
+        if (_pendingEnrollment ||
+            accountId == null ||
+            accountId.isEmpty ||
+            deviceId == null ||
+            deviceId.isEmpty) {
+          throw StateError('existing authenticated identity is unavailable');
+        }
+        final stored = await localStore.loadCryptoState();
+        checkCanCommit();
+        if (stored == null)
+          throw StateError('protected MLS state is unavailable');
+        if (_device != null &&
+            _accountId == accountId &&
+            _deviceId == deviceId &&
+            _deviceCounter == stored.counter) {
+          _adoptNoticeOrigin(origin, accountId, deviceId);
+          return;
+        }
+        final restored = bindings.restoreDevice(accountId, deviceId,
+            stored.stateKey, stored.counter, stored.sealedState);
+        var adopted = false;
+        try {
+          checkCanCommit();
+          if (restored.counter != stored.counter) {
+            throw StateError('MLS rollback counter mismatch');
+          }
+          _device?.close();
+          _device = restored.device;
+          _deviceCounter = restored.counter;
+          _adoptNoticeOrigin(origin, accountId, deviceId);
+          _accountId = accountId;
+          _deviceId = deviceId;
+          adopted = true;
+        } finally {
+          if (!adopted) restored.device.close();
+        }
       });
 
   @override
@@ -285,17 +375,29 @@ class NativeCryptoService implements MlsConversationCryptoService {
       );
 
   @override
-  Future<void> processMlsMessage(MlsMessage message) => _serial(() async {
+  Future<void> processMlsMessage(MlsMessage message) =>
+      _processMlsMessage(message);
+
+  @override
+  Future<void> processMlsMessageBounded(MlsMessage message,
+          {required void Function() checkCanCommit}) =>
+      _processMlsMessage(message, checkCanCommit: checkCanCommit);
+
+  Future<void> _processMlsMessage(MlsMessage message,
+          {void Function()? checkCanCommit}) =>
+      _serial(() async {
+        checkCanCommit?.call();
         final marker = 'mls:${message.syncEventId}:${message.id}';
         if (await localStore.hasProcessedMlsMessage(marker)) {
           return;
         }
-        final previous = await _requiredState();
+        final previous = await _requiredState(checkCanCommit: checkCanCommit);
         final previousCursor = await localStore.loadSyncCursor();
         if (message.syncEventId <= previousCursor) {
           throw StateError('unrecorded MLS message is behind the sync cursor');
         }
         try {
+          checkCanCommit?.call();
           if (message.senderDeviceId == _deviceId) {
             // This device's own commit is on the server, so it was
             // accepted: merge it now if the worker has not yet (card I51).
@@ -307,6 +409,7 @@ class NativeCryptoService implements MlsConversationCryptoService {
                     .firstOrNull
                 : null;
             if (bundle != null) {
+              checkCanCommit?.call();
               final device = _requiredDevice();
               final expected = MlsCommitBundle.decode(bundle.payload).epoch + 1;
               if (device.groupEpoch(message.conversationId).pending) {
@@ -317,6 +420,7 @@ class NativeCryptoService implements MlsConversationCryptoService {
                 throw StateError('own MLS commit does not match the group');
               }
               await localStore.commitMlsTransition(MlsStateTransition(
+                checkCanCommit: checkCanCommit,
                 messageId: marker,
                 conversationId: message.conversationId,
                 expectedCounter: previous.counter,
@@ -328,6 +432,7 @@ class NativeCryptoService implements MlsConversationCryptoService {
               return;
             }
             await localStore.commitSyncEvent(SyncEventCommit(
+              checkCanCommit: checkCanCommit,
               eventKey: marker,
               conversationId: message.conversationId,
               expectedCursor: previousCursor,
@@ -357,6 +462,7 @@ class NativeCryptoService implements MlsConversationCryptoService {
           }
           final next = _sealNext(previous);
           await localStore.commitMlsTransition(MlsStateTransition(
+            checkCanCommit: checkCanCommit,
             messageId: marker,
             conversationId: message.conversationId,
             expectedCounter: previous.counter,
@@ -459,7 +565,19 @@ class NativeCryptoService implements MlsConversationCryptoService {
   @override
   Future<Map<String, Object?>?> processCallSignal(
           CallSession call, int syncEventId) =>
+      _processCallSignal(call, syncEventId);
+
+  @override
+  Future<Map<String, Object?>?> processCallSignalBounded(
+          CallSession call, int syncEventId,
+          {required void Function() checkCanCommit}) =>
+      _processCallSignal(call, syncEventId, checkCanCommit: checkCanCommit);
+
+  Future<Map<String, Object?>?> _processCallSignal(
+          CallSession call, int syncEventId,
+          {void Function()? checkCanCommit}) =>
       _serial(() async {
+        checkCanCommit?.call();
         final metadata = call.metadata;
         final senderDeviceId = metadata['sender_device_id'];
         final actionId = metadata['action_id'];
@@ -477,12 +595,14 @@ class NativeCryptoService implements MlsConversationCryptoService {
             call.conversationId, senderDeviceId, actionId);
         final marker = 'call:$syncEventId:${call.id}:$actionId';
         if (await localStore.hasProcessedMlsMessage(marker)) return null;
-        final previous = await _requiredState();
+        final previous = await _requiredState(checkCanCommit: checkCanCommit);
         final cursor = await localStore.loadSyncCursor();
         if (syncEventId <= cursor)
           throw StateError('call signal is behind the sync cursor');
         if (senderDeviceId == _deviceId) {
+          checkCanCommit?.call();
           await localStore.commitSyncEvent(SyncEventCommit(
+            checkCanCommit: checkCanCommit,
             eventKey: marker,
             conversationId: call.conversationId,
             expectedCursor: cursor,
@@ -496,6 +616,7 @@ class NativeCryptoService implements MlsConversationCryptoService {
             ? call.invitedAccountId
             : call.createdBy;
         try {
+          checkCanCommit?.call();
           List<int>? plaintext;
           try {
             plaintext = _requiredDevice().decrypt(
@@ -520,6 +641,7 @@ class NativeCryptoService implements MlsConversationCryptoService {
                   senderDeviceId: senderDeviceId,
                   actionId: actionId);
           await localStore.commitMlsTransition(MlsStateTransition(
+              checkCanCommit: checkCanCommit,
               messageId: marker,
               conversationId: call.conversationId,
               expectedCounter: previous.counter,
@@ -541,7 +663,8 @@ class NativeCryptoService implements MlsConversationCryptoService {
   @override
   Future<MessageEnvelope> encrypt(String conversationId, String plaintext) =>
       encryptPayload(conversationId, AppPayloadType.text,
-          <String, Object?>{'text': plaintext});
+          <String, Object?>{'text': plaintext},
+          draftText: plaintext);
 
   /// Encrypts one text, reply, edit, delete or reaction payload (D22) and
   /// records this device's own copy in local history with the MLS state.
@@ -554,6 +677,7 @@ class NativeCryptoService implements MlsConversationCryptoService {
     AppPayloadType type,
     Map<String, Object?> body, {
     List<String> attachmentRefs = const <String>[],
+    String? draftText,
   }) =>
       _serial(() async {
         if (!_messageTypes.contains(type)) {
@@ -573,6 +697,11 @@ class NativeCryptoService implements MlsConversationCryptoService {
             senderDeviceId: deviceId,
             actionId: idempotencyKey,
             body: body,
+            hidden: type == AppPayloadType.pin,
+            channelId: _authority?.conversationKind(conversationId) ==
+                    'community_shared'
+                ? _authority?.conversationChannel(conversationId)
+                : null,
           );
           final device = _requiredDevice();
           final epoch = device.groupEpoch(conversationId).epoch;
@@ -586,7 +715,10 @@ class NativeCryptoService implements MlsConversationCryptoService {
               'protocol_version': 1,
               'group_id': conversationId,
               'content_type': 'application',
-              'payload_version': appPayloadVersion,
+              'payload_version': 1,
+              if (_authority?.conversationKind(conversationId) ==
+                  'community_shared')
+                'channel_id': _authority?.conversationChannel(conversationId),
               // The epoch is already readable in the MLS message header. The
               // server uses it to withhold a message from a device that
               // joined after that epoch and cannot decrypt it (card I51).
@@ -600,18 +732,22 @@ class NativeCryptoService implements MlsConversationCryptoService {
               expectedCursor: cursor,
               state: _sealNext(previous),
               envelope: envelope,
-              draftText:
-                  type == AppPayloadType.text || type == AppPayloadType.reply
-                      ? body['text'] as String
-                      : null,
+              draftText: draftText,
               messageEffects: messageEffectsFor(
                 DecryptedAppPayload(
-                    type: type, actionId: idempotencyKey, body: body),
+                    type: type,
+                    actionId: idempotencyKey,
+                    body: body,
+                    channelId: _authority?.conversationKind(conversationId) ==
+                            'community_shared'
+                        ? _authority?.conversationChannel(conversationId)
+                        : null),
                 conversationId: conversationId,
                 senderAccountId: _accountId!,
                 senderDeviceId: deviceId,
                 createdAt: DateTime.now().toUtc().millisecondsSinceEpoch,
                 state: LocalMessageState.pending,
+                authority: _authority,
               ),
             ),
           );
@@ -631,7 +767,7 @@ class NativeCryptoService implements MlsConversationCryptoService {
 
   InsertMessageEffect _placeholderRow(
           ReceivedMessageEnvelope envelope, String key, String kind,
-          {String? body}) =>
+          {String? body, bool senderHidden = false, String? channelId}) =>
       InsertMessageEffect(
         key: key,
         serverMessageId: envelope.id,
@@ -640,6 +776,8 @@ class NativeCryptoService implements MlsConversationCryptoService {
         senderDeviceId: envelope.senderDeviceId,
         kind: kind,
         body: body,
+        senderHidden: senderHidden,
+        channelId: channelId,
         createdAt: envelope.createdAt.millisecondsSinceEpoch,
         state: LocalMessageState.received,
         expiresAt: envelope.expiresAt?.toUtc().millisecondsSinceEpoch,
@@ -650,121 +788,80 @@ class NativeCryptoService implements MlsConversationCryptoService {
     ReceivedMessageEnvelope envelope,
     int syncEventId,
   ) =>
-      _serial(() async {
-        if (envelope.cryptoProtocol != 'mls10-openmls-v1') {
-          throw StateError('unsupported message crypto protocol');
-        }
-        // The server's envelope fields are checked before the ratchet can
-        // step: a malformed event stops sync with nothing consumed (P2).
-        AppPayloadCodec.validateContext(envelope.conversationId,
-            envelope.senderDeviceId, envelope.idempotencyKey);
-        if (envelope.id.isEmpty || envelope.id.length > 128) {
-          throw const FormatException('invalid message envelope id');
-        }
-        final marker = 'application:$syncEventId:${envelope.id}';
-        if (await localStore.hasProcessedMlsMessage(marker)) return null;
-        final previous = await _requiredState();
-        final cursor = await localStore.loadSyncCursor();
-        if (syncEventId <= cursor) {
-          throw StateError(
-              'unrecorded application message is behind the cursor');
-        }
-        if (envelope.senderDeviceId == _deviceId) {
-          // Our own message: its text was stored when it was encrypted, and
-          // MLS cannot decrypt a message for its own sender.
-          await localStore.commitSyncEvent(SyncEventCommit(
-            eventKey: marker,
-            conversationId: envelope.conversationId,
-            expectedCursor: cursor,
-            cursor: syncEventId,
-            envelope: envelope,
-            ownMessageKey:
-                messageKey(envelope.senderDeviceId, envelope.idempotencyKey),
-          ));
-          return null;
-        }
+      _processApplicationMessage(envelope, syncEventId);
+
+  @override
+  Future<List<int>?> processApplicationMessageBounded(
+          ReceivedMessageEnvelope envelope, int syncEventId,
+          {required void Function() checkCanCommit}) =>
+      _processApplicationMessage(envelope, syncEventId,
+          checkCanCommit: checkCanCommit);
+
+  Future<List<int>?> _processApplicationMessage(
+      ReceivedMessageEnvelope envelope, int syncEventId,
+      {void Function()? checkCanCommit}) {
+    final capture = _captureNoticeOwner(envelope);
+    void operationFence() {
+      checkCanCommit?.call();
+      if (capture != null) _checkNoticeOwner(capture);
+    }
+
+    return _serial(() async {
+      operationFence();
+      if (envelope.cryptoProtocol != 'mls10-openmls-v1') {
+        throw StateError('unsupported message crypto protocol');
+      }
+      // The server's envelope fields are checked before the ratchet can
+      // step: a malformed event stops sync with nothing consumed (P2).
+      AppPayloadCodec.validateContext(envelope.conversationId,
+          envelope.senderDeviceId, envelope.idempotencyKey);
+      if (envelope.id.isEmpty || envelope.id.length > 128) {
+        throw const FormatException('invalid message envelope id');
+      }
+      final marker = 'application:$syncEventId:${envelope.id}';
+      if (await localStore.hasProcessedMlsMessage(marker)) return null;
+      final previous = await _requiredState(checkCanCommit: operationFence);
+      final cursor = await localStore.loadSyncCursor();
+      if (syncEventId <= cursor) {
+        throw StateError('unrecorded application message is behind the cursor');
+      }
+      if (envelope.senderDeviceId == _deviceId) {
+        operationFence();
+        // Our own message: its text was stored when it was encrypted, and
+        // MLS cannot decrypt a message for its own sender.
+        await localStore.commitSyncEvent(SyncEventCommit(
+          checkCanCommit: operationFence,
+          eventKey: marker,
+          conversationId: envelope.conversationId,
+          expectedCursor: cursor,
+          cursor: syncEventId,
+          envelope: envelope,
+          ownMessageKey:
+              messageKey(envelope.senderDeviceId, envelope.idempotencyKey),
+          allowOwnPinEffect:
+              _authority?.conversationKind(envelope.conversationId) == 'dm' ||
+                  const {'owner', 'admin', 'moderator'}.contains(
+                      _authority?.roleOf(envelope.conversationId, _accountId!)),
+        ));
+        return null;
+      }
+      try {
+        operationFence();
+        final List<int> plaintext;
         try {
-          final List<int> plaintext;
-          try {
-            plaintext = _requiredDevice().decrypt(
-              envelope.conversationId,
-              envelope.ciphertext,
-              senderAccountId: envelope.senderAccountId,
-              senderDeviceId: envelope.senderDeviceId,
-            );
-          } on NativeCryptoException catch (error) {
-            if (error.kind != NativeCryptoError.senderMismatch) rethrow;
-            // The ratchet already advanced, so the message can never be
-            // decrypted again. Keep going and record a warning instead of
-            // the claimed sender's words (D25).
-            await localStore.commitMlsTransition(MlsStateTransition(
-              messageId: marker,
-              conversationId: envelope.conversationId,
-              expectedCounter: previous.counter,
-              expectedCursor: cursor,
-              state: _sealNext(previous),
-              cursor: syncEventId,
-              upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
-              messageEffects: <MessageEffect>[
-                // Keyed by the sync event: the claimed idempotency key is
-                // not authenticated (P3).
-                _placeholderRow(
-                    envelope,
-                    'unverifiable:$syncEventId:${envelope.id}',
-                    LocalMessageKind.unverifiable),
-              ],
-            ));
-            return null;
-          }
-          // From here the ratchet has moved: whatever the payload is, the
-          // MLS state and the cursor commit with it (P1). Only a storage
-          // error from the commit itself rolls back.
-          List<MessageEffect> effects;
-          List<int>? text;
-          try {
-            final outcome = AppPayloadCodec().classify(
-              plaintext,
-              conversationId: envelope.conversationId,
-              senderDeviceId: envelope.senderDeviceId,
-              actionId: envelope.idempotencyKey,
-            );
-            switch (outcome) {
-              case DecodedAppPayload(:final payload):
-                if (!_messageTypes.contains(payload.type)) {
-                  throw const FormatException('unexpected message type');
-                }
-                effects = messageEffectsFor(
-                  payload,
-                  conversationId: envelope.conversationId,
-                  senderAccountId: envelope.senderAccountId,
-                  senderDeviceId: envelope.senderDeviceId,
-                  serverMessageId: envelope.id,
-                  createdAt: envelope.createdAt.millisecondsSinceEpoch,
-                  state: LocalMessageState.received,
-                  expiresAt: envelope.expiresAt?.toUtc().millisecondsSinceEpoch,
-                );
-                if (payload.type == AppPayloadType.text ||
-                    payload.type == AppPayloadType.reply) {
-                  text = utf8.encode(payload.body['text'] as String);
-                }
-              case UnsupportedAppPayload():
-                effects = <MessageEffect>[
-                  _placeholderRow(
-                    envelope,
-                    messageKey(
-                        envelope.senderDeviceId, envelope.idempotencyKey),
-                    LocalMessageKind.unsupported,
-                    body: outcome.rawJson,
-                  ),
-                ];
-              case InvalidAppPayload():
-                effects = <MessageEffect>[_invalidRow(envelope, syncEventId)];
-            }
-          } catch (_) {
-            effects = <MessageEffect>[_invalidRow(envelope, syncEventId)];
-            text = null;
-          }
+          plaintext = _requiredDevice().decrypt(
+            envelope.conversationId,
+            envelope.ciphertext,
+            senderAccountId: envelope.senderAccountId,
+            senderDeviceId: envelope.senderDeviceId,
+          );
+        } on NativeCryptoException catch (error) {
+          if (error.kind != NativeCryptoError.senderMismatch) rethrow;
+          // The ratchet already advanced, so the message can never be
+          // decrypted again. Keep going and record a warning instead of
+          // the claimed sender's words (D25).
           await localStore.commitMlsTransition(MlsStateTransition(
+            checkCanCommit: operationFence,
             messageId: marker,
             conversationId: envelope.conversationId,
             expectedCounter: previous.counter,
@@ -772,19 +869,182 @@ class NativeCryptoService implements MlsConversationCryptoService {
             state: _sealNext(previous),
             cursor: syncEventId,
             upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
-            messageEffects: effects,
+            messageEffects: <MessageEffect>[
+              // Keyed by the sync event: the claimed idempotency key is
+              // not authenticated (P3).
+              _placeholderRow(
+                  envelope,
+                  'unverifiable:$syncEventId:${envelope.id}',
+                  LocalMessageKind.unverifiable),
+            ],
           ));
-          return text;
-        } catch (_) {
-          await _restorePrevious(previous);
-          rethrow;
+          return null;
         }
-      });
+        // From here the ratchet has moved: whatever the payload is, the
+        // MLS state and the cursor commit with it (P1). Only a storage
+        // error from the commit itself rolls back.
+        List<MessageEffect> effects;
+        List<int>? text;
+        var noticePayload = false;
+        try {
+          final outcome = AppPayloadCodec().classify(
+            plaintext,
+            conversationId: envelope.conversationId,
+            senderDeviceId: envelope.senderDeviceId,
+            actionId: envelope.idempotencyKey,
+            communityShared:
+                _authority?.conversationKind(envelope.conversationId) ==
+                    'community_shared',
+            channelId: (envelope.cryptoMetadata is Map
+                ? (envelope.cryptoMetadata as Map)['channel_id']
+                : null) as String?,
+          );
+          switch (outcome) {
+            case DecodedAppPayload(:final payload):
+              if (!_messageTypes.contains(payload.type)) {
+                throw const FormatException('unexpected message type');
+              }
+              effects = messageEffectsFor(
+                payload,
+                conversationId: envelope.conversationId,
+                senderAccountId: envelope.senderAccountId,
+                senderDeviceId: envelope.senderDeviceId,
+                serverMessageId: envelope.id,
+                createdAt: envelope.createdAt.millisecondsSinceEpoch,
+                state: LocalMessageState.received,
+                expiresAt: envelope.expiresAt?.toUtc().millisecondsSinceEpoch,
+                authority: _authority,
+              );
+              noticePayload = const {
+                AppPayloadType.text,
+                AppPayloadType.reply,
+                AppPayloadType.attachmentManifest,
+              }.contains(payload.type);
+              if (payload.type == AppPayloadType.text ||
+                  payload.type == AppPayloadType.reply) {
+                text = utf8.encode(payload.body['text'] as String);
+              }
+            case UnsupportedAppPayload():
+              effects = <MessageEffect>[
+                _placeholderRow(
+                  envelope,
+                  messageKey(envelope.senderDeviceId, envelope.idempotencyKey),
+                  LocalMessageKind.unsupported,
+                  body: outcome.rawJson,
+                  senderHidden: outcome.hidden,
+                  channelId: (envelope.cryptoMetadata is Map
+                      ? (envelope.cryptoMetadata as Map)['channel_id']
+                      : null) as String?,
+                ),
+              ];
+            case InvalidAppPayload():
+              effects = <MessageEffect>[_invalidRow(envelope, syncEventId)];
+          }
+        } catch (_) {
+          effects = <MessageEffect>[_invalidRow(envelope, syncEventId)];
+          text = null;
+          noticePayload = false;
+        }
+        operationFence();
+        await localStore.commitMlsTransition(MlsStateTransition(
+          checkCanCommit: operationFence,
+          messageId: marker,
+          conversationId: envelope.conversationId,
+          expectedCounter: previous.counter,
+          expectedCursor: cursor,
+          state: _sealNext(previous),
+          cursor: syncEventId,
+          upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
+          messageEffects: effects,
+          noticeReferences: noticePayload && capture != null
+              ? _noticeReferences(capture.owner, envelope, syncEventId, effects)
+              : const <LocalNoticeReference>[],
+        ));
+        return text;
+      } catch (_) {
+        await _restorePrevious(previous);
+        rethrow;
+      }
+    });
+  }
+
+  ({LocalNoticeOwner owner, int generation})? _captureNoticeOwner(
+      ReceivedMessageEnvelope envelope) {
+    final origin = _noticeOrigin, accountId = _accountId, deviceId = _deviceId;
+    if (!_noticeCaptureEnabled ||
+        _pendingEnrollment ||
+        origin == null ||
+        accountId == null ||
+        deviceId == null ||
+        envelope.senderAccountId == accountId ||
+        envelope.senderDeviceId == deviceId) {
+      return null;
+    }
+    return (
+      owner: LocalNoticeOwner(
+          origin: origin, accountId: accountId, deviceId: deviceId),
+      generation: _noticeCaptureGeneration
+    );
+  }
+
+  void _checkNoticeOwner(({LocalNoticeOwner owner, int generation}) capture) {
+    if (!_noticeCaptureEnabled ||
+        _pendingEnrollment ||
+        capture.generation != _noticeCaptureGeneration ||
+        capture.owner.origin != _noticeOrigin ||
+        capture.owner.accountId != _accountId ||
+        capture.owner.deviceId != _deviceId) {
+      throw const CryptoOperationCancelled();
+    }
+  }
+
+  List<LocalNoticeReference> _noticeReferences(
+      LocalNoticeOwner owner,
+      ReceivedMessageEnvelope envelope,
+      int eventId,
+      List<MessageEffect> effects) {
+    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
+    return [
+      for (final effect in effects.whereType<InsertMessageEffect>())
+        if (effect.state == LocalMessageState.received &&
+            const {LocalMessageKind.text, LocalMessageKind.attachment}
+                .contains(effect.kind) &&
+            !effect.senderHidden &&
+            effect.body != null &&
+            effect.senderAccountId != owner.accountId &&
+            effect.senderDeviceId != owner.deviceId &&
+            effect.conversationId == envelope.conversationId &&
+            effect.serverMessageId == envelope.id &&
+            effect.senderAccountId == envelope.senderAccountId &&
+            effect.senderDeviceId == envelope.senderDeviceId &&
+            effect.key ==
+                messageKey(envelope.senderDeviceId, envelope.idempotencyKey) &&
+            (effect.expiresAt == null || effect.expiresAt! > now))
+          LocalNoticeReference(
+              owner: owner,
+              eventId: eventId,
+              messageKey: effect.key,
+              serverMessageId: envelope.id,
+              conversationId: effect.conversationId,
+              channelId: effect.channelId,
+              senderAccountId: effect.senderAccountId,
+              senderDeviceId: effect.senderDeviceId,
+              createdAt: effect.createdAt,
+              expiresAt: effect.expiresAt),
+    ];
+  }
+
+  @override
+  Future<String> deviceLinkLocator(List<int> secret) async =>
+      bindings.deviceLinkLocator(secret);
 
   @override
   Future<DeviceLinkVerification> deriveDeviceLinkVerification({
     required String accountId,
     required String protocolVersion,
+    required String serverOrigin,
+    required String linkId,
+    required List<int> linkSecret,
     required List<int> linkNonce,
     required String peerDeviceId,
     required List<int> peerSigningKey,
@@ -796,6 +1056,9 @@ class NativeCryptoService implements MlsConversationCryptoService {
         }
         return _requiredDevice().deriveDeviceLinkVerification(
           protocolVersion: protocolVersion,
+          serverOrigin: serverOrigin,
+          linkId: linkId,
+          linkSecret: linkSecret,
           peerDeviceId: peerDeviceId,
           peerSigningKey: peerSigningKey,
           linkNonce: linkNonce,
@@ -803,9 +1066,11 @@ class NativeCryptoService implements MlsConversationCryptoService {
         );
       });
 
-  Future<StoredCryptoState> _requiredState() async {
+  Future<StoredCryptoState> _requiredState(
+      {void Function()? checkCanCommit}) async {
     _requiredDevice();
     final state = await localStore.loadCryptoState();
+    checkCanCommit?.call();
     if (state == null) throw StateError('protected MLS state is unavailable');
     if (state.counter != _deviceCounter) {
       // The stored state moved without this service (a backup restore, or a
@@ -878,6 +1143,8 @@ class NativeCryptoService implements MlsConversationCryptoService {
 
   @override
   Future<void> dispose() => _serial(() async {
+        noticeCaptureEnabled = false;
+        _noticeOrigin = null;
         _device?.close();
         _device = null;
         _deviceCounter = null;
@@ -898,6 +1165,7 @@ const Set<AppPayloadType> _messageTypes = <AppPayloadType>{
   AppPayloadType.delete,
   AppPayloadType.reaction,
   AppPayloadType.attachmentManifest,
+  AppPayloadType.pin,
 };
 
 /// The local history key of a message: its authenticated sender device and
@@ -917,8 +1185,14 @@ List<MessageEffect> messageEffectsFor(
   required String state,
   String? serverMessageId,
   int? expiresAt,
+  ConversationAuthority? authority,
 }) {
   final body = payload.body;
+  final decoration = messageDecoration(body,
+      members: authority?.memberAccounts(conversationId) ?? const {});
+  final forwarded = body['forwarded'];
+  final rawHops = forwarded is Map ? forwarded['hops'] : null;
+  final hops = rawHops is int ? rawHops.clamp(1, 5) : null;
   InsertMessageEffect row(String kind, {String? text, String? replyTo}) =>
       InsertMessageEffect(
         key: messageKey(senderDeviceId, payload.actionId),
@@ -932,6 +1206,9 @@ List<MessageEffect> messageEffectsFor(
         createdAt: createdAt,
         state: state,
         expiresAt: expiresAt,
+        formatJson: decoration.isEmpty ? null : jsonEncode(decoration),
+        forwardHops: hops,
+        channelId: payload.channelId,
       );
   return switch (payload.type) {
     AppPayloadType.text => <MessageEffect>[
@@ -949,6 +1226,9 @@ List<MessageEffect> messageEffectsFor(
           editorAccountId: senderAccountId,
           body: body['text'] as String,
           at: createdAt,
+          conversationId: conversationId,
+          channelId: payload.channelId,
+          formatJson: decoration.isEmpty ? null : jsonEncode(decoration),
         ),
       ],
     AppPayloadType.delete => <MessageEffect>[
@@ -957,6 +1237,8 @@ List<MessageEffect> messageEffectsFor(
           targetKey: body['message_id'] as String,
           deleterAccountId: senderAccountId,
           at: createdAt,
+          conversationId: conversationId,
+          channelId: payload.channelId,
         ),
       ],
     AppPayloadType.reaction => <MessageEffect>[
@@ -966,10 +1248,31 @@ List<MessageEffect> messageEffectsFor(
           reactorAccountId: senderAccountId,
           reaction: body['reaction'] as String,
           at: createdAt,
+          conversationId: conversationId,
+          channelId: payload.channelId,
         ),
       ],
     AppPayloadType.attachmentManifest => <MessageEffect>[
         row(LocalMessageKind.attachment, text: jsonEncode(body['attachments'])),
+      ],
+    AppPayloadType.pin => <MessageEffect>[
+        row(LocalMessageKind.action),
+        if (authority?.conversationKind(conversationId) == 'dm' ||
+            const {'owner', 'admin', 'moderator'}
+                .contains(authority?.roleOf(conversationId, senderAccountId)))
+          PinMessageEffect(
+              conversationId: conversationId,
+              targetKey: body['message_id'] as String,
+              accountId: senderAccountId,
+              at: createdAt,
+              pinned: body['pinned'] as bool,
+              durationSeconds: body['pinned'] == true
+                  ? body['duration_seconds'] as int
+                  : null,
+              channelId: payload.channelId,
+              pendingActionKey: state == LocalMessageState.pending
+                  ? messageKey(senderDeviceId, payload.actionId)
+                  : null),
       ],
     AppPayloadType.callSignal =>
       throw const FormatException('call signals are not messages'),

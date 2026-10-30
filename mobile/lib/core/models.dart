@@ -65,10 +65,14 @@ class DeviceLinkVerification {
   const DeviceLinkVerification({
     required this.transcriptHash,
     required this.sas,
+    required this.claimTag,
+    required this.approvalTag,
   });
 
   final List<int> transcriptHash;
   final String sas;
+  final List<int> claimTag;
+  final List<int> approvalTag;
 }
 
 class Conversation {
@@ -725,6 +729,8 @@ class DeviceLink {
     this.claimedDeviceId,
     this.claimedSigningKey,
     this.transcriptHash,
+    this.claimTag,
+    this.approvalTag,
   });
 
   final String id;
@@ -743,6 +749,8 @@ class DeviceLink {
   final String? claimedDeviceId;
   final List<int>? claimedSigningKey;
   final List<int>? transcriptHash;
+  final List<int>? claimTag;
+  final List<int>? approvalTag;
 
   factory DeviceLink.fromJson(Map<String, Object?> json) {
     return DeviceLink(
@@ -764,17 +772,21 @@ class DeviceLink {
       claimedDeviceId: json['claimed_device_id'] as String?,
       claimedSigningKey: _decodeOptionalBytes(json['claimed_signing_key']),
       transcriptHash: _decodeOptionalBytes(json['transcript_hash']),
+      claimTag: _decodeOptionalBytes(json['claim_tag']),
+      approvalTag: _decodeOptionalBytes(json['approval_tag']),
     );
   }
 }
 
 class DeviceLinkClaim {
   DeviceLinkClaim({
+    required this.serverOrigin,
     required this.deviceLink,
     required this.claimToken,
     required this.deviceSecret,
   });
 
+  final String serverOrigin;
   final DeviceLink deviceLink;
   final String claimToken;
   final String deviceSecret;

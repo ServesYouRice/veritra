@@ -52,13 +52,14 @@ void main() {
 
   test('parseDeviceLinkCode extracts the code from a link URI', () {
     expect(
-      parseDeviceLinkCode('veritra://device-link?code=ABCD1234'),
-      'ABCD1234',
+      parseDeviceLinkCode(
+          'veritra://device-link?code=AAAAAAAAAAAAAAAAAAAAAAAAAA'),
+      'AAAAAAAAAAAAAAAAAAAAAAAAAA',
     );
   });
 
   test('parseDeviceLinkCode falls back to the raw scan for a bare code', () {
-    expect(parseDeviceLinkCode('  BARECODE  '), 'BARECODE');
+    expect(parseDeviceLinkCode('  aaaaa-aaaaa-aaaaa-aaaaa-aaaaaa  '), 'A' * 26);
   });
 
   test('device-link QR rejects unrelated URLs and accepts HTTPS origins only',

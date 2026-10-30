@@ -69,7 +69,7 @@ void main() {
     final marker = utf8.encode('"v":1');
     final markerIndex = _indexOf(unknownVersion, marker);
     expect(markerIndex, greaterThanOrEqualTo(0));
-    unknownVersion[markerIndex + marker.length - 1] = 0x32;
+    unknownVersion[markerIndex + marker.length - 1] = 0x33;
     expect(
       () => codec.decode(
         unknownVersion,

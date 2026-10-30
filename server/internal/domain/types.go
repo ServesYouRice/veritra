@@ -136,6 +136,8 @@ type DeviceLink struct {
 	ClaimedDeviceID    string     `json:"claimed_device_id,omitempty"`
 	ClaimedSigningKey  []byte     `json:"claimed_signing_key,omitempty"`
 	TranscriptHash     []byte     `json:"transcript_hash,omitempty"`
+	ClaimTag           []byte     `json:"claim_tag,omitempty"`
+	ApprovalTag        []byte     `json:"approval_tag,omitempty"`
 	ClaimedDeviceName  *string    `json:"claimed_device_name,omitempty"`
 	ApprovedDeviceID   *string    `json:"approved_device_id,omitempty"`
 	CreatedAt          time.Time  `json:"created_at"`

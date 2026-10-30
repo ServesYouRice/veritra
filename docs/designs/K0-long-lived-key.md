@@ -109,7 +109,7 @@ current consumer needs a device to read a backup without the user.
 - **No password KDF.** 240 bits needs none. A user-chosen passphrase would
   need Argon2 on the client, which is a new crate (owner question 2).
 
-**ABI v7 (additive), for K1 and K2 to build.**
+**Future additive ABI (v7 is now used by L0), for K1 and K2 to build.**
 
 - **Functions:**
   - recovery-key generate, encode and decode;
@@ -213,7 +213,14 @@ so the encrypted DB is enough.
 - **The QR channel is the fix.** The one thing the server cannot touch is
   the QR code that the new device scans from the old device's screen.
 
-**Link protocol v2** (`veritra-device-link-v2`) uses that channel:
+**L0 implementation note (2026-10-26):** the current v2 protocol is specified
+in [L0](L0-device-link-v2.md). It uses a secret-derived public locator, the
+26-character secret alone as the QR/manual code, origin/link-ID binding,
+and separate claim/approval MACs. The transfer public key below is deferred
+to K2 and must use a new transcript version. The remaining text describes
+the proposed K2 extension, not the current L0 wire format.
+
+**Proposed K2 link extension** uses that channel:
 
 - **A link secret.** The old device makes a 16-byte link secret `s` and
   puts it only in the QR payload (`veritra://device-link?code=…&s=…`), and
@@ -482,7 +489,7 @@ therefore restores **history only**, into a new device.
 ## Done when (for K0)
 
 K0 is done when this design is reviewed and the owner has answered the
-questions above. K1 then builds ABI v7 with test vectors, and adds a
+questions above. K1 then builds its additive ABI with test vectors, and adds a
 `docs/crypto.md` change-log entry for the ABI, link protocol v2 and the
 container. Link v2 also fixes today's server-grindable SAS, so it is
 worth building before K2, as its own package.

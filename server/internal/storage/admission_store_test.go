@@ -66,7 +66,7 @@ func claimLink(t *testing.T, ctx context.Context, store *Store, link domain.Devi
 		t.Fatal(err)
 	}
 	transcript := bytes.Repeat([]byte{byte(len(name))}, 32)
-	if _, err := store.ClaimDeviceLink(ctx, link.Code, name, []byte(name+"-key-package"), bytes.Repeat([]byte{2}, 32), transcript, claimTokenHash, auth.HashToken(name+"-secret")); err != nil {
+	if _, err := store.ClaimDeviceLink(ctx, link.Code, name, []byte(name+"-key-package"), bytes.Repeat([]byte{2}, 32), transcript, bytes.Repeat([]byte{8}, 32), claimTokenHash, auth.HashToken(name+"-secret")); err != nil {
 		t.Fatal(err)
 	}
 	return transcript
@@ -76,7 +76,7 @@ func TestDeviceLimitHoldsInTheApprovingTransaction(t *testing.T) {
 	ctx := context.Background()
 	store := newLimitedStore(t, config.Limits{DevicesPerAccount: 2})
 	owner := createTestOwner(t, ctx, store)
-	link, err := store.CreateDeviceLink(ctx, owner.Account.ID, owner.Device.ID, time.Minute)
+	link, err := store.CreateDeviceLink(ctx, owner.Account.ID, owner.Device.ID, time.Minute, testLinkLocator(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,21 +85,21 @@ func TestDeviceLimitHoldsInTheApprovingTransaction(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO devices(id, account_id, name, key_package, created_at) VALUES('dev_extra', ?, 'Laptop', x'00', ?)`, owner.Account.ID, nowString()); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.ApproveDeviceLink(ctx, link.ID, owner.Account.ID, transcript); !errors.Is(err, ErrDeviceLimit) {
+	if _, _, err := store.ApproveDeviceLink(ctx, link.ID, owner.Account.ID, transcript, bytes.Repeat([]byte{9}, 32)); !errors.Is(err, ErrDeviceLimit) {
 		t.Fatalf("approval past the device limit: %v", err)
 	}
 	devices, err := countRows(ctx, store.db, `SELECT COUNT(*) FROM devices WHERE account_id = ?`, owner.Account.ID)
 	if err != nil || devices != 2 {
 		t.Fatalf("devices after refused approval = %d (%v), want 2", devices, err)
 	}
-	if _, err := store.CreateDeviceLink(ctx, owner.Account.ID, owner.Device.ID, time.Minute); !errors.Is(err, ErrDeviceLimit) {
+	if _, err := store.CreateDeviceLink(ctx, owner.Account.ID, owner.Device.ID, time.Minute, testLinkLocator(t)); !errors.Is(err, ErrDeviceLimit) {
 		t.Fatalf("link creation at the device limit: %v", err)
 	}
 	// Removing a device makes room again.
 	if _, err := store.db.ExecContext(ctx, `UPDATE devices SET revoked_at = ? WHERE id = 'dev_extra'`, nowString()); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.ApproveDeviceLink(ctx, link.ID, owner.Account.ID, transcript); err != nil {
+	if _, _, err := store.ApproveDeviceLink(ctx, link.ID, owner.Account.ID, transcript, bytes.Repeat([]byte{9}, 32)); err != nil {
 		t.Fatalf("approval after revoking a device: %v", err)
 	}
 	if got := rejections(store, admission.Devices); got != 2 {
@@ -113,7 +113,7 @@ func TestPendingDeviceLinksAreBounded(t *testing.T) {
 	owner := createTestOwner(t, ctx, store)
 	var first domain.DeviceLink
 	for i := 0; i < config.PendingDeviceLinksPerAccount; i++ {
-		link, err := store.CreateDeviceLink(ctx, owner.Account.ID, owner.Device.ID, time.Minute)
+		link, err := store.CreateDeviceLink(ctx, owner.Account.ID, owner.Device.ID, time.Minute, testLinkLocator(t))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -121,13 +121,13 @@ func TestPendingDeviceLinksAreBounded(t *testing.T) {
 			first = link
 		}
 	}
-	if _, err := store.CreateDeviceLink(ctx, owner.Account.ID, owner.Device.ID, time.Minute); !errors.Is(err, ErrDeviceLinkLimit) {
+	if _, err := store.CreateDeviceLink(ctx, owner.Account.ID, owner.Device.ID, time.Minute, testLinkLocator(t)); !errors.Is(err, ErrDeviceLinkLimit) {
 		t.Fatalf("fourth open link: %v", err)
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE device_links SET expires_at = ? WHERE id = ?`, formatTime(time.Now().UTC().Add(-time.Minute)), first.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateDeviceLink(ctx, owner.Account.ID, owner.Device.ID, time.Minute); err != nil {
+	if _, err := store.CreateDeviceLink(ctx, owner.Account.ID, owner.Device.ID, time.Minute, testLinkLocator(t)); err != nil {
 		t.Fatalf("link after one expired: %v", err)
 	}
 }

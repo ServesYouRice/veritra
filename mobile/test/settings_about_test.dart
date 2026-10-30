@@ -232,17 +232,18 @@ void main() {
       tester,
     ) async {
       final api = _ApproveApi();
-      final state = _state()
-        ..api = api
-        ..activeDeviceLink = DeviceLink(
-          id: 'dl_1',
-          state: 'claimed',
-          verificationCode: '12345678',
-          expiresAt: DateTime.utc(2030),
-          code: 'PAIRCODE',
-          accountId: 'acct_0123456789abcdef',
-          transcriptHash: List<int>.filled(32, 7),
-        );
+      final state = _state()..api = api;
+      await state.createDeviceLink();
+      state.activeDeviceLink = DeviceLink(
+        id: 'dl_1',
+        state: 'claimed',
+        verificationCode: '12345678',
+        expiresAt: DateTime.utc(2030),
+        code: 'PAIRCODE',
+        accountId: 'acct_0123456789abcdef',
+        transcriptHash: List<int>.filled(32, 7),
+        approvalTag: List<int>.filled(32, 9),
+      );
       await tester.pumpWidget(
         MaterialApp(home: DeviceLinkScreen(state: state)),
       );
@@ -292,9 +293,9 @@ void main() {
     });
 
     test('the QR payload is built locally and round-trips the scanner', () {
-      final payload = deviceLinkQrPayload(' AB CD+1 ')!;
+      final payload = deviceLinkQrPayload(' AAAAAAAAAAAAAAAAAAAAAAAAAA ')!;
       expect(payload, startsWith('veritra://device-link?code='));
-      expect(parseDeviceLinkCode(payload), 'AB CD+1');
+      expect(parseDeviceLinkCode(payload), 'A' * 26);
       expect(parseDeviceLinkOrigin(payload), isNull);
       expect(deviceLinkQrPayload(null), isNull);
       expect(deviceLinkQrPayload('  '), isNull);
@@ -303,23 +304,25 @@ void main() {
     testWidgets('the link screen never offers the server URI as a link', (
       tester,
     ) async {
-      final state = _state()
-        ..activeDeviceLink = DeviceLink(
-          id: 'dl_1',
-          state: 'pending',
-          verificationCode: '123456',
-          expiresAt: DateTime.utc(2030),
-          code: 'PAIRCODE',
-          linkUri: 'veritra://device-link?code=OTHER'
-              '&origin=https://attacker.example',
-        );
+      final state = _state();
+      await state.createDeviceLink();
+      state.activeDeviceLink = DeviceLink(
+        id: 'dl_1',
+        state: 'pending',
+        verificationCode: '123456',
+        expiresAt: DateTime.utc(2030),
+        code: 'PAIRCODE',
+        linkUri: 'veritra://device-link?code=OTHER'
+            '&origin=https://attacker.example',
+      );
       await tester.pumpWidget(
         MaterialApp(home: DeviceLinkScreen(state: state)),
       );
       expect(find.text('LINK URI'), findsNothing);
       expect(find.textContaining('attacker'), findsNothing);
       final qr = tester.widget<QrImageView>(find.byType(QrImageView));
-      expect(qr.key, ValueKey<String>(deviceLinkQrPayload('PAIRCODE')!));
+      expect(qr.key,
+          ValueKey<String>(deviceLinkQrPayload(state.activeDeviceLinkCode)!));
     });
   });
 }
@@ -374,6 +377,18 @@ class _Api extends ApiClient {
 
   @override
   Future<void> logout(String token) async {}
+
+  @override
+  Future<DeviceLink> createDeviceLink(String token, String locator) async =>
+      DeviceLink(
+        id: 'dl_1',
+        state: 'pending',
+        verificationCode: '',
+        expiresAt: DateTime.utc(2030),
+        code: locator,
+        accountId: 'acct_0123456789abcdef',
+        protocolVersion: 'veritra-device-link-v2',
+      );
 }
 
 class _ApproveApi extends _Api {
@@ -384,6 +399,7 @@ class _ApproveApi extends _Api {
     String token,
     String linkId,
     List<int> transcriptHash,
+    List<int> approvalTag,
   ) async {
     approvals++;
     return DeviceLink(

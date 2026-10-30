@@ -14,6 +14,7 @@ import (
 	"time"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
+	"private-messenger/server/internal/domain"
 )
 
 var (
@@ -23,10 +24,11 @@ var (
 )
 
 type Notification struct {
-	Provider   string
-	Endpoint   string
-	PublicKey  string
-	AuthSecret string
+	NotificationMode string
+	Provider         string
+	Endpoint         string
+	PublicKey        string
+	AuthSecret       string
 }
 
 type Router struct{ providers map[string]Provider }
@@ -127,13 +129,17 @@ func (p *WebPushProvider) SendEncryptedEventAvailable(ctx context.Context, notif
 	if err := ValidateWebPushTarget(notification); err != nil {
 		return err
 	}
+	data, err := GenericPayloadForMode(notification.NotificationMode)
+	if err != nil {
+		return err
+	}
 	select {
 	case p.slots <- struct{}{}:
 		defer func() { <-p.slots }()
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	payload, err := json.Marshal(GenericPayload())
+	payload, err := json.Marshal(data)
 	if err != nil {
 		return err
 	}
@@ -207,4 +213,16 @@ func publicOnlyDialer(ctx context.Context, network, address string) (net.Conn, e
 
 func GenericPayload() map[string]string {
 	return map[string]string{"version": "v1", "event": "new_encrypted_event_available"}
+}
+
+// An omitted in-memory mode is legacy for existing provider callers. Unknown
+// nonempty modes fail closed rather than accidentally presenting a notice.
+func GenericPayloadForMode(mode string) (map[string]string, error) {
+	if mode == "" || mode == domain.PushNotificationLegacy {
+		return GenericPayload(), nil
+	}
+	if mode == domain.PushNotificationLocalDecrypt {
+		return map[string]string{"version": "v2", "event": "new_encrypted_event_available", "presentation": "none"}, nil
+	}
+	return nil, ErrInvalidTarget
 }

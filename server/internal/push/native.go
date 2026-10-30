@@ -59,12 +59,16 @@ func (p *FCMProvider) SendEncryptedEventAvailable(ctx context.Context, notificat
 	if notification.Provider != "fcm" || !validFCMToken(notification.Endpoint) {
 		return ErrInvalidTarget
 	}
+	payload, err := GenericPayloadForMode(notification.NotificationMode)
+	if err != nil {
+		return err
+	}
 	token, err := p.token(ctx)
 	if err != nil {
 		return err
 	}
 	body, _ := json.Marshal(map[string]any{"message": map[string]any{
-		"token": notification.Endpoint, "data": GenericPayload(),
+		"token": notification.Endpoint, "data": payload,
 		"android": map[string]any{"priority": "normal", "ttl": "60s"},
 	}})
 	endpoint := "https://fcm.googleapis.com/v1/projects/" + url.PathEscape(p.config.ProjectID) + "/messages:send"
@@ -171,6 +175,10 @@ func (p *APNsProvider) SendEncryptedEventAvailable(ctx context.Context, notifica
 	if notification.Provider != "apns" || !validAPNsToken(notification.Endpoint) {
 		return ErrInvalidTarget
 	}
+	payload, err := GenericPayloadForMode(notification.NotificationMode)
+	if err != nil {
+		return err
+	}
 	jwt, err := p.token()
 	if err != nil {
 		return err
@@ -179,8 +187,11 @@ func (p *APNsProvider) SendEncryptedEventAvailable(ctx context.Context, notifica
 	if p.config.Sandbox {
 		host = "https://api.sandbox.push.apple.com"
 	}
-	body, _ := json.Marshal(map[string]any{"aps": map[string]any{"content-available": 1},
-		"version": "v1", "event": "new_encrypted_event_available"})
+	bodyFields := map[string]any{"aps": map[string]any{"content-available": 1}}
+	for key, value := range payload {
+		bodyFields[key] = value
+	}
+	body, _ := json.Marshal(bodyFields)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, host+"/3/device/"+notification.Endpoint, bytes.NewReader(body))
 	if err != nil {
 		return err

@@ -16,6 +16,7 @@ class ConversationHistory {
     required this.conversationId,
     required List<LocalMessage> messages,
     required List<LocalMessageReaction> reactions,
+    this.copiedKeys = const {},
   })  : _byKey = <String, LocalMessage>{
           for (final message in messages)
             if (message.conversationId == conversationId) message.key: message,
@@ -44,9 +45,11 @@ class ConversationHistory {
 
   ConversationHistory.empty(this.conversationId)
       : _byKey = const <String, LocalMessage>{},
-        _byServerId = const <String, LocalMessage>{};
+        _byServerId = const <String, LocalMessage>{},
+        copiedKeys = const {};
 
   final String conversationId;
+  final Set<String> copiedKeys;
   final Map<String, LocalMessage> _byKey;
 
   /// Rows by the server envelope that produced them. Placeholder rows are
@@ -79,6 +82,8 @@ class ConversationHistory {
     final local = forEnvelope(envelope);
     return local != null &&
         (local.kind == LocalMessageKind.action ||
+            local.hiddenAt != null ||
+            local.senderHidden == true ||
             _hiddenKeys.contains(local.key));
   }
 

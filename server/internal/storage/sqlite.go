@@ -235,11 +235,18 @@ func ListDatabaseBlobReferences(ctx context.Context, path string) ([]BackupBlobR
 		return nil, nil, err
 	}
 	defer db.Close()
-	rows, err := db.QueryContext(ctx, `
+	query := `
 		SELECT storage_key, ciphertext_sha256, size_bytes FROM attachment_envelopes
 		UNION ALL
-		SELECT storage_key, ciphertext_sha256, size_bytes FROM backup_blobs
-		ORDER BY storage_key`)
+		SELECT storage_key, ciphertext_sha256, size_bytes FROM backup_blobs`
+	var historyTable bool
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='device_history_transfers')`).Scan(&historyTable); err != nil {
+		return nil, nil, err
+	}
+	if historyTable {
+		query += ` UNION ALL SELECT storage_key,ciphertext_sha256,size_bytes FROM device_history_transfers WHERE state='active'`
+	}
+	rows, err := db.QueryContext(ctx, query+` ORDER BY storage_key`)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -491,7 +498,7 @@ func scanDeviceLink(rows scanner, link *domain.DeviceLink) error {
 		&legacyVerificationCode, &claimedDeviceName, &approvedDeviceID,
 		&created, &expires, &claimed, &approved, &consumed, &revoked,
 		&link.ProtocolVersion, &link.LinkNonce, &claimedDeviceID,
-		&link.ClaimedSigningKey, &link.TranscriptHash, &link.ExistingSigningKey,
+		&link.ClaimedSigningKey, &link.TranscriptHash, &link.ExistingSigningKey, &link.ClaimTag, &link.ApprovalTag,
 	); err != nil {
 		return err
 	}
@@ -524,7 +531,7 @@ func scanDeviceLinkForApproval(rows scanner, link *domain.DeviceLink, deviceName
 		&legacyVerificationCode, &claimedDeviceName, &approvedDeviceID,
 		&created, &expires, &claimed, &approved, &consumed, &revoked,
 		&link.ProtocolVersion, &link.LinkNonce, &claimedDeviceID,
-		&link.ClaimedSigningKey, &link.TranscriptHash, &link.ExistingSigningKey,
+		&link.ClaimedSigningKey, &link.TranscriptHash, &link.ExistingSigningKey, &link.ClaimTag, &link.ApprovalTag,
 		&claimedDeviceNameForDevice, keyPackage, authSecretHash,
 	); err != nil {
 		return err

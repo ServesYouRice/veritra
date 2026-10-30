@@ -527,12 +527,29 @@ func (a *API) completeQueuedBlobDeletion(ctx context.Context, storageKey string)
 
 func (a *API) createPushSubscription(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
 	var req struct {
-		Provider   string `json:"provider"`
-		Endpoint   string `json:"endpoint"`
-		PublicKey  string `json:"public_key"`
-		AuthSecret string `json:"auth_secret"`
+		NotificationMode json.RawMessage `json:"notification_mode"`
+		Provider         string          `json:"provider"`
+		Endpoint         string          `json:"endpoint"`
+		PublicKey        string          `json:"public_key"`
+		AuthSecret       string          `json:"auth_secret"`
 	}
 	if !decodeJSON(w, r, &req) {
+		return
+	}
+	mode := domain.PushNotificationLegacy
+	if len(req.NotificationMode) > 0 {
+		mode = ""
+		if err := json.Unmarshal(req.NotificationMode, &mode); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_push_subscription")
+			return
+		}
+	}
+	if !domain.ValidPushNotificationMode(mode) {
+		writeError(w, http.StatusBadRequest, "invalid_push_subscription")
+		return
+	}
+	if mode == domain.PushNotificationLocalDecrypt && principal.DeviceID == "" {
+		writeError(w, http.StatusBadRequest, "device_session_required")
 		return
 	}
 	valid := (req.Provider == "webpush" && push.ValidateWebPushTarget(push.Notification{Provider: "webpush", Endpoint: req.Endpoint, PublicKey: req.PublicKey, AuthSecret: req.AuthSecret}) == nil) ||
@@ -546,12 +563,16 @@ func (a *API) createPushSubscription(w http.ResponseWriter, r *http.Request, pri
 		writeError(w, http.StatusBadRequest, "push_provider_unavailable")
 		return
 	}
-	subscriptionID, err := a.Store.CreatePushSubscription(r.Context(), principal.AccountID, principal.DeviceID, req.Provider, req.Endpoint, req.PublicKey, req.AuthSecret)
+	subscriptionID, err := a.Store.CreatePushSubscriptionWithMode(r.Context(), principal.AccountID, principal.DeviceID, req.Provider, req.Endpoint, req.PublicKey, req.AuthSecret, mode)
 	if err != nil {
+		if errors.Is(err, storage.ErrUnauthorized) || errors.Is(err, storage.ErrInvalidInput) {
+			handleStorageError(w, err)
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "push_subscription_failed")
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]string{"status": "ok", "subscription_id": subscriptionID, "payload_policy": "generic_encrypted_event_only"})
+	writeJSON(w, http.StatusCreated, map[string]string{"status": "ok", "subscription_id": subscriptionID, "payload_policy": "generic_encrypted_event_only", "notification_mode": mode})
 }
 
 // pushConfig tells the client which providers this server delivers
@@ -618,16 +639,29 @@ func (a *API) sendTestPush(w http.ResponseWriter, r *http.Request, principal dom
 		return
 	}
 	type outcome struct {
-		ID       string `json:"id"`
-		Provider string `json:"provider"`
-		Result   string `json:"result"`
+		NotificationMode string `json:"notification_mode,omitempty"`
+		Presentation     string `json:"presentation,omitempty"`
+		ID               string `json:"id"`
+		Provider         string `json:"provider"`
+		Result           string `json:"result"`
 	}
 	results := make([]outcome, 0, len(subscriptions))
 	for _, subscription := range subscriptions {
-		target := subscription.Target()
+		// Resolve the mode/target again immediately before the provider call.
+		fresh, refreshErr := a.Store.DevicePushSubscriptionForDevice(r.Context(), subscription.ID, principal.AccountID, principal.DeviceID)
+		if refreshErr != nil {
+			result := "failed"
+			if errors.Is(refreshErr, storage.ErrNotFound) {
+				result = "gone"
+			}
+			results = append(results, outcome{ID: subscription.ID, Provider: subscription.Provider, Result: result})
+			continue
+		}
+		target := fresh.Target()
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		err := a.Push.SendEncryptedEventAvailable(ctx, push.Notification{
-			Provider: target.Provider, Endpoint: target.Endpoint,
+			NotificationMode: target.NotificationMode,
+			Provider:         target.Provider, Endpoint: target.Endpoint,
 			PublicKey: target.PublicKey, AuthSecret: target.AuthSecret,
 		})
 		cancel()
@@ -642,7 +676,11 @@ func (a *API) sendTestPush(w http.ResponseWriter, r *http.Request, principal dom
 		default:
 			result = "failed"
 		}
-		results = append(results, outcome{ID: subscription.ID, Provider: subscription.Provider, Result: result})
+		presentation := ""
+		if target.NotificationMode == domain.PushNotificationLocalDecrypt {
+			presentation = "none"
+		}
+		results = append(results, outcome{ID: subscription.ID, Provider: subscription.Provider, Result: result, NotificationMode: target.NotificationMode, Presentation: presentation})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }

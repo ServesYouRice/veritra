@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define PM_CRYPTO_UNAVAILABLE (-1)
-#define PM_CRYPTO_ABI_VERSION (6u)
+#define PM_CRYPTO_ABI_VERSION (8u)
 #define PM_CRYPTO_OK (0)
 #define PM_CRYPTO_INVALID_ARGUMENT (-2)
 #define PM_CRYPTO_ERROR (-3)
@@ -31,6 +31,7 @@ typedef struct {
 } PmDeviceCredentialInput;
 
 typedef struct PmCryptoHandle PmCryptoHandle;
+typedef struct PmHistoryStream PmHistoryStream;
 
 typedef struct {
   uint8_t *data;
@@ -61,8 +62,47 @@ void pm_crypto_device_destroy(PmCryptoHandle *handle);
 void pm_crypto_buffer_free(PmOwnedBuffer buffer);
 int32_t pm_crypto_device_signing_public_key(PmCryptoHandle *handle,
                                             PmOwnedBuffer *out);
+/* ABI 7: returns the 32-byte public locator. */
+int32_t pm_crypto_device_link_locator(PmByteSlice secret, PmOwnedBuffer *out);
+/* ABI 8 control frames: PK2Q/PK2R v1, u16-BE operation, bounded64KiB.
+ * See docs/designs/K2-abi8-boundary.md for exact fields and persistence rules.
+ * Each success returns one owned buffer. Failure resets out to null/zero.
+ * source_confirm NEVER returns approval_tag. Persist its intent/state before
+ * calling source_approval_request or sending HTTP. No private key is exported.
+ * Bundle stream symbols are reserved for a later complete implementation. */
+int32_t pm_crypto_k2_receive_begin(PmCryptoHandle *, PmByteSlice, PmOwnedBuffer *);
+int32_t pm_crypto_k2_source_accept(PmCryptoHandle *, PmByteSlice, PmOwnedBuffer *);
+int32_t pm_crypto_k2_inspect(PmCryptoHandle *, PmByteSlice, PmOwnedBuffer *);
+int32_t pm_crypto_k2_enrollment_proof(PmCryptoHandle *, PmByteSlice, PmOwnedBuffer *);
+int32_t pm_crypto_k2_source_confirm(PmCryptoHandle *, PmByteSlice, PmOwnedBuffer *);
+int32_t pm_crypto_k2_source_approval_request(PmCryptoHandle *, PmByteSlice, PmOwnedBuffer *);
+int32_t pm_crypto_k2_apply_approval(PmCryptoHandle *, PmByteSlice, PmOwnedBuffer *);
+int32_t pm_crypto_k2_source_posted(PmCryptoHandle *, PmByteSlice, PmOwnedBuffer *);
+int32_t pm_crypto_k2_importing(PmCryptoHandle *, PmByteSlice, PmOwnedBuffer *);
+int32_t pm_crypto_k2_forget(PmCryptoHandle *, PmByteSlice, PmOwnedBuffer *);
+int32_t pm_crypto_k2_expire(PmCryptoHandle *, PmByteSlice, PmOwnedBuffer *);
+/* ABI8 bounded bundle streams. One large stream process-wide. All results
+ * use PK2R framing; write/read chunks max1MiB, total padded frame max64MiB.
+ * Incoming read fails until receive_finish authenticates the complete bundle.
+ * Device destroy invalidates/wipes the stream; destroy the stream pointer once
+ * afterward too. Never persist pointers or write plaintext snapshots to disk.
+ * source_finish/receive_begin_bundle include the verified transfer ID.
+ * Persist ciphertext cache+exact opaque handoff+sealed state before HTTP. */
+int32_t pm_crypto_k2_source_begin(PmCryptoHandle *, PmByteSlice,
+    PmHistoryStream **, PmOwnedBuffer *);
+int32_t pm_crypto_k2_receive_begin_bundle(PmCryptoHandle *, PmByteSlice,
+    PmHistoryStream **, PmOwnedBuffer *);
+int32_t pm_crypto_k2_stream_write(PmHistoryStream *, PmByteSlice, PmOwnedBuffer *);
+int32_t pm_crypto_k2_stream_read(PmHistoryStream *, PmByteSlice, PmOwnedBuffer *);
+int32_t pm_crypto_k2_source_finish(PmCryptoHandle *, PmHistoryStream *,
+    PmByteSlice, PmOwnedBuffer *);
+int32_t pm_crypto_k2_receive_finish(PmCryptoHandle *, PmHistoryStream *,
+    PmByteSlice, PmOwnedBuffer *);
+void pm_crypto_k2_stream_destroy(PmHistoryStream *);
+/* ABI 7: returns hash32, claim MAC32, approval MAC32, SAS prefix4. */
 int32_t pm_crypto_device_link_transcript_hash(
     PmCryptoHandle *handle, PmByteSlice protocol_version,
+    PmByteSlice server_origin, PmByteSlice link_id, PmByteSlice link_secret,
     PmByteSlice peer_device_id,
     PmByteSlice peer_signing_public_key, PmByteSlice link_nonce,
     uint8_t local_is_existing_device, PmOwnedBuffer *out);

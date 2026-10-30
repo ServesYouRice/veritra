@@ -109,6 +109,9 @@ func TestApplicationLogNeverContainsBodiesTokensOrCiphertext(t *testing.T) {
 		{"GET", "/api/v1/recovery", "", "", map[string]string{"X-Recovery-Token": recovery}},
 		{"GET", "/api/v1/recovery", "", "", map[string]string{"X-Recovery-Token": "SENTINELrecoverytoken"}},
 		{"GET", "/api/v1/recovery/SENTINELrecoverytoken", "", "", nil},
+		{"POST", "/api/v1/device-links/v3/claim", "", `{"device_name":"SENTINELplaintextbody","claim_token_hash":"SENTINELclaimtoken"}`, nil},
+		{"GET", "/api/v1/device-links/v3/dlink_fixture/claim-status", "", "", map[string]string{"X-Veritra-Claim-Token": "SENTINELclaimtoken"}},
+		{"POST", "/api/v1/device-links/v3/dlink_fixture/complete", "", `{"initial_session_token_hash":"SENTINELsessiontoken0123456789abcdef"}`, map[string]string{"X-Veritra-Claim-Token": "SENTINELclaimtoken"}},
 	}
 	statuses := make([]int, 0, len(requests))
 	for _, item := range requests {

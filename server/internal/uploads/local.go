@@ -19,6 +19,8 @@ import (
 )
 
 type LocalStore struct {
+	activeMu      sync.Mutex
+	active        map[string]bool
 	root          string
 	syncFile      func(*os.File) error
 	rename        func(string, string) error
@@ -66,7 +68,15 @@ func (s *LocalStore) CleanupTemporaryFiles(ctx context.Context, olderThan time.T
 		if !info.ModTime().Before(olderThan) {
 			continue
 		}
-		if err := os.Remove(filepath.Join(s.root, entry.Name())); err != nil && !os.IsNotExist(err) {
+		s.activeMu.Lock()
+		busy := s.active[strings.TrimSuffix(entry.Name(), ".tmp")]
+		if busy {
+			s.activeMu.Unlock()
+			continue
+		}
+		err = os.Remove(filepath.Join(s.root, entry.Name()))
+		s.activeMu.Unlock()
+		if err != nil && !os.IsNotExist(err) {
 			return removed, err
 		}
 		removed++
@@ -104,6 +114,10 @@ func (s *LocalStore) PutEncryptedBlob(ctx context.Context, r io.Reader) (BlobRef
 	if err != nil {
 		return BlobRef{}, err
 	}
+	return s.putEncryptedBlob(ctx, id, r)
+}
+
+func (s *LocalStore) putEncryptedBlob(ctx context.Context, id string, r io.Reader) (BlobRef, error) {
 	path := filepath.Join(s.root, id)
 	tmp := path + ".tmp"
 	file, err := os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -198,6 +212,11 @@ func (s *LocalStore) Open(ctx context.Context, ref BlobRef) (Blob, error) {
 }
 
 func (s *LocalStore) Delete(ctx context.Context, storageKey string) error {
+	s.activeMu.Lock()
+	defer s.activeMu.Unlock()
+	if s.active[storageKey] {
+		return ErrBlobBusy
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}

@@ -1,0 +1,17 @@
+{
+  "generated_before_state_v3": true,
+  "source_account": "acct_fixture",
+  "source_device": "dev_old",
+  "source_key_hex": "7171717171717171717171717171717171717171717171717171717171717171",
+  "source_counter": 41,
+  "peer_account": "acct_peer",
+  "peer_device": "dev_peer",
+  "peer_key_hex": "7272727272727272727272727272727272727272727272727272727272727272",
+  "peer_counter": 42,
+  "files": {
+    "peer-next.bin": "612051d8569ffd35f6a428e0abd5b38e37db990b835f7a71d15c1e4ed5f68e38",
+    "peer.bin": "a052ce5c43699278f00d40e04b53ce2dd1d62e343dd46c51be89c412bf845957",
+    "source-public.bin": "e80384c1814fc32b92b9af16177d06187340df4ab9496126d6f20ef467c8e3ce",
+    "source.bin": "f2ca06ea449a62a0aad8dfeb3ee2f7bc63b6e6ab24b4d4bb16c0b729e2ed3170"
+  }
+}

@@ -7,9 +7,13 @@ import 'dart:typed_data';
 import '../crypto/mls_commit_bundle.dart';
 import 'admin_models.dart';
 import 'api_errors.dart';
+import 'device_link_v3_models.dart';
 import 'models.dart';
+import 'server_origin.dart';
+import 'transport_policy.dart';
 
 export 'api_errors.dart';
+export 'server_origin.dart';
 
 class ApiClient {
   ApiClient({required String baseUrl, HttpClient? httpClient})
@@ -69,6 +73,261 @@ class ApiClient {
 
   Future<Map<String, Object?>> setupStatus() async {
     return _jsonRequest('GET', '/api/v1/setup/status');
+  }
+
+  void _v3Owner(Session owner) {
+    _v3Origin();
+    deviceLinkV3Id(owner.accountId);
+    deviceLinkV3Id(owner.deviceId);
+    if (owner.baseUrl != baseUrl) {
+      throw const FormatException('device link owner origin mismatch');
+    }
+  }
+
+  void _v3Origin() {
+    if (!TransportPolicy.demo.allows(baseUrl)) {
+      throw const FormatException('device link requires HTTPS or loopback');
+    }
+  }
+
+  DeviceLinkV3Record _v3Link(Map<String, Object?> json,
+      {String? id, Session? owner}) {
+    return _decode(() {
+      final link = DeviceLinkV3Record.fromJson(_object(json, 'device_link'));
+      if (link.origin != baseUrl ||
+          (id != null && link.id != id) ||
+          (owner != null &&
+              (link.accountId != owner.accountId ||
+                  link.sourceDeviceId != owner.deviceId))) {
+        throw const ApiResponseException();
+      }
+      return link;
+    });
+  }
+
+  Future<DeviceLinkV3Record> createDeviceLinkV3(Session owner, String locator,
+      {int expiresInSeconds = 600}) async {
+    _v3Owner(owner);
+    deviceLinkV3Hash(locator);
+    if (expiresInSeconds < 1 || expiresInSeconds > 1800) {
+      throw const FormatException('invalid device link lifetime');
+    }
+    final json = await _jsonRequest('POST', '/api/v1/device-links/v3',
+        token: owner.token,
+        body: {
+          'code': locator,
+          'server_origin': baseUrl,
+          'protocol_version': deviceLinkV3Protocol,
+          'expires_in_seconds': expiresInSeconds,
+        });
+    final link = _v3Link(json, owner: owner);
+    if (link.fields['code'] != locator) throw const ApiResponseException();
+    return link;
+  }
+
+  Future<DeviceLinkV3Reservation> reserveDeviceLinkV3(
+      String locator, String requestId) async {
+    _v3Origin();
+    deviceLinkV3Hash(locator);
+    deviceLinkV3Hash(requestId);
+    final json = await _jsonRequest(
+        'POST', '/api/v1/device-links/v3/claim-enrollment',
+        body: {
+          'code': locator,
+          'protocol_version': deviceLinkV3Protocol,
+          'reservation_request_id': requestId,
+        });
+    return _decode(() => DeviceLinkV3Reservation.fromJson(json));
+  }
+
+  Future<DeviceLinkV3Record> submitDeviceLinkV3Claim(
+      FrozenDeviceLinkV3Claim claim,
+      DeviceLinkV3Reservation reservation) async {
+    _v3Origin();
+    if (claim.fields['server_origin'] != baseUrl ||
+        claim.fields['enrollment_reservation_id'] != reservation.fields['id']) {
+      throw const FormatException('device link claim origin mismatch');
+    }
+    final link = _v3Link(
+        await _jsonRequest('POST', '/api/v1/device-links/v3/claim',
+            body: claim.fields),
+        id: claim.fields['enrollment_reservation_id'] as String);
+    for (final (returned, reserved) in [
+      ('account_id', 'account_id'),
+      ('claimed_device_id', 'device_id'),
+      ('created_by_device_id', 'existing_device_id'),
+      ('existing_signing_key', 'existing_signing_key'),
+      ('link_nonce', 'link_nonce'),
+      ('expires_at', 'expires_at'),
+    ]) {
+      if (link.fields[returned] != reservation.fields[reserved]) {
+        throw const ApiResponseException();
+      }
+    }
+    for (final (returned, sent) in [
+      ('claimed_device_name', 'device_name'),
+      ('claimed_signing_key', 'signing_key'),
+      ('transfer_public_key', 'transfer_public_key'),
+      ('transcript_hash', 'transcript_hash'),
+      ('claim_tag', 'claim_tag'),
+    ]) {
+      if (link.fields[returned] != claim.fields[sent]) {
+        throw const ApiResponseException();
+      }
+    }
+    if (link.fields['claim_request_hash'] != claim.requestHash) {
+      throw const ApiResponseException();
+    }
+    return link;
+  }
+
+  Future<DeviceLinkV3Record> deviceLinkV3(Session owner, String id) async {
+    _v3Owner(owner);
+    deviceLinkV3Id(id);
+    return _v3Link(
+        await _jsonRequest('GET', '/api/v1/device-links/v3/$id',
+            token: owner.token),
+        id: id,
+        owner: owner);
+  }
+
+  /// Polling is deliberately read-only and never yields a Session.
+  Future<DeviceLinkV3Record> deviceLinkV3ClaimStatus(
+      DeviceLinkV3Record expected, String claimToken) async {
+    _v3Origin();
+    if (expected.origin != baseUrl) {
+      throw const FormatException('device link status origin mismatch');
+    }
+    deviceLinkV3ClaimToken(claimToken);
+    final link = _v3Link(
+        await _jsonRequest(
+            'GET', '/api/v1/device-links/v3/${expected.id}/claim-status',
+            extraHeaders: {'X-Veritra-Claim-Token': claimToken}),
+        id: expected.id);
+    _v3SameClaim(expected, link);
+    return link;
+  }
+
+  void _v3SameClaim(DeviceLinkV3Record expected, DeviceLinkV3Record actual) {
+    for (final key in [
+      'id',
+      'account_id',
+      'created_by_device_id',
+      'server_origin',
+      'link_nonce',
+      'existing_signing_key',
+      'claimed_device_id',
+      'claimed_device_name',
+      'claimed_signing_key',
+      'transfer_public_key',
+      'transcript_hash',
+      'claim_tag',
+      'claim_request_hash',
+      'created_at',
+      'expires_at',
+      'claimed_at'
+    ]) {
+      if (expected.fields[key] != actual.fields[key]) {
+        throw const ApiResponseException();
+      }
+    }
+    const rank = {'pending': 0, 'claimed': 1, 'approved': 2, 'consumed': 3};
+    if ((rank[actual.state] ?? -1) < (rank[expected.state] ?? 0)) {
+      throw const ApiResponseException();
+    }
+    for (final key in [
+      'approved_at',
+      'transfer_expires_at',
+      'approval_tag',
+      'completed_at'
+    ]) {
+      if (expected.fields.containsKey(key) &&
+          expected.fields[key] != actual.fields[key]) {
+        throw const ApiResponseException();
+      }
+    }
+  }
+
+  Future<DeviceLinkV3Record> approveDeviceLinkV3(
+      Session owner, DeviceLinkV3Record expected, List<int> approvalTag) async {
+    _v3Owner(owner);
+    if (expected.origin != baseUrl ||
+        expected.accountId != owner.accountId ||
+        expected.sourceDeviceId != owner.deviceId ||
+        approvalTag.length != 32) {
+      throw const FormatException('device link approval context mismatch');
+    }
+    final link = _v3Link(
+        await _jsonRequest(
+            'POST', '/api/v1/device-links/v3/${expected.id}/approve',
+            token: owner.token,
+            body: {
+              'protocol_version': deviceLinkV3Protocol,
+              'claim_request_hash':
+                  deviceLinkV3Hash(expected.fields['claim_request_hash']),
+              'transcript_hash':
+                  base64Encode(expected.bytes('transcript_hash')),
+              'approval_tag': base64Encode(approvalTag),
+            }),
+        id: expected.id,
+        owner: owner);
+    _v3SameClaim(expected, link);
+    if (!const {'approved', 'consumed'}.contains(link.state) ||
+        link.fields['approval_tag'] != base64Encode(approvalTag)) {
+      throw const ApiResponseException();
+    }
+    return link;
+  }
+
+  Future<DeviceLinkV3Completion> completeDeviceLinkV3(
+      DeviceLinkV3Record expected,
+      String claimToken,
+      String initialSessionTokenHash) async {
+    _v3Origin();
+    deviceLinkV3ClaimToken(claimToken);
+    deviceLinkV3Hash(initialSessionTokenHash);
+    if (expected.origin != baseUrl || expected.recipientDeviceId == null) {
+      throw const FormatException('device link completion context mismatch');
+    }
+    final json = await _jsonRequest(
+        'POST', '/api/v1/device-links/v3/${expected.id}/complete',
+        extraHeaders: {
+          'X-Veritra-Claim-Token': claimToken
+        },
+        body: {
+          'protocol_version': deviceLinkV3Protocol,
+          'claim_request_hash':
+              deviceLinkV3Hash(expected.fields['claim_request_hash']),
+          'transcript_hash': base64Encode(expected.bytes('transcript_hash')),
+          'initial_session_token_hash': initialSessionTokenHash,
+        });
+    return _decode(() {
+      final receipt = DeviceLinkV3Completion.fromJson(json);
+      final fields = receipt.fields;
+      if (fields['link_id'] != expected.id ||
+          fields['account_id'] != expected.accountId ||
+          fields['device_id'] != expected.recipientDeviceId ||
+          fields['server_origin'] != baseUrl ||
+          fields['claim_request_hash'] !=
+              expected.fields['claim_request_hash'] ||
+          fields['transcript_hash'] != expected.fields['transcript_hash'] ||
+          fields['initial_session_token_hash'] != initialSessionTokenHash ||
+          (expected.fields.containsKey('completed_at') &&
+              fields['completed_at'] != expected.fields['completed_at']) ||
+          (expected.fields.containsKey('approval_tag') &&
+              base64Encode(receipt.approvalTag) !=
+                  expected.fields['approval_tag'])) {
+        throw const ApiResponseException();
+      }
+      return receipt;
+    });
+  }
+
+  Future<void> cancelDeviceLinkV3(Session owner, String id) async {
+    _v3Owner(owner);
+    deviceLinkV3Id(id);
+    await _jsonRequest('DELETE', '/api/v1/device-links/v3/$id',
+        token: owner.token);
   }
 
   Future<EnrollmentReservation> reserveOwnerEnrollment({
@@ -1168,12 +1427,12 @@ class ApiClient {
     return _rows(json, 'results', MetadataSearchResult.fromJson);
   }
 
-  Future<DeviceLink> createDeviceLink(String token) async {
+  Future<DeviceLink> createDeviceLink(String token, String locator) async {
     final json = await _jsonRequest(
       'POST',
       '/api/v1/device-links',
       token: token,
-      body: <String, Object?>{},
+      body: <String, Object?>{'code': locator},
     );
     return _decode(() => DeviceLink.fromJson(_object(json, 'device_link')));
   }
@@ -1214,10 +1473,12 @@ class ApiClient {
         'signing_key': base64Encode(credential.signingKey),
         'challenge_signature': base64Encode(credential.challengeSignature),
         'transcript_hash': base64Encode(verification.transcriptHash),
+        'claim_tag': base64Encode(verification.claimTag),
       },
     );
     return _decode(
       () => DeviceLinkClaim(
+        serverOrigin: baseUrl,
         deviceLink: DeviceLink.fromJson(_object(json, 'device_link')),
         claimToken: json['claim_token'] as String,
         deviceSecret: json['device_secret'] as String,
@@ -1229,12 +1490,16 @@ class ApiClient {
     String token,
     String linkId,
     List<int> transcriptHash,
+    List<int> approvalTag,
   ) async {
     final json = await _jsonRequest(
       'POST',
       '/api/v1/device-links/$linkId/approve',
       token: token,
-      body: <String, Object?>{'transcript_hash': base64Encode(transcriptHash)},
+      body: <String, Object?>{
+        'transcript_hash': base64Encode(transcriptHash),
+        'approval_tag': base64Encode(approvalTag)
+      },
     );
     return _decode(() => DeviceLink.fromJson(_object(json, 'device_link')));
   }
@@ -1243,6 +1508,7 @@ class ApiClient {
     String linkId,
     String claimToken,
     List<int> expectedTranscriptHash,
+    List<int> expectedApprovalTag,
   ) async {
     final json = await _jsonRequest(
       'GET',
@@ -1256,6 +1522,11 @@ class ApiClient {
     final transcriptHash = _decodeRequiredBytes(json['transcript_hash']);
     if (!_bytesEqual(transcriptHash, expectedTranscriptHash)) {
       throw ApiException(409, '{"error":"transcript_mismatch"}');
+    }
+    final approvalTag = _decodeRequiredBytes(json['approval_tag']);
+    if (expectedApprovalTag.length != 32 ||
+        !_bytesEqual(approvalTag, expectedApprovalTag)) {
+      throw ApiException(409, '{"error":"link_confirmation_mismatch"}');
     }
     return _sessionFromAuthJson(json);
   }
@@ -1315,6 +1586,8 @@ class ApiClient {
     final uri = Uri.parse(baseUrl).resolve(path);
     final request =
         await _httpClient.openUrl(method, uri).timeout(_requestTimeout);
+    // API credentials are bound to this origin, including custom claim tokens.
+    request.followRedirects = false;
     request.headers.contentType = ContentType.json;
     if (token != null) {
       request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
@@ -1459,27 +1732,4 @@ List<T> _rows<T>(
           throw const ApiResponseException(),
     ],
   );
-}
-
-String canonicalizeServerOrigin(String raw) {
-  final uri = Uri.parse(raw.trim());
-  final scheme = uri.scheme.toLowerCase();
-  if ((scheme != 'http' && scheme != 'https') || uri.host.isEmpty) {
-    throw const FormatException('A full HTTP(S) server origin is required');
-  }
-  if (uri.userInfo.isNotEmpty ||
-      (uri.path.isNotEmpty && uri.path != '/') ||
-      uri.hasQuery ||
-      uri.hasFragment) {
-    throw const FormatException(
-      'Server URL must not contain credentials, a path, query, or fragment',
-    );
-  }
-  final defaultPort = scheme == 'https' ? 443 : 80;
-  final origin = Uri(
-    scheme: scheme,
-    host: uri.host.toLowerCase(),
-    port: uri.hasPort && uri.port != defaultPort ? uri.port : null,
-  );
-  return origin.toString().replaceFirst(RegExp(r'/$'), '');
 }

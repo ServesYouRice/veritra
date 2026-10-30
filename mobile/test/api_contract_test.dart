@@ -105,12 +105,13 @@ void main() {
     final badRequest = harness.nextRequest;
     final bad =
         client.reauthenticate('token_old', 'owner-password-123', 'secret_1');
+    final refused = expectLater(bad, throwsA(isA<ApiResponseException>()));
     final malformed = await badRequest;
     await utf8.decodeStream(malformed);
     malformed.response.headers.contentType = ContentType.json;
     malformed.response.write(jsonEncode(<String, Object?>{'token': 7}));
     await malformed.response.close();
-    await expectLater(bad, throwsA(isA<ApiResponseException>()));
+    await refused;
   });
 
   test('call API sends exact create and transition JSON', () async {
@@ -374,7 +375,9 @@ void main() {
     expect(accountExport['messages'], isA<List<Object?>>());
     expect(jsonEncode(accountExport), isNot(contains('auth_secret')));
 
-    final link = await client.createDeviceLink(owner.token);
+    final linkSecret = List<int>.filled(16, 0x55);
+    final link = await client.createDeviceLink(
+        owner.token, bindings.deviceLinkLocator(linkSecret));
     final fetchedLink = await client.deviceLink(owner.token, link.id);
     expect(fetchedLink.id, link.id);
     expect(fetchedLink.verificationCode, link.verificationCode);
@@ -395,6 +398,9 @@ void main() {
       ),
       verification: linkedNative.deriveDeviceLinkVerification(
         protocolVersion: linkReservation.protocolVersion!,
+        serverOrigin: client.baseUrl,
+        linkId: link.id,
+        linkSecret: linkSecret,
         peerDeviceId: linkReservation.existingDeviceId!,
         peerSigningKey: linkReservation.existingSigningKey!,
         linkNonce: linkReservation.linkNonce!,
@@ -403,17 +409,23 @@ void main() {
     );
     final linkedVerification = linkedNative.deriveDeviceLinkVerification(
       protocolVersion: linkReservation.protocolVersion!,
+      serverOrigin: client.baseUrl,
+      linkId: link.id,
+      linkSecret: linkSecret,
       peerDeviceId: linkReservation.existingDeviceId!,
       peerSigningKey: linkReservation.existingSigningKey!,
       linkNonce: linkReservation.linkNonce!,
       localIsExistingDevice: false,
     );
     expect(
-        await client.completeDeviceLinkClaim(
-            link.id, claim.claimToken, linkedVerification.transcriptHash),
+        await client.completeDeviceLinkClaim(link.id, claim.claimToken,
+            linkedVerification.transcriptHash, linkedVerification.approvalTag),
         isNull);
     final ownerVerification = ownerNative.deriveDeviceLinkVerification(
       protocolVersion: linkReservation.protocolVersion!,
+      serverOrigin: client.baseUrl,
+      linkId: link.id,
+      linkSecret: linkSecret,
       peerDeviceId: linkReservation.deviceId,
       peerSigningKey: linkedNative.signingPublicKey(),
       linkNonce: linkReservation.linkNonce!,
@@ -424,9 +436,13 @@ void main() {
       owner.token,
       link.id,
       ownerVerification.transcriptHash,
+      ownerVerification.approvalTag,
     );
     final linkedSession = await client.completeDeviceLinkClaim(
-        link.id, claim.claimToken, linkedVerification.transcriptHash);
+        link.id,
+        claim.claimToken,
+        linkedVerification.transcriptHash,
+        linkedVerification.approvalTag);
     expect(linkedSession?.deviceId, linkReservation.deviceId);
 
     final devicePage1 = await _getJson(

@@ -5,14 +5,18 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
+import 'package:flutter/foundation.dart' show setEquals;
 import 'package:path_provider/path_provider.dart';
 
 import '../crypto/app_payload.dart';
+import '../crypto/message_format.dart';
+import '../crypto/device_link_code.dart';
 import '../crypto/attachment_crypto.dart';
 import '../crypto/backup_service.dart';
 import '../crypto/mls_commit_bundle.dart';
 import '../crypto/crypto_service.dart';
 import '../push/push_service.dart';
+import '../push/background_wake_runner.dart';
 import '../storage/local_store.dart';
 import '../sync/sync_recovery.dart';
 import '../sync/sync_service.dart';
@@ -24,7 +28,12 @@ import 'errors.dart';
 import '../storage/message_search.dart';
 import 'message_history.dart';
 import '../storage/encrypted_database.dart'
-    show LocalMessageKind, localStorageErrorCode;
+    show
+        LocalMessageKind,
+        LocalMessage,
+        LocalPin,
+        LocalConversationPref,
+        localStorageErrorCode;
 import 'models.dart';
 import 'receipts_state.dart';
 import 'typing_state.dart';
@@ -154,7 +163,7 @@ class Ops {
 
 enum RequestBucket { chat, request, hidden }
 
-class AppState extends ChangeNotifier {
+class AppState extends ChangeNotifier implements ConversationAuthority {
   AppState({
     required this.apiClientFactory,
     required this.cryptoService,
@@ -169,6 +178,9 @@ class AppState extends ChangeNotifier {
         receiptPreferences = receiptPreferences ??
             ReceiptPreferences(MemoryReceiptPreferenceStore()) {
     composerDrafts.onChanged = _draftChanged;
+    if (cryptoService case final ConversationAuthorityConsumer consumer) {
+      consumer.conversationAuthority = this;
+    }
     // Read the saved switch now so the settings screen shows it at once.
     unawaited(this.receiptPreferences.loaded);
   }
@@ -232,6 +244,100 @@ class AppState extends ChangeNotifier {
   /// part of what [notifyListeners] reports; cleared when the session ends.
   final ComposerDrafts composerDrafts = ComposerDrafts();
   DeviceLink? activeDeviceLink;
+  Map<String, LocalConversationPref> conversationPrefs = {};
+  final Map<String, List<LocalPin>> _pins = {};
+  Set<String> starredMessages = {};
+  bool showArchivedChats = false;
+  bool mentionsInMutedChats = true;
+  @override
+  String? roleOf(String conversationId, String accountId) =>
+      membersFor(conversationId)
+          .where((m) => m.accountId == accountId)
+          .firstOrNull
+          ?.role;
+  @override
+  Set<String> memberAccounts(String conversationId) =>
+      membersFor(conversationId).map((m) => m.accountId).toSet();
+  @override
+  String? conversationKind(String conversationId) =>
+      conversations.where((c) => c.id == conversationId).firstOrNull?.kind;
+  @override
+  String? conversationChannel(String conversationId) =>
+      conversations.where((c) => c.id == conversationId).firstOrNull?.channelId;
+  bool isArchived(String id) => conversationPrefs[id]?.archivedAt != null;
+  bool isChatPinned(String id) => conversationPrefs[id]?.pinnedAt != null;
+  List<LocalPin> pinsFor(String id) => (_pins[id] ?? const [])
+      .where((p) => p.expiresAt > DateTime.now().millisecondsSinceEpoch)
+      .toList();
+  bool canPinMessages(String id) =>
+      conversationKind(id) == 'dm' ||
+      const {'owner', 'admin', 'moderator'}
+          .contains(roleOf(id, session?.accountId ?? ''));
+  void toggleArchivedChats() {
+    showArchivedChats = !showArchivedChats;
+    notifyListeners();
+  }
+
+  Future<void> setMentionsInMutedChats(bool value) async {
+    mentionsInMutedChats = value;
+    await localStore.saveSetting('w8.mentions_muted', '$value');
+    notifyListeners();
+  }
+
+  Future<void> setConversationArchived(String id, bool archived) async {
+    final old = conversationPrefs[id];
+    await _saveConversationPref(LocalConversationPref(
+        conversationId: id,
+        archivedAt: archived ? DateTime.now().millisecondsSinceEpoch : null,
+        pinnedAt: old?.pinnedAt));
+  }
+
+  Future<void> setChatPinned(String id, bool pinned) async {
+    final old = conversationPrefs[id];
+    await _saveConversationPref(LocalConversationPref(
+        conversationId: id,
+        archivedAt: old?.archivedAt,
+        pinnedAt: pinned ? DateTime.now().millisecondsSinceEpoch : null));
+  }
+
+  Future<void> _saveConversationPref(LocalConversationPref pref) async {
+    await localStore.saveConversationPref(pref);
+    conversationPrefs = {...conversationPrefs, pref.conversationId: pref};
+    notifyListeners();
+  }
+
+  Future<void> toggleMessageStar(LocalMessage message) async {
+    await localStore.setStarred(
+        message.key, !starredMessages.contains(message.key));
+    starredMessages = await localStore.loadStarred();
+    notifyListeners();
+  }
+
+  Future<void> deleteMessageForMe(LocalMessage message) async {
+    await localStore.hideMessage(message.conversationId, message.key);
+    await refreshHistory(message.conversationId);
+  }
+
+  Future<void> _ensureConversationAuthority(String id) async {
+    if (cryptoService is! ConversationAuthorityConsumer) return;
+    if (membersByConversation.containsKey(id)) return;
+    final current = session, client = api;
+    if (current == null || client == null) return;
+    final members = await client.conversationMembers(current.token, id);
+    membersByConversation = {...membersByConversation, id: members};
+  }
+
+  List<int>? _activeLinkSecret;
+  String? get activeDeviceLinkCode => _activeLinkSecret == null ||
+          activeDeviceLink == null ||
+          DateTime.now().isAfter(activeDeviceLink!.expiresAt)
+      ? null
+      : encodeDeviceLinkSecret(_activeLinkSecret!);
+  void _clearLinkSecret() {
+    _activeLinkSecret?.fillRange(0, _activeLinkSecret!.length, 0);
+    _activeLinkSecret = null;
+  }
+
   DeviceLinkClaim? pendingDeviceLinkClaim;
   String? error;
   bool busy = false;
@@ -727,12 +833,17 @@ class AppState extends ChangeNotifier {
   }
 
   Future<ConversationHistory> _loadHistory(String conversationId) async {
+    _pins[conversationId] = await localStore.loadPins(conversationId);
+    final stars = await localStore.loadStarred();
+    if (!setEquals(starredMessages, stars)) starredMessages = stars;
     final messages = await localStore.loadMessages(conversationId);
     final reactions = await localStore.loadReactions(conversationId);
     return ConversationHistory(
       conversationId: conversationId,
       messages: messages,
       reactions: reactions,
+      copiedKeys:
+          (await localStore.loadHistoryNamespace()).provenance.keys.toSet(),
     );
   }
 
@@ -782,8 +893,16 @@ class AppState extends ChangeNotifier {
     }
     return byKey.values.toList()
       ..sort((left, right) {
-        final byCreatedAt = right.createdAt.compareTo(left.createdAt);
-        return byCreatedAt != 0 ? byCreatedAt : right.id.compareTo(left.id);
+        final leftLocal = history.forEnvelope(left);
+        final rightLocal = history.forEnvelope(right);
+        final byCreatedAt = (rightLocal?.createdAt ??
+                right.createdAt.millisecondsSinceEpoch)
+            .compareTo(
+                leftLocal?.createdAt ?? left.createdAt.millisecondsSinceEpoch);
+        return byCreatedAt != 0
+            ? byCreatedAt
+            : (rightLocal?.key ?? right.id)
+                .compareTo(leftLocal?.key ?? left.id);
       });
   }
 
@@ -990,6 +1109,12 @@ class AppState extends ChangeNotifier {
       _mutes
         ..clear()
         ..addAll(await localStore.loadConversationMutes());
+      conversationPrefs = {
+        for (final p in await localStore.loadConversationPrefs())
+          p.conversationId: p
+      };
+      mentionsInMutedChats =
+          await localStore.loadSetting('w8.mentions_muted') != 'false';
       _armMuteTimer();
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
       final cached = await localStore.loadSnapshot();
@@ -1313,6 +1438,12 @@ class AppState extends ChangeNotifier {
       return;
     }
     conversations = await client.conversations(current.token);
+    conversationPrefs = {
+      for (final p in await localStore.loadConversationPrefs())
+        p.conversationId: p
+    };
+    mentionsInMutedChats =
+        await localStore.loadSetting('w8.mentions_muted') != 'false';
     await _loadRequestState(grandfather: false);
     // The server's list is the truth: a conversation no longer in it (an
     // admin removed this account, say) keeps no draft here.
@@ -2114,18 +2245,108 @@ class AppState extends ChangeNotifier {
   /// stays retryable from its pending bubble either way.
   Future<bool> sendMessageTo(String conversationId, String plaintext) =>
       _sendPayload(conversationId, AppPayloadType.text,
-          <String, Object?>{'text': plaintext});
+          _composedBody(conversationId, plaintext),
+          draftText: plaintext);
+
+  Map<String, Object?> _composedBody(String id, String text) =>
+      composeMessage(text, accountsByUsername: {
+        for (final m in membersFor(id))
+          if (m.username != null) m.username!: m.accountId
+      });
 
   /// Replies to the message with local history key [targetKey] (D22).
   Future<bool> replyTo(String conversationId, String targetKey, String text) =>
-      _sendPayload(conversationId, AppPayloadType.reply,
-          <String, Object?>{'text': text, 'reply_to_id': targetKey});
+      _sendPayload(
+          conversationId,
+          AppPayloadType.reply,
+          <String, Object?>{
+            ..._composedBody(conversationId, text),
+            'reply_to_id': targetKey
+          },
+          draftText: text);
 
   /// Replaces the text of one of this account's own messages.
   Future<bool> editMessage(
           String conversationId, String targetKey, String text) =>
-      _sendPayload(conversationId, AppPayloadType.edit,
-          <String, Object?>{'message_id': targetKey, 'text': text});
+      _sendPayload(conversationId, AppPayloadType.edit, <String, Object?>{
+        'message_id': targetKey,
+        ..._composedBody(conversationId, text)
+      });
+
+  Future<bool> pinMessage(String conversationId, String targetKey,
+      {required bool pinned, int durationSeconds = 604800}) async {
+    await _ensureConversationAuthority(conversationId);
+    if (!canPinMessages(conversationId)) return false;
+    return _sendPayload(conversationId, AppPayloadType.pin, {
+      'message_id': targetKey,
+      'pinned': pinned,
+      if (pinned) 'duration_seconds': durationSeconds
+    });
+  }
+
+  /// A forward is a fresh send, with no source identity or mention metadata.
+  Future<bool> forwardMessage(
+      LocalMessage source, List<String> destinations) async {
+    final owner = session;
+    final generation = _sessionGeneration;
+    if (owner == null || !_syncOwnerActive(owner, generation)) return false;
+    final live = historyFor(source.conversationId).forKey(source.key);
+    if (live == null ||
+        live.deletedAt != null ||
+        live.hiddenAt != null ||
+        (live.expiresAt != null &&
+            live.expiresAt! <= DateTime.now().millisecondsSinceEpoch) ||
+        !const [LocalMessageKind.text, LocalMessageKind.attachment]
+            .contains(live.kind)) return false;
+    final targets = destinations.toSet();
+    final hops = live.forwardHops ?? 0;
+    if (targets.isEmpty || targets.length > (hops >= 5 ? 1 : 5)) return false;
+    final nextHops = (hops + 1).clamp(1, 5);
+    for (final id in targets) {
+      if (!conversations.any((c) => c.id == id)) return false;
+    }
+    try {
+      for (final id in targets) {
+        if (!_syncOwnerActive(owner, generation)) return false;
+        if (live.kind == LocalMessageKind.text) {
+          final format = decodeDecoration(live.formatJson);
+          if (!await _sendPayload(id, AppPayloadType.text, {
+            'text': live.body ?? '',
+            if (format['entities'] != null) 'entities': format['entities'],
+            'forwarded': {'hops': nextHops}
+          })) return false;
+        } else {
+          final attachments = AttachmentEntry.listFromBody(live.body,
+              conversationId: live.conversationId);
+          if (attachments.isEmpty || attachmentService == null) return false;
+          for (final attachment in attachments) {
+            if (!_syncOwnerActive(owner, generation)) return false;
+            final plaintext = await loadAttachment(attachment,
+                conversationId: live.conversationId, memoryOnly: true);
+            try {
+              if (!_syncOwnerActive(owner, generation)) return false;
+              if (!await _sendEncryptedAttachment(id,
+                  fileName: attachment.fileName,
+                  forwardedHops: nextHops,
+                  prepare: (service, name) => service.encryptBytes(
+                      plaintext: plaintext,
+                      conversationId: id,
+                      attachmentActionId: _randomHexId(),
+                      fileName: name,
+                      mediaType: attachment.mediaType))) return false;
+            } finally {
+              plaintext.fillRange(0, plaintext.length, 0);
+            }
+          }
+        }
+      }
+      return _syncOwnerActive(owner, generation);
+    } catch (err) {
+      _opErrors[Ops.send] = describeError(err, l10n);
+      notifyListeners();
+      return false;
+    }
+  }
 
   /// Deletes one of this account's own messages for every member.
   Future<bool> deleteMessage(String conversationId, String targetKey) =>
@@ -2148,7 +2369,25 @@ class AppState extends ChangeNotifier {
     required String fileName,
     String? mediaType,
     AttachmentCancellationToken? cancellation,
-  }) async {
+    int? forwardedHops,
+  }) =>
+      _sendEncryptedAttachment(conversationId,
+          fileName: fileName,
+          forwardedHops: forwardedHops,
+          prepare: (service, name) => service.encryptFile(
+              sourcePath: path,
+              conversationId: conversationId,
+              attachmentActionId: _randomHexId(),
+              fileName: name,
+              mediaType: attachmentMediaType(name, mediaType),
+              cancellation: cancellation));
+
+  Future<bool> _sendEncryptedAttachment(String conversationId,
+      {required String fileName,
+      int? forwardedHops,
+      required Future<PreparedEncryptedAttachment> Function(
+              AttachmentCryptoService service, String name)
+          prepare}) async {
     final service = attachmentService;
     final current = session;
     final client = api;
@@ -2161,14 +2400,8 @@ class AppState extends ChangeNotifier {
     PreparedEncryptedAttachment? prepared;
     try {
       final name = safeAttachmentName(fileName);
-      prepared = await service.encryptFile(
-        sourcePath: path,
-        conversationId: conversationId,
-        attachmentActionId: _randomHexId(),
-        fileName: name,
-        mediaType: attachmentMediaType(name, mediaType),
-        cancellation: cancellation,
-      );
+      prepared = await prepare(service, name);
+      if (!_syncOwnerActive(current, ownerGeneration)) return false;
       final uploaded = await client.uploadEncryptedAttachment(
         current.token,
         conversationId,
@@ -2181,6 +2414,7 @@ class AppState extends ChangeNotifier {
         conversationId,
         AppPayloadType.attachmentManifest,
         <String, Object?>{
+          if (forwardedHops != null) 'forwarded': {'hops': forwardedHops},
           'attachments': <Object?>[
             <String, Object?>{
               ...prepared.manifest,
@@ -2208,10 +2442,12 @@ class AppState extends ChangeNotifier {
 
   /// Downloads one attachment's ciphertext and decrypts it in memory. The
   /// ciphertext and plaintext only touch disk as temporary files, which are
-  /// removed before this returns.
+  /// removed before this returns. Forwarding sets [memoryOnly], which never
+  /// creates a decrypted temporary file.
   Future<Uint8List> loadAttachment(
     AttachmentEntry entry, {
     required String conversationId,
+    bool memoryOnly = false,
   }) async {
     final service = attachmentService;
     final current = session;
@@ -2251,6 +2487,9 @@ class AppState extends ChangeNotifier {
       if (received != entry.ciphertextSize) {
         throw const FormatException('attachment is smaller than announced');
       }
+      if (memoryOnly)
+        return await service.decryptBytes(
+            ciphertextPath: ciphertext.path, manifest: entry.manifest);
       await service.decryptFile(
         ciphertextPath: ciphertext.path,
         destinationPath: plaintext.path,
@@ -2303,8 +2542,14 @@ class AppState extends ChangeNotifier {
     AppPayloadType type,
     Map<String, Object?> body, {
     List<String> attachmentRefs = const <String>[],
+    String? draftText,
   }) {
+    final owner = session;
+    final ownerGeneration = _sessionGeneration;
+    if (owner == null) return Future.value(false);
+    var queued = false;
     return _runScoped(Ops.send, () async {
+      if (!_syncOwnerActive(owner, ownerGeneration)) return;
       final current = session;
       final client = api;
       final conversation =
@@ -2316,25 +2561,28 @@ class AppState extends ChangeNotifier {
       if (isMessageRequest(conversation)) {
         await _acceptConversation(conversation);
       }
+      if (!_syncOwnerActive(owner, ownerGeneration)) return;
       if (!await localStore.hasOutboxCapacity()) {
         throw const OutboxFullException();
       }
+      if (!_syncOwnerActive(owner, ownerGeneration)) return;
       if (mlsConversationFailed(conversation.id)) {
         throw const ConversationPausedException();
       }
       final mls = _mlsCrypto;
       final MessageEnvelope encrypted;
-      if (type == AppPayloadType.text) {
+      if (mls != null) {
+        encrypted = await mls.encryptPayload(conversation.id, type, body,
+            attachmentRefs: attachmentRefs, draftText: draftText);
+      } else if (type == AppPayloadType.text) {
         encrypted = await cryptoService.encrypt(
             conversation.id, body['text'] as String);
-      } else if (mls != null) {
-        encrypted = await mls.encryptPayload(conversation.id, type, body,
-            attachmentRefs: attachmentRefs);
       } else {
         throw StateError('Production MLS/OpenMLS encryption is not integrated');
       }
-      final draftText = body['text'] as String?;
+      if (!_syncOwnerActive(owner, ownerGeneration)) return;
       await localStore.enqueueEnvelope(encrypted, draftText: draftText);
+      queued = true;
       if (mls != null) await refreshHistory(conversation.id);
       final record = (await localStore.pendingEnvelopeRecords())
           .where((item) =>
@@ -2349,7 +2597,7 @@ class AppState extends ChangeNotifier {
       // Durable acceptance is the send result. Network delivery is owned by
       // the single retry worker, so a slow connection never holds the draft.
       unawaited(_flushOutbox());
-    });
+    }).then((succeeded) => succeeded && queued);
   }
 
   Future<void> retryEnvelope(String idempotencyKey) async {
@@ -2369,6 +2617,9 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> discardEnvelope(String idempotencyKey) async {
+    final deviceId = session?.deviceId;
+    if (deviceId != null)
+      await localStore.discardPendingPin('$deviceId:$idempotencyKey');
     await _removeFromOutboxByKey(idempotencyKey);
   }
 
@@ -2379,13 +2630,29 @@ class AppState extends ChangeNotifier {
       if (current == null || client == null) {
         return;
       }
+      _requireLinkOrigin(current, client);
       if (!membershipChangesAvailable) {
         throw StateError('device linking is not available in this build');
       }
       activeDeviceLink = null;
-      final created = await client.createDeviceLink(current.token);
-      _requireLinkAccount(current, created);
-      activeDeviceLink = _deviceLinkWithoutVerification(created);
+      _clearLinkSecret();
+      final random = Random.secure();
+      final secret = List<int>.generate(16, (_) => random.nextInt(256));
+      try {
+        final locator = await cryptoService.deviceLinkLocator(secret);
+        final created = await client.createDeviceLink(current.token, locator);
+        if (created.protocolVersion != 'veritra-device-link-v2' ||
+            created.code != locator ||
+            created.state != 'pending') {
+          throw StateError('Device-link context was substituted');
+        }
+        _requireLinkAccount(current, created);
+        _activeLinkSecret = secret;
+        activeDeviceLink = _deviceLinkWithoutVerification(created);
+      } finally {
+        if (!identical(secret, _activeLinkSecret))
+          secret.fillRange(0, secret.length, 0);
+      }
     });
   }
 
@@ -2397,8 +2664,12 @@ class AppState extends ChangeNotifier {
       if (current == null || client == null || link == null) {
         return;
       }
+      _requireLinkOrigin(current, client);
       _requireLinkAccount(current, link);
-      if (link.state != 'claimed' ||
+      if (_activeLinkSecret == null ||
+          DateTime.now().isAfter(link.expiresAt) ||
+          link.approvalTag?.length != 32 ||
+          link.state != 'claimed' ||
           link.verificationCode.isEmpty ||
           verificationCode.trim() != link.verificationCode ||
           link.transcriptHash?.length != 32) {
@@ -2410,8 +2681,10 @@ class AppState extends ChangeNotifier {
           current.token,
           link.id,
           link.transcriptHash!,
+          link.approvalTag!,
         ),
       );
+      _clearLinkSecret();
     });
   }
 
@@ -2442,9 +2715,15 @@ class AppState extends ChangeNotifier {
       Session current, ApiClient client, DeviceLink link) async {
     final accountId = link.accountId;
     final linkNonce = link.linkNonce;
-    if (accountId == null || linkNonce == null || linkNonce.length != 32) {
+    if (_activeLinkSecret == null ||
+        link.protocolVersion != 'veritra-device-link-v2' ||
+        DateTime.now().isAfter(link.expiresAt) ||
+        accountId == null ||
+        linkNonce == null ||
+        linkNonce.length != 32) {
       throw StateError('Device-link transcript context is incomplete');
     }
+    _requireLinkOrigin(current, client);
     _requireLinkAccount(current, link);
     final refreshed = await client.deviceLink(current.token, link.id);
     if (refreshed.id != link.id) {
@@ -2459,7 +2738,7 @@ class AppState extends ChangeNotifier {
       id: link.id,
       state: refreshed.state,
       verificationCode: '',
-      expiresAt: refreshed.expiresAt,
+      expiresAt: link.expiresAt,
       code: link.code ?? refreshed.code,
       linkUri: link.linkUri ?? refreshed.linkUri,
       claimedDeviceName: refreshed.claimedDeviceName,
@@ -2474,7 +2753,7 @@ class AppState extends ChangeNotifier {
       transcriptHash: null,
     );
     if (refreshed.state == 'claimed') {
-      if (refreshed.protocolVersion == null ||
+      if (refreshed.protocolVersion != 'veritra-device-link-v2' ||
           refreshed.claimedDeviceId == null ||
           refreshed.claimedSigningKey?.length != 32) {
         throw StateError('Device-link transcript context is incomplete');
@@ -2486,6 +2765,9 @@ class AppState extends ChangeNotifier {
       final verification = await cryptoService.deriveDeviceLinkVerification(
         accountId: accountId,
         protocolVersion: refreshed.protocolVersion!,
+        serverOrigin: canonicalizeServerOrigin(current.baseUrl),
+        linkId: link.id,
+        linkSecret: _activeLinkSecret!,
         linkNonce: linkNonce,
         peerDeviceId: refreshed.claimedDeviceId!,
         peerSigningKey: refreshed.claimedSigningKey!,
@@ -2494,9 +2776,20 @@ class AppState extends ChangeNotifier {
       if (!_constantTimeBytesEqual(verification.transcriptHash, relayedHash)) {
         throw StateError('Device-link transcript was substituted');
       }
+      if (refreshed.claimTag == null ||
+          !_constantTimeBytesEqual(
+              verification.claimTag, refreshed.claimTag!)) {
+        throw StateError('Device-link confirmation is missing or invalid');
+      }
       merged = _deviceLinkWithVerification(merged, verification);
     }
     return merged;
+  }
+
+  void _requireLinkOrigin(Session current, ApiClient client) {
+    if (canonicalizeServerOrigin(current.baseUrl) != client.baseUrl) {
+      throw StateError('Device-link server was substituted');
+    }
   }
 
   void _requireLinkAccount(Session current, DeviceLink link) {
@@ -2508,42 +2801,61 @@ class AppState extends ChangeNotifier {
 
   Future<void> claimDeviceLink(String baseUrl, String code) async {
     await _run(() async {
-      _replaceApi(baseUrl);
-      final enrollment = await api!.reserveDeviceLinkEnrollment(code);
-      final credential =
-          await cryptoService.createEnrollmentCredential(enrollment);
-      if (enrollment.protocolVersion == null ||
-          enrollment.linkNonce?.length != 32 ||
-          enrollment.existingDeviceId == null ||
-          enrollment.existingSigningKey?.length != 32) {
-        throw StateError('Device-link transcript context is incomplete');
+      pendingDeviceLinkClaim = null;
+      final secret = decodeDeviceLinkSecret(code);
+      try {
+        final locator = await cryptoService.deviceLinkLocator(secret);
+        _replaceApi(baseUrl);
+        final client = api!;
+        final origin = client.baseUrl;
+        final enrollment = await client.reserveDeviceLinkEnrollment(locator);
+        if (enrollment.protocolVersion != 'veritra-device-link-v2' ||
+            enrollment.linkNonce?.length != 32 ||
+            enrollment.existingDeviceId == null ||
+            enrollment.existingSigningKey?.length != 32) {
+          throw StateError('Device-link transcript context is incomplete');
+        }
+        final credential =
+            await cryptoService.createEnrollmentCredential(enrollment);
+        final verification = await cryptoService.deriveDeviceLinkVerification(
+          accountId: enrollment.accountId,
+          protocolVersion: enrollment.protocolVersion!,
+          serverOrigin: origin,
+          linkId: enrollment.id,
+          linkSecret: secret,
+          linkNonce: enrollment.linkNonce!,
+          peerDeviceId: enrollment.existingDeviceId!,
+          peerSigningKey: enrollment.existingSigningKey!,
+          localIsExistingDevice: false,
+        );
+        final claimed = await client.claimDeviceLink(
+          code: locator,
+          deviceName: 'Linked ${config.deviceName.toLowerCase()}',
+          enrollment: enrollment,
+          credential: credential,
+          verification: verification,
+        );
+        if (claimed.deviceLink.id != enrollment.id ||
+            claimed.deviceLink.accountId != enrollment.accountId ||
+            claimed.deviceLink.claimedDeviceId != enrollment.deviceId ||
+            claimed.deviceLink.protocolVersion != 'veritra-device-link-v2') {
+          throw StateError('Device-link identity was substituted');
+        }
+        if (claimed.deviceLink.transcriptHash == null ||
+            !_constantTimeBytesEqual(claimed.deviceLink.transcriptHash!,
+                verification.transcriptHash)) {
+          throw StateError('Device-link transcript was substituted');
+        }
+        pendingDeviceLinkClaim = DeviceLinkClaim(
+          serverOrigin: origin,
+          deviceLink:
+              _deviceLinkWithVerification(claimed.deviceLink, verification),
+          claimToken: claimed.claimToken,
+          deviceSecret: claimed.deviceSecret,
+        );
+      } finally {
+        secret.fillRange(0, secret.length, 0);
       }
-      final verification = await cryptoService.deriveDeviceLinkVerification(
-        accountId: enrollment.accountId,
-        protocolVersion: enrollment.protocolVersion!,
-        linkNonce: enrollment.linkNonce!,
-        peerDeviceId: enrollment.existingDeviceId!,
-        peerSigningKey: enrollment.existingSigningKey!,
-        localIsExistingDevice: false,
-      );
-      final claimed = await api!.claimDeviceLink(
-        code: code,
-        deviceName: 'Linked ${config.deviceName.toLowerCase()}',
-        enrollment: enrollment,
-        credential: credential,
-        verification: verification,
-      );
-      if (claimed.deviceLink.transcriptHash != null &&
-          !_constantTimeBytesEqual(claimed.deviceLink.transcriptHash!,
-              verification.transcriptHash)) {
-        throw StateError('Device-link transcript was substituted');
-      }
-      pendingDeviceLinkClaim = DeviceLinkClaim(
-        deviceLink:
-            _deviceLinkWithVerification(claimed.deviceLink, verification),
-        claimToken: claimed.claimToken,
-        deviceSecret: claimed.deviceSecret,
-      );
     });
   }
 
@@ -2554,16 +2866,27 @@ class AppState extends ChangeNotifier {
       if (client == null || claim == null) {
         return;
       }
-      if (claim.deviceLink.transcriptHash?.length != 32) {
+      if (client.baseUrl != claim.serverOrigin) {
+        throw StateError('Device-link server was substituted');
+      }
+      if (claim.deviceLink.transcriptHash?.length != 32 ||
+          claim.deviceLink.approvalTag?.length != 32) {
         throw StateError('Device-link transcript is unavailable');
       }
       final linkedSession = await client.completeDeviceLinkClaim(
         claim.deviceLink.id,
         claim.claimToken,
         claim.deviceLink.transcriptHash!,
+        claim.deviceLink.approvalTag!,
       );
       if (linkedSession == null) {
         return;
+      }
+      if (canonicalizeServerOrigin(linkedSession.baseUrl) !=
+              claim.serverOrigin ||
+          linkedSession.accountId != claim.deviceLink.accountId ||
+          linkedSession.deviceId != claim.deviceLink.claimedDeviceId) {
+        throw StateError('Device-link identity was substituted');
       }
       session = Session(
         baseUrl: linkedSession.baseUrl,
@@ -3484,6 +3807,9 @@ class AppState extends ChangeNotifier {
       !_isTransientStorageError(err);
 
   static bool _isTransientSyncError(Object err) {
+    if (err is LocalNoticeCapacityException) return true;
+    if (err is CryptoOperationCancelled || err is WakeWorkCancelled)
+      return true;
     if (err is ApiException) {
       return err.statusCode == 408 ||
           err.statusCode == 429 ||
@@ -3536,6 +3862,12 @@ class AppState extends ChangeNotifier {
     if (type.startsWith('conversation.') ||
         type.startsWith('membership.') ||
         type == 'retention.updated') {
+      if (event.conversationId != null) {
+        membersByConversation = Map.of(membersByConversation)
+          ..remove(event.conversationId);
+      } else if (type.startsWith('membership.')) {
+        membersByConversation = {};
+      }
       await _refreshConversations(notify: false, persist: false);
       return;
     }
@@ -3635,6 +3967,7 @@ class AppState extends ChangeNotifier {
         if (resolved.id != id) {
           throw failure(SyncFailureKind.applicationUndecryptable);
         }
+        await _ensureConversationAuthority(resolved.conversationId);
         try {
           await mls.processApplicationMessage(resolved, event.id);
         } catch (err) {
@@ -3851,7 +4184,12 @@ class AppState extends ChangeNotifier {
     _loadingMessageConversations.clear();
     _messageLoadErrors.clear();
     selectedConversationId = null;
+    conversationPrefs = {};
+    _pins.clear();
+    starredMessages = {};
+    showArchivedChats = false;
     activeDeviceLink = null;
+    _clearLinkSecret();
     pendingDeviceLinkClaim = null;
     communities = <Community>[];
     channelsByCommunity = <String, List<Channel>>{};
@@ -4550,6 +4888,8 @@ class AppState extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _clearLinkSecret();
+    pendingDeviceLinkClaim = null;
     _receiptsRefreshTimer?.cancel();
     typing.dispose();
     receipts.dispose();
@@ -4597,6 +4937,8 @@ DeviceLink _deviceLinkWithVerification(
     claimedDeviceId: link.claimedDeviceId,
     claimedSigningKey: link.claimedSigningKey,
     transcriptHash: verification.transcriptHash,
+    claimTag: verification.claimTag,
+    approvalTag: verification.approvalTag,
   );
 }
 

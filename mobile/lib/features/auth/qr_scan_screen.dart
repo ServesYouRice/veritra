@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../core/api_client.dart';
+import '../../crypto/device_link_code.dart';
 import '../../core/transport_policy.dart';
 import '../../l10n/l10n.dart';
 
@@ -18,13 +19,21 @@ String parseDeviceLinkCode(String scanned) {
     }
     final code = uri.queryParameters['code'];
     if (code != null && code.trim().isNotEmpty) {
-      return code.trim();
+      return _validLinkCode(code);
     }
     if (uri.scheme.isNotEmpty) {
       return '';
     }
   }
-  return scanned.trim();
+  return _validLinkCode(scanned);
+}
+
+String _validLinkCode(String code) {
+  try {
+    return encodeDeviceLinkSecret(decodeDeviceLinkSecret(code));
+  } on FormatException {
+    return '';
+  }
 }
 
 /// Reads an optional HTTPS origin from a future structured link. The caller

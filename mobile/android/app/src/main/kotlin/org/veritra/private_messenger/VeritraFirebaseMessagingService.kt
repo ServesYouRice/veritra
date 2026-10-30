@@ -5,9 +5,10 @@ import com.google.firebase.messaging.RemoteMessage
 
 class VeritraFirebaseMessagingService : FirebaseMessagingService() {
     override fun onMessageReceived(message: RemoteMessage) {
-        if (message.data["version"] == "v1" &&
-            message.data["event"] == "new_encrypted_event_available") {
-            PushEventBridge.markWake(applicationContext)
+        when (WakeRules.payload(message.data)) {
+            WakeRules.Payload.LEGACY -> PushEventBridge.markWake(applicationContext)
+            WakeRules.Payload.SILENT -> PushEventBridge.markWake(applicationContext, silent = true)
+            else -> return
         }
     }
 

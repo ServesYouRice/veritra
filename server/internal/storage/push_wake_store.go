@@ -18,6 +18,7 @@ const (
 // intentionally does not contain message content, ciphertext, or push secrets
 // beyond the in-memory target resolved from the subscription row at claim time.
 type PushWakeJob struct {
+	NotificationMode   string
 	EventID            int64
 	RecipientAccountID string
 	SubscriptionID     string
@@ -54,10 +55,10 @@ func enqueuePushWakeJobs(ctx context.Context, tx *sql.Tx, eventID int64, convers
 			SELECT 1 FROM account_blocks b
 			WHERE b.blocker_account_id = ps.account_id AND b.blocked_account_id = ?
 		  )
-		  AND NOT EXISTS (
+		  AND (ps.notification_mode='local_decrypt_v1' OR NOT EXISTS (
 			SELECT 1 FROM conversation_notification_preferences p
 			WHERE p.account_id = ps.account_id AND p.conversation_id = ? AND p.muted = 1 AND (p.muted_until IS NULL OR p.muted_until > CAST(strftime('%s', 'now') AS INTEGER))
-		  )
+		  ))
 		ON CONFLICT(sync_event_id, recipient_account_id, subscription_id) DO NOTHING`,
 		eventID, conversationID, senderAccountID, createdAt, createdAt, expiresAt,
 		conversationID, senderAccountID, senderAccountID, conversationID)
@@ -124,10 +125,10 @@ func (s *Store) ClaimPushWakeJobs(ctx context.Context, provider string, limit in
 			SELECT 1 FROM account_blocks b
 			WHERE b.blocker_account_id = w.recipient_account_id AND b.blocked_account_id = w.sender_account_id
 		  )
-		  AND NOT EXISTS (
+		  AND (ps.notification_mode='local_decrypt_v1' OR NOT EXISTS (
 			SELECT 1 FROM conversation_notification_preferences p
 			WHERE p.account_id = w.recipient_account_id AND p.conversation_id = w.conversation_id AND p.muted = 1 AND (p.muted_until IS NULL OR p.muted_until > CAST(strftime('%s', 'now') AS INTEGER))
-		  )
+		  ))
 		  AND w.expires_at > ?
 		  AND w.next_attempt_at <= ?
 		  AND (w.lease_expires_at IS NULL OR w.lease_expires_at <= ?)
@@ -181,7 +182,7 @@ func (s *Store) ClaimPushWakeJobs(ctx context.Context, provider string, limit in
 	claimedRows, err := tx.QueryContext(ctx, `
 		SELECT w.sync_event_id, w.recipient_account_id, w.subscription_id,
 		       ps.provider, ps.endpoint, COALESCE(ps.public_key, ''), COALESCE(ps.auth_secret, ''),
-		       w.attempts
+		       w.attempts,ps.notification_mode
 		FROM push_wake_jobs w
 		JOIN push_subscriptions ps ON ps.id = w.subscription_id AND ps.account_id = w.recipient_account_id
 		WHERE w.lease_token = ? AND ps.provider = ? AND ps.disabled_at IS NULL
@@ -192,7 +193,7 @@ func (s *Store) ClaimPushWakeJobs(ctx context.Context, provider string, limit in
 	jobs := make([]PushWakeJob, 0, len(keys))
 	for claimedRows.Next() {
 		var job PushWakeJob
-		if err := claimedRows.Scan(&job.EventID, &job.RecipientAccountID, &job.SubscriptionID, &job.Provider, &job.Endpoint, &job.PublicKey, &job.AuthSecret, &job.Attempts); err != nil {
+		if err := claimedRows.Scan(&job.EventID, &job.RecipientAccountID, &job.SubscriptionID, &job.Provider, &job.Endpoint, &job.PublicKey, &job.AuthSecret, &job.Attempts, &job.NotificationMode); err != nil {
 			claimedRows.Close()
 			return nil, 0, err
 		}
@@ -221,7 +222,7 @@ func (s *Store) RefreshPushWakeJob(ctx context.Context, job PushWakeJob, now tim
 	err := s.db.QueryRowContext(ctx, `
 		SELECT w.sync_event_id, w.recipient_account_id, w.subscription_id,
 		       ps.provider, ps.endpoint, COALESCE(ps.public_key, ''), COALESCE(ps.auth_secret, ''),
-		       w.attempts
+		       w.attempts,ps.notification_mode
 		FROM push_wake_jobs w
 		JOIN push_subscriptions ps ON ps.id = w.subscription_id AND ps.account_id = w.recipient_account_id
 		JOIN memberships m ON m.conversation_id = w.conversation_id AND m.account_id = w.recipient_account_id
@@ -234,13 +235,13 @@ func (s *Store) RefreshPushWakeJob(ctx context.Context, job PushWakeJob, now tim
 			SELECT 1 FROM account_blocks b
 			WHERE b.blocker_account_id = w.recipient_account_id AND b.blocked_account_id = w.sender_account_id
 		  )
-		  AND NOT EXISTS (
+		  AND (ps.notification_mode='local_decrypt_v1' OR NOT EXISTS (
 			SELECT 1 FROM conversation_notification_preferences p
 			WHERE p.account_id = w.recipient_account_id AND p.conversation_id = w.conversation_id AND p.muted = 1 AND (p.muted_until IS NULL OR p.muted_until > CAST(strftime('%s', 'now') AS INTEGER))
-		  )`,
+		  ))`,
 		job.EventID, job.RecipientAccountID, job.SubscriptionID, job.LeaseToken, formatTime(now.UTC())).Scan(
 		&fresh.EventID, &fresh.RecipientAccountID, &fresh.SubscriptionID, &fresh.Provider, &fresh.Endpoint,
-		&fresh.PublicKey, &fresh.AuthSecret, &fresh.Attempts)
+		&fresh.PublicKey, &fresh.AuthSecret, &fresh.Attempts, &fresh.NotificationMode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PushWakeJob{}, ErrNotFound
 	}

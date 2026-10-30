@@ -17,8 +17,7 @@ func (s *Store) ListAdminAccounts(ctx context.Context, limit int, afterID string
 		       (SELECT COUNT(*) FROM devices d WHERE d.account_id = a.id AND d.revoked_at IS NULL),
 		       (SELECT COUNT(*) FROM attachment_envelopes ae WHERE ae.owner_account_id = a.id),
 		       (SELECT COUNT(*) FROM backup_blobs bb WHERE bb.account_id = a.id),
-		       COALESCE((SELECT SUM(size_bytes) FROM attachment_envelopes ae WHERE ae.owner_account_id = a.id), 0)
-		         + COALESCE((SELECT SUM(size_bytes) FROM backup_blobs bb WHERE bb.account_id = a.id), 0)
+		       COALESCE((SELECT size_bytes FROM blob_usage_accounts WHERE account_id = a.id), 0)
 		FROM accounts a
 		WHERE a.deleted_at IS NULL AND (? = '' OR a.id > ?)
 		ORDER BY a.id LIMIT ?`, afterID, afterID, limit)

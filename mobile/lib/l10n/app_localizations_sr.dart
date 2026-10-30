@@ -2426,6 +2426,72 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get requestDeleteMessage =>
       'Разговор се уклања са овог уређаја. Пошиљалац није обавештен.';
+
+  @override
+  String get w8PinnedMessage => 'Закачена порука';
+
+  @override
+  String get w8Pin => 'Закачи поруку';
+
+  @override
+  String get w8Unpin => 'Откачи поруку';
+
+  @override
+  String w8PinDays(int days) {
+    return 'Закачи на $days дана';
+  }
+
+  @override
+  String get w8Forward => 'Проследи';
+
+  @override
+  String get w8Forwarded => 'Прослеђено';
+
+  @override
+  String get w8ForwardedMany => 'Прослеђено више пута';
+
+  @override
+  String get w8Star => 'Означи звездицом на овом уређају';
+
+  @override
+  String get w8Unstar => 'Уклони звездицу';
+
+  @override
+  String get w8DeleteForMe => 'Избриши за мене на овом уређају';
+
+  @override
+  String get w8Archive => 'Архивирај на овом уређају';
+
+  @override
+  String get w8Unarchive => 'Врати из архиве';
+
+  @override
+  String get w8PinChat => 'Закачи ћаскање на овом уређају';
+
+  @override
+  String get w8UnpinChat => 'Откачи ћаскање';
+
+  @override
+  String get w8ArchivedChats => 'Архивирана ћаскања';
+
+  @override
+  String get w8Chats => 'Ћаскања';
+
+  @override
+  String get w8MentionsMuted => 'Помињања у утишаним ћаскањима';
+
+  @override
+  String get w8MentionsMutedDetail =>
+      'Обавести ме када ме члан помене, чак и у утишаном ћаскању.';
+
+  @override
+  String get w8HiddenSpoiler => 'Порука са скривеним спојлером';
+
+  @override
+  String get w8StarredMessages => 'Поруке са звездицом на овом уређају';
+
+  @override
+  String get k2CopiedHistory => 'Копирана историја · снимак са уређаја';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -4853,4 +4919,70 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get requestDeleteMessage =>
       'Razgovor se uklanja sa ovog uređaja. Pošiljalac nije obavešten.';
+
+  @override
+  String get w8PinnedMessage => 'Zakačena poruka';
+
+  @override
+  String get w8Pin => 'Zakači poruku';
+
+  @override
+  String get w8Unpin => 'Otkači poruku';
+
+  @override
+  String w8PinDays(int days) {
+    return 'Zakači na $days dana';
+  }
+
+  @override
+  String get w8Forward => 'Prosledi';
+
+  @override
+  String get w8Forwarded => 'Prosleđeno';
+
+  @override
+  String get w8ForwardedMany => 'Prosleđeno više puta';
+
+  @override
+  String get w8Star => 'Označi zvezdicom na ovom uređaju';
+
+  @override
+  String get w8Unstar => 'Ukloni zvezdicu';
+
+  @override
+  String get w8DeleteForMe => 'Izbriši za mene na ovom uređaju';
+
+  @override
+  String get w8Archive => 'Arhiviraj na ovom uređaju';
+
+  @override
+  String get w8Unarchive => 'Vrati iz arhive';
+
+  @override
+  String get w8PinChat => 'Zakači ćaskanje na ovom uređaju';
+
+  @override
+  String get w8UnpinChat => 'Otkači ćaskanje';
+
+  @override
+  String get w8ArchivedChats => 'Arhivirana ćaskanja';
+
+  @override
+  String get w8Chats => 'Ćaskanja';
+
+  @override
+  String get w8MentionsMuted => 'Pominjanja u utišanim ćaskanjima';
+
+  @override
+  String get w8MentionsMutedDetail =>
+      'Obavesti me kada me član pomene, čak i u utišanom ćaskanju.';
+
+  @override
+  String get w8HiddenSpoiler => 'Poruka sa skrivenim spojlerom';
+
+  @override
+  String get w8StarredMessages => 'Poruke sa zvezdicom na ovom uređaju';
+
+  @override
+  String get k2CopiedHistory => 'Kopirana istorija · snimak sa uređaja';
 }

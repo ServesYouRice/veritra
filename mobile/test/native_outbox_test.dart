@@ -22,6 +22,8 @@ import 'package:private_messenger/core/client_config.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/core/transport_policy.dart';
 import 'package:private_messenger/crypto/app_payload.dart' show AppPayloadType;
+import 'package:private_messenger/crypto/crypto_service.dart'
+    show ConversationAuthority;
 import 'package:private_messenger/crypto/mls_commit_bundle.dart'
     show MlsPendingChange;
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
@@ -131,6 +133,127 @@ void main() {
           isNot(contains('👍')),
         );
       }
+    },
+    skip: skip,
+  );
+
+  test(
+    'W8 formatted text, mentions, pins and forwards cross the native outbox',
+    () async {
+      final harness = await _Harness.start(library());
+      addTearDown(harness.dispose);
+      final alice = harness.alice;
+      await alice.loadConversationMembers(_conversation);
+      harness.bob.service.conversationAuthority = alice;
+      await harness.aliceStore.saveDraft(_conversation, '*hello* @bob');
+      expect(await alice.sendMessageTo(_conversation, '*hello* @bob'), isTrue);
+      expect(await harness.aliceStore.loadDrafts(), isEmpty);
+      final formattedEnvelope = await harness.nextEnvelope();
+      await harness.deliverToBob(formattedEnvelope);
+      final key = messageKey(
+          'dev_alice', formattedEnvelope['idempotency_key'] as String);
+      final formatted = (await harness.bobHistory()).single;
+      expect(formatted.body, 'hello @bob');
+      final decoration = jsonDecode(formatted.formatJson!) as Map;
+      expect((decoration['entities'] as List).single,
+          {'type': 'bold', 'offset': 0, 'length': 5});
+      expect(((decoration['mentions'] as List).single as Map)['account_id'],
+          'acct_bob');
+
+      expect(
+          await alice.pinMessage(_conversation, key,
+              pinned: true, durationSeconds: 86400),
+          isTrue);
+      final pinEnvelope = await harness.nextEnvelope();
+      await harness.deliverToBob(pinEnvelope);
+      expect((await harness.bob.store.loadPins(_conversation)).single.targetKey,
+          key);
+
+      final source = alice.historyFor(_conversation).forKey(key)!;
+      await harness.aliceStore.saveDraft(_conversation, 'hello @bob');
+      expect(await alice.forwardMessage(source, [_conversation]), isTrue);
+      expect((await harness.aliceStore.loadDrafts())[_conversation]?.text,
+          'hello @bob');
+      final forwardEnvelope = await harness.nextEnvelope();
+      await harness.deliverToBob(forwardEnvelope);
+      final forward =
+          (await harness.bobHistory()).firstWhere((m) => m.forwardHops != null);
+      expect(forward.key, isNot(key));
+      expect(forward.replyTo, isNull);
+      expect(forward.forwardHops, 1);
+      final forwardDecoration = jsonDecode(forward.formatJson!) as Map;
+      expect(forwardDecoration['entities'], decoration['entities']);
+      expect(forwardDecoration.containsKey('mentions'), false);
+      for (final json in [formattedEnvelope, pinEnvelope, forwardEnvelope]) {
+        expect((json['crypto_metadata'] as Map)['payload_version'], 1);
+        expect((json['crypto_metadata'] as Map).keys.toSet(),
+            (formattedEnvelope['crypto_metadata'] as Map).keys.toSet());
+      }
+      final many = await harness.aliceCrypto
+          .encryptPayload(_conversation, AppPayloadType.text, {
+        'text': 'many',
+        'forwarded': {'hops': 5}
+      });
+      await alice.refreshHistory(_conversation);
+      await alice.retryEnvelope(many.idempotencyKey);
+      await harness.deliverToBob(await harness.nextEnvelope());
+      final manySource = alice
+          .historyFor(_conversation)
+          .forKey(messageKey('dev_alice', many.idempotencyKey))!;
+      alice.conversations = [
+        ...alice.conversations,
+        for (var i = 1; i <= 5; i++)
+          Conversation(id: 'other$i', kind: 'dm', createdBy: 'acct_alice')
+      ];
+      final before = harness.aliceCrypto.encryptCalls;
+      expect(await alice.forwardMessage(manySource, [_conversation, 'other1']),
+          false);
+      expect(
+          await alice.forwardMessage(
+              source, [_conversation, for (var i = 1; i <= 5; i++) 'other$i']),
+          false);
+      expect(harness.aliceCrypto.encryptCalls, before,
+          reason: 'a refused multi-chat forward must not partly send');
+    },
+    skip: skip,
+  );
+
+  test(
+    'a pending own pin rechecks role at echo and cannot replay after promotion',
+    () async {
+      final harness = await _Harness.start(library());
+      addTearDown(harness.dispose);
+      final alice = harness.alice;
+      expect(await alice.sendMessageTo(_conversation, 'target'), true);
+      final first = await harness.nextEnvelope();
+      final target =
+          messageKey('dev_alice', first['idempotency_key'] as String);
+      final authority = _ChangingAuthority();
+      harness.aliceCrypto.conversationAuthority = authority;
+      expect(await alice.pinMessage(_conversation, target, pinned: true), true);
+      final json = await harness.nextEnvelope();
+      authority.role = 'member';
+      final echo = ReceivedMessageEnvelope(
+          id: 'own-pin',
+          conversationId: _conversation,
+          senderAccountId: 'acct_alice',
+          senderDeviceId: 'dev_alice',
+          idempotencyKey: json['idempotency_key'] as String,
+          ciphertext: base64Decode(json['ciphertext'] as String),
+          cryptoProtocol: 'mls10-openmls-v1',
+          cryptoMetadata: json['crypto_metadata'],
+          createdAt: DateTime.now());
+      await harness.aliceCrypto.processApplicationMessage(
+          echo, (await harness.aliceStore.loadSyncCursor()) + 1);
+      expect(await harness.aliceStore.loadPins(_conversation), isEmpty);
+      expect(
+          (jsonDecode(utf8.decode(await harness.aliceStore.exportBackup()))
+              as Map)['pending_pins'],
+          isEmpty);
+      authority.role = 'admin';
+      await harness.aliceCrypto.processApplicationMessage(
+          echo, (await harness.aliceStore.loadSyncCursor()) + 1);
+      expect(await harness.aliceStore.loadPins(_conversation), isEmpty);
     },
     skip: skip,
   );
@@ -362,6 +485,7 @@ class _CountingNativeCrypto extends NativeCryptoService {
     AppPayloadType type,
     Map<String, Object?> body, {
     List<String> attachmentRefs = const <String>[],
+    String? draftText,
   }) {
     encryptCalls++;
     return super.encryptPayload(
@@ -369,6 +493,7 @@ class _CountingNativeCrypto extends NativeCryptoService {
       type,
       body,
       attachmentRefs: attachmentRefs,
+      draftText: draftText,
     );
   }
 }
@@ -510,6 +635,16 @@ class _StandInApi extends ApiClient {
   Future<List<Device>> devices(String token) async => const <Device>[];
 
   @override
+  Future<List<ConversationMember>> conversationMembers(
+          String token, String conversationId) async =>
+      [
+        ConversationMember(
+            accountId: 'acct_alice', username: 'alice', role: 'member'),
+        ConversationMember(
+            accountId: 'acct_bob', username: 'bob', role: 'member'),
+      ];
+
+  @override
   Future<List<SyncEvent>> syncEvents(
     String token, {
     int after = 0,
@@ -541,4 +676,17 @@ class _QuietSync implements SyncService {
 
   @override
   Future<void> dispose() => _controller.close();
+}
+
+class _ChangingAuthority implements ConversationAuthority {
+  String role = 'admin';
+  @override
+  String? conversationKind(String conversationId) => 'group';
+  @override
+  String? conversationChannel(String conversationId) => null;
+  @override
+  Set<String> memberAccounts(String conversationId) =>
+      {'acct_alice', 'acct_bob'};
+  @override
+  String? roleOf(String conversationId, String accountId) => role;
 }

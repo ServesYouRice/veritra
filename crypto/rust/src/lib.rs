@@ -12,12 +12,18 @@ compile_error!("Veritra's FFI crate requires panic=unwind");
 
 pub mod attachment;
 mod ffi;
+// K2 primitives are internal until the complete reviewed transfer path is wired.
+#[allow(dead_code)]
+mod history;
 pub mod mls;
 
 pub use ffi::{PmCryptoHandle, PmOwnedBuffer};
 
 pub const PM_CRYPTO_UNAVAILABLE: i32 = -1;
-pub const PM_CRYPTO_ABI_VERSION: u32 = 6;
+pub const PM_CRYPTO_ABI_VERSION: u32 = 8;
+
+#[cfg(test)]
+mod test_memory;
 pub const CRYPTO_PROTOCOL: &str = "mls10-openmls-v1";
 
 pub const MAX_ACCOUNT_ID_BYTES: usize = 128;

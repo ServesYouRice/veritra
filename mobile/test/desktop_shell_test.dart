@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
@@ -101,6 +103,8 @@ LocalMessage _local(
   String device = 'dev_other',
   String kind = LocalMessageKind.text,
   String body = 'secret words',
+  String? formatJson,
+  int? hiddenAt,
 }) {
   return LocalMessage(
     key: 'dev_other:key_$id'.replaceFirst('dev_other', device),
@@ -109,6 +113,8 @@ LocalMessage _local(
     senderDeviceId: device,
     kind: kind,
     body: body,
+    formatJson: formatJson,
+    hiddenAt: hiddenAt,
     createdAt: 1,
     state: LocalMessageState.received,
   );
@@ -202,6 +208,46 @@ void main() {
     await messages.handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
     expect(notifier.shown.single.title, 'Veritra');
     expect(notifier.shown.single.body, 'New message');
+  });
+
+  test('a kept mention alerts in a muted chat, and its switch turns that off',
+      () async {
+    state.mutedOnServer.add('conv_1');
+    final format = jsonEncode({
+      'mentions': [
+        {'account_id': 'acct_me', 'offset': 0, 'length': 3}
+      ]
+    });
+    history([_local('mention', body: '@me hello', formatJson: format)]);
+    await messages.handle([_envelope('mention')]);
+    expect(notifier.shown.single.body, '@me hello');
+    state.mentionsInMutedChats = false;
+    history([_local('disabled', body: '@me hello', formatJson: format)]);
+    await messages.handle([_envelope('disabled')]);
+    expect(notifier.shown, hasLength(1));
+    state.mentionsInMutedChats = true;
+    history([
+      _local('hidden', body: '@me hello', formatJson: format, hiddenAt: 1),
+      _local('edit',
+          body: '@me hello', kind: LocalMessageKind.action, formatJson: format)
+    ]);
+    await messages.handle([_envelope('hidden'), _envelope('edit')]);
+    expect(notifier.shown, hasLength(1));
+  });
+
+  test('notification previews conceal spoiler text', () async {
+    history([
+      _local('spoiler',
+          body: 'secret words',
+          formatJson: jsonEncode({
+            'entities': [
+              {'type': 'spoiler', 'offset': 0, 'length': 6}
+            ]
+          }))
+    ]);
+    await messages.handle([_envelope('spoiler')]);
+    expect(notifier.shown.single.body, englishL10n.w8HiddenSpoiler);
+    expect(notifier.shown.single.body, isNot(contains('secret words')));
   });
 
   test('own, edited-away, action, stale and repeated messages are skipped',

@@ -823,5 +823,33 @@
   "requestBlockMessage": "{name} will no longer be able to message you, and this conversation will be removed.",
   "@requestBlockMessage": {"placeholders": {"name": {"type": "String"}}},
   "requestDeleteTitle": "Delete this request?",
-  "requestDeleteMessage": "The conversation is removed from this device. The sender is not told."
+  "requestDeleteMessage": "The conversation is removed from this device. The sender is not told.",
+  "w8PinnedMessage":  "Pinned message",
+    "w8Pin":  "Pin message",
+    "w8Unpin":  "Unpin message",
+    "w8PinDays":  "Pin for {days} days",
+    "@w8PinDays":  {
+                       "placeholders":  {
+                                            "days":  {
+                                                         "type":  "int"
+                                                     }
+                                        }
+                   },
+    "w8Forward":  "Forward",
+    "w8Forwarded":  "Forwarded",
+    "w8ForwardedMany":  "Forwarded many times",
+    "w8Star":  "Star on this device",
+    "w8Unstar":  "Remove star",
+    "w8DeleteForMe":  "Delete for me on this device",
+    "w8Archive":  "Archive on this device",
+    "w8Unarchive":  "Unarchive",
+    "w8PinChat":  "Pin chat on this device",
+    "w8UnpinChat":  "Unpin chat",
+    "w8ArchivedChats":  "Archived chats",
+    "w8Chats":  "Chats",
+    "w8MentionsMuted":  "Mentions in muted chats",
+    "w8MentionsMutedDetail":  "Notify when a member mentions you, even in a muted chat.",
+    "w8HiddenSpoiler":  "Message containing a hidden spoiler",
+    "w8StarredMessages":  "Starred messages on this device",
+    "k2CopiedHistory": "Copied history · device snapshot"
 }

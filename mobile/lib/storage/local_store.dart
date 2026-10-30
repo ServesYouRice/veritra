@@ -13,6 +13,10 @@ import '../sync/sync_recovery.dart';
 import 'backup_exclusion.dart';
 import 'encrypted_database.dart';
 import 'message_search.dart';
+import 'history_snapshot.dart';
+import 'notice_outbox.dart';
+
+export 'notice_outbox.dart';
 
 final Map<String, Future<void>> _databaseOpenTails = <String, Future<void>>{};
 final Map<String, Future<void>> _databaseWriteTails = <String, Future<void>>{};
@@ -144,7 +148,9 @@ class MlsStateTransition {
     this.upsertedEnvelopes = const <ReceivedMessageEnvelope>[],
     this.deletedEnvelopeIds = const <String>[],
     this.messageEffects = const <MessageEffect>[],
+    this.noticeReferences = const <LocalNoticeReference>[],
     this.resolvedMlsOutboxKey,
+    this.checkCanCommit,
   });
 
   /// An MLS outbox item that this transition settles, removed with it
@@ -162,6 +168,8 @@ class MlsStateTransition {
 
   /// Decrypted history changes, committed with [state] (D23).
   final List<MessageEffect> messageEffects;
+  final List<LocalNoticeReference> noticeReferences;
+  final void Function()? checkCanCommit;
 }
 
 class PendingMlsMessage {
@@ -245,7 +253,7 @@ class OutgoingApplicationStateTransition {
   final List<MessageEffect> messageEffects;
 }
 
-const int backupFormatVersion = 3;
+const int backupFormatVersion = 5;
 
 class LocalBackupData {
   const LocalBackupData({
@@ -260,6 +268,11 @@ class LocalBackupData {
     this.reactions = const <LocalMessageReaction>[],
     this.formatVersion = backupFormatVersion,
     this.expiryBackfillIds = const <String>{},
+    this.pins = const [],
+    this.pendingPins = const [],
+    this.starred = const {},
+    this.conversationPrefs = const [],
+    this.historyNamespace,
   });
 
   /// Server ids of history entries whose JSON has no `expiresAt` key at all
@@ -267,6 +280,11 @@ class LocalBackupData {
   /// says version 2). Only these get their expiry from the cached envelope;
   /// an entry that carries the key, null or not, is taken as it is.
   final Set<String> expiryBackfillIds;
+  final List<LocalPin> pins;
+  final List<LocalPendingPin> pendingPins;
+  final Map<String, int> starred;
+  final List<LocalConversationPref> conversationPrefs;
+  final HistoryNamespace? historyNamespace;
 
   /// The backup format this was read from, or the current one for a backup
   /// being written (3: message expiry travels with the history).
@@ -310,6 +328,8 @@ class SyncEventCommit {
     required this.cursor,
     this.envelope,
     this.ownMessageKey,
+    this.allowOwnPinEffect = false,
+    this.checkCanCommit,
   });
 
   final String eventKey;
@@ -321,6 +341,10 @@ class SyncEventCommit {
   /// Set when [envelope] is the server echo of a message this device sent:
   /// the local history record with this key is linked to the envelope.
   final String? ownMessageKey;
+
+  /// Current cached authority rechecked at echo processing time (W7).
+  final bool allowOwnPinEffect;
+  final void Function()? checkCanCommit;
 }
 
 class LocalSyncLease {
@@ -424,6 +448,29 @@ abstract class LocalStore {
     String? resolvedMlsOutboxKey,
   });
   Future<StoredCryptoState?> loadCryptoState();
+  Future<List<int>> exportHistorySnapshot();
+  Future<void> importHistorySnapshot(
+      List<int> encoded, HistoryImportContext context);
+  Future<HistoryNamespace> loadHistoryNamespace();
+  Future<List<LocalNoticeReference>> pendingNoticeReferences(
+      LocalNoticeOwner owner,
+      {int limit = localNoticeBatchLimit,
+      int? now,
+      void Function()? checkCanCommit});
+  Future<LocalNoticeDecision?> pendingNoticeDecision(LocalNoticeOwner owner,
+      {int? now, void Function()? checkCanCommit});
+  Future<LocalNoticeDecision?> freezeNoticeDecision(
+      LocalNoticeOwner owner, Iterable<String> referenceIds,
+      {int? now, void Function()? checkCanCommit});
+  Future<void> suppressNoticeReferences(
+      LocalNoticeOwner owner, Iterable<String> referenceIds,
+      {int? now, void Function()? checkCanCommit});
+  Future<void> suppressNoticesThrough(LocalNoticeOwner owner, int eventId,
+      {int? now, void Function()? checkCanCommit});
+  Future<void> finishNoticeDecision(
+      LocalNoticeOwner owner, String decisionId, LocalNoticeOutcome outcome,
+      {int? now, void Function()? checkCanCommit});
+
   Future<List<int>> exportBackup();
   Future<void> restoreBackup(List<int> encoded);
   Future<void> savePeerVerification(
@@ -434,6 +481,13 @@ abstract class LocalStore {
   /// Decrypted history for one conversation, oldest first (D23).
   Future<List<LocalMessage>> loadMessages(String conversationId);
   Future<List<LocalMessageReaction>> loadReactions(String conversationId);
+  Future<List<LocalPin>> loadPins(String conversationId);
+  Future<Set<String>> loadStarred();
+  Future<void> setStarred(String key, bool starred);
+  Future<void> hideMessage(String conversationId, String key);
+  Future<List<LocalConversationPref>> loadConversationPrefs();
+  Future<void> saveConversationPref(LocalConversationPref pref);
+  Future<void> discardPendingPin(String actionKey);
 
   /// Drops what the server can send again. [keepDrafts] is set only when the
   /// session expired (the person signs in again to the same drafts); sign-out
@@ -474,6 +528,7 @@ abstract class LocalStore {
 }
 
 class MemoryLocalStore implements LocalStore {
+  HistoryNamespace _historyNamespace = HistoryNamespace();
   Session? _session;
   int _syncCursor = 0;
   CachedSnapshot? _snapshot;
@@ -485,7 +540,8 @@ class MemoryLocalStore implements LocalStore {
   final Map<String, PendingMlsMessage> _mlsOutbox =
       <String, PendingMlsMessage>{};
   final Map<String, List<int>> _peerVerifications = <String, List<int>>{};
-  final _MemoryMessageHistory _history = _MemoryMessageHistory();
+  _MemoryMessageHistory _history = _MemoryMessageHistory();
+  final Map<String, LocalConversationPref> _conversationPrefs = {};
   String? _syncLeaseKey;
   SyncRecovery? _syncRecovery;
   DateTime? _lastBackupAt;
@@ -498,6 +554,8 @@ class MemoryLocalStore implements LocalStore {
 
   @override
   Future<DateTime?> loadLastBackupAt() async => _lastBackupAt;
+
+  LocalNoticeState _noticeState = LocalNoticeState();
 
   final Map<String, String> _settings = <String, String>{};
 
@@ -535,6 +593,8 @@ class MemoryLocalStore implements LocalStore {
       _mlsOutbox.clear();
       _peerVerifications.clear();
       _history.clear();
+      _historyNamespace = HistoryNamespace();
+      _conversationPrefs.clear();
       _syncLeaseKey = null;
       _syncRecovery = null;
       _lastBackupAt = null;
@@ -677,6 +737,7 @@ class MemoryLocalStore implements LocalStore {
 
   @override
   Future<void> commitMlsTransition(MlsStateTransition transition) async {
+    transition.checkCanCommit?.call();
     if (_processedMlsMessages.contains(transition.messageId)) {
       throw StateError('MLS message was already processed');
     }
@@ -703,7 +764,31 @@ class MemoryLocalStore implements LocalStore {
       if (_expired(envelope.expiresAt, now)) continue;
       messages.add(envelope);
     }
-    _history.apply(transition.messageEffects);
+    final nextHistory = _history.copy();
+    final nextNamespace = _historyNamespace.copy();
+    nextHistory.apply(transition.messageEffects,
+        namespace: nextNamespace, accountId: _session?.accountId);
+    final nextNotices = _noticeState.copy();
+    if (transition.noticeReferences.isNotEmpty) {
+      final owner = transition.noticeReferences.first.owner;
+      owner.requireSession(_session);
+      nextNotices.prune(owner, now.millisecondsSinceEpoch);
+      final refs = validLocalNoticeReferences(
+          session: _session,
+          references: transition.noticeReferences,
+          previousKeys: _history.allMessages().map((m) => m.key).toSet(),
+          rows: {for (final m in nextHistory.allMessages()) m.key: m},
+          cursor: transition.cursor,
+          now: now.millisecondsSinceEpoch);
+      for (final ref in refs) {
+        nextNotices.references.putIfAbsent(ref.id, () => ref);
+      }
+      nextNotices.checkCapacity(admission: true);
+    }
+    transition.checkCanCommit?.call();
+    _noticeState = nextNotices;
+    _history = nextHistory;
+    _historyNamespace = nextNamespace;
     _cryptoState = _copyCryptoState(transition.state);
     _processedMlsMessages.add(transition.messageId);
     final resolved = transition.resolvedMlsOutboxKey;
@@ -718,6 +803,7 @@ class MemoryLocalStore implements LocalStore {
 
   @override
   Future<void> commitSyncEvent(SyncEventCommit commit) async {
+    commit.checkCanCommit?.call();
     if (_processedMlsMessages.contains(commit.eventKey)) return;
     if (commit.expectedCursor != _syncCursor ||
         commit.cursor <= commit.expectedCursor) {
@@ -728,6 +814,8 @@ class MemoryLocalStore implements LocalStore {
           const <MapEntry<String, List<ReceivedMessageEnvelope>>>[])
         entry.key: List<ReceivedMessageEnvelope>.from(entry.value),
     };
+    final nextHistory = _history.copy();
+    final nextNamespace = _historyNamespace.copy();
     final envelope = commit.envelope;
     if (envelope != null) {
       final messages =
@@ -738,10 +826,35 @@ class MemoryLocalStore implements LocalStore {
       }
       final ownKey = commit.ownMessageKey;
       if (ownKey != null) {
-        _history.markSent(ownKey, envelope.id,
-            expiresAt: envelope.expiresAt?.toUtc().millisecondsSinceEpoch);
+        final command = nextHistory.pendingPins[ownKey];
+        final channel = envelope.cryptoMetadata is Map
+            ? (envelope.cryptoMetadata as Map)['channel_id']
+            : null;
+        if (command != null &&
+            command.conversationId == envelope.conversationId &&
+            command.channelId == channel) {
+          nextHistory.pendingPins.remove(ownKey);
+          if (commit.allowOwnPinEffect)
+            nextHistory.apply([
+              PinMessageEffect(
+                  conversationId: command.conversationId,
+                  channelId: command.channelId,
+                  targetKey: command.targetKey,
+                  accountId: command.accountId,
+                  at: envelope.createdAt.millisecondsSinceEpoch,
+                  pinned: command.pinned,
+                  durationSeconds: command.durationSeconds)
+            ], namespace: nextNamespace, accountId: _session?.accountId);
+        }
+        nextHistory.markSent(ownKey, envelope.id,
+            expiresAt: envelope.expiresAt?.toUtc().millisecondsSinceEpoch,
+            conversationId: envelope.conversationId,
+            channelId: channel as String?);
       }
     }
+    commit.checkCanCommit?.call();
+    _history = nextHistory;
+    _historyNamespace = nextNamespace;
     _processedMlsMessages.add(commit.eventKey);
     _syncCursor = commit.cursor;
     _snapshot = CachedSnapshot(
@@ -818,8 +931,8 @@ class MemoryLocalStore implements LocalStore {
     if (_outbox.length >= maxPendingEnvelopes) {
       throw const OutboxFullException();
     }
+    _applyHistoryEffects(transition.messageEffects);
     _cryptoState = _copyCryptoState(transition.state);
-    _history.apply(transition.messageEffects);
     final sentText = transition.draftText;
     final draft = _drafts[transition.envelope.conversationId];
     if (sentText != null &&
@@ -852,6 +965,125 @@ class MemoryLocalStore implements LocalStore {
   Future<StoredCryptoState?> loadCryptoState() async =>
       _cryptoState == null ? null : _copyCryptoState(_cryptoState!);
 
+  void _applyHistoryEffects(List<MessageEffect> effects) {
+    final next = _history.copy();
+    final namespace = _historyNamespace.copy();
+    next.apply(effects, namespace: namespace, accountId: _session?.accountId);
+    _history = next;
+    _historyNamespace = namespace;
+  }
+
+  Future<T> _noticeChange<T>(
+      LocalNoticeOwner owner, T Function(LocalNoticeState) change,
+      {int? now, void Function()? checkCanCommit}) async {
+    checkCanCommit?.call();
+    owner.requireSession(_session);
+    final next = _noticeState.copy();
+    next.prune(owner, now ?? DateTime.now().millisecondsSinceEpoch);
+    final result = change(next);
+    checkCanCommit?.call();
+    _noticeState = next;
+    return result;
+  }
+
+  @override
+  Future<List<LocalNoticeReference>> pendingNoticeReferences(
+          LocalNoticeOwner owner,
+          {int limit = localNoticeBatchLimit,
+          int? now,
+          void Function()? checkCanCommit}) =>
+      _noticeChange(owner, (n) => n.pending(owner, limit),
+          now: now, checkCanCommit: checkCanCommit);
+  @override
+  Future<LocalNoticeDecision?> pendingNoticeDecision(LocalNoticeOwner owner,
+          {int? now, void Function()? checkCanCommit}) =>
+      _noticeChange(owner, (n) => n.decision(owner),
+          now: now, checkCanCommit: checkCanCommit);
+  @override
+  Future<LocalNoticeDecision?> freezeNoticeDecision(
+          LocalNoticeOwner owner, Iterable<String> referenceIds,
+          {int? now, void Function()? checkCanCommit}) =>
+      _noticeChange(
+          owner,
+          (n) => n.freeze(owner, referenceIds,
+              now ?? DateTime.now().millisecondsSinceEpoch),
+          now: now,
+          checkCanCommit: checkCanCommit);
+  @override
+  Future<void> suppressNoticeReferences(
+          LocalNoticeOwner owner, Iterable<String> referenceIds,
+          {int? now, void Function()? checkCanCommit}) =>
+      _noticeChange(owner, (n) => n.suppress(owner, referenceIds),
+          now: now, checkCanCommit: checkCanCommit);
+  @override
+  Future<void> suppressNoticesThrough(LocalNoticeOwner owner, int eventId,
+          {int? now, void Function()? checkCanCommit}) =>
+      _noticeChange(owner, (n) {
+        if (eventId < 0 || eventId > _syncCursor)
+          throw StateError('notice watermark is not committed');
+        n.suppressThrough(owner, eventId);
+      }, now: now, checkCanCommit: checkCanCommit);
+  @override
+  Future<void> finishNoticeDecision(
+          LocalNoticeOwner owner, String decisionId, LocalNoticeOutcome outcome,
+          {int? now, void Function()? checkCanCommit}) =>
+      _noticeChange(owner, (n) => n.finish(owner, decisionId, outcome),
+          now: now, checkCanCommit: checkCanCommit);
+
+  @override
+  Future<HistoryNamespace> loadHistoryNamespace() async =>
+      _historyNamespace.copy();
+
+  @override
+  Future<List<int>> exportHistorySnapshot() async {
+    final session = _session;
+    if (session == null) throw StateError('history export requires a session');
+    final snapshot = captureHistory(
+        session: session,
+        namespace: _historyNamespace,
+        conversations: _snapshot?.conversations ?? [],
+        messages: _history.allMessages(),
+        reactions: _history.allReactions(),
+        pins: _history.pins.values.toList(),
+        starred: _history.starred,
+        preferences: _conversationPrefs.values.toList(),
+        now: DateTime.now().millisecondsSinceEpoch);
+    final bytes = snapshot.encode();
+    _historyNamespace.counter = snapshot.counter;
+    return bytes;
+  }
+
+  @override
+  Future<void> importHistorySnapshot(
+      List<int> encoded, HistoryImportContext context) async {
+    final snapshot = HistorySnapshot.decode(encoded);
+    context.checkSession(_session);
+    final merge = mergeHistory(
+        snapshot: snapshot,
+        context: context,
+        namespace: _historyNamespace,
+        liveConversations: _snapshot?.conversations ?? [],
+        existing: _history.allMessages(),
+        existingPins: _history.pins.values.toList(),
+        existingPreferences: _conversationPrefs.values.toList(),
+        now: DateTime.now().millisecondsSinceEpoch);
+    // The pure plan validates everything before touching this in-memory store.
+    for (final m in merge.messages) {
+      _history._messages[m.key] = m;
+    }
+    for (final r in merge.reactions) {
+      _history._reactions['${r.targetKey}\u0000${r.reactorAccountId}'] = r;
+    }
+    for (final p in merge.pins) {
+      _history.pins[p.targetKey] = p;
+    }
+    _history.starred.addAll(merge.starred);
+    for (final p in merge.preferences) {
+      _conversationPrefs[p.conversationId] = p;
+    }
+    _historyNamespace = merge.namespace;
+  }
+
   @override
   Future<List<int>> exportBackup() async {
     final activeSession = _session;
@@ -874,12 +1106,21 @@ class MemoryLocalStore implements LocalStore {
           .where((item) => item.expiresAt == null || item.expiresAt! > nowMs)
           .toList(growable: false),
       reactions: _history.allReactions(),
+      pins: _history.pins.values.toList(),
+      starred: _history.starred,
+      pendingPins: _history.pendingPins.values.toList(),
+      conversationPrefs: _conversationPrefs.values.toList(),
+      historyNamespace: _historyNamespace,
     ));
   }
 
   @override
   Future<void> restoreBackup(List<int> encoded) async {
     final backup = _decodeBackup(encoded);
+    final historyCounter =
+        _session != null && _identity(_session!) == _identity(backup.session)
+            ? _historyNamespace.counter
+            : 0;
     if (_cryptoState != null &&
         backup.cryptoState.counter < _cryptoState!.counter) {
       throw StateError('backup would roll MLS state backward');
@@ -906,6 +1147,18 @@ class MemoryLocalStore implements LocalStore {
     _cryptoState = _copyCryptoState(backup.cryptoState);
     _processedMlsMessages.clear();
     _history.replace(backup.history, backup.reactions);
+    _noticeState = LocalNoticeState();
+    _historyNamespace = backup.historyNamespace?.copy() ?? HistoryNamespace();
+    if (_historyNamespace.counter < historyCounter)
+      _historyNamespace.counter = historyCounter;
+    _history.pins.addEntries(backup.pins.map((p) => MapEntry(p.targetKey, p)));
+    _history.pendingPins
+        .addEntries(backup.pendingPins.map((p) => MapEntry(p.actionKey, p)));
+    _history.starred.addAll(backup.starred);
+    _conversationPrefs
+      ..clear()
+      ..addEntries(
+          backup.conversationPrefs.map((p) => MapEntry(p.conversationId, p)));
   }
 
   @override
@@ -926,6 +1179,7 @@ class MemoryLocalStore implements LocalStore {
   @override
   Future<void> clearCachedState(
       {bool preserveOutbox = false, bool keepDrafts = false}) async {
+    _noticeState = LocalNoticeState();
     _syncCursor = 0;
     _snapshot = null;
     if (!keepDrafts) _drafts.clear();
@@ -938,12 +1192,15 @@ class MemoryLocalStore implements LocalStore {
 
   @override
   Future<void> clear() async {
+    _noticeState = LocalNoticeState();
     _session = null;
     _cryptoState = null;
     _processedMlsMessages.clear();
     _mlsOutbox.clear();
     _peerVerifications.clear();
     _history.clear();
+    _historyNamespace = HistoryNamespace();
+    _conversationPrefs.clear();
     _syncLeaseKey = null;
     _syncRecovery = null;
     _lastBackupAt = null;
@@ -1048,6 +1305,68 @@ class MemoryLocalStore implements LocalStore {
       _history.messages(conversationId);
 
   @override
+  Future<List<LocalPin>> loadPins(String conversationId) async {
+    _history.pins.removeWhere(
+        (_, p) => p.expiresAt <= DateTime.now().millisecondsSinceEpoch);
+    return _history.pins.values
+        .where((p) => p.conversationId == conversationId)
+        .toList()
+      ..sort((a, b) {
+        final t = b.pinnedAt.compareTo(a.pinnedAt);
+        return t != 0 ? t : b.appliedOrder.compareTo(a.appliedOrder);
+      });
+  }
+
+  @override
+  Future<Set<String>> loadStarred() async => _history.starred.keys.toSet();
+  @override
+  Future<void> setStarred(String key, bool starred) async {
+    final target = _history._messages[key];
+    if (target == null || target.hiddenAt != null || target.deletedAt != null)
+      return;
+    if (starred) {
+      _history.starred[key] = DateTime.now().millisecondsSinceEpoch;
+    } else {
+      _history.starred.remove(key);
+    }
+  }
+
+  @override
+  Future<void> hideMessage(String conversationId, String key) async {
+    final target = _history._messages[key];
+    if (target == null || target.conversationId != conversationId) return;
+    _history._messages[key] = target.copyWith(
+        hiddenAt: Value(DateTime.now().millisecondsSinceEpoch),
+        body: const Value(null),
+        formatJson: const Value(null),
+        replyTo: const Value(null));
+    _history._reactions.removeWhere((_, r) => r.targetKey == key);
+    _history.pins.remove(key);
+    _history.starred.remove(key);
+    _history.pendingPins.removeWhere((_, p) => p.targetKey == key);
+  }
+
+  @override
+  Future<List<LocalConversationPref>> loadConversationPrefs() async =>
+      _conversationPrefs.values.toList();
+  @override
+  Future<void> saveConversationPref(LocalConversationPref pref) async {
+    if (pref.pinnedAt != null &&
+        _conversationPrefs.values
+                .where((p) =>
+                    p.pinnedAt != null &&
+                    p.conversationId != pref.conversationId)
+                .length >=
+            5)
+      throw StateError('At most five chats can be pinned on this device');
+    _conversationPrefs[pref.conversationId] = pref;
+  }
+
+  @override
+  Future<void> discardPendingPin(String actionKey) async =>
+      _history.pendingPins.remove(actionKey);
+
+  @override
   Future<List<LocalMessageReaction>> loadReactions(
           String conversationId) async =>
       _history.reactions(conversationId);
@@ -1056,6 +1375,9 @@ class MemoryLocalStore implements LocalStore {
 /// In-memory twin of the database's decrypted history, with the same effect
 /// rules as `EncryptedLocalDatabase._applyMessageEffects`.
 class _MemoryMessageHistory {
+  final Map<String, LocalPin> pins = {};
+  final Map<String, LocalPendingPin> pendingPins = {};
+  final Map<String, int> starred = {};
   final Map<String, LocalMessage> _messages = <String, LocalMessage>{};
   final Map<String, LocalMessageReaction> _reactions =
       <String, LocalMessageReaction>{};
@@ -1078,42 +1400,57 @@ class _MemoryMessageHistory {
   }
 
   void clear() {
+    pins.clear();
+    starred.clear();
+    pendingPins.clear();
     _messages.clear();
     _reactions.clear();
   }
 
-  void apply(List<MessageEffect> effects) {
+  _MemoryMessageHistory copy() {
+    final next = _MemoryMessageHistory()
+      ..replace(allMessages(), allReactions());
+    next.pins.addAll(pins);
+    next.pendingPins.addAll(pendingPins);
+    next.starred.addAll(starred);
+    return next;
+  }
+
+  void apply(List<MessageEffect> effects,
+      {required HistoryNamespace namespace, String? accountId}) {
     for (final effect in effects) {
       switch (effect) {
         case InsertMessageEffect():
-          if (_messages.containsKey(effect.key)) continue;
           if (effect.expiresAt != null &&
-              effect.expiresAt! <=
-                  DateTime.now().toUtc().millisecondsSinceEpoch) {
+              effect.expiresAt! <= DateTime.now().millisecondsSinceEpoch)
             continue;
+          final merged = reconcileDirectHistory(
+              namespace,
+              _messages.values.toList(),
+              historyMessageFromInsert(effect),
+              accountId);
+          for (final key in merged.removed) {
+            _messages.remove(key);
+            _reactions.removeWhere((_, r) => r.targetKey == key);
+            pins.remove(key);
+            starred.remove(key);
+            pendingPins.removeWhere((_, p) => p.targetKey == key);
           }
-          if (effect.serverMessageId != null &&
-              _messages.values.any(
-                  (item) => item.serverMessageId == effect.serverMessageId)) {
-            continue;
-          }
-          _messages[effect.key] = LocalMessage(
-            key: effect.key,
-            serverMessageId: effect.serverMessageId,
-            conversationId: effect.conversationId,
-            senderAccountId: effect.senderAccountId,
-            senderDeviceId: effect.senderDeviceId,
-            kind: effect.kind,
-            body: effect.body,
-            replyTo: effect.replyTo,
-            createdAt: effect.createdAt,
-            state: effect.state,
-            expiresAt: effect.expiresAt,
-          );
+          if (merged.message == null) continue;
+          _messages[effect.key] = merged.message!;
         case EditMessageEffect():
           final target = _messages[effect.targetKey];
-          if (target == null ||
-              target.senderAccountId != effect.editorAccountId ||
+          if (target == null) {
+            deferHistoryEffect(namespace, effect, accountId);
+            continue;
+          }
+          if (target.senderAccountId != effect.editorAccountId ||
+              target.hiddenAt != null ||
+              target.channelId != effect.channelId ||
+              (target.expiresAt != null &&
+                  target.expiresAt! <= DateTime.now().millisecondsSinceEpoch) ||
+              (effect.conversationId != null &&
+                  target.conversationId != effect.conversationId) ||
               target.kind != LocalMessageKind.text ||
               target.deletedAt != null) {
             continue;
@@ -1121,12 +1458,25 @@ class _MemoryMessageHistory {
           _messages[effect.targetKey] = target.copyWith(
             body: Value(effect.body),
             editedAt: Value(effect.at),
+            formatJson: Value(effect.formatJson),
           );
+          markLiveHistoryEffect(namespace, effect, effect.targetKey);
         case DeleteMessageEffect():
           final target = _messages[effect.targetKey];
-          if (target == null ||
-              target.senderAccountId != effect.deleterAccountId ||
+          if (target == null) {
+            deferHistoryEffect(namespace, effect, accountId);
+            continue;
+          }
+          if (target.senderAccountId != effect.deleterAccountId ||
+              target.hiddenAt != null ||
+              target.deletedAt != null ||
+              target.channelId != effect.channelId ||
+              (target.expiresAt != null &&
+                  target.expiresAt! <= DateTime.now().millisecondsSinceEpoch) ||
+              (effect.conversationId != null &&
+                  target.conversationId != effect.conversationId) ||
               (target.kind != LocalMessageKind.text &&
+                  target.kind != LocalMessageKind.attachment &&
                   target.kind != LocalMessageKind.unsupported)) {
             continue;
           }
@@ -1135,15 +1485,29 @@ class _MemoryMessageHistory {
                 ? bodyAfterUnsupportedDelete(target.body)
                 : null),
             deletedAt: Value(effect.at),
+            formatJson: const Value(null),
           );
+          markLiveHistoryEffect(namespace, effect, effect.targetKey);
           _reactions
               .removeWhere((_, item) => item.targetKey == effect.targetKey);
+          pins.remove(effect.targetKey);
+          starred.remove(effect.targetKey);
+          pendingPins.removeWhere((_, p) => p.targetKey == effect.targetKey);
         case ReactionEffect():
           final id = '${effect.targetKey}\u0000${effect.reactorAccountId}';
           final reactionTarget = _messages[effect.targetKey];
+          if (reactionTarget == null ||
+              reactionTarget.hiddenAt != null ||
+              reactionTarget.deletedAt != null ||
+              reactionTarget.channelId != effect.channelId ||
+              (reactionTarget.expiresAt != null &&
+                  reactionTarget.expiresAt! <=
+                      DateTime.now().millisecondsSinceEpoch) ||
+              (effect.conversationId != null &&
+                  reactionTarget.conversationId != effect.conversationId))
+            continue;
           if (effect.reaction.isNotEmpty &&
-              (reactionTarget == null ||
-                  reactionTarget.deletedAt != null ||
+              (reactionTarget.deletedAt != null ||
                   (reactionTarget.kind != LocalMessageKind.text &&
                       reactionTarget.kind != LocalMessageKind.attachment))) {
             continue;
@@ -1152,19 +1516,73 @@ class _MemoryMessageHistory {
             _reactions.remove(id);
           } else {
             _reactions[id] = LocalMessageReaction(
+                targetKey: effect.targetKey,
+                reactorAccountId: effect.reactorAccountId,
+                reaction: effect.reaction,
+                updatedAt: effect.at);
+          }
+        case PinMessageEffect():
+          if (effect.pendingActionKey != null) {
+            pendingPins[effect.pendingActionKey!] = LocalPendingPin(
+                actionKey: effect.pendingActionKey!,
+                conversationId: effect.conversationId,
+                channelId: effect.channelId,
+                targetKey: effect.targetKey,
+                accountId: effect.accountId,
+                pinned: effect.pinned,
+                durationSeconds: effect.durationSeconds);
+            continue;
+          }
+          final target = _messages[effect.targetKey];
+          if (target == null ||
+              target.conversationId != effect.conversationId ||
+              target.channelId != effect.channelId ||
+              target.hiddenAt != null ||
+              target.deletedAt != null ||
+              (target.expiresAt != null &&
+                  target.expiresAt! <= DateTime.now().millisecondsSinceEpoch) ||
+              !const [LocalMessageKind.text, LocalMessageKind.attachment]
+                  .contains(target.kind)) continue;
+          pins.remove(effect.targetKey);
+          if (!effect.pinned) continue;
+          var expiry = effect.at + effect.durationSeconds! * 1000;
+          if (target.expiresAt != null && expiry > target.expiresAt!)
+            expiry = target.expiresAt!;
+          if (expiry <= DateTime.now().millisecondsSinceEpoch) continue;
+          final order = pins.values.fold(0,
+                  (int max, p) => p.appliedOrder > max ? p.appliedOrder : max) +
+              1;
+          pins[effect.targetKey] = LocalPin(
+              conversationId: effect.conversationId,
+              channelId: effect.channelId,
               targetKey: effect.targetKey,
-              reactorAccountId: effect.reactorAccountId,
-              reaction: effect.reaction,
-              updatedAt: effect.at,
-            );
+              pinnedByAccountId: effect.accountId,
+              pinnedAt: effect.at,
+              appliedOrder: order,
+              expiresAt: expiry);
+          final scoped = pins.values
+              .where((p) =>
+                  p.conversationId == effect.conversationId &&
+                  p.channelId == effect.channelId)
+              .toList()
+            ..sort((a, b) {
+              final t = b.pinnedAt.compareTo(a.pinnedAt);
+              return t != 0 ? t : b.appliedOrder.compareTo(a.appliedOrder);
+            });
+          while (scoped.length > 3) {
+            final oldest = scoped.removeLast();
+            pins.remove(oldest.targetKey);
           }
       }
     }
   }
 
-  void markSent(String key, String serverMessageId, {int? expiresAt}) {
+  void markSent(String key, String serverMessageId,
+      {int? expiresAt, String? conversationId, String? channelId}) {
     final target = _messages[key];
-    if (target == null) return;
+    if (target == null ||
+        (conversationId != null && target.conversationId != conversationId) ||
+        target.channelId != channelId) return;
     _messages[key] = target.copyWith(
       serverMessageId: Value(serverMessageId),
       state: LocalMessageState.sent,
@@ -1191,6 +1609,9 @@ class _MemoryMessageHistory {
       return gone;
     });
     _reactions.removeWhere((_, item) => removed.contains(item.targetKey));
+    pins.removeWhere((key, p) => removed.contains(key) || p.expiresAt <= nowMs);
+    pendingPins.removeWhere((_, p) => removed.contains(p.targetKey));
+    starred.removeWhere((key, _) => removed.contains(key));
     return touched;
   }
 
@@ -1266,11 +1687,14 @@ class SecureLocalStore implements LocalStore {
     FlutterSecureStorage? storage,
     Future<Directory> Function()? directoryProvider,
     LocalDatabaseFactory? databaseFactory,
+    LocalDatabaseFactory? existingDatabaseFactory,
     MlsCommitFailureInjector? mlsCommitFailureInjector,
     BackupExclusion? backupExclusion,
     String namespace = '',
+    bool existingOnly = false,
   })  : assert(RegExp(r'^[a-z0-9-]{0,40}$').hasMatch(namespace)),
         _namespace = namespace,
+        _existingOnly = existingOnly,
         _storage = storage ??
             const FlutterSecureStorage(
               // Fail closed (I39): resetting on a keystore error would wipe
@@ -1290,6 +1714,8 @@ class SecureLocalStore implements LocalStore {
         _directoryProvider =
             directoryProvider ?? getApplicationSupportDirectory,
         _databaseFactory = databaseFactory ?? openEncryptedLocalDatabase,
+        _existingDatabaseFactory =
+            existingDatabaseFactory ?? openExistingEncryptedLocalDatabase,
         _mlsCommitFailureInjector = mlsCommitFailureInjector,
         _backupExclusion = backupExclusion ??
             (Platform.isIOS ? PlatformBackupExclusion.exclude : null);
@@ -1308,6 +1734,11 @@ class SecureLocalStore implements LocalStore {
   /// release layout (database in the support directory, key
   /// `veritra.database_key.v1`) byte for byte.
   final String _namespace;
+  bool _existingOnly;
+
+  /// Only the actual attached UI may enable initialization. An already-started
+  /// strict open keeps its captured mode, even if the UI attaches meanwhile.
+  void allowForegroundInitialization() => _existingOnly = false;
   String get _databaseKeyName =>
       _namespace.isEmpty ? _databaseKey : 'veritra.$_namespace.database_key.v1';
   String get _legacyRecordKeyName => _namespace.isEmpty
@@ -1316,6 +1747,7 @@ class SecureLocalStore implements LocalStore {
   final FlutterSecureStorage _storage;
   final Future<Directory> Function() _directoryProvider;
   final LocalDatabaseFactory _databaseFactory;
+  final LocalDatabaseFactory _existingDatabaseFactory;
   final MlsCommitFailureInjector? _mlsCommitFailureInjector;
   final BackupExclusion? _backupExclusion;
   Future<EncryptedLocalDatabase>? _openingDatabase;
@@ -1588,6 +2020,8 @@ class SecureLocalStore implements LocalStore {
       failureInjector: _mlsCommitFailureInjector,
       leaseKey: _syncLeaseKey,
       resolvedMlsOutboxKey: transition.resolvedMlsOutboxKey,
+      checkCanCommit: transition.checkCanCommit,
+      noticeReferences: transition.noticeReferences,
     );
   }
 
@@ -1606,6 +2040,8 @@ class SecureLocalStore implements LocalStore {
               payloadJson: jsonEncode(commit.envelope!.toJson()),
             ),
       ownMessageKey: commit.ownMessageKey,
+      allowOwnPinEffect: commit.allowOwnPinEffect,
+      checkCanCommit: commit.checkCanCommit,
       leaseKey: _syncLeaseKey,
     );
   }
@@ -1752,30 +2188,101 @@ class SecureLocalStore implements LocalStore {
   }
 
   @override
+  Future<List<LocalNoticeReference>> pendingNoticeReferences(
+          LocalNoticeOwner owner,
+          {int limit = localNoticeBatchLimit,
+          int? now,
+          void Function()? checkCanCommit}) async =>
+      (await _database()).pendingNoticeReferences(owner,
+          limit: limit, now: now, checkCanCommit: checkCanCommit);
+  @override
+  Future<LocalNoticeDecision?> pendingNoticeDecision(LocalNoticeOwner owner,
+          {int? now, void Function()? checkCanCommit}) async =>
+      (await _database()).pendingNoticeDecision(owner,
+          now: now, checkCanCommit: checkCanCommit);
+  @override
+  Future<LocalNoticeDecision?> freezeNoticeDecision(
+          LocalNoticeOwner owner, Iterable<String> referenceIds,
+          {int? now, void Function()? checkCanCommit}) async =>
+      (await _database()).freezeNoticeDecision(owner, referenceIds,
+          now: now, checkCanCommit: checkCanCommit);
+  @override
+  Future<void> suppressNoticeReferences(
+          LocalNoticeOwner owner, Iterable<String> referenceIds,
+          {int? now, void Function()? checkCanCommit}) async =>
+      (await _database()).suppressNoticeReferences(owner, referenceIds,
+          now: now, checkCanCommit: checkCanCommit);
+  @override
+  Future<void> suppressNoticesThrough(LocalNoticeOwner owner, int eventId,
+          {int? now, void Function()? checkCanCommit}) async =>
+      (await _database()).suppressNoticesThrough(owner, eventId,
+          now: now, checkCanCommit: checkCanCommit);
+  @override
+  Future<void> finishNoticeDecision(
+          LocalNoticeOwner owner, String decisionId, LocalNoticeOutcome outcome,
+          {int? now, void Function()? checkCanCommit}) async =>
+      (await _database()).finishNoticeDecision(owner, decisionId, outcome,
+          now: now, checkCanCommit: checkCanCommit);
+
+  @override
+  Future<HistoryNamespace> loadHistoryNamespace() async =>
+      (await _database()).readHistoryNamespace();
+
+  @override
+  Future<List<int>> exportHistorySnapshot() async =>
+      (await _database()).exportHistorySnapshot(
+          (json) => json == null ? null : _sessionFrom(jsonDecode(json)));
+
+  @override
+  Future<void> importHistorySnapshot(
+      List<int> encoded, HistoryImportContext context) async {
+    final snapshot = HistorySnapshot.decode(encoded);
+    await (await _database()).importHistorySnapshot(snapshot, context,
+        (json) => json == null ? null : _sessionFrom(jsonDecode(json)));
+  }
+
+  @override
   Future<List<int>> exportBackup() async {
-    final activeSession = await loadSession();
-    final snapshot = await loadSnapshot();
-    final state = await loadCryptoState();
-    if (activeSession == null || state == null) {
-      throw StateError('complete authenticated crypto state is required');
-    }
-    // Rows past their expiry are not written to the backup, even when the
-    // purge has not removed them yet (W2).
-    final now = DateTime.now().toUtc();
-    final nowMs = now.millisecondsSinceEpoch;
-    return _encodeBackup(LocalBackupData(
-      session: activeSession,
-      cursor: await loadSyncCursor(),
-      conversations: snapshot?.conversations ?? const <Conversation>[],
-      messages: _withoutExpired(snapshot?.messagesByConversation, now),
-      outbox: await pendingEnvelopes(),
-      mlsOutbox: await pendingMlsMessages(),
-      cryptoState: state,
-      history: (await (await _database()).readAllMessages())
-          .where((item) => item.expiresAt == null || item.expiresAt! > nowMs)
-          .toList(growable: false),
-      reactions: await (await _database()).readAllReactions(),
-    ));
+    final database = await _database();
+    return database.transaction(() async {
+      final activeSession = await loadSession();
+      final snapshot = await loadSnapshot();
+      final state = await loadCryptoState();
+      if (activeSession == null || state == null) {
+        throw StateError('complete authenticated crypto state is required');
+      }
+      // Rows past their expiry are not written to the backup, even when the
+      // purge has not removed them yet (W2).
+      final now = DateTime.now().toUtc();
+      final nowMs = now.millisecondsSinceEpoch;
+      return _encodeBackup(LocalBackupData(
+        session: activeSession,
+        cursor: await loadSyncCursor(),
+        conversations: snapshot?.conversations ?? const <Conversation>[],
+        messages: _withoutExpired(snapshot?.messagesByConversation, now),
+        outbox: await pendingEnvelopes(),
+        mlsOutbox: await pendingMlsMessages(),
+        cryptoState: state,
+        history: (await (await _database()).readAllMessages())
+            .where((item) => item.expiresAt == null || item.expiresAt! > nowMs)
+            .toList(growable: false),
+        reactions: await (await _database()).readAllReactions(),
+        pins: await (await _database())
+            .select((await _database()).localPins)
+            .get(),
+        pendingPins: await (await _database())
+            .select((await _database()).localPendingPins)
+            .get(),
+        starred: {
+          for (final row in await (await _database())
+              .select((await _database()).localStarred)
+              .get())
+            row.messageKey: row.starredAt
+        },
+        conversationPrefs: await loadConversationPrefs(),
+        historyNamespace: await (await _database()).readHistoryNamespace(),
+      ));
+    });
   }
 
   @override
@@ -1831,6 +2338,11 @@ class SecureLocalStore implements LocalStore {
       history: backup.history,
       reactions: backup.reactions,
       backfillExpiryFor: backup.expiryBackfillIds,
+      pins: backup.pins,
+      pendingPins: backup.pendingPins,
+      starred: backup.starred,
+      conversationPrefs: backup.conversationPrefs,
+      historyNamespace: backup.historyNamespace,
     );
   }
 
@@ -1905,6 +2417,32 @@ class SecureLocalStore implements LocalStore {
       (await _database()).readMessages(conversationId);
 
   @override
+  Future<List<LocalPin>> loadPins(String conversationId) async =>
+      (await _database()).readPins(conversationId);
+  @override
+  Future<Set<String>> loadStarred() async => (await _database()).readStarred();
+  @override
+  Future<void> setStarred(String key, bool starred) async => (await _database())
+      .setStarred(key, starred, DateTime.now().millisecondsSinceEpoch);
+  @override
+  Future<void> hideMessage(String conversationId, String key) async =>
+      (await _database()).hideMessage(
+          conversationId, key, DateTime.now().millisecondsSinceEpoch);
+  @override
+  Future<List<LocalConversationPref>> loadConversationPrefs() async =>
+      (await _database()).readConversationPrefs();
+  @override
+  Future<void> saveConversationPref(LocalConversationPref pref) async =>
+      (await _database()).saveConversationPref(pref);
+  @override
+  Future<void> discardPendingPin(String actionKey) async {
+    final db = await _database();
+    await (db.delete(db.localPendingPins)
+          ..where((t) => t.actionKey.equals(actionKey)))
+        .go();
+  }
+
+  @override
   Future<List<LocalMessageReaction>> loadReactions(
           String conversationId) async =>
       (await _database()).readReactions(conversationId);
@@ -1957,13 +2495,17 @@ class SecureLocalStore implements LocalStore {
     return opening;
   }
 
-  Future<Directory> _profileDirectory() async {
+  Future<Directory> _profileDirectory({bool existingOnly = false}) async {
     final base = await _directoryProvider();
     final directory = _namespace.isEmpty
         ? base
         : Directory('${base.path}${Platform.pathSeparator}profiles'
             '${Platform.pathSeparator}$_namespace');
-    await directory.create(recursive: true);
+    if (existingOnly) {
+      if (!await directory.exists()) throw const ExistingDatabaseUnavailable();
+    } else {
+      await directory.create(recursive: true);
+    }
     return directory;
   }
 
@@ -2024,7 +2566,8 @@ class SecureLocalStore implements LocalStore {
   }
 
   Future<EncryptedLocalDatabase> _openDatabase() async {
-    final directory = await _profileDirectory();
+    final existingOnly = _existingOnly;
+    final directory = await _profileDirectory(existingOnly: existingOnly);
     final databaseFile =
         File('${directory.path}${Platform.pathSeparator}veritra-local.db');
     final path = databaseFile.absolute.path;
@@ -2035,7 +2578,8 @@ class SecureLocalStore implements LocalStore {
     _databaseOpenTails[path] = current;
     await previous;
     try {
-      return await _openDatabaseLocked(directory, databaseFile);
+      return await _openDatabaseLocked(directory, databaseFile,
+          existingOnly: existingOnly);
     } finally {
       release.complete();
       if (identical(_databaseOpenTails[path], current)) {
@@ -2045,7 +2589,33 @@ class SecureLocalStore implements LocalStore {
   }
 
   Future<EncryptedLocalDatabase> _openDatabaseLocked(
-      Directory directory, File databaseFile) async {
+      Directory directory, File databaseFile,
+      {required bool existingOnly}) async {
+    if (existingOnly) {
+      if (!await databaseFile.exists() ||
+          await File(
+                  '${directory.path}${Platform.pathSeparator}$_resetIntentName')
+              .exists() ||
+          await File(
+                  '${directory.path}${Platform.pathSeparator}$_resetIntentName.tmp')
+              .exists()) {
+        throw const ExistingDatabaseUnavailable();
+      }
+      try {
+        final key = await _storage.read(key: _databaseKeyName);
+        final legacy = await _storage.read(key: _legacyRecordKeyName);
+        if (key == null ||
+            !RegExp(r'^[0-9a-f]{64}$').hasMatch(key) ||
+            legacy != null) {
+          throw const ExistingDatabaseUnavailable();
+        }
+      } on ExistingDatabaseUnavailable {
+        rethrow;
+      } catch (_) {
+        throw const LocalStoreUnavailableException(
+            LocalStoreFailureKind.keyUnavailable);
+      }
+    }
     try {
       await _holdInstanceLock(directory);
     } on StateError {
@@ -2062,7 +2632,18 @@ class SecureLocalStore implements LocalStore {
       // in a directory that is already excluded.
       await _excludeFromBackup(directory);
       // A reset interrupted by a crash is finished before anything else.
-      await _completeReset(directory);
+      if (existingOnly) {
+        if (await File(
+                    '${directory.path}${Platform.pathSeparator}$_resetIntentName')
+                .exists() ||
+            await File(
+                    '${directory.path}${Platform.pathSeparator}$_resetIntentName.tmp')
+                .exists()) {
+          throw const ExistingDatabaseUnavailable();
+        }
+      } else {
+        await _completeReset(directory);
+      }
       final String? keyHex;
       try {
         keyHex = await _storage.read(key: _databaseKeyName);
@@ -2071,6 +2652,9 @@ class SecureLocalStore implements LocalStore {
             LocalStoreFailureKind.keyUnavailable);
       }
       final databaseExists = await databaseFile.exists();
+      if (existingOnly && (keyHex == null || !databaseExists)) {
+        throw const ExistingDatabaseUnavailable();
+      }
       if (keyHex == null && databaseExists) {
         // A database without its key is unreadable. Writing a fresh key
         // would hide that behind a new, empty identity (D26), so stop and
@@ -2085,7 +2669,9 @@ class SecureLocalStore implements LocalStore {
       final key = keyHex ?? await _createKey();
       EncryptedLocalDatabase? database;
       try {
-        database = _databaseFactory(databaseFile, key);
+        database = existingOnly
+            ? _existingDatabaseFactory(databaseFile, key)
+            : _databaseFactory(databaseFile, key);
         await database.readCursor();
       } catch (error) {
         if (isSqliteFeatureUnavailable(error)) {
@@ -2112,10 +2698,27 @@ class SecureLocalStore implements LocalStore {
         }
         // SQLite cannot tell a wrong key from a damaged file. Either way the
         // file is left exactly as it is.
+        try {
+          await database?.close();
+        } catch (_) {}
         throw const LocalStoreUnavailableException(
             LocalStoreFailureKind.keyRejected);
       }
-      await _migrateLegacyRecord(database);
+      if (existingOnly) {
+        try {
+          if (await database.readMetadata(_migrationMarker) != '1' ||
+              await _storage.read(key: _legacyRecordKeyName) != null) {
+            throw const ExistingDatabaseUnavailable();
+          }
+        } catch (_) {
+          try {
+            await database.close();
+          } catch (_) {}
+          rethrow;
+        }
+      } else {
+        await _migrateLegacyRecord(database);
+      }
       // Again now that the database, WAL and SHM files exist.
       await _excludeFromBackup(directory);
       return database;
@@ -2510,10 +3113,17 @@ StoredCryptoState _copyCryptoState(StoredCryptoState state) =>
 List<int> _encodeBackup(LocalBackupData data) => utf8.encode(jsonEncode(
       <String, Object?>{
         'version': backupFormatVersion,
+        'history_namespace':
+            (data.historyNamespace ?? HistoryNamespace()).toJson(),
         // Decrypted history (D27). Local only: the backup is encrypted with
         // a key the server never sees.
         'history': data.history.map((item) => item.toJson()).toList(),
         'reactions': data.reactions.map((item) => item.toJson()).toList(),
+        'pins': data.pins.map((p) => p.toJson()).toList(),
+        'pending_pins': data.pendingPins.map((p) => p.toJson()).toList(),
+        'starred': data.starred,
+        'conversation_prefs':
+            data.conversationPrefs.map((p) => p.toJson()).toList(),
         'account_id': data.session.accountId,
         'device_id': data.session.deviceId,
         'session': _sessionJson(data.session),
@@ -2561,6 +3171,8 @@ LocalBackupData _decodeBackup(List<int> encoded) {
         ? const <LocalMessage>[]
         : (root['history'] as List).map((item) {
             final json = Map<String, dynamic>.from(item as Map);
+            // v1-v3 predate the explicit sender-hidden column.
+            json.putIfAbsent('senderHidden', () => false);
             final message = LocalMessage.fromJson(json);
             final serverId = message.serverMessageId;
             if (serverId != null && !json.containsKey('expiresAt')) {
@@ -2624,6 +3236,50 @@ LocalBackupData _decodeBackup(List<int> encoded) {
         history: history,
         reactions: reactions,
         formatVersion: version,
+        historyNamespace: version < 5
+            ? null
+            : HistoryNamespace.fromJson(root['history_namespace']),
+        pins: version < 4
+            ? const []
+            : (root['pins'] as List)
+                .map((p) =>
+                    LocalPin.fromJson(Map<String, dynamic>.from(p as Map)))
+                .toList(),
+        pendingPins: version < 4
+            ? const []
+            : (root['pending_pins'] as List)
+                .map((p) => LocalPendingPin.fromJson(
+                    Map<String, dynamic>.from(p as Map)))
+                .where((p) {
+                if (p.pinned &&
+                    !const [86400, 604800, 2592000].contains(p.durationSeconds))
+                  throw const FormatException('invalid backup pin command');
+                return p.accountId == session.accountId &&
+                    p.actionKey.startsWith('${session.deviceId}:') &&
+                    (outbox.any((o) =>
+                            '${session.deviceId}:${o.idempotencyKey}' ==
+                                p.actionKey &&
+                            o.conversationId == p.conversationId) ||
+                        history.any((m) =>
+                            m.key == p.actionKey &&
+                            m.senderAccountId == session.accountId &&
+                            m.senderDeviceId == session.deviceId &&
+                            m.conversationId == p.conversationId &&
+                            m.channelId == p.channelId &&
+                            m.kind == LocalMessageKind.action &&
+                            m.state == LocalMessageState.pending &&
+                            m.hiddenAt == null &&
+                            m.deletedAt == null));
+              }).toList(),
+        starred: version < 4
+            ? const {}
+            : Map<String, int>.from(root['starred'] as Map),
+        conversationPrefs: version < 4
+            ? const []
+            : (root['conversation_prefs'] as List)
+                .map((p) => LocalConversationPref.fromJson(
+                    Map<String, dynamic>.from(p as Map)))
+                .toList(),
         expiryBackfillIds: expiryBackfillIds);
   } catch (error) {
     if (error is FormatException) rethrow;

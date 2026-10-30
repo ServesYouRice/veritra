@@ -128,6 +128,9 @@ func (s *Store) DeleteAccountData(ctx context.Context, accountID string) ([]stri
 	if err := blobRows.Close(); err != nil {
 		return nil, err
 	}
+	if err := retireHistoryForLinks(ctx, tx, `account_id=?`, accountID); err != nil {
+		return nil, err
+	}
 	for _, storageKey := range storageKeys {
 		if err := enqueueBlobDeletion(ctx, tx, storageKey); err != nil {
 			return nil, err
@@ -149,6 +152,7 @@ func (s *Store) DeleteAccountData(ctx context.Context, accountID string) ([]stri
 		`DELETE FROM delivery_receipts WHERE account_id = ?`,
 		`DELETE FROM push_subscriptions WHERE account_id = ?`,
 		`DELETE FROM device_links WHERE account_id = ?`,
+		`DELETE FROM device_links_v3 WHERE account_id = ?`,
 		`DELETE FROM attachment_envelopes WHERE owner_account_id = ?`,
 		`DELETE FROM backup_blobs WHERE account_id = ?`,
 	} {

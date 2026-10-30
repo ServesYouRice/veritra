@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -17,7 +18,7 @@ import (
 	"private-messenger/server/internal/domain"
 )
 
-const deviceLinkProtocolVersion = "veritra-device-link-v1"
+const deviceLinkProtocolVersion = "veritra-device-link-v2"
 
 func (s *Store) ListCommunities(ctx context.Context, accountID string) ([]domain.Community, error) {
 	rows, err := s.db.QueryContext(ctx, `
@@ -97,7 +98,10 @@ func (s *Store) ListDevicesPage(ctx context.Context, accountID string, limit int
 	return devices, rows.Err()
 }
 
-func (s *Store) CreateDeviceLink(ctx context.Context, accountID, deviceID string, ttl time.Duration) (domain.DeviceLink, error) {
+func (s *Store) CreateDeviceLink(ctx context.Context, accountID, deviceID string, ttl time.Duration, code string) (domain.DeviceLink, error) {
+	if decoded, err := hex.DecodeString(code); err != nil || len(decoded) != 32 || code != strings.ToLower(code) {
+		return domain.DeviceLink{}, ErrDeviceLinkInvalid
+	}
 	if ttl <= 0 || ttl > 30*time.Minute {
 		ttl = 10 * time.Minute
 	}
@@ -121,8 +125,7 @@ func (s *Store) CreateDeviceLink(ctx context.Context, accountID, deviceID string
 	if err := s.checkDevices(ctx, tx, accountID); err != nil {
 		return domain.DeviceLink{}, err
 	}
-	open, err := countRows(ctx, tx, `SELECT COUNT(*) FROM device_links WHERE account_id = ? AND state IN (?, ?) AND revoked_at IS NULL AND expires_at > ?`,
-		accountID, domain.DeviceLinkPending, domain.DeviceLinkClaimed, nowString())
+	open, err := countPendingDeviceLinks(ctx, tx, accountID)
 	if err != nil {
 		return domain.DeviceLink{}, err
 	}
@@ -130,10 +133,6 @@ func (s *Store) CreateDeviceLink(ctx context.Context, accountID, deviceID string
 		return domain.DeviceLink{}, s.refuse(admission.DeviceLinks, ErrDeviceLinkLimit)
 	}
 	id, err := domain.NewID("dlink")
-	if err != nil {
-		return domain.DeviceLink{}, err
-	}
-	code, err := domain.NewInviteCode()
 	if err != nil {
 		return domain.DeviceLink{}, err
 	}
@@ -167,10 +166,10 @@ func (s *Store) CreateDeviceLink(ctx context.Context, accountID, deviceID string
 	}, nil
 }
 
-func (s *Store) ClaimDeviceLink(ctx context.Context, code, deviceName string, keyPackage, signingKey, transcriptHash []byte, claimTokenHash, authSecretHash string) (domain.DeviceLink, error) {
+func (s *Store) ClaimDeviceLink(ctx context.Context, code, deviceName string, keyPackage, signingKey, transcriptHash, claimTag []byte, claimTokenHash, authSecretHash string) (domain.DeviceLink, error) {
 	code = strings.TrimSpace(code)
 	deviceName = strings.TrimSpace(deviceName)
-	if code == "" || deviceName == "" || len(keyPackage) == 0 || len(signingKey) != 32 || len(transcriptHash) != 32 || claimTokenHash == "" || authSecretHash == "" {
+	if code == "" || deviceName == "" || len(keyPackage) == 0 || len(signingKey) != 32 || len(transcriptHash) != 32 || len(claimTag) != 32 || claimTokenHash == "" || authSecretHash == "" {
 		return domain.DeviceLink{}, ErrDeviceLinkInvalid
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -181,9 +180,9 @@ func (s *Store) ClaimDeviceLink(ctx context.Context, code, deviceName string, ke
 	var link domain.DeviceLink
 	row := tx.QueryRowContext(ctx, `
 		SELECT dl.id, dl.code, dl.account_id, dl.created_by_device_id, dl.state, dl.verification_code, dl.claimed_device_name, dl.approved_device_id, dl.created_at, dl.expires_at, dl.claimed_at, dl.approved_at, dl.consumed_at, dl.revoked_at,
-		       dl.protocol_version, dl.link_nonce, dl.claimed_device_id, dl.claimed_signing_key, dl.claimed_transcript_hash, creator.signing_key
+		       dl.protocol_version, dl.link_nonce, dl.claimed_device_id, dl.claimed_signing_key, dl.claimed_transcript_hash, creator.signing_key, dl.claim_tag, dl.approval_tag
 		FROM device_links dl JOIN devices creator ON creator.id = dl.created_by_device_id AND creator.revoked_at IS NULL
-		WHERE dl.code = ? AND dl.state = ? AND dl.revoked_at IS NULL AND dl.expires_at > ?`,
+		WHERE dl.protocol_version = 'veritra-device-link-v2' AND dl.code = ? AND dl.state = ? AND dl.revoked_at IS NULL AND dl.expires_at > ?`,
 		code, domain.DeviceLinkPending, nowString())
 	if err := scanDeviceLink(row, &link); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -194,9 +193,9 @@ func (s *Store) ClaimDeviceLink(ctx context.Context, code, deviceName string, ke
 	now := nowString()
 	result, err := tx.ExecContext(ctx, `
 		UPDATE device_links
-		SET state = ?, claimed_device_name = ?, claimed_key_package = ?, claimed_signing_key = ?, claimed_transcript_hash = ?, claim_token_hash = ?, claimed_auth_secret_hash = ?, claimed_at = ?
+		SET state = ?, claimed_device_name = ?, claimed_key_package = ?, claimed_signing_key = ?, claimed_transcript_hash = ?, claim_tag = ?, claim_token_hash = ?, claimed_auth_secret_hash = ?, claimed_at = ?
 		WHERE id = ? AND state = ? AND claimed_device_id IS NOT NULL`,
-		domain.DeviceLinkClaimed, deviceName, keyPackage, signingKey, transcriptHash, claimTokenHash, authSecretHash, now, link.ID, domain.DeviceLinkPending)
+		domain.DeviceLinkClaimed, deviceName, keyPackage, signingKey, transcriptHash, claimTag, claimTokenHash, authSecretHash, now, link.ID, domain.DeviceLinkPending)
 	if err != nil {
 		return domain.DeviceLink{}, err
 	}
@@ -215,6 +214,7 @@ func (s *Store) ClaimDeviceLink(ctx context.Context, code, deviceName string, ke
 	link.ClaimedDeviceName = &deviceName
 	link.ClaimedSigningKey = append([]byte(nil), signingKey...)
 	link.TranscriptHash = append([]byte(nil), transcriptHash...)
+	link.ClaimTag = append([]byte(nil), claimTag...)
 	link.ClaimedAt = &claimedAt
 	link.Code = ""
 	return link, nil
@@ -231,7 +231,7 @@ func (s *Store) ReserveDeviceLinkEnrollment(ctx context.Context, code string) (E
 	err = tx.QueryRowContext(ctx, `
 		SELECT dl.id, dl.account_id, dl.created_by_device_id, dl.protocol_version, dl.link_nonce, creator.signing_key
 		FROM device_links dl JOIN devices creator ON creator.id = dl.created_by_device_id AND creator.revoked_at IS NULL
-		WHERE dl.code = ? AND dl.state = ? AND dl.claimed_device_id IS NULL
+		WHERE dl.protocol_version = 'veritra-device-link-v2' AND dl.code = ? AND dl.state = ? AND dl.claimed_device_id IS NULL
 		  AND dl.revoked_at IS NULL AND dl.expires_at > ?`,
 		strings.TrimSpace(code), domain.DeviceLinkPending, nowString()).Scan(&linkID, &accountID, &existingDeviceID, &protocolVersion, &linkNonce, &existingSigningKey)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -297,7 +297,7 @@ func (s *Store) DeviceLinkEnrollment(ctx context.Context, code, linkID string) (
 func (s *Store) DeviceLinkForAccount(ctx context.Context, linkID, accountID string) (domain.DeviceLink, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT dl.id, dl.code, dl.account_id, dl.created_by_device_id, dl.state, dl.verification_code, dl.claimed_device_name, dl.approved_device_id, dl.created_at, dl.expires_at, dl.claimed_at, dl.approved_at, dl.consumed_at, dl.revoked_at,
-		       dl.protocol_version, dl.link_nonce, dl.claimed_device_id, dl.claimed_signing_key, dl.claimed_transcript_hash, creator.signing_key
+		       dl.protocol_version, dl.link_nonce, dl.claimed_device_id, dl.claimed_signing_key, dl.claimed_transcript_hash, creator.signing_key, dl.claim_tag, dl.approval_tag
 		FROM device_links dl JOIN devices creator ON creator.id = dl.created_by_device_id
 		WHERE dl.id = ? AND dl.account_id = ? AND dl.revoked_at IS NULL`, linkID, accountID)
 	var link domain.DeviceLink
@@ -311,16 +311,16 @@ func (s *Store) DeviceLinkForAccount(ctx context.Context, linkID, accountID stri
 	return link, nil
 }
 
-func (s *Store) ApproveDeviceLink(ctx context.Context, linkID, accountID string, transcriptHash []byte) (domain.DeviceLink, domain.Device, error) {
-	link, device, _, err := s.approveDeviceLink(ctx, linkID, accountID, transcriptHash, "")
+func (s *Store) ApproveDeviceLink(ctx context.Context, linkID, accountID string, transcriptHash, approvalTag []byte) (domain.DeviceLink, domain.Device, error) {
+	link, device, _, err := s.approveDeviceLink(ctx, linkID, accountID, transcriptHash, approvalTag, "")
 	return link, device, err
 }
 
-func (s *Store) ApproveDeviceLinkWithSyncEvent(ctx context.Context, linkID, accountID string, transcriptHash []byte) (domain.DeviceLink, domain.Device, int64, error) {
-	return s.approveDeviceLink(ctx, linkID, accountID, transcriptHash, "device.updated")
+func (s *Store) ApproveDeviceLinkWithSyncEvent(ctx context.Context, linkID, accountID string, transcriptHash, approvalTag []byte) (domain.DeviceLink, domain.Device, int64, error) {
+	return s.approveDeviceLink(ctx, linkID, accountID, transcriptHash, approvalTag, "device.updated")
 }
 
-func (s *Store) approveDeviceLink(ctx context.Context, linkID, accountID string, transcriptHash []byte, eventType string) (domain.DeviceLink, domain.Device, int64, error) {
+func (s *Store) approveDeviceLink(ctx context.Context, linkID, accountID string, transcriptHash, approvalTag []byte, eventType string) (domain.DeviceLink, domain.Device, int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return domain.DeviceLink{}, domain.Device{}, 0, err
@@ -332,7 +332,7 @@ func (s *Store) approveDeviceLink(ctx context.Context, linkID, accountID string,
 	var authSecretHash string
 	row := tx.QueryRowContext(ctx, `
 		SELECT dl.id, dl.code, dl.account_id, dl.created_by_device_id, dl.state, dl.verification_code, dl.claimed_device_name, dl.approved_device_id, dl.created_at, dl.expires_at, dl.claimed_at, dl.approved_at, dl.consumed_at, dl.revoked_at,
-		       dl.protocol_version, dl.link_nonce, dl.claimed_device_id, dl.claimed_signing_key, dl.claimed_transcript_hash, creator.signing_key,
+		       dl.protocol_version, dl.link_nonce, dl.claimed_device_id, dl.claimed_signing_key, dl.claimed_transcript_hash, creator.signing_key, dl.claim_tag, dl.approval_tag,
 		       dl.claimed_device_name, dl.claimed_key_package, dl.claimed_auth_secret_hash
 		FROM device_links dl JOIN devices creator ON creator.id = dl.created_by_device_id AND creator.revoked_at IS NULL
 		WHERE dl.id = ? AND dl.account_id = ? AND dl.state = ? AND dl.revoked_at IS NULL AND dl.expires_at > ?`,
@@ -343,7 +343,7 @@ func (s *Store) approveDeviceLink(ctx context.Context, linkID, accountID string,
 		}
 		return domain.DeviceLink{}, domain.Device{}, 0, err
 	}
-	if len(transcriptHash) != 32 || subtle.ConstantTimeCompare(transcriptHash, link.TranscriptHash) != 1 {
+	if link.ProtocolVersion != deviceLinkProtocolVersion || len(link.ClaimTag) != 32 || len(approvalTag) != 32 || len(transcriptHash) != 32 || subtle.ConstantTimeCompare(transcriptHash, link.TranscriptHash) != 1 {
 		return domain.DeviceLink{}, domain.Device{}, 0, ErrDeviceLinkVerificationFailed
 	}
 	if strings.TrimSpace(deviceName) == "" || len(keyPackage) == 0 || len(link.ClaimedSigningKey) != 32 || link.ClaimedDeviceID == "" || authSecretHash == "" {
@@ -360,7 +360,7 @@ func (s *Store) approveDeviceLink(ctx context.Context, linkID, accountID string,
 	if err := insertInitialDeviceKeyPackage(ctx, tx, deviceID, keyPackage, now); err != nil {
 		return domain.DeviceLink{}, domain.Device{}, 0, err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE device_links SET state = ?, approved_device_id = ?, approved_at = ? WHERE id = ? AND state = ?`, domain.DeviceLinkApproved, deviceID, now, linkID, domain.DeviceLinkClaimed)
+	result, err := tx.ExecContext(ctx, `UPDATE device_links SET state = ?, approved_device_id = ?, approved_at = ?, approval_tag = ? WHERE id = ? AND state = ?`, domain.DeviceLinkApproved, deviceID, now, approvalTag, linkID, domain.DeviceLinkClaimed)
 	if err != nil {
 		return domain.DeviceLink{}, domain.Device{}, 0, err
 	}
@@ -373,6 +373,7 @@ func (s *Store) approveDeviceLink(ctx context.Context, linkID, accountID string,
 	}
 	approvedAt := parseTime(now)
 	link.State = domain.DeviceLinkApproved
+	link.ApprovalTag = append([]byte(nil), approvalTag...)
 	link.Code = ""
 	link.ApprovedDeviceID = &deviceID
 	link.ApprovedAt = &approvedAt
@@ -452,16 +453,16 @@ func (s *Store) ConsumeApprovedDeviceLink(ctx context.Context, linkID, claimToke
 	return linked, nil
 }
 
-func (s *Store) DeviceLinkTranscriptForClaim(ctx context.Context, linkID, claimTokenHash string) ([]byte, error) {
-	var transcriptHash []byte
+func (s *Store) DeviceLinkTranscriptForClaim(ctx context.Context, linkID, claimTokenHash string) ([]byte, []byte, error) {
+	var transcriptHash, approvalTag []byte
 	err := s.db.QueryRowContext(ctx, `
-		SELECT claimed_transcript_hash FROM device_links
+		SELECT claimed_transcript_hash, approval_tag FROM device_links
 		WHERE id = ? AND claim_token_hash = ? AND state = ? AND revoked_at IS NULL`,
-		linkID, claimTokenHash, domain.DeviceLinkConsumed).Scan(&transcriptHash)
-	if errors.Is(err, sql.ErrNoRows) || len(transcriptHash) != 32 {
-		return nil, ErrDeviceLinkInvalid
+		linkID, claimTokenHash, domain.DeviceLinkConsumed).Scan(&transcriptHash, &approvalTag)
+	if errors.Is(err, sql.ErrNoRows) || len(transcriptHash) != 32 || len(approvalTag) != 32 {
+		return nil, nil, ErrDeviceLinkInvalid
 	}
-	return transcriptHash, err
+	return transcriptHash, approvalTag, err
 }
 
 func (s *Store) CreateCommunity(ctx context.Context, name, createdBy string) (domain.Community, error) {

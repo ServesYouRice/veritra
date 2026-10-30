@@ -328,6 +328,12 @@ class SettingsScreen extends StatelessWidget {
                     preferences: state.receiptPreferences,
                     onChanged: state.setSendReadReceipts,
                   ),
+                  SwitchListTile(
+                      secondary: const Icon(Icons.alternate_email),
+                      title: Text(l10n.w8MentionsMuted),
+                      subtitle: Text(l10n.w8MentionsMutedDetail),
+                      value: state.mentionsInMutedChats,
+                      onChanged: state.setMentionsInMutedChats),
                 ],
               ),
               if (appearance != null) ...<Widget>[

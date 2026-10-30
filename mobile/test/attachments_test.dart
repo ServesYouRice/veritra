@@ -331,6 +331,7 @@ class _FakeMls implements MlsConversationCryptoService {
     AppPayloadType type,
     Map<String, Object?> body, {
     List<String> attachmentRefs = const <String>[],
+    String? draftText,
   }) async {
     this.type = type;
     this.body = body;

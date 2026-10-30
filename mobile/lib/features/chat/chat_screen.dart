@@ -5,6 +5,7 @@ import 'package:file_selector/file_selector.dart' show XFile;
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, listEquals, visibleForTesting;
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart' show kSecondaryMouseButton;
 import 'package:flutter/services.dart';
 
 import '../../core/app_state.dart';
@@ -14,7 +15,7 @@ import '../../core/message_history.dart';
 import '../../core/models.dart';
 import '../../crypto/app_payload.dart' show maxAppTextLength;
 import '../../storage/encrypted_database.dart'
-    show LocalMessage, LocalMessageKind;
+    show LocalMessage, LocalMessageKind, LocalMessageState;
 import '../../l10n/l10n.dart';
 import '../../ui/format.dart';
 import '../../ui/motion.dart';
@@ -26,6 +27,7 @@ import '../../ui/widgets/status_pill.dart';
 import '../search/search_screen.dart';
 import 'attachment_views.dart';
 import 'chat_desktop.dart';
+import 'formatted_message.dart';
 import 'chat_list_screen.dart';
 import 'composer_attachments.dart';
 import 'conversation_details_screen.dart';
@@ -363,6 +365,10 @@ class _ChatScreenState extends State<ChatScreen> {
                         ],
                       ),
                 actions: <Widget>[
+                  IconButton(
+                      tooltip: context.l10n.w8StarredMessages,
+                      onPressed: _showStarredMessages,
+                      icon: const Icon(Icons.star_outline)),
                   if (conversation != null)
                     IconButton(
                       tooltip: context.l10n.chatListDetails,
@@ -385,6 +391,33 @@ class _ChatScreenState extends State<ChatScreen> {
                 onFiles: _addFiles,
                 child: Column(
                   children: <Widget>[
+                    if (widget.state.pinsFor(widget.conversationId).isNotEmpty)
+                      Material(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest,
+                        child: Column(children: [
+                          for (final pin
+                              in widget.state.pinsFor(widget.conversationId))
+                            ListTile(
+                              dense: true,
+                              leading:
+                                  const Icon(Icons.push_pin_outlined, size: 18),
+                              title: Text(
+                                  quotedPreview(
+                                      context.l10n,
+                                      widget.state
+                                          .historyFor(widget.conversationId)
+                                          .forKey(pin.targetKey)),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis),
+                              onTap: () {
+                                setState(() => _jumpKey = pin.targetKey);
+                                _scheduleJump();
+                              },
+                            )
+                        ]),
+                      ),
                     Expanded(
                       child: conversation == null
                           ? EmptyState(
@@ -565,61 +598,122 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   /// Long-press on mobile, right-click on desktop.
+  Future<void> _showStarredMessages() async {
+    final state = widget.state;
+    final selected = await showModalBottomSheet<String>(
+        context: context,
+        builder: (sheetContext) => SafeArea(
+                child: ListView(shrinkWrap: true, children: [
+              ListTile(title: Text(context.l10n.w8StarredMessages)),
+              for (final message
+                  in state.historyFor(widget.conversationId).messages)
+                if (state.starredMessages.contains(message.key) &&
+                    message.hiddenAt == null &&
+                    message.deletedAt == null)
+                  ListTile(
+                      leading: const Icon(Icons.star),
+                      title: Text(quotedPreview(context.l10n, message)),
+                      onTap: () => Navigator.pop(sheetContext, message.key)),
+            ])));
+    if (selected != null && mounted) {
+      setState(() => _jumpKey = selected);
+      _scheduleJump();
+    }
+  }
+
+  /// Long-press on mobile, right-click on desktop.
   Future<void> _showMessageActions(LocalMessage message, bool mine) async {
     final state = widget.state;
     final conversationId = widget.conversationId;
+    final actionable = message.deletedAt == null &&
+        const [LocalMessageKind.text, LocalMessageKind.attachment]
+            .contains(message.kind);
     final action = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
       builder: (sheetContext) => SafeArea(
-        child: Column(
+        child: SingleChildScrollView(
+            child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: BoneSpacing.md),
-              child: Wrap(
-                spacing: BoneSpacing.xs,
-                children: <Widget>[
-                  for (final reaction in quickReactions)
+            if (actionable)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: BoneSpacing.md),
+                child: Wrap(
+                  spacing: BoneSpacing.xs,
+                  children: <Widget>[
+                    for (final reaction in quickReactions)
+                      IconButton(
+                        tooltip: context.l10n.chatReact(reaction),
+                        onPressed: () =>
+                            Navigator.of(sheetContext).pop('react:$reaction'),
+                        icon: Text(reaction,
+                            style: const TextStyle(fontSize: 24)),
+                      ),
                     IconButton(
-                      tooltip: context.l10n.chatReact(reaction),
-                      onPressed: () =>
-                          Navigator.of(sheetContext).pop('react:$reaction'),
-                      icon:
-                          Text(reaction, style: const TextStyle(fontSize: 24)),
+                      tooltip: context.l10n.chatMoreReactions,
+                      onPressed: () => Navigator.of(sheetContext).pop('react:'),
+                      icon: const Icon(Icons.add_reaction_outlined),
                     ),
-                  IconButton(
-                    tooltip: context.l10n.chatMoreReactions,
-                    onPressed: () => Navigator.of(sheetContext).pop('react:'),
-                    icon: const Icon(Icons.add_reaction_outlined),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
+            if (actionable)
+              ListTile(
+                leading: const Icon(Icons.reply),
+                title: Text(context.l10n.chatReply),
+                onTap: () => Navigator.of(sheetContext).pop('reply'),
+              ),
+            if (actionable && message.kind == LocalMessageKind.text)
+              ListTile(
+                leading: const Icon(Icons.copy),
+                title: Text(context.l10n.chatCopyText),
+                onTap: () => Navigator.of(sheetContext).pop('copy'),
+              ),
+            if (actionable)
+              ListTile(
+                  leading: const Icon(Icons.forward_outlined),
+                  title: Text(context.l10n.w8Forward),
+                  onTap: () => Navigator.of(sheetContext).pop('forward')),
             ListTile(
-              leading: const Icon(Icons.reply),
-              title: Text(context.l10n.chatReply),
-              onTap: () => Navigator.of(sheetContext).pop('reply'),
-            ),
+                leading: Icon(state.starredMessages.contains(message.key)
+                    ? Icons.star
+                    : Icons.star_outline),
+                title: Text(state.starredMessages.contains(message.key)
+                    ? context.l10n.w8Unstar
+                    : context.l10n.w8Star),
+                onTap: () => Navigator.of(sheetContext).pop('star')),
             ListTile(
-              leading: const Icon(Icons.copy),
-              title: Text(context.l10n.chatCopyText),
-              onTap: () => Navigator.of(sheetContext).pop('copy'),
-            ),
+                leading: const Icon(Icons.hide_source),
+                title: Text(context.l10n.w8DeleteForMe),
+                onTap: () => Navigator.of(sheetContext).pop('hide')),
+            if (actionable && state.canPinMessages(conversationId))
+              ListTile(
+                  leading: const Icon(Icons.push_pin_outlined),
+                  title: Text(context.l10n.w8Pin),
+                  onTap: () => Navigator.of(sheetContext).pop('pin')),
             if (mine) ...<Widget>[
-              ListTile(
-                leading: const Icon(Icons.edit_outlined),
-                title: Text(context.l10n.chatEdit),
-                onTap: () => Navigator.of(sheetContext).pop('edit'),
-              ),
-              ListTile(
-                leading: const Icon(Icons.delete_outline),
-                title: Text(context.l10n.chatDeleteForEveryone),
-                onTap: () => Navigator.of(sheetContext).pop('delete'),
-              ),
+              if (message.kind == LocalMessageKind.text &&
+                  message.deletedAt == null)
+                ListTile(
+                  leading: const Icon(Icons.edit_outlined),
+                  title: Text(context.l10n.chatEdit),
+                  onTap: () => Navigator.of(sheetContext).pop('edit'),
+                ),
+              if (const [
+                    LocalMessageKind.text,
+                    LocalMessageKind.attachment,
+                    LocalMessageKind.unsupported
+                  ].contains(message.kind) &&
+                  message.deletedAt == null)
+                ListTile(
+                  leading: const Icon(Icons.delete_outline),
+                  title: Text(context.l10n.chatDeleteForEveryone),
+                  onTap: () => Navigator.of(sheetContext).pop('delete'),
+                ),
             ],
           ],
-        ),
+        )),
       ),
     );
     if (!mounted || action == null) return;
@@ -644,6 +738,74 @@ class _ChatScreenState extends State<ChatScreen> {
       _setReplyTarget(message.key);
     } else if (action == 'copy') {
       await Clipboard.setData(ClipboardData(text: message.body ?? ''));
+    } else if (action == 'star') {
+      await state.toggleMessageStar(message);
+    } else if (action == 'hide') {
+      await state.deleteMessageForMe(message);
+    } else if (action == 'forward') {
+      final selected = <String>{};
+      final destinations = await showDialog<List<String>>(
+          context: context,
+          builder: (dialogContext) => StatefulBuilder(
+              builder: (context, setDialogState) => AlertDialog(
+                    title: Text(context.l10n.w8Forward),
+                    content: SizedBox(
+                        width: 360,
+                        child: SingleChildScrollView(
+                            child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                              for (final c in state.conversations)
+                                CheckboxListTile(
+                                    value: selected.contains(c.id),
+                                    title: Text(
+                                        conversationTitle(context.l10n, c)),
+                                    onChanged: (v) => setDialogState(() {
+                                          if (v == true &&
+                                              selected.length <
+                                                  ((message.forwardHops ?? 0) >=
+                                                          5
+                                                      ? 1
+                                                      : 5)) {
+                                            selected.add(c.id);
+                                          } else {
+                                            selected.remove(c.id);
+                                          }
+                                        }))
+                            ]))),
+                    actions: [
+                      TextButton(
+                          onPressed: () => Navigator.pop(dialogContext),
+                          child: Text(context.l10n.commonCancel)),
+                      FilledButton(
+                          onPressed: selected.isEmpty
+                              ? null
+                              : () => Navigator.pop(
+                                  dialogContext, selected.toList()),
+                          child: Text(context.l10n.w8Forward))
+                    ],
+                  )));
+      if (destinations != null)
+        sent = await state.forwardMessage(message, destinations);
+    } else if (action == 'pin') {
+      final existing =
+          state.pinsFor(conversationId).any((p) => p.targetKey == message.key);
+      final duration = await showModalBottomSheet<int>(
+          context: context,
+          builder: (sheetContext) => SafeArea(
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                if (existing)
+                  ListTile(
+                      title: Text(context.l10n.w8Unpin),
+                      onTap: () => Navigator.pop(sheetContext, 0)),
+                for (final days in [1, 7, 30])
+                  ListTile(
+                      title: Text(context.l10n.w8PinDays(days)),
+                      onTap: () => Navigator.pop(sheetContext, days * 86400)),
+              ])));
+      if (duration != null)
+        sent = await state.pinMessage(conversationId, message.key,
+            pinned: duration != 0, durationSeconds: duration);
     } else if (action == 'edit') {
       await _editMessage(message);
       return;
@@ -809,6 +971,8 @@ List<Object?> _chatScreenSelection(AppState state, String conversationId) {
     state.isBusy(Ops.attachment),
     state.attachmentsAvailable,
     state.messageActionsAvailable,
+    state.starredMessages,
+    ...state.pinsFor(conversationId),
     state.isLoadingMessages(conversationId),
     state.messageLoadError(conversationId),
     state.hasMoreHistory(conversationId),
@@ -1002,12 +1166,15 @@ class _MessageList extends StatelessWidget {
               conversationId: conversationId,
               createdAt: message.createdAt,
               enabled: mine &&
+                  local?.state != LocalMessageState.restored &&
                   message.deletedAt == null &&
                   local?.deletedAt == null &&
                   state.ticksApply(conversationId),
               builder: (context, tick) => _MessageBubble(
                 message: message,
                 local: local,
+                copiedHistory: local?.state == LocalMessageState.restored ||
+                    (local != null && history.copiedKeys.contains(local.key)),
                 replyPreview: local?.replyTo == null
                     ? null
                     : quotedPreview(context.l10n, replyTarget),
@@ -1015,12 +1182,27 @@ class _MessageList extends StatelessWidget {
                     ? const <({String reaction, int count, bool mine})>[]
                     : history.reactionsFor(local.key,
                         ownAccountId: state.session?.accountId),
+                starred:
+                    local != null && state.starredMessages.contains(local.key),
+                onMention: (accountId) {
+                  final member = state
+                      .membersFor(conversationId)
+                      .where((m) => m.accountId == accountId)
+                      .firstOrNull;
+                  showModalBottomSheet<void>(
+                      context: context,
+                      builder: (_) => SafeArea(
+                          child: ListTile(
+                              leading: const Icon(Icons.person_outline),
+                              title: Text(member?.username ?? accountId),
+                              subtitle: Text(accountId))));
+                },
                 mine: mine,
                 tick: tick,
                 onActions: onMessageActions == null ||
                         local == null ||
-                        local.kind != LocalMessageKind.text ||
-                        local.deletedAt != null
+                        local.kind == LocalMessageKind.action ||
+                        local.hiddenAt != null
                     ? null
                     : () => onMessageActions!(local, mine),
                 senderLabel: _senderLabel(senderAccountId),
@@ -1075,6 +1257,8 @@ String quotedPreview(AppLocalizations l10n, LocalMessage? target) {
   if (target.deletedAt != null || target.body == null) {
     return l10n.chatReplyDeleted;
   }
+  if (target.formatJson?.contains('spoiler') == true)
+    return l10n.w8HiddenSpoiler;
   if (target.kind == LocalMessageKind.attachment) {
     return _attachmentSummary(l10n, target, target.conversationId);
   }
@@ -1306,6 +1490,9 @@ class _MessageBubble extends StatelessWidget {
     this.tick,
     this.onActions,
     this.onOpenAttachment,
+    this.onMention,
+    this.starred = false,
+    this.copiedHistory = false,
   });
 
   /// Sent, delivered or read, for a message of yours; null otherwise.
@@ -1316,6 +1503,9 @@ class _MessageBubble extends StatelessWidget {
 
   /// Opens one attachment of an attachment message.
   final void Function(AttachmentEntry entry)? onOpenAttachment;
+  final void Function(String accountId)? onMention;
+  final bool starred;
+  final bool copiedHistory;
 
   final ReceivedMessageEnvelope message;
 
@@ -1353,12 +1543,15 @@ class _MessageBubble extends StatelessWidget {
         mine ? scheme.surfaceContainerHigh : scheme.surfaceContainerLow;
     final foreground = scheme.onSurface;
     final sender = mine ? context.l10n.chatSenderYou : senderLabel;
-    return GestureDetector(
-      onLongPress: onActions,
-      onSecondaryTap: onActions,
-      child: _bubble(context, theme, scheme, background, foreground, sender,
-          deleted, unverifiable, text),
-    );
+    return Listener(
+        onPointerDown: (event) {
+          if (event.buttons & kSecondaryMouseButton != 0) onActions?.call();
+        },
+        child: GestureDetector(
+          onLongPress: onActions,
+          child: _bubble(context, theme, scheme, background, foreground, sender,
+              deleted, unverifiable, text),
+        ));
   }
 
   bool get _isPlaceholder =>
@@ -1420,7 +1613,9 @@ class _MessageBubble extends StatelessWidget {
                   : placeholder
                       ? _placeholderLabel(l10n)
                       : text != null
-                          ? l10n.chatMessageSemantics(sender, time, text)
+                          ? (local?.formatJson?.contains('spoiler') == true
+                              ? l10n.w8HiddenSpoiler
+                              : l10n.chatMessageSemantics(sender, time, text))
                           : local?.kind == LocalMessageKind.attachment
                               ? l10n.chatAttachmentSemantics(sender, time)
                               : l10n.chatEncryptedSemantics(sender, time)) +
@@ -1446,6 +1641,19 @@ class _MessageBubble extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
+                    if (starred) const Icon(Icons.star, size: 14),
+                    if (copiedHistory)
+                      Text(l10n.k2CopiedHistory,
+                          style: theme.textTheme.labelSmall),
+                    if (local?.forwardHops != null)
+                      Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text(
+                              local!.forwardHops! >= 5
+                                  ? l10n.w8ForwardedMany
+                                  : l10n.w8Forwarded,
+                              style: theme.textTheme.labelSmall
+                                  ?.copyWith(fontStyle: FontStyle.italic))),
                     if (showSender)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 5),
@@ -1525,8 +1733,10 @@ class _MessageBubble extends StatelessWidget {
                     else if (local?.kind == LocalMessageKind.attachment)
                       ..._attachmentTiles(context)
                     else if (text != null)
-                      SelectableText(
-                        text,
+                      FormattedMessage(
+                        text: text,
+                        formatJson: local?.formatJson,
+                        onMention: onMention,
                         style: theme.textTheme.bodyMedium
                             ?.copyWith(color: foreground),
                       )

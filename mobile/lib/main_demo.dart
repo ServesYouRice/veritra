@@ -15,8 +15,10 @@ import 'crypto/native_crypto_bindings.dart';
 import 'crypto/native_crypto_service.dart';
 import 'features/chat/attachment_views.dart' show purgeOpenedAttachments;
 import 'features/chat/composer_attachments.dart' show purgePastedImages;
-import 'main.dart' show VeritraApp;
+import 'main.dart' show VeritraApp, StartupFailureApp;
 import 'push/push_service.dart';
+import 'push/wake_worker_bridge.dart';
+import 'push/wake_launch_coordinator.dart';
 import 'storage/local_store.dart';
 import 'sync/sync_service.dart';
 
@@ -49,50 +51,63 @@ Future<void> main(List<String> args) async {
     runApp(_Message(error.message));
     return;
   }
-  final localStore =
-      SecureLocalStore(namespace: profile == null ? 'demo' : 'demo-$profile');
-  final bindings = NativeCryptoBindings.load();
-  final state = AppState(
-    apiClientFactory: (baseUrl) => ApiClient(baseUrl: baseUrl),
-    cryptoService: NativeCryptoService(
-      bindings: bindings,
-      localStore: localStore,
-    ),
-    localStore: localStore,
-    backupService: BackupService(
-      bindings: bindings,
-      localStore: localStore,
-      clientFactory: (baseUrl) {
-        // A recovery code names its server; demo builds still accept only
-        // HTTPS or loopback (D12).
-        if (!TransportPolicy.demo.allows(baseUrl)) {
-          throw StateError('recovery code names a server this build refuses');
-        }
-        return ApiClient(baseUrl: baseUrl);
-      },
-    ),
-    attachmentService: AttachmentCryptoService(bindings),
-    receiptPreferences: ReceiptPreferences(SecureReceiptPreferenceStore()),
-    syncServiceFactory: (baseUrl, token) =>
-        WebSocketSyncService(baseUrl: baseUrl, token: token),
-    pushService: Platform.isAndroid || Platform.isIOS
-        ? PlatformMobilePushService()
-        : DisabledMobilePushService(),
-    config: ClientConfig(
-      demo: true,
-      transport: TransportPolicy.demo,
-      deviceName:
-          profile == null ? _deviceName() : '${_deviceName()} ($profile)',
-      defaultServerUrl: 'http://localhost:8080',
-      syncWhileUnfocused:
-          Platform.isWindows || Platform.isLinux || Platform.isMacOS,
-    ),
+  final namespace = profile == null ? 'demo' : 'demo-$profile';
+  final bridge = PlatformWakeWorkerBridge();
+  final launch = WakeLaunchCoordinator(
+    bridge: bridge,
+    profile: namespace,
+    onUi: () async {
+      final localStore = SecureLocalStore(
+          namespace: profile == null ? 'demo' : 'demo-$profile');
+      final bindings = NativeCryptoBindings.load();
+      final state = AppState(
+        apiClientFactory: (baseUrl) => ApiClient(baseUrl: baseUrl),
+        cryptoService: NativeCryptoService(
+          bindings: bindings,
+          localStore: localStore,
+        ),
+        localStore: localStore,
+        backupService: BackupService(
+          bindings: bindings,
+          localStore: localStore,
+          clientFactory: (baseUrl) {
+            // A recovery code names its server; demo builds still accept only
+            // HTTPS or loopback (D12).
+            if (!TransportPolicy.demo.allows(baseUrl)) {
+              throw StateError(
+                  'recovery code names a server this build refuses');
+            }
+            return ApiClient(baseUrl: baseUrl);
+          },
+        ),
+        attachmentService: AttachmentCryptoService(bindings),
+        receiptPreferences: ReceiptPreferences(SecureReceiptPreferenceStore()),
+        syncServiceFactory: (baseUrl, token) =>
+            WebSocketSyncService(baseUrl: baseUrl, token: token),
+        pushService: Platform.isAndroid || Platform.isIOS
+            ? PlatformMobilePushService()
+            : DisabledMobilePushService(),
+        config: ClientConfig(
+          demo: true,
+          transport: TransportPolicy.demo,
+          deviceName:
+              profile == null ? _deviceName() : '${_deviceName()} ($profile)',
+          defaultServerUrl: 'http://localhost:8080',
+          syncWhileUnfocused:
+              Platform.isWindows || Platform.isLinux || Platform.isMacOS,
+        ),
+      );
+      final desktop = await DesktopServices.startIfSupported(state);
+      runApp(VeritraApp(state: state, desktop: desktop));
+      unawaited(purgeOpenedAttachments());
+      unawaited(purgePastedImages());
+      unawaited(state.tryRestoreSession());
+    },
+    // Cold demo work is added only through this normal compiled entry point,
+    // after the existing-only store and bounded sync owner are installed.
+    onUiError: () => runApp(const StartupFailureApp()),
   );
-  final desktop = await DesktopServices.startIfSupported(state);
-  runApp(VeritraApp(state: state, desktop: desktop));
-  unawaited(purgeOpenedAttachments());
-  unawaited(purgePastedImages());
-  unawaited(state.tryRestoreSession());
+  await launch.start();
 }
 
 String _deviceName() {

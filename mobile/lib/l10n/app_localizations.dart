@@ -3932,6 +3932,132 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The conversation is removed from this device. The sender is not told.'**
   String get requestDeleteMessage;
+
+  /// No description provided for @w8PinnedMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Pinned message'**
+  String get w8PinnedMessage;
+
+  /// No description provided for @w8Pin.
+  ///
+  /// In en, this message translates to:
+  /// **'Pin message'**
+  String get w8Pin;
+
+  /// No description provided for @w8Unpin.
+  ///
+  /// In en, this message translates to:
+  /// **'Unpin message'**
+  String get w8Unpin;
+
+  /// No description provided for @w8PinDays.
+  ///
+  /// In en, this message translates to:
+  /// **'Pin for {days} days'**
+  String w8PinDays(int days);
+
+  /// No description provided for @w8Forward.
+  ///
+  /// In en, this message translates to:
+  /// **'Forward'**
+  String get w8Forward;
+
+  /// No description provided for @w8Forwarded.
+  ///
+  /// In en, this message translates to:
+  /// **'Forwarded'**
+  String get w8Forwarded;
+
+  /// No description provided for @w8ForwardedMany.
+  ///
+  /// In en, this message translates to:
+  /// **'Forwarded many times'**
+  String get w8ForwardedMany;
+
+  /// No description provided for @w8Star.
+  ///
+  /// In en, this message translates to:
+  /// **'Star on this device'**
+  String get w8Star;
+
+  /// No description provided for @w8Unstar.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove star'**
+  String get w8Unstar;
+
+  /// No description provided for @w8DeleteForMe.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete for me on this device'**
+  String get w8DeleteForMe;
+
+  /// No description provided for @w8Archive.
+  ///
+  /// In en, this message translates to:
+  /// **'Archive on this device'**
+  String get w8Archive;
+
+  /// No description provided for @w8Unarchive.
+  ///
+  /// In en, this message translates to:
+  /// **'Unarchive'**
+  String get w8Unarchive;
+
+  /// No description provided for @w8PinChat.
+  ///
+  /// In en, this message translates to:
+  /// **'Pin chat on this device'**
+  String get w8PinChat;
+
+  /// No description provided for @w8UnpinChat.
+  ///
+  /// In en, this message translates to:
+  /// **'Unpin chat'**
+  String get w8UnpinChat;
+
+  /// No description provided for @w8ArchivedChats.
+  ///
+  /// In en, this message translates to:
+  /// **'Archived chats'**
+  String get w8ArchivedChats;
+
+  /// No description provided for @w8Chats.
+  ///
+  /// In en, this message translates to:
+  /// **'Chats'**
+  String get w8Chats;
+
+  /// No description provided for @w8MentionsMuted.
+  ///
+  /// In en, this message translates to:
+  /// **'Mentions in muted chats'**
+  String get w8MentionsMuted;
+
+  /// No description provided for @w8MentionsMutedDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Notify when a member mentions you, even in a muted chat.'**
+  String get w8MentionsMutedDetail;
+
+  /// No description provided for @w8HiddenSpoiler.
+  ///
+  /// In en, this message translates to:
+  /// **'Message containing a hidden spoiler'**
+  String get w8HiddenSpoiler;
+
+  /// No description provided for @w8StarredMessages.
+  ///
+  /// In en, this message translates to:
+  /// **'Starred messages on this device'**
+  String get w8StarredMessages;
+
+  /// No description provided for @k2CopiedHistory.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied history · device snapshot'**
+  String get k2CopiedHistory;
 }
 
 class _AppLocalizationsDelegate

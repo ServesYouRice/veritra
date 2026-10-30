@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
-const int appPayloadVersion = 1;
+const int appPayloadVersion = 2;
 const int _headerLength = 8;
 const int _paddingBucket = 256;
 const int _maxPayloadBytes = 64 * 1024;
@@ -19,6 +19,7 @@ enum AppPayloadType {
   delete,
   reaction,
   attachmentManifest,
+  pin,
   callSignal
 }
 
@@ -27,11 +28,13 @@ class DecryptedAppPayload {
     required this.type,
     required this.actionId,
     required this.body,
+    this.channelId,
   });
 
   final AppPayloadType type;
   final String actionId;
   final Map<String, Object?> body;
+  final String? channelId;
 }
 
 /// What a decrypted application payload turned out to be (W8 step 0, P1).
@@ -76,15 +79,31 @@ class AppPayloadCodec {
     required String senderDeviceId,
     required String actionId,
     required Map<String, Object?> body,
+    String? channelId,
+    bool hidden = false,
   }) {
     validateContext(conversationId, senderDeviceId, actionId);
-    _validateBody(type, body);
+    final version = type == AppPayloadType.pin ||
+            channelId != null ||
+            hidden ||
+            body.keys.any(const {
+              'entities',
+              'mentions',
+              'forwarded',
+              'profile_key',
+              'group_profile_key'
+            }.contains)
+        ? 2
+        : 1;
+    _validateBody(type, body, version: version);
     final encoded = utf8.encode(jsonEncode(<String, Object?>{
-      'v': appPayloadVersion,
+      'v': version,
       'type': type.name,
       'conversation_id': conversationId,
       'sender_device_id': senderDeviceId,
       'action_id': actionId,
+      if (channelId != null) 'channel_id': channelId,
+      if (hidden) 'hidden': true,
       'body': body,
     }));
     if (encoded.length > _maxPayloadBytes - _headerLength) {
@@ -134,7 +153,8 @@ class AppPayloadCodec {
       throw const FormatException('invalid application payload');
     }
     final map = Map<String, Object?>.from(decoded);
-    if (map['v'] != appPayloadVersion) {
+    final version = map['v'];
+    if (version is! int || version < 1 || version > appPayloadVersion) {
       throw const FormatException('unsupported application payload version');
     }
     final typeName = map['type'];
@@ -149,7 +169,12 @@ class AppPayloadCodec {
       throw const FormatException('application payload context mismatch');
     }
     final body = Map<String, Object?>.from(map['body'] as Map);
-    _validateBody(type, body);
+    if (map.containsKey('channel_id') ||
+        (version == 1 &&
+            (map.length != _v1Keys.length ||
+                !map.keys.every(_v1Keys.contains))))
+      throw const FormatException('invalid application payload context');
+    _validateBody(type, body, version: version);
     return DecryptedAppPayload(type: type, actionId: actionId, body: body);
   }
 
@@ -170,14 +195,15 @@ class AppPayloadCodec {
   /// Decodes like [decode] but never throws (P1). Run it only on a context
   /// already checked with [validateContext].
   ///
-  /// This app supports only `v` 1: a `v` above it, or an unknown type at
-  /// `v` 1, is [UnsupportedAppPayload]. v1 stays strict (exactly the six
-  /// top-level keys); later versions may add top-level keys (P6).
+  /// v1 stays strict; v2 validates required fields and ignores additive keys.
+  /// Newer versions and reserved types are retained as unsupported rows.
   AppPayloadOutcome classify(
     List<int> padded, {
     required String conversationId,
     required String senderDeviceId,
     required String actionId,
+    String? channelId,
+    bool communityShared = false,
   }) {
     try {
       if (padded.length < _paddingBucket ||
@@ -206,53 +232,67 @@ class AppPayloadCodec {
           map['action_id'] != actionId ||
           map['type'] is! String ||
           map['body'] is! Map ||
-          // No conversation here is a community channel yet, so a
-          // `channel_id` can only be wrong (S1).
-          map.containsKey('channel_id')) {
+          // Channel context is mandatory only for a shared community group.
+          (communityShared
+              ? channelId == null || map['channel_id'] != channelId
+              : map.containsKey('channel_id'))) {
         return const InvalidAppPayload();
       }
       if (version > appPayloadVersion) {
         return UnsupportedAppPayload(
             rawJson: rawJson, hidden: map['hidden'] == true);
       }
-      if (map.length != _v1Keys.length || !map.keys.every(_v1Keys.contains)) {
+      if (version == 1 &&
+          (map.length != _v1Keys.length || !map.keys.every(_v1Keys.contains))) {
         return const InvalidAppPayload();
       }
       final type = AppPayloadType.values
           .where((candidate) => candidate.name == map['type'])
           .firstOrNull;
       if (type == null) {
-        return UnsupportedAppPayload(rawJson: rawJson, hidden: false);
+        return UnsupportedAppPayload(
+            rawJson: rawJson, hidden: map['hidden'] == true);
       }
       final body = Map<String, Object?>.from(map['body'] as Map);
-      _validateBody(type, body);
-      return DecodedAppPayload(
-          DecryptedAppPayload(type: type, actionId: actionId, body: body));
+      _validateBody(type, body, version: version);
+      return DecodedAppPayload(DecryptedAppPayload(
+          type: type,
+          actionId: actionId,
+          body: body,
+          channelId: map['channel_id'] as String?));
     } catch (_) {
       return const InvalidAppPayload();
     }
   }
 
-  void _validateBody(AppPayloadType type, Map<String, Object?> body) {
+  void _validateBody(AppPayloadType type, Map<String, Object?> body,
+      {int version = 1}) {
     bool stringField(String name, {int max = maxAppTextLength}) =>
         body[name] is String && (body[name] as String).length <= max;
     final valid = switch (type) {
-      AppPayloadType.text => stringField('text') && body.length == 1,
+      AppPayloadType.text =>
+        stringField('text') && (version >= 2 || body.length == 1),
       AppPayloadType.reply => stringField('text') &&
           stringField('reply_to_id', max: 128) &&
-          body.length == 2,
+          (version >= 2 || body.length == 2),
       AppPayloadType.edit => stringField('message_id', max: 128) &&
           stringField('text') &&
-          body.length == 2,
-      AppPayloadType.delete =>
-        stringField('message_id', max: 128) && body.length == 1,
+          (version >= 2 || body.length == 2),
+      AppPayloadType.delete => stringField('message_id', max: 128) &&
+          (version >= 2 || body.length == 1),
       AppPayloadType.reaction => stringField('message_id', max: 128) &&
           stringField('reaction', max: 32) &&
-          body.length == 2,
+          (version >= 2 || body.length == 2),
       AppPayloadType.attachmentManifest => body['attachments'] is List &&
           (body['attachments'] as List).length <= 32,
+      AppPayloadType.pin => version >= 2 &&
+          stringField('message_id', max: 128) &&
+          body['pinned'] is bool &&
+          (body['pinned'] == false ||
+              const [86400, 604800, 2592000]
+                  .contains(body['duration_seconds'])),
       AppPayloadType.callSignal => body['signal'] is Map &&
-          body.length == 1 &&
+          (version >= 2 || body.length == 1) &&
           jsonEncode(body['signal']).length <= 48 * 1024,
     };
     if (!valid) throw const FormatException('invalid application payload body');

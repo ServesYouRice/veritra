@@ -5,7 +5,7 @@ import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 
 void main() {
   final libraryPath = Platform.environment['VERITRA_CRYPTO_LIBRARY'];
-  test('ABI v5 lifecycle owns outputs and handles safely', () {
+  test('ABI v8 lifecycle owns outputs and handles safely', () {
     final bindings = NativeCryptoBindings.open(libraryPath!);
     final alice = bindings.createDevice('acct_alice', 'dev_alice');
     final bob = bindings.createDevice('acct_bob', 'dev_bob');
@@ -17,14 +17,20 @@ void main() {
     final linked = bindings.createDevice('acct_alice', 'dev_linked');
     final nonce = List<int>.filled(32, 0x42);
     final existingVerification = alice.deriveDeviceLinkVerification(
-      protocolVersion: 'veritra-device-link-v1',
+      protocolVersion: 'veritra-device-link-v2',
+      serverOrigin: 'https://example.test',
+      linkId: 'link_01',
+      linkSecret: List<int>.filled(16, 0x55),
       peerDeviceId: 'dev_linked',
       peerSigningKey: linked.signingPublicKey(),
       linkNonce: nonce,
       localIsExistingDevice: true,
     );
     final linkedVerification = linked.deriveDeviceLinkVerification(
-      protocolVersion: 'veritra-device-link-v1',
+      protocolVersion: 'veritra-device-link-v2',
+      serverOrigin: 'https://example.test',
+      linkId: 'link_01',
+      linkSecret: List<int>.filled(16, 0x55),
       peerDeviceId: 'dev_alice',
       peerSigningKey: alice.signingPublicKey(),
       linkNonce: nonce,
@@ -33,12 +39,18 @@ void main() {
     expect(
         linkedVerification.transcriptHash, existingVerification.transcriptHash);
     expect(linkedVerification.sas, existingVerification.sas);
+    expect(linkedVerification.claimTag, existingVerification.claimTag);
+    expect(linkedVerification.approvalTag, existingVerification.approvalTag);
+    expect(linkedVerification.claimTag, isNot(linkedVerification.approvalTag));
     final substitutedKey = linked.signingPublicKey();
     substitutedKey[0] ^= 1;
     expect(
       alice
           .deriveDeviceLinkVerification(
-            protocolVersion: 'veritra-device-link-v1',
+            protocolVersion: 'veritra-device-link-v2',
+            serverOrigin: 'https://example.test',
+            linkId: 'link_01',
+            linkSecret: List<int>.filled(16, 0x55),
             peerDeviceId: 'dev_linked',
             peerSigningKey: substitutedKey,
             linkNonce: nonce,

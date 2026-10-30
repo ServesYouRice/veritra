@@ -3149,6 +3149,39 @@ class $LocalMessagesTable extends LocalMessages
   late final GeneratedColumn<int> searchId = GeneratedColumn<int>(
       'search_id', aliasedName, true,
       type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _hiddenAtMeta =
+      const VerificationMeta('hiddenAt');
+  @override
+  late final GeneratedColumn<int> hiddenAt = GeneratedColumn<int>(
+      'hidden_at', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _formatJsonMeta =
+      const VerificationMeta('formatJson');
+  @override
+  late final GeneratedColumn<String> formatJson = GeneratedColumn<String>(
+      'format_json', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _forwardHopsMeta =
+      const VerificationMeta('forwardHops');
+  @override
+  late final GeneratedColumn<int> forwardHops = GeneratedColumn<int>(
+      'forward_hops', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _channelIdMeta =
+      const VerificationMeta('channelId');
+  @override
+  late final GeneratedColumn<String> channelId = GeneratedColumn<String>(
+      'channel_id', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _senderHiddenMeta =
+      const VerificationMeta('senderHidden');
+  @override
+  late final GeneratedColumn<bool> senderHidden = GeneratedColumn<bool>(
+      'sender_hidden', aliasedName, true,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'CHECK ("sender_hidden" IN (0, 1))'));
   @override
   List<GeneratedColumn> get $columns => [
         key,
@@ -3164,7 +3197,12 @@ class $LocalMessagesTable extends LocalMessages
         deletedAt,
         state,
         expiresAt,
-        searchId
+        searchId,
+        hiddenAt,
+        formatJson,
+        forwardHops,
+        channelId,
+        senderHidden
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -3254,6 +3292,32 @@ class $LocalMessagesTable extends LocalMessages
       context.handle(_searchIdMeta,
           searchId.isAcceptableOrUnknown(data['search_id']!, _searchIdMeta));
     }
+    if (data.containsKey('hidden_at')) {
+      context.handle(_hiddenAtMeta,
+          hiddenAt.isAcceptableOrUnknown(data['hidden_at']!, _hiddenAtMeta));
+    }
+    if (data.containsKey('format_json')) {
+      context.handle(
+          _formatJsonMeta,
+          formatJson.isAcceptableOrUnknown(
+              data['format_json']!, _formatJsonMeta));
+    }
+    if (data.containsKey('forward_hops')) {
+      context.handle(
+          _forwardHopsMeta,
+          forwardHops.isAcceptableOrUnknown(
+              data['forward_hops']!, _forwardHopsMeta));
+    }
+    if (data.containsKey('channel_id')) {
+      context.handle(_channelIdMeta,
+          channelId.isAcceptableOrUnknown(data['channel_id']!, _channelIdMeta));
+    }
+    if (data.containsKey('sender_hidden')) {
+      context.handle(
+          _senderHiddenMeta,
+          senderHidden.isAcceptableOrUnknown(
+              data['sender_hidden']!, _senderHiddenMeta));
+    }
     return context;
   }
 
@@ -3291,6 +3355,16 @@ class $LocalMessagesTable extends LocalMessages
           .read(DriftSqlType.int, data['${effectivePrefix}expires_at']),
       searchId: attachedDatabase.typeMapping
           .read(DriftSqlType.int, data['${effectivePrefix}search_id']),
+      hiddenAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}hidden_at']),
+      formatJson: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}format_json']),
+      forwardHops: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}forward_hops']),
+      channelId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}channel_id']),
+      senderHidden: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}sender_hidden']),
     );
   }
 
@@ -3320,6 +3394,11 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
   /// cannot use `rowid`: a table keyed by text may renumber its rows when
   /// vacuumed, which would leave deleted text in the index.
   final int? searchId;
+  final int? hiddenAt;
+  final String? formatJson;
+  final int? forwardHops;
+  final String? channelId;
+  final bool? senderHidden;
   const LocalMessage(
       {required this.key,
       this.serverMessageId,
@@ -3334,7 +3413,12 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       this.deletedAt,
       required this.state,
       this.expiresAt,
-      this.searchId});
+      this.searchId,
+      this.hiddenAt,
+      this.formatJson,
+      this.forwardHops,
+      this.channelId,
+      this.senderHidden});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -3365,6 +3449,21 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
     }
     if (!nullToAbsent || searchId != null) {
       map['search_id'] = Variable<int>(searchId);
+    }
+    if (!nullToAbsent || hiddenAt != null) {
+      map['hidden_at'] = Variable<int>(hiddenAt);
+    }
+    if (!nullToAbsent || formatJson != null) {
+      map['format_json'] = Variable<String>(formatJson);
+    }
+    if (!nullToAbsent || forwardHops != null) {
+      map['forward_hops'] = Variable<int>(forwardHops);
+    }
+    if (!nullToAbsent || channelId != null) {
+      map['channel_id'] = Variable<String>(channelId);
+    }
+    if (!nullToAbsent || senderHidden != null) {
+      map['sender_hidden'] = Variable<bool>(senderHidden);
     }
     return map;
   }
@@ -3397,6 +3496,21 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       searchId: searchId == null && nullToAbsent
           ? const Value.absent()
           : Value(searchId),
+      hiddenAt: hiddenAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(hiddenAt),
+      formatJson: formatJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(formatJson),
+      forwardHops: forwardHops == null && nullToAbsent
+          ? const Value.absent()
+          : Value(forwardHops),
+      channelId: channelId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(channelId),
+      senderHidden: senderHidden == null && nullToAbsent
+          ? const Value.absent()
+          : Value(senderHidden),
     );
   }
 
@@ -3418,6 +3532,11 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       state: serializer.fromJson<String>(json['state']),
       expiresAt: serializer.fromJson<int?>(json['expiresAt']),
       searchId: serializer.fromJson<int?>(json['searchId']),
+      hiddenAt: serializer.fromJson<int?>(json['hiddenAt']),
+      formatJson: serializer.fromJson<String?>(json['formatJson']),
+      forwardHops: serializer.fromJson<int?>(json['forwardHops']),
+      channelId: serializer.fromJson<String?>(json['channelId']),
+      senderHidden: serializer.fromJson<bool?>(json['senderHidden']),
     );
   }
   @override
@@ -3438,6 +3557,11 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       'state': serializer.toJson<String>(state),
       'expiresAt': serializer.toJson<int?>(expiresAt),
       'searchId': serializer.toJson<int?>(searchId),
+      'hiddenAt': serializer.toJson<int?>(hiddenAt),
+      'formatJson': serializer.toJson<String?>(formatJson),
+      'forwardHops': serializer.toJson<int?>(forwardHops),
+      'channelId': serializer.toJson<String?>(channelId),
+      'senderHidden': serializer.toJson<bool?>(senderHidden),
     };
   }
 
@@ -3455,7 +3579,12 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
           Value<int?> deletedAt = const Value.absent(),
           String? state,
           Value<int?> expiresAt = const Value.absent(),
-          Value<int?> searchId = const Value.absent()}) =>
+          Value<int?> searchId = const Value.absent(),
+          Value<int?> hiddenAt = const Value.absent(),
+          Value<String?> formatJson = const Value.absent(),
+          Value<int?> forwardHops = const Value.absent(),
+          Value<String?> channelId = const Value.absent(),
+          Value<bool?> senderHidden = const Value.absent()}) =>
       LocalMessage(
         key: key ?? this.key,
         serverMessageId: serverMessageId.present
@@ -3473,6 +3602,12 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
         state: state ?? this.state,
         expiresAt: expiresAt.present ? expiresAt.value : this.expiresAt,
         searchId: searchId.present ? searchId.value : this.searchId,
+        hiddenAt: hiddenAt.present ? hiddenAt.value : this.hiddenAt,
+        formatJson: formatJson.present ? formatJson.value : this.formatJson,
+        forwardHops: forwardHops.present ? forwardHops.value : this.forwardHops,
+        channelId: channelId.present ? channelId.value : this.channelId,
+        senderHidden:
+            senderHidden.present ? senderHidden.value : this.senderHidden,
       );
   LocalMessage copyWithCompanion(LocalMessagesCompanion data) {
     return LocalMessage(
@@ -3498,6 +3633,15 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       state: data.state.present ? data.state.value : this.state,
       expiresAt: data.expiresAt.present ? data.expiresAt.value : this.expiresAt,
       searchId: data.searchId.present ? data.searchId.value : this.searchId,
+      hiddenAt: data.hiddenAt.present ? data.hiddenAt.value : this.hiddenAt,
+      formatJson:
+          data.formatJson.present ? data.formatJson.value : this.formatJson,
+      forwardHops:
+          data.forwardHops.present ? data.forwardHops.value : this.forwardHops,
+      channelId: data.channelId.present ? data.channelId.value : this.channelId,
+      senderHidden: data.senderHidden.present
+          ? data.senderHidden.value
+          : this.senderHidden,
     );
   }
 
@@ -3517,7 +3661,12 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
           ..write('deletedAt: $deletedAt, ')
           ..write('state: $state, ')
           ..write('expiresAt: $expiresAt, ')
-          ..write('searchId: $searchId')
+          ..write('searchId: $searchId, ')
+          ..write('hiddenAt: $hiddenAt, ')
+          ..write('formatJson: $formatJson, ')
+          ..write('forwardHops: $forwardHops, ')
+          ..write('channelId: $channelId, ')
+          ..write('senderHidden: $senderHidden')
           ..write(')'))
         .toString();
   }
@@ -3537,7 +3686,12 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       deletedAt,
       state,
       expiresAt,
-      searchId);
+      searchId,
+      hiddenAt,
+      formatJson,
+      forwardHops,
+      channelId,
+      senderHidden);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -3555,7 +3709,12 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
           other.deletedAt == this.deletedAt &&
           other.state == this.state &&
           other.expiresAt == this.expiresAt &&
-          other.searchId == this.searchId);
+          other.searchId == this.searchId &&
+          other.hiddenAt == this.hiddenAt &&
+          other.formatJson == this.formatJson &&
+          other.forwardHops == this.forwardHops &&
+          other.channelId == this.channelId &&
+          other.senderHidden == this.senderHidden);
 }
 
 class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
@@ -3573,6 +3732,11 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
   final Value<String> state;
   final Value<int?> expiresAt;
   final Value<int?> searchId;
+  final Value<int?> hiddenAt;
+  final Value<String?> formatJson;
+  final Value<int?> forwardHops;
+  final Value<String?> channelId;
+  final Value<bool?> senderHidden;
   final Value<int> rowid;
   const LocalMessagesCompanion({
     this.key = const Value.absent(),
@@ -3589,6 +3753,11 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
     this.state = const Value.absent(),
     this.expiresAt = const Value.absent(),
     this.searchId = const Value.absent(),
+    this.hiddenAt = const Value.absent(),
+    this.formatJson = const Value.absent(),
+    this.forwardHops = const Value.absent(),
+    this.channelId = const Value.absent(),
+    this.senderHidden = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   LocalMessagesCompanion.insert({
@@ -3606,6 +3775,11 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
     required String state,
     this.expiresAt = const Value.absent(),
     this.searchId = const Value.absent(),
+    this.hiddenAt = const Value.absent(),
+    this.formatJson = const Value.absent(),
+    this.forwardHops = const Value.absent(),
+    this.channelId = const Value.absent(),
+    this.senderHidden = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : key = Value(key),
         conversationId = Value(conversationId),
@@ -3629,6 +3803,11 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
     Expression<String>? state,
     Expression<int>? expiresAt,
     Expression<int>? searchId,
+    Expression<int>? hiddenAt,
+    Expression<String>? formatJson,
+    Expression<int>? forwardHops,
+    Expression<String>? channelId,
+    Expression<bool>? senderHidden,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -3646,6 +3825,11 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
       if (state != null) 'state': state,
       if (expiresAt != null) 'expires_at': expiresAt,
       if (searchId != null) 'search_id': searchId,
+      if (hiddenAt != null) 'hidden_at': hiddenAt,
+      if (formatJson != null) 'format_json': formatJson,
+      if (forwardHops != null) 'forward_hops': forwardHops,
+      if (channelId != null) 'channel_id': channelId,
+      if (senderHidden != null) 'sender_hidden': senderHidden,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -3665,6 +3849,11 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
       Value<String>? state,
       Value<int?>? expiresAt,
       Value<int?>? searchId,
+      Value<int?>? hiddenAt,
+      Value<String?>? formatJson,
+      Value<int?>? forwardHops,
+      Value<String?>? channelId,
+      Value<bool?>? senderHidden,
       Value<int>? rowid}) {
     return LocalMessagesCompanion(
       key: key ?? this.key,
@@ -3681,6 +3870,11 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
       state: state ?? this.state,
       expiresAt: expiresAt ?? this.expiresAt,
       searchId: searchId ?? this.searchId,
+      hiddenAt: hiddenAt ?? this.hiddenAt,
+      formatJson: formatJson ?? this.formatJson,
+      forwardHops: forwardHops ?? this.forwardHops,
+      channelId: channelId ?? this.channelId,
+      senderHidden: senderHidden ?? this.senderHidden,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -3730,6 +3924,21 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
     if (searchId.present) {
       map['search_id'] = Variable<int>(searchId.value);
     }
+    if (hiddenAt.present) {
+      map['hidden_at'] = Variable<int>(hiddenAt.value);
+    }
+    if (formatJson.present) {
+      map['format_json'] = Variable<String>(formatJson.value);
+    }
+    if (forwardHops.present) {
+      map['forward_hops'] = Variable<int>(forwardHops.value);
+    }
+    if (channelId.present) {
+      map['channel_id'] = Variable<String>(channelId.value);
+    }
+    if (senderHidden.present) {
+      map['sender_hidden'] = Variable<bool>(senderHidden.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -3753,6 +3962,11 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
           ..write('state: $state, ')
           ..write('expiresAt: $expiresAt, ')
           ..write('searchId: $searchId, ')
+          ..write('hiddenAt: $hiddenAt, ')
+          ..write('formatJson: $formatJson, ')
+          ..write('forwardHops: $forwardHops, ')
+          ..write('channelId: $channelId, ')
+          ..write('senderHidden: $senderHidden, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -4532,6 +4746,1262 @@ class LocalConversationMutesCompanion
   }
 }
 
+class $LocalPinsTable extends LocalPins
+    with TableInfo<$LocalPinsTable, LocalPin> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $LocalPinsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _conversationIdMeta =
+      const VerificationMeta('conversationId');
+  @override
+  late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
+      'conversation_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _channelIdMeta =
+      const VerificationMeta('channelId');
+  @override
+  late final GeneratedColumn<String> channelId = GeneratedColumn<String>(
+      'channel_id', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _targetKeyMeta =
+      const VerificationMeta('targetKey');
+  @override
+  late final GeneratedColumn<String> targetKey = GeneratedColumn<String>(
+      'target_key', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _pinnedByAccountIdMeta =
+      const VerificationMeta('pinnedByAccountId');
+  @override
+  late final GeneratedColumn<String> pinnedByAccountId =
+      GeneratedColumn<String>('pinned_by_account_id', aliasedName, false,
+          type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _pinnedAtMeta =
+      const VerificationMeta('pinnedAt');
+  @override
+  late final GeneratedColumn<int> pinnedAt = GeneratedColumn<int>(
+      'pinned_at', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _appliedOrderMeta =
+      const VerificationMeta('appliedOrder');
+  @override
+  late final GeneratedColumn<int> appliedOrder = GeneratedColumn<int>(
+      'applied_order', aliasedName, false,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(0));
+  static const VerificationMeta _expiresAtMeta =
+      const VerificationMeta('expiresAt');
+  @override
+  late final GeneratedColumn<int> expiresAt = GeneratedColumn<int>(
+      'expires_at', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  @override
+  List<GeneratedColumn> get $columns => [
+        conversationId,
+        channelId,
+        targetKey,
+        pinnedByAccountId,
+        pinnedAt,
+        appliedOrder,
+        expiresAt
+      ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'local_pins';
+  @override
+  VerificationContext validateIntegrity(Insertable<LocalPin> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('conversation_id')) {
+      context.handle(
+          _conversationIdMeta,
+          conversationId.isAcceptableOrUnknown(
+              data['conversation_id']!, _conversationIdMeta));
+    } else if (isInserting) {
+      context.missing(_conversationIdMeta);
+    }
+    if (data.containsKey('channel_id')) {
+      context.handle(_channelIdMeta,
+          channelId.isAcceptableOrUnknown(data['channel_id']!, _channelIdMeta));
+    }
+    if (data.containsKey('target_key')) {
+      context.handle(_targetKeyMeta,
+          targetKey.isAcceptableOrUnknown(data['target_key']!, _targetKeyMeta));
+    } else if (isInserting) {
+      context.missing(_targetKeyMeta);
+    }
+    if (data.containsKey('pinned_by_account_id')) {
+      context.handle(
+          _pinnedByAccountIdMeta,
+          pinnedByAccountId.isAcceptableOrUnknown(
+              data['pinned_by_account_id']!, _pinnedByAccountIdMeta));
+    } else if (isInserting) {
+      context.missing(_pinnedByAccountIdMeta);
+    }
+    if (data.containsKey('pinned_at')) {
+      context.handle(_pinnedAtMeta,
+          pinnedAt.isAcceptableOrUnknown(data['pinned_at']!, _pinnedAtMeta));
+    } else if (isInserting) {
+      context.missing(_pinnedAtMeta);
+    }
+    if (data.containsKey('applied_order')) {
+      context.handle(
+          _appliedOrderMeta,
+          appliedOrder.isAcceptableOrUnknown(
+              data['applied_order']!, _appliedOrderMeta));
+    }
+    if (data.containsKey('expires_at')) {
+      context.handle(_expiresAtMeta,
+          expiresAt.isAcceptableOrUnknown(data['expires_at']!, _expiresAtMeta));
+    } else if (isInserting) {
+      context.missing(_expiresAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {conversationId, targetKey};
+  @override
+  LocalPin map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return LocalPin(
+      conversationId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}conversation_id'])!,
+      channelId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}channel_id']),
+      targetKey: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}target_key'])!,
+      pinnedByAccountId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}pinned_by_account_id'])!,
+      pinnedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}pinned_at'])!,
+      appliedOrder: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}applied_order'])!,
+      expiresAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}expires_at'])!,
+    );
+  }
+
+  @override
+  $LocalPinsTable createAlias(String alias) {
+    return $LocalPinsTable(attachedDatabase, alias);
+  }
+}
+
+class LocalPin extends DataClass implements Insertable<LocalPin> {
+  final String conversationId;
+  final String? channelId;
+  final String targetKey;
+  final String pinnedByAccountId;
+  final int pinnedAt;
+  final int appliedOrder;
+  final int expiresAt;
+  const LocalPin(
+      {required this.conversationId,
+      this.channelId,
+      required this.targetKey,
+      required this.pinnedByAccountId,
+      required this.pinnedAt,
+      required this.appliedOrder,
+      required this.expiresAt});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['conversation_id'] = Variable<String>(conversationId);
+    if (!nullToAbsent || channelId != null) {
+      map['channel_id'] = Variable<String>(channelId);
+    }
+    map['target_key'] = Variable<String>(targetKey);
+    map['pinned_by_account_id'] = Variable<String>(pinnedByAccountId);
+    map['pinned_at'] = Variable<int>(pinnedAt);
+    map['applied_order'] = Variable<int>(appliedOrder);
+    map['expires_at'] = Variable<int>(expiresAt);
+    return map;
+  }
+
+  LocalPinsCompanion toCompanion(bool nullToAbsent) {
+    return LocalPinsCompanion(
+      conversationId: Value(conversationId),
+      channelId: channelId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(channelId),
+      targetKey: Value(targetKey),
+      pinnedByAccountId: Value(pinnedByAccountId),
+      pinnedAt: Value(pinnedAt),
+      appliedOrder: Value(appliedOrder),
+      expiresAt: Value(expiresAt),
+    );
+  }
+
+  factory LocalPin.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return LocalPin(
+      conversationId: serializer.fromJson<String>(json['conversationId']),
+      channelId: serializer.fromJson<String?>(json['channelId']),
+      targetKey: serializer.fromJson<String>(json['targetKey']),
+      pinnedByAccountId: serializer.fromJson<String>(json['pinnedByAccountId']),
+      pinnedAt: serializer.fromJson<int>(json['pinnedAt']),
+      appliedOrder: serializer.fromJson<int>(json['appliedOrder']),
+      expiresAt: serializer.fromJson<int>(json['expiresAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'conversationId': serializer.toJson<String>(conversationId),
+      'channelId': serializer.toJson<String?>(channelId),
+      'targetKey': serializer.toJson<String>(targetKey),
+      'pinnedByAccountId': serializer.toJson<String>(pinnedByAccountId),
+      'pinnedAt': serializer.toJson<int>(pinnedAt),
+      'appliedOrder': serializer.toJson<int>(appliedOrder),
+      'expiresAt': serializer.toJson<int>(expiresAt),
+    };
+  }
+
+  LocalPin copyWith(
+          {String? conversationId,
+          Value<String?> channelId = const Value.absent(),
+          String? targetKey,
+          String? pinnedByAccountId,
+          int? pinnedAt,
+          int? appliedOrder,
+          int? expiresAt}) =>
+      LocalPin(
+        conversationId: conversationId ?? this.conversationId,
+        channelId: channelId.present ? channelId.value : this.channelId,
+        targetKey: targetKey ?? this.targetKey,
+        pinnedByAccountId: pinnedByAccountId ?? this.pinnedByAccountId,
+        pinnedAt: pinnedAt ?? this.pinnedAt,
+        appliedOrder: appliedOrder ?? this.appliedOrder,
+        expiresAt: expiresAt ?? this.expiresAt,
+      );
+  LocalPin copyWithCompanion(LocalPinsCompanion data) {
+    return LocalPin(
+      conversationId: data.conversationId.present
+          ? data.conversationId.value
+          : this.conversationId,
+      channelId: data.channelId.present ? data.channelId.value : this.channelId,
+      targetKey: data.targetKey.present ? data.targetKey.value : this.targetKey,
+      pinnedByAccountId: data.pinnedByAccountId.present
+          ? data.pinnedByAccountId.value
+          : this.pinnedByAccountId,
+      pinnedAt: data.pinnedAt.present ? data.pinnedAt.value : this.pinnedAt,
+      appliedOrder: data.appliedOrder.present
+          ? data.appliedOrder.value
+          : this.appliedOrder,
+      expiresAt: data.expiresAt.present ? data.expiresAt.value : this.expiresAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalPin(')
+          ..write('conversationId: $conversationId, ')
+          ..write('channelId: $channelId, ')
+          ..write('targetKey: $targetKey, ')
+          ..write('pinnedByAccountId: $pinnedByAccountId, ')
+          ..write('pinnedAt: $pinnedAt, ')
+          ..write('appliedOrder: $appliedOrder, ')
+          ..write('expiresAt: $expiresAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(conversationId, channelId, targetKey,
+      pinnedByAccountId, pinnedAt, appliedOrder, expiresAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is LocalPin &&
+          other.conversationId == this.conversationId &&
+          other.channelId == this.channelId &&
+          other.targetKey == this.targetKey &&
+          other.pinnedByAccountId == this.pinnedByAccountId &&
+          other.pinnedAt == this.pinnedAt &&
+          other.appliedOrder == this.appliedOrder &&
+          other.expiresAt == this.expiresAt);
+}
+
+class LocalPinsCompanion extends UpdateCompanion<LocalPin> {
+  final Value<String> conversationId;
+  final Value<String?> channelId;
+  final Value<String> targetKey;
+  final Value<String> pinnedByAccountId;
+  final Value<int> pinnedAt;
+  final Value<int> appliedOrder;
+  final Value<int> expiresAt;
+  final Value<int> rowid;
+  const LocalPinsCompanion({
+    this.conversationId = const Value.absent(),
+    this.channelId = const Value.absent(),
+    this.targetKey = const Value.absent(),
+    this.pinnedByAccountId = const Value.absent(),
+    this.pinnedAt = const Value.absent(),
+    this.appliedOrder = const Value.absent(),
+    this.expiresAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  LocalPinsCompanion.insert({
+    required String conversationId,
+    this.channelId = const Value.absent(),
+    required String targetKey,
+    required String pinnedByAccountId,
+    required int pinnedAt,
+    this.appliedOrder = const Value.absent(),
+    required int expiresAt,
+    this.rowid = const Value.absent(),
+  })  : conversationId = Value(conversationId),
+        targetKey = Value(targetKey),
+        pinnedByAccountId = Value(pinnedByAccountId),
+        pinnedAt = Value(pinnedAt),
+        expiresAt = Value(expiresAt);
+  static Insertable<LocalPin> custom({
+    Expression<String>? conversationId,
+    Expression<String>? channelId,
+    Expression<String>? targetKey,
+    Expression<String>? pinnedByAccountId,
+    Expression<int>? pinnedAt,
+    Expression<int>? appliedOrder,
+    Expression<int>? expiresAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (conversationId != null) 'conversation_id': conversationId,
+      if (channelId != null) 'channel_id': channelId,
+      if (targetKey != null) 'target_key': targetKey,
+      if (pinnedByAccountId != null) 'pinned_by_account_id': pinnedByAccountId,
+      if (pinnedAt != null) 'pinned_at': pinnedAt,
+      if (appliedOrder != null) 'applied_order': appliedOrder,
+      if (expiresAt != null) 'expires_at': expiresAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  LocalPinsCompanion copyWith(
+      {Value<String>? conversationId,
+      Value<String?>? channelId,
+      Value<String>? targetKey,
+      Value<String>? pinnedByAccountId,
+      Value<int>? pinnedAt,
+      Value<int>? appliedOrder,
+      Value<int>? expiresAt,
+      Value<int>? rowid}) {
+    return LocalPinsCompanion(
+      conversationId: conversationId ?? this.conversationId,
+      channelId: channelId ?? this.channelId,
+      targetKey: targetKey ?? this.targetKey,
+      pinnedByAccountId: pinnedByAccountId ?? this.pinnedByAccountId,
+      pinnedAt: pinnedAt ?? this.pinnedAt,
+      appliedOrder: appliedOrder ?? this.appliedOrder,
+      expiresAt: expiresAt ?? this.expiresAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (conversationId.present) {
+      map['conversation_id'] = Variable<String>(conversationId.value);
+    }
+    if (channelId.present) {
+      map['channel_id'] = Variable<String>(channelId.value);
+    }
+    if (targetKey.present) {
+      map['target_key'] = Variable<String>(targetKey.value);
+    }
+    if (pinnedByAccountId.present) {
+      map['pinned_by_account_id'] = Variable<String>(pinnedByAccountId.value);
+    }
+    if (pinnedAt.present) {
+      map['pinned_at'] = Variable<int>(pinnedAt.value);
+    }
+    if (appliedOrder.present) {
+      map['applied_order'] = Variable<int>(appliedOrder.value);
+    }
+    if (expiresAt.present) {
+      map['expires_at'] = Variable<int>(expiresAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalPinsCompanion(')
+          ..write('conversationId: $conversationId, ')
+          ..write('channelId: $channelId, ')
+          ..write('targetKey: $targetKey, ')
+          ..write('pinnedByAccountId: $pinnedByAccountId, ')
+          ..write('pinnedAt: $pinnedAt, ')
+          ..write('appliedOrder: $appliedOrder, ')
+          ..write('expiresAt: $expiresAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $LocalPendingPinsTable extends LocalPendingPins
+    with TableInfo<$LocalPendingPinsTable, LocalPendingPin> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $LocalPendingPinsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _actionKeyMeta =
+      const VerificationMeta('actionKey');
+  @override
+  late final GeneratedColumn<String> actionKey = GeneratedColumn<String>(
+      'action_key', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _conversationIdMeta =
+      const VerificationMeta('conversationId');
+  @override
+  late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
+      'conversation_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _channelIdMeta =
+      const VerificationMeta('channelId');
+  @override
+  late final GeneratedColumn<String> channelId = GeneratedColumn<String>(
+      'channel_id', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _targetKeyMeta =
+      const VerificationMeta('targetKey');
+  @override
+  late final GeneratedColumn<String> targetKey = GeneratedColumn<String>(
+      'target_key', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _accountIdMeta =
+      const VerificationMeta('accountId');
+  @override
+  late final GeneratedColumn<String> accountId = GeneratedColumn<String>(
+      'account_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _pinnedMeta = const VerificationMeta('pinned');
+  @override
+  late final GeneratedColumn<bool> pinned = GeneratedColumn<bool>(
+      'pinned', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: true,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("pinned" IN (0, 1))'));
+  static const VerificationMeta _durationSecondsMeta =
+      const VerificationMeta('durationSeconds');
+  @override
+  late final GeneratedColumn<int> durationSeconds = GeneratedColumn<int>(
+      'duration_seconds', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  @override
+  List<GeneratedColumn> get $columns => [
+        actionKey,
+        conversationId,
+        channelId,
+        targetKey,
+        accountId,
+        pinned,
+        durationSeconds
+      ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'local_pending_pins';
+  @override
+  VerificationContext validateIntegrity(Insertable<LocalPendingPin> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('action_key')) {
+      context.handle(_actionKeyMeta,
+          actionKey.isAcceptableOrUnknown(data['action_key']!, _actionKeyMeta));
+    } else if (isInserting) {
+      context.missing(_actionKeyMeta);
+    }
+    if (data.containsKey('conversation_id')) {
+      context.handle(
+          _conversationIdMeta,
+          conversationId.isAcceptableOrUnknown(
+              data['conversation_id']!, _conversationIdMeta));
+    } else if (isInserting) {
+      context.missing(_conversationIdMeta);
+    }
+    if (data.containsKey('channel_id')) {
+      context.handle(_channelIdMeta,
+          channelId.isAcceptableOrUnknown(data['channel_id']!, _channelIdMeta));
+    }
+    if (data.containsKey('target_key')) {
+      context.handle(_targetKeyMeta,
+          targetKey.isAcceptableOrUnknown(data['target_key']!, _targetKeyMeta));
+    } else if (isInserting) {
+      context.missing(_targetKeyMeta);
+    }
+    if (data.containsKey('account_id')) {
+      context.handle(_accountIdMeta,
+          accountId.isAcceptableOrUnknown(data['account_id']!, _accountIdMeta));
+    } else if (isInserting) {
+      context.missing(_accountIdMeta);
+    }
+    if (data.containsKey('pinned')) {
+      context.handle(_pinnedMeta,
+          pinned.isAcceptableOrUnknown(data['pinned']!, _pinnedMeta));
+    } else if (isInserting) {
+      context.missing(_pinnedMeta);
+    }
+    if (data.containsKey('duration_seconds')) {
+      context.handle(
+          _durationSecondsMeta,
+          durationSeconds.isAcceptableOrUnknown(
+              data['duration_seconds']!, _durationSecondsMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {actionKey};
+  @override
+  LocalPendingPin map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return LocalPendingPin(
+      actionKey: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}action_key'])!,
+      conversationId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}conversation_id'])!,
+      channelId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}channel_id']),
+      targetKey: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}target_key'])!,
+      accountId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}account_id'])!,
+      pinned: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}pinned'])!,
+      durationSeconds: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}duration_seconds']),
+    );
+  }
+
+  @override
+  $LocalPendingPinsTable createAlias(String alias) {
+    return $LocalPendingPinsTable(attachedDatabase, alias);
+  }
+}
+
+class LocalPendingPin extends DataClass implements Insertable<LocalPendingPin> {
+  final String actionKey;
+  final String conversationId;
+  final String? channelId;
+  final String targetKey;
+  final String accountId;
+  final bool pinned;
+  final int? durationSeconds;
+  const LocalPendingPin(
+      {required this.actionKey,
+      required this.conversationId,
+      this.channelId,
+      required this.targetKey,
+      required this.accountId,
+      required this.pinned,
+      this.durationSeconds});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['action_key'] = Variable<String>(actionKey);
+    map['conversation_id'] = Variable<String>(conversationId);
+    if (!nullToAbsent || channelId != null) {
+      map['channel_id'] = Variable<String>(channelId);
+    }
+    map['target_key'] = Variable<String>(targetKey);
+    map['account_id'] = Variable<String>(accountId);
+    map['pinned'] = Variable<bool>(pinned);
+    if (!nullToAbsent || durationSeconds != null) {
+      map['duration_seconds'] = Variable<int>(durationSeconds);
+    }
+    return map;
+  }
+
+  LocalPendingPinsCompanion toCompanion(bool nullToAbsent) {
+    return LocalPendingPinsCompanion(
+      actionKey: Value(actionKey),
+      conversationId: Value(conversationId),
+      channelId: channelId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(channelId),
+      targetKey: Value(targetKey),
+      accountId: Value(accountId),
+      pinned: Value(pinned),
+      durationSeconds: durationSeconds == null && nullToAbsent
+          ? const Value.absent()
+          : Value(durationSeconds),
+    );
+  }
+
+  factory LocalPendingPin.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return LocalPendingPin(
+      actionKey: serializer.fromJson<String>(json['actionKey']),
+      conversationId: serializer.fromJson<String>(json['conversationId']),
+      channelId: serializer.fromJson<String?>(json['channelId']),
+      targetKey: serializer.fromJson<String>(json['targetKey']),
+      accountId: serializer.fromJson<String>(json['accountId']),
+      pinned: serializer.fromJson<bool>(json['pinned']),
+      durationSeconds: serializer.fromJson<int?>(json['durationSeconds']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'actionKey': serializer.toJson<String>(actionKey),
+      'conversationId': serializer.toJson<String>(conversationId),
+      'channelId': serializer.toJson<String?>(channelId),
+      'targetKey': serializer.toJson<String>(targetKey),
+      'accountId': serializer.toJson<String>(accountId),
+      'pinned': serializer.toJson<bool>(pinned),
+      'durationSeconds': serializer.toJson<int?>(durationSeconds),
+    };
+  }
+
+  LocalPendingPin copyWith(
+          {String? actionKey,
+          String? conversationId,
+          Value<String?> channelId = const Value.absent(),
+          String? targetKey,
+          String? accountId,
+          bool? pinned,
+          Value<int?> durationSeconds = const Value.absent()}) =>
+      LocalPendingPin(
+        actionKey: actionKey ?? this.actionKey,
+        conversationId: conversationId ?? this.conversationId,
+        channelId: channelId.present ? channelId.value : this.channelId,
+        targetKey: targetKey ?? this.targetKey,
+        accountId: accountId ?? this.accountId,
+        pinned: pinned ?? this.pinned,
+        durationSeconds: durationSeconds.present
+            ? durationSeconds.value
+            : this.durationSeconds,
+      );
+  LocalPendingPin copyWithCompanion(LocalPendingPinsCompanion data) {
+    return LocalPendingPin(
+      actionKey: data.actionKey.present ? data.actionKey.value : this.actionKey,
+      conversationId: data.conversationId.present
+          ? data.conversationId.value
+          : this.conversationId,
+      channelId: data.channelId.present ? data.channelId.value : this.channelId,
+      targetKey: data.targetKey.present ? data.targetKey.value : this.targetKey,
+      accountId: data.accountId.present ? data.accountId.value : this.accountId,
+      pinned: data.pinned.present ? data.pinned.value : this.pinned,
+      durationSeconds: data.durationSeconds.present
+          ? data.durationSeconds.value
+          : this.durationSeconds,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalPendingPin(')
+          ..write('actionKey: $actionKey, ')
+          ..write('conversationId: $conversationId, ')
+          ..write('channelId: $channelId, ')
+          ..write('targetKey: $targetKey, ')
+          ..write('accountId: $accountId, ')
+          ..write('pinned: $pinned, ')
+          ..write('durationSeconds: $durationSeconds')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(actionKey, conversationId, channelId,
+      targetKey, accountId, pinned, durationSeconds);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is LocalPendingPin &&
+          other.actionKey == this.actionKey &&
+          other.conversationId == this.conversationId &&
+          other.channelId == this.channelId &&
+          other.targetKey == this.targetKey &&
+          other.accountId == this.accountId &&
+          other.pinned == this.pinned &&
+          other.durationSeconds == this.durationSeconds);
+}
+
+class LocalPendingPinsCompanion extends UpdateCompanion<LocalPendingPin> {
+  final Value<String> actionKey;
+  final Value<String> conversationId;
+  final Value<String?> channelId;
+  final Value<String> targetKey;
+  final Value<String> accountId;
+  final Value<bool> pinned;
+  final Value<int?> durationSeconds;
+  final Value<int> rowid;
+  const LocalPendingPinsCompanion({
+    this.actionKey = const Value.absent(),
+    this.conversationId = const Value.absent(),
+    this.channelId = const Value.absent(),
+    this.targetKey = const Value.absent(),
+    this.accountId = const Value.absent(),
+    this.pinned = const Value.absent(),
+    this.durationSeconds = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  LocalPendingPinsCompanion.insert({
+    required String actionKey,
+    required String conversationId,
+    this.channelId = const Value.absent(),
+    required String targetKey,
+    required String accountId,
+    required bool pinned,
+    this.durationSeconds = const Value.absent(),
+    this.rowid = const Value.absent(),
+  })  : actionKey = Value(actionKey),
+        conversationId = Value(conversationId),
+        targetKey = Value(targetKey),
+        accountId = Value(accountId),
+        pinned = Value(pinned);
+  static Insertable<LocalPendingPin> custom({
+    Expression<String>? actionKey,
+    Expression<String>? conversationId,
+    Expression<String>? channelId,
+    Expression<String>? targetKey,
+    Expression<String>? accountId,
+    Expression<bool>? pinned,
+    Expression<int>? durationSeconds,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (actionKey != null) 'action_key': actionKey,
+      if (conversationId != null) 'conversation_id': conversationId,
+      if (channelId != null) 'channel_id': channelId,
+      if (targetKey != null) 'target_key': targetKey,
+      if (accountId != null) 'account_id': accountId,
+      if (pinned != null) 'pinned': pinned,
+      if (durationSeconds != null) 'duration_seconds': durationSeconds,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  LocalPendingPinsCompanion copyWith(
+      {Value<String>? actionKey,
+      Value<String>? conversationId,
+      Value<String?>? channelId,
+      Value<String>? targetKey,
+      Value<String>? accountId,
+      Value<bool>? pinned,
+      Value<int?>? durationSeconds,
+      Value<int>? rowid}) {
+    return LocalPendingPinsCompanion(
+      actionKey: actionKey ?? this.actionKey,
+      conversationId: conversationId ?? this.conversationId,
+      channelId: channelId ?? this.channelId,
+      targetKey: targetKey ?? this.targetKey,
+      accountId: accountId ?? this.accountId,
+      pinned: pinned ?? this.pinned,
+      durationSeconds: durationSeconds ?? this.durationSeconds,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (actionKey.present) {
+      map['action_key'] = Variable<String>(actionKey.value);
+    }
+    if (conversationId.present) {
+      map['conversation_id'] = Variable<String>(conversationId.value);
+    }
+    if (channelId.present) {
+      map['channel_id'] = Variable<String>(channelId.value);
+    }
+    if (targetKey.present) {
+      map['target_key'] = Variable<String>(targetKey.value);
+    }
+    if (accountId.present) {
+      map['account_id'] = Variable<String>(accountId.value);
+    }
+    if (pinned.present) {
+      map['pinned'] = Variable<bool>(pinned.value);
+    }
+    if (durationSeconds.present) {
+      map['duration_seconds'] = Variable<int>(durationSeconds.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalPendingPinsCompanion(')
+          ..write('actionKey: $actionKey, ')
+          ..write('conversationId: $conversationId, ')
+          ..write('channelId: $channelId, ')
+          ..write('targetKey: $targetKey, ')
+          ..write('accountId: $accountId, ')
+          ..write('pinned: $pinned, ')
+          ..write('durationSeconds: $durationSeconds, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $LocalStarredTable extends LocalStarred
+    with TableInfo<$LocalStarredTable, LocalStarredData> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $LocalStarredTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _messageKeyMeta =
+      const VerificationMeta('messageKey');
+  @override
+  late final GeneratedColumn<String> messageKey = GeneratedColumn<String>(
+      'message_key', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _starredAtMeta =
+      const VerificationMeta('starredAt');
+  @override
+  late final GeneratedColumn<int> starredAt = GeneratedColumn<int>(
+      'starred_at', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  @override
+  List<GeneratedColumn> get $columns => [messageKey, starredAt];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'local_starred';
+  @override
+  VerificationContext validateIntegrity(Insertable<LocalStarredData> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('message_key')) {
+      context.handle(
+          _messageKeyMeta,
+          messageKey.isAcceptableOrUnknown(
+              data['message_key']!, _messageKeyMeta));
+    } else if (isInserting) {
+      context.missing(_messageKeyMeta);
+    }
+    if (data.containsKey('starred_at')) {
+      context.handle(_starredAtMeta,
+          starredAt.isAcceptableOrUnknown(data['starred_at']!, _starredAtMeta));
+    } else if (isInserting) {
+      context.missing(_starredAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {messageKey};
+  @override
+  LocalStarredData map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return LocalStarredData(
+      messageKey: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}message_key'])!,
+      starredAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}starred_at'])!,
+    );
+  }
+
+  @override
+  $LocalStarredTable createAlias(String alias) {
+    return $LocalStarredTable(attachedDatabase, alias);
+  }
+}
+
+class LocalStarredData extends DataClass
+    implements Insertable<LocalStarredData> {
+  final String messageKey;
+  final int starredAt;
+  const LocalStarredData({required this.messageKey, required this.starredAt});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['message_key'] = Variable<String>(messageKey);
+    map['starred_at'] = Variable<int>(starredAt);
+    return map;
+  }
+
+  LocalStarredCompanion toCompanion(bool nullToAbsent) {
+    return LocalStarredCompanion(
+      messageKey: Value(messageKey),
+      starredAt: Value(starredAt),
+    );
+  }
+
+  factory LocalStarredData.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return LocalStarredData(
+      messageKey: serializer.fromJson<String>(json['messageKey']),
+      starredAt: serializer.fromJson<int>(json['starredAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'messageKey': serializer.toJson<String>(messageKey),
+      'starredAt': serializer.toJson<int>(starredAt),
+    };
+  }
+
+  LocalStarredData copyWith({String? messageKey, int? starredAt}) =>
+      LocalStarredData(
+        messageKey: messageKey ?? this.messageKey,
+        starredAt: starredAt ?? this.starredAt,
+      );
+  LocalStarredData copyWithCompanion(LocalStarredCompanion data) {
+    return LocalStarredData(
+      messageKey:
+          data.messageKey.present ? data.messageKey.value : this.messageKey,
+      starredAt: data.starredAt.present ? data.starredAt.value : this.starredAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalStarredData(')
+          ..write('messageKey: $messageKey, ')
+          ..write('starredAt: $starredAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(messageKey, starredAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is LocalStarredData &&
+          other.messageKey == this.messageKey &&
+          other.starredAt == this.starredAt);
+}
+
+class LocalStarredCompanion extends UpdateCompanion<LocalStarredData> {
+  final Value<String> messageKey;
+  final Value<int> starredAt;
+  final Value<int> rowid;
+  const LocalStarredCompanion({
+    this.messageKey = const Value.absent(),
+    this.starredAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  LocalStarredCompanion.insert({
+    required String messageKey,
+    required int starredAt,
+    this.rowid = const Value.absent(),
+  })  : messageKey = Value(messageKey),
+        starredAt = Value(starredAt);
+  static Insertable<LocalStarredData> custom({
+    Expression<String>? messageKey,
+    Expression<int>? starredAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (messageKey != null) 'message_key': messageKey,
+      if (starredAt != null) 'starred_at': starredAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  LocalStarredCompanion copyWith(
+      {Value<String>? messageKey, Value<int>? starredAt, Value<int>? rowid}) {
+    return LocalStarredCompanion(
+      messageKey: messageKey ?? this.messageKey,
+      starredAt: starredAt ?? this.starredAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (messageKey.present) {
+      map['message_key'] = Variable<String>(messageKey.value);
+    }
+    if (starredAt.present) {
+      map['starred_at'] = Variable<int>(starredAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalStarredCompanion(')
+          ..write('messageKey: $messageKey, ')
+          ..write('starredAt: $starredAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $LocalConversationPrefsTable extends LocalConversationPrefs
+    with TableInfo<$LocalConversationPrefsTable, LocalConversationPref> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $LocalConversationPrefsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _conversationIdMeta =
+      const VerificationMeta('conversationId');
+  @override
+  late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
+      'conversation_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _archivedAtMeta =
+      const VerificationMeta('archivedAt');
+  @override
+  late final GeneratedColumn<int> archivedAt = GeneratedColumn<int>(
+      'archived_at', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _pinnedAtMeta =
+      const VerificationMeta('pinnedAt');
+  @override
+  late final GeneratedColumn<int> pinnedAt = GeneratedColumn<int>(
+      'pinned_at', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  @override
+  List<GeneratedColumn> get $columns => [conversationId, archivedAt, pinnedAt];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'local_conversation_prefs';
+  @override
+  VerificationContext validateIntegrity(
+      Insertable<LocalConversationPref> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('conversation_id')) {
+      context.handle(
+          _conversationIdMeta,
+          conversationId.isAcceptableOrUnknown(
+              data['conversation_id']!, _conversationIdMeta));
+    } else if (isInserting) {
+      context.missing(_conversationIdMeta);
+    }
+    if (data.containsKey('archived_at')) {
+      context.handle(
+          _archivedAtMeta,
+          archivedAt.isAcceptableOrUnknown(
+              data['archived_at']!, _archivedAtMeta));
+    }
+    if (data.containsKey('pinned_at')) {
+      context.handle(_pinnedAtMeta,
+          pinnedAt.isAcceptableOrUnknown(data['pinned_at']!, _pinnedAtMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {conversationId};
+  @override
+  LocalConversationPref map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return LocalConversationPref(
+      conversationId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}conversation_id'])!,
+      archivedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}archived_at']),
+      pinnedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}pinned_at']),
+    );
+  }
+
+  @override
+  $LocalConversationPrefsTable createAlias(String alias) {
+    return $LocalConversationPrefsTable(attachedDatabase, alias);
+  }
+}
+
+class LocalConversationPref extends DataClass
+    implements Insertable<LocalConversationPref> {
+  final String conversationId;
+  final int? archivedAt;
+  final int? pinnedAt;
+  const LocalConversationPref(
+      {required this.conversationId, this.archivedAt, this.pinnedAt});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['conversation_id'] = Variable<String>(conversationId);
+    if (!nullToAbsent || archivedAt != null) {
+      map['archived_at'] = Variable<int>(archivedAt);
+    }
+    if (!nullToAbsent || pinnedAt != null) {
+      map['pinned_at'] = Variable<int>(pinnedAt);
+    }
+    return map;
+  }
+
+  LocalConversationPrefsCompanion toCompanion(bool nullToAbsent) {
+    return LocalConversationPrefsCompanion(
+      conversationId: Value(conversationId),
+      archivedAt: archivedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(archivedAt),
+      pinnedAt: pinnedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(pinnedAt),
+    );
+  }
+
+  factory LocalConversationPref.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return LocalConversationPref(
+      conversationId: serializer.fromJson<String>(json['conversationId']),
+      archivedAt: serializer.fromJson<int?>(json['archivedAt']),
+      pinnedAt: serializer.fromJson<int?>(json['pinnedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'conversationId': serializer.toJson<String>(conversationId),
+      'archivedAt': serializer.toJson<int?>(archivedAt),
+      'pinnedAt': serializer.toJson<int?>(pinnedAt),
+    };
+  }
+
+  LocalConversationPref copyWith(
+          {String? conversationId,
+          Value<int?> archivedAt = const Value.absent(),
+          Value<int?> pinnedAt = const Value.absent()}) =>
+      LocalConversationPref(
+        conversationId: conversationId ?? this.conversationId,
+        archivedAt: archivedAt.present ? archivedAt.value : this.archivedAt,
+        pinnedAt: pinnedAt.present ? pinnedAt.value : this.pinnedAt,
+      );
+  LocalConversationPref copyWithCompanion(
+      LocalConversationPrefsCompanion data) {
+    return LocalConversationPref(
+      conversationId: data.conversationId.present
+          ? data.conversationId.value
+          : this.conversationId,
+      archivedAt:
+          data.archivedAt.present ? data.archivedAt.value : this.archivedAt,
+      pinnedAt: data.pinnedAt.present ? data.pinnedAt.value : this.pinnedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalConversationPref(')
+          ..write('conversationId: $conversationId, ')
+          ..write('archivedAt: $archivedAt, ')
+          ..write('pinnedAt: $pinnedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(conversationId, archivedAt, pinnedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is LocalConversationPref &&
+          other.conversationId == this.conversationId &&
+          other.archivedAt == this.archivedAt &&
+          other.pinnedAt == this.pinnedAt);
+}
+
+class LocalConversationPrefsCompanion
+    extends UpdateCompanion<LocalConversationPref> {
+  final Value<String> conversationId;
+  final Value<int?> archivedAt;
+  final Value<int?> pinnedAt;
+  final Value<int> rowid;
+  const LocalConversationPrefsCompanion({
+    this.conversationId = const Value.absent(),
+    this.archivedAt = const Value.absent(),
+    this.pinnedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  LocalConversationPrefsCompanion.insert({
+    required String conversationId,
+    this.archivedAt = const Value.absent(),
+    this.pinnedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : conversationId = Value(conversationId);
+  static Insertable<LocalConversationPref> custom({
+    Expression<String>? conversationId,
+    Expression<int>? archivedAt,
+    Expression<int>? pinnedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (conversationId != null) 'conversation_id': conversationId,
+      if (archivedAt != null) 'archived_at': archivedAt,
+      if (pinnedAt != null) 'pinned_at': pinnedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  LocalConversationPrefsCompanion copyWith(
+      {Value<String>? conversationId,
+      Value<int?>? archivedAt,
+      Value<int?>? pinnedAt,
+      Value<int>? rowid}) {
+    return LocalConversationPrefsCompanion(
+      conversationId: conversationId ?? this.conversationId,
+      archivedAt: archivedAt ?? this.archivedAt,
+      pinnedAt: pinnedAt ?? this.pinnedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (conversationId.present) {
+      map['conversation_id'] = Variable<String>(conversationId.value);
+    }
+    if (archivedAt.present) {
+      map['archived_at'] = Variable<int>(archivedAt.value);
+    }
+    if (pinnedAt.present) {
+      map['pinned_at'] = Variable<int>(pinnedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalConversationPrefsCompanion(')
+          ..write('conversationId: $conversationId, ')
+          ..write('archivedAt: $archivedAt, ')
+          ..write('pinnedAt: $pinnedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$EncryptedLocalDatabase extends GeneratedDatabase {
   _$EncryptedLocalDatabase(QueryExecutor e) : super(e);
   $EncryptedLocalDatabaseManager get managers =>
@@ -4560,6 +6030,12 @@ abstract class _$EncryptedLocalDatabase extends GeneratedDatabase {
   late final $LocalDraftsTable localDrafts = $LocalDraftsTable(this);
   late final $LocalConversationMutesTable localConversationMutes =
       $LocalConversationMutesTable(this);
+  late final $LocalPinsTable localPins = $LocalPinsTable(this);
+  late final $LocalPendingPinsTable localPendingPins =
+      $LocalPendingPinsTable(this);
+  late final $LocalStarredTable localStarred = $LocalStarredTable(this);
+  late final $LocalConversationPrefsTable localConversationPrefs =
+      $LocalConversationPrefsTable(this);
   late final Index localCiphertextEnvelopesConversationPosition = Index(
       'local_ciphertext_envelopes_conversation_position',
       'CREATE INDEX IF NOT EXISTS local_ciphertext_envelopes_conversation_position ON local_ciphertext_envelopes (conversation_id, position)');
@@ -4589,6 +6065,10 @@ abstract class _$EncryptedLocalDatabase extends GeneratedDatabase {
         localMessageReactions,
         localDrafts,
         localConversationMutes,
+        localPins,
+        localPendingPins,
+        localStarred,
+        localConversationPrefs,
         localCiphertextEnvelopesConversationPosition,
         localCiphertextEnvelopesExpiresAt,
         localMessagesExpiresAt,
@@ -6398,6 +7878,11 @@ typedef $$LocalMessagesTableCreateCompanionBuilder = LocalMessagesCompanion
   required String state,
   Value<int?> expiresAt,
   Value<int?> searchId,
+  Value<int?> hiddenAt,
+  Value<String?> formatJson,
+  Value<int?> forwardHops,
+  Value<String?> channelId,
+  Value<bool?> senderHidden,
   Value<int> rowid,
 });
 typedef $$LocalMessagesTableUpdateCompanionBuilder = LocalMessagesCompanion
@@ -6416,6 +7901,11 @@ typedef $$LocalMessagesTableUpdateCompanionBuilder = LocalMessagesCompanion
   Value<String> state,
   Value<int?> expiresAt,
   Value<int?> searchId,
+  Value<int?> hiddenAt,
+  Value<String?> formatJson,
+  Value<int?> forwardHops,
+  Value<String?> channelId,
+  Value<bool?> senderHidden,
   Value<int> rowid,
 });
 
@@ -6473,6 +7963,21 @@ class $$LocalMessagesTableFilterComposer
 
   ColumnFilters<int> get searchId => $composableBuilder(
       column: $table.searchId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get hiddenAt => $composableBuilder(
+      column: $table.hiddenAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get formatJson => $composableBuilder(
+      column: $table.formatJson, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get forwardHops => $composableBuilder(
+      column: $table.forwardHops, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get channelId => $composableBuilder(
+      column: $table.channelId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get senderHidden => $composableBuilder(
+      column: $table.senderHidden, builder: (column) => ColumnFilters(column));
 }
 
 class $$LocalMessagesTableOrderingComposer
@@ -6529,6 +8034,22 @@ class $$LocalMessagesTableOrderingComposer
 
   ColumnOrderings<int> get searchId => $composableBuilder(
       column: $table.searchId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get hiddenAt => $composableBuilder(
+      column: $table.hiddenAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get formatJson => $composableBuilder(
+      column: $table.formatJson, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get forwardHops => $composableBuilder(
+      column: $table.forwardHops, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get channelId => $composableBuilder(
+      column: $table.channelId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get senderHidden => $composableBuilder(
+      column: $table.senderHidden,
+      builder: (column) => ColumnOrderings(column));
 }
 
 class $$LocalMessagesTableAnnotationComposer
@@ -6581,6 +8102,21 @@ class $$LocalMessagesTableAnnotationComposer
 
   GeneratedColumn<int> get searchId =>
       $composableBuilder(column: $table.searchId, builder: (column) => column);
+
+  GeneratedColumn<int> get hiddenAt =>
+      $composableBuilder(column: $table.hiddenAt, builder: (column) => column);
+
+  GeneratedColumn<String> get formatJson => $composableBuilder(
+      column: $table.formatJson, builder: (column) => column);
+
+  GeneratedColumn<int> get forwardHops => $composableBuilder(
+      column: $table.forwardHops, builder: (column) => column);
+
+  GeneratedColumn<String> get channelId =>
+      $composableBuilder(column: $table.channelId, builder: (column) => column);
+
+  GeneratedColumn<bool> get senderHidden => $composableBuilder(
+      column: $table.senderHidden, builder: (column) => column);
 }
 
 class $$LocalMessagesTableTableManager extends RootTableManager<
@@ -6625,6 +8161,11 @@ class $$LocalMessagesTableTableManager extends RootTableManager<
             Value<String> state = const Value.absent(),
             Value<int?> expiresAt = const Value.absent(),
             Value<int?> searchId = const Value.absent(),
+            Value<int?> hiddenAt = const Value.absent(),
+            Value<String?> formatJson = const Value.absent(),
+            Value<int?> forwardHops = const Value.absent(),
+            Value<String?> channelId = const Value.absent(),
+            Value<bool?> senderHidden = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               LocalMessagesCompanion(
@@ -6642,6 +8183,11 @@ class $$LocalMessagesTableTableManager extends RootTableManager<
             state: state,
             expiresAt: expiresAt,
             searchId: searchId,
+            hiddenAt: hiddenAt,
+            formatJson: formatJson,
+            forwardHops: forwardHops,
+            channelId: channelId,
+            senderHidden: senderHidden,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -6659,6 +8205,11 @@ class $$LocalMessagesTableTableManager extends RootTableManager<
             required String state,
             Value<int?> expiresAt = const Value.absent(),
             Value<int?> searchId = const Value.absent(),
+            Value<int?> hiddenAt = const Value.absent(),
+            Value<String?> formatJson = const Value.absent(),
+            Value<int?> forwardHops = const Value.absent(),
+            Value<String?> channelId = const Value.absent(),
+            Value<bool?> senderHidden = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               LocalMessagesCompanion.insert(
@@ -6676,6 +8227,11 @@ class $$LocalMessagesTableTableManager extends RootTableManager<
             state: state,
             expiresAt: expiresAt,
             searchId: searchId,
+            hiddenAt: hiddenAt,
+            formatJson: formatJson,
+            forwardHops: forwardHops,
+            channelId: channelId,
+            senderHidden: senderHidden,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
@@ -7188,6 +8744,725 @@ typedef $$LocalConversationMutesTableProcessedTableManager
         ),
         LocalConversationMute,
         PrefetchHooks Function()>;
+typedef $$LocalPinsTableCreateCompanionBuilder = LocalPinsCompanion Function({
+  required String conversationId,
+  Value<String?> channelId,
+  required String targetKey,
+  required String pinnedByAccountId,
+  required int pinnedAt,
+  Value<int> appliedOrder,
+  required int expiresAt,
+  Value<int> rowid,
+});
+typedef $$LocalPinsTableUpdateCompanionBuilder = LocalPinsCompanion Function({
+  Value<String> conversationId,
+  Value<String?> channelId,
+  Value<String> targetKey,
+  Value<String> pinnedByAccountId,
+  Value<int> pinnedAt,
+  Value<int> appliedOrder,
+  Value<int> expiresAt,
+  Value<int> rowid,
+});
+
+class $$LocalPinsTableFilterComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalPinsTable> {
+  $$LocalPinsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get conversationId => $composableBuilder(
+      column: $table.conversationId,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get channelId => $composableBuilder(
+      column: $table.channelId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get targetKey => $composableBuilder(
+      column: $table.targetKey, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get pinnedByAccountId => $composableBuilder(
+      column: $table.pinnedByAccountId,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get pinnedAt => $composableBuilder(
+      column: $table.pinnedAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get appliedOrder => $composableBuilder(
+      column: $table.appliedOrder, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get expiresAt => $composableBuilder(
+      column: $table.expiresAt, builder: (column) => ColumnFilters(column));
+}
+
+class $$LocalPinsTableOrderingComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalPinsTable> {
+  $$LocalPinsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get conversationId => $composableBuilder(
+      column: $table.conversationId,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get channelId => $composableBuilder(
+      column: $table.channelId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get targetKey => $composableBuilder(
+      column: $table.targetKey, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get pinnedByAccountId => $composableBuilder(
+      column: $table.pinnedByAccountId,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get pinnedAt => $composableBuilder(
+      column: $table.pinnedAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get appliedOrder => $composableBuilder(
+      column: $table.appliedOrder,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get expiresAt => $composableBuilder(
+      column: $table.expiresAt, builder: (column) => ColumnOrderings(column));
+}
+
+class $$LocalPinsTableAnnotationComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalPinsTable> {
+  $$LocalPinsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get conversationId => $composableBuilder(
+      column: $table.conversationId, builder: (column) => column);
+
+  GeneratedColumn<String> get channelId =>
+      $composableBuilder(column: $table.channelId, builder: (column) => column);
+
+  GeneratedColumn<String> get targetKey =>
+      $composableBuilder(column: $table.targetKey, builder: (column) => column);
+
+  GeneratedColumn<String> get pinnedByAccountId => $composableBuilder(
+      column: $table.pinnedByAccountId, builder: (column) => column);
+
+  GeneratedColumn<int> get pinnedAt =>
+      $composableBuilder(column: $table.pinnedAt, builder: (column) => column);
+
+  GeneratedColumn<int> get appliedOrder => $composableBuilder(
+      column: $table.appliedOrder, builder: (column) => column);
+
+  GeneratedColumn<int> get expiresAt =>
+      $composableBuilder(column: $table.expiresAt, builder: (column) => column);
+}
+
+class $$LocalPinsTableTableManager extends RootTableManager<
+    _$EncryptedLocalDatabase,
+    $LocalPinsTable,
+    LocalPin,
+    $$LocalPinsTableFilterComposer,
+    $$LocalPinsTableOrderingComposer,
+    $$LocalPinsTableAnnotationComposer,
+    $$LocalPinsTableCreateCompanionBuilder,
+    $$LocalPinsTableUpdateCompanionBuilder,
+    (
+      LocalPin,
+      BaseReferences<_$EncryptedLocalDatabase, $LocalPinsTable, LocalPin>
+    ),
+    LocalPin,
+    PrefetchHooks Function()> {
+  $$LocalPinsTableTableManager(
+      _$EncryptedLocalDatabase db, $LocalPinsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$LocalPinsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$LocalPinsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$LocalPinsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> conversationId = const Value.absent(),
+            Value<String?> channelId = const Value.absent(),
+            Value<String> targetKey = const Value.absent(),
+            Value<String> pinnedByAccountId = const Value.absent(),
+            Value<int> pinnedAt = const Value.absent(),
+            Value<int> appliedOrder = const Value.absent(),
+            Value<int> expiresAt = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalPinsCompanion(
+            conversationId: conversationId,
+            channelId: channelId,
+            targetKey: targetKey,
+            pinnedByAccountId: pinnedByAccountId,
+            pinnedAt: pinnedAt,
+            appliedOrder: appliedOrder,
+            expiresAt: expiresAt,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String conversationId,
+            Value<String?> channelId = const Value.absent(),
+            required String targetKey,
+            required String pinnedByAccountId,
+            required int pinnedAt,
+            Value<int> appliedOrder = const Value.absent(),
+            required int expiresAt,
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalPinsCompanion.insert(
+            conversationId: conversationId,
+            channelId: channelId,
+            targetKey: targetKey,
+            pinnedByAccountId: pinnedByAccountId,
+            pinnedAt: pinnedAt,
+            appliedOrder: appliedOrder,
+            expiresAt: expiresAt,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (
+                    e.readTable<$LocalPinsTable, LocalPin>(table),
+                    BaseReferences<_$EncryptedLocalDatabase, $LocalPinsTable,
+                        LocalPin>(db, table, e)
+                  ))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$LocalPinsTableProcessedTableManager = ProcessedTableManager<
+    _$EncryptedLocalDatabase,
+    $LocalPinsTable,
+    LocalPin,
+    $$LocalPinsTableFilterComposer,
+    $$LocalPinsTableOrderingComposer,
+    $$LocalPinsTableAnnotationComposer,
+    $$LocalPinsTableCreateCompanionBuilder,
+    $$LocalPinsTableUpdateCompanionBuilder,
+    (
+      LocalPin,
+      BaseReferences<_$EncryptedLocalDatabase, $LocalPinsTable, LocalPin>
+    ),
+    LocalPin,
+    PrefetchHooks Function()>;
+typedef $$LocalPendingPinsTableCreateCompanionBuilder
+    = LocalPendingPinsCompanion Function({
+  required String actionKey,
+  required String conversationId,
+  Value<String?> channelId,
+  required String targetKey,
+  required String accountId,
+  required bool pinned,
+  Value<int?> durationSeconds,
+  Value<int> rowid,
+});
+typedef $$LocalPendingPinsTableUpdateCompanionBuilder
+    = LocalPendingPinsCompanion Function({
+  Value<String> actionKey,
+  Value<String> conversationId,
+  Value<String?> channelId,
+  Value<String> targetKey,
+  Value<String> accountId,
+  Value<bool> pinned,
+  Value<int?> durationSeconds,
+  Value<int> rowid,
+});
+
+class $$LocalPendingPinsTableFilterComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalPendingPinsTable> {
+  $$LocalPendingPinsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get actionKey => $composableBuilder(
+      column: $table.actionKey, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get conversationId => $composableBuilder(
+      column: $table.conversationId,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get channelId => $composableBuilder(
+      column: $table.channelId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get targetKey => $composableBuilder(
+      column: $table.targetKey, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get accountId => $composableBuilder(
+      column: $table.accountId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get pinned => $composableBuilder(
+      column: $table.pinned, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get durationSeconds => $composableBuilder(
+      column: $table.durationSeconds,
+      builder: (column) => ColumnFilters(column));
+}
+
+class $$LocalPendingPinsTableOrderingComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalPendingPinsTable> {
+  $$LocalPendingPinsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get actionKey => $composableBuilder(
+      column: $table.actionKey, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get conversationId => $composableBuilder(
+      column: $table.conversationId,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get channelId => $composableBuilder(
+      column: $table.channelId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get targetKey => $composableBuilder(
+      column: $table.targetKey, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get accountId => $composableBuilder(
+      column: $table.accountId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get pinned => $composableBuilder(
+      column: $table.pinned, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get durationSeconds => $composableBuilder(
+      column: $table.durationSeconds,
+      builder: (column) => ColumnOrderings(column));
+}
+
+class $$LocalPendingPinsTableAnnotationComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalPendingPinsTable> {
+  $$LocalPendingPinsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get actionKey =>
+      $composableBuilder(column: $table.actionKey, builder: (column) => column);
+
+  GeneratedColumn<String> get conversationId => $composableBuilder(
+      column: $table.conversationId, builder: (column) => column);
+
+  GeneratedColumn<String> get channelId =>
+      $composableBuilder(column: $table.channelId, builder: (column) => column);
+
+  GeneratedColumn<String> get targetKey =>
+      $composableBuilder(column: $table.targetKey, builder: (column) => column);
+
+  GeneratedColumn<String> get accountId =>
+      $composableBuilder(column: $table.accountId, builder: (column) => column);
+
+  GeneratedColumn<bool> get pinned =>
+      $composableBuilder(column: $table.pinned, builder: (column) => column);
+
+  GeneratedColumn<int> get durationSeconds => $composableBuilder(
+      column: $table.durationSeconds, builder: (column) => column);
+}
+
+class $$LocalPendingPinsTableTableManager extends RootTableManager<
+    _$EncryptedLocalDatabase,
+    $LocalPendingPinsTable,
+    LocalPendingPin,
+    $$LocalPendingPinsTableFilterComposer,
+    $$LocalPendingPinsTableOrderingComposer,
+    $$LocalPendingPinsTableAnnotationComposer,
+    $$LocalPendingPinsTableCreateCompanionBuilder,
+    $$LocalPendingPinsTableUpdateCompanionBuilder,
+    (
+      LocalPendingPin,
+      BaseReferences<_$EncryptedLocalDatabase, $LocalPendingPinsTable,
+          LocalPendingPin>
+    ),
+    LocalPendingPin,
+    PrefetchHooks Function()> {
+  $$LocalPendingPinsTableTableManager(
+      _$EncryptedLocalDatabase db, $LocalPendingPinsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$LocalPendingPinsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$LocalPendingPinsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$LocalPendingPinsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> actionKey = const Value.absent(),
+            Value<String> conversationId = const Value.absent(),
+            Value<String?> channelId = const Value.absent(),
+            Value<String> targetKey = const Value.absent(),
+            Value<String> accountId = const Value.absent(),
+            Value<bool> pinned = const Value.absent(),
+            Value<int?> durationSeconds = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalPendingPinsCompanion(
+            actionKey: actionKey,
+            conversationId: conversationId,
+            channelId: channelId,
+            targetKey: targetKey,
+            accountId: accountId,
+            pinned: pinned,
+            durationSeconds: durationSeconds,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String actionKey,
+            required String conversationId,
+            Value<String?> channelId = const Value.absent(),
+            required String targetKey,
+            required String accountId,
+            required bool pinned,
+            Value<int?> durationSeconds = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalPendingPinsCompanion.insert(
+            actionKey: actionKey,
+            conversationId: conversationId,
+            channelId: channelId,
+            targetKey: targetKey,
+            accountId: accountId,
+            pinned: pinned,
+            durationSeconds: durationSeconds,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (
+                    e.readTable<$LocalPendingPinsTable, LocalPendingPin>(table),
+                    BaseReferences<_$EncryptedLocalDatabase,
+                        $LocalPendingPinsTable, LocalPendingPin>(db, table, e)
+                  ))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$LocalPendingPinsTableProcessedTableManager = ProcessedTableManager<
+    _$EncryptedLocalDatabase,
+    $LocalPendingPinsTable,
+    LocalPendingPin,
+    $$LocalPendingPinsTableFilterComposer,
+    $$LocalPendingPinsTableOrderingComposer,
+    $$LocalPendingPinsTableAnnotationComposer,
+    $$LocalPendingPinsTableCreateCompanionBuilder,
+    $$LocalPendingPinsTableUpdateCompanionBuilder,
+    (
+      LocalPendingPin,
+      BaseReferences<_$EncryptedLocalDatabase, $LocalPendingPinsTable,
+          LocalPendingPin>
+    ),
+    LocalPendingPin,
+    PrefetchHooks Function()>;
+typedef $$LocalStarredTableCreateCompanionBuilder = LocalStarredCompanion
+    Function({
+  required String messageKey,
+  required int starredAt,
+  Value<int> rowid,
+});
+typedef $$LocalStarredTableUpdateCompanionBuilder = LocalStarredCompanion
+    Function({
+  Value<String> messageKey,
+  Value<int> starredAt,
+  Value<int> rowid,
+});
+
+class $$LocalStarredTableFilterComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalStarredTable> {
+  $$LocalStarredTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get messageKey => $composableBuilder(
+      column: $table.messageKey, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get starredAt => $composableBuilder(
+      column: $table.starredAt, builder: (column) => ColumnFilters(column));
+}
+
+class $$LocalStarredTableOrderingComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalStarredTable> {
+  $$LocalStarredTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get messageKey => $composableBuilder(
+      column: $table.messageKey, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get starredAt => $composableBuilder(
+      column: $table.starredAt, builder: (column) => ColumnOrderings(column));
+}
+
+class $$LocalStarredTableAnnotationComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalStarredTable> {
+  $$LocalStarredTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get messageKey => $composableBuilder(
+      column: $table.messageKey, builder: (column) => column);
+
+  GeneratedColumn<int> get starredAt =>
+      $composableBuilder(column: $table.starredAt, builder: (column) => column);
+}
+
+class $$LocalStarredTableTableManager extends RootTableManager<
+    _$EncryptedLocalDatabase,
+    $LocalStarredTable,
+    LocalStarredData,
+    $$LocalStarredTableFilterComposer,
+    $$LocalStarredTableOrderingComposer,
+    $$LocalStarredTableAnnotationComposer,
+    $$LocalStarredTableCreateCompanionBuilder,
+    $$LocalStarredTableUpdateCompanionBuilder,
+    (
+      LocalStarredData,
+      BaseReferences<_$EncryptedLocalDatabase, $LocalStarredTable,
+          LocalStarredData>
+    ),
+    LocalStarredData,
+    PrefetchHooks Function()> {
+  $$LocalStarredTableTableManager(
+      _$EncryptedLocalDatabase db, $LocalStarredTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$LocalStarredTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$LocalStarredTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$LocalStarredTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> messageKey = const Value.absent(),
+            Value<int> starredAt = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalStarredCompanion(
+            messageKey: messageKey,
+            starredAt: starredAt,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String messageKey,
+            required int starredAt,
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalStarredCompanion.insert(
+            messageKey: messageKey,
+            starredAt: starredAt,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (
+                    e.readTable<$LocalStarredTable, LocalStarredData>(table),
+                    BaseReferences<_$EncryptedLocalDatabase, $LocalStarredTable,
+                        LocalStarredData>(db, table, e)
+                  ))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$LocalStarredTableProcessedTableManager = ProcessedTableManager<
+    _$EncryptedLocalDatabase,
+    $LocalStarredTable,
+    LocalStarredData,
+    $$LocalStarredTableFilterComposer,
+    $$LocalStarredTableOrderingComposer,
+    $$LocalStarredTableAnnotationComposer,
+    $$LocalStarredTableCreateCompanionBuilder,
+    $$LocalStarredTableUpdateCompanionBuilder,
+    (
+      LocalStarredData,
+      BaseReferences<_$EncryptedLocalDatabase, $LocalStarredTable,
+          LocalStarredData>
+    ),
+    LocalStarredData,
+    PrefetchHooks Function()>;
+typedef $$LocalConversationPrefsTableCreateCompanionBuilder
+    = LocalConversationPrefsCompanion Function({
+  required String conversationId,
+  Value<int?> archivedAt,
+  Value<int?> pinnedAt,
+  Value<int> rowid,
+});
+typedef $$LocalConversationPrefsTableUpdateCompanionBuilder
+    = LocalConversationPrefsCompanion Function({
+  Value<String> conversationId,
+  Value<int?> archivedAt,
+  Value<int?> pinnedAt,
+  Value<int> rowid,
+});
+
+class $$LocalConversationPrefsTableFilterComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalConversationPrefsTable> {
+  $$LocalConversationPrefsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get conversationId => $composableBuilder(
+      column: $table.conversationId,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get archivedAt => $composableBuilder(
+      column: $table.archivedAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get pinnedAt => $composableBuilder(
+      column: $table.pinnedAt, builder: (column) => ColumnFilters(column));
+}
+
+class $$LocalConversationPrefsTableOrderingComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalConversationPrefsTable> {
+  $$LocalConversationPrefsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get conversationId => $composableBuilder(
+      column: $table.conversationId,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get archivedAt => $composableBuilder(
+      column: $table.archivedAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get pinnedAt => $composableBuilder(
+      column: $table.pinnedAt, builder: (column) => ColumnOrderings(column));
+}
+
+class $$LocalConversationPrefsTableAnnotationComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalConversationPrefsTable> {
+  $$LocalConversationPrefsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get conversationId => $composableBuilder(
+      column: $table.conversationId, builder: (column) => column);
+
+  GeneratedColumn<int> get archivedAt => $composableBuilder(
+      column: $table.archivedAt, builder: (column) => column);
+
+  GeneratedColumn<int> get pinnedAt =>
+      $composableBuilder(column: $table.pinnedAt, builder: (column) => column);
+}
+
+class $$LocalConversationPrefsTableTableManager extends RootTableManager<
+    _$EncryptedLocalDatabase,
+    $LocalConversationPrefsTable,
+    LocalConversationPref,
+    $$LocalConversationPrefsTableFilterComposer,
+    $$LocalConversationPrefsTableOrderingComposer,
+    $$LocalConversationPrefsTableAnnotationComposer,
+    $$LocalConversationPrefsTableCreateCompanionBuilder,
+    $$LocalConversationPrefsTableUpdateCompanionBuilder,
+    (
+      LocalConversationPref,
+      BaseReferences<_$EncryptedLocalDatabase, $LocalConversationPrefsTable,
+          LocalConversationPref>
+    ),
+    LocalConversationPref,
+    PrefetchHooks Function()> {
+  $$LocalConversationPrefsTableTableManager(
+      _$EncryptedLocalDatabase db, $LocalConversationPrefsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$LocalConversationPrefsTableFilterComposer(
+                  $db: db, $table: table),
+          createOrderingComposer: () =>
+              $$LocalConversationPrefsTableOrderingComposer(
+                  $db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$LocalConversationPrefsTableAnnotationComposer(
+                  $db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> conversationId = const Value.absent(),
+            Value<int?> archivedAt = const Value.absent(),
+            Value<int?> pinnedAt = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalConversationPrefsCompanion(
+            conversationId: conversationId,
+            archivedAt: archivedAt,
+            pinnedAt: pinnedAt,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String conversationId,
+            Value<int?> archivedAt = const Value.absent(),
+            Value<int?> pinnedAt = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalConversationPrefsCompanion.insert(
+            conversationId: conversationId,
+            archivedAt: archivedAt,
+            pinnedAt: pinnedAt,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (
+                    e.readTable<$LocalConversationPrefsTable,
+                        LocalConversationPref>(table),
+                    BaseReferences<
+                        _$EncryptedLocalDatabase,
+                        $LocalConversationPrefsTable,
+                        LocalConversationPref>(db, table, e)
+                  ))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$LocalConversationPrefsTableProcessedTableManager
+    = ProcessedTableManager<
+        _$EncryptedLocalDatabase,
+        $LocalConversationPrefsTable,
+        LocalConversationPref,
+        $$LocalConversationPrefsTableFilterComposer,
+        $$LocalConversationPrefsTableOrderingComposer,
+        $$LocalConversationPrefsTableAnnotationComposer,
+        $$LocalConversationPrefsTableCreateCompanionBuilder,
+        $$LocalConversationPrefsTableUpdateCompanionBuilder,
+        (
+          LocalConversationPref,
+          BaseReferences<_$EncryptedLocalDatabase, $LocalConversationPrefsTable,
+              LocalConversationPref>
+        ),
+        LocalConversationPref,
+        PrefetchHooks Function()>;
 
 class $EncryptedLocalDatabaseManager {
   final _$EncryptedLocalDatabase _db;
@@ -7223,4 +9498,13 @@ class $EncryptedLocalDatabaseManager {
   $$LocalConversationMutesTableTableManager get localConversationMutes =>
       $$LocalConversationMutesTableTableManager(
           _db, _db.localConversationMutes);
+  $$LocalPinsTableTableManager get localPins =>
+      $$LocalPinsTableTableManager(_db, _db.localPins);
+  $$LocalPendingPinsTableTableManager get localPendingPins =>
+      $$LocalPendingPinsTableTableManager(_db, _db.localPendingPins);
+  $$LocalStarredTableTableManager get localStarred =>
+      $$LocalStarredTableTableManager(_db, _db.localStarred);
+  $$LocalConversationPrefsTableTableManager get localConversationPrefs =>
+      $$LocalConversationPrefsTableTableManager(
+          _db, _db.localConversationPrefs);
 }

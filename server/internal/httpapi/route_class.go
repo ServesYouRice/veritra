@@ -28,17 +28,19 @@ const (
 // slash, an encoded slash) matches no route or one that answers 404.
 var (
 	credentialRoutes = map[string]bool{
-		"/api/v1/setup/owner":        true,
-		"/api/v1/auth/login":         true,
-		"/api/v1/auth/reauth":        true,
-		"/api/v1/register":           true,
-		"/api/v1/recovery":           true,
-		"/api/v1/device-links/claim": true,
+		"/api/v1/setup/owner":           true,
+		"/api/v1/auth/login":            true,
+		"/api/v1/auth/reauth":           true,
+		"/api/v1/register":              true,
+		"/api/v1/recovery":              true,
+		"/api/v1/device-links/claim":    true,
+		"/api/v1/device-links/v3/claim": true,
 	}
 	enrollmentRoutes = map[string]bool{
-		"/api/v1/setup/owner/enrollment":        true,
-		"/api/v1/register/enrollment":           true,
-		"/api/v1/device-links/claim-enrollment": true,
+		"/api/v1/setup/owner/enrollment":           true,
+		"/api/v1/register/enrollment":              true,
+		"/api/v1/device-links/claim-enrollment":    true,
+		"/api/v1/device-links/v3/claim-enrollment": true,
 	}
 	publicRoutes = map[string]bool{
 		"/livez":               true,
@@ -64,6 +66,12 @@ func ClassifyRoute(urlPath string) RouteClass {
 		return EnrollmentRoute
 	case publicRoutes[urlPath]:
 		return PublicRoute
+	}
+	// Every nested v3 path can check a claim capability now or in the history
+	// follow-up. Use the fixed credential budget even for alternate decoded
+	// slash spellings; authenticated source operations share that safe bound.
+	if strings.HasPrefix(urlPath, deviceLinkV3Prefix+"/") {
+		return CredentialRoute
 	}
 	if strings.HasPrefix(urlPath, deviceLinkPrefix) {
 		if parts := deviceLinkPathParts(urlPath); len(parts) == 2 && parts[1] == "claim-status" {

@@ -23,9 +23,12 @@ class VeritraPushService : PushService() {
     override fun onMessage(message: PushMessage, instance: String) {
         if (!message.decrypted) return
         val payload = runCatching { JSONObject(String(message.content, Charsets.UTF_8)) }.getOrNull() ?: return
-        if (payload.optString("version") != "v1" ||
-            payload.optString("event") != "new_encrypted_event_available") return
-        PushEventBridge.markWake(applicationContext)
+        val fields = payload.keys().asSequence().associateWith { payload.get(it) }
+        when (WakeRules.payload(fields)) {
+            WakeRules.Payload.LEGACY -> PushEventBridge.markWake(applicationContext)
+            WakeRules.Payload.SILENT -> PushEventBridge.markWake(applicationContext, silent = true)
+            else -> return
+        }
     }
 
     override fun onUnregistered(instance: String) {

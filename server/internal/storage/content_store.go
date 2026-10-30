@@ -361,14 +361,22 @@ func (s *Store) markRead(ctx context.Context, conversationID, accountID, message
 }
 
 type PushTarget struct {
-	ID         string
-	Provider   string
-	Endpoint   string
-	PublicKey  string
-	AuthSecret string
+	NotificationMode string
+	ID               string
+	Provider         string
+	Endpoint         string
+	PublicKey        string
+	AuthSecret       string
 }
 
 func (s *Store) CreatePushSubscription(ctx context.Context, accountID, deviceID, provider, endpoint, publicKey, authSecret string) (string, error) {
+	return s.CreatePushSubscriptionWithMode(ctx, accountID, deviceID, provider, endpoint, publicKey, authSecret, domain.PushNotificationLegacy)
+}
+
+func (s *Store) CreatePushSubscriptionWithMode(ctx context.Context, accountID, deviceID, provider, endpoint, publicKey, authSecret, mode string) (string, error) {
+	if !domain.ValidPushNotificationMode(mode) {
+		return "", ErrInvalidInput
+	}
 	id, err := domain.NewID("push")
 	if err != nil {
 		return "", err
@@ -378,16 +386,25 @@ func (s *Store) CreatePushSubscription(ctx context.Context, accountID, deviceID,
 		return "", err
 	}
 	defer tx.Rollback()
+	if mode == domain.PushNotificationLocalDecrypt {
+		var active bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM devices d JOIN accounts a ON a.id=d.account_id WHERE d.id=? AND d.account_id=? AND d.revoked_at IS NULL AND a.status='active' AND a.deleted_at IS NULL)`, deviceID, accountID).Scan(&active); err != nil {
+			return "", err
+		}
+		if !active {
+			return "", ErrUnauthorized
+		}
+	}
 	var activeID string
 	err = tx.QueryRowContext(ctx, `SELECT id FROM push_subscriptions WHERE account_id = ? AND device_id = ? AND provider = ? AND disabled_at IS NULL ORDER BY created_at DESC LIMIT 1`, accountID, deviceID, provider).Scan(&activeID)
 	if errors.Is(err, sql.ErrNoRows) {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO push_subscriptions(id, account_id, device_id, provider, endpoint, public_key, auth_secret, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, id, accountID, nullableEmptyString(deviceID), provider, endpoint, publicKey, authSecret, nowString()); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO push_subscriptions(id, account_id, device_id, provider, endpoint, public_key, auth_secret, created_at,notification_mode) VALUES(?, ?, ?, ?, ?, ?, ?, ?,?)`, id, accountID, nullableEmptyString(deviceID), provider, endpoint, publicKey, authSecret, nowString(), mode); err != nil {
 			return "", err
 		}
 		activeID = id
 	} else if err != nil {
 		return "", err
-	} else if _, err := tx.ExecContext(ctx, `UPDATE push_subscriptions SET endpoint = ?, public_key = ?, auth_secret = ?, created_at = ? WHERE id = ?`, endpoint, publicKey, authSecret, nowString(), activeID); err != nil {
+	} else if _, err := tx.ExecContext(ctx, `UPDATE push_subscriptions SET endpoint = ?, public_key = ?, auth_secret = ?, created_at = ?,notification_mode=? WHERE id = ?`, endpoint, publicKey, authSecret, nowString(), mode, activeID); err != nil {
 		return "", err
 	}
 	// One device uses one provider at a time: switching provider retires the
@@ -406,10 +423,11 @@ func (s *Store) CreatePushSubscription(ctx context.Context, accountID, deviceID,
 // DevicePushSubscription is one active registration of the caller's device.
 // Endpoint and keys stay server-side; only ID, provider and time leave it.
 type DevicePushSubscription struct {
-	ID        string    `json:"id"`
-	Provider  string    `json:"provider"`
-	CreatedAt time.Time `json:"created_at"`
-	target    PushTarget
+	NotificationMode string    `json:"notification_mode"`
+	ID               string    `json:"id"`
+	Provider         string    `json:"provider"`
+	CreatedAt        time.Time `json:"created_at"`
+	target           PushTarget
 }
 
 // Target is the delivery target, for the self-test wake only.
@@ -417,7 +435,7 @@ func (d DevicePushSubscription) Target() PushTarget { return d.target }
 
 func (s *Store) ListDevicePushSubscriptions(ctx context.Context, accountID, deviceID string) ([]DevicePushSubscription, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, provider, endpoint, COALESCE(public_key, ''), COALESCE(auth_secret, ''), created_at
+		SELECT id, provider, endpoint, COALESCE(public_key, ''), COALESCE(auth_secret, ''), created_at,notification_mode
 		FROM push_subscriptions
 		WHERE account_id = ? AND device_id = ? AND disabled_at IS NULL
 		ORDER BY created_at DESC LIMIT 10`, accountID, deviceID)
@@ -429,11 +447,12 @@ func (s *Store) ListDevicePushSubscriptions(ctx context.Context, accountID, devi
 	for rows.Next() {
 		var item DevicePushSubscription
 		var created string
-		if err := rows.Scan(&item.ID, &item.Provider, &item.target.Endpoint, &item.target.PublicKey, &item.target.AuthSecret, &created); err != nil {
+		if err := rows.Scan(&item.ID, &item.Provider, &item.target.Endpoint, &item.target.PublicKey, &item.target.AuthSecret, &created, &item.NotificationMode); err != nil {
 			return nil, err
 		}
 		item.target.ID = item.ID
 		item.target.Provider = item.Provider
+		item.target.NotificationMode = item.NotificationMode
 		item.CreatedAt = parseTime(created)
 		result = append(result, item)
 	}
@@ -442,12 +461,12 @@ func (s *Store) ListDevicePushSubscriptions(ctx context.Context, accountID, devi
 
 func (s *Store) PushTargetsForConversation(ctx context.Context, conversationID, excludeAccountID string) ([]PushTarget, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT ps.id, ps.provider, ps.endpoint, COALESCE(ps.public_key, ''), COALESCE(ps.auth_secret, '')
+		SELECT ps.id, ps.provider, ps.endpoint, COALESCE(ps.public_key, ''), COALESCE(ps.auth_secret, ''),ps.notification_mode
 		FROM push_subscriptions ps
 		JOIN memberships m ON m.account_id = ps.account_id
 		WHERE m.conversation_id = ? AND ps.account_id <> ? AND ps.provider IN ('webpush', 'fcm', 'apns') AND ps.disabled_at IS NULL
 		  AND NOT EXISTS (SELECT 1 FROM account_blocks b WHERE b.blocker_account_id = ps.account_id AND b.blocked_account_id = ?)
-		  AND NOT EXISTS (SELECT 1 FROM conversation_notification_preferences p WHERE p.account_id = ps.account_id AND p.conversation_id = ? AND p.muted = 1 AND (p.muted_until IS NULL OR p.muted_until > CAST(strftime('%s', 'now') AS INTEGER)))
+		  AND (ps.notification_mode='local_decrypt_v1' OR NOT EXISTS (SELECT 1 FROM conversation_notification_preferences p WHERE p.account_id = ps.account_id AND p.conversation_id = ? AND p.muted = 1 AND (p.muted_until IS NULL OR p.muted_until > CAST(strftime('%s', 'now') AS INTEGER))))
 		ORDER BY ps.id
 		LIMIT 500`, conversationID, excludeAccountID, excludeAccountID, conversationID)
 	if err != nil {
@@ -457,12 +476,28 @@ func (s *Store) PushTargetsForConversation(ctx context.Context, conversationID, 
 	var targets []PushTarget
 	for rows.Next() {
 		var target PushTarget
-		if err := rows.Scan(&target.ID, &target.Provider, &target.Endpoint, &target.PublicKey, &target.AuthSecret); err != nil {
+		if err := rows.Scan(&target.ID, &target.Provider, &target.Endpoint, &target.PublicKey, &target.AuthSecret, &target.NotificationMode); err != nil {
 			return nil, err
 		}
 		targets = append(targets, target)
 	}
 	return targets, rows.Err()
+}
+
+// DevicePushSubscriptionForDevice rechecks a self-test target just before send.
+func (s *Store) DevicePushSubscriptionForDevice(ctx context.Context, id, accountID, deviceID string) (DevicePushSubscription, error) {
+	var item DevicePushSubscription
+	var created string
+	err := s.db.QueryRowContext(ctx, `SELECT ps.id,ps.provider,ps.endpoint,COALESCE(ps.public_key,''),COALESCE(ps.auth_secret,''),ps.notification_mode,ps.created_at FROM push_subscriptions ps JOIN devices d ON d.id=ps.device_id AND d.account_id=ps.account_id JOIN accounts a ON a.id=ps.account_id WHERE ps.id=? AND ps.account_id=? AND ps.device_id=? AND ps.disabled_at IS NULL AND d.revoked_at IS NULL AND a.status='active' AND a.deleted_at IS NULL`, id, accountID, deviceID).Scan(&item.ID, &item.Provider, &item.target.Endpoint, &item.target.PublicKey, &item.target.AuthSecret, &item.NotificationMode, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return item, ErrNotFound
+	}
+	if err != nil {
+		return item, err
+	}
+	item.target.ID, item.target.Provider, item.target.NotificationMode = item.ID, item.Provider, item.NotificationMode
+	item.CreatedAt = parseTime(created)
+	return item, nil
 }
 
 func (s *Store) DisablePushTarget(ctx context.Context, subscriptionID string) error {
@@ -769,6 +804,15 @@ func (s *Store) PruneOperationalRows(ctx context.Context, now time.Time) (int64,
 		return 0, err
 	}
 	defer tx.Rollback()
+	if err := retireHistoryForLinks(ctx, tx, `id IN (SELECT id FROM device_links_v3 WHERE COALESCE(transfer_expires_at,expires_at) < ? ORDER BY COALESCE(transfer_expires_at,expires_at),id LIMIT 500)`, formatTime(now.UTC().Add(-OperationalRowRetention))); err != nil {
+		return 0, err
+	}
+	if err := retireHistoryIntents(ctx, tx, `storage_key IN (SELECT storage_key FROM device_history_upload_intents WHERE expires_at<=? ORDER BY expires_at LIMIT 500)`, formatTime(now.UTC())); err != nil {
+		return 0, err
+	}
+	if err := retireHistoryTransfers(ctx, tx, `link_id IN (SELECT link_id FROM device_history_transfers WHERE state='active' AND expires_at<=? ORDER BY expires_at LIMIT 500)`, "expired", formatTime(now.UTC())); err != nil {
+		return 0, err
+	}
 	cutoff := formatTime(now.UTC().Add(-OperationalRowRetention))
 	queries := []struct {
 		query string
@@ -777,6 +821,7 @@ func (s *Store) PruneOperationalRows(ctx context.Context, now time.Time) (int64,
 		{`DELETE FROM sessions WHERE token_hash IN (SELECT token_hash FROM sessions WHERE expires_at <= ? ORDER BY expires_at LIMIT 500)`, []interface{}{formatTime(now.UTC())}},
 		{`DELETE FROM invites WHERE id IN (SELECT id FROM invites WHERE (expires_at IS NOT NULL AND expires_at < ?) OR (revoked_at IS NOT NULL AND revoked_at < ?) ORDER BY COALESCE(revoked_at, expires_at), id LIMIT 500)`, []interface{}{cutoff, cutoff}},
 		{`DELETE FROM device_links WHERE id IN (SELECT id FROM device_links WHERE expires_at < ? AND state IN ('consumed', 'revoked') ORDER BY expires_at, id LIMIT 500)`, []interface{}{cutoff}},
+		{`DELETE FROM device_links_v3 WHERE id IN (SELECT id FROM device_links_v3 WHERE COALESCE(transfer_expires_at,expires_at) < ? ORDER BY COALESCE(transfer_expires_at,expires_at), id LIMIT 500)`, []interface{}{cutoff}},
 		{`DELETE FROM enrollment_reservations WHERE id IN (SELECT id FROM enrollment_reservations WHERE expires_at < ? OR (consumed_at IS NOT NULL AND consumed_at < ?) ORDER BY COALESCE(consumed_at, expires_at), id LIMIT 500)`, []interface{}{formatTime(now.UTC()), cutoff}},
 		{`DELETE FROM push_subscriptions WHERE id IN (SELECT id FROM push_subscriptions WHERE disabled_at IS NOT NULL AND disabled_at < ? ORDER BY disabled_at, id LIMIT 500)`, []interface{}{cutoff}},
 		{`DELETE FROM device_key_packages WHERE id IN (SELECT id FROM device_key_packages WHERE expires_at < ? OR (claimed_at IS NOT NULL AND claimed_at < ?) ORDER BY COALESCE(claimed_at, expires_at), id LIMIT 500)`, []interface{}{formatTime(now.UTC()), cutoff}},
@@ -1020,7 +1065,9 @@ func (s *Store) enforceBlobQuota(ctx context.Context, tx *sql.Tx, accountID stri
 	}
 	blobs, err := countRows(ctx, tx, `SELECT
 		(SELECT COUNT(*) FROM attachment_envelopes WHERE owner_account_id = ?) +
-		(SELECT COUNT(*) FROM backup_blobs WHERE account_id = ?)`, accountID, accountID)
+		(SELECT COUNT(*) FROM backup_blobs WHERE account_id = ?) +
+		(SELECT COUNT(*) FROM device_history_transfers WHERE account_id = ? AND state='active') +
+		(SELECT COUNT(*) FROM device_history_upload_intents WHERE account_id = ?)`, accountID, accountID, accountID, accountID)
 	if err != nil {
 		return err
 	}
@@ -1079,6 +1126,7 @@ func (s *Store) RecordBlobChunkDigests(ctx context.Context, storageKey, cipherte
 	for _, query := range []string{
 		`UPDATE attachment_envelopes SET chunk_digests = ? WHERE storage_key = ? AND ciphertext_sha256 = ? AND size_bytes = ? AND chunk_digests IS NULL`,
 		`UPDATE backup_blobs SET chunk_digests = ? WHERE storage_key = ? AND ciphertext_sha256 = ? AND size_bytes = ? AND chunk_digests IS NULL`,
+		`UPDATE device_history_transfers SET chunk_digests = ? WHERE storage_key = ? AND ciphertext_sha256 = ? AND size_bytes = ? AND chunk_digests IS NULL`,
 	} {
 		if _, err := tx.ExecContext(ctx, query, chunkDigests, storageKey, ciphertextSHA256, sizeBytes); err != nil {
 			return err

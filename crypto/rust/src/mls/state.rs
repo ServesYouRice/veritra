@@ -1,4 +1,4 @@
-use super::{encode_device_identity, MlsDevice, MlsError, CIPHERSUITE};
+use super::{encode_device_identity, transfer, MlsDevice, MlsError, CIPHERSUITE};
 use aes_gcm::{
     aead::{Aead, KeyInit, Payload},
     Aes256Gcm, Nonce,
@@ -8,11 +8,14 @@ use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
 use openmls_traits::{random::OpenMlsRand, OpenMlsProvider};
 use std::collections::HashMap;
+use tls_codec::SecretVLBytes;
 
 const MAGIC: &[u8; 8] = b"PMMLSST1";
-// Version 2: state sealed under OpenMLS 0.9. Version 1 blobs (OpenMLS 0.8.1)
-// fail closed instead of being restored into a newer storage layout.
-const FORMAT_VERSION: u16 = 2;
+// V2 provider-only state remains readable. V3 adds typed durable transfer
+// records. V1 (OpenMLS 0.8.1) and unknown future formats still fail closed.
+const FORMAT_VERSION: u16 = 3;
+const LEGACY_FORMAT_VERSION: u16 = 2;
+const PLAINTEXT_MAGIC: &[u8; 8] = b"PMMLSPL3";
 const NONCE_BYTES: usize = 12;
 const KEY_BYTES: usize = 32;
 const MAX_STATE_BYTES: usize = 32 * 1024 * 1024;
@@ -33,7 +36,37 @@ impl MlsDevice {
             .values
             .read()
             .map_err(|_| MlsError::Storage)?;
-        let plaintext = encode_records(&values)?;
+        let records: SecretVLBytes = encode_records(&values)?.into();
+        let transfers = transfer::encode(
+            &self.pending_transfers,
+            &self.account_id,
+            &self.device_id,
+            self.signer.public(),
+            &self.provider,
+        )?;
+        let plaintext_size = PLAINTEXT_MAGIC
+            .len()
+            .checked_add(4)
+            .and_then(|len| len.checked_add(records.as_slice().len()))
+            .and_then(|len| len.checked_add(transfers.as_slice().len()))
+            .ok_or(MlsError::InvalidState)?;
+        if plaintext_size > MAX_STATE_BYTES {
+            return Err(MlsError::InvalidState);
+        }
+        // Reserve once: growing a Vec after copying secrets would leave an
+        // old allocation outside the zero-on-drop wrapper's final buffer.
+        let mut plaintext = SecretVLBytes::new(Vec::with_capacity(plaintext_size));
+        for byte in PLAINTEXT_MAGIC
+            .iter()
+            .chain((records.as_slice().len() as u32).to_be_bytes().iter())
+            .chain(records.as_slice())
+            .chain(transfers.as_slice())
+        {
+            plaintext.push(*byte);
+        }
+        if plaintext.as_slice().len() > MAX_STATE_BYTES {
+            return Err(MlsError::InvalidState);
+        }
         let nonce = self
             .provider
             .rand()
@@ -53,7 +86,7 @@ impl MlsDevice {
             .encrypt(
                 &nonce,
                 Payload {
-                    msg: &plaintext,
+                    msg: plaintext.as_slice(),
                     aad: &header,
                 },
             )
@@ -84,7 +117,8 @@ impl MlsDevice {
         if reader.take(MAGIC.len())? != MAGIC {
             return Err(MlsError::InvalidState);
         }
-        if reader.u16()? != FORMAT_VERSION {
+        let version = reader.u16()?;
+        if version != FORMAT_VERSION && version != LEGACY_FORMAT_VERSION {
             return Err(MlsError::InvalidState);
         }
         let counter = reader.u64()?;
@@ -104,7 +138,7 @@ impl MlsDevice {
         }
         let cipher = Aes256Gcm::new_from_slice(state_key).map_err(|_| MlsError::InvalidState)?;
         let nonce = Nonce::try_from(nonce.as_slice()).map_err(|_| MlsError::InvalidState)?;
-        let plaintext = cipher
+        let plaintext: SecretVLBytes = cipher
             .decrypt(
                 &nonce,
                 Payload {
@@ -112,9 +146,30 @@ impl MlsDevice {
                     aad: &sealed[..aad_end],
                 },
             )
-            .map_err(|_| MlsError::InvalidState)?;
-        let records = decode_records(&plaintext)?;
+            .map_err(|_| MlsError::InvalidState)?
+            .into();
         let provider = OpenMlsRustCrypto::default();
+        let (records, pending_transfers) = if version == LEGACY_FORMAT_VERSION {
+            (decode_records(plaintext.as_slice())?, Default::default())
+        } else {
+            let mut payload = Reader::new(plaintext.as_slice());
+            if payload.take(PLAINTEXT_MAGIC.len())? != PLAINTEXT_MAGIC {
+                return Err(MlsError::InvalidState);
+            }
+            let record_bytes = payload.u32()? as usize;
+            if record_bytes > MAX_STATE_BYTES {
+                return Err(MlsError::InvalidState);
+            }
+            let records = decode_records(payload.take(record_bytes)?)?;
+            let transfers = transfer::decode(
+                &plaintext.as_slice()[payload.offset..],
+                account_id,
+                device_id,
+                &public_key,
+                &provider,
+            )?;
+            (records, transfers)
+        };
         *provider
             .storage()
             .values
@@ -138,6 +193,7 @@ impl MlsDevice {
                 credential,
                 account_id: account_id.to_vec(),
                 device_id: device_id.to_vec(),
+                pending_transfers,
             },
             counter,
         ))
@@ -148,9 +204,25 @@ fn encode_records(values: &HashMap<Vec<u8>, Vec<u8>>) -> Result<Vec<u8>, MlsErro
     if values.len() > MAX_RECORDS {
         return Err(MlsError::InvalidState);
     }
-    let mut output = Vec::new();
-    output.extend_from_slice(&(values.len() as u32).to_be_bytes());
+    let mut output_size = 4usize;
     for (key, value) in values {
+        if key.len() > MAX_RECORD_BYTES || value.len() > MAX_RECORD_BYTES {
+            return Err(MlsError::InvalidState);
+        }
+        output_size = output_size
+            .checked_add(8)
+            .and_then(|len| len.checked_add(key.len()))
+            .and_then(|len| len.checked_add(value.len()))
+            .ok_or(MlsError::InvalidState)?;
+        if output_size > MAX_STATE_BYTES {
+            return Err(MlsError::InvalidState);
+        }
+    }
+    let mut output = Vec::with_capacity(output_size);
+    output.extend_from_slice(&(values.len() as u32).to_be_bytes());
+    let mut records: Vec<_> = values.iter().collect();
+    records.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+    for (key, value) in records {
         if key.len() > MAX_RECORD_BYTES || value.len() > MAX_RECORD_BYTES {
             return Err(MlsError::InvalidState);
         }
@@ -256,6 +328,135 @@ mod tests {
     use super::*;
 
     const KEY: [u8; KEY_BYTES] = [7; KEY_BYTES];
+
+    #[test]
+    fn genuine_v2_fixture_upgrades_without_losing_signer_or_live_group() {
+        let sealed = include_bytes!("../../tests/fixtures/state-v2/source.bin");
+        assert_eq!(&sealed[8..10], &2u16.to_be_bytes());
+        let (source, count) =
+            MlsDevice::restore_state(b"acct_fixture", b"dev_old", &[0x71; 32], 41, sealed).unwrap();
+        assert_eq!(count, 41);
+        assert_eq!(
+            source.signing_public_key(),
+            include_bytes!("../../tests/fixtures/state-v2/source-public.bin")
+        );
+        assert!(source.pending_transfers.is_empty());
+        let mut group = source.load_group(b"conv_fixture").unwrap();
+        assert_eq!(
+            source
+                .decrypt(
+                    &mut group,
+                    include_bytes!("../../tests/fixtures/state-v2/peer-next.bin"),
+                    b"acct_peer",
+                    b"dev_peer"
+                )
+                .unwrap(),
+            b"synthetic-after-upgrade"
+        );
+        let upgraded = source.seal_state(&[0x71; 32], 42).unwrap();
+        assert_eq!(&upgraded[8..10], &3u16.to_be_bytes());
+        let (source, count) =
+            MlsDevice::restore_state(b"acct_fixture", b"dev_old", &[0x71; 32], 42, &upgraded)
+                .unwrap();
+        assert_eq!(count, 42);
+        assert_eq!(
+            source.signing_public_key(),
+            include_bytes!("../../tests/fixtures/state-v2/source-public.bin")
+        );
+        let mut group = source.load_group(b"conv_fixture").unwrap();
+        let (peer, _) = MlsDevice::restore_state(
+            b"acct_peer",
+            b"dev_peer",
+            &[0x72; 32],
+            42,
+            include_bytes!("../../tests/fixtures/state-v2/peer.bin"),
+        )
+        .unwrap();
+        let mut peer_group = peer.load_group(b"conv_fixture").unwrap();
+        let message = source
+            .encrypt(&mut group, b"synthetic-upgraded-source")
+            .unwrap();
+        assert_eq!(
+            peer.decrypt(&mut peer_group, &message, b"acct_fixture", b"dev_old")
+                .unwrap(),
+            b"synthetic-upgraded-source"
+        );
+        let reply = peer
+            .encrypt(&mut peer_group, b"synthetic-peer-reply")
+            .unwrap();
+        assert_eq!(
+            source
+                .decrypt(&mut group, &reply, b"acct_peer", b"dev_peer")
+                .unwrap(),
+            b"synthetic-peer-reply"
+        );
+        assert!(matches!(
+            MlsDevice::restore_state(b"acct_fixture", b"dev_old", &[0x71; 32], 43, &upgraded),
+            Err(MlsError::Rollback)
+        ));
+    }
+
+    #[test]
+    fn authenticated_v3_wrapper_must_be_exact_and_keep_provider_record_checks() {
+        let device = MlsDevice::new(b"acct_wrapper", b"dev_wrapper").unwrap();
+        let sealed = device.seal_state(&KEY, 3).unwrap();
+        let mut reader = Reader::new(&sealed);
+        reader.take(8).unwrap();
+        reader.u16().unwrap();
+        reader.u64().unwrap();
+        reader.u16_bytes().unwrap();
+        reader.u16_bytes().unwrap();
+        reader.u16_bytes().unwrap();
+        let nonce = reader.take(12).unwrap().to_vec();
+        let aad_end = reader.offset;
+        let length = reader.u32().unwrap() as usize;
+        let ciphertext = reader.take(length).unwrap();
+        let cipher = Aes256Gcm::new_from_slice(&KEY).unwrap();
+        let nonce = Nonce::try_from(nonce.as_slice()).unwrap();
+        let original = cipher
+            .decrypt(
+                &nonce,
+                Payload {
+                    msg: ciphertext,
+                    aad: &sealed[..aad_end],
+                },
+            )
+            .unwrap();
+        for change in 0..4 {
+            let mut payload = original.clone();
+            match change {
+                0 => payload[0] ^= 1,
+                1 => payload[8..12].copy_from_slice(&u32::MAX.to_be_bytes()),
+                2 => payload.push(0),
+                _ => {
+                    let duplicate = [
+                        0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 1, b'k', 1, 0, 0, 0, 1, 0, 0, 0, 1, b'k',
+                        2,
+                    ];
+                    payload = PLAINTEXT_MAGIC.to_vec();
+                    payload.extend_from_slice(&(duplicate.len() as u32).to_be_bytes());
+                    payload.extend_from_slice(&duplicate);
+                    payload.extend_from_slice(&0u16.to_be_bytes());
+                }
+            }
+            let encrypted = cipher
+                .encrypt(
+                    &nonce,
+                    Payload {
+                        msg: &payload,
+                        aad: &sealed[..aad_end],
+                    },
+                )
+                .unwrap();
+            let mut malformed = sealed[..aad_end].to_vec();
+            malformed.extend_from_slice(&(encrypted.len() as u32).to_be_bytes());
+            malformed.extend_from_slice(&encrypted);
+            assert!(matches!(
+                MlsDevice::restore_state(b"acct_wrapper", b"dev_wrapper", &KEY, 3, &malformed),
+                Err(MlsError::InvalidState)
+            ));
+        }
+    }
 
     #[test]
     fn sealed_state_restores_groups_and_signing_identity() {

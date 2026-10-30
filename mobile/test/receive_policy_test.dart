@@ -30,6 +30,8 @@ void main() {
   final skip = configured == null && !inCi
       ? 'native crypto library absent: set VERITRA_CRYPTO_LIBRARY'
       : false;
+  final databases = <EncryptedLocalDatabase>[];
+  MlsCommitFailureInjector? boundedFailure;
 
   final variants = <String, Future<LocalStore> Function(Directory)>{
     'in-memory store': (_) async => MemoryLocalStore(),
@@ -38,6 +40,14 @@ void main() {
       return SecureLocalStore(
         storage: const FlutterSecureStorage(),
         directoryProvider: () async => directory,
+        mlsCommitFailureInjector: (stage) async {
+          await boundedFailure?.call(stage);
+        },
+        databaseFactory: (file, key) {
+          final db = openEncryptedLocalDatabase(file, key);
+          databases.add(db);
+          return db;
+        },
       );
     },
   };
@@ -48,6 +58,7 @@ void main() {
       late _Pair pair;
 
       setUp(() async {
+        boundedFailure = null;
         directory = await Directory.systemTemp.createTemp('veritra-policy-');
         final store = await variant.value(directory);
         pair = await _Pair.start(
@@ -59,7 +70,89 @@ void main() {
 
       tearDown(() async {
         await pair.dispose();
+        for (final db in databases) {
+          await db.close();
+        }
+        databases.clear();
+        await SecureLocalStore.releaseInstanceLocks();
         if (await directory.exists()) await directory.delete(recursive: true);
+      });
+
+      test(
+          'bounded cancellation preserves ratchet, cursor and history for retry',
+          () async {
+        for (final stage in variant.key == 'Drift store'
+            ? [MlsCommitStage.afterState, MlsCommitStage.afterMessageEffects]
+            : <MlsCommitStage?>[null]) {
+          final before = (await pair.store.loadCryptoState())!;
+          final cursor = await pair.store.loadSyncCursor();
+          final beforeMessages = await pair.messages();
+          var active = stage != null;
+          final action = 'bounded_${stage?.name ?? 'entry'}';
+          final item = pair.envelope(
+              pair.alice.encrypt(_conversation,
+                  _frame(_payload('text', action, actionId: action))),
+              action);
+          final event = ++pair.events;
+          boundedFailure = (at) async {
+            if (at == stage) active = false;
+          };
+          void fence() {
+            if (!active) throw StateError('test permit revoked');
+          }
+
+          await expectLater(
+              pair.bob.processApplicationMessageBounded(item, event,
+                  checkCanCommit: fence),
+              throwsStateError);
+          final unchanged = (await pair.store.loadCryptoState())!;
+          expect(unchanged.counter, before.counter);
+          expect(unchanged.sealedState, before.sealedState);
+          expect(await pair.store.loadSyncCursor(), cursor);
+          expect(await pair.messages(), beforeMessages);
+          expect(
+              await pair.store
+                  .hasProcessedMlsMessage('application:$event:${item.id}'),
+              isFalse);
+          boundedFailure = null;
+          active = true;
+          expect(
+              utf8.decode((await pair.bob.processApplicationMessageBounded(
+                  item, event,
+                  checkCanCommit: fence))!),
+              action);
+          expect(await pair.store.loadSyncCursor(), event);
+          expect(
+              await pair.store
+                  .hasProcessedMlsMessage('application:$event:${item.id}'),
+              isTrue);
+        }
+      });
+
+      test('bounded existing activation cannot create pending enrollment state',
+          () async {
+        final empty = MemoryLocalStore();
+        final service = NativeCryptoService(
+            bindings: NativeCryptoBindings.open(
+                configured ?? fail('set VERITRA_CRYPTO_LIBRARY')),
+            localStore: empty);
+        addTearDown(service.dispose);
+        await service.createEnrollmentCredential(const EnrollmentReservation(
+            id: 'pending',
+            accountId: 'acct_pending',
+            deviceId: 'dev_pending',
+            challenge: [1, 2, 3]));
+        await expectLater(
+            service.activateExistingSessionBounded(
+                const Session(
+                    baseUrl: 'https://example.test',
+                    token: 'fixture',
+                    accountId: 'acct_pending',
+                    deviceId: 'dev_pending'),
+                checkCanCommit: () {}),
+            throwsStateError);
+        expect(await empty.loadCryptoState(), isNull);
+        expect(await empty.loadSyncCursor(), 0);
       });
 
       test('an invalid message commits, then a normal one still decrypts',
@@ -182,7 +275,7 @@ void main() {
         await pair.receive(
             _frame(jsonEncode(<String, Object?>{
               ..._head(2, 'h1'),
-              'type': 'pin',
+              'type': 'admin_delete',
               'hidden': true,
               'body': <String, Object?>{'message_id': 'x'},
             })),
@@ -193,6 +286,7 @@ void main() {
             .singleWhere((m) => m.key == messageKey(_senderDevice, 'h1'));
         expect(row.deletedAt, isNotNull);
         expect(row.body, '{"hidden":true}');
+        expect(row.senderHidden, true);
       });
 
       test('a reply to a placeholder row never quotes its JSON', () {
@@ -334,12 +428,20 @@ void main() {
     test('rolls everything back, and the retry commits the same row', () async {
       final directory =
           await Directory.systemTemp.createTemp('veritra-policy-inject-');
-      addTearDown(() => directory.delete(recursive: true));
+      addTearDown(() async {
+        await SecureLocalStore.releaseInstanceLocks();
+        await directory.delete(recursive: true);
+      });
       FlutterSecureStorage.setMockInitialValues(<String, String>{});
       var armed = false;
       final store = SecureLocalStore(
         storage: const FlutterSecureStorage(),
         directoryProvider: () async => directory,
+        databaseFactory: (file, key) {
+          final db = openEncryptedLocalDatabase(file, key);
+          databases.add(db);
+          return db;
+        },
         mlsCommitFailureInjector: (stage) async {
           if (armed && stage == MlsCommitStage.afterMessageEffects) {
             armed = false;
@@ -347,6 +449,12 @@ void main() {
           }
         },
       );
+      addTearDown(() async {
+        for (final db in databases) {
+          await db.close();
+        }
+        databases.clear();
+      });
       final pair = await _Pair.start(
           NativeCryptoBindings.open(
               configured ?? fail('set VERITRA_CRYPTO_LIBRARY')),

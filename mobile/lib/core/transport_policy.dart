@@ -1,4 +1,4 @@
-import 'api_client.dart';
+import 'server_origin.dart';
 
 /// Which server origins this build may talk to.
 ///

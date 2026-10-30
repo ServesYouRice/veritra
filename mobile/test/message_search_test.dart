@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'schema_fixtures.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
@@ -317,6 +319,7 @@ void main() {
       await database.customStatement('DROP INDEX local_messages_search_id');
       await database
           .customStatement('ALTER TABLE local_messages DROP COLUMN search_id');
+      await stripW8Schema(database);
       await database.customStatement('PRAGMA user_version = 11');
       await database.close();
       databases.removeLast();
@@ -326,7 +329,8 @@ void main() {
       final reopened = databases.last;
       final version =
           await reopened.customSelect('PRAGMA user_version').getSingle();
-      expect(version.read<int>('user_version'), 12);
+      expect(version.read<int>('user_version'),
+          EncryptedLocalDatabase.currentSchemaVersion);
       // And it stays in step afterwards.
       await reopened.applyMessageEffects(<MessageEffect>[
         message('c', 'written after the index', at: 3),

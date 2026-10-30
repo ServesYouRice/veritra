@@ -6,8 +6,10 @@ use crate::{
 use core::ptr;
 use std::{
     panic::{catch_unwind, AssertUnwindSafe},
-    sync::Mutex,
+    sync::{Arc, Mutex, Weak},
 };
+
+mod k2;
 
 pub const PM_CRYPTO_OK: i32 = 0;
 pub const PM_CRYPTO_INVALID_ARGUMENT: i32 = -2;
@@ -32,7 +34,14 @@ const ATTACHMENT_NONCE_PREFIX_BYTES: usize = 8;
 /// Opaque, library-owned device state. Callers receive only a pointer and must
 /// destroy it exactly once with [`pm_crypto_device_destroy`].
 pub struct PmCryptoHandle {
-    device: Mutex<MlsDevice>,
+    device: Arc<Mutex<MlsDevice>>,
+    active_stream: Mutex<Weak<Mutex<k2::streams::StreamState>>>,
+}
+
+impl Drop for PmCryptoHandle {
+    fn drop(&mut self) {
+        k2::streams::invalidate(self);
+    }
 }
 
 /// Library-owned output. The caller must release it exactly once with
@@ -157,7 +166,8 @@ pub unsafe extern "C" fn pm_crypto_device_create(
         let device_id = unsafe { borrowed(device_id, MAX_ID_BYTES)? };
         let device = MlsDevice::new(account_id, device_id).map_err(|_| PM_CRYPTO_ERROR)?;
         let handle = Box::into_raw(Box::new(PmCryptoHandle {
-            device: Mutex::new(device),
+            device: Arc::new(Mutex::new(device)),
+            active_stream: Mutex::new(Weak::new()),
         }));
         // SAFETY: out_handle was checked and points to caller-owned writable
         // pointer storage for this call.
@@ -196,7 +206,8 @@ pub unsafe extern "C" fn pm_crypto_device_restore(
             MlsDevice::restore_state(account_id, device_id, state_key, minimum_counter, sealed)
                 .map_err(|_| PM_CRYPTO_ERROR)?;
         let handle = Box::into_raw(Box::new(PmCryptoHandle {
-            device: Mutex::new(device),
+            device: Arc::new(Mutex::new(device)),
+            active_stream: Mutex::new(Weak::new()),
         }));
         // SAFETY: Both outputs were checked and are written only after a full
         // restore succeeds.
@@ -232,8 +243,11 @@ pub unsafe extern "C" fn pm_crypto_buffer_free(buffer: PmOwnedBuffer) {
     }
     let raw = ptr::slice_from_raw_parts_mut(buffer.data, buffer.len);
     // SAFETY: Ownership is transferred back by the caller exactly once.
-    let mut boxed = unsafe { Box::from_raw(raw) };
-    boxed.fill(0);
+    let boxed = unsafe { Box::from_raw(raw) };
+    // SecretVLBytes uses zeroize's non-elidable clearing on drop. Reuse the
+    // exact allocation; no extra secret copy or competing allocator contract.
+    let secret: tls_codec::SecretVLBytes = boxed.into_vec().into();
+    drop(secret);
 }
 
 /// Returns the public Ed25519 key used by the MLS credential.
@@ -252,12 +266,14 @@ pub unsafe extern "C" fn pm_crypto_device_signing_public_key(
     })
 }
 
-/// Derives the credential-bound device-link transcript hash. The SAS is
-/// formatted locally by the caller from the first four hash bytes.
+/// ABI v7: hash32 || claim_tag32 || approval_tag32 || sas_mac_prefix4.
 #[no_mangle]
 pub unsafe extern "C" fn pm_crypto_device_link_transcript_hash(
     handle: *mut PmCryptoHandle,
     protocol_version: PmByteSlice,
+    server_origin: PmByteSlice,
+    link_id: PmByteSlice,
+    link_secret: PmByteSlice,
     peer_device_id: PmByteSlice,
     peer_signing_public_key: PmByteSlice,
     link_nonce: PmByteSlice,
@@ -269,6 +285,9 @@ pub unsafe extern "C" fn pm_crypto_device_link_transcript_hash(
             return Err(PM_CRYPTO_INVALID_ARGUMENT);
         }
         let protocol_version = unsafe { borrowed(protocol_version, 64)? };
+        let server_origin = unsafe { borrowed(server_origin, 2048)? };
+        let link_id = unsafe { borrowed(link_id, MAX_ID_BYTES)? };
+        let link_secret = unsafe { borrowed(link_secret, 16)? };
         let peer_device_id = unsafe { borrowed(peer_device_id, MAX_ID_BYTES)? };
         let peer_signing_public_key = unsafe { borrowed(peer_signing_public_key, 32)? };
         let link_nonce = unsafe { borrowed(link_nonce, 32)? };
@@ -280,16 +299,33 @@ pub unsafe extern "C" fn pm_crypto_device_link_transcript_hash(
                 device
                     .derive_device_link_verification(
                         protocol_version,
+                        server_origin,
+                        link_id,
+                        link_secret,
                         peer_device_id,
                         peer_signing_public_key,
                         link_nonce,
                         local_is_existing_device == 1,
                     )
-                    .map(|verification| verification.transcript_hash)
+                    .map(|v| [v.transcript_hash, v.claim_tag, v.approval_tag, v.sas_bytes].concat())
                     .map_err(|_| PM_CRYPTO_INVALID_ARGUMENT)
             })?
         };
         unsafe { output(out, transcript_hash) }
+    })
+}
+
+/// ABI v7 locator. `secret` must be readable and `out` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_device_link_locator(
+    secret: PmByteSlice,
+    out: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        let secret = unsafe { borrowed(secret, 16)? };
+        let locator =
+            crate::mls::device_link_locator(secret).map_err(|_| PM_CRYPTO_INVALID_ARGUMENT)?;
+        unsafe { output(out, locator) }
     })
 }
 
@@ -1073,6 +1109,18 @@ mod tests {
 
     #[test]
     fn invalid_ffi_inputs_fail_without_partial_outputs() {
+        let mut locator = PmOwnedBuffer::default();
+        assert_eq!(
+            unsafe { pm_crypto_device_link_locator(slice(&[1; 15]), &mut locator) },
+            PM_CRYPTO_INVALID_ARGUMENT
+        );
+        assert!(locator.data.is_null());
+        assert_eq!(locator.len, 0);
+        assert_eq!(
+            unsafe { pm_crypto_device_link_locator(slice(&[1; 16]), &mut locator) },
+            PM_CRYPTO_OK
+        );
+        assert_eq!(unsafe { take(locator) }.len(), 32);
         let mut handle = ptr::null_mut();
         assert_eq!(
             unsafe { pm_crypto_device_create(slice(b""), slice(b"dev_a"), &mut handle) },

@@ -58,9 +58,21 @@ class ChatListScreen extends StatelessWidget {
     // Strangers wait in a Requests section above the chats (B8).
     final requests =
         conversations.where(state.isMessageRequest).toList(growable: false);
+    final positions = {for (final (i, c) in conversations.indexed) c.id: i};
     final chats = conversations
-        .where((c) => !state.isMessageRequest(c))
-        .toList(growable: false);
+        .where((c) =>
+            !state.isMessageRequest(c) &&
+            state.isArchived(c.id) == state.showArchivedChats)
+        .toList()
+      ..sort((a, b) {
+        final ap = state.conversationPrefs[a.id]?.pinnedAt,
+            bp = state.conversationPrefs[b.id]?.pinnedAt;
+        if (ap == null && bp == null)
+          return positions[a.id]!.compareTo(positions[b.id]!);
+        if (ap == null) return 1;
+        if (bp == null) return -1;
+        return bp.compareTo(ap);
+      });
     final requestRows = requests.isEmpty ? 0 : requests.length + 1;
     return Scaffold(
       appBar: AppBar(
@@ -72,10 +84,20 @@ class ChatListScreen extends StatelessWidget {
         toolbarHeight: 64,
         titleSpacing: BoneSpacing.gutter,
         title: Text(
-          context.l10n.navChats,
+          state.showArchivedChats
+              ? context.l10n.w8ArchivedChats
+              : context.l10n.navChats,
           style: theme.textTheme.displaySmall,
         ),
         actions: <Widget>[
+          IconButton(
+              tooltip: state.showArchivedChats
+                  ? context.l10n.w8Chats
+                  : context.l10n.w8ArchivedChats,
+              onPressed: state.toggleArchivedChats,
+              icon: Icon(state.showArchivedChats
+                  ? Icons.chat_outlined
+                  : Icons.archive_outlined)),
           RefreshAction(onRefresh: state.refreshConversations),
           IconButton(
             tooltip: context.l10n.chatListSearch,
@@ -229,6 +251,18 @@ class ChatListScreen extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
             ListTile(
+                leading: const Icon(Icons.archive_outlined),
+                title: Text(state.isArchived(conversation.id)
+                    ? context.l10n.w8Unarchive
+                    : context.l10n.w8Archive),
+                onTap: () => Navigator.of(sheetContext).pop('archive')),
+            ListTile(
+                leading: const Icon(Icons.push_pin_outlined),
+                title: Text(state.isChatPinned(conversation.id)
+                    ? context.l10n.w8UnpinChat
+                    : context.l10n.w8PinChat),
+                onTap: () => Navigator.of(sheetContext).pop('pin')),
+            ListTile(
               leading: Icon(
                 muted
                     ? Icons.notifications_active_outlined
@@ -249,6 +283,22 @@ class ChatListScreen extends StatelessWidget {
       ),
     );
     if (!context.mounted || action == null) {
+      return;
+    }
+    if (action == 'archive' || action == 'pin') {
+      try {
+        if (action == 'archive') {
+          await state.setConversationArchived(
+              conversation.id, !state.isArchived(conversation.id));
+        } else {
+          await state.setChatPinned(
+              conversation.id, !state.isChatPinned(conversation.id));
+        }
+      } catch (error) {
+        if (context.mounted)
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
       return;
     }
     if (action == 'details') {
@@ -293,6 +343,8 @@ List<Object?> _chatListSelection(AppState state, {required bool embedded}) {
     embedded ? state.selectedConversationId : null,
     for (final conversation in conversations) state.isMuted(conversation.id),
     state.requestStateLoaded,
+    state.conversationPrefs,
+    state.showArchivedChats,
     for (final conversation in conversations) state.requestBucket(conversation),
   ];
 }

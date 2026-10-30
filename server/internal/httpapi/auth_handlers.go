@@ -532,7 +532,8 @@ func (a *API) listDevices(w http.ResponseWriter, r *http.Request, principal doma
 }
 
 type createDeviceLinkRequest struct {
-	ExpiresInSeconds int64 `json:"expires_in_seconds,omitempty"`
+	Code             string `json:"code"`
+	ExpiresInSeconds int64  `json:"expires_in_seconds,omitempty"`
 }
 
 func (a *API) createDeviceLink(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
@@ -544,7 +545,7 @@ func (a *API) createDeviceLink(w http.ResponseWriter, r *http.Request, principal
 	if !decodeOptionalJSON(w, r, &req) {
 		return
 	}
-	link, err := a.Store.CreateDeviceLink(r.Context(), principal.AccountID, principal.DeviceID, time.Duration(req.ExpiresInSeconds)*time.Second)
+	link, err := a.Store.CreateDeviceLink(r.Context(), principal.AccountID, principal.DeviceID, time.Duration(req.ExpiresInSeconds)*time.Second, req.Code)
 	if err != nil {
 		handleStorageError(w, err)
 		return
@@ -560,6 +561,7 @@ type claimDeviceLinkRequest struct {
 	SigningKey              []byte `json:"signing_key,omitempty"`
 	ChallengeSignature      []byte `json:"challenge_signature"`
 	TranscriptHash          []byte `json:"transcript_hash"`
+	ClaimTag                []byte `json:"claim_tag"`
 }
 
 func (a *API) reserveDeviceLinkEnrollment(w http.ResponseWriter, r *http.Request) {
@@ -602,7 +604,7 @@ func (a *API) claimDeviceLink(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_device_key_package")
 		return
 	}
-	if len(req.SigningKey) != ed25519.PublicKeySize || len(req.ChallengeSignature) != ed25519.SignatureSize || len(req.TranscriptHash) != sha256.Size {
+	if len(req.SigningKey) != ed25519.PublicKeySize || len(req.ChallengeSignature) != ed25519.SignatureSize || len(req.TranscriptHash) != sha256.Size || len(req.ClaimTag) != sha256.Size {
 		writeError(w, http.StatusBadRequest, "invalid_enrollment")
 		return
 	}
@@ -627,7 +629,7 @@ func (a *API) claimDeviceLink(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "device_secret_create_failed")
 		return
 	}
-	link, err := a.Store.ClaimDeviceLink(r.Context(), req.Code, req.DeviceName, req.DeviceKeyPackage, req.SigningKey, req.TranscriptHash, claimTokenHash, deviceAuthHash)
+	link, err := a.Store.ClaimDeviceLink(r.Context(), req.Code, req.DeviceName, req.DeviceKeyPackage, req.SigningKey, req.TranscriptHash, req.ClaimTag, claimTokenHash, deviceAuthHash)
 	if err != nil {
 		if errors.Is(err, storage.ErrDeviceLinkInvalid) {
 			writeError(w, http.StatusBadRequest, "invalid_device_link")
@@ -671,15 +673,16 @@ func (a *API) deviceLinkSubroute(w http.ResponseWriter, r *http.Request) {
 		}
 		var req struct {
 			TranscriptHash []byte `json:"transcript_hash"`
+			ApprovalTag    []byte `json:"approval_tag"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		if len(req.TranscriptHash) != sha256.Size {
+		if len(req.TranscriptHash) != sha256.Size || len(req.ApprovalTag) != sha256.Size {
 			writeError(w, http.StatusBadRequest, "transcript_hash_required")
 			return
 		}
-		link, device, eventID, err := a.Store.ApproveDeviceLinkWithSyncEvent(r.Context(), linkID, principal.AccountID, req.TranscriptHash)
+		link, device, eventID, err := a.Store.ApproveDeviceLinkWithSyncEvent(r.Context(), linkID, principal.AccountID, req.TranscriptHash, req.ApprovalTag)
 		if err != nil {
 			switch {
 			case errors.Is(err, storage.ErrDeviceLinkVerificationFailed):
@@ -719,12 +722,12 @@ func (a *API) deviceLinkSubroute(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		transcriptHash, err := a.Store.DeviceLinkTranscriptForClaim(r.Context(), linkID, auth.HashToken(claimToken))
+		transcriptHash, approvalTag, err := a.Store.DeviceLinkTranscriptForClaim(r.Context(), linkID, auth.HashToken(claimToken))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_device_link")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"account": linked.Account, "device": linked.Device, "token": sessionToken, "transcript_hash": transcriptHash})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"account": linked.Account, "device": linked.Device, "token": sessionToken, "transcript_hash": transcriptHash, "approval_tag": approvalTag})
 	default:
 		writeError(w, http.StatusNotFound, "not_found")
 	}

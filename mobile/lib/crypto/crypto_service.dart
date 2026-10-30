@@ -20,12 +20,16 @@ class EncryptedCallSignal {
 }
 
 abstract class CryptoService {
+  Future<String> deviceLinkLocator(List<int> secret);
   Future<EnrollmentCredential> createEnrollmentCredential(
       EnrollmentReservation reservation);
   Future<MessageEnvelope> encrypt(String conversationId, String plaintext);
   Future<DeviceLinkVerification> deriveDeviceLinkVerification({
     required String accountId,
     required String protocolVersion,
+    required String serverOrigin,
+    required String linkId,
+    required List<int> linkSecret,
     required List<int> linkNonce,
     required String peerDeviceId,
     required List<int> peerSigningKey,
@@ -72,11 +76,14 @@ abstract class MlsConversationCryptoService implements CryptoService {
 
   /// [attachmentRefs] names the uploaded ciphertext blobs the message
   /// refers to, so the server expires them with it.
+  /// [draftText] is the original composer text, before formatting markers
+  /// are stripped. It stays local and clears that draft atomically with send.
   Future<MessageEnvelope> encryptPayload(
     String conversationId,
     AppPayloadType type,
     Map<String, Object?> body, {
     List<String> attachmentRefs = const <String>[],
+    String? draftText,
   });
   Future<List<int>?> processApplicationMessage(
     ReceivedMessageEnvelope envelope,
@@ -85,7 +92,56 @@ abstract class MlsConversationCryptoService implements CryptoService {
   Future<void> dispose();
 }
 
+/// Inbound-only operations authorized by one short-lived background permit.
+/// The captured synchronous fence is checked at native mutation boundaries
+/// and by the same atomic storage transaction. It must throw when ownership
+/// or the permit has ended; callers still drain that transaction normally.
+abstract interface class BoundedMlsConversationCryptoService
+    implements MlsConversationCryptoService {
+  Future<void> activateExistingSessionBounded(Session session,
+      {required void Function() checkCanCommit});
+  Future<void> processMlsMessageBounded(MlsMessage message,
+      {required void Function() checkCanCommit});
+  Future<List<int>?> processApplicationMessageBounded(
+      ReceivedMessageEnvelope envelope, int syncEventId,
+      {required void Function() checkCanCommit});
+  Future<Map<String, Object?>?> processCallSignalBounded(
+      CallSession call, int syncEventId,
+      {required void Function() checkCanCommit});
+}
+
+/// Cached server roles today; C4 will replace this source with encrypted roles.
+abstract interface class ConversationAuthority {
+  String? roleOf(String conversationId, String accountId);
+  Set<String> memberAccounts(String conversationId);
+  String? conversationKind(String conversationId);
+  String? conversationChannel(String conversationId);
+}
+
+abstract interface class ConversationAuthorityConsumer {
+  set conversationAuthority(ConversationAuthority authority);
+}
+
+/// Off by default. AppState enables this only for the current verified
+/// subscription's local-decryption capability. The service freezes the grant
+/// for each queued inbound operation, never enabling capture halfway through.
+abstract interface class NoticeCaptureConsumer {
+  bool get noticeCaptureEnabled;
+  set noticeCaptureEnabled(bool enabled);
+}
+
+/// A local owner/capability ended before commit. Retrying under the current
+/// owner is safe; this is not evidence of a malformed or undecryptable message.
+class CryptoOperationCancelled implements Exception {
+  const CryptoOperationCancelled();
+  @override
+  String toString() => 'crypto operation ownership changed';
+}
+
 class UnavailableCryptoService implements CryptoService {
+  @override
+  Future<String> deviceLinkLocator(List<int> secret) async =>
+      throw StateError("Device linking is unavailable");
   @override
   Future<EnrollmentCredential> createEnrollmentCredential(
       EnrollmentReservation reservation) async {
@@ -103,6 +159,9 @@ class UnavailableCryptoService implements CryptoService {
   Future<DeviceLinkVerification> deriveDeviceLinkVerification({
     required String accountId,
     required String protocolVersion,
+    required String serverOrigin,
+    required String linkId,
+    required List<int> linkSecret,
     required List<int> linkNonce,
     required String peerDeviceId,
     required List<int> peerSigningKey,

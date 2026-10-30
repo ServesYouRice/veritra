@@ -12,13 +12,17 @@ use openmls_traits::{signatures::Signer, OpenMlsProvider};
 use sha2::{Digest, Sha256, Sha512};
 use tls_codec::{Deserialize as TlsDeserializeTrait, Serialize as TlsSerializeTrait};
 
+#[allow(dead_code)]
+pub(crate) mod link_v3;
 mod state;
+#[allow(dead_code)]
+pub(crate) mod transfer;
 
 const CIPHERSUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
 const MAX_ID_BYTES: usize = 128;
 const PADDING_BYTES: usize = 256;
 const CREDENTIAL_FORMAT_VERSION: u8 = 1;
-const DEVICE_LINK_PROTOCOL_VERSION: &[u8] = b"veritra-device-link-v1";
+const DEVICE_LINK_PROTOCOL_VERSION: &[u8] = b"veritra-device-link-v2";
 const DEVICE_LINK_TRANSCRIPT_DOMAIN: &[u8] = b"veritra-device-link-transcript";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -49,15 +53,33 @@ pub struct MlsDevice {
     credential: CredentialWithKey,
     account_id: Vec<u8>,
     device_id: Vec<u8>,
+    pending_transfers: transfer::PendingTransfers,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeviceLinkVerification {
     pub transcript_hash: Vec<u8>,
     pub sas: String,
+    pub claim_tag: Vec<u8>,
+    pub approval_tag: Vec<u8>,
+    pub sas_bytes: Vec<u8>,
 }
 
 impl MlsDevice {
+    pub(crate) fn validate_local_key_package(&self, bytes: &[u8]) -> Result<(), MlsError> {
+        let package = KeyPackageIn::tls_deserialize_exact(bytes)
+            .map_err(|_| MlsError::InvalidKeyPackage)?
+            .validate(self.provider.crypto(), ProtocolVersion::Mls10)
+            .map_err(|_| MlsError::InvalidKeyPackage)?;
+        if package.leaf_node().credential().serialized_content()
+            != encode_device_identity(&self.account_id, &self.device_id)?
+            || package.leaf_node().signature_key().as_slice() != self.signing_public_key()
+        {
+            return Err(MlsError::InvalidKeyPackage);
+        }
+        Ok(())
+    }
+
     pub fn new(account_id: &[u8], device_id: &[u8]) -> Result<Self, MlsError> {
         let identity = encode_device_identity(account_id, device_id)?;
         let provider = OpenMlsRustCrypto::default();
@@ -76,6 +98,7 @@ impl MlsDevice {
             credential,
             account_id: account_id.to_vec(),
             device_id: device_id.to_vec(),
+            pending_transfers: Default::default(),
         })
     }
 
@@ -98,9 +121,14 @@ impl MlsDevice {
         self.signer.public()
     }
 
+    // Explicit transcript fields mirror the ABI and make their order reviewable.
+    #[allow(clippy::too_many_arguments)]
     pub fn derive_device_link_verification(
         &self,
         protocol_version: &[u8],
+        server_origin: &[u8],
+        link_id: &[u8],
+        link_secret: &[u8],
         peer_device_id: &[u8],
         peer_signing_public_key: &[u8],
         link_nonce: &[u8],
@@ -124,6 +152,9 @@ impl MlsDevice {
         };
         derive_device_link_verification(
             protocol_version,
+            server_origin,
+            link_id,
+            link_secret,
             &self.account_id,
             link_nonce,
             existing_device_id,
@@ -450,8 +481,13 @@ impl MlsDevice {
     }
 }
 
+// Keep the complete ordered transcript visible at each derivation call.
+#[allow(clippy::too_many_arguments)]
 pub fn derive_device_link_verification(
     protocol_version: &[u8],
+    server_origin: &[u8],
+    link_id: &[u8],
+    link_secret: &[u8],
     account_id: &[u8],
     link_nonce: &[u8],
     existing_device_id: &[u8],
@@ -459,7 +495,12 @@ pub fn derive_device_link_verification(
     new_device_id: &[u8],
     new_signing_public_key: &[u8],
 ) -> Result<DeviceLinkVerification, MlsError> {
-    if protocol_version != DEVICE_LINK_PROTOCOL_VERSION
+    if server_origin.is_empty()
+        || server_origin.len() > 2048
+        || link_id.is_empty()
+        || link_id.len() > MAX_ID_BYTES
+        || link_secret.len() != 16
+        || protocol_version != DEVICE_LINK_PROTOCOL_VERSION
         || account_id.is_empty()
         || account_id.len() > MAX_ID_BYTES
         || existing_device_id.is_empty()
@@ -475,6 +516,8 @@ pub fn derive_device_link_verification(
     let mut transcript = Vec::with_capacity(256);
     append_transcript_field(&mut transcript, DEVICE_LINK_TRANSCRIPT_DOMAIN)?;
     append_transcript_field(&mut transcript, protocol_version)?;
+    append_transcript_field(&mut transcript, server_origin)?;
+    append_transcript_field(&mut transcript, link_id)?;
     append_transcript_field(&mut transcript, account_id)?;
     append_transcript_field(&mut transcript, link_nonce)?;
     append_transcript_field(&mut transcript, existing_device_id)?;
@@ -482,15 +525,55 @@ pub fn derive_device_link_verification(
     append_transcript_field(&mut transcript, new_device_id)?;
     append_transcript_field(&mut transcript, new_signing_public_key)?;
     let transcript_hash = Sha256::digest(&transcript).to_vec();
+    let sas_mac = link_mac(link_secret, b"veritra-link-sas-v2", &transcript);
+    let claim_tag = link_mac(link_secret, b"veritra-link-claim-v2", &transcript).to_vec();
+    let approval_tag = link_mac(link_secret, b"veritra-link-approval-v2", &transcript).to_vec();
     let sas_value = u32::from_be_bytes(
-        transcript_hash[..4]
+        sas_mac[..4]
             .try_into()
             .map_err(|_| MlsError::InvalidState)?,
     ) % 100_000_000;
     Ok(DeviceLinkVerification {
         transcript_hash,
         sas: format!("{sas_value:08}"),
+        claim_tag,
+        approval_tag,
+        sas_bytes: sas_mac[..4].to_vec(),
     })
+}
+
+/// Fixed 128-bit input; only the one-way locator is sent to the server.
+pub fn device_link_locator(secret: &[u8]) -> Result<Vec<u8>, MlsError> {
+    if secret.len() != 16 {
+        return Err(MlsError::InvalidIdentity);
+    }
+    Ok(Sha256::digest([b"veritra-link-locator-v2".as_slice(), secret].concat()).to_vec())
+}
+
+// HMAC (RFC 2104), followed by HKDF Extract/one-block Expand (RFC 5869).
+// Keys here are at most 32 bytes; accept general keys for standard vectors.
+fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
+    let mut block = [0u8; 64];
+    if key.len() > 64 {
+        block[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        block[..key.len()].copy_from_slice(key);
+    }
+    let mut inner = Sha256::new();
+    inner.update(block.map(|b| b ^ 0x36));
+    inner.update(message);
+    let mut outer = Sha256::new();
+    outer.update(block.map(|b| b ^ 0x5c));
+    outer.update(inner.finalize());
+    outer.finalize().into()
+}
+
+fn link_mac(secret: &[u8], label: &[u8], transcript: &[u8]) -> [u8; 32] {
+    let prk = hmac_sha256(&[0u8; 32], secret);
+    let mut info = label.to_vec();
+    info.push(1);
+    let key = hmac_sha256(&prk, &info);
+    hmac_sha256(&key, transcript)
 }
 
 /// Number of digits in a conversation safety number: twelve groups of five,
@@ -540,6 +623,9 @@ fn conversation_safety_number_v2(
     Ok(DeviceLinkVerification {
         transcript_hash,
         sas,
+        claim_tag: Vec::new(),
+        approval_tag: Vec::new(),
+        sas_bytes: Vec::new(),
     })
 }
 
@@ -1005,6 +1091,9 @@ mod tests {
         let from_existing = existing
             .derive_device_link_verification(
                 DEVICE_LINK_PROTOCOL_VERSION,
+                b"https://example.test",
+                b"link_01",
+                &[0x55; 16],
                 b"device-new",
                 new.signing_public_key(),
                 &nonce,
@@ -1014,6 +1103,9 @@ mod tests {
         let from_new = new
             .derive_device_link_verification(
                 DEVICE_LINK_PROTOCOL_VERSION,
+                b"https://example.test",
+                b"link_01",
+                &[0x55; 16],
                 b"device-existing",
                 existing.signing_public_key(),
                 &nonce,
@@ -1027,6 +1119,9 @@ mod tests {
         let substituted = existing
             .derive_device_link_verification(
                 DEVICE_LINK_PROTOCOL_VERSION,
+                b"https://example.test",
+                b"link_01",
+                &[0x55; 16],
                 b"device-new",
                 &substituted_key,
                 &nonce,
@@ -1038,6 +1133,9 @@ mod tests {
         let mismatched_nonce = existing
             .derive_device_link_verification(
                 DEVICE_LINK_PROTOCOL_VERSION,
+                b"https://example.test",
+                b"link_01",
+                &[0x55; 16],
                 b"device-new",
                 new.signing_public_key(),
                 &[0x43; 32],
@@ -1047,7 +1145,10 @@ mod tests {
         assert_ne!(from_existing, mismatched_nonce);
         assert_eq!(
             existing.derive_device_link_verification(
-                b"veritra-device-link-v2",
+                b"veritra-device-link-v1",
+                b"https://example.test",
+                b"link_01",
+                &[0x55; 16],
                 b"device-new",
                 new.signing_public_key(),
                 &nonce,
@@ -1134,9 +1235,92 @@ mod tests {
     }
 
     #[test]
+    fn link_hmac_and_hkdf_match_rfc_vectors() {
+        assert_eq!(
+            hmac_sha256(&[0x0b; 20], b"Hi There").to_vec(),
+            vec![
+                0xb0, 0x34, 0x4c, 0x61, 0xd8, 0xdb, 0x38, 0x53, 0x5c, 0xa8, 0xaf, 0xce, 0xaf, 0x0b,
+                0xf1, 0x2b, 0x88, 0x1d, 0xc2, 0x00, 0xc9, 0x83, 0x3d, 0xa7, 0x26, 0xe9, 0x37, 0x6c,
+                0x2e, 0x32, 0xcf, 0xf7
+            ]
+        );
+        assert_eq!(
+            hmac_sha256(
+                &[0xaa; 131],
+                b"Test Using Larger Than Block-Size Key - Hash Key First"
+            )
+            .to_vec(),
+            vec![
+                0x60, 0xe4, 0x31, 0x59, 0x1e, 0xe0, 0xb6, 0x7f, 0x0d, 0x8a, 0x26, 0xaa, 0xcb, 0xf5,
+                0xb7, 0x7f, 0x8e, 0x0b, 0xc6, 0x21, 0x37, 0x28, 0xc5, 0x14, 0x05, 0x46, 0x04, 0x0f,
+                0x0e, 0xe3, 0x7f, 0x54
+            ]
+        );
+        let prk = hmac_sha256(&[0; 32], &[0x0b; 22]);
+        assert_eq!(
+            prk.to_vec(),
+            vec![
+                0x19, 0xef, 0x24, 0xa3, 0x2c, 0x71, 0x7b, 0x16, 0x7f, 0x33, 0xa9, 0x1d, 0x6f, 0x64,
+                0x8b, 0xdf, 0x96, 0x59, 0x67, 0x76, 0xaf, 0xdb, 0x63, 0x77, 0xac, 0x43, 0x4c, 0x1c,
+                0x29, 0x3c, 0xcb, 0x04
+            ]
+        );
+        assert_eq!(
+            hmac_sha256(&prk, &[1]).to_vec(),
+            vec![
+                0x8d, 0xa4, 0xe7, 0x75, 0xa5, 0x63, 0xc1, 0x8f, 0x71, 0x5f, 0x80, 0x2a, 0x06, 0x3c,
+                0x5a, 0x31, 0xb8, 0xa1, 0x1f, 0x5c, 0x5e, 0xe1, 0x87, 0x9e, 0xc3, 0x45, 0x4e, 0x5f,
+                0x3c, 0x73, 0x8d, 0x2d
+            ]
+        );
+    }
+
+    #[test]
+    fn link_v2_binds_every_context_field_and_separates_directions() {
+        let fields: Vec<Vec<u8>> = vec![
+            DEVICE_LINK_PROTOCOL_VERSION.to_vec(),
+            b"https://example.test".to_vec(),
+            b"link_01".to_vec(),
+            vec![0x55; 16],
+            b"acct_01".to_vec(),
+            vec![0x11; 32],
+            b"dev_old".to_vec(),
+            vec![0x22; 32],
+            b"dev_new".to_vec(),
+            vec![0x33; 32],
+        ];
+        let derive = |f: &[Vec<u8>]| {
+            derive_device_link_verification(
+                &f[0], &f[1], &f[2], &f[3], &f[4], &f[5], &f[6], &f[7], &f[8], &f[9],
+            )
+        };
+        let expected = derive(&fields).unwrap();
+        assert_ne!(expected.claim_tag, expected.approval_tag);
+        for i in 0..fields.len() {
+            let mut changed = fields.clone();
+            changed[i][0] ^= 1;
+            match derive(&changed) {
+                Ok(actual) => {
+                    assert_ne!(expected.claim_tag, actual.claim_tag);
+                    assert_ne!(expected.approval_tag, actual.approval_tag);
+                }
+                Err(e) => assert_eq!(e, MlsError::InvalidIdentity),
+            }
+        }
+        for length in [0, 15, 17] {
+            let mut changed = fields.clone();
+            changed[3] = vec![1; length];
+            assert_eq!(derive(&changed), Err(MlsError::InvalidIdentity));
+        }
+    }
+
+    #[test]
     fn device_link_transcript_has_a_stable_vector() {
         let verification = derive_device_link_verification(
             DEVICE_LINK_PROTOCOL_VERSION,
+            b"https://example.test",
+            b"link_01",
+            &[0x55; 16],
             b"acct_01",
             &[0x11; 32],
             b"dev_old",
@@ -1148,11 +1332,35 @@ mod tests {
         assert_eq!(
             verification.transcript_hash,
             vec![
-                0x8c, 0xce, 0x0b, 0x98, 0x04, 0x9c, 0xcb, 0xd2, 0x0f, 0xb4, 0x97, 0x73, 0x2f, 0xb8,
-                0xe2, 0xc2, 0x06, 0x07, 0xb5, 0x93, 0xfa, 0xc2, 0x9f, 0xa8, 0xf3, 0xd4, 0x46, 0x31,
-                0x12, 0x24, 0xf0, 0x43,
+                0x9b, 0xba, 0xf8, 0xd8, 0xf6, 0x05, 0x79, 0x2d, 0xae, 0xa6, 0xc0, 0x2d, 0x88, 0x4a,
+                0x4e, 0x12, 0x4d, 0x26, 0x34, 0x61, 0xb9, 0x4c, 0xca, 0xd6, 0xf8, 0x04, 0xb6, 0x74,
+                0xc0, 0x10, 0x96, 0xd8
             ]
         );
-        assert_eq!(verification.sas, "62313624");
+        assert_eq!(
+            verification.claim_tag,
+            vec![
+                0x44, 0x6c, 0xdb, 0xea, 0x4d, 0x4b, 0xfa, 0x24, 0xd7, 0x0c, 0xda, 0xc8, 0x39, 0xde,
+                0x69, 0xc6, 0x49, 0x04, 0x91, 0x4f, 0x32, 0x32, 0x77, 0xdc, 0xb1, 0xcb, 0xc2, 0x1e,
+                0xe3, 0xed, 0x6e, 0x9f
+            ]
+        );
+        assert_eq!(
+            verification.approval_tag,
+            vec![
+                0xfc, 0x82, 0xfe, 0x05, 0x43, 0xa9, 0x2b, 0x13, 0xb4, 0x54, 0xe3, 0x88, 0xa6, 0x86,
+                0x71, 0xe0, 0xe3, 0x58, 0x72, 0x05, 0x34, 0x28, 0x1e, 0x88, 0xd8, 0x89, 0x5b, 0xf5,
+                0x4b, 0x97, 0x88, 0x11
+            ]
+        );
+        assert_eq!(verification.sas, "94112245");
+        assert_eq!(
+            device_link_locator(&[0x55; 16]).unwrap(),
+            vec![
+                0x89, 0x6e, 0x62, 0x7a, 0x33, 0x81, 0xce, 0x62, 0x5a, 0x8b, 0x3f, 0xd2, 0x0a, 0xd0,
+                0x90, 0xb4, 0x44, 0xa8, 0x8c, 0x0a, 0x20, 0x1c, 0x3c, 0x8f, 0xa5, 0xb6, 0xa6, 0xf1,
+                0x6a, 0x48, 0xe2, 0x5a
+            ]
+        );
     }
 }

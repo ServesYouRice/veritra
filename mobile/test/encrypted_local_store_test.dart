@@ -11,6 +11,8 @@ import 'package:drift/native.dart' show NativeDatabase, SqliteException;
 import 'package:flutter/services.dart' show MethodCall;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'schema_fixtures.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:sqlite3/common.dart' show CommonDatabase;
 import 'package:private_messenger/storage/backup_exclusion.dart';
@@ -61,6 +63,7 @@ void main() {
     for (final database in databases) {
       await database.close();
     }
+    await SecureLocalStore.releaseInstanceLocks();
     if (await directory.exists()) {
       await directory.delete(recursive: true);
     }
@@ -889,6 +892,7 @@ void main() {
           'ALTER TABLE local_mls_outbox_entries DROP COLUMN $column');
     }
     await dropExpiryColumns(database);
+    await stripW8Schema(database);
     await database.customStatement('PRAGMA user_version = 7');
     await database.close();
     databases.removeLast();
@@ -935,7 +939,8 @@ void main() {
     final store = createStore();
     await store.saveSyncCursor(1);
     final database = databases.last;
-    expect(await userVersion(database), 12);
+    expect(await userVersion(database),
+        EncryptedLocalDatabase.currentSchemaVersion);
     expect(await hasEnvelopeIndex(database), isTrue);
     expect(
         await tailLookupPlan(database),
@@ -965,6 +970,7 @@ void main() {
     final database = databases.last;
     await database.customStatement('DROP INDEX $envelopeIndex');
     await dropExpiryColumns(database);
+    await stripW8Schema(database);
     await database.customStatement('PRAGMA user_version = 8');
     expect(await tailLookupPlan(database), isNot(contains(envelopeIndex)));
     await database.close();
@@ -973,7 +979,8 @@ void main() {
     final upgraded = createStore();
     final snapshot = await upgraded.loadSnapshot();
     final reopened = databases.last;
-    expect(await userVersion(reopened), 12);
+    expect(await userVersion(reopened),
+        EncryptedLocalDatabase.currentSchemaVersion);
     expect(await hasEnvelopeIndex(reopened), isTrue);
     expect(await tailLookupPlan(reopened), contains('INDEX $envelopeIndex'));
     expect(snapshot?.cursor, 1);
@@ -1038,6 +1045,7 @@ void main() {
     await database.customStatement('DROP INDEX $envelopeIndex');
     await database.customStatement('CREATE TABLE $envelopeIndex (blocker)');
     await dropExpiryColumns(database);
+    await stripW8Schema(database);
     await database.customStatement('PRAGMA user_version = 7');
     await database.close();
     databases.removeLast();
@@ -1071,7 +1079,8 @@ void main() {
     // With the cause gone, the next open runs the whole upgrade.
     final upgraded = openStore();
     expect((await upgraded.pendingMlsMessages()).single.attemptCount, 0);
-    expect(await userVersion(databases.last), 12);
+    expect(await userVersion(databases.last),
+        EncryptedLocalDatabase.currentSchemaVersion);
     expect(await hasEnvelopeIndex(databases.last), isTrue);
   });
 
@@ -1092,6 +1101,7 @@ void main() {
     final database = databases.last;
     await database.customStatement('DROP INDEX $envelopeIndex');
     await dropExpiryColumns(database);
+    await stripW8Schema(database);
     await database.customStatement('PRAGMA user_version = 8');
     await database.customStatement('VACUUM');
     final pages = (await database.customSelect('PRAGMA page_count').getSingle())
@@ -1150,6 +1160,7 @@ void main() {
       await database.customStatement(
           'ALTER TABLE local_mls_outbox_entries DROP COLUMN $column');
     }
+    await stripW8Schema(database);
     await database.customStatement('PRAGMA user_version = 6');
     await database.close();
     databases.removeLast();
@@ -1157,7 +1168,8 @@ void main() {
     final upgraded = createStore();
     expect(await upgraded.loadSyncCursor(), 1);
     final reopened = databases.last;
-    expect(await userVersion(reopened), 12);
+    expect(await userVersion(reopened),
+        EncryptedLocalDatabase.currentSchemaVersion);
     await reopened.applyMessageEffects(<MessageEffect>[
       const InsertMessageEffect(
         key: 'dev_peer:new',
@@ -1193,13 +1205,15 @@ void main() {
       await database.customStatement(
           'ALTER TABLE local_outbox_entries DROP COLUMN $column');
     }
+    await stripW8Schema(database);
     await database.customStatement('PRAGMA user_version = 2');
     await database.close();
     databases.removeLast();
 
     final upgraded = createStore();
     expect(await upgraded.loadSyncCursor(), 1);
-    expect(await userVersion(databases.last), 12);
+    expect(await userVersion(databases.last),
+        EncryptedLocalDatabase.currentSchemaVersion);
   });
 
   test('an upgrade from schema 3 keeps its rows and builds every later table',
@@ -1238,6 +1252,7 @@ void main() {
         'INSERT INTO local_mls_outbox_entries (idempotency_key, '
         'conversation_id, kind, recipient_device_id, payload, state_counter, '
         "queued_at) VALUES ('mls_1', 'conv_1', 'welcome', 'dev_2', x'0102', 1, 1)");
+    await stripW8Schema(database);
     await database.customStatement('PRAGMA user_version = 3');
     await database.close();
     databases.removeLast();
@@ -1245,7 +1260,8 @@ void main() {
     final upgraded = createStore();
     expect(await upgraded.loadSyncCursor(), 1);
     final reopened = databases.last;
-    expect(await userVersion(reopened), 12);
+    expect(await userVersion(reopened),
+        EncryptedLocalDatabase.currentSchemaVersion);
     // The old rows are there with the new columns at their defaults.
     final outbox = await reopened
         .customSelect(
@@ -1350,6 +1366,7 @@ void main() {
     final database = databases.last;
     await insertTextMessages(database, 400);
     await dropSearchIndex(database);
+    await stripW8Schema(database);
     await database.customStatement('PRAGMA user_version = 11');
     await database.customStatement('VACUUM');
     final pages = (await database.customSelect('PRAGMA page_count').getSingle())
@@ -1377,7 +1394,8 @@ void main() {
 
     diskFull = false;
     expect(await constrained.searchMessages('words'), hasLength(50));
-    expect(await userVersion(databases.last), 12);
+    expect(await userVersion(databases.last),
+        EncryptedLocalDatabase.currentSchemaVersion);
   });
 
   test('a full disk during the upgrade is reported as a full device', () async {
@@ -1417,7 +1435,8 @@ void main() {
     final snapshot = await store.loadSnapshot();
     expect(snapshot?.cursor, 1);
     expect(snapshot?.messagesByConversation['conv_1'], hasLength(200));
-    expect(await userVersion(databases.last), 12);
+    expect(await userVersion(databases.last),
+        EncryptedLocalDatabase.currentSchemaVersion);
     expect(await hasEnvelopeIndex(databases.last), isTrue);
   });
 

@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -479,7 +480,7 @@ func TestSetupRejectsInvalidUsername(t *testing.T) {
 func TestDeviceLinkingFlowRequiresExistingDeviceApproval(t *testing.T) {
 	handler, ownerToken, _ := newTestHandlerWithOwner(t)
 
-	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/device-links", ownerToken, map[string]interface{}{})
+	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/device-links", ownerToken, map[string]interface{}{"code": strings.Repeat("a", 64)})
 	if status != http.StatusCreated {
 		t.Fatalf("create device link status=%d body=%s", status, response)
 	}
@@ -508,6 +509,7 @@ func TestDeviceLinkingFlowRequiresExistingDeviceApproval(t *testing.T) {
 		"device_name":        "linked tablet",
 		"device_key_package": make([]byte, 64),
 		"transcript_hash":    bytes.Repeat([]byte{7}, 32),
+		"claim_tag":          bytes.Repeat([]byte{8}, 32),
 	}
 	addEnrollmentProof(claimBody, enrollment)
 	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/device-links/claim", "", claimBody)
@@ -545,12 +547,14 @@ func TestDeviceLinkingFlowRequiresExistingDeviceApproval(t *testing.T) {
 
 	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/device-links/"+created.DeviceLink.ID+"/approve", ownerToken, map[string]interface{}{
 		"transcript_hash": bytes.Repeat([]byte{8}, 32),
+		"approval_tag":    bytes.Repeat([]byte{9}, 32),
 	})
 	if status != http.StatusBadRequest || !bytes.Contains(response, []byte("transcript_mismatch")) {
 		t.Fatalf("substituted transcript approval status=%d body=%s", status, response)
 	}
 	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/device-links/"+created.DeviceLink.ID+"/approve", ownerToken, map[string]interface{}{
 		"transcript_hash": bytes.Repeat([]byte{7}, 32),
+		"approval_tag":    bytes.Repeat([]byte{9}, 32),
 	})
 	if status != http.StatusOK {
 		t.Fatalf("approve device link status=%d body=%s", status, response)

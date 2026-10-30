@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/mail"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -98,6 +97,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/device-links", a.withRecentAuth(a.createDeviceLink))
 	mux.HandleFunc("POST /api/v1/device-links/claim-enrollment", a.reserveDeviceLinkEnrollment)
 	mux.HandleFunc("POST /api/v1/device-links/claim", a.claimDeviceLink)
+	a.registerDeviceLinkV3Routes(mux)
 	mux.HandleFunc("POST /api/v1/communities", a.withAuth(a.withWriteBudget(a.createCommunity)))
 	mux.HandleFunc("GET /api/v1/communities", a.withAuth(a.listCommunities))
 	mux.HandleFunc("POST /api/v1/conversations", a.withAuth(a.withWriteBudget(a.createConversation)))
@@ -424,13 +424,13 @@ func deviceLinkPayload(link domain.DeviceLink) map[string]interface{} {
 		"created_by_device_id": link.CreatedByDeviceID,
 		"protocol_version":     link.ProtocolVersion,
 		"link_nonce":           link.LinkNonce,
+		"claim_tag":            link.ClaimTag,
 		"existing_signing_key": link.ExistingSigningKey,
 		"created_at":           link.CreatedAt,
 		"expires_at":           link.ExpiresAt,
 	}
 	if link.Code != "" {
 		payload["code"] = link.Code
-		payload["link_uri"] = "veritra://device-link?code=" + url.QueryEscape(link.Code)
 	}
 	if link.ClaimedDeviceName != nil {
 		payload["claimed_device_name"] = *link.ClaimedDeviceName

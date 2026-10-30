@@ -5,9 +5,9 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../core/app_state.dart';
 import '../core/models.dart';
+import '../push/message_notice_policy.dart';
 import '../features/chat/chat_list_screen.dart' show conversationTitle;
 import '../l10n/app_localizations.dart';
-import '../storage/encrypted_database.dart' show LocalMessageKind;
 import '../ui/about.dart';
 import 'desktop_shell.dart';
 
@@ -149,30 +149,37 @@ class MessageNotifier {
   Future<void> handle(List<ReceivedMessageEnvelope> envelopes) async {
     final session = state.session;
     if (session == null) return;
-    final candidates =
-        <String, ({ReceivedMessageEnvelope envelope, String text})>{};
+    final candidates = <String,
+        ({ReceivedMessageEnvelope envelope, String text, bool mentioned})>{};
     for (final envelope in envelopes) {
-      if (envelope.editedAt != null || envelope.deletedAt != null) continue;
-      if (envelope.senderAccountId == session.accountId ||
-          envelope.senderDeviceId == session.deviceId) {
-        continue;
-      }
-      if (state.isBlocked(envelope.senderAccountId)) continue;
-      // A request stays silent until it is accepted (B8).
-      if (!state.conversationOpen(envelope.conversationId)) continue;
-      if (_now().difference(envelope.createdAt) > freshness) continue;
       final local = state.historyFor(envelope.conversationId).forEnvelope(
             envelope,
           );
-      if (local == null || local.kind != LocalMessageKind.text) continue;
-      if (local.deletedAt != null) continue;
+      final candidate = messageNoticeCandidate(
+          session: session,
+          envelope: envelope,
+          message: local,
+          now: _now(),
+          blocked: state.isBlocked(envelope.senderAccountId),
+          conversationAccepted: state.conversationOpen(envelope.conversationId),
+          freshness: freshness);
+      if (candidate == null) continue;
+      final mentioned = candidate.allowedWhenMuted(
+          mentionsInMutedChats: state.mentionsInMutedChats);
       if (!_announced.add(envelope.id)) continue;
       // One notification per conversation: the newest message.
       final previous = candidates[envelope.conversationId];
       if (previous == null ||
-          envelope.createdAt.isAfter(previous.envelope.createdAt)) {
-        candidates[envelope.conversationId] =
-            (envelope: envelope, text: local.body ?? '');
+          (mentioned && !previous.mentioned) ||
+          (mentioned == previous.mentioned &&
+              envelope.createdAt.isAfter(previous.envelope.createdAt))) {
+        candidates[envelope.conversationId] = (
+          envelope: envelope,
+          text: candidate.concealsSpoiler
+              ? l10n().w8HiddenSpoiler
+              : candidate.text,
+          mentioned: mentioned
+        );
       }
     }
     if (candidates.isEmpty) return;
@@ -184,7 +191,7 @@ class MessageNotifier {
       // The mute flag lives on the server and is read per conversation. If it
       // cannot be read, stay quiet rather than notify for a muted chat.
       if (!await state.loadConversationMuted(entry.key)) continue;
-      if (state.isMuted(entry.key)) continue;
+      if (state.isMuted(entry.key) && !entry.value.mentioned) continue;
       final strings = l10n();
       if (settings.hidePreview) {
         await notifier.show(

@@ -616,10 +616,11 @@ func (a *App) deliverPushWake(ctx context.Context, metric *pushDeliveryMetrics, 
 	sendCtx, cancel := context.WithTimeout(ctx, sendTimeout)
 	sendStarted := time.Now()
 	err := a.Push.SendEncryptedEventAvailable(sendCtx, push.Notification{
-		Provider:   job.Provider,
-		Endpoint:   job.Endpoint,
-		PublicKey:  job.PublicKey,
-		AuthSecret: job.AuthSecret,
+		NotificationMode: job.NotificationMode,
+		Provider:         job.Provider,
+		Endpoint:         job.Endpoint,
+		PublicKey:        job.PublicKey,
+		AuthSecret:       job.AuthSecret,
 	})
 	metric.sendDuration.Observe(time.Since(sendStarted))
 	if err != nil && ctx.Err() == nil && errors.Is(sendCtx.Err(), context.DeadlineExceeded) {

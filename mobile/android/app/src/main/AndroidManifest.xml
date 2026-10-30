@@ -42,6 +42,10 @@
             </intent-filter>
         </activity>
         <service
+            android:name=".VeritraWakeJobService"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="true" />
+        <service
             android:name=".VeritraPushService"
             android:exported="false">
             <intent-filter>

@@ -724,7 +724,7 @@ func TestDeviceLinkRequiresApprovalBeforeSession(t *testing.T) {
 	defer store.Close()
 	owner := createTestOwner(t, ctx, store)
 
-	link, err := store.CreateDeviceLink(ctx, owner.Account.ID, owner.Device.ID, time.Minute)
+	link, err := store.CreateDeviceLink(ctx, owner.Account.ID, owner.Device.ID, time.Minute, testLinkLocator(t))
 	if err != nil {
 		t.Fatalf("create device link: %v", err)
 	}
@@ -737,7 +737,12 @@ func TestDeviceLinkRequiresApprovalBeforeSession(t *testing.T) {
 		t.Fatalf("claim token: %v", err)
 	}
 	transcriptHash := bytes.Repeat([]byte{3}, 32)
-	claimed, err := store.ClaimDeviceLink(ctx, link.Code, "Tablet", []byte("tablet-key-package"), bytes.Repeat([]byte{2}, 32), transcriptHash, claimTokenHash, auth.HashToken("tablet-device-secret"))
+	for _, tag := range [][]byte{nil, make([]byte, 31), make([]byte, 33)} {
+		if _, err := store.ClaimDeviceLink(ctx, link.Code, "Tablet", []byte("kp"), bytes.Repeat([]byte{2}, 32), transcriptHash, tag, claimTokenHash, auth.HashToken("secret")); !errors.Is(err, ErrDeviceLinkInvalid) {
+			t.Fatalf("malformed claim tag: %v", err)
+		}
+	}
+	claimed, err := store.ClaimDeviceLink(ctx, link.Code, "Tablet", []byte("tablet-key-package"), bytes.Repeat([]byte{2}, 32), transcriptHash, bytes.Repeat([]byte{8}, 32), claimTokenHash, auth.HashToken("tablet-device-secret"))
 	if err != nil {
 		t.Fatalf("claim device link: %v", err)
 	}
@@ -751,10 +756,15 @@ func TestDeviceLinkRequiresApprovalBeforeSession(t *testing.T) {
 	if _, err := store.ConsumeApprovedDeviceLink(ctx, link.ID, auth.HashToken(claimToken), sessionTokenHash, time.Now().UTC().Add(time.Hour)); !errors.Is(err, ErrDeviceLinkNotReady) {
 		t.Fatalf("pre-approval consume err=%v want %v", err, ErrDeviceLinkNotReady)
 	}
-	if _, _, err := store.ApproveDeviceLink(ctx, link.ID, owner.Account.ID, bytes.Repeat([]byte{4}, 32)); !errors.Is(err, ErrDeviceLinkVerificationFailed) {
+	if _, _, err := store.ApproveDeviceLink(ctx, link.ID, owner.Account.ID, bytes.Repeat([]byte{4}, 32), bytes.Repeat([]byte{9}, 32)); !errors.Is(err, ErrDeviceLinkVerificationFailed) {
 		t.Fatalf("wrong verification code err=%v want %v", err, ErrDeviceLinkVerificationFailed)
 	}
-	approved, device, err := store.ApproveDeviceLink(ctx, link.ID, owner.Account.ID, transcriptHash)
+	for _, tag := range [][]byte{nil, make([]byte, 31), make([]byte, 33)} {
+		if _, _, err := store.ApproveDeviceLink(ctx, link.ID, owner.Account.ID, transcriptHash, tag); !errors.Is(err, ErrDeviceLinkVerificationFailed) {
+			t.Fatalf("malformed approval tag: %v", err)
+		}
+	}
+	approved, device, err := store.ApproveDeviceLink(ctx, link.ID, owner.Account.ID, transcriptHash, bytes.Repeat([]byte{9}, 32))
 	if err != nil {
 		t.Fatalf("approve device link: %v", err)
 	}
@@ -771,6 +781,10 @@ func TestDeviceLinkRequiresApprovalBeforeSession(t *testing.T) {
 	if linked.Account.ID != owner.Account.ID || linked.Device.ID != device.ID {
 		t.Fatalf("unexpected linked account/device: %#v", linked)
 	}
+	hash, tag, err := store.DeviceLinkTranscriptForClaim(ctx, link.ID, claimTokenHash)
+	if err != nil || !bytes.Equal(hash, transcriptHash) || !bytes.Equal(tag, bytes.Repeat([]byte{9}, 32)) {
+		t.Fatalf("confirmation roundtrip: %v", err)
+	}
 	principal, err := store.PrincipalByTokenHash(ctx, sessionTokenHash)
 	if err != nil {
 		t.Fatalf("principal by linked token: %v", err)
@@ -785,7 +799,7 @@ func TestDeviceLinkRequiresApprovalBeforeSession(t *testing.T) {
 	if _, err := store.ConsumeApprovedDeviceLink(ctx, link.ID, auth.HashToken(claimToken), secondTokenHash, time.Now().UTC().Add(time.Hour)); !errors.Is(err, ErrDeviceLinkInvalid) {
 		t.Fatalf("second consume with token %q err=%v want %v", secondToken, err, ErrDeviceLinkInvalid)
 	}
-	expired, err := store.CreateDeviceLink(ctx, owner.Account.ID, owner.Device.ID, time.Minute)
+	expired, err := store.CreateDeviceLink(ctx, owner.Account.ID, owner.Device.ID, time.Minute, testLinkLocator(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1296,4 +1310,13 @@ func runtimeSentinel(t *testing.T) string {
 		t.Fatalf("rand: %v", err)
 	}
 	return "PLAINTEXT_SENTINEL_" + hex.EncodeToString(b[:])
+}
+
+func testLinkLocator(t *testing.T) string {
+	t.Helper()
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatal(err)
+	}
+	return hex.EncodeToString(b)
 }

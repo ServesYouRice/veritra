@@ -594,6 +594,9 @@ func (s *Store) revokeDevice(ctx context.Context, accountID, deviceID, eventType
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE device_id = ?`, deviceID); err != nil {
 		return 0, err
 	}
+	if err := retireDeviceLinksV3ForDevice(ctx, tx, accountID, deviceID); err != nil {
+		return 0, err
+	}
 	payload := map[string]string{"device_id": deviceID}
 	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, &accountID, "", payload, now)
 	if err != nil {

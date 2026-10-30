@@ -5,18 +5,18 @@ standing decisions and the release gates. It replaces `docs/board.md`,
 `docs/audit-consensus.md` and `implementation/REMAINING_WORK.md`, which remain
 in Git history at `d2d9eb8`. Evidence lives in [`testing/evidence/`](testing/evidence/).
 
-**Updated 2026-10-24.**
+**Updated 2026-10-30.**
 
 ## At a glance
 
 | Area | State |
 |---|---|
-| 🎯 Current focus | Chats on Windows first (D43), then Discord-style communities and the WhatsApp and Discord basics, privacy first (D44). Order and packages: [Build plan](#build-plan) |
+| 🎯 Current focus | Safer device linking (L0), then message actions (W8), history on a new device (K2), and communities (D50). Order and packages: [Build plan](#build-plan) |
 | 🔒 Public release | 🔴 **NO-GO by design.** Messaging stays off in release builds until the independent crypto review (G25) and signed-device evidence (G24) pass |
 | 🧪 Local demos (real encryption, labelled "unreviewed") | 🟢 Work: server + Linux app run here; Android, iOS, Windows, macOS build in CI |
-| 🧰 Local work queue | 🟡 Build plan round 1 (2026-10-24) landed W2, W5, W6, W8 step 0, W9, W10, B4, B8, B9 and four designs; W1, W3, W4 wait for a run on a real Windows desktop. See [Build plan](#build-plan) and [Open work](#open-work) |
+| 🧰 Local work queue | 🟡 Build plan round 1 (2026-10-24) landed W2, W5, W6, W8 step 0, W9, W10, B4, B8, B9 and four designs; L0 implemented and verified; W8 client actions pass full Linux checks (D52 phone background delivery remains open). K2 enrollment/native preparation is checked; transfer/import work is in progress. W1, W3, W4 wait for a run on a real Windows desktop. See [Build plan](#build-plan) and [Open work](#open-work) |
 | 🚀 First deployment (k3s, handbook plan) | 🟡 Repo side ready; needs the owner's accounts (see [Deployment](#deployment)) and branch protection on GitHub |
-| ✅ Checks | 🟢 Go, Rust, Flutter, contract, demo e2e, release-policy fixtures pass; CI runs on every PR |
+| ✅ Checks | 🟡 Last full Linux test and lint scripts pass for L0/W8/K2 preparation: 632 Flutter tests, all Go packages, 51 Rust unit + 2 integration tests. Later server transfer/silent-mode full Go/race/vet checks pass; native streams/import/background foundations have focused checks. Combined full verification remains pending; the [2026-10-30 checkpoint](testing/evidence/checkpoint-2026-10-30.md) records the final focused checks. See [`verification`](testing/evidence/verification-2026-10-28.md) |
 | 🌐 Languages | 🟡 English, and Serbian (Cyrillic and Latin) awaiting a native-speaker review |
 
 ```
@@ -89,7 +89,8 @@ and keep each change small. Missing product features are packages in the
 | Full disk during setup | A disk that fills before the migration starts still shows the wrong-key message | Pre-existing; nothing is lost |
 | Clone-restore twin | After an I45 restore the original device can keep running as the same MLS member; its repeated generations stop every receiver's global sync and can fork groups. Confirmed by two reviews on 2026-10-24 | Until K2 replaces clone-restore, tell users to stop using the old device; K0 restores into a new device |
 | Drafts after re-sign-in | After a session expiry and sign-in as the same identity, stored drafts reload only on the next app start; typing first overwrites the stored draft | Reload drafts on sign-in |
-| Owner questions from the designs | K0: random key or passphrase, retire clone-restore (recovery path, waiting period and backup default decided in D49). L0: typed code length (option A recommended). W7: mentions in muted chats on phones, archive behaviour, pin limits and who may pin. W11: profile key rotation trigger, 404 revealing a block, group profile editors, refusing plaintext group titles. C0: may the server know a post's channel, own group for busy channels | Listed in each design's open questions |
+| Windows verification blockers | Full test suite cannot pass on this Windows host: release fixtures cannot delete read-only Git objects, app backup tests fail directory fsync, Flutter database fixtures fail cleanup with open handles | The isolated Linux full suite passes; Windows-specific issues remain. Details in [`L0 evidence`](testing/evidence/L0-device-link-v2.md) |
+| Owner questions from the designs | K0: random key or passphrase, retire clone-restore (recovery path, waiting period and backup default decided in D49). L0 uses option A (26-character secret-derived code, D50). W7: archive behaviour, pin limits and who may pin (written defaults used for W8); silent muted-phone wakes approved in D52. W11: profile key rotation trigger, 404 revealing a block, group profile editors, refusing plaintext group titles. C0: own group for busy channels (channel IDs allowed by D51) | Listed in each design's open questions |
 
 ## Release gates
 
@@ -163,6 +164,9 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 | **D47** (2026-10-24) | W5 stores delivery cursors and a shared read cursor on the server (migration 0035): when a member's device last caught up in a conversation, only in conversations of ≤ 20 members, never in channels. Turning read receipts off freezes the shared cursor |
 | **D48** (2026-10-24, coordinator, owner may veto) | A block hides receipts and delivery state in both directions. DMs and groups from strangers are requests. A fresh device (link, reinstall, restore) accepts only conversations it created; an upgrade accepts what existed. Drafts survive a session expiry and are wiped on sign-out or reset |
 | **D49** (2026-10-25, owner) | K0 answers: recovery after losing every device needs the password **and** the recovery key; a recovery waits (and can be cancelled from an active device) when a device was active recently; automatic backups are on by default. The generated emoji data (Unicode License v3) is accepted |
+| **D50** (2026-10-26, owner) | Build order: safer device linking (L0), then message actions (W8), history on a new device (K2), then communities (C1-C8). Keep each package complete and checked; prerequisites and release gates still apply. |
+| **D51** (2026-10-26, owner) | Community posts may carry a server-visible channel ID for posting rules and retention. Post content and channel names remain end-to-end encrypted. This settles C0's metadata question; the shared-group layout and its sync-isolation prerequisite still need implementation. |
+| **D52** (2026-10-27, owner) | Muted chats on phones may receive generic, silent wakeups so mention alerts can be decided locally after decryption. Never make the server mention-aware. Native wake behavior and lifecycle handling must support silence before this is enabled. |
 
 ## Roadmap
 
@@ -177,7 +181,7 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 The owner picked the build plan's order (D43, D44); the other items are
 recommendations until the owner picks them.
 
-1. **Build plan, phase 1:** chats on Windows (W1-W12, K0-K2).
+1. **Owner order (D50):** L0 device linking, W8 message actions, K2 new-device history, then communities. Other Windows packages remain open.
 2. **Book the independent crypto review.** It gates every release. NLnet's
    open call for privacy work closes **2026-11-03** and may fund it.
 3. **Build plan, phase 2:** communities like Discord (C0-C8).
@@ -196,7 +200,7 @@ recommendations until the owner picks them.
 ## Build plan
 
 Every feature the 2026-10-24 status review and gap study found missing, as
-packages in build order. Pick the first open package whose dependencies are
+packages in build order, overridden by D50. Pick the first open package whose dependencies are
 done, confirm it against the code, and build it as one complete change. A
 package is done when its line is true, its tests pass, and `scripts/test` and
 `scripts/lint` pass (or CI is green on the PR where a toolchain is missing
@@ -228,15 +232,15 @@ dependency, with the licence review and `THIRD_PARTY_NOTICES.md` update that
 | W5 ✅ | Ticks and typing | Sent, delivered and read ticks and a typing line in DMs and small groups, from what the server already stores; one switch turns your own read receipts off | Sonnet — 2026-10-24, server migration 0035; Opus-reviewed, ticks only in conversations of ≤ 20 members |
 | W6 ✅ | Reactions, mute, drafts | Any emoji can react; mute for 8 hours, 1 week or always; drafts survive a restart, kept in the encrypted local database | Opus review — 2026-10-24, local schema 11, server migration 0036; Opus-reviewed, review fixes in |
 | W7 ✅ | Message actions design | One payload design for formatting, mentions, forward, pin, polls and other "messages about a message", recorded in `docs/crypto.md` with its payload version | Opus designs — designed 2026-10-24 in `docs/crypto.md` (payload v2), reviewed; step 0 (receive policy) built and Opus-reviewed |
-| W8 | Message actions | Formatting, @mentions that alert even in a muted chat, forward with a label and limits, pin with an expiry, star, delete for me, archive and pinned chats, all on the W7 design | Sonnet |
+| W8 🟡 | Message actions | Formatting, @mentions that alert even in a muted chat, forward with a label and limits, pin with an expiry, star, delete for me, archive and pinned chats, all on the W7 design | Client actions implemented and full Linux checks pass; D52 server silent-mode, bounded background foundations, native notice capture and private notice outbox have focused checks; main/AppState integration and platform lifecycle evidence remain open. See [`W8 evidence`](testing/evidence/W8-message-actions.md) |
 | W9 ✅ | Desktop feel | Right-click menus, shortcuts (Esc, Up to edit, Ctrl+F), drag-and-drop and paste of files, several files per send | Sonnet — 2026-10-24 with `desktop_drop`/`pasteboard`; several files go as consecutive messages |
 | W10 ✅ | Search on the device | Search finds message text this device holds, through an index inside the encrypted local database; nothing reaches the server | Opus review — 2026-10-24, local schema 12, FTS5 inside the encrypted database; Opus-reviewed, review fixes in |
 | W11 ✅ | Profiles | A display name and photo for people, a name and photo for groups, all encrypted, with the key given only to contacts and group members | Opus designs — designed 2026-10-24 in `docs/designs/W11-profiles.md`, reviewed |
 | K0 ✅ | One long-lived key | One reviewed design for the key that automatic backups, history on a new device, community history and search over old messages all rely on, so they do not end up with four key schemes | Opus designs — designed 2026-10-24 in `docs/designs/K0-long-lived-key.md`, reviewed; owner questions open |
 | K1 | Automatic backups | After saving one recovery key once, the app backs up daily without a tap, replaces the old copy, asks now and then to confirm the key, and can keep a second copy where the user picks | Opus designs (after K0) |
-| K2 | History on a new device | A newly linked device receives the old device's history as one encrypted bundle, or restores it from a backup | Opus designs (after K0) |
+| K2 🟡 | History on a new device | A newly linked device receives the old device's history as one encrypted bundle, or restores it from a backup | Reviewed live-transfer design; internal native primitives/state migration and v3 server enrollment checked. Temporary transfer resource0039 independently reviewed; full Go/race/vet pass. History-only importer schema14/backup5 and ABI8 controls/streams have focused checks and review fixes; client transfer flow/read-only history UI remain unwired |
 | W12 | Windows release path | A signed Windows installer, an update channel, and a documented HTTPS setup so a second PC can connect | Owner first (signing account) |
-| L0 | Device link v2 | The safety code and a link-confirmation tag are keyed by a secret that travels only in the QR or typed code, so a server cannot substitute the new device; the old device refuses a missing tag. Needed before K2 or anything gated on link approval. Brief and option A (code derived from the secret) in the 2026-10-24 review notes of `docs/designs/K0-long-lived-key.md` | Opus designs |
+| L0 🟢 | Device link v2 | The safety code and a link-confirmation tag are keyed by a secret that travels only in the QR or typed code, so a server cannot substitute the new device; the old device refuses a missing tag. Needed before K2 or anything gated on link approval. Brief and option A (code derived from the secret) in the 2026-10-24 review notes of `docs/designs/K0-long-lived-key.md` | Independent agent design/review; implemented 2026-10-26 (ABI v7, migration 0037). Focused/live checks and full Linux test/lint pass; Windows-specific cleanup/fsync issues remain. See [`L0 evidence`](testing/evidence/L0-device-link-v2.md) |
 | L1 | Approved-device list | Existing devices sign the list of approved devices and other members check it before adding one, so a server cannot add a hidden device to an account (today it can; it then reads new messages, never history) | Opus designs (after L0); owner scope |
 
 ### Phase 2: communities like Discord (D44)

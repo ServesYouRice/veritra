@@ -639,5 +639,33 @@
   "requestBlockTitle": "Blokirati ovu osobu?",
   "requestBlockMessage": "{name} više neće moći da vam piše, a ovaj razgovor će biti uklonjen.",
   "requestDeleteTitle": "Obrisati ovaj zahtev?",
-  "requestDeleteMessage": "Razgovor se uklanja sa ovog uređaja. Pošiljalac nije obavešten."
+  "requestDeleteMessage": "Razgovor se uklanja sa ovog uređaja. Pošiljalac nije obavešten.",
+  "w8PinnedMessage": "Zakačena poruka",
+  "w8Pin": "Zakači poruku",
+  "w8Unpin": "Otkači poruku",
+  "w8PinDays": "Zakači na {days} dana",
+  "@w8PinDays": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "w8Forward": "Prosledi",
+  "w8Forwarded": "Prosleđeno",
+  "w8ForwardedMany": "Prosleđeno više puta",
+  "w8Star": "Označi zvezdicom na ovom uređaju",
+  "w8Unstar": "Ukloni zvezdicu",
+  "w8DeleteForMe": "Izbriši za mene na ovom uređaju",
+  "w8Archive": "Arhiviraj na ovom uređaju",
+  "w8Unarchive": "Vrati iz arhive",
+  "w8PinChat": "Zakači ćaskanje na ovom uređaju",
+  "w8UnpinChat": "Otkači ćaskanje",
+  "w8ArchivedChats": "Arhivirana ćaskanja",
+  "w8Chats": "Ćaskanja",
+  "w8MentionsMuted": "Pominjanja u utišanim ćaskanjima",
+  "w8MentionsMutedDetail": "Obavesti me kada me član pomene, čak i u utišanom ćaskanju.",
+  "w8HiddenSpoiler": "Poruka sa skrivenim spojlerom",
+  "w8StarredMessages": "Poruke sa zvezdicom na ovom uređaju",
+  "k2CopiedHistory": "Kopirana istorija · snimak sa uređaja"
 }

@@ -2408,4 +2408,70 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get requestDeleteMessage =>
       'The conversation is removed from this device. The sender is not told.';
+
+  @override
+  String get w8PinnedMessage => 'Pinned message';
+
+  @override
+  String get w8Pin => 'Pin message';
+
+  @override
+  String get w8Unpin => 'Unpin message';
+
+  @override
+  String w8PinDays(int days) {
+    return 'Pin for $days days';
+  }
+
+  @override
+  String get w8Forward => 'Forward';
+
+  @override
+  String get w8Forwarded => 'Forwarded';
+
+  @override
+  String get w8ForwardedMany => 'Forwarded many times';
+
+  @override
+  String get w8Star => 'Star on this device';
+
+  @override
+  String get w8Unstar => 'Remove star';
+
+  @override
+  String get w8DeleteForMe => 'Delete for me on this device';
+
+  @override
+  String get w8Archive => 'Archive on this device';
+
+  @override
+  String get w8Unarchive => 'Unarchive';
+
+  @override
+  String get w8PinChat => 'Pin chat on this device';
+
+  @override
+  String get w8UnpinChat => 'Unpin chat';
+
+  @override
+  String get w8ArchivedChats => 'Archived chats';
+
+  @override
+  String get w8Chats => 'Chats';
+
+  @override
+  String get w8MentionsMuted => 'Mentions in muted chats';
+
+  @override
+  String get w8MentionsMutedDetail =>
+      'Notify when a member mentions you, even in a muted chat.';
+
+  @override
+  String get w8HiddenSpoiler => 'Message containing a hidden spoiler';
+
+  @override
+  String get w8StarredMessages => 'Starred messages on this device';
+
+  @override
+  String get k2CopiedHistory => 'Copied history · device snapshot';
 }

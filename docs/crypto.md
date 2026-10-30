@@ -3,7 +3,7 @@
 The selected production direction is MLS through OpenMLS. This Rust crate now
 pins OpenMLS 0.9.2 and contains a tested native core for signed key packages,
 group creation/join, and authenticated application messages. It also exposes a
-versioned C ABI and Rust-side credential/key-package boundary types. ABI v6 has
+versioned C ABI and Rust-side credential/key-package boundary types. ABI v8 has
 tested opaque device handles, zeroing owned buffers, credential public-key
 export, enrollment-challenge signing, key-package creation, state sealing, and
 rollback-checked restore, plus group create/join/add/remove/update, staged
@@ -16,12 +16,12 @@ The server now reserves final account/device IDs before key generation and
 atomically verifies and consumes a signed enrollment proof covering the server
 challenge, Ed25519 public key, and SHA-256 key-package commitment. The Flutter
 client models this preflight, and its low-level Dart FFI binding requires ABI
-version 6 exactly (`native_crypto_bindings.dart`) and uses the owned
+version 8 exactly (`native_crypto_bindings.dart`) and uses the owned
 device/buffer calls. Native libraries are packaged for Android/iOS, while the
 production service remains behind the release gate.
 
 The public header is `crypto/rust/include/veritra_crypto.h`, which pins
-`PM_CRYPTO_ABI_VERSION` at 6. That version defines:
+`PM_CRYPTO_ABI_VERSION` at 8. That version defines:
 
 - account/device-bound opaque handles with exactly-once destruction
 - library-owned, zero-on-free output buffers
@@ -45,8 +45,10 @@ Key-package size checks mirror the server transport boundary (64 bytes through
 OpenMLS 0.9.2, `openmls_rust_crypto` 0.6.0, and their supporting crates are
 exactly pinned (Rust 1.91 or newer). All 205 locked third-party packages declare
 compatible license choices recorded in `THIRD_PARTY_NOTICES.md`. Sealed state
-uses envelope format version 2; version 1 blobs written under OpenMLS 0.8.1 fail
-closed. No debug feature that exposes
+reads envelope formats 2 and 3 and writes format 3, including through existing
+ABI v7 state-sealing calls. Genuine format 2 state preserves its signer and live
+groups during migration. Version 1 blobs written under OpenMLS 0.8.1 and unknown
+versions fail closed. No debug feature that exposes
 message content or cryptographic material is enabled.
 
 Before production message sending:
@@ -66,9 +68,9 @@ until the package that builds it lands and adds its change-log entry.
 - [K0: one long-lived key](designs/K0-long-lived-key.md): a recovery key
   only the user holds; backups sealed to its public half; one history
   container for backups (K1) and new-device bundles (K2); restores create
-  a new device instead of cloning MLS state. Proposes ABI v7 (additive)
-  and device-link protocol v2: a QR-only link secret keys the SAS (today's
-  8-digit SAS can be ground by a malicious server) and the K2 hand-off.
+  a new device instead of cloning MLS state. Recovery operations now target
+  a later ABI (L0 uses v7). L0 implements secret-authenticated linking below;
+  K2 must use a new transcript version when adding its transfer key.
 - [C0: community group layout](designs/C0-community-groups.md): one shared
   MLS group for a community's open channels plus one per private channel,
   with a measured join cost ([evidence](../testing/evidence/C0-community-groups.md)).
@@ -77,10 +79,65 @@ until the package that builds it lands and adds its change-log entry.
   and invalid on a mismatch with the envelope. It must land before any W8
   sender.
 
+## Device linking
+
+[L0 device link v2](designs/L0-device-link-v2.md) specifies the current
+transcript and tag derivation. Both devices use their configured canonical
+server origin. The old device generates a 128-bit secret; QR and manual
+input carry its 26-character base32 encoding. HTTP carries only a one-way
+locator. The old device verifies the claim tag before asking for the typed
+safety code; the new device verifies the separate approval tag and its
+reserved identity before saving a session. JSON API redirects are refused.
+Legacy links must be recreated. Existing account/device sessions remain valid.
+
 ## Change log since the Stage 1 freeze
 
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
+
+- **K2 ABI8 controls (2026-10-28):** adds bounded local binary control
+  operations and matching Dart bindings for protocol v3. Claim proof validates
+  the native key-package identity, and source SAS confirmation records intent
+  without returning an approval tag. Ordinary owned-buffer free now uses the
+  existing non-elidable zero-on-drop wrapper. Controls are checked, but bundle
+  streams and the durable application flow remain separate unfinished slices.
+  Migration0038 adds immutable signed v3 enrollment; migration0039 adds a
+  temporary ciphertext/handoff resource with durable quota-charged upload
+  intents, guarded writes and retryable import ACK. These have independent
+  review and full Go/race checks. See `testing/evidence/K2-abi8-controls.md`
+  and `testing/evidence/K2-server-transfer.md`. Release gates remain closed.
+
+- **K2 native preparation (2026-10-28):** sealed state format 3 adds bounded,
+  typed transfer records, retaining format 2 reads. Existing ABI v7 sealing
+  writes format 3; this migration is active even though public K2 transfer calls
+  and the Flutter transfer flow are not wired. Internal bundle and HPKE handoff
+  primitives bind both device identities and the v3 link transcript. Transfer
+  retries preserve keys and import state; late approval recovery requires the
+  original approval window and a durably recorded source confirmation intent.
+  No MLS group cloning or release-gate change. Evidence:
+  [`K2-native-state.md`](../testing/evidence/K2-native-state.md) and
+  [`K2-core-primitives.md`](../testing/evidence/K2-core-primitives.md).
+
+- **W8 (2026-10-27):** implements v2 formatted text, roster-checked mentions,
+  forwarded text/attachments and role-checked pins. Plain v1 bodies still send
+  as v1; every envelope keeps framing metadata `payload_version: 1`. Local
+  schema 13 adds decoration/channel/hidden state, pins with durable tie order,
+  local stars and conversation preferences, plus a separate pending-pin table
+  for own echoes. Backup plaintext v4 reads v1-v3. The original composer draft
+  travels only through a local encryption argument, so stripping markup clears
+  it atomically and forwarding cannot erase a destination draft. Own pins use
+  the server echo's timestamp and recheck current authority; denied commands
+  are consumed. No Rust ABI, server plaintext or release-gate change. Phone
+  background mention delivery remains the separate D52 prerequisite. Evidence:
+  [`W8-message-actions.md`](../testing/evidence/W8-message-actions.md).
+
+- **L0 (2026-10-26):** ABI v7 extends device-link derivation with canonical
+  origin, link ID and a 16-byte client secret; output is hash32, claim MAC32,
+  approval MAC32, SAS MAC prefix4. Adds a 32-byte public locator operation.
+  Protocol v2 uses HKDF/HMAC-SHA256 with direction-separated keys. Migration
+  0037 stores opaque tags and retires unfinished v1 links. No message payload,
+  MLS group ordering or release-gate change. Independent agent design/review;
+  implementation evidence in `testing/evidence/L0-device-link-v2.md`.
 
 - **Stage 5, I33 (2026-09-24):** no ABI or payload change. Sync stops,
   without advancing the cursor, at any MLS control message it cannot apply,
@@ -252,11 +309,12 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   the insert, so a server that reuses an envelope ID can make a later row
   for it be dropped (an availability harm, no content).
 
-## Proposed, not yet built: application payload v2 (W7)
+## Application payload v2 (W7/W8)
 
-**Status: proposed, not yet built.** This is the W7 design. W8 (message
-actions), B3 (polls), W11 (profiles) and later C2/C5 build on it. It
-changes nothing until W8 lands. It needs no ABI change: Rust encrypts the
+**Status:** W8 implements formatting, mentions, forwarding, pins and local
+actions; full verification and D52 phone background delivery remain pending.
+B3 (polls), W11 (profiles) and later C2/C5 remain reserved. It needs no ABI
+change: Rust encrypts the
 padded payload as opaque bytes, and all of this lives in
 `mobile/lib/crypto/app_payload.dart`, `native_crypto_service.dart` and the
 local database.
@@ -691,7 +749,23 @@ device" for star, archive and pinned chats.
 | Forward | 5 chats per action; 1 when `hops` ≥ 5; `hops` sent ≤ 5 |
 | Pinned chats | 5 |
 
-### 8. Local storage when built: schema 10, backup plaintext v3
+### 8. Local storage: schema 13, backup plaintext v4
+
+W8's implementation uses schema 13 and backup plaintext v4 because expiry,
+drafts and search had already taken schemas 10-12 and backup v3. It adds
+`hidden_at`, `forward_hops`, `format_json`, `channel_id` and nullable
+`sender_hidden` (null means false), plus `local_pins`, `local_starred` and
+`local_conversation_prefs`. Pins also retain `applied_order` so ties keep
+their sync order through backup/restore. The separate `local_pending_pins`
+table stores only this device's outgoing pin commands until their first
+matching server echo; it is applied/cleared in that cursor transaction.
+Authority is checked again at the echo. Commands denied after demotion are
+consumed without an effect. A same-device backup may retain a command with
+either its queued outbox or its still-pending own action row (HTTP can
+acknowledge before sync echoes). K2 history transfer must exclude this table.
+
+The original design below also reserves poll and admin-delete state, which
+W8 does not create. W11 takes a later backup number when it is implemented.
 
 Action rows store no body, so pin, vote and close state cannot be rebuilt
 from history. They are tables applied in the MLS transaction:
@@ -707,9 +781,9 @@ from history. They are tables applied in the MLS transaction:
 
 - **The upgrade** is additive and runs in one transaction, as schema 9
   did.
-- **Backup plaintext v3** adds all of the above; v1 and v2 still restore.
-  W11 adds its key and profile tables to the same v3, so if W11 builds
-  after W8 it bumps to v4. Whichever builds second takes the next number.
+- **Backup plaintext v4** adds the implemented W8 state; v1-v3 still restore.
+  Poll state and profile-key tables remain reserved. Their implementing
+  packages take the next backup number rather than reusing v4.
 
 ### 9. Server
 

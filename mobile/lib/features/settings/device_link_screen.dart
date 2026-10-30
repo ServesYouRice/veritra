@@ -43,7 +43,7 @@ class DeviceLinkScreen extends StatelessWidget {
         final theme = Theme.of(context);
         final l10n = context.l10n;
         final link = state.activeDeviceLink;
-        final qrPayload = deviceLinkQrPayload(link?.code);
+        final qrPayload = deviceLinkQrPayload(state.activeDeviceLinkCode);
         return Scaffold(
           appBar: LargeTitleBar(title: l10n.deviceLinkTitle),
           body: ListView(
@@ -134,7 +134,7 @@ class DeviceLinkScreen extends StatelessWidget {
                     _LinkValueTile(
                       icon: Icons.pin_outlined,
                       title: l10n.connectLinkCode,
-                      value: link.code ?? '',
+                      value: state.activeDeviceLinkCode ?? '',
                       copyable: true,
                     ),
                     _LinkValueTile(
