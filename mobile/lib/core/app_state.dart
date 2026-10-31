@@ -505,9 +505,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   int _removalReadCount = 0;
 
   /// The highest [_removalReadCount] a complete sync fetch started after.
-  /// Every commit the server held at that read has then been applied (or
-  /// sync stopped), because the server writes a commit's sync event, its
-  /// roster change and the new epoch in one transaction.
+  /// Every commit the server held at that read has then been applied: the
+  /// server writes a commit's sync event, its roster change and the new
+  /// epoch in one transaction, and an MLS control message that cannot be
+  /// applied stops sync at its event (I33), so that fetch never completes.
   int _removalFetchedAfterRead = 0;
 
   /// Completed and replaced whenever [_removalHolds], a paused conversation
