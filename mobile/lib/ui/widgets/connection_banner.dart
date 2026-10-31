@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
+import '../../features/settings/backup_screen.dart';
 import '../../sync/sync_recovery.dart';
 import '../format.dart';
 import '../tokens.dart';
@@ -185,6 +186,19 @@ class _SyncRecoveryBanner extends StatelessWidget {
                     TextButton(
                       onPressed: state.busy ? null : state.retrySyncRecovery,
                       child: Text(context.l10n.bannerTryAgain),
+                    ),
+                  // A single-device account cannot relink; the backup
+                  // screen holds the restore action and its confirmation.
+                  if (choices.contains(SyncRecoveryChoice.restoreBackup))
+                    TextButton(
+                      onPressed: state.busy
+                          ? null
+                          : () => Navigator.of(context).push(
+                                MaterialPageRoute<void>(
+                                  builder: (_) => BackupScreen(state: state),
+                                ),
+                              ),
+                      child: Text(context.l10n.bannerRestoreBackup),
                     ),
                   if (choices.contains(SyncRecoveryChoice.relink))
                     TextButton(
