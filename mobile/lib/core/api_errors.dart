@@ -76,6 +76,7 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'mls_epoch_conflict': ApiErrorKind.conflict,
   'mls_group_legacy': ApiErrorKind.conflict,
   'mls_commit_bundle_required': ApiErrorKind.conflict,
+  'mls_change_pending': ApiErrorKind.conflict,
   'recovery_transfer_in_progress': ApiErrorKind.conflict,
   'transcript_mismatch': ApiErrorKind.conflict,
   'device_recovery_required': ApiErrorKind.conflict,
@@ -127,6 +128,7 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'realtime_connection_limit': ApiErrorKind.rateLimited,
   'key_package_quota_exceeded': ApiErrorKind.rateLimited,
   'key_package_claim_limit': ApiErrorKind.rateLimited,
+  'mls_self_update_limit': ApiErrorKind.rateLimited,
   'write_rate_limited': ApiErrorKind.rateLimited,
   // Size and storage.
   'upload_too_large': ApiErrorKind.tooLarge,
