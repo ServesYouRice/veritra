@@ -348,6 +348,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   bool conversationsLoaded = false;
   bool communitiesLoaded = false;
   bool invitesLoaded = false;
+
+  /// True when the last [refreshInvites] could not list the invites. The
+  /// listing stays best-effort for everyone else, but the invite screen says
+  /// so instead of showing an empty list.
+  bool invitesLoadFailed = false;
   bool devicesLoaded = false;
   final Set<String> _loadingMessageConversations = <String>{};
   final Map<String, String> _messageLoadErrors = <String, String>{};
@@ -1390,8 +1395,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     }
     try {
       invites = await client.listInvites(current.token);
+      invitesLoadFailed = false;
     } catch (_) {
-      // Ignored: invite listing is a privilege, not a core flow.
+      // Not surfaced here: invite listing is a privilege, not a core flow.
+      invitesLoadFailed = true;
     } finally {
       invitesLoaded = true;
       notifyListeners();
@@ -4178,6 +4185,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     conversationsLoaded = false;
     communitiesLoaded = false;
     invitesLoaded = false;
+    invitesLoadFailed = false;
     devicesLoaded = false;
     devices = <Device>[];
     messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};

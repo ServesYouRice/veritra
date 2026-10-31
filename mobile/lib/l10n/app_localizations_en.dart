@@ -796,6 +796,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Invite codes you create appear here. Share them over a secure channel.';
 
   @override
+  String get inviteLoadFailed =>
+      'Your invites could not be loaded. Check the connection and try again.';
+
+  @override
   String get inviteYourInvites => 'Your invites';
 
   @override

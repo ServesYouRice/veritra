@@ -229,6 +229,7 @@
   "inviteCreate": "Napravi pozivnicu",
   "inviteEmptyTitle": "Još nema pozivnica",
   "inviteEmptyMessage": "Kodovi pozivnica koje napravite pojavljuju se ovde. Delite ih preko bezbednog kanala.",
+  "inviteLoadFailed": "Vaše pozivnice nisu mogle da se učitaju. Proverite vezu i pokušajte ponovo.",
   "inviteYourInvites": "Vaše pozivnice",
   "inviteUsesPill": "{uses}/{maxUses}",
   "inviteUsesSemantics": "Iskorišćeno {uses} od {maxUses}",

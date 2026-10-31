@@ -1467,6 +1467,12 @@ abstract class AppLocalizations {
   /// **'Invite codes you create appear here. Share them over a secure channel.'**
   String get inviteEmptyMessage;
 
+  /// No description provided for @inviteLoadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Your invites could not be loaded. Check the connection and try again.'**
+  String get inviteLoadFailed;
+
   /// No description provided for @inviteYourInvites.
   ///
   /// In en, this message translates to:

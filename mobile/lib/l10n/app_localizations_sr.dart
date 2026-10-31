@@ -804,6 +804,10 @@ class AppLocalizationsSr extends AppLocalizations {
       'Кодови позивница које направите појављују се овде. Делите их преко безбедног канала.';
 
   @override
+  String get inviteLoadFailed =>
+      'Ваше позивнице нису могле да се учитају. Проверите везу и покушајте поново.';
+
+  @override
   String get inviteYourInvites => 'Ваше позивнице';
 
   @override
@@ -3296,6 +3300,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get inviteEmptyMessage =>
       'Kodovi pozivnica koje napravite pojavljuju se ovde. Delite ih preko bezbednog kanala.';
+
+  @override
+  String get inviteLoadFailed =>
+      'Vaše pozivnice nisu mogle da se učitaju. Proverite vezu i pokušajte ponovo.';
 
   @override
   String get inviteYourInvites => 'Vaše pozivnice';

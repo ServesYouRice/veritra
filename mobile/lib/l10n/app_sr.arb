@@ -250,6 +250,7 @@
   "inviteCreate": "Направи позивницу",
   "inviteEmptyTitle": "Још нема позивница",
   "inviteEmptyMessage": "Кодови позивница које направите појављују се овде. Делите их преко безбедног канала.",
+  "inviteLoadFailed": "Ваше позивнице нису могле да се учитају. Проверите везу и покушајте поново.",
   "inviteYourInvites": "Ваше позивнице",
   "inviteUsesPill": "{uses}/{maxUses}",
   "inviteUsesSemantics": "Искоришћено {uses} од {maxUses}",

@@ -321,6 +321,7 @@
   "inviteCreate": "Create invite",
   "inviteEmptyTitle": "No invites yet",
   "inviteEmptyMessage": "Invite codes you create appear here. Share them over a secure channel.",
+  "inviteLoadFailed": "Your invites could not be loaded. Check the connection and try again.",
   "inviteYourInvites": "Your invites",
   "inviteUsesPill": "{uses}/{maxUses}",
   "@inviteUsesPill": {"placeholders": {"uses": {"type": "int", "format": "decimalPattern"}, "maxUses": {"type": "int", "format": "decimalPattern"}}},
