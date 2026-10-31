@@ -51,6 +51,9 @@ func TestSmokeLoadAgainstInProcessServer(t *testing.T) {
 	if len(result.Steps) != 2 {
 		t.Fatalf("steps = %d, want 2", len(result.Steps))
 	}
+	if result.Companions == 0 {
+		t.Fatal("no companion device ran")
+	}
 	for _, step := range result.Steps {
 		if step.Offered <= 0 {
 			t.Fatalf("step at %.0f/min reports no offered rate", step.Rate)

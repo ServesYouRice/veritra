@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -183,6 +184,93 @@ func (c *apiClient) enroll(ctx context.Context, reservePath, createPath, ip stri
 	}
 	if session.Token == "" || session.Account.ID == "" || session.Device.ID == "" {
 		return sessionResponse{}, errors.New("create account: response lacks a session")
+	}
+	return session, nil
+}
+
+// linkDevice links a second device to owner's account through the public
+// device-link API, acting as both devices: owner creates a link, the new
+// device reserves an enrollment and claims the link with a fresh signing key
+// and key package, owner approves the claimed transcript, and the new
+// device collects its session from claim-status. The transcript hash and
+// the claim and approval tags are random: the server only stores and
+// compares them, and the comparison people make between two screens has
+// no part in a synthetic load. The new device's unauthenticated requests
+// come from ip. Codes and tokens are never printed.
+func (c *apiClient) linkDevice(ctx context.Context, owner *device, ip, name string) (sessionResponse, error) {
+	random := func(n int) ([]byte, error) {
+		buf := make([]byte, n)
+		_, err := rand.Read(buf)
+		return buf, err
+	}
+	code, err := random(32)
+	if err != nil {
+		return sessionResponse{}, err
+	}
+	var created struct {
+		DeviceLink struct {
+			ID   string `json:"id"`
+			Code string `json:"code"`
+		} `json:"device_link"`
+	}
+	status, err := c.json(ctx, http.MethodPost, "/api/v1/device-links", owner, "", map[string]any{"code": hex.EncodeToString(code)}, &created, nil)
+	if err := expect(status, err, http.StatusCreated); err != nil {
+		return sessionResponse{}, fmt.Errorf("create device link: %w", err)
+	}
+	if created.DeviceLink.ID == "" || created.DeviceLink.Code == "" {
+		return sessionResponse{}, errors.New("create device link: response lacks the link")
+	}
+	var reservation enrollmentReservation
+	if err := expect(c.json(ctx, http.MethodPost, "/api/v1/device-links/claim-enrollment", nil, ip, map[string]any{"code": created.DeviceLink.Code}, &reservation, nil)); err != nil {
+		return sessionResponse{}, fmt.Errorf("reserve link enrollment: %w", err)
+	}
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return sessionResponse{}, err
+	}
+	keyPackage, err := random(64)
+	if err != nil {
+		return sessionResponse{}, err
+	}
+	transcript, err := random(sha256.Size)
+	if err != nil {
+		return sessionResponse{}, err
+	}
+	claimTag, err := random(sha256.Size)
+	if err != nil {
+		return sessionResponse{}, err
+	}
+	approvalTag, err := random(sha256.Size)
+	if err != nil {
+		return sessionResponse{}, err
+	}
+	var claimed struct {
+		ClaimToken string `json:"claim_token"`
+	}
+	status, err = c.json(ctx, http.MethodPost, "/api/v1/device-links/claim", nil, ip, map[string]any{
+		"code": created.DeviceLink.Code, "device_name": name, "enrollment_reservation_id": reservation.ID,
+		"device_key_package": keyPackage, "signing_key": []byte(publicKey),
+		"challenge_signature": ed25519.Sign(privateKey, enrollmentProof(reservation.Challenge, publicKey, keyPackage)),
+		"transcript_hash":     transcript, "claim_tag": claimTag,
+	}, &claimed, nil)
+	if err := expect(status, err, http.StatusAccepted); err != nil {
+		return sessionResponse{}, fmt.Errorf("claim device link: %w", err)
+	}
+	if claimed.ClaimToken == "" {
+		return sessionResponse{}, errors.New("claim device link: response lacks a claim token")
+	}
+	linkPath := "/api/v1/device-links/" + url.PathEscape(created.DeviceLink.ID)
+	status, err = c.json(ctx, http.MethodPost, linkPath+"/approve", owner, "", map[string]any{"transcript_hash": transcript, "approval_tag": approvalTag}, nil, nil)
+	if err := expect(status, err, http.StatusOK); err != nil {
+		return sessionResponse{}, fmt.Errorf("approve device link: %w", err)
+	}
+	var session sessionResponse
+	status, err = c.json(ctx, http.MethodGet, linkPath+"/claim-status", nil, ip, nil, &session, map[string]string{"X-Veritra-Claim-Token": claimed.ClaimToken})
+	if err := expect(status, err, http.StatusOK); err != nil {
+		return sessionResponse{}, fmt.Errorf("collect linked session: %w", err)
+	}
+	if session.Token == "" || session.Account.ID != owner.accountID || session.Device.ID == "" || session.Device.ID == owner.deviceID {
+		return sessionResponse{}, errors.New("collect linked session: response lacks a new device session")
 	}
 	return session, nil
 }

@@ -28,8 +28,9 @@ import (
 // every realtime event runs the app's catch-up (GET /sync/events until
 // empty, coalesced while one runs, as mobile/lib/core/app_state.dart does);
 // a conversation-list read and a history page about every two minutes.
-// -companions adds a second client for that share of accounts (sockets,
-// catch-up and reads, no sends) and -cold makes that share of devices catch
+// -companions adds a second, separately linked device for that share of
+// online accounts (its own session, address, socket, catch-up, reads and
+// downloads; no sends) and -cold makes that share of devices catch
 // up once from the middle of the instance's history, as after a night
 // offline.
 type profile struct {
@@ -98,6 +99,9 @@ type world struct {
 	convs    []conversation
 	byDevice [][]int
 	rec      *recorder
+	// companions holds each account's separately linked companion device,
+	// nil when it has none. Companions never send.
+	companions []*device
 	// clients holds, per online device index, the devices its simulated
 	// clients use: slot 0 is the primary client, slot 1 a companion. It is
 	// nil for devices that are offline during the load.
@@ -182,12 +186,39 @@ func execute(ctx context.Context, target *url.URL, setupToken string, opts optio
 	w.rate.Store(math.Float64bits(opts.Rates[0]))
 	result := &runResult{StartedAt: time.Now().UTC().Format(time.RFC3339), Profile: opts.Profile, Online: opts.Online,
 		Warmup: opts.Warmup.String(), Measured: opts.Duration.String()}
+	// Plan the online devices first: the seed links a device for each
+	// companion, and every device's clients must be known before any of
+	// them sends, so each send knows all the clients that should see it.
+	type devicePlan struct {
+		rng      *mrand.Rand
+		coldWake chan struct{}
+	}
+	plans := make([]devicePlan, opts.Online)
+	companions := make([]bool, opts.Online)
+	var coldWakes []chan struct{}
+	for i := range plans {
+		plan := devicePlan{rng: mrand.New(mrand.NewPCG(opts.Seed, uint64(1000+i)))}
+		if plan.rng.Float64() < opts.Cold {
+			plan.coldWake = make(chan struct{}, 1)
+			coldWakes = append(coldWakes, plan.coldWake)
+		}
+		companions[i] = plan.rng.Float64() < opts.Companions
+		plans[i] = plan
+	}
 	seedStarted := time.Now()
-	if err := w.seed(ctx, setupToken, rng, progress); err != nil {
+	if err := w.seed(ctx, setupToken, rng, progress, companions); err != nil {
 		return nil, fmt.Errorf("seed: %w", err)
 	}
 	result.SeedDuration = time.Since(seedStarted).Round(time.Second).String()
 	result.Conversations = len(w.convs)
+	w.clients = make([][]*device, len(w.devices))
+	for i := range plans {
+		w.clients[i] = []*device{w.devices[i]}
+		if companion := w.companions[i]; companion != nil {
+			result.Companions++
+			w.clients[i] = append(w.clients[i], companion)
+		}
+	}
 
 	loadCtx, stopLoad := context.WithCancel(ctx)
 	defer stopLoad()
@@ -198,30 +229,6 @@ func execute(ctx context.Context, target *url.URL, setupToken string, opts optio
 		deadline = defaultDeliveryDeadline
 	}
 	w.deliveries = newDeliveryTracker(w.rec, deadline)
-	// Plan every online device's clients before any of them sends, so each
-	// send knows all the clients that should see it.
-	type devicePlan struct {
-		rng      *mrand.Rand
-		coldWake chan struct{}
-	}
-	plans := make([]devicePlan, opts.Online)
-	w.clients = make([][]*device, len(w.devices))
-	var coldWakes []chan struct{}
-	for i := 0; i < opts.Online; i++ {
-		dev := w.devices[i]
-		plan := devicePlan{rng: mrand.New(mrand.NewPCG(opts.Seed, uint64(1000+i)))}
-		if plan.rng.Float64() < opts.Cold {
-			plan.coldWake = make(chan struct{}, 1)
-			coldWakes = append(coldWakes, plan.coldWake)
-		}
-		w.clients[i] = []*device{dev}
-		if plan.rng.Float64() < opts.Companions {
-			result.Companions++
-			// The companion client shares the primary's device session.
-			w.clients[i] = append(w.clients[i], dev)
-		}
-		plans[i] = plan
-	}
 	for i, plan := range plans {
 		dev := w.devices[i]
 		running.Add(1)
@@ -326,7 +333,13 @@ func randomSecret() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
 }
 
-func (w *world) seed(ctx context.Context, setupToken string, rng *mrand.Rand, progress io.Writer) error {
+// companionIP gives account i's companion device its own client address,
+// apart from the primaries' (deviceIP) and seeding's (seedIP) ranges.
+func companionIP(i int) string { return fmt.Sprintf("10.79.%d.%d", i/250, i%250+1) }
+
+// seed creates the dataset. companions[i] asks for a second, separately
+// linked device for account i.
+func (w *world) seed(ctx context.Context, setupToken string, rng *mrand.Rand, progress io.Writer, companions []bool) error {
 	p := w.profile
 	password, err := randomSecret()
 	if err != nil {
@@ -339,14 +352,24 @@ func (w *world) seed(ctx context.Context, setupToken string, rng *mrand.Rand, pr
 		return fmt.Errorf("owner setup (the instance must be fresh): %w", err)
 	}
 	w.devices = make([]*device, p.Accounts)
+	w.companions = make([]*device, p.Accounts)
 	w.devices[0] = &device{index: 0, token: owner.Token, accountID: owner.Account.ID, deviceID: owner.Device.ID, ip: deviceIP(0)}
+	linked := 0
+	for i := range min(len(companions), p.Accounts) {
+		if companions[i] {
+			linked++
+		}
+	}
+	fmt.Fprintf(progress, "seed: registering %d accounts and linking %d companion devices\n", p.Accounts-1, linked)
+	if err := w.linkCompanion(ctx, 0, companions); err != nil {
+		return err
+	}
 	var invite struct {
 		Code string `json:"code"`
 	}
 	if err := expect(w.client.json(ctx, http.MethodPost, "/api/v1/invites", w.devices[0], "", map[string]any{"max_uses": p.Accounts - 1}, &invite, nil)); err != nil {
 		return fmt.Errorf("create invite: %w", err)
 	}
-	fmt.Fprintf(progress, "seed: registering %d accounts\n", p.Accounts-1)
 	if err := parallel(ctx, p.Accounts-1, 4, func(ctx context.Context, n int) error {
 		i := n + 1
 		session, err := w.client.enroll(ctx, "/api/v1/register/enrollment", "/api/v1/register", deviceIP(i), nil,
@@ -356,7 +379,7 @@ func (w *world) seed(ctx context.Context, setupToken string, rng *mrand.Rand, pr
 			return err
 		}
 		w.devices[i] = &device{index: i, token: session.Token, accountID: session.Account.ID, deviceID: session.Device.ID, ip: deviceIP(i)}
-		return nil
+		return w.linkCompanion(ctx, i, companions)
 	}); err != nil {
 		return fmt.Errorf("register: %w", err)
 	}
@@ -417,6 +440,22 @@ func (w *world) seed(ctx context.Context, setupToken string, rng *mrand.Rand, pr
 	}); err != nil {
 		return fmt.Errorf("history: %w", err)
 	}
+	return nil
+}
+
+// linkCompanion links account i's companion device when one is planned. It
+// runs right after the account is created, because linking needs a
+// sign-in from the last five minutes, which a long history seed outlasts,
+// and so the companion is a member device before any conversation exists.
+func (w *world) linkCompanion(ctx context.Context, i int, companions []bool) error {
+	if i >= len(companions) || !companions[i] {
+		return nil
+	}
+	session, err := w.client.linkDevice(ctx, w.devices[i], companionIP(i), "load companion")
+	if err != nil {
+		return fmt.Errorf("link companion: %w", err)
+	}
+	w.companions[i] = &device{index: i, token: session.Token, accountID: session.Account.ID, deviceID: session.Device.ID, ip: companionIP(i)}
 	return nil
 }
 
