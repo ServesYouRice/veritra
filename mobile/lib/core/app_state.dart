@@ -19,6 +19,7 @@ import '../push/push_service.dart';
 import '../push/background_wake_runner.dart';
 import '../push/notice_decisions.dart';
 import '../push/wake_worker_bridge.dart' show WakeNoticeResult;
+import '../storage/history_snapshot.dart' show HistoryConversation;
 import '../storage/local_store.dart';
 import '../sync/sync_recovery.dart';
 import '../sync/sync_service.dart';
@@ -250,6 +251,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   final Map<String, List<LocalPin>> _pins = {};
   Set<String> starredMessages = {};
   bool showArchivedChats = false;
+
+  /// Conversation descriptors copied from another device (K2). Historical
+  /// metadata only: never a live conversation, member list or permission.
+  Map<String, HistoryConversation> _copiedHistory = {};
   bool mentionsInMutedChats = true;
   @override
   String? roleOf(String conversationId, String accountId) =>
@@ -842,6 +847,58 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       _history[conversationId] ?? ConversationHistory.empty(conversationId);
 
   /// Rereads decrypted history for one conversation from the local store.
+  /// Copied conversations this device cannot open live: not in the server's
+  /// conversation list and not in a joined community. Empty until the live
+  /// list is known, so a live chat is never shown as read-only history.
+  List<HistoryConversation> get historyOnlyConversations {
+    if (!conversationsLoaded || _copiedHistory.isEmpty) return const [];
+    final live = {for (final c in conversations) c.id};
+    final joined = {for (final c in communities) c.id};
+    return [
+      for (final c in _copiedHistory.values)
+        if (!live.contains(c.id) &&
+            (c.communityId == null || !joined.contains(c.communityId)))
+          c
+    ]..sort((a, b) => (a.title ?? '').compareTo(b.title ?? ''));
+  }
+
+  bool isHistoryOnly(String conversationId) =>
+      historyOnlyConversations.any((c) => c.id == conversationId);
+
+  /// Rereads the copied-history descriptors after a restore or import.
+  Future<void> refreshCopiedHistory() async {
+    final generation = _sessionGeneration;
+    final namespace = await localStore.loadHistoryNamespace();
+    if (generation != _sessionGeneration || session == null) return;
+    _copiedHistory = Map.of(namespace.conversations);
+    notifyListeners();
+  }
+
+  /// The visible copied messages of a history-only conversation, oldest
+  /// first. Read from this device's encrypted store only: nothing is
+  /// fetched, sent, downloaded or looked up. Expired, hidden and deleted
+  /// rows are left out.
+  Future<List<LocalMessage>> historyOnlyMessages(String conversationId,
+      {DateTime? now}) async {
+    if (!isHistoryOnly(conversationId)) return const [];
+    final at = (now ?? DateTime.now()).millisecondsSinceEpoch;
+    final rows = await localStore.loadMessages(conversationId);
+    if (!isHistoryOnly(conversationId)) return const [];
+    return [
+      for (final m in rows)
+        if (const {
+              LocalMessageKind.text,
+              LocalMessageKind.attachment,
+              LocalMessageKind.unsupported
+            }.contains(m.kind) &&
+            m.hiddenAt == null &&
+            m.deletedAt == null &&
+            m.senderHidden != true &&
+            (m.expiresAt == null || m.expiresAt! > at))
+          m
+    ]..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  }
+
   Future<void> refreshHistory(String conversationId) async {
     _history[conversationId] = await _loadHistory(conversationId);
     notifyListeners();
@@ -1131,6 +1188,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       mentionsInMutedChats =
           await localStore.loadSetting('w8.mentions_muted') != 'false';
       _armMuteTimer();
+      _copiedHistory =
+          Map.of((await localStore.loadHistoryNamespace()).conversations);
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
       final cached = await localStore.loadSnapshot();
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
@@ -4545,6 +4604,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     _pins.clear();
     starredMessages = {};
     showArchivedChats = false;
+    _copiedHistory = {};
     activeDeviceLink = null;
     _clearLinkSecret();
     pendingDeviceLinkClaim = null;

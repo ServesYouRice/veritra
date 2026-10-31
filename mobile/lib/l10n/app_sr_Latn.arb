@@ -667,5 +667,11 @@
   "w8MentionsMutedDetail": "Obavesti me kada me član pomene, čak i u utišanom ćaskanju.",
   "w8HiddenSpoiler": "Poruka sa skrivenim spojlerom",
   "w8StarredMessages": "Poruke sa zvezdicom na ovom uređaju",
-  "k2CopiedHistory": "Kopirana istorija · snimak sa uređaja"
+  "k2CopiedHistory": "Kopirana istorija · snimak sa uređaja",
+  "k2HistoryOnlyTitle": "Kopirana istorija",
+  "k2HistoryOnlyNotice": "Kopirano sa vašeg drugog uređaja. Samo za čitanje: ovaj uređaj nije član ovog razgovora, pa se ovde ništa ne može poslati.",
+  "k2HistoryUntitled": "Raniji razgovor",
+  "k2HistoryOtherMember": "Drugi član",
+  "k2HistoryAttachment": "Prilog, nije preuzet na ovom uređaju",
+  "k2HistoryEmpty": "U ovom razgovoru nije ostala nijedna kopirana poruka."
 }
