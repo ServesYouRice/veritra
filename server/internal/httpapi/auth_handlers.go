@@ -296,7 +296,31 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	// verified above, so a password change committed meanwhile (which
 	// deletes the account's sessions) cannot be outlived by this login. It
 	// goes before the rehash, which changes the stored hash.
-	if err := a.Store.CreateLoginSession(r.Context(), tokenHash, record.AccountID, record.DeviceID, record.PasswordHash); err != nil {
+	if loginBeforeSessionHook != nil {
+		loginBeforeSessionHook()
+	}
+	err = a.Store.CreateLoginSession(r.Context(), tokenHash, record.AccountID, record.DeviceID, record.PasswordHash)
+	if errors.Is(err, storage.ErrUnauthorized) {
+		// A concurrent login on this account may have just rehashed the
+		// same password (a legacy hash or changed Argon2 parameters). Check
+		// the password once against the hash now stored and try once more;
+		// a real password change fails that check and still wins. Every
+		// credential was already checked, so this reveals nothing new and
+		// does not count towards the backoff.
+		current, lookupErr := a.Store.LoginRecord(r.Context(), req.Username, req.DeviceID)
+		if lookupErr == nil && current.AccountID == record.AccountID && current.PasswordHash != "" && current.PasswordHash != record.PasswordHash {
+			recheck, verifyErr := passwords.Verify(r.Context(), auth.Anonymous, current.PasswordHash, req.Password)
+			if verifyErr != nil {
+				writePasswordHashFailure(w, verifyErr)
+				return
+			}
+			if recheck.OK {
+				record, check = current, recheck
+				err = a.Store.CreateLoginSession(r.Context(), tokenHash, record.AccountID, record.DeviceID, record.PasswordHash)
+			}
+		}
+	}
+	if err != nil {
 		if errors.Is(err, storage.ErrUnauthorized) {
 			writeError(w, http.StatusUnauthorized, "invalid_credentials")
 			return
@@ -310,6 +334,10 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	a.recordAuditEvent(r.Context(), &record.AccountID, "session.login", map[string]string{"device_id": record.DeviceID})
 	writeJSON(w, http.StatusOK, map[string]interface{}{"token": token, "account_id": record.AccountID, "device_id": record.DeviceID, "role": record.Role})
 }
+
+// loginBeforeSessionHook, when set by a test, runs between a login's password
+// check and its session insert, where a concurrent rehash can land.
+var loginBeforeSessionHook func()
 
 func writeRetryError(w http.ResponseWriter, code string, retryAfter time.Duration) {
 	seconds := int(retryAfter.Round(time.Second) / time.Second)
