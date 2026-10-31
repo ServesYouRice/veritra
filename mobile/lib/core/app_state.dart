@@ -592,11 +592,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
 
   /// Restores a backup onto this empty device and signs it in (card I45).
   /// Returns false with a typed error under [Ops.restore]; an interrupted
-  /// download continues on the next attempt. True once the restored session
-  /// is up (which includes running offline from its cache), and also when
-  /// the backup's identity and history are restored but its session expired
-  /// or was revoked: the device then shows sign-in and a password sign-in
-  /// finishes it.
+  /// download continues on the next attempt. True only once the restored
+  /// session is up, which includes running offline from its cache. A backup
+  /// session the server rejects (401) is a failed restore (D66): its identity
+  /// and history stay on this device, and the error asks for the password
+  /// sign-in that finishes it.
   Future<bool> restoreFromBackup(String recoveryCode) {
     return _runScoped(Ops.restore, () async {
       final service = backupService;
@@ -623,10 +623,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         if (stored != null &&
             stored.token.isEmpty &&
             (stored.deviceId?.isNotEmpty ?? false)) {
-          // The backup's session expired or was revoked. Its identity and
-          // history are on this device: the restore is done and a password
-          // sign-in finishes it.
-          return;
+          // The backup's session expired or was revoked (D66: a failed
+          // restore). Its identity and history are on this device: a
+          // password sign-in finishes it.
+          throw UserFacingException(l10n.backupErrorSignInAgain);
         }
       }
       // The local store or keystore failed (the recovery screen says how),
