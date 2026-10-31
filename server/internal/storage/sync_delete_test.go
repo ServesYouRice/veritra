@@ -99,3 +99,48 @@ func TestPruneBackfillRedactsVersionsOfMessagesDeletedEarlier(t *testing.T) {
 		}
 	}
 }
+
+// The delete's redaction reads only the conversation's events from the
+// message's created event on, not its whole retained history, since it holds
+// the single writer. An earlier event the update must not read is made
+// unreadable to json_extract here: reading it would fail the delete.
+func TestDeleteRedactionReadsNoEventBeforeTheMessage(t *testing.T) {
+	ctx := context.Background()
+	f := newSyncVisibilityFixture(t, ctx)
+	_, earlierEvent := f.send(t, ctx, "earlier", nil)
+	if _, err := f.store.db.ExecContext(ctx, `UPDATE sync_events SET payload_json = '{' WHERE id = ?`, earlierEvent); err != nil {
+		t.Fatal(err)
+	}
+	message, _ := f.send(t, ctx, "deleted-bounded", nil)
+	if _, _, err := f.store.UpdateMessageEnvelopeWithSyncEvent(ctx, message.ID, f.sender.Account.ID, []byte("ciphertext-bounded-edit"), "mls-openmls-todo", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.store.DeleteMessageEnvelopeWithSyncEvent(ctx, message.ID, f.sender.Account.ID, []byte("ciphertext-bounded-marker"), "mls-openmls-todo", nil); err != nil {
+		t.Fatalf("delete read an event from before the message: %v", err)
+	}
+	for _, secret := range []string{"ciphertext-deleted-bounded", "ciphertext-bounded-edit"} {
+		if n := syncPayloadsContain(t, ctx, f.store, encodeBase64ForTest(secret)); n != 0 {
+			t.Fatalf("%d sync events still hold %q after the delete", n, secret)
+		}
+	}
+}
+
+// When retention already pruned the created event, the edits that are left
+// are still redacted.
+func TestDeleteRedactsEditsWhenTheCreatedEventWasPruned(t *testing.T) {
+	ctx := context.Background()
+	f := newSyncVisibilityFixture(t, ctx)
+	message, createdEvent := f.send(t, ctx, "pruned-original", nil)
+	if _, _, err := f.store.UpdateMessageEnvelopeWithSyncEvent(ctx, message.ID, f.sender.Account.ID, []byte("ciphertext-pruned-edit"), "mls-openmls-todo", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.db.ExecContext(ctx, `DELETE FROM sync_events WHERE id = ?`, createdEvent); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.store.DeleteMessageEnvelopeWithSyncEvent(ctx, message.ID, f.sender.Account.ID, []byte("ciphertext-pruned-marker"), "mls-openmls-todo", nil); err != nil {
+		t.Fatal(err)
+	}
+	if n := syncPayloadsContain(t, ctx, f.store, encodeBase64ForTest("ciphertext-pruned-edit")); n != 0 {
+		t.Fatalf("%d sync events still hold the edit after the delete", n)
+	}
+}
