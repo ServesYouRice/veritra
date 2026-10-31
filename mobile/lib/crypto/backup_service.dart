@@ -458,10 +458,10 @@ class BackupService {
         if (start > 0) throw const _RangeRefused();
         throw const BackupException(BackupFailureKind.corrupt);
       }
-      if (error.statusCode >= 500 || error.statusCode == 429) {
-        throw const BackupException(BackupFailureKind.network);
-      }
-      throw const BackupException(BackupFailureKind.notFound);
+      // Anything else (5xx, 429, or a status the recovery route never
+      // sends, as from a proxy or captive portal) says nothing about the
+      // backup: keep the download and let the user try again.
+      throw const BackupException(BackupFailureKind.network);
     } on SocketException {
       throw const BackupException(BackupFailureKind.network);
     } on HttpException {

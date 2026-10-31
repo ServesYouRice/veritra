@@ -130,4 +130,23 @@ void main() {
     expect(server.rangeStarts, <int>[100]);
     expect(scratch.listSync(), isEmpty);
   }, skip: skip);
+
+  for (final status in <int>[400, 403, 407]) {
+    test('an unexpected $status keeps the saved download for a retry',
+        () async {
+      final (code, ciphertext) = await makeBackup();
+      partial().writeAsBytesSync(ciphertext.sublist(0, 100));
+      // As from a proxy or captive portal in front of the server.
+      server.recoveryStatus = status;
+      final target = MemoryLocalStore();
+      await expectLater(serviceFor(target).recover(code),
+          throwsA(failure(BackupFailureKind.network)));
+      expect(partial().readAsBytesSync(), ciphertext.sublist(0, 100));
+
+      server.recoveryStatus = null;
+      await serviceFor(target).recover(code);
+      expect((await target.loadSession())?.deviceId, 'dev_1');
+      expect(scratch.listSync(), isEmpty);
+    }, skip: skip);
+  }
 }
