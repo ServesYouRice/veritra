@@ -63,17 +63,15 @@ class ApiClient {
 
   void close() => _httpClient.close(force: true);
 
-  static int _pageLimit(int limit) =>
-      limit.clamp(1, _maxServerPageSize).toInt();
-
   /// Runs [request] with [limit], halving it while the reply is over
   /// [_maxCiphertextResponseBytes]. A single item that is still too large
   /// rethrows.
   static Future<T> _shrinkingPage<T>(
     int limit,
-    Future<T> Function(int limit) request,
-  ) async {
-    var current = _pageLimit(limit);
+    Future<T> Function(int limit) request, {
+    int maxLimit = _maxServerPageSize,
+  }) async {
+    var current = limit.clamp(1, maxLimit).toInt();
     while (true) {
       try {
         return await request(current);
@@ -548,10 +546,19 @@ class ApiClient {
     int limit = 250,
     String? before,
   }) async {
-    final boundedLimit = limit.clamp(1, 5000).toInt();
-    final path = '/api/v1/account/export?limit=$boundedLimit'
-        '${before == null ? '' : '&before=${Uri.encodeQueryComponent(before)}'}';
-    return _jsonRequest('GET', path, token: token);
+    // Rows keep their message ciphertext, so a page can pass the JSON cap;
+    // it is then re-requested smaller. The export has its own 1..5000 limit
+    // range, and the caller follows `next_before`, not the page length.
+    return _shrinkingPage(limit, maxLimit: 5000, (pageLimit) {
+      final path = '/api/v1/account/export?limit=$pageLimit'
+          '${before == null ? '' : '&before=${Uri.encodeQueryComponent(before)}'}';
+      return _jsonRequest(
+        'GET',
+        path,
+        token: token,
+        maxResponseBytes: _maxCiphertextResponseBytes,
+      );
+    });
   }
 
   Future<Conversation> createConversation(String token, String kind) async {
@@ -967,6 +974,8 @@ class ApiClient {
         if (revocationDeviceId != null)
           'revocation_device_id': revocationDeviceId,
       },
+      // The reply echoes the stored message, payload included.
+      maxResponseBytes: _maxCiphertextResponseBytes,
     );
     return _decode(() => MlsMessage.fromJson(_object(json, 'mls_message')));
   }
