@@ -37,6 +37,15 @@ func TestJournalPathsMustStayBesideTheLiveInstance(t *testing.T) {
 			j.StagingDir = filepath.Dir(live) + string(filepath.Separator) + "sub" + string(filepath.Separator) + ".." +
 				string(filepath.Separator) + ".veritra-restore-x"
 		},
+		"blob staging climbs out": func(j *restoreJournal, _, liveBlobs, _ string) {
+			j.Version = 2
+			j.Blobs = liveBlobs
+			j.BlobStagingDir = filepath.Join(filepath.Dir(liveBlobs), ".veritra-restore-blobs-x") + "/../../victim"
+		},
+		"blob staging without blobs": func(j *restoreJournal, _, liveBlobs, _ string) {
+			j.Version = 2
+			j.BlobStagingDir = filepath.Join(filepath.Dir(liveBlobs), ".veritra-restore-blobs-x")
+		},
 	}
 	for name, damage := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -81,6 +90,29 @@ func TestJournalPathsMustStayBesideTheLiveInstance(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Version 1 journals never name a blob staging directory; one that does was
+// not written by any build and is left for the operator.
+func TestVersionOneJournalWithBlobStagingIsDamaged(t *testing.T) {
+	cfg := seedInstance(t, "original")
+	live, _ := filepath.Abs(cfg.DatabasePath)
+	liveBlobs, _ := filepath.Abs(cfg.StoragePath)
+	stage, err := makeStagingDir(filepath.Dir(live), ".veritra-restore-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJournal(journalPath(live), restoreJournal{
+		Version: 1, State: "activating", Database: live, Blobs: liveBlobs, StagingDir: stage,
+		BlobStagingDir: filepath.Join(filepath.Dir(liveBlobs), ".veritra-restore-blobs-x"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	err = recoverInterruptedRestore(cfg, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "is damaged") {
+		t.Fatalf("recovery err=%v, want a damaged journal", err)
+	}
+	expectLive(t, cfg, "original")
 }
 
 // A journal that a real restore wrote passes the containment checks.

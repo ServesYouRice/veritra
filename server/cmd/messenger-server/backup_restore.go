@@ -106,6 +106,9 @@ func removeStagingDir(dir string) error {
 }
 
 func syncDir(dir string) error {
+	if err := faultHook("sync:" + dir); err != nil {
+		return err
+	}
 	handle, err := os.Open(dir)
 	if err != nil {
 		return err
@@ -360,11 +363,22 @@ type stagedRestore struct {
 	dir      string
 	database string
 	blobs    string // empty for a legacy database-only restore
+	// blobDir is a second staging directory beside the live blob directory,
+	// used when its parent differs from the database's, so activating the
+	// blobs is a rename within one file system. Empty otherwise.
+	blobDir string
 }
 
-// stageBackup copies and verifies a backup into an invocation-owned
-// directory next to the live database. Nothing live is touched.
-func stageBackup(cfg config.Config, src, liveDatabase string) (stagedRestore, error) {
+// remove deletes the staging directories (only those carrying the marker).
+func (staged stagedRestore) remove() {
+	_ = removeStagingDir(staged.dir)
+	_ = removeStagingDir(staged.blobDir)
+}
+
+// stageBackup copies and verifies a backup into invocation-owned
+// directories next to the live database and blob directory. Nothing live is
+// touched.
+func stageBackup(cfg config.Config, src, liveDatabase, liveBlobs string) (stagedRestore, error) {
 	info, err := os.Stat(src)
 	if err != nil {
 		return stagedRestore{}, fmt.Errorf("backup not readable: %w", err)
@@ -391,17 +405,30 @@ func stageBackup(cfg config.Config, src, liveDatabase string) (stagedRestore, er
 	if err != nil {
 		return stagedRestore{}, fmt.Errorf("backup not readable: %w", err)
 	}
-	need := sourceInfo.Size()
+	databaseNeed := sourceInfo.Size()
+	var blobNeed int64
 	if manifest != nil {
 		for _, blob := range manifest.Blobs {
-			need += blob.SizeBytes
+			blobNeed += blob.SizeBytes
 		}
 	}
 	parent := filepath.Dir(liveDatabase)
+	blobParent := filepath.Dir(liveBlobs)
+	separateBlobs := manifest != nil && blobParent != parent
 	if err := os.MkdirAll(parent, 0o700); err != nil {
 		return stagedRestore{}, err
 	}
-	if err := requireFreeSpace(parent, need); err != nil {
+	if separateBlobs {
+		if err := os.MkdirAll(blobParent, 0o700); err != nil {
+			return stagedRestore{}, err
+		}
+		if err := requireFreeSpace(parent, databaseNeed); err != nil {
+			return stagedRestore{}, err
+		}
+		if err := requireFreeSpace(blobParent, blobNeed); err != nil {
+			return stagedRestore{}, err
+		}
+	} else if err := requireFreeSpace(parent, databaseNeed+blobNeed); err != nil {
 		return stagedRestore{}, err
 	}
 	dir, err := makeStagingDir(parent, ".veritra-restore-")
@@ -410,7 +437,7 @@ func stageBackup(cfg config.Config, src, liveDatabase string) (stagedRestore, er
 	}
 	staged := stagedRestore{dir: dir, database: filepath.Join(dir, "database.db")}
 	fail := func(err error) (stagedRestore, error) {
-		_ = removeStagingDir(dir)
+		staged.remove()
 		return stagedRestore{}, err
 	}
 	if err := faultHook("restore:stage-database"); err != nil {
@@ -437,6 +464,13 @@ func stageBackup(cfg config.Config, src, liveDatabase string) (stagedRestore, er
 		return fail(errors.New("backup manifest does not match database contents"))
 	}
 	staged.blobs = filepath.Join(dir, "blobs")
+	if separateBlobs {
+		staged.blobDir, err = makeStagingDir(blobParent, ".veritra-restore-blobs-")
+		if err != nil {
+			return fail(err)
+		}
+		staged.blobs = filepath.Join(staged.blobDir, "blobs")
+	}
 	if err := os.Mkdir(staged.blobs, 0o700); err != nil {
 		return fail(err)
 	}
@@ -468,7 +502,19 @@ func stageBackup(cfg config.Config, src, liveDatabase string) (stagedRestore, er
 	if err := syncDir(staged.blobs); err != nil {
 		return fail(err)
 	}
-	return staged, syncDir(dir)
+	if staged.blobDir != "" {
+		// The journal names this directory; the journal write syncs only
+		// the database's parent.
+		for _, synced := range []string{staged.blobDir, blobParent} {
+			if err := syncDir(synced); err != nil {
+				return fail(err)
+			}
+		}
+	}
+	if err := syncDir(dir); err != nil {
+		return fail(err)
+	}
+	return staged, nil
 }
 
 // restoreJournal records a restore in progress. Paths are checked against
@@ -484,10 +530,24 @@ type restoreJournal struct {
 	Blobs            string            `json:"blobs,omitempty"`
 	BlobsRollback    string            `json:"blobs_rollback,omitempty"`
 	StagingDir       string            `json:"staging_dir"`
+	// BlobStagingDir is set (journal Version 2) when the blob directory's
+	// parent differs from the database's: restored blobs are staged there,
+	// so every blob rename stays on one file system.
+	BlobStagingDir string `json:"blob_staging_dir,omitempty"`
 }
 
 func journalPath(liveDatabase string) string {
 	return filepath.Join(filepath.Dir(liveDatabase), restoreJournalName)
+}
+
+// parents lists the directories whose entries a restore or its rollback
+// renames: the database's parent and, when it differs, the blob directory's.
+func (journal restoreJournal) parents() []string {
+	parents := []string{filepath.Dir(journal.Database)}
+	if journal.Blobs != "" && filepath.Dir(journal.Blobs) != parents[0] {
+		parents = append(parents, filepath.Dir(journal.Blobs))
+	}
+	return parents
 }
 
 func writeJournal(path string, journal restoreJournal) error {
@@ -528,7 +588,7 @@ func restore(cfg config.Config, args []string, stdout io.Writer) error {
 	if _, err := os.Stat(journalPath(live)); err == nil {
 		return errors.New("an earlier restore is unfinished; run the command again after it is settled")
 	}
-	staged, err := stageBackup(cfg, args[0], live)
+	staged, err := stageBackup(cfg, args[0], live, liveBlobs)
 	if err != nil {
 		return err
 	}
@@ -538,7 +598,7 @@ func restore(cfg config.Config, args []string, stdout io.Writer) error {
 	// leaves the journal, and so leaves staging as well.
 	defer func() {
 		if _, err := os.Lstat(path); os.IsNotExist(err) {
-			_ = removeStagingDir(staged.dir)
+			staged.remove()
 		}
 	}()
 	if _, err := os.Stat(live); err == nil {
@@ -572,6 +632,12 @@ func restore(cfg config.Config, args []string, stdout io.Writer) error {
 			journal.BlobsRollback = liveBlobs + suffix
 		}
 	}
+	if staged.blobDir != "" {
+		// An older build cannot settle this journal; Version 2 makes it
+		// refuse instead of rolling back without the blob staging.
+		journal.Version = 2
+		journal.BlobStagingDir = staged.blobDir
+	}
 	if err := writeJournal(path, journal); err != nil {
 		return fmt.Errorf("write restore journal: %w", err)
 	}
@@ -580,6 +646,17 @@ func restore(cfg config.Config, args []string, stdout io.Writer) error {
 			return err
 		}
 		return action()
+	}
+	// Renames change the entries of the database's parent and, when it
+	// differs, the blob directory's parent; both must be durable before the
+	// journal may say "activated".
+	syncParents := func() error {
+		for _, parent := range journal.parents() {
+			if err := syncDir(parent); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	activate := func() error {
 		if journal.DatabaseRollback != "" {
@@ -597,7 +674,7 @@ func restore(cfg config.Config, args []string, stdout io.Writer) error {
 				return fmt.Errorf("preserve live blob directory: %w", err)
 			}
 		}
-		if err := syncDir(filepath.Dir(live)); err != nil {
+		if err := syncParents(); err != nil {
 			return err
 		}
 		if err := step("restore:activate-database", func() error { return os.Rename(staged.database, live) }); err != nil {
@@ -608,7 +685,7 @@ func restore(cfg config.Config, args []string, stdout io.Writer) error {
 				return fmt.Errorf("activate staged blob directory: %w", err)
 			}
 		}
-		if err := syncDir(filepath.Dir(live)); err != nil {
+		if err := syncParents(); err != nil {
 			return err
 		}
 		if err := step("restore:validate", func() error {
@@ -658,16 +735,24 @@ func rollBackRestore(journal restoreJournal) error {
 	if err := ensureStagingDir(journal.StagingDir); err != nil {
 		return err
 	}
+	// Version 1 journals staged blobs beside the database.
+	blobStaging := journal.StagingDir
+	if journal.BlobStagingDir != "" {
+		if err := ensureStagingDir(journal.BlobStagingDir); err != nil {
+			return err
+		}
+		blobStaging = journal.BlobStagingDir
+	}
 	// withdraw moves a restored copy out of its live path into staging,
 	// rather than deleting it. An earlier, interrupted attempt may have
 	// used the plain name already.
-	withdraw := func(live, name string) error {
+	withdraw := func(live, staging, name string) error {
 		if _, err := os.Lstat(live); os.IsNotExist(err) {
 			return nil
 		} else if err != nil {
 			return err
 		}
-		target := filepath.Join(journal.StagingDir, name)
+		target := filepath.Join(staging, name)
 		if _, err := os.Lstat(target); err == nil {
 			target += "-" + randomSuffix()
 		} else if !os.IsNotExist(err) {
@@ -675,7 +760,7 @@ func rollBackRestore(journal restoreJournal) error {
 		}
 		return os.Rename(live, target)
 	}
-	putBack := func(live, rollback string) error {
+	putBack := func(live, rollback, staging string) error {
 		if rollback == "" {
 			return nil
 		}
@@ -684,18 +769,24 @@ func rollBackRestore(journal restoreJournal) error {
 		} else if err != nil {
 			return err
 		}
-		if err := withdraw(live, "rolled-back-"+filepath.Base(live)); err != nil {
+		if err := withdraw(live, staging, "rolled-back-"+filepath.Base(live)); err != nil {
 			return err
 		}
 		return os.Rename(rollback, live)
 	}
+	syncParents := func() error {
+		var result error
+		for _, parent := range journal.parents() {
+			result = errors.Join(result, syncDir(parent))
+		}
+		return result
+	}
 	// settle runs one step and stops the rollback at its first failure.
 	// Every step can run again: a retry finds the originals that are already
 	// back and moves only what is left.
-	parent := filepath.Dir(journal.Database)
 	settle := func(err error) error {
 		if err != nil {
-			return errors.Join(err, syncDir(parent))
+			return errors.Join(err, syncParents())
 		}
 		return nil
 	}
@@ -705,31 +796,31 @@ func rollBackRestore(journal restoreJournal) error {
 	err := faultHook("restore:rollback-database")
 	if err == nil {
 		if journal.DatabaseRollback != "" {
-			err = putBack(journal.Database, journal.DatabaseRollback)
+			err = putBack(journal.Database, journal.DatabaseRollback, journal.StagingDir)
 		} else {
 			// There was no live database: a restored one is simply withdrawn.
-			err = withdraw(journal.Database, "rolled-back-database.db")
+			err = withdraw(journal.Database, journal.StagingDir, "rolled-back-database.db")
 		}
 	}
 	if err := settle(err); err != nil {
 		return err
 	}
 	for live, rollback := range journal.Companions {
-		if err := settle(putBack(live, rollback)); err != nil {
+		if err := settle(putBack(live, rollback, journal.StagingDir)); err != nil {
 			return err
 		}
 	}
 	if journal.Blobs != "" {
 		if journal.BlobsRollback != "" {
-			err = putBack(journal.Blobs, journal.BlobsRollback)
+			err = putBack(journal.Blobs, journal.BlobsRollback, blobStaging)
 		} else {
-			err = withdraw(journal.Blobs, "rolled-back-blobs")
+			err = withdraw(journal.Blobs, blobStaging, "rolled-back-blobs")
 		}
 		if err := settle(err); err != nil {
 			return err
 		}
 	}
-	return syncDir(parent)
+	return syncParents()
 }
 
 // ensureStagingDir recreates a journal's staging directory when it is gone,
@@ -794,7 +885,7 @@ func settleRestoreJournal(cfg config.Config, live, path string, stdout io.Writer
 		return fmt.Errorf("read restore journal: %w", err)
 	}
 	var journal restoreJournal
-	if err := json.Unmarshal(raw, &journal); err != nil || journal.Version != 1 {
+	if err := json.Unmarshal(raw, &journal); err != nil || !knownJournalVersion(journal) {
 		return fmt.Errorf("restore journal %s is damaged; resolve it by hand before starting", path)
 	}
 	liveBlobs, err := filepath.Abs(cfg.StoragePath)
@@ -819,7 +910,21 @@ func settleRestoreJournal(cfg config.Config, live, path string, stdout io.Writer
 		return err
 	}
 	_ = removeStagingDir(journal.StagingDir)
+	_ = removeStagingDir(journal.BlobStagingDir)
 	return syncDir(filepath.Dir(live))
+}
+
+// knownJournalVersion accepts Version 1 (blobs staged beside the database)
+// and Version 2 (which may name a separate blob staging directory).
+func knownJournalVersion(journal restoreJournal) bool {
+	switch journal.Version {
+	case 1:
+		return journal.BlobStagingDir == ""
+	case 2:
+		return true
+	default:
+		return false
+	}
 }
 
 func journalMatches(journal restoreJournal, live, liveBlobs string) bool {
@@ -835,6 +940,10 @@ func journalMatches(journal restoreJournal, live, liveBlobs string) bool {
 		}
 	}
 	if journal.Blobs != "" && (journal.Blobs != liveBlobs || !rollback(journal.BlobsRollback, liveBlobs)) {
+		return false
+	}
+	if journal.BlobStagingDir != "" &&
+		(journal.Blobs == "" || !contained(journal.BlobStagingDir, filepath.Dir(liveBlobs), ".veritra-restore-blobs-")) {
 		return false
 	}
 	return contained(journal.StagingDir, filepath.Dir(live), ".veritra-restore-")

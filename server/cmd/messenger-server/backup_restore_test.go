@@ -24,7 +24,13 @@ import (
 // blob both carry label, so a test can tell which instance is live.
 func seedInstance(t *testing.T, label string) config.Config {
 	t.Helper()
-	cfg := commandConfig(t.TempDir())
+	return seedInstanceAt(t, commandConfig(t.TempDir()), label)
+}
+
+// seedInstanceAt seeds an instance at cfg's paths, for layouts such as a blob
+// directory outside the data directory.
+func seedInstanceAt(t *testing.T, cfg config.Config, label string) config.Config {
+	t.Helper()
 	if err := migrate(context.Background(), cfg, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
