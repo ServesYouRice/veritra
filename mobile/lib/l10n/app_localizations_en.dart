@@ -2043,6 +2043,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Your encrypted message queue is full. Send or discard a pending message before composing another.';
 
   @override
+  String get errorCryptoStateFormatUnsupported =>
+      'This device\'s encrypted data was saved in a format this version of the app cannot read. Link this device again to keep messaging.';
+
+  @override
   String get errorConversationPausedDetail =>
       'Sending is paused in this conversation because the server rejected an encryption update. Other conversations still work.';
 

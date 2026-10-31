@@ -705,6 +705,7 @@
 
   "errorConversationPaused": "Sending is paused in this conversation.",
   "errorOutboxFull": "Your encrypted message queue is full. Send or discard a pending message before composing another.",
+  "errorCryptoStateFormatUnsupported": "This device's encrypted data was saved in a format this version of the app cannot read. Link this device again to keep messaging.",
   "errorConversationPausedDetail": "Sending is paused in this conversation because the server rejected an encryption update. Other conversations still work.",
   "errorEncryptionUnavailable": "This build does not include the production encryption engine yet, so this action is unavailable.",
   "errorActionUnavailable": "This action is unavailable in this build.",

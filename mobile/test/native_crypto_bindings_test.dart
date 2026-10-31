@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 
@@ -214,5 +215,43 @@ void main() {
     }
     alice.close();
     bob.close();
+  }, skip: libraryPath == null ? 'host native library not built' : false);
+
+  test('a plaintext whose ciphertext cannot be sent is refused first', () {
+    final bindings = NativeCryptoBindings.open(libraryPath!);
+    final alice = bindings.createDevice('acct_alice', 'dev_alice');
+    alice.createGroup('conv_size');
+    final tooLarge = throwsA(isA<NativeCryptoException>().having(
+        (error) => error.kind, 'kind', NativeCryptoError.plaintextTooLarge));
+    // 800 KiB encrypts to more than the 1 MiB JSON route can carry in
+    // base64, so it must be refused before encrypting.
+    expect(() => alice.encrypt('conv_size', List<int>.filled(800 * 1024, 7)),
+        tooLarge);
+    expect(
+        () => alice.encrypt(
+            'conv_size', List<int>.filled(maxSendablePlaintextBytes + 1, 7)),
+        tooLarge);
+    final epoch = alice.groupEpoch('conv_size');
+    // The largest accepted plaintext fits a full message request.
+    final ciphertext = alice.encrypt(
+        'conv_size', List<int>.filled(maxSendablePlaintextBytes, 7));
+    expect(ciphertext.length - maxSendablePlaintextBytes, lessThan(4096));
+    final request = jsonEncode(<String, Object?>{
+      'conversation_id': 'c' * 128,
+      'idempotency_key': 'k' * 128,
+      'ciphertext': base64Encode(ciphertext),
+      'crypto_protocol': 'mls10-openmls-v1',
+      'crypto_metadata': <String, Object?>{
+        'protocol_version': 1,
+        'epoch': epoch.epoch,
+        'note': 'm' * 4096,
+      },
+      'attachment_refs': List<String>.filled(64, 'a' * 128),
+      'reply_to_id': 'r' * 128,
+      'thread_root_id': 't' * 128,
+      'expires_at': '2026-10-31T00:00:00.000000000Z',
+    });
+    expect(utf8.encode(request).length, lessThanOrEqualTo(1024 * 1024));
+    alice.close();
   }, skip: libraryPath == null ? 'host native library not built' : false);
 }

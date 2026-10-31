@@ -543,6 +543,7 @@
   "errorUnexpectedResponse": "Server je vratio neočekivan odgovor.",
   "errorConversationPaused": "Slanje je pauzirano u ovom razgovoru.",
   "errorOutboxFull": "Vaš red šifrovanih poruka je pun. Pošaljite ili odbacite poruku na čekanju pre nego što napišete novu.",
+  "errorCryptoStateFormatUnsupported": "Šifrovani podaci na ovom uređaju sačuvani su u formatu koji ova verzija aplikacije ne može da pročita. Ponovo povežite ovaj uređaj da biste nastavili da šaljete poruke.",
   "errorConversationPausedDetail": "Slanje je pauzirano u ovom razgovoru jer je server odbio ažuriranje šifrovanja. Ostali razgovori i dalje rade.",
   "errorEncryptionUnavailable": "Ova verzija aplikacije još ne sadrži produkcioni mehanizam za šifrovanje, pa ova radnja nije dostupna.",
   "errorActionUnavailable": "Ova radnja nije dostupna u ovoj verziji aplikacije.",

@@ -3351,6 +3351,12 @@ abstract class AppLocalizations {
   /// **'Your encrypted message queue is full. Send or discard a pending message before composing another.'**
   String get errorOutboxFull;
 
+  /// No description provided for @errorCryptoStateFormatUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'This device\'s encrypted data was saved in a format this version of the app cannot read. Link this device again to keep messaging.'**
+  String get errorCryptoStateFormatUnsupported;
+
   /// No description provided for @errorConversationPausedDetail.
   ///
   /// In en, this message translates to:

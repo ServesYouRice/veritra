@@ -2060,6 +2060,10 @@ class AppLocalizationsSr extends AppLocalizations {
       'Ваш ред шифрованих порука је пун. Пошаљите или одбаците поруку на чекању пре него што напишете нову.';
 
   @override
+  String get errorCryptoStateFormatUnsupported =>
+      'Шифровани подаци на овом уређају сачувани су у формату који ова верзија апликације не може да прочита. Поново повежите овај уређај да бисте наставили да шаљете поруке.';
+
+  @override
   String get errorConversationPausedDetail =>
       'Слање је паузирано у овом разговору јер је сервер одбио ажурирање шифровања. Остали разговори и даље раде.';
 
@@ -4571,6 +4575,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get errorOutboxFull =>
       'Vaš red šifrovanih poruka je pun. Pošaljite ili odbacite poruku na čekanju pre nego što napišete novu.';
+
+  @override
+  String get errorCryptoStateFormatUnsupported =>
+      'Šifrovani podaci na ovom uređaju sačuvani su u formatu koji ova verzija aplikacije ne može da pročita. Ponovo povežite ovaj uređaj da biste nastavili da šaljete poruke.';
 
   @override
   String get errorConversationPausedDetail =>

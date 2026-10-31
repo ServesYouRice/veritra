@@ -241,7 +241,11 @@ impl MlsDevice {
             .validate(self.provider.crypto(), ProtocolVersion::Mls10)
             .map_err(|_| MlsError::InvalidKeyPackage)?;
         let expected_identity = encode_device_identity(expected_account_id, expected_device_id)?;
-        if key_package.leaf_node().credential().serialized_content() != expected_identity {
+        // The same check receivers run on the commit (inspect_commit).
+        if basic_identity(key_package.leaf_node().credential())
+            .map_err(|_| MlsError::InvalidKeyPackage)?
+            != expected_identity
+        {
             return Err(MlsError::InvalidKeyPackage);
         }
         ensure_added_identities_unique(&roster_identities(group, &[]), &[expected_identity])?;
@@ -281,7 +285,11 @@ impl MlsDevice {
                 .validate(self.provider.crypto(), ProtocolVersion::Mls10)
                 .map_err(|_| MlsError::InvalidKeyPackage)?;
             let expected = encode_device_identity(add.account_id, add.device_id)?;
-            if key_package.leaf_node().credential().serialized_content() != expected {
+            // The same check receivers run on the commit (inspect_commit).
+            if basic_identity(key_package.leaf_node().credential())
+                .map_err(|_| MlsError::InvalidKeyPackage)?
+                != expected
+            {
                 return Err(MlsError::InvalidKeyPackage);
             }
             key_packages.push(key_package);
@@ -1249,6 +1257,55 @@ mod tests {
             .unwrap()
             .key_package()
             .clone()
+    }
+
+    #[test]
+    fn the_sender_runs_the_receivers_credential_check() {
+        // Same identity bytes, but not a Basic credential: receivers refuse
+        // it (basic_identity), so the sender runs that check too. OpenMLS
+        // already refused this one later (GroupOperation, unsupported
+        // credential type); now both sides run the same check first.
+        let alice = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
+        let bob = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+        let other = CredentialType::Other(0xF000);
+        let credential = CredentialWithKey {
+            credential: Credential::new(
+                other,
+                encode_device_identity(b"acct_bob", b"dev_bob").unwrap(),
+            ),
+            signature_key: bob.signer.public().into(),
+        };
+        let package = KeyPackage::builder()
+            .leaf_node_capabilities(Capabilities::new(
+                None,
+                None,
+                None,
+                None,
+                Some(&[CredentialType::Basic, other]),
+            ))
+            .build(CIPHERSUITE, &bob.provider, &bob.signer, credential)
+            .unwrap()
+            .key_package()
+            .tls_serialize_detached()
+            .unwrap();
+        let mut group = alice.create_group(b"conv_other_credential").unwrap();
+        assert!(matches!(
+            alice.add_member(&mut group, &package, b"acct_bob", b"dev_bob"),
+            Err(MlsError::InvalidKeyPackage)
+        ));
+        assert!(matches!(
+            alice.stage_membership_commit(
+                &mut group,
+                &[MemberAdd {
+                    key_package: &package,
+                    account_id: b"acct_bob",
+                    device_id: b"dev_bob",
+                }],
+                &[],
+            ),
+            Err(MlsError::InvalidKeyPackage)
+        ));
+        assert!(group.pending_commit().is_none());
     }
 
     /// Alice, Bob and Carol in one group at epoch 1.

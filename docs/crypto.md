@@ -132,6 +132,28 @@ a real account. L1, the signed approved-device list, must give the core:
 With L1 the identity-only check on past-epoch senders (TASK-008) can also
 compare signing keys.
 
+## Message size
+
+Three limits apply to an MLS application message, smallest first:
+
+| Limit | Bytes | Where |
+| --- | --- | --- |
+| App payload (padded) | 65,536 | `app_payload.dart` `_maxPayloadBytes` |
+| Sendable plaintext | 733,184 | `maxSendablePlaintextBytes` in `native_crypto_bindings.dart` |
+| FFI plaintext / ciphertext | 1,048,576 / 1,052,672 | `MAX_MESSAGE_BYTES`, `MAX_CIPHERTEXT_BYTES` in `ffi.rs` |
+
+The message routes read at most 1 MiB of JSON (`readLimitedJSON` in
+`server/internal/httpapi/api.go`), with the ciphertext base64-encoded inside
+it, so the largest ciphertext the server can take is about 768 KiB. The
+sendable plaintext is derived from that: reserve 64 KiB for the other JSON
+fields (ids, metadata, attachment refs), leaving (1 MiB - 64 KiB) * 3 / 4 =
+737,280 ciphertext bytes, then subtract a 4 KiB margin for MLS framing (312
+bytes measured). `NativeCryptoDevice.encrypt` refuses anything larger with
+`NativeCryptoError.plaintextTooLarge` before encrypting, so no ratchet step
+is spent on a message that cannot be sent. A test encrypts exactly the cap
+and checks that a full request body stays within 1 MiB. The server limit is
+not raised; if it changes, change the derivation with it.
+
 ## Change log since the Stage 1 freeze
 
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
@@ -159,7 +181,9 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     wiped. encrypt/decrypt check the output pointer before using a ratchet
     step. `pm_crypto_buffer_free` already wiped non-elidably.
   - TASK-002: decrypt accepts MLS ciphertext up to 1 MiB + 4096 bytes and
-    encrypt never returns more, so every 1 MiB plaintext round-trips.
+    encrypt never returns more, so every 1 MiB plaintext round-trips through
+    the FFI. That is the native ceiling, not what the app can send: see
+    "Message size".
   - TASK-003: an account/device identity occupies one leaf. Adds that would
     repeat an identity in the resulting roster are refused, and removing a
     device removes every leaf that carries its credential.
@@ -189,6 +213,19 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     corruption. The version is not authenticated: the code may lead only to
     re-linking, never to a weaker check. Everything else stays
     `PM_CRYPTO_ERROR`; old blobs are still refused.
+  - Review follow-up: the app caps sendable plaintext at 733,184 bytes
+    ("Message size"); a restore of an unsupported sealed format surfaces as
+    `CryptoStateFormatUnsupported` with its own message that asks the user
+    to link the device again (still fail-closed); senders run the same
+    Basic-credential check (`basic_identity`) on adds that receivers run.
+  - Every client must run ABI 9 before any release. The receive-side
+    commit and Welcome checks (TASK-004, TASK-005) have no version gate: an
+    ABI 8 committer can still add a duplicate identity, ABI 9 receivers
+    refuse that commit, and the group forks with them stalled under I33.
+    Nothing is released, so there is no mixed fleet yet; before a release,
+    the server or app must refuse mixed ABI versions (for example a minimum
+    client version on enrollment and sync). This belongs with the release
+    gates in STATE.md.
   - TASK-010, TASK-048: no protocol change. L0's secret-keyed SAS and tags
     already stop a relay from grinding keys; the doc comments now state the
     8-digit SAS (about 26.6 bits) and the leaked-secret residual. See

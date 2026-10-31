@@ -1,7 +1,10 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:private_messenger/core/errors.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/crypto/crypto_service.dart';
+import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/crypto/app_payload.dart';
 import 'package:private_messenger/crypto/mls_commit_bundle.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
@@ -96,6 +99,40 @@ void main() {
     // Both received in the same test tick, so compare without order.
     expect((await bob.history()).map((item) => item.body),
         unorderedEquals(<String?>['one', 'two']));
+  }, skip: skip);
+
+  test('sealed state in an unsupported format is a distinct error', () async {
+    final bindings = NativeCryptoBindings.open(libraryPath!);
+    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+    final stored = (await alice.store.loadCryptoState())!;
+    // Format 1 (OpenMLS 0.8.1): right magic, a version this build refuses.
+    final oldFormat = List<int>.of(stored.sealedState)
+      ..setRange(8, 10, const [0, 1]);
+    // A fresh store, as after reinstalling over old app data.
+    final store = MemoryLocalStore();
+    await store.saveCryptoState(
+        StoredCryptoState(
+            counter: stored.counter,
+            stateKey: stored.stateKey,
+            sealedState: oldFormat),
+        0);
+    final restarted =
+        NativeCryptoService(bindings: bindings, localStore: store);
+    const session = Session(
+      baseUrl: 'https://localhost:8443',
+      token: 'token',
+      accountId: 'acct_alice',
+      deviceId: 'dev_alice',
+    );
+    await expectLater(restarted.activateSession(session),
+        throwsA(isA<CryptoStateFormatUnsupported>()));
+    await expectLater(
+        restarted.activateExistingSessionBounded(session,
+            checkCanCommit: () {}),
+        throwsA(isA<CryptoStateFormatUnsupported>()));
+    expect(describeError(const CryptoStateFormatUnsupported()),
+        englishL10n.errorCryptoStateFormatUnsupported);
+    await restarted.dispose();
   }, skip: skip);
 
   test('a device added after creation joins and reads new messages', () async {
