@@ -177,7 +177,9 @@ void main() {
     // same answer.
     expect(server.rangeStarts, <int>[0, 0]);
     expect(await target.loadSession(), isNull);
-    expect(scratch.listSync(), isEmpty);
+    // The server accepted the token, so the downloaded file is this backup
+    // and is kept for the corrected code.
+    expect(scratch.listSync().whereType<File>(), hasLength(1));
   }, skip: skip);
 
   test('a device that already has an account is not overwritten', () async {

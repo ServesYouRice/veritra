@@ -149,4 +149,37 @@ void main() {
       expect(scratch.listSync(), isEmpty);
     }, skip: skip);
   }
+
+  test('interrupted download, then key typo, then corrected key restores',
+      () async {
+    final (code, ciphertext) = await makeBackup();
+    // A download the right code started, stopped at 90%.
+    partial()
+        .writeAsBytesSync(ciphertext.sublist(0, ciphertext.length * 9 ~/ 10));
+    server.consumeOnComplete = true;
+    final target = MemoryLocalStore();
+    await expectLater(serviceFor(target).recover(withWrongKey(code)),
+        throwsA(failure(BackupFailureKind.wrongKey)));
+    // The whole transfer used up the code; the file is its only copy.
+    expect(server.stored, isNull);
+    expect(partial().readAsBytesSync(), ciphertext);
+
+    await serviceFor(target).recover(code);
+    expect((await target.loadSession())?.deviceId, 'dev_1');
+    expect(scratch.listSync(), isEmpty);
+  }, skip: skip);
+
+  test('a first attempt with a key typo keeps the download', () async {
+    final (code, ciphertext) = await makeBackup();
+    server.consumeOnComplete = true;
+    final target = MemoryLocalStore();
+    await expectLater(serviceFor(target).recover(withWrongKey(code)),
+        throwsA(failure(BackupFailureKind.wrongKey)));
+    expect(server.stored, isNull);
+    expect(partial().readAsBytesSync(), ciphertext);
+
+    await serviceFor(target).recover(code);
+    expect((await target.loadSession())?.deviceId, 'dev_1');
+    expect(scratch.listSync(), isEmpty);
+  }, skip: skip);
 }
