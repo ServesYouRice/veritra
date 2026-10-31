@@ -5,7 +5,7 @@ standing decisions and the release gates. It replaces `docs/board.md`,
 `docs/audit-consensus.md` and `implementation/REMAINING_WORK.md`, which remain
 in Git history at `d2d9eb8`. Evidence lives in [`testing/evidence/`](testing/evidence/).
 
-**Updated 2026-10-30.**
+**Updated 2026-10-31.**
 
 ## At a glance
 
@@ -90,7 +90,7 @@ and keep each change small. Missing product features are packages in the
 | Clone-restore twin | After an I45 restore the original device can keep running as the same MLS member; its repeated generations stop every receiver's global sync and can fork groups. Confirmed by two reviews on 2026-10-24 | Until K2 replaces clone-restore, tell users to stop using the old device; K0 restores into a new device |
 | Drafts after re-sign-in | After a session expiry and sign-in as the same identity, stored drafts reload only on the next app start; typing first overwrites the stored draft | Reload drafts on sign-in |
 | Windows verification blockers | Full test suite cannot pass on this Windows host: release fixtures cannot delete read-only Git objects, app backup tests fail directory fsync, Flutter database fixtures fail cleanup with open handles | The isolated Linux full suite passes; Windows-specific issues remain. Details in [`L0 evidence`](testing/evidence/L0-device-link-v2.md) |
-| Owner questions from the designs | K0: random key or passphrase, retire clone-restore (recovery path, waiting period and backup default decided in D49). L0 uses option A (26-character secret-derived code, D50). W7: archive behaviour, pin limits and who may pin (written defaults used for W8); silent muted-phone wakes approved in D52. W11: profile key rotation trigger, 404 revealing a block, group profile editors, refusing plaintext group titles. C0: own group for busy channels (channel IDs allowed by D51) | Listed in each design's open questions |
+| Owner questions from the designs | Answered: K0 (D49, D57), L0 (D50), W7 pins (D58) and mentions (D52), W11 group editors (D59), C0 channel IDs (D51). Still open, built on the written defaults: W7 archive behaviour (stays archived); W11 rotation trigger, 404 revealing a block, refusing plaintext group titles; C0 own group for busy channels | Listed in each design's open questions |
 
 ## Release gates
 
@@ -167,6 +167,13 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 | **D50** (2026-10-26, owner) | Build order: safer device linking (L0), then message actions (W8), history on a new device (K2), then communities (C1-C8). Keep each package complete and checked; prerequisites and release gates still apply. |
 | **D51** (2026-10-26, owner) | Community posts may carry a server-visible channel ID for posting rules and retention. Post content and channel names remain end-to-end encrypted. This settles C0's metadata question; the shared-group layout and its sync-isolation prerequisite still need implementation. |
 | **D52** (2026-10-27, owner) | Muted chats on phones may receive generic, silent wakeups so mention alerts can be decided locally after decryption. Never make the server mention-aware. Native wake behavior and lifecycle handling must support silence before this is enabled. |
+| **D53** (2026-10-31, owner) | iOS pushes for new encrypted events are visible alerts with a fixed, generic localized text ("New message"; no sender, no content), so delivery does not depend on background execution (bug-hunt Q-1, TASK-022) |
+| **D54** (2026-10-31, owner) | A peer's application message or call signal that can never be decrypted is committed past with a visible "couldn't unlock this message" placeholder; sync continues for everything else. MLS control messages keep I33's fail-closed rule until a group-fork analysis says otherwise (bug-hunt Q-001 of section 6ba03bc2, TASK-032/058) |
+| **D55** (2026-10-31, owner) | No real users yet, so restore drops the legacy VBK1 backup format once the authenticated format ships; no compatibility path (bug-hunt Q-001 of section c6ed5c69, TASK-044) |
+| **D56** (2026-10-31, owner) | Calls relay through TURN by default (`iceTransportPolicy: relay`); a user setting may allow direct connections, with a plain warning that the other side then sees their address (bug-hunt Q-2, TASK-021) |
+| **D57** (2026-10-31, owner) | K0 recovery key: a random key is the default, and users may choose a passphrase instead. The passphrase path needs Argon2id on the client (a new crate: licence review and `THIRD_PARTY_NOTICES.md` entry before it lands) and a strength floor. Clone-restore is retired once K2 ships |
+| **D58** (2026-10-31, owner) | Pins: in groups any member may pin by default, up to 50 pins per chat; a group's admins may restrict pinning to admins and moderators. Supersedes W7's "moderators only, 3 pins" default |
+| **D59** (2026-10-31, owner) | Only the owner and admins may change a group's name and photo (W11 question 4) |
 
 ## Roadmap
 
