@@ -585,7 +585,7 @@ class ApiClient {
     int? retentionSeconds,
   }) async {
     final trimmedTitle = title?.trim();
-    final json = await _jsonRequest(
+    final (status, json) = await _jsonRequestWithStatus(
       'POST',
       '/api/v1/conversations',
       token: token,
@@ -599,7 +599,25 @@ class ApiClient {
         if (retentionSeconds != null) 'retention_seconds': retentionSeconds,
       },
     );
-    return _decode(() => Conversation.fromJson(json));
+    final conversation = _decode(() => Conversation.fromJson(json));
+    // 200 instead of 201: a DM the pair already had (D67).
+    if (status != HttpStatus.ok) return conversation;
+    return Conversation(
+      id: conversation.id,
+      kind: conversation.kind,
+      title: conversation.title,
+      communityId: conversation.communityId,
+      channelId: conversation.channelId,
+      retentionSeconds: conversation.retentionSeconds,
+      createdAt: conversation.createdAt,
+      lastMessageAt: conversation.lastMessageAt,
+      unreadCount: conversation.unreadCount,
+      currentRole: conversation.currentRole,
+      peerAccountId: conversation.peerAccountId,
+      peerUsername: conversation.peerUsername,
+      createdBy: conversation.createdBy,
+      existedOnServer: true,
+    );
   }
 
   Future<Invite> createInvite(
@@ -1729,6 +1747,23 @@ class ApiClient {
     Map<String, String> extraHeaders = const <String, String>{},
     int maxResponseBytes = _maxJsonResponseBytes,
   }) async {
+    final (_, json) = await _jsonRequestWithStatus(method, path,
+        token: token,
+        body: body,
+        extraHeaders: extraHeaders,
+        maxResponseBytes: maxResponseBytes);
+    return json;
+  }
+
+  /// [_jsonRequest] that also returns the 2xx status.
+  Future<(int, Map<String, Object?>)> _jsonRequestWithStatus(
+    String method,
+    String path, {
+    String? token,
+    Map<String, Object?>? body,
+    Map<String, String> extraHeaders = const <String, String>{},
+    int maxResponseBytes = _maxJsonResponseBytes,
+  }) async {
     final uri = Uri.parse(baseUrl).resolve(path);
     final request = await _openRequest(method, uri);
     request.headers.contentType = ContentType.json;
@@ -1740,7 +1775,10 @@ class ApiClient {
       request.write(jsonEncode(body));
     }
     final response = await request.close().timeout(_requestTimeout);
-    return _readJsonResponse(response, maxResponseBytes);
+    return (
+      response.statusCode,
+      await _readJsonResponse(response, maxResponseBytes),
+    );
   }
 
   /// Reads a JSON object response. A non-2xx status becomes an

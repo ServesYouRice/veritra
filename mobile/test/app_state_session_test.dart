@@ -337,14 +337,14 @@ void main() {
       h.dispose();
     });
 
-    test('a session the server rejects restores for a password sign-in',
-        () async {
+    test('a session the server rejects is a failed restore (D66)', () async {
       final api = _Api()
         ..conversationsFailure = ApiException(401, '{"error":"unauthorized"}');
       final h = await restored(_BackupMode.session, api: api);
-      expect(await h.state.restoreFromBackup('v1.code'), isTrue);
+      expect(await h.state.restoreFromBackup('v1.code'), isFalse);
       expect(h.state.session, isNull);
-      expect(h.state.errorFor(Ops.restore), isNull);
+      // The message says how to finish: a password sign-in.
+      expect(h.state.errorFor(Ops.restore), contains('Sign in'));
       // The identity stays for that sign-in.
       expect((await h.store.loadSession())?.deviceId, _owner.deviceId);
       h.dispose();

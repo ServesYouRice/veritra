@@ -136,7 +136,7 @@ func (a *API) createConversation(w http.ResponseWriter, r *http.Request, princip
 		writeError(w, http.StatusBadRequest, "invalid_retention_seconds")
 		return
 	}
-	conversation, err := a.Store.CreateConversation(r.Context(), storage.CreateConversationInput{
+	conversation, created, err := a.Store.CreateOrGetConversation(r.Context(), storage.CreateConversationInput{
 		Kind:             req.Kind,
 		Title:            req.Title,
 		CommunityID:      req.CommunityID,
@@ -151,7 +151,14 @@ func (a *API) createConversation(w http.ResponseWriter, r *http.Request, princip
 		handleStorageError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, conversation)
+	// A DM pair has one conversation: asking again returns it with 200, not
+	// 201, so the client joins its MLS group through a Welcome instead of
+	// building a second one (D67). The body is the same either way.
+	status := http.StatusCreated
+	if !created {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, conversation)
 }
 
 func (a *API) listConversations(w http.ResponseWriter, r *http.Request, principal domain.Principal) {

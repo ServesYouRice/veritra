@@ -400,7 +400,12 @@ func (w *world) seed(ctx context.Context, setupToken string, rng *mrand.Rand, pr
 			ID string `json:"id"`
 		}
 		status, err := w.client.json(ctx, http.MethodPost, "/api/v1/conversations", creator, "", map[string]any{"kind": kind, "member_account_ids": others}, &created, nil)
-		if err := expect(status, err, http.StatusCreated); err != nil {
+		// A DM pair the server already has answers 200 with that DM (D67).
+		ok := []int{http.StatusCreated}
+		if kind == "dm" {
+			ok = append(ok, http.StatusOK)
+		}
+		if err := expect(status, err, ok...); err != nil {
 			return err
 		}
 		conv.id = created.ID

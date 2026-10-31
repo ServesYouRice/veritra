@@ -592,11 +592,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
 
   /// Restores a backup onto this empty device and signs it in (card I45).
   /// Returns false with a typed error under [Ops.restore]; an interrupted
-  /// download continues on the next attempt. True once the restored session
-  /// is up (which includes running offline from its cache), and also when
-  /// the backup's identity and history are restored but its session expired
-  /// or was revoked: the device then shows sign-in and a password sign-in
-  /// finishes it.
+  /// download continues on the next attempt. True only once the restored
+  /// session is up, which includes running offline from its cache. A backup
+  /// session the server rejects (401) is a failed restore (D66): its identity
+  /// and history stay on this device, and the error asks for the password
+  /// sign-in that finishes it.
   Future<bool> restoreFromBackup(String recoveryCode) {
     return _runScoped(Ops.restore, () async {
       final service = backupService;
@@ -623,10 +623,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         if (stored != null &&
             stored.token.isEmpty &&
             (stored.deviceId?.isNotEmpty ?? false)) {
-          // The backup's session expired or was revoked. Its identity and
-          // history are on this device: the restore is done and a password
-          // sign-in finishes it.
-          return;
+          // The backup's session expired or was revoked (D66: a failed
+          // restore). Its identity and history are on this device: a
+          // password sign-in finishes it.
+          throw UserFacingException(l10n.backupErrorSignInAgain);
         }
       }
       // The local store or keystore failed (the recovery screen says how),
@@ -1985,13 +1985,16 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       );
       final conversation = created!;
       // The server hands back the existing DM for a pair instead of making a
-      // second one. One the peer created already has its group, and this
-      // device joins it through the peer's Welcome; one whose group this
-      // device already holds needs nothing either. Only a new conversation
-      // gets a group here.
+      // second one, and says so with 200 instead of 201 (D67). Its group was
+      // built by whoever created it (the peer, or another device of this
+      // account), and this device joins it through that Welcome; one whose
+      // group this device already holds needs nothing either. Only a new
+      // conversation gets a group here. The creator and local-group checks
+      // stay for a server that answers 201 either way.
       final mls = _mlsCrypto;
       final existingDm = conversation.isDm &&
-          ((conversation.createdBy != null &&
+          (conversation.existedOnServer ||
+              (conversation.createdBy != null &&
                   conversation.createdBy != current.accountId) ||
               (mls != null && await mls.groupEpoch(conversation.id) != null));
       if (!existingDm) await _setUpConversationGroup(conversation.id);
@@ -2415,6 +2418,18 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     for (final id in pending) {
       _draftTimers.remove(id)?.cancel();
       unawaited(_persistDraft(id));
+    }
+  }
+
+  /// Writes every pending draft and waits for the writes. Runs while the
+  /// session that owns the drafts is still current, before a session end
+  /// clears local data (D65): an expired session keeps the newest text, and
+  /// sign-out wipes it with the rest instead of a late timer writing it back.
+  Future<void> _flushDraftsBeforeSessionEnd() async {
+    final pending = _draftTimers.keys.toList(growable: false);
+    _cancelDraftTimers();
+    for (final id in pending) {
+      await _persistDraft(id);
     }
   }
 
@@ -5294,7 +5309,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (cryptoService case final NoticeCaptureConsumer capture) {
       capture.noticeCaptureEnabled = false;
     }
-    _cancelDraftTimers();
+    await _flushDraftsBeforeSessionEnd();
     final previousOwner = _syncOwner;
     _syncOwner = null;
     previousOwner?.dispose();

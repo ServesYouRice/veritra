@@ -228,11 +228,11 @@ void main() {
     expect(await again.state.restoreFromBackup(code), isFalse);
 
     // Signing in again after a restore: this device backs up and signs out,
-    // which revokes the session the backup carries. The next restore comes
-    // back signed out, and signing in as the same account and device goes
-    // on from the backup's cursor. Replaying from the first event would meet
-    // commits the restored MLS state has already applied and stop sync
-    // (I33).
+    // which revokes the session the backup carries. The next restore is
+    // reported as failed (D66) but leaves the identity and history, and
+    // signing in as the same account and device goes on from the backup's
+    // cursor. Replaying from the first event would meet commits the
+    // restored MLS state has already applied and stop sync (I33).
     final second = await replacement.state.createBackup();
     expect(replacement.state.errorFor(Ops.backup), isNull,
         reason: replacement.state.errorFor(Ops.backup));
@@ -241,8 +241,8 @@ void main() {
     replacement.dispose();
     final signedOut = _DemoClient(bindings, baseUrl);
     addTearDown(signedOut.dispose);
-    expect(await signedOut.state.restoreFromBackup(second!), isTrue,
-        reason: signedOut.state.errorFor(Ops.restore));
+    expect(await signedOut.state.restoreFromBackup(second!), isFalse);
+    expect(signedOut.state.errorFor(Ops.restore), isNotNull);
     expect(signedOut.state.session, isNull);
     await signedOut.state.login(baseUrl, 'owner', 'owner-password-123');
     signedOut.expectOk();
