@@ -78,9 +78,10 @@ void main() {
   Future<List<int>> backupWithPending(LocalStore store) async {
     await store.saveSession(_session);
     await store.saveCryptoState(_state(1), 10);
-    await store.saveSnapshot(<Conversation>[
-      Conversation(id: 'conv_1', kind: 'dm', title: 'Chat')
-    ], const <String, List<ReceivedMessageEnvelope>>{}, 10);
+    await store.saveSnapshot(
+        <Conversation>[Conversation(id: 'conv_1', kind: 'dm', title: 'Chat')],
+        const <String, List<ReceivedMessageEnvelope>>{},
+        10);
     await store.commitMlsTransition(MlsStateTransition(
       messageId: 'application:11:m1',
       conversationId: 'conv_1',
@@ -138,8 +139,8 @@ void main() {
       final messages = await target.loadMessages('conv_1');
       expect(messages.map((m) => m.key), <String>['dev_peer:m1']);
       expect(messages.single.body, 'hello');
-      expect(messages.any((m) => m.state == LocalMessageState.pending),
-          isFalse);
+      expect(
+          messages.any((m) => m.state == LocalMessageState.pending), isFalse);
       expect(await target.loadStarred(), <String>{'dev_peer:m1'});
       expect((await target.loadReactions('conv_1')).map((r) => r.targetKey),
           <String>['dev_peer:m1']);

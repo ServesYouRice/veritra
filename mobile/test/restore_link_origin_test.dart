@@ -69,9 +69,10 @@ void main() {
   Future<List<int>> seededBackup(LocalStore store) async {
     await store.saveSession(_stored);
     await store.saveCryptoState(_state(1), 10);
-    await store.saveSnapshot(<Conversation>[
-      Conversation(id: 'conv_1', kind: 'dm', title: 'Chat')
-    ], const <String, List<ReceivedMessageEnvelope>>{}, 10);
+    await store.saveSnapshot(
+        <Conversation>[Conversation(id: 'conv_1', kind: 'dm', title: 'Chat')],
+        const <String, List<ReceivedMessageEnvelope>>{},
+        10);
     await store.commitMlsTransition(MlsStateTransition(
       messageId: 'application:11:m1',
       conversationId: 'conv_1',
@@ -99,7 +100,8 @@ void main() {
   for (final memory in <bool>[true, false]) {
     final label = memory ? 'memory store' : 'encrypted store';
 
-    test('a link to the same server in another spelling keeps the restored '
+    test(
+        'a link to the same server in another spelling keeps the restored '
         'history ($label)', () async {
       final backup =
           await seededBackup(memory ? MemoryLocalStore() : createStore());
@@ -111,7 +113,8 @@ void main() {
       expect((await target.loadMessages('conv_1')).single.body, 'hello');
     });
 
-    test('a link to another server still drops the restored history '
+    test(
+        'a link to another server still drops the restored history '
         '($label)', () async {
       final backup =
           await seededBackup(memory ? MemoryLocalStore() : createStore());

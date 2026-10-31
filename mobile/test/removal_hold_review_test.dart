@@ -65,6 +65,56 @@ void main() {
     await h.frames(const Duration(milliseconds: 300));
     await _waitFor(() => !h.state.sendHeldForRemoval('conv_a'));
   });
+
+  test(
+      'a removal committed after the fetch and before the read waits for '
+      'the commit', () async {
+    final h = await _Harness.start();
+    addTearDown(h.state.dispose);
+    // The coordinator commits the removal at once: the server never lists
+    // it, and the first fetch after the removal comes before the commit.
+    h.api
+      ..listRemovals = false
+      ..stepsOnRemove = <void Function()>[
+        () {},
+        () {
+          h.crypto.epochs['conv_a'] = 4;
+          h.crypto.removalApplied.add('conv_a');
+        },
+      ];
+    expect(await h.state.removeConversationMember('conv_a', _bob.accountId),
+        isTrue);
+    final sent = h.state.sendMessageTo('conv_a', 'after removal');
+    expect(await sent.timeout(const Duration(seconds: 5)), isTrue);
+    expect(h.crypto.encrypted.single.removalApplied, isTrue,
+        reason: 'not listed does not mean applied here');
+  });
+
+  test('an add applied before the removal commit does not release it',
+      () async {
+    final h = await _Harness.start(
+        pendingRemovals: {'conv_a'},
+        fakes: (api, crypto) => crypto.stageFailures.add('conv_a'));
+    addTearDown(h.state.dispose);
+    await _waitFor(() => h.state.sendHeldForRemoval('conv_a'));
+    final sent = h.state.sendMessageTo('conv_a', 'held');
+    h.api.fetchSteps.addAll(<void Function()>[
+      // This fetch applies an add (epoch 3 to 4); the removal commit (4 to
+      // 5) lands on the server after it, before the read.
+      () {
+        h.crypto.epochs['conv_a'] = 4;
+        h.api.pendingRemovals.remove('conv_a');
+      },
+      () {
+        h.crypto.epochs['conv_a'] = 5;
+        h.crypto.removalApplied.add('conv_a');
+      },
+    ]);
+    h.sync.frame();
+    expect(await sent.timeout(const Duration(seconds: 5)), isTrue);
+    expect(h.crypto.encrypted.single.removalApplied, isTrue,
+        reason: 'a higher local epoch does not prove the removal applied');
+  });
 }
 
 const _origin = 'https://example.test';
@@ -150,6 +200,15 @@ class _Api extends ApiClient {
   /// it cut the whole list at its cap.
   bool truncateReads = false;
 
+  /// Run one per sync fetch, in order: what lands on the server, or what a
+  /// fetched commit applies locally, at that fetch.
+  final List<void Function()> fetchSteps = <void Function()>[];
+
+  /// When false, a removal is never listed: another device committed it at
+  /// once. [stepsOnRemove] are queued as [fetchSteps] when it is made.
+  bool listRemovals = true;
+  List<void Function()> stepsOnRemove = <void Function()>[];
+
   /// While set and not completed, a bundle's answer waits for it.
   Completer<void>? bundleGate;
 
@@ -183,7 +242,8 @@ class _Api extends ApiClient {
       return;
     }
     membersOf(conversationId).remove(accountId);
-    pendingRemovals.add(conversationId);
+    if (listRemovals) pendingRemovals.add(conversationId);
+    fetchSteps.addAll(stepsOnRemove);
   }
 
   @override
@@ -213,6 +273,7 @@ class _Api extends ApiClient {
   Future<List<SyncEvent>> syncEvents(String token,
       {int after = 0, int limit = 100}) async {
     await _network();
+    if (fetchSteps.isNotEmpty) fetchSteps.removeAt(0)();
     return const <SyncEvent>[];
   }
 

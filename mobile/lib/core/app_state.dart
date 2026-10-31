@@ -501,6 +501,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// The session generation whose stored holds were loaded.
   int? _removalHoldsLoaded;
 
+  /// Pending-changes reads applied to the holds so far (D68).
+  int _removalReadCount = 0;
+
+  /// The highest [_removalReadCount] a complete sync fetch started after.
+  /// Every commit the server held at that read has then been applied (or
+  /// sync stopped), because the server writes a commit's sync event, its
+  /// roster change and the new epoch in one transaction.
+  int _removalFetchedAfterRead = 0;
+
   /// Completed and replaced whenever [_removalHolds], a paused conversation
   /// or the session changes, so waiting sends look again. Never polled.
   Completer<void> _removalHoldsChanged = Completer<void>();
@@ -2228,6 +2237,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
               conversationId, () => _RemovalHold(epoch: epoch));
           hold
             ..seq = ++_removalHoldSeq
+            // A read before this removal proves nothing about its commit.
+            ..unlistedAt = null
             ..accounts.add(accountId);
           if (epoch > hold.epoch) hold.epoch = epoch;
           await _saveRemovalHolds();
@@ -3236,12 +3247,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// Updates the holds from one pending-changes read that started when
   /// [_removalHoldSeq] was [readSeq]. A hold set after the read started is
   /// left alone. A listed removal holds its conversation; one not listed is
-  /// released when no MLS message of it is queued, no commit is staged, and
-  /// either a commit was applied since the epoch it was listed at, the
-  /// server never listed it (nothing to commit), or every removed account
-  /// is a member again (the removal was withdrawn). A conversation that is
-  /// gone, or has no local group, holds nothing. A read the server cut at
-  /// its cap releases only holds of conversations that are gone.
+  /// released when no MLS message of it is queued, no commit is staged, a
+  /// complete sync fetch started after an earlier read that already left it
+  /// out (so a removal commit the server held then has been applied: not
+  /// being listed alone does not prove that), and either a commit was
+  /// applied since the epoch it was listed at, the server never listed it
+  /// (nothing to commit), or every removed account is a member again (the
+  /// removal was withdrawn). A conversation that is gone, or has no local
+  /// group, holds nothing. A read the server cut at its cap releases only
+  /// holds of conversations that are gone.
   Future<void> _updateRemovalHolds(
     List<MlsPendingChange> changes,
     int readSeq,
@@ -3252,6 +3266,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final generation = _sessionGeneration;
     await _loadRemovalHolds();
     if (!_syncOwnerActive(current, generation)) return;
+    final read = ++_removalReadCount;
+    var followUp = false;
     var changed = false;
     final listed = <String, MlsPendingChange>{
       for (final change in changes)
@@ -3270,6 +3286,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       }
       hold
         ..listed = true
+        ..unlistedAt = null
         // A stale read never lowers the epoch a release compares against.
         ..epoch = max(hold.epoch, change.epoch)
         ..accounts.addAll(accounts);
@@ -3285,11 +3302,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       var release = !conversations.any((item) => item.id == conversationId);
       if (!release && cut) continue;
       if (!release) {
+        // The first read to leave it out asks for one more pass, whose
+        // fetch then brings in any commit the server held at this read.
+        final unlistedAt = hold.unlistedAt ??= read;
+        if (unlistedAt == read) followUp = true;
         if (await _hasPendingMlsWork(conversationId)) continue;
         final local = await mls.groupEpoch(conversationId);
         if (local == null) {
           release = true;
-        } else if (local.pending) {
+        } else if (local.pending || _removalFetchedAfterRead < unlistedAt) {
           continue;
         } else if (!hold.listed || local.epoch > hold.epoch) {
           release = true;
@@ -3316,6 +3337,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     }
     // A hold still open is looked at again on the next catch-up.
     if (_removalHolds.isNotEmpty) _mlsReconcileRequested = true;
+    if (followUp) _syncOwner?.markRequested();
     if (changed) {
       await _saveRemovalHolds();
       _removalHoldsUpdated();
@@ -4790,6 +4812,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             <ReceivedMessageEnvelope>[], current, ownerGeneration);
       } catch (_) {}
       if (!mayRun() || !_syncOwnerActive(current, ownerGeneration)) return;
+      // Pending-changes reads finished before this fetch starts (D68).
+      final fetchAfterRead = _removalReadCount;
       var pageCursor = await localStore.loadSyncCursor();
       const pageSize = 200;
       while (true) {
@@ -4908,6 +4932,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         await _publishReceived(received, current, ownerGeneration);
         pageCursor = await localStore.loadSyncCursor();
         if (events.length < pageSize) break;
+      }
+      // Every event up to the end of the stream is applied.
+      if (fetchAfterRead > _removalFetchedAfterRead) {
+        _removalFetchedAfterRead = fetchAfterRead;
       }
       if (wake != null) {
         // Revocations and membership reconcile send commits; a background
@@ -7744,6 +7772,11 @@ class _RemovalHold {
 
   /// The removed accounts.
   final Set<String> accounts = <String>{};
+
+  /// The pending-changes read that first left this removal out, since it
+  /// was last set or listed. Not stored: after a restart a read sets it
+  /// again.
+  int? unlistedAt;
 
   Map<String, Object?> toJson() => <String, Object?>{
         'epoch': epoch,
