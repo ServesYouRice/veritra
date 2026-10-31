@@ -4541,7 +4541,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           // Like reconcile below, revocations never block sync: a failure
           // is retried after its own backoff (TASK-035).
           if (err is ApiException && err.statusCode == 401) rethrow;
-          _mlsStepSettled('revocations', failed: true);
+          if (_syncOwnerActive(current, ownerGeneration)) {
+            _mlsStepSettled('revocations', failed: true);
+          }
         }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         if (_mlsReconcileRequested || _mlsPendingSeen.isNotEmpty) {
@@ -5229,6 +5231,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           preserveOutbox: preserveOutbox, keepDrafts: keepDrafts);
     } else {
       await localStore.clear();
+      // The MLS outbox went with the store; an item kept for a later
+      // session (the branch above) keeps its "accepted, unfinished" mark,
+      // or a re-send could meet a refusal that drops an accepted commit.
+      _mlsAcceptedUnfinished.clear();
     }
     session = null;
     final detachedApi = api;
@@ -5254,6 +5260,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     _mlsOutboxRetryTimer?.cancel();
     _mlsOutboxRetryTimer = null;
     _resetMlsRetries();
+    _outboxLocalFailures = 0;
+    _mlsOutboxLocalFailures = 0;
     _expiryTimer?.cancel();
     _expiryTimer = null;
     _cancelCatchUpRetry();
@@ -5582,7 +5590,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   Future<void> _scheduleOutboxRetry() async {
     _outboxRetryTimer?.cancel();
     _outboxRetryTimer = null;
-    if (_disposed || session == null || api == null) return;
+    // The timer belongs to the session that read the outbox: one that ended
+    // or was replaced during the read arms nothing for its successor.
+    final owner = session;
+    final generation = _sessionGeneration;
+    if (_disposed || owner == null || api == null) return;
     final List<PendingEnvelopeRecord> records;
     final Set<String> heldBack;
     try {
@@ -5596,8 +5608,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
               .toSet();
     } catch (_) {
       // Unreadable outbox: try again later rather than wait for a wake.
+      if (_disposed || !_syncOwnerActive(owner, generation)) return;
       _outboxLocalFailures++;
-      if (!_disposed) _armOutboxRetry(_localRetryDelay(_outboxLocalFailures));
+      _armOutboxRetry(_localRetryDelay(_outboxLocalFailures));
       return;
     }
     final now = DateTime.now().toUtc();
@@ -5620,7 +5633,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       final fallback = _localRetryDelay(_outboxLocalFailures);
       if (delay == null || delay < fallback) delay = fallback;
     }
-    if (delay == null || _disposed) return;
+    if (delay == null || _disposed || !_syncOwnerActive(owner, generation)) {
+      return;
+    }
     _armOutboxRetry(delay);
   }
 
@@ -5736,6 +5751,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             // its duplicate check drops it, so it does not pause the
             // conversation, and the policy waits before trying again.
             await _mlsCrypto?.abandonCommitBundle(message);
+            if (!_syncOwnerActive(current, ownerGeneration)) return;
             _selfUpdatePolicyFor(current)?.recordBackoff(
                 message.conversationId, DateTime.now(), backoff);
             await _saveSelfUpdates();
@@ -5755,6 +5771,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             // up, then reconcile again: at once on a new epoch, otherwise
             // after the change's backoff.
             await _mlsCrypto?.abandonCommitBundle(message);
+            // The retry maps belong to this session; once it ended they
+            // were cleared and must stay so.
+            if (!_syncOwnerActive(current, ownerGeneration)) return;
             _mlsBundleRefused(message);
             _mlsReconcileRequested = true;
             unawaited(_catchUpSyncEvents());
@@ -5819,20 +5838,26 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final client = api;
     final mls = _mlsCrypto;
     if (current == null || client == null || mls == null) return;
+    // Results are recorded only for the session that ran the pass: the
+    // retry maps of one that ended were cleared and stay so.
+    final ownerGeneration = _sessionGeneration;
     try {
       await _reconcileMlsMembershipOnce(current, client, mls);
-      _mlsStepSettled('reconcile', failed: false);
+      if (_syncOwnerActive(current, ownerGeneration)) {
+        _mlsStepSettled('reconcile', failed: false);
+      }
     } catch (err) {
       // The pending-changes list could not be read: try again later, not
       // only on the next catch-up something else starts.
-      if (err is! ApiException || err.statusCode != 401) {
+      if ((err is! ApiException || err.statusCode != 401) &&
+          _syncOwnerActive(current, ownerGeneration)) {
         _mlsStepSettled('reconcile', failed: true);
       }
       rethrow;
     } finally {
       // Every pass, failed or not, re-arms the wake for the earliest change
       // still backing off.
-      _armMlsRetryWake();
+      if (_syncOwnerActive(current, ownerGeneration)) _armMlsRetryWake();
     }
   }
 
@@ -5899,6 +5924,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             name: 'veritra.sync');
       }
     }
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
     _mlsPendingSeen.removeWhere((key, _) => !stillPending.contains(key));
     _mlsReconcileNow.removeWhere((conversationId) =>
         !changes.any((change) => change.conversationId == conversationId));
@@ -6183,7 +6209,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   Future<void> _scheduleMlsOutboxRetry() async {
     _mlsOutboxRetryTimer?.cancel();
     _mlsOutboxRetryTimer = null;
-    if (_disposed || session == null || api == null || _mlsCrypto == null) {
+    // Armed only for the session that read the queue (see
+    // [_scheduleOutboxRetry]).
+    final owner = session;
+    final generation = _sessionGeneration;
+    if (_disposed || owner == null || api == null || _mlsCrypto == null) {
       return;
     }
     final List<PendingMlsMessage> messages;
@@ -6191,10 +6221,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       messages = await localStore.pendingMlsMessages();
     } catch (_) {
       // Unreadable queue: try again later rather than wait for a wake.
+      if (_disposed || !_syncOwnerActive(owner, generation)) return;
       _mlsOutboxLocalFailures++;
-      if (!_disposed) {
-        _armMlsOutboxRetry(_localRetryDelay(_mlsOutboxLocalFailures));
-      }
+      _armMlsOutboxRetry(_localRetryDelay(_mlsOutboxLocalFailures));
       return;
     }
     // Only the head of each conversation can be sent next; a conversation
@@ -6220,7 +6249,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       final fallback = _localRetryDelay(_mlsOutboxLocalFailures);
       if (delay == null || delay < fallback) delay = fallback;
     }
-    if (delay == null || _disposed) return;
+    if (delay == null || _disposed || !_syncOwnerActive(owner, generation)) {
+      return;
+    }
     _armMlsOutboxRetry(delay);
   }
 
@@ -6483,6 +6514,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final client = api;
     final mls = _mlsCrypto;
     if (current == null || client == null || mls == null) return;
+    // Recorded only for the session that ran the pass (see
+    // [_reconcileMlsMembership]).
+    final ownerGeneration = _sessionGeneration;
     final List<MlsRevocation> revocations;
     try {
       revocations = await client.mlsRevocations(current.token);
@@ -6495,9 +6529,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           'mls_revocations_unavailable '
           '${err is ApiException ? err.statusCode : err.runtimeType}',
           name: 'veritra.sync');
-      _mlsStepSettled('revocations', failed: true);
+      if (_syncOwnerActive(current, ownerGeneration)) {
+        _mlsStepSettled('revocations', failed: true);
+      }
       return;
     }
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
     var failed = false;
     _revocationPendingGroups
       ..clear()
@@ -6505,6 +6542,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           .where((revocation) => revocation.state == 'pending')
           .map((revocation) => revocation.conversationId));
     for (final revocation in revocations) {
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
       // Each revocation is handled on its own: one that cannot be committed
       // here (no local group, or no leaf for the device) must not fail the
       // pass, or reconcile and the wake ACK never run. It is listed again,
@@ -6562,6 +6600,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             name: 'veritra.sync');
       }
     }
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
     _mlsStepSettled('revocations', failed: failed);
   }
 
