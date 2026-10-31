@@ -849,7 +849,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// Rereads decrypted history for one conversation from the local store.
   /// Copied conversations this device cannot open live: not in the server's
   /// conversation list and not in a joined community. Empty until the live
-  /// list is known, so a live chat is never shown as read-only history.
+  /// list is known (community channels: until communities are known too), so
+  /// a live chat is never shown as read-only history.
   List<HistoryConversation> get historyOnlyConversations {
     if (!conversationsLoaded || _copiedHistory.isEmpty) return const [];
     final live = {for (final c in conversations) c.id};
@@ -857,7 +858,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     return [
       for (final c in _copiedHistory.values)
         if (!live.contains(c.id) &&
-            (c.communityId == null || !joined.contains(c.communityId)))
+            (c.communityId == null ||
+                (communitiesLoaded && !joined.contains(c.communityId))))
           c
     ]..sort((a, b) => (a.title ?? '').compareTo(b.title ?? ''));
   }
@@ -1188,9 +1190,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       mentionsInMutedChats =
           await localStore.loadSetting('w8.mentions_muted') != 'false';
       _armMuteTimer();
-      _copiedHistory =
-          Map.of((await localStore.loadHistoryNamespace()).conversations);
+      final copied = await localStore.loadHistoryNamespace();
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
+      // Assigned only after the generation check, so a sign-out during the
+      // read never brings the previous account's titles back.
+      _copiedHistory = Map.of(copied.conversations);
       final cached = await localStore.loadSnapshot();
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
       if (cached != null) {

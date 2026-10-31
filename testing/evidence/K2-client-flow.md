@@ -25,7 +25,10 @@ read-only from the encrypted local store:
   becomes a second way into live chats or a membership source;
 - descriptors are loaded with the session (`_tryRestoreSession`, which the
   I45 restore also uses) and cleared on sign-out. An importer must call
-  `refreshCopiedHistory()` after its transaction commits.
+  `refreshCopiedHistory()` after its transaction commits. The descriptors
+  are assigned only after the session-generation check, so a sign-out during
+  the read cannot bring another account's titles back; community channels
+  wait until the community list is known.
 
 Choice the design left open, safest option taken: history-only chats are
 listed in a separate screen, not mixed into the live chat list, so a copied
@@ -36,10 +39,15 @@ chat cannot be mistaken for one that can receive messages.
 `docs/designs/K2-transfer-resource.md` against the field spellings in
 `server/internal/storage/device_history_transfer_store.go`:
 
-- upload: streaming `multipart/form-data`, exactly `metadata`
-  (`application/json`) then `ciphertext` (`application/octet-stream`), exact
-  `Content-Length`, a source stream of the wrong length aborts; the receipt
-  must match the sent metadata (exact retry returns the same receipt);
+- upload: the source first GETs the transfer. A receipt for exactly this
+  metadata is returned without resending (the Go handler answers a retry
+  after reading only the metadata part and may close mid-body, which a
+  client would see as a socket error); a different receipt is refused; only
+  404 leads to the POST. The POST streams `multipart/form-data`, exactly
+  `metadata` (`application/json`) then `ciphertext`
+  (`application/octet-stream`), exact `Content-Length`; a source stream of
+  the wrong length aborts; the reply must match the sent metadata. A refusal
+  of a first large upload may still surface as a transport error;
 - status: strict receipt decoding; `handoff` decoded only when present;
 - download: into a ciphertext file, resuming with `Range` + `If-Range` pinned
   to `"sha256-<digest>"`; a 200 restarts from zero; a wrong ETag, wrong
@@ -97,11 +105,15 @@ then the clone path stays as it is.
 
 ## Checks (Linux, pinned Flutter 3.44.0)
 
-- `k2_copied_history_test.dart`: 6 passed (memory and SQLite: live/joined/
-  unknown-list exclusion, expiry, rejoin; widget: list entry, read-only
-  screen, no `TextField`, senders unnamed; no entry without copied chats).
+- `k2_copied_history_test.dart`: 8 passed (memory and SQLite: live/joined/
+  unknown-list exclusion, expiry, rejoin; session ended during the restore
+  read keeps nothing (fails without the fix); community channels wait for
+  the community list; widget: list entry, read-only screen, no `TextField`,
+  senders unnamed; no entry without copied chats).
 - `k2_history_transfer_client_test.dart`: 10 passed against a loopback
-  server (multipart order/fields/bytes, exact retry and mismatched receipt,
+  server (multipart order/fields/bytes, status-first lookup returns an
+  existing receipt without a POST and refuses a different one, mismatched
+  POST receipt, non-404 status stops before the POST,
   wrong-length source, redirects not followed for status/download/upload,
   claim header, malformed receipts, resume/restart/ETag/range/oversize,
   ACK body and state, cancel, client-side limits).

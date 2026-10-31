@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:drift/native.dart';
@@ -15,6 +16,8 @@ import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/history_snapshot.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
+
+import 'test_crypto_service.dart';
 
 const origin = 'https://example.test';
 const source = 'source';
@@ -173,6 +176,61 @@ void main() {
     });
   }
 
+  test('a session ended during the restore read never keeps its descriptors',
+      () async {
+    final store = _BlockingHistoryStore();
+    await _prepare(store);
+    final state = AppState(
+        apiClientFactory: (_) => ApiClient(baseUrl: origin),
+        cryptoService: TestOnlyCryptoService(),
+        localStore: store,
+        syncServiceFactory: (_, __) => _QuietSync());
+    store.block = Completer<void>();
+    final restoring = state.tryRestoreSession();
+    await store.reading.future.timeout(const Duration(seconds: 5));
+    state.dispose(); // ends the session generation mid-read
+    store.block!.complete();
+    await restoring;
+    state.conversationsLoaded = true;
+    expect(state.historyOnlyConversations, isEmpty);
+  });
+
+  test('community channels wait for the community list', () async {
+    final store = MemoryLocalStore();
+    await store.saveSession(_session);
+    await store.saveCryptoState(
+        StoredCryptoState(
+            counter: 1, stateKey: List.filled(32, 7), sealedState: [8]),
+        0);
+    await store.importHistorySnapshot(
+        HistorySnapshot(
+            accountId: 'alice',
+            sourceDeviceId: source,
+            counter: 1,
+            createdAt: now,
+            conversations: const [
+              HistoryConversation('ch', 'community_channel',
+                  communityId: 'c1', channelId: 'k1', title: 'General'),
+            ],
+            messages: [
+              _message('ch', 'c1')
+            ],
+            reactions: const [],
+            pins: const [],
+            starred: const {},
+            preferences: const []).encode(),
+        _context());
+    final state = _state(store);
+    await state.refreshCopiedHistory();
+    expect(state.historyOnlyConversations, isEmpty,
+        reason: 'communities are not known yet');
+    state.communitiesLoaded = true;
+    expect(state.historyOnlyConversations.map((c) => c.id), ['ch']);
+    state.communities = [Community(id: 'c1', name: 'Club')];
+    expect(state.historyOnlyConversations, isEmpty);
+    state.dispose();
+  });
+
   testWidgets('copied history opens read-only, with no composer or actions',
       (tester) async {
     final store = MemoryLocalStore();
@@ -216,6 +274,20 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     state.dispose();
   });
+}
+
+class _BlockingHistoryStore extends MemoryLocalStore {
+  Completer<void>? block;
+  final reading = Completer<void>();
+  @override
+  Future<HistoryNamespace> loadHistoryNamespace() async {
+    final gate = block;
+    if (gate != null) {
+      if (!reading.isCompleted) reading.complete();
+      await gate.future;
+    }
+    return super.loadHistoryNamespace();
+  }
 }
 
 class _MlsStub implements MlsConversationCryptoService {

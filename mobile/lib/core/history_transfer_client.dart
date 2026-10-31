@@ -228,15 +228,29 @@ class HistoryTransferClient {
   }
 
   /// Source only: posts metadata then exactly [HistoryTransferMetadata.sizeBytes]
-  /// ciphertext bytes read from [ciphertext] (the durable source cache). An
-  /// exact retry after a lost response returns the original receipt; a
-  /// receipt for different metadata is refused.
+  /// ciphertext bytes read from [ciphertext] (the durable source cache).
+  ///
+  /// The server answers a repeated or refused upload after reading only the
+  /// metadata part and may then close the connection mid-body, which reaches
+  /// this client as a transport error rather than the receipt. So an existing
+  /// transfer is looked up first: a receipt for exactly [metadata] is
+  /// returned without sending the body again, and a receipt for different
+  /// metadata is refused. Only a missing resource (404) leads to the POST.
+  /// A refusal of a first upload may still surface as a transport error.
   Future<HistoryTransferReceipt> upload({
     required String token,
     required String linkId,
     required HistoryTransferMetadata metadata,
     required Stream<List<int>> Function() ciphertext,
   }) async {
+    final auth = HistorySessionAuth(token);
+    try {
+      final existing = await status(linkId, auth);
+      if (!existing.matches(metadata)) throw const ApiResponseException();
+      return existing;
+    } on ApiException catch (e) {
+      if (e.statusCode != HttpStatus.notFound) rethrow;
+    }
     final boundary = 'veritra-${_randomHex(16)}';
     final head = utf8.encode('--$boundary\r\n'
         'Content-Disposition: form-data; name="metadata"\r\n'
@@ -246,8 +260,7 @@ class HistoryTransferClient {
         'Content-Disposition: form-data; name="ciphertext"\r\n'
         'Content-Type: application/octet-stream\r\n\r\n');
     final tail = utf8.encode('\r\n--$boundary--\r\n');
-    final request =
-        await _open('POST', _uri(linkId), HistorySessionAuth(token));
+    final request = await _open('POST', _uri(linkId), auth);
     request.headers.set(HttpHeaders.contentTypeHeader,
         'multipart/form-data; boundary=$boundary');
     request.contentLength = head.length + metadata.sizeBytes + tail.length;

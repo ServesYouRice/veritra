@@ -67,6 +67,13 @@ Future<void> sendJson(HttpRequest r, int status, Object body) async {
   await r.response.close();
 }
 
+/// The source's status lookup before its first upload: no transfer yet.
+Future<bool> notYet(HttpRequest r) async {
+  if (r.method != 'GET') return false;
+  await sendJson(r, 404, {'error': 'not_found'});
+  return true;
+}
+
 /// Serves [content] like `serveEncryptedBlob`: ETag, ranges and If-Range.
 Future<void> serveBlob(HttpRequest r, List<int> content,
     {String? etag, int? cutAt}) async {
@@ -108,6 +115,7 @@ void main() {
     late List<int> raw;
     late String? auth, type;
     server.handler = (r) async {
+      if (await notYet(r)) return;
       auth = r.headers.value(HttpHeaders.authorizationHeader);
       type = r.headers.value(HttpHeaders.contentTypeHeader);
       raw = await r.fold<List<int>>([], (a, b) => a..addAll(b));
@@ -122,7 +130,8 @@ void main() {
             Stream.fromIterable([body.sublist(0, 1000), body.sublist(1000)]));
     expect(result.transferId, transfer);
     expect(result.handoff, isNull);
-    expect(server.requests.single.uri.path,
+    expect(server.requests.map((r) => r.method), ['GET', 'POST']);
+    expect(server.requests.last.uri.path,
         '/api/v1/device-links/v3/link-1/history');
     expect(auth, 'Bearer source-token');
     final boundary = RegExp(r'boundary=(.+)$').firstMatch(type!)!.group(1)!;
@@ -150,28 +159,40 @@ void main() {
     expect(parts[3], '--\r\n');
   });
 
-  test('an exact retry returns the receipt; a different receipt is refused',
-      () async {
-    server.handler = (r) async {
-      await r.drain<void>();
-      await sendJson(r, 200, receipt());
-    };
+  test(
+      'an existing transfer is looked up first: the same one is returned '
+      'without resending, a different one is refused', () async {
+    server.handler = (r) async => sendJson(r, 200, receipt());
     Future<HistoryTransferReceipt> send() => client.upload(
         token: 't',
         linkId: 'link-1',
         metadata: metadata(),
         ciphertext: () => Stream.value(body));
     expect((await send()).state, 'active');
+    server.handler = (r) async => sendJson(r, 200, receipt(sha: 'd' * 64));
+    await expectLater(send(), throwsA(isA<ApiResponseException>()));
+    expect(server.requests.map((r) => r.method), ['GET', 'GET'],
+        reason: 'the body is never sent again for an existing transfer');
+
+    // A POST answered with a different receipt is refused too.
     server.handler = (r) async {
+      if (await notYet(r)) return;
       await r.drain<void>();
-      await sendJson(r, 200, receipt(sha: 'd' * 64));
+      await sendJson(r, 201, receipt(sha: 'd' * 64));
     };
     await expectLater(send(), throwsA(isA<ApiResponseException>()));
+
+    // Any status other than 404 stops before the POST.
+    server.handler = (r) async => sendJson(r, 403, {'error': 'forbidden'});
+    await expectLater(send(),
+        throwsA(isA<ApiException>().having((e) => e.statusCode, 's', 403)));
+    expect(server.requests.where((r) => r.method == 'POST'), hasLength(1));
   });
 
   test('a ciphertext source of the wrong length never completes an upload',
       () async {
     server.handler = (r) async {
+      if (await notYet(r)) return;
       try {
         await r.drain<void>();
       } catch (_) {}
