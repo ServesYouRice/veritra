@@ -40,3 +40,35 @@ func TestDevicelessBackupCounterAndCapabilityRotation(t *testing.T) {
 		t.Fatalf("device backup with its own counter: %v", err)
 	}
 }
+
+// Making a new backup revokes the recovery capability of the earlier one while
+// it is still unused: only the newest capability recovers anything.
+func TestNewBackupRevokesOutstandingRecoveryCapability(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	owner := createTestOwner(t, ctx, store)
+	sha := strings.Repeat("e", 64)
+	tokenA, tokenB := bytes.Repeat([]byte{0xA5}, 32), bytes.Repeat([]byte{0xB6}, 32)
+	if err := store.CreateBackupBlob(ctx, owner.Account.ID, owner.Device.ID, "blob_rotation_1", sha, 8, json.RawMessage(`{"state_counter":1}`), tokenA); err != nil {
+		t.Fatal(err)
+	}
+	// tokenA is live and unused: a transfer may begin with it (and is then
+	// abandoned, which releases the lease without consuming the capability).
+	first, err := store.BeginRecoveryTransfer(ctx, tokenA, 0)
+	if err != nil {
+		t.Fatalf("outstanding capability does not work before the rotation: %v", err)
+	}
+	if err := store.CompleteRecoveryTransfer(ctx, first.LeaseID, first.StartOffset, 0, 8); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateBackupBlob(ctx, owner.Account.ID, owner.Device.ID, "blob_rotation_2", sha, 8, json.RawMessage(`{"state_counter":2}`), tokenB); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.BeginRecoveryTransfer(ctx, tokenA, 0); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("the earlier backup's unconsumed capability after a new backup: err = %v, want %v", err, ErrNotFound)
+	}
+	if _, err := store.BeginRecoveryTransfer(ctx, tokenB, 0); err != nil {
+		t.Fatalf("the newest capability: %v", err)
+	}
+}

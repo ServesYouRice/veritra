@@ -299,9 +299,9 @@ func TestRecoveryCapabilityExpiresAndConsumesAfterResumableTransfer(t *testing.T
 	if err := store.CreateBackupBlob(ctx, owner.Account.ID, owner.Device.ID, "recovery-blob-2", strings.Repeat("b", 64), 1, json.RawMessage(`{"state_counter":2}`), secondToken); err != nil {
 		t.Fatalf("create rotated backup: %v", err)
 	}
-	if _, err := store.BeginRecoveryTransfer(ctx, firstToken, 0); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("rotated capability err=%v want %v", err, ErrNotFound)
-	}
+	// firstToken was consumed above, so it proves nothing about rotation here;
+	// TestNewBackupRevokesOutstandingRecoveryCapability covers a capability
+	// that is still unconsumed when the next backup is made.
 	if _, err := store.db.ExecContext(ctx, `UPDATE backup_blobs SET recovery_expires_at = ? WHERE recovery_token_hash = ?`, formatTime(time.Now().UTC().Add(-time.Minute)), secondToken); err != nil {
 		t.Fatalf("expire capability: %v", err)
 	}
