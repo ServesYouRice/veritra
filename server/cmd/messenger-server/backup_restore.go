@@ -604,6 +604,14 @@ func restore(cfg config.Config, args []string, stdout io.Writer) error {
 		return fmt.Errorf("a server appears to be running; stop the server before restore: %w", err)
 	}
 	defer server.Release()
+	// A server of another database may share the blob directory; only its
+	// blob-storage lock shows it. Released before activation renames the
+	// directory that holds it (see blobStorageLock).
+	blobLock, err := lockExistingBlobStorage(cfg)
+	if err != nil {
+		return fmt.Errorf("a server appears to be running; stop the server before restore: %w", err)
+	}
+	defer blobLock.Release()
 	if _, err := os.Stat(journalPath(live)); err == nil {
 		return errors.New("an earlier restore is unfinished; run the command again after it is settled")
 	}
@@ -656,6 +664,9 @@ func restore(cfg config.Config, args []string, stdout io.Writer) error {
 		// refuse instead of rolling back without the blob staging.
 		journal.Version = 2
 		journal.BlobStagingDir = staged.blobDir
+	}
+	if err := blobLock.Release(); err != nil {
+		return fmt.Errorf("release blob storage lock: %w", err)
 	}
 	if err := writeJournal(path, journal); err != nil {
 		return fmt.Errorf("write restore journal: %w", err)
@@ -886,6 +897,20 @@ func recoverInterruptedRestore(cfg config.Config, stdout io.Writer) error {
 		return err
 	}
 	defer lock.Release()
+	// Settling moves live files, so it never runs beside a server. The blob
+	// lock is only checked: the rollback may move the directory holding it.
+	server, err := acquireServerExclusion(cfg)
+	if err != nil {
+		return fmt.Errorf("a server appears to be running; stop the server so the interrupted restore can be settled: %w", err)
+	}
+	defer server.Release()
+	blobLock, err := lockExistingBlobStorage(cfg)
+	if err != nil {
+		return fmt.Errorf("a server appears to be running; stop the server so the interrupted restore can be settled: %w", err)
+	}
+	if err := blobLock.Release(); err != nil {
+		return fmt.Errorf("release blob storage lock: %w", err)
+	}
 	if err := faultHook("recover:locked"); err != nil {
 		return err
 	}
@@ -931,6 +956,22 @@ func settleRestoreJournal(cfg config.Config, live, path string, stdout io.Writer
 	_ = removeStagingDir(journal.StagingDir)
 	_ = removeStagingDir(journal.BlobStagingDir)
 	return syncDir(filepath.Dir(live))
+}
+
+// requireSettledRestore fails when a restore journal is present. Writers
+// call it once they hold their locks: recovery ran before that, and a
+// restore killed in between leaves an instance nothing may open yet.
+func requireSettledRestore(cfg config.Config) error {
+	live, err := filepath.Abs(cfg.DatabasePath)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Lstat(journalPath(live)); err == nil {
+		return errors.New("an interrupted restore must be settled first; run the command again")
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("check for a restore journal: %w", err)
+	}
+	return nil
 }
 
 // knownJournalVersion accepts Version 1 (blobs staged beside the database)

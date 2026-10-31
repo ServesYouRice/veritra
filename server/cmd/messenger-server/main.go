@@ -88,10 +88,22 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 		// A restore cut short by a crash is settled before anything opens the
-		// database (card I45).
+		// database (card I45). Settling takes the server's locks itself, and
+		// only when there is a journal, so the online commands stay lock-free.
 		if err := recoverInterruptedRestore(cfg, stdout); err != nil {
 			return err
 		}
+	}
+	switch command {
+	case "init", "migrate":
+		// They write the database, so like serve they hold the data-directory
+		// and resource locks for the whole command. verify-backup's drill
+		// calls migrate() directly on its own scratch instance, unlocked.
+		locks, err := acquireWriterLocks(cfg)
+		if err != nil {
+			return err
+		}
+		defer locks.Release()
 	}
 	switch command {
 	case "serve":
@@ -166,6 +178,14 @@ func resetOwnerPassword(ctx context.Context, cfg config.Config, username, passwo
 		return fmt.Errorf("a server appears to be running; stop the server before recovery: %w", err)
 	}
 	defer server.Release()
+	blobs, err := lockExistingBlobStorage(cfg)
+	if err != nil {
+		return fmt.Errorf("a server appears to be running; stop the server before recovery: %w", err)
+	}
+	defer blobs.Release()
+	if err := requireSettledRestore(cfg); err != nil {
+		return err
+	}
 	probeCtx, cancel := context.WithTimeout(ctx, time.Second)
 	err = storage.ProbeDatabaseExclusive(probeCtx, cfg.DatabasePath)
 	cancel()
@@ -246,16 +266,11 @@ func serve(ctx context.Context, cfg config.Config) error {
 	if err := cfg.ValidateServe(); err != nil {
 		return err
 	}
-	lock, err := acquireInstanceLock(cfg.DataDir)
+	locks, err := acquireWriterLocks(cfg)
 	if err != nil {
 		return err
 	}
-	defer lock.Release()
-	resources, err := acquireResourceLocks(cfg)
-	if err != nil {
-		return err
-	}
-	defer resources.Release()
+	defer locks.Release()
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	level := slog.LevelInfo
