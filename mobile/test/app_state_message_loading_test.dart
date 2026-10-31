@@ -159,4 +159,65 @@ void main() {
       state.dispose();
     });
   });
+
+  group('TASK-040: a newest-page refresh and the history cursor', () {
+    MessagePage page(List<int> ids, String? nextBefore) => MessagePage(
+          messages: <ReceivedMessageEnvelope>[
+            for (final id in ids) _message('m$id', id),
+          ],
+          nextBefore: nextBefore,
+        );
+
+    _Api history() => _Api()
+      ..pages[null] = page(<int>[6, 5], 'c5')
+      ..pages['c5'] = page(<int>[4, 3], 'c3')
+      ..pages['c3'] = page(<int>[2, 1], null);
+
+    test('an exhausted history stays exhausted after an overlapping refresh',
+        () async {
+      final api = history();
+      final state = _state(api);
+      await state.loadMessages('conv');
+      await state.loadOlderMessages('conv');
+      await state.loadOlderMessages('conv');
+      expect(api.pageRequests, <String?>[null, 'c5', 'c3']);
+
+      api.pages[null] = page(<int>[7, 6], 'c6');
+      await state.loadMessages('conv');
+      expect(state.messagesFor('conv').map((m) => m.id),
+          <String>['m7', 'm6', 'm5', 'm4', 'm3', 'm2', 'm1']);
+      await state.loadOlderMessages('conv');
+      expect(api.pageRequests, <String?>[null, 'c5', 'c3', null],
+          reason: 'already-loaded history was fetched again');
+      state.dispose();
+    });
+
+    test('an overlapping refresh keeps the deeper cursor', () async {
+      final api = history();
+      final state = _state(api);
+      await state.loadMessages('conv');
+      await state.loadOlderMessages('conv');
+
+      api.pages[null] = page(<int>[7, 6], 'c6');
+      await state.loadMessages('conv');
+      await state.loadOlderMessages('conv');
+      expect(api.pageRequests.last, 'c3');
+      expect(state.messagesFor('conv').map((m) => m.id),
+          <String>['m7', 'm6', 'm5', 'm4', 'm3', 'm2', 'm1']);
+      state.dispose();
+    });
+
+    test('a refresh with a gap rewinds to the fresh page cursor', () async {
+      final api = history();
+      final state = _state(api);
+      await state.loadMessages('conv');
+      await state.loadOlderMessages('conv');
+
+      api.pages[null] = page(<int>[9, 8], 'c8');
+      await state.loadMessages('conv');
+      await state.loadOlderMessages('conv');
+      expect(api.pageRequests.last, 'c8');
+      state.dispose();
+    });
+  });
 }

@@ -1756,7 +1756,16 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       ...messagesByConversation,
       conversationId: <ReceivedMessageEnvelope>[...page.messages, ...older],
     };
-    _historyCursors[conversationId] = page.nextBefore;
+    // When the fresh page meets what is cached, the older pages already
+    // merged in stay reachable, so the deepest cursor (null once history is
+    // exhausted) still applies. A gap rewinds to the fresh page's cursor so
+    // the missing messages are fetched.
+    final overlaps = existing.any((message) => fresh.contains(message.id));
+    if (!overlaps ||
+        older.isEmpty ||
+        !_historyCursors.containsKey(conversationId)) {
+      _historyCursors[conversationId] = page.nextBefore;
+    }
     // A message that just landed ends its sender's "typing…" line.
     final newest = page.messages.firstOrNull;
     if (newest != null &&
