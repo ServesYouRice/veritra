@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:drift/native.dart' show SqliteException;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
@@ -67,6 +68,56 @@ void main() {
     await harness.waitFor(() => harness.state.lastSyncedAt != null);
     expect(harness.state.syncRecovery, isNull);
     expect(await store.loadSyncRecovery(), isNull);
+    harness.dispose();
+  });
+
+  for (final code in <int>[11, 26]) {
+    test(
+        'a damaged database ($code) offers the confirmed reset, not Retry only',
+        () async {
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[_envelopeEvent(4, 'msg_one')];
+      final store = MemoryLocalStore();
+      await _keepIdentity(store);
+      final harness = await _Harness.start(api,
+          store: store,
+          configure: (state) =>
+              (state.cryptoService as _FakeMlsCrypto).applyError =
+                  SqliteException(extendedResultCode: code, message: 'test'));
+      final state = harness.state;
+      await harness
+          .waitFor(() => state.lifecycle == SessionLifecycle.recoveryRequired);
+      expect(state.session, isNull);
+      expect(state.canResetLocalData, isTrue);
+      expect(state.canContinueWithoutRestore, isFalse);
+      expect(state.recoveryMessage, state.l10n.recoveryStorageDamaged);
+      expect(state.syncRecovery, isNull);
+      expect(await store.loadSyncRecovery(), isNull);
+      expect(await store.loadSyncCursor(), 0);
+
+      await state.resetUnreadableLocalData(confirmed: true);
+      expect(state.lifecycle, SessionLifecycle.ready);
+      expect(state.session, isNull);
+      expect(state.canResetLocalData, isFalse);
+      harness.dispose();
+    });
+  }
+
+  test('another durable storage error still stops with Retry only', () async {
+    final api = _ScriptedApi()
+      ..events = <SyncEvent>[_envelopeEvent(4, 'msg_one')];
+    final store = MemoryLocalStore();
+    await _keepIdentity(store);
+    final harness = await _Harness.start(api,
+        store: store,
+        configure: (state) =>
+            (state.cryptoService as _FakeMlsCrypto).applyError =
+                SqliteException(extendedResultCode: 19, message: 'test'));
+    final state = harness.state;
+    await harness.waitFor(() => state.syncRecovery != null);
+    expect(state.syncRecovery!.kind, SyncFailureKind.localStorage);
+    expect(state.lifecycle, SessionLifecycle.ready);
+    expect(state.canResetLocalData, isFalse);
     harness.dispose();
   });
 }
@@ -339,6 +390,9 @@ class _FakeMlsCrypto implements MlsConversationCryptoService {
   final List<int> cursorAtApply = <int>[];
   final Set<String> rejectedMls = <String>{};
 
+  /// Thrown by the next application message, once.
+  Object? applyError;
+
   @override
   Future<void> activateSession(Session session) async {}
 
@@ -357,6 +411,11 @@ class _FakeMlsCrypto implements MlsConversationCryptoService {
   Future<List<int>?> processApplicationMessage(
       ReceivedMessageEnvelope envelope, int syncEventId) async {
     applied.add(envelope.id);
+    final error = applyError;
+    if (error != null) {
+      applyError = null;
+      throw error;
+    }
     cursorAtApply.add(await store.loadSyncCursor());
     if (envelope.ciphertext.length == 1 &&
         envelope.ciphertext.single == _neverDecrypts.single) {

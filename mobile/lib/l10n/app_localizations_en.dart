@@ -2177,6 +2177,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'This device could not update its message storage for this version of Veritra. Nothing has been changed or deleted. Retry. If it keeps failing, you can reset this device and link it again.';
 
   @override
+  String get recoveryStorageDamaged =>
+      'This device\'s message storage is damaged and cannot be read, so sync has stopped. Nothing has been deleted. Retry, or reset this device and link it again.';
+
+  @override
   String get recoverySqliteFeatureMissing =>
       'This build of Veritra cannot open its message storage: the database engine lacks encryption or search support. Your data has not been changed or deleted. Install a Veritra build that supports them.';
 

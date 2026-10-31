@@ -1310,6 +1310,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     lifecycle = SessionLifecycle.initializing;
     recoveryMessage = null;
     localStoreFailure = null;
+    _localDataDamaged = false;
     notifyListeners();
     try {
       final stored = await localStore.loadSession();
@@ -1459,9 +1460,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// Why the encrypted local database could not be opened (I39), or null.
   LocalStoreFailureKind? localStoreFailure;
 
+  /// Sync found the open local database damaged (corrupt or not a
+  /// database); see [_enterDamagedStorageRecovery].
+  bool _localDataDamaged = false;
+
   /// Signing in cannot work while the local database is unreadable, so the
   /// recovery screen offers it only for other restore failures.
-  bool get canContinueWithoutRestore => localStoreFailure == null;
+  bool get canContinueWithoutRestore =>
+      localStoreFailure == null && !_localDataDamaged;
 
   /// A reset moves the database and its key aside (it never deletes them),
   /// so it is always reachable and the user is never stuck. An upgrade that
@@ -1469,6 +1475,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// and retrying is the fix: the reset is offered for it only once a retry
   /// has failed the same way again.
   bool get canResetLocalData {
+    if (_localDataDamaged) return true;
     final failure = localStoreFailure;
     if (failure == null) return false;
     if (failure == LocalStoreFailureKind.upgradeStorageFull) {
@@ -1505,6 +1512,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       try {
         await localStore.quarantineUnreadableDatabase(confirmed: true);
         localStoreFailure = null;
+        _localDataDamaged = false;
         _storageFullFailures = 0;
         recoveryMessage = null;
         lifecycle = SessionLifecycle.ready;
@@ -4605,6 +4613,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         return;
       }
       final failure = _recoveryFailureFor(err);
+      if (failure != null && failure.damagedStorage) {
+        // No record is written: the write would land in the damaged file,
+        // or reload later as a stop that only offers Retry.
+        _enterDamagedStorageRecovery();
+        return;
+      }
       if (failure != null) {
         final recovery = SyncRecovery.fromFailure(failure, DateTime.now());
         try {
@@ -4675,7 +4689,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       return const SyncEventFailure(SyncFailureKind.cursorExpired);
     }
     if (_isDurableStorageError(err)) {
-      return const SyncEventFailure(SyncFailureKind.localStorage);
+      return SyncEventFailure(SyncFailureKind.localStorage,
+          damagedStorage: _isDamagedStorage(err));
     }
     // Anything else happened outside one event's processing (a page or a
     // projection refresh failed) and is retried on the next wake. Event
@@ -4751,6 +4766,67 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       return _transientFileErrors.contains(err.osError?.errorCode);
     }
     return false;
+  }
+
+  /// SQLite CORRUPT (11) or NOTADB (26): the database file is damaged.
+  static bool _isDamagedStorage(Object err) {
+    final code = localStorageErrorCode(err);
+    return code == 11 || code == 26;
+  }
+
+  /// Sync found the local database damaged while the app ran. The session
+  /// is put down in memory only, with no store writes (they would fail or
+  /// corrupt more), and the app shows the recovery screen a failed restore
+  /// shows: Retry reopens the store, and the confirmed reset moves it aside
+  /// (C-d0ba626ecdd7). This runs inside the sync owner's own pass, so the
+  /// owner is disposed, never drained.
+  void _enterDamagedStorageRecovery() {
+    _sessionGeneration++;
+    _syncStartFailed = null;
+    final owner = _syncOwner;
+    _syncOwner = null;
+    owner?.dispose();
+    final lease = _syncLease;
+    _syncLease = null;
+    if (lease != null) {
+      unawaited(localStore.releaseSyncLease(lease).catchError((Object _) {}));
+    }
+    final mls = _mlsCrypto;
+    if (mls != null) unawaited(mls.dispose().catchError((Object _) {}));
+    final subscription = _syncSubscription;
+    _syncSubscription = null;
+    if (subscription != null) {
+      unawaited(subscription.cancel().catchError((Object _) {}));
+    }
+    final previousSync = sync;
+    sync = null;
+    if (previousSync != null) {
+      unawaited(previousSync.dispose().catchError((Object _) {}));
+    }
+    api?.close();
+    api = null;
+    session = null;
+    _outboxRetryTimer?.cancel();
+    _outboxRetryTimer = null;
+    _mlsOutboxRetryTimer?.cancel();
+    _mlsOutboxRetryTimer = null;
+    _resetMlsRetries();
+    _expiryTimer?.cancel();
+    _expiryTimer = null;
+    _cancelCatchUpRetry();
+    devices = <Device>[];
+    conversationsLoaded = false;
+    messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
+    _history.clear();
+    composerDrafts.clear();
+    syncRecovery = null;
+    deviceRecoveryRequired = false;
+    syncError = null;
+    localStoreFailure = null;
+    _localDataDamaged = true;
+    lifecycle = SessionLifecycle.recoveryRequired;
+    recoveryMessage = l10n.recoveryStorageDamaged;
+    notifyListeners();
   }
 
   /// A local storage failure that will not pass by itself: another SQLite
@@ -4880,10 +4956,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         : mls is BoundedMlsConversationCryptoService
             ? mls
             : throw const WakeWorkCancelled();
-    SyncEventFailure failure(SyncFailureKind kind) => SyncEventFailure(kind,
-        eventId: event.id,
-        eventType: event.type,
-        conversationId: event.conversationId);
+    SyncEventFailure failure(SyncFailureKind kind, [Object? cause]) =>
+        SyncEventFailure(kind,
+            eventId: event.id,
+            eventType: event.type,
+            conversationId: event.conversationId,
+            damagedStorage: cause != null && _isDamagedStorage(cause));
     switch (event.type) {
       case 'mls.message.created':
         // Control messages are never skipped: missing, malformed or
@@ -4921,7 +4999,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         } catch (err) {
           if (_isTransientSyncError(err)) rethrow;
           if (_isDurableStorageError(err)) {
-            throw failure(SyncFailureKind.localStorage);
+            throw failure(SyncFailureKind.localStorage, err);
           }
           throw failure(err is FormatException
               ? SyncFailureKind.mlsControlMalformed
@@ -4994,7 +5072,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         } catch (err) {
           if (_isTransientSyncError(err)) rethrow;
           if (_isDurableStorageError(err)) {
-            throw failure(SyncFailureKind.localStorage);
+            throw failure(SyncFailureKind.localStorage, err);
           }
           if (_provenExpired(resolved.expiresAt)) {
             await _commitExpiredTombstone(event, id, wake);
@@ -5024,7 +5102,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         } catch (err) {
           if (_isTransientSyncError(err)) rethrow;
           if (_isDurableStorageError(err)) {
-            throw failure(SyncFailureKind.localStorage);
+            throw failure(SyncFailureKind.localStorage, err);
           }
           if (_provenExpired(call.expiresAt)) {
             await _commitExpiredTombstone(event, call.id, wake);

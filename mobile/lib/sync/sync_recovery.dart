@@ -57,12 +57,19 @@ class SyncEventFailure implements Exception {
     this.eventId,
     this.eventType,
     this.conversationId,
+    this.damagedStorage = false,
   });
 
   final SyncFailureKind kind;
   final int? eventId;
   final String? eventType;
   final String? conversationId;
+
+  /// A [SyncFailureKind.localStorage] failure where SQLite reported the
+  /// database corrupt or not a database. Retrying cannot help, and the
+  /// record cannot be stored in it, so the app offers the confirmed local
+  /// data reset instead (C-d0ba626ecdd7).
+  final bool damagedStorage;
 
   @override
   String toString() => 'SyncEventFailure(${kind.name}, event $eventId)';
