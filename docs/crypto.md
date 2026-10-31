@@ -246,8 +246,11 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   - **Row.** An application message gets an `invalid` row keyed
     `undecryptable:<syncEventId>:<envelopeId>`, with no body, shown as
     "Couldn't unlock this message". A call signal is dropped with no row.
-  - **`groupEpoch`** reloads the committed state and asks again after a
-    native error, so a poisoned handle never reads as "no group".
+  - **`groupEpoch`** after a native error probes the handle with a call
+    that takes the same device lock. A handle that answers and holds the
+    stored state means the group is simply missing (no restore); otherwise
+    it reloads the committed state and asks again, so a poisoned handle
+    never reads as "no group".
   - **Fork check.** An own-device commit with no queued bundle passes only
     when the group is already past the epoch in the commit's clear MLS
     header (the outbox worker merged and settled it). Otherwise, as for a
@@ -262,7 +265,11 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     would then stop sync at the fork check. The server answers 403 there
     only when the account left the conversation or the device was
     revoked, and sync no longer delivers a left conversation's events, so
-    only a revoked device can meet it.
+    only a revoked device can meet it. Second case: the account left, the
+    bundle was abandoned, and the account is re-invited. Until the MLS
+    re-add lands, the old roster window shows the old own commit again
+    (`mls_group_store.go`, join filter) and the fork check stops sync.
+    This is transient: the re-add moves `joined_after_event_id` past it.
   - Tests: `native_crypto_service_policy_test.dart`,
     `native_crypto_service_d54_review_test.dart` (fault-injected native
     errors) and `chat_undecryptable_placeholder_test.dart`.
