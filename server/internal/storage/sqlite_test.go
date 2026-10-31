@@ -1149,6 +1149,7 @@ func newTestStore(t *testing.T, ctx context.Context) (*Store, config.Config) {
 		StoragePath:  filepath.Join(dir, "blobs"),
 		InstanceName: "Test Messenger",
 	}
+	seedMigratedDatabase(t, cfg.DatabasePath)
 	store, err := Open(ctx, cfg)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
