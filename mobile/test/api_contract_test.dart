@@ -373,6 +373,10 @@ void main() {
     final accountExport = await client.exportAccountPage(owner.token);
     expect(accountExport['manifest_version'], 'v2');
     expect(accountExport['messages'], isA<List<Object?>>());
+    // Smoke check only: this server refuses push registration above, so the
+    // export holds no subscription that could carry a secret. The guarantee
+    // is TestAccountExportOmitsPushSubscriptionAuthSecret in
+    // server/internal/httpapi/export_push_secret_test.go, which seeds one.
     expect(jsonEncode(accountExport), isNot(contains('auth_secret')));
 
     final linkSecret = List<int>.filled(16, 0x55);
