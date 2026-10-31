@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -193,6 +194,10 @@ func NewAPNsProvider(config APNsConfig) (*APNsProvider, error) {
 	} else {
 		return nil, fmt.Errorf("parse APNs private key: %w", err)
 	}
+	// The JWT is signed with ES256, which Apple defines on P-256 only.
+	if key.Curve != elliptic.P256() {
+		return nil, errors.New("APNs private key must use the P-256 curve")
+	}
 	return &APNsProvider{config: config, key: key, client: nativeHTTPClient()}, nil
 }
 
@@ -233,13 +238,39 @@ func (p *APNsProvider) SendEncryptedEventAvailable(ctx context.Context, notifica
 	}
 	defer response.Body.Close()
 	responseBody, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-	if response.StatusCode == http.StatusGone || bytes.Contains(responseBody, []byte("BadDeviceToken")) || bytes.Contains(responseBody, []byte("Unregistered")) {
+	// Apple's answer is {"reason": "..."}; only the exact field counts.
+	// HTTP 410 and reason Unregistered mean the token is no longer active.
+	// BadDeviceToken is deliberately not gone: Apple also answers it for a
+	// valid token sent to the wrong (sandbox or production) environment, and
+	// the process uses one environment for every subscription.
+	var answer struct {
+		Reason string `json:"reason"`
+	}
+	_ = json.Unmarshal(responseBody, &answer)
+	if response.StatusCode == http.StatusGone || answer.Reason == "Unregistered" {
 		return ErrSubscriptionGone
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if apnsReasonToken(answer.Reason) {
+			return fmt.Errorf("APNs returned status %d (%s)", response.StatusCode, answer.Reason)
+		}
 		return fmt.Errorf("APNs returned status %d", response.StatusCode)
 	}
 	return nil
+}
+
+// apnsReasonToken reports whether reason looks like one of Apple's fixed
+// reason codes (short, letters only), so it is safe to put in an error.
+func apnsReasonToken(reason string) bool {
+	if reason == "" || len(reason) > 64 {
+		return false
+	}
+	for _, char := range reason {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *APNsProvider) token() (string, error) {
@@ -314,12 +345,25 @@ func signECDSAJWT(key *ecdsa.PrivateKey, header, claims map[string]any) (string,
 	if err != nil {
 		return "", err
 	}
+	// ES256 is a fixed 64-byte signature: r and s as 32-byte big-endian
+	// halves. A key on a larger curve cannot produce one.
 	signature := make([]byte, 64)
-	fillInt(signature[:32], r)
-	fillInt(signature[32:], s)
+	if err := fillInt(signature[:32], r); err != nil {
+		return "", err
+	}
+	if err := fillInt(signature[32:], s); err != nil {
+		return "", err
+	}
 	return value + "." + base64.RawURLEncoding.EncodeToString(signature), nil
 }
-func fillInt(target []byte, value *big.Int) {
+
+// fillInt writes value big-endian, left-padded, into target. It reports an
+// error instead of slicing out of range when value does not fit.
+func fillInt(target []byte, value *big.Int) error {
 	bytes := value.Bytes()
+	if len(bytes) > len(target) {
+		return errors.New("ECDSA signature component does not fit an ES256 signature; the key must use P-256")
+	}
 	copy(target[len(target)-len(bytes):], bytes)
+	return nil
 }
