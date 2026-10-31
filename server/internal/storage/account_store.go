@@ -208,6 +208,8 @@ func (s *Store) DeleteAccountData(ctx context.Context, accountID string) ([]stri
 		`DELETE FROM device_links_v3 WHERE account_id = ?`,
 		`DELETE FROM attachment_envelopes WHERE owner_account_id = ?`,
 		`DELETE FROM backup_blobs WHERE account_id = ?`,
+		`DELETE FROM account_recovery_keys WHERE account_id = ?`,
+		`DELETE FROM account_recovery_requests WHERE account_id = ?`,
 	} {
 		if _, err := tx.ExecContext(ctx, query, accountID); err != nil {
 			return nil, err

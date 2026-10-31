@@ -56,11 +56,17 @@ func (s *Store) ReserveRegistrationEnrollment(ctx context.Context, inviteCode st
 }
 
 func (s *Store) createEnrollmentReservation(ctx context.Context, kind string, inviteID *string) (EnrollmentReservation, error) {
-	id, err := domain.NewID("enroll")
+	accountID, err := domain.NewID("acct")
 	if err != nil {
 		return EnrollmentReservation{}, err
 	}
-	accountID, err := domain.NewID("acct")
+	return s.createEnrollmentReservationFor(ctx, kind, inviteID, accountID)
+}
+
+// createEnrollmentReservationFor reserves an enrollment for accountID: a new
+// id for owner and register, an existing (or decoy) id for recovery.
+func (s *Store) createEnrollmentReservationFor(ctx context.Context, kind string, inviteID *string, accountID string) (EnrollmentReservation, error) {
+	id, err := domain.NewID("enroll")
 	if err != nil {
 		return EnrollmentReservation{}, err
 	}

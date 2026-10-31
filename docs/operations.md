@@ -57,6 +57,44 @@ MLS state (D71, D73). Someone holding a backup and its recovery code can
 read that history but cannot sign in. A restored device joins the account
 as a new device.
 
+### Account recovery (all devices lost)
+
+Someone who lost every device gets the account back on a new device with the
+password and the recovery key (D49; design
+[`designs/K0-recovery-enrollment.md`](designs/K0-recovery-enrollment.md)).
+It brings back the account, not history: history comes back only from a
+backup restored within its window.
+
+- **`PRIVATE_MESSENGER_PUBLIC_ORIGIN`** is the canonical origin clients use,
+  `https://host[:port]` (lower-case host, no path, no default port; plain
+  `http` only for a loopback host). The recovery proof names this origin and
+  the server checks it against this setting only, never `Host` or forwarded
+  headers, so a look-alike origin relaying to the server is refused. Use the
+  one permanent hostname. While it is unset, every `/api/v1/account-recovery/`
+  route and `PUT /api/v1/account/recovery-key` answer 503
+  `recovery_not_configured`, and `GET /api/v1/account/recovery-key` reports
+  `available: false`. Changing it later invalidates proofs made for the old
+  origin.
+- **Wait.** When any device of the account was active (not revoked, a live
+  session, seen) within `PRIVATE_MESSENGER_RECOVERY_ACTIVE_WINDOW_DAYS`
+  (default 7), the new device joins only after
+  `PRIVATE_MESSENGER_RECOVERY_WAIT_DAYS` (default 7). Active devices can
+  cancel with recent authentication; a password change, an offline owner
+  password reset or a new recovery key cancels it too. Completion revokes
+  every old device.
+- **Routes.** `PUT`/`GET /api/v1/account/recovery-key`;
+  `POST /api/v1/account-recovery/enrollment` (5/min, takes a username and
+  answers a real or stable decoy account id), and `.../claim`,
+  `GET .../{id}/status` (claim token in `X-Veritra-Claim-Token`) and
+  `POST .../{id}/cancel` (10/min credential budget, any spelling).
+- **Failures.** Every failed claim answers the same 401. A per-address,
+  per-account backoff applies as for login, and the account scope counts
+  only callers whose recovery proof verified. After 50 right-password,
+  wrong-recovery-key claims in a UTC day (D79) the account refuses every
+  claim until the next day, and its devices are told once that the password
+  appears leaked. The server stores only the recovery key's verification key
+  and id, never the key.
+
 Native FCM and APNs use the matching `PRIVATE_MESSENGER_FCM_*` and
 `PRIVATE_MESSENGER_APNS_*` environment secrets. Push payloads are fixed generic
 wake events. Calls require a self-hosted coturn-compatible shared secret via
@@ -128,8 +166,9 @@ which never look a token up (`/livez`, `/healthz`, `/readyz`,
 with or without a token: a junk token there buys nothing. A token on a
 path with no route is charged to the 240 after its 404, which costs no
 more than a 429 would. Credential and enrollment routes
-(setup, login, reauthentication, registration, recovery, device-link claim
-and claim status, and the setup, registration and device-link enrollment
+(setup, login, reauthentication, registration, recovery, every
+`/api/v1/account-recovery/` path, device-link claim and claim status, and the
+setup, registration, device-link and account-recovery enrollment
 reservations) always use the address budgets, with or without a token.
 
 | `PRIVATE_MESSENGER_RATE_LIMIT_...` | Default | Range | Counts per minute |
