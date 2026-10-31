@@ -20,7 +20,11 @@ bool isTerminalCallState(String state) =>
 /// server's /api/v1/calls/config returns) names a turn: or turns: URL.
 bool _hasTurnUrl(Map<String, Object?> server) {
   final urls = server['urls'];
-  final list = urls is String ? <Object?>[urls] : urls is List ? urls : null;
+  final list = urls is String
+      ? <Object?>[urls]
+      : urls is List
+          ? urls
+          : null;
   return list != null &&
       list.any((url) =>
           url is String &&
@@ -43,11 +47,17 @@ String? relayCandidateOnly(String candidate) {
   if (typ < 0 || typ + 1 >= tokens.length || tokens[typ + 1] != 'relay') {
     return null;
   }
-  for (var i = typ + 2; i + 1 < tokens.length; i += 2) {
-    if (tokens[i] == 'raddr') {
-      tokens[i + 1] = tokens[i + 1].contains(':') ? '::' : '0.0.0.0';
-    } else if (tokens[i] == 'rport') {
-      tokens[i + 1] = '0';
+  // Every token is checked, not key/value pairs, so a malformed extension
+  // cannot shift the pairing and let the related address through.
+  for (var i = typ + 2; i < tokens.length; i++) {
+    if (tokens[i] == 'raddr' || tokens[i] == 'rport') {
+      if (i + 1 >= tokens.length) return null;
+      tokens[i + 1] = tokens[i] == 'rport'
+          ? '0'
+          : tokens[i + 1].contains(':')
+              ? '::'
+              : '0.0.0.0';
+      i++;
     }
   }
   return tokens.join(' ');
@@ -336,6 +346,10 @@ class NativeCallService {
         offer['sdp_type'] is! String) {
       throw const FormatException('invalid encrypted call offer');
     }
+    // Already over: do not turn on the microphone or camera for it.
+    if (_terminated.contains(call.id)) {
+      throw CallUnavailableException(call.id, 'ended');
+    }
     final media = await _createConnection(video: offer['video'] == true);
     final ActiveCall active;
     try {
@@ -366,6 +380,7 @@ class NativeCallService {
   /// Declines a ringing call. The latest known session is kept until the
   /// server accepts the rejection, so a failed reject can be retried.
   Future<void> reject(CallSession call) async {
+    if (_terminated.contains(call.id)) return;
     try {
       await _transition(
           () => _newest(_pendingSessions[call.id], call), _recordPending,
@@ -575,13 +590,21 @@ class NativeCallService {
     if (active._ending) return;
     final encrypted =
         await crypto.encryptCallSignal(active.session.conversationId, signal);
-    final updated = await _transition(
-        () => active.session, (session) => _adopt(active, session),
-        // A same-state write: after a refresh the state may have moved on
-        // (ringing -> active), and the server allows no step back.
-        state: (current) => current.state,
-        metadata: encrypted.metadata,
-        giveUp: (current) => isTerminalCallState(current.state));
+    final CallSession updated;
+    try {
+      updated = await _transition(
+          () => active.session, (session) => _adopt(active, session),
+          // A same-state write: after a refresh the state may have moved on
+          // (ringing -> active), and the server allows no step back.
+          state: (current) => current.state,
+          metadata: encrypted.metadata,
+          // Stop retrying once hung up, so 'ended' is not held back.
+          giveUp: (current) =>
+              active._ending || isTerminalCallState(current.state));
+    } on CallUnavailableException {
+      if (active._ending) return;
+      rethrow;
+    }
     _adopt(active, updated);
   }
 
@@ -634,8 +657,8 @@ class NativeCallService {
             attempt >= maxConflictRetries) {
           rethrow;
         }
-        await _retryDelay(Duration(
-            milliseconds: 50 * (attempt + 1) + _jitter.nextInt(100)));
+        await _retryDelay(
+            Duration(milliseconds: 50 * (attempt + 1) + _jitter.nextInt(100)));
         final refreshed = (await api.calls(token, current.conversationId))
             .where((call) => call.id == current.id)
             .firstOrNull;
@@ -722,8 +745,8 @@ class NativeCallService {
         final pending = _pendingSessions.remove(callId);
         if (pending != null) _adopt(active, pending);
         active._drained = true;
-        for (final signal in _earlySignals.remove(callId) ??
-            const <Map<String, Object?>>[]) {
+        for (final signal
+            in _earlySignals.remove(callId) ?? const <Map<String, Object?>>[]) {
           if (_disposed || active._media.released) return;
           try {
             await _applySignal(active, signal);

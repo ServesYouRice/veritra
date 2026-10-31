@@ -25,12 +25,16 @@ class _Harness {
       crypto: crypto,
       incoming: incoming.stream,
       media: media,
-      retryDelay: (delay) async => delays.add(delay),
+      retryDelay: (delay) async {
+        delays.add(delay);
+        await delayGate?.call();
+      },
       allowDirectConnections: allowDirectConnections,
     );
   }
 
   final List<Duration> delays = <Duration>[];
+  Future<void> Function()? delayGate;
 
   final List<String> log = <String>[];
   final StreamController<IncomingCallSignal> incoming =
@@ -73,6 +77,7 @@ void main() {
   _task019();
   _task020();
   _task021();
+  _followUps();
   group('TASK-015 setup failure releases media', () {
     const startSteps = <String>[
       'getUserMedia',
@@ -236,13 +241,12 @@ void _task016() {
         peer.duringSetRemote = (p) => p.emitTrack(remote);
       };
       h.api.createGate = () async {
-        h.incoming.add(IncomingCallSignal(
-            callSession(version: 2),
-            const <String, Object?>{
-              'kind': 'answer',
-              'sdp': 'remote-answer',
-              'sdp_type': 'answer',
-            }));
+        h.incoming.add(
+            IncomingCallSignal(callSession(version: 2), const <String, Object?>{
+          'kind': 'answer',
+          'sdp': 'remote-answer',
+          'sdp_type': 'answer',
+        }));
         await _settle();
       };
 
@@ -344,8 +348,8 @@ void _task017() {
         h.incoming.add(IncomingCallSignal(call.session, _ice('a', sdpMid: 5)));
         h.incoming.add(IncomingCallSignal(call.session, _ice('b', index: 'x')));
         h.incoming.add(IncomingCallSignal(call.session, _ice(7)));
-        h.incoming.add(IncomingCallSignal(call.session,
-            const <String, Object?>{'kind': 'answer', 'sdp': 1}));
+        h.incoming.add(IncomingCallSignal(
+            call.session, const <String, Object?>{'kind': 'answer', 'sdp': 1}));
         await _settle();
         h.media.peer.failures['addCandidate'] = InjectedFailure('addCandidate');
         h.incoming.add(IncomingCallSignal(call.session, _ice('c')));
@@ -378,8 +382,7 @@ void _task017() {
       expect(uncaught, isEmpty);
     });
 
-    test('dispose() during setup drops the call and releases media',
-        () async {
+    test('dispose() during setup drops the call and releases media', () async {
       final h = _harness();
       final created = Completer<void>();
       h.api.createGate = () => created.future;
@@ -457,8 +460,7 @@ void _task018() {
       expect(h.delays, hasLength(1));
     });
 
-    test('persistent conflicts stop at the bound and are reported',
-        () async {
+    test('persistent conflicts stop at the bound and are reported', () async {
       final h = _harness();
       final call = await h.service.start('conv_1');
       final errors = <Object>[];
@@ -471,8 +473,8 @@ void _task018() {
       expect(h.api.transitions,
           hasLength(NativeCallService.maxConflictRetries + 1));
       expect(errors, hasLength(1));
-      expect((errors.single as ApiException).serverCode,
-          'call_version_conflict');
+      expect(
+          (errors.single as ApiException).serverCode, 'call_version_conflict');
     });
 
     test('other API errors are not retried', () async {
@@ -513,8 +515,7 @@ void _task018() {
       expect(call.session.version, 3);
     });
 
-    test('answer() stops and releases media when the call is gone',
-        () async {
+    test('answer() stops and releases media when the call is gone', () async {
       final h = _harness();
       h.api.server['call_1'] = callSession(state: 'ended', version: 2);
       await expectLater(h.service.answer(callSession(version: 1), _offer),
@@ -552,8 +553,7 @@ void _task018() {
 
 void _task019() {
   group('TASK-019 end() through the outbound queue', () {
-    test('end() waits for the in-flight send and skips queued ones',
-        () async {
+    test('end() waits for the in-flight send and skips queued ones', () async {
       final h = _harness();
       final call = await h.service.start('conv_1');
       final gate = Completer<void>();
@@ -688,8 +688,7 @@ void _task020() {
       expect(h.service.pendingCallIds, isEmpty);
     });
 
-    test('a terminal push while hanging up does not double-dispose',
-        () async {
+    test('a terminal push while hanging up does not double-dispose', () async {
       final h = _harness();
       final terminations = <({String callId, String state})>[];
       h.service.terminations.listen(terminations.add);
@@ -827,6 +826,64 @@ void _task021() {
       h.media.peer.emitCandidate(host);
       await _settle();
       expect(_sentCandidates(h.api), <String>[host]);
+    });
+  });
+}
+
+void _followUps() {
+  group('review follow-ups', () {
+    test('answer() of a call already over acquires no media', () async {
+      final h = _harness();
+      h.incoming.add(IncomingCallSignal(
+          callSession(state: 'ended', version: 2), const <String, Object?>{}));
+      await _settle();
+      await expectLater(h.service.answer(callSession(), _offer),
+          throwsA(isA<CallUnavailableException>()));
+      await h.service.reject(callSession());
+      expect(h.media.peers, isEmpty);
+      expect(h.api.transitions, isEmpty);
+    });
+
+    test('an ICE conflict retry stops once the call is hung up', () async {
+      final h = _harness();
+      final call = await h.service.start('conv_1');
+      final errors = <Object>[];
+      call.signalErrors.stream.listen(errors.add);
+      final waiting = Completer<void>();
+      final resume = Completer<void>();
+      h.delayGate = () {
+        waiting.complete();
+        return resume.future;
+      };
+      h.api.onTransition = (request) async {
+        if (request.state == 'ended') {
+          return callSession(state: 'ended', version: 3);
+        }
+        throw versionConflict();
+      };
+      h.media.peer.emitCandidate(_relay(1));
+      // The ICE send hit a conflict and waits to retry; hang up now.
+      await waiting.future;
+      final ended = h.service.end(call.session.id);
+      await _settle();
+      resume.complete();
+      await ended;
+
+      expect(h.api.transitions.where((t) => t.state != 'ended'), hasLength(1));
+      expect(h.api.transitions.last.state, 'ended');
+      expect(errors, isEmpty);
+    });
+
+    test('a dangling raddr drops the candidate', () {
+      expect(
+          relayCandidateOnly(
+              'candidate:1 1 udp 1 203.0.113.9 5 typ relay x raddr'),
+          isNull);
+      expect(
+          relayCandidateOnly('candidate:1 1 udp 1 203.0.113.9 5 typ relay '
+              'odd raddr 198.51.100.7 rport 9'),
+          'candidate:1 1 udp 1 203.0.113.9 5 typ relay '
+          'odd raddr 0.0.0.0 rport 0');
     });
   });
 }

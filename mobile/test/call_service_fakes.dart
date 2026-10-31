@@ -236,8 +236,8 @@ class FakeCallCrypto implements MlsConversationCryptoService {
 
 /// One recorded transitionCall request.
 class TransitionRequest {
-  TransitionRequest(this.callId, this.state, this.expectedVersion,
-      this.metadata);
+  TransitionRequest(
+      this.callId, this.state, this.expectedVersion, this.metadata);
   final String callId;
   final String state;
   final int expectedVersion;
