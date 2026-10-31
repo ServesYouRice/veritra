@@ -110,3 +110,84 @@ func (locks *resourceLocks) Release() error {
 	locks.files = nil
 	return errors.Join(errs...)
 }
+
+// writerLocks are the locks serve holds for its whole life: the
+// data-directory lock and the database and blob-storage locks. init and
+// migrate take them too (I46), after any interrupted restore is settled.
+type writerLocks struct {
+	instance  *instanceLock
+	resources *resourceLocks
+}
+
+// acquireWriterLocks takes the writer locks without blocking. It then
+// refuses to go on if a restore journal is present: a restore killed after
+// recovery ran but before these locks were taken leaves one, and the
+// instance must be settled before anything opens it.
+func acquireWriterLocks(cfg config.Config) (*writerLocks, error) {
+	instance, err := acquireInstanceLock(cfg.DataDir)
+	if err != nil {
+		return nil, err
+	}
+	resources, err := acquireResourceLocks(cfg)
+	if err != nil {
+		_ = instance.Release()
+		return nil, err
+	}
+	locks := &writerLocks{instance: instance, resources: resources}
+	if err := requireSettledRestore(cfg); err != nil {
+		_ = locks.Release()
+		return nil, err
+	}
+	return locks, nil
+}
+
+func (locks *writerLocks) Release() error {
+	if locks == nil {
+		return nil
+	}
+	return errors.Join(locks.resources.Release(), locks.instance.Release())
+}
+
+// blobStorageLock is the blob-storage lock a server holds, taken by an
+// offline command. Its file lives inside the blob directory, which restore
+// and its rollback rename, so the command lets go before it moves that
+// directory: Windows refuses to rename a directory with an open file inside,
+// and on unix the lock would leave with the old directory anyway. A server
+// started after that point locks a fresh file in the new directory; the
+// data-directory and database locks still keep out a server of this
+// instance, but not one of another database sharing the blob directory
+// (bug-hunt Q-004: moving the lock file needs a config change).
+type blobStorageLock struct {
+	file *os.File
+}
+
+// lockExistingBlobStorage takes the blob-storage lock without blocking when
+// the blob directory exists. A missing directory has no server using it, and
+// is not created: a restore onto a clean host keeps its layout.
+func lockExistingBlobStorage(cfg config.Config) (*blobStorageLock, error) {
+	_, path := cfg.LockPaths()
+	if _, err := os.Stat(cfg.StoragePath); os.IsNotExist(err) {
+		return &blobStorageLock{}, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("check blob storage for a process lock: %w", err)
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open blob storage process lock: %w", err)
+	}
+	if err := lockFileExclusive(file); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("blob storage lock %s is held by another server process; do not run multiple writers: %w", path, err)
+	}
+	return &blobStorageLock{file: file}, nil
+}
+
+func (lock *blobStorageLock) Release() error {
+	if lock == nil || lock.file == nil {
+		return nil
+	}
+	unlockErr := unlockFile(lock.file)
+	closeErr := lock.file.Close()
+	lock.file = nil
+	return errors.Join(unlockErr, closeErr)
+}

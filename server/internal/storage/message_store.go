@@ -735,6 +735,12 @@ func (s *Store) PruneExpiredContent(ctx context.Context, now time.Time) (int64, 
 		}
 		storageKeys = append(storageKeys, key)
 	}
+	// A query that stops early would leave blobs of deleted attachments
+	// behind with no record to find them by.
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, nil, err
+	}
 	if err := rows.Close(); err != nil {
 		return 0, nil, err
 	}

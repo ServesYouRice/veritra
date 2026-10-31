@@ -767,7 +767,18 @@ func (a *App) updateRetentionMetrics(ctx context.Context, now time.Time) {
 func (a *App) reconcileBlobDeletions(ctx context.Context) {
 	started := time.Now()
 	failed := 0
-	for batch := 0; batch < retentionMaxBatches && time.Since(started) < a.retentionTimeLimit(); batch++ {
+	defer func() {
+		if failed > 0 {
+			a.Log.Warn("blob_cleanup_incomplete", "failed_count", failed)
+		}
+	}()
+	// A batch is up to 500 file deletions, so the time budget and shutdown
+	// are checked before each one, not only between batches. Keys left over
+	// stay queued for the next sweep.
+	withinBudget := func() bool {
+		return ctx.Err() == nil && time.Since(started) < a.retentionTimeLimit()
+	}
+	for batch := 0; batch < retentionMaxBatches && withinBudget(); batch++ {
 		storageKeys, err := a.Store.PendingBlobDeletions(ctx, 500)
 		if err != nil {
 			a.Log.Warn("blob_cleanup_queue_read_failed")
@@ -777,6 +788,9 @@ func (a *App) reconcileBlobDeletions(ctx context.Context) {
 			break
 		}
 		for _, storageKey := range storageKeys {
+			if !withinBudget() {
+				return
+			}
 			if err := a.Blobs.Delete(ctx, storageKey); err != nil {
 				failed++
 				_ = a.Store.RecordBlobDeletionFailure(ctx, storageKey)
@@ -789,9 +803,6 @@ func (a *App) reconcileBlobDeletions(ctx context.Context) {
 		if int64(len(storageKeys)) < retentionBatchSize || !retentionYield(ctx) {
 			break
 		}
-	}
-	if failed > 0 {
-		a.Log.Warn("blob_cleanup_incomplete", "failed_count", failed)
 	}
 }
 
