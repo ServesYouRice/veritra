@@ -1,10 +1,13 @@
 // MLS outbox and membership reconcile (I34, I51): refused commit bundles back
-// off and are reconciled again by a wake timer (TASK-029).
+// off and are reconciled again by a wake timer (TASK-029); accepted items
+// whose local finish failed are retried (TASK-030); storage failures in the
+// outbox workers are contained and retried with backoff (TASK-042).
 @Timeout(Duration(seconds: 60))
 library;
 
 import 'dart:async';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
@@ -13,6 +16,8 @@ import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/crypto/mls_commit_bundle.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
+
+import 'test_crypto_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -227,6 +232,93 @@ void main() {
     });
 
   });
+
+  group('storage failures in the outbox workers', () {
+    test('a store that keeps failing is retried with backoff, not spun',
+        () async {
+      final store = _FlakyStore();
+      final h = await _Harness.start(
+          pending: const <String>{}, store: store);
+      await _settle();
+      await _queue(store, <PendingMlsMessage>[_message('c1', 'conv_a')]);
+      store.mlsReadFailures = 1000;
+      h.sync.frame();
+      await _waitFor(() => store.mlsReads > 0);
+      final reads = store.mlsReads;
+      await Future<void>.delayed(const Duration(seconds: 3));
+      // Fallback timers at 2 s and then 8 s; a 100 ms spin would read ~60
+      // times.
+      expect(store.mlsReads - reads, lessThanOrEqualTo(8));
+      store.mlsReadFailures = 0;
+      h.state.dispose();
+    });
+
+    Future<(AppState, _Api, List<Object>)> appOutbox(
+        _FlakyStore store, int failures) async {
+      final api = _Api();
+      final errors = <Object>[];
+      late AppState state;
+      await runZonedGuarded(() async {
+        state = AppState(
+          apiClientFactory: (_) => api,
+          cryptoService: TestOnlyCryptoService(),
+          localStore: store,
+          syncServiceFactory: (_, __) => _Sync(),
+        )
+          ..api = api
+          ..session = _session
+          ..conversations = <Conversation>[
+            Conversation(id: 'conv_a', kind: 'group'),
+          ];
+        await store.enqueueEnvelope(MessageEnvelope(
+          conversationId: 'conv_a',
+          idempotencyKey: 'app_1',
+          ciphertext: const <int>[1],
+          cryptoProtocol: 'test-only-not-production',
+        ));
+        store.envelopeReadFailures = failures;
+        // A resume flushes the outbox; its first read fails.
+        state.handleAppLifecycleState(AppLifecycleState.resumed);
+      }, (error, _) => errors.add(error));
+      return (state, api, errors);
+    }
+
+    test('an outbox read failure is contained and retried', () async {
+      final store = _FlakyStore();
+      final (state, api, errors) = await appOutbox(store, 1);
+      await _waitFor(() => store.envelopeReadFailures == 0);
+      await _waitFor(() => api.envelopes.contains('app_1'),
+          timeout: const Duration(seconds: 6));
+      expect(errors, isEmpty, reason: 'no storage error escapes the worker');
+      state.dispose();
+    });
+
+    test('a read failure in the retry scheduler still arms a retry',
+        () async {
+      final store = _FlakyStore();
+      // The worker's read and then the scheduler's read fail.
+      final (state, api, errors) = await appOutbox(store, 2);
+      await _waitFor(() => store.envelopeReadFailures == 0);
+      await _waitFor(() => api.envelopes.contains('app_1'),
+          timeout: const Duration(seconds: 8));
+      expect(errors, isEmpty);
+      state.dispose();
+    });
+
+    test('an outbox that keeps failing is retried with backoff, not spun',
+        () async {
+      final store = _FlakyStore();
+      final (state, api, errors) = await appOutbox(store, 1000);
+      await _waitFor(() => store.envelopeReads > 0);
+      final reads = store.envelopeReads;
+      await Future<void>.delayed(const Duration(seconds: 3));
+      expect(store.envelopeReads - reads, lessThanOrEqualTo(8));
+      expect(api.envelopes, isEmpty);
+      expect(errors, isEmpty);
+      store.envelopeReadFailures = 0;
+      state.dispose();
+    });
+  });
 }
 
 const _origin = 'https://localhost:8080';
@@ -343,6 +435,7 @@ class _Api extends ApiClient {
   final List<String> claims = <String>[];
   final List<String> bundles = <String>[];
   final List<String> messages = <String>[];
+  final List<String> envelopes = <String>[];
   int pendingChangeCalls = 0;
   int syncCalls = 0;
   bool hangBundles = false;
@@ -470,7 +563,9 @@ class _Api extends ApiClient {
   }
 
   @override
-  Future<void> sendEnvelope(String token, MessageEnvelope envelope) async {}
+  Future<void> sendEnvelope(String token, MessageEnvelope envelope) async {
+    envelopes.add(envelope.idempotencyKey);
+  }
 }
 
 /// Stages each membership change as a queued `bundle` item, the way the
@@ -579,6 +674,18 @@ class _FlakyStore extends MemoryLocalStore {
   int mlsReadFailures = 0;
   int mlsReads = 0;
   int removeFailures = 0;
+  int envelopeReadFailures = 0;
+  int envelopeReads = 0;
+
+  @override
+  Future<List<PendingEnvelopeRecord>> pendingEnvelopeRecords() async {
+    envelopeReads++;
+    if (envelopeReadFailures > 0) {
+      envelopeReadFailures--;
+      throw StateError('database is locked');
+    }
+    return super.pendingEnvelopeRecords();
+  }
 
   @override
   Future<List<PendingMlsMessage>> pendingMlsMessages() async {

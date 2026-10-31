@@ -4913,7 +4913,16 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     try {
       do {
         _flushOutboxRequested = false;
-        await _flushOutboxOnce();
+        try {
+          await _flushOutboxOnce();
+          _outboxLocalFailures = 0;
+        } catch (_) {
+          // A local storage failure leaves every envelope queued. Callers
+          // leave this future unawaited, so nothing may escape; the retry
+          // timer tries again with backoff (TASK-042). Not written to the
+          // shared [error]: no user action failed.
+          _outboxLocalFailures++;
+        }
       } while (_flushOutboxRequested && !_disposed);
     } finally {
       _flushingOutbox = false;
@@ -5025,18 +5034,30 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     }
   }
 
+  /// Consecutive application outbox passes or reads that failed locally.
+  int _outboxLocalFailures = 0;
+
   Future<void> _scheduleOutboxRetry() async {
     _outboxRetryTimer?.cancel();
     _outboxRetryTimer = null;
     if (_disposed || session == null || api == null) return;
-    final records = await localStore.pendingEnvelopeRecords();
-    // Held-back conversations wait for the MLS worker, which flushes when
-    // it finishes; scheduling them here would spin.
-    final heldBack = _mlsCrypto == null
-        ? const <String>{}
-        : (await localStore.pendingMlsMessages())
-            .map((message) => message.conversationId)
-            .toSet();
+    final List<PendingEnvelopeRecord> records;
+    final Set<String> heldBack;
+    try {
+      records = await localStore.pendingEnvelopeRecords();
+      // Held-back conversations wait for the MLS worker, which flushes when
+      // it finishes; scheduling them here would spin.
+      heldBack = _mlsCrypto == null
+          ? const <String>{}
+          : (await localStore.pendingMlsMessages())
+              .map((message) => message.conversationId)
+              .toSet();
+    } catch (_) {
+      // Unreadable outbox: try again later rather than wait for a wake.
+      _outboxLocalFailures++;
+      if (!_disposed) _armOutboxRetry(_localRetryDelay(_outboxLocalFailures));
+      return;
+    }
     final now = DateTime.now().toUtc();
     DateTime? earliest;
     for (final record in records) {
@@ -5050,8 +5071,20 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       // once; skipping it would strand it until the next wake.
       if (earliest == null || due.isBefore(earliest)) earliest = due;
     }
-    if (earliest == null || _disposed) return;
-    final delay = earliest.difference(now);
+    var delay = earliest?.difference(now);
+    // After a local failure a queued envelope may have no due time (it was
+    // never tried) or a stale one, so wait at least the local backoff.
+    if (_outboxLocalFailures > 0) {
+      final fallback = _localRetryDelay(_outboxLocalFailures);
+      if (delay == null || delay < fallback) delay = fallback;
+    }
+    if (delay == null || _disposed) return;
+    _armOutboxRetry(delay);
+  }
+
+  void _armOutboxRetry(Duration delay) {
+    // Two schedulers may overlap their reads; only the last timer stays.
+    _outboxRetryTimer?.cancel();
     _outboxRetryTimer =
         Timer(delay < _minimumRetryDelay ? _minimumRetryDelay : delay, () {
       _outboxRetryTimer = null;
