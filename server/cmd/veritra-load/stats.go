@@ -48,6 +48,9 @@ func printStep(w io.Writer, step stepResult) {
 		_, _ = fmt.Fprintf(w, ", first error at %.0f s, recovered after %.0f s", t.FirstErrorAtS, t.RecoveredAfterS)
 	}
 	_, _ = fmt.Fprintln(w)
+	if step.ServerError != "" {
+		_, _ = fmt.Fprintln(w, "server metrics:", step.ServerError)
+	}
 	if len(step.Server) > 0 {
 		keys := make([]string, 0, len(step.Server))
 		for key := range step.Server {

@@ -123,7 +123,10 @@ type stepResult struct {
 	Ops      []opSummary        `json:"ops"`
 	Timeline timelineSummary    `json:"timeline"`
 	Server   map[string]float64 `json:"server_metrics,omitempty"`
-	Verdict  verdict            `json:"verdict"`
+	// ServerError says why server metrics are missing or lack the counter
+	// deltas; it is a fixed message without URLs or response text.
+	ServerError string  `json:"server_metrics_error,omitempty"`
+	Verdict     verdict `json:"verdict"`
 }
 
 type verifyResult struct {
@@ -195,16 +198,16 @@ func execute(ctx context.Context, target *url.URL, setupToken string, opts optio
 			coldWake := coldWake
 			time.AfterFunc(time.Duration(stepRNG.Int64N(int64(opts.Duration*3/4)+1)), func() { wake(coldWake) })
 		}
-		before := scrape(ctx, opts.MetricsURL)
+		before, beforeErr := scrape(ctx, opts.MetricsURL)
 		fmt.Fprintf(progress, "load: measuring for %s\n", opts.Duration)
 		measureFrom := time.Since(w.rec.started)
 		sleepCtx(ctx, opts.Duration)
 		measureTo := time.Since(w.rec.started)
-		after := scrape(ctx, opts.MetricsURL)
+		after, afterErr := scrape(ctx, opts.MetricsURL)
 		step := stepResult{Rate: rate}
 		step.Ops, step.Timeline = w.rec.summarize(measureFrom, measureTo)
 		if opts.MetricsURL != "" {
-			step.Server = serverSummary(before, after, (measureTo - measureFrom).Seconds())
+			step.Server, step.ServerError = serverMetrics(before, beforeErr, after, afterErr, (measureTo - measureFrom).Seconds())
 		}
 		step.Verdict = evaluateStep(step)
 		result.Steps = append(result.Steps, step)
@@ -754,25 +757,44 @@ func (w *world) verify(ctx context.Context) *verifyResult {
 	return result
 }
 
+// Fixed scrape errors: they reach the report, so they never carry the URL,
+// a response body or an underlying error text.
+var (
+	errScrapeRequest = errors.New("metrics request failed")
+	errScrapeStatus  = errors.New("metrics endpoint did not answer 200")
+	errScrapeBody    = errors.New("metrics body was unreadable or too large")
+)
+
+const maxScrapeBytes = 16 << 20
+
 // scrape reads the private /metrics text. It keeps only veritra_* series;
-// none of them carries an identifier.
-func scrape(ctx context.Context, metricsURL string) map[string]float64 {
+// none of them carries an identifier. It returns nil, nil when no URL is
+// set, and an error whenever the scrape failed or may be partial: a
+// missing baseline would otherwise turn lifetime counters into a window's
+// deltas.
+func scrape(ctx context.Context, metricsURL string) (map[string]float64, error) {
 	if metricsURL == "" {
-		return nil
+		return nil, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metricsURL, nil)
 	if err != nil {
-		return nil
+		return nil, errScrapeRequest
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil
+		return nil, errScrapeRequest
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+		return nil, errScrapeStatus
+	}
 	values := map[string]float64{}
-	scanner := bufio.NewScanner(io.LimitReader(resp.Body, 16<<20))
+	// One byte over the limit tells a body that was cut off by it.
+	body := &io.LimitedReader{R: resp.Body, N: maxScrapeBytes + 1}
+	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 64<<10), 1<<20)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -789,12 +811,50 @@ func scrape(ctx context.Context, metricsURL string) map[string]float64 {
 		}
 		values[line[:cut]] = value
 	}
-	return values
+	if scanner.Err() != nil || body.N == 0 {
+		return nil, errScrapeBody
+	}
+	return values, nil
 }
 
 var writerBuckets = []string{"0.001", "0.005", "0.01", "0.025", "0.05", "0.1", "0.25", "0.5", "1", "5"}
 
-// serverSummary reduces two scrapes to the capacity signals in the report.
+// serverMetrics reduces the scrapes around one window to the step's server
+// signals. Counter deltas need a complete baseline: without one a key
+// missing from before would read as 0 and report the lifetime counter as
+// the window's figure, so they are left out and the returned message says
+// why. Gauges come from the end-of-window scrape alone.
+func serverMetrics(before map[string]float64, beforeErr error, after map[string]float64, afterErr error, seconds float64) (map[string]float64, string) {
+	switch {
+	case afterErr != nil && beforeErr != nil:
+		return nil, "both scrapes failed"
+	case afterErr != nil:
+		return nil, "end-of-window scrape failed"
+	case len(after) == 0:
+		return nil, "end-of-window scrape had no veritra metrics"
+	case beforeErr != nil:
+		return serverGauges(after), "baseline scrape failed; counter deltas omitted"
+	}
+	return serverSummary(before, after, seconds), ""
+}
+
+// serverGauges holds the values read from the end-of-window scrape alone.
+func serverGauges(after map[string]float64) map[string]float64 {
+	return map[string]float64{
+		"go_memory_bytes":        after["veritra_go_memory_bytes"],
+		"go_heap_live_bytes":     after["veritra_go_heap_live_bytes"],
+		"go_goroutines":          after["veritra_go_goroutines"],
+		"realtime_connections":   after["veritra_realtime_connections"],
+		"retention_backlog_rows": after["veritra_retention_backlog_rows"],
+		"storage_database_bytes": after[`veritra_storage_bytes{component="database"}`],
+		"storage_wal_bytes":      after[`veritra_storage_bytes{component="wal"}`],
+		"storage_blob_bytes":     after[`veritra_storage_bytes{component="blobs"}`],
+	}
+}
+
+// serverSummary reduces two complete scrapes to the capacity signals in the
+// report: the gauges plus counter deltas over the window. A counter absent
+// from a complete baseline did not exist yet, so it counts from zero.
 func serverSummary(before, after map[string]float64, seconds float64) map[string]float64 {
 	if len(after) == 0 {
 		return nil
@@ -807,23 +867,18 @@ func serverSummary(before, after map[string]float64, seconds float64) map[string
 		}
 		return after[key] - before[key]
 	}
-	summary := map[string]float64{
-		"go_memory_bytes":                 after["veritra_go_memory_bytes"],
-		"go_heap_live_bytes":              after["veritra_go_heap_live_bytes"],
-		"go_goroutines":                   after["veritra_go_goroutines"],
-		"realtime_connections":            after["veritra_realtime_connections"],
+	summary := serverGauges(after)
+	for key, value := range map[string]float64{
 		"realtime_dropped_events_delta":   delta("veritra_realtime_dropped_events_total"),
 		"http_5xx_delta":                  delta(`veritra_http_responses_total{status_class="5xx"}`),
-		"retention_backlog_rows":          after["veritra_retention_backlog_rows"],
-		"storage_database_bytes":          after[`veritra_storage_bytes{component="database"}`],
-		"storage_wal_bytes":               after[`veritra_storage_bytes{component="wal"}`],
-		"storage_blob_bytes":              after[`veritra_storage_bytes{component="blobs"}`],
 		"writer_waits_delta":              delta(`veritra_sqlite_pool_waits_total{pool="writer"}`),
 		"writer_mean_queue":               delta(`veritra_sqlite_pool_wait_seconds_total{pool="writer"}`) / seconds,
 		"reader_waits_delta":              delta(`veritra_sqlite_pool_waits_total{pool="reader"}`),
 		"rate_limit_rejections_delta":     delta(`veritra_rate_limit_rejections_total{scope="general"}`) + delta(`veritra_rate_limit_rejections_total{scope="auth"}`) + delta(`veritra_rate_limit_rejections_total{scope="enrollment"}`),
 		"writer_acquire_count_delta":      delta("veritra_sqlite_writer_acquire_duration_seconds_count"),
 		"writer_acquire_mean_ms_in_delta": 0,
+	} {
+		summary[key] = value
 	}
 	if count := summary["writer_acquire_count_delta"]; count > 0 {
 		summary["writer_acquire_mean_ms_in_delta"] = 1000 * delta("veritra_sqlite_writer_acquire_duration_seconds_sum") / count
