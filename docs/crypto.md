@@ -159,6 +159,53 @@ not raised; if it changes, change the derivation with it.
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **Attachment size padding, manifest v2 (2026-10-31, research round 2):**
+  no ABI, chunk-crypto, AAD or upload change. Before this the server
+  stored each attachment's exact ciphertext size, `plaintext + 20` bytes
+  per 1 MiB chunk, so it could recognise a known file by its length.
+  - **Sender.** `attachment_crypto.dart` encrypts the file followed by
+    zero bytes up to `padded_size`, then seals it with the same chunking.
+    The bucket is Signal's (`PaddingInputStream.getPaddedSize`):
+    `max(541, floor(1.05^ceil(log_1.05(size))))`, the smallest
+    `floor(1.05^k)` that holds the file. That costs at most 5% above
+    541 bytes; 236 buckets in all, 80 of them between 1 MiB and 48 MiB.
+    The power is built by repeated IEEE 754 multiplication, so every
+    platform picks the same buckets. The bucket stops at the server's attachment cap
+    (`max_attachment_bytes` from `setup/status`, at most 48 MiB, which is
+    the app's own cap), so a file just under it is never refused for its
+    padding. It never goes below the file's own size. The server's limit
+    (`MaxAttachmentCiphertext`) is unchanged and still holds, because
+    padded ≤ cap.
+  - **Manifest.** `version: 2` adds `padded_size`. `plaintext_size` is the
+    true length, and both travel only inside the MLS message.
+    `chunk_count = ceil(padded_size / 1 MiB)`, and the ciphertext is
+    `padded_size + chunk_count * 20` bytes. The upload metadata the server
+    sees stays `{version: 1, algorithm, chunk_size}`, because the framing
+    it sees is unchanged and a second version would label padded blobs.
+  - **Receiver.** It accepts version 1 (no `padded_size` allowed) and
+    version 2 (`plaintext_size ≤ padded_size ≤ 48 MiB`). It does not
+    recompute the bucket, because the sender's clamp depends on its
+    server's cap. Every chunk is authenticated, including padding-only
+    ones. Bytes past `plaintext_size` must be zero, or decryption fails
+    closed with nothing published, and only `plaintext_size` bytes are
+    written. AEAD integrity and the exact-length framing check now cover
+    the padded stream. The server's whole-blob SHA-256 and chunk digests
+    (`server/internal/uploads/local.go`) are computed over the uploaded
+    bytes, the padded ciphertext, so they still cover exactly what a
+    client downloads. The manifest (MLS-authenticated, from the sender)
+    alone decides the true length, as it already decided the key.
+  - **Old attachments.** Version 1 manifests decrypt as before, which a
+    hand-built version 1 test shows.
+  - **Older apps.** An app from before this change still lists a padded
+    attachment (name and size come from the manifest) but refuses to open
+    it with `unsupported attachment manifest`. Nothing wrong is ever shown
+    as the file. A K2 history snapshot from a new device that holds
+    padded attachments is refused whole by an older receiving device
+    (strict manifest check in `history_snapshot.dart`). K2 transfer is
+    not wired yet, so no shipped path hits this.
+  - **Cost.** Quotas and the write budget count padded bytes
+    (`docs/operations.md`, Admission limits).
+
 - **W8 pin rule (2026-10-31, owner decision):** any member of a DM or a
   group may pin; community conversations keep moderator roles until C4. The
   limit rises from 3 to **50** active pins per chat (per channel in a shared
@@ -792,7 +839,9 @@ markup:
 - **Residual (S5, for L2).** The server sees one upload per target chat,
   with the same plaintext size bucket, in the same second as the forward.
   It can link forwarded attachments by size and timing even though the
-  keys and ciphertext differ. Padding and send jitter belong to L2.
+  keys and ciphertext differ. Attachment padding (manifest v2, 2026-10-31)
+  widens the size to a 5% bucket, but one bucket at one moment still links
+  them; send jitter belongs to L2.
 
 #### 5.4 Pins
 

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
@@ -73,6 +74,18 @@ void main() {
       {...valid, 'conversation_id': 'conv\u0000ambiguous'},
       {...valid, 'action_id': ''},
       {...valid, 'conversation_id': List<String>.filled(512, 'c').join()},
+      // Version 1 has no padding; version 2 must state it, within bounds.
+      {...valid, 'padded_size': 10},
+      {...valid, 'padded_size': 541},
+      {...valid, 'version': 2, 'padded_size': 9},
+      {...valid, 'version': 2, 'padded_size': '541'},
+      {...valid, 'version': 2, 'padded_size': maxPlaintextAttachmentBytes + 1},
+      {
+        ...valid,
+        'version': 2,
+        'padded_size': attachmentChunkSize + 1,
+        'chunk_count': 1,
+      },
     ];
 
     for (final manifest in invalid) {
@@ -146,6 +159,68 @@ void main() {
     expect(await _attachmentArtifacts(tempDir), isEmpty);
   });
 
+  group('padding buckets', () {
+    // Signal's formula, PaddingInputStream.getPaddedSize.
+    int signal(int size) =>
+        max(541, pow(1.05, (log(size) / log(1.05)).ceil()).floor());
+
+    test('small files pad to the 541-byte minimum', () {
+      for (final size in <int>[1, 2, 100, 540, 541]) {
+        expect(paddedAttachmentSize(size), 541, reason: '$size');
+      }
+      expect(paddedAttachmentSize(542), greaterThan(541));
+      expect(() => paddedAttachmentSize(0), throwsArgumentError);
+    });
+
+    test(
+        'every bucket up to the cap holds itself, costs at most 5%, '
+        'and the next byte moves up', () {
+      final buckets = _buckets();
+      expect(buckets.first, 541);
+      expect(buckets.last, maxPlaintextAttachmentBytes);
+      for (var i = 0; i < buckets.length; i++) {
+        final bucket = buckets[i];
+        expect(paddedAttachmentSize(bucket), bucket);
+        if (i > 0) {
+          final first = buckets[i - 1] + 1;
+          expect(paddedAttachmentSize(first), bucket, reason: '$first');
+          // At most 5% above the file it pads.
+          expect(bucket, lessThanOrEqualTo(first * 1.05), reason: '$first');
+        }
+      }
+    });
+
+    test('is monotonic and never below the size', () {
+      var previous = 0;
+      for (var size = 1; size < 3 * attachmentChunkSize; size += 997) {
+        final padded = paddedAttachmentSize(size);
+        expect(padded, greaterThanOrEqualTo(size));
+        expect(padded, greaterThanOrEqualTo(previous));
+        previous = padded;
+      }
+    });
+
+    test('matches Signal away from float edges', () {
+      for (final size in <int>[600, 1000, 4096, 65536, 1000000, 20000000]) {
+        expect(paddedAttachmentSize(size), signal(size), reason: '$size');
+      }
+    });
+
+    test('stops at the server cap and never pads below the size', () {
+      const limit = 10 * 1024 * 1024;
+      const size = limit - 1000;
+      expect(paddedAttachmentSize(size), greaterThan(limit));
+      expect(paddedAttachmentSize(size, limit: limit), limit);
+      expect(paddedAttachmentSize(limit, limit: limit), limit);
+      // Over the cap: unpadded, and refused by the size checks as before.
+      expect(paddedAttachmentSize(limit + 5, limit: limit), limit + 5);
+      expect(paddedAttachmentSize(maxPlaintextAttachmentBytes - 1),
+          maxPlaintextAttachmentBytes);
+      expect(paddedAttachmentSize(1000, limit: 2 * maxPlaintextAttachmentBytes),
+          paddedAttachmentSize(1000));
+    });
+  });
+
   final libraryPath = Platform.environment['VERITRA_CRYPTO_LIBRARY'];
 
   group('real native attachment crypto pipeline', () {
@@ -178,14 +253,16 @@ void main() {
           fileName: 'source_$size.bin',
           mediaType: 'application/octet-stream',
         );
+        final padded = paddedAttachmentSize(size);
         final expectedChunks =
-            (size + attachmentChunkSize - 1) ~/ attachmentChunkSize;
-        expect(encrypted.manifest['version'], 1);
+            (padded + attachmentChunkSize - 1) ~/ attachmentChunkSize;
+        expect(encrypted.manifest['version'], 2);
         expect(encrypted.manifest['algorithm'], 'AES-256-GCM-chunked');
         expect(encrypted.manifest['chunk_size'], attachmentChunkSize);
         expect(encrypted.manifest['chunk_count'], expectedChunks);
         expect(encrypted.manifest['plaintext_size'], size);
-        expect(encrypted.ciphertextLength, size + expectedChunks * 20);
+        expect(encrypted.manifest['padded_size'], padded);
+        expect(encrypted.ciphertextLength, padded + expectedChunks * 20);
 
         await service.decryptFile(
           ciphertextPath: encrypted.ciphertextPath,
@@ -276,7 +353,11 @@ void main() {
       );
       final mutations = <Map<String, Object?>>[
         {...encrypted.manifest, 'chunk_count': 2},
-        {...encrypted.manifest, 'plaintext_size': 6},
+        // Shorter than the file: its last byte (5) would be padding.
+        {...encrypted.manifest, 'plaintext_size': 4},
+        {...encrypted.manifest, 'padded_size': 542},
+        {...encrypted.manifest, 'plaintext_size': 542},
+        {...encrypted.manifest, 'version': 1},
       ];
       for (var index = 0; index < mutations.length; index++) {
         final destination = '${tempDir.path}/manifest_dest_$index.bin';
@@ -430,6 +511,148 @@ void main() {
       expect(await existingPart.readAsBytes(), [6, 5, 4]);
       await encrypted.cleanup();
     }, skip: libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false);
+
+    test('ciphertext length shows the bucket, not the file size', () async {
+      // Without padding these lengths would all differ.
+      final lengths = <int>[];
+      for (final size in <int>[1, 300, 540, 541]) {
+        final encrypted = await _encryptBytes(
+            service, tempDir, 'bucket_$size', _patternBytes(size));
+        lengths.add(encrypted.ciphertextLength);
+        await encrypted.cleanup();
+      }
+      expect(lengths.toSet(), {541 + 20});
+
+      final a = await _encryptBytes(
+          service, tempDir, 'bucket_a', _patternBytes(100000));
+      final b = await _encryptBytes(
+          service, tempDir, 'bucket_b', _patternBytes(100001));
+      expect(a.ciphertextLength, b.ciphertextLength);
+      expect(a.ciphertextLength, paddedAttachmentSize(100000) + 20);
+      await a.cleanup();
+      await b.cleanup();
+    }, skip: libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false);
+
+    test('padded files round-trip exactly through files and memory', () async {
+      for (final size in <int>[
+        1,
+        541,
+        542,
+        attachmentChunkSize - 3,
+        attachmentChunkSize + 1,
+      ]) {
+        final plaintext = _patternBytes(size);
+        final encrypted =
+            await _encryptBytes(service, tempDir, 'exact_$size', plaintext);
+        expect(encrypted.manifest['padded_size'], paddedAttachmentSize(size));
+        final dest = File('${tempDir.path}/exact_dest_$size.bin');
+        await service.decryptFile(
+          ciphertextPath: encrypted.ciphertextPath,
+          destinationPath: dest.path,
+          manifest: encrypted.manifest,
+        );
+        expect(await dest.readAsBytes(), plaintext);
+        expect(
+          await service.decryptBytes(
+              ciphertextPath: encrypted.ciphertextPath,
+              manifest: encrypted.manifest),
+          plaintext,
+        );
+        await encrypted.cleanup();
+      }
+      // From memory (forwarding) as well.
+      final bytes = _patternBytes(70000);
+      final forwarded = await service.encryptBytes(
+        plaintext: bytes,
+        conversationId: 'conv_forward',
+        attachmentActionId: 'action_forward',
+        fileName: 'forward.bin',
+        mediaType: 'application/octet-stream',
+      );
+      expect(forwarded.ciphertextLength, paddedAttachmentSize(70000) + 20);
+      expect(
+        await service.decryptBytes(
+            ciphertextPath: forwarded.ciphertextPath,
+            manifest: forwarded.manifest),
+        bytes,
+      );
+      await forwarded.cleanup();
+    }, skip: libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false);
+
+    test('padding stops at the server cap, inside its upload limit', () async {
+      // A lower operator cap: a file just under it would pad past it.
+      const limit = 2 * attachmentChunkSize;
+      const size = limit - 100;
+      expect(paddedAttachmentSize(size), greaterThan(limit));
+      final source = File('${tempDir.path}/cap.bin');
+      final plaintext = _patternBytes(size);
+      await source.writeAsBytes(plaintext);
+      final encrypted = await service.encryptFile(
+        sourcePath: source.path,
+        conversationId: 'conv_cap',
+        attachmentActionId: 'action_cap',
+        fileName: 'cap.bin',
+        mediaType: 'application/octet-stream',
+        paddingLimit: limit,
+      );
+      expect(encrypted.manifest['padded_size'], limit);
+      // server/internal/config/limits.go MaxAttachmentCiphertext(limit).
+      expect(encrypted.ciphertextLength,
+          lessThanOrEqualTo(limit + (limit ~/ attachmentChunkSize) * 20));
+      expect(
+        await service.decryptBytes(
+            ciphertextPath: encrypted.ciphertextPath,
+            manifest: encrypted.manifest),
+        plaintext,
+      );
+      await encrypted.cleanup();
+    }, skip: libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false);
+
+    test('old version 1 attachments still decrypt', () async {
+      // Written the way the version 1 sender did: no padding at all.
+      for (final size in <int>[5, attachmentChunkSize + 7]) {
+        final plaintext = _patternBytes(size);
+        final v1 = await _writeManifestV1(
+            service.bindings, tempDir, 'v1_$size', plaintext);
+        expect(v1.manifest.containsKey('padded_size'), isFalse);
+        final dest = File('${tempDir.path}/v1_dest_$size.bin');
+        await service.decryptFile(
+          ciphertextPath: v1.path,
+          destinationPath: dest.path,
+          manifest: v1.manifest,
+        );
+        expect(await dest.readAsBytes(), plaintext);
+        expect(
+          await service.decryptBytes(
+              ciphertextPath: v1.path, manifest: v1.manifest),
+          plaintext,
+        );
+      }
+    }, skip: libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false);
+
+    test('non-zero padding fails closed', () async {
+      // A version 2 file whose padding is not zero, sealed with a valid key.
+      final v1 = await _writeManifestV1(
+          service.bindings, tempDir, 'dirty', _patternBytes(600));
+      final manifest = <String, Object?>{
+        ...v1.manifest,
+        'version': 2,
+        'plaintext_size': 500,
+        'padded_size': 600,
+      };
+      final dest = '${tempDir.path}/dirty_dest.bin';
+      await expectLater(
+        service.decryptFile(
+            ciphertextPath: v1.path, destinationPath: dest, manifest: manifest),
+        throwsA(isA<FormatException>()),
+      );
+      expect(await File(dest).exists(), isFalse);
+      expect(await File('$dest.part').exists(), isFalse);
+      await expectLater(
+        service.decryptBytes(ciphertextPath: v1.path, manifest: manifest),
+        throwsA(isA<FormatException>()),
+      );
+    }, skip: libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false);
   });
 }
 
@@ -446,6 +669,69 @@ Map<String, Object?> _manifest({required int plaintextSize}) =>
       'conversation_id': 'conv_1',
       'action_id': 'action_1',
     };
+
+/// Every padded size up to the app's cap, in order.
+List<int> _buckets() {
+  final result = <int>[];
+  var size = 1;
+  while (true) {
+    final bucket = paddedAttachmentSize(size);
+    result.add(bucket);
+    if (bucket >= maxPlaintextAttachmentBytes) return result;
+    size = bucket + 1;
+  }
+}
+
+/// A version 1 attachment as the pre-padding sender wrote it: the exact
+/// bytes in 1 MiB chunks, each `u32 length || AES-GCM(chunk)`.
+Future<({String path, Map<String, Object?> manifest})> _writeManifestV1(
+  NativeCryptoBindings bindings,
+  Directory tempDir,
+  String name,
+  List<int> plaintext,
+) async {
+  final key = List<int>.generate(32, (i) => i + 1);
+  final nonce = List<int>.generate(8, (i) => 0xa0 + i);
+  final conversationId = 'conv_$name';
+  final actionId = 'action_$name';
+  final context = utf8.encode('$conversationId\u0000$actionId');
+  final out = BytesBuilder();
+  var chunks = 0;
+  for (var offset = 0; offset < plaintext.length;) {
+    final end = min(offset + attachmentChunkSize, plaintext.length);
+    final sealed = bindings.encryptAttachmentChunk(
+      key: key,
+      noncePrefix: nonce,
+      chunkIndex: chunks,
+      context: context,
+      plaintext: plaintext.sublist(offset, end),
+    );
+    out.add((ByteData(4)..setUint32(0, sealed.length, Endian.big))
+        .buffer
+        .asUint8List());
+    out.add(sealed);
+    offset = end;
+    chunks++;
+  }
+  final file = File('${tempDir.path}/$name.v1.ciphertext');
+  await file.writeAsBytes(out.takeBytes());
+  return (
+    path: file.path,
+    manifest: <String, Object?>{
+      'version': 1,
+      'algorithm': 'AES-256-GCM-chunked',
+      'key': base64Encode(key),
+      'nonce_prefix': base64Encode(nonce),
+      'chunk_size': attachmentChunkSize,
+      'chunk_count': chunks,
+      'plaintext_size': plaintext.length,
+      'conversation_id': conversationId,
+      'action_id': actionId,
+      'file_name': '$name.bin',
+      'media_type': 'application/octet-stream',
+    },
+  );
+}
 
 Uint8List _patternBytes(int length) => Uint8List.fromList(
       List<int>.generate(length, (index) => index % 251, growable: false),

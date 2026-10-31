@@ -2414,12 +2414,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
               if (!await _sendEncryptedAttachment(id,
                   fileName: attachment.fileName,
                   forwardedHops: nextHops,
-                  prepare: (service, name) => service.encryptBytes(
-                      plaintext: plaintext,
-                      conversationId: id,
-                      attachmentActionId: _randomHexId(),
-                      fileName: name,
-                      mediaType: attachment.mediaType))) return false;
+                  prepare: (service, name, paddingLimit) =>
+                      service.encryptBytes(
+                          plaintext: plaintext,
+                          conversationId: id,
+                          attachmentActionId: _randomHexId(),
+                          fileName: name,
+                          mediaType: attachment.mediaType,
+                          paddingLimit: paddingLimit))) return false;
             } finally {
               plaintext.fillRange(0, plaintext.length, 0);
             }
@@ -2460,19 +2462,20 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       _sendEncryptedAttachment(conversationId,
           fileName: fileName,
           forwardedHops: forwardedHops,
-          prepare: (service, name) => service.encryptFile(
+          prepare: (service, name, paddingLimit) => service.encryptFile(
               sourcePath: path,
               conversationId: conversationId,
               attachmentActionId: _randomHexId(),
               fileName: name,
               mediaType: attachmentMediaType(name, mediaType),
-              cancellation: cancellation));
+              cancellation: cancellation,
+              paddingLimit: paddingLimit));
 
   Future<bool> _sendEncryptedAttachment(String conversationId,
       {required String fileName,
       int? forwardedHops,
       required Future<PreparedEncryptedAttachment> Function(
-              AttachmentCryptoService service, String name)
+              AttachmentCryptoService service, String name, int paddingLimit)
           prepare}) async {
     final service = attachmentService;
     final current = session;
@@ -2486,7 +2489,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     PreparedEncryptedAttachment? prepared;
     try {
       final name = safeAttachmentName(fileName);
-      prepared = await prepare(service, name);
+      // Padding stops at the server's cap, so a file just under it is not
+      // refused for its padding (docs/crypto.md, attachment padding).
+      prepared = await prepare(service, name, await attachmentSizeLimit());
       if (!_syncOwnerActive(current, ownerGeneration)) return false;
       final uploaded = await client.uploadEncryptedAttachment(
         current.token,

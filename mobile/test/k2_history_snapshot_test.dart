@@ -247,6 +247,34 @@ void main() {
     manifest['conversation_id'] = 'conv';
     manifest['key'] = base64Encode([1]);
     expect(() => snapshot([attachment()]).encode(), throwsFormatException);
+    manifest['key'] = base64Encode(List.filled(32, 1));
+
+    // Version 2 (padded): framing follows padded_size, not plaintext_size.
+    manifest
+      ..['version'] = 2
+      ..['padded_size'] = 541
+      ..['ciphertext_size'] = 561;
+    expect(
+        HistorySnapshot.decode(snapshot([attachment()]).encode())
+            .messages
+            .single
+            .kind,
+        'attachment');
+    for (final bad in <Map<String, Object?>>[
+      {'ciphertext_size': 52}, // plaintext framing on a padded file
+      {'padded_size': 31, 'ciphertext_size': 51}, // padding below the file
+      {'padded_size': null},
+      {'version': 1}, // version 1 claims no padding
+    ]) {
+      final saved = Map<String, Object?>.of(manifest);
+      manifest.addAll(bad);
+      if (manifest['padded_size'] == null) manifest.remove('padded_size');
+      expect(() => snapshot([attachment()]).encode(), throwsFormatException,
+          reason: '$bad');
+      manifest
+        ..clear()
+        ..addAll(saved);
+    }
     expect(
         () => strictHistoryJson(utf8
             .encode('[${List.filled(historyRecordLimit + 1, 0).join(',')}]')),

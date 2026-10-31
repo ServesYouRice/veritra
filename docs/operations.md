@@ -335,8 +335,10 @@ The base holds:
 - the namespace and `veritra-data` volume annotated
   `kustomize.toolkit.fluxcd.io/prune: disabled`, so a file missing from infra
   never makes Flux delete the data (local-path deletes it with the claim);
-- a Traefik `IngressRoute` with an HSTS headers middleware and a cert-manager
-  `Certificate` (Cloudflare DNS-01, so the DNS-only hostname works);
+- a Traefik `IngressRoute` with an HSTS headers middleware, a `TLSOption`
+  that offers post-quantum key exchange first (see Post-quantum TLS; needs
+  Traefik v3.5 or later), and a cert-manager `Certificate` (Cloudflare
+  DNS-01, so the DNS-only hostname works);
 - default-deny network policies that admit only Traefik to the server, DNS,
   HTTPS to public addresses for push providers, and HTTPS for the R2 jobs;
 - the backup and restore-drill CronJobs described below.
@@ -398,6 +400,65 @@ The app has no custom trust, no trust-on-first-use and no way to skip TLS checks
 
 Never use self-signed leaf certificates, or plain HTTP outside loopback demo builds.
 
+
+## Post-quantum TLS
+
+Both edges offer the hybrid key exchange X25519MLKEM768 first, so a recorded
+session cannot be decrypted later with a quantum computer ("harvest now,
+decrypt later"). Clients without it still connect with classical groups.
+Status as read from the code on 2026-10-31:
+
+| Piece | Post-quantum? | Where |
+|---|---|---|
+| Veritra server (Go 1.26) | Does not terminate TLS. `Serve` in `server/internal/app/app.go` runs plain `ListenAndServe` behind the proxy; HSTS is set only for a TLS request, which no shipped profile sends to it | n/a |
+| Server's outbound calls (Web Push, FCM, APNs) | Yes: no `CurvePreferences` set, so Go 1.26's defaults offer X25519MLKEM768 first | `server/internal/push` |
+| Compose: Caddy `2.11.4` | Yes, by default: X25519MLKEM768, X25519, P-256 when the Caddyfile sets no `curves` (from Caddy v2.10.0, `modules/caddytls/values.go`). The Caddyfile sets none | `deploy/caddy/Caddyfile` |
+| k3s: Traefik (v3.7.13 in k3s v1.34.12) | Yes, set explicitly: TLSOption `veritra` with X25519MLKEM768, X25519, CurveP256 and a TLS 1.2 floor, used by the IngressRoute | `deploy/kubernetes/base/tlsoption.yaml` |
+| The app (Flutter 3.44 `dart:io`) | Not yet: its BoringSSL offers X25519, P-256, P-384 only (research note, not re-checked here), so app connections negotiate X25519 until a Flutter release with the newer BoringSSL | `mobile` |
+
+`server/cmd/messenger-server/edge_tls_test.go` checks the TLSOption's names
+against Traefik's table, and that Go's TLS (which Traefik uses) negotiates
+X25519MLKEM768 with a current client, and X25519 or P-256 with classical
+and TLS 1.2 clients. It also checks that the Caddyfile keeps Caddy's
+default.
+
+**Traefik version floor.** The curve names exist from Traefik v3.5.0. An
+older Traefik does not know `X25519MLKEM768`. It logs `invalid CurveID in
+curvePreferences` and then refuses every TLS connection to the Veritra host
+instead of falling back. On another k3s release, check the bundled Traefik
+first: `kubectl -n kube-system get deploy traefik -o
+jsonpath='{..image}'`. After applying, look for TLS option errors in
+`kubectl -n kube-system logs deploy/traefik`.
+
+**Confirming it on a live server.** Either of these, from any machine:
+
+- **OpenSSL 3.5 or later:**
+  `openssl s_client -connect chat.example.org:443 -servername chat.example.org -groups X25519MLKEM768 </dev/null`
+  prints `Negotiated TLS1.3 group: X25519MLKEM768`. Run it again with
+  `-groups X25519` and it should connect too (the classical fallback).
+  OpenSSL 3.0-3.4 do not know the group name.
+- **Go 1.25 or later** (`ConnectionState().CurveID`): put this in a
+  `main.go`, then `go run main.go chat.example.org`. It prints
+  `X25519MLKEM768`, or the error if the server does not offer it.
+
+  ```go
+  package main
+
+  import (
+  	"crypto/tls"
+  	"fmt"
+  	"os"
+  )
+
+  func main() {
+  	c, err := tls.Dial("tcp", os.Args[1]+":443", &tls.Config{CurvePreferences: []tls.CurveID{tls.X25519MLKEM768}})
+  	if err != nil {
+  		fmt.Println("no post-quantum handshake:", err)
+  		os.Exit(1)
+  	}
+  	fmt.Println(c.ConnectionState().CurveID)
+  }
+  ```
 
 ## Off-host backups in R2
 
@@ -479,6 +540,8 @@ accounts or decisions only the owner has.
   `scripts/release-image.sh --infra-dir ...` produced the digest in infra.
 - [ ] `examples/traefik-helmchartconfig.yaml` applied: the Traefik pod's
   arguments show `readTimeout=16m` and the `web` redirect.
+- [ ] Traefik is v3.5 or later, and a handshake with only X25519MLKEM768
+  succeeds (see Post-quantum TLS).
 - [ ] `PRIVATE_MESSENGER_TRUSTED_PROXIES` matches the cluster CIDR; two
   clients on different networks are rate-limited separately.
 - [ ] Owner set up, then the setup-token key and its `_FILE` patch removed.
@@ -796,7 +859,7 @@ write transaction, so concurrent requests cannot both take the last slot.
 | `KEY_PACKAGE_CLAIMS_PER_TARGET` | 25 (half the 50 single-use key packages a device may hold) | 1-50 | key packages one account claims from one device of another account in 24 hours; claiming from its own devices is not limited | 429 `key_package_claim_limit` with `Retry-After`; adding devices to an existing group skips a device over its limit, as it skips one with no package left |
 | `DELIVERIES_PER_MINUTE` | 1,000 | 60-1,000,000, and at least 2 × (1 + members) | per account, each fan-out write counts 1 plus every account it is published to | 429 `write_rate_limited` with `Retry-After` |
 | `WRITE_MIB_PER_HOUR` | 64 | 16-65,536 | request bodies of those writes | 429 `write_rate_limited` |
-| `ATTACHMENT_MIB` | 48 | 1-48 | the largest file one attachment may hold (plaintext; the upload route allows the chunk framing on top) | 413 `upload_too_large` |
+| `ATTACHMENT_MIB` | 48 | 1-48 | the largest file one attachment may hold (plaintext with its padding; the upload route allows the chunk framing on top) | 413 `upload_too_large` |
 | `SOCKETS_PER_IPV6_PREFIX` | 200 | 20-10,000 | realtime sockets of all addresses in one IPv6 /64 (one address always gets at most 20) | 429 `realtime_connection_limit` |
 
 Why these defaults: a realtime delivery costs the server 4-10 ms of CPU;
@@ -817,6 +880,18 @@ per-file cap. The server reports it to apps as `max_attachment_bytes` in
 `GET /api/v1/setup/status`, and the app refuses a larger file before it
 encrypts or uploads anything. 48 is the most the app can encrypt, so the
 setting can only lower it.
+
+**Attachment padding.** Apps pad each file with zeros inside the encryption
+to a size bucket about 5% apart (Signal's buckets, at least 541 bytes), so
+the server sees the bucket, not the exact size (`docs/crypto.md`,
+attachment manifest v2). Stored sizes, the account and instance storage
+quotas and the hourly write budget therefore count padded bytes: up to 5%
+more per file, and at least 541 bytes for a tiny one. Padding never passes
+the cap above: a file just under it is padded only up to the cap, so the
+cap still means the largest file a user can send. The app reads the cap from
+`setup/status` at send time; if that call fails it pads up to 48 MiB, and on
+a server with a lower cap a file within 5% of it may then be refused with
+413 until the call works again.
 
 **Write guard.** With less free space than the smaller of 5% and 2 GiB on
 the database or blob file system, the server answers new messages, MLS

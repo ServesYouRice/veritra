@@ -27,8 +27,9 @@ type Limits struct {
 	DeliveriesPerMinute       int
 	WriteBytesPerHour         int64
 	// AttachmentBytes is the largest file (plaintext) one attachment may
-	// hold; the upload route accepts that plus the chunk framing, see
-	// MaxAttachmentCiphertext.
+	// hold, counting the zero padding the app adds inside the encryption
+	// (it pads to at most this cap); the upload route accepts that plus the
+	// chunk framing, see MaxAttachmentCiphertext.
 	AttachmentBytes int64
 	// SocketsPerIPv6Prefix caps the realtime sockets of all addresses in one
 	// IPv6 /64 (an office or home network); one address always gets at most

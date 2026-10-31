@@ -755,6 +755,7 @@ void _validateAttachments(LocalMessage m) {
       'chunk_size',
       'chunk_count',
       'plaintext_size',
+      'padded_size',
       'conversation_id',
       'action_id',
       'file_name',
@@ -762,24 +763,31 @@ void _validateAttachments(LocalMessage m) {
       'id',
       'ciphertext_size'
     });
+    // Version 2 encrypts zero padding up to padded_size; version 1 has none
+    // (attachment_crypto.dart, docs/crypto.md).
+    final plain = crypto['plaintext_size'];
+    final padded = crypto['version'] == 2
+        ? crypto['padded_size']
+        : (crypto.containsKey('padded_size') ? null : plain);
+    if (plain is! int ||
+        padded is! int ||
+        padded < plain ||
+        padded > 48 * 1024 * 1024) _invalid();
     if (crypto['id'] is! String ||
         crypto['file_name'] is! String ||
         crypto['media_type'] is! String ||
-        crypto['version'] != 1 ||
+        (crypto['version'] != 1 && crypto['version'] != 2) ||
         crypto['algorithm'] != 'AES-256-GCM-chunked' ||
         crypto['conversation_id'] != m.conversationId ||
         crypto['action_id'] != m.key.substring(m.senderDeviceId.length + 1) ||
         base64Decode(crypto['key'] as String).length != 32 ||
         base64Decode(crypto['nonce_prefix'] as String).length != 8 ||
         crypto['chunk_size'] != 1048576 ||
-        crypto['plaintext_size'] is! int ||
-        (crypto['plaintext_size'] as int) <= 0 ||
-        (crypto['plaintext_size'] as int) > 48 * 1024 * 1024 ||
-        crypto['chunk_count'] !=
-            ((crypto['plaintext_size'] as int) + 1048575) ~/ 1048576 ||
+        plain <= 0 ||
+        plain > 48 * 1024 * 1024 ||
+        crypto['chunk_count'] != (padded + 1048575) ~/ 1048576 ||
         crypto['ciphertext_size'] !=
-            (crypto['plaintext_size'] as int) +
-                (crypto['chunk_count'] as int) * 20) _invalid();
+            padded + (crypto['chunk_count'] as int) * 20) _invalid();
   }
 }
 
