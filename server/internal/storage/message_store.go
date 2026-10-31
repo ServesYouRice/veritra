@@ -864,12 +864,20 @@ var listSyncEventsQuery = `
 // receipt (D48: a block hides receipts in both directions), from an account
 // that blocked blocker. blocker is SQL text (a column or a positional
 // parameter), never a value.
+//
+// A message event names its sender through the live envelope row; when that
+// row is gone (expired and pruned, or replaced by an idempotent retry) the
+// sender stored in the event payload stands in, so a block keeps hiding the
+// event instead of failing open.
 func syncEventBlockedFor(blocker string) string {
 	return `(EXISTS (
 		SELECT 1 FROM account_blocks b
 		WHERE b.blocker_account_id = ` + blocker + `
 		  AND b.blocked_account_id = CASE
-		    WHEN se.event_type LIKE 'message.%' THEN (SELECT sender_account_id FROM message_envelopes WHERE id = json_extract(se.payload_json, '$.message_id'))
+		    WHEN se.event_type LIKE 'message.%' THEN COALESCE(
+		      (SELECT sender_account_id FROM message_envelopes WHERE id = json_extract(se.payload_json, '$.message_id')),
+		      json_extract(se.payload_json, '$.envelope.sender_account_id'),
+		      json_extract(se.payload_json, '$.sender_account_id'))
 		    WHEN se.event_type LIKE 'reaction.%' OR se.event_type = 'read_receipt.updated' THEN json_extract(se.payload_json, '$.account_id')
 		    WHEN se.event_type LIKE 'call.%' THEN json_extract(se.payload_json, '$.created_by')
 		    ELSE NULL
