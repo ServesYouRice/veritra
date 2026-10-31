@@ -52,14 +52,18 @@ chat cannot be mistaken for one that can receive messages.
 - download: into a ciphertext file, resuming with `Range` + `If-Range` pinned
   to `"sha256-<digest>"`; a 200 restarts from zero; a wrong ETag, wrong
   `Content-Range`, wrong length or extra bytes deletes the partial file; a
-  cut connection keeps its prefix. Whole-container authenticity is left to
-  the native receive stream (no SHA-256 in Dart, no new dependency);
+  cut connection keeps its prefix. The caller must pass the native
+  whole-ciphertext digest check (`verifyDigest`); it runs on every complete
+  file and a failure deletes the file, so a bad prefix behind a matching
+  ETag is never resumed (no SHA-256 in Dart, no new dependency);
 - acknowledge: only `{protocol_version, transfer_id, ciphertext_sha256}`,
   and the reply must say `acknowledged`; its doc says to call it only after
   the import transaction and import ledger commit;
 - cancel: idempotent DELETE, never unlinks a device;
 - auth: ordinary session or the canonical 32-byte `X-Veritra-Claim-Token`;
-  **redirects are never followed**, so no token is forwarded.
+  **redirects are never followed**, so no token is forwarded; the
+  constructor refuses any origin the `TransportPolicy` refuses (HTTPS only
+  unless the demo entry point passes its loopback policy).
 
 Already covered before this round and rechecked: the history snapshot export
 excludes the D52 notice outbox (`notice_outbox_test.dart`, "backups and K2

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -3880,7 +3881,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   Future<void> _runOwnedCatchUp(Session current, int ownerGeneration) async {
     // A D52 background pass runs on this same owner, bounded by its permit,
     // instead of pretending the app is in the foreground.
-    final wake = _wakeRun;
+    // A cancelled wake (the UI resumed mid-pass) no longer owns this run:
+    // the follow-up pass the resume requested is a foreground pass.
+    final pending = _wakeRun;
+    final wake = pending != null && pending.active ? pending : null;
     bool mayRun() => wake != null ? wake.active : _isForeground;
     if (!mayRun() ||
         ownerGeneration != _sessionGeneration ||
@@ -3948,8 +3952,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
                     eventType: event.type,
                     conversationId: event.conversationId);
               }
-              final envelope =
-                  await _processCryptoSyncEvent(event, repair, wake: wake);
+              final envelope = await _processCryptoSyncEvent(event, repair,
+                  wake: wake, client: client);
               if (envelope != null) {
                 received.add(envelope);
                 if (received.length >= _receivedBatchLimit) {
@@ -4279,11 +4283,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
 
   Future<ReceivedMessageEnvelope?> _processCryptoSyncEvent(
       SyncEvent event, _SyncPageRepair repair,
-      {WakeRunContext? wake}) async {
+      {WakeRunContext? wake, required ApiClient client}) async {
     final current = session;
-    final client = wake != null ? _wakeApi : api;
     final mls = _mlsCrypto;
-    if (current == null || client == null || mls == null) return null;
+    if (current == null || mls == null) return null;
     // A background pass uses only the bounded inbound operations, fenced by
     // its permit inside the same storage transaction.
     final bounded = wake == null
@@ -4355,7 +4358,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           final fetched = await repair.envelope(event, id);
           if (fetched == null) {
             // The server proved the envelope expired (410).
-            await _commitExpiredTombstone(event, id);
+            await _commitExpiredTombstone(event, id, wake);
             return null;
           }
           resolved = fetched;
@@ -4378,7 +4381,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             throw failure(SyncFailureKind.localStorage);
           }
           if (_provenExpired(resolved.expiresAt)) {
-            await _commitExpiredTombstone(event, id);
+            await _commitExpiredTombstone(event, id, wake);
             return null;
           }
           throw failure(SyncFailureKind.applicationUndecryptable);
@@ -4408,7 +4411,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             throw failure(SyncFailureKind.localStorage);
           }
           if (_provenExpired(call.expiresAt)) {
-            await _commitExpiredTombstone(event, call.id);
+            await _commitExpiredTombstone(event, call.id, wake);
             return null;
           }
           throw failure(SyncFailureKind.applicationUndecryptable);
@@ -4433,14 +4436,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// would be gone anyway. The tombstone moves the cursor past the event and
   /// stores nothing else: no text, no envelope. Control messages never get
   /// one.
-  Future<void> _commitExpiredTombstone(SyncEvent event, String targetId) async {
+  Future<void> _commitExpiredTombstone(
+      SyncEvent event, String targetId, WakeRunContext? wake) async {
     final cursor = await localStore.loadSyncCursor();
     await localStore.commitSyncEvent(SyncEventCommit(
       eventKey: 'expired:${event.id}:$targetId',
       conversationId: event.conversationId ?? '',
       expectedCursor: cursor,
       cursor: event.id,
-      checkCanCommit: _wakeRun?.checkCanCommit,
+      checkCanCommit: wake?.checkCanCommit,
     ));
   }
 
@@ -5023,6 +5027,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final now = DateTime.now().toUtc();
     final stillPending = <String>{};
     var staged = false;
+    var failed = false;
     for (final change in changes) {
       final key = _pendingChangeKey(change);
       stillPending.add(key);
@@ -5034,29 +5039,46 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (!coordinator && now.difference(firstSeen) < _reconcileFallback) {
         continue;
       }
-      if (await _hasPendingMlsWork(change.conversationId)) continue;
-      final local = await mls.groupEpoch(change.conversationId);
-      // Behind or ahead of the server means sync is not finished yet.
-      if (local == null || local.pending || local.epoch != change.epoch) {
-        continue;
+      // Each conversation is reconciled on its own: one refusal (a device
+      // the server lists that is already a member, say) must not stop the
+      // others. A failed one stays pending and is tried on the next pass.
+      try {
+        if (await _hasPendingMlsWork(change.conversationId)) continue;
+        final local = await mls.groupEpoch(change.conversationId);
+        // Behind or ahead of the server means sync is not finished yet.
+        if (local == null || local.pending || local.epoch != change.epoch) {
+          continue;
+        }
+        final adds = change.add.isEmpty
+            ? const <DeviceKeyPackage>[]
+            : await client.claimDeviceKeyPackages(
+                current.token,
+                change.conversationId,
+                change.add.map((item) => item.deviceId).toList(growable: false),
+              );
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        if (adds.isEmpty && change.remove.isEmpty) continue;
+        await mls.stageMembershipChange(change.conversationId,
+            adds: adds, removes: change.remove);
+        _mlsReconcileNow.remove(change.conversationId);
+        staged = true;
+      } catch (err) {
+        // A revoked session ends the whole pass; anything else is local to
+        // this conversation.
+        if (err is ApiException && err.statusCode == 401) rethrow;
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        failed = true;
+        // Body-free: no conversation, device or server text.
+        developer.log(
+            'mls_reconcile_conversation_failed '
+            '${err is ApiException ? err.statusCode : err.runtimeType}',
+            name: 'veritra.sync');
       }
-      final adds = change.add.isEmpty
-          ? const <DeviceKeyPackage>[]
-          : await client.claimDeviceKeyPackages(
-              current.token,
-              change.conversationId,
-              change.add.map((item) => item.deviceId).toList(growable: false),
-            );
-      if (!_syncOwnerActive(current, ownerGeneration)) return;
-      if (adds.isEmpty && change.remove.isEmpty) continue;
-      await mls.stageMembershipChange(change.conversationId,
-          adds: adds, removes: change.remove);
-      _mlsReconcileNow.remove(change.conversationId);
-      staged = true;
     }
     _mlsPendingSeen.removeWhere((key, _) => !stillPending.contains(key));
     _mlsReconcileNow.removeWhere((conversationId) =>
         !changes.any((change) => change.conversationId == conversationId));
+    if (failed) _mlsReconcileRequested = true;
     if (staged) await _flushMlsOutbox();
   }
 

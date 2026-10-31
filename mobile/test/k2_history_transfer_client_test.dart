@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_errors.dart';
 import 'package:private_messenger/core/history_transfer_client.dart';
+import 'package:private_messenger/core/transport_policy.dart';
 
 final digest = 'c' * 64;
 final transfer = 'a' * 64;
@@ -101,7 +102,8 @@ void main() {
   setUp(() async {
     server = Loopback();
     await server.start();
-    client = HistoryTransferClient(baseUrl: server.origin);
+    client = HistoryTransferClient(
+        baseUrl: server.origin, transport: TransportPolicy.demo);
     dir = await Directory.systemTemp.createTemp('veritra-k2-transfer-');
   });
   tearDown(() async {
@@ -237,7 +239,8 @@ void main() {
             auth: claim,
             expectedSha256: digest,
             expectedSize: body.length,
-            target: File('${dir.path}/c')),
+            target: File('${dir.path}/c'),
+            verifyDigest: (_) async => true),
         throwsA(isA<ApiException>()));
     await expectLater(
         client.upload(
@@ -291,7 +294,8 @@ void main() {
         auth: claim,
         expectedSha256: digest,
         expectedSize: body.length,
-        target: target);
+        target: target,
+        verifyDigest: (_) async => true);
     // A cut connection keeps its prefix.
     await expectLater(fetch(), throwsA(anything));
     expect(await target.length(), 30000);
@@ -329,7 +333,8 @@ void main() {
         auth: claim,
         expectedSha256: digest,
         expectedSize: body.length,
-        target: target);
+        target: target,
+        verifyDigest: (_) async => true);
     server.handler = (r) => serveBlob(r, body, etag: '"sha256-${'e' * 64}"');
     await target.writeAsBytes(body.sublist(0, 10));
     await expectLater(fetch(), throwsA(isA<HistoryTransferMismatch>()));
@@ -398,6 +403,61 @@ void main() {
     server.handler = (r) async => sendJson(r, 200, {'state': 'cancelled'});
     await client.cancel('link-1', const HistorySessionAuth('t'));
     expect(server.requests.last.method, 'DELETE');
+  });
+
+  test('credentials are never sent to an origin the transport policy refuses',
+      () {
+    for (final origin in [
+      'http://example.com',
+      'http://10.0.0.2:8080',
+      'ftp://example.com'
+    ]) {
+      expect(() => HistoryTransferClient(baseUrl: origin), throwsArgumentError);
+      expect(
+          () => HistoryTransferClient(
+              baseUrl: origin, transport: TransportPolicy.demo),
+          throwsArgumentError);
+    }
+    expect(() => HistoryTransferClient(baseUrl: server.origin),
+        throwsArgumentError,
+        reason: 'release builds refuse loopback HTTP too');
+    HistoryTransferClient(baseUrl: 'https://example.com').close();
+  });
+
+  test('a failed digest check deletes the file, so a bad prefix never resumes',
+      () async {
+    final target = File('${dir.path}/content');
+    final claim = HistoryClaimAuth(List.filled(32, 1));
+    var accept = false;
+    Future<int> fetch() => client.download(
+        linkId: 'link-1',
+        auth: claim,
+        expectedSha256: digest,
+        expectedSize: body.length,
+        target: target,
+        verifyDigest: (file) async {
+          expect(file.path, target.path);
+          return accept;
+        });
+    // A server whose ETag matches but whose bytes are wrong.
+    final wrong = Uint8List.fromList(body.reversed.toList());
+    server.handler = (r) => serveBlob(r, wrong);
+    await expectLater(fetch(), throwsA(isA<HistoryTransferMismatch>()));
+    expect(await target.exists(), isFalse);
+
+    // A complete file left by an earlier attempt is checked before use.
+    await target.writeAsBytes(wrong);
+    final before = server.requests.length;
+    await expectLater(fetch(), throwsA(isA<HistoryTransferMismatch>()));
+    expect(await target.exists(), isFalse);
+    expect(server.requests.length, before);
+
+    // The next attempt starts from byte zero, with no Range.
+    accept = true;
+    server.handler = (r) => serveBlob(r, body);
+    expect(await fetch(), body.length);
+    expect(server.requests.last.headers.value(HttpHeaders.rangeHeader), isNull);
+    expect(await target.readAsBytes(), body);
   });
 
   test('metadata outside the server limits is refused before any request', () {

@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'api_errors.dart';
 import 'server_origin.dart' show canonicalizeServerOrigin;
+import 'transport_policy.dart';
 
 /// K2 history transfer transport (`docs/designs/K2-transfer-resource.md`).
 ///
@@ -198,14 +199,28 @@ class HistoryTransferMismatch implements Exception {
 }
 
 class HistoryTransferClient {
-  HistoryTransferClient({required String baseUrl, HttpClient? httpClient})
-      : baseUrl = canonicalizeServerOrigin(baseUrl),
+  /// [transport] decides which origins may receive a session or claim token:
+  /// HTTPS only unless the demo entry point passes its loopback policy. A
+  /// refused origin fails here, before any request exists.
+  HistoryTransferClient(
+      {required String baseUrl,
+      HttpClient? httpClient,
+      TransportPolicy transport = TransportPolicy.production})
+      : baseUrl = _allowedOrigin(baseUrl, transport),
         _http = httpClient ?? HttpClient() {
     _http.connectionTimeout = const Duration(seconds: 15);
   }
 
   final String baseUrl;
   final HttpClient _http;
+
+  static String _allowedOrigin(String origin, TransportPolicy transport) {
+    if (!transport.allows(origin)) {
+      throw ArgumentError('origin not allowed by the transport policy');
+    }
+    return canonicalizeServerOrigin(origin);
+  }
+
   static const _timeout = Duration(seconds: 30);
 
   /// Upload budget, matching the server's five-minute body budget.
@@ -295,9 +310,38 @@ class HistoryTransferClient {
   /// Recipient only: downloads the ciphertext into [target], resuming from
   /// its current length when the server still serves the same body
   /// (`If-Range` with the expected ETag). Returns the final length, always
-  /// [expectedSize]. The caller passes the file to the native receive stream,
-  /// which authenticates the whole container before any plaintext exists.
+  /// [expectedSize].
+  ///
+  /// The ETag is the server's claim, not proof. [verifyDigest] is the native
+  /// whole-ciphertext check against the digest from the verified handoff; it
+  /// runs on every complete file, including one left by an earlier attempt.
+  /// When it fails the file is deleted and [HistoryTransferMismatch] thrown,
+  /// so a bad prefix is never resumed.
   Future<int> download({
+    required String linkId,
+    required HistoryTransferAuth auth,
+    required String expectedSha256,
+    required int expectedSize,
+    required File target,
+    required Future<bool> Function(File complete) verifyDigest,
+  }) async {
+    final length = await _fetch(
+        linkId: linkId,
+        auth: auth,
+        expectedSha256: expectedSha256,
+        expectedSize: expectedSize,
+        target: target);
+    var verified = false;
+    try {
+      verified = await verifyDigest(target);
+    } finally {
+      if (!verified) await _discard(target);
+    }
+    if (!verified) throw const HistoryTransferMismatch();
+    return length;
+  }
+
+  Future<int> _fetch({
     required String linkId,
     required HistoryTransferAuth auth,
     required String expectedSha256,
