@@ -104,4 +104,30 @@ void main() {
     expect((await target.loadSession())?.deviceId, 'dev_1');
     expect(scratch.listSync(), isEmpty);
   }, skip: skip);
+
+  test('a saved prefix of another code is not continued with this code',
+      () async {
+    final (_, other) = await makeBackup();
+    final (code, _) = await makeBackup();
+    // An interrupted download for another code, long enough to hold frame 0.
+    partial().writeAsBytesSync(other.sublist(0, 100));
+    server.consumeOnComplete = true;
+    final target = MemoryLocalStore();
+    await serviceFor(target).recover(code);
+    expect((await target.loadSession())?.deviceId, 'dev_1');
+    // No range request: this code's tail never lands on the other prefix.
+    expect(server.rangeStarts, <int>[0]);
+    expect(scratch.listSync(), isEmpty);
+  }, skip: skip);
+
+  test('a saved prefix whose frame 0 opens is continued', () async {
+    final (code, ciphertext) = await makeBackup();
+    partial().writeAsBytesSync(ciphertext.sublist(0, 100));
+    server.consumeOnComplete = true;
+    final target = MemoryLocalStore();
+    await serviceFor(target).recover(code);
+    expect((await target.loadSession())?.deviceId, 'dev_1');
+    expect(server.rangeStarts, <int>[100]);
+    expect(scratch.listSync(), isEmpty);
+  }, skip: skip);
 }

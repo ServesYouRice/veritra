@@ -114,7 +114,7 @@ void main() {
 
   test('an interrupted download continues after a restart', () async {
     final code = await makeBackup();
-    server.dropAfterBytes = 40;
+    server.dropAfterBytes = 100;
     final target = MemoryLocalStore();
     await expectLater(serviceFor(target).recover(code),
         throwsA(failure(BackupFailureKind.network)));
@@ -139,7 +139,7 @@ void main() {
         'a resume the server ${mode == 'ignores Range' ? 'cannot honour' : 'refuses'} '
         'restarts from the beginning ($mode)', () async {
       final code = await makeBackup();
-      server.dropAfterBytes = 40;
+      server.dropAfterBytes = 100;
       final target = MemoryLocalStore();
       await expectLater(serviceFor(target).recover(code),
           throwsA(failure(BackupFailureKind.network)));
@@ -152,7 +152,7 @@ void main() {
         server.refuseRange = true;
       }
       await serviceFor(target).recover(code);
-      expect(server.rangeStarts, <int>[0, 40, 0]);
+      expect(server.rangeStarts, <int>[0, 100, 0]);
       expect((await target.loadMessages('conv_1')).single.body,
           'kept across devices');
       expect(scratch.listSync(), isEmpty);
@@ -161,7 +161,7 @@ void main() {
 
   test('a restarted download still refuses a wrong recovery code', () async {
     final code = await makeBackup();
-    server.dropAfterBytes = 40;
+    server.dropAfterBytes = 100;
     final target = MemoryLocalStore();
     await expectLater(serviceFor(target).recover(code),
         throwsA(failure(BackupFailureKind.network)));
@@ -172,8 +172,10 @@ void main() {
         '${'A' * parts[3].length}';
     await expectLater(serviceFor(target).recover(wrongKey),
         throwsA(failure(BackupFailureKind.wrongKey)));
-    // One restart from byte 0, not a second download for the same answer.
-    expect(server.rangeStarts, <int>[0, 40, 0]);
+    // The saved prefix does not open with this code, so it is not
+    // continued: one restart from byte 0, not a second download for the
+    // same answer.
+    expect(server.rangeStarts, <int>[0, 0]);
     expect(await target.loadSession(), isNull);
     expect(scratch.listSync(), isEmpty);
   }, skip: skip);

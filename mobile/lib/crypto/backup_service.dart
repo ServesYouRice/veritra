@@ -289,21 +289,21 @@ class BackupService {
     final file =
         File('${directory.path}${Platform.pathSeparator}$_partialName');
     try {
-      final download = await _download(client, recoveryToken, file,
+      final download = await _download(client, recoveryToken, key, file,
           restoreSaved: () => _restoreSaved(file, recoveryToken, key));
       if (download != _Download.restoredSaved) {
         try {
           await _decryptAndRestore(file, recoveryToken, key);
         } on BackupException catch (error) {
-          // A partial file left by another recovery code decrypts as
-          // garbage: only a fresh download can tell a wrong code from a
-          // stale prefix.
+          // Only a prefix whose frame 0 opened with this code is continued,
+          // but its later frames may still be damaged: only a fresh download
+          // can tell a damaged backup from a damaged prefix.
           if (download != _Download.resumed ||
               error.kind == BackupFailureKind.deviceNotEmpty) {
             rethrow;
           }
           await file.delete();
-          await _download(client, recoveryToken, file);
+          await _download(client, recoveryToken, key, file);
           await _decryptAndRestore(file, recoveryToken, key);
         }
       }
@@ -328,6 +328,13 @@ class BackupService {
   /// already holds, and says whether the file now continues a prefix saved
   /// by an earlier attempt.
   ///
+  /// A saved prefix is continued only if its frame 0 opens with this code.
+  /// Otherwise it belongs to another code (or this code's key is mistyped,
+  /// or it is too short to tell), and appending this code's tail to it would
+  /// use up this code for a file that never restores. The download then
+  /// starts from byte 0 and replaces the file only once the server answers;
+  /// a 404 then keeps a file that failed on the key ([_SavedFileKept]).
+  ///
   /// The server may not continue a saved file: a 416 (or a 200 to the range
   /// request, as from a proxy that drops `Range`), or a 404 once a transfer
   /// that reached the end used up the code. The saved file may then already
@@ -339,11 +346,24 @@ class BackupService {
   /// unless the saved file failed on the key: it is then kept
   /// ([_SavedFileKept]) for the corrected code.
   Future<_Download> _download(
-      ApiClient client, List<int> recoveryToken, File file,
+      ApiClient client, List<int> recoveryToken, List<int> key, File file,
       {Future<BackupFailureKind?> Function()? restoreSaved}) async {
     final start = await file.exists() ? await file.length() : 0;
     if (start == 0) {
       await _downloadFrom(client, recoveryToken, file, 0);
+      return _Download.fresh;
+    }
+    final savedFailure = await _savedHeaderFailure(file, recoveryToken, key);
+    if (savedFailure != null) {
+      try {
+        await _downloadFrom(client, recoveryToken, file, 0);
+      } on BackupException catch (error) {
+        if (error.kind == BackupFailureKind.notFound &&
+            savedFailure == BackupFailureKind.wrongKey) {
+          throw const _SavedFileKept();
+        }
+        rethrow;
+      }
       return _Download.fresh;
     }
     try {
@@ -382,6 +402,29 @@ class BackupService {
     }
   }
 
+  /// Null if [file]'s header and frame 0 open with this code; otherwise
+  /// why not: [BackupFailureKind.wrongKey] if frame 0 does not open,
+  /// [BackupFailureKind.corrupt] if the file is too short or not VBK2.
+  Future<BackupFailureKind?> _savedHeaderFailure(
+      File file, List<int> recoveryToken, List<int> key) async {
+    final RandomAccessFile input;
+    try {
+      input = await file.open();
+    } on FileSystemException {
+      throw const BackupException(BackupFailureKind.storage);
+    }
+    try {
+      await _readHeader(input, recoveryToken, key);
+      return null;
+    } on BackupException catch (error) {
+      return error.kind;
+    } on FormatException {
+      return BackupFailureKind.corrupt;
+    } finally {
+      await input.close();
+    }
+  }
+
   static Future<void> _deletePartial(File file) async {
     try {
       if (await file.exists()) await file.delete();
@@ -396,7 +439,10 @@ class BackupService {
     try {
       final stream = await client.recoverEncryptedBackup(recoveryToken,
           startOffset: start == 0 ? null : start);
-      sink = file.openWrite(mode: FileMode.writeOnlyAppend);
+      // From byte 0 the file is replaced, but only now that the server has
+      // answered: a refused request leaves a saved file as it was.
+      sink = file.openWrite(
+          mode: start == 0 ? FileMode.writeOnly : FileMode.writeOnlyAppend);
       await sink.addStream(stream);
       await sink.flush();
     } on ApiException catch (error) {
@@ -439,35 +485,8 @@ class BackupService {
     final input = await file.open();
     Uint8List? decoded;
     try {
-      final header = await _readExactly(input, _backupHeaderLength);
-      // Anything else, the legacy VBK1 format included (D55), is refused.
-      if (!_constantTimeEqual(header.sublist(0, 4), _backupMagic)) {
-        throw const BackupException(BackupFailureKind.corrupt);
-      }
+      final header = await _readHeader(input, recoveryToken, key);
       final nonce = header.sublist(4, 12);
-      // Frame 0 first: it checks the key and seals the count and size, so
-      // nothing below trusts the cleartext header unchecked.
-      final headerFrameLength = await _readFrameLength(input);
-      if (headerFrameLength != 12 + 16) {
-        throw const BackupException(BackupFailureKind.corrupt);
-      }
-      final headerFrame = await _readExactly(input, headerFrameLength);
-      final List<int> sealedMetadata;
-      try {
-        sealedMetadata = bindings.decryptAttachmentChunk(
-          key: key,
-          noncePrefix: nonce,
-          chunkIndex: 0,
-          context: _headerFrameContext(recoveryToken, header),
-          ciphertext: headerFrame,
-        );
-      } on NativeCryptoException {
-        // The code does not open this backup (or its nonce was changed).
-        throw const BackupException(BackupFailureKind.wrongKey);
-      }
-      if (!_constantTimeEqual(sealedMetadata, header.sublist(12))) {
-        throw const BackupException(BackupFailureKind.corrupt);
-      }
       final metadata =
           ByteData.sublistView(Uint8List.fromList(header.sublist(12)));
       final chunkCount = metadata.getUint32(0, Endian.big);
@@ -516,6 +535,45 @@ class BackupService {
       decoded?.fillRange(0, decoded.length, 0);
       await input.close();
     }
+  }
+
+  /// Reads the header and frame 0 from [input] and returns the header once
+  /// frame 0 has authenticated it with this code. Throws
+  /// [BackupFailureKind.wrongKey] if frame 0 does not open,
+  /// [BackupFailureKind.corrupt] if the file is not VBK2, and
+  /// [FormatException] if it is too short.
+  Future<List<int>> _readHeader(
+      RandomAccessFile input, List<int> recoveryToken, List<int> key) async {
+    final header = await _readExactly(input, _backupHeaderLength);
+    // Anything else, the legacy VBK1 format included (D55), is refused.
+    if (!_constantTimeEqual(header.sublist(0, 4), _backupMagic)) {
+      throw const BackupException(BackupFailureKind.corrupt);
+    }
+    final nonce = header.sublist(4, 12);
+    // Frame 0 first: it checks the key and seals the count and size, so
+    // nothing below trusts the cleartext header unchecked.
+    final headerFrameLength = await _readFrameLength(input);
+    if (headerFrameLength != 12 + 16) {
+      throw const BackupException(BackupFailureKind.corrupt);
+    }
+    final headerFrame = await _readExactly(input, headerFrameLength);
+    final List<int> sealedMetadata;
+    try {
+      sealedMetadata = bindings.decryptAttachmentChunk(
+        key: key,
+        noncePrefix: nonce,
+        chunkIndex: 0,
+        context: _headerFrameContext(recoveryToken, header),
+        ciphertext: headerFrame,
+      );
+    } on NativeCryptoException {
+      // The code does not open this backup (or its nonce was changed).
+      throw const BackupException(BackupFailureKind.wrongKey);
+    }
+    if (!_constantTimeEqual(sealedMetadata, header.sublist(12))) {
+      throw const BackupException(BackupFailureKind.corrupt);
+    }
+    return header;
   }
 
   /// A frame's length: at least one byte of ciphertext and its 16-byte tag,
