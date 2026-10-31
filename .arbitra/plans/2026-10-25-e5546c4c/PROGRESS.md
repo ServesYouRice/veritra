@@ -64,7 +64,6 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 53 `TASK-053` Hide stale history and retry after an expiry history reload fails
 - [x] 54 `TASK-054` Stop startConversation from re-creating the MLS group and resetting state for an existing DM
   - Done; owner questions left: may the server say whether a DM already existed (Q-004)?
-  - Not attempted this round (app_state section).
 - [x] 55 `TASK-055` Start sync after login or createOwner even when a step after authentication fails
 - [x] 56 `TASK-056` Bind markPeerVerified to the safety number the user compared
   - Fixed by TASK-074 (4b8349a): markPeerVerifiedIfMatches binds the mark to the compared safety number; the old markPeerVerified has no caller.

@@ -44,4 +44,42 @@ void main() {
     expect(after.sealedState, before.sealedState);
     await service.dispose();
   }, skip: nativeCryptoSkip());
+
+  test('groupEpoch during a pending enrollment keeps the enrolled device',
+      () async {
+    final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
+    final store = MemoryLocalStore();
+    final service = NativeCryptoService(bindings: bindings, localStore: store);
+    await service.createEnrollmentCredential(const EnrollmentReservation(
+      id: 'res_dev_alice',
+      accountId: 'acct_alice',
+      deviceId: 'dev_alice',
+      challenge: <int>[1, 2, 3],
+    ));
+    await service.activateSession(const Session(
+      baseUrl: 'https://localhost:8443',
+      token: 'token',
+      accountId: 'acct_alice',
+      deviceId: 'dev_alice',
+    ));
+    final before = (await store.loadCryptoState())!;
+
+    final credential =
+        await service.createEnrollmentCredential(const EnrollmentReservation(
+      id: 'res_dev_alice_2',
+      accountId: 'acct_alice',
+      deviceId: 'dev_alice',
+      challenge: <int>[4, 5, 6],
+    ));
+
+    // No group exists on the fresh device; the stored state must not be
+    // loaded over it.
+    await expectLater(
+        service.groupEpoch('conv_missing'), throwsA(isA<StateError>()));
+    final after = (await store.loadCryptoState())!;
+    expect(after.counter, before.counter);
+    expect(after.sealedState, before.sealedState);
+    expect(credential, isNotNull);
+    await service.dispose();
+  }, skip: nativeCryptoSkip());
 }

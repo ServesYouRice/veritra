@@ -1272,6 +1272,12 @@ class NativeCryptoService
   /// state can no longer be trusted) is closed and the device left inactive:
   /// callers fail closed until the session is activated again.
   Future<void> _restorePrevious(StoredCryptoState previous) async {
+    // A pending enrollment holds a fresh device whose key is in the issued
+    // credential; reloading stored state would replace it and activation
+    // would then seal the wrong device. Refuse before touching the handle.
+    if (_pendingEnrollment) {
+      throw StateError('crypto state cannot be restored during enrollment');
+    }
     _deviceCounter = null;
     ({NativeCryptoDevice device, int counter}) restored;
     try {
