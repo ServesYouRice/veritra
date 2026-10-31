@@ -84,13 +84,38 @@ func (p *FCMProvider) SendEncryptedEventAvailable(ctx context.Context, notificat
 	}
 	defer response.Body.Close()
 	responseBody, _ := io.ReadAll(io.LimitReader(response.Body, 16<<10))
-	if response.StatusCode == http.StatusNotFound || response.StatusCode == http.StatusGone || bytes.Contains(responseBody, []byte("UNREGISTERED")) {
+	// The device token is retired only when FCM says so: HTTP 410, or an
+	// UNREGISTERED errorCode in error.details. A bare 404 can come from the
+	// project or the request rather than the token, so it stays an ordinary
+	// error; so does a body that is truncated or not JSON (retry, don't delete).
+	if response.StatusCode == http.StatusGone || (response.StatusCode >= 400 && fcmUnregistered(responseBody)) {
 		return ErrSubscriptionGone
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return fmt.Errorf("FCM returned status %d", response.StatusCode)
 	}
 	return nil
+}
+
+// fcmUnregistered reports whether an FCM v1 error body carries the
+// UNREGISTERED errorCode in error.details.
+func fcmUnregistered(body []byte) bool {
+	var parsed struct {
+		Error struct {
+			Details []struct {
+				ErrorCode string `json:"errorCode"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &parsed) != nil {
+		return false
+	}
+	for _, detail := range parsed.Error.Details {
+		if detail.ErrorCode == "UNREGISTERED" {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *FCMProvider) token(ctx context.Context) (string, error) {

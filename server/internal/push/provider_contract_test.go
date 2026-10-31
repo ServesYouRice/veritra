@@ -125,10 +125,17 @@ func TestFCMClassifiesProviderAnswers(t *testing.T) {
 		body   string
 		gone   bool
 	}{
-		"not found":    {404, `{}`, true},
-		"unregistered": {400, `{"error":{"details":[{"errorCode":"UNREGISTERED"}]}}`, true},
-		"server error": {503, `{}`, false},
-		"huge body":    {500, strings.Repeat("x", 1<<20), false},
+		// A bare 404 (an unknown project, say) says nothing about the token.
+		"not found":                 {404, `{}`, false},
+		"not found empty":           {404, ``, false},
+		"not found other detail":    {404, `{"error":{"status":"NOT_FOUND","details":[{"errorCode":"SENDER_ID_MISMATCH"}]}}`, false},
+		"unregistered only in text": {404, `{"error":{"message":"token UNREGISTERED somewhere"}}`, false},
+		"unparseable":               {404, `not json UNREGISTERED`, false},
+		"gone":                      {410, `{}`, true},
+		"not found unregistered":    {404, `{"error":{"status":"NOT_FOUND","details":[{"@type":"type.googleapis.com/google.firebase.fcm.v1.FcmError","errorCode":"UNREGISTERED"}]}}`, true},
+		"unregistered":              {400, `{"error":{"details":[{"errorCode":"UNREGISTERED"}]}}`, true},
+		"server error":              {503, `{}`, false},
+		"huge body":                 {500, strings.Repeat("x", 1<<20), false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			provider := newTestFCM(t, func(r *http.Request) (*http.Response, error) {
