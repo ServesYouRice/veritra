@@ -70,6 +70,12 @@ func (s *Store) exportAssociatedData(ctx context.Context, accountID string) (map
 			}
 			items = append(items, json.RawMessage(raw))
 		}
+		// Next also stops on a step error or a cancelled context. Only Err
+		// reports it, because Close on the already-closed Rows returns nil.
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
 		if err := rows.Close(); err != nil {
 			return nil, err
 		}
