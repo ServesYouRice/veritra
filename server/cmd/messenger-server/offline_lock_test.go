@@ -100,3 +100,32 @@ func TestResetOwnerPasswordOnAMissingDatabaseCreatesNothing(t *testing.T) {
 		t.Fatalf("reset created %s (stat err = %v)", cfg.DatabasePath, statErr)
 	}
 }
+
+// The scheduled backup runs its restore drill beside a live server. The drill
+// restores into its own scratch data directory, so the locks the server holds
+// on the live one must not stop it.
+func TestRestoreDrillRunsWhileAServerHoldsTheLiveLocks(t *testing.T) {
+	ctx := context.Background()
+	live := seedInstance(t, "live")
+	archive := filepath.Join(t.TempDir(), "backup")
+	if err := backup(ctx, live, []string{archive}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	instance, err := acquireInstanceLock(live.DataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer instance.Release()
+	resources, err := acquireResourceLocks(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resources.Release()
+	var output bytes.Buffer
+	if err := verifyBackup(ctx, live, []string{archive}, &output); err != nil {
+		t.Fatalf("restore drill beside a running server: %v", err)
+	}
+	if !strings.Contains(output.String(), "backup verified") {
+		t.Fatalf("drill output = %q", output.String())
+	}
+}
