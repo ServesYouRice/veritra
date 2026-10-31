@@ -734,7 +734,8 @@ void main() {
     FlutterSecureStorage.setMockInitialValues(<String, String>{
       'veritra.account_state.v2': '{not-json',
     });
-    expect(createStore().loadSession(), throwsStateError);
+    expect(createStore().loadSession(),
+        throwsA(_storeFailure(LocalStoreFailureKind.upgradeFailed)));
   });
 
   test('concurrent stores do not lose outbox writes', () async {

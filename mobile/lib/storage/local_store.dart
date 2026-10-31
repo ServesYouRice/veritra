@@ -65,7 +65,10 @@ enum LocalStoreFailureKind {
 
   /// The key opened the database, but upgrading or opening it for this app
   /// version failed for another reason, for example a damaged page or a step
-  /// that cannot complete. The upgrade rolled back and nothing was changed.
+  /// that cannot complete, such as moving a corrupt legacy secure-storage
+  /// record into the database or a move that did not check out. The upgrade
+  /// rolled back and nothing was changed; a legacy record is kept. A reset
+  /// discards that record along with the database.
   /// A retry runs it again; if that keeps failing, only the confirmed
   /// [LocalStore.quarantineUnreadableDatabase] moves the database aside.
   upgradeFailed,
@@ -2823,7 +2826,20 @@ class SecureLocalStore implements LocalStore {
           rethrow;
         }
       } else {
-        await _migrateLegacyRecord(database);
+        try {
+          await _migrateLegacyRecord(database);
+        } catch (error) {
+          // The key opened the file, but this open still fails, so the handle
+          // is closed as after a failed upgrade. Nothing was deleted: the
+          // legacy record stays, and a retry runs the migration again.
+          try {
+            await database.close();
+          } catch (_) {}
+          if (error is LocalStoreUnavailableException) rethrow;
+          throw LocalStoreUnavailableException(isStorageFullError(error)
+              ? LocalStoreFailureKind.upgradeStorageFull
+              : LocalStoreFailureKind.upgradeFailed);
+        }
         await _repairEnvelopeExpiry(database);
       }
       // Again now that the database, WAL and SHM files exist.
@@ -2899,11 +2915,29 @@ class SecureLocalStore implements LocalStore {
     _instanceLocks[path] = handle;
   }
 
+  /// Moves the legacy secure-storage record into the database once. A
+  /// record that cannot be read throws [LocalStoreFailureKind.keyUnavailable];
+  /// a corrupt record or a failed check throws for the caller to classify.
+  /// The record is deleted only after the check passed and the marker was
+  /// written.
   Future<void> _migrateLegacyRecord(EncryptedLocalDatabase database) async {
-    final raw = await _storage.read(key: _legacyRecordKeyName);
+    // The marker first: once the migration finished, a keystore that cannot
+    // be read must not stop the database from opening. Removing a leftover
+    // record is then best effort; a later open tries again.
     if (await database.readMetadata(_migrationMarker) == '1') {
-      if (raw != null) await _storage.delete(key: _legacyRecordKeyName);
+      try {
+        if (await _storage.read(key: _legacyRecordKeyName) != null) {
+          await _storage.delete(key: _legacyRecordKeyName);
+        }
+      } catch (_) {}
       return;
+    }
+    final String? raw;
+    try {
+      raw = await _storage.read(key: _legacyRecordKeyName);
+    } catch (_) {
+      throw const LocalStoreUnavailableException(
+          LocalStoreFailureKind.keyUnavailable);
     }
     if (raw == null || raw.isEmpty) {
       await database.writeMetadata(_migrationMarker, '1');
@@ -2921,7 +2955,11 @@ class SecureLocalStore implements LocalStore {
     );
     await _verifyLegacyMigration(database, legacy);
     await database.writeMetadata(_migrationMarker, '1');
-    await _storage.delete(key: _legacyRecordKeyName);
+    try {
+      await _storage.delete(key: _legacyRecordKeyName);
+    } catch (_) {
+      // Migrated and marked: the next open removes the leftover record.
+    }
   }
 
   /// Runs after the legacy migration has finished or found nothing to do,
