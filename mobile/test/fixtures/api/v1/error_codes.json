@@ -74,6 +74,7 @@
     "invite_create_failed": "server",
     "invites_list_failed": "server",
     "key_derivation_metadata_required": "encryption",
+    "key_package_claim_limit": "rateLimited",
     "key_package_quota_exceeded": "rateLimited",
     "key_package_unavailable": "notFound",
     "last_owner_required": "conflict",

@@ -236,6 +236,11 @@ class _BackupServer {
       rangeStarts.add(start);
       final part = data.sublist(start);
       request.response.statusCode = start == 0 ? 200 : 206;
+      if (start != 0) {
+        // Like the server: a 206 says where its body starts.
+        request.response.headers.set(
+            'Content-Range', 'bytes $start-${data.length - 1}/${data.length}');
+      }
       request.response.contentLength = part.length;
       final drop = dropAfterBytes;
       if (drop != null && drop < part.length) {

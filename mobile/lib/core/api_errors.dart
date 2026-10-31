@@ -126,6 +126,7 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'typing_rate_limited': ApiErrorKind.rateLimited,
   'realtime_connection_limit': ApiErrorKind.rateLimited,
   'key_package_quota_exceeded': ApiErrorKind.rateLimited,
+  'key_package_claim_limit': ApiErrorKind.rateLimited,
   'write_rate_limited': ApiErrorKind.rateLimited,
   // Size and storage.
   'upload_too_large': ApiErrorKind.tooLarge,

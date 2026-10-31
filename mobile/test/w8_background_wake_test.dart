@@ -294,11 +294,14 @@ void main() {
     // An unfocused desktop window keeps syncing (W4) and notifies (W3).
     state.handleAppLifecycleState(AppLifecycleState.inactive);
     final notifier = _Notifier();
+    // Previews stay hidden until the saved choice is known (TASK-060).
+    final settings = NotificationSettings(MemoryNotificationSettingsStore());
+    await settings.load();
     MessageNotifier(
         state: state,
         shell: _Shell(),
         notifier: notifier,
-        settings: NotificationSettings(MemoryNotificationSettingsStore()),
+        settings: settings,
         l10n: () => englishL10n).attach();
     await state.tryRestoreSession();
     await _until(() async => notifier.shown.isNotEmpty);
