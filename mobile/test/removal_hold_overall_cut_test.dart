@@ -1,6 +1,7 @@
 // D68 review follow-ups: only a read the server says it cut at its overall
 // cap keeps unlisted holds; one conversation over its own cap must not hold
-// every other conversation.
+// every other conversation; and one conversation whose epoch cannot be read
+// keeps only its own hold.
 @Timeout(Duration(seconds: 60))
 library;
 
@@ -66,6 +67,33 @@ void main() {
     expect(h.api.pendingChangeCalls, greaterThan(reads + 1));
     expect(h.state.sendHeldForRemoval('conv_a'), isTrue,
         reason: 'fail closed when the server does not say');
+  });
+
+  test('an unreadable epoch keeps only its own hold', () async {
+    final h = await _Harness.start(
+        pendingRemovals: {'conv_a', 'conv_b'},
+        fakes: (api, crypto) =>
+            crypto.stageFailures.addAll({'conv_a', 'conv_b'}));
+    addTearDown(h.state.dispose);
+    await _waitFor(() =>
+        h.state.sendHeldForRemoval('conv_a') &&
+        h.state.sendHeldForRemoval('conv_b'));
+    // Both removals were committed elsewhere and applied here, but conv_a's
+    // group state cannot be read; it comes first in the release loop.
+    h.api
+      ..listCut = false
+      ..pendingRemovals.clear();
+    h.crypto
+      ..epochs['conv_a'] = 4
+      ..epochs['conv_b'] = 4
+      ..epochAlwaysFails.add('conv_a');
+    await h.frames(const Duration(milliseconds: 300));
+    await _waitFor(() => !h.state.sendHeldForRemoval('conv_b'));
+    expect(h.state.sendHeldForRemoval('conv_a'), isTrue);
+    // The kept hold is looked at again once it can be read.
+    h.crypto.epochAlwaysFails.clear();
+    await h.frames(const Duration(milliseconds: 300));
+    await _waitFor(() => !h.state.sendHeldForRemoval('conv_a'));
   });
 }
 
@@ -308,6 +336,9 @@ class _Crypto implements MlsConversationCryptoService {
   final Set<String> stageFailures = <String>{};
   final Set<String> noGroup = <String>{};
   final Set<String> epochFailures = <String>{};
+
+  /// Every read of these groups' epoch fails until removed.
+  final Set<String> epochAlwaysFails = <String>{};
   int staged = 0;
 
   int epochOf(String conversationId) => epochs[conversationId] ?? 3;
@@ -317,7 +348,8 @@ class _Crypto implements MlsConversationCryptoService {
 
   @override
   Future<({int epoch, bool pending})?> groupEpoch(String conversationId) async {
-    if (epochFailures.remove(conversationId)) {
+    if (epochFailures.remove(conversationId) ||
+        epochAlwaysFails.contains(conversationId)) {
       throw StateError('group state unreadable');
     }
     return noGroup.contains(conversationId)

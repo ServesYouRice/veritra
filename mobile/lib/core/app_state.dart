@@ -3311,8 +3311,19 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         // fetch then brings in any commit the server held at this read.
         final unlistedAt = hold.unlistedAt ??= read;
         if (unlistedAt == read) followUp = true;
-        if (await _hasPendingMlsWork(conversationId)) continue;
-        final local = await mls.groupEpoch(conversationId);
+        final ({int epoch, bool pending})? local;
+        try {
+          if (await _hasPendingMlsWork(conversationId)) continue;
+          local = await mls.groupEpoch(conversationId);
+        } catch (err) {
+          // One unreadable conversation keeps its hold; the others are
+          // still looked at, and the pass still asks for a follow-up.
+          if (!_syncOwnerActive(current, generation)) return;
+          // Body-free: no conversation, device or crypto text.
+          developer.log('mls_removal_hold_epoch_failed ${err.runtimeType}',
+              name: 'veritra.sync');
+          continue;
+        }
         if (local == null) {
           release = true;
         } else if (local.pending || _removalFetchedAfterRead < unlistedAt) {
