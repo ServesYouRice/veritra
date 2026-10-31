@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -8,6 +9,24 @@ import '../core/app_state.dart';
 import '../core/models.dart';
 import '../crypto/crypto_service.dart';
 import 'call_media.dart';
+
+/// Call lifecycle states after which no transition is accepted. Matches
+/// `isTerminalCallState` in server/internal/storage/content_store.go.
+bool isTerminalCallState(String state) =>
+    state == 'rejected' || state == 'missed' || state == 'ended';
+
+/// A transition was abandoned because the server's current session no longer
+/// allows it, for example the call ended while this device was answering.
+class CallUnavailableException implements Exception {
+  const CallUnavailableException(this.callId, this.state);
+  final String callId;
+
+  /// The server's current state for the call.
+  final String state;
+
+  @override
+  String toString() => 'CallUnavailableException: call is $state';
+}
 
 class ActiveCall {
   ActiveCall._(
@@ -160,11 +179,21 @@ class NativeCallService {
       required this.token,
       required this.crypto,
       required Stream<IncomingCallSignal> incoming,
-      CallMediaFactory? media})
-      : media = media ?? const FlutterWebRtcMediaFactory() {
+      CallMediaFactory? media,
+      Future<void> Function(Duration delay)? retryDelay})
+      : media = media ?? const FlutterWebRtcMediaFactory(),
+        _retryDelay = retryDelay ?? Future<void>.delayed {
     _subscription = incoming.listen(_onIncoming,
         onError: (Object error) => _reportError(null, error));
   }
+
+  /// How many times one transition is retried after a stale-version
+  /// rejection. Both peers write the same per-call version (each ICE
+  /// candidate, the answer, hang-up), so overlapping writes are expected.
+  static const int maxConflictRetries = 5;
+
+  final Future<void> Function(Duration delay) _retryDelay;
+  final Random _jitter = Random();
 
   /// Serial lane for inbound work; see [_inLane].
   Future<void> _inbound = Future<void>.value();
@@ -241,10 +270,11 @@ class NativeCallService {
         'sdp': answer.sdp,
         'sdp_type': answer.type
       });
-      final current = _pendingSessions[call.id] ?? call;
-      final updated = await api.transitionCall(token, call.id, 'active',
-          expectedVersion: current.version,
-          encryptedMetadata: encrypted.metadata);
+      final updated = await _transition(
+          () => _newest(_pendingSessions[call.id], call), _recordPending,
+          state: (_) => 'active',
+          metadata: encrypted.metadata,
+          giveUp: (current) => current.state != 'ringing');
       active = _activate(updated, media);
     } catch (_) {
       await media.release();
@@ -254,11 +284,20 @@ class NativeCallService {
     return active;
   }
 
+  /// Declines a ringing call. The latest known session is kept until the
+  /// server accepts the rejection, so a failed reject can be retried.
   Future<void> reject(CallSession call) async {
-    final current = _pendingSessions.remove(call.id) ?? call;
+    try {
+      await _transition(
+          () => _newest(_pendingSessions[call.id], call), _recordPending,
+          state: (_) => 'rejected',
+          giveUp: (current) => current.state != 'ringing');
+    } on CallUnavailableException catch (error) {
+      // Already over (the caller hung up): nothing left to reject.
+      if (!isTerminalCallState(error.state)) rethrow;
+    }
+    _pendingSessions.remove(call.id);
     _earlySignals.remove(call.id);
-    await api.transitionCall(token, call.id, 'rejected',
-        expectedVersion: current.version);
   }
 
   Future<void> end(String callId, {int? expectedVersion}) async {
@@ -360,11 +399,75 @@ class NativeCallService {
       ActiveCall active, Map<String, Object?> signal) async {
     final encrypted =
         await crypto.encryptCallSignal(active.session.conversationId, signal);
-    final updated = await api.transitionCall(
-        token, active.session.id, active.session.state,
-        expectedVersion: active.session.version,
-        encryptedMetadata: encrypted.metadata);
-    active.session = updated;
+    final updated = await _transition(
+        () => active.session, (session) => _adopt(active, session),
+        // A same-state write: after a refresh the state may have moved on
+        // (ringing -> active), and the server allows no step back.
+        state: (current) => current.state,
+        metadata: encrypted.metadata,
+        giveUp: (current) => isTerminalCallState(current.state));
+    _adopt(active, updated);
+  }
+
+  /// Sets [active]'s session only if [session] is newer. Send responses and
+  /// pushed sessions race, and the version must never go back.
+  bool _adopt(ActiveCall active, CallSession session) {
+    if (session.version <= active.session.version) return false;
+    active.session = session;
+    return true;
+  }
+
+  /// Records [session] for a call with no [ActiveCall] yet, if newer.
+  void _recordPending(CallSession session) {
+    final known = _pendingSessions[session.id];
+    if (known == null || session.version > known.version) {
+      _pendingSessions[session.id] = session;
+    }
+  }
+
+  static CallSession _newest(CallSession? a, CallSession b) =>
+      a != null && a.version > b.version ? a : b;
+
+  /// Sends one transition on the newest known session. When the server
+  /// rejects it as stale ('call_version_conflict': the other peer wrote
+  /// first), refreshes the session, passes it to [adopt] and retries, at most
+  /// [maxConflictRetries] times. Other errors are not retried.
+  ///
+  /// [state] picks the target state from the session about to be used.
+  /// Before each attempt, [giveUp] can stop the transition; it then throws
+  /// [CallUnavailableException].
+  ///
+  /// Retries resend the same encrypted [metadata]. That is safe: the server
+  /// checks the version before it writes anything, so a rejected attempt
+  /// stored nothing and the peer never saw that ciphertext.
+  Future<CallSession> _transition(
+      CallSession Function() latest, void Function(CallSession) adopt,
+      {required String Function(CallSession current) state,
+      Map<String, Object?>? metadata,
+      required bool Function(CallSession current) giveUp}) async {
+    for (var attempt = 0;; attempt++) {
+      final current = latest();
+      if (giveUp(current)) {
+        throw CallUnavailableException(current.id, current.state);
+      }
+      try {
+        return await api.transitionCall(token, current.id, state(current),
+            expectedVersion: current.version, encryptedMetadata: metadata);
+      } on ApiException catch (error) {
+        if (error.serverCode != 'call_version_conflict' ||
+            attempt >= maxConflictRetries) {
+          rethrow;
+        }
+        await _retryDelay(Duration(
+            milliseconds: 50 * (attempt + 1) + _jitter.nextInt(100)));
+        final refreshed = (await api.calls(token, current.conversationId))
+            .where((call) => call.id == current.id)
+            .firstOrNull;
+        // Not listed any more (pruned or out of the newest 100): give up.
+        if (refreshed == null) rethrow;
+        adopt(refreshed);
+      }
+    }
   }
 
   /// Runs [work] after every inbound step queued before it. Incoming signals
@@ -405,7 +508,7 @@ class NativeCallService {
     // Until its drain has run, a new call's signals queue behind the early
     // ones so they are applied in arrival order.
     if (active == null || !active._drained) {
-      _pendingSessions[incoming.call.id] = incoming.call;
+      _recordPending(incoming.call);
       (_earlySignals[incoming.call.id] ??= <Map<String, Object?>>[])
           .add(incoming.signal);
       if (active == null && incoming.signal['kind'] == 'offer') {
@@ -413,7 +516,7 @@ class NativeCallService {
       }
       return;
     }
-    active.session = incoming.call;
+    _adopt(active, incoming.call);
     await _applySignal(active, incoming.signal);
   }
 
@@ -425,7 +528,10 @@ class NativeCallService {
         if (_disposed || active._media.released) {
           throw StateError('Call $callId ended during setup');
         }
-        _pendingSessions.remove(callId);
+        // A session pushed while setup awaited the server can be newer than
+        // the one setup returned.
+        final pending = _pendingSessions.remove(callId);
+        if (pending != null) _adopt(active, pending);
         active._drained = true;
         for (final signal in _earlySignals.remove(callId) ??
             const <Map<String, Object?>>[]) {

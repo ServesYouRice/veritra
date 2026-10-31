@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:private_messenger/calls/call_service.dart';
+import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 
 import 'call_service_fakes.dart';
@@ -24,8 +25,11 @@ class _Harness {
       crypto: crypto,
       incoming: incoming.stream,
       media: media,
+      retryDelay: (delay) async => delays.add(delay),
     );
   }
+
+  final List<Duration> delays = <Duration>[];
 
   final List<String> log = <String>[];
   final StreamController<IncomingCallSignal> incoming =
@@ -63,6 +67,7 @@ void _expectReleasedOnce(FakeMediaFactory media, {required bool hadStream}) {
 void main() {
   _task016();
   _task017();
+  _task018();
   group('TASK-015 setup failure releases media', () {
     const startSteps = <String>[
       'getUserMedia',
@@ -381,6 +386,161 @@ void _task017() {
       await disposed;
       expect(h.media.peer.closeCount, 1);
       expect(h.media.stream.disposeCount, 1);
+    });
+  });
+}
+
+void _task018() {
+  group('TASK-018 session adoption and version-conflict retry', () {
+    test('a stale send response does not undo a newer push', () async {
+      final h = _harness();
+      final call = await h.service.start('conv_1');
+      final released = Completer<void>();
+      h.api.onTransition = (request) async {
+        await released.future;
+        return callSession(state: 'ringing', version: 2);
+      };
+      h.media.peer.emitCandidate(_relay(1));
+      await _settle();
+      h.incoming.add(IncomingCallSignal(
+          callSession(state: 'active', version: 3), _ice('remote-1')));
+      await _settle();
+      expect(call.session.version, 3);
+      released.complete();
+      await _settle();
+      expect(call.session.version, 3);
+      expect(call.session.state, 'active');
+    });
+
+    test('a session pushed during answer() is adopted after the drain',
+        () async {
+      final h = _harness();
+      var pushed = false;
+      h.api.transitionGate = (request) async {
+        if (pushed) return;
+        pushed = true;
+        h.incoming.add(IncomingCallSignal(
+            callSession(state: 'active', version: 3), _ice('remote-1')));
+        await _settle();
+      };
+      final call = await h.service.answer(callSession(), _offer);
+      expect(h.api.transitions.first.expectedVersion, 1);
+      expect(call.session.version, 3);
+      expect(h.media.peer.addedCandidates, hasLength(1));
+    });
+
+    test('an ICE send retries once on a version conflict', () async {
+      final h = _harness();
+      final call = await h.service.start('conv_1');
+      final errors = <Object>[];
+      call.signalErrors.stream.listen(errors.add);
+      // The callee wrote meanwhile: the server is one version ahead.
+      h.api.server['call_1'] = callSession(state: 'active', version: 2);
+
+      h.media.peer.emitCandidate(_relay(1));
+      await _settle();
+
+      expect(errors, isEmpty);
+      final ice = h.api.transitions;
+      expect(ice.map((t) => '${t.state}@${t.expectedVersion}'),
+          <String>['ringing@1', 'active@2']);
+      expect(identical(ice[0].metadata, ice[1].metadata), isTrue,
+          reason: 'the same ciphertext is resent');
+      expect(h.crypto.encrypted.where((s) => s['kind'] == 'ice'), hasLength(1));
+      expect(call.session.version, 3);
+      expect(h.api.callsRequests, 1);
+      expect(h.delays, hasLength(1));
+    });
+
+    test('persistent conflicts stop at the bound and are reported',
+        () async {
+      final h = _harness();
+      final call = await h.service.start('conv_1');
+      final errors = <Object>[];
+      call.signalErrors.stream.listen(errors.add);
+      h.api.onTransition = (request) async => throw versionConflict();
+
+      h.media.peer.emitCandidate(_relay(1));
+      await _settle();
+
+      expect(h.api.transitions,
+          hasLength(NativeCallService.maxConflictRetries + 1));
+      expect(errors, hasLength(1));
+      expect((errors.single as ApiException).serverCode,
+          'call_version_conflict');
+    });
+
+    test('other API errors are not retried', () async {
+      final h = _harness();
+      final call = await h.service.start('conv_1');
+      final errors = <Object>[];
+      call.signalErrors.stream.listen(errors.add);
+      h.api.onTransition = (request) async => throw ApiException(503);
+
+      h.media.peer.emitCandidate(_relay(1));
+      await _settle();
+
+      expect(h.api.transitions, hasLength(1));
+      expect(h.api.callsRequests, 0);
+      expect(errors, hasLength(1));
+    });
+
+    test('a terminal refreshed session stops ICE retries', () async {
+      final h = _harness();
+      final call = await h.service.start('conv_1');
+      final errors = <Object>[];
+      call.signalErrors.stream.listen(errors.add);
+      h.api.server['call_1'] = callSession(state: 'rejected', version: 2);
+
+      h.media.peer.emitCandidate(_relay(1));
+      await _settle();
+
+      expect(h.api.transitions, hasLength(1));
+      expect(errors.single, isA<CallUnavailableException>());
+    });
+
+    test('answer() retries with the refreshed version', () async {
+      final h = _harness();
+      h.api.server['call_1'] = callSession(version: 2);
+      final call = await h.service.answer(callSession(version: 1), _offer);
+      expect(h.api.transitions.map((t) => '${t.state}@${t.expectedVersion}'),
+          <String>['active@1', 'active@2']);
+      expect(call.session.version, 3);
+    });
+
+    test('answer() stops and releases media when the call is gone',
+        () async {
+      final h = _harness();
+      h.api.server['call_1'] = callSession(state: 'ended', version: 2);
+      await expectLater(h.service.answer(callSession(version: 1), _offer),
+          throwsA(isA<CallUnavailableException>()));
+      expect(h.api.transitions, hasLength(1));
+      _expectReleasedOnce(h.media, hadStream: true);
+    });
+
+    test('reject() retries with the refreshed version', () async {
+      final h = _harness();
+      h.api.server['call_1'] = callSession(version: 3);
+      await h.service.reject(callSession(version: 1));
+      expect(h.api.transitions.map((t) => '${t.state}@${t.expectedVersion}'),
+          <String>['rejected@1', 'rejected@3']);
+    });
+
+    test('reject() keeps the latest session until it succeeds', () async {
+      final h = _harness();
+      final offer = h.service.incomingOffers.first;
+      h.incoming.add(IncomingCallSignal(callSession(version: 2), _offer));
+      await offer;
+      h.api.server['call_1'] = callSession(version: 2);
+      final failure = InjectedFailure('network');
+      h.api.failures['transitionCall'] = failure;
+      await expectLater(
+          h.service.reject(callSession(version: 1)), throwsA(same(failure)));
+
+      h.api.failures.clear();
+      await h.service.reject(callSession(version: 1));
+      expect(h.api.transitions.last.expectedVersion, 2);
+      expect(h.api.callsRequests, 0);
     });
   });
 }
