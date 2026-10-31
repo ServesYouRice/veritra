@@ -39,6 +39,9 @@ pub enum MlsError {
     /// The message decrypted, but its MLS sender credential is not the
     /// account/device the transport claimed. The ratchet has already advanced.
     SenderMismatch,
+    /// The message decrypted from a retained past epoch, but its sender is
+    /// no longer in the group. The ratchet has already advanced.
+    SenderRemoved,
 }
 
 /// One MLS device identity and its private provider state.
@@ -524,11 +527,27 @@ impl MlsDevice {
             .process_message(&self.provider, protocol_message)
             .map_err(|_| MlsError::InvalidMessage)?;
         let sender_matches = processed.credential().serialized_content() == expected_identity;
+        // Two past epochs stay decryptable (I51), so a device removed at
+        // epoch N could keep writing in epoch N by never applying its
+        // removal. A past-epoch message counts only while its sender is
+        // still a member. Q-003: a genuine late message from a removed
+        // device is dropped too; the receiver cannot tell the two apart.
+        // Past-epoch signature keys are not exposed, so this compares the
+        // identity only (L1 binds identities to keys).
+        let removed = processed.epoch() != group.epoch()
+            && !group
+                .members()
+                .any(|member| member.credential.serialized_content() == expected_identity);
         match processed.into_content() {
-            ProcessedMessageContent::ApplicationMessage(message) if sender_matches => {
-                Ok(message.into_bytes())
+            ProcessedMessageContent::ApplicationMessage(message) if !sender_matches => {
+                wipe(message.into_bytes());
+                Err(MlsError::SenderMismatch)
             }
-            ProcessedMessageContent::ApplicationMessage(_) => Err(MlsError::SenderMismatch),
+            ProcessedMessageContent::ApplicationMessage(message) if removed => {
+                wipe(message.into_bytes());
+                Err(MlsError::SenderRemoved)
+            }
+            ProcessedMessageContent::ApplicationMessage(message) => Ok(message.into_bytes()),
             _ => Err(MlsError::UnexpectedMessage),
         }
     }
@@ -736,6 +755,11 @@ fn group_create_config() -> MlsGroupCreateConfig {
         // kept for decryption only.
         .max_past_epochs(2)
         .build()
+}
+
+/// Drops plaintext that is not handed out through a non-elidable wipe.
+fn wipe(bytes: Vec<u8>) {
+    drop(tls_codec::SecretVLBytes::new(bytes));
 }
 
 fn encode_device_identity(account_id: &[u8], device_id: &[u8]) -> Result<Vec<u8>, MlsError> {
@@ -1554,6 +1578,81 @@ mod tests {
             b"sent at epoch 1"
         );
         bob.process_commit(&mut bob_group, &staged.commit).unwrap();
+    }
+
+    #[test]
+    fn a_removed_device_cannot_inject_through_a_past_epoch() {
+        let ([alice, bob, carol], [mut alice_group, mut bob_group, mut carol_group]) =
+            three_members(b"conv_removed");
+        let removal = alice
+            .stage_membership_commit(
+                &mut alice_group,
+                &[],
+                &[MemberIdentity {
+                    account_id: b"acct_bob",
+                    device_id: b"dev_bob",
+                }],
+            )
+            .unwrap();
+        alice.merge_pending_commit(&mut alice_group).unwrap();
+        carol
+            .process_commit(&mut carol_group, &removal.commit)
+            .unwrap();
+
+        // Bob ignores his removal and keeps writing in the old epoch.
+        let injected = bob.encrypt(&mut bob_group, b"still here").unwrap();
+        assert_eq!(
+            carol.decrypt(&mut carol_group, &injected, b"acct_bob", b"dev_bob"),
+            Err(MlsError::SenderRemoved)
+        );
+        // A past-epoch message from a member who stays still decrypts.
+        let ([a, b, c], [mut ag, mut bg, mut cg]) = three_members(b"conv_stays");
+        let late = c.encrypt(&mut cg, b"late but welcome").unwrap();
+        let dave = MlsDevice::new(b"acct_dave", b"dev_dave").unwrap();
+        let dave_kp = dave.create_key_package().unwrap();
+        let add = a
+            .stage_membership_commit(
+                &mut ag,
+                &[MemberAdd {
+                    key_package: &dave_kp,
+                    account_id: b"acct_dave",
+                    device_id: b"dev_dave",
+                }],
+                &[],
+            )
+            .unwrap();
+        a.merge_pending_commit(&mut ag).unwrap();
+        b.process_commit(&mut bg, &add.commit).unwrap();
+        assert_eq!(
+            b.decrypt(&mut bg, &late, b"acct_carol", b"dev_carol")
+                .unwrap(),
+            b"late but welcome"
+        );
+    }
+
+    #[test]
+    fn the_committer_drops_a_late_message_from_the_device_it_removed() {
+        // The cost of the rule (Q-003): Bob's message is sent, and accepted
+        // by the server, before Alice's removal commit, but Alice merges her
+        // commit on acceptance and reads Bob's message afterwards.
+        let ([alice, bob, _carol], [mut alice_group, mut bob_group, _]) =
+            three_members(b"conv_race_removed");
+        let late = bob.encrypt(&mut bob_group, b"sent before removal").unwrap();
+        alice
+            .stage_membership_commit(
+                &mut alice_group,
+                &[],
+                &[MemberIdentity {
+                    account_id: b"acct_bob",
+                    device_id: b"dev_bob",
+                }],
+            )
+            .unwrap();
+        alice.merge_pending_commit(&mut alice_group).unwrap();
+        assert_eq!(
+            alice.decrypt(&mut alice_group, &late, b"acct_bob", b"dev_bob"),
+            Err(MlsError::SenderRemoved)
+        );
     }
 
     #[test]

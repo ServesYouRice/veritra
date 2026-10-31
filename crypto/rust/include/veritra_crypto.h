@@ -12,6 +12,10 @@
 #define PM_CRYPTO_PANIC (-4)
 /* Decrypted, but the MLS sender is not the claimed account/device (ABI 5). */
 #define PM_CRYPTO_SENDER_MISMATCH (-5)
+/* ABI 9: decrypted from a retained past epoch, but the sender has left the
+ * group. The ratchet has advanced: commit state, keep no content, exactly as
+ * for PM_CRYPTO_SENDER_MISMATCH. */
+#define PM_CRYPTO_SENDER_REMOVED (-7)
 
 typedef struct {
   const uint8_t *data;

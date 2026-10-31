@@ -99,4 +99,45 @@ void main() {
     restored.device.close();
     bob.close();
   }, skip: libraryPath == null ? 'host native library not built' : false);
+
+  test('a past-epoch message from a removed device is senderRemoved', () {
+    final bindings = NativeCryptoBindings.open(libraryPath!);
+    final alice = bindings.createDevice('acct_alice', 'dev_alice');
+    final bob = bindings.createDevice('acct_bob', 'dev_bob');
+    final carol = bindings.createDevice('acct_carol', 'dev_carol');
+    alice.createGroup('conv_removed');
+    final added = alice.stageCommit('conv_removed', adds: [
+      (
+        keyPackage: bob.createKeyPackage(),
+        accountId: 'acct_bob',
+        deviceId: 'dev_bob'
+      ),
+      (
+        keyPackage: carol.createKeyPackage(),
+        accountId: 'acct_carol',
+        deviceId: 'dev_carol'
+      ),
+    ]);
+    alice.mergePendingCommit('conv_removed');
+    bob.joinGroup('conv_removed', added.welcome);
+    carol.joinGroup('conv_removed', added.welcome);
+    final removal = alice.stageCommit('conv_removed',
+        removes: [(accountId: 'acct_bob', deviceId: 'dev_bob')]);
+    alice.mergePendingCommit('conv_removed');
+    carol.processCommit('conv_removed', removal.commit);
+    // Bob never applies his removal and writes in the old epoch.
+    final injected = bob.encrypt('conv_removed', [1, 2, 3]);
+    expect(
+        () => carol.decrypt('conv_removed', injected,
+            senderAccountId: 'acct_bob', senderDeviceId: 'dev_bob'),
+        throwsA(isA<NativeCryptoException>().having(
+            (error) => error.kind, 'kind', NativeCryptoError.senderRemoved)));
+    // The service commits the ratchet and keeps a warning for both.
+    expect(NativeCryptoError.senderRemoved.ratchetAdvanced, isTrue);
+    expect(NativeCryptoError.senderMismatch.ratchetAdvanced, isTrue);
+    expect(NativeCryptoError.operationFailed.ratchetAdvanced, isFalse);
+    alice.close();
+    bob.close();
+    carol.close();
+  }, skip: libraryPath == null ? 'host native library not built' : false);
 }

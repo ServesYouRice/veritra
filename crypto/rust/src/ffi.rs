@@ -18,6 +18,10 @@ pub const PM_CRYPTO_PANIC: i32 = -4;
 /// Decryption succeeded but the MLS sender is not the claimed account/device.
 /// The group ratchet has already advanced past the message.
 pub const PM_CRYPTO_SENDER_MISMATCH: i32 = -5;
+/// Decryption succeeded from a retained past epoch, but the sender is no
+/// longer a member of the group (ABI 9). The ratchet has already advanced;
+/// handle it like [`PM_CRYPTO_SENDER_MISMATCH`]: commit, show no content.
+pub const PM_CRYPTO_SENDER_REMOVED: i32 = -7;
 
 const MAX_ID_BYTES: usize = 128;
 const STATE_KEY_BYTES: usize = 32;
@@ -909,7 +913,11 @@ pub unsafe extern "C" fn pm_crypto_group_encrypt(
     })
 }
 
-/// Decrypts and authenticates one MLS application message.
+/// Decrypts and authenticates one MLS application message. Returns
+/// [`PM_CRYPTO_SENDER_MISMATCH`] when the MLS sender is not the claimed one
+/// and [`PM_CRYPTO_SENDER_REMOVED`] for a past-epoch message whose sender has
+/// left the group. In both cases the ratchet has advanced, so the caller
+/// commits its state and keeps no content.
 ///
 /// # Safety
 /// `handle` must be live, slices readable, and `out_plaintext` writable.
@@ -938,6 +946,7 @@ pub unsafe extern "C" fn pm_crypto_group_decrypt(
                     .decrypt(&mut group, ciphertext, sender_account_id, sender_device_id)
                     .map_err(|error| match error {
                         MlsError::SenderMismatch => PM_CRYPTO_SENDER_MISMATCH,
+                        MlsError::SenderRemoved => PM_CRYPTO_SENDER_REMOVED,
                         _ => PM_CRYPTO_ERROR,
                     })
             })?

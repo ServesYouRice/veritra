@@ -123,6 +123,17 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     group id, well-formed unique identities, this device's own identity and
     signing key on its leaf, a sender that is another leaf. A refused
     Welcome stores nothing, but staging has already consumed the key package.
+  - TASK-008 (decides Q-003): a message decrypted from one of the two
+    retained past epochs (I51) is refused when its sender is no longer in
+    the group, so a removed device cannot keep writing by never applying
+    its removal. The cost: a committer that merges a removal on acceptance
+    drops the removed device's genuine late message too; the receiver
+    cannot tell the two apart. The new code `PM_CRYPTO_SENDER_REMOVED` (-7)
+    is handled exactly like D25's sender mismatch: the ratchet advanced, so
+    the state and cursor commit with an `unverifiable` row. Mapping it to
+    `PM_CRYPTO_ERROR` instead would roll back and stop global sync (I33)
+    on that honest race. The check compares identities only; past-epoch
+    signature keys are not exposed by OpenMLS.
   - Not closed here: which identities may hold which keys, and who may
     commit or invite (TASK-006), needs the L1 approved-device list.
 

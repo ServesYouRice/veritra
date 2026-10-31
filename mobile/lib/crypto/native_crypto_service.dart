@@ -629,7 +629,7 @@ class NativeCryptoService
             // The server also delivers a caller's signals to the caller's
             // other devices, where the guessed sender account is wrong. The
             // ratchet already advanced, so commit and drop the signal (P4).
-            if (error.kind != NativeCryptoError.senderMismatch) rethrow;
+            if (!error.kind.ratchetAdvanced) rethrow;
           }
           // Once decryption succeeds the ratchet has moved, so the state and
           // cursor always commit (P4). A payload that is not a valid call
@@ -856,7 +856,7 @@ class NativeCryptoService
             senderDeviceId: envelope.senderDeviceId,
           );
         } on NativeCryptoException catch (error) {
-          if (error.kind != NativeCryptoError.senderMismatch) rethrow;
+          if (!error.kind.ratchetAdvanced) rethrow;
           // The ratchet already advanced, so the message can never be
           // decrypted again. Keep going and record a warning instead of
           // the claimed sender's words (D25).

@@ -530,6 +530,7 @@ class NativeCryptoBindings {
       -3 => NativeCryptoError.operationFailed,
       -4 => NativeCryptoError.nativePanic,
       -5 => NativeCryptoError.senderMismatch,
+      -7 => NativeCryptoError.senderRemoved,
       _ => NativeCryptoError.unknown,
     });
   }
@@ -593,8 +594,21 @@ enum NativeCryptoError {
   /// The message decrypted, but its MLS sender is not the account/device the
   /// server claimed (ABI 5). The group ratchet has already advanced.
   senderMismatch,
+
+  /// The message decrypted from a retained past epoch, but its sender has
+  /// left the group (ABI 9). The ratchet has already advanced: handle it as
+  /// [senderMismatch].
+  senderRemoved,
   invalidOutput,
   unknown
+}
+
+extension NativeCryptoErrorRatchet on NativeCryptoError {
+  /// Decryption used its ratchet step, so the message can never be decrypted
+  /// again, but its content must not be shown: commit and keep a warning.
+  bool get ratchetAdvanced =>
+      this == NativeCryptoError.senderMismatch ||
+      this == NativeCryptoError.senderRemoved;
 }
 
 class NativeCryptoException implements Exception {
@@ -862,7 +876,9 @@ class NativeCryptoDevice implements Finalizable {
 
   /// Decrypts [ciphertext] and checks that its MLS sender is
   /// [senderAccountId]/[senderDeviceId]. Throws
-  /// [NativeCryptoError.senderMismatch] when it is not.
+  /// [NativeCryptoError.senderMismatch] when it is not, and
+  /// [NativeCryptoError.senderRemoved] for a past-epoch message from a
+  /// sender who has left the group; the ratchet has advanced in both.
   List<int> decrypt(
     String groupId,
     List<int> ciphertext, {
