@@ -650,60 +650,86 @@ func restore(cfg config.Config, args []string, stdout io.Writer) error {
 	return nil
 }
 
-// rollBackRestore puts every preserved original back. Restored copies are
-// removed only where an original is waiting to replace them, or when they
-// sit at the live path with no original to lose.
+// rollBackRestore puts every preserved original back: the database, then
+// its WAL and SHM, then the blobs, stopping at the first failure. Restored
+// copies are moved into staging only where an original is waiting to replace
+// them, or when they sit at the live path with no original to lose.
 func rollBackRestore(journal restoreJournal) error {
 	if err := ensureStagingDir(journal.StagingDir); err != nil {
 		return err
 	}
-	var result error
-	putBack := func(live, rollback string, directory bool) {
+	// withdraw moves a restored copy out of its live path into staging,
+	// rather than deleting it. An earlier, interrupted attempt may have
+	// used the plain name already.
+	withdraw := func(live, name string) error {
+		if _, err := os.Lstat(live); os.IsNotExist(err) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		target := filepath.Join(journal.StagingDir, name)
+		if _, err := os.Lstat(target); err == nil {
+			target += "-" + randomSuffix()
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		return os.Rename(live, target)
+	}
+	putBack := func(live, rollback string) error {
 		if rollback == "" {
-			return
+			return nil
 		}
-		if _, err := os.Lstat(rollback); err != nil {
-			if !os.IsNotExist(err) {
-				result = errors.Join(result, err)
-			}
-			return // never moved: the original is still live
+		if _, err := os.Lstat(rollback); os.IsNotExist(err) {
+			return nil // never moved, or already back: the original is live
+		} else if err != nil {
+			return err
 		}
-		if _, err := os.Lstat(live); err == nil {
-			// The restored copy came from the staging directory; move it back
-			// there rather than deleting it.
-			if err := os.Rename(live, filepath.Join(journal.StagingDir, "rolled-back-"+filepath.Base(live))); err != nil {
-				result = errors.Join(result, err)
-				return
-			}
+		if err := withdraw(live, "rolled-back-"+filepath.Base(live)); err != nil {
+			return err
 		}
-		if err := os.Rename(rollback, live); err != nil {
-			result = errors.Join(result, err)
+		return os.Rename(rollback, live)
+	}
+	// settle runs one step and stops the rollback at its first failure.
+	// Every step can run again: a retry finds the originals that are already
+	// back and moves only what is left.
+	parent := filepath.Dir(journal.Database)
+	settle := func(err error) error {
+		if err != nil {
+			return errors.Join(err, syncDir(parent))
+		}
+		return nil
+	}
+	// The database comes first. Its WAL holds committed data and SQLite does
+	// not check which database a WAL belongs to, so the original -wal and
+	// -shm may only go back once the original database is live again.
+	err := faultHook("restore:rollback-database")
+	if err == nil {
+		if journal.DatabaseRollback != "" {
+			err = putBack(journal.Database, journal.DatabaseRollback)
+		} else {
+			// There was no live database: a restored one is simply withdrawn.
+			err = withdraw(journal.Database, "rolled-back-database.db")
 		}
 	}
-	putBack(journal.Database, journal.DatabaseRollback, false)
+	if err := settle(err); err != nil {
+		return err
+	}
 	for live, rollback := range journal.Companions {
-		putBack(live, rollback, false)
-	}
-	if journal.DatabaseRollback == "" {
-		// There was no live database: a restored one is simply withdrawn.
-		if _, err := os.Lstat(journal.Database); err == nil {
-			result = errors.Join(result, os.Rename(journal.Database,
-				filepath.Join(journal.StagingDir, "rolled-back-database.db")))
+		if err := settle(putBack(live, rollback)); err != nil {
+			return err
 		}
 	}
 	if journal.Blobs != "" {
-		putBack(journal.Blobs, journal.BlobsRollback, true)
-		if journal.BlobsRollback == "" {
-			if _, err := os.Lstat(journal.Blobs); err == nil {
-				result = errors.Join(result, os.Rename(journal.Blobs,
-					filepath.Join(journal.StagingDir, "rolled-back-blobs")))
-			}
+		if journal.BlobsRollback != "" {
+			err = putBack(journal.Blobs, journal.BlobsRollback)
+		} else {
+			err = withdraw(journal.Blobs, "rolled-back-blobs")
+		}
+		if err := settle(err); err != nil {
+			return err
 		}
 	}
-	if err := syncDir(filepath.Dir(journal.Database)); err != nil {
-		result = errors.Join(result, err)
-	}
-	return result
+	return syncDir(parent)
 }
 
 // ensureStagingDir recreates a journal's staging directory when it is gone,
