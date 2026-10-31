@@ -356,6 +356,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   bool conversationsLoaded = false;
   bool communitiesLoaded = false;
   bool invitesLoaded = false;
+
+  /// True when the last [refreshInvites] could not list the invites. The
+  /// listing stays best-effort for everyone else, but the invite screen says
+  /// so instead of showing an empty list.
+  bool invitesLoadFailed = false;
   bool devicesLoaded = false;
   final Set<String> _loadingMessageConversations = <String>{};
   final Map<String, String> _messageLoadErrors = <String, String>{};
@@ -1469,8 +1474,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     }
     try {
       invites = await client.listInvites(current.token);
+      invitesLoadFailed = false;
     } catch (_) {
-      // Ignored: invite listing is a privilege, not a core flow.
+      // Not surfaced here: invite listing is a privilege, not a core flow.
+      invitesLoadFailed = true;
     } finally {
       invitesLoaded = true;
       notifyListeners();
@@ -3101,6 +3108,25 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         <int>[_safetyNumberVersion, ...safety.transcriptHash]);
   }
 
+  /// Stores a verification for the safety number whose code the person
+  /// compared ([comparedCode]: the code shown to them, or the one they
+  /// scanned), and only if that is still the conversation's number. The
+  /// current number is read once and both checked and stored from that
+  /// reading, so a device that joined or left since the comparison can never
+  /// be recorded as verified. Returns false, storing nothing, when the number
+  /// is no longer the compared one; a failure to store throws.
+  Future<bool> markPeerVerifiedIfMatches(
+      String conversationId, String peerAccountId, String comparedCode) async {
+    final current = await conversationSafetyNumber(conversationId);
+    if (!_constantTimeBytesEqual(
+        utf8.encode(comparedCode.trim()), utf8.encode(current.qrPayload))) {
+      return false;
+    }
+    await localStore.savePeerVerification(conversationId, peerAccountId,
+        <int>[_safetyNumberVersion, ...current.transcriptHash]);
+    return true;
+  }
+
   Future<PeerVerificationStatus> peerVerificationStatus(
       String conversationId, String peerAccountId) async {
     final saved =
@@ -4583,6 +4609,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     conversationsLoaded = false;
     communitiesLoaded = false;
     invitesLoaded = false;
+    invitesLoadFailed = false;
     devicesLoaded = false;
     devices = <Device>[];
     messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};

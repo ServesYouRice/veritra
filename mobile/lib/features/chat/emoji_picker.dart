@@ -133,13 +133,18 @@ class _EmojiPickerState extends State<EmojiPicker> {
                     itemCount: entries.length,
                     itemBuilder: (context, index) {
                       final entry = entries[index];
+                      void pick() => Navigator.of(context).pop(entry.emoji);
+                      // excludeSemantics keeps the glyph from being read in
+                      // addition to its name, but it also drops the InkWell's
+                      // own tap action, so this node carries it.
                       return Semantics(
                         label: entry.name,
                         button: true,
+                        onTap: pick,
                         excludeSemantics: true,
                         child: InkWell(
                           borderRadius: BorderRadius.circular(BoneRadii.md),
-                          onTap: () => Navigator.of(context).pop(entry.emoji),
+                          onTap: pick,
                           child: Center(
                             child: Text(
                               entry.emoji,

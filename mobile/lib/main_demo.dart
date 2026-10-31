@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'core/api_client.dart';
 import 'core/app_state.dart';
+import 'core/attachments.dart' show cleanupAttachmentOrphans;
 import 'core/client_config.dart';
 import 'core/receipts_state.dart';
 import 'core/transport_policy.dart';
@@ -14,7 +15,8 @@ import 'crypto/backup_service.dart';
 import 'crypto/native_crypto_bindings.dart';
 import 'crypto/native_crypto_service.dart';
 import 'features/chat/attachment_views.dart' show purgeOpenedAttachments;
-import 'features/chat/composer_attachments.dart' show purgePastedImages;
+import 'features/chat/composer_attachments.dart'
+    show purgePastedImages, usePastedImageProfile;
 import 'main.dart' show VeritraApp, StartupFailureApp;
 import 'push/background_wake_runner.dart';
 import 'push/push_service.dart';
@@ -53,6 +55,7 @@ Future<void> main(List<String> args) async {
     return;
   }
   final namespace = profile == null ? 'demo' : 'demo-$profile';
+  usePastedImageProfile(namespace);
   final bridge = PlatformWakeWorkerBridge();
   // One store and one AppState per process (D52 contract): a background
   // wake and the UI share them, so two owners never race on MLS state.
@@ -156,11 +159,22 @@ Future<void> main(List<String> args) async {
       runApp(VeritraApp(state: state, desktop: desktop));
       unawaited(purgeOpenedAttachments());
       unawaited(purgePastedImages());
+      unawaited(_sweepAttachmentOrphans(state));
       unawaited(state.tryRestoreSession());
     },
     onUiError: () => runApp(const StartupFailureApp()),
   );
   await launch.start();
+}
+
+/// Removes attachment working files an interrupted run left behind.
+Future<void> _sweepAttachmentOrphans(AppState state) async {
+  try {
+    final directory = await state.attachmentService?.workingDirectory();
+    if (directory != null) await cleanupAttachmentOrphans(directory);
+  } catch (_) {
+    // Best effort; no path provider on a test host.
+  }
 }
 
 String _deviceName() {

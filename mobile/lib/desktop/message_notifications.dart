@@ -14,6 +14,9 @@ import 'desktop_shell.dart';
 /// Where the notification choice is kept. A device preference like the
 /// appearance: it survives sign-out and holds no message content.
 abstract class NotificationSettingsStore {
+  /// The saved choice, or null when none was ever saved. Throws when the
+  /// store cannot be read: that is not the same as "never saved", because an
+  /// unknown choice must not be treated as "show previews".
   Future<bool?> loadHidePreview();
   Future<void> saveHidePreview(bool value);
 }
@@ -31,12 +34,8 @@ class SecureNotificationSettingsStore implements NotificationSettingsStore {
 
   @override
   Future<bool?> loadHidePreview() async {
-    try {
-      final value = await _storage.read(key: key);
-      return value == null ? null : value == 'true';
-    } catch (_) {
-      return null;
-    }
+    final value = await _storage.read(key: key);
+    return value == null ? null : value == 'true';
   }
 
   @override
@@ -62,19 +61,34 @@ class MemoryNotificationSettingsStore implements NotificationSettingsStore {
 }
 
 /// Whether a notification may show message text. The preview is shown until
-/// the person hides it.
+/// the person hides it, but only once the saved choice is known: before it
+/// has loaded, and for the whole run when the store cannot be read, a
+/// notification carries no message text.
 class NotificationSettings extends ChangeNotifier {
   NotificationSettings(this._store);
 
   final NotificationSettingsStore _store;
   bool _hidePreview = false;
   bool _changed = false;
+  bool _loaded = false;
 
+  /// The choice the settings screen shows.
   bool get hidePreview => _hidePreview;
 
-  /// Reads the saved choice. A choice made before the read finishes wins.
+  /// Whether a notification may carry message text: the saved choice was
+  /// read (or the person chose in this run) and it is not "hide".
+  bool get previewAllowed => (_loaded || _changed) && !_hidePreview;
+
+  /// Reads the saved choice. A choice made before the read finishes wins. A
+  /// read that fails leaves the choice unknown, which hides previews.
   Future<void> load() async {
-    final saved = await _store.loadHidePreview();
+    final bool? saved;
+    try {
+      saved = await _store.loadHidePreview();
+    } catch (_) {
+      return;
+    }
+    _loaded = true;
     if (saved == null || _changed || saved == _hidePreview) return;
     _hidePreview = saved;
     notifyListeners();
@@ -134,9 +148,17 @@ class MessageNotifier {
 
   final Set<String> _announced = <String>{};
 
-  void attach() => state.onMessagesPublished = _onPublished;
+  /// Bumped by [attach] and [detach]; work that started under an earlier
+  /// value is dropped.
+  int _generation = 0;
+
+  void attach() {
+    _generation++;
+    state.onMessagesPublished = _onPublished;
+  }
 
   void detach() {
+    _generation++;
     if (state.onMessagesPublished == _onPublished) {
       state.onMessagesPublished = null;
     }
@@ -149,6 +171,17 @@ class MessageNotifier {
   Future<void> handle(List<ReceivedMessageEnvelope> envelopes) async {
     final session = state.session;
     if (session == null) return;
+    // The text below belongs to this session. If the notifier is detached or
+    // the account or device changes while this call waits, nothing is shown.
+    final generation = _generation;
+    bool current() {
+      final active = state.session;
+      return generation == _generation &&
+          active != null &&
+          active.accountId == session.accountId &&
+          active.deviceId == session.deviceId;
+    }
+
     final candidates = <String,
         ({ReceivedMessageEnvelope envelope, String text, bool mentioned})>{};
     for (final envelope in envelopes) {
@@ -184,19 +217,23 @@ class MessageNotifier {
     }
     if (candidates.isEmpty) return;
     if (await shell.isWindowActive()) return;
+    if (!current()) return;
 
     var shown = 0;
     for (final entry in candidates.entries) {
       if (shown >= _maxPerBatch) break;
       // The mute flag lives on the server and is read per conversation. If it
       // cannot be read, stay quiet rather than notify for a muted chat.
-      if (!await state.loadConversationMuted(entry.key)) continue;
+      final muteKnown = await state.loadConversationMuted(entry.key);
+      if (!current()) return;
+      if (!muteKnown) continue;
       if (state.isMuted(entry.key) && !entry.value.mentioned) continue;
       final strings = l10n();
-      if (settings.hidePreview) {
+      if (!settings.previewAllowed) {
         await notifier.show(
           title: veritraProductName,
           body: strings.notificationNewMessage,
+          stillWanted: current,
         );
       } else {
         final conversation = state.conversations
@@ -207,6 +244,7 @@ class MessageNotifier {
               ? veritraProductName
               : conversationTitle(strings, conversation),
           body: _preview(entry.value.text),
+          stillWanted: current,
         );
       }
       shown++;

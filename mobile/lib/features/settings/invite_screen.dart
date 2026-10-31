@@ -132,16 +132,37 @@ class _InviteScreenState extends State<InviteScreen> {
                 if (invites.isEmpty)
                   // Spinner until the first fetch resolves, then the empty
                   // state — otherwise "No invites yet" flashes during load.
-                  widget.state.invitesLoaded
-                      ? EmptyState(
-                          icon: Icons.card_giftcard_outlined,
-                          title: l10n.inviteEmptyTitle,
-                          message: l10n.inviteEmptyMessage,
+                  // A listing that failed is not an empty list.
+                  widget.state.invitesLoaded && widget.state.invitesLoadFailed
+                      ? Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 32),
+                          child: Column(
+                            children: <Widget>[
+                              Text(
+                                l10n.inviteLoadFailed,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: Theme.of(context).colorScheme.error,
+                                ),
+                              ),
+                              const SizedBox(height: BoneSpacing.md),
+                              OutlinedButton(
+                                onPressed: widget.state.refreshInvites,
+                                child: Text(l10n.commonRetry),
+                              ),
+                            ],
+                          ),
                         )
-                      : const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 32),
-                          child: Center(child: CircularProgressIndicator()),
-                        )
+                      : widget.state.invitesLoaded
+                          ? EmptyState(
+                              icon: Icons.card_giftcard_outlined,
+                              title: l10n.inviteEmptyTitle,
+                              message: l10n.inviteEmptyMessage,
+                            )
+                          : const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 32),
+                              child: Center(child: CircularProgressIndicator()),
+                            )
                 else ...<Widget>[
                   SectionHeader(l10n.inviteYourInvites),
                   TileGroup(
@@ -170,8 +191,15 @@ class _InviteScreenState extends State<InviteScreen> {
       confirmLabel: context.l10n.commonRevoke,
       destructive: true,
     );
-    if (confirmed) {
-      await widget.state.revokeInvite(invite.id);
+    if (!confirmed) return;
+    await widget.state.revokeInvite(invite.id);
+    if (!context.mounted) return;
+    // The action clears the shared error when it starts and sets it when it
+    // fails, so an error here belongs to this revoke, not an earlier one.
+    final error = widget.state.error;
+    if (error != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error)));
     }
   }
 

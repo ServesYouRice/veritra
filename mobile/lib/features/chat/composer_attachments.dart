@@ -51,30 +51,80 @@ class PendingAttachment {
 class ComposerAttachments extends ChangeNotifier {
   final List<PendingAttachment> _items = <PendingAttachment>[];
 
+  /// True while one [sendPendingAttachments] call runs, from its first line
+  /// to its last, including the clean-up after each file. A second call finds
+  /// it set and sends nothing.
+  bool _sendingBatch = false;
+
+  /// The file whose send is under way. Taking it off the tray must not delete
+  /// its temporary copy until the send has read it.
+  PendingAttachment? _inFlight;
+  bool _discardInFlight = false;
+  bool _disposed = false;
+
   List<PendingAttachment> get items =>
       List<PendingAttachment>.unmodifiable(_items);
   bool get isEmpty => _items.isEmpty;
   bool get isNotEmpty => _items.isNotEmpty;
   int get length => _items.length;
 
+  /// Whether a batch send is running on this tray.
+  bool get isSending => _sendingBatch;
+
+  /// Whether [item] is still waiting on the tray.
+  bool contains(PendingAttachment item) => _items.contains(item);
+
   void add(PendingAttachment item) {
     _items.add(item);
-    notifyListeners();
+    _notify();
   }
 
   Future<void> remove(PendingAttachment item) async {
-    if (_items.remove(item)) notifyListeners();
-    await item.discard();
+    if (_items.remove(item)) _notify();
+    await _discard(item);
   }
 
-  /// Drops everything, deleting the app's own temporary copies.
+  /// Drops everything, deleting the app's own temporary copies. The file
+  /// being sent right now is deleted once its send ends.
   Future<void> clear() async {
     final dropped = List<PendingAttachment>.of(_items);
     _items.clear();
-    if (dropped.isNotEmpty) notifyListeners();
+    if (dropped.isNotEmpty) _notify();
     for (final item in dropped) {
-      await item.discard();
+      await _discard(item);
     }
+  }
+
+  Future<void> _discard(PendingAttachment item) async {
+    if (identical(item, _inFlight)) {
+      _discardInFlight = true;
+      return;
+    }
+    await item.discard();
+  }
+
+  void _markInFlight(PendingAttachment item) {
+    _inFlight = item;
+    _discardInFlight = false;
+  }
+
+  /// Ends the in-flight marker and deletes the file now if it was taken off
+  /// the tray while it was being sent.
+  Future<void> _clearInFlight(PendingAttachment item) async {
+    final discard = _discardInFlight;
+    _inFlight = null;
+    _discardInFlight = false;
+    if (discard) await item.discard();
+  }
+
+  void _notify() {
+    if (!_disposed) notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
   }
 }
 
@@ -166,28 +216,66 @@ String pastedImageName(DateTime now) {
       '${two(now.hour)}${two(now.minute)}${two(now.second)}.png';
 }
 
-/// Writes clipboard image bytes to a private cache file, for the tray.
+/// The folder name that keeps one profile's pasted images apart from
+/// another's. Demo builds run several profiles side by side on one machine
+/// and share one cache directory; each sets its own with
+/// [usePastedImageProfile] before anything is pasted or purged.
+String _pasteScope = 'default';
+
+/// Names the profile whose pasted images this process keeps and purges. Only
+/// lower-case letters, digits and '-' are kept, so the name can never leave
+/// the paste folder.
+void usePastedImageProfile(String? profile) {
+  final clean = (profile ?? '').toLowerCase().replaceAll(
+        RegExp(r'[^a-z0-9-]'),
+        '',
+      );
+  _pasteScope = clean.isEmpty ? 'default' : clean;
+}
+
+/// Where this profile's pasted images live: a folder of its own under the
+/// per-user application cache. The cache is private to the signed-in user on
+/// every platform (unlike the shared temporary directory, often /tmp) and is
+/// left out of backups and device transfers.
+Future<Directory> _pastedImagesDirectory() async {
+  final cache = await getApplicationCacheDirectory();
+  final sep = Platform.pathSeparator;
+  return Directory('${cache.path}${sep}veritra-paste$sep$_pasteScope');
+}
+
+/// Writes clipboard image bytes to a file in this profile's folder under the
+/// per-user application cache, for the tray. The folder is not encrypted at
+/// rest; it holds a pasted image only until it is sent or removed.
 Future<XFile> writePastedImage(Uint8List bytes) async {
-  final directory = await getTemporaryDirectory();
-  final folder = Directory(
-    '${directory.path}${Platform.pathSeparator}veritra-paste',
-  );
+  final folder = await _pastedImagesDirectory();
   await folder.create(recursive: true);
   final random = Random.secure().nextInt(1 << 32).toRadixString(16);
   final name = pastedImageName(DateTime.now());
   final file = File('${folder.path}${Platform.pathSeparator}$random-$name');
+  // Exclusive: never write through a file or link that is already there.
+  await file.create(exclusive: true);
   await file.writeAsBytes(bytes, flush: true);
   return XFile(file.path, name: name, mimeType: 'image/png');
 }
 
-/// Deletes pasted images left behind by an earlier run. Call at startup.
+/// Deletes this profile's pasted images left behind by an earlier run, and
+/// the shared temporary folder older versions wrote to. Another profile's
+/// folder is never touched. Call at startup.
 Future<void> purgePastedImages() async {
   try {
-    final directory = await getTemporaryDirectory();
-    final folder = Directory(
-      '${directory.path}${Platform.pathSeparator}veritra-paste',
-    );
+    final folder = await _pastedImagesDirectory();
     if (await folder.exists()) await folder.delete(recursive: true);
+  } on FileSystemException {
+    // Best effort.
+  } on MissingPluginException {
+    // No path provider (a test host).
+  }
+  try {
+    final temp = await getTemporaryDirectory();
+    final legacy = Directory(
+      '${temp.path}${Platform.pathSeparator}veritra-paste',
+    );
+    if (await legacy.exists()) await legacy.delete(recursive: true);
   } on FileSystemException {
     // Best effort.
   } on MissingPluginException {
@@ -198,33 +286,52 @@ Future<void> purgePastedImages() async {
 /// Sends each waiting file as its own encrypted attachment message, in
 /// order, taking sent ones off the tray. Stops at the first failure and
 /// leaves the rest waiting. Returns whether everything was sent.
+///
+/// Only one call runs per tray: a call made while another is still running,
+/// even in its clean-up after a file, sends nothing and returns false. A file
+/// taken off the tray before its turn is not sent, and one taken off during
+/// its own send keeps its temporary copy until that send ends.
 Future<bool> sendPendingAttachments(
   BuildContext context,
   AppState state,
   String conversationId,
   ComposerAttachments tray,
 ) async {
-  final items = tray.items;
-  for (final item in items) {
-    final sent = await state.sendAttachment(
-      conversationId,
-      path: item.path,
-      fileName: item.name,
-      mediaType: item.mediaType,
-    );
-    if (!sent) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(
-            state.errorFor(Ops.attachment) ?? context.l10n.attachmentSendFailed,
-          ),
-        ));
+  if (tray._sendingBatch) return false;
+  tray._sendingBatch = true;
+  try {
+    for (final item in tray.items) {
+      // The person may have removed it since the list was copied.
+      if (!tray.contains(item)) continue;
+      tray._markInFlight(item);
+      final bool sent;
+      try {
+        sent = await state.sendAttachment(
+          conversationId,
+          path: item.path,
+          fileName: item.name,
+          mediaType: item.mediaType,
+        );
+      } finally {
+        await tray._clearInFlight(item);
       }
-      return false;
+      if (!sent) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(
+              state.errorFor(Ops.attachment) ??
+                  context.l10n.attachmentSendFailed,
+            ),
+          ));
+        }
+        return false;
+      }
+      await tray.remove(item);
     }
-    await tray.remove(item);
+    return true;
+  } finally {
+    tray._sendingBatch = false;
   }
-  return true;
 }
 
 /// The files waiting to be sent, as removable chips above the composer.

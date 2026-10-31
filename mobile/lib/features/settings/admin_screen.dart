@@ -42,7 +42,10 @@ class _AdminScreenState extends State<AdminScreen> {
   bool _accountsLoaded = false;
   bool _eventsLoaded = false;
   bool _loading = false;
-  String? _error;
+  // Each tab has its own error: one tab's failure says nothing about the
+  // other, and a failed load must not read as an empty list.
+  String? _accountsError;
+  String? _eventsError;
   // A reload supersedes a load still in flight: the older answer is dropped
   // rather than appended to the fresh list.
   int _accountsGeneration = 0;
@@ -66,7 +69,7 @@ class _AdminScreenState extends State<AdminScreen> {
     final generation = reset ? ++_accountsGeneration : _accountsGeneration;
     setState(() {
       _loading = true;
-      _error = null;
+      _accountsError = null;
     });
     try {
       final page = await client.listAdminAccounts(
@@ -81,7 +84,9 @@ class _AdminScreenState extends State<AdminScreen> {
         _accountsLoaded = true;
       });
     } catch (err) {
-      if (generation == _accountsGeneration) _fail(err);
+      if (generation == _accountsGeneration) {
+        _fail(err, accounts: true);
+      }
     } finally {
       if (mounted && generation == _accountsGeneration) {
         setState(() => _loading = false);
@@ -96,6 +101,7 @@ class _AdminScreenState extends State<AdminScreen> {
     if (_eventsLoading && !reset) return;
     final generation = reset ? ++_eventsGeneration : _eventsGeneration;
     _eventsLoading = true;
+    if (_eventsError != null) setState(() => _eventsError = null);
     try {
       final page = await client.listAdminAuditEvents(
         token,
@@ -109,18 +115,23 @@ class _AdminScreenState extends State<AdminScreen> {
         _eventsLoaded = true;
       });
     } catch (err) {
-      if (generation == _eventsGeneration) _fail(err);
+      if (generation == _eventsGeneration) _fail(err, accounts: false);
     } finally {
       if (generation == _eventsGeneration) _eventsLoading = false;
     }
   }
 
-  void _fail(Object err) {
+  /// Records that the load of one tab failed. The tab's loaded flag is not
+  /// set: only a page that arrived makes an empty list mean "nothing here".
+  void _fail(Object err, {required bool accounts}) {
     if (!mounted) return;
+    final message = describeError(err, context.l10n);
     setState(() {
-      _error = describeError(err, context.l10n);
-      _accountsLoaded = true;
-      _eventsLoaded = true;
+      if (accounts) {
+        _accountsError = message;
+      } else {
+        _eventsError = message;
+      }
     });
   }
 
@@ -200,10 +211,10 @@ class _AdminScreenState extends State<AdminScreen> {
     );
   }
 
-  Widget _errorBanner(BuildContext context) => Padding(
+  Widget _errorBanner(BuildContext context, String message) => Padding(
         padding: const EdgeInsets.all(BoneSpacing.lg),
         child: Text(
-          _error!,
+          message,
           style: TextStyle(color: Theme.of(context).colorScheme.error),
         ),
       );
@@ -217,14 +228,14 @@ class _AdminScreenState extends State<AdminScreen> {
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(BoneSpacing.gutter),
         children: <Widget>[
-          if (_error != null) _errorBanner(context),
-          if (_accounts.isEmpty && _accountsLoaded && _error == null)
+          if (_accountsError != null) _errorBanner(context, _accountsError!),
+          if (_accounts.isEmpty && _accountsLoaded && _accountsError == null)
             EmptyState(
               icon: Icons.people_outline,
               title: l10n.adminNoAccounts,
               message: '',
             )
-          else if (_accounts.isEmpty && _error == null)
+          else if (_accounts.isEmpty && _accountsError == null)
             const Center(child: CircularProgressIndicator())
           else
             TileGroup(
@@ -289,14 +300,14 @@ class _AdminScreenState extends State<AdminScreen> {
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(BoneSpacing.gutter),
         children: <Widget>[
-          if (_error != null) _errorBanner(context),
-          if (_events.isEmpty && _eventsLoaded && _error == null)
+          if (_eventsError != null) _errorBanner(context, _eventsError!),
+          if (_events.isEmpty && _eventsLoaded && _eventsError == null)
             EmptyState(
               icon: Icons.history,
               title: l10n.adminNoEvents,
               message: '',
             )
-          else if (_events.isEmpty && _error == null)
+          else if (_events.isEmpty && _eventsError == null)
             const Center(child: CircularProgressIndicator())
           else
             TileGroup(

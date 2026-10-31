@@ -391,6 +391,20 @@ class AppLocalizationsSr extends AppLocalizations {
       'Апликација се и даље синхронизује када се пробуди, али ништа не приказује. Дозволите обавештења за Veritra у системским подешавањима.';
 
   @override
+  String get settingsPushNotAllowedTitle => 'Обавештења још нису дозвољена';
+
+  @override
+  String get settingsPushNotAllowedDetail =>
+      'Дозволите обавештења испод да бисте били обавештавани. До тада се апликација синхронизује када се пробуди, али ништа не приказује.';
+
+  @override
+  String get settingsPushUnconfirmedTitle => 'Обавештења се не могу потврдити';
+
+  @override
+  String get settingsPushUnconfirmedDetail =>
+      'Овај уређај није потврдио да су обавештења дозвољена, па можда ништа неће бити приказано. Проверите системска подешавања за Veritra.';
+
+  @override
   String get settingsPushActiveTitle => 'Push обавештења су активна';
 
   @override
@@ -802,6 +816,10 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get inviteEmptyMessage =>
       'Кодови позивница које направите појављују се овде. Делите их преко безбедног канала.';
+
+  @override
+  String get inviteLoadFailed =>
+      'Ваше позивнице нису могле да се учитају. Проверите везу и покушајте поново.';
 
   @override
   String get inviteYourInvites => 'Ваше позивнице';
@@ -1413,6 +1431,10 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get safetyChangedDetail =>
       'Откако сте верификовали, у овом разговору је неки уређај додат, уклоњен или замењен. Поново упоредите нови број.';
+
+  @override
+  String get safetyChangedWhileComparing =>
+      'Безбедносни број се променио док сте га упоређивали, па ништа није сачувано. Поново упоредите нови број.';
 
   @override
   String get safetyUnverifiedDetail => 'Још није верификовано.';
@@ -2905,6 +2927,20 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Aplikacija se i dalje sinhronizuje kada se probudi, ali ništa ne prikazuje. Dozvolite obaveštenja za Veritra u sistemskim podešavanjima.';
 
   @override
+  String get settingsPushNotAllowedTitle => 'Obaveštenja još nisu dozvoljena';
+
+  @override
+  String get settingsPushNotAllowedDetail =>
+      'Dozvolite obaveštenja ispod da biste bili obaveštavani. Do tada se aplikacija sinhronizuje kada se probudi, ali ništa ne prikazuje.';
+
+  @override
+  String get settingsPushUnconfirmedTitle => 'Obaveštenja se ne mogu potvrditi';
+
+  @override
+  String get settingsPushUnconfirmedDetail =>
+      'Ovaj uređaj nije potvrdio da su obaveštenja dozvoljena, pa možda ništa neće biti prikazano. Proverite sistemska podešavanja za Veritra.';
+
+  @override
   String get settingsPushActiveTitle => 'Push obaveštenja su aktivna';
 
   @override
@@ -3316,6 +3352,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get inviteEmptyMessage =>
       'Kodovi pozivnica koje napravite pojavljuju se ovde. Delite ih preko bezbednog kanala.';
+
+  @override
+  String get inviteLoadFailed =>
+      'Vaše pozivnice nisu mogle da se učitaju. Proverite vezu i pokušajte ponovo.';
 
   @override
   String get inviteYourInvites => 'Vaše pozivnice';
@@ -3927,6 +3967,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get safetyChangedDetail =>
       'Otkako ste verifikovali, u ovom razgovoru je neki uređaj dodat, uklonjen ili zamenjen. Ponovo uporedite novi broj.';
+
+  @override
+  String get safetyChangedWhileComparing =>
+      'Bezbednosni broj se promenio dok ste ga upoređivali, pa ništa nije sačuvano. Ponovo uporedite novi broj.';
 
   @override
   String get safetyUnverifiedDetail => 'Još nije verifikovano.';

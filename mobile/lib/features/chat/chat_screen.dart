@@ -163,17 +163,22 @@ class _ChatScreenState extends State<ChatScreen> {
           return;
         }
         final position = scroll.position;
-        if (offset > position.maxScrollExtent) {
-          offset = position.maxScrollExtent;
+        final extentBefore = position.maxScrollExtent;
+        if (offset > extentBefore) {
+          offset = extentBefore;
         }
         scroll.jumpTo(offset);
         await WidgetsBinding.instance.endOfFrame;
+        // The screen may have been left, or the list replaced, while the
+        // frame was pending; the controller is then disposed or detached.
+        if (!mounted || !scroll.hasClients) return;
         if (_jumpTarget.currentContext == null) {
-          if (offset >= scroll.position.maxScrollExtent &&
-              scroll.position.maxScrollExtent == position.maxScrollExtent) {
+          final after = scroll.position;
+          if (offset >= after.maxScrollExtent &&
+              after.maxScrollExtent == extentBefore) {
             return;
           }
-          offset += position.viewportDimension * 0.8;
+          offset += after.viewportDimension * 0.8;
         }
       }
     } finally {
@@ -1268,7 +1273,11 @@ String quotedPreview(AppLocalizations l10n, LocalMessage? target) {
     return _attachmentSummary(l10n, target, target.conversationId);
   }
   final text = target.body!.replaceAll(RegExp(r'\s+'), ' ').trim();
-  return text.length <= 80 ? text : '${text.substring(0, 80)}…';
+  // Cut by user-perceived character: a UTF-16 cut can leave half a surrogate
+  // pair (text Flutter's paragraph builder rejects) or split an emoji
+  // sequence.
+  final characters = text.characters;
+  return characters.length <= 80 ? text : '${characters.take(80)}…';
 }
 
 /// Top-of-list affordance for older history: a spinner while a page is in
@@ -1607,8 +1616,22 @@ class _MessageBubble extends StatelessWidget {
     final l10n = context.l10n;
     final placeholder = _isPlaceholder;
     final time = formatTimeOfDay(context, message.createdAt);
+    // An attachment bubble keeps its attachment tiles as nodes of their own
+    // (file name, size and a tap action); excluding descendants would leave
+    // the merged bubble with no way to open them. Everything else in such a
+    // bubble stays covered by the bubble's label.
+    final tileNodes = local?.kind == LocalMessageKind.attachment &&
+        !deleted &&
+        !unverifiable &&
+        onOpenAttachment != null &&
+        AttachmentEntry.listFromBody(local?.body,
+                conversationId: message.conversationId)
+            .isNotEmpty;
+    Widget quiet(Widget child) =>
+        tileNodes ? ExcludeSemantics(child: child) : child;
     return Semantics(
-      excludeSemantics: true,
+      container: tileNodes,
+      excludeSemantics: !tileNodes,
       onLongPress: onActions,
       onLongPressHint: onActions == null ? null : l10n.chatMessageActions,
       label: (deleted
@@ -1646,21 +1669,21 @@ class _MessageBubble extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
-                    if (starred) const Icon(Icons.star, size: 14),
+                    if (starred) quiet(const Icon(Icons.star, size: 14)),
                     if (copiedHistory)
-                      Text(l10n.k2CopiedHistory,
-                          style: theme.textTheme.labelSmall),
+                      quiet(Text(l10n.k2CopiedHistory,
+                          style: theme.textTheme.labelSmall)),
                     if (local?.forwardHops != null)
-                      Padding(
+                      quiet(Padding(
                           padding: const EdgeInsets.only(bottom: 4),
                           child: Text(
                               local!.forwardHops! >= 5
                                   ? l10n.w8ForwardedMany
                                   : l10n.w8Forwarded,
                               style: theme.textTheme.labelSmall
-                                  ?.copyWith(fontStyle: FontStyle.italic))),
+                                  ?.copyWith(fontStyle: FontStyle.italic)))),
                     if (showSender)
-                      Padding(
+                      quiet(Padding(
                         padding: const EdgeInsets.only(bottom: 5),
                         child: Text(
                           senderLabel,
@@ -1668,9 +1691,9 @@ class _MessageBubble extends StatelessWidget {
                             color: scheme.onSurfaceVariant,
                           ),
                         ),
-                      ),
+                      )),
                     if (replyPreview != null && !deleted)
-                      Container(
+                      quiet(Container(
                         margin: const EdgeInsets.only(bottom: 6),
                         padding: const EdgeInsets.only(left: 8),
                         decoration: BoxDecoration(
@@ -1687,7 +1710,7 @@ class _MessageBubble extends StatelessWidget {
                             color: scheme.onSurfaceVariant,
                           ),
                         ),
-                      ),
+                      )),
                     if (deleted)
                       Text(
                         l10n.chatMessageDeleted,
@@ -1752,7 +1775,7 @@ class _MessageBubble extends StatelessWidget {
                         color: foreground,
                       ),
                     if (reactions.isNotEmpty && !deleted)
-                      Padding(
+                      quiet(Padding(
                         padding: const EdgeInsets.only(top: 6),
                         child: Wrap(
                           spacing: 4,
@@ -1780,9 +1803,9 @@ class _MessageBubble extends StatelessWidget {
                               ),
                           ],
                         ),
-                      ),
+                      )),
                     const SizedBox(height: 6),
-                    _metaLine(context, scheme),
+                    quiet(_metaLine(context, scheme)),
                   ],
                 ),
               ),

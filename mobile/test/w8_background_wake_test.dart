@@ -472,8 +472,14 @@ class _Shell extends NoopDesktopShell {
 class _Notifier implements DesktopNotifier {
   final List<String> shown = [];
   @override
-  Future<void> show({required String title, required String body}) async =>
-      shown.add(body);
+  Future<void> show({
+    required String title,
+    required String body,
+    bool Function()? stillWanted,
+  }) async {
+    if (stillWanted != null && !stillWanted()) return;
+    shown.add(body);
+  }
 }
 
 Future<void> _until(Future<bool> Function() condition) async {

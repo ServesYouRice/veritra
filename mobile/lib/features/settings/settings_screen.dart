@@ -795,8 +795,6 @@ class _PushStatusRow extends StatelessWidget {
     final desktop = defaultTargetPlatform == TargetPlatform.windows ||
         defaultTargetPlatform == TargetPlatform.linux ||
         defaultTargetPlatform == TargetPlatform.macOS;
-    final denied =
-        state.notificationPermission == NotificationPermission.denied;
     if (desktop) {
       title = l10n.settingsPushDesktopTitle;
       detail = l10n.settingsPushDesktopDetail;
@@ -821,15 +819,26 @@ class _PushStatusRow extends StatelessWidget {
           detail = l10n.settingsPushFailedDetail;
           icon = Icons.warning_amber_outlined;
         case PushState.registered:
-          if (denied) {
-            title = l10n.settingsPushDeniedTitle;
-            detail = l10n.settingsPushDeniedDetail;
-            icon = Icons.notifications_off_outlined;
-          } else {
-            title = l10n.settingsPushActiveTitle;
-            detail = l10n.settingsPushActiveDetail;
-            icon = Icons.notifications_active_outlined;
-            warn = false;
+          // Registered only means the server will send; the system still has
+          // to allow showing it. Active is claimed only when it does.
+          switch (state.notificationPermission) {
+            case NotificationPermission.granted:
+              title = l10n.settingsPushActiveTitle;
+              detail = l10n.settingsPushActiveDetail;
+              icon = Icons.notifications_active_outlined;
+              warn = false;
+            case NotificationPermission.denied:
+              title = l10n.settingsPushDeniedTitle;
+              detail = l10n.settingsPushDeniedDetail;
+              icon = Icons.notifications_off_outlined;
+            case NotificationPermission.notDetermined:
+              title = l10n.settingsPushNotAllowedTitle;
+              detail = l10n.settingsPushNotAllowedDetail;
+              icon = Icons.notifications_paused_outlined;
+            case NotificationPermission.unsupported:
+              title = l10n.settingsPushUnconfirmedTitle;
+              detail = l10n.settingsPushUnconfirmedDetail;
+              icon = Icons.notification_important_outlined;
           }
       }
     }

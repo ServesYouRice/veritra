@@ -19,20 +19,32 @@ class ApiClient {
   /// [transport] decides which origins the device-link checks accept. It
   /// defaults to HTTPS only; only the demo entry point passes a policy that
   /// also allows loopback HTTP (D11, D12).
-  ApiClient(
-      {required String baseUrl,
-      HttpClient? httpClient,
-      TransportPolicy transport = TransportPolicy.production})
-      : baseUrl = canonicalizeServerOrigin(baseUrl),
+  ///
+  /// [transferIdleTimeout] bounds how long a streamed upload or download may
+  /// go without moving a chunk (see [defaultTransferIdleTimeout]); tests
+  /// shorten it.
+  ApiClient({
+    required String baseUrl,
+    HttpClient? httpClient,
+    TransportPolicy transport = TransportPolicy.production,
+    Duration transferIdleTimeout = defaultTransferIdleTimeout,
+  })  : baseUrl = canonicalizeServerOrigin(baseUrl),
         _transport = transport,
-        _httpClient = httpClient ?? HttpClient() {
+        _httpClient = httpClient ?? HttpClient(),
+        _transferIdleTimeout = transferIdleTimeout {
     _httpClient.connectionTimeout = const Duration(seconds: 15);
   }
 
   final String baseUrl;
   final TransportPolicy _transport;
   final HttpClient _httpClient;
+  final Duration _transferIdleTimeout;
   static const _requestTimeout = Duration(seconds: 30);
+
+  /// Streamed bodies (attachments, backups, up to 100 MiB) are bounded by
+  /// progress, not by a whole-transfer deadline: a healthy slow link may take
+  /// minutes, a stalled one is cut after this long without a chunk.
+  static const defaultTransferIdleTimeout = Duration(seconds: 30);
   static const _maxJsonResponseBytes = 2 * 1024 * 1024;
 
   /// Cap for replies that carry ciphertext. One item always fits: an MLS
@@ -58,17 +70,15 @@ class ApiClient {
 
   void close() => _httpClient.close(force: true);
 
-  static int _pageLimit(int limit) =>
-      limit.clamp(1, _maxServerPageSize).toInt();
-
   /// Runs [request] with [limit], halving it while the reply is over
   /// [_maxCiphertextResponseBytes]. A single item that is still too large
   /// rethrows.
   static Future<T> _shrinkingPage<T>(
     int limit,
-    Future<T> Function(int limit) request,
-  ) async {
-    var current = _pageLimit(limit);
+    Future<T> Function(int limit) request, {
+    int maxLimit = _maxServerPageSize,
+  }) async {
+    var current = limit.clamp(1, maxLimit).toInt();
     while (true) {
       try {
         return await request(current);
@@ -546,10 +556,19 @@ class ApiClient {
     int limit = 250,
     String? before,
   }) async {
-    final boundedLimit = limit.clamp(1, 5000).toInt();
-    final path = '/api/v1/account/export?limit=$boundedLimit'
-        '${before == null ? '' : '&before=${Uri.encodeQueryComponent(before)}'}';
-    return _jsonRequest('GET', path, token: token);
+    // Rows keep their message ciphertext, so a page can pass the JSON cap;
+    // it is then re-requested smaller. The export has its own 1..5000 limit
+    // range, and the caller follows `next_before`, not the page length.
+    return _shrinkingPage(limit, maxLimit: 5000, (pageLimit) {
+      final path = '/api/v1/account/export?limit=$pageLimit'
+          '${before == null ? '' : '&before=${Uri.encodeQueryComponent(before)}'}';
+      return _jsonRequest(
+        'GET',
+        path,
+        token: token,
+        maxResponseBytes: _maxCiphertextResponseBytes,
+      );
+    });
   }
 
   Future<Conversation> createConversation(String token, String kind) async {
@@ -767,13 +786,12 @@ class ApiClient {
         queryParameters: <String, String>{'conversation_id': conversationId},
       ).toString(),
     );
-    final request = await _httpClient.postUrl(uri).timeout(_requestTimeout);
+    final request = await _openRequest('POST', uri);
     request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
     request.headers.set('X-Private-Messenger-Encrypted', '1');
     request.headers.set('X-Crypto-Metadata', jsonEncode(cryptoMetadata));
     request.contentLength = ciphertextLength;
-    await request.addStream(ciphertext).timeout(_requestTimeout);
-    final response = await request.close().timeout(_requestTimeout);
+    final response = await _sendBody(request, ciphertext);
     final json = await _readJsonResponse(response);
     return _decode(() => AttachmentEnvelope.fromJson(json));
   }
@@ -785,7 +803,7 @@ class ApiClient {
     final uri = Uri.parse(
       baseUrl,
     ).resolve('/api/v1/attachments/${Uri.encodeComponent(attachmentId)}');
-    final request = await _httpClient.getUrl(uri).timeout(_requestTimeout);
+    final request = await _openRequest('GET', uri);
     request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
     final response = await request.close().timeout(_requestTimeout);
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -806,9 +824,10 @@ class ApiClient {
         recoveryToken.length != 32) {
       throw ArgumentError('invalid encrypted backup');
     }
-    final request = await _httpClient
-        .postUrl(Uri.parse(baseUrl).resolve('/api/v1/backups'))
-        .timeout(_requestTimeout);
+    final request = await _openRequest(
+      'POST',
+      Uri.parse(baseUrl).resolve('/api/v1/backups'),
+    );
     request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
     request.headers.set('X-Private-Messenger-Encrypted', '1');
     request.headers.set(
@@ -820,8 +839,7 @@ class ApiClient {
       jsonEncode(cryptoMetadata),
     );
     request.contentLength = ciphertextLength;
-    await request.addStream(ciphertext).timeout(_requestTimeout);
-    final response = await request.close().timeout(_requestTimeout);
+    final response = await _sendBody(request, ciphertext);
     await _readJsonResponse(response);
   }
 
@@ -839,9 +857,10 @@ class ApiClient {
       throw ArgumentError('invalid recovery range');
     }
     final encoded = base64Url.encode(recoveryToken).replaceAll('=', '');
-    final request = await _httpClient
-        .getUrl(Uri.parse(baseUrl).resolve('/api/v1/recovery'))
-        .timeout(_requestTimeout);
+    final request = await _openRequest(
+      'GET',
+      Uri.parse(baseUrl).resolve('/api/v1/recovery'),
+    );
     request.headers.set('X-Recovery-Token', encoded);
     if (startOffset != null) {
       final rangeEnd = endOffset == null ? '' : '$endOffset';
@@ -851,10 +870,56 @@ class ApiClient {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw await _apiError(response);
     }
-    return _boundedStream(
-      response,
-      maxBackupCiphertextBytes - (startOffset ?? 0),
-    );
+    if (startOffset == null) {
+      if (response.statusCode != 200) {
+        await _discard(response);
+        throw const ApiResponseException();
+      }
+      return _boundedStream(response, maxBackupCiphertextBytes);
+    }
+    // A ranged request is answered only by a 206 that proves where its body
+    // starts. A 200 is the whole object from byte 0 (RFC 9110, 14.2) and
+    // would be misplaced at the saved offset.
+    if (response.statusCode == 200) {
+      await _discard(response);
+      throw RangeNotHonoredException();
+    }
+    final range = response.statusCode == 206
+        ? _parseContentRange(response.headers['content-range'])
+        : null;
+    if (range == null ||
+        range.first != startOffset ||
+        (endOffset != null && range.last > endOffset) ||
+        (response.contentLength >= 0 &&
+            response.contentLength != range.last - range.first + 1)) {
+      await _discard(response);
+      throw const ApiResponseException();
+    }
+    if (range.last >= maxBackupCiphertextBytes) {
+      await _discard(response);
+      throw const ApiResponseTooLargeException();
+    }
+    return _boundedStream(response, range.last - range.first + 1);
+  }
+
+  /// Stops reading [response]; the rest of its body is never downloaded.
+  static Future<void> _discard(HttpClientResponse response) =>
+      response.listen(null).cancel();
+
+  /// Parses `bytes first-last/complete` (the complete length may be `*`).
+  /// Anything else, including an unsatisfied range (`bytes */n`), a repeated
+  /// header or a last byte before the first, gives null.
+  static ({int first, int last})? _parseContentRange(List<String>? values) {
+    if (values == null || values.length != 1) return null;
+    final match = RegExp(r'^bytes (\d{1,15})-(\d{1,15})/(\d{1,15}|\*)$')
+        .firstMatch(values.single.trim());
+    if (match == null) return null;
+    final first = int.parse(match.group(1)!);
+    final last = int.parse(match.group(2)!);
+    final complete = match.group(3)!;
+    if (last < first) return null;
+    if (complete != '*' && int.parse(complete) <= last) return null;
+    return (first: first, last: last);
   }
 
   Future<void> publishDeviceKeyPackages(
@@ -919,6 +984,8 @@ class ApiClient {
         if (revocationDeviceId != null)
           'revocation_device_id': revocationDeviceId,
       },
+      // The reply echoes the stored message, payload included.
+      maxResponseBytes: _maxCiphertextResponseBytes,
     );
     return _decode(() => MlsMessage.fromJson(_object(json, 'mls_message')));
   }
@@ -1586,6 +1653,74 @@ class ApiClient {
     return null;
   }
 
+  /// Opens every request this client makes. API credentials, including the
+  /// custom recovery, claim and setup tokens that dart:io does not strip on a
+  /// redirect, are bound to this origin, so a 3xx is never followed: it
+  /// reaches the caller as an [ApiException] carrying the 3xx status.
+  Future<HttpClientRequest> _openRequest(String method, Uri uri) async {
+    final request =
+        await _httpClient.openUrl(method, uri).timeout(_requestTimeout);
+    request.followRedirects = false;
+    return request;
+  }
+
+  /// Streams [body] as the request body and returns the response. The
+  /// transfer is bounded by progress: it fails with a [TimeoutException]
+  /// when no chunk is taken from [body] for [_transferIdleTimeout], and when
+  /// the server then does not answer within the same time. A [Timer] is used
+  /// because [Stream.timeout] restarts its countdown on pause, which a socket
+  /// that applies backpressure does all the time. On any failure the request
+  /// is aborted, so a stalled upload does not keep running unowned.
+  Future<HttpClientResponse> _sendBody(
+    HttpClientRequest request,
+    Stream<List<int>> body,
+  ) async {
+    final idle = _transferIdleTimeout;
+    final stalled = Completer<void>();
+    Timer? watchdog;
+    void arm() {
+      watchdog?.cancel();
+      watchdog = Timer(idle, () {
+        if (stalled.isCompleted) return;
+        stalled.complete();
+        request.abort(TimeoutException('The transfer stopped.', idle));
+      });
+    }
+
+    Stream<List<int>> watched() async* {
+      await for (final chunk in body) {
+        arm();
+        yield chunk;
+      }
+    }
+
+    try {
+      arm();
+      await Future.any<void>(<Future<void>>[
+        request.addStream(watched()),
+        stalled.future,
+      ]);
+      if (stalled.isCompleted)
+        throw TimeoutException('The transfer stopped.', idle);
+      arm();
+      final response = await Future.any<HttpClientResponse?>(
+        <Future<HttpClientResponse?>>[
+          request.close(),
+          stalled.future.then((_) => null),
+        ],
+      );
+      if (response == null)
+        throw TimeoutException('The transfer stopped.', idle);
+      return response;
+    } catch (_) {
+      // A no-op once the response has arrived.
+      request.abort();
+      rethrow;
+    } finally {
+      watchdog?.cancel();
+    }
+  }
+
   Future<Map<String, Object?>> _jsonRequest(
     String method,
     String path, {
@@ -1595,10 +1730,7 @@ class ApiClient {
     int maxResponseBytes = _maxJsonResponseBytes,
   }) async {
     final uri = Uri.parse(baseUrl).resolve(path);
-    final request =
-        await _httpClient.openUrl(method, uri).timeout(_requestTimeout);
-    // API credentials are bound to this origin, including custom claim tokens.
-    request.followRedirects = false;
+    final request = await _openRequest(method, uri);
     request.headers.contentType = ContentType.json;
     if (token != null) {
       request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
@@ -1675,23 +1807,28 @@ class ApiClient {
 
   /// Passes a download through while counting bytes; more than [maxBytes]
   /// (or an announced length above it) fails instead of filling the disk.
-  static Future<Stream<List<int>>> _boundedStream(
+  Future<Stream<List<int>>> _boundedStream(
     HttpClientResponse response,
     int maxBytes,
   ) async {
     if (maxBytes < 0 || response.contentLength > maxBytes) {
-      await response.listen(null).cancel();
+      await _discard(response);
       throw const ApiResponseTooLargeException();
     }
-    return _countBytes(response, maxBytes);
+    return _countBytes(response, maxBytes, _transferIdleTimeout);
   }
 
+  /// Also fails with a [TimeoutException] when the body stops arriving for
+  /// [idle] while someone is listening. [Stream.timeout] stops its countdown
+  /// while the listener is paused (a slow disk write), which is wanted here.
+  /// Leaving the loop cancels the response and closes its connection.
   static Stream<List<int>> _countBytes(
     Stream<List<int>> source,
     int maxBytes,
+    Duration idle,
   ) async* {
     var received = 0;
-    await for (final chunk in source) {
+    await for (final chunk in source.timeout(idle)) {
       received += chunk.length;
       if (received > maxBytes) throw const ApiResponseTooLargeException();
       yield chunk;

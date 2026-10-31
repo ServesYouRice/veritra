@@ -25,6 +25,10 @@ class BackupScreen extends StatefulWidget {
 }
 
 class _BackupScreenState extends State<BackupScreen> {
+  /// True from the start of a backup until its recovery code is shown. The
+  /// code exists only in this call, so leaving now would lose it for good.
+  bool _creating = false;
+
   @override
   void initState() {
     super.initState();
@@ -42,55 +46,61 @@ class _BackupScreenState extends State<BackupScreen> {
         final last = state.lastBackupAt;
         final busy = state.isBusy(Ops.backup);
         final error = state.errorFor(Ops.backup);
-        return Scaffold(
-          appBar: LargeTitleBar(title: context.l10n.settingsBackup),
-          body: ListView(
-            padding: const EdgeInsets.all(BoneSpacing.gutter),
-            children: <Widget>[
-              Text(
-                context.l10n.backupIntro,
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-              const SizedBox(height: BoneSpacing.lg),
-              SectionHeader(context.l10n.backupSectionStatus),
-              TileGroup(
-                children: <Widget>[
-                  ListTile(
-                    leading: const Icon(Icons.cloud_done_outlined),
-                    title: Text(
-                      last == null
-                          ? context.l10n.backupNone
-                          : context.l10n.backupLast(
-                              formatDateTime(context, last.toLocal()),
-                            ),
+        return PopScope(
+          // Back, the back gesture and the app bar's back button wait while a
+          // backup is being made.
+          canPop: !_creating,
+          child: Scaffold(
+            appBar: LargeTitleBar(title: context.l10n.settingsBackup),
+            body: ListView(
+              padding: const EdgeInsets.all(BoneSpacing.gutter),
+              children: <Widget>[
+                Text(
+                  context.l10n.backupIntro,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                const SizedBox(height: BoneSpacing.lg),
+                SectionHeader(context.l10n.backupSectionStatus),
+                TileGroup(
+                  children: <Widget>[
+                    ListTile(
+                      leading: const Icon(Icons.cloud_done_outlined),
+                      title: Text(
+                        last == null
+                            ? context.l10n.backupNone
+                            : context.l10n.backupLast(
+                                formatDateTime(context, last.toLocal()),
+                              ),
+                      ),
+                      subtitle: Text(context.l10n.backupReplacesPrevious),
                     ),
-                    subtitle: Text(context.l10n.backupReplacesPrevious),
+                  ],
+                ),
+                const SizedBox(height: BoneSpacing.lg),
+                FilledButton.icon(
+                  onPressed: busy ? null : () => _create(context),
+                  icon: busy
+                      ? const SizedBox.square(
+                          dimension: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.backup_outlined),
+                  label: Text(
+                    last == null
+                        ? context.l10n.backupMake
+                        : context.l10n.backupMakeNew,
+                  ),
+                ),
+                if (error != null) ...<Widget>[
+                  const SizedBox(height: BoneSpacing.md),
+                  Text(
+                    error,
+                    style:
+                        TextStyle(color: Theme.of(context).colorScheme.error),
                   ),
                 ],
-              ),
-              const SizedBox(height: BoneSpacing.lg),
-              FilledButton.icon(
-                onPressed: busy ? null : () => _create(context),
-                icon: busy
-                    ? const SizedBox.square(
-                        dimension: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.backup_outlined),
-                label: Text(
-                  last == null
-                      ? context.l10n.backupMake
-                      : context.l10n.backupMakeNew,
-                ),
-              ),
-              if (error != null) ...<Widget>[
-                const SizedBox(height: BoneSpacing.md),
-                Text(
-                  error,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
               ],
-            ],
+            ),
           ),
         );
       },
@@ -110,12 +120,31 @@ class _BackupScreenState extends State<BackupScreen> {
       );
       if (!confirmed || !context.mounted) return;
     }
-    final code = await widget.state.createBackup();
-    if (code == null || !context.mounted) return;
+    // The code reaches only this call: it is never stored. The root
+    // navigator outlives this screen, so if the screen was removed anyway (a
+    // destination switch on desktop does not pop a route) the dialog is shown
+    // there instead of the code being dropped.
+    final navigator = Navigator.of(context, rootNavigator: true);
+    if (mounted) setState(() => _creating = true);
+    final String? code;
+    try {
+      code = await widget.state.createBackup();
+    } finally {
+      if (mounted) setState(() => _creating = false);
+    }
+    if (code == null) return;
+    final BuildContext host;
+    if (context.mounted) {
+      host = context;
+    } else if (navigator.mounted) {
+      host = navigator.context;
+    } else {
+      return;
+    }
     await showDialog<void>(
-      context: context,
+      context: host,
       barrierDismissible: false,
-      builder: (context) => _RecoveryCodeDialog(code: code),
+      builder: (context) => _RecoveryCodeDialog(code: code!),
     );
   }
 }
@@ -127,27 +156,32 @@ class _RecoveryCodeDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(context.l10n.backupSaveCodeTitle),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          Text(context.l10n.backupSaveCodeMessage),
-          const SizedBox(height: BoneSpacing.md),
-          SelectableText(code, style: BoneType.mono),
+    // barrierDismissible only stops taps outside; the system back button and
+    // gesture would still pop the route. Only "I saved it" may close this.
+    return PopScope(
+      canPop: false,
+      child: AlertDialog(
+        title: Text(context.l10n.backupSaveCodeTitle),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Text(context.l10n.backupSaveCodeMessage),
+            const SizedBox(height: BoneSpacing.md),
+            SelectableText(code, style: BoneType.mono),
+          ],
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Clipboard.setData(ClipboardData(text: code)),
+            child: Text(context.l10n.commonCopy),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(context.l10n.backupSavedIt),
+          ),
         ],
       ),
-      actions: <Widget>[
-        TextButton(
-          onPressed: () => Clipboard.setData(ClipboardData(text: code)),
-          child: Text(context.l10n.commonCopy),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(context.l10n.backupSavedIt),
-        ),
-      ],
     );
   }
 }
