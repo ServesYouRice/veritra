@@ -163,14 +163,25 @@ class PluginDesktopShell
 /// Raises a system notification. Text is passed in already built on this
 /// device; nothing here talks to the network.
 abstract class DesktopNotifier {
-  Future<void> show({required String title, required String body});
+  /// [stillWanted], when given, is asked right before the notification goes
+  /// out, after any asynchronous setup; a notifier shows nothing when it
+  /// answers false (the session ended while the notification was prepared).
+  Future<void> show({
+    required String title,
+    required String body,
+    bool Function()? stillWanted,
+  });
 }
 
 class NoopDesktopNotifier implements DesktopNotifier {
   const NoopDesktopNotifier();
 
   @override
-  Future<void> show({required String title, required String body}) async {}
+  Future<void> show({
+    required String title,
+    required String body,
+    bool Function()? stillWanted,
+  }) async {}
 }
 
 /// Windows toasts and the Linux and macOS equivalents, on `local_notifier`.
@@ -194,9 +205,14 @@ class PluginDesktopNotifier implements DesktopNotifier {
   }
 
   @override
-  Future<void> show({required String title, required String body}) async {
+  Future<void> show({
+    required String title,
+    required String body,
+    bool Function()? stillWanted,
+  }) async {
     try {
       await _setup();
+      if (stillWanted != null && !stillWanted()) return;
       final notification = LocalNotification(title: title, body: body);
       notification.onClick = onClick;
       await notification.show();

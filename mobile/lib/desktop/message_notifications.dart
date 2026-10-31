@@ -148,9 +148,17 @@ class MessageNotifier {
 
   final Set<String> _announced = <String>{};
 
-  void attach() => state.onMessagesPublished = _onPublished;
+  /// Bumped by [attach] and [detach]; work that started under an earlier
+  /// value is dropped.
+  int _generation = 0;
+
+  void attach() {
+    _generation++;
+    state.onMessagesPublished = _onPublished;
+  }
 
   void detach() {
+    _generation++;
     if (state.onMessagesPublished == _onPublished) {
       state.onMessagesPublished = null;
     }
@@ -163,6 +171,17 @@ class MessageNotifier {
   Future<void> handle(List<ReceivedMessageEnvelope> envelopes) async {
     final session = state.session;
     if (session == null) return;
+    // The text below belongs to this session. If the notifier is detached or
+    // the account or device changes while this call waits, nothing is shown.
+    final generation = _generation;
+    bool current() {
+      final active = state.session;
+      return generation == _generation &&
+          active != null &&
+          active.accountId == session.accountId &&
+          active.deviceId == session.deviceId;
+    }
+
     final candidates = <String,
         ({ReceivedMessageEnvelope envelope, String text, bool mentioned})>{};
     for (final envelope in envelopes) {
@@ -198,19 +217,23 @@ class MessageNotifier {
     }
     if (candidates.isEmpty) return;
     if (await shell.isWindowActive()) return;
+    if (!current()) return;
 
     var shown = 0;
     for (final entry in candidates.entries) {
       if (shown >= _maxPerBatch) break;
       // The mute flag lives on the server and is read per conversation. If it
       // cannot be read, stay quiet rather than notify for a muted chat.
-      if (!await state.loadConversationMuted(entry.key)) continue;
+      final muteKnown = await state.loadConversationMuted(entry.key);
+      if (!current()) return;
+      if (!muteKnown) continue;
       if (state.isMuted(entry.key) && !entry.value.mentioned) continue;
       final strings = l10n();
       if (!settings.previewAllowed) {
         await notifier.show(
           title: veritraProductName,
           body: strings.notificationNewMessage,
+          stillWanted: current,
         );
       } else {
         final conversation = state.conversations
@@ -221,6 +244,7 @@ class MessageNotifier {
               ? veritraProductName
               : conversationTitle(strings, conversation),
           body: _preview(entry.value.text),
+          stillWanted: current,
         );
       }
       shown++;

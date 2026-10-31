@@ -20,16 +20,31 @@ import 'test_crypto_service.dart';
 class _FakeShell extends NoopDesktopShell {
   bool active = false;
 
+  /// When set, the window check waits for it.
+  Completer<void>? gate;
+
   @override
-  Future<bool> isWindowActive() async => active;
+  Future<bool> isWindowActive() async {
+    await gate?.future;
+    return active;
+  }
 }
 
 class _FakeNotifier implements DesktopNotifier {
   final List<({String title, String body})> shown =
       <({String title, String body})>[];
 
+  /// When set, showing waits for it first, like the real notifier's setup.
+  Completer<void>? setupGate;
+
   @override
-  Future<void> show({required String title, required String body}) async {
+  Future<void> show({
+    required String title,
+    required String body,
+    bool Function()? stillWanted,
+  }) async {
+    await setupGate?.future;
+    if (stillWanted != null && !stillWanted()) return;
     shown.add((title: title, body: body));
   }
 }
@@ -86,6 +101,9 @@ class _State extends AppState {
   bool muteReadable = true;
   int muteReads = 0;
 
+  /// When set, the mute lookup waits for it.
+  Completer<void>? muteGate;
+
   @override
   ConversationHistory historyFor(String conversationId) =>
       histories[conversationId] ?? ConversationHistory.empty(conversationId);
@@ -93,6 +111,7 @@ class _State extends AppState {
   @override
   Future<bool> loadConversationMuted(String conversationId) async {
     muteReads++;
+    await muteGate?.future;
     return muteReadable;
   }
 
@@ -326,6 +345,88 @@ void main() {
       await notifierFor(saved)
           .handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
       expectGeneric();
+    });
+  });
+
+  group('work in flight is dropped when the session ends', () {
+    const other = Session(
+      baseUrl: 'https://localhost',
+      token: 't2',
+      accountId: 'acct_other_me',
+      deviceId: 'dev_me',
+    );
+
+    /// Starts handling one message and returns the pending call.
+    Future<void> start() {
+      history(<LocalMessage>[_local('m1')]);
+      return messages.handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
+    }
+
+    // Each wait in handle: the window check, the mute lookup and the
+    // notifier's own setup.
+    final waits = <String, void Function(Completer<void>)>{
+      'the window check': (gate) => shell.gate = gate,
+      'the mute lookup': (gate) => state.muteGate = gate,
+      'the notifier setup': (gate) => notifier.setupGate = gate,
+    };
+    for (final wait in waits.entries) {
+      test('sign-out during ${wait.key} shows nothing', () async {
+        final gate = Completer<void>();
+        wait.value(gate);
+        final pending = start();
+        await Future<void>.delayed(Duration.zero);
+        state.session = null;
+        gate.complete();
+        await pending;
+        expect(notifier.shown, isEmpty);
+      });
+
+      test('an account switch during ${wait.key} shows nothing', () async {
+        final gate = Completer<void>();
+        wait.value(gate);
+        final pending = start();
+        await Future<void>.delayed(Duration.zero);
+        state.session = other;
+        gate.complete();
+        await pending;
+        expect(notifier.shown, isEmpty);
+      });
+
+      test('detach during ${wait.key} shows nothing', () async {
+        final gate = Completer<void>();
+        wait.value(gate);
+        messages.attach();
+        final pending = start();
+        await Future<void>.delayed(Duration.zero);
+        messages.detach();
+        gate.complete();
+        await pending;
+        expect(notifier.shown, isEmpty);
+      });
+
+      test('a token refresh during ${wait.key} does not drop it', () async {
+        final gate = Completer<void>();
+        wait.value(gate);
+        final pending = start();
+        await Future<void>.delayed(Duration.zero);
+        state.session = const Session(
+          baseUrl: 'https://localhost',
+          token: 'rotated',
+          accountId: 'acct_me',
+          deviceId: 'dev_me',
+        );
+        gate.complete();
+        await pending;
+        expect(notifier.shown, hasLength(1));
+      });
+    }
+
+    test('a notification after re-attaching is shown', () async {
+      messages.attach();
+      messages.detach();
+      messages.attach();
+      await start();
+      expect(notifier.shown, hasLength(1));
     });
   });
 
