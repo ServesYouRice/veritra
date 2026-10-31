@@ -61,7 +61,8 @@ Future<void> main(List<String> args) async {
           namespace: profile == null ? 'demo' : 'demo-$profile');
       final bindings = NativeCryptoBindings.load();
       final state = AppState(
-        apiClientFactory: (baseUrl) => ApiClient(baseUrl: baseUrl),
+        apiClientFactory: (baseUrl) =>
+            ApiClient(baseUrl: baseUrl, transport: TransportPolicy.demo),
         cryptoService: NativeCryptoService(
           bindings: bindings,
           localStore: localStore,
@@ -77,7 +78,7 @@ Future<void> main(List<String> args) async {
               throw StateError(
                   'recovery code names a server this build refuses');
             }
-            return ApiClient(baseUrl: baseUrl);
+            return ApiClient(baseUrl: baseUrl, transport: TransportPolicy.demo);
           },
         ),
         attachmentService: AttachmentCryptoService(bindings),

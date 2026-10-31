@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/device_link_v3_models.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/core/transport_policy.dart';
 
 String hash(String c) => List.filled(64, c).join();
 String binary(int n, [int size = 32]) => base64Encode(List.filled(size, n));
@@ -81,7 +82,7 @@ void main() {
   setUp(() async {
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     origin = 'http://127.0.0.1:${server.port}';
-    api = ApiClient(baseUrl: origin);
+    api = ApiClient(baseUrl: origin, transport: TransportPolicy.demo);
     owner = Session(
         baseUrl: origin,
         token: 'source-token',
@@ -161,7 +162,7 @@ void main() {
     final reservation = await api.reserveDeviceLinkV3(hash('a'), hash('b'));
     expect(reservation.fields['device_id'], 'dev_new');
     final frozen = FrozenDeviceLinkV3Claim.fromJson(signedClaim(origin),
-        requestHash: hash('d'));
+        requestHash: hash('d'), transport: TransportPolicy.demo);
     final claimed = await api.submitDeviceLinkV3Claim(frozen, reservation);
     await api.deviceLinkV3(owner, claimed.id);
     final approved =
@@ -205,7 +206,8 @@ void main() {
       };
       await expectLater(
           api.completeDeviceLinkV3(
-              DeviceLinkV3Record.fromJson(context(origin, state: 'approved')),
+              DeviceLinkV3Record.fromJson(context(origin, state: 'approved'),
+                  transport: TransportPolicy.demo),
               claimToken,
               hash('3')),
           throwsA(isA<ApiResponseException>()),
@@ -249,7 +251,7 @@ void main() {
       await expectLater(
           api.submitDeviceLinkV3Claim(
               FrozenDeviceLinkV3Claim.fromJson(signedClaim(origin),
-                  requestHash: hash('d')),
+                  requestHash: hash('d'), transport: TransportPolicy.demo),
               reservation),
           throwsA(isA<ApiResponseException>()),
           reason: key);
@@ -258,8 +260,9 @@ void main() {
 
   test('approved polling rejects regression and changed fixed approval context',
       () async {
-    final expected =
-        DeviceLinkV3Record.fromJson(context(origin, state: 'approved'));
+    final expected = DeviceLinkV3Record.fromJson(
+        context(origin, state: 'approved'),
+        transport: TransportPolicy.demo);
     for (final change in ['regression', 'tag', 'deadline']) {
       handle = (r) async {
         await r.drain<void>();
@@ -294,7 +297,9 @@ void main() {
     };
     await expectLater(
         api.deviceLinkV3ClaimStatus(
-            DeviceLinkV3Record.fromJson(context(origin)), claimToken),
+            DeviceLinkV3Record.fromJson(context(origin),
+                transport: TransportPolicy.demo),
+            claimToken),
         throwsA(isA<ApiException>()));
     expect(leaked, 0);
   });
@@ -329,12 +334,53 @@ void main() {
       final json = context(origin);
       mutate(json);
       try {
-        DeviceLinkV3Record.fromJson(json);
+        DeviceLinkV3Record.fromJson(json, transport: TransportPolicy.demo);
         fail('accepted malformed context');
       } on FormatException catch (e) {
         expect(e.source, isNull);
         expect(e.toString(), isNot(contains('sensitive-invalid-binary')));
       }
     }
+  });
+
+  test('release default refuses loopback HTTP; HTTPS and the demo policy pass',
+      () async {
+    var requests = 0;
+    handle = (r) async {
+      requests++;
+    };
+    // An ApiClient built the way main.dart builds it (no policy) rejects a
+    // loopback HTTP origin before any request is made.
+    final release = ApiClient(baseUrl: origin);
+    addTearDown(release.close);
+    await expectLater(
+        release.createDeviceLinkV3(owner, hash('a')), throwsFormatException);
+    await expectLater(
+        release.deviceLinkV3(owner, 'dlink_test'), throwsFormatException);
+    expect(requests, 0);
+    // The parsers default to HTTPS only as well.
+    expect(() => DeviceLinkV3Record.fromJson(context(origin)),
+        throwsFormatException);
+    expect(
+        () => FrozenDeviceLinkV3Claim.fromJson(signedClaim(origin),
+            requestHash: hash('d')),
+        throwsFormatException);
+    expect(() => DeviceLinkV3Completion.fromJson(receipt(origin)),
+        throwsFormatException);
+    // The same inputs are valid under the demo policy, so the refusals
+    // above are about the origin alone.
+    DeviceLinkV3Completion.fromJson(receipt(origin),
+        transport: TransportPolicy.demo);
+    FrozenDeviceLinkV3Claim.fromJson(signedClaim(origin),
+        requestHash: hash('d'), transport: TransportPolicy.demo);
+    // HTTPS is accepted under the default, and loopback only when the
+    // caller opts in with the demo policy.
+    const secure = 'https://veritra.example';
+    expect(DeviceLinkV3Record.fromJson(context(secure)).origin, secure);
+    expect(
+        DeviceLinkV3Record.fromJson(context(origin),
+                transport: TransportPolicy.demo)
+            .origin,
+        origin);
   });
 }
