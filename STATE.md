@@ -105,6 +105,8 @@ replace `UnavailableCryptoService` before G25.
 
 `scripts/release-readiness.sh` stays blocked until all three pass.
 
+Also before any release: every client runs crypto ABI 9 and mixed ABI versions are refused. An ABI-8 committer that adds a duplicate identity would fork a group and stall ABI-9 receivers under I33 ([`docs/crypto.md`](docs/crypto.md), change log, ABI 9).
+
 ## Deployment
 
 Plan from the owner's hosting handbook: single-node k3s on an OVH VPS, a
