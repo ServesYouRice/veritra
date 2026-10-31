@@ -357,7 +357,7 @@ func (s *Store) deleteMessageEnvelope(ctx context.Context, messageID, accountID 
 	now := nowString()
 	result, err := tx.ExecContext(ctx, `
 		UPDATE message_envelopes
-		SET ciphertext = ?, crypto_protocol = ?, crypto_metadata_json = ?, deleted_at = ?
+		SET ciphertext = ?, crypto_protocol = ?, crypto_metadata_json = ?, deleted_at = ?, attachment_refs_json = '[]'
 		WHERE id = ? AND sender_account_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
 		  AND EXISTS (SELECT 1 FROM memberships m WHERE m.conversation_id = message_envelopes.conversation_id AND m.account_id = ?)`,
 		markerCiphertext, cryptoProtocol, string(cryptoMetadata), now, messageID, accountID, now, accountID)
@@ -368,6 +368,9 @@ func (s *Store) deleteMessageEnvelope(ctx context.Context, messageID, accountID 
 	if err != nil {
 		return domain.MessageEnvelope{}, 0, err
 	}
+	if err := releaseMessageAttachments(ctx, tx, messageID); err != nil {
+		return domain.MessageEnvelope{}, 0, err
+	}
 	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, nil, envelope.ConversationID, messageSyncEventPayload(envelope), now)
 	if err != nil {
 		return domain.MessageEnvelope{}, 0, err
@@ -376,6 +379,62 @@ func (s *Store) deleteMessageEnvelope(ctx context.Context, messageID, accountID 
 		return domain.MessageEnvelope{}, 0, err
 	}
 	return envelope, eventID, nil
+}
+
+// releaseMessageAttachments drops the attachment links of a message that was
+// just turned into a tombstone, deletes the attachments nothing links any
+// more, and queues their blobs for deletion, all in the caller's transaction.
+// An attachment links to one message at most (message_attachments.attachment_id
+// is unique), so every attachment of the message goes. The tombstone's own
+// attachment_refs_json was cleared by the UPDATE.
+func releaseMessageAttachments(ctx context.Context, tx *sql.Tx, messageID string) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT a.id, a.storage_key
+		FROM message_attachments ma
+		JOIN attachment_envelopes a ON a.id = ma.attachment_id
+		WHERE ma.message_id = ?`, messageID)
+	if err != nil {
+		return err
+	}
+	type released struct{ id, storageKey string }
+	var attachments []released
+	for rows.Next() {
+		var item released
+		if err := rows.Scan(&item.id, &item.storageKey); err != nil {
+			rows.Close()
+			return err
+		}
+		attachments = append(attachments, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if len(attachments) == 0 {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM message_attachments WHERE message_id = ?`, messageID); err != nil {
+		return err
+	}
+	for _, item := range attachments {
+		result, err := tx.ExecContext(ctx, `
+			DELETE FROM attachment_envelopes
+			WHERE id = ? AND NOT EXISTS (SELECT 1 FROM message_attachments ma WHERE ma.attachment_id = attachment_envelopes.id)`, item.id)
+		if err != nil {
+			return err
+		}
+		if deleted, err := result.RowsAffected(); err != nil {
+			return err
+		} else if deleted == 1 {
+			if err := enqueueBlobDeletion(ctx, tx, item.storageKey); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Store) messageAfterOwnedMutation(ctx context.Context, messageID string, result sql.Result) (domain.MessageEnvelope, error) {
