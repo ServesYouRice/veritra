@@ -2111,9 +2111,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         accountId,
         role: role,
       );
-      // Their devices join the MLS group through reconcile (card I51).
+      // Their devices join the MLS group through reconcile (card I51). The
+      // change is new, so an earlier one's backoff does not hold it.
       _mlsReconcileRequested = true;
       _mlsReconcileNow.add(conversationId);
+      _mlsChangeRetries.remove(conversationId);
       unawaited(_catchUpSyncEvents());
     });
   }
@@ -2152,9 +2154,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         conversationId,
         accountId,
       );
-      // Their devices leave the MLS group through reconcile (card I51).
+      // Their devices leave the MLS group through reconcile (card I51). The
+      // change is new, so an earlier one's backoff does not hold it.
       _mlsReconcileRequested = true;
       _mlsReconcileNow.add(conversationId);
+      _mlsChangeRetries.remove(conversationId);
       unawaited(_catchUpSyncEvents());
       membersByConversation = <String, List<ConversationMember>>{
         ...membersByConversation,
@@ -4524,7 +4528,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       }
       await _suppressForegroundNotices(current);
       if (_mlsCrypto != null) {
-        await _processMlsRevocations();
+        try {
+          await _processMlsRevocations();
+        } catch (err) {
+          // Like reconcile below, revocations never block sync: a failure
+          // is retried after its own backoff (TASK-035).
+          if (err is ApiException && err.statusCode == 401) rethrow;
+          _mlsStepSettled('revocations', failed: true);
+        }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         if (_mlsReconcileRequested || _mlsPendingSeen.isNotEmpty) {
           _mlsReconcileRequested = false;
@@ -5235,6 +5246,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     _outboxRetryTimer = null;
     _mlsOutboxRetryTimer?.cancel();
     _mlsOutboxRetryTimer = null;
+    _resetMlsRetries();
     _expiryTimer?.cancel();
     _expiryTimer = null;
     _cancelCatchUpRetry();
@@ -5434,7 +5446,16 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     try {
       do {
         _flushOutboxRequested = false;
-        await _flushOutboxOnce();
+        try {
+          await _flushOutboxOnce();
+          _outboxLocalFailures = 0;
+        } catch (_) {
+          // A local storage failure leaves every envelope queued. Callers
+          // leave this future unawaited, so nothing may escape; the retry
+          // timer tries again with backoff (TASK-042). Not written to the
+          // shared [error]: no user action failed.
+          _outboxLocalFailures++;
+        }
       } while (_flushOutboxRequested && !_disposed);
     } finally {
       _flushingOutbox = false;
@@ -5546,18 +5567,30 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     }
   }
 
+  /// Consecutive application outbox passes or reads that failed locally.
+  int _outboxLocalFailures = 0;
+
   Future<void> _scheduleOutboxRetry() async {
     _outboxRetryTimer?.cancel();
     _outboxRetryTimer = null;
     if (_disposed || session == null || api == null) return;
-    final records = await localStore.pendingEnvelopeRecords();
-    // Held-back conversations wait for the MLS worker, which flushes when
-    // it finishes; scheduling them here would spin.
-    final heldBack = _mlsCrypto == null
-        ? const <String>{}
-        : (await localStore.pendingMlsMessages())
-            .map((message) => message.conversationId)
-            .toSet();
+    final List<PendingEnvelopeRecord> records;
+    final Set<String> heldBack;
+    try {
+      records = await localStore.pendingEnvelopeRecords();
+      // Held-back conversations wait for the MLS worker, which flushes when
+      // it finishes; scheduling them here would spin.
+      heldBack = _mlsCrypto == null
+          ? const <String>{}
+          : (await localStore.pendingMlsMessages())
+              .map((message) => message.conversationId)
+              .toSet();
+    } catch (_) {
+      // Unreadable outbox: try again later rather than wait for a wake.
+      _outboxLocalFailures++;
+      if (!_disposed) _armOutboxRetry(_localRetryDelay(_outboxLocalFailures));
+      return;
+    }
     final now = DateTime.now().toUtc();
     DateTime? earliest;
     for (final record in records) {
@@ -5571,8 +5604,20 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       // once; skipping it would strand it until the next wake.
       if (earliest == null || due.isBefore(earliest)) earliest = due;
     }
-    if (earliest == null || _disposed) return;
-    final delay = earliest.difference(now);
+    var delay = earliest?.difference(now);
+    // After a local failure a queued envelope may have no due time (it was
+    // never tried) or a stale one, so wait at least the local backoff.
+    if (_outboxLocalFailures > 0) {
+      final fallback = _localRetryDelay(_outboxLocalFailures);
+      if (delay == null || delay < fallback) delay = fallback;
+    }
+    if (delay == null || _disposed) return;
+    _armOutboxRetry(delay);
+  }
+
+  void _armOutboxRetry(Duration delay) {
+    // Two schedulers may overlap their reads; only the last timer stays.
+    _outboxRetryTimer?.cancel();
     _outboxRetryTimer =
         Timer(delay < _minimumRetryDelay ? _minimumRetryDelay : delay, () {
       _outboxRetryTimer = null;
@@ -5594,9 +5639,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         _flushMlsOutboxRequested = false;
         try {
           await _flushMlsOutboxOnce();
+          _mlsOutboxLocalFailures = 0;
         } catch (_) {
           // A local storage failure leaves every item queued; the retry
-          // timer or the next wake tries again.
+          // timer tries again with backoff, even for an item that names no
+          // due time.
+          _mlsOutboxLocalFailures++;
         }
       } while (_flushMlsOutboxRequested && !_disposed);
     } finally {
@@ -5618,6 +5666,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final ownerGeneration = _sessionGeneration;
     final messages = await localStore.pendingMlsMessages();
     if (!_syncOwnerActive(current, ownerGeneration)) return;
+    // Items settled some other way no longer need finishing.
+    _mlsAcceptedUnfinished.removeWhere(
+        (key) => !messages.any((message) => message.idempotencyKey == key));
     final byConversation = <String, List<PendingMlsMessage>>{};
     for (final message in messages) {
       byConversation
@@ -5636,7 +5687,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         if (message.nextAttemptAt?.isAfter(now) ?? false) break;
         final isBundle = message.kind == MlsCommitBundle.kind;
         try {
-          if (isBundle) {
+          if (_mlsAcceptedUnfinished.contains(message.idempotencyKey)) {
+            // The server already accepted it; only finishing it here
+            // failed. Sending it again could meet a refusal (this device
+            // removed meanwhile, say) that would drop an accepted commit.
+          } else if (isBundle) {
             await client.sendMlsCommitBundle(
               current.token,
               message.conversationId,
@@ -5688,8 +5743,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             // Another commit won this epoch, or the change is no longer
             // valid. The staged commit was never merged, so dropping it
             // leaves this device in step with the group (card I51). Catch
-            // up, then reconcile again.
+            // up, then reconcile again: at once on a new epoch, otherwise
+            // after the change's backoff.
             await _mlsCrypto?.abandonCommitBundle(message);
+            _mlsBundleRefused(message);
             _mlsReconcileRequested = true;
             unawaited(_catchUpSyncEvents());
             break;
@@ -5699,8 +5756,23 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           break;
         }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
+        try {
+          if (isBundle) {
+            await _mlsCrypto?.completeCommitBundle(message);
+          } else {
+            await localStore.removePendingMlsMessage(message.idempotencyKey);
+          }
+        } catch (err) {
+          // Accepted but not finished here: it is never dropped, and it
+          // holds back the rest of its conversation until a timed retry
+          // finishes it.
+          if (!_syncOwnerActive(current, ownerGeneration)) return;
+          _mlsAcceptedUnfinished.add(message.idempotencyKey);
+          await _recordMlsFinishFailure(message, err);
+          break;
+        }
+        _mlsAcceptedUnfinished.remove(message.idempotencyKey);
         if (isBundle) {
-          await _mlsCrypto?.completeCommitBundle(message);
           final bundle = MlsCommitBundle.decode(message.payload);
           // A self-update, and any commit that removes someone, carries an
           // update path: this device's leaf key is fresh again.
@@ -5709,8 +5781,6 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
                 ?.recordPathCommit(message.conversationId, DateTime.now());
             await _saveSelfUpdates();
           }
-        } else {
-          await localStore.removePendingMlsMessage(message.idempotencyKey);
         }
       }
     }
@@ -5740,6 +5810,25 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final client = api;
     final mls = _mlsCrypto;
     if (current == null || client == null || mls == null) return;
+    try {
+      await _reconcileMlsMembershipOnce(current, client, mls);
+      _mlsStepSettled('reconcile', failed: false);
+    } catch (err) {
+      // The pending-changes list could not be read: try again later, not
+      // only on the next catch-up something else starts.
+      if (err is! ApiException || err.statusCode != 401) {
+        _mlsStepSettled('reconcile', failed: true);
+      }
+      rethrow;
+    } finally {
+      // Every pass, failed or not, re-arms the wake for the earliest change
+      // still backing off.
+      _armMlsRetryWake();
+    }
+  }
+
+  Future<void> _reconcileMlsMembershipOnce(Session current, ApiClient client,
+      MlsConversationCryptoService mls) async {
     final ownerGeneration = _sessionGeneration;
     final changes = await client.mlsPendingChanges(current.token);
     if (!_syncOwnerActive(current, ownerGeneration)) return;
@@ -5751,6 +5840,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       final key = _pendingChangeKey(change);
       stillPending.add(key);
       final firstSeen = _mlsPendingSeen.putIfAbsent(key, () => now);
+      // A change whose bundle was refused is neither claimed nor staged
+      // again until its backoff passes.
+      if (_mlsChangeWaiting(change.conversationId, change.epoch, now)) {
+        continue;
+      }
       // The device that made the change commits it too, without waiting.
       final coordinator = change.coordinatorDeviceId == null ||
           change.coordinatorDeviceId == current.deviceId ||
@@ -5787,6 +5881,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         if (err is ApiException && err.statusCode == 401) rethrow;
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         failed = true;
+        // Not claimed again on every catch-up: it waits out a backoff.
+        _mlsChangeFailed(change.conversationId, change.epoch);
         // Body-free: no conversation, device or server text.
         developer.log(
             'mls_reconcile_conversation_failed '
@@ -5797,11 +5893,187 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     _mlsPendingSeen.removeWhere((key, _) => !stillPending.contains(key));
     _mlsReconcileNow.removeWhere((conversationId) =>
         !changes.any((change) => change.conversationId == conversationId));
+    // A change the server no longer lists, or lists at another epoch, starts
+    // afresh.
+    _mlsChangeRetries.removeWhere((conversationId, retry) => !changes.any(
+        (change) =>
+            change.conversationId == conversationId &&
+            change.epoch == retry.epoch));
     if (failed) _mlsReconcileRequested = true;
     if (staged) await _flushMlsOutbox();
   }
 
   static const _reconcileFallback = Duration(minutes: 3);
+
+  // Membership changes that failed or whose commit bundle the server refused
+  // back off (TASK-029). Plan defaults for bug-hunt Q-003 and Q-005: a
+  // bounded, capped backoff and no terminal pause, since no source shows
+  // which refusals are permanent. A change is neither claimed nor staged
+  // again for [mlsRetryBase], doubling per attempt up to [mlsRetryCap], so a
+  // permanent refusal costs at most one key-package claim and one bundle
+  // per cap interval. A new epoch (another commit landed: a 409 epoch
+  // conflict) or the change leaving the server's list starts it afresh.
+  // Memory only; a restart or a session change resets it.
+
+  /// The first wait after a failed MLS membership change or catch-up step.
+  @visibleForTesting
+  Duration mlsRetryBase = const Duration(seconds: 1);
+
+  /// The longest wait between two attempts of one change or step.
+  @visibleForTesting
+  Duration mlsRetryCap = const Duration(minutes: 10);
+
+  /// Per conversation: the epoch the change failed at, how often, and when
+  /// it may go again. A null [due] has been handed to a pass already.
+  final Map<String, ({int epoch, int attempts, DateTime? due})>
+      _mlsChangeRetries =
+      <String, ({int epoch, int attempts, DateTime? due})>{};
+
+  /// Per catch-up step ('revocations', 'reconcile') that failed as a whole
+  /// or in part: how often in a row, and when the wake retries it.
+  final Map<String, ({int attempts, DateTime? due})> _mlsStepRetries =
+      <String, ({int attempts, DateTime? due})>{};
+
+  /// One timer for the earliest deadline above, so an idle session still
+  /// reconciles when a backoff ends. Separate from the catch-up and outbox
+  /// retry timers, which a successful catch-up or an empty outbox cancel.
+  Timer? _mlsRetryWake;
+
+  Duration _mlsRetryDelay(int attempts) {
+    var delay = mlsRetryBase;
+    for (var i = 1; i < attempts && delay < mlsRetryCap; i++) {
+      delay *= 2;
+    }
+    return delay > mlsRetryCap ? mlsRetryCap : delay;
+  }
+
+  /// Backs off the change of [conversationId] at [epoch] after a failure.
+  void _mlsChangeFailed(String conversationId, int epoch) {
+    final previous = _mlsChangeRetries[conversationId];
+    final attempts =
+        previous != null && previous.epoch == epoch ? previous.attempts + 1 : 1;
+    _mlsChangeRetries[conversationId] = (
+      epoch: epoch,
+      attempts: attempts,
+      due: DateTime.now().toUtc().add(_mlsRetryDelay(attempts)),
+    );
+  }
+
+  /// Whether the change of [conversationId] at [epoch] still waits out its
+  /// backoff at [now]. A change that may go takes its deadline with it, so
+  /// the wake does not fire for it again while the attempt runs.
+  bool _mlsChangeWaiting(String conversationId, int epoch, DateTime now) {
+    final retry = _mlsChangeRetries[conversationId];
+    if (retry == null) return false;
+    if (retry.epoch != epoch) {
+      _mlsChangeRetries.remove(conversationId);
+      return false;
+    }
+    final due = retry.due;
+    if (due == null) return false;
+    if (now.isBefore(due)) return true;
+    _mlsChangeRetries[conversationId] =
+        (epoch: retry.epoch, attempts: retry.attempts, due: null);
+    return false;
+  }
+
+  /// Records how a catch-up [step] went. A failed one is retried by the
+  /// wake after a backoff that grows while it keeps failing; it runs on
+  /// every catch-up meanwhile, as before.
+  void _mlsStepSettled(String step, {required bool failed}) {
+    if (failed) {
+      final attempts = (_mlsStepRetries[step]?.attempts ?? 0) + 1;
+      _mlsStepRetries[step] = (
+        attempts: attempts,
+        due: DateTime.now().toUtc().add(_mlsRetryDelay(attempts)),
+      );
+    } else if (_mlsStepRetries.remove(step) == null) {
+      return;
+    }
+    _armMlsRetryWake();
+  }
+
+  /// The server refused the membership bundle [message] for good or for
+  /// this epoch: its change backs off. A revocation commit has its own path.
+  void _mlsBundleRefused(PendingMlsMessage message) {
+    final MlsCommitBundle bundle;
+    try {
+      bundle = MlsCommitBundle.decode(message.payload);
+    } catch (_) {
+      return;
+    }
+    if (bundle.revocationDeviceId != null) return;
+    _mlsChangeFailed(message.conversationId, bundle.epoch);
+    _armMlsRetryWake();
+  }
+
+  /// Arms the wake for the earliest backoff deadline, replacing any earlier
+  /// one. It belongs to the session that armed it: once that session ends
+  /// or sync restarts, it does nothing.
+  void _armMlsRetryWake() {
+    _mlsRetryWake?.cancel();
+    _mlsRetryWake = null;
+    final owner = session;
+    if (_disposed || owner == null) return;
+    DateTime? earliest;
+    for (final due in _mlsRetryDeadlines()) {
+      if (earliest == null || due.isBefore(earliest)) earliest = due;
+    }
+    if (earliest == null) return;
+    final generation = _sessionGeneration;
+    final delay = earliest.difference(DateTime.now().toUtc());
+    _mlsRetryWake =
+        Timer(delay < _minimumRetryDelay ? _minimumRetryDelay : delay, () {
+      _mlsRetryWake = null;
+      if (_disposed || !_syncOwnerActive(owner, generation)) return;
+      // Hand every expired deadline to the catch-up below, so a pass that
+      // cannot reach the change (a failed fetch, say) does not re-fire the
+      // wake at once.
+      _consumeMlsRetryDeadlines(DateTime.now().toUtc());
+      _mlsReconcileRequested = true;
+      unawaited(_catchUpSyncEvents());
+      _armMlsRetryWake();
+    });
+  }
+
+  Iterable<DateTime> _mlsRetryDeadlines() sync* {
+    for (final retry in _mlsChangeRetries.values) {
+      final due = retry.due;
+      if (due != null) yield due;
+    }
+    for (final retry in _mlsStepRetries.values) {
+      final due = retry.due;
+      if (due != null) yield due;
+    }
+  }
+
+  void _consumeMlsRetryDeadlines(DateTime now) {
+    for (final entry in _mlsChangeRetries.entries.toList()) {
+      final due = entry.value.due;
+      if (due != null && !due.isAfter(now)) {
+        _mlsChangeRetries[entry.key] = (
+          epoch: entry.value.epoch,
+          attempts: entry.value.attempts,
+          due: null
+        );
+      }
+    }
+    for (final entry in _mlsStepRetries.entries.toList()) {
+      final due = entry.value.due;
+      if (due != null && !due.isAfter(now)) {
+        _mlsStepRetries[entry.key] =
+            (attempts: entry.value.attempts, due: null);
+      }
+    }
+  }
+
+  /// Drops every backoff and the wake: the session ended or the app closes.
+  void _resetMlsRetries() {
+    _mlsRetryWake?.cancel();
+    _mlsRetryWake = null;
+    _mlsChangeRetries.clear();
+    _mlsStepRetries.clear();
+  }
 
   /// A floor on retry timers, so an item a pass cannot send yet never
   /// turns the retry timer into a busy loop.
@@ -5815,20 +6087,43 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       ].join('|');
 
   /// Records one delivery failure and says whether it is terminal. Server
-  /// rejections are terminal; connection problems and busy servers retry
-  /// with bounded exponential backoff.
+  /// rejections are terminal, and so are local errors that cannot pass by
+  /// themselves: an item that does not decode, a bad argument, a durable
+  /// storage error (TASK-052). They pause the conversation, with the item
+  /// kept; nothing resumes it yet but the device's own recovery (bug-hunt
+  /// Q-006 is open). Connection problems, busy servers, a malformed
+  /// response, transient storage errors and unknown errors retry with
+  /// bounded exponential backoff.
   Future<bool> _recordMlsOutboxFailure(
       PendingMlsMessage message, Object error) async {
     final apiError = error is ApiException ? error : null;
-    final retryable = (apiError != null && _isTransientSyncError(apiError)) ||
-        (apiError == null && _isTransientSyncError(error));
-    final terminal = apiError != null && !retryable;
+    final bool terminal;
+    final String failureClass;
+    if (apiError != null) {
+      terminal = !_isTransientSyncError(apiError);
+      failureClass = terminal
+          ? 'terminal:${apiError.statusCode}:${apiError.serverCode ?? 'rejected'}'
+          : 'retryable:${apiError.statusCode}';
+    } else if (_isDurableLocalError(error)) {
+      terminal = true;
+      failureClass = 'terminal:local:${error.runtimeType}';
+    } else {
+      terminal = false;
+      failureClass = error is ApiResponseException
+          ? 'retryable:response'
+          : error is SocketException ||
+                  error is TimeoutException ||
+                  error is HttpException ||
+                  error is HandshakeException
+              ? 'retryable:network'
+              : _isTransientSyncError(error)
+                  ? 'retryable:local'
+                  : 'retryable:unknown';
+    }
     final exponent = min(message.attemptCount, 8);
     await localStore.recordMlsOutboxFailure(
       message.idempotencyKey,
-      failureClass: terminal
-          ? 'terminal:${apiError.statusCode}:${apiError.serverCode ?? 'rejected'}'
-          : 'retryable:${apiError?.statusCode ?? 'network'}',
+      failureClass: failureClass,
       terminal: terminal,
       nextAttemptAt: terminal
           ? null
@@ -5836,6 +6131,45 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     );
     return terminal;
   }
+
+  /// A local error a retry cannot fix. A malformed server response is a
+  /// [FormatException] too, but the next answer may be fine.
+  static bool _isDurableLocalError(Object error) =>
+      (error is FormatException && error is! ApiResponseException) ||
+      error is ArgumentError ||
+      _isDurableStorageError(error);
+
+  /// Items the server accepted whose local finishing (merging the commit,
+  /// or removing the item) failed; the next pass only finishes them. Memory
+  /// only: after a restart the item is sent again, and the server answers
+  /// a repeated idempotency key with the original result.
+  final Set<String> _mlsAcceptedUnfinished = <String>{};
+
+  /// Consecutive MLS outbox passes or queue reads that failed locally.
+  int _mlsOutboxLocalFailures = 0;
+
+  /// Records that the server accepted [message] but finishing it here
+  /// failed with [error]. Always a timed retry with the item's own backoff,
+  /// never terminal: the group already moved on with it (TASK-030).
+  Future<void> _recordMlsFinishFailure(
+      PendingMlsMessage message, Object error) async {
+    // Body-free: no conversation, device or server text.
+    developer.log('mls_outbox_finish_failed ${error.runtimeType}',
+        name: 'veritra.sync');
+    final exponent = min(message.attemptCount, 8);
+    await localStore.recordMlsOutboxFailure(
+      message.idempotencyKey,
+      failureClass: 'retryable:finish',
+      terminal: false,
+      nextAttemptAt:
+          DateTime.now().toUtc().add(Duration(seconds: 1 << exponent)),
+    );
+  }
+
+  /// The wait after [failures] consecutive local storage failures of an
+  /// outbox worker: 1 s, doubling to 256 s, like an item's own retries.
+  static Duration _localRetryDelay(int failures) =>
+      Duration(seconds: 1 << min(max(failures - 1, 0), 8));
 
   Future<void> _scheduleMlsOutboxRetry() async {
     _mlsOutboxRetryTimer?.cancel();
@@ -5847,6 +6181,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     try {
       messages = await localStore.pendingMlsMessages();
     } catch (_) {
+      // Unreadable queue: try again later rather than wait for a wake.
+      _mlsOutboxLocalFailures++;
+      if (!_disposed) {
+        _armMlsOutboxRetry(_localRetryDelay(_mlsOutboxLocalFailures));
+      }
       return;
     }
     // Only the head of each conversation can be sent next; a conversation
@@ -5864,8 +6203,21 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (head.terminal || due == null) continue;
       if (earliest == null || due.isBefore(earliest)) earliest = due;
     }
-    if (earliest == null || _disposed) return;
-    final delay = earliest.difference(now);
+    var delay = earliest?.difference(now);
+    // After a local failure the stored due times may be stale or missing
+    // (the failure could not be recorded), so wait at least the local
+    // backoff: a due head would otherwise be retried at the floor forever.
+    if (_mlsOutboxLocalFailures > 0) {
+      final fallback = _localRetryDelay(_mlsOutboxLocalFailures);
+      if (delay == null || delay < fallback) delay = fallback;
+    }
+    if (delay == null || _disposed) return;
+    _armMlsOutboxRetry(delay);
+  }
+
+  void _armMlsOutboxRetry(Duration delay) {
+    // Two schedulers may overlap their reads; only the last timer stays.
+    _mlsOutboxRetryTimer?.cancel();
     _mlsOutboxRetryTimer =
         Timer(delay < _minimumRetryDelay ? _minimumRetryDelay : delay, () {
       _mlsOutboxRetryTimer = null;
@@ -6122,7 +6474,22 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final client = api;
     final mls = _mlsCrypto;
     if (current == null || client == null || mls == null) return;
-    final revocations = await client.mlsRevocations(current.token);
+    final List<MlsRevocation> revocations;
+    try {
+      revocations = await client.mlsRevocations(current.token);
+    } catch (err) {
+      // A revoked session ends the whole pass; otherwise reconcile still
+      // runs, and the list is read again after a backoff (TASK-035).
+      if (err is ApiException && err.statusCode == 401) rethrow;
+      // Body-free: no server text.
+      developer.log(
+          'mls_revocations_unavailable '
+          '${err is ApiException ? err.statusCode : err.runtimeType}',
+          name: 'veritra.sync');
+      _mlsStepSettled('revocations', failed: true);
+      return;
+    }
+    var failed = false;
     _revocationPendingGroups
       ..clear()
       ..addAll(revocations
@@ -6132,7 +6499,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       // Each revocation is handled on its own: one that cannot be committed
       // here (no local group, or no leaf for the device) must not fail the
       // pass, or reconcile and the wake ACK never run. It is listed again,
-      // and tried again, on the next pass.
+      // and tried again on the next pass, which the wake starts after a
+      // backoff when nothing else does.
       try {
         if (revocation.state == 'pending' &&
             revocation.coordinatorDeviceId == current.deviceId) {
@@ -6140,11 +6508,27 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           // particular, a revocation commit queued before a restart is
           // still "pending" on the server until it is delivered; making
           // another one would fork the group.
+          var target = revocation;
           if (await _hasPendingMlsWork(revocation.conversationId)) {
             await _flushMlsOutbox();
             if (await _hasPendingMlsWork(revocation.conversationId)) continue;
+            // The drain may have delivered this revocation's own commit, and
+            // the list above predates it: read the revocation again and
+            // commit only if the server still waits for this device.
+            final fresh = (await client.mlsRevocations(current.token))
+                .where((item) =>
+                    item.conversationId == revocation.conversationId &&
+                    item.revokedDeviceId == revocation.revokedDeviceId)
+                .firstOrNull;
+            if (fresh == null ||
+                fresh.state != 'pending' ||
+                fresh.coordinatorDeviceId != current.deviceId ||
+                await _hasPendingMlsWork(revocation.conversationId)) {
+              continue;
+            }
+            target = fresh;
           }
-          await mls.createRevocationCommit(revocation);
+          await mls.createRevocationCommit(target);
           await _flushMlsOutbox();
           continue;
         }
@@ -6161,6 +6545,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       } catch (err) {
         // A revoked session ends the whole pass.
         if (err is ApiException && err.statusCode == 401) rethrow;
+        failed = true;
         // Body-free: no conversation, device or server text.
         developer.log(
             'mls_revocation_failed '
@@ -6168,6 +6553,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             name: 'veritra.sync');
       }
     }
+    _mlsStepSettled('revocations', failed: failed);
   }
 
   /// How long the self-update policy waits after the server refused the
@@ -6513,6 +6899,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     _outboxRetryTimer = null;
     _mlsOutboxRetryTimer?.cancel();
     _mlsOutboxRetryTimer = null;
+    _resetMlsRetries();
     _expiryTimer?.cancel();
     _expiryTimer = null;
     _muteTimer?.cancel();
