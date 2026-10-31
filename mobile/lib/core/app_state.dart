@@ -2868,10 +2868,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     }
   }
 
-  /// Downloads one attachment's ciphertext and decrypts it in memory. The
-  /// ciphertext and plaintext only touch disk as temporary files, which are
-  /// removed before this returns. Forwarding sets [memoryOnly], which never
-  /// creates a decrypted temporary file.
+  /// Downloads one attachment's ciphertext to a temporary file and decrypts
+  /// it. By default it decrypts to a temporary plaintext file and reads that
+  /// back. With [memoryOnly] (used by forwarding) it decrypts straight to
+  /// bytes and creates no plaintext file. Both temporary files are deleted
+  /// in `finally`, best effort: a crash or kill before then can leave them
+  /// in the working directory.
   Future<Uint8List> loadAttachment(
     AttachmentEntry entry, {
     required String conversationId,
