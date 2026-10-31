@@ -796,7 +796,11 @@ restore is rolled back to the previous instance, a finished one is kept. A
 damaged journal, or one naming other paths, stops startup until an operator
 resolves it. Staging directories are removed only when they carry the
 `.veritra-staging` marker that this tool writes, so no other path is ever
-cleaned. A migration applies its SQL and its `schema_migrations` record in one
+cleaned. Restore and recovery hold `<database>.restore.lock` and a
+`.veritra-restore.lock` in the database's directory; these small files stay
+in place and must not be deleted while a command runs. Two instances whose
+databases share a directory cannot restore at the same time, and a crashed
+restore of one blocks recovery of the other until it is settled. A migration applies its SQL and its `schema_migrations` record in one
 transaction; a failing migration leaves the database as it was. Rolling back
 across an incompatible migration means restoring the matching backup, never a
 hand-written down migration.
