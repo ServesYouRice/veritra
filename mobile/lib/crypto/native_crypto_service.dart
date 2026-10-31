@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
 
 import '../core/models.dart';
 import '../core/server_origin.dart';
@@ -371,11 +372,16 @@ class NativeCryptoService
           return _requiredDevice().groupEpoch(conversationId);
         } on NativeCryptoException {
           // A missing group and a handle a native panic left poisoned both
-          // answer operationFailed. Reload the committed state and ask once
-          // more, so a poisoned handle never reads as "no group" and is not
-          // kept for the next operation.
+          // answer operationFailed. A call that takes the same device lock
+          // tells them apart: if it succeeds and the handle holds the
+          // committed state, the group is simply missing. Otherwise reload
+          // the committed state and ask once more, so a poisoned or stale
+          // handle never reads as "no group" and is not kept.
           final stored = await localStore.loadCryptoState();
           if (stored == null) return null;
+          if (stored.counter == _deviceCounter && _handleAnswers()) {
+            return null;
+          }
           await _restorePrevious(stored);
         }
         try {
@@ -384,6 +390,18 @@ class NativeCryptoService
           return null;
         }
       });
+
+  /// Whether the device handle still answers a call that takes its lock
+  /// (`with_device` in `crypto/rust/src/ffi.rs`). A native panic poisons that
+  /// lock, after which every call fails.
+  bool _handleAnswers() {
+    try {
+      _requiredDevice().signingPublicKey();
+      return true;
+    } on NativeCryptoException {
+      return false;
+    }
+  }
 
   MlsCommitBundle _stage(
     NativeCryptoDevice device,
@@ -1241,15 +1259,26 @@ class NativeCryptoService
     return null;
   }
 
+  /// Replaces the device handle with one restored from [previous]. The new
+  /// handle is built before the old one is closed, so [_device] never points
+  /// at a closed handle. If the restore fails, the old handle (whose group
+  /// state can no longer be trusted) is closed and the device left inactive:
+  /// callers fail closed until the session is activated again.
   Future<void> _restorePrevious(StoredCryptoState previous) async {
-    _device?.close();
     _deviceCounter = null;
-    final restored = _restoreDevice(_accountId!, _deviceId!, previous);
-    if (restored.counter != previous.counter) {
-      restored.device.close();
+    ({NativeCryptoDevice device, int counter}) restored;
+    try {
+      restored = _restoreDevice(_accountId!, _deviceId!, previous);
+      if (restored.counter != previous.counter) {
+        restored.device.close();
+        throw StateError('failed to restore the previous MLS state');
+      }
+    } catch (_) {
+      _device?.close();
       _device = null;
-      throw StateError('failed to restore the previous MLS state');
+      rethrow;
     }
+    _device?.close();
     _device = restored.device;
     _deviceCounter = restored.counter;
   }
@@ -1453,7 +1482,10 @@ int? mlsMessageEpoch(List<int> message, String groupId) {
     length = (length << 8) | message[offset + index];
   }
   offset += sizeBytes;
-  final expected = utf8.encode(groupId);
+  // The bytes the bindings send as the group ID (`native_crypto_bindings.dart`
+  // passes `Uint8List.fromList(groupId.codeUnits)`), so a header matches the
+  // group the native side created, whatever characters the ID holds.
+  final expected = Uint8List.fromList(groupId.codeUnits);
   if (length != expected.length || offset + length + 8 > message.length) {
     return null;
   }
