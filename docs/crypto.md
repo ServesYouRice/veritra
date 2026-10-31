@@ -45,12 +45,72 @@ Key-package size checks mirror the server transport boundary (64 bytes through
 
 OpenMLS 0.9.2, `openmls_rust_crypto` 0.6.0, and their supporting crates are
 exactly pinned (Rust 1.91 or newer). All 205 locked third-party packages declare
-compatible license choices recorded in `THIRD_PARTY_NOTICES.md`. Sealed state
-reads envelope formats 2 and 3 and writes format 3, including through existing
-ABI v7 state-sealing calls. Genuine format 2 state preserves its signer and live
-groups during migration. Version 1 blobs written under OpenMLS 0.8.1 and unknown
-versions fail closed, with their own restore code since ABI 9. No debug feature that exposes
-message content or cryptographic material is enabled.
+compatible license choices recorded in `THIRD_PARTY_NOTICES.md`. Since ABI 10
+(D70) sealed state is format 4: a root plus one record per owner, described
+in "Sealed state, format 4" below. Format 2 and 3 blobs are read only by the
+one-way migration at activation. Version 1 blobs written under OpenMLS 0.8.1
+and unknown versions fail closed, with their own restore code since ABI 9.
+No debug feature that exposes message content or cryptographic material is
+enabled.
+
+### Sealed state, format 4 (ABI 10, D70)
+
+The state is no longer one blob. It is a root, kept in the existing
+singleton row, and one record per owner in `local_crypto_records` (schema
+16): the device record (kind 1: signer, key pairs no group owns, K2
+transfers), one record per group (kind 2, id = conversation id) and one per
+key package (kind 3, id = hash reference). Design:
+[D70](designs/D70-per-group-sealed-state.md).
+
+- **Record.** `"PMMLSST1" || u16 4 || u8 kind || u64 generation ||
+  u16 account_len || account || u16 device_len || device || u16 id_len ||
+  id || nonce12`, then `u32 len || AES-256-GCM ciphertext` under the
+  existing state key, with the whole header as AAD. Kind 0 is the root.
+- **Root.** Lists the signer's public key and, for every record, its kind,
+  id, generation and the SHA-256 of the sealed record. It is resealed in
+  every transaction at the new generation, which must be the stored counter
+  plus one.
+- **Writes.** `pm_crypto_device_seal_changes` returns the root and only the
+  records that changed (upserts and deletes). The app applies them in the
+  same SQLite transaction as the root and the change that caused them
+  (message, cursor, outbox). Every write that replaces the root applies its
+  changes, including rollbacks and the D54 retry. A full write
+  (`saveCryptoState`) replaces all records.
+- **Restore.** The app reads the root and every record in one transaction,
+  then `pm_crypto_restore_begin` (generation at least the minimum, and the
+  app requires it to equal the stored counter), `pm_crypto_restore_add` per
+  record, `pm_crypto_restore_finish`. A missing, extra, duplicate, stale,
+  foreign (other account or device), altered or wrong-key record fails the
+  whole restore. `finish` and `pm_crypto_restore_abort` spend the token.
+- **Caps (plaintext).** Root 16 MiB and 200,000 entries; device record
+  1 MiB; group record 32 MiB, 4 MiB per value, 10,000 values; key package
+  record 256 KiB; at most 1,000 key packages. A sealed record may be up to
+  4 KiB larger. A record over its cap fails the seal with
+  `PM_CRYPTO_RECORD_LIMIT` (-8), which names its kind and id; nothing is
+  sealed and the app restores the committed state. The change-set output
+  is bounded at 128 MiB.
+- **Migration (one way).** At activation only, a format 2 or 3 blob goes
+  through `pm_crypto_device_migrate_v3`: every check of the old restore, the
+  counter must equal the stored one, inactive groups and key pairs no group
+  owns are dropped, and the result is checked against the input. The app
+  then seals every record at counter + 1 and stores the new root and all
+  records in one compare-and-swap transaction (`commitCryptoMigration`:
+  the old blob must still be stored, unchanged), deleting any records found
+  beside the old blob. The device is then restored from what was stored.
+  A crash at any step leaves either the old blob or the full new state.
+  Older builds refuse a format 4 root (`stateFormatUnsupported`).
+- **Groups that end.** Applying its own removal drops a device's group and,
+  with the next seal, its record. `pm_crypto_group_delete` drops a group
+  the user deleted. A missing group behaves as an inactive one did before:
+  a peer message to it is a D54 placeholder, `groupEpoch` answers null, and
+  a commit bundle for it settles.
+- **Key packages.** `pm_crypto_device_prune_key_packages` drops packages
+  whose `not_after` passed more than 24 hours ago. A Welcome for a key
+  package this device does not hold, or one that expired, fails with
+  `PM_CRYPTO_WELCOME_KEY_PACKAGE_UNAVAILABLE` (-9, D74) before anything is
+  consumed; the app records an `invalid` row keyed
+  `welcome-unavailable:<syncEventId>:<mlsMessageId>`, shown as "Couldn't
+  join this chat. Ask a member to add you again.", and sync moves on.
 
 **OpenMLS upgrade checklist.** Any OpenMLS (or `openmls_rust_crypto` /
 `openmls_memory_storage`) version bump must re-check the storage labels
@@ -141,12 +201,14 @@ compare signing keys.
 ### Rejoining a conversation
 
 A device removed from a conversation and later re-added (an account that
-leaves and is invited back) still stores the old group under the same id:
-OpenMLS keeps a group after its own removal, marked inactive.
-`join_group` (`pm_crypto_group_join`, no ABI change) lets a Welcome replace
-a stored group only when that group is inactive, that is, the device has
-applied its own removal commit. The old group's state is deleted before the
-new one is stored. The Welcome then has the trust of any fresh join, which
+leaves and is invited back) no longer stores the old group: since ABI 10
+(D70) applying its own removal commit drops the group and its record, so
+the Welcome is a fresh join. `join_group` (`pm_crypto_group_join`) still
+lets a Welcome replace a stored group that is inactive, which only a state
+restored from before the drop can hold. `pm_crypto_group_delete` is for a
+chat the user deletes, and only for that: the app never calls it on a
+removal, a server event or a Welcome, so the server cannot use it to make a
+device drop an active group. The Welcome then has the trust of any fresh join, which
 includes the L1 gap above: the core checks its structure, not who may be in
 the group or who may invite.
 
@@ -276,6 +338,32 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
+
+- **D70 S3, per-record sealed state, ABI 10 (2026-10-31):** sealed state
+  format 4 (see "Sealed state, format 4" above). ABI 10 removes
+  `pm_crypto_device_restore` and `pm_crypto_device_seal_state` and adds
+  `pm_crypto_device_seal_changes`, `pm_crypto_restore_begin`, `_add`,
+  `_finish` and `_abort`, `pm_crypto_device_migrate_v3`,
+  `pm_crypto_group_delete`, `pm_crypto_device_prune_key_packages`, and the
+  codes `PM_CRYPTO_RECORD_LIMIT` (-8) and
+  `PM_CRYPTO_WELCOME_KEY_PACKAGE_UNAVAILABLE` (-9, D74). The Dart bindings
+  pin ABI 10 exactly. No server or payload change; schema 16 (S2) holds the
+  records.
+  - **Behaviour changes.** A device that applies its own removal no longer
+    keeps an inactive group: `groupEpoch` is null and later messages are
+    D54 placeholders. A Welcome for a missing or expired key package is a
+    notice row instead of a sync stop. Key packages are capped at 1,000.
+  - **Migration.** One way, at activation, in one compare-and-swap
+    transaction that does not move the sync cursor. A build before ABI 10
+    cannot read the migrated state; it reports `stateFormatUnsupported`.
+  - **Not wired yet (S4).** The app does not call `group_delete` or
+    `prune_key_packages`, and has no screen for `PM_CRYPTO_RECORD_LIMIT`
+    (the operation fails and rolls back).
+  - Tests: `crypto/rust/src/mls/records_tests.rs`,
+    `crypto/rust/src/ffi/records_tests.rs`,
+    `crypto/rust/tests/rejoin_after_removal.rs`,
+    `mobile/test/d70_crypto_records_changes_test.dart`,
+    `mobile/test/d70_native_records_service_test.dart`.
 
 - **D54, undecryptable peer messages (2026-10-31, owner decision):** no
   ABI, payload, schema or server change. A peer's application message or
