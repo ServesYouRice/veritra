@@ -43,7 +43,8 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 35 `TASK-035` Isolate failures per revocation and per membership change in the MLS catch-up step
 - [x] 36 `TASK-036` Coalesce projection refreshes per contiguous run of non-crypto sync events
 - [x] 37 `TASK-037` Make _startSync failures observable and recoverable
-- [ ] 38 `TASK-038` Report restoreFromBackup failure when the restored session does not come up
+- [x] 38 `TASK-038` Report restoreFromBackup failure when the restored session does not come up
+  - Done; owner questions left: restore-failure kind (Q-003) and whether a 401-rejected restored session counts as failure (VAL-053).
   - Partial: lifecycle fixes landed; remainder left open.
 - [ ] 39 `TASK-039` Hold sends after a member removal until the MLS removal commit is applied
   - Blocked on owner question Q-001.
@@ -62,7 +63,8 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 51 `TASK-051` Re-check revocation state after draining before creating a revocation commit
 - [x] 52 `TASK-052` Classify durable non-API MLS outbox failures as terminal and label them accurately
 - [x] 53 `TASK-053` Hide stale history and retry after an expiry history reload fails
-- [ ] 54 `TASK-054` Stop startConversation from re-creating the MLS group and resetting state for an existing DM
+- [x] 54 `TASK-054` Stop startConversation from re-creating the MLS group and resetting state for an existing DM
+  - Done; owner questions left: may the server say whether a DM already existed (Q-004)?
   - Not attempted this round (app_state section).
 - [x] 55 `TASK-055` Start sync after login or createOwner even when a step after authentication fails
 - [x] 56 `TASK-056` Bind markPeerVerified to the safety number the user compared
@@ -305,17 +307,20 @@ The audit could not settle these, and most such reports do not hold. Check one o
   - Real; fixed on branch agent/busy-thompson-nv3ayb (PR #100).
 - [ ] check 24 `C-7121f7bb1452` Backups carry the bearer token, device secret, and the sealed MLS state together with its key, so a backup can clone the device
   - Blocked: needs an owner decision.
-- [ ] check 25 `C-7bad26b22132` Overlapping preference saves can persist an older privacy choice
+- [x] check 25 `C-7bad26b22132` Overlapping preference saves can persist an older privacy choice
+  - Checked: not a bug (secure storage writes are serialized in order). A related read-receipts refresh race was real and is fixed.
 - [x] check 26 `C-8eb6c45ffd50` Blob cleanup fallback reuses the deletion's exhausted deadline
   - Real; fixed on branch agent/busy-thompson-nv3ayb (PR #100).
-- [ ] check 27 `C-973d380c02c5` Legacy add_member, self_update and remove_member merge commits locally before the delivery service accepts them
+- [x] check 27 `C-973d380c02c5` Legacy add_member, self_update and remove_member merge commits locally before the delivery service accepts them
+  - Real (test-only eager exports): NULL out_commit now refused before merging. Removing the exports waits for the next ABI bump.
 - [x] check 28 `C-9ba096eeb276` release-readiness.sh skips the full evidence verification when no evidence file is present, yet still reports that all gates passed
   - Real; fixed on branch agent/busy-thompson-nv3ayb (PR #100).
 - [x] check 29 `C-a118300d899c` Approvals commit is not checked to be on the protected branch or descended from the candidate, and approval paths need not be candidate-keyed
   - Real; fixed on branch agent/busy-thompson-nv3ayb (PR #100).
 - [x] check 30 `C-a6c5810ae85d` Release-entry crypto boundary check is textual and limited to main.dart, so transitive wiring of native crypto goes undetected
   - Real; fixed on branch agent/busy-thompson-nv3ayb (PR #100).
-- [ ] check 31 `C-b5dfd921d890` createEnrollmentCredential swaps in a fresh device but keeps the old `_deviceCounter`, so stored MLS state can be overwritten
+- [x] check 31 `C-b5dfd921d890` createEnrollmentCredential swaps in a fresh device but keeps the old `_deviceCounter`, so stored MLS state can be overwritten
+  - Real; fixed (enrollment resets the device counter, and no state is sealed until activation).
 - [x] check 32 `C-bbb8fe5d93f3` stageCommit can leave an orphaned native pending commit when post-stage validation fails
   - Checked: not a bug.
 - [x] check 33 `C-c10536ccbdc0` Returning false from didFinishLaunching does not stop launch on crypto ABI mismatch
