@@ -363,6 +363,12 @@ jobs:
           python3 scripts/write-release-evidence_test.py
           python3 scripts/check-coverage_test.py
           python3 scripts/l10n-sr-latn_test.py
+          python3 scripts/build-crypto_test.py
+          python3 scripts/check-dart-licenses_test.py
+          python3 scripts/check-demo-boundary_test.py
+          python3 scripts/check-go-toolchain_test.py
+          python3 scripts/check-gradle-inputs_test.py
+          python3 scripts/release-image_test.py
 
   vulnerabilities:
     runs-on: ubuntu-latest

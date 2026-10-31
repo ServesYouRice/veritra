@@ -18,6 +18,8 @@ if ($PythonCmd) {
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   & $PythonCmd (Join-Path $Root "scripts/l10n-sr-latn_test.py")
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  & $PythonCmd (Join-Path $Root "scripts/check-gradle-inputs_test.py")
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 } else {
   [Console]::Error.WriteLine("release-policy fixtures need py, python3 or python; none found")
   exit 1

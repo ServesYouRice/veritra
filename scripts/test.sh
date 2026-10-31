@@ -13,6 +13,12 @@ if command -v python3 >/dev/null 2>&1; then
   python3 "$ROOT/scripts/write-release-evidence_test.py"
   python3 "$ROOT/scripts/check-coverage_test.py"
   python3 "$ROOT/scripts/l10n-sr-latn_test.py"
+  python3 "$ROOT/scripts/build-crypto_test.py"
+  python3 "$ROOT/scripts/check-dart-licenses_test.py"
+  python3 "$ROOT/scripts/check-demo-boundary_test.py"
+  python3 "$ROOT/scripts/check-go-toolchain_test.py"
+  python3 "$ROOT/scripts/check-gradle-inputs_test.py"
+  python3 "$ROOT/scripts/release-image_test.py"
 elif command -v python >/dev/null 2>&1; then
   python "$ROOT/scripts/check-release-evidence_test.py"
   python "$ROOT/scripts/check-dart-retractions_test.py"
@@ -20,6 +26,12 @@ elif command -v python >/dev/null 2>&1; then
   python "$ROOT/scripts/write-release-evidence_test.py"
   python "$ROOT/scripts/check-coverage_test.py"
   python "$ROOT/scripts/l10n-sr-latn_test.py"
+  python "$ROOT/scripts/build-crypto_test.py"
+  python "$ROOT/scripts/check-dart-licenses_test.py"
+  python "$ROOT/scripts/check-demo-boundary_test.py"
+  python "$ROOT/scripts/check-go-toolchain_test.py"
+  python "$ROOT/scripts/check-gradle-inputs_test.py"
+  python "$ROOT/scripts/release-image_test.py"
 else
   echo "release-policy fixtures need python3 or python; none found" >&2
   exit 1
