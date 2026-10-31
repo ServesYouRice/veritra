@@ -9,11 +9,17 @@ import Darwin
   private var pushInstance: String?
   private var ownedEngine: FlutterEngine?
   private(set) var backgroundLaunchHint = false
+  // Set once in didFinishLaunching; false until the crypto boundary checks.
+  private var cryptoBoundaryReady = false
   private let wakeCoordinator = IOSWakeCoordinator()
 
   func sharedEngine(background: Bool = false) -> FlutterEngine? {
     dispatchPrecondition(condition: .onQueue(.main))
     if let ownedEngine { return ownedEngine }
+    // UIKit ignores didFinishLaunching's false and still connects the scene,
+    // so the crypto check is enforced here: no Dart runs against a
+    // mismatched or prematurely enabled crypto library.
+    guard cryptoBoundaryReady else { return nil }
     let startingInBackground = background || backgroundLaunchHint
     guard !startingInBackground || IOSWakeCoordinator.coldExecutionEnabled else { return nil }
     let engine = FlutterEngine(name: "veritra.shared", project: nil, allowHeadlessExecution: true)
@@ -40,10 +46,9 @@ import Darwin
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     backgroundLaunchHint = launchOptions?[.remoteNotification] != nil && application.applicationState != .active
-    guard pm_crypto_abi_version() == PM_CRYPTO_ABI_VERSION,
-          pm_crypto_available() == PM_CRYPTO_UNAVAILABLE else {
-      return false
-    }
+    cryptoBoundaryReady = pm_crypto_abi_version() == PM_CRYPTO_ABI_VERSION &&
+      pm_crypto_available() == PM_CRYPTO_UNAVAILABLE
+    guard cryptoBoundaryReady else { return false }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
