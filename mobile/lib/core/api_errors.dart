@@ -375,6 +375,18 @@ class ApiResponseException implements FormatException {
   String toString() => message;
 }
 
+/// A resumed download asked for a byte range and the server (or a proxy in
+/// front of it) answered 200 with the whole object, which starts at byte 0.
+/// Those bytes must never be appended at the saved offset.
+///
+/// It is an [ApiException] with status 416, the answer a server gives when
+/// it cannot serve the requested range, so existing handling of a rejected
+/// range applies: the saved prefix is dropped and the next attempt downloads
+/// from the start.
+class RangeNotHonoredException extends ApiException {
+  RangeNotHonoredException() : super(416);
+}
+
 /// A response larger than the client accepts for its kind. It stays an
 /// [HttpException] so retry policy treats it like other transport failures.
 class ApiResponseTooLargeException extends HttpException {
