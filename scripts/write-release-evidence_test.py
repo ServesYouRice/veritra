@@ -88,6 +88,12 @@ def test_build_manifest() -> None:
     # 2. Missing image or digest
     expect_value_error("empty image", image="")
     expect_value_error("empty digest", digest="")
+    # The digest must be the immutable form the checker accepts, not a tag
+    # or a typo.
+    for bad_digest in ("latest", "sha256:ABC", "sha256:" + "a" * 63, "sha256:" + "A" * 64, "sha256:" + "a" * 65,
+                       "sha512:" + "a" * 64, "a" * 64, DIGEST + "\n", " " + DIGEST, IMAGE + "@" + DIGEST):
+        expect_value_error(f"digest {bad_digest!r}", digest=bad_digest)
+    assert build(digest="sha256:" + "0" * 64)["container"]["digest"] == "sha256:" + "0" * 64
 
     # 3. Invalid approvals structure in policy, or no approvals commit
     expect_value_error("non-dict approvals", policy={"schema_version": 3, "approvals": "not a dict"})
@@ -169,6 +175,7 @@ def test_required_approvals_match_the_gate() -> None:
     checker = importlib.util.module_from_spec(checker_spec)
     checker_spec.loader.exec_module(checker)
     assert set(writer.REQUIRED_APPROVALS) == set(checker.REQUIRED_APPROVALS)
+    assert writer.DIGEST_PATTERN.pattern == checker.DIGEST_RE.pattern
     policy = json.loads((MODULE_PATH.parents[1] / "release/release-policy.json").read_text(encoding="utf-8"))
     assert set(writer.REQUIRED_APPROVALS) == set(policy["approvals"])
 
@@ -391,6 +398,7 @@ def test_missing_mobile_evidence_fails_closed() -> None:
     try:
         expect_refused(repo.run(MOBILE_ARTIFACTS_FILE=str(repo.root / "absent.json")),
                        "signed mobile artifact evidence is missing")
+        expect_refused(repo.run(CONTAINER_DIGEST="latest"), "CONTAINER_DIGEST must be sha256:<64 lowercase hex>")
     finally:
         repo.close()
 

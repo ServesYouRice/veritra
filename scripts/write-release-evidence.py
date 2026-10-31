@@ -14,6 +14,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -27,6 +28,8 @@ GIT_HISTORY_ENV = {"GIT_NO_REPLACE_OBJECTS": "1", "GIT_GRAFT_FILE": os.path.join
 # The approvals check-release-evidence.py requires (its REQUIRED_APPROVALS).
 # A policy without any of them cannot make a manifest.
 REQUIRED_APPROVALS = ("production_crypto", "independent_review")
+# An immutable image digest, as check-release-evidence.py's DIGEST_RE.
+DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 def load(path: Path) -> dict[str, object]:
@@ -98,6 +101,8 @@ def build_manifest(
     validate_commit(approvals_commit, "RELEASE_APPROVALS_COMMIT")
     if not image or not digest:
         raise ValueError("CONTAINER_IMAGE and CONTAINER_DIGEST are required")
+    if not DIGEST_PATTERN.fullmatch(digest):
+        raise ValueError("CONTAINER_DIGEST must be sha256:<64 lowercase hex>")
     approvals = policy.get("approvals")
     if not isinstance(approvals, dict) or not approvals:
         raise ValueError("release policy has no approvals")
