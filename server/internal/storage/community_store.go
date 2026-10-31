@@ -389,32 +389,45 @@ func (s *Store) approveDeviceLink(ctx context.Context, linkID, accountID string,
 	return link, device, eventID, nil
 }
 
-func (s *Store) ConsumeApprovedDeviceLink(ctx context.Context, linkID, claimTokenHash, sessionTokenHash string, sessionExpiresAt time.Time) (AccountDevice, error) {
+// ConsumedDeviceLink is what consuming an approved link returns: the linked
+// account and device, and the claimed transcript hash and approval tag read in
+// the same transaction that creates the session.
+type ConsumedDeviceLink struct {
+	AccountDevice
+	TranscriptHash []byte
+	ApprovalTag    []byte
+}
+
+func (s *Store) ConsumeApprovedDeviceLink(ctx context.Context, linkID, claimTokenHash, sessionTokenHash string, sessionExpiresAt time.Time) (ConsumedDeviceLink, error) {
 	if strings.TrimSpace(linkID) == "" || claimTokenHash == "" || sessionTokenHash == "" {
-		return AccountDevice{}, ErrDeviceLinkInvalid
+		return ConsumedDeviceLink{}, ErrDeviceLinkInvalid
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return AccountDevice{}, err
+		return ConsumedDeviceLink{}, err
 	}
 	defer tx.Rollback()
 	var state string
+	var transcriptHash, approvalTag []byte
 	err = tx.QueryRowContext(ctx, `
-		SELECT state
+		SELECT state, claimed_transcript_hash, approval_tag
 		FROM device_links
 		WHERE id = ? AND claim_token_hash = ? AND revoked_at IS NULL AND expires_at > ?`,
-		linkID, claimTokenHash, nowString()).Scan(&state)
+		linkID, claimTokenHash, nowString()).Scan(&state, &transcriptHash, &approvalTag)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return AccountDevice{}, ErrDeviceLinkInvalid
+			return ConsumedDeviceLink{}, ErrDeviceLinkInvalid
 		}
-		return AccountDevice{}, err
+		return ConsumedDeviceLink{}, err
 	}
 	if state != domain.DeviceLinkApproved {
 		if state == domain.DeviceLinkClaimed || state == domain.DeviceLinkPending {
-			return AccountDevice{}, ErrDeviceLinkNotReady
+			return ConsumedDeviceLink{}, ErrDeviceLinkNotReady
 		}
-		return AccountDevice{}, ErrDeviceLinkInvalid
+		return ConsumedDeviceLink{}, ErrDeviceLinkInvalid
+	}
+	if len(transcriptHash) != 32 || len(approvalTag) != 32 {
+		return ConsumedDeviceLink{}, ErrDeviceLinkInvalid
 	}
 	row := tx.QueryRowContext(ctx, `
 		SELECT a.id, a.username, a.email, a.role, a.status, a.created_at, a.deleted_at,
@@ -427,42 +440,30 @@ func (s *Store) ConsumeApprovedDeviceLink(ctx context.Context, linkID, claimToke
 	linked, err := scanAccountDevice(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return AccountDevice{}, ErrDeviceLinkInvalid
+			return ConsumedDeviceLink{}, ErrDeviceLinkInvalid
 		}
-		return AccountDevice{}, err
+		return ConsumedDeviceLink{}, err
 	}
 	createdAt := nowString()
 	sessionExpiry, absoluteExpiry := s.sessionLifetime(parseTime(createdAt), sessionExpiresAt)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO sessions(token_hash, account_id, device_id, expires_at, created_at, recent_auth_at, last_used_at, absolute_expires_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, sessionTokenHash, linked.Account.ID, linked.Device.ID, sessionExpiry, createdAt, createdAt, createdAt, absoluteExpiry); err != nil {
-		return AccountDevice{}, err
+		return ConsumedDeviceLink{}, err
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE device_links SET state = ?, consumed_at = ? WHERE id = ? AND state = ?`, domain.DeviceLinkConsumed, nowString(), linkID, domain.DeviceLinkApproved)
 	if err != nil {
-		return AccountDevice{}, err
+		return ConsumedDeviceLink{}, err
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return AccountDevice{}, err
+		return ConsumedDeviceLink{}, err
 	}
 	if rows == 0 {
-		return AccountDevice{}, ErrDeviceLinkInvalid
+		return ConsumedDeviceLink{}, ErrDeviceLinkInvalid
 	}
 	if err := tx.Commit(); err != nil {
-		return AccountDevice{}, err
+		return ConsumedDeviceLink{}, err
 	}
-	return linked, nil
-}
-
-func (s *Store) DeviceLinkTranscriptForClaim(ctx context.Context, linkID, claimTokenHash string) ([]byte, []byte, error) {
-	var transcriptHash, approvalTag []byte
-	err := s.db.QueryRowContext(ctx, `
-		SELECT claimed_transcript_hash, approval_tag FROM device_links
-		WHERE id = ? AND claim_token_hash = ? AND state = ? AND revoked_at IS NULL`,
-		linkID, claimTokenHash, domain.DeviceLinkConsumed).Scan(&transcriptHash, &approvalTag)
-	if errors.Is(err, sql.ErrNoRows) || len(transcriptHash) != 32 || len(approvalTag) != 32 {
-		return nil, nil, ErrDeviceLinkInvalid
-	}
-	return transcriptHash, approvalTag, err
+	return ConsumedDeviceLink{AccountDevice: linked, TranscriptHash: transcriptHash, ApprovalTag: approvalTag}, nil
 }
 
 func (s *Store) CreateCommunity(ctx context.Context, name, createdBy string) (domain.Community, error) {

@@ -738,12 +738,9 @@ func (a *API) deviceLinkSubroute(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		transcriptHash, approvalTag, err := a.Store.DeviceLinkTranscriptForClaim(r.Context(), linkID, auth.HashToken(claimToken))
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_device_link")
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"account": linked.Account, "device": linked.Device, "token": sessionToken, "transcript_hash": transcriptHash, "approval_tag": approvalTag})
+		// The transcript and tag come from the transaction that consumed the
+		// link, so a committed session token is always delivered.
+		writeJSON(w, http.StatusOK, map[string]interface{}{"account": linked.Account, "device": linked.Device, "token": sessionToken, "transcript_hash": linked.TranscriptHash, "approval_tag": linked.ApprovalTag})
 	default:
 		writeError(w, http.StatusNotFound, "not_found")
 	}
