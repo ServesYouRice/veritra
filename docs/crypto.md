@@ -159,6 +159,33 @@ not raised; if it changes, change the derivation with it.
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **Sign-in keeps the sync cursor (2026-10-31):** no ABI, payload, schema
+  or server change; I33 and D28 unchanged.
+  - **Bug.** Password sign-in reset the sync cursor to 0. The cursor and
+    the MLS state commit together and a sign-in keeps the state, so
+    sync replayed events that state had already consumed:
+    - After an I45 restore, the restore drops the applied-event markers.
+      The first old commit failed and I33 stopped sync. Seen when the
+      original device signed out, which revoked the session the backup
+      carries.
+    - After a session expiry or a sign-out, the markers skip the old
+      events but do not move the cursor. With 200 or more retained events,
+      sync fetched the same first page forever and never reached new
+      events. Every pass also re-handled an old Welcome and published a
+      new key package.
+  - **Fix.** `AppState.login` keeps the cursor when the account, device
+    and server are unchanged and protected MLS state was present before
+    the sign-in. Otherwise it resets the cursor to 0, as before. The stores
+    own the same rule: clearing cached state keeps the cursor, and a new
+    identity or a full wipe sets it to 0. Before this, the database kept
+    the old value on both, and only the callers' explicit reset hid that.
+  - **Effect.** A device signed out for longer than server event retention
+    now gets `device_recovery_required` (relink or backup) at sign-in.
+    Before, it skipped that check by asking from event 0.
+  - **Tests.** `mobile/test/sync_recovery_test.dart` ("signing in again
+    as the same identity") covers both stores. The demo e2e covers a
+    restore after sign-out followed by sign-in.
+
 - **Periodic self-update (2026-10-31, research round 2):** no payload or
   local schema change, no new symbol and no ABI number change; server
   migration 0043.

@@ -1438,16 +1438,29 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           deviceSecret.isEmpty) {
         throw StateError(l10n.errorPasswordLoginNeedsLink);
       }
+      // Read before saving the new session: a different identity wipes the
+      // MLS state with it.
+      final hadMlsState = await localStore.loadCryptoState() != null;
       session = await api!.login(
         username: username,
         password: password,
         deviceId: deviceId,
         deviceSecret: deviceSecret,
       );
+      final sameIdentity = localSession!.accountId != null &&
+          localSession.baseUrl == session!.baseUrl &&
+          localSession.accountId == session!.accountId &&
+          localSession.deviceId == session!.deviceId;
       await localStore.saveSession(session!);
       await _reloadStoredDrafts();
       await _mlsCrypto?.activateSession(session!);
-      await localStore.saveSyncCursor(0);
+      // The same device signing in again keeps its cursor: it was committed
+      // with the MLS state, and replaying from event 0 would meet commits
+      // and messages that state has already consumed (I33 stops sync on
+      // them after a restore) or loop on a page of applied events.
+      if (!sameIdentity || !hadMlsState) {
+        await localStore.saveSyncCursor(0);
+      }
       await _refreshConversations(notify: true);
       await _refreshDevices();
       _startSync();

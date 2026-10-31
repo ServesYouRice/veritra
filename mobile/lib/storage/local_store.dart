@@ -492,7 +492,9 @@ abstract class LocalStore {
 
   /// Drops what the server can send again. [keepDrafts] is set only when the
   /// session expired (the person signs in again to the same drafts); sign-out
-  /// and relinking leave it unset and delete them.
+  /// and relinking leave it unset and delete them. The sync cursor stays with
+  /// the MLS state it was committed with; only a new identity or [clear]
+  /// resets it.
   Future<void> clearCachedState(
       {bool preserveOutbox = false, bool keepDrafts = false});
   Future<void> clear();
@@ -589,6 +591,7 @@ class MemoryLocalStore implements LocalStore {
   Future<void> saveSession(Session session) async {
     if (_session != null && _identity(_session!) != _identity(session)) {
       await clearCachedState();
+      _syncCursor = 0;
       _cryptoState = null;
       _processedMlsMessages.clear();
       _mlsOutbox.clear();
@@ -1181,7 +1184,7 @@ class MemoryLocalStore implements LocalStore {
   Future<void> clearCachedState(
       {bool preserveOutbox = false, bool keepDrafts = false}) async {
     _noticeState = LocalNoticeState();
-    _syncCursor = 0;
+    // The cursor stays: it belongs to the MLS state, which stays too.
     _snapshot = null;
     if (!keepDrafts) _drafts.clear();
     _mutes.clear();
@@ -1206,6 +1209,7 @@ class MemoryLocalStore implements LocalStore {
     _syncRecovery = null;
     _lastBackupAt = null;
     await clearCachedState();
+    _syncCursor = 0;
   }
 
   @override

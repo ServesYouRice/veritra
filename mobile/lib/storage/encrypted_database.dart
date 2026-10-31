@@ -813,8 +813,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
                     ])))
               .go();
           await delete(localCryptoStates).go();
+          // The cursor went with the MLS state it was committed with. An
+          // upsert of only the key would keep the old value.
           await into(localSyncStates).insertOnConflictUpdate(
-            LocalSyncStatesCompanion.insert(singleton: const Value(1)),
+            LocalSyncStatesCompanion.insert(
+                singleton: const Value(1), cursor: const Value(0)),
           );
         }
         await into(localAccounts).insertOnConflictUpdate(
@@ -1958,6 +1961,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           await customStatement('DELETE FROM local_metadata WHERE name LIKE ?',
               <Object?>['$outboxDraftPrefix%']);
         }
+        // The cursor stays: it was committed with the MLS state, which this
+        // keeps. The same device signing in again resumes from it.
         await into(localSyncStates).insertOnConflictUpdate(
           LocalSyncStatesCompanion.insert(singleton: const Value(1)),
         );
@@ -1984,7 +1989,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localConversationPrefs).go();
         await delete(localConversationMutes).go();
         await into(localSyncStates).insertOnConflictUpdate(
-          LocalSyncStatesCompanion.insert(singleton: const Value(1)),
+          LocalSyncStatesCompanion.insert(
+              singleton: const Value(1), cursor: const Value(0)),
         );
       });
 
