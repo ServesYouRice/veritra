@@ -4,6 +4,28 @@ set -eu
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 SUMMARY="${VERIFY_SUMMARY_FILE:-$ROOT/dist/verify-summary.json}"
 mkdir -p "$(dirname -- "$SUMMARY")"
+# A summary from an earlier run must not outlive this one: if this run is
+# killed or stops early, no summary (and so no stale "pass") is left.
+rm -f "$SUMMARY"
+SUMMARY_TMP="$SUMMARY.tmp.$$"
+trap 'rm -f "$SUMMARY_TMP"' EXIT
+
+# What was verified: the commit, and whether the tree had local changes.
+commit_json=null
+dirty_json=null
+if head=$(git -C "$ROOT" rev-parse --verify --quiet HEAD 2>/dev/null) && [ -n "$head" ]; then
+  commit_json="\"$head\""
+  if changes=$(git -C "$ROOT" status --porcelain 2>/dev/null); then
+    if [ -n "$changes" ]; then dirty_json=true; else dirty_json=false; fi
+  fi
+fi
+
+# Writes the summary in one step: $1 is its status-specific JSON members.
+write_summary() {
+  printf '{"schema_version":1,%s,"commit":%s,"dirty":%s,"generated_at":"%s"}\n' \
+    "$1" "$commit_json" "$dirty_json" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$SUMMARY_TMP"
+  mv -f "$SUMMARY_TMP" "$SUMMARY"
+}
 
 missing=""
 for command in go cargo cargo-audit flutter dart; do
@@ -12,14 +34,12 @@ for command in go cargo cargo-audit flutter dart; do
   fi
 done
 if [ -n "$missing" ]; then
-  printf '{"schema_version":1,"status":"blocked","missing":[' > "$SUMMARY"
-  first=1
+  names=""
   for command in $missing; do
-    [ "$first" -eq 1 ] || printf ',' >> "$SUMMARY"
-    printf '"%s"' "$command" >> "$SUMMARY"
-    first=0
+    if [ -n "$names" ]; then names="$names,"; fi
+    names="$names\"$command\""
   done
-  printf ']}\n' >> "$SUMMARY"
+  write_summary "\"status\":\"blocked\",\"missing\":[$names]"
   echo "full verification blocked; missing required tools:$missing" >&2
   exit 2
 fi
@@ -60,7 +80,7 @@ run_step rust-audit sh "$ROOT/scripts/audit-rust.sh"
 run_step release-policy-fixtures sh -c "python3 '$ROOT/scripts/check-release-evidence_test.py' && python3 '$ROOT/scripts/check-dart-retractions_test.py' && python3 '$ROOT/scripts/check-ci-evidence_test.py' && python3 '$ROOT/scripts/write-release-evidence_test.py' && python3 '$ROOT/scripts/check-coverage_test.py'"
 run_step api-contracts sh "$ROOT/scripts/test-api-contracts.sh"
 
-printf '{"schema_version":1,"status":"%s","steps":[%s]}\n' "$status" "$steps" > "$SUMMARY"
+write_summary "\"status\":\"$status\",\"steps\":[$steps]"
 if [ "$status" != pass ]; then
   exit 1
 fi
