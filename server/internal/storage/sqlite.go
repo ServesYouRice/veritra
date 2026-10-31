@@ -174,6 +174,54 @@ func (s *Store) CheckReady(ctx context.Context) error {
 	return nil
 }
 
+// rowIterator is the part of *sql.Rows that eachRow needs.
+type rowIterator interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+	Close() error
+}
+
+// eachRow calls visit for every row and closes rows. database/sql ends Next
+// on a step error or a cancelled context and keeps that error for Err only,
+// after which Close reports nothing, so a loop that checks Close alone takes
+// a failed read for the end of the data. eachRow returns the visit error, or
+// else Err joined with the Close error.
+func eachRow(rows rowIterator, visit func(rows rowIterator) error) error {
+	for rows.Next() {
+		if err := visit(rows); err != nil {
+			rows.Close()
+			return err
+		}
+	}
+	return errors.Join(rows.Err(), rows.Close())
+}
+
+// checkQuickCheckRows reads the result of PRAGMA quick_check: it must be one
+// "ok" row or a list of problems. No row at all means the check did not run,
+// which is not a pass.
+func checkQuickCheckRows(rows rowIterator) error {
+	count := 0
+	err := eachRow(rows, func(rows rowIterator) error {
+		var result string
+		if err := rows.Scan(&result); err != nil {
+			return err
+		}
+		count++
+		if result != "ok" {
+			return fmt.Errorf("sqlite quick_check: %s", result)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return errors.New("sqlite quick_check returned no result")
+	}
+	return nil
+}
+
 func ValidateDatabaseFile(ctx context.Context, path string) error {
 	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro&_pragma=foreign_keys(1)")
 	if err != nil {
@@ -184,18 +232,7 @@ func ValidateDatabaseFile(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
-	for rows.Next() {
-		var result string
-		if err := rows.Scan(&result); err != nil {
-			rows.Close()
-			return err
-		}
-		if result != "ok" {
-			rows.Close()
-			return fmt.Errorf("sqlite quick_check: %s", result)
-		}
-	}
-	if err := rows.Close(); err != nil {
+	if err := checkQuickCheckRows(rows); err != nil {
 		return err
 	}
 	var requiredTables int
@@ -258,15 +295,14 @@ func ListDatabaseBlobReferences(ctx context.Context, path string) ([]BackupBlobR
 		return nil, nil, err
 	}
 	references := make([]BackupBlobReference, 0)
-	for rows.Next() {
+	if err := eachRow(rows, func(rows rowIterator) error {
 		var reference BackupBlobReference
 		if err := rows.Scan(&reference.StorageKey, &reference.SHA256, &reference.SizeBytes); err != nil {
-			rows.Close()
-			return nil, nil, err
+			return err
 		}
 		references = append(references, reference)
-	}
-	if err := rows.Close(); err != nil {
+		return nil
+	}); err != nil {
 		return nil, nil, err
 	}
 	migrationsRows, err := db.QueryContext(ctx, `SELECT version FROM schema_migrations ORDER BY version`)
@@ -274,15 +310,14 @@ func ListDatabaseBlobReferences(ctx context.Context, path string) ([]BackupBlobR
 		return nil, nil, err
 	}
 	migrations := make([]string, 0)
-	for migrationsRows.Next() {
+	if err := eachRow(migrationsRows, func(rows rowIterator) error {
 		var version string
-		if err := migrationsRows.Scan(&version); err != nil {
-			migrationsRows.Close()
-			return nil, nil, err
+		if err := rows.Scan(&version); err != nil {
+			return err
 		}
 		migrations = append(migrations, version)
-	}
-	if err := migrationsRows.Close(); err != nil {
+		return nil
+	}); err != nil {
 		return nil, nil, err
 	}
 	return references, migrations, nil
