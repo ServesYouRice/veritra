@@ -796,7 +796,7 @@ write transaction, so concurrent requests cannot both take the last slot.
 | `KEY_PACKAGE_CLAIMS_PER_TARGET` | 25 (half the 50 single-use key packages a device may hold) | 1-50 | key packages one account claims from one device of another account in 24 hours; claiming from its own devices is not limited | 429 `key_package_claim_limit` with `Retry-After`; adding devices to an existing group skips a device over its limit, as it skips one with no package left |
 | `DELIVERIES_PER_MINUTE` | 1,000 | 60-1,000,000, and at least 2 × (1 + members) | per account, each fan-out write counts 1 plus every account it is published to | 429 `write_rate_limited` with `Retry-After` |
 | `WRITE_MIB_PER_HOUR` | 64 | 16-65,536 | request bodies of those writes | 429 `write_rate_limited` |
-| `ATTACHMENT_MIB` | 48 | 1-48 | the largest file one attachment may hold (plaintext; the upload route allows the chunk framing on top) | 413 `upload_too_large` |
+| `ATTACHMENT_MIB` | 48 | 1-48 | the largest file one attachment may hold (plaintext with its padding; the upload route allows the chunk framing on top) | 413 `upload_too_large` |
 | `SOCKETS_PER_IPV6_PREFIX` | 200 | 20-10,000 | realtime sockets of all addresses in one IPv6 /64 (one address always gets at most 20) | 429 `realtime_connection_limit` |
 
 Why these defaults: a realtime delivery costs the server 4-10 ms of CPU;
@@ -817,6 +817,18 @@ per-file cap. The server reports it to apps as `max_attachment_bytes` in
 `GET /api/v1/setup/status`, and the app refuses a larger file before it
 encrypts or uploads anything. 48 is the most the app can encrypt, so the
 setting can only lower it.
+
+**Attachment padding.** Apps pad each file with zeros inside the encryption
+to a size bucket about 5% apart (Signal's buckets, at least 541 bytes), so
+the server sees the bucket, not the exact size (`docs/crypto.md`,
+attachment manifest v2). Stored sizes, the account and instance storage
+quotas and the hourly write budget therefore count padded bytes: up to 5%
+more per file, and at least 541 bytes for a tiny one. Padding never passes
+the cap above: a file just under it is padded only up to the cap, so the
+cap still means the largest file a user can send. The app reads the cap from
+`setup/status` at send time; if that call fails it pads up to 48 MiB, and on
+a server with a lower cap a file within 5% of it may then be refused with
+413 until the call works again.
 
 **Write guard.** With less free space than the smaller of 5% and 2 GiB on
 the database or blob file system, the server answers new messages, MLS

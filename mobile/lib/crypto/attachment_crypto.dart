@@ -10,6 +10,41 @@ import 'native_crypto_bindings.dart';
 const int attachmentChunkSize = 1024 * 1024;
 const int maxPlaintextAttachmentBytes = 48 * 1024 * 1024;
 
+/// The manifest version this app writes: version 2 pads the plaintext with
+/// zeros to [paddedAttachmentSize] inside the encrypted chunks. Version 1
+/// (no padding) still decrypts.
+const int attachmentManifestVersion = 2;
+
+/// The smallest padded attachment, as in Signal's `PaddingInputStream`.
+const int minimumPaddedAttachmentBytes = 541;
+
+/// The size an attachment of [size] bytes is padded to before encryption,
+/// so the server sees a size bucket rather than the exact file size.
+///
+/// Signal's buckets (`PaddingInputStream.getPaddedSize`):
+/// `max(541, floor(1.05^ceil(log_1.05(size))))`, that is the smallest
+/// `floor(1.05^k)` that holds [size]: at most 5% overhead above 541 bytes.
+/// The power is built by repeated multiplication, which IEEE 754 rounds the
+/// same way on every platform, so every client picks the same buckets.
+///
+/// The result never exceeds [limit] (the largest attachment the server
+/// accepts), so a file just under the cap is never refused for its padding,
+/// and is never below [size]: a file over [limit] is left unpadded and is
+/// refused by the size checks as before.
+int paddedAttachmentSize(int size, {int limit = maxPlaintextAttachmentBytes}) {
+  if (size <= 0) throw ArgumentError.value(size, 'size');
+  var bucket = minimumPaddedAttachmentBytes;
+  if (size > bucket) {
+    var power = 1.0;
+    while (power.floor() < size) {
+      power *= 1.05;
+    }
+    bucket = power.floor();
+  }
+  final ceiling = min(limit, maxPlaintextAttachmentBytes);
+  return max(size, min(bucket, ceiling));
+}
+
 class AttachmentCancellationToken {
   bool _cancelled = false;
   bool get isCancelled => _cancelled;
@@ -39,10 +74,10 @@ class PreparedEncryptedAttachment {
 }
 
 class AttachmentCryptoService {
-  AttachmentCryptoService(this.bindings,
-      {Future<Directory> Function()? directoryProvider})
-      : _directoryProvider =
-            directoryProvider ?? getApplicationSupportDirectory;
+  AttachmentCryptoService(
+    this.bindings, {
+    Future<Directory> Function()? directoryProvider,
+  }) : _directoryProvider = directoryProvider ?? getApplicationSupportDirectory;
 
   final NativeCryptoBindings bindings;
   final Future<Directory> Function() _directoryProvider;
@@ -58,6 +93,7 @@ class AttachmentCryptoService {
     required String fileName,
     required String mediaType,
     AttachmentCancellationToken? cancellation,
+    int paddingLimit = maxPlaintextAttachmentBytes,
   }) async {
     cancellation?.throwIfCancelled();
     final input = await File(sourcePath).open(mode: FileMode.read);
@@ -65,13 +101,17 @@ class AttachmentCryptoService {
       return await _encryptChunks(
         size: await input.length(),
         readChunk: (length) => _readExact(
-            input, length, 'attachment source changed during encryption'),
+          input,
+          length,
+          'attachment source changed during encryption',
+        ),
         atEnd: () async => await input.readByte() == -1,
         conversationId: conversationId,
         attachmentActionId: attachmentActionId,
         fileName: fileName,
         mediaType: mediaType,
         cancellation: cancellation,
+        paddingLimit: paddingLimit,
       );
     } finally {
       await input.close();
@@ -87,6 +127,7 @@ class AttachmentCryptoService {
     required String fileName,
     required String mediaType,
     AttachmentCancellationToken? cancellation,
+    int paddingLimit = maxPlaintextAttachmentBytes,
   }) {
     var offset = 0;
     return _encryptChunks(
@@ -102,9 +143,13 @@ class AttachmentCryptoService {
       fileName: fileName,
       mediaType: mediaType,
       cancellation: cancellation,
+      paddingLimit: paddingLimit,
     );
   }
 
+  /// Encrypts [size] source bytes followed by zeros up to the padded size
+  /// (manifest version 2). Only the padded size is visible outside the
+  /// manifest: the ciphertext length is `padded + chunks * 20`.
   Future<PreparedEncryptedAttachment> _encryptChunks({
     required int size,
     required Future<List<int>> Function(int length) readChunk,
@@ -114,6 +159,7 @@ class AttachmentCryptoService {
     required String fileName,
     required String mediaType,
     AttachmentCancellationToken? cancellation,
+    required int paddingLimit,
   }) async {
     final context = _attachmentContext(conversationId, attachmentActionId);
     cancellation?.throwIfCancelled();
@@ -123,24 +169,49 @@ class AttachmentCryptoService {
     List<int>? key;
     var chunks = 0;
     var total = 0;
+    var read = 0;
     try {
       if (size <= 0 || size > maxPlaintextAttachmentBytes) {
         throw const FileSystemException(
-            'attachment size is outside allowed bounds');
+          'attachment size is outside allowed bounds',
+        );
       }
-      final expectedChunks = _expectedChunkCount(size);
+      if (paddingLimit <= 0) {
+        throw ArgumentError.value(paddingLimit, 'paddingLimit');
+      }
+      final padded = paddedAttachmentSize(size, limit: paddingLimit);
+      final expectedChunks = _expectedChunkCount(padded);
       key = _randomBytes(32);
       final nonce = _randomBytes(8);
       final directory = await workingDirectory();
-      output = File('${directory.path}${Platform.pathSeparator}'
-          '.attachment-${_randomHex(16)}.ciphertext');
+      output = File(
+        '${directory.path}${Platform.pathSeparator}'
+        '.attachment-${_randomHex(16)}.ciphertext',
+      );
       await output.create(exclusive: true);
       ownsOutput = true;
       sink = await output.open(mode: FileMode.writeOnly);
-      while (total < size) {
+      while (total < padded) {
         cancellation?.throwIfCancelled();
-        final expectedLength = min(attachmentChunkSize, size - total);
-        final plaintext = await readChunk(expectedLength);
+        final expectedLength = min(attachmentChunkSize, padded - total);
+        final sourceLength = max(0, min(expectedLength, size - total));
+        final List<int> plaintext;
+        if (sourceLength == expectedLength) {
+          plaintext = await readChunk(sourceLength);
+        } else {
+          // The chunk that ends the file, or one of padding only: the
+          // source bytes, then zeros.
+          final source =
+              sourceLength > 0 ? await readChunk(sourceLength) : const <int>[];
+          if (source.length != sourceLength) {
+            throw const FileSystemException(
+              'attachment source changed during encryption',
+            );
+          }
+          plaintext = Uint8List(expectedLength)
+            ..setRange(0, sourceLength, source);
+        }
+        read += sourceLength;
         cancellation?.throwIfCancelled();
         final encrypted = bindings.encryptAttachmentChunk(
           key: key,
@@ -159,9 +230,13 @@ class AttachmentCryptoService {
         total += plaintext.length;
         chunks++;
       }
-      if (!await atEnd() || total != size || chunks != expectedChunks) {
+      if (!await atEnd() ||
+          read != size ||
+          total != padded ||
+          chunks != expectedChunks) {
         throw const FileSystemException(
-            'attachment source changed during encryption');
+          'attachment source changed during encryption',
+        );
       }
       cancellation?.throwIfCancelled();
       await sink.flush();
@@ -173,13 +248,14 @@ class AttachmentCryptoService {
         ciphertextPath: output.path,
         ciphertextLength: ciphertextLength,
         manifest: <String, Object?>{
-          'version': 1,
+          'version': attachmentManifestVersion,
           'algorithm': 'AES-256-GCM-chunked',
           'key': base64Encode(key),
           'nonce_prefix': base64Encode(nonce),
           'chunk_size': attachmentChunkSize,
           'chunk_count': chunks,
           'plaintext_size': size,
+          'padded_size': padded,
           'conversation_id': conversationId,
           'action_id': attachmentActionId,
           'file_name': fileName,
@@ -221,10 +297,11 @@ class AttachmentCryptoService {
       ownsPartial = true;
       output = await partial.open(mode: FileMode.write);
       await _decryptChunks(
-          ciphertextPath: ciphertextPath,
-          parsed: parsed,
-          writeChunk: output.writeFrom,
-          cancellation: cancellation);
+        ciphertextPath: ciphertextPath,
+        parsed: parsed,
+        writeChunk: output.writeFrom,
+        cancellation: cancellation,
+      );
       cancellation?.throwIfCancelled();
       await output.flush();
       await output.setPosition(0);
@@ -269,23 +346,25 @@ class AttachmentCryptoService {
 
   /// Publishes an authenticated attachment directly into memory. A failure
   /// wipes the partial result, and no plaintext file is ever created.
-  Future<Uint8List> decryptBytes(
-      {required String ciphertextPath,
-      required Map<String, Object?> manifest,
-      AttachmentCancellationToken? cancellation}) async {
+  Future<Uint8List> decryptBytes({
+    required String ciphertextPath,
+    required Map<String, Object?> manifest,
+    AttachmentCancellationToken? cancellation,
+  }) async {
     cancellation?.throwIfCancelled();
     final parsed = _parseAttachmentManifest(manifest);
     final plaintext = Uint8List(parsed.plaintextSize);
     var offset = 0;
     try {
       await _decryptChunks(
-          ciphertextPath: ciphertextPath,
-          parsed: parsed,
-          cancellation: cancellation,
-          writeChunk: (chunk) async {
-            plaintext.setRange(offset, offset + chunk.length, chunk);
-            offset += chunk.length;
-          });
+        ciphertextPath: ciphertextPath,
+        parsed: parsed,
+        cancellation: cancellation,
+        writeChunk: (chunk) async {
+          plaintext.setRange(offset, offset + chunk.length, chunk);
+          offset += chunk.length;
+        },
+      );
       return plaintext;
     } catch (_) {
       plaintext.fillRange(0, plaintext.length, 0);
@@ -295,45 +374,78 @@ class AttachmentCryptoService {
     }
   }
 
-  Future<void> _decryptChunks(
-      {required String ciphertextPath,
-      required _AttachmentManifest parsed,
-      required Future<void> Function(List<int>) writeChunk,
-      AttachmentCancellationToken? cancellation}) async {
+  Future<void> _decryptChunks({
+    required String ciphertextPath,
+    required _AttachmentManifest parsed,
+    required Future<void> Function(List<int>) writeChunk,
+    AttachmentCancellationToken? cancellation,
+  }) async {
     final input = await File(ciphertextPath).open(mode: FileMode.read);
     var written = 0;
+    var processed = 0;
     try {
       if (await input.length() != parsed.ciphertextSize)
         throw const FormatException('attachment framing mismatch');
       for (var index = 0; index < parsed.chunkCount; index++) {
         cancellation?.throwIfCancelled();
-        final expectedPlaintextLength =
-            min(attachmentChunkSize, parsed.plaintextSize - written);
+        final expectedPlaintextLength = min(
+          attachmentChunkSize,
+          parsed.paddedSize - processed,
+        );
         final header = await _readExact(input, 4, 'truncated attachment');
-        final length = ByteData.sublistView(Uint8List.fromList(header))
-            .getUint32(0, Endian.big);
+        final length = ByteData.sublistView(
+          Uint8List.fromList(header),
+        ).getUint32(0, Endian.big);
         if (length != expectedPlaintextLength + 16)
           throw const FormatException('invalid attachment chunk length');
-        final encrypted =
-            await _readExact(input, length, 'truncated attachment');
+        final encrypted = await _readExact(
+          input,
+          length,
+          'truncated attachment',
+        );
         cancellation?.throwIfCancelled();
         final plaintext = bindings.decryptAttachmentChunk(
-            key: parsed.key,
-            noncePrefix: parsed.noncePrefix,
-            chunkIndex: index,
-            context: parsed.context,
-            ciphertext: encrypted);
+          key: parsed.key,
+          noncePrefix: parsed.noncePrefix,
+          chunkIndex: index,
+          context: parsed.context,
+          ciphertext: encrypted,
+        );
         try {
           if (plaintext.length != expectedPlaintextLength)
             throw const FormatException('attachment size mismatch');
+          // Bytes past plaintext_size are padding: authenticated with the
+          // chunk, required to be zero, and never published.
+          final keep = max(
+            0,
+            min(plaintext.length, parsed.plaintextSize - processed),
+          );
+          for (var i = keep; i < plaintext.length; i++) {
+            if (plaintext[i] != 0)
+              throw const FormatException('invalid attachment padding');
+          }
           cancellation?.throwIfCancelled();
-          await writeChunk(plaintext);
-          written += plaintext.length;
+          if (keep == plaintext.length) {
+            await writeChunk(plaintext);
+          } else if (keep > 0) {
+            final part = plaintext is Uint8List
+                ? Uint8List.sublistView(plaintext, 0, keep)
+                : plaintext.sublist(0, keep);
+            try {
+              await writeChunk(part);
+            } finally {
+              part.fillRange(0, part.length, 0);
+            }
+          }
+          written += keep;
+          processed += plaintext.length;
         } finally {
           plaintext.fillRange(0, plaintext.length, 0);
         }
       }
-      if (await input.readByte() != -1 || written != parsed.plaintextSize)
+      if (await input.readByte() != -1 ||
+          written != parsed.plaintextSize ||
+          processed != parsed.paddedSize)
         throw const FormatException('attachment framing mismatch');
       cancellation?.throwIfCancelled();
     } finally {
@@ -349,6 +461,7 @@ class _AttachmentManifest {
     required this.context,
     required this.chunkCount,
     required this.plaintextSize,
+    required this.paddedSize,
     required this.ciphertextSize,
   });
 
@@ -357,6 +470,10 @@ class _AttachmentManifest {
   final List<int> context;
   final int chunkCount;
   final int plaintextSize;
+
+  /// Bytes encrypted: [plaintextSize] plus zero padding (version 2), or
+  /// exactly [plaintextSize] (version 1).
+  final int paddedSize;
   final int ciphertextSize;
 }
 
@@ -364,7 +481,7 @@ _AttachmentManifest _parseAttachmentManifest(Map<String, Object?> manifest) {
   final version = manifest['version'];
   final algorithm = manifest['algorithm'];
   if (version is! int ||
-      version != 1 ||
+      (version != 1 && version != 2) ||
       algorithm is! String ||
       algorithm != 'AES-256-GCM-chunked') {
     throw const FormatException('unsupported attachment manifest');
@@ -376,15 +493,23 @@ _AttachmentManifest _parseAttachmentManifest(Map<String, Object?> manifest) {
   final chunkSize = manifest['chunk_size'];
   final chunkCount = manifest['chunk_count'];
   final plaintextSize = manifest['plaintext_size'];
+  // Version 1 has no padding and must not claim any; version 2 must say
+  // how much it encrypted. The receiver does not recompute the bucket: the
+  // sender clamps it to its server's cap, which the receiver cannot know.
+  final paddedValue = version == 2
+      ? manifest['padded_size']
+      : (manifest.containsKey('padded_size') ? null : plaintextSize);
   if (keyValue is! String ||
       nonceValue is! String ||
       conversationId is! String ||
       actionId is! String ||
       chunkSize is! int ||
       chunkCount is! int ||
-      plaintextSize is! int) {
+      plaintextSize is! int ||
+      paddedValue is! int) {
     throw const FormatException('invalid attachment manifest');
   }
+  final paddedSize = paddedValue;
 
   Uint8List? key;
   var transferredKey = false;
@@ -397,7 +522,9 @@ _AttachmentManifest _parseAttachmentManifest(Map<String, Object?> manifest) {
         chunkSize != attachmentChunkSize ||
         plaintextSize <= 0 ||
         plaintextSize > maxPlaintextAttachmentBytes ||
-        chunkCount != _expectedChunkCount(plaintextSize)) {
+        paddedSize < plaintextSize ||
+        paddedSize > maxPlaintextAttachmentBytes ||
+        chunkCount != _expectedChunkCount(paddedSize)) {
       throw const FormatException('invalid attachment manifest');
     }
     transferredKey = true;
@@ -407,7 +534,8 @@ _AttachmentManifest _parseAttachmentManifest(Map<String, Object?> manifest) {
       context: context,
       chunkCount: chunkCount,
       plaintextSize: plaintextSize,
-      ciphertextSize: plaintextSize + chunkCount * (4 + 16),
+      paddedSize: paddedSize,
+      ciphertextSize: paddedSize + chunkCount * (4 + 16),
     );
   } on FormatException {
     rethrow;
@@ -461,6 +589,6 @@ List<int> _randomBytes(int length) {
   return List<int>.generate(length, (_) => random.nextInt(256));
 }
 
-String _randomHex(int bytes) => _randomBytes(bytes)
-    .map((value) => value.toRadixString(16).padLeft(2, '0'))
-    .join();
+String _randomHex(int bytes) => _randomBytes(
+      bytes,
+    ).map((value) => value.toRadixString(16).padLeft(2, '0')).join();
