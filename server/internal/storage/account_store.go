@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -32,9 +33,17 @@ func (s *Store) ExportAccount(ctx context.Context, accountID string, opts Export
 	if err != nil {
 		return domain.AccountExport{}, err
 	}
-	categories, err := s.exportAssociatedData(ctx, accountID)
-	if err != nil {
-		return domain.AccountExport{}, err
+	// Only messages are paged. The associated-data categories are exported once,
+	// with the first page: reading them again for every message page repeated
+	// every category query and every row, and an export put together from
+	// its pages would hold each row once per page. Later pages carry the key
+	// with no categories in it.
+	categories := map[string][]json.RawMessage{}
+	if opts.BeforeID == "" {
+		categories, err = s.exportAssociatedData(ctx, accountID)
+		if err != nil {
+			return domain.AccountExport{}, err
+		}
 	}
 	return domain.AccountExport{ManifestVersion: "v2", Account: account, Devices: devices, Conversations: conversations, Messages: messages, Categories: categories}, nil
 }
@@ -69,6 +78,12 @@ func (s *Store) exportAssociatedData(ctx context.Context, accountID string) (map
 				return nil, err
 			}
 			items = append(items, json.RawMessage(raw))
+		}
+		// Next also stops on a step error or a cancelled context. Only Err
+		// reports it, because Close on the already-closed Rows returns nil.
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
 		}
 		if err := rows.Close(); err != nil {
 			return nil, err
@@ -125,6 +140,12 @@ func (s *Store) DeleteAccountData(ctx context.Context, accountID string) ([]stri
 		}
 		storageKeys = append(storageKeys, key)
 	}
+	// An iteration failure must abort the deletion: continuing would commit
+	// the account scrub with blobs missing from the cleanup queue.
+	if err := blobRows.Err(); err != nil {
+		blobRows.Close()
+		return nil, err
+	}
 	if err := blobRows.Close(); err != nil {
 		return nil, err
 	}
@@ -142,10 +163,42 @@ func (s *Store) DeleteAccountData(ctx context.Context, accountID string) ([]stri
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE account_id = ?`, accountID); err != nil {
 		return nil, err
 	}
+	deviceIDs, err := accountDeviceIDs(ctx, tx, accountID)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE devices SET name = 'Deleted device', key_package = X'', signing_key = NULL, auth_secret_hash = NULL, revoked_at = COALESCE(revoked_at, ?) WHERE account_id = ?`, now, accountID); err != nil {
 		return nil, err
 	}
+	// The devices leave every MLS group the way a revoked device does: the
+	// remaining members commit their removal. Every device is revoked first,
+	// so none of them coordinates or has to confirm another's removal, and
+	// the memberships are dropped only afterwards, since groups without a
+	// recorded roster are found through them.
+	for _, deviceID := range deviceIDs {
+		if err := queueMLSRevocations(ctx, tx, accountID, deviceID, now); err != nil {
+			return nil, err
+		}
+		// A device that will never confirm another device's revocation
+		// stops it waiting.
+		if err := releaseMLSRevocationConfirmations(ctx, tx, deviceID, parseTime(now)); err != nil {
+			return nil, err
+		}
+	}
+	// Call metadata carries session descriptions the account produced. The
+	// pseudonymous ids stay for the other participant's call history; open
+	// calls end the way a normal hang-up ends them.
+	callExpiry := formatTime(time.Now().UTC().Add(7 * 24 * time.Hour))
+	if _, err := tx.ExecContext(ctx, `UPDATE call_sessions SET state = 'ended', ended_at = ?, expires_at = ?, version = version + 1 WHERE created_by = ? AND state NOT IN ('rejected', 'missed', 'ended')`, now, callExpiry, accountID); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE call_sessions SET metadata_json = '{}' WHERE created_by = ?`, accountID); err != nil {
+		return nil, err
+	}
 	for _, query := range []string{
+		`DELETE FROM conversation_notification_preferences WHERE account_id = ?`,
+		`DELETE FROM account_blocks WHERE blocker_account_id = ?`,
+		`DELETE FROM device_key_packages WHERE device_id IN (SELECT id FROM devices WHERE account_id = ?)`,
 		`DELETE FROM memberships WHERE account_id = ?`,
 		`DELETE FROM reactions WHERE account_id = ?`,
 		`DELETE FROM read_receipts WHERE account_id = ?`,
@@ -175,6 +228,24 @@ func (s *Store) DeleteAccountData(ctx context.Context, accountID string) ([]stri
 		return nil, err
 	}
 	return storageKeys, nil
+}
+
+// accountDeviceIDs lists every device of the account, revoked ones included.
+func accountDeviceIDs(ctx context.Context, tx *sql.Tx, accountID string) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM devices WHERE account_id = ? ORDER BY id`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 func (s *Store) accountByID(ctx context.Context, accountID string) (domain.Account, error) {

@@ -110,6 +110,17 @@ abstract interface class BoundedMlsConversationCryptoService
       {required void Function() checkCanCommit});
 }
 
+/// Periodic MLS self-update (docs/crypto.md, change log 2026-10-31). Kept
+/// apart from [MlsConversationCryptoService] so a service that cannot
+/// refresh keys is simply never asked to.
+abstract interface class MlsSelfUpdateCryptoService {
+  /// Stages one commit that adds and removes no one and gives this device's
+  /// leaf a fresh key in [conversationId], and queues it as an update-only
+  /// commit bundle. Like every staged commit (D28) it is merged only once
+  /// the server accepts it, and dropped when the server refuses it.
+  Future<void> stageSelfUpdate(String conversationId);
+}
+
 /// Cached server roles today; C4 will replace this source with encrypted roles.
 abstract interface class ConversationAuthority {
   String? roleOf(String conversationId, String accountId);
@@ -136,6 +147,16 @@ class CryptoOperationCancelled implements Exception {
   const CryptoOperationCancelled();
   @override
   String toString() => 'crypto operation ownership changed';
+}
+
+/// The protected MLS state on this device was sealed in a format this build
+/// cannot read (ABI 9 `PM_CRYPTO_STATE_FORMAT_UNSUPPORTED`). The state stays
+/// refused; linking the device again is the way forward. The format version
+/// is not authenticated, so this never relaxes a check.
+class CryptoStateFormatUnsupported implements Exception {
+  const CryptoStateFormatUnsupported();
+  @override
+  String toString() => 'protected MLS state format is unsupported';
 }
 
 class UnavailableCryptoService implements CryptoService {

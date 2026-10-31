@@ -25,6 +25,7 @@ class NativeCryptoService
     implements
         BoundedMlsConversationCryptoService,
         ConversationAuthorityConsumer,
+        MlsSelfUpdateCryptoService,
         NoticeCaptureConsumer {
   NativeCryptoService({
     required this.bindings,
@@ -122,13 +123,7 @@ class NativeCryptoService
           _deviceCounter = 1;
         } else {
           _device?.close();
-          final restored = bindings.restoreDevice(
-            accountId,
-            deviceId,
-            stored.stateKey,
-            stored.counter,
-            stored.sealedState,
-          );
+          final restored = _restoreDevice(accountId, deviceId, stored);
           if (restored.counter != stored.counter) {
             restored.device.close();
             throw StateError('MLS rollback counter mismatch');
@@ -168,8 +163,7 @@ class NativeCryptoService
           _adoptNoticeOrigin(origin, accountId, deviceId);
           return;
         }
-        final restored = bindings.restoreDevice(accountId, deviceId,
-            stored.stateKey, stored.counter, stored.sealedState);
+        final restored = _restoreDevice(accountId, deviceId, stored);
         var adopted = false;
         try {
           checkCanCommit();
@@ -261,6 +255,33 @@ class NativeCryptoService
               state: _sealNext(previous),
               messages: <PendingMlsMessage>[
                 _bundleItem(conversationId, bundle)
+              ],
+            ),
+          );
+        } catch (_) {
+          await _restorePrevious(previous);
+          rethrow;
+        }
+      });
+
+  @override
+  Future<void> stageSelfUpdate(String conversationId) => _serial(() async {
+        final previous = await _requiredState();
+        try {
+          final staged = _requiredDevice().stageSelfUpdate(conversationId);
+          if (staged.commit.isEmpty || staged.welcome.isNotEmpty) {
+            throw StateError('MLS self-update output is invalid');
+          }
+          await localStore.commitOutgoingMlsTransition(
+            OutgoingMlsStateTransition(
+              expectedCounter: previous.counter,
+              expectedCursor: await localStore.loadSyncCursor(),
+              state: _sealNext(previous),
+              messages: <PendingMlsMessage>[
+                _bundleItem(
+                  conversationId,
+                  MlsCommitBundle(epoch: staged.epoch, commit: staged.commit),
+                ),
               ],
             ),
           );
@@ -629,7 +650,7 @@ class NativeCryptoService
             // The server also delivers a caller's signals to the caller's
             // other devices, where the guessed sender account is wrong. The
             // ratchet already advanced, so commit and drop the signal (P4).
-            if (error.kind != NativeCryptoError.senderMismatch) rethrow;
+            if (!error.kind.ratchetAdvanced) rethrow;
           }
           // Once decryption succeeds the ratchet has moved, so the state and
           // cursor always commit (P4). A payload that is not a valid call
@@ -838,10 +859,9 @@ class NativeCryptoService
           envelope: envelope,
           ownMessageKey:
               messageKey(envelope.senderDeviceId, envelope.idempotencyKey),
-          allowOwnPinEffect:
-              _authority?.conversationKind(envelope.conversationId) == 'dm' ||
-                  const {'owner', 'admin', 'moderator'}.contains(
-                      _authority?.roleOf(envelope.conversationId, _accountId!)),
+          allowOwnPinEffect: pinAllowed(
+              kind: _authority?.conversationKind(envelope.conversationId),
+              role: _authority?.roleOf(envelope.conversationId, _accountId!)),
         ));
         return null;
       }
@@ -856,7 +876,7 @@ class NativeCryptoService
             senderDeviceId: envelope.senderDeviceId,
           );
         } on NativeCryptoException catch (error) {
-          if (error.kind != NativeCryptoError.senderMismatch) rethrow;
+          if (!error.kind.ratchetAdvanced) rethrow;
           // The ratchet already advanced, so the message can never be
           // decrypted again. Keep going and record a warning instead of
           // the claimed sender's words (D25).
@@ -1113,13 +1133,7 @@ class NativeCryptoService
   Future<void> _restorePrevious(StoredCryptoState previous) async {
     _device?.close();
     _deviceCounter = null;
-    final restored = bindings.restoreDevice(
-      _accountId!,
-      _deviceId!,
-      previous.stateKey,
-      previous.counter,
-      previous.sealedState,
-    );
+    final restored = _restoreDevice(_accountId!, _deviceId!, previous);
     if (restored.counter != previous.counter) {
       restored.device.close();
       _device = null;
@@ -1127,6 +1141,22 @@ class NativeCryptoService
     }
     _device = restored.device;
     _deviceCounter = restored.counter;
+  }
+
+  /// Restores sealed state, turning an unsupported format into
+  /// [CryptoStateFormatUnsupported] so the app can offer re-linking. Every
+  /// other failure is rethrown unchanged; both stay fail-closed.
+  ({NativeCryptoDevice device, int counter}) _restoreDevice(
+      String accountId, String deviceId, StoredCryptoState stored) {
+    try {
+      return bindings.restoreDevice(accountId, deviceId, stored.stateKey,
+          stored.counter, stored.sealedState);
+    } on NativeCryptoException catch (error) {
+      if (error.kind == NativeCryptoError.stateFormatUnsupported) {
+        throw const CryptoStateFormatUnsupported();
+      }
+      rethrow;
+    }
   }
 
   Future<T> _serial<T>(Future<T> Function() operation) async {
@@ -1257,9 +1287,9 @@ List<MessageEffect> messageEffectsFor(
       ],
     AppPayloadType.pin => <MessageEffect>[
         row(LocalMessageKind.action),
-        if (authority?.conversationKind(conversationId) == 'dm' ||
-            const {'owner', 'admin', 'moderator'}
-                .contains(authority?.roleOf(conversationId, senderAccountId)))
+        if (pinAllowed(
+            kind: authority?.conversationKind(conversationId),
+            role: authority?.roleOf(conversationId, senderAccountId)))
           PinMessageEffect(
               conversationId: conversationId,
               targetKey: body['message_id'] as String,

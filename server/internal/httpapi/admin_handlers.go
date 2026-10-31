@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"private-messenger/server/internal/domain"
+	"private-messenger/server/internal/storage"
 )
 
 func requireAdministrator(w http.ResponseWriter, principal domain.Principal) bool {
@@ -47,14 +48,15 @@ func (a *API) setAdminAccountStatus(w http.ResponseWriter, r *http.Request, prin
 		return
 	}
 	targetID := strings.TrimSpace(r.PathValue("id"))
-	if err := a.Store.SetAccountStatus(r.Context(), principal.AccountID, targetID, req.Status); err != nil {
+	// The change and its audit row commit in one transaction.
+	audit := storage.AuditEvent{Type: "account.status.updated", Metadata: map[string]string{"target_account_id": targetID, "status": req.Status}}
+	if err := a.Store.SetAccountStatus(r.Context(), principal.AccountID, targetID, req.Status, audit); err != nil {
 		handleStorageError(w, err)
 		return
 	}
 	if req.Status == "suspended" {
 		a.Hub.DisconnectAccount(targetID)
 	}
-	a.recordAuditEvent(r.Context(), &principal.AccountID, "account.status.updated", map[string]string{"target_account_id": targetID, "status": req.Status})
 	writeJSON(w, http.StatusOK, map[string]string{"account_id": targetID, "status": req.Status})
 }
 
@@ -63,11 +65,11 @@ func (a *API) adminRevokeInvite(w http.ResponseWriter, r *http.Request, principa
 		return
 	}
 	inviteID := strings.TrimSpace(r.PathValue("id"))
-	if err := a.Store.AdminRevokeInvite(r.Context(), inviteID); err != nil {
+	audit := storage.AuditEvent{Type: "invite.revoked", Metadata: map[string]string{"invite_id": inviteID}}
+	if err := a.Store.AdminRevokeInvite(r.Context(), principal.AccountID, inviteID, audit); err != nil {
 		handleStorageError(w, err)
 		return
 	}
-	a.recordAuditEvent(r.Context(), &principal.AccountID, "invite.revoked", map[string]string{"invite_id": inviteID})
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -232,7 +232,7 @@ Anyone else gets 404, never 403, so the route is not an existence oracle.
 |---|---|---|
 | `PUT /api/v1/profiles/account/me` | The account | Body is the raw blob. Headers: `X-Private-Messenger-Encrypted: 1`, `X-Profile-Key-Id`, and either `If-Match: "<version>"` or `If-None-Match: *` for the first write. Errors: `412 version_conflict`, `413 profile_too_large`, `400 invalid_profile` (bad magic, key ID or size not 4 KiB or 256 KiB plus overhead). Returns `{version}` |
 | `GET /api/v1/profiles/account/{account_id}` | The read rule | Returns the blob, with `ETag: "<version>"` and `X-Profile-Key-Id`; `If-None-Match` gives 304 |
-| `PUT /api/v1/conversations/{id}/profile` | A member with role `owner` or `admin`; conversation kind `group` only | Same headers and errors as the account PUT. This role rule is the **only** check on who wrote a group record (S12): records are not signed |
+| `PUT /api/v1/conversations/{id}/profile` | Any current member by default (owner decision 2026-10-31, open question 4); `owner` or `admin` only once C4 lets the group's admins restrict it; conversation kind `group` only | Same headers and errors as the account PUT. This role rule is the **only** check on who wrote a group record (S12): records are not signed |
 | `GET /api/v1/conversations/{id}/profile` | The read rule | As the account GET |
 | `DELETE /api/v1/conversations/{id}/title` | `owner` or `admin` | Clears the legacy plaintext title ([below](#group-titles-today)) |
 | `POST /api/v1/profiles/versions` | Any account | `{"account_ids":[≤200],"conversation_ids":[≤200]}` returns `{kind, id, version, key_id}` for the subjects the caller may read. Unreadable or missing subjects are left out silently |
@@ -281,7 +281,7 @@ sent.
 
 **Why any member may relay a group key:**
 
-- The server lets only `owner` and `admin` replace the group record.
+- The server lets any current member replace the group record by default, or only `owner` and `admin` when the group's admins restrict it (C4; open question 4).
 - The key ID picks the key to use.
 - A key that does not open the served record is dropped.
 
@@ -616,8 +616,13 @@ there is no route to change it.
    MIT) for smaller and sharper photos than PNG at 256×256. It needs the
    owner's yes, a licence review and a `THIRD_PARTY_NOTICES.md` entry. The
    design works without it.
-4. **Who may edit a group's name and photo.** This design allows `owner`
-   and `admin`. WhatsApp lets admins choose "all members"; that would come
-   with C4's permission switches.
+4. **Who may edit a group's name and photo.** **Decided by the owner
+   (2026-10-31):** group settings are open by default, so any member may
+   change the group's name and photo, and the group's admins may restrict
+   that to admins (the same pattern as pins). This replaces the `owner`/
+   `admin` rule above, including the server's role check on
+   `PUT /api/v1/conversations/{id}/profile`, when the group record is built.
+   The admin restriction switch needs an encrypted group settings record and
+   comes with C4's permission switches; until then the default is open.
 5. **Whether to refuse server-side group titles** once migration is done,
    for every client.

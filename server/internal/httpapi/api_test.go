@@ -11,6 +11,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -53,9 +54,9 @@ func TestMessageAPIRejectsPlaintextFields(t *testing.T) {
 		"ciphertext":      base64.StdEncoding.EncodeToString([]byte("ciphertext")),
 		"crypto_protocol": "mls10-openmls-v1",
 	}
-	status, _ := doJSON(t, handler, http.MethodPost, "/api/v1/messages/envelopes", token, body)
-	if status != http.StatusBadRequest {
-		t.Fatalf("status=%d want %d", status, http.StatusBadRequest)
+	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/messages/envelopes", token, body)
+	if status != http.StatusBadRequest || !bytes.Contains(response, []byte("plaintext_message_fields_forbidden")) {
+		t.Fatalf("status=%d body=%s, want %d plaintext_message_fields_forbidden", status, response, http.StatusBadRequest)
 	}
 	nested := map[string]interface{}{
 		"conversation_id": conversationID,
@@ -64,17 +65,56 @@ func TestMessageAPIRejectsPlaintextFields(t *testing.T) {
 		"crypto_protocol": "mls10-openmls-v1",
 		"crypto_metadata": map[string]interface{}{"body": sentinel},
 	}
-	status, _ = doJSON(t, handler, http.MethodPost, "/api/v1/messages/envelopes", token, nested)
-	if status != http.StatusBadRequest {
-		t.Fatalf("nested status=%d want %d", status, http.StatusBadRequest)
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/messages/envelopes", token, nested)
+	if status != http.StatusBadRequest || !bytes.Contains(response, []byte("plaintext_message_fields_forbidden")) {
+		t.Fatalf("nested status=%d body=%s, want %d plaintext_message_fields_forbidden", status, response, http.StatusBadRequest)
 	}
-	dbBytes, err := os.ReadFile(dbPath)
+
+	// Positive control: a value that was accepted and committed is found by
+	// the same scan while the app is still open (committed pages may sit in
+	// the -wal file), so a clean scan for the rejected sentinel means
+	// something.
+	accepted := runtimeSentinel(t)
+	createMessage(t, handler, token, conversationID, "send-control", []byte(accepted))
+	dataDir := filepath.Dir(dbPath)
+	if found := scanTreeForNeedles(t, dataDir, []byte(accepted), []byte(base64.StdEncoding.EncodeToString([]byte(accepted)))); len(found) == 0 {
+		t.Fatal("positive control: the scan did not find an accepted value; it cannot show that a rejected one is absent")
+	}
+	// Every file under the data directory: main database, -wal, -shm,
+	// -journal and the blobs directory.
+	if found := scanTreeForNeedles(t, dataDir, []byte(sentinel)); len(found) != 0 {
+		t.Fatalf("rejected plaintext sentinel was persisted in %v", found)
+	}
+}
+
+// scanTreeForNeedles returns the regular files under dir that contain any
+// needle.
+func scanTreeForNeedles(t *testing.T, dir string, needles ...[]byte) []string {
+	t.Helper()
+	var found []string
+	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.Type().IsRegular() {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, needle := range needles {
+			if bytes.Contains(content, needle) {
+				found = append(found, filepath.Base(path))
+				break
+			}
+		}
+		return nil
+	})
 	if err != nil {
-		t.Fatalf("read db: %v", err)
+		t.Fatalf("scan %s: %v", dir, err)
 	}
-	if bytes.Contains(dbBytes, []byte(sentinel)) {
-		t.Fatal("rejected plaintext sentinel was persisted")
-	}
+	return found
 }
 
 func runtimeSentinel(t *testing.T) string {
@@ -143,6 +183,16 @@ func TestMessageLifecycleAndSyncRoutes(t *testing.T) {
 		t.Fatalf("read receipt status=%d body=%s", status, response)
 	}
 
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/sync/events?after=0", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("sync events status=%d body=%s", status, response)
+	}
+	for _, eventType := range []string{"message.envelope.created", "message.envelope.edited", "reaction.created", "read_receipt.updated"} {
+		if !bytes.Contains(response, []byte(eventType)) {
+			t.Fatalf("sync response before the delete missing %s: %s", eventType, response)
+		}
+	}
+
 	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/messages/"+messageID+"/delete", token, map[string]interface{}{
 		"ciphertext":      base64.StdEncoding.EncodeToString([]byte("encrypted delete marker")),
 		"crypto_protocol": "mls10-openmls-v1",
@@ -158,9 +208,17 @@ func TestMessageLifecycleAndSyncRoutes(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("sync events status=%d body=%s", status, response)
 	}
-	for _, eventType := range []string{"message.envelope.created", "message.envelope.edited", "reaction.created", "read_receipt.updated", "message.envelope.deleted"} {
+	for _, eventType := range []string{"reaction.created", "read_receipt.updated", "message.envelope.deleted"} {
 		if !bytes.Contains(response, []byte(eventType)) {
 			t.Fatalf("sync response missing %s: %s", eventType, response)
+		}
+	}
+	// A deleted message replays only its delete marker; the versions it
+	// replaced are neither served nor kept.
+	for _, hidden := range []string{"message.envelope.created", "message.envelope.edited",
+		base64.StdEncoding.EncodeToString([]byte("ciphertext-v1")), base64.StdEncoding.EncodeToString([]byte("ciphertext-v2"))} {
+		if bytes.Contains(response, []byte(hidden)) {
+			t.Fatalf("sync response after the delete still has %s: %s", hidden, response)
 		}
 	}
 }
@@ -240,8 +298,18 @@ func TestMetadataSearchBackupExportAndAccountDelete(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("ciphertext search status=%d body=%s", status, response)
 	}
-	if bytes.Contains(response, []byte("SEARCH_ONLY_CIPHERTEXT")) {
-		t.Fatalf("metadata search returned ciphertext content: %s", response)
+	// The ciphertext went in as base64, so check every encoding a leak could
+	// take as well as the raw bytes.
+	for _, needle := range [][]byte{
+		searchOnlyCiphertext,
+		[]byte(base64.StdEncoding.EncodeToString(searchOnlyCiphertext)),
+		[]byte(base64.RawStdEncoding.EncodeToString(searchOnlyCiphertext)),
+		[]byte(base64.URLEncoding.EncodeToString(searchOnlyCiphertext)),
+		[]byte(base64.RawURLEncoding.EncodeToString(searchOnlyCiphertext)),
+	} {
+		if bytes.Contains(response, needle) {
+			t.Fatalf("metadata search returned ciphertext content %q: %s", needle, response)
+		}
 	}
 
 	recoveryToken := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))

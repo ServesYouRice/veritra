@@ -122,6 +122,53 @@ void main() {
     expect(scratch.listSync(), isEmpty);
   }, skip: skip);
 
+  // A saved prefix the server cannot continue (a proxy that drops Range, or
+  // a 416) restarts the download from byte 0 in the same call, instead of
+  // reporting a damaged backup.
+  for (final mode in <String>['ignores Range', 'answers 416']) {
+    test(
+        'a resume the server ${mode == 'ignores Range' ? 'cannot honour' : 'refuses'} '
+        'restarts from the beginning ($mode)', () async {
+      final code = await makeBackup();
+      server.dropAfterBytes = 40;
+      final target = MemoryLocalStore();
+      await expectLater(serviceFor(target).recover(code),
+          throwsA(failure(BackupFailureKind.network)));
+      expect(scratch.listSync().whereType<File>(), isNotEmpty);
+
+      server.dropAfterBytes = null;
+      if (mode == 'ignores Range') {
+        server.ignoreRange = true;
+      } else {
+        server.refuseRange = true;
+      }
+      await serviceFor(target).recover(code);
+      expect(server.rangeStarts, <int>[0, 40, 0]);
+      expect((await target.loadMessages('conv_1')).single.body,
+          'kept across devices');
+      expect(scratch.listSync(), isEmpty);
+    }, skip: skip);
+  }
+
+  test('a restarted download still refuses a wrong recovery code', () async {
+    final code = await makeBackup();
+    server.dropAfterBytes = 40;
+    final target = MemoryLocalStore();
+    await expectLater(serviceFor(target).recover(code),
+        throwsA(failure(BackupFailureKind.network)));
+    server.dropAfterBytes = null;
+    server.refuseRange = true;
+    final parts = code.split('.');
+    final wrongKey = '${parts[0]}.${parts[1]}.${parts[2]}.'
+        '${'A' * parts[3].length}';
+    await expectLater(serviceFor(target).recover(wrongKey),
+        throwsA(failure(BackupFailureKind.wrongKey)));
+    // One restart from byte 0, not a second download for the same answer.
+    expect(server.rangeStarts, <int>[0, 40, 0]);
+    expect(await target.loadSession(), isNull);
+    expect(scratch.listSync(), isEmpty);
+  }, skip: skip);
+
   test('a device that already has an account is not overwritten', () async {
     final code = await makeBackup();
     final target = MemoryLocalStore();
@@ -190,6 +237,8 @@ class _BackupServer {
   List<int>? stored;
   String? token;
   int? dropAfterBytes;
+  bool ignoreRange = false;
+  bool refuseRange = false;
   final List<int> rangeStarts = <int>[];
 
   String get baseUrl => 'http://127.0.0.1:${_server.port}';
@@ -234,8 +283,24 @@ class _BackupServer {
         start = int.parse(range.substring(6).split('-').first);
       }
       rangeStarts.add(start);
+      if (start != 0 && refuseRange) {
+        request.response
+          ..statusCode = HttpStatus.requestedRangeNotSatisfiable
+          ..headers.set('Content-Range', 'bytes */${data.length}');
+        await request.response.close();
+        return;
+      }
+      if (start != 0 && ignoreRange) {
+        // Like a proxy that drops Range: the whole object, from byte 0.
+        start = 0;
+      }
       final part = data.sublist(start);
       request.response.statusCode = start == 0 ? 200 : 206;
+      if (start != 0) {
+        // Like the server: a 206 says where its body starts.
+        request.response.headers.set(
+            'Content-Range', 'bytes $start-${data.length - 1}/${data.length}');
+      }
       request.response.contentLength = part.length;
       final drop = dropAfterBytes;
       if (drop != null && drop < part.length) {

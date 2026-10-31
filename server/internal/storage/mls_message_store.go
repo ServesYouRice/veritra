@@ -75,11 +75,8 @@ func (s *Store) CreateMLSMessage(ctx context.Context, input CreateMLSMessageInpu
 		return domain.MLSMessage{}, false, err
 	}
 	if input.RevocationDeviceID != "" {
-		var allowed bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-			SELECT 1 FROM mls_revocations WHERE conversation_id = ? AND revoked_device_id = ?
-			AND coordinator_device_id = ? AND state = 'pending')`, input.ConversationID,
-			input.RevocationDeviceID, input.SenderDeviceID).Scan(&allowed); err != nil {
+		allowed, err := mlsRevocationCommitAllowed(ctx, tx, input.ConversationID, input.RevocationDeviceID, input.SenderDeviceID)
+		if err != nil {
 			return domain.MLSMessage{}, false, err
 		}
 		if !allowed {
@@ -127,6 +124,7 @@ func (s *Store) CreateMLSMessage(ctx context.Context, input CreateMLSMessageInpu
 	if _, err := tx.ExecContext(ctx, `UPDATE conversation_mls_messages SET sync_event_id = ? WHERE id = ?`, eventID, id); err != nil {
 		return domain.MLSMessage{}, false, err
 	}
+	var completedEventID int64
 	if input.RevocationDeviceID != "" {
 		if _, err := tx.ExecContext(ctx, `UPDATE mls_revocations SET state = 'commit_submitted', commit_message_id = ?
 			WHERE conversation_id = ? AND revoked_device_id = ? AND state = 'pending'`,
@@ -138,7 +136,9 @@ func (s *Store) CreateMLSMessage(ctx context.Context, input CreateMLSMessageInpu
 			formatTime(createdAt), input.ConversationID, input.RevocationDeviceID, input.SenderDeviceID); err != nil {
 			return domain.MLSMessage{}, false, err
 		}
-		if err := completeMLSRevocationIfConfirmed(ctx, tx, input.ConversationID, input.RevocationDeviceID, createdAt); err != nil {
+		var err error
+		completedEventID, err = completeMLSRevocationIfConfirmed(ctx, tx, input.ConversationID, input.RevocationDeviceID, createdAt)
+		if err != nil {
 			return domain.MLSMessage{}, false, err
 		}
 	}
@@ -150,7 +150,7 @@ func (s *Store) CreateMLSMessage(ctx context.Context, input CreateMLSMessageInpu
 		SenderDeviceID: input.SenderDeviceID, RecipientDeviceID: input.RecipientDeviceID,
 		RevocationDeviceID: input.RevocationDeviceID,
 		Kind:               input.Kind, Payload: input.Payload, IdempotencyKey: input.IdempotencyKey,
-		SyncEventID: eventID, CreatedAt: createdAt,
+		SyncEventID: eventID, CreatedAt: createdAt, RevocationCompletedEventID: completedEventID,
 	}, false, nil
 }
 
@@ -217,18 +217,36 @@ func scanMLSMessage(scanner mlsMessageScanner) (domain.MLSMessage, error) {
 	return message, nil
 }
 
-func completeMLSRevocationIfConfirmed(ctx context.Context, tx *sql.Tx, conversationID, revokedDeviceID string, now time.Time) error {
+// completeMLSRevocationIfConfirmed completes a revocation whose commit was
+// submitted once every required device confirmed it. It is the one place a
+// revocation becomes completed, so it is also the one place that records the
+// mls.revocation.completed event: it returns that event's id when this call
+// made the transition, and zero when nothing changed. The transition happens
+// only from commit_submitted, which makes the event at most once per
+// revocation.
+func completeMLSRevocationIfConfirmed(ctx context.Context, tx *sql.Tx, conversationID, revokedDeviceID string, now time.Time) (int64, error) {
 	var remaining int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM mls_revocation_required_devices
 		WHERE conversation_id = ? AND revoked_device_id = ? AND confirmed_at IS NULL`,
 		conversationID, revokedDeviceID).Scan(&remaining); err != nil {
-		return err
+		return 0, err
 	}
-	if remaining == 0 {
-		_, err := tx.ExecContext(ctx, `UPDATE mls_revocations SET state = 'completed', completed_at = ?
-			WHERE conversation_id = ? AND revoked_device_id = ? AND state = 'commit_submitted'`,
-			formatTime(now), conversationID, revokedDeviceID)
-		return err
+	if remaining != 0 {
+		return 0, nil
 	}
-	return nil
+	result, err := tx.ExecContext(ctx, `UPDATE mls_revocations SET state = 'completed', completed_at = ?
+		WHERE conversation_id = ? AND revoked_device_id = ? AND state = 'commit_submitted'`,
+		formatTime(now), conversationID, revokedDeviceID)
+	if err != nil {
+		return 0, err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if changed != 1 {
+		return 0, nil
+	}
+	return insertSyncEvent(ctx, tx, "mls.revocation.completed", nil,
+		conversationID, map[string]string{"device_id": revokedDeviceID}, formatTime(now))
 }

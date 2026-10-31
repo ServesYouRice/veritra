@@ -60,7 +60,7 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 		}
 	}
 	now := time.Now().UTC()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM message_envelopes WHERE sender_device_id = ? AND idempotency_key = ? AND expires_at IS NOT NULL AND expires_at <= ?`, envelope.SenderDeviceID, envelope.IdempotencyKey, formatTime(now)); err != nil {
+	if err := deleteExpiredMessageByIdempotency(ctx, tx, envelope.SenderDeviceID, envelope.IdempotencyKey, now); err != nil {
 		return domain.MessageEnvelope{}, false, 0, err
 	}
 	existing, err := scanMessage(tx.QueryRowContext(ctx, `SELECT id, conversation_id, sender_account_id, sender_device_id, idempotency_key, ciphertext, crypto_protocol, crypto_metadata_json, attachment_refs_json, reply_to_id, thread_root_id, created_at, edited_at, deleted_at, expires_at FROM message_envelopes WHERE sender_device_id = ? AND idempotency_key = ?`, envelope.SenderDeviceID, envelope.IdempotencyKey))
@@ -153,7 +153,13 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 		}
 	}
 	if recipients != nil && withSyncEvent {
-		rows, err := tx.QueryContext(ctx, `SELECT account_id FROM memberships WHERE conversation_id = ? ORDER BY account_id`, envelope.ConversationID)
+		// Accounts that blocked the sender never see the envelope, on any read
+		// path, so they are not sent it live either.
+		rows, err := tx.QueryContext(ctx, `
+			SELECT account_id FROM memberships
+			WHERE conversation_id = ?
+			  AND NOT EXISTS (SELECT 1 FROM account_blocks b WHERE b.blocker_account_id = memberships.account_id AND b.blocked_account_id = ?)
+			ORDER BY account_id`, envelope.ConversationID, envelope.SenderAccountID)
 		if err != nil {
 			return domain.MessageEnvelope{}, false, 0, err
 		}
@@ -307,8 +313,9 @@ func (s *Store) updateMessageEnvelope(ctx context.Context, messageID, accountID 
 	result, err := tx.ExecContext(ctx, `
 		UPDATE message_envelopes
 		SET ciphertext = ?, crypto_protocol = ?, crypto_metadata_json = ?, edited_at = ?
-		WHERE id = ? AND sender_account_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
-		ciphertext, cryptoProtocol, string(cryptoMetadata), now, messageID, accountID, now)
+		WHERE id = ? AND sender_account_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
+		  AND EXISTS (SELECT 1 FROM memberships m WHERE m.conversation_id = message_envelopes.conversation_id AND m.account_id = ?)`,
+		ciphertext, cryptoProtocol, string(cryptoMetadata), now, messageID, accountID, now, accountID)
 	if err != nil {
 		return domain.MessageEnvelope{}, 0, err
 	}
@@ -350,14 +357,35 @@ func (s *Store) deleteMessageEnvelope(ctx context.Context, messageID, accountID 
 	now := nowString()
 	result, err := tx.ExecContext(ctx, `
 		UPDATE message_envelopes
-		SET ciphertext = ?, crypto_protocol = ?, crypto_metadata_json = ?, deleted_at = ?
-		WHERE id = ? AND sender_account_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
-		markerCiphertext, cryptoProtocol, string(cryptoMetadata), now, messageID, accountID, now)
+		SET ciphertext = ?, crypto_protocol = ?, crypto_metadata_json = ?, deleted_at = ?, attachment_refs_json = '[]'
+		WHERE id = ? AND sender_account_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
+		  AND EXISTS (SELECT 1 FROM memberships m WHERE m.conversation_id = message_envelopes.conversation_id AND m.account_id = ?)`,
+		markerCiphertext, cryptoProtocol, string(cryptoMetadata), now, messageID, accountID, now, accountID)
 	if err != nil {
 		return domain.MessageEnvelope{}, 0, err
 	}
 	envelope, err := messageAfterOwnedMutationTx(ctx, tx, messageID, result, now)
 	if err != nil {
+		return domain.MessageEnvelope{}, 0, err
+	}
+	if err := releaseMessageAttachments(ctx, tx, messageID); err != nil {
+		return domain.MessageEnvelope{}, 0, err
+	}
+	// The created and edited events still hold the ciphertext the delete
+	// replaced. They are hidden from sync from now on (syncEventVisibleTo),
+	// and their copies go here, the way expiry removes them. The deleted
+	// event, written below, carries the marker and stays visible. Every
+	// copy is at or after the created event, so the update reads only the
+	// conversation's events from there on (idx_sync_events_conversation),
+	// not its whole retained history.
+	from, err := messageCreatedEventID(ctx, tx, envelope.ConversationID, messageID, envelope.CreatedAt)
+	if err != nil {
+		return domain.MessageEnvelope{}, 0, err
+	}
+	if _, err := tx.ExecContext(ctx, redactMessageSyncEventsSQL+`
+		WHERE conversation_id = ? AND id >= ? AND event_type IN (`+messageVersionEventTypes+`)
+		  AND json_extract(payload_json, '$.message_id') = ?
+		  AND json_extract(payload_json, '$.envelope') IS NOT NULL`, envelope.ConversationID, from, messageID); err != nil {
 		return domain.MessageEnvelope{}, 0, err
 	}
 	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, nil, envelope.ConversationID, messageSyncEventPayload(envelope), now)
@@ -368,6 +396,79 @@ func (s *Store) deleteMessageEnvelope(ctx context.Context, messageID, accountID 
 		return domain.MessageEnvelope{}, 0, err
 	}
 	return envelope, eventID, nil
+}
+
+// messageCreatedEventID is the id of the message's created sync event, or 0
+// when retention already pruned it. The event was written in the message's
+// own transaction with the message's created_at, so the lookup walks the
+// conversation's events back from the newest and stops there; that is the
+// events after the message, not the conversation's whole history.
+func messageCreatedEventID(ctx context.Context, tx *sql.Tx, conversationID, messageID string, createdAt time.Time) (int64, error) {
+	var id int64
+	err := tx.QueryRowContext(ctx, `SELECT id FROM sync_events
+		WHERE conversation_id = ? AND event_type = 'message.envelope.created' AND created_at = ?
+		  AND json_extract(payload_json, '$.message_id') = ?
+		ORDER BY id DESC LIMIT 1`, conversationID, formatTime(createdAt), messageID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return id, err
+}
+
+// releaseMessageAttachments drops the attachment links of a message that was
+// just turned into a tombstone, deletes the attachments nothing links any
+// more, and queues their blobs for deletion, all in the caller's transaction.
+// An attachment links to one message at most (message_attachments.attachment_id
+// is unique), so every attachment of the message goes. The tombstone's own
+// attachment_refs_json was cleared by the UPDATE.
+func releaseMessageAttachments(ctx context.Context, tx *sql.Tx, messageID string) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT a.id, a.storage_key
+		FROM message_attachments ma
+		JOIN attachment_envelopes a ON a.id = ma.attachment_id
+		WHERE ma.message_id = ?`, messageID)
+	if err != nil {
+		return err
+	}
+	type released struct{ id, storageKey string }
+	var attachments []released
+	for rows.Next() {
+		var item released
+		if err := rows.Scan(&item.id, &item.storageKey); err != nil {
+			rows.Close()
+			return err
+		}
+		attachments = append(attachments, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if len(attachments) == 0 {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM message_attachments WHERE message_id = ?`, messageID); err != nil {
+		return err
+	}
+	for _, item := range attachments {
+		result, err := tx.ExecContext(ctx, `
+			DELETE FROM attachment_envelopes
+			WHERE id = ? AND NOT EXISTS (SELECT 1 FROM message_attachments ma WHERE ma.attachment_id = attachment_envelopes.id)`, item.id)
+		if err != nil {
+			return err
+		}
+		if deleted, err := result.RowsAffected(); err != nil {
+			return err
+		} else if deleted == 1 {
+			if err := enqueueBlobDeletion(ctx, tx, item.storageKey); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Store) messageAfterOwnedMutation(ctx context.Context, messageID string, result sql.Result) (domain.MessageEnvelope, error) {
@@ -509,9 +610,57 @@ func (s *Store) conversationRetention(ctx context.Context, conversationID string
 }
 
 func (s *Store) pruneExpiredMessageByIdempotency(ctx context.Context, deviceID, key string, now time.Time) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM message_envelopes WHERE sender_device_id = ? AND idempotency_key = ? AND expires_at IS NOT NULL AND expires_at <= ?`, deviceID, key, formatTime(now.UTC()))
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := deleteExpiredMessageByIdempotency(ctx, tx, deviceID, key, now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// deleteExpiredMessageByIdempotency removes the device's expired envelope for
+// key, if there is one, together with the ciphertext copies in its sync
+// events, in the caller's transaction.
+func deleteExpiredMessageByIdempotency(ctx context.Context, tx *sql.Tx, deviceID, key string, now time.Time) error {
+	var messageID, conversationID string
+	err := tx.QueryRowContext(ctx, `SELECT id, conversation_id FROM message_envelopes WHERE sender_device_id = ? AND idempotency_key = ? AND expires_at IS NOT NULL AND expires_at <= ?`, deviceID, key, formatTime(now.UTC())).Scan(&messageID, &conversationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, redactMessageSyncEventsSQL+`
+		WHERE conversation_id = ? AND event_type IN (`+messageEnvelopeEventTypes+`)
+		  AND json_extract(payload_json, '$.message_id') = ?
+		  AND json_extract(payload_json, '$.envelope') IS NOT NULL`, conversationID, messageID); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `DELETE FROM message_envelopes WHERE id = ?`, messageID)
 	return err
 }
+
+// messageEnvelopeEventTypes lists the sync events that hold a copy of a
+// message envelope, ciphertext included (messageSyncEventPayload).
+const messageEnvelopeEventTypes = `'message.envelope.created', 'message.envelope.edited', 'message.envelope.deleted'`
+
+// messageVersionEventTypes lists the message events whose envelope copy a
+// delete supersedes: every one but the deleted event itself.
+const messageVersionEventTypes = `'message.envelope.created', 'message.envelope.edited'`
+
+// redactMessageSyncEventsSQL starts an UPDATE that cuts a message event down
+// to the identifiers readers still need. The row and its id stay, so a cursor
+// on it keeps working; the ciphertext and every other envelope field go. The
+// sender stays so syncEventBlockedFor keeps hiding the event from accounts
+// that blocked it.
+const redactMessageSyncEventsSQL = `UPDATE sync_events SET payload_json = json_object(
+	'message_id', json_extract(payload_json, '$.message_id'),
+	'conversation_id', COALESCE(json_extract(payload_json, '$.conversation_id'), conversation_id),
+	'sender_account_id', COALESCE(json_extract(payload_json, '$.envelope.sender_account_id'), json_extract(payload_json, '$.sender_account_id')),
+	'redacted', 1)`
 
 // PruneExpiredMessages deletes server-held encrypted envelopes whose
 // disappearing-message expiry has passed.
@@ -589,6 +738,20 @@ func (s *Store) PruneExpiredContent(ctx context.Context, now time.Time) (int64, 
 	if err := rows.Close(); err != nil {
 		return 0, nil, err
 	}
+	// The envelope rows are about to go, and the sync events that copied them
+	// must not keep the ciphertext. Restricting by conversation lets the
+	// update use idx_sync_events_conversation.
+	if _, err := tx.ExecContext(ctx, redactMessageSyncEventsSQL+`
+		WHERE conversation_id IN (SELECT conversation_id FROM message_envelopes WHERE id IN (SELECT id FROM prune_expired_message_ids))
+		  AND event_type IN (`+messageEnvelopeEventTypes+`)
+		  AND json_extract(payload_json, '$.message_id') IN (SELECT id FROM prune_expired_message_ids)
+		  AND json_extract(payload_json, '$.envelope') IS NOT NULL`); err != nil {
+		return 0, nil, err
+	}
+	backfillTo, err := s.redactOrphanedMessageEvents(ctx, tx)
+	if err != nil {
+		return 0, nil, err
+	}
 	result, err := tx.ExecContext(ctx, `
 		DELETE FROM message_envelopes
 		WHERE id IN (SELECT id FROM prune_expired_message_ids)`)
@@ -599,7 +762,7 @@ func (s *Store) PruneExpiredContent(ctx context.Context, now time.Time) (int64, 
 	if err != nil {
 		return 0, nil, err
 	}
-	orphanCutoff := formatTime(now.UTC().Add(-24 * time.Hour))
+	orphanCutoff := formatTime(now.UTC().Add(-OrphanedAttachmentGrace))
 	orphans, err := tx.QueryContext(ctx, `SELECT storage_key FROM attachment_envelopes WHERE created_at < ? AND NOT EXISTS (SELECT 1 FROM message_attachments ma WHERE ma.attachment_id = attachment_envelopes.id) ORDER BY created_at, id LIMIT 500`, orphanCutoff)
 	if err != nil {
 		return 0, nil, err
@@ -637,8 +800,46 @@ func (s *Store) PruneExpiredContent(ctx context.Context, now time.Time) (int64, 
 	if err := tx.Commit(); err != nil {
 		return 0, nil, err
 	}
+	s.redactMu.Lock()
+	s.redactCursor = backfillTo
+	s.redactMu.Unlock()
 	return removed, storageKeys, nil
 }
+
+// redactOrphanedMessageEvents redacts the message events whose envelope row is
+// already gone but whose payload still holds the envelope: the copies left by
+// expiries pruned before events were redacted with them. It also redacts the
+// created and edited events of a message deleted before deletes redacted
+// them, which sync already hides (syncEventVisibleTo). Each call starts at
+// the first event after the cursor and looks at the next redactBackfillWindow
+// event ids, so the work per sweep is bounded however large sync_events is,
+// and a gap left by PruneSyncEvents is jumped, not crawled. The cursor wraps
+// to the start when nothing is left after it. It returns the cursor for the
+// next call, which the caller stores once its transaction commits.
+func (s *Store) redactOrphanedMessageEvents(ctx context.Context, tx *sql.Tx) (int64, error) {
+	s.redactMu.Lock()
+	from := s.redactCursor
+	s.redactMu.Unlock()
+	var first sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT MIN(id) FROM sync_events WHERE id > ?`, from).Scan(&first); err != nil {
+		return 0, err
+	}
+	if !first.Valid {
+		return 0, nil
+	}
+	to := first.Int64 + redactBackfillWindow - 1
+	if _, err := tx.ExecContext(ctx, redactMessageSyncEventsSQL+`
+		WHERE id >= ? AND id <= ? AND event_type IN (`+messageEnvelopeEventTypes+`)
+		  AND json_extract(payload_json, '$.envelope') IS NOT NULL
+		  AND NOT EXISTS (SELECT 1 FROM message_envelopes me WHERE me.id = json_extract(payload_json, '$.message_id')
+		                  AND (me.deleted_at IS NULL OR event_type = 'message.envelope.deleted'))`, first.Int64, to); err != nil {
+		return 0, err
+	}
+	return to, nil
+}
+
+// redactBackfillWindow is how many event ids one sweep's backfill covers.
+const redactBackfillWindow = 2000
 
 // PruneSyncEvents deletes sync events older than the cutoff. Returns the
 // number of rows removed. Intended to be run periodically by a background
@@ -681,6 +882,19 @@ func (s *Store) pruneEventRows(ctx context.Context, query string, olderThan time
 // message content, ciphertext, or any field that would defeat the privacy
 // promise that admins cannot read user data.
 func (s *Store) RecordAuditEvent(ctx context.Context, actorAccountID *string, eventType string, metadata interface{}) error {
+	return insertAuditEvent(ctx, s.db, actorAccountID, eventType, metadata)
+}
+
+// AuditEvent is a metadata-only audit row that a store method writes in the
+// same transaction as the change it records, so the change is never
+// persisted without it. The same rule applies as for RecordAuditEvent: no
+// message content, ciphertext or secrets in Metadata.
+type AuditEvent struct {
+	Type     string
+	Metadata interface{}
+}
+
+func insertAuditEvent(ctx context.Context, exec syncEventExecer, actorAccountID *string, eventType string, metadata interface{}) error {
 	payload := json.RawMessage(`{}`)
 	if metadata != nil {
 		b, err := json.Marshal(metadata)
@@ -689,7 +903,7 @@ func (s *Store) RecordAuditEvent(ctx context.Context, actorAccountID *string, ev
 		}
 		payload = b
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO audit_events(actor_account_id, event_type, metadata_json, created_at) VALUES(?, ?, ?, ?)`, nullableString(actorAccountID), eventType, string(payload), nowString())
+	_, err := exec.ExecContext(ctx, `INSERT INTO audit_events(actor_account_id, event_type, metadata_json, created_at) VALUES(?, ?, ?, ?)`, nullableString(actorAccountID), eventType, string(payload), nowString())
 	return err
 }
 
@@ -796,10 +1010,26 @@ func (c *syncCandidateScanner) Scan(dest ...interface{}) error {
 // syncEventVisibleTo is true when the conversation event se may go to the
 // device ?3 of account ?1: its encrypted events follow the device's MLS
 // join cursor, and nothing comes from an account ?1 blocked.
+//
+// A message event also needs its envelope row: once the message expired or
+// the row is gone, the event is hidden even from a cursor older than it, so
+// an expired envelope is never replayed. Once the message is deleted, only
+// its deleted event (the marker) is served; the created and edited events,
+// whose ciphertext the delete redacted, are hidden the same way. The clock
+// is SQLite's, in the stored fixed-width format, because the query takes no
+// time parameter.
 var syncEventVisibleTo = `(NOT (se.event_type = 'mls.message.created' OR se.event_type LIKE 'message.envelope.%'
 	        OR se.event_type LIKE 'call.%')
 	   OR ` + mlsJoinFilterEventFor("?3") + `)
-	AND NOT ` + syncEventBlockedFor("?1")
+	AND NOT ` + syncEventBlockedFor("?1") + `
+	AND (se.event_type NOT LIKE 'message.envelope.%' OR EXISTS (
+	  SELECT 1 FROM message_envelopes live
+	  WHERE live.id = json_extract(se.payload_json, '$.message_id')
+	    AND (live.expires_at IS NULL OR live.expires_at > ` + sqlNowText + `)
+	    AND (live.deleted_at IS NULL OR se.event_type = 'message.envelope.deleted')))`
+
+// sqlNowText is the current time in formatTime's layout, to the millisecond.
+const sqlNowText = `(strftime('%Y-%m-%dT%H:%M:%S', 'now') || substr(strftime('%f', 'now'), 3) || '000000Z')`
 
 // listSyncEventsQuery streams, in id order, the events after ?2 that could
 // go to device ?3 of account ?1, each with a flag that says whether it may
@@ -864,12 +1094,20 @@ var listSyncEventsQuery = `
 // receipt (D48: a block hides receipts in both directions), from an account
 // that blocked blocker. blocker is SQL text (a column or a positional
 // parameter), never a value.
+//
+// A message event names its sender through the live envelope row; when that
+// row is gone (expired and pruned, or replaced by an idempotent retry) the
+// sender stored in the event payload stands in, so a block keeps hiding the
+// event instead of failing open.
 func syncEventBlockedFor(blocker string) string {
 	return `(EXISTS (
 		SELECT 1 FROM account_blocks b
 		WHERE b.blocker_account_id = ` + blocker + `
 		  AND b.blocked_account_id = CASE
-		    WHEN se.event_type LIKE 'message.%' THEN (SELECT sender_account_id FROM message_envelopes WHERE id = json_extract(se.payload_json, '$.message_id'))
+		    WHEN se.event_type LIKE 'message.%' THEN COALESCE(
+		      (SELECT sender_account_id FROM message_envelopes WHERE id = json_extract(se.payload_json, '$.message_id')),
+		      json_extract(se.payload_json, '$.envelope.sender_account_id'),
+		      json_extract(se.payload_json, '$.sender_account_id'))
 		    WHEN se.event_type LIKE 'reaction.%' OR se.event_type = 'read_receipt.updated' THEN json_extract(se.payload_json, '$.account_id')
 		    WHEN se.event_type LIKE 'call.%' THEN json_extract(se.payload_json, '$.created_by')
 		    ELSE NULL

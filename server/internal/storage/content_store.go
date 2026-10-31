@@ -22,7 +22,13 @@ import (
 const RecoveryCapabilityLifetime = 15 * time.Minute
 
 // RecoveryLeaseLifetime is deliberately shorter than the capability lifetime
-// so a crashed process cannot strand a resumable transfer until expiry.
+// so a crashed process cannot strand a resumable transfer until expiry. The
+// holder of a lease keeps it with RenewRecoveryTransfer while it streams, so a
+// slow transfer is not taken over; a holder that stops renewing loses it after
+// this long. A lease is not cut off at the capability deadline: a transfer
+// leased before expiry may finish after it. What bounds a renewing stream is
+// the recovery route's request deadline (15 minutes, routeTimeouts in
+// internal/app), which ends the handler that renews.
 const RecoveryLeaseLifetime = 2 * time.Minute
 
 // RecoveryTransfer is an approved, serialized range of an encrypted backup.
@@ -396,9 +402,12 @@ func (s *Store) CreatePushSubscriptionWithMode(ctx context.Context, accountID, d
 		}
 	}
 	var activeID string
-	err = tx.QueryRowContext(ctx, `SELECT id FROM push_subscriptions WHERE account_id = ? AND device_id = ? AND provider = ? AND disabled_at IS NULL ORDER BY created_at DESC LIMIT 1`, accountID, deviceID, provider).Scan(&activeID)
+	// A session without a device stores a NULL device_id; IS matches that
+	// NULL where = never does, so device-less rows share one scope.
+	storedDeviceID := nullableEmptyString(deviceID)
+	err = tx.QueryRowContext(ctx, `SELECT id FROM push_subscriptions WHERE account_id = ? AND device_id IS ? AND provider = ? AND disabled_at IS NULL ORDER BY created_at DESC LIMIT 1`, accountID, storedDeviceID, provider).Scan(&activeID)
 	if errors.Is(err, sql.ErrNoRows) {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO push_subscriptions(id, account_id, device_id, provider, endpoint, public_key, auth_secret, created_at,notification_mode) VALUES(?, ?, ?, ?, ?, ?, ?, ?,?)`, id, accountID, nullableEmptyString(deviceID), provider, endpoint, publicKey, authSecret, nowString(), mode); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO push_subscriptions(id, account_id, device_id, provider, endpoint, public_key, auth_secret, created_at,notification_mode) VALUES(?, ?, ?, ?, ?, ?, ?, ?,?)`, id, accountID, storedDeviceID, provider, endpoint, publicKey, authSecret, nowString(), mode); err != nil {
 			return "", err
 		}
 		activeID = id
@@ -410,8 +419,8 @@ func (s *Store) CreatePushSubscriptionWithMode(ctx context.Context, accountID, d
 	// One device uses one provider at a time: switching provider retires the
 	// old registration so the device is not woken twice (card I41).
 	if _, err := tx.ExecContext(ctx, `UPDATE push_subscriptions SET disabled_at = ?
-		WHERE account_id = ? AND device_id = ? AND provider <> ? AND disabled_at IS NULL`,
-		nowString(), accountID, deviceID, provider); err != nil {
+		WHERE account_id = ? AND device_id IS ? AND provider <> ? AND disabled_at IS NULL`,
+		nowString(), accountID, storedDeviceID, provider); err != nil {
 		return "", err
 	}
 	if err := tx.Commit(); err != nil {
@@ -500,8 +509,16 @@ func (s *Store) DevicePushSubscriptionForDevice(ctx context.Context, id, account
 	return item, nil
 }
 
-func (s *Store) DisablePushTarget(ctx context.Context, subscriptionID string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE push_subscriptions SET disabled_at = COALESCE(disabled_at, ?) WHERE id = ?`, nowString(), subscriptionID)
+// DisablePushTarget disables target's subscription only while it still holds
+// the endpoint and credentials that failed. Re-registering keeps the id and
+// replaces them, so a late failure of the old registration must not disable
+// the refreshed one.
+func (s *Store) DisablePushTarget(ctx context.Context, target PushTarget) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE push_subscriptions SET disabled_at = COALESCE(disabled_at, ?)
+		WHERE id = ? AND provider = ? AND endpoint = ?
+		  AND COALESCE(public_key, '') = ? AND COALESCE(auth_secret, '') = ?`,
+		nowString(), target.ID, target.Provider, target.Endpoint, target.PublicKey, target.AuthSecret)
 	return err
 }
 
@@ -662,6 +679,12 @@ func (s *Store) transitionCallSession(ctx context.Context, callID, accountID str
 	}
 	if err != nil {
 		return domain.CallSession{}, 0, err
+	}
+	// Pruning deletes expired calls on a timer; until it runs the row is still
+	// here, and it must answer as it will after pruning rather than let a stale
+	// ringing call be accepted and given a fresh expiry.
+	if call.ExpiresAt != nil && !call.ExpiresAt.After(time.Now().UTC()) {
+		return domain.CallSession{}, 0, ErrNotFound
 	}
 	var kind string
 	var memberCount int
@@ -875,9 +898,13 @@ func (s *Store) CreateBackupBlobWithChunkDigests(ctx context.Context, accountID,
 	}{StateCounter: &stateCounter}); err != nil || stateCounter <= 0 {
 		return ErrInvalidInput
 	}
+	// A session without a device stores a NULL device_id; IS matches that NULL
+	// where = never does, so device-less backups share one counter sequence and
+	// one live recovery capability.
+	storedDeviceID := nullableEmptyString(deviceID)
 	var previousCounter sql.NullInt64
 	if err := tx.QueryRowContext(ctx, `SELECT MAX(CAST(json_extract(key_derivation_metadata_json, '$.state_counter') AS INTEGER))
-		FROM backup_blobs WHERE account_id = ? AND device_id = ?`, accountID, deviceID).Scan(&previousCounter); err != nil {
+		FROM backup_blobs WHERE account_id = ? AND device_id IS ?`, accountID, storedDeviceID).Scan(&previousCounter); err != nil {
 		return err
 	}
 	if previousCounter.Valid && stateCounter <= previousCounter.Int64 {
@@ -886,10 +913,10 @@ func (s *Store) CreateBackupBlobWithChunkDigests(ctx context.Context, accountID,
 	recoveryExpiresAt := time.Now().UTC().Add(RecoveryCapabilityLifetime)
 	if _, err := tx.ExecContext(ctx, `UPDATE backup_blobs SET recovery_token_hash = NULL,
 		recovery_expires_at = NULL, recovery_next_offset = 0, recovery_lease_id = NULL,
-		recovery_lease_expires_at = NULL WHERE account_id = ? AND device_id = ?`, accountID, deviceID); err != nil {
+		recovery_lease_expires_at = NULL WHERE account_id = ? AND device_id IS ?`, accountID, storedDeviceID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO backup_blobs(id, account_id, device_id, storage_key, ciphertext_sha256, size_bytes, key_derivation_metadata_json, created_at, recovery_token_hash, recovery_expires_at, recovery_next_offset, chunk_digests) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`, id, accountID, nullableEmptyString(deviceID), storageKey, ciphertextSHA256, sizeBytes, string(keyDerivationMetadata), nowString(), recoveryTokenHash, formatTime(recoveryExpiresAt), nullableBytes(chunkDigests)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO backup_blobs(id, account_id, device_id, storage_key, ciphertext_sha256, size_bytes, key_derivation_metadata_json, created_at, recovery_token_hash, recovery_expires_at, recovery_next_offset, chunk_digests) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`, id, accountID, storedDeviceID, storageKey, ciphertextSHA256, sizeBytes, string(keyDerivationMetadata), nowString(), recoveryTokenHash, formatTime(recoveryExpiresAt), nullableBytes(chunkDigests)); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -950,9 +977,6 @@ func (s *Store) BeginRecoveryTransfer(ctx context.Context, recoveryTokenHash []b
 		return RecoveryTransfer{}, ErrRecoveryRange
 	}
 	leaseDeadline := now.Add(RecoveryLeaseLifetime)
-	if leaseDeadline.After(expiresAt) {
-		leaseDeadline = expiresAt
-	}
 	result, err := tx.ExecContext(ctx, `UPDATE backup_blobs SET recovery_lease_id = ?,
 		recovery_lease_expires_at = ? WHERE id = ? AND recovery_token_hash = ?
 		AND recovery_next_offset = ? AND (recovery_lease_id IS NULL OR recovery_lease_expires_at <= ?)`,
@@ -972,6 +996,30 @@ func (s *Store) BeginRecoveryTransfer(ctx context.Context, recoveryTokenHash []b
 	transfer.LeaseID = leaseID
 	transfer.StartOffset = start
 	return transfer, nil
+}
+
+// RenewRecoveryTransfer extends a lease that is still live by another
+// RecoveryLeaseLifetime. A lease that has lapsed or was taken over is not
+// revived: the caller gets ErrRecoveryBusy and must stop sending.
+func (s *Store) RenewRecoveryTransfer(ctx context.Context, leaseID string) error {
+	if leaseID == "" {
+		return ErrInvalidInput
+	}
+	now := time.Now().UTC()
+	result, err := s.db.ExecContext(ctx, `UPDATE backup_blobs SET recovery_lease_expires_at = ?
+		WHERE recovery_lease_id = ? AND recovery_lease_expires_at > ?`,
+		formatTime(now.Add(RecoveryLeaseLifetime)), leaseID, formatTime(now))
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return ErrRecoveryBusy
+	}
+	return nil
 }
 
 // CompleteRecoveryTransfer advances a leased transfer by the bytes that the

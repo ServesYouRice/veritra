@@ -391,6 +391,20 @@ class AppLocalizationsSr extends AppLocalizations {
       'Апликација се и даље синхронизује када се пробуди, али ништа не приказује. Дозволите обавештења за Veritra у системским подешавањима.';
 
   @override
+  String get settingsPushNotAllowedTitle => 'Обавештења још нису дозвољена';
+
+  @override
+  String get settingsPushNotAllowedDetail =>
+      'Дозволите обавештења испод да бисте били обавештавани. До тада се апликација синхронизује када се пробуди, али ништа не приказује.';
+
+  @override
+  String get settingsPushUnconfirmedTitle => 'Обавештења се не могу потврдити';
+
+  @override
+  String get settingsPushUnconfirmedDetail =>
+      'Овај уређај није потврдио да су обавештења дозвољена, па можда ништа неће бити приказано. Проверите системска подешавања за Veritra.';
+
+  @override
   String get settingsPushActiveTitle => 'Push обавештења су активна';
 
   @override
@@ -802,6 +816,10 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get inviteEmptyMessage =>
       'Кодови позивница које направите појављују се овде. Делите их преко безбедног канала.';
+
+  @override
+  String get inviteLoadFailed =>
+      'Ваше позивнице нису могле да се учитају. Проверите везу и покушајте поново.';
 
   @override
   String get inviteYourInvites => 'Ваше позивнице';
@@ -1413,6 +1431,10 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get safetyChangedDetail =>
       'Откако сте верификовали, у овом разговору је неки уређај додат, уклоњен или замењен. Поново упоредите нови број.';
+
+  @override
+  String get safetyChangedWhileComparing =>
+      'Безбедносни број се променио док сте га упоређивали, па ништа није сачувано. Поново упоредите нови број.';
 
   @override
   String get safetyUnverifiedDetail => 'Још није верификовано.';
@@ -2060,6 +2082,10 @@ class AppLocalizationsSr extends AppLocalizations {
       'Ваш ред шифрованих порука је пун. Пошаљите или одбаците поруку на чекању пре него што напишете нову.';
 
   @override
+  String get errorCryptoStateFormatUnsupported =>
+      'Шифровани подаци на овом уређају сачувани су у формату који ова верзија апликације не може да прочита. Поново повежите овај уређај да бисте наставили да шаљете поруке.';
+
+  @override
   String get errorConversationPausedDetail =>
       'Слање је паузирано у овом разговору јер је сервер одбио ажурирање шифровања. Остали разговори и даље раде.';
 
@@ -2492,6 +2518,26 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get k2CopiedHistory => 'Копирана историја · снимак са уређаја';
+
+  @override
+  String get k2HistoryOnlyTitle => 'Копирана историја';
+
+  @override
+  String get k2HistoryOnlyNotice =>
+      'Копирано са вашег другог уређаја. Само за читање: овај уређај није члан овог разговора, па се овде ништа не може послати.';
+
+  @override
+  String get k2HistoryUntitled => 'Ранији разговор';
+
+  @override
+  String get k2HistoryOtherMember => 'Други члан';
+
+  @override
+  String get k2HistoryAttachment => 'Прилог, није преузет на овом уређају';
+
+  @override
+  String get k2HistoryEmpty =>
+      'У овом разговору није остала ниједна копирана порука.';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -2879,6 +2925,20 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get settingsPushDeniedDetail =>
       'Aplikacija se i dalje sinhronizuje kada se probudi, ali ništa ne prikazuje. Dozvolite obaveštenja za Veritra u sistemskim podešavanjima.';
+
+  @override
+  String get settingsPushNotAllowedTitle => 'Obaveštenja još nisu dozvoljena';
+
+  @override
+  String get settingsPushNotAllowedDetail =>
+      'Dozvolite obaveštenja ispod da biste bili obaveštavani. Do tada se aplikacija sinhronizuje kada se probudi, ali ništa ne prikazuje.';
+
+  @override
+  String get settingsPushUnconfirmedTitle => 'Obaveštenja se ne mogu potvrditi';
+
+  @override
+  String get settingsPushUnconfirmedDetail =>
+      'Ovaj uređaj nije potvrdio da su obaveštenja dozvoljena, pa možda ništa neće biti prikazano. Proverite sistemska podešavanja za Veritra.';
 
   @override
   String get settingsPushActiveTitle => 'Push obaveštenja su aktivna';
@@ -3292,6 +3352,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get inviteEmptyMessage =>
       'Kodovi pozivnica koje napravite pojavljuju se ovde. Delite ih preko bezbednog kanala.';
+
+  @override
+  String get inviteLoadFailed =>
+      'Vaše pozivnice nisu mogle da se učitaju. Proverite vezu i pokušajte ponovo.';
 
   @override
   String get inviteYourInvites => 'Vaše pozivnice';
@@ -3903,6 +3967,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get safetyChangedDetail =>
       'Otkako ste verifikovali, u ovom razgovoru je neki uređaj dodat, uklonjen ili zamenjen. Ponovo uporedite novi broj.';
+
+  @override
+  String get safetyChangedWhileComparing =>
+      'Bezbednosni broj se promenio dok ste ga upoređivali, pa ništa nije sačuvano. Ponovo uporedite novi broj.';
 
   @override
   String get safetyUnverifiedDetail => 'Još nije verifikovano.';
@@ -4553,6 +4621,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Vaš red šifrovanih poruka je pun. Pošaljite ili odbacite poruku na čekanju pre nego što napišete novu.';
 
   @override
+  String get errorCryptoStateFormatUnsupported =>
+      'Šifrovani podaci na ovom uređaju sačuvani su u formatu koji ova verzija aplikacije ne može da pročita. Ponovo povežite ovaj uređaj da biste nastavili da šaljete poruke.';
+
+  @override
   String get errorConversationPausedDetail =>
       'Slanje je pauzirano u ovom razgovoru jer je server odbio ažuriranje šifrovanja. Ostali razgovori i dalje rade.';
 
@@ -4985,4 +5057,24 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get k2CopiedHistory => 'Kopirana istorija · snimak sa uređaja';
+
+  @override
+  String get k2HistoryOnlyTitle => 'Kopirana istorija';
+
+  @override
+  String get k2HistoryOnlyNotice =>
+      'Kopirano sa vašeg drugog uređaja. Samo za čitanje: ovaj uređaj nije član ovog razgovora, pa se ovde ništa ne može poslati.';
+
+  @override
+  String get k2HistoryUntitled => 'Raniji razgovor';
+
+  @override
+  String get k2HistoryOtherMember => 'Drugi član';
+
+  @override
+  String get k2HistoryAttachment => 'Prilog, nije preuzet na ovom uređaju';
+
+  @override
+  String get k2HistoryEmpty =>
+      'U ovom razgovoru nije ostala nijedna kopirana poruka.';
 }

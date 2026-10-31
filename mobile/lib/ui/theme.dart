@@ -260,8 +260,22 @@ ThemeData _buildTheme(Brightness brightness) {
       indicatorColor: scheme.primary,
       elevation: 0,
       surfaceTintColor: Colors.transparent,
-      labelTextStyle: WidgetStatePropertyAll<TextStyle?>(
-        textTheme.labelSmall,
+      // The indicator is the accent colour, so the selected icon is the
+      // colour made for text on it. Left to Material it would be
+      // onSecondaryContainer (the body text colour), about 1.1:1 on the
+      // indicator in the dark theme and 1.4:1 in the light one.
+      iconTheme: WidgetStateProperty.resolveWith<IconThemeData?>(
+        (states) => IconThemeData(
+          color: states.contains(WidgetState.selected)
+              ? scheme.onPrimary
+              : scheme.onSurfaceVariant,
+        ),
+      ),
+      // The selected label is the full text colour, the others stay muted.
+      labelTextStyle: WidgetStateProperty.resolveWith<TextStyle?>(
+        (states) => states.contains(WidgetState.selected)
+            ? textTheme.labelSmall?.copyWith(color: scheme.onSurface)
+            : textTheme.labelSmall,
       ),
     ),
     listTileTheme: ListTileThemeData(

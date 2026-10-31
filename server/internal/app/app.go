@@ -6,12 +6,14 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -60,7 +62,10 @@ type App struct {
 	// the jittered backoff; the capacity scenario tests shorten them.
 	pushSendTimeout time.Duration
 	pushRetryDelay  time.Duration
-	Log             *slog.Logger
+	// pushRejections counts provider refusals of a target that do not prove
+	// it dead (push_rejections.go).
+	pushRejections rejectedTargets
+	Log            *slog.Logger
 }
 
 // Shutdown timing (card I46). The whole stop sequence fits inside
@@ -171,7 +176,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		providers["apns"] = provider
 	}
 	pushProvider := push.NewRouter(providers)
-	hub := realtime.NewHub()
+	hub := realtime.NewHubWithLimits(realtime.HubLimits{PerIPv6Prefix: cfg.Limits.WithDefaults().SocketsPerIPv6Prefix})
 	metrics := newHTTPMetrics()
 	metrics.realtimeConnections = hub.ConnectionCount
 	dataDir := cfg.DataDir
@@ -372,10 +377,7 @@ func routeTimeouts(next http.Handler) http.Handler {
 // runRetentionSweeper periodically prunes expired message envelopes plus
 // sync_events and audit_events older than the retention window. The event
 func (a *App) runRetentionSweeper(ctx context.Context) {
-	retention := a.Config.SyncRetention
-	if retention <= 0 {
-		retention = 30 * 24 * time.Hour
-	}
+	retention := a.syncRetention()
 	ticker := time.NewTicker(6 * time.Hour)
 	defer ticker.Stop()
 	sweep := func() {
@@ -633,6 +635,7 @@ func (a *App) deliverPushWake(ctx context.Context, metric *pushDeliveryMetrics, 
 		// again after the lease; a repeated generic wake only makes the
 		// device sync once more.
 		metric.delivered.Add(1)
+		a.pushRejections.clear(job.SubscriptionID)
 		completionCtx, completionCancel := context.WithTimeout(ctx, 2*time.Second)
 		completeErr := a.Store.CompletePushWakeJob(completionCtx, job)
 		completionCancel()
@@ -640,6 +643,27 @@ func (a *App) deliverPushWake(ctx context.Context, metric *pushDeliveryMetrics, 
 			a.Log.Warn("push_wake_completion_failed", "provider", job.Provider, "err", completeErr)
 		}
 		return
+	}
+	if errors.Is(err, push.ErrTargetRejected) {
+		// The provider refused this send in a way a retry would repeat but
+		// that does not prove the subscription dead. Drop the job (not a
+		// retry every five minutes for a day) and keep the subscription,
+		// unless it has been refused repeatedly for over a day.
+		if !a.pushRejections.note(job.SubscriptionID, time.Now().UTC()) {
+			dropCtx, dropCancel := context.WithTimeout(ctx, 2*time.Second)
+			dropErr := a.Store.DropPushWakeJob(dropCtx, job)
+			dropCancel()
+			if dropErr != nil {
+				// The job stays leased and is dropped after the lease.
+				metric.failed.Add(1)
+				a.Log.Warn("push_wake_drop_failed", "provider", job.Provider, "err", dropErr)
+				return
+			}
+			metric.abandoned.Add(1)
+			return
+		}
+		a.Log.Warn("push_target_retired_after_repeated_rejections", "provider", job.Provider)
+		err = push.ErrSubscriptionGone
 	}
 	if errors.Is(err, push.ErrSubscriptionGone) || errors.Is(err, push.ErrInvalidTarget) {
 		retireCtx, retireCancel := context.WithTimeout(ctx, 2*time.Second)
@@ -721,8 +745,17 @@ func (a *App) updatePushWakeMetrics(ctx context.Context) {
 	}
 }
 
+// syncRetention is how long sync and audit events are kept: the configured
+// window, or 30 days when none is set.
+func (a *App) syncRetention() time.Duration {
+	if a.Config.SyncRetention > 0 {
+		return a.Config.SyncRetention
+	}
+	return 30 * 24 * time.Hour
+}
+
 func (a *App) updateRetentionMetrics(ctx context.Context, now time.Time) {
-	backlog, err := a.Store.RetentionBacklog(ctx, now)
+	backlog, err := a.Store.RetentionBacklogWithSyncRetention(ctx, now, a.syncRetention())
 	if err != nil {
 		a.Log.Warn("retention_backlog_read_failed", "err", err)
 		return
@@ -1073,11 +1106,19 @@ func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 }
 
 func (r *statusRecorder) Flush() {
-	if flusher, ok := r.ResponseWriter.(http.Flusher); ok {
+	_ = r.FlushError()
+}
+
+// FlushError is what http.ResponseController calls, so a handler that needs to
+// know whether a flush reached the connection (recovery progress) sees the
+// error instead of the Flusher interface swallowing it.
+func (r *statusRecorder) FlushError() error {
+	err := http.NewResponseController(r.ResponseWriter).Flush()
+	if !errors.Is(err, http.ErrNotSupported) {
 		// Flushing sends the status line (an implicit 200) if none was.
 		r.wroteHeader = true
-		flusher.Flush()
 	}
+	return err
 }
 
 func requestRoute(pattern string) string {
@@ -1130,6 +1171,9 @@ type rateLimiter struct {
 	salt             [16]byte
 	clientIdentities *httpapi.ClientIdentityResolver
 	limits           rateLimits
+	// maxEntries bounds each bucket table; it defaults to maxRateLimitEntries
+	// and tests lower it.
+	maxEntries int
 
 	mu sync.Mutex
 	// buckets holds address buckets (every budget of one client address,
@@ -1139,8 +1183,14 @@ type rateLimiter struct {
 	// other addresses' buckets and reset their credential budgets.
 	buckets        map[string]*bucket
 	accountBuckets map[string]*bucket
-	evictions      atomic.Int64
-	rejections     [len(rateLimitScopes)]atomic.Int64
+	// overflow and accountOverflow serve keys that arrive while the matching
+	// table is full of live buckets that all used a credential budget. Each
+	// is sharded by the key's network (overflowShard). They are not table
+	// entries.
+	overflow        [overflowShards]bucket
+	accountOverflow [overflowShards]bucket
+	evictions       atomic.Int64
+	rejections      [len(rateLimitScopes)]atomic.Int64
 }
 
 // rateLimitScopes name the limit a rejected request hit, for metrics only.
@@ -1173,6 +1223,7 @@ func newRateLimiter(clientIdentities *httpapi.ClientIdentityResolver, limits rat
 	rl := &rateLimiter{
 		clientIdentities: clientIdentities,
 		limits:           limits,
+		maxEntries:       maxRateLimitEntries,
 		buckets:          map[string]*bucket{},
 		accountBuckets:   map[string]*bucket{},
 	}
@@ -1206,17 +1257,55 @@ func (rl *rateLimiter) cleanupLoop(ctx context.Context) {
 // bucketLocked returns key's bucket in table for the current minute,
 // starting a new one (and evicting from the same table under pressure)
 // when needed. rl.mu must be held.
-func (rl *rateLimiter) bucketLocked(table map[string]*bucket, key string, now time.Time) *bucket {
+func (rl *rateLimiter) bucketLocked(table map[string]*bucket, overflow *[overflowShards]bucket, host, key string, now time.Time) *bucket {
 	b, ok := table[key]
 	if ok && !b.reset.Before(now) {
 		return b
 	}
-	if !ok && len(table) >= maxRateLimitEntries {
-		rl.evictOneLocked(table, now)
+	if !ok && len(table) >= rl.maxEntries && !rl.evictOneLocked(table, now) {
+		// Every sampled entry is live and has used a credential or
+		// enrollment budget, which must not be reset before its minute
+		// ends. This key shares the overflow bucket of its network instead
+		// (a /48 for IPv6, a /24 for IPv4, salted and hashed into a fixed
+		// number of buckets): the cap holds, nothing is forgotten, and one
+		// network that fills the table and burns its overflow bucket cannot
+		// refuse clients of other networks.
+		rl.evictions.Add(1)
+		shared := &overflow[rl.overflowShard(host)]
+		if shared.reset.Before(now) {
+			*shared = bucket{reset: now.Add(time.Minute)}
+		}
+		return shared
 	}
 	b = &bucket{reset: now.Add(time.Minute)}
 	table[key] = b
 	return b
+}
+
+// overflowShards is how many overflow buckets each table has.
+const overflowShards = 256
+
+// overflowShard picks the overflow bucket for host (as rateLimitHost spells
+// it) from its network: a /48 for IPv6, a /24 for IPv4. The salt keeps the
+// assignment private to this process.
+func (rl *rateLimiter) overflowShard(host string) int {
+	network := host
+	if prefix, err := netip.ParsePrefix(host); err == nil {
+		network = netip.PrefixFrom(prefix.Addr(), 48).Masked().String()
+	} else if addr, err := netip.ParseAddr(host); err == nil {
+		addr = addr.Unmap()
+		if addr.Is4() {
+			network = netip.PrefixFrom(addr, 24).Masked().String()
+		} else {
+			network = netip.PrefixFrom(addr, 48).Masked().String()
+		}
+	}
+	hasher := sha256.New()
+	_, _ = hasher.Write(rl.salt[:])
+	_, _ = hasher.Write([]byte("overflow\x00"))
+	_, _ = hasher.Write([]byte(network))
+	sum := hasher.Sum(nil)
+	return int(binary.BigEndian.Uint32(sum[:4]) % overflowShards)
 }
 
 func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
@@ -1234,7 +1323,7 @@ func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
 		signedIn := class == httpapi.OrdinaryRoute && httpapi.HasBearerToken(r)
 
 		rl.mu.Lock()
-		b := rl.bucketLocked(rl.buckets, remoteHash(rl.salt[:], host), now)
+		b := rl.bucketLocked(rl.buckets, &rl.overflow, host, remoteHash(rl.salt[:], host), now)
 		if signedIn {
 			b.signedIn++
 		} else {
@@ -1303,7 +1392,7 @@ func (c *accountCharge) Authenticated(accountID string) (bool, int) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	if !c.done {
-		c.settleLocked(rl.accountBuckets, rl.accountKey(accountID, c.host), rl.limits.account, scopeAccount)
+		c.settleLocked(rl.accountBuckets, &rl.accountOverflow, rl.accountKey(accountID, c.host), rl.limits.account, scopeAccount)
 	}
 	return c.ok, c.retryAfter
 }
@@ -1317,7 +1406,7 @@ func (c *accountCharge) Unauthenticated() (bool, int) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	if !c.done {
-		c.settleLocked(rl.buckets, remoteHash(rl.salt[:], c.host), rl.limits.general, scopeGeneral)
+		c.settleLocked(rl.buckets, &rl.overflow, remoteHash(rl.salt[:], c.host), rl.limits.general, scopeGeneral)
 	}
 	return c.ok, c.retryAfter
 }
@@ -1330,18 +1419,18 @@ func (c *accountCharge) settleUnused() {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	if !c.done {
-		c.settleLocked(rl.buckets, remoteHash(rl.salt[:], c.host), rl.limits.general, -1)
+		c.settleLocked(rl.buckets, &rl.overflow, remoteHash(rl.salt[:], c.host), rl.limits.general, -1)
 	}
 }
 
 // settleLocked charges key's general count in table for the current minute
 // against limit, counting a refusal under scope unless it is -1. rl.mu
 // must be held.
-func (c *accountCharge) settleLocked(table map[string]*bucket, key string, limit, scope int) {
+func (c *accountCharge) settleLocked(table map[string]*bucket, overflow *[overflowShards]bucket, key string, limit, scope int) {
 	rl := c.limiter
 	now := time.Now()
 	c.done = true
-	b := rl.bucketLocked(table, key, now)
+	b := rl.bucketLocked(table, overflow, c.host, key, now)
 	b.general++
 	c.ok = b.general <= limit
 	c.retryAfter = boundedRetryAfter(b.reset.Sub(now))
@@ -1399,36 +1488,51 @@ func rateLimitHost(host string) string {
 	return host
 }
 
-func (rl *rateLimiter) evictOneLocked(table map[string]*bucket, now time.Time) {
-	if len(table) < maxRateLimitEntries {
-		return
+// evictOneLocked makes room in a full table and reports whether it did.
+// Expired buckets go first. Otherwise, of up to rateLimitEvictionSampleSize
+// live buckets it evicts the least used one that has used no credential
+// (auth) and no enrollment budget: those two are what bound password and
+// code guessing and must not reset before their minute ends, but a bucket
+// with only ordinary request counts costs its owner little to lose. If every
+// sampled bucket has used a credential budget nothing is evicted and the
+// caller falls back to the network's overflow bucket.
+func (rl *rateLimiter) evictOneLocked(table map[string]*bucket, now time.Time) bool {
+	if len(table) < rl.maxEntries {
+		return true
 	}
-	var candidate string
-	var candidateReset time.Time
 	sampled := 0
+	var victim string
+	victimLoad, found := 0, false
 	for key, b := range table {
 		if !b.reset.After(now) {
 			delete(table, key)
-			if len(table) < maxRateLimitEntries {
-				return
+			if len(table) < rl.maxEntries {
+				return true
 			}
 			continue
 		}
-		if candidate == "" || b.reset.Before(candidateReset) {
-			candidate, candidateReset = key, b.reset
+		if b.auth == 0 && b.enrollment == 0 {
+			if load := b.general + b.signedIn; !found || load < victimLoad {
+				victim, victimLoad, found = key, load, true
+			}
 		}
 		sampled++
 		if sampled >= rateLimitEvictionSampleSize {
 			break
 		}
 	}
-	if candidate != "" {
-		delete(table, candidate)
-		rl.evictions.Add(1)
+	if !found {
+		return false
 	}
+	delete(table, victim)
+	rl.evictions.Add(1)
+	return true
 }
 
-// stats reports the entries of both tables together and their evictions.
+// stats reports the entries of both tables together and how many times a new
+// key found its table full of live buckets: veritra_rate_limit_evictions_total
+// counts each, whether a bucket with no credential use was evicted to make
+// room or the key was admitted through its network's overflow bucket.
 func (rl *rateLimiter) stats() (entries int, evictions int64) {
 	rl.mu.Lock()
 	entries = len(rl.buckets) + len(rl.accountBuckets)

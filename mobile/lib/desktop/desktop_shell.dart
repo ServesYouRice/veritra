@@ -71,21 +71,43 @@ class PluginDesktopShell
     required String quitLabel,
     required String tooltip,
   }) async {
-    await windowManager.ensureInitialized();
-    await windowManager.setPreventClose(true);
-    windowManager.addListener(this);
-    trayManager.addListener(this);
-    await trayManager.setIcon(
-      Platform.isWindows
-          ? 'assets/tray/veritra.ico'
-          : 'assets/tray/veritra.png',
-    );
-    if (!Platform.isLinux) await trayManager.setToolTip(tooltip);
-    await trayManager.setContextMenu(Menu(items: <MenuItem>[
-      MenuItem(key: _openKey, label: openLabel),
-      MenuItem.separator(),
-      MenuItem(key: _quitKey, label: quitLabel),
-    ]));
+    try {
+      await windowManager.ensureInitialized();
+      // The tray comes first: closing the window only hides it, which is safe
+      // only while there is a tray icon to bring it back. If any step fails
+      // the window must keep its normal close.
+      await trayManager.setIcon(
+        Platform.isWindows
+            ? 'assets/tray/veritra.ico'
+            : 'assets/tray/veritra.png',
+      );
+      if (!Platform.isLinux) await trayManager.setToolTip(tooltip);
+      await trayManager.setContextMenu(Menu(items: <MenuItem>[
+        MenuItem(key: _openKey, label: openLabel),
+        MenuItem.separator(),
+        MenuItem(key: _quitKey, label: quitLabel),
+      ]));
+      trayManager.addListener(this);
+      windowManager.addListener(this);
+      await windowManager.setPreventClose(true);
+    } catch (_) {
+      await _undoStart();
+      rethrow;
+    }
+  }
+
+  /// Puts the window back to its normal close after a failed [start]. Every
+  /// step is tried on its own, so one that fails does not skip the rest, and
+  /// none of them replaces the error being reported.
+  Future<void> _undoStart() async {
+    windowManager.removeListener(this);
+    trayManager.removeListener(this);
+    try {
+      await windowManager.setPreventClose(false);
+    } catch (_) {}
+    try {
+      await trayManager.destroy();
+    } catch (_) {}
   }
 
   @override
@@ -141,14 +163,25 @@ class PluginDesktopShell
 /// Raises a system notification. Text is passed in already built on this
 /// device; nothing here talks to the network.
 abstract class DesktopNotifier {
-  Future<void> show({required String title, required String body});
+  /// [stillWanted], when given, is asked right before the notification goes
+  /// out, after any asynchronous setup; a notifier shows nothing when it
+  /// answers false (the session ended while the notification was prepared).
+  Future<void> show({
+    required String title,
+    required String body,
+    bool Function()? stillWanted,
+  });
 }
 
 class NoopDesktopNotifier implements DesktopNotifier {
   const NoopDesktopNotifier();
 
   @override
-  Future<void> show({required String title, required String body}) async {}
+  Future<void> show({
+    required String title,
+    required String body,
+    bool Function()? stillWanted,
+  }) async {}
 }
 
 /// Windows toasts and the Linux and macOS equivalents, on `local_notifier`.
@@ -172,9 +205,14 @@ class PluginDesktopNotifier implements DesktopNotifier {
   }
 
   @override
-  Future<void> show({required String title, required String body}) async {
+  Future<void> show({
+    required String title,
+    required String body,
+    bool Function()? stillWanted,
+  }) async {
     try {
       await _setup();
+      if (stillWanted != null && !stillWanted()) return;
       final notification = LocalNotification(title: title, body: body);
       notification.onClick = onClick;
       await notification.show();

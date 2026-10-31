@@ -75,3 +75,88 @@ func TestResolvePathsAcceptsSeparateOverrides(t *testing.T) {
 		t.Fatalf("lock paths: %s %s", database, blobs)
 	}
 }
+
+// DataDir/backups may be a symlink (for example to another disk), but it must
+// not resolve onto or over live data (VAL-212).
+func TestResolvePathsChecksResolvedBackupsDirectory(t *testing.T) {
+	setup := func(t *testing.T) (root, data string) {
+		t.Helper()
+		root = t.TempDir()
+		data = filepath.Join(root, "data")
+		if err := os.MkdirAll(data, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return root, data
+	}
+	link := func(t *testing.T, target, data string) {
+		t.Helper()
+		if err := os.MkdirAll(target, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, filepath.Join(data, "backups")); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+	}
+	cases := map[string]struct {
+		target func(root, data string) string
+		cfg    func(root, data string) Config
+		reject bool
+	}{
+		"backups link to blob directory": {
+			target: func(root, data string) string { return filepath.Join(root, "blobs") },
+			cfg: func(root, data string) Config {
+				return Config{DataDir: data, DatabasePath: filepath.Join(data, "db"), StoragePath: filepath.Join(root, "blobs")}
+			},
+			reject: true,
+		},
+		"backups link to a directory containing the blobs": {
+			target: func(root, data string) string { return filepath.Join(root, "shared") },
+			cfg: func(root, data string) Config {
+				return Config{DataDir: data, DatabasePath: filepath.Join(data, "db"), StoragePath: filepath.Join(root, "shared", "blobs")}
+			},
+			reject: true,
+		},
+		"backups link to the directory holding the database": {
+			target: func(root, data string) string { return filepath.Join(root, "dbdir") },
+			cfg: func(root, data string) Config {
+				return Config{DataDir: data, DatabasePath: filepath.Join(root, "dbdir", "private-messenger.db"), StoragePath: filepath.Join(data, "blobs")}
+			},
+			reject: true,
+		},
+		"backups link inside the blob directory": {
+			target: func(root, data string) string { return filepath.Join(root, "blobs", "backups") },
+			cfg: func(root, data string) Config {
+				return Config{DataDir: data, DatabasePath: filepath.Join(data, "db"), StoragePath: filepath.Join(root, "blobs")}
+			},
+			reject: true,
+		},
+		"backups link to an unrelated directory": {
+			target: func(root, data string) string { return filepath.Join(root, "otherdisk", "backups") },
+			cfg: func(root, data string) Config {
+				return Config{DataDir: data, DatabasePath: filepath.Join(data, "db"), StoragePath: filepath.Join(root, "blobs")}
+			},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			root, data := setup(t)
+			link(t, tc.target(root, data), data)
+			_, err := tc.cfg(root, data).ResolvePaths()
+			if tc.reject && err == nil {
+				t.Fatal("backups symlink onto live data was accepted")
+			}
+			if !tc.reject && err != nil {
+				t.Fatalf("legitimate symlinked backups rejected: %v", err)
+			}
+		})
+	}
+	t.Run("plain backups directory", func(t *testing.T) {
+		root, data := setup(t)
+		if err := os.Mkdir(filepath.Join(data, "backups"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := (Config{DataDir: data, DatabasePath: filepath.Join(data, "db"), StoragePath: filepath.Join(root, "blobs")}).ResolvePaths(); err != nil {
+			t.Fatalf("plain backups directory rejected: %v", err)
+		}
+	})
+}

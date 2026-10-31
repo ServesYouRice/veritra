@@ -135,21 +135,44 @@ whole address no more than one account's budget; raise it for a large
 office. A refusal is 429 with `Retry-After`;
 `veritra_rate_limit_rejections_total` counts it by scope (`general`,
 `auth`, `enrollment`, `account`, `signed_in`). Realtime sockets have their
-own fixed limits (20 per address, 10 per account). The server logs the
-resolved values at start (`rate_limits`).
+own limits: 10 per account and 3 per device, 20 per address, and for IPv6 a
+separate cap on all addresses of one /64 (default 200,
+`PRIVATE_MESSENGER_LIMIT_SOCKETS_PER_IPV6_PREFIX`, 20-10,000; an office or home
+network hands out many addresses, so the /64 cap is higher than the address
+cap). IPv4 clients behind one NAT share their address's 20. The server logs
+the resolved values at start (`rate_limits`, `admission_limits`).
 
-Login and reauthentication also use bounded account, source/device and
-session backoff scopes: the first two failures are unauthorized responses,
-the third starts a 1-second delay that progresses to 60 seconds, and entries
-expire after 15 minutes. The controls
-evict under bounded-table pressure and sweep expired state; they do not expose
-usernames, addresses, device IDs or tokens in metrics. Address budgets and
-per-account budgets are kept in two tables of 65,536 entries each, so one
-account seen from many addresses (each IPv6 /64 counts as one) evicts only
-other account budgets, never an address's credential budget;
-`veritra_rate_limit_buckets` counts both tables. Monitor
-`veritra_rate_limit_buckets`, `veritra_rate_limit_evictions_total`,
-`veritra_login_backoff_entries` and
+Login and reauthentication also use bounded backoff scopes: the first two
+failures are unauthorized responses, the third starts a 1-second delay that
+progresses to 60 seconds, and entries expire after 15 minutes. A login
+counts every failure against its source scope (client address, device and
+username). A second scope, username plus device from any address, is counted
+and enforced only for a request that presented that device's valid secret,
+so someone who only knows a username cannot lock its owner out by failing
+logins from elsewhere; for such requests a right and a wrong password look
+the same and change nothing else. Whoever holds the device secret is limited
+across addresses as before. When the backoff table is full it evicts the
+entry with the fewest failures first, so filler identities do not push out
+an account that is being guessed. The controls sweep expired state; they do
+not expose usernames, addresses, device IDs or tokens in metrics.
+
+Address budgets and per-account budgets are kept in two tables of 65,536
+entries each (IPv6 sources count per /64). When a table is full, a new key
+first replaces an expired bucket, then the least used live bucket that has
+used no credential and no enrollment budget; those two budgets are never
+reset before their minute ends. Only if every sampled bucket has used one
+does the new key share an overflow bucket, one of 256 chosen by a salted hash
+of its network (a /48 for IPv6, a /24 for IPv4), so a network that fills the
+table and burns its overflow bucket affects itself and the few networks that
+hash alongside it, not everyone's first request. One account seen from many
+addresses evicts only other account budgets, never an address's credential
+budget. `veritra_rate_limit_buckets` counts both tables.
+`veritra_rate_limit_evictions_total` counts each time a new key found its
+table full of live buckets, whether it evicted a credential-free bucket or
+went to an overflow bucket; it does not count reset credential budgets. A
+steady rise means a table is under pressure (an address flood or very many
+networks). Monitor `veritra_rate_limit_buckets`,
+`veritra_rate_limit_evictions_total`, `veritra_login_backoff_entries` and
 `veritra_login_backoff_evictions_total` as aggregate pressure signals.
 Sessions enforce a 30-day idle limit and a 30-day absolute lifetime using
 server-side last-use state. Token rotation is deferred until the client/server
@@ -169,7 +192,10 @@ metadata, not server blob bytes. Push subscription exports retain endpoint
 metadata needed for portability but omit the reusable `auth_secret`; bearer,
 session and recovery capabilities are never export fields. Server audit history
 is intentionally excluded; the export audit record contains only fixed schema
-and scope metadata. The mobile client writes the bounded pages to a local
+and scope metadata. Only messages are paged (`limit`, then `before` with the
+previous page's `next_before`): the `categories` object comes with the first
+page, and later pages carry an empty `categories`, so a full export holds
+every category row once. The mobile client writes the bounded pages to a local
 `veritra-account-export-v2-*.json` file without logging its contents.
 
 ## Upgrade and rollback
@@ -309,8 +335,10 @@ The base holds:
 - the namespace and `veritra-data` volume annotated
   `kustomize.toolkit.fluxcd.io/prune: disabled`, so a file missing from infra
   never makes Flux delete the data (local-path deletes it with the claim);
-- a Traefik `IngressRoute` with an HSTS headers middleware and a cert-manager
-  `Certificate` (Cloudflare DNS-01, so the DNS-only hostname works);
+- a Traefik `IngressRoute` with an HSTS headers middleware, a `TLSOption`
+  that offers post-quantum key exchange first (see Post-quantum TLS; needs
+  Traefik v3.5 or later), and a cert-manager `Certificate` (Cloudflare
+  DNS-01, so the DNS-only hostname works);
 - default-deny network policies that admit only Traefik to the server, DNS,
   HTTPS to public addresses for push providers, and HTTPS for the R2 jobs;
 - the backup and restore-drill CronJobs described below.
@@ -372,6 +400,65 @@ The app has no custom trust, no trust-on-first-use and no way to skip TLS checks
 
 Never use self-signed leaf certificates, or plain HTTP outside loopback demo builds.
 
+
+## Post-quantum TLS
+
+Both edges offer the hybrid key exchange X25519MLKEM768 first, so a recorded
+session cannot be decrypted later with a quantum computer ("harvest now,
+decrypt later"). Clients without it still connect with classical groups.
+Status as read from the code on 2026-10-31:
+
+| Piece | Post-quantum? | Where |
+|---|---|---|
+| Veritra server (Go 1.26) | Does not terminate TLS. `Serve` in `server/internal/app/app.go` runs plain `ListenAndServe` behind the proxy; HSTS is set only for a TLS request, which no shipped profile sends to it | n/a |
+| Server's outbound calls (Web Push, FCM, APNs) | Yes: no `CurvePreferences` set, so Go 1.26's defaults offer X25519MLKEM768 first | `server/internal/push` |
+| Compose: Caddy `2.11.4` | Yes, by default: X25519MLKEM768, X25519, P-256 when the Caddyfile sets no `curves` (from Caddy v2.10.0, `modules/caddytls/values.go`). The Caddyfile sets none | `deploy/caddy/Caddyfile` |
+| k3s: Traefik (v3.7.13 in k3s v1.34.12) | Yes, set explicitly: TLSOption `veritra` with X25519MLKEM768, X25519, CurveP256 and a TLS 1.2 floor, used by the IngressRoute | `deploy/kubernetes/base/tlsoption.yaml` |
+| The app (Flutter 3.44 `dart:io`) | Not yet: its BoringSSL offers X25519, P-256, P-384 only (research note, not re-checked here), so app connections negotiate X25519 until a Flutter release with the newer BoringSSL | `mobile` |
+
+`server/cmd/messenger-server/edge_tls_test.go` checks the TLSOption's names
+against Traefik's table, and that Go's TLS (which Traefik uses) negotiates
+X25519MLKEM768 with a current client, and X25519 or P-256 with classical
+and TLS 1.2 clients. It also checks that the Caddyfile keeps Caddy's
+default.
+
+**Traefik version floor.** The curve names exist from Traefik v3.5.0. An
+older Traefik does not know `X25519MLKEM768`. It logs `invalid CurveID in
+curvePreferences` and then refuses every TLS connection to the Veritra host
+instead of falling back. On another k3s release, check the bundled Traefik
+first: `kubectl -n kube-system get deploy traefik -o
+jsonpath='{..image}'`. After applying, look for TLS option errors in
+`kubectl -n kube-system logs deploy/traefik`.
+
+**Confirming it on a live server.** Either of these, from any machine:
+
+- **OpenSSL 3.5 or later:**
+  `openssl s_client -connect chat.example.org:443 -servername chat.example.org -groups X25519MLKEM768 </dev/null`
+  prints `Negotiated TLS1.3 group: X25519MLKEM768`. Run it again with
+  `-groups X25519` and it should connect too (the classical fallback).
+  OpenSSL 3.0-3.4 do not know the group name.
+- **Go 1.25 or later** (`ConnectionState().CurveID`): put this in a
+  `main.go`, then `go run main.go chat.example.org`. It prints
+  `X25519MLKEM768`, or the error if the server does not offer it.
+
+  ```go
+  package main
+
+  import (
+  	"crypto/tls"
+  	"fmt"
+  	"os"
+  )
+
+  func main() {
+  	c, err := tls.Dial("tcp", os.Args[1]+":443", &tls.Config{CurvePreferences: []tls.CurveID{tls.X25519MLKEM768}})
+  	if err != nil {
+  		fmt.Println("no post-quantum handshake:", err)
+  		os.Exit(1)
+  	}
+  	fmt.Println(c.ConnectionState().CurveID)
+  }
+  ```
 
 ## Off-host backups in R2
 
@@ -453,6 +540,8 @@ accounts or decisions only the owner has.
   `scripts/release-image.sh --infra-dir ...` produced the digest in infra.
 - [ ] `examples/traefik-helmchartconfig.yaml` applied: the Traefik pod's
   arguments show `readTimeout=16m` and the `web` redirect.
+- [ ] Traefik is v3.5 or later, and a handshake with only X25519MLKEM768
+  succeeds (see Post-quantum TLS).
 - [ ] `PRIVATE_MESSENGER_TRUSTED_PROXIES` matches the cluster CIDR; two
   clients on different networks are rate-limited separately.
 - [ ] Owner set up, then the setup-token key and its `_FILE` patch removed.
@@ -530,6 +619,16 @@ after 64 batches or 10 seconds per class. Monitor
 above 1,200 rows or an oldest age above one sweep interval after two sweeps.
 The metrics contain aggregate counts and ages only.
 
+Sync events keep a copy of each message envelope version. An expired message
+and a message deleted through the server's delete route lose those copies:
+the event rows stay for cursors, cut down to the message id and sender, and
+sync no longer serves them (a deleted message keeps only its delete marker
+event). Each sweep also redacts, in a bounded window of event ids, copies left
+by expiries and deletes from before an upgrade. The mobile app deletes a
+message with an encrypted action message instead, which the server cannot
+tell apart from any other message; that message's original ciphertext stays
+until it expires or sync-event retention removes it.
+
 ## Push providers
 
 Configure only the providers you can operate. Clients register with what
@@ -557,6 +656,30 @@ means the job was dropped for good (its subscription is gone or retired);
 `failed` means the job stays queued and is tried again. A job whose removal
 fails after delivery is sent again after its lease, which only makes the
 device sync once more.
+
+How a provider's refusal is treated:
+
+- Retired (subscription disabled, jobs removed): HTTP 410 from FCM or APNs,
+  an FCM error whose `error.details` carry `errorCode` `UNREGISTERED`, an APNs
+  reason `Unregistered`. Only the exact fields count, not words found
+  anywhere in a body.
+- Dropped, subscription kept: APNs `BadDeviceToken` and `DeviceTokenNotForTopic`,
+  and an FCM 404 without `UNREGISTERED`. Apple also answers `BadDeviceToken`
+  for a valid token sent to the wrong (sandbox or production) environment,
+  and a 404 can come from the FCM project, so neither proves the target dead,
+  and retrying would be refused again. These jobs count as `abandoned`. A
+  subscription refused this way 10 times over more than 24 hours with no
+  successful send in between is then retired. That count is in memory: a
+  restart only delays retiring a dead target. A persistent `abandoned` rate
+  for one provider means a configuration problem (the `Sandbox` environment,
+  the bundle ID or the FCM project), not dead devices.
+- Retried with backoff until the 24-hour job age: any other failure
+  (timeouts, 5xx, 429, authentication).
+- An APNs key that is not P-256 is refused at startup; an APNs key and
+  `Sandbox` setting apply to every subscription.
+- A Web Push endpoint must resolve to a globally routable address: private,
+  loopback, link-local, shared address space (100.64.0.0/10), benchmarking,
+  documentation and reserved ranges, NAT64 and 6to4 are refused.
 
 ## Scheduled backups
 
@@ -743,9 +866,12 @@ write transaction, so concurrent requests cannot both take the last slot.
 | `DEVICES_PER_ACCOUNT` | 10 (the realtime hub allows 10 sockets per account) | 1-10 | active devices; also at most 3 open device links | 409 `device_limit_reached`, `device_link_limit_reached` |
 | `CONVERSATION_MEMBERS` | 100 | 2-1,000 | members of a group, a community and each of its channels | 409 `conversation_member_limit_reached` |
 | `CONVERSATIONS_PER_ACCOUNT` | 1,000 | 10-10,000 | conversations an account belongs to | 409 `conversation_limit_reached` to that account; adding an account that is full answers 403 `forbidden`, as a block does |
+| `KEY_PACKAGE_CLAIMS_PER_TARGET` | 25 (half the 50 single-use key packages a device may hold) | 1-50 | key packages one account claims from one device of another account in 24 hours; claiming from its own devices is not limited | 429 `key_package_claim_limit` with `Retry-After`; adding devices to an existing group skips a device over its limit, as it skips one with no package left |
+| `MLS_SELF_UPDATE_MINUTES` | 60 | 1-10,080 | update-only MLS commits (a device's periodic key refresh, adding and removing no one) per device and conversation; each moves the group to a new epoch | 429 `mls_self_update_limit` with `Retry-After`; the app drops that update and tries again later |
 | `DELIVERIES_PER_MINUTE` | 1,000 | 60-1,000,000, and at least 2 × (1 + members) | per account, each fan-out write counts 1 plus every account it is published to | 429 `write_rate_limited` with `Retry-After` |
 | `WRITE_MIB_PER_HOUR` | 64 | 16-65,536 | request bodies of those writes | 429 `write_rate_limited` |
-| `ATTACHMENT_MIB` | 48 | 1-48 | the largest file one attachment may hold (plaintext; the upload route allows the chunk framing on top) | 413 `upload_too_large` |
+| `ATTACHMENT_MIB` | 48 | 1-48 | the largest file one attachment may hold (plaintext with its padding; the upload route allows the chunk framing on top) | 413 `upload_too_large` |
+| `SOCKETS_PER_IPV6_PREFIX` | 200 | 20-10,000 | realtime sockets of all addresses in one IPv6 /64 (one address always gets at most 20) | 429 `realtime_connection_limit` |
 
 Why these defaults: a realtime delivery costs the server 4-10 ms of CPU;
 one account at 1,000 a minute (17/s) is about a third of the 47/s tier S
@@ -760,11 +886,37 @@ of database, so 64 MiB an hour caps one account's database growth at about
 budget is in memory: a restart refills it, and a bulk import through the
 API proceeds at its pace.
 
+**MLS self-updates.** Apps refresh their own MLS key in each conversation
+after 100 sent messages, after 7 days with activity, and once shortly
+after joining (`docs/crypto.md`, periodic self-update). Each refresh is a
+commit that every group device receives, so the server allows one per
+device and conversation per `PRIVATE_MESSENGER_LIMIT_MLS_SELF_UPDATE_MINUTES`,
+counted in `veritra_admission_rejections_total{limit="mls_self_updates"}`
+when refused. It also refuses one (409 `mls_change_pending`) while the
+group still has to remove a revoked or departed device, so removals land
+first. These commits also count in the request and delivery budgets
+above. The last refresh time is a column added by migration 0043; an
+older server binary ignores it, so rolling back past it needs no restore,
+but that binary refuses update-only commits (400), and apps then wait a
+day before trying again.
+
 **Attachment size cap.** `PRIVATE_MESSENGER_LIMIT_ATTACHMENT_MIB` is the
 per-file cap. The server reports it to apps as `max_attachment_bytes` in
 `GET /api/v1/setup/status`, and the app refuses a larger file before it
 encrypts or uploads anything. 48 is the most the app can encrypt, so the
 setting can only lower it.
+
+**Attachment padding.** Apps pad each file with zeros inside the encryption
+to a size bucket about 5% apart (Signal's buckets, at least 541 bytes), so
+the server sees the bucket, not the exact size (`docs/crypto.md`,
+attachment manifest v2). Stored sizes, the account and instance storage
+quotas and the hourly write budget therefore count padded bytes: up to 5%
+more per file, and at least 541 bytes for a tiny one. Padding never passes
+the cap above: a file just under it is padded only up to the cap, so the
+cap still means the largest file a user can send. The app reads the cap from
+`setup/status` at send time; if that call fails it pads up to 48 MiB, and on
+a server with a lower cap a file within 5% of it may then be refused with
+413 until the call works again.
 
 **Write guard.** With less free space than the smaller of 5% and 2 GiB on
 the database or blob file system, the server answers new messages, MLS

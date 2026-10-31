@@ -19,12 +19,27 @@ type Limits struct {
 	DevicesPerAccount       int
 	ConversationMembers     int
 	ConversationsPerAccount int
-	DeliveriesPerMinute     int
-	WriteBytesPerHour       int64
+	// KeyPackageClaimsPerTarget is the most MLS key packages one account may
+	// claim from one device of another account in a day. Claims draw down the
+	// target's single-use pool (50 packages), so without it any conversation
+	// member could empty it.
+	KeyPackageClaimsPerTarget int
+	// MLSSelfUpdateMinutes is the shortest time between two update-only MLS
+	// commits (a self-update that adds and removes no one) from one device
+	// in one conversation. Each accepted commit moves the group to a new
+	// epoch, so without it one device could churn epochs for everyone.
+	MLSSelfUpdateMinutes int
+	DeliveriesPerMinute  int
+	WriteBytesPerHour    int64
 	// AttachmentBytes is the largest file (plaintext) one attachment may
-	// hold; the upload route accepts that plus the chunk framing, see
-	// MaxAttachmentCiphertext.
+	// hold, counting the zero padding the app adds inside the encryption
+	// (it pads to at most this cap); the upload route accepts that plus the
+	// chunk framing, see MaxAttachmentCiphertext.
 	AttachmentBytes int64
+	// SocketsPerIPv6Prefix caps the realtime sockets of all addresses in one
+	// IPv6 /64 (an office or home network); one address always gets at most
+	// 20.
+	SocketsPerIPv6Prefix int
 }
 
 const mib = 1 << 20
@@ -32,16 +47,27 @@ const mib = 1 << 20
 // Defaults and bounds. The device bound stops at the realtime hub's ten
 // sockets per account: an eleventh device could never connect.
 const (
-	DefaultAccountStorageMiB     = 512
-	LegacyInstanceStorageMiB     = 10240 // the cap the derived default never exceeds
-	DefaultAccountBlobs          = 10000
-	DefaultDevicesPerAccount     = 10
-	DefaultConversationMembers   = 100
-	DefaultConversationsPerAcct  = 1000
+	DefaultAccountStorageMiB    = 512
+	LegacyInstanceStorageMiB    = 10240 // the cap the derived default never exceeds
+	DefaultAccountBlobs         = 10000
+	DefaultDevicesPerAccount    = 10
+	DefaultConversationMembers  = 100
+	DefaultConversationsPerAcct = 1000
+	// DefaultKeyPackageClaimsPerTarget is half the 50 packages a device may
+	// hold: one account can take at most half the pool of a device per day,
+	// which still covers setting up that many groups with it.
+	DefaultKeyPackageClaimsPerTarget = 25
+	MaxKeyPackageClaimsPerTarget     = 50
+	// DefaultMLSSelfUpdateMinutes allows one self-update an hour per device
+	// and conversation. Apps refresh after 100 sent messages or 7 days, so
+	// only a device sending more than 100 messages an hour in one chat waits.
+	DefaultMLSSelfUpdateMinutes  = 60
+	MaxMLSSelfUpdateMinutes      = 10080 // 7 days, the apps' time trigger
 	DefaultDeliveriesPerMinute   = 1000
 	DefaultWriteMiBPerHour       = 64
 	DefaultAttachmentMiB         = 48 // what the app encrypts at most
 	MaxAttachmentMiB             = 48
+	DefaultSocketsPerIPv6Prefix  = 200
 	PendingDeviceLinksPerAccount = 3
 )
 
@@ -59,9 +85,12 @@ var limitSettings = []limitSetting{
 	{"PRIVATE_MESSENGER_LIMIT_DEVICES_PER_ACCOUNT", 1, 10, 1, func(l *Limits, v int64) { l.DevicesPerAccount = int(v) }},
 	{"PRIVATE_MESSENGER_LIMIT_CONVERSATION_MEMBERS", 2, 1000, 1, func(l *Limits, v int64) { l.ConversationMembers = int(v) }},
 	{"PRIVATE_MESSENGER_LIMIT_CONVERSATIONS_PER_ACCOUNT", 10, 10_000, 1, func(l *Limits, v int64) { l.ConversationsPerAccount = int(v) }},
+	{"PRIVATE_MESSENGER_LIMIT_KEY_PACKAGE_CLAIMS_PER_TARGET", 1, MaxKeyPackageClaimsPerTarget, 1, func(l *Limits, v int64) { l.KeyPackageClaimsPerTarget = int(v) }},
+	{"PRIVATE_MESSENGER_LIMIT_MLS_SELF_UPDATE_MINUTES", 1, MaxMLSSelfUpdateMinutes, 1, func(l *Limits, v int64) { l.MLSSelfUpdateMinutes = int(v) }},
 	{"PRIVATE_MESSENGER_LIMIT_DELIVERIES_PER_MINUTE", 60, 1_000_000, 1, func(l *Limits, v int64) { l.DeliveriesPerMinute = int(v) }},
 	{"PRIVATE_MESSENGER_LIMIT_WRITE_MIB_PER_HOUR", 16, 65_536, mib, func(l *Limits, v int64) { l.WriteBytesPerHour = v }},
 	{"PRIVATE_MESSENGER_LIMIT_ATTACHMENT_MIB", 1, MaxAttachmentMiB, mib, func(l *Limits, v int64) { l.AttachmentBytes = v }},
+	{"PRIVATE_MESSENGER_LIMIT_SOCKETS_PER_IPV6_PREFIX", 20, 10_000, 1, func(l *Limits, v int64) { l.SocketsPerIPv6Prefix = int(v) }},
 }
 
 func loadLimits() (Limits, error) {
@@ -101,6 +130,12 @@ func (l Limits) WithDefaults() Limits {
 	if l.ConversationsPerAccount == 0 {
 		l.ConversationsPerAccount = DefaultConversationsPerAcct
 	}
+	if l.KeyPackageClaimsPerTarget == 0 {
+		l.KeyPackageClaimsPerTarget = DefaultKeyPackageClaimsPerTarget
+	}
+	if l.MLSSelfUpdateMinutes == 0 {
+		l.MLSSelfUpdateMinutes = DefaultMLSSelfUpdateMinutes
+	}
 	if l.DeliveriesPerMinute == 0 {
 		l.DeliveriesPerMinute = DefaultDeliveriesPerMinute
 	}
@@ -109,6 +144,9 @@ func (l Limits) WithDefaults() Limits {
 	}
 	if l.AttachmentBytes == 0 {
 		l.AttachmentBytes = DefaultAttachmentMiB * mib
+	}
+	if l.SocketsPerIPv6Prefix == 0 {
+		l.SocketsPerIPv6Prefix = DefaultSocketsPerIPv6Prefix
 	}
 	return l
 }

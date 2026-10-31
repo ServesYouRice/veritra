@@ -23,10 +23,15 @@ func (s *Store) QueueBlobDeletion(ctx context.Context, storageKey string) error 
 }
 
 func (s *Store) PendingBlobDeletions(ctx context.Context, limit int) ([]string, error) {
-	if limit <= 0 || limit > 500 {
+	if limit <= 0 {
 		limit = 100
+	} else if limit > 500 {
+		limit = 500
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT storage_key FROM blob_deletion_queue ORDER BY created_at, storage_key LIMIT ?`, limit)
+	// Keys that failed before sort behind keys tried less often, so a batch
+	// of permanently failing blobs cannot keep newer deletions from running.
+	// Every key is still returned eventually: attempts only orders the queue.
+	rows, err := s.db.QueryContext(ctx, `SELECT storage_key FROM blob_deletion_queue ORDER BY attempts, created_at, storage_key LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}

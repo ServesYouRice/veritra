@@ -178,6 +178,10 @@
   "settingsPushFailedDetail": "This device could not register for push. It tries again the next time the app starts.",
   "settingsPushDeniedTitle": "Notifications are turned off",
   "settingsPushDeniedDetail": "The app still syncs when woken, but shows nothing. Allow notifications for Veritra in the system settings.",
+  "settingsPushNotAllowedTitle": "Notifications are not allowed yet",
+  "settingsPushNotAllowedDetail": "Allow notifications below to be alerted. Until then the app syncs when woken but shows nothing.",
+  "settingsPushUnconfirmedTitle": "Notifications cannot be confirmed",
+  "settingsPushUnconfirmedDetail": "This device did not confirm that notifications are allowed, so none may be shown. Check the system settings for Veritra.",
   "settingsPushActiveTitle": "Push notifications are active",
   "settingsPushActiveDetail": "Notifications never contain message text or sender names.",
 
@@ -321,6 +325,7 @@
   "inviteCreate": "Create invite",
   "inviteEmptyTitle": "No invites yet",
   "inviteEmptyMessage": "Invite codes you create appear here. Share them over a secure channel.",
+  "inviteLoadFailed": "Your invites could not be loaded. Check the connection and try again.",
   "inviteYourInvites": "Your invites",
   "inviteUsesPill": "{uses}/{maxUses}",
   "@inviteUsesPill": {"placeholders": {"uses": {"type": "int", "format": "decimalPattern"}, "maxUses": {"type": "int", "format": "decimalPattern"}}},
@@ -502,6 +507,7 @@
   "safetyQrSemantics": "QR code of this safety number. The other person can scan it to compare.",
   "safetyVerifiedDetail": "You verified this number.",
   "safetyChangedDetail": "A device in this conversation was added, removed or replaced since you verified. Compare the new number again.",
+  "safetyChangedWhileComparing": "The safety number changed while you were comparing it, so nothing was saved. Compare the new number again.",
   "safetyUnverifiedDetail": "Not verified yet.",
   "safetyVerified": "Verified",
   "safetyChanged": "Changed",
@@ -705,6 +711,7 @@
 
   "errorConversationPaused": "Sending is paused in this conversation.",
   "errorOutboxFull": "Your encrypted message queue is full. Send or discard a pending message before composing another.",
+  "errorCryptoStateFormatUnsupported": "This device's encrypted data was saved in a format this version of the app cannot read. Link this device again to keep messaging.",
   "errorConversationPausedDetail": "Sending is paused in this conversation because the server rejected an encryption update. Other conversations still work.",
   "errorEncryptionUnavailable": "This build does not include the production encryption engine yet, so this action is unavailable.",
   "errorActionUnavailable": "This action is unavailable in this build.",
@@ -851,5 +858,11 @@
     "w8MentionsMutedDetail":  "Notify when a member mentions you, even in a muted chat.",
     "w8HiddenSpoiler":  "Message containing a hidden spoiler",
     "w8StarredMessages":  "Starred messages on this device",
-    "k2CopiedHistory": "Copied history · device snapshot"
+    "k2CopiedHistory": "Copied history · device snapshot",
+    "k2HistoryOnlyTitle": "Copied history",
+    "k2HistoryOnlyNotice": "Copied from your other device. Read-only: this device is not a member of this conversation, so nothing can be sent here.",
+    "k2HistoryUntitled": "Earlier conversation",
+    "k2HistoryOtherMember": "Another member",
+    "k2HistoryAttachment": "Attachment, not downloaded on this device",
+    "k2HistoryEmpty": "No copied messages are left in this conversation."
 }

@@ -127,3 +127,31 @@ func TestAuthenticatedRequestRejectsExpiredSessionInsideThrottleWindow(t *testin
 		})
 	}
 }
+
+// The activity write is bookkeeping after SessionPrincipal has validated the
+// session. A transient failure of that write (database busy, I/O error) must
+// not turn a valid session into a 401, which clients treat as a sign-out
+// (VAL-222).
+func TestWithAuthTouchFailureDoesNotUnauthenticate(t *testing.T) {
+	handler, token, dbPath := newTestHandlerWithOwner(t)
+	db := openSessionTestDB(t, dbPath)
+	old := time.Now().UTC().Add(-storage.SessionTouchInterval - time.Minute)
+	setActivity(t, db, old, time.Now().UTC().Add(time.Hour), time.Now().UTC())
+	if _, err := db.Exec(`CREATE TRIGGER fail_touch BEFORE UPDATE ON sessions BEGIN SELECT RAISE(ABORT, 'injected touch failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	status, response := doJSON(t, handler, http.MethodGet, "/api/v1/devices/me", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("touch failure status=%d body=%s, want 200", status, response)
+	}
+	// Dropping the session still refuses the request, as before.
+	if _, err := db.Exec(`DROP TRIGGER fail_touch`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM sessions`); err != nil {
+		t.Fatal(err)
+	}
+	if status, response = doJSON(t, handler, http.MethodGet, "/api/v1/devices/me", token, nil); status != http.StatusUnauthorized {
+		t.Fatalf("revoked session status=%d body=%s, want 401", status, response)
+	}
+}

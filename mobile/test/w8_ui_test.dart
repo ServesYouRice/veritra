@@ -7,6 +7,8 @@ import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
+import 'package:private_messenger/crypto/message_format.dart'
+    show pinLimitPerChat;
 import 'package:private_messenger/features/chat/chat_list_screen.dart';
 import 'package:private_messenger/features/chat/chat_screen.dart';
 import 'package:private_messenger/features/chat/message_ticks.dart';
@@ -100,6 +102,66 @@ void main() {
     state.dispose();
   });
 
+  testWidgets('fifty pins scroll in a bounded bar and any group member pins',
+      (tester) async {
+    final store = MemoryLocalStore(), state = _state();
+    state.localStoreOverride = store;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await _seed(store, extra: [
+      for (var i = 0; i < pinLimitPerChat; i++) ...[
+        InsertMessageEffect(
+            key: 'dev:p$i',
+            conversationId: 'conv',
+            senderAccountId: 'alice',
+            senderDeviceId: 'dev',
+            kind: LocalMessageKind.text,
+            body: 'pinned $i',
+            createdAt: now,
+            state: LocalMessageState.received),
+        PinMessageEffect(
+            conversationId: 'conv',
+            targetKey: 'dev:p$i',
+            accountId: 'alice',
+            at: now + i,
+            pinned: true,
+            durationSeconds: 86400),
+      ]
+    ]);
+    await state.refreshHistory('conv');
+    expect(state.pinsFor('conv'), hasLength(pinLimitPerChat));
+    await tester.pumpWidget(
+        MaterialApp(home: ChatScreen(state: state, conversationId: 'conv')));
+    await tester.pumpAndSettle();
+    final bar = find.byKey(const ValueKey('pin-bar'));
+    expect(bar, findsOneWidget);
+    expect(tester.getSize(bar).height, lessThanOrEqualTo(144));
+    expect(find.byType(FormattedMessage), findsWidgets,
+        reason: 'the timeline keeps its room below the pin bar');
+    expect(tester.takeException(), isNull);
+
+    state.conversations = [
+      Conversation(id: 'conv', kind: 'group', title: 'Team', createdBy: 'bob')
+    ];
+    state.membersByConversation = {
+      'conv': [
+        ConversationMember(accountId: 'alice', role: 'member'),
+        ConversationMember(accountId: 'bob', role: 'owner'),
+      ]
+    };
+    expect(state.canPinMessages('conv'), isTrue);
+    state.conversations = [
+      Conversation(
+          id: 'conv',
+          kind: 'community_channel',
+          title: 'Team',
+          createdBy: 'bob')
+    ];
+    expect(state.canPinMessages('conv'), isFalse,
+        reason: 'community channels keep moderator roles until C4');
+    await tester.pumpWidget(const SizedBox());
+    state.dispose();
+  });
+
   testWidgets('archived chats remain reachable through the archive switch',
       (tester) async {
     final state = _state();
@@ -139,7 +201,8 @@ _UiState _state() => _UiState()
   ]
   ..conversationsLoaded = true;
 Future<void> _seed(LocalStore store,
-    {String messageState = LocalMessageState.received}) async {
+    {String messageState = LocalMessageState.received,
+    List<MessageEffect> extra = const []}) async {
   await store.saveCryptoState(
       StoredCryptoState(
           counter: 1, stateKey: List.filled(32, 1), sealedState: [1]),
@@ -161,7 +224,8 @@ Future<void> _seed(LocalStore store,
             kind: LocalMessageKind.text,
             body: 'hello',
             createdAt: 1,
-            state: messageState)
+            state: messageState),
+        ...extra,
       ]));
 }
 

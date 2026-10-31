@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -33,7 +34,6 @@ func (c Config) ResolvePaths() (Config, error) {
 // process lock, backups and status files; the blob directory is owned by the
 // blob store alone; the database (and its -wal/-shm siblings) by SQLite.
 func (c Config) validateOwnership() error {
-	backups := filepath.Join(c.DataDir, "backups")
 	switch {
 	case c.DatabasePath == c.DataDir:
 		return errors.New("database path must be a file, not the data directory")
@@ -47,12 +47,33 @@ func (c Config) validateOwnership() error {
 		return errors.New("database must not be inside the blob storage directory")
 	case within(c.StoragePath, c.DatabasePath):
 		return errors.New("blob storage directory must not be inside the database path")
-	case c.DatabasePath == backups || within(c.DatabasePath, backups):
-		return errors.New("database must not be inside the data directory's backups directory")
-	case c.StoragePath == backups || within(c.StoragePath, backups) || within(backups, c.StoragePath):
-		return errors.New("blob storage must not overlap the data directory's backups directory")
+	}
+	// The backups directory may itself be a symlink (to another disk, say),
+	// so every overlap check runs against where it is spelled and where it
+	// resolves to.
+	backupsDir := filepath.Join(c.DataDir, "backups")
+	for _, backups := range backupsLocations(backupsDir) {
+		switch {
+		case c.DatabasePath == backups || within(c.DatabasePath, backups):
+			return errors.New("database must not be inside the data directory's backups directory")
+		case c.StoragePath == backups || within(c.StoragePath, backups) || within(backups, c.StoragePath):
+			return errors.New("blob storage must not overlap the data directory's backups directory")
+		}
 	}
 	return nil
+}
+
+// backupsLocations returns the backups directory as spelled and, when it
+// exists and resolves elsewhere (a symlink), where it really is.
+func backupsLocations(backups string) []string {
+	locations := []string{backups}
+	if _, err := os.Lstat(backups); err != nil {
+		return locations
+	}
+	if resolved, err := filepath.EvalSymlinks(backups); err == nil && resolved != backups {
+		locations = append(locations, resolved)
+	}
+	return locations
 }
 
 // within reports whether path is strictly below dir.

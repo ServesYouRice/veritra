@@ -389,6 +389,21 @@ class AppLocalizationsEn extends AppLocalizations {
       'The app still syncs when woken, but shows nothing. Allow notifications for Veritra in the system settings.';
 
   @override
+  String get settingsPushNotAllowedTitle => 'Notifications are not allowed yet';
+
+  @override
+  String get settingsPushNotAllowedDetail =>
+      'Allow notifications below to be alerted. Until then the app syncs when woken but shows nothing.';
+
+  @override
+  String get settingsPushUnconfirmedTitle =>
+      'Notifications cannot be confirmed';
+
+  @override
+  String get settingsPushUnconfirmedDetail =>
+      'This device did not confirm that notifications are allowed, so none may be shown. Check the system settings for Veritra.';
+
+  @override
   String get settingsPushActiveTitle => 'Push notifications are active';
 
   @override
@@ -794,6 +809,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get inviteEmptyMessage =>
       'Invite codes you create appear here. Share them over a secure channel.';
+
+  @override
+  String get inviteLoadFailed =>
+      'Your invites could not be loaded. Check the connection and try again.';
 
   @override
   String get inviteYourInvites => 'Your invites';
@@ -1398,6 +1417,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get safetyChangedDetail =>
       'A device in this conversation was added, removed or replaced since you verified. Compare the new number again.';
+
+  @override
+  String get safetyChangedWhileComparing =>
+      'The safety number changed while you were comparing it, so nothing was saved. Compare the new number again.';
 
   @override
   String get safetyUnverifiedDetail => 'Not verified yet.';
@@ -2043,6 +2066,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Your encrypted message queue is full. Send or discard a pending message before composing another.';
 
   @override
+  String get errorCryptoStateFormatUnsupported =>
+      'This device\'s encrypted data was saved in a format this version of the app cannot read. Link this device again to keep messaging.';
+
+  @override
   String get errorConversationPausedDetail =>
       'Sending is paused in this conversation because the server rejected an encryption update. Other conversations still work.';
 
@@ -2474,4 +2501,24 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get k2CopiedHistory => 'Copied history · device snapshot';
+
+  @override
+  String get k2HistoryOnlyTitle => 'Copied history';
+
+  @override
+  String get k2HistoryOnlyNotice =>
+      'Copied from your other device. Read-only: this device is not a member of this conversation, so nothing can be sent here.';
+
+  @override
+  String get k2HistoryUntitled => 'Earlier conversation';
+
+  @override
+  String get k2HistoryOtherMember => 'Another member';
+
+  @override
+  String get k2HistoryAttachment => 'Attachment, not downloaded on this device';
+
+  @override
+  String get k2HistoryEmpty =>
+      'No copied messages are left in this conversation.';
 }

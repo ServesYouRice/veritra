@@ -515,6 +515,13 @@ func restore(cfg config.Config, args []string, stdout io.Writer) error {
 		return err
 	}
 	defer lock.Release()
+	// A running server holds its process locks even when idle, which the
+	// SQLite probe below cannot see in WAL mode.
+	server, err := acquireServerExclusion(cfg)
+	if err != nil {
+		return fmt.Errorf("a server appears to be running; stop the server before restore: %w", err)
+	}
+	defer server.Release()
 	if _, err := os.Stat(journalPath(live)); err == nil {
 		return errors.New("an earlier restore is unfinished; run the command again after it is settled")
 	}

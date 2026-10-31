@@ -777,6 +777,30 @@ abstract class AppLocalizations {
   /// **'The app still syncs when woken, but shows nothing. Allow notifications for Veritra in the system settings.'**
   String get settingsPushDeniedDetail;
 
+  /// No description provided for @settingsPushNotAllowedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications are not allowed yet'**
+  String get settingsPushNotAllowedTitle;
+
+  /// No description provided for @settingsPushNotAllowedDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow notifications below to be alerted. Until then the app syncs when woken but shows nothing.'**
+  String get settingsPushNotAllowedDetail;
+
+  /// No description provided for @settingsPushUnconfirmedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications cannot be confirmed'**
+  String get settingsPushUnconfirmedTitle;
+
+  /// No description provided for @settingsPushUnconfirmedDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'This device did not confirm that notifications are allowed, so none may be shown. Check the system settings for Veritra.'**
+  String get settingsPushUnconfirmedDetail;
+
   /// No description provided for @settingsPushActiveTitle.
   ///
   /// In en, this message translates to:
@@ -1466,6 +1490,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Invite codes you create appear here. Share them over a secure channel.'**
   String get inviteEmptyMessage;
+
+  /// No description provided for @inviteLoadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Your invites could not be loaded. Check the connection and try again.'**
+  String get inviteLoadFailed;
 
   /// No description provided for @inviteYourInvites.
   ///
@@ -2318,6 +2348,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'A device in this conversation was added, removed or replaced since you verified. Compare the new number again.'**
   String get safetyChangedDetail;
+
+  /// No description provided for @safetyChangedWhileComparing.
+  ///
+  /// In en, this message translates to:
+  /// **'The safety number changed while you were comparing it, so nothing was saved. Compare the new number again.'**
+  String get safetyChangedWhileComparing;
 
   /// No description provided for @safetyUnverifiedDetail.
   ///
@@ -3351,6 +3387,12 @@ abstract class AppLocalizations {
   /// **'Your encrypted message queue is full. Send or discard a pending message before composing another.'**
   String get errorOutboxFull;
 
+  /// No description provided for @errorCryptoStateFormatUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'This device\'s encrypted data was saved in a format this version of the app cannot read. Link this device again to keep messaging.'**
+  String get errorCryptoStateFormatUnsupported;
+
   /// No description provided for @errorConversationPausedDetail.
   ///
   /// In en, this message translates to:
@@ -4058,6 +4100,42 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Copied history · device snapshot'**
   String get k2CopiedHistory;
+
+  /// No description provided for @k2HistoryOnlyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied history'**
+  String get k2HistoryOnlyTitle;
+
+  /// No description provided for @k2HistoryOnlyNotice.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied from your other device. Read-only: this device is not a member of this conversation, so nothing can be sent here.'**
+  String get k2HistoryOnlyNotice;
+
+  /// No description provided for @k2HistoryUntitled.
+  ///
+  /// In en, this message translates to:
+  /// **'Earlier conversation'**
+  String get k2HistoryUntitled;
+
+  /// No description provided for @k2HistoryOtherMember.
+  ///
+  /// In en, this message translates to:
+  /// **'Another member'**
+  String get k2HistoryOtherMember;
+
+  /// No description provided for @k2HistoryAttachment.
+  ///
+  /// In en, this message translates to:
+  /// **'Attachment, not downloaded on this device'**
+  String get k2HistoryAttachment;
+
+  /// No description provided for @k2HistoryEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No copied messages are left in this conversation.'**
+  String get k2HistoryEmpty;
 }
 
 class _AppLocalizationsDelegate

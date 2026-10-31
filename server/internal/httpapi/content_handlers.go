@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"private-messenger/server/internal/config"
@@ -304,7 +306,52 @@ type blobResponseWriter struct {
 	status          int
 	written         int64
 	integrityFailed bool
+
+	// confirmFlush makes the writer flush every recoveryFlushInterval bytes
+	// and at the end (flushAll). flushed is the body byte count the last
+	// successful flush covered: bytes still in the server's buffers are not
+	// progress, because a dropped connection never delivers them.
+	confirmFlush bool
+	flushed      int64
+	// flushUnsupported records that the response chain cannot flush, so
+	// nothing can be confirmed and written is used as before.
+	flushUnsupported bool
+	flushErr         error
+	// cutOff is set from another goroutine to stop a stream whose recovery
+	// lease was lost. It is never set for ordinary downloads.
+	cutOff atomic.Bool
 }
+
+// recoveryFlushInterval is how many body bytes a recovery download writes
+// between confirming flushes.
+const recoveryFlushInterval = 1 << 20
+
+// flushAll flushes the response and records how far that confirmed.
+func (w *blobResponseWriter) flushAll() {
+	if !w.confirmFlush || w.flushErr != nil || w.flushUnsupported {
+		return
+	}
+	err := http.NewResponseController(w.ResponseWriter).Flush()
+	switch {
+	case err == nil:
+		w.flushed = w.written
+	case errors.Is(err, http.ErrNotSupported):
+		w.flushUnsupported = true
+	default:
+		w.flushErr = err
+	}
+}
+
+// confirmed is the number of body bytes progress may count.
+func (w *blobResponseWriter) confirmed() int64 {
+	if !w.confirmFlush || w.flushUnsupported {
+		return w.written
+	}
+	return w.flushed
+}
+
+// errTransferCutOff ends a stream that no longer holds its recovery lease.
+var errTransferCutOff = errors.New("recovery transfer lease lost")
 
 func (w *blobResponseWriter) WriteHeader(status int) {
 	if w.status != 0 {
@@ -335,8 +382,16 @@ func (w *blobResponseWriter) Write(p []byte) (int, error) {
 	if w.integrityFailed {
 		return 0, uploads.ErrBlobIntegrity
 	}
+	if w.cutOff.Load() {
+		return 0, errTransferCutOff
+	}
 	n, err := w.ResponseWriter.Write(p)
 	w.written += int64(n)
+	if err == nil && w.confirmFlush && w.written-w.flushed >= recoveryFlushInterval {
+		if w.flushAll(); w.flushErr != nil {
+			return n, w.flushErr
+		}
+	}
 	return n, err
 }
 
@@ -398,13 +453,18 @@ func (a *API) serveRecoveryBlob(w http.ResponseWriter, r *http.Request, transfer
 	if transfer.Backup.CiphertextSHA256 != "" {
 		w.Header().Set("ETag", `"sha256-`+transfer.Backup.CiphertextSHA256+`"`)
 	}
-	tracked := &blobResponseWriter{ResponseWriter: w, blob: blob}
+	tracked := &blobResponseWriter{ResponseWriter: w, blob: blob, confirmFlush: true}
 	request := r.Clone(r.Context())
 	request.Header.Del("If-Match")
 	request.Header.Del("If-None-Match")
 	request.Header.Del("If-Modified-Since")
 	request.Header.Del("If-Unmodified-Since")
 	request.Header.Del("If-Range")
+	// The lease is renewed until the final flush is done: a client that stalls
+	// there must not let it lapse, or the completion below is refused and the
+	// capability stays usable.
+	stopRenewing := a.renewRecoveryLease(r.Context(), tracked, transfer)
+	defer stopRenewing()
 	http.ServeContent(tracked, request, "encrypted.bin", time.Time{}, blob)
 	validResponse := !tracked.integrityFailed && (tracked.status == http.StatusOK || tracked.status == http.StatusPartialContent)
 	if r.Header.Get("Range") != "" {
@@ -417,16 +477,74 @@ func (a *API) serveRecoveryBlob(w http.ResponseWriter, r *http.Request, transfer
 	if contentLength, err := strconv.ParseInt(w.Header().Get("Content-Length"), 10, 64); err != nil || contentLength != expected {
 		validResponse = false
 	}
-	// Only bytes handed to the connection count, and those were verified:
-	// a mid-stream failure records progress up to the bad chunk.
-	written := tracked.written
+	// Only verified bytes that a flush pushed to the connection count: Write
+	// succeeds long before a client has the data, and a drop during the
+	// final flush must not consume the capability. A flush only reaches the
+	// kernel, so delivery is still not proven (see the recovery
+	// acknowledgement question); a mid-stream failure records progress up to
+	// the last confirmed flush.
+	if validResponse {
+		tracked.flushAll()
+	}
+	written := tracked.confirmed()
+	stopRenewing()
 	if !validResponse || written > expected {
 		written = 0
 	}
 	abort := a.finishBlobResponse(r, ref, blob, tracked)
-	_ = finalizeRecoveryTransfer(r, a.Store, transfer, written, expected)
+	if err := finalizeRecoveryTransfer(r, a.Store, transfer, written, expected); err != nil {
+		// No lease id, token or range goes into the log.
+		a.warn("recovery_transfer_completion_failed", "lease_lost", errors.Is(err, storage.ErrRecoveryBusy))
+	}
 	if abort {
 		panic(http.ErrAbortHandler)
+	}
+}
+
+// recoveryLeaseRenewInterval is well below storage.RecoveryLeaseLifetime, so
+// two renewals can fail before a lease lapses.
+var recoveryLeaseRenewInterval = storage.RecoveryLeaseLifetime / 3
+
+// renewRecoveryLease keeps transfer's lease alive while its body streams, so a
+// slow download is not taken over by a second caller and can still record its
+// progress. The stream ends with the request, whose deadline bounds the whole
+// transfer. If the lease cannot be renewed (it lapsed or was taken over) the
+// writer is cut off: the capability may already be in other hands. A failed
+// renewal for any other reason is retried at the next tick. The returned
+// function stops the renewal and waits for it.
+func (a *API) renewRecoveryLease(ctx context.Context, w *blobResponseWriter, transfer storage.RecoveryTransfer) (stop func()) {
+	done := make(chan struct{})
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		ticker := time.NewTicker(recoveryLeaseRenewInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+			renewCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			err := a.Store.RenewRecoveryTransfer(renewCtx, transfer.LeaseID)
+			cancel()
+			switch {
+			case err == nil:
+			case errors.Is(err, storage.ErrRecoveryBusy):
+				a.warn("recovery_transfer_lease_lost")
+				w.cutOff.Store(true)
+				return
+			default:
+				a.warn("recovery_transfer_lease_renew_failed")
+			}
+		}
+	}()
+	var once sync.Once
+	return func() {
+		once.Do(func() { close(done) })
+		<-finished
 	}
 }
 
@@ -483,6 +601,16 @@ func backupBlobRef(backup domain.BackupBlob) uploads.BlobRef {
 // serveEncryptedBlob streams a blob, verifying each chunk before it is sent
 // (see blobResponseWriter for what a client sees on a failure).
 func (a *API) serveEncryptedBlob(w http.ResponseWriter, r *http.Request, ref uploads.BlobRef) {
+	// Callers have authorized the request by now. Each range of a multipart
+	// response costs a seek plus a chunk read and hash, and a Range header
+	// can name thousands of them, so only one range is served (RFC 9110
+	// §14.2 lets a server refuse such a request). The recovery route already
+	// does the same; clients here send a single range or none.
+	if strings.Contains(r.Header.Get("Range"), ",") {
+		w.Header().Set("Content-Range", "bytes */"+strconv.FormatInt(ref.Size, 10))
+		writeError(w, http.StatusRequestedRangeNotSatisfiable, "multiple_ranges_not_supported")
+		return
+	}
 	blob, ok := a.openBlob(w, r, ref)
 	if !ok {
 		return
@@ -670,7 +798,7 @@ func (a *API) sendTestPush(w http.ResponseWriter, r *http.Request, principal dom
 		case err == nil:
 		case errors.Is(err, push.ErrSubscriptionGone):
 			result = "gone"
-			_ = a.Store.DisablePushTarget(r.Context(), subscription.ID)
+			_ = a.Store.DisablePushTarget(r.Context(), target)
 		case errors.Is(err, push.ErrNoProvider):
 			result = "provider_unavailable"
 		default:

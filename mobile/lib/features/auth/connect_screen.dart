@@ -46,6 +46,11 @@ class _ConnectScreenState extends State<ConnectScreen> {
   bool _modeManuallySelected = false;
   Timer? _setupProbeDebounce;
   int _setupProbeGeneration = 0;
+  // The URL text the probe last started for: a controller also notifies for
+  // caret, selection and composing changes, which are not edits.
+  String _lastUrlText = '';
+  // True from the tap on submit until its pre-flight and action are done.
+  bool _submitting = false;
 
   @override
   void initState() {
@@ -72,6 +77,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
   }
 
   void _scheduleSetupProbe() {
+    if (url.text == _lastUrlText) return;
+    _lastUrlText = url.text;
     _modeManuallySelected = false;
     _setupProbeDebounce?.cancel();
     _setupProbeGeneration++;
@@ -214,8 +221,10 @@ class _ConnectScreenState extends State<ConnectScreen> {
                             label: Text(context.l10n.connectCheckApproval),
                           )
                         : FilledButton.icon(
-                            onPressed: widget.state.busy ? null : _submit,
-                            icon: widget.state.busy
+                            onPressed: widget.state.busy || _submitting
+                                ? null
+                                : _submit,
+                            icon: widget.state.busy || _submitting
                                 ? const SizedBox.square(
                                     dimension: 18,
                                     child: CircularProgressIndicator(
@@ -556,12 +565,36 @@ class _ConnectScreenState extends State<ConnectScreen> {
   }
 
   Future<void> _submit() async {
+    // One submission at a time: the pre-flight below awaits twice before the
+    // action sets the app's own busy flag.
+    if (_submitting) return;
     if (!(formKey.currentState?.validate() ?? false)) {
       return;
     }
+    setState(() => _submitting = true);
+    try {
+      await _submitForm();
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  Future<void> _submitForm() async {
+    // Everything the person submitted is read now, together. The form stays
+    // editable while the pre-flight runs, so nothing is read from the fields
+    // after an await.
     final raw = url.text.trim();
+    final submitMode = mode;
+    final ownerName = username.text.trim();
+    final secret = password.text;
+    final setupSecret = setupToken.text.trim();
+    final invite = inviteCode.text.trim();
+    final link = linkCode.text.trim();
+    // The origin the person is looking at must still be the one submitted.
+    bool changed() => !mounted || url.text.trim() != raw;
+
     final result = await widget.state.probeSetup(raw);
-    if (!mounted) return;
+    if (changed()) return;
     if (!result.isReachable) {
       setState(() {
         _probeResult = result;
@@ -570,12 +603,12 @@ class _ConnectScreenState extends State<ConnectScreen> {
       return;
     }
     final linked = await widget.state.hasStoredDeviceIdentityForOrigin(raw);
-    if (!mounted) return;
+    if (changed()) return;
     // Switch to owner setup and let the user fill it in, but only when the
     // form is not already there; otherwise "Create owner" could never submit.
     if (!_modeManuallySelected &&
         result.setupRequired == true &&
-        mode != AuthMode.owner) {
+        submitMode != AuthMode.owner) {
       setState(() {
         _probeResult = result;
         setupRequired = true;
@@ -585,7 +618,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
     if (!_modeManuallySelected && result.setupRequired == false) {
       final discoveredMode = linked ? AuthMode.signIn : AuthMode.join;
-      if (mode != discoveredMode) {
+      if (submitMode != discoveredMode) {
         setState(() {
           _probeResult = result;
           setupRequired = false;
@@ -600,21 +633,15 @@ class _ConnectScreenState extends State<ConnectScreen> {
       setupRequired = result.setupRequired;
       _hasStoredDevice = linked;
     });
-    switch (mode) {
+    switch (submitMode) {
       case AuthMode.owner:
-        return widget.state.createOwner(
-            raw, username.text.trim(), password.text, setupToken.text.trim());
+        return widget.state.createOwner(raw, ownerName, secret, setupSecret);
       case AuthMode.signIn:
-        return widget.state.login(raw, username.text.trim(), password.text);
+        return widget.state.login(raw, ownerName, secret);
       case AuthMode.join:
-        return widget.state.registerWithInvite(
-          raw,
-          inviteCode.text.trim(),
-          username.text.trim(),
-          password.text,
-        );
+        return widget.state.registerWithInvite(raw, invite, ownerName, secret);
       case AuthMode.linkDevice:
-        return widget.state.claimDeviceLink(raw, linkCode.text.trim());
+        return widget.state.claimDeviceLink(raw, link);
     }
   }
 

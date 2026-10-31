@@ -360,6 +360,7 @@ func TestTouchSessionDropsAnEndedGrace(t *testing.T) {
 func TestSessionLifetimesFollowConfiguration(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
+	seedMigratedDatabase(t, filepath.Join(dir, "private-messenger.db"))
 	store, err := Open(ctx, config.Config{
 		DataDir:                 dir,
 		DatabasePath:            filepath.Join(dir, "private-messenger.db"),

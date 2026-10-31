@@ -53,6 +53,11 @@ type API struct {
 	Budget    *admission.Budget
 	Admission *admission.Counters
 	LowDisk   func() bool
+	// beforeWebSocketRegister is a test hook run between WebSocket
+	// authentication and hub registration. It is nil in production.
+	beforeWebSocketRegister func()
+	// applyDeliveries replaces Store.ApplyDeliveries in tests.
+	applyDeliveries func(ctx context.Context, accountID string, advances []storage.DeliveryAdvance) ([]storage.DeliveryAdvance, error)
 	// MaxAttachmentBytes is the operator's per-file cap (plaintext); zero
 	// means the default. The setup status tells clients, the upload enforces it.
 	MaxAttachmentBytes int64
@@ -102,7 +107,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/communities", a.withAuth(a.listCommunities))
 	mux.HandleFunc("POST /api/v1/conversations", a.withAuth(a.withWriteBudget(a.createConversation)))
 	mux.HandleFunc("GET /api/v1/conversations", a.withAuth(a.listConversations))
-	mux.HandleFunc("POST /api/v1/conversations/{id}/key-packages/claim", a.withAuth(a.claimConversationKeyPackages))
+	mux.HandleFunc("POST /api/v1/conversations/{id}/key-packages/claim", a.withAuth(a.withWriteBudget(a.claimConversationKeyPackages)))
 	mux.HandleFunc("POST /api/v1/conversations/{id}/mls/messages", a.withAuth(a.withWriteBudget(a.createMLSMessage)))
 	mux.HandleFunc("POST /api/v1/conversations/{id}/mls/commits", a.withAuth(a.withWriteBudget(a.createMLSCommitBundle)))
 	mux.HandleFunc("GET /api/v1/mls/pending-changes", a.withAuth(a.listMLSPendingChanges))
@@ -182,11 +187,15 @@ func (a *API) withAuth(next authedHandler) http.HandlerFunc {
 		}
 		if activity.SessionTouchDue(now) {
 			if err := a.Store.TouchSession(r.Context(), tokenHash); err != nil {
-				if !errors.Is(err, storage.ErrUnauthorized) {
-					a.warn("session_touch_failed", "err", err)
+				// Only a session that vanished between the read and the
+				// write is refused. Any other failure is a transient
+				// bookkeeping error on an already validated session: log it
+				// and serve the request (a skipped touch is routine).
+				if errors.Is(err, storage.ErrUnauthorized) {
+					refuseUnauthenticated(w, r)
+					return
 				}
-				writeError(w, http.StatusUnauthorized, "unauthorized")
-				return
+				a.warn("session_touch_failed", "err", err)
 			}
 		}
 		next(w, r, principal)
@@ -466,6 +475,8 @@ func handleStorageError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "mls_group_legacy")
 	case errors.Is(err, storage.ErrMLSBundleRequired):
 		writeError(w, http.StatusConflict, "mls_commit_bundle_required")
+	case errors.Is(err, storage.ErrMLSChangePending):
+		writeError(w, http.StatusConflict, "mls_change_pending")
 	case errors.Is(err, storage.ErrMLSNotInGroup):
 		writeError(w, http.StatusForbidden, "mls_not_in_group")
 	case errors.Is(err, storage.ErrInvalidInput):

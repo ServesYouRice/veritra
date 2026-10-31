@@ -38,7 +38,7 @@ func (s *Store) ListAdminAccounts(ctx context.Context, limit int, afterID string
 	return accounts, rows.Err()
 }
 
-func (s *Store) SetAccountStatus(ctx context.Context, actorAccountID, targetAccountID, status string) error {
+func (s *Store) SetAccountStatus(ctx context.Context, actorAccountID, targetAccountID, status string, audit AuditEvent) error {
 	if status != "active" && status != "suspended" {
 		return ErrInvalidInput
 	}
@@ -77,18 +77,31 @@ func (s *Store) SetAccountStatus(ctx context.Context, actorAccountID, targetAcco
 			return err
 		}
 	}
+	if err := insertAuditEvent(ctx, tx, &actorAccountID, audit.Type, audit.Metadata); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
-func (s *Store) AdminRevokeInvite(ctx context.Context, inviteID string) error {
-	result, err := s.db.ExecContext(ctx, `UPDATE invites SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`, nowString(), inviteID)
+// AdminRevokeInvite revokes any invite and records audit in the same
+// transaction, so a revocation is never persisted without its audit row.
+func (s *Store) AdminRevokeInvite(ctx context.Context, actorAccountID, inviteID string, audit AuditEvent) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE invites SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`, nowString(), inviteID)
 	if err != nil {
 		return err
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
 		return ErrNotFound
 	}
-	return nil
+	if err := insertAuditEvent(ctx, tx, &actorAccountID, audit.Type, audit.Metadata); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ListAdminAuditEvents pages the audit log. Oldest first continues after

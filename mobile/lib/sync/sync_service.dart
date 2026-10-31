@@ -101,10 +101,24 @@ class AccountSyncEngine {
 }
 
 class WebSocketSyncService implements SyncService {
-  WebSocketSyncService({required this.baseUrl, required this.token});
+  /// [pingInterval] is how often a ping is sent on an open socket; a socket
+  /// that has not answered by the next one is closed, which sets the reconnect
+  /// loop going again (null: [defaultPingInterval]).
+  WebSocketSyncService({
+    required this.baseUrl,
+    required this.token,
+    Duration? pingInterval,
+  }) : pingInterval = pingInterval ?? defaultPingInterval;
+
+  /// Short enough to notice a connection that died silently (a network
+  /// handover, a NAT timeout) within a minute, long enough to keep the radio
+  /// asleep between pings. The server answers pings (RFC 6455, 5.5.2) and
+  /// pings clients itself every 54 s.
+  static const defaultPingInterval = Duration(seconds: 30);
 
   final String baseUrl;
   final String token;
+  final Duration pingInterval;
   final _controller = StreamController<Map<String, Object?>>.broadcast();
   final _stopped = Completer<void>();
   WebSocket? _socket;
@@ -170,7 +184,7 @@ class WebSocketSyncService implements SyncService {
       socket = await WebSocket.connect(
         uri.toString(),
         headers: <String, dynamic>{'Authorization': 'Bearer $token'},
-        customClient: client,
+        customClient: _NoRedirectClient(client),
       ).timeout(const Duration(seconds: 15));
     } catch (_) {
       client.close(force: true);
@@ -184,6 +198,10 @@ class WebSocketSyncService implements SyncService {
       await _closeSocket(socket);
       return Duration.zero;
     }
+    // dart:io pings the server this often and closes the socket when no pong
+    // came back by the next ping; the close reaches onDone below. Without it
+    // a connection that died without a FIN or reset would park this loop.
+    socket.pingInterval = pingInterval;
     _socket = socket;
     final connectedAt = DateTime.now();
     // Events sent while the socket was down are not replayed over it. Tell
@@ -246,4 +264,30 @@ class WebSocketSyncService implements SyncService {
       // Already closed or the peer vanished; either way it is no longer open.
     }
   }
+}
+
+/// The handshake client [WebSocket.connect] is given. It opens every request
+/// with `followRedirects = false`, so a 3xx reaches the handshake as a
+/// non-101 answer and fails. Followed, dart:io would copy the bearer token
+/// in `Authorization` to the new location on the same host or a subdomain.
+/// [WebSocket.connect] only calls [openUrl]; any other use fails loudly
+/// rather than reaching a client that follows redirects.
+class _NoRedirectClient implements HttpClient {
+  _NoRedirectClient(this._inner);
+
+  final HttpClient _inner;
+
+  @override
+  Future<HttpClientRequest> openUrl(String method, Uri url) async {
+    final request = await _inner.openUrl(method, url);
+    request.followRedirects = false;
+    return request;
+  }
+
+  @override
+  void close({bool force = false}) => _inner.close(force: force);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnsupportedError('the sync handshake client only opens requests');
 }

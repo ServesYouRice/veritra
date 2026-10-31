@@ -10,10 +10,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
-const fileName = "backup-status.json"
+const (
+	fileName     = "backup-status.json"
+	lockFileName = "backup-status.lock"
+)
 
 // Status is the last known state of scheduled backups.
 //
@@ -53,49 +57,103 @@ func Read(dataDir string) (Status, bool) {
 	return status, true
 }
 
+// The recorders read, change and replace one small file. Scheduled backups
+// and verify-backup may run against the same data directory at once, so each
+// recorder holds an in-process mutex and an exclusive advisory lock on
+// backup-status.lock for the whole read-modify-write. Read takes no lock: a
+// replacement is an atomic rename, so it sees the old or the new file.
+var recordMu sync.Mutex
+
+// withLock runs fn with the status file locked against other recorders in
+// this and other processes.
+func withLock(dataDir string, fn func() error) error {
+	if dataDir == "" {
+		return errors.New("backup status needs a data directory")
+	}
+	recordMu.Lock()
+	defer recordMu.Unlock()
+	lock, err := os.OpenFile(filepath.Join(dataDir, lockFileName), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := lockFile(lock); err != nil {
+		return err
+	}
+	defer func() { _ = unlockFile(lock) }()
+	return fn()
+}
+
 // RecordSuccess marks a backup that passed its restore drill.
 func RecordSuccess(dataDir string, now time.Time) error {
-	status, _ := Read(dataDir)
-	now = now.UTC()
-	status.LastAttemptAt = now
-	status.LastSuccessAt = &now
-	status.LastFailureStep = ""
-	status.ConsecutiveFailures = 0
-	return write(dataDir, status)
+	return withLock(dataDir, func() error {
+		status, _ := Read(dataDir)
+		now = now.UTC()
+		status.LastAttemptAt = now
+		status.LastSuccessAt = &now
+		status.LastFailureStep = ""
+		status.ConsecutiveFailures = 0
+		return write(dataDir, status)
+	})
 }
 
 // RecordFailure marks a failed attempt at step.
 func RecordFailure(dataDir, step string, now time.Time) error {
-	status, _ := Read(dataDir)
-	now = now.UTC()
-	status.LastAttemptAt = now
-	status.LastFailureAt = &now
-	status.LastFailureStep = step
-	status.ConsecutiveFailures++
-	return write(dataDir, status)
+	return withLock(dataDir, func() error {
+		status, _ := Read(dataDir)
+		now = now.UTC()
+		status.LastAttemptAt = now
+		status.LastFailureAt = &now
+		status.LastFailureStep = step
+		status.ConsecutiveFailures++
+		return write(dataDir, status)
+	})
 }
 
 // RecordDrill records the outcome of a restore drill and keeps every other
 // field.
 func RecordDrill(dataDir string, passed bool, now time.Time) error {
-	status, _ := Read(dataDir)
-	now = now.UTC()
-	status.LastDrillAt = &now
-	status.LastDrillPassed = passed
-	return write(dataDir, status)
+	return withLock(dataDir, func() error {
+		status, _ := Read(dataDir)
+		now = now.UTC()
+		status.LastDrillAt = &now
+		status.LastDrillPassed = passed
+		return write(dataDir, status)
+	})
 }
 
-func write(dataDir string, status Status) error {
-	if dataDir == "" {
-		return errors.New("backup status needs a data directory")
-	}
+// write replaces the status file through a unique temporary file in the same
+// directory: written, synced, renamed, and the directory synced. The caller
+// holds the lock.
+func write(dataDir string, status Status) (err error) {
 	data, err := json.Marshal(status)
 	if err != nil {
 		return err
 	}
-	tmp := path(dataDir) + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	tmp, err := os.CreateTemp(dataDir, "backup-status-*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path(dataDir))
+	defer func() {
+		if err != nil {
+			_ = tmp.Close()
+			_ = os.Remove(tmp.Name())
+		}
+	}()
+	if err = tmp.Chmod(0o600); err != nil {
+		return err
+	}
+	if _, err = tmp.Write(data); err != nil {
+		return err
+	}
+	if err = tmp.Sync(); err != nil {
+		return err
+	}
+	if err = tmp.Close(); err != nil {
+		return err
+	}
+	if err = os.Rename(tmp.Name(), path(dataDir)); err != nil {
+		return err
+	}
+	return syncDirectory(dataDir)
 }

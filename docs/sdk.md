@@ -254,7 +254,7 @@ Versioning and compatibility:
 
 | Surface | Rule |
 |---|---|
-| C ABI (`PM_CRYPTO_ABI_VERSION` 6) | Untouched by SDK work. The SDK links the core as an rlib, so it never calls it through the C ABI. Any later ABI change follows the existing rule: bump the version, log it in `crypto.md`, and the Dart binding keeps requiring an exact match. |
+| C ABI (`PM_CRYPTO_ABI_VERSION` 9) | Untouched by SDK work. The SDK links the core as an rlib, so it never calls it through the C ABI. Any later ABI change follows the existing rule: bump the version, log it in `crypto.md`, and the Dart binding keeps requiring an exact match. |
 | SDK API | Semantic versioning, starting at 0.x while unreviewed. |
 | Generated bindings | Built from the same commit as the native library; a binding refuses to load a library from a different build (UniFFI checksum). |
 | Wire and payload | `mls10-openmls-v1`, `VAP1` version 1, sealed-state envelope version 2. Changing any of them is a crypto change for the `crypto.md` change log, not an SDK release detail. |
@@ -285,7 +285,8 @@ bot token or machine credential. **All of the following is a proposal.**
 - Clients show service members with a distinct label. That label is
   server-authored and must never be presented as cryptographic verification.
 - No password. A service device authenticates by signing a server challenge
-  with its MLS credential key (the key `sign_enrollment_challenge` already uses)
+  with its MLS credential key (the key the enrollment proof already uses), over
+  a domain-separated message (ABI 9 has no raw-challenge signer)
   and receives a short-lived token. Nothing long-lived and bearer-shaped is
   stored on the bot host except the sealed MLS state and its key.
 

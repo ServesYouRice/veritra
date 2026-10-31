@@ -76,6 +76,7 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'mls_epoch_conflict': ApiErrorKind.conflict,
   'mls_group_legacy': ApiErrorKind.conflict,
   'mls_commit_bundle_required': ApiErrorKind.conflict,
+  'mls_change_pending': ApiErrorKind.conflict,
   'recovery_transfer_in_progress': ApiErrorKind.conflict,
   'transcript_mismatch': ApiErrorKind.conflict,
   'device_recovery_required': ApiErrorKind.conflict,
@@ -109,6 +110,7 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'invalid_name': ApiErrorKind.invalidRequest,
   'invalid_push_subscription': ApiErrorKind.invalidRequest,
   'invalid_recovery_range': ApiErrorKind.invalidRequest,
+  'multiple_ranges_not_supported': ApiErrorKind.invalidRequest,
   'invalid_retention_seconds': ApiErrorKind.invalidRequest,
   'invalid_role': ApiErrorKind.invalidRequest,
   'invalid_subscription_id': ApiErrorKind.invalidRequest,
@@ -125,6 +127,8 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'typing_rate_limited': ApiErrorKind.rateLimited,
   'realtime_connection_limit': ApiErrorKind.rateLimited,
   'key_package_quota_exceeded': ApiErrorKind.rateLimited,
+  'key_package_claim_limit': ApiErrorKind.rateLimited,
+  'mls_self_update_limit': ApiErrorKind.rateLimited,
   'write_rate_limited': ApiErrorKind.rateLimited,
   // Size and storage.
   'upload_too_large': ApiErrorKind.tooLarge,
@@ -152,6 +156,7 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'push_provider_unavailable': ApiErrorKind.unavailable,
   'setup_ui_unavailable': ApiErrorKind.unavailable,
   'password_hashing_busy': ApiErrorKind.unavailable,
+  'session_check_unavailable': ApiErrorKind.unavailable,
   // Internal server failures.
   'attachment_record_failed': ApiErrorKind.server,
   'backup_record_failed': ApiErrorKind.server,
@@ -373,6 +378,18 @@ class ApiResponseException implements FormatException {
 
   @override
   String toString() => message;
+}
+
+/// A resumed download asked for a byte range and the server (or a proxy in
+/// front of it) answered 200 with the whole object, which starts at byte 0.
+/// Those bytes must never be appended at the saved offset.
+///
+/// It is an [ApiException] with status 416, the answer a server gives when
+/// it cannot serve the requested range, so existing handling of a rejected
+/// range applies: the saved prefix is dropped and the next attempt downloads
+/// from the start.
+class RangeNotHonoredException extends ApiException {
+  RangeNotHonoredException() : super(416);
 }
 
 /// A response larger than the client accepts for its kind. It stays an

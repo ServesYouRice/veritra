@@ -6,10 +6,41 @@ import (
 	"errors"
 	"time"
 
+	"private-messenger/server/internal/admission"
 	"private-messenger/server/internal/domain"
 )
 
 var ErrKeyPackageUnavailable = errors.New("an active conversation device has no available key package")
+
+// ErrKeyPackageClaimLimit means the account has claimed as many key packages
+// of one device as it may in KeyPackageClaimWindow.
+var ErrKeyPackageClaimLimit = errors.New("this account has claimed too many key packages of a device today")
+
+// KeyPackageClaimWindow is the span over which an account's claims on one
+// device count against Limits.KeyPackageClaimsPerTarget.
+const KeyPackageClaimWindow = 24 * time.Hour
+
+// keyPackageClaimAllowed reports whether requesterAccountID may claim one
+// more key package of targetDeviceID: it has claimed fewer than the limit
+// from that device within the window, counting every device of the account.
+// An account's claims on its own devices are not limited: they cannot take
+// anything from anyone else, and adding a new device to all of an account's
+// groups takes one claim per group.
+func (s *Store) keyPackageClaimAllowed(ctx context.Context, q queryRower, targetDeviceID, targetAccountID, requesterAccountID string, now time.Time) (bool, error) {
+	if targetAccountID == requesterAccountID {
+		return true, nil
+	}
+	claimed, err := countRows(ctx, q, `
+		SELECT COUNT(*) FROM device_key_packages kp
+		JOIN devices claimer ON claimer.id = kp.claimed_by_device_id
+		WHERE kp.device_id = ? AND kp.claimed_at IS NOT NULL AND kp.claimed_at > ?
+		  AND claimer.account_id = ?`,
+		targetDeviceID, formatTime(now.Add(-KeyPackageClaimWindow)), requesterAccountID)
+	if err != nil {
+		return false, err
+	}
+	return claimed < s.limits.KeyPackageClaimsPerTarget, nil
+}
 
 type NewDeviceKeyPackage struct {
 	KeyPackage  []byte
@@ -99,15 +130,29 @@ func (s *Store) ClaimConversationKeyPackages(ctx context.Context, conversationID
 		}
 		targets = append(targets, item)
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
 	claimedAt := time.Now().UTC()
 	result := make([]domain.DeviceKeyPackage, 0, len(targets))
 	for _, target := range targets {
+		// A group is created with every device or not at all, so one device
+		// over its limit refuses the whole claim (the transaction rolls back
+		// what was claimed before it).
+		allowed, err := s.keyPackageClaimAllowed(ctx, tx, target.deviceID, target.accountID, requesterAccountID, claimedAt)
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
+			return nil, s.refuse(admission.KeyPackages, ErrKeyPackageClaimLimit)
+		}
 		var item domain.DeviceKeyPackage
 		var createdAt, expiresAt string
-		err := tx.QueryRowContext(ctx, `
+		err = tx.QueryRowContext(ctx, `
 			SELECT id, key_package, ciphersuite, created_at, expires_at
 			FROM device_key_packages
 			WHERE device_id = ? AND claimed_at IS NULL AND expires_at > ?

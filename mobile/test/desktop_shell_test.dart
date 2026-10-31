@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -19,18 +20,59 @@ import 'test_crypto_service.dart';
 class _FakeShell extends NoopDesktopShell {
   bool active = false;
 
+  /// When set, the window check waits for it.
+  Completer<void>? gate;
+
   @override
-  Future<bool> isWindowActive() async => active;
+  Future<bool> isWindowActive() async {
+    await gate?.future;
+    return active;
+  }
 }
 
 class _FakeNotifier implements DesktopNotifier {
   final List<({String title, String body})> shown =
       <({String title, String body})>[];
 
+  /// When set, showing waits for it first, like the real notifier's setup.
+  Completer<void>? setupGate;
+
   @override
-  Future<void> show({required String title, required String body}) async {
+  Future<void> show({
+    required String title,
+    required String body,
+    bool Function()? stillWanted,
+  }) async {
+    await setupGate?.future;
+    if (stillWanted != null && !stillWanted()) return;
     shown.add((title: title, body: body));
   }
+}
+
+/// A store whose read finishes only when the test releases it.
+class _HeldStore implements NotificationSettingsStore {
+  _HeldStore(this.saved);
+
+  final bool? saved;
+  final Completer<void> release = Completer<void>();
+
+  @override
+  Future<bool?> loadHidePreview() async {
+    await release.future;
+    return saved;
+  }
+
+  @override
+  Future<void> saveHidePreview(bool value) async {}
+}
+
+/// A store whose read fails, like a locked or broken keychain.
+class _UnreadableStore implements NotificationSettingsStore {
+  @override
+  Future<bool?> loadHidePreview() async => throw StateError('keychain');
+
+  @override
+  Future<void> saveHidePreview(bool value) async {}
 }
 
 class _NoSync implements SyncService {
@@ -59,6 +101,9 @@ class _State extends AppState {
   bool muteReadable = true;
   int muteReads = 0;
 
+  /// When set, the mute lookup waits for it.
+  Completer<void>? muteGate;
+
   @override
   ConversationHistory historyFor(String conversationId) =>
       histories[conversationId] ?? ConversationHistory.empty(conversationId);
@@ -66,6 +111,7 @@ class _State extends AppState {
   @override
   Future<bool> loadConversationMuted(String conversationId) async {
     muteReads++;
+    await muteGate?.future;
     return muteReadable;
   }
 
@@ -105,6 +151,7 @@ LocalMessage _local(
   String body = 'secret words',
   String? formatJson,
   int? hiddenAt,
+  DateTime? createdAt,
 }) {
   return LocalMessage(
     key: 'dev_other:key_$id'.replaceFirst('dev_other', device),
@@ -115,7 +162,8 @@ LocalMessage _local(
     body: body,
     formatJson: formatJson,
     hiddenAt: hiddenAt,
-    createdAt: 1,
+    // The notice policy compares the row's time with the envelope's.
+    createdAt: (createdAt ?? _now).millisecondsSinceEpoch,
     state: LocalMessageState.received,
   );
 }
@@ -135,7 +183,7 @@ void main() {
     );
   }
 
-  setUp(() {
+  setUp(() async {
     state = _State()
       ..session = const Session(
         baseUrl: 'https://localhost',
@@ -149,6 +197,8 @@ void main() {
     shell = _FakeShell();
     notifier = _FakeNotifier();
     settings = NotificationSettings(MemoryNotificationSettingsStore());
+    // Previews wait for the saved choice to be known.
+    await settings.load();
     messages = MessageNotifier(
       state: state,
       shell: shell,
@@ -210,6 +260,215 @@ void main() {
     expect(notifier.shown.single.body, 'New message');
   });
 
+  group('previews wait for the saved choice', () {
+    MessageNotifier notifierFor(NotificationSettings choice) => MessageNotifier(
+          state: state,
+          shell: shell,
+          notifier: notifier,
+          settings: choice,
+          l10n: () => englishL10n,
+          now: () => _now,
+        );
+
+    void expectGeneric() {
+      expect(notifier.shown, hasLength(1));
+      expect(notifier.shown.single.title, 'Veritra');
+      expect(notifier.shown.single.body, 'New message');
+    }
+
+    test('a saved "hide" is honoured before the load finishes', () async {
+      final store = _HeldStore(true);
+      final pending = NotificationSettings(store);
+      final loading = pending.load();
+      history(<LocalMessage>[_local('m1')]);
+      await notifierFor(pending)
+          .handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
+      expectGeneric();
+      expect(notifier.shown.single.body, isNot(contains('secret')));
+      store.release.complete();
+      await loading;
+    });
+
+    test('an unreadable store hides previews for the run', () async {
+      final unreadable = NotificationSettings(_UnreadableStore());
+      await unreadable.load();
+      history(<LocalMessage>[_local('m1'), _local('m2')]);
+      final notifier2 = notifierFor(unreadable);
+      await notifier2.handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
+      await unreadable.load();
+      await notifier2.handle(<ReceivedMessageEnvelope>[_envelope('m2')]);
+      expect(notifier.shown, hasLength(2));
+      for (final item in notifier.shown) {
+        expect(item.title, 'Veritra');
+        expect(item.body, 'New message');
+      }
+    });
+
+    test('a store that holds no choice shows previews after loading', () async {
+      final empty = NotificationSettings(MemoryNotificationSettingsStore());
+      await empty.load();
+      history(<LocalMessage>[_local('m1')]);
+      await notifierFor(empty)
+          .handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
+      expect(notifier.shown.single.body, 'secret words');
+    });
+
+    test('a choice made before the load finishes wins', () async {
+      final store = _HeldStore(true);
+      final pending = NotificationSettings(store);
+      final loading = pending.load();
+      await pending.setHidePreview(false);
+      store.release.complete();
+      await loading;
+      expect(pending.hidePreview, isFalse);
+      history(<LocalMessage>[_local('m1')]);
+      await notifierFor(pending)
+          .handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
+      expect(notifier.shown.single.body, 'secret words');
+    });
+
+    test('an explicit "show" is honoured even when the store is unreadable',
+        () async {
+      final unreadable = NotificationSettings(_UnreadableStore());
+      await unreadable.load();
+      await unreadable.setHidePreview(false);
+      history(<LocalMessage>[_local('m1')]);
+      await notifierFor(unreadable)
+          .handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
+      expect(notifier.shown.single.body, 'secret words');
+    });
+
+    test('a saved "hide" still applies after the load', () async {
+      final saved = NotificationSettings(MemoryNotificationSettingsStore(true));
+      await saved.load();
+      history(<LocalMessage>[_local('m1')]);
+      await notifierFor(saved)
+          .handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
+      expectGeneric();
+    });
+  });
+
+  group('work in flight is dropped when the session ends', () {
+    const other = Session(
+      baseUrl: 'https://localhost',
+      token: 't2',
+      accountId: 'acct_other_me',
+      deviceId: 'dev_me',
+    );
+
+    /// Starts handling one message and returns the pending call.
+    Future<void> start() {
+      history(<LocalMessage>[_local('m1')]);
+      return messages.handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
+    }
+
+    // Each wait in handle: the window check, the mute lookup and the
+    // notifier's own setup.
+    final waits = <String, void Function(Completer<void>)>{
+      'the window check': (gate) => shell.gate = gate,
+      'the mute lookup': (gate) => state.muteGate = gate,
+      'the notifier setup': (gate) => notifier.setupGate = gate,
+    };
+    for (final wait in waits.entries) {
+      test('sign-out during ${wait.key} shows nothing', () async {
+        final gate = Completer<void>();
+        wait.value(gate);
+        final pending = start();
+        await Future<void>.delayed(Duration.zero);
+        state.session = null;
+        gate.complete();
+        await pending;
+        expect(notifier.shown, isEmpty);
+      });
+
+      test('a sign-out that has started during ${wait.key} shows nothing',
+          () async {
+        // The session stays set for several awaits while sign-out runs.
+        final entered = Completer<void>();
+        final release = Completer<void>();
+        state.beforeLocalSessionClear = () async {
+          entered.complete();
+          await release.future;
+        };
+        final gate = Completer<void>();
+        wait.value(gate);
+        final pending = start();
+        await Future<void>.delayed(Duration.zero);
+        final signOut = state.logout();
+        await entered.future;
+        expect(state.session, isNotNull);
+        gate.complete();
+        await pending;
+        expect(notifier.shown, isEmpty);
+        release.complete();
+        await signOut;
+      });
+
+      test('an account switch during ${wait.key} shows nothing', () async {
+        final gate = Completer<void>();
+        wait.value(gate);
+        final pending = start();
+        await Future<void>.delayed(Duration.zero);
+        state.session = other;
+        gate.complete();
+        await pending;
+        expect(notifier.shown, isEmpty);
+      });
+
+      test('detach during ${wait.key} shows nothing', () async {
+        final gate = Completer<void>();
+        wait.value(gate);
+        messages.attach();
+        final pending = start();
+        await Future<void>.delayed(Duration.zero);
+        messages.detach();
+        gate.complete();
+        await pending;
+        expect(notifier.shown, isEmpty);
+      });
+
+      test('a token refresh during ${wait.key} does not drop it', () async {
+        final gate = Completer<void>();
+        wait.value(gate);
+        final pending = start();
+        await Future<void>.delayed(Duration.zero);
+        state.session = const Session(
+          baseUrl: 'https://localhost',
+          token: 'rotated',
+          accountId: 'acct_me',
+          deviceId: 'dev_me',
+        );
+        gate.complete();
+        await pending;
+        expect(notifier.shown, hasLength(1));
+      });
+    }
+
+    test('a message handled while a sign-out runs shows nothing', () async {
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      state.beforeLocalSessionClear = () async {
+        entered.complete();
+        await release.future;
+      };
+      final signOut = state.logout();
+      await entered.future;
+      expect(state.session, isNotNull);
+      await start();
+      expect(notifier.shown, isEmpty);
+      release.complete();
+      await signOut;
+    });
+
+    test('a notification after re-attaching is shown', () async {
+      messages.attach();
+      messages.detach();
+      messages.attach();
+      await start();
+      expect(notifier.shown, hasLength(1));
+    });
+  });
+
   test('a kept mention alerts in a muted chat, and its switch turns that off',
       () async {
     state.mutedOnServer.add('conv_1');
@@ -255,7 +514,7 @@ void main() {
     history(<LocalMessage>[
       _local('own', account: 'acct_me', device: 'dev_me'),
       _local('act', kind: LocalMessageKind.action),
-      _local('old'),
+      _local('old', createdAt: _now.subtract(const Duration(hours: 1))),
       _local('gone'),
       _local('ok'),
     ]);
@@ -275,10 +534,13 @@ void main() {
 
   test('a burst in one chat gives one notification with the newest text',
       () async {
-    history(
-        <LocalMessage>[_local('a', body: 'first'), _local('b', body: 'last')]);
+    final earlier = _now.subtract(const Duration(seconds: 5));
+    history(<LocalMessage>[
+      _local('a', body: 'first', createdAt: earlier),
+      _local('b', body: 'last'),
+    ]);
     await messages.handle(<ReceivedMessageEnvelope>[
-      _envelope('a', createdAt: _now.subtract(const Duration(seconds: 5))),
+      _envelope('a', createdAt: earlier),
       _envelope('b'),
     ]);
     expect(notifier.shown.single.body, 'last');

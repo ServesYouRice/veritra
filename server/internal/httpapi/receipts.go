@@ -47,15 +47,18 @@ const deliveryWriteTimeout = 3 * time.Second
 // deliveryKey identifies the cursor a pending write moves.
 type deliveryKey struct{ accountID, conversationID string }
 
-// deliveryQueue holds the delivery cursors waiting for a writer. A newer
-// candidate for the same (account, conversation) replaces the older one, so
-// the queue is bounded by the live cursors and a burst of sync pages is
-// coalesced instead of dropped (a dropped write would never recover: the next
-// catch-up page is empty).
+// deliveryQueue holds the delivery cursors waiting for a writer. For the same
+// (account, conversation) a candidate replaces the pending one only when it
+// is not older (merge), so the queue is bounded by the live cursors, a burst
+// of sync pages is coalesced instead of dropped (a dropped write would never
+// recover: the next catch-up page is empty), and a late older page cannot
+// discard a newer pending cursor.
 type deliveryQueue struct {
 	mu      sync.Mutex
-	pending map[deliveryKey]string
+	pending map[deliveryKey]storage.DeliveryAdvance
 	workers int
+	// stopped is set when shutdown gave up waiting: workers stop retrying.
+	stopped bool
 }
 
 // deliveryCandidates reads which delivery cursors a sync page served to
@@ -81,11 +84,8 @@ func (a *API) recordDeliveredAsync(accountID string, candidates []storage.Delive
 	}
 	q := &a.deliveries
 	q.mu.Lock()
-	if q.pending == nil {
-		q.pending = map[deliveryKey]string{}
-	}
 	for _, advance := range candidates {
-		q.pending[deliveryKey{accountID, advance.ConversationID}] = advance.MessageID
+		q.mergeLocked(accountID, advance)
 	}
 	start := q.workers < maxDeliveryWriters
 	if start {
@@ -109,32 +109,104 @@ func (q *deliveryQueue) take() (map[string][]storage.DeliveryAdvance, bool) {
 		return nil, false
 	}
 	batch := map[string][]storage.DeliveryAdvance{}
-	for key, messageID := range q.pending {
-		batch[key.accountID] = append(batch[key.accountID], storage.DeliveryAdvance{ConversationID: key.conversationID, MessageID: messageID})
+	for key, advance := range q.pending {
+		batch[key.accountID] = append(batch[key.accountID], advance)
 		delete(q.pending, key)
 	}
 	return batch, true
 }
 
+// mergeLocked queues advance unless a pending one for the same cursor is
+// further along. Messages are ordered by created_at, the order ApplyDeliveries
+// keeps the stored cursor monotonic by; equal or unknown times let the later
+// arrival win. q.mu must be held.
+func (q *deliveryQueue) mergeLocked(accountID string, advance storage.DeliveryAdvance) {
+	if q.pending == nil {
+		q.pending = map[deliveryKey]storage.DeliveryAdvance{}
+	}
+	key := deliveryKey{accountID, advance.ConversationID}
+	if current, ok := q.pending[key]; ok && advance.CreatedAt.Before(current.CreatedAt) {
+		return
+	}
+	q.pending[key] = advance
+}
+
+// requeue puts the advances of a failed write back, never replacing a pending
+// candidate that is further along.
+func (q *deliveryQueue) requeue(accountID string, advances []storage.DeliveryAdvance) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for _, advance := range advances {
+		q.mergeLocked(accountID, advance)
+	}
+}
+
+func (q *deliveryQueue) isStopped() bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.stopped
+}
+
 func (a *API) runDeliveryWorker() {
+	failures := 0
 	for {
 		batch, ok := a.deliveries.take()
 		if !ok {
 			return
 		}
+		failed := map[string][]storage.DeliveryAdvance{}
 		for accountID, candidates := range batch {
-			a.writeDeliveries(accountID, candidates)
+			if !a.writeDeliveries(accountID, candidates) {
+				failed[accountID] = candidates
+			}
 		}
+		if len(failed) == 0 {
+			failures = 0
+			continue
+		}
+		// The store refused a write: keep those advances and retry after a
+		// growing pause, a bounded number of times. Past that, or once
+		// shutdown stopped waiting, only the failed advances are dropped
+		// (counted, not named); cursors other accounts queued meanwhile stay.
+		if failures++; failures > maxDeliveryRetries || a.deliveries.isStopped() {
+			dropped := 0
+			for _, candidates := range failed {
+				dropped += len(candidates)
+			}
+			a.warn("delivery_receipts_dropped", "cursors", dropped)
+			failures = 0
+			continue
+		}
+		for accountID, candidates := range failed {
+			a.deliveries.requeue(accountID, candidates)
+		}
+		time.Sleep(min(deliveryRetryBase<<(failures-1), deliveryRetryCap))
 	}
 }
 
-func (a *API) writeDeliveries(accountID string, candidates []storage.DeliveryAdvance) {
+// deliveryRetryBase is the first wait before a failed delivery write is
+// retried; each further attempt doubles it up to deliveryRetryCap. Tests
+// shorten it.
+var deliveryRetryBase = 100 * time.Millisecond
+
+const (
+	deliveryRetryCap = 2 * time.Second
+	// maxDeliveryRetries bounds how many times a batch is retried before
+	// its advances are dropped (the store is down, not busy).
+	maxDeliveryRetries = 6
+)
+
+func (a *API) writeDeliveries(accountID string, candidates []storage.DeliveryAdvance) bool {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), deliveryWriteTimeout)
 	defer cancel()
-	moved, err := a.Store.ApplyDeliveries(ctx, accountID, candidates)
+	apply := a.Store.ApplyDeliveries
+	if a.applyDeliveries != nil {
+		apply = a.applyDeliveries
+	}
+	moved, err := apply(ctx, accountID, candidates)
 	if err != nil {
 		a.warn("delivery_receipt_record_failed", "err", err)
-		return
+		return false
 	}
 	for _, advance := range moved {
 		members, err := a.Store.ReceiptRecipients(ctx, advance.ConversationID, accountID)
@@ -150,13 +222,15 @@ func (a *API) writeDeliveries(accountID string, candidates []storage.DeliveryAdv
 			CreatedAt:      time.Now().UTC(),
 		})
 	}
+	return true
 }
 
 // WaitDeliveryWrites blocks until the queued delivery writes are done or the
-// deadline passes. The server calls it before storage closes.
+// deadline passes. The server calls it before storage closes. If the
+// deadline passes first, workers stop retrying failed writes.
 func (a *API) WaitDeliveryWrites(deadline time.Time) {
+	q := &a.deliveries
 	for time.Now().Before(deadline) {
-		q := &a.deliveries
 		q.mu.Lock()
 		idle := q.workers == 0 && len(q.pending) == 0
 		q.mu.Unlock()
@@ -165,4 +239,7 @@ func (a *API) WaitDeliveryWrites(deadline time.Time) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	q.mu.Lock()
+	q.stopped = true
+	q.mu.Unlock()
 }

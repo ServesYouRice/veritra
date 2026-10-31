@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -21,6 +22,14 @@ var (
 	ErrNoProvider       = errors.New("push provider is not configured")
 	ErrInvalidTarget    = errors.New("invalid web push target")
 	ErrSubscriptionGone = errors.New("push subscription is no longer valid")
+	// ErrTargetRejected means the provider refused this one send in a way
+	// that says something about the target (APNs BadDeviceToken or
+	// DeviceTokenNotForTopic, an FCM 404 without UNREGISTERED) but is not
+	// proof that the subscription is dead: Apple also answers BadDeviceToken
+	// for a token sent to the wrong environment, and a 404 can come from the
+	// project. A retry would be refused the same way, so the caller drops the
+	// job without retiring the subscription and counts the rejection.
+	ErrTargetRejected = errors.New("push provider rejected the target")
 )
 
 type Notification struct {
@@ -188,6 +197,45 @@ func ValidateWebPushTarget(notification Notification) error {
 	return nil
 }
 
+// nonGlobalPushPrefixes are IANA special-purpose ranges that Go's IsPrivate,
+// IsLoopback and link-local predicates do not cover but that are not
+// globally reachable: this-network, shared address space (RFC 6598, used by
+// carrier NAT and overlay networks), IETF protocol assignments,
+// documentation, benchmarking, reserved and broadcast space, and the IPv6
+// translation and tunnelling ranges. NAT64 (64:ff9b::/96) and 6to4
+// (2002::/16) are blocked outright rather than decoded for the IPv4 address
+// they embed, which is simpler and cannot be fooled by the decoding.
+var nonGlobalPushPrefixes = func() []netip.Prefix {
+	var prefixes []netip.Prefix
+	for _, cidr := range []string{
+		"0.0.0.0/8", "100.64.0.0/10", "192.0.0.0/24", "192.0.2.0/24",
+		"198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24", "240.0.0.0/4",
+		"255.255.255.255/32",
+		"64:ff9b::/96", "64:ff9b:1::/48", "100::/64", "2001::/32",
+		"2001:db8::/32", "2002::/16",
+	} {
+		prefixes = append(prefixes, netip.MustParsePrefix(cidr))
+	}
+	return prefixes
+}()
+
+// forbiddenPushAddress reports whether a push endpoint must not be dialed at
+// addr: anything private, loopback, link-local, unspecified, multicast or in a
+// non-global special-purpose range. IPv4-mapped IPv6 forms are judged as the
+// IPv4 address they carry.
+func forbiddenPushAddress(addr netip.Addr) bool {
+	addr = addr.Unmap().WithZone("")
+	if addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() || addr.IsUnspecified() || addr.IsMulticast() {
+		return true
+	}
+	for _, prefix := range nonGlobalPushPrefixes {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
 func publicOnlyDialer(ctx context.Context, network, address string) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
@@ -200,7 +248,8 @@ func publicOnlyDialer(ctx context.Context, network, address string) (net.Conn, e
 	dialer := net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
 	for _, candidate := range addresses {
 		ip := candidate.IP
-		if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+		addr, ok := netip.AddrFromSlice(ip)
+		if !ok || forbiddenPushAddress(addr) {
 			continue
 		}
 		connection, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))

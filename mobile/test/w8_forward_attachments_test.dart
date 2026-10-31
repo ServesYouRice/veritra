@@ -208,7 +208,8 @@ class _MemoryOnlyAttachmentCrypto extends AttachmentCryptoService {
       required String attachmentActionId,
       required String fileName,
       required String mediaType,
-      AttachmentCancellationToken? cancellation}) {
+      AttachmentCancellationToken? cancellation,
+      int paddingLimit = maxPlaintextAttachmentBytes}) {
     expect(memoryForwardOnly, false,
         reason: 'forwarding must not create a plaintext source file');
     return super.encryptFile(
@@ -217,7 +218,8 @@ class _MemoryOnlyAttachmentCrypto extends AttachmentCryptoService {
         attachmentActionId: attachmentActionId,
         fileName: fileName,
         mediaType: mediaType,
-        cancellation: cancellation);
+        cancellation: cancellation,
+        paddingLimit: paddingLimit);
   }
 
   @override
@@ -242,7 +244,8 @@ class _MemoryOnlyAttachmentCrypto extends AttachmentCryptoService {
       required String attachmentActionId,
       required String fileName,
       required String mediaType,
-      AttachmentCancellationToken? cancellation}) async {
+      AttachmentCancellationToken? cancellation,
+      int paddingLimit = maxPlaintextAttachmentBytes}) async {
     encryptMemoryCalls++;
     buffers.add(plaintext);
     if (memoryForwardOnly) await _audit();
@@ -252,7 +255,8 @@ class _MemoryOnlyAttachmentCrypto extends AttachmentCryptoService {
         attachmentActionId: attachmentActionId,
         fileName: fileName,
         mediaType: mediaType,
-        cancellation: cancellation);
+        cancellation: cancellation,
+        paddingLimit: paddingLimit);
     if (memoryForwardOnly) await _audit();
     return result;
   }

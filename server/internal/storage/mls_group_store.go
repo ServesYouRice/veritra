@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"private-messenger/server/internal/admission"
 	"private-messenger/server/internal/domain"
 )
 
@@ -31,7 +32,31 @@ var (
 	// ErrMLSBundleRequired means a commit or Welcome was sent outside a
 	// commit bundle for a group with a recorded roster.
 	ErrMLSBundleRequired = errors.New("mls group changes must use a commit bundle")
+	// ErrMLSChangePending means an update-only commit was refused because
+	// the group still has to remove a device: a pending revocation or a
+	// device whose account left. Those commits go first.
+	ErrMLSChangePending = errors.New("mls group has a pending removal")
+	// ErrMLSSelfUpdateLimit means the device already made an update-only
+	// commit in this conversation within the configured interval.
+	ErrMLSSelfUpdateLimit = errors.New("mls self-update submitted too soon")
 )
+
+// mlsSelfUpdateLimitError carries how long until the device may submit its
+// next update-only commit. It matches ErrMLSSelfUpdateLimit.
+type mlsSelfUpdateLimitError struct{ retryAfter time.Duration }
+
+func (e mlsSelfUpdateLimitError) Error() string { return ErrMLSSelfUpdateLimit.Error() }
+func (e mlsSelfUpdateLimitError) Unwrap() error { return ErrMLSSelfUpdateLimit }
+
+// MLSSelfUpdateRetryAfter reports how long a device refused with
+// ErrMLSSelfUpdateLimit waits before its next update-only commit.
+func MLSSelfUpdateRetryAfter(err error) (time.Duration, bool) {
+	var limit mlsSelfUpdateLimitError
+	if errors.As(err, &limit) {
+		return limit.retryAfter, true
+	}
+	return 0, false
+}
 
 const (
 	maxMLSBundleChanges = 256
@@ -62,6 +87,9 @@ type MLSCommitBundleResult struct {
 	Welcomes  []domain.MLSMessage
 	Epoch     int64
 	Duplicate bool
+	// RevocationCompletedEventID is the mls.revocation.completed event the
+	// bundle caused when its commit finished a revocation, else zero.
+	RevocationCompletedEventID int64
 }
 
 // MLSPendingChange lists the devices a group should add or remove.
@@ -74,6 +102,10 @@ type MLSPendingChange struct {
 	// first, so group devices do not all race for the same epoch. Others
 	// act only when the change stays pending.
 	CoordinatorDeviceID string `json:"coordinator_device_id"`
+	// Truncated is true when the lists were cut at a cap, so more changes may
+	// be pending than listed. Acting on the listed ones brings the rest into
+	// the next call.
+	Truncated bool `json:"truncated"`
 }
 
 func validMLSDeviceRefs(refs []MLSDeviceRef) bool {
@@ -94,18 +126,30 @@ func validMLSDeviceRefs(refs []MLSDeviceRef) bool {
 // CreateMLSCommitBundle stores one commit with its Welcomes and roster
 // change, or records the creator of a new group when there is nothing to
 // commit yet.
+//
+// A commit that adds and removes no one is an update-only commit: the
+// committer's periodic self-update, which refreshes its leaf keys for
+// post-compromise security. The server cannot read a commit, so "update
+// only" is what the sender declares, as Added and Removed are for every
+// other bundle; receivers check only the commit's shape (docs/crypto.md,
+// periodic self-update). It is ordered like any other commit (current epoch,
+// idempotency key), and in addition waits while the group has a removal to
+// commit, and is limited per device and conversation to one per
+// Limits.MLSSelfUpdateMinutes.
 func (s *Store) CreateMLSCommitBundle(ctx context.Context, input MLSCommitBundleInput) (MLSCommitBundleResult, error) {
 	input.ConversationID = strings.TrimSpace(input.ConversationID)
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
 	input.RevocationDeviceID = strings.TrimSpace(input.RevocationDeviceID)
 	hasCommit := len(input.Commit) > 0
+	// A Welcome needs an Added device and a revocation a Removed one (both
+	// checked below), so an update-only commit carries neither.
+	updateOnly := hasCommit && len(input.Added) == 0 && len(input.Removed) == 0
 	if input.ConversationID == "" || input.SenderAccountID == "" || input.SenderDeviceID == "" ||
 		input.Epoch < 0 || input.IdempotencyKey == "" || len(input.IdempotencyKey) > 96 ||
 		len(input.Commit) > maxMLSHandshake || len(input.Welcome) > maxMLSHandshake ||
 		!validMLSDeviceRefs(input.Added) || !validMLSDeviceRefs(input.Removed) ||
 		(len(input.Added) > 0) != (len(input.Welcome) > 0) ||
-		(!hasCommit && (len(input.Added) > 0 || len(input.Removed) > 0 || input.Epoch != 0)) ||
-		(hasCommit && len(input.Added) == 0 && len(input.Removed) == 0) {
+		(!hasCommit && (len(input.Added) > 0 || len(input.Removed) > 0 || input.Epoch != 0)) {
 		return MLSCommitBundleResult{}, ErrInvalidInput
 	}
 	for _, removed := range input.Removed {
@@ -167,6 +211,10 @@ func (s *Store) CreateMLSCommitBundle(ctx context.Context, input MLSCommitBundle
 		return MLSCommitBundleResult{}, err
 	}
 	now := time.Now().UTC()
+	if !exists && updateOnly {
+		// Nothing to update: the server knows no group with this device.
+		return MLSCommitBundleResult{}, ErrMLSNotInGroup
+	}
 	if !exists {
 		// A new group. Groups created before rosters were tracked are left
 		// alone rather than guessed.
@@ -189,6 +237,9 @@ func (s *Store) CreateMLSCommitBundle(ctx context.Context, input MLSCommitBundle
 			VALUES(?, ?, ?, 0, 0)`, input.ConversationID, input.SenderDeviceID, input.SenderAccountID); err != nil {
 			return MLSCommitBundleResult{}, err
 		}
+		if err := dropStaleMLSRevocations(ctx, tx, input.ConversationID); err != nil {
+			return MLSCommitBundleResult{}, err
+		}
 	} else {
 		active, err := activeMLSDevice(ctx, tx, input.ConversationID, input.SenderDeviceID)
 		if err != nil {
@@ -207,6 +258,11 @@ func (s *Store) CreateMLSCommitBundle(ctx context.Context, input MLSCommitBundle
 	}
 	if !hasCommit {
 		return MLSCommitBundleResult{Epoch: 0}, tx.Commit()
+	}
+	if updateOnly {
+		if err := s.checkMLSSelfUpdate(ctx, tx, input.ConversationID, input.SenderDeviceID, now); err != nil {
+			return MLSCommitBundleResult{}, err
+		}
 	}
 
 	for _, added := range input.Added {
@@ -236,13 +292,24 @@ func (s *Store) CreateMLSCommitBundle(ctx context.Context, input MLSCommitBundle
 		if err != nil {
 			return MLSCommitBundleResult{}, err
 		}
+		// A device whose revocation is pending leaves the roster only through
+		// its revocation commit, which the coordinator submits with
+		// RevocationDeviceID. Any other bundle removing it would leave the
+		// revocation pending for good: the coordinator's commit could no longer
+		// name a device that is already gone. (Q-004: refuse, not reinterpret.)
+		var revocationPending bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM mls_revocations
+			WHERE conversation_id = ? AND revoked_device_id = ? AND state = 'pending')`,
+			input.ConversationID, removed.DeviceID).Scan(&revocationPending); err != nil {
+			return MLSCommitBundleResult{}, err
+		}
+		if revocationPending && removed.DeviceID != input.RevocationDeviceID {
+			return MLSCommitBundleResult{}, ErrForbidden
+		}
 	}
 	if input.RevocationDeviceID != "" {
-		var allowed bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-			SELECT 1 FROM mls_revocations WHERE conversation_id = ? AND revoked_device_id = ?
-			AND coordinator_device_id = ? AND state = 'pending')`, input.ConversationID,
-			input.RevocationDeviceID, input.SenderDeviceID).Scan(&allowed); err != nil {
+		allowed, err := mlsRevocationCommitAllowed(ctx, tx, input.ConversationID, input.RevocationDeviceID, input.SenderDeviceID)
+		if err != nil {
 			return MLSCommitBundleResult{}, err
 		}
 		if !allowed {
@@ -261,6 +328,13 @@ func (s *Store) CreateMLSCommitBundle(ctx context.Context, input MLSCommitBundle
 	if _, err := tx.ExecContext(ctx, `UPDATE conversation_mls_groups SET epoch = epoch + 1, updated_at = ? WHERE conversation_id = ?`,
 		formatTime(now), input.ConversationID); err != nil {
 		return MLSCommitBundleResult{}, err
+	}
+	if updateOnly {
+		if _, err := tx.ExecContext(ctx, `UPDATE conversation_mls_devices SET last_self_update_at = ?
+			WHERE conversation_id = ? AND device_id = ?`,
+			formatTime(now), input.ConversationID, input.SenderDeviceID); err != nil {
+			return MLSCommitBundleResult{}, err
+		}
 	}
 	for _, removed := range input.Removed {
 		if _, err := tx.ExecContext(ctx, `UPDATE conversation_mls_devices SET removed_after_event_id = ?
@@ -295,6 +369,7 @@ func (s *Store) CreateMLSCommitBundle(ctx context.Context, input MLSCommitBundle
 		}
 		welcomes = append(welcomes, welcome)
 	}
+	var completedEventID int64
 	if input.RevocationDeviceID != "" {
 		if _, err := tx.ExecContext(ctx, `UPDATE mls_revocations SET state = 'commit_submitted', commit_message_id = ?
 			WHERE conversation_id = ? AND revoked_device_id = ? AND state = 'pending'`,
@@ -306,14 +381,51 @@ func (s *Store) CreateMLSCommitBundle(ctx context.Context, input MLSCommitBundle
 			formatTime(now), input.ConversationID, input.RevocationDeviceID, input.SenderDeviceID); err != nil {
 			return MLSCommitBundleResult{}, err
 		}
-		if err := completeMLSRevocationIfConfirmed(ctx, tx, input.ConversationID, input.RevocationDeviceID, now); err != nil {
+		completedEventID, err = completeMLSRevocationIfConfirmed(ctx, tx, input.ConversationID, input.RevocationDeviceID, now)
+		if err != nil {
 			return MLSCommitBundleResult{}, err
 		}
+	}
+	if err := dropStaleMLSRevocations(ctx, tx, input.ConversationID); err != nil {
+		return MLSCommitBundleResult{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return MLSCommitBundleResult{}, err
 	}
-	return MLSCommitBundleResult{Commit: &commit, Welcomes: welcomes, Epoch: epoch + 1}, nil
+	return MLSCommitBundleResult{Commit: &commit, Welcomes: welcomes, Epoch: epoch + 1, RevocationCompletedEventID: completedEventID}, nil
+}
+
+// checkMLSSelfUpdate admits one update-only commit. Removals come first: a
+// pending revocation, or a group device whose account left the
+// conversation, refuses it with ErrMLSChangePending, so a self-update never
+// takes the epoch a removal is waiting for. Then the per-device interval.
+func (s *Store) checkMLSSelfUpdate(ctx context.Context, tx *sql.Tx, conversationID, deviceID string, now time.Time) error {
+	var pending bool
+	if err := tx.QueryRowContext(ctx, `SELECT
+		EXISTS(SELECT 1 FROM mls_revocations WHERE conversation_id = ?1 AND state = 'pending')
+		OR EXISTS(SELECT 1 FROM conversation_mls_devices r
+			JOIN devices d ON d.id = r.device_id AND d.revoked_at IS NULL
+			WHERE r.conversation_id = ?1 AND r.removed_after_event_id IS NULL
+			AND NOT EXISTS (SELECT 1 FROM memberships m WHERE m.conversation_id = r.conversation_id AND m.account_id = r.account_id))`,
+		conversationID).Scan(&pending); err != nil {
+		return err
+	}
+	if pending {
+		return ErrMLSChangePending
+	}
+	var last sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT last_self_update_at FROM conversation_mls_devices
+		WHERE conversation_id = ? AND device_id = ?`, conversationID, deviceID).Scan(&last); err != nil {
+		return err
+	}
+	if !last.Valid {
+		return nil
+	}
+	next := parseTime(last.String).Add(time.Duration(s.limits.MLSSelfUpdateMinutes) * time.Minute)
+	if now.Before(next) {
+		return s.refuse(admission.SelfUpdates, mlsSelfUpdateLimitError{retryAfter: next.Sub(now)})
+	}
+	return nil
 }
 
 type mlsMessageRow struct {
@@ -402,72 +514,142 @@ func (s *Store) MLSGroupEpoch(ctx context.Context, conversationID string) (int64
 // whose account left the conversation. Revoked devices are handled by the
 // revocation flow instead.
 func (s *Store) ListMLSPendingChanges(ctx context.Context, accountID, deviceID string) ([]MLSPendingChange, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT g.conversation_id, g.epoch, 'add', d.account_id, d.id
-		FROM conversation_mls_groups g
-		JOIN conversation_mls_devices me ON me.conversation_id = g.conversation_id
-			AND me.device_id = ? AND me.removed_after_event_id IS NULL
-		JOIN memberships requester ON requester.conversation_id = g.conversation_id AND requester.account_id = ?
-		JOIN memberships m ON m.conversation_id = g.conversation_id
-		JOIN devices d ON d.account_id = m.account_id AND d.revoked_at IS NULL
-		WHERE NOT EXISTS (SELECT 1 FROM conversation_mls_devices r
-			WHERE r.conversation_id = g.conversation_id AND r.device_id = d.id AND r.removed_after_event_id IS NULL)
-		UNION ALL
-		SELECT g.conversation_id, g.epoch, 'remove', r.account_id, r.device_id
-		FROM conversation_mls_groups g
-		JOIN conversation_mls_devices me ON me.conversation_id = g.conversation_id
-			AND me.device_id = ? AND me.removed_after_event_id IS NULL
-		JOIN memberships requester ON requester.conversation_id = g.conversation_id AND requester.account_id = ?
-		JOIN conversation_mls_devices r ON r.conversation_id = g.conversation_id AND r.removed_after_event_id IS NULL
-		JOIN devices d ON d.id = r.device_id AND d.revoked_at IS NULL
-		WHERE NOT EXISTS (SELECT 1 FROM memberships m WHERE m.conversation_id = g.conversation_id AND m.account_id = r.account_id)
-		LIMIT 2000`, deviceID, accountID, deviceID, accountID)
+	// Removals come first and each kind has its own caps, so a backlog of one
+	// kind cannot hide the other, and every conversation keeps its share.
+	// Within a conversation both lists are ordered by device id, adds with the
+	// devices that have a usable key package ahead of those that have none:
+	// a device without one stays pending (claiming skips it), and would
+	// otherwise fill the list for good while a claimable device waits behind.
+	// Each query reads one row past a cap so that clipping can be told.
+	// One read transaction, so the epoch, both lists and the coordinator of an
+	// item come from the same snapshot: a commit landing between the queries
+	// must not give a list built for one epoch the coordinator of the next.
+	tx, err := s.db.reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer tx.Rollback()
 	byConversation := map[string]*MLSPendingChange{}
-	for rows.Next() {
-		var conversationID, change string
-		var epoch int64
-		var ref MLSDeviceRef
-		if err := rows.Scan(&conversationID, &epoch, &change, &ref.AccountID, &ref.DeviceID); err != nil {
+	overall := false
+	removeSQL := `
+		SELECT conversation_id, epoch, account_id, device_id FROM (
+			SELECT g.conversation_id AS conversation_id, g.epoch AS epoch, r.account_id AS account_id, r.device_id AS device_id,
+			       ROW_NUMBER() OVER (PARTITION BY g.conversation_id ORDER BY r.device_id) AS position
+			FROM conversation_mls_groups g
+			JOIN conversation_mls_devices me ON me.conversation_id = g.conversation_id
+				AND me.device_id = ?1 AND me.removed_after_event_id IS NULL
+			JOIN memberships requester ON requester.conversation_id = g.conversation_id AND requester.account_id = ?2
+			JOIN conversation_mls_devices r ON r.conversation_id = g.conversation_id AND r.removed_after_event_id IS NULL
+			JOIN devices d ON d.id = r.device_id AND d.revoked_at IS NULL
+			WHERE NOT EXISTS (SELECT 1 FROM memberships m WHERE m.conversation_id = g.conversation_id AND m.account_id = r.account_id)
+		) WHERE position <= ?3
+		ORDER BY conversation_id, position
+		LIMIT ?4`
+	addSQL := `
+		SELECT conversation_id, epoch, account_id, device_id FROM (
+			SELECT g.conversation_id AS conversation_id, g.epoch AS epoch, d.account_id AS account_id, d.id AS device_id,
+			       ROW_NUMBER() OVER (PARTITION BY g.conversation_id ORDER BY
+			         EXISTS (SELECT 1 FROM device_key_packages kp
+			                 WHERE kp.device_id = d.id AND kp.claimed_at IS NULL AND kp.expires_at > ?5) DESC,
+			         d.id) AS position
+			FROM conversation_mls_groups g
+			JOIN conversation_mls_devices me ON me.conversation_id = g.conversation_id
+				AND me.device_id = ?1 AND me.removed_after_event_id IS NULL
+			JOIN memberships requester ON requester.conversation_id = g.conversation_id AND requester.account_id = ?2
+			JOIN memberships m ON m.conversation_id = g.conversation_id
+			JOIN devices d ON d.account_id = m.account_id AND d.revoked_at IS NULL
+			WHERE NOT EXISTS (SELECT 1 FROM conversation_mls_devices r
+				WHERE r.conversation_id = g.conversation_id AND r.device_id = d.id AND r.removed_after_event_id IS NULL)
+		) WHERE position <= ?3
+		ORDER BY conversation_id, position
+		LIMIT ?4`
+	now := nowString()
+	for _, kind := range []string{"remove", "add"} {
+		query := removeSQL
+		if kind == "add" {
+			query = addSQL
+		}
+		rows, err := queryPendingChanges(ctx, tx, query, kind, deviceID, accountID, now)
+		if err != nil {
 			return nil, err
 		}
-		item := byConversation[conversationID]
-		if item == nil {
-			item = &MLSPendingChange{ConversationID: conversationID, Epoch: epoch, Add: []MLSDeviceRef{}, Remove: []MLSDeviceRef{}}
-			byConversation[conversationID] = item
+		if len(rows) > mlsPendingChangeLimit {
+			overall = true
+			rows = rows[:mlsPendingChangeLimit]
 		}
-		if change == "add" {
-			if len(item.Add) < maxMLSBundleChanges {
-				item.Add = append(item.Add, ref)
+		for _, row := range rows {
+			item := byConversation[row.conversationID]
+			if item == nil {
+				item = &MLSPendingChange{ConversationID: row.conversationID, Epoch: row.epoch, Add: []MLSDeviceRef{}, Remove: []MLSDeviceRef{}}
+				byConversation[row.conversationID] = item
 			}
-		} else if len(item.Remove) < maxMLSBundleChanges {
-			item.Remove = append(item.Remove, ref)
+			list := &item.Add
+			if kind == "remove" {
+				list = &item.Remove
+			}
+			if len(*list) >= maxMLSBundleChanges {
+				item.Truncated = true
+				continue
+			}
+			*list = append(*list, row.ref)
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
+	if s.afterPendingChangesRead != nil {
+		s.afterPendingChangesRead()
 	}
 	result := make([]MLSPendingChange, 0, len(byConversation))
 	for _, item := range byConversation {
-		if err := s.db.QueryRowContext(ctx, `SELECT MIN(r.device_id) FROM conversation_mls_devices r
+		if overall {
+			// Some conversations were left out altogether; the caller cannot
+			// tell which, so every list says it may be incomplete.
+			item.Truncated = true
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT MIN(r.device_id) FROM conversation_mls_devices r
 			JOIN devices d ON d.id = r.device_id AND d.revoked_at IS NULL
 			JOIN memberships m ON m.conversation_id = r.conversation_id AND m.account_id = r.account_id
 			WHERE r.conversation_id = ? AND r.removed_after_event_id IS NULL`,
 			item.ConversationID).Scan(&item.CoordinatorDeviceID); err != nil {
 			return nil, err
 		}
-		sort.Slice(item.Add, func(i, j int) bool { return item.Add[i].DeviceID < item.Add[j].DeviceID })
-		sort.Slice(item.Remove, func(i, j int) bool { return item.Remove[i].DeviceID < item.Remove[j].DeviceID })
 		result = append(result, *item)
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ConversationID < result[j].ConversationID })
 	return result, nil
+}
+
+// mlsPendingChangeLimit caps the rows read for each kind of change, across
+// all of the requester's groups. Beyond it conversations are left out, in
+// conversation id order, and the lists are flagged truncated.
+const mlsPendingChangeLimit = 2000
+
+type pendingChangeRow struct {
+	conversationID string
+	epoch          int64
+	ref            MLSDeviceRef
+}
+
+// queryPendingChanges runs one of the two pending-change queries: at most
+// maxMLSBundleChanges+1 rows per conversation and mlsPendingChangeLimit+1 in
+// all.
+func queryPendingChanges(ctx context.Context, tx *sql.Tx, query, kind, deviceID, accountID, now string) ([]pendingChangeRow, error) {
+	args := []interface{}{deviceID, accountID, maxMLSBundleChanges + 1, mlsPendingChangeLimit + 1}
+	if kind == "add" {
+		args = append(args, now)
+	}
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []pendingChangeRow
+	for rows.Next() {
+		var row pendingChangeRow
+		if err := rows.Scan(&row.conversationID, &row.epoch, &row.ref.AccountID, &row.ref.DeviceID); err != nil {
+			return nil, err
+		}
+		result = append(result, row)
+	}
+	return result, rows.Err()
 }
 
 // ClaimDeviceKeyPackages claims one key package for each listed device of
@@ -515,6 +697,16 @@ func (s *Store) ClaimDeviceKeyPackages(ctx context.Context, conversationID, requ
 		}
 		if err != nil {
 			return nil, err
+		}
+		// A device over its claim limit is skipped like one with no package
+		// left: the caller adds it to the group later.
+		allowed, err := s.keyPackageClaimAllowed(ctx, tx, deviceID, accountID, requesterAccountID, claimedAt)
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
+			_ = s.refuse(admission.KeyPackages, ErrKeyPackageClaimLimit)
+			continue
 		}
 		var item domain.DeviceKeyPackage
 		var createdAt, expiresAt string

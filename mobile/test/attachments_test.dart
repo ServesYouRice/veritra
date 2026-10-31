@@ -282,6 +282,7 @@ class _FakeAttachmentCrypto implements AttachmentCryptoService {
     required String fileName,
     required String mediaType,
     AttachmentCancellationToken? cancellation,
+    int paddingLimit = maxPlaintextAttachmentBytes,
   }) async {
     final file = File('${dir.path}/$attachmentActionId.ciphertext')
       ..writeAsBytesSync(ciphertext);

@@ -1,5 +1,20 @@
 import 'dart:convert';
 
+/// Active pins per chat (per channel in a shared community conversation).
+/// Owner decision 2026-10-31: Discord-like 50, replacing W7's original 3.
+/// A pin beyond the limit evicts the oldest by `pinned_at`.
+const pinLimitPerChat = 50;
+
+/// Who may pin (owner decision 2026-10-31): either member of a DM and any
+/// member of a group. Community conversations keep moderator roles until C4
+/// adds per-channel permissions; an admin-only group switch also waits for
+/// C4, because groups have no encrypted settings record yet. An unknown
+/// [kind] (roster not cached) authorizes only a moderator role.
+bool pinAllowed({required String? kind, required String? role}) =>
+    kind == 'dm' ||
+    kind == 'group' ||
+    const {'owner', 'admin', 'moderator'}.contains(role);
+
 const formatTypes = {
   'bold',
   'italic',

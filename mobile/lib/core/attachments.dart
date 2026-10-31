@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import '../crypto/attachment_crypto.dart' show maxPlaintextAttachmentBytes;
 
@@ -100,11 +102,33 @@ class AttachmentEntry {
   }
 }
 
+/// Control, format and separator characters: C0, DEL and C1 controls (Cc),
+/// bidi controls, zero-width and other format characters (Cf) and the line
+/// and paragraph separators (Zl, Zp). A sender uses them to make
+/// `invoice<RLO>fdp.exe` read as `invoiceexe.pdf`. Removing Cf also removes
+/// the zero-width joiner, which splits emoji ZWJ sequences into their parts;
+/// a name that is safe on every platform matters more than that.
+final RegExp _invisibleNameCharacters =
+    RegExp(r'[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]', unicode: true);
+
+/// Characters Windows does not allow in a file name (the path separators are
+/// split off before this).
+final RegExp _windowsInvalidNameCharacters = RegExp(r'[<>:"|?*]');
+
+/// Device names Windows reserves, with or without an extension.
+final RegExp _windowsReservedName =
+    RegExp(r'^(con|prn|aux|nul|com[1-9]|lpt[1-9])$', caseSensitive: false);
+
 /// A file name that is safe to show and to use as a suggested save name:
-/// no directories, no control characters, bounded length.
+/// no directories, no invisible or direction-changing characters, valid on
+/// Windows as well as elsewhere (the desktop build saves with this name, and
+/// the chat shows the same name), bounded length.
 String safeAttachmentName(String raw) {
   var name = raw.split(RegExp(r'[/\\]')).last;
-  name = name.replaceAll(RegExp(r'[\x00-\x1f\x7f]'), '').trim();
+  name = name
+      .replaceAll(_invisibleNameCharacters, '')
+      .replaceAll(_windowsInvalidNameCharacters, '_')
+      .trim();
   if (name.startsWith('.')) name = name.replaceFirst(RegExp(r'^\.+'), '');
   if (name.length > 120) {
     final dot = name.lastIndexOf('.');
@@ -112,6 +136,10 @@ String safeAttachmentName(String raw) {
         dot > 0 && name.length - dot <= 10 ? name.substring(dot) : '';
     name = '${name.substring(0, 120 - extension.length)}$extension';
   }
+  // Windows drops trailing dots and spaces, so "a.pdf." is "a.pdf" there.
+  name = name.replaceFirst(RegExp(r'[. ]+$'), '');
+  final base = name.split('.').first.trimRight();
+  if (_windowsReservedName.hasMatch(base)) name = '_$name';
   return name.isEmpty ? 'attachment' : name;
 }
 
@@ -126,4 +154,100 @@ String attachmentMediaType(String fileName, String? pickerType) {
   if (lower.endsWith('.gif')) return 'image/gif';
   if (lower.endsWith('.webp')) return 'image/webp';
   return 'application/octet-stream';
+}
+
+/// Working files of an interrupted encryption (`.attachment-<hex>.ciphertext`)
+/// or opening (`.veritra-attachment-<hex>.ciphertext`, `.plaintext` and its
+/// `.part`). Nothing else in the working directory, which also holds the
+/// database, its key and backup files, matches.
+final RegExp _attachmentOrphanName = RegExp(
+  r'^\.(attachment-[0-9a-f]{32}\.ciphertext'
+  r'|veritra-attachment-[0-9a-f]+\.(ciphertext|plaintext|plaintext\.part))$',
+);
+
+/// Files younger than this are left alone: another process (a second demo
+/// profile shares the directory) or an upload still running may own them.
+const Duration attachmentOrphanMinAge = Duration(hours: 1);
+
+/// How often a running app sweeps again. A file is old enough to go after
+/// [attachmentOrphanMinAge], so one left by a failure while the app keeps
+/// running is gone within about two hours instead of at the next start.
+const Duration attachmentOrphanSweepInterval = Duration(hours: 1);
+
+/// Runs [cleanupAttachmentOrphans] at [start] and then every [interval]
+/// until [stop]. Sweeps never overlap, and a failure (no directory, no path
+/// provider) only skips that sweep. The [minAge] guard keeps the files of
+/// operations that are still running.
+class AttachmentOrphanSweeper {
+  AttachmentOrphanSweeper(
+    this._directory, {
+    this.interval = attachmentOrphanSweepInterval,
+    this.minAge = attachmentOrphanMinAge,
+  });
+
+  final Future<Directory?> Function() _directory;
+  final Duration interval;
+  final Duration minAge;
+  Timer? _timer;
+  bool _sweeping = false;
+  bool _stopped = false;
+
+  /// Sweeps now and arms the periodic sweep. A second call does nothing.
+  void start() {
+    if (_stopped || _timer != null) return;
+    _timer = Timer.periodic(interval, (_) => unawaited(sweep()));
+    unawaited(sweep());
+  }
+
+  Future<void> sweep() async {
+    if (_stopped || _sweeping) return;
+    _sweeping = true;
+    try {
+      final directory = await _directory();
+      if (directory != null && !_stopped) {
+        await cleanupAttachmentOrphans(directory, minAge: minAge);
+      }
+    } catch (_) {
+      // Best effort; the next tick tries again.
+    } finally {
+      _sweeping = false;
+    }
+  }
+
+  void stop() {
+    _stopped = true;
+    _timer?.cancel();
+    _timer = null;
+  }
+}
+
+/// Deletes the attachment working files a killed or crashed process left in
+/// [directory], plaintext `.part` files included. Runs at start, before
+/// attachments are used, and then periodically ([AttachmentOrphanSweeper]).
+/// Best effort: a file that cannot be deleted is skipped and nothing is
+/// thrown.
+Future<void> cleanupAttachmentOrphans(
+  Directory directory, {
+  Duration minAge = attachmentOrphanMinAge,
+  DateTime? now,
+}) async {
+  final cutoff = (now ?? DateTime.now()).subtract(minAge);
+  final List<FileSystemEntity> entries;
+  try {
+    if (!await directory.exists()) return;
+    entries = await directory.list(followLinks: false).toList();
+  } catch (_) {
+    return;
+  }
+  for (final entry in entries) {
+    if (entry is! File) continue;
+    final name = entry.uri.pathSegments.last;
+    if (!_attachmentOrphanName.hasMatch(name)) continue;
+    try {
+      if ((await entry.lastModified()).isAfter(cutoff)) continue;
+      await entry.delete();
+    } on FileSystemException {
+      // One file that cannot go must not keep the others.
+    }
+  }
 }

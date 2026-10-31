@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -56,6 +57,16 @@ type Store struct {
 	// counts their refusals (admission_store.go).
 	limits    config.Limits
 	admission *admission.Counters
+
+	// redactCursor is where the next PruneExpiredContent looks for message
+	// sync events that outlived their envelope (redactOrphanedMessageEvents).
+	// It lives in memory: a restart only repeats a cheap, bounded scan.
+	redactMu     sync.Mutex
+	redactCursor int64
+
+	// afterPendingChangesRead is a test seam: ListMLSPendingChanges calls it
+	// between its list queries and its coordinator read, inside its snapshot.
+	afterPendingChangesRead func()
 }
 
 type dbRouter struct {
@@ -167,6 +178,54 @@ func (s *Store) CheckReady(ctx context.Context) error {
 	return nil
 }
 
+// rowIterator is the part of *sql.Rows that eachRow needs.
+type rowIterator interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+	Close() error
+}
+
+// eachRow calls visit for every row and closes rows. database/sql ends Next
+// on a step error or a cancelled context and keeps that error for Err only,
+// after which Close reports nothing, so a loop that checks Close alone takes
+// a failed read for the end of the data. eachRow returns the visit error, or
+// else Err joined with the Close error.
+func eachRow(rows rowIterator, visit func(rows rowIterator) error) error {
+	for rows.Next() {
+		if err := visit(rows); err != nil {
+			rows.Close()
+			return err
+		}
+	}
+	return errors.Join(rows.Err(), rows.Close())
+}
+
+// checkQuickCheckRows reads the result of PRAGMA quick_check: it must be one
+// "ok" row or a list of problems. No row at all means the check did not run,
+// which is not a pass.
+func checkQuickCheckRows(rows rowIterator) error {
+	count := 0
+	err := eachRow(rows, func(rows rowIterator) error {
+		var result string
+		if err := rows.Scan(&result); err != nil {
+			return err
+		}
+		count++
+		if result != "ok" {
+			return fmt.Errorf("sqlite quick_check: %s", result)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return errors.New("sqlite quick_check returned no result")
+	}
+	return nil
+}
+
 func ValidateDatabaseFile(ctx context.Context, path string) error {
 	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro&_pragma=foreign_keys(1)")
 	if err != nil {
@@ -177,18 +236,7 @@ func ValidateDatabaseFile(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
-	for rows.Next() {
-		var result string
-		if err := rows.Scan(&result); err != nil {
-			rows.Close()
-			return err
-		}
-		if result != "ok" {
-			rows.Close()
-			return fmt.Errorf("sqlite quick_check: %s", result)
-		}
-	}
-	if err := rows.Close(); err != nil {
+	if err := checkQuickCheckRows(rows); err != nil {
 		return err
 	}
 	var requiredTables int
@@ -209,8 +257,19 @@ func ValidateDatabaseFile(ctx context.Context, path string) error {
 	return foreignKeys.Err()
 }
 
+// ProbeDatabaseExclusive reports whether the database at path can be locked
+// for writing right now: it fails while another connection holds a write
+// lock. It is an extra check, not proof that no server runs: in WAL mode an
+// idle or reading connection does not stop it, so callers that need to exclude
+// a running server must also take the server's process locks. It never
+// creates a database: a missing path is an error.
 func ProbeDatabaseExclusive(ctx context.Context, path string) error {
-	db, err := sql.Open("sqlite", sqliteDSN(path))
+	if _, err := os.Stat(path); err != nil {
+		return err
+	}
+	// mode=rw opens an existing file only, so a path that vanishes after the
+	// check still does not become a new empty database.
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=rw&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return err
 	}
@@ -251,15 +310,14 @@ func ListDatabaseBlobReferences(ctx context.Context, path string) ([]BackupBlobR
 		return nil, nil, err
 	}
 	references := make([]BackupBlobReference, 0)
-	for rows.Next() {
+	if err := eachRow(rows, func(rows rowIterator) error {
 		var reference BackupBlobReference
 		if err := rows.Scan(&reference.StorageKey, &reference.SHA256, &reference.SizeBytes); err != nil {
-			rows.Close()
-			return nil, nil, err
+			return err
 		}
 		references = append(references, reference)
-	}
-	if err := rows.Close(); err != nil {
+		return nil
+	}); err != nil {
 		return nil, nil, err
 	}
 	migrationsRows, err := db.QueryContext(ctx, `SELECT version FROM schema_migrations ORDER BY version`)
@@ -267,15 +325,14 @@ func ListDatabaseBlobReferences(ctx context.Context, path string) ([]BackupBlobR
 		return nil, nil, err
 	}
 	migrations := make([]string, 0)
-	for migrationsRows.Next() {
+	if err := eachRow(migrationsRows, func(rows rowIterator) error {
 		var version string
-		if err := migrationsRows.Scan(&version); err != nil {
-			migrationsRows.Close()
-			return nil, nil, err
+		if err := rows.Scan(&version); err != nil {
+			return err
 		}
 		migrations = append(migrations, version)
-	}
-	if err := migrationsRows.Close(); err != nil {
+		return nil
+	}); err != nil {
 		return nil, nil, err
 	}
 	return references, migrations, nil
@@ -304,10 +361,8 @@ func (s *Store) Migrate(ctx context.Context, migrations fs.FS) error {
 	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, checksum_sha256 TEXT NOT NULL, applied_at TEXT NOT NULL)`); err != nil {
 		return err
 	}
-	checksumColumnAdded, err := s.ensureMigrationChecksumColumn(ctx)
-	if err != nil {
-		return err
-	}
+	// Read every migration before writing anything more, so the legacy
+	// backfill below knows all the checksums.
 	entries, err := fs.ReadDir(migrations, ".")
 	if err != nil {
 		return err
@@ -319,11 +374,19 @@ func (s *Store) Migrate(ctx context.Context, migrations fs.FS) error {
 		}
 	}
 	sort.Strings(names)
+	contents := make(map[string][]byte, len(names))
 	for _, name := range names {
 		sqlBytes, err := fs.ReadFile(migrations, name)
 		if err != nil {
 			return err
 		}
+		contents[name] = sqlBytes
+	}
+	if err := s.ensureMigrationChecksums(ctx, contents); err != nil {
+		return err
+	}
+	for _, name := range names {
+		sqlBytes := contents[name]
 		checksum := migrationChecksum(sqlBytes)
 		appliedChecksum, applied, err := s.appliedMigrationChecksum(ctx, name)
 		if err != nil {
@@ -331,13 +394,7 @@ func (s *Store) Migrate(ctx context.Context, migrations fs.FS) error {
 		}
 		if applied {
 			if appliedChecksum == "" {
-				if !checksumColumnAdded {
-					return fmt.Errorf("migration %s has no stored checksum", name)
-				}
-				if _, err := s.db.ExecContext(ctx, `UPDATE schema_migrations SET checksum_sha256 = ? WHERE version = ? AND (checksum_sha256 IS NULL OR checksum_sha256 = '')`, checksum, name); err != nil {
-					return err
-				}
-				continue
+				return fmt.Errorf("migration %s has no stored checksum", name)
 			}
 			if !strings.EqualFold(appliedChecksum, checksum) {
 				return fmt.Errorf("migration %s checksum mismatch: applied %s, current %s", name, appliedChecksum, checksum)
@@ -363,34 +420,57 @@ func (s *Store) Migrate(ctx context.Context, migrations fs.FS) error {
 	return nil
 }
 
-func (s *Store) ensureMigrationChecksumColumn(ctx context.Context) (bool, error) {
-	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(schema_migrations)`)
+// ensureMigrationChecksums adds the checksum column to a schema_migrations
+// table that predates it and backfills every applied row from contents (the
+// current migration files by name), as one transaction. An interruption, or a
+// failure of the backfill, leaves the table as it was, so the next start
+// repeats the whole step. Once it has committed, a row without a checksum can
+// only belong to a database that already had the column, and Migrate refuses
+// it: nothing repairs that silently.
+func (s *Store) ensureMigrationChecksums(ctx context.Context, contents map[string][]byte) error {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return false, err
+		return err
 	}
-	defer rows.Close()
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `PRAGMA table_info(schema_migrations)`)
+	if err != nil {
+		return err
+	}
 	hasChecksum := false
-	for rows.Next() {
+	if err := eachRow(rows, func(rows rowIterator) error {
 		var cid int
 		var name, columnType string
 		var notNull int
 		var defaultValue interface{}
 		var pk int
 		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
-			return false, err
+			return err
 		}
 		if name == "checksum_sha256" {
 			hasChecksum = true
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return false, err
+		return nil
+	}); err != nil {
+		return err
 	}
 	if hasChecksum {
-		return false, nil
+		return nil
 	}
-	_, err = s.db.ExecContext(ctx, `ALTER TABLE schema_migrations ADD COLUMN checksum_sha256 TEXT`)
-	return err == nil, err
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE schema_migrations ADD COLUMN checksum_sha256 TEXT`); err != nil {
+		return err
+	}
+	names := make([]string, 0, len(contents))
+	for name := range contents {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if _, err := tx.ExecContext(ctx, `UPDATE schema_migrations SET checksum_sha256 = ? WHERE version = ? AND (checksum_sha256 IS NULL OR checksum_sha256 = '')`, migrationChecksum(contents[name]), name); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) appliedMigrationChecksum(ctx context.Context, version string) (string, bool, error) {

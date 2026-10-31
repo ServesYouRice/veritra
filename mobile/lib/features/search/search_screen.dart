@@ -38,6 +38,9 @@ class SearchScreen extends StatefulWidget {
 enum _SearchMode { messages, people }
 
 class _SearchScreenState extends State<SearchScreen> {
+  /// The account whose conversation is being started, if any.
+  String? _startingAccountId;
+
   final query = TextEditingController();
   Timer? _debounce;
   _SearchMode mode = _SearchMode.messages;
@@ -367,6 +370,9 @@ class _SearchScreenState extends State<SearchScreen> {
                 itemBuilder: (context, index) {
                   final result = results[index];
                   final action = _actionFor(result);
+                  // While a conversation is being started, account rows wait.
+                  final startingThis =
+                      _startingAccountId != null && result.type == 'account';
                   final reason = _inertReason(result);
                   final colors = avatarColorsFor(context, result.id);
                   return MergeSemantics(
@@ -420,8 +426,8 @@ class _SearchScreenState extends State<SearchScreen> {
                               label: result.label,
                             )
                           : null,
-                      enabled: action != null,
-                      onTap: action,
+                      enabled: action != null && !startingThis,
+                      onTap: startingThis ? null : action,
                     ),
                   );
                 },
@@ -431,22 +437,31 @@ class _SearchScreenState extends State<SearchScreen> {
   VoidCallback? _actionFor(MetadataSearchResult result) {
     if (result.type == 'account') {
       return () async {
-        // startConversation reuses the existing DM with this account rather
-        // than creating a second, indistinguishable thread.
-        final conversation = await widget.state.startConversation(
-          kind: 'dm',
-          memberAccountIds: <String>[result.id],
-        );
-        if (!mounted) return;
-        if (conversation == null) {
-          final error = widget.state.error;
-          if (error != null) {
-            ScaffoldMessenger.of(context)
-                .showSnackBar(SnackBar(content: Text(error)));
+        // One start at a time: two taps would run two startConversation
+        // calls that can both miss the existing DM, and each would open a
+        // chat of its own.
+        if (_startingAccountId != null) return;
+        setState(() => _startingAccountId = result.id);
+        try {
+          // startConversation reuses the existing DM with this account rather
+          // than creating a second, indistinguishable thread.
+          final conversation = await widget.state.startConversation(
+            kind: 'dm',
+            memberAccountIds: <String>[result.id],
+          );
+          if (!mounted) return;
+          if (conversation == null) {
+            final error = widget.state.error;
+            if (error != null) {
+              ScaffoldMessenger.of(context)
+                  .showSnackBar(SnackBar(content: Text(error)));
+            }
+            return;
           }
-          return;
+          _open(conversation.id);
+        } finally {
+          if (mounted) setState(() => _startingAccountId = null);
         }
-        _open(conversation.id);
       };
     }
     if (result.type == 'channel') {

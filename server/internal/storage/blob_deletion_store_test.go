@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 
 	"private-messenger/server/internal/domain"
 )
@@ -105,5 +107,67 @@ func TestDeleteBackupQueuesBlob(t *testing.T) {
 	}
 	if _, err := store.BackupForAccount(ctx, backups[0].ID, owner.Account.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("backup lookup error = %v, want not found", err)
+	}
+}
+
+func TestPendingBlobDeletionsReturnsFreshKeysBeforeRepeatedFailures(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	old := formatTime(time.Now().UTC().Add(-48 * time.Hour))
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 500; i++ {
+		key := fmt.Sprintf("blob_failing_%032d", i)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO blob_deletion_queue(storage_key, created_at, attempts, last_attempt_at) VALUES(?, ?, 3, ?)`, key, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	fresh := "blob_fresh_00000000000000000000000000"
+	if err := store.QueueBlobDeletion(ctx, fresh); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := store.PendingBlobDeletions(ctx, 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 500 || keys[0] != fresh {
+		first := ""
+		if len(keys) > 0 {
+			first = keys[0]
+		}
+		t.Fatalf("pending = %d keys starting with %q, want 500 keys starting with the never-attempted key", len(keys), first)
+	}
+}
+
+func TestPendingBlobDeletionsClampsLargeLimitAndDefaultsSmallOnes(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 600; i++ {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO blob_deletion_queue(storage_key, created_at) VALUES(?, ?)`, fmt.Sprintf("blob_clamp_%032d", i), nowString()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ limit, want int }{{0, 100}, {-5, 100}, {7, 7}, {500, 500}, {501, 500}, {100000, 500}} {
+		keys, err := store.PendingBlobDeletions(ctx, tc.limit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(keys) != tc.want {
+			t.Errorf("PendingBlobDeletions(%d) returned %d keys, want %d", tc.limit, len(keys), tc.want)
+		}
 	}
 }

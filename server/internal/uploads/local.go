@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,6 +54,15 @@ func (s *LocalStore) CleanupTemporaryFiles(ctx context.Context, olderThan time.T
 	if err != nil {
 		return 0, err
 	}
+	return s.sweepTemporaryEntries(ctx, entries, olderThan)
+}
+
+// sweepTemporaryEntries removes the stale .tmp files among entries. A listed
+// file can be gone by the time it is looked at (its upload finished and
+// renamed it, failed and removed it, or another sweep got there first); that
+// is not an error and does not stop the sweep, and it is not counted as a
+// removal. Only files this call removed are counted.
+func (s *LocalStore) sweepTemporaryEntries(ctx context.Context, entries []os.DirEntry, olderThan time.Time) (int, error) {
 	removed := 0
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
@@ -62,6 +72,9 @@ func (s *LocalStore) CleanupTemporaryFiles(ctx context.Context, olderThan time.T
 			continue
 		}
 		info, err := entry.Info()
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
 		if err != nil {
 			return removed, err
 		}
@@ -74,9 +87,12 @@ func (s *LocalStore) CleanupTemporaryFiles(ctx context.Context, olderThan time.T
 			s.activeMu.Unlock()
 			continue
 		}
-		err = os.Remove(filepath.Join(s.root, entry.Name()))
+		err = s.remove(filepath.Join(s.root, entry.Name()))
 		s.activeMu.Unlock()
-		if err != nil && !os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
 			return removed, err
 		}
 		removed++
@@ -225,10 +241,14 @@ func (s *LocalStore) Delete(ctx context.Context, storageKey string) error {
 		return err
 	}
 	err = s.remove(path)
-	if os.IsNotExist(err) {
-		return nil
+	if err != nil && !os.IsNotExist(err) {
+		return err
 	}
-	return err
+	// The unlink is durable only once the directory entry change is flushed,
+	// as PutEncryptedBlob does after its rename. A blob that was already
+	// missing still gets the flush: an earlier delete may have removed it
+	// and stopped before syncing.
+	return s.syncDirectory(s.root)
 }
 
 func (s *LocalStore) path(storageKey string) (string, error) {

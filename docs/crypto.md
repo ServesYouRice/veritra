@@ -3,9 +3,9 @@
 The selected production direction is MLS through OpenMLS. This Rust crate now
 pins OpenMLS 0.9.2 and contains a tested native core for signed key packages,
 group creation/join, and authenticated application messages. It also exposes a
-versioned C ABI and Rust-side credential/key-package boundary types. ABI v8 has
+versioned C ABI and Rust-side credential/key-package boundary types. ABI v9 has
 tested opaque device handles, zeroing owned buffers, credential public-key
-export, enrollment-challenge signing, key-package creation, state sealing, and
+export, domain-separated enrollment proofs, key-package creation, state sealing, and
 rollback-checked restore, plus group create/join/add/remove/update, staged
 membership commits, commit processing, and application encrypt/decrypt. The legacy handle-free
 encrypt/decrypt entry points still return `PM_CRYPTO_UNAVAILABLE`, so mobile code cannot
@@ -16,16 +16,17 @@ The server now reserves final account/device IDs before key generation and
 atomically verifies and consumes a signed enrollment proof covering the server
 challenge, Ed25519 public key, and SHA-256 key-package commitment. The Flutter
 client models this preflight, and its low-level Dart FFI binding requires ABI
-version 8 exactly (`native_crypto_bindings.dart`) and uses the owned
+version 9 exactly (`native_crypto_bindings.dart`) and uses the owned
 device/buffer calls. Native libraries are packaged for Android/iOS, while the
 production service remains behind the release gate.
 
 The public header is `crypto/rust/include/veritra_crypto.h`, which pins
-`PM_CRYPTO_ABI_VERSION` at 8. That version defines:
+`PM_CRYPTO_ABI_VERSION` at 9. That version defines:
 
 - account/device-bound opaque handles with exactly-once destruction
 - library-owned, zero-on-free output buffers
-- enrollment challenge signing with the MLS credential key
+- enrollment proofs signed with the MLS credential key over a fixed
+  `veritra-enrollment-proof-v1` prefix (no raw-challenge signer since ABI 9)
 - sealed provider-state export and rollback-checked restore
 - conversation-bound Welcome processing and credential-bound member addition
 - the versioned protocol identifier `mls10-openmls-v1`
@@ -48,7 +49,7 @@ compatible license choices recorded in `THIRD_PARTY_NOTICES.md`. Sealed state
 reads envelope formats 2 and 3 and writes format 3, including through existing
 ABI v7 state-sealing calls. Genuine format 2 state preserves its signer and live
 groups during migration. Version 1 blobs written under OpenMLS 0.8.1 and unknown
-versions fail closed. No debug feature that exposes
+versions fail closed, with their own restore code since ABI 9. No debug feature that exposes
 message content or cryptographic material is enabled.
 
 Before production message sending:
@@ -90,11 +91,327 @@ safety code; the new device verifies the separate approval tag and its
 reserved identity before saving a session. JSON API redirects are refused.
 Legacy links must be recreated. Existing account/device sessions remain valid.
 
+SAS strength (TASK-010, TASK-048). The SAS is 8 digits, about 26.6 bits.
+The audit's grinding attack assumes the SAS is a hash of values the relay
+sees, so a relay that substitutes both keys can search for a collision
+(about 10^4 key generations per side). Under L0 that does not hold: the
+SAS, the claim tag and the approval tag are MACs keyed from the 128-bit
+secret, which travels only out of band. A relay without the secret cannot
+evaluate any of them. A substituted new-device key fails the claim tag, so
+the old device never asks for or accepts the typed SAS; a substituted
+old-device key fails the approval tag, so the new device saves no session. The
+secret plays the role a commit-then-reveal step would, so none is added.
+The residual case is a leaked secret (a QR seen by someone who also
+controls the relay): the attacker can then forge both tags and grind the
+SAS, which becomes the only check. Closing that needs a key commitment
+before the nonce is revealed, or a longer SAS. That is an owner decision
+(Q-001), not a defect in v2. Protocol v3 (`mls/link_v3.rs`) uses the same
+construction. Any transcript change needs a new protocol string and vector.
+
+### What L1 must provide (TASK-006)
+
+The crypto core now checks the shape of every commit and Welcome (Basic
+credentials, well-formed and unique device identities, no identity change
+on update, the own leaf, a member inviter). It cannot decide who may hold a
+key: the server publishes key packages, so it can still invent a device for
+a real account. L1, the signed approved-device list, must give the core:
+
+- a trust anchor: per account, the set of `(device_id, signing key)` pairs
+  the account's own devices signed, verifiable without trusting the server,
+  with rollback protection (a version or chain) so removed devices stay out;
+- a check on every added leaf, update-path leaf and Welcome roster member
+  that its identity and signing key are in the current list for its account;
+- authorization of the committer and of the Welcome sender: a member whose
+  pair is in that list (and, for conversation roles, allowed to change
+  membership);
+- the expected roster for a Welcome, from the conversation's participants,
+  so a join into a server-built group of look-alike devices is refused;
+- a defined result when the list is unavailable or stale: fail closed for
+  adds and joins, with a visible state instead of silent acceptance.
+
+With L1 the identity-only check on past-epoch senders (TASK-008) can also
+compare signing keys.
+
+## Message size
+
+Three limits apply to an MLS application message, smallest first:
+
+| Limit | Bytes | Where |
+| --- | --- | --- |
+| App payload (padded) | 65,536 | `app_payload.dart` `_maxPayloadBytes` |
+| Sendable plaintext | 733,184 | `maxSendablePlaintextBytes` in `native_crypto_bindings.dart` |
+| FFI plaintext / ciphertext | 1,048,576 / 1,052,672 | `MAX_MESSAGE_BYTES`, `MAX_CIPHERTEXT_BYTES` in `ffi.rs` |
+
+The message routes read at most 1 MiB of JSON (`readLimitedJSON` in
+`server/internal/httpapi/api.go`), with the ciphertext base64-encoded inside
+it, so the largest ciphertext the server can take is about 768 KiB. The
+sendable plaintext is derived from that: reserve 64 KiB for the other JSON
+fields (ids, metadata, attachment refs), leaving (1 MiB - 64 KiB) * 3 / 4 =
+737,280 ciphertext bytes, then subtract a 4 KiB margin for MLS framing (312
+bytes measured). `NativeCryptoDevice.encrypt` refuses anything larger with
+`NativeCryptoError.plaintextTooLarge` before encrypting, so no ratchet step
+is spent on a message that cannot be sent. A test encrypts exactly the cap
+and checks that a full request body stays within 1 MiB. The server limit is
+not raised; if it changes, change the derivation with it.
+
 ## Change log since the Stage 1 freeze
 
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **Periodic self-update (2026-10-31, research round 2):** no payload or
+  local schema change, no new symbol and no ABI number change; server
+  migration 0043.
+  - **Why.** A device's leaf key changed only when that device committed
+    with an update path, which in practice meant removing someone. Most
+    devices kept the key from the key package they joined with, so a
+    leaked device state stayed readable for the life of the group:
+    post-compromise security rarely happened. A path commit soon after a
+    join also fills the device's path in the tree, which makes later
+    removals cheaper (research notes on post-quantum groups, cold trees).
+  - **Native.** `pm_crypto_group_stage_commit` with an empty change list
+    (version 1, no adds, no removes) stages a commit with an update path
+    and no proposals (`MlsDevice::stage_self_update`): the proposal store
+    is not consumed and every proposal is filtered out, and a result
+    without a path is cleared and refused. It is staged, not merged, like
+    every D28 commit. The credential and signature key are kept, so the
+    safety number does not change. Receivers need no change:
+    `inspect_commit` already accepts an update path that keeps the leaf's
+    identity. Earlier ABI 9 builds refuse an empty list, so a mismatched
+    library fails closed (the app backs off and sends nothing). The Dart
+    `selfUpdate` wrapper of `pm_crypto_group_self_update`, which merges
+    before any server answer and can fork the group, is removed; the
+    symbol stays in the library, documented as not for app use.
+  - **Server.** A commit bundle with a commit and no Added or Removed
+    devices is an update-only commit. It needs an active group device of
+    a member account, as every commit does, and is checked in this order:
+    idempotency key (a retried accepted commit returns the stored one,
+    even inside the budget), current epoch (409 `mls_epoch_conflict`),
+    then 409 `mls_change_pending` while the group has a pending
+    revocation or a device whose account left (removals take the epoch
+    first), then 429 `mls_self_update_limit` with `Retry-After` when the
+    same device made one in the conversation within
+    `PRIVATE_MESSENGER_LIMIT_MLS_SELF_UPDATE_MINUTES` (default 60). The
+    time is kept on the device's roster row. The route stays under the
+    D39 request budgets and the delivery write budget. A Welcome needs an
+    Added device and a revocation a Removed one, so neither can ride on
+    an update-only bundle; every other check is unchanged.
+  - **App.** `MlsSelfUpdatePolicy` (`mobile/lib/core/`) decides per
+    conversation: once after a Welcome (30 s plus a jitter of about a
+    minute per member, at most 3 h, since every device a commit adds
+    joins at once); after 100 application messages sent since this
+    device's last path commit (at least an hour after it); after 7 days
+    plus up to 12 h when the chat had activity since. Jitter is derived
+    from the device and conversation IDs. A chat first seen after an
+    upgrade gets a last update spread over the past 7 days, so devices
+    that upgrade together do not all update at once. AppState stages at
+    most one per foreground sync pass, a minute apart, after revocations
+    and reconcile, never in a background wake, and skips a group with a
+    pending revocation, a listed removal, queued MLS work, a staged
+    commit or a paused MLS outbox. A commit tells every member that this
+    device is online, so, like a read receipt, none goes to a message
+    request (or a declined one, D48) or to a DM whose peer is blocked
+    (blocks loaded first); their counters wait for acceptance. Any 4xx
+    refusal of an update-only bundle (other than 401 and 408) drops the
+    staged commit and backs off
+    (409: 10 min, the budget's 429: 1 h, others such as an older
+    server's 400: 24 h), so a self-update never pauses a conversation
+    the way a refused membership commit does. An accepted self-update, or
+    any own commit that removes a device, resets the counters. State is
+    a JSON setting in the encrypted local store, bound to the account and
+    device.
+  - **Trust model.** The server cannot read a commit. "Update only" is
+    what the sender declares, exactly as Added and Removed are for every
+    other bundle, and nothing cross-checks the declaration: not the
+    server, and not receivers, whose `inspect_commit` checks only the
+    commit's shape (proposal types, Basic credentials, unique
+    identities, identity kept on update). A malicious member's client
+    could already hide an Add or Remove inside a bundle that declares
+    another change. An update-only bundle widens that slightly: a hidden
+    Remove no longer needs a real pending change to ride on. The
+    per-device budget bounds how often. A hidden Add still needs a
+    member account and the server roster to receive anything. The fix is
+    L1 ("What L1 must provide"): receivers check every added and updated
+    leaf against the signed device list.
+  - **Open.** Commits that only add devices still carry no path, so the
+    committer's key is not refreshed by them. A device that loses its
+    local policy state updates early or late, never more often than the
+    budget allows. A Welcome handled in a background wake notes the join
+    only in memory, saved by the next foreground pass. If the process
+    ends first, the note is lost: the chat is later first seen, and its
+    first update is spread over 7 days instead of coming shortly after
+    the join.
+
+- **Attachment size padding, manifest v2 (2026-10-31, research round 2):**
+  no ABI, chunk-crypto, AAD or upload change. Before this the server
+  stored each attachment's exact ciphertext size, `plaintext + 20` bytes
+  per 1 MiB chunk, so it could recognise a known file by its length.
+  - **Sender.** `attachment_crypto.dart` encrypts the file followed by
+    zero bytes up to `padded_size`, then seals it with the same chunking.
+    The bucket is Signal's (`PaddingInputStream.getPaddedSize`):
+    `max(541, floor(1.05^ceil(log_1.05(size))))`, the smallest
+    `floor(1.05^k)` that holds the file. That costs at most 5% above
+    541 bytes; 236 buckets in all, 80 of them between 1 MiB and 48 MiB.
+    The power is built by repeated IEEE 754 multiplication, so every
+    platform picks the same buckets. The bucket stops at the server's attachment cap
+    (`max_attachment_bytes` from `setup/status`, at most 48 MiB, which is
+    the app's own cap), so a file just under it is never refused for its
+    padding. It never goes below the file's own size. The server's limit
+    (`MaxAttachmentCiphertext`) is unchanged and still holds, because
+    padded ≤ cap.
+  - **Manifest.** `version: 2` adds `padded_size`. `plaintext_size` is the
+    true length, and both travel only inside the MLS message.
+    `chunk_count = ceil(padded_size / 1 MiB)`, and the ciphertext is
+    `padded_size + chunk_count * 20` bytes. The upload metadata the server
+    sees stays `{version: 1, algorithm, chunk_size}`, because the framing
+    it sees is unchanged and a second version would label padded blobs.
+  - **Receiver.** It accepts version 1 (no `padded_size` allowed) and
+    version 2 (`plaintext_size ≤ padded_size ≤ 48 MiB`). It does not
+    recompute the bucket, because the sender's clamp depends on its
+    server's cap. Every chunk is authenticated, including padding-only
+    ones. Bytes past `plaintext_size` must be zero, or decryption fails
+    closed with nothing published, and only `plaintext_size` bytes are
+    written. AEAD integrity and the exact-length framing check now cover
+    the padded stream. The server's whole-blob SHA-256 and chunk digests
+    (`server/internal/uploads/local.go`) are computed over the uploaded
+    bytes, the padded ciphertext, so they still cover exactly what a
+    client downloads. The manifest (MLS-authenticated, from the sender)
+    alone decides the true length, as it already decided the key.
+  - **Old attachments.** Version 1 manifests decrypt as before, which a
+    hand-built version 1 test shows.
+  - **Older apps.** An app from before this change still lists a padded
+    attachment (name and size come from the manifest) but refuses to open
+    it with `unsupported attachment manifest`. Nothing wrong is ever shown
+    as the file. A K2 history snapshot from a new device that holds
+    padded attachments is refused whole by an older receiving device
+    (strict manifest check in `history_snapshot.dart`). K2 transfer is
+    not wired yet, so no shipped path hits this.
+  - **Cost.** Quotas and the write budget count padded bytes
+    (`docs/operations.md`, Admission limits).
+- **Server revocation and delete fixes (2026-10-31, storage review):** no
+  ABI, wire or schema change.
+  - The coordinator of a pending device revocation is now computed when
+    read or committed: the one recorded when the revocation was queued while
+    it is still an eligible group device (not revoked, its account a member,
+    an active roster device in a rostered group), otherwise the lowest
+    eligible device id. Before, a revoked or departed coordinator left the
+    revocation pending for good. `GET /api/v1/mls/revocations` reports that
+    device in `coordinator_device_id` and lists a pending revocation for it
+    even when it joined the group later and has nothing to confirm. Only it
+    may submit the revocation commit; the group's epoch check, not the
+    coordinator rule, is what stops two commits from both landing.
+  - Deleting an account queues the same per-group revocations as revoking
+    each of its devices, so the remaining members commit the removal of its
+    leaves. They are still not on the reconcile remove list, because a plain
+    bundle may not remove a device with a pending revocation (Q-004).
+  - A message deleted through the server's delete route has its created and
+    edited sync events redacted and hidden; only `message.envelope.deleted`
+    replays. A client never sees a created event without its envelope.
+  - A device that must confirm a revocation and is then revoked, or whose
+    account is deleted, no longer holds it: its unconfirmed rows count as
+    confirmed, and a revocation whose commit is in completes with its one
+    `mls.revocation.completed` event (found by sync, not pushed live).
+  - Open: a device whose account only leaves the conversation still never
+    confirms (confirming needs membership), so that revocation stays
+    `commit_submitted`. Nothing waits on that state today.
+- **Revocations only where a leaf exists (2026-10-31, roster review):** no
+  ABI, wire or schema change.
+  - A revoked device gets a revocation in a rostered group it is an active
+    device of, and, without a roster, only in a legacy group: one with MLS
+    messages, the test `CreateMLSCommitBundle` uses. Before, every
+    conversation without a group row got one, including groups never
+    created (setup failed, or the first bundle still in the creator's
+    outbox); the named coordinator could never commit it.
+  - A pending revocation whose device has no leaf (rostered group, device
+    not an active roster device; or no group and no MLS messages) names no
+    coordinator, so no commit for it is accepted.
+    `GET /api/v1/mls/revocations` reports `coordinator_device_id` as `""`
+    for a pending revocation no device can commit now, not the stale
+    recorded one.
+  - Creating a group, and every later commit bundle, deletes the group's
+    pending revocations whose device is not an active roster device (a
+    revoked device can never join, so they could never complete).
+  - The client handles each listed revocation on its own: one that fails
+    (no local group, no leaf) is logged without identifiers and retried on
+    the next pass, and reconcile and the wake ACK still run.
+  - A server-route delete redacts the message's events from its created
+    event on (`idx_sync_events_conversation`), not the conversation's whole
+    retained history.
+
+- **W8 pin rule (2026-10-31, owner decision):** any member of a DM or a
+  group may pin; community conversations keep moderator roles until C4. The
+  limit rises from 3 to **50** active pins per chat (per channel in a shared
+  community conversation); the 51st evicts the oldest by `pinned_at`. A
+  group admin-only switch waits for C4, because groups have no encrypted
+  settings record yet. Mixed versions disagree until updated: an older app
+  drops a group member's pin and keeps only 3. Payload bytes are unchanged.
+- **Crypto-core fixes, ABI 9 (2026-10-31, audit plan 2026-10-25):** one
+  ABI bump for the whole set; the Dart binding requires 9 exactly.
+  - TASK-007: `pm_crypto_device_sign_enrollment_challenge` is removed. It
+    signed caller-chosen bytes with the MLS identity key, so a server could
+    obtain a valid signature over any RFC 9420 `SignContent` (a leaf node,
+    key package or framed content). No server or app path verified a
+    raw-challenge signature (only the prefixed proof of
+    `pm_crypto_device_create_enrollment_credential`, unchanged), so nothing
+    on the server changes.
+  - TASK-001: every output buffer is an exact-length allocation; a Vec with
+    spare capacity is copied and the original wiped instead of shrunk by a
+    realloc that could free it unwiped. Outputs refused for a NULL target are
+    wiped. encrypt/decrypt check the output pointer before using a ratchet
+    step. `pm_crypto_buffer_free` already wiped non-elidably.
+  - TASK-002: decrypt accepts MLS ciphertext up to 1 MiB + 4096 bytes and
+    encrypt never returns more, so every 1 MiB plaintext round-trips through
+    the FFI. That is the native ceiling, not what the app can send: see
+    "Message size".
+  - TASK-003: an account/device identity occupies one leaf. Adds that would
+    repeat an identity in the resulting roster are refused, and removing a
+    device removes every leaf that carries its credential.
+  - TASK-004: a remote commit is inspected before it is merged: member
+    sender only; Add, Remove and Update proposals only; Basic credentials
+    holding well-formed, unique device identities; updates keep the leaf's
+    identity. A refused commit leaves the stored epoch unchanged.
+  - TASK-005: a Welcome is checked before its group is stored: expected
+    group id, well-formed unique identities, this device's own identity and
+    signing key on its leaf, a sender that is another leaf. A refused
+    Welcome stores nothing, but staging has already consumed the key package.
+  - TASK-008 (decides Q-003): a message decrypted from one of the two
+    retained past epochs (I51) is refused when its sender is no longer in
+    the group, so a removed device cannot keep writing by never applying
+    its removal. The cost: a committer that merges a removal on acceptance
+    drops the removed device's genuine late message too; the receiver
+    cannot tell the two apart. The new code `PM_CRYPTO_SENDER_REMOVED` (-7)
+    is handled exactly like D25's sender mismatch: the ratchet advanced, so
+    the state and cursor commit with an `unverifiable` row. Mapping it to
+    `PM_CRYPTO_ERROR` instead would roll back and stop global sync (I33)
+    on that honest race. The check compares identities only; past-epoch
+    signature keys are not exposed by OpenMLS.
+  - TASK-009: `pm_crypto_device_restore` returns
+    `PM_CRYPTO_STATE_FORMAT_UNSUPPORTED` (-6) for sealed state with the
+    right magic and a format version this build does not read (format 1,
+    or a newer one), so the app can tell "state from another version" from
+    corruption. The version is not authenticated: the code may lead only to
+    re-linking, never to a weaker check. Everything else stays
+    `PM_CRYPTO_ERROR`; old blobs are still refused.
+  - Review follow-up: the app caps sendable plaintext at 733,184 bytes
+    ("Message size"); a restore of an unsupported sealed format surfaces as
+    `CryptoStateFormatUnsupported` with its own message that asks the user
+    to link the device again (still fail-closed); senders run the same
+    Basic-credential check (`basic_identity`) on adds that receivers run.
+  - Every client must run ABI 9 before any release. The receive-side
+    commit and Welcome checks (TASK-004, TASK-005) have no version gate: an
+    ABI 8 committer can still add a duplicate identity, ABI 9 receivers
+    refuse that commit, and the group forks with them stalled under I33.
+    Nothing is released, so there is no mixed fleet yet; before a release,
+    the server or app must refuse mixed ABI versions (for example a minimum
+    client version on enrollment and sync). This belongs with the release
+    gates in STATE.md.
+  - TASK-010, TASK-048: no protocol change. L0's secret-keyed SAS and tags
+    already stop a relay from grinding keys; the doc comments now state the
+    8-digit SAS (about 26.6 bits) and the leaked-secret residual. See
+    "Device linking".
+  - Not closed here: which identities may hold which keys, and who may
+    commit or invite (TASK-006), needs the L1 approved-device list. See
+    "What L1 must provide".
 - **K2 ABI8 controls (2026-10-28):** adds bounded local binary control
   operations and matching Dart bindings for protocol v3. Claim proof validates
   the native key-package identity, and source SAS confirmation records intent
@@ -546,7 +863,7 @@ input can differ.
 | `delete` | 1 | `message_id` | Target's author account | Clears body and reactions. Kinds widen to `text`, `attachment`, `poll`, and `unsupported` (its raw JSON is cleared, §1); clearing an attachment row also drops its keys. A poll's votes and pin go with it |
 | `reaction` | 1 | `message_id`, `reaction` (≤ 32 UTF-16 units, empty clears) | Any member | As today, plus the conversation check |
 | `attachmentManifest` | 1/2 | `attachments` (≤ 32); *`forwarded`*, *`profile_key`*, *`group_profile_key`* | Any member | Row kind `attachment` |
-| `pin` | 2 | `message_id`, `pinned` (bool); `duration_seconds` when `pinned` is true: 86400, 604800 or 2592000 | DM: either member. Group/channel: moderator roles | §5.4 |
+| `pin` | 2 | `message_id`, `pinned` (bool); `duration_seconds` when `pinned` is true: 86400, 604800 or 2592000 | DM and group: any member (owner decision 2026-10-31; an admin-only group switch waits for C4). Community conversation/channel: moderator roles | §5.4 |
 | `poll` | 2 | `question`, `options` (list of strings), `multiple_choice` (bool); *`profile_key`*, *`group_profile_key`* | Any member | Row kind `poll` (new); body holds the poll JSON |
 | `poll_vote` | 2 | `message_id`, `choices` (list of option indexes; empty = retract) | Any member | §5.5 |
 | `poll_close` | 2 | `message_id` | The poll's author account | §5.5 |
@@ -654,7 +971,9 @@ markup:
 - **Residual (S5, for L2).** The server sees one upload per target chat,
   with the same plaintext size bucket, in the same second as the forward.
   It can link forwarded attachments by size and timing even though the
-  keys and ciphertext differ. Padding and send jitter belong to L2.
+  keys and ciphertext differ. Attachment padding (manifest v2, 2026-10-31)
+  widens the size to a 5% bucket, but one bucket at one moment still links
+  them; send jitter belongs to L2.
 
 #### 5.4 Pins
 
@@ -666,8 +985,10 @@ markup:
 - **Conflicts and limits.** Pins apply in sync order, and the last pin
   action for a target wins. `pinned_at` is the pin envelope's server
   `created_at`, and ties go by sync order. A conversation has at most
-  **3** active pins; a `community_shared` conversation has at most 3 **per
-  channel**. A fourth evicts the oldest by `pinned_at`.
+  **50** active pins (owner decision 2026-10-31; W7 first set 3); a
+  `community_shared` conversation has at most 50 **per channel**. The 51st
+  evicts the oldest by `pinned_at`. The pin bar shows about three rows and
+  scrolls.
 - **Expiry and deletion.** Expired pins disappear from the pin bar when
   it is drawn, and are swept when the chat opens. Deleting the target,
   for everyone or for this device only, removes its pin here.

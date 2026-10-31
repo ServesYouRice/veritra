@@ -208,7 +208,13 @@ void boundedDecodingTests() {
         await request.response.flush();
         return;
       }
-      request.response.add(List<int>.filled(64, 7));
+      // The resumed recovery: a valid 206 for the last 10 bytes below the
+      // cap, followed by more bytes than it announced.
+      const cap = ApiClient.maxBackupCiphertextBytes;
+      request.response
+        ..statusCode = HttpStatus.partialContent
+        ..headers.set('Content-Range', 'bytes ${cap - 10}-${cap - 1}/$cap')
+        ..add(List<int>.filled(64, 7));
     });
     final client = await _clientFor(server);
     await expectLater(

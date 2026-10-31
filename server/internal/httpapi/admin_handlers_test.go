@@ -178,3 +178,87 @@ func TestAdminSuspendRankAndRecentAuth(t *testing.T) {
 		t.Fatalf("stale suspend status=%d body=%s", status, response)
 	}
 }
+
+// The privileged change and its audit row commit together or not at all
+// (VAL-214). A trigger makes the audit insert fail.
+func TestAdminActionsAreAtomicWithTheirAuditRow(t *testing.T) {
+	handler, ownerToken, dbPath := newTestHandlerWithOwner(t)
+	_, memberID := registerMemberWithID(t, handler, ownerToken, "bob")
+	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/invites", ownerToken, map[string]interface{}{"max_uses": 2})
+	if status != http.StatusCreated {
+		t.Fatalf("create invite status=%d body=%s", status, response)
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(response, &created); err != nil || created.ID == "" {
+		t.Fatalf("invite response %s: %v", response, err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	auditRows := func(eventType string) int {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM audit_events WHERE event_type = ?`, eventType).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	accountStatus := func() string {
+		var s string
+		if err := db.QueryRow(`SELECT status FROM accounts WHERE id = ?`, memberID).Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	inviteRevoked := func() bool {
+		var revoked sql.NullString
+		if err := db.QueryRow(`SELECT revoked_at FROM invites WHERE id = ?`, created.ID).Scan(&revoked); err != nil {
+			t.Fatal(err)
+		}
+		return revoked.Valid
+	}
+	setStatus := func() int {
+		code, _ := doJSON(t, handler, http.MethodPatch, "/api/v1/admin/accounts/"+memberID+"/status", ownerToken, map[string]string{"status": "suspended"})
+		return code
+	}
+	revoke := func() int {
+		code, _ := doJSON(t, handler, http.MethodDelete, "/api/v1/admin/invites/"+created.ID, ownerToken, nil)
+		return code
+	}
+
+	if _, err := db.Exec(`CREATE TRIGGER audit_insert_fails BEFORE INSERT ON audit_events BEGIN SELECT RAISE(ABORT, 'audit write refused'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if code := setStatus(); code < 400 {
+		t.Fatalf("status change returned %d although its audit row could not be written", code)
+	}
+	if got := accountStatus(); got != "active" {
+		t.Fatalf("account status = %q after a failed audit write, want active", got)
+	}
+	if code := revoke(); code < 400 {
+		t.Fatalf("invite revocation returned %d although its audit row could not be written", code)
+	}
+	if inviteRevoked() {
+		t.Fatal("invite stayed revoked after a failed audit write")
+	}
+
+	if _, err := db.Exec(`DROP TRIGGER audit_insert_fails`); err != nil {
+		t.Fatal(err)
+	}
+	if code := setStatus(); code != http.StatusOK {
+		t.Fatalf("status change status=%d", code)
+	}
+	if got := accountStatus(); got != "suspended" || auditRows("account.status.updated") != 1 {
+		t.Fatalf("after success: status=%q audit rows=%d", got, auditRows("account.status.updated"))
+	}
+	if code := revoke(); code != http.StatusNoContent {
+		t.Fatalf("revoke status=%d", code)
+	}
+	if !inviteRevoked() || auditRows("invite.revoked") != 1 {
+		t.Fatalf("after success: revoked=%v audit rows=%d", inviteRevoked(), auditRows("invite.revoked"))
+	}
+}
