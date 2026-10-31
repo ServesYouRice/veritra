@@ -1065,6 +1065,46 @@ def qa02_cases(root: Path, valid: dict[str, object]) -> None:
                    "signed ios artifact is not a readable iOS app archive")
     expect_blocked(root, with_record(signed_bytes("two-apps.ipa", extra_apps=("Other.app",))), "must hold exactly one Payload/*.app bundle")
 
+    # The central directory must end exactly at the end record (review
+    # finding). Otherwise zipfile silently shifts every offset by the
+    # difference and reads the directory before the end record, while a
+    # reader trusting the recorded offset, or walking local headers from
+    # byte 0, sees another archive. Bytes before the first entry that no
+    # directory entry names are refused too.
+    good_ipa = (dist / SIGNED_IPA).read_bytes()
+    ipa_end = len(good_ipa) - 22
+    ipa_cd_offset = struct.unpack_from("<I", good_ipa, ipa_end + 16)[0]
+
+    def ipa_raw(name: str, data: bytes) -> dict[str, object]:
+        (dist / name).write_bytes(data)
+        return record(file=name, digest="sha256:" + hashlib.sha256(data).hexdigest())
+
+    def cd_offset(data: bytes, value: int) -> bytes:
+        end = len(data) - 22
+        return data[:end + 16] + struct.pack("<I", value) + data[end + 20:]
+
+    misplaced = "signed ios artifact central directory is not where its end record says"
+    for name, data in (
+        ("prefixed.ipa", b"PREFIX" + good_ipa),
+        ("directory-offset-low.ipa", cd_offset(good_ipa, ipa_cd_offset - 1)),
+        ("directory-offset-high.ipa", cd_offset(good_ipa, ipa_cd_offset + 1)),
+    ):
+        expect_blocked(root, with_record(ipa_raw(name, data)), misplaced, no_signed)
+    # Prepended bytes with every offset moved to match: a consistent zip,
+    # but one whose first bytes no entry accounts for.
+    stub = b"PREFIX"
+    shifted_directory = bytearray(good_ipa[ipa_cd_offset:ipa_end])
+    position = 0
+    while position < len(shifted_directory):
+        name_size, extra_size, comment_size = struct.unpack_from("<HHH", shifted_directory, position + 28)
+        local = struct.unpack_from("<I", shifted_directory, position + 42)[0]
+        struct.pack_into("<I", shifted_directory, position + 42, local + len(stub))
+        position += 46 + name_size + extra_size + comment_size
+    stubbed = cd_offset(stub + good_ipa[:ipa_cd_offset] + bytes(shifted_directory) + good_ipa[ipa_end:],
+                        ipa_cd_offset + len(stub))
+    expect_blocked(root, with_record(ipa_raw("stubbed.ipa", stubbed)),
+                   "signed ios artifact has bytes before its first entry", no_signed, absent=(misplaced,))
+
     # Review finding: another app, a zip comment and two profiles (zipfile
     # reads the last, a distribution one; the first allows debugging) passed.
     reviewer_ipa = signed_bytes("reviewer.ipa", prefix="Payload/Other.app/", bundle_id="com.someone.else",

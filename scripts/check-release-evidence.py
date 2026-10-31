@@ -546,10 +546,20 @@ def ipa_errors(path: Path, pins: dict[str, str] | None) -> list[str]:
         layout = zip_layout_error(data)
         if layout:
             return [f"signed ios artifact {layout}"]
+        # As for an APK (apk_signing_block): the central directory ends at
+        # the end record. Otherwise zipfile shifts every offset by the gap
+        # and reads another archive than a reader that trusts the offsets.
+        cd_size, cd_offset = struct.unpack_from("<II", data, len(data) - ZIP_EOCD_SIZE + 12)
+        if cd_offset + cd_size != len(data) - ZIP_EOCD_SIZE:
+            return ["signed ios artifact central directory is not where its end record says"]
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             problem = zip_entries_error(data, archive)
             if problem:
                 return [f"signed ios artifact {problem}"]
+            # Bytes before the first entry are in no entry, so nothing here
+            # would check them.
+            if min((entry.header_offset for entry in archive.infolist()), default=None) != 0:
+                return ["signed ios artifact has bytes before its first entry"]
             names = set(archive.namelist())
             apps = {
                 name.split("/")[1]
