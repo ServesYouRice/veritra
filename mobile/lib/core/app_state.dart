@@ -218,6 +218,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// stored keeps its language. Push data never carries any of it.
   AppLocalizations l10n = englishL10n;
 
+  /// How long sign-out waits for the server to revoke the token before it
+  /// gives up. The local wipe never waits on it: the device is signed out
+  /// either way, and an unrevoked token expires on its own.
+  @visibleForTesting
+  Duration signOutRevokeTimeout = const Duration(seconds: 5);
+
   Session? session;
   ApiClient? api;
   SyncService? sync;
@@ -2999,16 +3005,29 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       final current = session;
       final client = api;
       await _stopPush(current, client);
-      await _clearLocalSession(preserveDeviceIdentity: true);
-      if (current != null && client != null) {
-        try {
-          await client.logout(current.token);
-        } catch (_) {
-          // Local sign-out is the security boundary. The remote token expires
-          // normally if revocation cannot be delivered while offline.
-        }
-      }
+      final detached = await _clearLocalSession(
+          preserveDeviceIdentity: true, keepApiOpen: true);
+      await _revokeAndClose(current, detached);
     });
+  }
+
+  /// Asks the server to revoke [current]'s token over [client], the client
+  /// [_clearLocalSession] detached without closing, then closes it. Runs
+  /// after the local wipe: the wipe is the security boundary and never waits
+  /// on the network. A revoke that fails or takes longer than
+  /// [signOutRevokeTimeout] is dropped, and the token expires on its own.
+  Future<void> _revokeAndClose(Session? current, ApiClient? client) async {
+    if (client == null) return;
+    try {
+      if (current != null && current.token.isNotEmpty) {
+        await client.logout(current.token).timeout(signOutRevokeTimeout);
+      }
+    } catch (_) {
+      // Offline or slow: the device is signed out either way.
+    } finally {
+      // Also aborts a revoke still in flight after the timeout.
+      client.close();
+    }
   }
 
   Future<void> logoutOtherDevices() async {
@@ -4180,14 +4199,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       final current = session;
       final client = api;
       await _stopPush(current, client);
-      await _clearLocalSession();
-      if (current != null && client != null) {
-        try {
-          await client.logout(current.token);
-        } catch (_) {
-          // The local identity is already gone; the token expires normally.
-        }
-      }
+      final detached = await _clearLocalSession(keepApiOpen: true);
+      await _revokeAndClose(current, detached);
     });
   }
 
@@ -4540,13 +4553,18 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     };
   }
 
-  Future<void> _clearLocalSession({
+  /// Ends the local session. With [keepApiOpen] the API client is detached
+  /// but not closed and is returned, so sign-out can still revoke the token
+  /// on the server; the caller closes it. Otherwise it is closed here and
+  /// null is returned.
+  Future<ApiClient?> _clearLocalSession({
     bool preserveDeviceIdentity = false,
     bool preserveOutbox = false,
     bool drainSyncOwner = true,
     // Set only when the server rejected the session (401): the same person
     // signs in again to their drafts. Sign-out and relinking wipe them.
     bool keepDrafts = false,
+    bool keepApiOpen = false,
   }) async {
     _sessionGeneration++;
     // Native permits go first, then capture, then the private notice state
@@ -4603,8 +4621,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       await localStore.clear();
     }
     session = null;
-    api?.close();
+    final detachedApi = api;
     api = null;
+    if (!keepApiOpen) detachedApi?.close();
     conversations = <Conversation>[];
     conversationsLoaded = false;
     communitiesLoaded = false;
@@ -4667,6 +4686,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     syncRecovery = null;
     lifecycle = SessionLifecycle.ready;
     recoveryMessage = null;
+    return keepApiOpen ? detachedApi : null;
   }
 
   Future<void> _persistSnapshot() async {
