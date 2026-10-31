@@ -156,8 +156,7 @@ void main() {
       memberAccountIds: <String>[bob.accountId],
     );
     owner.expectOk();
-    expect(await owner.state.sendMessageTo(bobDm!.id, 'after removal'),
-        isTrue);
+    expect(await owner.state.sendMessageTo(bobDm!.id, 'after removal'), isTrue);
     await bob.waitFor(bobDm.id, (m) => m.body == 'after removal',
         timeout: const Duration(seconds: 120));
     // Bob's own view reflects the removal: the group leaves his list.

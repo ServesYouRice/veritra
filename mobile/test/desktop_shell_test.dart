@@ -256,8 +256,7 @@ void main() {
     expect(notifier.shown, isEmpty);
   });
 
-  test('the same envelope notifies once its mute reads as not muted',
-      () async {
+  test('the same envelope notifies once its mute reads as not muted', () async {
     history(<LocalMessage>[_local('m1'), _local('m2')]);
     state.muteReadable = true;
     await messages.handle(<ReceivedMessageEnvelope>[_envelope('m2')]);

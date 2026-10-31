@@ -143,7 +143,8 @@ void main() {
     state.dispose();
   });
 
-  test('loading stages the decrypted file, reads it back and removes it', () async {
+  test('loading stages the decrypted file, reads it back and removes it',
+      () async {
     final api = _AttachmentApi();
     final crypto = _FakeAttachmentCrypto(tempDir);
     final state = _state(api, _FakeMls(), crypto);
