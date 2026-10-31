@@ -1572,7 +1572,7 @@ class _MessageBubble extends StatelessWidget {
       local?.kind == LocalMessageKind.unsupported ||
       local?.kind == LocalMessageKind.invalid;
 
-  /// A peer message this device can never decrypt (D54). NativeCryptoService
+  /// A peer message this device can never decrypt (D54). The crypto service
   /// stores it as an `invalid` row, which holds no content and offers no
   /// action, keyed `undecryptable:<sync event>:<server id>`.
   bool get _isUndecryptable =>

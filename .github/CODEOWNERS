@@ -29,9 +29,9 @@
 /scripts/check-rust-audit-policy.py @ServesYouRice
 /scripts/check-demo-boundary.sh @ServesYouRice
 /scripts/check-demo-boundary_test.py @ServesYouRice
+/scripts/check-demo-boundary-imports_test.py @ServesYouRice
 /scripts/audit-rust.sh @ServesYouRice
 /scripts/smoke-deploy.sh @ServesYouRice
-/scripts/check-demo-boundary_test.py @ServesYouRice
 /scripts/check-go-toolchain_test.py @ServesYouRice
 /scripts/release-image_test.py @ServesYouRice
 /scripts/build-crypto_test.py @ServesYouRice
