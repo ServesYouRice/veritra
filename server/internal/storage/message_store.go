@@ -371,6 +371,16 @@ func (s *Store) deleteMessageEnvelope(ctx context.Context, messageID, accountID 
 	if err := releaseMessageAttachments(ctx, tx, messageID); err != nil {
 		return domain.MessageEnvelope{}, 0, err
 	}
+	// The created and edited events still hold the ciphertext the delete
+	// replaced. They are hidden from sync from now on (syncEventVisibleTo),
+	// and their copies go here, the way expiry removes them. The deleted
+	// event, written below, carries the marker and stays visible.
+	if _, err := tx.ExecContext(ctx, redactMessageSyncEventsSQL+`
+		WHERE conversation_id = ? AND event_type IN (`+messageVersionEventTypes+`)
+		  AND json_extract(payload_json, '$.message_id') = ?
+		  AND json_extract(payload_json, '$.envelope') IS NOT NULL`, envelope.ConversationID, messageID); err != nil {
+		return domain.MessageEnvelope{}, 0, err
+	}
 	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, nil, envelope.ConversationID, messageSyncEventPayload(envelope), now)
 	if err != nil {
 		return domain.MessageEnvelope{}, 0, err
@@ -613,6 +623,10 @@ func deleteExpiredMessageByIdempotency(ctx context.Context, tx *sql.Tx, deviceID
 // message envelope, ciphertext included (messageSyncEventPayload).
 const messageEnvelopeEventTypes = `'message.envelope.created', 'message.envelope.edited', 'message.envelope.deleted'`
 
+// messageVersionEventTypes lists the message events whose envelope copy a
+// delete supersedes: every one but the deleted event itself.
+const messageVersionEventTypes = `'message.envelope.created', 'message.envelope.edited'`
+
 // redactMessageSyncEventsSQL starts an UPDATE that cuts a message event down
 // to the identifiers readers still need. The row and its id stay, so a cursor
 // on it keeps working; the ciphertext and every other envelope field go. The
@@ -770,7 +784,9 @@ func (s *Store) PruneExpiredContent(ctx context.Context, now time.Time) (int64, 
 
 // redactOrphanedMessageEvents redacts the message events whose envelope row is
 // already gone but whose payload still holds the envelope: the copies left by
-// expiries pruned before events were redacted with them. Each call starts at
+// expiries pruned before events were redacted with them. It also redacts the
+// created and edited events of a message deleted before deletes redacted
+// them, which sync already hides (syncEventVisibleTo). Each call starts at
 // the first event after the cursor and looks at the next redactBackfillWindow
 // event ids, so the work per sweep is bounded however large sync_events is,
 // and a gap left by PruneSyncEvents is jumped, not crawled. The cursor wraps
@@ -791,7 +807,8 @@ func (s *Store) redactOrphanedMessageEvents(ctx context.Context, tx *sql.Tx) (in
 	if _, err := tx.ExecContext(ctx, redactMessageSyncEventsSQL+`
 		WHERE id >= ? AND id <= ? AND event_type IN (`+messageEnvelopeEventTypes+`)
 		  AND json_extract(payload_json, '$.envelope') IS NOT NULL
-		  AND NOT EXISTS (SELECT 1 FROM message_envelopes me WHERE me.id = json_extract(payload_json, '$.message_id'))`, first.Int64, to); err != nil {
+		  AND NOT EXISTS (SELECT 1 FROM message_envelopes me WHERE me.id = json_extract(payload_json, '$.message_id')
+		                  AND (me.deleted_at IS NULL OR event_type = 'message.envelope.deleted'))`, first.Int64, to); err != nil {
 		return 0, err
 	}
 	return to, nil
@@ -972,8 +989,11 @@ func (c *syncCandidateScanner) Scan(dest ...interface{}) error {
 //
 // A message event also needs its envelope row: once the message expired or
 // the row is gone, the event is hidden even from a cursor older than it, so
-// an expired envelope is never replayed. The clock is SQLite's, in the stored
-// fixed-width format, because the query takes no time parameter.
+// an expired envelope is never replayed. Once the message is deleted, only
+// its deleted event (the marker) is served; the created and edited events,
+// whose ciphertext the delete redacted, are hidden the same way. The clock
+// is SQLite's, in the stored fixed-width format, because the query takes no
+// time parameter.
 var syncEventVisibleTo = `(NOT (se.event_type = 'mls.message.created' OR se.event_type LIKE 'message.envelope.%'
 	        OR se.event_type LIKE 'call.%')
 	   OR ` + mlsJoinFilterEventFor("?3") + `)
@@ -981,7 +1001,8 @@ var syncEventVisibleTo = `(NOT (se.event_type = 'mls.message.created' OR se.even
 	AND (se.event_type NOT LIKE 'message.envelope.%' OR EXISTS (
 	  SELECT 1 FROM message_envelopes live
 	  WHERE live.id = json_extract(se.payload_json, '$.message_id')
-	    AND (live.expires_at IS NULL OR live.expires_at > ` + sqlNowText + `)))`
+	    AND (live.expires_at IS NULL OR live.expires_at > ` + sqlNowText + `)
+	    AND (live.deleted_at IS NULL OR se.event_type = 'message.envelope.deleted')))`
 
 // sqlNowText is the current time in formatTime's layout, to the millisecond.
 const sqlNowText = `(strftime('%Y-%m-%dT%H:%M:%S', 'now') || substr(strftime('%f', 'now'), 3) || '000000Z')`
