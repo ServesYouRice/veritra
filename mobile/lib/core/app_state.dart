@@ -1559,7 +1559,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           deviceId.isEmpty ||
           deviceSecret == null ||
           deviceSecret.isEmpty) {
-        throw StateError(l10n.errorPasswordLoginNeedsLink);
+        throw UserFacingException(l10n.errorPasswordLoginNeedsLink);
       }
       // Read before saving the new session: a different identity wipes the
       // MLS state with it.
@@ -3401,7 +3401,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       final client = api;
       final deviceSecret = current?.deviceSecret;
       if (current == null || client == null || deviceSecret == null) {
-        throw StateError(l10n.errorRelinkRequired);
+        throw UserFacingException(l10n.errorRelinkRequired);
       }
       final rotated =
           await client.reauthenticate(current.token, password, deviceSecret);
@@ -6933,7 +6933,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     // The UI validates too, but this is the one place every connection path
     // (setup, registration, sign-in, device link, restore) goes through.
     if (!config.transport.allows(baseUrl)) {
-      throw StateError(l10n.errorServerNotAllowed(baseUrl));
+      throw UserFacingException(l10n.errorServerNotAllowed(baseUrl));
     }
     api?.close();
     api = apiClientFactory(baseUrl);
