@@ -1602,8 +1602,22 @@ class _MessageBubble extends StatelessWidget {
     final l10n = context.l10n;
     final placeholder = _isPlaceholder;
     final time = formatTimeOfDay(context, message.createdAt);
+    // An attachment bubble keeps its attachment tiles as nodes of their own
+    // (file name, size and a tap action); excluding descendants would leave
+    // the merged bubble with no way to open them. Everything else in such a
+    // bubble stays covered by the bubble's label.
+    final tileNodes = local?.kind == LocalMessageKind.attachment &&
+        !deleted &&
+        !unverifiable &&
+        onOpenAttachment != null &&
+        AttachmentEntry.listFromBody(local?.body,
+                conversationId: message.conversationId)
+            .isNotEmpty;
+    Widget quiet(Widget child) =>
+        tileNodes ? ExcludeSemantics(child: child) : child;
     return Semantics(
-      excludeSemantics: true,
+      container: tileNodes,
+      excludeSemantics: !tileNodes,
       onLongPress: onActions,
       onLongPressHint: onActions == null ? null : l10n.chatMessageActions,
       label: (deleted
@@ -1641,21 +1655,21 @@ class _MessageBubble extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
-                    if (starred) const Icon(Icons.star, size: 14),
+                    if (starred) quiet(const Icon(Icons.star, size: 14)),
                     if (copiedHistory)
-                      Text(l10n.k2CopiedHistory,
-                          style: theme.textTheme.labelSmall),
+                      quiet(Text(l10n.k2CopiedHistory,
+                          style: theme.textTheme.labelSmall)),
                     if (local?.forwardHops != null)
-                      Padding(
+                      quiet(Padding(
                           padding: const EdgeInsets.only(bottom: 4),
                           child: Text(
                               local!.forwardHops! >= 5
                                   ? l10n.w8ForwardedMany
                                   : l10n.w8Forwarded,
                               style: theme.textTheme.labelSmall
-                                  ?.copyWith(fontStyle: FontStyle.italic))),
+                                  ?.copyWith(fontStyle: FontStyle.italic)))),
                     if (showSender)
-                      Padding(
+                      quiet(Padding(
                         padding: const EdgeInsets.only(bottom: 5),
                         child: Text(
                           senderLabel,
@@ -1663,9 +1677,9 @@ class _MessageBubble extends StatelessWidget {
                             color: scheme.onSurfaceVariant,
                           ),
                         ),
-                      ),
+                      )),
                     if (replyPreview != null && !deleted)
-                      Container(
+                      quiet(Container(
                         margin: const EdgeInsets.only(bottom: 6),
                         padding: const EdgeInsets.only(left: 8),
                         decoration: BoxDecoration(
@@ -1682,7 +1696,7 @@ class _MessageBubble extends StatelessWidget {
                             color: scheme.onSurfaceVariant,
                           ),
                         ),
-                      ),
+                      )),
                     if (deleted)
                       Text(
                         l10n.chatMessageDeleted,
@@ -1747,7 +1761,7 @@ class _MessageBubble extends StatelessWidget {
                         color: foreground,
                       ),
                     if (reactions.isNotEmpty && !deleted)
-                      Padding(
+                      quiet(Padding(
                         padding: const EdgeInsets.only(top: 6),
                         child: Wrap(
                           spacing: 4,
@@ -1775,9 +1789,9 @@ class _MessageBubble extends StatelessWidget {
                               ),
                           ],
                         ),
-                      ),
+                      )),
                     const SizedBox(height: 6),
-                    _metaLine(context, scheme),
+                    quiet(_metaLine(context, scheme)),
                   ],
                 ),
               ),

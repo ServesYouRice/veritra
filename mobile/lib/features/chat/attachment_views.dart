@@ -206,6 +206,9 @@ class AttachmentTile extends StatelessWidget {
     final size = formatFileSize(context, entry.plaintextSize);
     return Semantics(
       button: onOpen != null,
+      // The tile's own tap action: excludeSemantics below drops the InkWell's,
+      // and this node must still be activatable by assistive technology.
+      onTap: onOpen,
       label: entry.isImage
           ? context.l10n.attachmentImageSemantics(entry.fileName, size)
           : context.l10n.attachmentFileSemantics(entry.fileName, size),
