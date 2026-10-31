@@ -2369,9 +2369,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     }
     try {
       // With the switch off the receipt is private: the server keeps this
-      // account's own cursor for the unread count and shares nothing.
+      // account's own cursor for the unread count and shares nothing. The
+      // same holds while the saved choice cannot be read.
       await receiptPreferences.loaded;
-      if (receiptPreferences.sendReadReceipts) {
+      if (receiptPreferences.shareReadReceipts) {
         await client.markRead(current.token, conversationId, messages.first.id);
       } else {
         await client.markReadPrivate(

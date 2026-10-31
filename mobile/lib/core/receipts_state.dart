@@ -91,13 +91,17 @@ MessageTick tickForReceipts(
 /// Where the read-receipts switch is kept. A device preference, not account
 /// data, and it holds no message content.
 abstract class ReceiptPreferenceStore {
+  /// The saved choice, or null when none was ever saved. Throws when the
+  /// store cannot be read, so a failure is never mistaken for the default.
   Future<bool?> load();
+
+  /// Throws when the choice could not be saved.
   Future<void> save(bool sendReadReceipts);
 }
 
-/// Keeps the switch in the platform keystore the app already uses. A keystore
-/// failure falls back to the default (on); a preference must never block
-/// startup.
+/// Keeps the switch in the platform keystore the app already uses. Keystore
+/// errors are thrown to [ReceiptPreferences], which keeps read state private
+/// until the choice is known; a preference must never block startup.
 class SecureReceiptPreferenceStore implements ReceiptPreferenceStore {
   SecureReceiptPreferenceStore({FlutterSecureStorage? storage})
       : _storage = storage ??
@@ -114,26 +118,15 @@ class SecureReceiptPreferenceStore implements ReceiptPreferenceStore {
   final FlutterSecureStorage _storage;
 
   @override
-  Future<bool?> load() async {
-    try {
-      return switch (await _storage.read(key: key)) {
+  Future<bool?> load() async => switch (await _storage.read(key: key)) {
         'on' => true,
         'off' => false,
         _ => null,
       };
-    } catch (_) {
-      return null;
-    }
-  }
 
   @override
-  Future<void> save(bool sendReadReceipts) async {
-    try {
-      await _storage.write(key: key, value: sendReadReceipts ? 'on' : 'off');
-    } catch (_) {
-      // The choice still applies for this run.
-    }
-  }
+  Future<void> save(bool sendReadReceipts) =>
+      _storage.write(key: key, value: sendReadReceipts ? 'on' : 'off');
 }
 
 class MemoryReceiptPreferenceStore implements ReceiptPreferenceStore {
@@ -157,28 +150,66 @@ class ReceiptPreferences extends ChangeNotifier {
   final ReceiptPreferenceStore _store;
   bool _sendReadReceipts = true;
   bool _changed = false;
+  bool _known = false;
+  bool _saveFailed = false;
   Future<void>? _loaded;
 
+  /// The switch as shown. Before the saved choice is known this is the
+  /// default (on), but [shareReadReceipts] stays false.
   bool get sendReadReceipts => _sendReadReceipts;
 
-  /// Completes once the saved choice has been read; a read receipt waits for
-  /// it so a stored "off" is never missed at startup.
-  Future<void> get loaded => _loaded ??= _load();
+  /// Whether a read receipt may be shared now: only once the choice is known
+  /// (read from the store, or made in this run) and it is on. While a
+  /// keystore error hides a saved "off", read state stays private.
+  bool get shareReadReceipts => _known && _sendReadReceipts;
 
-  Future<void> _load() async {
-    final saved = await _store.load();
-    if (saved != null && !_changed && saved != _sendReadReceipts) {
+  /// The last choice could not be saved on this device, so a later launch
+  /// may not see it until the account's setting is read from the server.
+  bool get saveFailed => _saveFailed;
+
+  /// Completes once the saved choice has been read, or the read has failed;
+  /// it never throws. A read receipt waits for it so a stored "off" is never
+  /// missed at startup. A failed read is tried again on the next wait.
+  Future<void> get loaded => _loaded ??= _load().then((read) {
+        if (!read) _loaded = null;
+      });
+
+  Future<bool> _load() async {
+    final bool? saved;
+    try {
+      saved = await _store.load();
+    } catch (_) {
+      return false;
+    }
+    if (_changed) return true;
+    _known = true;
+    if (saved != null && saved != _sendReadReceipts) {
       _sendReadReceipts = saved;
       notifyListeners();
     }
+    return true;
   }
 
-  Future<void> setSendReadReceipts(bool value) async {
+  /// Applies [value] at once and saves it. False when it could not be saved
+  /// ([saveFailed]); the choice still applies for this run.
+  Future<bool> setSendReadReceipts(bool value) async {
     _changed = true;
-    if (value != _sendReadReceipts) {
+    final wasKnown = _known;
+    _known = true;
+    if (value != _sendReadReceipts || !wasKnown) {
       _sendReadReceipts = value;
       notifyListeners();
     }
-    await _store.save(value);
+    var saved = true;
+    try {
+      await _store.save(value);
+    } catch (_) {
+      saved = false;
+    }
+    if (_saveFailed != !saved) {
+      _saveFailed = !saved;
+      notifyListeners();
+    }
+    return saved;
   }
 }
