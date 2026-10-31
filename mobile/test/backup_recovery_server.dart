@@ -20,6 +20,10 @@ class BackupRecoveryServer {
   /// Answers every recovery request with this status instead.
   int? recoveryStatus;
 
+  /// Answers a range request with a 206 that lacks its Content-Range, as a
+  /// broken proxy might.
+  bool omitContentRange = false;
+
   String get baseUrl => 'http://127.0.0.1:${_server.port}';
 
   static Future<BackupRecoveryServer> start() async {
@@ -77,7 +81,7 @@ class BackupRecoveryServer {
       }
       final part = data.sublist(start);
       request.response.statusCode = start == 0 ? 200 : 206;
-      if (start != 0) {
+      if (start != 0 && !omitContentRange) {
         request.response.headers.set(
             'Content-Range', 'bytes $start-${data.length - 1}/${data.length}');
       }

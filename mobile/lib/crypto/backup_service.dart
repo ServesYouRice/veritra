@@ -105,14 +105,6 @@ class _RangeRefused implements Exception {
   const _RangeRefused();
 }
 
-/// The saved file does not open with this code, and the server has nothing
-/// for the code either. The file may be the only copy of this backup, and
-/// the key part of the code mistyped, so [BackupService.recover] keeps it
-/// and reports a wrong code.
-class _SavedFileKept implements Exception {
-  const _SavedFileKept();
-}
-
 class BackupException implements Exception {
   const BackupException(this.kind);
 
@@ -308,11 +300,15 @@ class BackupService {
         }
       }
       if (await file.exists()) await file.delete();
-    } on _SavedFileKept {
-      throw const BackupException(BackupFailureKind.wrongKey);
     } on BackupException catch (error) {
+      // A wrong key is kept too: the server accepted the token, so the file
+      // is this backup, and the transfer that fetched it may have used up
+      // the code. Only the corrected key part can restore it now. A local
+      // storage failure says nothing about the file either.
       if (error.kind != BackupFailureKind.network &&
           error.kind != BackupFailureKind.busy &&
+          error.kind != BackupFailureKind.wrongKey &&
+          error.kind != BackupFailureKind.storage &&
           await file.exists()) {
         await file.delete();
       }
@@ -333,7 +329,8 @@ class BackupService {
   /// or it is too short to tell), and appending this code's tail to it would
   /// use up this code for a file that never restores. The download then
   /// starts from byte 0 and replaces the file only once the server answers;
-  /// a 404 then keeps a file that failed on the key ([_SavedFileKept]).
+  /// a 404 then reports a file that failed on the key as a wrong code,
+  /// which [recover] keeps.
   ///
   /// The server may not continue a saved file: a 416 (or a 200 to the range
   /// request, as from a proxy that drops `Range`), or a 404 once a transfer
@@ -344,7 +341,7 @@ class BackupService {
   /// passes. If it does not restore, a refused range drops the file and
   /// downloads again from byte 0, once, in this call; a 404 stays not found,
   /// unless the saved file failed on the key: it is then kept
-  /// ([_SavedFileKept]) for the corrected code.
+  /// for the corrected code, as a wrong code.
   Future<_Download> _download(
       ApiClient client, List<int> recoveryToken, List<int> key, File file,
       {Future<BackupFailureKind?> Function()? restoreSaved}) async {
@@ -360,7 +357,7 @@ class BackupService {
       } on BackupException catch (error) {
         if (error.kind == BackupFailureKind.notFound &&
             savedFailure == BackupFailureKind.wrongKey) {
-          throw const _SavedFileKept();
+          throw const BackupException(BackupFailureKind.wrongKey);
         }
         rethrow;
       }
@@ -380,7 +377,8 @@ class BackupService {
       if (error.kind == BackupFailureKind.notFound && restoreSaved != null) {
         final failed = await restoreSaved();
         if (failed == null) return _Download.restoredSaved;
-        if (failed == BackupFailureKind.wrongKey) throw const _SavedFileKept();
+        if (failed == BackupFailureKind.wrongKey)
+          throw const BackupException(BackupFailureKind.wrongKey);
       }
       rethrow;
     }
@@ -461,6 +459,13 @@ class BackupService {
       // Anything else (5xx, 429, or a status the recovery route never
       // sends, as from a proxy or captive portal) says nothing about the
       // backup: keep the download and let the user try again.
+      throw const BackupException(BackupFailureKind.network);
+    } on FormatException {
+      // A malformed answer (ApiResponseException), as from a proxy: a range
+      // the server did not prove is refused like a 416, so the saved file is
+      // tried and the download restarts from 0; from byte 0 it says nothing
+      // about the backup, so the file is kept for a retry.
+      if (start > 0) throw const _RangeRefused();
       throw const BackupException(BackupFailureKind.network);
     } on SocketException {
       throw const BackupException(BackupFailureKind.network);

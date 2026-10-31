@@ -149,4 +149,111 @@ void main() {
       expect(scratch.listSync(), isEmpty);
     }, skip: skip);
   }
+
+  test('interrupted download, then key typo, then corrected key restores',
+      () async {
+    final (code, ciphertext) = await makeBackup();
+    // A download the right code started, stopped at 90%.
+    partial()
+        .writeAsBytesSync(ciphertext.sublist(0, ciphertext.length * 9 ~/ 10));
+    server.consumeOnComplete = true;
+    final target = MemoryLocalStore();
+    await expectLater(serviceFor(target).recover(withWrongKey(code)),
+        throwsA(failure(BackupFailureKind.wrongKey)));
+    // The whole transfer used up the code; the file is its only copy.
+    expect(server.stored, isNull);
+    expect(partial().readAsBytesSync(), ciphertext);
+
+    await serviceFor(target).recover(code);
+    expect((await target.loadSession())?.deviceId, 'dev_1');
+    expect(scratch.listSync(), isEmpty);
+  }, skip: skip);
+
+  test('a first attempt with a key typo keeps the download', () async {
+    final (code, ciphertext) = await makeBackup();
+    server.consumeOnComplete = true;
+    final target = MemoryLocalStore();
+    await expectLater(serviceFor(target).recover(withWrongKey(code)),
+        throwsA(failure(BackupFailureKind.wrongKey)));
+    expect(server.stored, isNull);
+    expect(partial().readAsBytesSync(), ciphertext);
+
+    await serviceFor(target).recover(code);
+    expect((await target.loadSession())?.deviceId, 'dev_1');
+    expect(scratch.listSync(), isEmpty);
+  }, skip: skip);
+
+  test('a storage failure keeps the saved download', () async {
+    final (code, ciphertext) = await makeBackup();
+    final prefix = ciphertext.sublist(0, 100);
+    partial().writeAsBytesSync(prefix);
+    if (!await _makeUnwritable(partial())) {
+      markTestSkipped('cannot make a file unwritable here');
+      return;
+    }
+    addTearDown(() => _makeWritable(partial()));
+    final target = MemoryLocalStore();
+    await expectLater(serviceFor(target).recover(code),
+        throwsA(failure(BackupFailureKind.storage)));
+    await _makeWritable(partial());
+    expect(partial().readAsBytesSync(), prefix);
+
+    await serviceFor(target).recover(code);
+    expect((await target.loadSession())?.deviceId, 'dev_1');
+    expect(scratch.listSync(), isEmpty);
+  }, skip: skip);
+
+  test('a malformed answer to a range request restarts from byte 0', () async {
+    final (code, ciphertext) = await makeBackup();
+    partial().writeAsBytesSync(ciphertext.sublist(0, 100));
+    server.omitContentRange = true;
+    final target = MemoryLocalStore();
+    await serviceFor(target).recover(code);
+    expect((await target.loadSession())?.deviceId, 'dev_1');
+    expect(server.rangeStarts, <int>[100, 0]);
+    expect(scratch.listSync(), isEmpty);
+  }, skip: skip);
+
+  test('a malformed answer from byte 0 is a network error and keeps the file',
+      () async {
+    final (_, other) = await makeBackup();
+    final (code, _) = await makeBackup();
+    final saved = other.sublist(0, 100);
+    partial().writeAsBytesSync(saved);
+    // A 2xx that is not the 200 an unranged request needs.
+    server.recoveryStatus = 203;
+    final target = MemoryLocalStore();
+    await expectLater(serviceFor(target).recover(code),
+        throwsA(failure(BackupFailureKind.network)));
+    expect(server.rangeStarts, <int>[0]);
+    expect(partial().readAsBytesSync(), saved);
+  }, skip: skip);
+}
+
+/// Makes appending to [file] fail: read-only for a normal user, immutable
+/// for root (which ignores the mode bits). False if neither works here.
+Future<bool> _makeUnwritable(File file) async {
+  final root = (await Process.run('id', ['-u'])).stdout.toString().trim();
+  try {
+    await Process.run(root == '0' ? 'chattr' : 'chmod',
+        [root == '0' ? '+i' : '444', file.path]);
+  } on ProcessException {
+    return false;
+  }
+  try {
+    file.openSync(mode: FileMode.append).closeSync();
+    return false;
+  } on FileSystemException {
+    return true;
+  }
+}
+
+Future<void> _makeWritable(File file) async {
+  if (!file.existsSync()) return;
+  try {
+    await Process.run('chattr', ['-i', file.path]);
+  } on ProcessException {
+    // Not root, or no chattr: the mode bits are enough.
+  }
+  await Process.run('chmod', ['644', file.path]);
 }
