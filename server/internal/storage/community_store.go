@@ -1197,7 +1197,24 @@ func (s *Store) ListConversations(ctx context.Context, accountID string) ([]doma
 // stopping at the first message that is not deleted, expired or from a
 // blocked sender. Unread counts and DM peers are computed only for the
 // conversations on the returned page.
-const listConversationsPageQuery = `
+const listConversationsPageQuery = conversationsPageHead + conversationsPageLegacyCursor + conversationsPageTail
+
+// listConversationsPageKeysetQuery is the same page with its boundary taken
+// from the (activity_at, id) pair the previous page returned: ?3 is the last
+// conversation id and ?5 its activity time in stored format. Nothing is looked
+// up for the boundary, so a new message, an expiry or a left conversation on
+// the cursor row between requests cannot move it.
+const listConversationsPageKeysetQuery = conversationsPageHead + conversationsPageKeysetCursor + conversationsPageTail
+
+// conversationsPageLegacyCursor recomputes the boundary from the cursor
+// conversation's current activity (the id-only cursor of older clients).
+const conversationsPageLegacyCursor = `(?3 = '' OR (activity_at, id) < (
+			SELECT activity_at, id FROM ranked WHERE id = ?3
+		))`
+
+const conversationsPageKeysetCursor = `(activity_at, id) < (?5, ?3)`
+
+const conversationsPageHead = `
 	WITH conversation_activity AS MATERIALIZED (
 		SELECT c.id, c.kind, c.title, c.community_id, c.channel_id,
 		       c.created_by, c.retention_seconds, c.created_at,
@@ -1216,9 +1233,9 @@ const listConversationsPageQuery = `
 		FROM conversation_activity
 	), page AS (
 		SELECT * FROM ranked
-		WHERE (?3 = '' OR (activity_at, id) < (
-			SELECT activity_at, id FROM ranked WHERE id = ?3
-		))
+		WHERE `
+
+const conversationsPageTail = `
 		ORDER BY activity_at DESC, id DESC
 		LIMIT ?4
 	)
@@ -1264,11 +1281,47 @@ const listConversationsPageQuery = `
 	LEFT JOIN read_receipts rr ON rr.conversation_id = p.id AND rr.account_id = ?1
 	ORDER BY p.activity_at DESC, p.id DESC`
 
+// ConversationCursor is the boundary of a conversation-list page: the last
+// conversation of the previous page and, when the client has it, the activity
+// time that page listed it with (its last_message_at, or created_at without
+// messages). With both set the boundary is fixed; with only BeforeID it is
+// recomputed from that conversation's current activity.
+type ConversationCursor struct {
+	BeforeID       string
+	BeforeActivity time.Time
+}
+
+// ListConversationsPage pages by conversation id alone; see ConversationCursor.
 func (s *Store) ListConversationsPage(ctx context.Context, accountID string, limit int, beforeID string) ([]domain.Conversation, error) {
+	return s.ListConversationsPageFrom(ctx, accountID, limit, ConversationCursor{BeforeID: beforeID})
+}
+
+// ListConversationsPageFrom lists one page of the account's conversations. A
+// cursor naming a conversation the account no longer belongs to cannot give a
+// boundary without its activity time: that is ErrInvalidInput, not an empty
+// page that would look like the end of the list.
+func (s *Store) ListConversationsPageFrom(ctx context.Context, accountID string, limit int, cursor ConversationCursor) ([]domain.Conversation, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, listConversationsPageQuery, accountID, nowString(), beforeID, limit)
+	query := listConversationsPageQuery
+	args := []interface{}{accountID, nowString(), cursor.BeforeID, limit}
+	switch {
+	case cursor.BeforeID == "" && !cursor.BeforeActivity.IsZero():
+		return nil, ErrInvalidInput
+	case cursor.BeforeID != "" && !cursor.BeforeActivity.IsZero():
+		query = listConversationsPageKeysetQuery
+		args = append(args, formatTime(cursor.BeforeActivity))
+	case cursor.BeforeID != "":
+		member, err := s.IsConversationMember(ctx, cursor.BeforeID, accountID)
+		if err != nil {
+			return nil, err
+		}
+		if !member {
+			return nil, ErrInvalidInput
+		}
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
