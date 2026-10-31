@@ -332,7 +332,7 @@ func TestAccountBucketsCannotEvictAddressBuckets(t *testing.T) {
 	addresses := len(limiter.buckets)
 	limiter.mu.Unlock()
 	// The same account from new /64s: each finds the account table full of
-	// live buckets and is charged to the overflow bucket; no bucket is evicted.
+	// live buckets and evicts the least used (account buckets carry no credential use).
 	for i := 0; i < 50; i++ {
 		host := rateLimitHost(fmt.Sprintf("2001:db8:%x::1", i))
 		if ok, _ := (&accountCharge{limiter: limiter, host: host}).Authenticated("acct_roaming"); !ok {

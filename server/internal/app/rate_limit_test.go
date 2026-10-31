@@ -164,7 +164,7 @@ func TestRateLimiterAdmitsNewClientsThroughOverflowWhenFull(t *testing.T) {
 }
 
 // A full table of live buckets must not recycle an exhausted credential
-// budget: new keys share an overflow bucket instead of evicting (VAL-207).
+// budget: a full table evicts only buckets with no credential use (VAL-207).
 func TestRateLimiterFullTableKeepsExhaustedCredentialBudget(t *testing.T) {
 	limiter, err := newRateLimiter(httpapi.NewClientIdentityResolver(nil), rateLimits{general: 100, auth: 2, enrollment: 2, account: 100, signedIn: 100})
 	if err != nil {
@@ -207,8 +207,8 @@ func TestRateLimiterFullTableKeepsExhaustedCredentialBudget(t *testing.T) {
 		t.Fatalf("auth rejections %d -> %d", before, got)
 	}
 	// Keys that found the table full are counted, and the table never grew.
-	if _, overflowed := limiter.stats(); overflowed == 0 {
-		t.Fatal("overflow admissions were not counted")
+	if _, pressure := limiter.stats(); pressure == 0 {
+		t.Fatal("table-pressure events were not counted")
 	}
 }
 
@@ -240,6 +240,120 @@ func TestRateLimiterFullAccountTableKeepsLiveBuckets(t *testing.T) {
 	}
 	if charge("acct_first") {
 		t.Fatal("exhausted account budget was reset under table pressure")
+	}
+}
+
+// One routed IPv6 /48 holds 65,536 /64 keys. An attacker that fills the
+// address table with credential-using buckets and then burns its network's
+// overflow bucket must not be able to refuse everyone else's first login
+// (the shared overflow bucket let it).
+func TestRateLimiterOverflowIsPerNetwork(t *testing.T) {
+	limiter, err := newRateLimiter(httpapi.NewClientIdentityResolver(nil), rateLimits{general: 100, auth: 3, enrollment: 3, account: 100, signedIn: 100})
+	if err != nil {
+		t.Fatalf("new limiter: %v", err)
+	}
+	limiter.maxEntries = 8
+	handler := limiter.middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	login := func(ip string) int {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+		request.RemoteAddr = "[" + ip + "]:4000"
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder.Code
+	}
+	// The attacker owns 2001:db8:a::/48: eight /64s fill the table with
+	// buckets that have used a credential budget, then more /64s of the same
+	// /48 land in the overflow and exhaust it.
+	for i := 0; i < 8; i++ {
+		if code := login(fmt.Sprintf("2001:db8:a:%x::1", i)); code != http.StatusNoContent {
+			t.Fatalf("attacker login %d status=%d", i, code)
+		}
+	}
+	limited := 0
+	for i := 0; i < 12; i++ {
+		if login(fmt.Sprintf("2001:db8:a:%x::1", 0x100+i)) == http.StatusTooManyRequests {
+			limited++
+		}
+	}
+	if limited == 0 {
+		t.Fatal("the attacker's own overflow bucket never ran out; the test is not exercising the overflow")
+	}
+	attackerShard := limiter.overflowShard(rateLimitHost("2001:db8:a:1::1"))
+	for _, victim := range []string{"2001:db8:b::1", "2001:db8:c::1", "2001:db8:d::1"} {
+		if limiter.overflowShard(rateLimitHost(victim)) == attackerShard {
+			continue // a 1-in-256 salt collision; try the next network
+		}
+		if code := login(victim); code != http.StatusNoContent {
+			t.Fatalf("an unrelated client's first login from %s was refused: %d", victim, code)
+		}
+		return
+	}
+	t.Fatal("no victim network avoided the attacker's shard")
+}
+
+// A full table prefers to evict the least used bucket with no credential or
+// enrollment use, and never one that has used either.
+func TestRateLimiterEvictsLeastUsedBucketWithoutCredentialUse(t *testing.T) {
+	limiter, err := newRateLimiter(httpapi.NewClientIdentityResolver(nil), rateLimits{general: 100, auth: 3, enrollment: 3, account: 100, signedIn: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	limiter.maxEntries = 4
+	now := time.Now()
+	live := now.Add(time.Minute)
+	limiter.buckets["credential"] = &bucket{auth: 3, reset: live}
+	limiter.buckets["enrollment"] = &bucket{enrollment: 1, reset: live}
+	limiter.buckets["busy"] = &bucket{general: 50, reset: live}
+	limiter.buckets["quiet"] = &bucket{general: 1, reset: live}
+	limiter.mu.Lock()
+	b := limiter.bucketLocked(limiter.buckets, &limiter.overflow, "198.51.100.1", "fresh", now)
+	_, hasQuiet := limiter.buckets["quiet"]
+	_, hasFresh := limiter.buckets["fresh"]
+	size := len(limiter.buckets)
+	limiter.mu.Unlock()
+	if hasQuiet || !hasFresh || size != 4 || b != limiter.buckets["fresh"] {
+		t.Fatalf("expected the quiet bucket to make room: quiet=%v fresh=%v size=%d", hasQuiet, hasFresh, size)
+	}
+	for _, key := range []string{"credential", "enrollment", "busy"} {
+		if limiter.buckets[key] == nil {
+			t.Fatalf("bucket %q was evicted", key)
+		}
+	}
+	// With nothing evictable left, the next key uses its network's overflow.
+	limiter.buckets["busy"].auth = 1
+	limiter.buckets["fresh"].auth = 1
+	limiter.mu.Lock()
+	shared := limiter.bucketLocked(limiter.buckets, &limiter.overflow, "198.51.100.1", "another", now)
+	size = len(limiter.buckets)
+	limiter.mu.Unlock()
+	if size != 4 || shared != &limiter.overflow[limiter.overflowShard("198.51.100.1")] {
+		t.Fatalf("expected the overflow bucket of 198.51.100.0/24, size=%d", size)
+	}
+}
+
+func TestOverflowShardGroupsByNetwork(t *testing.T) {
+	limiter, err := newRateLimiter(httpapi.NewClientIdentityResolver(nil), rateLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	same := [][2]string{
+		{"2001:db8:a:1::1", "2001:db8:a:ffff::9"}, // one /48
+		{"198.51.100.1", "198.51.100.254"},        // one /24
+		{"::ffff:198.51.100.1", "198.51.100.77"},  // mapped form
+	}
+	for _, pair := range same {
+		if a, b := limiter.overflowShard(rateLimitHost(pair[0])), limiter.overflowShard(rateLimitHost(pair[1])); a != b {
+			t.Errorf("%s and %s are in different shards: %d, %d", pair[0], pair[1], a, b)
+		}
+	}
+	seen := map[int]bool{}
+	for i := 0; i < 64; i++ {
+		seen[limiter.overflowShard(rateLimitHost(fmt.Sprintf("2001:db8:%x::1", 0x1000+i)))] = true
+	}
+	if len(seen) < 32 {
+		t.Errorf("64 networks landed in only %d of %d shards", len(seen), overflowShards)
 	}
 }
 
