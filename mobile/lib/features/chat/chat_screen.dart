@@ -163,17 +163,22 @@ class _ChatScreenState extends State<ChatScreen> {
           return;
         }
         final position = scroll.position;
-        if (offset > position.maxScrollExtent) {
-          offset = position.maxScrollExtent;
+        final extentBefore = position.maxScrollExtent;
+        if (offset > extentBefore) {
+          offset = extentBefore;
         }
         scroll.jumpTo(offset);
         await WidgetsBinding.instance.endOfFrame;
+        // The screen may have been left, or the list replaced, while the
+        // frame was pending; the controller is then disposed or detached.
+        if (!mounted || !scroll.hasClients) return;
         if (_jumpTarget.currentContext == null) {
-          if (offset >= scroll.position.maxScrollExtent &&
-              scroll.position.maxScrollExtent == position.maxScrollExtent) {
+          final after = scroll.position;
+          if (offset >= after.maxScrollExtent &&
+              after.maxScrollExtent == extentBefore) {
             return;
           }
-          offset += position.viewportDimension * 0.8;
+          offset += after.viewportDimension * 0.8;
         }
       }
     } finally {
