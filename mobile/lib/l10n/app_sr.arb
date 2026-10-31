@@ -518,6 +518,7 @@
   "chatComposerHint": "Порука",
   "chatComposerCounter": "{length} / {max}",
   "chatPausedNotice": "Слање је овде паузирано: сервер је одбио ажурирање шифровања за овај разговор. Остали разговори и даље раде.",
+  "chatRemovalHoldNotice": "Ваша порука чека да се заврши ажурирање шифровања после уклањања члана, а затим се шаље.",
   "chatAttachment": "Прилог",
   "chatAttachmentOne": "Прилог: {name}",
   "chatAttachmentMany": "Прилози: {name} и још {count}",

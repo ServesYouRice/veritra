@@ -1831,6 +1831,10 @@ class AppLocalizationsSr extends AppLocalizations {
       'Слање је овде паузирано: сервер је одбио ажурирање шифровања за овај разговор. Остали разговори и даље раде.';
 
   @override
+  String get chatRemovalHoldNotice =>
+      'Ваша порука чека да се заврши ажурирање шифровања после уклањања члана, а затим се шаље.';
+
+  @override
   String get chatAttachment => 'Прилог';
 
   @override
@@ -4383,6 +4387,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get chatPausedNotice =>
       'Slanje je ovde pauzirano: server je odbio ažuriranje šifrovanja za ovaj razgovor. Ostali razgovori i dalje rade.';
+
+  @override
+  String get chatRemovalHoldNotice =>
+      'Vaša poruka čeka da se završi ažuriranje šifrovanja posle uklanjanja člana, a zatim se šalje.';
 
   @override
   String get chatAttachment => 'Prilog';

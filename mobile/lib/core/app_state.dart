@@ -3054,6 +3054,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   bool sendHeldForRemoval(String conversationId) =>
       _removalHolds.containsKey(conversationId);
 
+  /// Holds sends to [conversationId] as a removal would, for widget tests.
+  @visibleForTesting
+  void debugHoldSendsForRemoval(String conversationId) {
+    _removalHolds[conversationId] = _RemovalHold(epoch: 0)
+      ..seq = ++_removalHoldSeq;
+    _removalHoldsUpdated();
+  }
+
   /// Sends one payload. After a member removal (D68) it first waits, before
   /// anything is encrypted, until the removal commit is applied; sends to
   /// the same conversation then go out in the order they were made.

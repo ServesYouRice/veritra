@@ -439,7 +439,10 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                     if (conversation != null &&
                         widget.state.mlsConversationFailed(conversation.id))
-                      const _PausedConversationNotice(),
+                      const _PausedConversationNotice()
+                    else if (conversation != null &&
+                        widget.state.sendHeldForRemoval(conversation.id))
+                      const _RemovalHoldNotice(),
                     TypingLine(
                       state: widget.state,
                       conversationId: widget.conversationId,
@@ -456,7 +459,11 @@ class _ChatScreenState extends State<ChatScreen> {
                       controller: composer,
                       // Scoped to the send operation: an unrelated background task
                       // no longer disables the composer.
-                      busy: widget.state.isBusy(Ops.send),
+                      // A send held for a member's removal (D68) is still
+                      // pending: no second send of the same text meanwhile.
+                      busy: widget.state.isBusy(Ops.send) ||
+                          widget.state
+                              .sendHeldForRemoval(widget.conversationId),
                       onSend: _send,
                       attaching: widget.state.isBusy(Ops.attachment),
                       onAttach: widget.state.attachmentsAvailable
@@ -977,6 +984,7 @@ List<Object?> _chatScreenSelection(AppState state, String conversationId) {
     state.l10n,
     state.isMuted(conversationId),
     state.mlsConversationFailed(conversationId),
+    state.sendHeldForRemoval(conversationId),
     state.isBusy(Ops.send),
     state.isBusy(Ops.attachment),
     state.attachmentsAvailable,
@@ -2178,6 +2186,31 @@ class _PausedConversationNotice extends StatelessWidget {
         child: Text(
           context.l10n.chatPausedNotice,
           style: TextStyle(color: scheme.onErrorContainer),
+        ),
+      ),
+    );
+  }
+}
+
+/// Sends wait for a removed member's MLS commit (D68).
+class _RemovalHoldNotice extends StatelessWidget {
+  const _RemovalHoldNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Semantics(
+      liveRegion: true,
+      child: Container(
+        width: double.infinity,
+        color: scheme.secondaryContainer,
+        padding: const EdgeInsets.symmetric(
+          horizontal: BoneSpacing.gutter,
+          vertical: BoneSpacing.sm,
+        ),
+        child: Text(
+          context.l10n.chatRemovalHoldNotice,
+          style: TextStyle(color: scheme.onSecondaryContainer),
         ),
       ),
     );
