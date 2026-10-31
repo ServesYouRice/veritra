@@ -87,6 +87,18 @@ enum BackupFailureKind {
   storage,
 }
 
+/// What [BackupService._download] left in the recovery file.
+enum _Download {
+  /// A whole download from byte 0.
+  fresh,
+
+  /// A saved prefix continued.
+  resumed,
+
+  /// The saved file was already the whole backup, and is restored.
+  restoredSaved,
+}
+
 /// The server will not continue a saved prefix (416, or a 200 to a range
 /// request). Never leaves [BackupService]: the download restarts from 0.
 class _RangeRefused implements Exception {
@@ -269,19 +281,23 @@ class BackupService {
     final file =
         File('${directory.path}${Platform.pathSeparator}$_partialName');
     try {
-      var resumed = await _download(client, recoveryToken, file);
-      try {
-        await _decryptAndRestore(file, recoveryToken, key);
-      } on BackupException catch (error) {
-        // A partial file left by another recovery code decrypts as garbage:
-        // only a fresh download can tell a wrong code from a stale prefix.
-        if (!resumed || error.kind == BackupFailureKind.deviceNotEmpty) {
-          rethrow;
+      final download = await _download(client, recoveryToken, file,
+          restoreSaved: () => _restoreSaved(file, recoveryToken, key));
+      if (download != _Download.restoredSaved) {
+        try {
+          await _decryptAndRestore(file, recoveryToken, key);
+        } on BackupException catch (error) {
+          // A partial file left by another recovery code decrypts as
+          // garbage: only a fresh download can tell a wrong code from a
+          // stale prefix.
+          if (download != _Download.resumed ||
+              error.kind == BackupFailureKind.deviceNotEmpty) {
+            rethrow;
+          }
+          await file.delete();
+          await _download(client, recoveryToken, file);
+          await _decryptAndRestore(file, recoveryToken, key);
         }
-        resumed = false;
-        await file.delete();
-        await _download(client, recoveryToken, file);
-        await _decryptAndRestore(file, recoveryToken, key);
       }
       if (await file.exists()) await file.delete();
     } on BackupException catch (error) {
@@ -299,27 +315,55 @@ class BackupService {
   }
 
   /// Appends the rest of the backup to [file], starting after what it
-  /// already holds. Returns whether the file now continues a prefix saved
+  /// already holds, and says whether the file now continues a prefix saved
   /// by an earlier attempt.
   ///
-  /// A saved prefix the server cannot continue (a 416, or a 200 to the range
-  /// request, as from a proxy that drops `Range`) is dropped and the backup
-  /// is downloaded again from byte 0, once, in this call. Whether the prefix
-  /// was stale or the range unsupported, a fresh copy is the answer, and the
-  /// full digest and authentication checks still run on what is restored.
-  Future<bool> _download(
-      ApiClient client, List<int> recoveryToken, File file) async {
+  /// The server may not continue a saved file: a 416 (or a 200 to the range
+  /// request, as from a proxy that drops `Range`), or a 404 once a transfer
+  /// that reached the end used up the code. The saved file may then already
+  /// be the whole backup, as when the app stopped after the download but
+  /// before the restore, so [restoreSaved] tries it first; VBK2
+  /// authenticates every frame and the last, so a cut or stale file never
+  /// passes. If it does not restore, a refused range drops the file and
+  /// downloads again from byte 0, once, in this call; a 404 stays not found.
+  Future<_Download> _download(
+      ApiClient client, List<int> recoveryToken, File file,
+      {Future<bool> Function()? restoreSaved}) async {
     final start = await file.exists() ? await file.length() : 0;
     if (start == 0) {
       await _downloadFrom(client, recoveryToken, file, 0);
-      return false;
+      return _Download.fresh;
     }
     try {
       await _downloadFrom(client, recoveryToken, file, start);
-      return true;
+      return _Download.resumed;
     } on _RangeRefused {
+      if (restoreSaved != null && await restoreSaved()) {
+        return _Download.restoredSaved;
+      }
       await _deletePartial(file);
       await _downloadFrom(client, recoveryToken, file, 0);
+      return _Download.fresh;
+    } on BackupException catch (error) {
+      if (error.kind == BackupFailureKind.notFound &&
+          restoreSaved != null &&
+          await restoreSaved()) {
+        return _Download.restoredSaved;
+      }
+      rethrow;
+    }
+  }
+
+  /// Restores [file] if it is a whole, authentic backup for this code.
+  /// False if it is not (partial, stale or damaged); a device that already
+  /// has an account still fails as such.
+  Future<bool> _restoreSaved(
+      File file, List<int> recoveryToken, List<int> key) async {
+    try {
+      await _decryptAndRestore(file, recoveryToken, key);
+      return true;
+    } on BackupException catch (error) {
+      if (error.kind == BackupFailureKind.deviceNotEmpty) rethrow;
       return false;
     }
   }
