@@ -35,6 +35,7 @@ This project is licensed AGPL-3.0-or-later. Dependency licenses must be compatib
 | `openmls_basic_credential` 0.6.0 | Basic MLS credential signing keys | MIT | Exact version pinned; used to bind the application device identity to MLS credentials. |
 | `openmls_rust_crypto` 0.6.0 | RustCrypto provider for OpenMLS | MIT | Exact version pinned; native provider core only, pending platform-secure persistence review. |
 | `openmls_traits` 0.6.0 | OpenMLS provider and storage traits | MIT | Exact version pinned. |
+| `serde_json` 1.0.150 | Serializes a key-package hash reference into the storage key OpenMLS's memory storage uses, for a direct lookup | MIT OR Apache-2.0 | Exact version pinned; direct dependency approved in D76 (already in the graph through `openmls_memory_storage`). |
 | `sha2` 0.11.1 | SHA-256 enrollment key-package commitment | Apache-2.0 OR MIT | Exact version pinned; used only to bind the public key package into the signed enrollment proof. |
 | `tls_codec` 0.5.0 | RFC 9420 TLS presentation-language encoding | MIT | Exact version pinned for MLS transport serialization. |
 | Flutter SDK | Mobile client framework | BSD-3-Clause | Toolchain, not vendored. |

@@ -5,8 +5,8 @@
 use super::super::{MlsDevice, MlsError, CIPHERSUITE};
 use super::*;
 use openmls::prelude::{
-    tls_codec::Deserialize as _, KeyPackageIn, LeafNodeParameters, MlsGroup, MlsMessageIn,
-    ProcessedMessageContent, ProtocolVersion,
+    tls_codec::Deserialize as _, KeyPackageIn, LeafNodeParameters, MlsGroup, MlsMessageBodyIn,
+    MlsMessageIn, ProcessedMessageContent, ProtocolVersion, Welcome,
 };
 use openmls::schedule::{ExternalPsk, PreSharedKeyId, Psk};
 use openmls_basic_credential::SignatureKeyPair;
@@ -557,4 +557,76 @@ fn every_storage_method_is_routed() {
     let missing: Vec<_> = all.iter().filter(|name| !hits.contains(*name)).collect();
     assert!(missing.is_empty(), "not exercised: {missing:?}");
     assert!(hits.iter().all(|name| all.contains(name)));
+}
+
+/// A Welcome is server-controlled and may name thousands of key packages.
+/// Each must cost one direct lookup, not one per stored package.
+#[test]
+fn a_welcome_with_many_bogus_secrets_costs_one_lookup_each() {
+    const PACKAGES: usize = 100;
+    const BOGUS: usize = 1000;
+    let alice = device("alice");
+    let bob = device("bob");
+    let mut packages: Vec<Vec<u8>> = (0..PACKAGES)
+        .map(|_| bob.create_key_package().unwrap())
+        .collect();
+    let mut group = alice.create_group(b"conv_bogus").unwrap();
+    let add = alice
+        .add_member(
+            &mut group,
+            &packages.pop().unwrap(),
+            b"acct_bob",
+            b"dev_bob",
+        )
+        .unwrap();
+    let message = MlsMessageIn::tls_deserialize_exact(&add.welcome).unwrap();
+    let MlsMessageBodyIn::Welcome(welcome) = message.extract() else {
+        panic!("expected a Welcome");
+    };
+    let json = serde_json::to_value(&welcome).unwrap();
+    let real = json["secrets"][0].clone();
+    let bogus: Vec<_> = (0..BOGUS)
+        .map(|i| {
+            let mut secret = real.clone();
+            let reference: Vec<u8> = (0..32).map(|j| (i * 31 + j * 7) as u8).collect();
+            secret["new_member"]["value"]["vec"] = serde_json::json!(reference);
+            secret
+        })
+        .collect();
+    let encode = |secrets: Vec<serde_json::Value>| {
+        let mut json = json.clone();
+        json["secrets"] = serde_json::Value::Array(secrets);
+        let welcome: Welcome = serde_json::from_value(json).unwrap();
+        // MLSMessage header (version, wire format), then the Welcome.
+        let mut bytes = add.welcome[..4].to_vec();
+        bytes.extend(welcome.tls_serialize_detached().unwrap());
+        bytes
+    };
+
+    // Only bogus secrets: no package matches, the join fails and nothing
+    // changes.
+    let before = storage(&bob).snapshot();
+    let probes = storage(&bob).package_probes();
+    let started = std::time::Instant::now();
+    assert_eq!(
+        bob.join_group(b"conv_bogus", &encode(bogus.clone()))
+            .map(|_| ()),
+        Err(MlsError::GroupOperation)
+    );
+    let elapsed = started.elapsed();
+    let used = storage(&bob).package_probes() - probes;
+    eprintln!("{BOGUS} bogus secrets, {PACKAGES} packages: {used} store probes, {elapsed:?}");
+    assert!(used <= BOGUS, "{used} store probes");
+    assert_eq!(changed(&before, &storage(&bob).snapshot()), set(&[]));
+
+    // The real secret after the bogus ones still joins, and only its
+    // package is consumed.
+    let mut secrets = bogus;
+    secrets.push(real);
+    bob.join_group(b"conv_bogus", &encode(secrets)).unwrap();
+    let left = owners(&bob)
+        .iter()
+        .filter(|owner| owner.starts_with("kp:"))
+        .count();
+    assert_eq!(left, PACKAGES - 1);
 }

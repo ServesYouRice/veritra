@@ -1473,6 +1473,7 @@ dependencies = [
  "openmls_basic_credential",
  "openmls_rust_crypto",
  "openmls_traits",
+ "serde_json",
  "sha2 0.11.1",
  "tls_codec",
 ]
