@@ -251,7 +251,7 @@ void main() {
       expect(
           (jsonDecode(utf8.decode(await harness.aliceStore.exportBackup()))
               as Map)['pending_pins'],
-          isEmpty);
+          isNull);
       authority.role = 'admin';
       await harness.aliceCrypto.processApplicationMessage(
           echo, (await harness.aliceStore.loadSyncCursor()) + 1);

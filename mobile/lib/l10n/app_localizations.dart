@@ -1842,7 +1842,7 @@ abstract class AppLocalizations {
   /// No description provided for @backupRestoreMessage.
   ///
   /// In en, this message translates to:
-  /// **'This device takes the place of the one that made the backup. Stop using that device first.'**
+  /// **'Your messages and settings come back on this device. The backup holds no sign-in, so this device then joins your account as a new device.'**
   String get backupRestoreMessage;
 
   /// No description provided for @backupRecoveryCode.
@@ -3087,11 +3087,11 @@ abstract class AppLocalizations {
   /// **'This device could not store the backup.'**
   String get backupErrorStorage;
 
-  /// No description provided for @backupErrorSignInAgain.
+  /// No description provided for @backupRestoredLinkToFinish.
   ///
   /// In en, this message translates to:
-  /// **'The backup is restored on this device, but its session is no longer valid. Sign in with your password to continue.'**
-  String get backupErrorSignInAgain;
+  /// **'Your messages and settings are restored on this device. To finish, link this device from another device that is signed in to your account. Finishing without another device is not available yet.'**
+  String get backupRestoredLinkToFinish;
 
   /// No description provided for @syncErrorCursorExpired.
   ///

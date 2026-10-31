@@ -51,7 +51,11 @@ backup rotates the previous capability, and an approved transfer expires after
 exposed, immediately upload a fresh backup (which invalidates the old one),
 then purge application, container and reverse-proxy logs covering the exposure
 window according to the host's retention tooling. Do not copy the capability
-into tickets, shell history or diagnostic bundles.
+into tickets, shell history or diagnostic bundles. A backup holds the
+account's history and settings, never its session token, device secret or
+MLS state (D71, D73). Someone holding a backup and its recovery code can
+read that history but cannot sign in. A restored device joins the account
+as a new device.
 
 Native FCM and APNs use the matching `PRIVATE_MESSENGER_FCM_*` and
 `PRIVATE_MESSENGER_APNS_*` environment secrets. Push payloads are fixed generic

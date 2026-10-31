@@ -953,37 +953,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               String payloadJson
             })>
         envelopes,
-    required List<
-            ({
-              String idempotencyKey,
-              String conversationId,
-              String payloadJson
-            })>
-        outbox,
-    required List<
-            ({
-              String idempotencyKey,
-              String conversationId,
-              String kind,
-              String? recipientDeviceId,
-              String? revocationDeviceId,
-              List<int> payload,
-              int attemptCount,
-              int? nextAttemptAt,
-              String? failureClass,
-              bool terminal
-            })>
-        mlsOutbox,
-    required ({
-      int counter,
-      List<int> stateKey,
-      List<int> sealedState
-    }) cryptoState,
-    required int cursor,
     List<LocalMessage> history = const <LocalMessage>[],
     List<LocalMessageReaction> reactions = const <LocalMessageReaction>[],
     List<LocalPin> pins = const [],
-    List<LocalPendingPin> pendingPins = const [],
     Map<String, int> starred = const {},
     List<LocalConversationPref> conversationPrefs = const [],
     HistoryNamespace? historyNamespace,
@@ -1014,7 +986,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localDrafts).go();
         await delete(localConversationMutes).go();
         // Decrypted history travels in the backup (D27, I45); a version 1
-        // backup without it restores an empty history.
+        // backup without it restores an empty history. The MLS state, its
+        // outbox and the plain outbox do not (D71, D73): the device starts
+        // like a freshly linked one, with no group state and cursor 0.
         await _clearHistoryNamespace();
         await delete(localMessages).go();
         await delete(localMessageReactions).go();
@@ -1034,9 +1008,6 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         }
         for (final pin in pins) {
           await into(localPins).insert(pin);
-        }
-        for (final pin in pendingPins) {
-          await into(localPendingPins).insert(pin);
         }
         for (final entry in starred.entries) {
           await into(localStarred).insert(LocalStarredCompanion.insert(
@@ -1074,39 +1045,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         }
         await _purgeExpiredInTransaction(
             DateTime.now().toUtc().millisecondsSinceEpoch);
-        final queuedAt = DateTime.now().microsecondsSinceEpoch;
-        for (final item in outbox) {
-          await into(localOutboxEntries).insert(
-              LocalOutboxEntriesCompanion.insert(
-                  idempotencyKey: item.idempotencyKey,
-                  conversationId: item.conversationId,
-                  queuedAt: queuedAt,
-                  payloadJson: item.payloadJson));
-        }
-        await into(localCryptoStates).insert(LocalCryptoStatesCompanion.insert(
-            singleton: const Value(1),
-            counter: cryptoState.counter,
-            stateKey: Uint8List.fromList(cryptoState.stateKey),
-            sealedState: Uint8List.fromList(cryptoState.sealedState)));
-        for (final (index, item) in mlsOutbox.indexed) {
-          await into(localMlsOutboxEntries).insert(
-              LocalMlsOutboxEntriesCompanion.insert(
-                  idempotencyKey: item.idempotencyKey,
-                  conversationId: item.conversationId,
-                  kind: item.kind,
-                  recipientDeviceId: Value(item.recipientDeviceId),
-                  revocationDeviceId: Value(item.revocationDeviceId),
-                  payload: Uint8List.fromList(item.payload),
-                  stateCounter: cryptoState.counter,
-                  queuedAt: queuedAt + index,
-                  attemptCount: Value(item.attemptCount),
-                  nextAttemptAt: Value(item.nextAttemptAt),
-                  failureClass: Value(item.failureClass),
-                  terminal: Value(item.terminal)));
-        }
         await into(localSyncStates).insertOnConflictUpdate(
             LocalSyncStatesCompanion.insert(
-                singleton: const Value(1), cursor: Value(cursor)));
+                singleton: const Value(1), cursor: const Value(0)));
       });
 
   Future<int> readCursor() async {

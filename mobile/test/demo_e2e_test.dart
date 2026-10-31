@@ -8,6 +8,7 @@ import 'package:private_messenger/core/client_config.dart';
 import 'package:private_messenger/core/transport_policy.dart';
 import 'package:private_messenger/crypto/attachment_crypto.dart';
 import 'package:private_messenger/crypto/backup_service.dart';
+import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
@@ -200,59 +201,70 @@ void main() {
     await offline.waitUntil(() async => offline.state.pendingFor(conv).isEmpty,
         timeout: const Duration(seconds: 90));
 
-    // Encrypted backup (card I45): the owner backs up, a fresh device
-    // restores it and carries on with the owner's history and groups.
+    // Encrypted backup (card I45, D71, D73): the owner backs up and a fresh
+    // device restores it. The backup holds no sign-in and no MLS state, so
+    // the original device keeps working and the restored one joins the
+    // account as a new device, by a link from the original, keeping the
+    // restored history.
     final code = await owner.state.createBackup();
     owner.expectOk();
     expect(owner.state.errorFor(Ops.backup), isNull,
         reason: owner.state.errorFor(Ops.backup));
     expect(code, isNotNull);
     final ownerAccountId = owner.accountId;
-    // The original device stops, as the clone-restore guidance asks. Here
-    // it does not sign out, so the restore comes back signed in; the round
-    // below covers a restore whose session was revoked.
-    owner.dispose();
     final replacement = _DemoClient(bindings, baseUrl);
     addTearDown(replacement.dispose);
-    expect(await replacement.state.restoreFromBackup(code!), isTrue,
-        reason: replacement.state.errorFor(Ops.restore));
-    expect(replacement.state.session?.accountId, ownerAccountId);
+    expect(await replacement.state.restoreFromBackup(code!), isFalse);
+    expect(replacement.state.errorFor(Ops.restore), contains('link'));
+    expect(replacement.state.session, isNull);
     expect((await replacement.store.loadMessages(conv)).map((m) => m.body),
         contains('hi owner'));
-    expect(await offline.state.sendMessageTo(conv, 'after restore'), isTrue);
-    await replacement.waitFor(conv, (m) => m.body == 'after restore',
-        timeout: const Duration(seconds: 60));
+    expect(await replacement.store.loadCryptoState(), isNull);
+    // A password alone does not sign in a device the server does not know.
+    await replacement.state.login(baseUrl, 'owner', 'owner-password-123');
+    expect(replacement.state.session, isNull);
     // The code is used up.
     final again = _DemoClient(bindings, baseUrl);
     addTearDown(again.dispose);
     expect(await again.state.restoreFromBackup(code), isFalse);
 
-    // Signing in again after a restore: this device backs up and signs out,
-    // which revokes the session the backup carries. The next restore is
-    // reported as failed (D66) but leaves the identity and history, and
-    // signing in as the same account and device goes on from the backup's
-    // cursor. Replaying from the first event would meet commits the
-    // restored MLS state has already applied and stop sync (I33).
-    final second = await replacement.state.createBackup();
-    expect(replacement.state.errorFor(Ops.backup), isNull,
-        reason: replacement.state.errorFor(Ops.backup));
-    expect(second, isNotNull);
-    await replacement.state.logout();
-    replacement.dispose();
-    final signedOut = _DemoClient(bindings, baseUrl);
-    addTearDown(signedOut.dispose);
-    expect(await signedOut.state.restoreFromBackup(second!), isFalse);
-    expect(signedOut.state.errorFor(Ops.restore), isNotNull);
-    expect(signedOut.state.session, isNull);
-    await signedOut.state.login(baseUrl, 'owner', 'owner-password-123');
-    signedOut.expectOk();
-    expect(signedOut.state.session?.accountId, ownerAccountId);
-    expect(await offline.state.sendMessageTo(conv, 'after sign-in'), isTrue);
-    await signedOut.waitFor(conv, (m) => m.body == 'after sign-in',
-        timeout: const Duration(seconds: 60));
-    expect(signedOut.state.syncRecovery, isNull);
-    expect(signedOut.state.deviceRecoveryRequired, isFalse);
-  }, skip: skip, timeout: const Timeout(Duration(minutes: 8)));
+    // The original device links the restored one.
+    expect(await owner.state.reauthenticate('owner-password-123'), isTrue,
+        reason: owner.state.error);
+    await owner.state.createDeviceLink();
+    owner.expectOk();
+    final linkCode = owner.state.activeDeviceLinkCode;
+    expect(linkCode, isNotNull);
+    await replacement.state.claimDeviceLink(baseUrl, linkCode!);
+    replacement.expectOk();
+    final verification =
+        replacement.state.pendingDeviceLinkClaim!.deviceLink.verificationCode;
+    await owner.state.refreshActiveDeviceLink();
+    owner.expectOk();
+    await owner.state.approveActiveDeviceLink(verification);
+    owner.expectOk();
+    await replacement.state.completeDeviceLinkClaim();
+    replacement.expectOk();
+    expect(replacement.state.session?.accountId, ownerAccountId);
+    expect(replacement.state.session?.deviceId,
+        isNot(owner.state.session?.deviceId));
+    // The restored history is still there, and new messages arrive once
+    // the groups add the new device.
+    expect((await replacement.store.loadMessages(conv)).map((m) => m.body),
+        contains('hi owner'));
+    // A member device adds it to the group (I51); a non-coordinator only
+    // falls back after three minutes.
+    final replacementMls =
+        replacement.state.cryptoService as MlsConversationCryptoService;
+    await replacement.waitUntil(
+        () async => await replacementMls.groupEpoch(conv) != null,
+        timeout: const Duration(minutes: 4));
+    expect(await offline.state.sendMessageTo(conv, 'after restore'), isTrue);
+    await replacement.waitFor(conv, (m) => m.body == 'after restore',
+        timeout: const Duration(seconds: 90));
+    expect(replacement.state.syncRecovery, isNull);
+    expect(replacement.state.deviceRecoveryRequired, isFalse);
+  }, skip: skip, timeout: const Timeout(Duration(minutes: 12)));
 }
 
 class _Server {

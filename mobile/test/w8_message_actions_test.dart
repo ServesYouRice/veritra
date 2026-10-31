@@ -310,13 +310,13 @@ void main() {
         expect((await store.loadPins('conv')).map((p) => p.targetKey),
             [for (var i = pinLimitPerChat; i >= 1; i--) 'dev:$i']);
         final before = await store.loadPins('conv');
-        await store.restoreBackup(await store.exportBackup());
+        await _restoreAndReenroll(store, await store.exportBackup());
         expect(await store.loadPins('conv'), before);
         await store.setStarred('dev:2', true);
         await store.saveConversationPref(const LocalConversationPref(
             conversationId: 'conv', archivedAt: 1, pinnedAt: 2));
         final backup = await store.exportBackup();
-        expect((jsonDecode(utf8.decode(backup)) as Map)['version'], 5);
+        expect((jsonDecode(utf8.decode(backup)) as Map)['version'], 6);
         await store.restoreBackup(backup);
         expect(await store.loadStarred(), {'dev:2'});
         expect((await store.loadConversationPrefs()).single.archivedAt, 1);
@@ -363,6 +363,16 @@ void main() {
         final root = jsonDecode(utf8.decode(await store.exportBackup()))
             as Map<String, dynamic>;
         root['version'] = 3;
+        // Versions 1 to 5 carried the device's session, bound to it.
+        root
+          ..['session'] = <String, Object?>{
+            'base_url': 'https://example.test',
+            'token': 'token',
+            'account_id': 'alice',
+            'device_id': 'dev',
+          }
+          ..['account_id'] = 'alice'
+          ..['device_id'] = 'dev';
         for (final message in root['history'] as List) {
           (message as Map).remove('senderHidden');
         }
@@ -420,11 +430,10 @@ void main() {
                   pendingActionKey: 'dev:pin'),
             ]));
         expect(await store.loadPins('conv'), isEmpty);
-        // Restart/backup preserves only this device's still-pending command.
-        await store.restoreBackup(await store.exportBackup());
+        // A backup no longer carries the pending command or its outbox
+        // (D71, D73), so the echo below is checked without a round trip.
         // A server HTTP acknowledgement removes the outbox before sync echo.
         await store.removePendingEnvelope('pin');
-        await store.restoreBackup(await store.exportBackup());
         final now = DateTime.now().millisecondsSinceEpoch;
         final cursor = await store.loadSyncCursor();
         final echoed = ReceivedMessageEnvelope(
@@ -515,6 +524,21 @@ PinMessageEffect _pin(String key,
         pinned: pinned,
         durationSeconds: 86400,
         channelId: channel);
+/// Restores [backup] into [store] and enrolls the same device again, as a
+/// restore now leaves no device or MLS state (D71, D73).
+Future<void> _restoreAndReenroll(LocalStore store, List<int> backup) async {
+  await store.restoreBackup(backup);
+  await store.saveSession(const Session(
+      baseUrl: 'https://example.test',
+      token: 'token',
+      accountId: 'alice',
+      deviceId: 'dev'));
+  await store.saveCryptoState(
+      StoredCryptoState(
+          counter: 1, stateKey: List.filled(32, 1), sealedState: [1]),
+      0);
+}
+
 Future<void> _commit(LocalStore store, List<MessageEffect> effects) async {
   final state = (await store.loadCryptoState())!,
       cursor = await store.loadSyncCursor();

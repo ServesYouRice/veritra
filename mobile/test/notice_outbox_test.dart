@@ -308,6 +308,13 @@ void main() {
         expect(utf8.decode(await store.exportHistorySnapshot()),
             isNot(contains(decision.id)));
         await store.restoreBackup(backup);
+        // A restore leaves no device or MLS state (D71, D73): enroll again,
+        // at the cursor the next reference below expects.
+        await store.saveSession(session);
+        await store.saveCryptoState(
+            StoredCryptoState(
+                counter: 1, stateKey: List.filled(32, 7), sealedState: [8]),
+            1);
         expect(await store.pendingNoticeReferences(owner, now: now), isEmpty);
         expect(await store.pendingNoticeDecision(owner, now: now), isNull);
         await commit(store, [effect('b')], [ref(2, 'b')]);

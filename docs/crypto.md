@@ -223,6 +223,41 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
   because the server accepts only that value; the magic tells the formats
   apart.
 
+### What the plaintext holds (backup JSON v6, D71, D73)
+
+- **Carried:** the account (server origin, account id, username, role),
+  the cached conversation list and envelopes, the decrypted history and
+  reactions, pins, starred messages, conversation preferences and the K2
+  history namespace. Nothing else.
+- **Never carried:** the bearer token, the device id, the device secret,
+  the sealed MLS state, its state key, the plain and MLS outboxes, pending
+  pin commands and the sync cursor. A stolen backup and its recovery code
+  therefore cannot sign in, and cannot act as the device that made it in
+  any MLS group. `mobile/test/backup_no_credentials_test.dart` scans the
+  plaintext for each of them.
+- **Restore makes no device.** It writes the history and an account-only
+  session (empty token, no device), sync cursor 0 and no MLS state. Sync
+  does not start. The device then joins the account as a new device. Today
+  that means a device link from a signed-in device. Saving the linked
+  session over the account-only one keeps the restored history when the
+  server and account match; any other account drops it. The linked device
+  starts fresh MLS state and publishes key packages. Its groups add it by
+  reconcile (I51), and D54 placeholders cover what it cannot decrypt. A
+  second restore over an account-only session is refused
+  (`deviceNotEmpty`).
+- **Password-only finish (D71) is not built yet.** Password sign-in needs
+  the device's id and secret (`login` in `auth_handlers.go`), which a
+  backup no longer has. Finishing a restore with a password alone needs
+  K0's recovery-enrollment route (`docs/designs/K0-long-lived-key.md`, "All
+  devices lost").
+- **Older backups (v1-v5)** still restore. Their session must still bind
+  to their `account_id` and `device_id`. After that check, the token,
+  device secret, MLS state and key, outboxes, pending pin commands and
+  cursor are dropped unread. A restore never keeps them.
+- `state_counter` in the upload's `crypto_metadata` is still the device's
+  MLS counter, so the server's monotonic check is unchanged. It is a
+  number, not state.
+
 ## Change log since the Stage 1 freeze
 
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
