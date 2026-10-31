@@ -6,6 +6,7 @@
 // drive the Dart side through a fake native bridge and a fake bounded
 // crypto service that commits through the real stores.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -422,6 +423,26 @@ void main() {
       expect(await runner.run(permit(3)), WakeOutcome.noChange);
     });
 
+    test('a UI resume during a running wake pass still syncs in the foreground',
+        () async {
+      api.events.add(api.event(1, 'plain'));
+      api.events.add(api.event(2, 'plain'));
+      final gate = api.gate = Completer<void>();
+      final run = runner.run(permit());
+      await api.reached.future.timeout(const Duration(seconds: 5));
+      // The person opens the app while the wake pass waits on the network:
+      // the wake is cancelled and the foreground asks the same owner to sync.
+      state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await Future<void>.delayed(Duration.zero);
+      gate.complete();
+      expect(await run.timeout(const Duration(seconds: 5)),
+          isNot(WakeOutcome.committed));
+      await _until(() async => await store.loadSyncCursor() == 2);
+      expect(crypto.unboundedCalls, 2,
+          reason: 'the foreground pass, not the cancelled wake, decrypted');
+      expect(bridge.presented, isEmpty);
+    });
+
     test('a foreground UI refuses a background run', () async {
       state.handleAppLifecycleState(AppLifecycleState.resumed);
       expect(await runner.run(permit()), WakeOutcome.unavailable);
@@ -485,6 +506,10 @@ class _FakeApi extends ApiClient {
   bool muteFails = false;
   int closed = 0;
 
+  /// When set, the next sync page waits here (after [reached] completes).
+  Completer<void>? gate;
+  Completer<void> reached = Completer<void>();
+
   SyncEvent event(int id, String key, {String? mention}) => SyncEvent(
           id: id,
           type: 'message.envelope.created',
@@ -508,8 +533,16 @@ class _FakeApi extends ApiClient {
   void close() => closed++;
   @override
   Future<List<SyncEvent>> syncEvents(String token,
-          {int after = 0, int limit = 100}) async =>
-      events.where((e) => e.id > after).take(limit).toList();
+      {int after = 0, int limit = 100}) async {
+    final wait = gate;
+    if (wait != null) {
+      gate = null;
+      if (!reached.isCompleted) reached.complete();
+      await wait.future;
+    }
+    return events.where((e) => e.id > after).take(limit).toList();
+  }
+
   @override
   Future<ConversationMute> conversationMute(
       String token, String conversationId) async {
