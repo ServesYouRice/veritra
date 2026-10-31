@@ -99,6 +99,10 @@ func (s *Store) ClaimConversationKeyPackages(ctx context.Context, conversationID
 		}
 		targets = append(targets, item)
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}

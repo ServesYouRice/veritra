@@ -582,6 +582,10 @@ func (s *Store) CreateChannelWithConversation(ctx context.Context, communityID, 
 		}
 		members = append(members, item)
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return domain.Channel{}, domain.Conversation{}, err
+	}
 	if err := rows.Close(); err != nil {
 		return domain.Channel{}, domain.Conversation{}, err
 	}
@@ -689,6 +693,10 @@ func (s *Store) ManageCommunityMember(ctx context.Context, communityID, actorAcc
 			return nil, err
 		}
 		conversationIDs = append(conversationIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

@@ -634,6 +634,10 @@ func (s *Store) revokeDevice(ctx context.Context, accountID, deviceID, eventType
 			}
 			pending = append(pending, item)
 		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return 0, err
+		}
 		if err := rows.Close(); err != nil {
 			return 0, err
 		}
