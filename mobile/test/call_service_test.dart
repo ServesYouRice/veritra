@@ -55,6 +55,7 @@ _Harness _harness({bool allowDirectConnections = false}) {
 /// Asserts every acquired resource was released exactly once.
 void _expectReleasedOnce(FakeMediaFactory media, {required bool hadStream}) {
   expect(media.peer.closeCount, 1, reason: 'peer closed once');
+  expect(media.peer.disposeCount, 1, reason: 'peer disposed once');
   if (hadStream) {
     expect(media.stream.disposeCount, 1, reason: 'stream disposed once');
     for (final track in media.stream.tracks) {

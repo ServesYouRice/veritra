@@ -75,6 +75,7 @@ class FakePeer implements RTCPeerConnection {
   Completer<void>? setRemoteGate;
 
   int closeCount = 0;
+  int disposeCount = 0;
   final List<RTCIceCandidate> addedCandidates = <RTCIceCandidate>[];
   final List<RTCSessionDescription> remoteDescriptions =
       <RTCSessionDescription>[];
@@ -150,6 +151,12 @@ class FakePeer implements RTCPeerConnection {
     closeCount++;
     log.add('peer.close');
     _maybeFail('close');
+  }
+
+  @override
+  Future<void> dispose() async {
+    disposeCount++;
+    log.add('peer.dispose');
   }
 
   @override

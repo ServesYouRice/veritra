@@ -207,6 +207,9 @@ class _CallMedia {
       await _quietly(local.dispose);
     }
     await _quietly(peer.close);
+    // close() only stops the connection; dispose() frees the native peer
+    // and its event channel.
+    await _quietly(peer.dispose);
   }
 
   static Future<void> _quietly(Future<void> Function() step) async {
