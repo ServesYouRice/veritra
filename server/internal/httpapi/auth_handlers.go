@@ -233,7 +233,7 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sourceKey, accountDeviceKey := a.loginBackoffKeys(r, req.Username, req.DeviceID)
-	if retryAfter := a.LoginBackoff.RetryAfterAny(time.Now(), sourceKey); retryAfter > 0 {
+	if retryAfter := a.LoginBackoff.RetryAfterAny(loginBackoffNow(), sourceKey); retryAfter > 0 {
 		writeRetryError(w, "login_backoff", retryAfter)
 		return
 	}
@@ -259,7 +259,7 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	// the password was right unless the device secret was, so a caller
 	// without the secret learns nothing about the password.
 	if deviceOK {
-		if retryAfter := a.LoginBackoff.RetryAfterAny(time.Now(), accountDeviceKey); retryAfter > 0 {
+		if retryAfter := a.LoginBackoff.RetryAfterAny(loginBackoffNow(), accountDeviceKey); retryAfter > 0 {
 			writeRetryError(w, "login_backoff", retryAfter)
 			return
 		}
@@ -269,7 +269,7 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		if deviceOK {
 			failedKeys = append(failedKeys, accountDeviceKey)
 		}
-		if retryAfter := a.LoginBackoff.FailedAny(time.Now(), failedKeys...); retryAfter > 0 {
+		if retryAfter := a.LoginBackoff.FailedAny(loginBackoffNow(), failedKeys...); retryAfter > 0 {
 			writeRetryError(w, "login_backoff", retryAfter)
 			return
 		}
@@ -774,7 +774,7 @@ func (a *API) reauthenticate(w http.ResponseWriter, r *http.Request, principal d
 		return
 	}
 	backoffKeys := a.reauthenticationBackoffKeys(r, principal)
-	if retryAfter := a.LoginBackoff.RetryAfterAny(time.Now(), backoffKeys...); retryAfter > 0 {
+	if retryAfter := a.LoginBackoff.RetryAfterAny(loginBackoffNow(), backoffKeys...); retryAfter > 0 {
 		writeRetryError(w, "reauth_backoff", retryAfter)
 		return
 	}
@@ -787,7 +787,7 @@ func (a *API) reauthenticate(w http.ResponseWriter, r *http.Request, principal d
 	}
 	deviceOK := err == nil && deviceAuthHash != "" && subtle.ConstantTimeCompare([]byte(auth.HashToken(req.DeviceSecret)), []byte(deviceAuthHash)) == 1
 	if err != nil || !check.OK || !deviceOK {
-		if retryAfter := a.LoginBackoff.FailedAny(time.Now(), backoffKeys...); retryAfter > 0 {
+		if retryAfter := a.LoginBackoff.FailedAny(loginBackoffNow(), backoffKeys...); retryAfter > 0 {
 			writeRetryError(w, "reauth_backoff", retryAfter)
 			return
 		}

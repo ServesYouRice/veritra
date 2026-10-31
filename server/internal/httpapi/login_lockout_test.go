@@ -8,8 +8,11 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"private-messenger/server/internal/httpapi"
 )
 
 type loginResult struct {
@@ -63,6 +66,11 @@ func TestLoginBackoffCannotBeTriggeredByThirdParty(t *testing.T) {
 // across sources (VAL-225).
 func TestLoginBackoffStillBoundsGuessingWithDeviceSecret(t *testing.T) {
 	owner := newRotationOwner(t)
+	// Each login verifies a password first, which can take a second under
+	// the race detector: a moving clock would let the one-second block lapse
+	// before the last attempt. The backoff's clock stands still instead.
+	frozen := time.Now()
+	t.Cleanup(httpapi.SetLoginBackoffClockForTest(func() time.Time { return frozen }))
 	var last loginResult
 	for i := 0; i < 5; i++ {
 		last = owner.loginFrom(t, 10+i, "owner", "wrong-password-123", owner.deviceID, owner.deviceSecret)
