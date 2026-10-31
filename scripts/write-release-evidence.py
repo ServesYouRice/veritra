@@ -44,6 +44,43 @@ def validate_commit(commit: str, name: str = "RELEASE_COMMIT") -> None:
         raise ValueError(f"{name} must be a 40-character lowercase hex SHA")
 
 
+def git_blob(commit: str, path: str, root: Path = ROOT) -> bytes:
+    """``path`` as stored in ``commit``; CalledProcessError when it is not there.
+
+    Replace refs and grafts are ignored (``GIT_HISTORY_ENV``).
+    """
+    return subprocess.run(
+        ["git", "--no-replace-objects", "-C", str(root), "cat-file", "blob", f"{commit}:{path}"],
+        capture_output=True,
+        check=True,
+        env={**os.environ, **GIT_HISTORY_ENV},
+    ).stdout
+
+
+def committed_text(commit: str, path: str, root: Path = ROOT) -> str:
+    """A file as the candidate commit holds it, never the working tree's copy.
+
+    The manifest attests the candidate, so its policy and toolchain are the
+    candidate's, whatever is checked out under ``root``.
+    """
+    validate_commit(commit)
+    try:
+        return git_blob(commit, path, root).decode("utf-8")
+    except subprocess.CalledProcessError as exc:
+        raise ValueError(f"{path} is missing from candidate commit {commit}") from exc
+
+
+def committed_policy(commit: str, root: Path = ROOT) -> dict[str, object]:
+    path = "release/release-policy.json"
+    try:
+        value = json.loads(committed_text(commit, path, root))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{path} in candidate commit {commit} is not valid JSON: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return value
+
+
 def build_manifest(
     policy: dict[str, object],
     ci: dict[str, object],
@@ -103,12 +140,7 @@ def build_manifest(
 def git_approval_loader(approvals_commit: str, root: Path = ROOT) -> Callable[[str], dict[str, object]]:
     def load_approval(path: str) -> dict[str, object]:
         try:
-            blob = subprocess.run(
-                ["git", "--no-replace-objects", "-C", str(root), "cat-file", "blob", f"{approvals_commit}:{path}"],
-                capture_output=True,
-                check=True,
-                env={**os.environ, **GIT_HISTORY_ENV},
-            ).stdout
+            blob = git_blob(approvals_commit, path, root)
         except subprocess.CalledProcessError as exc:
             raise ValueError(f"approval is missing from approvals commit {approvals_commit}: {path}") from exc
         record = json.loads(blob.decode("utf-8"))
@@ -192,12 +224,13 @@ def main() -> int:
         print("release evidence needs RELEASE_COMMIT, CONTAINER_IMAGE and CONTAINER_DIGEST", file=sys.stderr)
         return 1
     try:
-        policy = load(ROOT / "release/release-policy.json")
+        # Read from the candidate commit, not the working tree.
+        policy = committed_policy(commit)
         ci = load((ROOT / ci_path).resolve())
         mobile_file = (ROOT / mobile_path).resolve()
         if not mobile_file.is_file():
             raise ValueError(f"signed mobile artifact evidence is missing (G24): {mobile_file}")
-        go_version = (ROOT / ".go-version").read_text(encoding="utf-8")
+        go_version = committed_text(commit, ".go-version")
         manifest = build_manifest(
             policy,
             ci,

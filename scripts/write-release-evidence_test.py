@@ -259,57 +259,151 @@ def test_emulator_record() -> None:
         shutil.rmtree(temp)
 
 
-def test_missing_mobile_evidence_fails_closed() -> None:
-    temp = Path(tempfile.mkdtemp(prefix="veritra-writer-"))
-    try:
-        ci_file = temp / "ci-evidence.json"
-        ci_file.write_text(json.dumps(CI_EVIDENCE), encoding="utf-8")
-        env = dict(
-            os.environ,
-            RELEASE_COMMIT=COMMIT,
-            CI_EVIDENCE_FILE=str(ci_file),
-            MOBILE_ARTIFACTS_FILE=str(temp / "absent.json"),
+# --- The CLI against a real git repository: a candidate commit holding the
+# policy and .go-version, a later approvals commit, and a copy of the writer
+# at <repo>/scripts/, so that its ROOT is that repository.
+
+GIT_ENV = {
+    **{key: value for key, value in os.environ.items() if not key.startswith("GIT_")},
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_AUTHOR_NAME": "fixture",
+    "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
+    "GIT_COMMITTER_NAME": "fixture",
+    "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
+}
+
+
+def git(root: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(root), *args], check=True, capture_output=True, text=True, env=GIT_ENV
+    ).stdout.strip()
+
+
+def commit_files(root: Path, start: str, files: dict[str, str | None], message: str) -> str:
+    """Commit ``files`` (None deletes) on a detached HEAD at ``start``."""
+    if start:
+        git(root, "checkout", "-q", "--detach", start)
+    for path, content in files.items():
+        if content is None:
+            git(root, "rm", "-q", path)
+            continue
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        git(root, "add", path)
+    git(root, "commit", "-q", "-m", message)
+    return git(root, "rev-parse", "HEAD")
+
+
+class Repository:
+    def __init__(self) -> None:
+        self.root = Path(tempfile.mkdtemp(prefix="veritra-writer-repo-"))
+        git(self.root, "init", "-q", "-b", "main")
+        self.candidate = commit_files(
+            self.root, "", {"release/release-policy.json": json.dumps(POLICY), ".go-version": GO_VERSION}, "candidate"
+        )
+        self.approvals = commit_files(
+            self.root,
+            self.candidate,
+            {
+                f"release/approvals/{self.candidate}/crypto.json": json.dumps({"reviewer": "crypto-team"}),
+                f"release/approvals/{self.candidate}/review.json": json.dumps({"reviewer": "sec-team"}),
+            },
+            "approve",
+        )
+        (self.root / "scripts").mkdir()
+        shutil.copy(MODULE_PATH, self.root / "scripts" / MODULE_PATH.name)
+        (self.root / "ci-evidence.json").write_text(json.dumps(CI_EVIDENCE), encoding="utf-8")
+        (self.root / "mobile-artifacts.json").write_text(json.dumps({"artifacts": MOBILE}), encoding="utf-8")
+
+    def run(self, **changes: str | None) -> subprocess.CompletedProcess[str]:
+        env = {key: value for key, value in GIT_ENV.items() if not key.startswith("RELEASE_")}
+        env.update(
+            RELEASE_COMMIT=self.candidate,
+            RELEASE_APPROVALS_COMMIT=self.approvals,
+            CI_EVIDENCE_FILE=str(self.root / "ci-evidence.json"),
+            MOBILE_ARTIFACTS_FILE=str(self.root / "mobile-artifacts.json"),
             CONTAINER_IMAGE=IMAGE,
             CONTAINER_DIGEST=DIGEST,
         )
-        result = subprocess.run(
-            [sys.executable, str(MODULE_PATH)], text=True, capture_output=True, check=False, env=env
-        )
-        assert result.returncode != 0
-        assert "signed mobile artifact evidence is missing" in result.stderr
-        assert not result.stdout
+        for key, value in changes.items():
+            if value is None:
+                env.pop(key, None)
+            else:
+                env[key] = value
+        script = self.root / "scripts" / MODULE_PATH.name
+        return subprocess.run([sys.executable, str(script)], text=True, capture_output=True, check=False, env=env)
+
+    def close(self) -> None:
+        shutil.rmtree(self.root)
+
+
+def expect_refused(result: subprocess.CompletedProcess[str], reason: str) -> None:
+    assert result.returncode != 0, result.stdout
+    assert not result.stdout, result.stdout
+    assert reason in result.stderr, result.stderr
+
+
+def test_policy_and_toolchain_come_from_the_candidate_commit() -> None:
+    repo = Repository()
+    try:
+        result = repo.run()
+        assert result.returncode == 0, result.stderr
+        manifest = json.loads(result.stdout)
+        assert manifest["candidate_commit"] == repo.candidate
+        # A working tree that differs from the candidate changes nothing:
+        # the manifest attests the candidate, so it reads the candidate.
+        drifted = json.loads(json.dumps(POLICY))
+        drifted["schema_version"] = 99
+        drifted["approvals"]["extra"] = {"path": "release/approvals/{commit}/extra.json"}
+        (repo.root / "release/release-policy.json").write_text(json.dumps(drifted), encoding="utf-8")
+        (repo.root / ".go-version").write_text("9.9.9\n", encoding="utf-8")
+        result = repo.run()
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == manifest
+        assert manifest["schema_version"] == 3
+        assert manifest["container"]["toolchain"] == GO_VERSION.strip()
+        assert set(manifest["approvals"]) == {"commit", "production_crypto", "independent_review"}
+        # Nor does a working tree without them.
+        (repo.root / "release/release-policy.json").unlink()
+        (repo.root / ".go-version").unlink()
+        result = repo.run()
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == manifest
+
+        # A file missing from the candidate commit fails, naming it.
+        for path in (".go-version", "release/release-policy.json"):
+            missing = commit_files(repo.root, repo.candidate, {path: None}, f"no {path}")
+            expect_refused(repo.run(RELEASE_COMMIT=missing), f"{path} is missing from candidate commit {missing}")
+        for content, reason in (("{not json", "release/release-policy.json"), ("[]", "must contain a JSON object")):
+            broken = commit_files(repo.root, repo.candidate, {"release/release-policy.json": content}, "bad policy")
+            expect_refused(repo.run(RELEASE_COMMIT=broken), reason)
+        # A commit that is not in the repository, or not a full SHA.
+        expect_refused(repo.run(RELEASE_COMMIT="f" * 40), "is missing from candidate commit")
+        expect_refused(repo.run(RELEASE_COMMIT="HEAD"), "RELEASE_COMMIT must be a 40-character lowercase hex SHA")
     finally:
-        shutil.rmtree(temp)
+        repo.close()
+
+
+def test_missing_mobile_evidence_fails_closed() -> None:
+    repo = Repository()
+    try:
+        expect_refused(repo.run(MOBILE_ARTIFACTS_FILE=str(repo.root / "absent.json")),
+                       "signed mobile artifact evidence is missing")
+    finally:
+        repo.close()
 
 
 def test_approvals_commit_is_required() -> None:
-    temp = Path(tempfile.mkdtemp(prefix="veritra-writer-"))
+    repo = Repository()
     try:
-        ci_file = temp / "ci-evidence.json"
-        ci_file.write_text(json.dumps(CI_EVIDENCE), encoding="utf-8")
-        mobile_file = temp / "mobile-artifacts.json"
-        mobile_file.write_text(json.dumps({"artifacts": MOBILE}), encoding="utf-8")
-        base = {key: value for key, value in os.environ.items() if key != "RELEASE_APPROVALS_COMMIT"}
-        env = dict(
-            base,
-            RELEASE_COMMIT=COMMIT,
-            CI_EVIDENCE_FILE=str(ci_file),
-            MOBILE_ARTIFACTS_FILE=str(mobile_file),
-            CONTAINER_IMAGE=IMAGE,
-            CONTAINER_DIGEST=DIGEST,
-        )
-        for approvals_commit in (None, "", "f" * 40):
-            if approvals_commit is not None:
-                env["RELEASE_APPROVALS_COMMIT"] = approvals_commit
-            result = subprocess.run(
-                [sys.executable, str(MODULE_PATH)], text=True, capture_output=True, check=False, env=env
-            )
-            assert result.returncode != 0, result.stdout
-            assert not result.stdout
-            expected = "approval is missing" if approvals_commit else "RELEASE_APPROVALS_COMMIT must be"
-            assert expected in result.stderr, result.stderr
+        assert repo.run().returncode == 0
+        for approvals_commit in (None, ""):
+            expect_refused(repo.run(RELEASE_APPROVALS_COMMIT=approvals_commit), "RELEASE_APPROVALS_COMMIT must be")
+        expect_refused(repo.run(RELEASE_APPROVALS_COMMIT="f" * 40), "approval is missing")
     finally:
-        shutil.rmtree(temp)
+        repo.close()
 
 
 if __name__ == "__main__":
@@ -317,6 +411,7 @@ if __name__ == "__main__":
     test_required_approvals_match_the_gate()
     test_simulator_record()
     test_emulator_record()
+    test_policy_and_toolchain_come_from_the_candidate_commit()
     test_missing_mobile_evidence_fails_closed()
     test_approvals_commit_is_required()
     print("Release evidence manifest construction tests passed")
