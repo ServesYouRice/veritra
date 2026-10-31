@@ -13,18 +13,63 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 CRATE="$ROOT/crypto/rust"
 PLATFORM=${1:-}
+# rustup reads rust-toolchain.toml from the working directory, so run cargo and
+# rustc from inside the repository whatever directory the caller started in.
+cd "$ROOT"
+
+fail() {
+  echo "$*" >&2
+  exit 1
+}
+
+# is_hex VALUE LENGTH: VALUE is exactly LENGTH lowercase hex characters.
+is_hex() {
+  [ "${#1}" -eq "$2" ] || return 1
+  case $1 in
+    ''|*[!0-9a-f]*) return 1 ;;
+  esac
+}
+
+# Reads what is about to be built before cargo runs. Every value is captured by
+# assignment and checked, so a failed or malformed read stops the build instead
+# of being written into build-info.txt.
+capture_provenance() {
+  revision=$(git -C "$ROOT" rev-parse --verify HEAD) ||
+    fail "crypto provenance: cannot read the source revision"
+  is_hex "$revision" 40 || fail "crypto provenance: malformed source revision: $revision"
+  if command -v sha256sum >/dev/null 2>&1; then
+    lock_line=$(sha256sum "$CRATE/Cargo.lock") || fail "crypto provenance: cannot hash Cargo.lock"
+  else
+    lock_line=$(shasum -a 256 "$CRATE/Cargo.lock") || fail "crypto provenance: cannot hash Cargo.lock"
+  fi
+  lock_hash=${lock_line%% *}
+  is_hex "$lock_hash" 64 || fail "crypto provenance: malformed Cargo.lock hash: $lock_hash"
+  # Uncommitted or untracked crate sources mean the library is not exactly
+  # source_revision. The ignored target directory does not count.
+  tree_status=$(git -C "$ROOT" status --porcelain --untracked-files=normal -- crypto/rust) ||
+    fail "crypto provenance: cannot read the crypto/rust tree status"
+  if [ -n "$tree_status" ]; then
+    source_tree_dirty=true
+  else
+    source_tree_dirty=false
+  fi
+  rustc_info=$(cd "$CRATE" && rustc -Vv) || fail "crypto provenance: rustc -Vv failed"
+  case $rustc_info in
+    "rustc "*) ;;
+    *) fail "crypto provenance: unexpected rustc -Vv output" ;;
+  esac
+  printf '%s\n' "$rustc_info" | grep -q '^release: [0-9]' ||
+    fail "crypto provenance: rustc -Vv output has no release line"
+}
 
 write_metadata() {
   destination=$1
   mkdir -p "$destination"
   {
-    echo "source_revision=$(git -C "$ROOT" rev-parse HEAD)"
-    if command -v sha256sum >/dev/null 2>&1; then
-      echo "cargo_lock_sha256=$(sha256sum "$CRATE/Cargo.lock" | awk '{print $1}')"
-    else
-      echo "cargo_lock_sha256=$(shasum -a 256 "$CRATE/Cargo.lock" | awk '{print $1}')"
-    fi
-    rustc -Vv
+    echo "source_revision=$revision"
+    echo "cargo_lock_sha256=$lock_hash"
+    echo "source_tree_dirty=$source_tree_dirty"
+    printf '%s\n' "$rustc_info"
   } > "$destination/build-info.txt"
   (cd "$CRATE" && cargo metadata --locked --format-version 1) | \
     python3 "$ROOT/scripts/cargo-license-metadata.py" > "$destination/cargo-metadata.json"
@@ -37,6 +82,7 @@ case "$PLATFORM" in
       echo "build the Linux library on Linux (or in WSL2)" >&2
       exit 2
     fi
+    capture_provenance
     (cd "$CRATE" && cargo build --locked --release)
     output="$ROOT/mobile/linux/crypto"
     mkdir -p "$output"
@@ -51,6 +97,7 @@ case "$PLATFORM" in
     fi
     # Match the Runner's deployment target so the linker does not warn.
     export MACOSX_DEPLOYMENT_TARGET=10.15
+    capture_provenance
     for target in aarch64-apple-darwin x86_64-apple-darwin; do
       cargo build --manifest-path "$CRATE/Cargo.toml" --locked --release --target "$target"
     done
