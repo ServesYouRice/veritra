@@ -396,9 +396,12 @@ func (s *Store) CreatePushSubscriptionWithMode(ctx context.Context, accountID, d
 		}
 	}
 	var activeID string
-	err = tx.QueryRowContext(ctx, `SELECT id FROM push_subscriptions WHERE account_id = ? AND device_id = ? AND provider = ? AND disabled_at IS NULL ORDER BY created_at DESC LIMIT 1`, accountID, deviceID, provider).Scan(&activeID)
+	// A session without a device stores a NULL device_id; IS matches that
+	// NULL where = never does, so device-less rows share one scope.
+	storedDeviceID := nullableEmptyString(deviceID)
+	err = tx.QueryRowContext(ctx, `SELECT id FROM push_subscriptions WHERE account_id = ? AND device_id IS ? AND provider = ? AND disabled_at IS NULL ORDER BY created_at DESC LIMIT 1`, accountID, storedDeviceID, provider).Scan(&activeID)
 	if errors.Is(err, sql.ErrNoRows) {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO push_subscriptions(id, account_id, device_id, provider, endpoint, public_key, auth_secret, created_at,notification_mode) VALUES(?, ?, ?, ?, ?, ?, ?, ?,?)`, id, accountID, nullableEmptyString(deviceID), provider, endpoint, publicKey, authSecret, nowString(), mode); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO push_subscriptions(id, account_id, device_id, provider, endpoint, public_key, auth_secret, created_at,notification_mode) VALUES(?, ?, ?, ?, ?, ?, ?, ?,?)`, id, accountID, storedDeviceID, provider, endpoint, publicKey, authSecret, nowString(), mode); err != nil {
 			return "", err
 		}
 		activeID = id
@@ -410,8 +413,8 @@ func (s *Store) CreatePushSubscriptionWithMode(ctx context.Context, accountID, d
 	// One device uses one provider at a time: switching provider retires the
 	// old registration so the device is not woken twice (card I41).
 	if _, err := tx.ExecContext(ctx, `UPDATE push_subscriptions SET disabled_at = ?
-		WHERE account_id = ? AND device_id = ? AND provider <> ? AND disabled_at IS NULL`,
-		nowString(), accountID, deviceID, provider); err != nil {
+		WHERE account_id = ? AND device_id IS ? AND provider <> ? AND disabled_at IS NULL`,
+		nowString(), accountID, storedDeviceID, provider); err != nil {
 		return "", err
 	}
 	if err := tx.Commit(); err != nil {
