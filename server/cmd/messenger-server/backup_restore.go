@@ -622,7 +622,11 @@ func restore(cfg config.Config, args []string, stdout io.Writer) error {
 		return fmt.Errorf("a server appears to be running; stop the server before restore: %w", err)
 	}
 	defer blobLock.Release()
-	if _, err := os.Stat(journalPath(live)); err == nil {
+	// Any entry at the journal path, or one that cannot be checked, stops
+	// the restore: a journal read as absent would be overwritten.
+	if present, err := entryPresent(journalPath(live)); err != nil {
+		return fmt.Errorf("check for a restore journal: %w", err)
+	} else if present {
 		return errors.New("an earlier restore is unfinished; run the command again after it is settled")
 	}
 	staged, err := stageBackup(cfg, args[0], live, liveBlobs)
@@ -654,18 +658,27 @@ func restore(cfg config.Config, args []string, stdout io.Writer) error {
 		Version: 1, State: "activating", StartedAt: time.Now().UTC(), Database: live,
 		Companions: map[string]string{}, StagingDir: staged.dir,
 	}
-	if _, err := os.Stat(live); err == nil {
+	// An original that cannot be checked is not taken as absent: the
+	// journal would not list it, and a rollback treats unlisted files at the
+	// live paths as restored copies.
+	if present, err := entryPresent(live); err != nil {
+		return fmt.Errorf("check live database: %w", err)
+	} else if present {
 		journal.DatabaseRollback = live + suffix
 	}
 	for _, companion := range []string{live + "-wal", live + "-shm"} {
-		if _, err := os.Stat(companion); err == nil {
+		if present, err := entryPresent(companion); err != nil {
+			return fmt.Errorf("check SQLite companion: %w", err)
+		} else if present {
 			// The WAL holds committed data: it moves with its database.
 			journal.Companions[companion] = companion + suffix
 		}
 	}
 	if staged.blobs != "" {
 		journal.Blobs = liveBlobs
-		if _, err := os.Stat(liveBlobs); err == nil {
+		if present, err := entryPresent(liveBlobs); err != nil {
+			return fmt.Errorf("check live blob directory: %w", err)
+		} else if present {
 			journal.BlobsRollback = liveBlobs + suffix
 		}
 	}
@@ -765,6 +778,20 @@ func restore(cfg config.Config, args []string, stdout io.Writer) error {
 		fmt.Fprintf(stdout, "previous blob directory preserved for rollback: %s\n", journal.BlobsRollback)
 	}
 	return nil
+}
+
+// entryPresent reports whether a directory entry exists at path, without
+// following a final symlink. An error other than "not exist" is returned, so
+// callers fail closed.
+func entryPresent(path string) (bool, error) {
+	_, err := os.Lstat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
 }
 
 // rollBackRestore puts every preserved original back: the database, then
