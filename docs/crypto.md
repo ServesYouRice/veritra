@@ -97,8 +97,9 @@ sees, so a relay that substitutes both keys can search for a collision
 (about 10^4 key generations per side). Under L0 that does not hold: the
 SAS, the claim tag and the approval tag are MACs keyed from the 128-bit
 secret, which travels only out of band. A relay without the secret cannot
-evaluate any of them, and a substituted key fails the claim tag on the old
-device, or the approval tag on the new one, before a SAS is shown. The
+evaluate any of them. A substituted new-device key fails the claim tag, so
+the old device never asks for or accepts the typed SAS; a substituted
+old-device key fails the approval tag, so the new device saves no session. The
 secret plays the role a commit-then-reveal step would, so none is added.
 The residual case is a leaked secret (a QR seen by someone who also
 controls the relay): the attacker can then forge both tags and grind the

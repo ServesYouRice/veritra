@@ -568,8 +568,10 @@ impl MlsDevice {
 /// transcript under keys derived from the 128-bit link secret, which reaches
 /// the new device only out of band (QR or typed code). A relay that does not
 /// know the secret cannot evaluate them, so it cannot grind substitute keys
-/// towards a matching SAS, and a substituted key already fails the claim or
-/// approval tag before any SAS is shown. This replaces a commit-then-reveal
+/// towards a matching SAS. A substituted new-device key fails the claim tag,
+/// so the old device never asks for or accepts the typed SAS; a substituted
+/// old-device key fails the approval tag, so the new device saves no
+/// session. This replaces a commit-then-reveal
 /// step (TASK-010/TASK-048). The 8 digits stand alone only if the secret
 /// leaks: an active relay that knows it chooses both keys and needs about
 /// 10^4 key generations per side for the two SAS values to collide. Any
