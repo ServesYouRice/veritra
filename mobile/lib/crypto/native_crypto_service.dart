@@ -366,6 +366,17 @@ class NativeCryptoService
         try {
           return _requiredDevice().groupEpoch(conversationId);
         } on NativeCryptoException {
+          // A missing group and a handle a native panic left poisoned both
+          // answer operationFailed. Reload the committed state and ask once
+          // more, so a poisoned handle never reads as "no group" and is not
+          // kept for the next operation.
+          final stored = await localStore.loadCryptoState();
+          if (stored == null) return null;
+          await _restorePrevious(stored);
+        }
+        try {
+          return _requiredDevice().groupEpoch(conversationId);
+        } on NativeCryptoException {
           return null;
         }
       });
@@ -654,24 +665,24 @@ class NativeCryptoService
             : call.createdBy;
         try {
           checkCanCommit?.call();
+          final ciphertext = base64Decode(encoded);
           List<int>? plaintext;
           try {
-            plaintext = _requiredDevice().decrypt(
-              call.conversationId,
-              base64Decode(encoded),
-              senderAccountId: senderAccountId,
-              senderDeviceId: senderDeviceId,
-            );
+            // Null when this device can never decrypt the signal (D54): it
+            // is dropped and sync moves past it.
+            plaintext = await _decryptOrUndecryptable(
+                previous,
+                () => _requiredDevice().decrypt(
+                      call.conversationId,
+                      ciphertext,
+                      senderAccountId: senderAccountId,
+                      senderDeviceId: senderDeviceId,
+                    ));
           } on NativeCryptoException catch (error) {
             // The server also delivers a caller's signals to the caller's
             // other devices, where the guessed sender account is wrong. The
             // ratchet already advanced, so commit and drop the signal (P4).
-            //
-            // Any other decrypt error means this device can never decrypt
-            // the signal (D54): it is dropped and sync moves past it.
-            // Nothing of it was used, so the committed group comes back
-            // first; the failed attempt may have changed the one in memory.
-            if (!error.kind.ratchetAdvanced) await _restorePrevious(previous);
+            if (!error.kind.ratchetAdvanced) rethrow;
           }
           // The state and cursor always commit from here (P4, D54). A
           // payload that is not a valid call signal is dropped: no row and
@@ -890,21 +901,19 @@ class NativeCryptoService
         operationFence();
         final List<int> plaintext;
         try {
-          plaintext = _requiredDevice().decrypt(
-            envelope.conversationId,
-            envelope.ciphertext,
-            senderAccountId: envelope.senderAccountId,
-            senderDeviceId: envelope.senderDeviceId,
-          );
-        } on NativeCryptoException catch (error) {
-          if (!error.kind.ratchetAdvanced) {
+          final decrypted = await _decryptOrUndecryptable(
+              previous,
+              () => _requiredDevice().decrypt(
+                    envelope.conversationId,
+                    envelope.ciphertext,
+                    senderAccountId: envelope.senderAccountId,
+                    senderDeviceId: envelope.senderDeviceId,
+                  ));
+          if (decrypted == null) {
             // This device can never decrypt the message (D54): an epoch it
             // never held or whose secrets are gone, or damaged bytes. Sync
             // moves past it and the conversation shows a placeholder with
-            // no content. Nothing of it was used, so the committed group
-            // comes back first: the failed attempt may have changed the one
-            // in memory.
-            await _restorePrevious(previous);
+            // no content. The committed group is already back in memory.
             await localStore.commitMlsTransition(MlsStateTransition(
               checkCanCommit: operationFence,
               messageId: marker,
@@ -926,6 +935,9 @@ class NativeCryptoService
             ));
             return null;
           }
+          plaintext = decrypted;
+        } on NativeCryptoException catch (error) {
+          if (!error.kind.ratchetAdvanced) rethrow;
           // The ratchet already advanced, so the message can never be
           // decrypted again. Keep going and record a warning instead of
           // the claimed sender's words (D25).
@@ -1177,6 +1189,36 @@ class NativeCryptoService
       expectedCursor: await localStore.loadSyncCursor(),
       state: _sealNext(previous),
     );
+  }
+
+  /// Native errors after which a peer's message may be one this device can
+  /// never decrypt (D54). Every other kind, such as invalidArgument or
+  /// unknown, stops sync under I33.
+  static const _undecryptableErrors = <NativeCryptoError>{
+    NativeCryptoError.operationFailed,
+    NativeCryptoError.nativePanic,
+    NativeCryptoError.invalidOutput,
+  };
+
+  /// Runs [decrypt] for a peer's message. After a failure in
+  /// [_undecryptableErrors] the committed group comes back from [previous]
+  /// and [decrypt] runs once more on the fresh handle: the failed attempt
+  /// may have changed the group in memory, and a native panic leaves the
+  /// handle poisoned, so one failure alone must not cost the message.
+  /// Returns null only when the retry fails the same way, with the committed
+  /// group restored again. Any other error, including a [ratchetAdvanced]
+  /// one from either attempt, is rethrown.
+  Future<List<int>?> _decryptOrUndecryptable(
+      StoredCryptoState previous, List<int> Function() decrypt) async {
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        return decrypt();
+      } on NativeCryptoException catch (error) {
+        if (!_undecryptableErrors.contains(error.kind)) rethrow;
+      }
+      await _restorePrevious(previous);
+    }
+    return null;
   }
 
   Future<void> _restorePrevious(StoredCryptoState previous) async {
