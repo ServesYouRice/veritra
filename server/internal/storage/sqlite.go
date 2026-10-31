@@ -346,10 +346,8 @@ func (s *Store) Migrate(ctx context.Context, migrations fs.FS) error {
 	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, checksum_sha256 TEXT NOT NULL, applied_at TEXT NOT NULL)`); err != nil {
 		return err
 	}
-	checksumColumnAdded, err := s.ensureMigrationChecksumColumn(ctx)
-	if err != nil {
-		return err
-	}
+	// Read every migration before writing anything more, so the legacy
+	// backfill below knows all the checksums.
 	entries, err := fs.ReadDir(migrations, ".")
 	if err != nil {
 		return err
@@ -361,11 +359,19 @@ func (s *Store) Migrate(ctx context.Context, migrations fs.FS) error {
 		}
 	}
 	sort.Strings(names)
+	contents := make(map[string][]byte, len(names))
 	for _, name := range names {
 		sqlBytes, err := fs.ReadFile(migrations, name)
 		if err != nil {
 			return err
 		}
+		contents[name] = sqlBytes
+	}
+	if err := s.ensureMigrationChecksums(ctx, contents); err != nil {
+		return err
+	}
+	for _, name := range names {
+		sqlBytes := contents[name]
 		checksum := migrationChecksum(sqlBytes)
 		appliedChecksum, applied, err := s.appliedMigrationChecksum(ctx, name)
 		if err != nil {
@@ -373,13 +379,7 @@ func (s *Store) Migrate(ctx context.Context, migrations fs.FS) error {
 		}
 		if applied {
 			if appliedChecksum == "" {
-				if !checksumColumnAdded {
-					return fmt.Errorf("migration %s has no stored checksum", name)
-				}
-				if _, err := s.db.ExecContext(ctx, `UPDATE schema_migrations SET checksum_sha256 = ? WHERE version = ? AND (checksum_sha256 IS NULL OR checksum_sha256 = '')`, checksum, name); err != nil {
-					return err
-				}
-				continue
+				return fmt.Errorf("migration %s has no stored checksum", name)
 			}
 			if !strings.EqualFold(appliedChecksum, checksum) {
 				return fmt.Errorf("migration %s checksum mismatch: applied %s, current %s", name, appliedChecksum, checksum)
@@ -405,34 +405,57 @@ func (s *Store) Migrate(ctx context.Context, migrations fs.FS) error {
 	return nil
 }
 
-func (s *Store) ensureMigrationChecksumColumn(ctx context.Context) (bool, error) {
-	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(schema_migrations)`)
+// ensureMigrationChecksums adds the checksum column to a schema_migrations
+// table that predates it and backfills every applied row from contents (the
+// current migration files by name), as one transaction. An interruption, or a
+// failure of the backfill, leaves the table as it was, so the next start
+// repeats the whole step. Once it has committed, a row without a checksum can
+// only belong to a database that already had the column, and Migrate refuses
+// it: nothing repairs that silently.
+func (s *Store) ensureMigrationChecksums(ctx context.Context, contents map[string][]byte) error {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return false, err
+		return err
 	}
-	defer rows.Close()
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `PRAGMA table_info(schema_migrations)`)
+	if err != nil {
+		return err
+	}
 	hasChecksum := false
-	for rows.Next() {
+	if err := eachRow(rows, func(rows rowIterator) error {
 		var cid int
 		var name, columnType string
 		var notNull int
 		var defaultValue interface{}
 		var pk int
 		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
-			return false, err
+			return err
 		}
 		if name == "checksum_sha256" {
 			hasChecksum = true
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return false, err
+		return nil
+	}); err != nil {
+		return err
 	}
 	if hasChecksum {
-		return false, nil
+		return nil
 	}
-	_, err = s.db.ExecContext(ctx, `ALTER TABLE schema_migrations ADD COLUMN checksum_sha256 TEXT`)
-	return err == nil, err
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE schema_migrations ADD COLUMN checksum_sha256 TEXT`); err != nil {
+		return err
+	}
+	names := make([]string, 0, len(contents))
+	for name := range contents {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if _, err := tx.ExecContext(ctx, `UPDATE schema_migrations SET checksum_sha256 = ? WHERE version = ? AND (checksum_sha256 IS NULL OR checksum_sha256 = '')`, migrationChecksum(contents[name]), name); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) appliedMigrationChecksum(ctx context.Context, version string) (string, bool, error) {
