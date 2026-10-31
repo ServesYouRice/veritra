@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -96,6 +97,51 @@ func TestLegacyBcryptVerifiesAndAsksForRehash(t *testing.T) {
 	}
 }
 
+// A stored bcrypt hash may name any cost up to 31; the request context cannot
+// interrupt the comparison, so a cost above the policy ceiling is never run
+// (VAL-208). The primitive is stubbed so a regression cannot hang the test.
+func TestVerifyPasswordNeverRunsBcryptAboveMaxCost(t *testing.T) {
+	legacy, err := bcrypt.GenerateFromPassword([]byte(testPassword), DefaultBcryptCost)
+	if err != nil {
+		t.Fatalf("legacy hash: %v", err)
+	}
+	oversized := strings.Replace(string(legacy), "$10$", "$31$", 1)
+	if cost, err := bcrypt.Cost([]byte(oversized)); err != nil || cost != 31 {
+		t.Fatalf("test hash cost = %d, %v", cost, err)
+	}
+	realBcrypt := bcryptCompare
+	t.Cleanup(func() { bcryptCompare = realBcrypt })
+	var costs []int
+	bcryptCompare = func(hash, password []byte) error {
+		cost, err := bcrypt.Cost(hash)
+		if err != nil {
+			t.Fatalf("bcrypt.Cost: %v", err)
+		}
+		costs = append(costs, cost)
+		return bcrypt.ErrMismatchedHashAndPassword
+	}
+	for _, present := range []bool{true, false} {
+		costs = nil
+		check, err := VerifyPassword(context.Background(), oversized, testPassword, VerifyOptions{LegacyHashesPresent: present})
+		if err != nil || check.OK || check.Rehash || !check.Legacy {
+			t.Fatalf("oversized cost: %+v err=%v", check, err)
+		}
+		for _, cost := range costs {
+			if cost > MaxBcryptCost {
+				t.Fatalf("bcryptCompare received a hash of cost %d, ceiling is %d", cost, MaxBcryptCost)
+			}
+		}
+		if len(costs) != 1 {
+			t.Fatalf("legacyPresent=%v: %d bcrypt comparisons, want 1 (the dummy)", present, len(costs))
+		}
+	}
+	// Truncated bcrypt-looking strings are unusable too, not an error.
+	check, err := VerifyPassword(context.Background(), "$2a$10$short", testPassword, VerifyOptions{})
+	if err != nil || check.OK || !check.Legacy {
+		t.Fatalf("malformed bcrypt: %+v err=%v", check, err)
+	}
+}
+
 func TestOlderArgon2idParametersAskForRehash(t *testing.T) {
 	salt := make([]byte, argon2idSaltBytes)
 	old := argon2idParams{memoryKiB: 19 * 1024, iterations: 2, parallelism: 1}
@@ -153,6 +199,111 @@ func TestVerificationWorkDoesNotDependOnAccountOrOutcome(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// workUnits records the cost of each primitive call as a string: Argon2id as
+// memory KiB x passes, bcrypt as its cost. It is the deterministic stand-in
+// for timing, so the policy below is checked without a clock.
+func workUnits(t *testing.T) *[]string {
+	t.Helper()
+	var units []string
+	realArgon, realBcrypt := argon2idKey, bcryptCompare
+	argon2idKey = func(password, salt []byte, time, memory uint32, threads uint8, keyLen uint32) []byte {
+		units = append(units, fmt.Sprintf("argon2id %dKiB x%d", memory, time))
+		return realArgon(password, salt, time, memory, threads, keyLen)
+	}
+	bcryptCompare = func(hash, password []byte) error {
+		cost, err := bcrypt.Cost(hash)
+		if err != nil {
+			t.Fatalf("bcrypt.Cost: %v", err)
+		}
+		units = append(units, fmt.Sprintf("bcrypt cost %d", cost))
+		return realBcrypt(hash, password)
+	}
+	t.Cleanup(func() { argon2idKey, bcryptCompare = realArgon, realBcrypt })
+	return &units
+}
+
+// VerifyPassword timing policy (audit plan Q-003 option (c), with the
+// Q-OUTCOME constraint): the work done never depends on whether the password
+// matched, for every stored profile (VAL-303). It does depend on the stored
+// profile: an older supported Argon2id profile or an off-configuration
+// bcrypt cost runs at its own cost, which an unknown account cannot imitate.
+// That residual is accepted because a real hash is only checked after the
+// caller presents a valid username and device ID, and rehash-on-success
+// removes it. VAL-209 asserts the residual explicitly so a change to it is
+// a visible decision.
+func TestVerificationWorkUnitsDoNotDependOnOutcome(t *testing.T) {
+	const configured = DefaultBcryptCost
+	legacyConfigured, err := bcrypt.GenerateFromPassword([]byte(testPassword), configured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyOffCost, err := bcrypt.GenerateFromPassword([]byte(testPassword), configured+1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := HashPassword(testPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	salt := make([]byte, argon2idSaltBytes)
+	old := argon2idParams{memoryKiB: 19 * 1024, iterations: 2, parallelism: 1}
+	older := encodeArgon2id(old, salt, argon2idKey([]byte(testPassword), salt, old.iterations, old.memoryKiB, old.parallelism, argon2idKeyBytes))
+
+	profiles := []struct {
+		name   string
+		stored string
+		legacy bool // a bcrypt hash exists, so legacy hashes are present
+	}{
+		{"unknown", "", false},
+		{"unknown_legacy_present", "", true},
+		{"current", current, false},
+		{"current_legacy_present", current, true},
+		{"older_argon2id", older, false},
+		{"older_argon2id_legacy_present", older, true},
+		{"legacy_configured_cost", string(legacyConfigured), true},
+		{"legacy_off_cost", string(legacyOffCost), true},
+	}
+	units := make(map[string][]string)
+	for _, profile := range profiles {
+		var match, mismatch []string
+		for i, password := range []string{testPassword, "wrong-password-123"} {
+			recorded := workUnits(t)
+			if _, err := VerifyPassword(context.Background(), profile.stored, password, VerifyOptions{LegacyHashesPresent: profile.legacy, LegacyBcryptCost: configured}); err != nil {
+				t.Fatalf("%s: %v", profile.name, err)
+			}
+			if i == 0 {
+				match = append(match, *recorded...)
+			} else {
+				mismatch = append(mismatch, *recorded...)
+			}
+		}
+		if strings.Join(match, ",") != strings.Join(mismatch, ",") {
+			t.Fatalf("%s: work depends on the outcome: match %v, mismatch %v", profile.name, match, mismatch)
+		}
+		units[profile.name] = match
+	}
+
+	// Residual (accepted, asserted): profiles other than the configured one
+	// run their own cost.
+	if got := strings.Join(units["unknown"], ","); got != "argon2id 65536KiB x2" {
+		t.Fatalf("unknown account work = %q", got)
+	}
+	if got := strings.Join(units["older_argon2id"], ","); got != "argon2id 19456KiB x2" {
+		t.Fatalf("older Argon2id work = %q", got)
+	}
+	if got := strings.Join(units["legacy_off_cost"], ","); got != fmt.Sprintf("bcrypt cost %d,argon2id 65536KiB x2", configured+1) {
+		t.Fatalf("off-cost bcrypt work = %q", got)
+	}
+	// What is equal: the configured legacy cost and the current profile cost
+	// the same as an unknown account.
+	if got, want := strings.Join(units["legacy_configured_cost"], ","), strings.Join(units["unknown_legacy_present"], ","); got != want {
+		t.Fatalf("configured-cost legacy work %q differs from unknown account %q", got, want)
+	}
+	if got, want := strings.Join(units["current_legacy_present"], ","), strings.Join(units["unknown_legacy_present"], ","); got != want {
+		t.Fatalf("current-profile work %q differs from unknown account %q", got, want)
 	}
 }
 
