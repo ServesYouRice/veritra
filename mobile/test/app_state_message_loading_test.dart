@@ -3,10 +3,12 @@
 
 import 'dart:async';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/core/receipts_state.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
@@ -95,19 +97,43 @@ class _FakeSync implements SyncService {
   Future<void> dispose() => _events.close();
 }
 
-AppState _state(_Api api, {List<Conversation>? conversations}) => AppState(
+AppState _state(
+  _Api api, {
+  List<Conversation>? conversations,
+  ReceiptPreferences? receiptPreferences,
+}) =>
+    AppState(
       apiClientFactory: (_) => api,
       cryptoService: TestOnlyCryptoService(),
       localStore: MemoryLocalStore(),
       syncServiceFactory: (_, __) => _FakeSync(),
+      receiptPreferences: receiptPreferences,
     )
       ..api = api
       ..session = _session
       ..conversations = conversations ??
           <Conversation>[
-            Conversation(id: 'conv', kind: 'group', createdBy: 'acct_me'),
+            Conversation(
+                id: 'conv',
+                kind: 'group',
+                createdBy: 'acct_me',
+                unreadCount: 2),
             Conversation(id: 'other', kind: 'group', createdBy: 'acct_me'),
           ];
+
+/// Holds the saved read-receipts choice until [gate] completes.
+class _GatedPreferenceStore implements ReceiptPreferenceStore {
+  final Completer<void> gate = Completer<void>();
+
+  @override
+  Future<bool?> load() async {
+    await gate.future;
+    return true;
+  }
+
+  @override
+  Future<void> save(bool sendReadReceipts) async {}
+}
 
 Future<void> _settle() async {
   for (var i = 0; i < 30; i++) {
@@ -217,6 +243,86 @@ void main() {
       await state.loadMessages('conv');
       await state.loadOlderMessages('conv');
       expect(api.pageRequests.last, 'c8');
+      state.dispose();
+    });
+  });
+
+  group('TASK-041: a load that lands after the user moved on', () {
+    int unread(AppState state) =>
+        state.conversations.firstWhere((c) => c.id == 'conv').unreadCount;
+
+    test('sends no receipt once another conversation is selected', () async {
+      final api = _Api()
+        ..pages[null] =
+            MessagePage(messages: <ReceivedMessageEnvelope>[_message('m1', 1)])
+        ..pageGate = Completer<void>();
+      final gate = api.pageGate!;
+      final state = _state(api);
+      state.selectConversation('conv');
+      await _settle();
+      state.selectConversation('other');
+      await _settle();
+      gate.complete();
+      await _settle();
+      expect(api.reads, isNot(contains('conv')));
+      expect(api.privateReads, isNot(contains('conv')));
+      expect(unread(state), 2);
+      expect(state.messagesFor('conv'), hasLength(1),
+          reason: 'the load itself still lands');
+      state.dispose();
+    });
+
+    test('sends no receipt once the app is in the background', () async {
+      final api = _Api()
+        ..pages[null] =
+            MessagePage(messages: <ReceivedMessageEnvelope>[_message('m1', 1)])
+        ..pageGate = Completer<void>();
+      final gate = api.pageGate!;
+      final state = _state(api);
+      state.selectConversation('conv');
+      await _settle();
+      state.handleAppLifecycleState(AppLifecycleState.paused);
+      gate.complete();
+      await _settle();
+      expect(api.reads, isEmpty);
+      expect(api.privateReads, isEmpty);
+      expect(unread(state), 2);
+      state.dispose();
+    });
+
+    test('sends no receipt if the app is backgrounded while the choice loads',
+        () async {
+      final store = _GatedPreferenceStore();
+      final api = _Api();
+      final state = _state(api, receiptPreferences: ReceiptPreferences(store))
+        ..messagesByConversation['conv'] = <ReceivedMessageEnvelope>[
+          _message('m1', 1),
+        ];
+      final read = state.markNewestMessageRead('conv');
+      await _settle();
+      state.handleAppLifecycleState(AppLifecycleState.paused);
+      store.gate.complete();
+      await read;
+      expect(api.reads, isEmpty);
+      expect(api.privateReads, isEmpty);
+      expect(unread(state), 2);
+      state.dispose();
+    });
+
+    test('a load for the selected, visible conversation still marks it read',
+        () async {
+      final api = _Api()
+        ..pages[null] =
+            MessagePage(messages: <ReceivedMessageEnvelope>[_message('m1', 1)])
+        ..pageGate = Completer<void>();
+      final gate = api.pageGate!;
+      final state = _state(api);
+      state.selectConversation('conv');
+      await _settle();
+      gate.complete();
+      await _settle();
+      expect(api.reads, <String>['conv']);
+      expect(unread(state), 0);
       state.dispose();
     });
   });

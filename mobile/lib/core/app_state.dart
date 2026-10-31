@@ -1844,7 +1844,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (_mlsCrypto != null) await refreshHistory(conversationId);
       await _fetchMessages(conversationId);
       if (_mlsCrypto != null) await refreshHistory(conversationId);
-      unawaited(markNewestMessageRead(conversationId));
+      // Read only what is on screen: not a conversation the user has since
+      // left, and nothing while the app is in the background.
+      if (selectedConversationId == conversationId && _isForeground) {
+        unawaited(markNewestMessageRead(conversationId));
+      }
     } catch (err) {
       _messageLoadErrors[conversationId] = describeError(err, l10n);
     } finally {
@@ -2381,6 +2385,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       // account's own cursor for the unread count and shares nothing. The
       // same holds while the saved choice cannot be read.
       await receiptPreferences.loaded;
+      // The app may have gone to the background while the choice was read.
+      if (!_isForeground) return;
       if (receiptPreferences.shareReadReceipts) {
         await client.markRead(current.token, conversationId, messages.first.id);
       } else {
