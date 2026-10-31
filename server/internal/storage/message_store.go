@@ -313,8 +313,9 @@ func (s *Store) updateMessageEnvelope(ctx context.Context, messageID, accountID 
 	result, err := tx.ExecContext(ctx, `
 		UPDATE message_envelopes
 		SET ciphertext = ?, crypto_protocol = ?, crypto_metadata_json = ?, edited_at = ?
-		WHERE id = ? AND sender_account_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
-		ciphertext, cryptoProtocol, string(cryptoMetadata), now, messageID, accountID, now)
+		WHERE id = ? AND sender_account_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
+		  AND EXISTS (SELECT 1 FROM memberships m WHERE m.conversation_id = message_envelopes.conversation_id AND m.account_id = ?)`,
+		ciphertext, cryptoProtocol, string(cryptoMetadata), now, messageID, accountID, now, accountID)
 	if err != nil {
 		return domain.MessageEnvelope{}, 0, err
 	}
@@ -357,8 +358,9 @@ func (s *Store) deleteMessageEnvelope(ctx context.Context, messageID, accountID 
 	result, err := tx.ExecContext(ctx, `
 		UPDATE message_envelopes
 		SET ciphertext = ?, crypto_protocol = ?, crypto_metadata_json = ?, deleted_at = ?
-		WHERE id = ? AND sender_account_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
-		markerCiphertext, cryptoProtocol, string(cryptoMetadata), now, messageID, accountID, now)
+		WHERE id = ? AND sender_account_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
+		  AND EXISTS (SELECT 1 FROM memberships m WHERE m.conversation_id = message_envelopes.conversation_id AND m.account_id = ?)`,
+		markerCiphertext, cryptoProtocol, string(cryptoMetadata), now, messageID, accountID, now, accountID)
 	if err != nil {
 		return domain.MessageEnvelope{}, 0, err
 	}
