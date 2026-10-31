@@ -19,6 +19,7 @@ import (
 func newLimitedStore(t *testing.T, limits config.Limits) *Store {
 	t.Helper()
 	dir := t.TempDir()
+	seedMigratedDatabase(t, filepath.Join(dir, "private-messenger.db"))
 	store, err := Open(context.Background(), config.Config{
 		Addr: ":0", DataDir: dir, DatabasePath: filepath.Join(dir, "private-messenger.db"),
 		StoragePath: filepath.Join(dir, "blobs"), InstanceName: "Test Messenger", Limits: limits,

@@ -69,6 +69,7 @@ func newBenchStore(tb testing.TB, ctx context.Context) *Store {
 		StoragePath:  filepath.Join(dir, "blobs"),
 		InstanceName: "Bench Messenger",
 	}
+	seedMigratedDatabase(tb, cfg.DatabasePath)
 	store, err := Open(ctx, cfg)
 	if err != nil {
 		tb.Fatalf("open store: %v", err)

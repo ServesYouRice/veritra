@@ -16,13 +16,21 @@ export 'api_errors.dart';
 export 'server_origin.dart';
 
 class ApiClient {
-  ApiClient({required String baseUrl, HttpClient? httpClient})
+  /// [transport] decides which origins the device-link checks accept. It
+  /// defaults to HTTPS only; only the demo entry point passes a policy that
+  /// also allows loopback HTTP (D11, D12).
+  ApiClient(
+      {required String baseUrl,
+      HttpClient? httpClient,
+      TransportPolicy transport = TransportPolicy.production})
       : baseUrl = canonicalizeServerOrigin(baseUrl),
+        _transport = transport,
         _httpClient = httpClient ?? HttpClient() {
     _httpClient.connectionTimeout = const Duration(seconds: 15);
   }
 
   final String baseUrl;
+  final TransportPolicy _transport;
   final HttpClient _httpClient;
   static const _requestTimeout = Duration(seconds: 30);
   static const _maxJsonResponseBytes = 2 * 1024 * 1024;
@@ -85,15 +93,17 @@ class ApiClient {
   }
 
   void _v3Origin() {
-    if (!TransportPolicy.demo.allows(baseUrl)) {
-      throw const FormatException('device link requires HTTPS or loopback');
+    if (!_transport.allows(baseUrl)) {
+      throw const FormatException(
+          'device link requires an origin this build allows');
     }
   }
 
   DeviceLinkV3Record _v3Link(Map<String, Object?> json,
       {String? id, Session? owner}) {
     return _decode(() {
-      final link = DeviceLinkV3Record.fromJson(_object(json, 'device_link'));
+      final link = DeviceLinkV3Record.fromJson(_object(json, 'device_link'),
+          transport: _transport);
       if (link.origin != baseUrl ||
           (id != null && link.id != id) ||
           (owner != null &&
@@ -302,7 +312,8 @@ class ApiClient {
           'initial_session_token_hash': initialSessionTokenHash,
         });
     return _decode(() {
-      final receipt = DeviceLinkV3Completion.fromJson(json);
+      final receipt =
+          DeviceLinkV3Completion.fromJson(json, transport: _transport);
       final fields = receipt.fields;
       if (fields['link_id'] != expected.id ||
           fields['account_id'] != expected.accountId ||

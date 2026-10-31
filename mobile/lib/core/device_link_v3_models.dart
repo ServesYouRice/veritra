@@ -68,11 +68,15 @@ void _keys(Map<String, Object?> json, Set<String> allowed) {
   if (json.keys.any((key) => !allowed.contains(key))) _invalid();
 }
 
-String _origin(Map<String, Object?> json) {
+/// The origin must be canonical and allowed by [transport], the policy of the
+/// build that is parsing. Callers pass the policy of their `ApiClient`; the
+/// default is HTTPS only, so only an entry point that opts in (the demo, D12)
+/// can accept loopback HTTP.
+String _origin(Map<String, Object?> json, TransportPolicy transport) {
   final origin = _string(json, 'server_origin', 2048);
   try {
-    if (canonicalizeServerOrigin(origin) != origin ||
-        !TransportPolicy.demo.allows(origin)) _invalid();
+    if (canonicalizeServerOrigin(origin) != origin || !transport.allows(origin))
+      _invalid();
   } on FormatException {
     _invalid();
   }
@@ -82,7 +86,8 @@ String _origin(Map<String, Object?> json) {
 /// Public server context only. This is NOT proof of the source's approval;
 /// the native transcript/MAC check must succeed before identity promotion.
 class DeviceLinkV3Record {
-  DeviceLinkV3Record.fromJson(Map<String, Object?> json)
+  DeviceLinkV3Record.fromJson(Map<String, Object?> json,
+      {TransportPolicy transport = TransportPolicy.production})
       : fields = Map<String, Object?>.unmodifiable(json) {
     _keys(fields, const {
       'id',
@@ -115,7 +120,7 @@ class DeviceLinkV3Record {
     for (final key in ['id', 'account_id', 'created_by_device_id']) {
       deviceLinkV3Id(fields[key]);
     }
-    _origin(fields);
+    _origin(fields, transport);
     _binary(fields, 'link_nonce');
     _binary(fields, 'existing_signing_key');
     final created = _time(fields, 'created_at');
@@ -203,7 +208,8 @@ class DeviceLinkV3Record {
 /// in this object. The native operation supplies its signature and digest.
 class FrozenDeviceLinkV3Claim {
   FrozenDeviceLinkV3Claim.fromJson(Map<String, Object?> json,
-      {required String requestHash})
+      {required String requestHash,
+      TransportPolicy transport = TransportPolicy.production})
       : fields = Map<String, Object?>.unmodifiable(json),
         requestHash = deviceLinkV3Hash(requestHash) {
     const keys = {
@@ -226,7 +232,7 @@ class FrozenDeviceLinkV3Claim {
     _keys(fields, keys);
     if (fields.length != keys.length ||
         fields['protocol_version'] != deviceLinkV3Protocol) _invalid();
-    _origin(fields);
+    _origin(fields, transport);
     for (final key in [
       'code',
       'reservation_request_id',
@@ -289,7 +295,8 @@ class DeviceLinkV3Reservation {
 
 /// A public receipt and approval MAC, never a server-issued Session/token.
 class DeviceLinkV3Completion {
-  DeviceLinkV3Completion.fromJson(Map<String, Object?> json) {
+  DeviceLinkV3Completion.fromJson(Map<String, Object?> json,
+      {TransportPolicy transport = TransportPolicy.production}) {
     _keys(json, const {'completion', 'approval_tag'});
     final raw = json['completion'];
     if (raw is! Map<String, Object?>) _invalid();
@@ -307,7 +314,7 @@ class DeviceLinkV3Completion {
     for (final key in ['link_id', 'account_id', 'device_id']) {
       deviceLinkV3Id(fields[key]);
     }
-    _origin(fields);
+    _origin(fields, transport);
     deviceLinkV3Hash(fields['claim_request_hash']);
     deviceLinkV3Hash(fields['initial_session_token_hash']);
     _binary(fields, 'transcript_hash');

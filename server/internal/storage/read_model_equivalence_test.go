@@ -139,11 +139,13 @@ const legacyListSyncEventsQuery = `
 		LIMIT ?`
 
 // legacyListSyncEvents is ListSyncEvents as it was: the cursor check on the
-// full bounds, then the single-scan query.
-func legacyListSyncEvents(t testing.TB, store *Store, accountID, deviceID string, afterID int64, limit int) ([]domain.SyncEvent, error) {
+// full bounds, then the single-scan query. oldest is the account's legacy
+// oldest bound (legacySyncBounds). The bounds query scans the account's whole
+// history, so callers compute it once while the data is unchanged instead of
+// once per page, which made this check dominate the package under -race.
+func legacyListSyncEvents(t testing.TB, store *Store, oldest int64, accountID, deviceID string, afterID int64, limit int) ([]domain.SyncEvent, error) {
 	t.Helper()
 	ctx := context.Background()
-	oldest, _ := legacySyncBounds(t, store, accountID)
 	if afterID > 0 && oldest > 0 && afterID < oldest-1 {
 		return nil, ErrSyncCursorExpired
 	}
@@ -169,10 +171,12 @@ func legacyListSyncEvents(t testing.TB, store *Store, accountID, deviceID string
 	return events, nil
 }
 
-func checkSyncPage(t *testing.T, store *Store, accountID, deviceID string, afterID int64, limit int) []domain.SyncEvent {
+// checkSyncPage compares one page with the legacy query. oldest is the
+// legacy oldest bound of accountID for the current data.
+func checkSyncPage(t *testing.T, store *Store, oldest int64, accountID, deviceID string, afterID int64, limit int) []domain.SyncEvent {
 	t.Helper()
 	got, gotErr := store.ListSyncEvents(context.Background(), accountID, deviceID, afterID, limit)
-	want, wantErr := legacyListSyncEvents(t, store, accountID, deviceID, afterID, limit)
+	want, wantErr := legacyListSyncEvents(t, store, oldest, accountID, deviceID, afterID, limit)
 	if !errors.Is(gotErr, wantErr) {
 		t.Fatalf("sync page %s/%q after %d limit %d: err %v want %v", accountID, deviceID, afterID, limit, gotErr, wantErr)
 	}
@@ -201,11 +205,13 @@ func checkSyncEventsMatch(t *testing.T, store *Store, accountID string, devices 
 	if err := store.db.QueryRowContext(context.Background(), `SELECT COALESCE(MAX(id), 0) FROM sync_events`).Scan(&maxID); err != nil {
 		t.Fatal(err)
 	}
+	// Nothing below writes, so the legacy bound is the same for every page.
+	oldest, _ := legacySyncBounds(t, store, accountID)
 	for _, device := range devices {
 		if paged {
 			after, pages, seen := int64(0), 0, 0
 			for {
-				page := checkSyncPage(t, store, accountID, device, after, 7)
+				page := checkSyncPage(t, store, oldest, accountID, device, after, 7)
 				if len(page) == 0 {
 					break
 				}
@@ -217,11 +223,11 @@ func checkSyncEventsMatch(t *testing.T, store *Store, accountID string, devices 
 				t.Fatalf("%s/%q: %d events in %d pages; paging would be vacuous", accountID, device, seen, pages)
 			}
 			for _, limit := range []int{-1, 0, 1, 200, 201} {
-				checkSyncPage(t, store, accountID, device, mid, limit)
+				checkSyncPage(t, store, oldest, accountID, device, mid, limit)
 			}
 		}
 		for _, after := range []int64{0, 1, mid / 2, mid, mid + 1, maxID - 3, maxID, maxID + 5} {
-			checkSyncPage(t, store, accountID, device, after, 50)
+			checkSyncPage(t, store, oldest, accountID, device, after, 50)
 		}
 	}
 }
@@ -522,8 +528,9 @@ func TestSyncHiddenRunMatchesLegacy(t *testing.T) {
 				t.Fatal(err)
 			}
 			checkSyncEventsMatch(t, store, ds.Account, []string{ds.Device}, true, true, ds.LastEventID/2)
+			oldest, _ := legacySyncBounds(t, store, ds.Account)
 			for after := int64(1); after <= ds.LastEventID+1; after += 7 {
-				checkSyncPage(t, store, ds.Account, ds.Device, after, 5)
+				checkSyncPage(t, store, oldest, ds.Account, ds.Device, after, 5)
 			}
 			if _, err := store.ListSyncEvents(ctx, ds.Account, ds.Device, 1, 5); !errors.Is(err, ErrSyncCursorExpired) {
 				t.Fatalf("cursor in the pruned range: err=%v, want expired", err)
