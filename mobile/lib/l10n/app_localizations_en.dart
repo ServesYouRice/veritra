@@ -1400,6 +1400,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'A device in this conversation was added, removed or replaced since you verified. Compare the new number again.';
 
   @override
+  String get safetyChangedWhileComparing =>
+      'The safety number changed while you were comparing it, so nothing was saved. Compare the new number again.';
+
+  @override
   String get safetyUnverifiedDetail => 'Not verified yet.';
 
   @override

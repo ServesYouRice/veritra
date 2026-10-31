@@ -2319,6 +2319,12 @@ abstract class AppLocalizations {
   /// **'A device in this conversation was added, removed or replaced since you verified. Compare the new number again.'**
   String get safetyChangedDetail;
 
+  /// No description provided for @safetyChangedWhileComparing.
+  ///
+  /// In en, this message translates to:
+  /// **'The safety number changed while you were comparing it, so nothing was saved. Compare the new number again.'**
+  String get safetyChangedWhileComparing;
+
   /// No description provided for @safetyUnverifiedDetail.
   ///
   /// In en, this message translates to:

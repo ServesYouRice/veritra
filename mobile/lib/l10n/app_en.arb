@@ -502,6 +502,7 @@
   "safetyQrSemantics": "QR code of this safety number. The other person can scan it to compare.",
   "safetyVerifiedDetail": "You verified this number.",
   "safetyChangedDetail": "A device in this conversation was added, removed or replaced since you verified. Compare the new number again.",
+  "safetyChangedWhileComparing": "The safety number changed while you were comparing it, so nothing was saved. Compare the new number again.",
   "safetyUnverifiedDetail": "Not verified yet.",
   "safetyVerified": "Verified",
   "safetyChanged": "Changed",

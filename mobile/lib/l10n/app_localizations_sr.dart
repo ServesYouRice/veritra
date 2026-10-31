@@ -1415,6 +1415,10 @@ class AppLocalizationsSr extends AppLocalizations {
       'Откако сте верификовали, у овом разговору је неки уређај додат, уклоњен или замењен. Поново упоредите нови број.';
 
   @override
+  String get safetyChangedWhileComparing =>
+      'Безбедносни број се променио док сте га упоређивали, па ништа није сачувано. Поново упоредите нови број.';
+
+  @override
   String get safetyUnverifiedDetail => 'Још није верификовано.';
 
   @override
@@ -3903,6 +3907,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get safetyChangedDetail =>
       'Otkako ste verifikovali, u ovom razgovoru je neki uređaj dodat, uklonjen ili zamenjen. Ponovo uporedite novi broj.';
+
+  @override
+  String get safetyChangedWhileComparing =>
+      'Bezbednosni broj se promenio dok ste ga upoređivali, pa ništa nije sačuvano. Ponovo uporedite novi broj.';
 
   @override
   String get safetyUnverifiedDetail => 'Još nije verifikovano.';

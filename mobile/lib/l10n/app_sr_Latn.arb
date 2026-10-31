@@ -371,6 +371,7 @@
   "safetyQrSemantics": "QR kod ovog bezbednosnog broja. Druga osoba može da ga skenira radi poređenja.",
   "safetyVerifiedDetail": "Verifikovali ste ovaj broj.",
   "safetyChangedDetail": "Otkako ste verifikovali, u ovom razgovoru je neki uređaj dodat, uklonjen ili zamenjen. Ponovo uporedite novi broj.",
+  "safetyChangedWhileComparing": "Bezbednosni broj se promenio dok ste ga upoređivali, pa ništa nije sačuvano. Ponovo uporedite novi broj.",
   "safetyUnverifiedDetail": "Još nije verifikovano.",
   "safetyVerified": "Verifikovano",
   "safetyChanged": "Promenjeno",

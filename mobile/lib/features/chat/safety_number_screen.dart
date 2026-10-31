@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -26,15 +27,24 @@ class SafetyNumberScreen extends StatefulWidget {
   const SafetyNumberScreen({
     required this.state,
     required this.conversation,
+    this.scanCode,
     super.key,
   });
 
   final AppState state;
   final Conversation conversation;
 
+  /// Opens the camera and returns the scanned code. Replaced in tests; the
+  /// scan button only appears on phones, or when this is given.
+  @visibleForTesting
+  final Future<String?> Function(BuildContext context)? scanCode;
+
   @override
   State<SafetyNumberScreen> createState() => _SafetyNumberScreenState();
 }
+
+/// How a try to store a verification ended.
+enum _Saved { saved, numberChanged, failed }
 
 class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
   ConversationSafetyNumber? _safety;
@@ -42,17 +52,44 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
   bool _failed = false;
   bool _working = false;
 
+  /// Bumped by every load; an answer from an older one is dropped.
+  int _loadGeneration = 0;
+  bool _loading = false;
+  bool _reloadAfter = false;
+
   String? get _peerAccountId =>
       widget.conversation.isDm ? widget.conversation.peerAccountId : null;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    widget.state.addListener(_onStateChanged);
+    unawaited(_load());
+  }
+
+  @override
+  void dispose() {
+    widget.state.removeListener(_onStateChanged);
+    super.dispose();
+  }
+
+  /// A device can join, leave or change its signing key through a commit
+  /// applied in the background, which changes the number and what a stored
+  /// verification means. The app announces many unrelated changes, so loads
+  /// never overlap: one runs, and one more follows if anything was announced
+  /// meanwhile.
+  void _onStateChanged() {
+    if (_loading) {
+      _reloadAfter = true;
+      return;
+    }
+    unawaited(_load());
   }
 
   Future<void> _load() async {
-    setState(() => _failed = false);
+    final generation = ++_loadGeneration;
+    _loading = true;
+    if (mounted && _failed) setState(() => _failed = false);
     try {
       final id = widget.conversation.id;
       final safety = await widget.state.conversationSafetyNumber(id);
@@ -60,20 +97,37 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
       final status = peer == null
           ? null
           : await widget.state.peerVerificationStatus(id, peer);
-      if (!mounted) return;
-      setState(() {
-        _safety = safety;
-        _status = status;
-      });
+      if (!mounted || generation != _loadGeneration) return;
+      final unchanged = _safety?.qrPayload == safety.qrPayload &&
+          _safety?.digits == safety.digits &&
+          _status == status;
+      if (!unchanged) {
+        setState(() {
+          _safety = safety;
+          _status = status;
+        });
+      }
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() => _failed = true);
+    } finally {
+      if (generation == _loadGeneration) {
+        _loading = false;
+        if (_reloadAfter) {
+          _reloadAfter = false;
+          if (mounted) unawaited(_load());
+        }
+      }
     }
   }
 
   Future<void> _markVerified() async {
     final peer = _peerAccountId;
-    if (peer == null) return;
+    // The number the person is looking at when they start. If the screen
+    // shows a different one by the time they confirm, or the app's own
+    // number differs when it stores, nothing is saved.
+    final compared = _safety;
+    if (peer == null || compared == null) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -92,34 +146,56 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
       ),
     );
     if (confirmed != true || !mounted) return;
-    await _saveVerification(peer);
+    final result = _safety?.qrPayload == compared.qrPayload
+        ? await _saveVerification(peer, compared.qrPayload)
+        : _Saved.numberChanged;
+    _reportSave(result);
   }
 
-  Future<void> _saveVerification(String peer) async {
-    setState(() => _working = true);
+  /// Stores the verification for the number whose code is [comparedCode].
+  /// Never touches the screen once it is gone.
+  Future<_Saved> _saveVerification(String peer, String comparedCode) async {
+    if (mounted) setState(() => _working = true);
     try {
-      await widget.state.markPeerVerified(widget.conversation.id, peer);
+      final stored = await widget.state.markPeerVerifiedIfMatches(
+          widget.conversation.id, peer, comparedCode);
+      return stored ? _Saved.saved : _Saved.numberChanged;
     } catch (_) {
-      _showMessage(context.l10n.safetySaveFailed);
+      return _Saved.failed;
     } finally {
       if (mounted) setState(() => _working = false);
+      if (mounted) unawaited(_load());
     }
-    await _load();
+  }
+
+  /// Says what a refused or failed save means; a success shows in the status.
+  void _reportSave(_Saved result, {String Function(AppLocalizations)? saved}) {
+    switch (result) {
+      case _Saved.saved:
+        if (saved != null) _showMessage(saved);
+      case _Saved.numberChanged:
+        _showMessage((l10n) => l10n.safetyChangedWhileComparing);
+      case _Saved.failed:
+        _showMessage((l10n) => l10n.safetySaveFailed);
+    }
   }
 
   Future<void> _scan() async {
-    final scanned = await Navigator.of(context).push<String>(
-      MaterialPageRoute<String>(
-        builder: (_) => QrScanScreen(title: context.l10n.safetyScanTitle),
-      ),
-    );
+    final scanner = widget.scanCode;
+    final scanned = scanner != null
+        ? await scanner(context)
+        : await Navigator.of(context).push<String>(
+            MaterialPageRoute<String>(
+              builder: (_) => QrScanScreen(title: context.l10n.safetyScanTitle),
+            ),
+          );
     if (scanned == null || !mounted) return;
     final bool matches;
     try {
       matches =
           await widget.state.safetyCodeMatches(widget.conversation.id, scanned);
     } catch (_) {
-      _showMessage(context.l10n.safetyReadFailed);
+      _showMessage((l10n) => l10n.safetyReadFailed);
       return;
     }
     if (!mounted) return;
@@ -141,17 +217,20 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
     }
     final peer = _peerAccountId;
     if (peer == null) {
-      _showMessage(context.l10n.safetyCodesMatch);
+      _showMessage((l10n) => l10n.safetyCodesMatch);
       return;
     }
-    await _saveVerification(peer);
-    if (!mounted) return;
-    _showMessage(context.l10n.safetyCodesMatchVerified);
+    // The scanned code is what was compared; it is stored only if it is still
+    // the conversation's number.
+    final result = await _saveVerification(peer, scanned);
+    _reportSave(result, saved: (l10n) => l10n.safetyCodesMatchVerified);
   }
 
-  void _showMessage(String text) {
+  /// Shows [text] unless the screen is gone; the strings are read only then.
+  void _showMessage(String Function(AppLocalizations l10n) text) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(text(context.l10n))));
   }
 
   @override
@@ -159,7 +238,8 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
     final theme = Theme.of(context);
     final l10n = context.l10n;
     final safety = _safety;
-    final canScan = Platform.isAndroid || Platform.isIOS;
+    final canScan =
+        widget.scanCode != null || Platform.isAndroid || Platform.isIOS;
     return Scaffold(
       appBar: LargeTitleBar(title: l10n.safetyTitle),
       body: ListView(
