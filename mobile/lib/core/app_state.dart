@@ -5027,9 +5027,23 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             _history[id] = history;
             _historyReloadPending.remove(id);
           } catch (_) {
-            // The cached history still holds the deleted rows; timelineFor
-            // hides the expired ones, and the reload is tried again.
+            // The cached history still holds the deleted rows. Drop the
+            // expired ones now, so no view (timeline, replies, pins,
+            // starred) shows them; reactions come back with the reload,
+            // which is tried again.
             if (generation != _sessionGeneration) return;
+            final cached = _history[id];
+            final nowMs = DateTime.now().millisecondsSinceEpoch;
+            bool live(LocalMessage m) =>
+                m.expiresAt == null || m.expiresAt! > nowMs;
+            if (cached != null && !cached.messages.every(live)) {
+              _history[id] = ConversationHistory(
+                conversationId: id,
+                messages: cached.messages.where(live).toList(),
+                reactions: const [],
+                copiedKeys: cached.copiedKeys,
+              );
+            }
             _historyReloadPending.add(id);
             _historyReloadSession = current;
             failed = true;

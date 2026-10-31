@@ -134,6 +134,8 @@ void main() {
     expect(
         state.timelineFor('conv_1').map((e) => e.id), <String>['dev_peer:live'],
         reason: 'expired text is still in the chat after a failed reload');
+    expect(state.historyFor('conv_1').forKey('dev_peer:soon'), isNull,
+        reason: 'replies, pins and starred read the cached history too');
     expect(notified, greaterThan(0));
     expect(await store.nextMessageExpiry(), isNull);
 
