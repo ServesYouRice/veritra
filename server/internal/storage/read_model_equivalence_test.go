@@ -152,17 +152,11 @@ const legacyListSyncEventsQuery = `
 		ORDER BY id ASC
 		LIMIT ?`
 
-// legacyListSyncEvents is ListSyncEvents as it was: the cursor check on the
-// full bounds, then the single-scan query. oldest is the account's legacy
-// oldest bound (legacySyncBounds). The bounds query scans the account's whole
-// history, so callers compute it once while the data is unchanged instead of
-// once per page, which made this check dominate the package under -race.
-func legacyListSyncEvents(t testing.TB, store *Store, oldest int64, accountID, deviceID string, afterID int64, limit int) ([]domain.SyncEvent, error) {
+// legacyListSyncEvents is the page ListSyncEvents serves, from the
+// single-scan query. The cursor test is referenceCursorExpiry's.
+func legacyListSyncEvents(t testing.TB, store *Store, accountID, deviceID string, afterID int64, limit int) []domain.SyncEvent {
 	t.Helper()
 	ctx := context.Background()
-	if afterID > 0 && oldest > 0 && afterID < oldest-1 {
-		return nil, ErrSyncCursorExpired
-	}
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
@@ -182,18 +176,79 @@ func legacyListSyncEvents(t testing.TB, store *Store, oldest int64, accountID, d
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	return events, nil
+	return events
 }
 
-// checkSyncPage compares one page with the legacy query. oldest is the
-// legacy oldest bound of accountID for the current data.
-func checkSyncPage(t *testing.T, store *Store, oldest int64, accountID, deviceID string, afterID int64, limit int) []domain.SyncEvent {
+// logPrunedSyncEvents copies every sync event deleted from now on into
+// ref_pruned_sync_events, so referenceCursorExpiry can tell what a cursor
+// lost without the store's prune marks. Call it before the first delete.
+func logPrunedSyncEvents(t testing.TB, store *Store) {
+	t.Helper()
+	for _, statement := range []string{
+		`CREATE TABLE IF NOT EXISTS ref_pruned_sync_events AS SELECT id, event_type, account_id, conversation_id, payload_json, created_at, device_id FROM sync_events WHERE 0`,
+		`CREATE TRIGGER IF NOT EXISTS ref_pruned_sync_events_log AFTER DELETE ON sync_events BEGIN
+		   INSERT INTO ref_pruned_sync_events(id, event_type, account_id, conversation_id, payload_json, created_at, device_id)
+		   VALUES(OLD.id, OLD.event_type, OLD.account_id, OLD.conversation_id, OLD.payload_json, OLD.created_at, OLD.device_id);
+		 END`,
+	} {
+		if _, err := store.db.ExecContext(context.Background(), statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// referenceCursorExpiry bounds the cursor test from the deleted events
+// themselves. must: the legacy page query, run over the deleted events,
+// finds one after the cursor that the device would be sent now (joins,
+// blocks, expiry and all), so the store has to refuse the cursor. may: a
+// deleted event after the cursor lies in the account's own stream or in a
+// conversation it is a member of; the store may refuse the cursor only
+// then. The gap between the two is the documented conservative part
+// (blocked senders, joined_epoch, a removed device's window).
+func referenceCursorExpiry(t testing.TB, store *Store, accountID, deviceID string, afterID int64) (must, may bool) {
+	t.Helper()
+	if afterID <= 0 {
+		return false, false
+	}
+	ctx := context.Background()
+	prunedQuery := strings.ReplaceAll(legacyListSyncEventsQuery, "FROM sync_events", "FROM ref_pruned_sync_events")
+	rows, err := store.db.QueryContext(ctx, prunedQuery, afterID, accountID, deviceID, afterID, accountID, deviceID, nowString(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	must = rows.Next()
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM ref_pruned_sync_events r WHERE r.id > ?1 AND (
+		  (r.account_id = ?2 AND (r.device_id IS NULL OR r.device_id = ?3))
+		  OR (r.account_id IS NULL AND EXISTS (SELECT 1 FROM memberships m WHERE m.account_id = ?2 AND m.conversation_id = r.conversation_id))))`,
+		afterID, accountID, deviceID).Scan(&may); err != nil {
+		t.Fatal(err)
+	}
+	return must, may
+}
+
+// checkSyncPage compares one page with the legacy query and the cursor
+// test with referenceCursorExpiry.
+func checkSyncPage(t *testing.T, store *Store, accountID, deviceID string, afterID int64, limit int) []domain.SyncEvent {
 	t.Helper()
 	got, gotErr := store.ListSyncEvents(context.Background(), accountID, deviceID, afterID, limit)
-	want, wantErr := legacyListSyncEvents(t, store, oldest, accountID, deviceID, afterID, limit)
-	if !errors.Is(gotErr, wantErr) {
-		t.Fatalf("sync page %s/%q after %d limit %d: err %v want %v", accountID, deviceID, afterID, limit, gotErr, wantErr)
+	must, may := referenceCursorExpiry(t, store, accountID, deviceID, afterID)
+	expired := errors.Is(gotErr, ErrSyncCursorExpired)
+	if gotErr != nil && !expired {
+		t.Fatalf("sync page %s/%q after %d limit %d: %v", accountID, deviceID, afterID, limit, gotErr)
 	}
+	if must && !expired {
+		t.Fatalf("sync page %s/%q after %d: served a cursor that lost a visible pruned event", accountID, deviceID, afterID)
+	}
+	if expired && !may {
+		t.Fatalf("sync page %s/%q after %d: refused a cursor that lost nothing it could see", accountID, deviceID, afterID)
+	}
+	if expired {
+		return nil
+	}
+	want := legacyListSyncEvents(t, store, accountID, deviceID, afterID, limit)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("sync page %s/%q after %d limit %d differs:\n got %d events %v\nwant %d events %v",
 			accountID, deviceID, afterID, limit, len(got), pageEventIDs(got), len(want), pageEventIDs(want))
@@ -219,13 +274,11 @@ func checkSyncEventsMatch(t *testing.T, store *Store, accountID string, devices 
 	if err := store.db.QueryRowContext(context.Background(), `SELECT COALESCE(MAX(id), 0) FROM sync_events`).Scan(&maxID); err != nil {
 		t.Fatal(err)
 	}
-	// Nothing below writes, so the legacy bound is the same for every page.
-	oldest, _ := legacySyncBounds(t, store, accountID)
 	for _, device := range devices {
 		if paged {
 			after, pages, seen := int64(0), 0, 0
 			for {
-				page := checkSyncPage(t, store, oldest, accountID, device, after, 7)
+				page := checkSyncPage(t, store, accountID, device, after, 7)
 				if len(page) == 0 {
 					break
 				}
@@ -237,11 +290,11 @@ func checkSyncEventsMatch(t *testing.T, store *Store, accountID string, devices 
 				t.Fatalf("%s/%q: %d events in %d pages; paging would be vacuous", accountID, device, seen, pages)
 			}
 			for _, limit := range []int{-1, 0, 1, 200, 201} {
-				checkSyncPage(t, store, oldest, accountID, device, mid, limit)
+				checkSyncPage(t, store, accountID, device, mid, limit)
 			}
 		}
 		for _, after := range []int64{0, 1, mid / 2, mid, mid + 1, maxID - 3, maxID, maxID + 5} {
-			checkSyncPage(t, store, oldest, accountID, device, after, 50)
+			checkSyncPage(t, store, accountID, device, after, 50)
 		}
 	}
 }
@@ -453,6 +506,7 @@ func checkReadModelsMatch(t *testing.T, store *Store, ds benchDataset) {
 func TestReadModelQueriesMatchLegacy(t *testing.T) {
 	ctx := context.Background()
 	store := newBenchStore(t, ctx)
+	logPrunedSyncEvents(t, store)
 	ds := seedBenchDataset(t, ctx, store, benchProfile{Name: "equivalence", Accounts: 16, Conversations: 32, HotMemberships: 16,
 		MembersPerConv: 4, MessagesPerConv: 20, AccountEvents: 40, CiphertextBytes: 32, BlockedByHot: 2, ReadReceiptRatio: 2})
 	seedEquivalenceEdges(t, store, ds)
@@ -511,6 +565,7 @@ func TestSyncHiddenRunMatchesLegacy(t *testing.T) {
 	for _, mode := range []hiddenRunMode{hiddenJoinedLate, hiddenRemoved, hiddenBlocked} {
 		t.Run(string(mode), func(t *testing.T) {
 			store := newBenchStore(t, ctx)
+			logPrunedSyncEvents(t, store)
 			ds := seedHiddenRun(t, ctx, store, 60, mode)
 			checkSyncEventsMatch(t, store, ds.Account, []string{ds.Device, "", "dev_unknown"}, true, true, ds.LastEventID/2)
 			checkSyncEventsMatch(t, store, "acct_hr_b", []string{"dev_hr_b"}, true, true, ds.LastEventID/2)
@@ -536,15 +591,15 @@ func TestSyncHiddenRunMatchesLegacy(t *testing.T) {
 			if want := map[hiddenRunMode]int{hiddenRemoved: 1}[mode]; hidden != want {
 				t.Fatalf("device saw %d hidden-run messages, want %d", hidden, want)
 			}
-			// After retention, cursors into the pruned range expire as
-			// before, whether or not the event at the cursor counts.
+			// After retention, a cursor expires when the device lost an
+			// event it could see, whether or not the event at the cursor
+			// counts; checkSyncPage holds each cursor to that.
 			if _, err := store.db.ExecContext(ctx, `DELETE FROM sync_events WHERE id <= ?`, ds.LastEventID/4); err != nil {
 				t.Fatal(err)
 			}
 			checkSyncEventsMatch(t, store, ds.Account, []string{ds.Device}, true, true, ds.LastEventID/2)
-			oldest, _ := legacySyncBounds(t, store, ds.Account)
 			for after := int64(1); after <= ds.LastEventID+1; after += 7 {
-				checkSyncPage(t, store, oldest, ds.Account, ds.Device, after, 5)
+				checkSyncPage(t, store, ds.Account, ds.Device, after, 5)
 			}
 			if _, err := store.ListSyncEvents(ctx, ds.Account, ds.Device, 1, 5); !errors.Is(err, ErrSyncCursorExpired) {
 				t.Fatalf("cursor in the pruned range: err=%v, want expired", err)
