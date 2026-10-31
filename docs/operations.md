@@ -335,8 +335,10 @@ The base holds:
 - the namespace and `veritra-data` volume annotated
   `kustomize.toolkit.fluxcd.io/prune: disabled`, so a file missing from infra
   never makes Flux delete the data (local-path deletes it with the claim);
-- a Traefik `IngressRoute` with an HSTS headers middleware and a cert-manager
-  `Certificate` (Cloudflare DNS-01, so the DNS-only hostname works);
+- a Traefik `IngressRoute` with an HSTS headers middleware, a `TLSOption`
+  that offers post-quantum key exchange first (see Post-quantum TLS; needs
+  Traefik v3.5 or later), and a cert-manager `Certificate` (Cloudflare
+  DNS-01, so the DNS-only hostname works);
 - default-deny network policies that admit only Traefik to the server, DNS,
   HTTPS to public addresses for push providers, and HTTPS for the R2 jobs;
 - the backup and restore-drill CronJobs described below.
@@ -398,6 +400,65 @@ The app has no custom trust, no trust-on-first-use and no way to skip TLS checks
 
 Never use self-signed leaf certificates, or plain HTTP outside loopback demo builds.
 
+
+## Post-quantum TLS
+
+Both edges offer the hybrid key exchange X25519MLKEM768 first, so a recorded
+session cannot be decrypted later with a quantum computer ("harvest now,
+decrypt later"). Clients without it still connect with classical groups.
+Status as read from the code on 2026-10-31:
+
+| Piece | Post-quantum? | Where |
+|---|---|---|
+| Veritra server (Go 1.26) | Does not terminate TLS. `Serve` in `server/internal/app/app.go` runs plain `ListenAndServe` behind the proxy; HSTS is set only for a TLS request, which no shipped profile sends to it | n/a |
+| Server's outbound calls (Web Push, FCM, APNs) | Yes: no `CurvePreferences` set, so Go 1.26's defaults offer X25519MLKEM768 first | `server/internal/push` |
+| Compose: Caddy `2.11.4` | Yes, by default: X25519MLKEM768, X25519, P-256 when the Caddyfile sets no `curves` (from Caddy v2.10.0, `modules/caddytls/values.go`). The Caddyfile sets none | `deploy/caddy/Caddyfile` |
+| k3s: Traefik (v3.7.13 in k3s v1.34.12) | Yes, set explicitly: TLSOption `veritra` with X25519MLKEM768, X25519, CurveP256 and a TLS 1.2 floor, used by the IngressRoute | `deploy/kubernetes/base/tlsoption.yaml` |
+| The app (Flutter 3.44 `dart:io`) | Not yet: its BoringSSL offers X25519, P-256, P-384 only (research note, not re-checked here), so app connections negotiate X25519 until a Flutter release with the newer BoringSSL | `mobile` |
+
+`server/cmd/messenger-server/edge_tls_test.go` checks the TLSOption's names
+against Traefik's table, and that Go's TLS (which Traefik uses) negotiates
+X25519MLKEM768 with a current client, and X25519 or P-256 with classical
+and TLS 1.2 clients. It also checks that the Caddyfile keeps Caddy's
+default.
+
+**Traefik version floor.** The curve names exist from Traefik v3.5.0. An
+older Traefik does not know `X25519MLKEM768`. It logs `invalid CurveID in
+curvePreferences` and then refuses every TLS connection to the Veritra host
+instead of falling back. On another k3s release, check the bundled Traefik
+first: `kubectl -n kube-system get deploy traefik -o
+jsonpath='{..image}'`. After applying, look for TLS option errors in
+`kubectl -n kube-system logs deploy/traefik`.
+
+**Confirming it on a live server.** Either of these, from any machine:
+
+- **OpenSSL 3.5 or later:**
+  `openssl s_client -connect chat.example.org:443 -servername chat.example.org -groups X25519MLKEM768 </dev/null`
+  prints `Negotiated TLS1.3 group: X25519MLKEM768`. Run it again with
+  `-groups X25519` and it should connect too (the classical fallback).
+  OpenSSL 3.0-3.4 do not know the group name.
+- **Go 1.25 or later** (`ConnectionState().CurveID`): put this in a
+  `main.go`, then `go run main.go chat.example.org`. It prints
+  `X25519MLKEM768`, or the error if the server does not offer it.
+
+  ```go
+  package main
+
+  import (
+  	"crypto/tls"
+  	"fmt"
+  	"os"
+  )
+
+  func main() {
+  	c, err := tls.Dial("tcp", os.Args[1]+":443", &tls.Config{CurvePreferences: []tls.CurveID{tls.X25519MLKEM768}})
+  	if err != nil {
+  		fmt.Println("no post-quantum handshake:", err)
+  		os.Exit(1)
+  	}
+  	fmt.Println(c.ConnectionState().CurveID)
+  }
+  ```
 
 ## Off-host backups in R2
 
@@ -479,6 +540,8 @@ accounts or decisions only the owner has.
   `scripts/release-image.sh --infra-dir ...` produced the digest in infra.
 - [ ] `examples/traefik-helmchartconfig.yaml` applied: the Traefik pod's
   arguments show `readTimeout=16m` and the `web` redirect.
+- [ ] Traefik is v3.5 or later, and a handshake with only X25519MLKEM768
+  succeeds (see Post-quantum TLS).
 - [ ] `PRIVATE_MESSENGER_TRUSTED_PROXIES` matches the cluster CIDR; two
   clients on different networks are rate-limited separately.
 - [ ] Owner set up, then the setup-token key and its `_FILE` patch removed.

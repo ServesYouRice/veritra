@@ -21,6 +21,7 @@ resources:
   - deployment.yaml
   - service.yaml
   - ingressroute.yaml
+  - tlsoption.yaml
   - certificate.yaml
   - networkpolicy.yaml
   - backup-cronjob.yaml
