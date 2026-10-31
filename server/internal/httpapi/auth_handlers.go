@@ -276,18 +276,26 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid_credentials")
 		return
 	}
-	// Only now, with every credential checked, may a legacy hash migrate.
-	passwords.Upgrade(r.Context(), record.AccountID, record.PasswordHash, req.Password, check)
-	a.LoginBackoff.SucceededAny(sourceKey, accountDeviceKey)
 	token, tokenHash, err := auth.NewToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "token_create_failed")
 		return
 	}
-	if err := a.Store.CreateSession(r.Context(), tokenHash, record.AccountID, record.DeviceID, time.Time{}); err != nil {
+	// The session is stored only while the password hash is still the one
+	// verified above, so a password change committed meanwhile (which
+	// deletes the account's sessions) cannot be outlived by this login. It
+	// goes before the rehash, which changes the stored hash.
+	if err := a.Store.CreateLoginSession(r.Context(), tokenHash, record.AccountID, record.DeviceID, record.PasswordHash); err != nil {
+		if errors.Is(err, storage.ErrUnauthorized) {
+			writeError(w, http.StatusUnauthorized, "invalid_credentials")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "session_create_failed")
 		return
 	}
+	// Only now, with every credential checked, may a legacy hash migrate.
+	passwords.Upgrade(r.Context(), record.AccountID, record.PasswordHash, req.Password, check)
+	a.LoginBackoff.SucceededAny(sourceKey, accountDeviceKey)
 	a.recordAuditEvent(r.Context(), &record.AccountID, "session.login", map[string]string{"device_id": record.DeviceID})
 	writeJSON(w, http.StatusOK, map[string]interface{}{"token": token, "account_id": record.AccountID, "device_id": record.DeviceID, "role": record.Role})
 }

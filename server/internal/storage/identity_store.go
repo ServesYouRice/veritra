@@ -262,6 +262,32 @@ func (s *Store) CreateSession(ctx context.Context, tokenHash, accountID, deviceI
 	return err
 }
 
+// CreateLoginSession creates the session a password login earned, but only
+// while the account's password hash is still the one the login verified.
+// A password change or owner recovery that commits between the login's
+// read and this insert deletes the account's sessions; without the check
+// the late insert would survive it. It returns ErrUnauthorized, inserting
+// nothing, when the hash moved or the account is no longer active.
+func (s *Store) CreateLoginSession(ctx context.Context, tokenHash, accountID, deviceID, verifiedPasswordHash string) error {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" || verifiedPasswordHash == "" {
+		return ErrForbidden
+	}
+	now := nowString()
+	idleExpiresAt, absoluteExpiresAt := s.sessionLifetime(time.Now().UTC(), time.Time{})
+	result, err := s.db.ExecContext(ctx, `INSERT INTO sessions(token_hash, account_id, device_id, expires_at, created_at, recent_auth_at, last_used_at, absolute_expires_at)
+		SELECT ?, a.id, ?, ?, ?, ?, ?, ? FROM accounts a
+		WHERE a.id = ? AND a.password_hash = ? AND a.status = 'active' AND a.deleted_at IS NULL`,
+		tokenHash, deviceID, idleExpiresAt, now, now, now, absoluteExpiresAt, accountID, verifiedPasswordHash)
+	if err != nil {
+		return err
+	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return ErrUnauthorized
+	}
+	return nil
+}
+
 func (s *Store) PrincipalByTokenHash(ctx context.Context, tokenHash string) (domain.Principal, error) {
 	principal, _, err := s.SessionPrincipal(ctx, tokenHash)
 	return principal, err
