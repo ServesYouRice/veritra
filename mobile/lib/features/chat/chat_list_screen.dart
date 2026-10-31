@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
+import '../../core/errors.dart';
 import '../../core/models.dart';
 import '../../ui/avatar.dart';
 import '../../ui/format.dart';
@@ -304,8 +305,8 @@ class ChatListScreen extends StatelessWidget {
         }
       } catch (error) {
         if (context.mounted)
-          ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text(error.toString())));
+          ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(describeError(error, context.l10n))));
       }
       return;
     }
