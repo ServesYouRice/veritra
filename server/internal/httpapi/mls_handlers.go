@@ -252,10 +252,13 @@ func (a *API) listMLSPendingChanges(w http.ResponseWriter, r *http.Request, prin
 		writeError(w, http.StatusBadRequest, "device_session_required")
 		return
 	}
-	changes, err := a.Store.ListMLSPendingChanges(r.Context(), principal.AccountID, principal.DeviceID)
+	changes, cut, err := a.Store.ListMLSPendingChangesRead(r.Context(), principal.AccountID, principal.DeviceID)
 	if err != nil {
 		handleStorageError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"pending_changes": changes})
+	// list_truncated: the whole read hit its overall cap, so conversations
+	// may be missing from it. An item's own truncated flag alone (one
+	// conversation over its per-group cap) does not mean that.
+	writeJSON(w, http.StatusOK, map[string]any{"pending_changes": changes, "list_truncated": cut})
 }

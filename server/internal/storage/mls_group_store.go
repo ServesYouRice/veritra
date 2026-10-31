@@ -530,6 +530,15 @@ func (s *Store) MLSGroupEpoch(ctx context.Context, conversationID string) (int64
 // whose account left the conversation. Revoked devices are handled by the
 // revocation flow instead.
 func (s *Store) ListMLSPendingChanges(ctx context.Context, accountID, deviceID string) ([]MLSPendingChange, error) {
+	changes, _, err := s.ListMLSPendingChangesRead(ctx, accountID, deviceID)
+	return changes, err
+}
+
+// ListMLSPendingChangesRead is ListMLSPendingChanges that also reports
+// whether the whole read was cut at mlsPendingChangeLimit, so conversations
+// may be missing from it. A single conversation over its own cap is flagged
+// truncated but still listed, and does not set it.
+func (s *Store) ListMLSPendingChangesRead(ctx context.Context, accountID, deviceID string) ([]MLSPendingChange, bool, error) {
 	// Removals come first and each kind has its own caps, so a backlog of one
 	// kind cannot hide the other, and every conversation keeps its share.
 	// Within a conversation both lists are ordered by device id, adds with the
@@ -542,7 +551,7 @@ func (s *Store) ListMLSPendingChanges(ctx context.Context, accountID, deviceID s
 	// must not give a list built for one epoch the coordinator of the next.
 	tx, err := s.db.reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer tx.Rollback()
 	byConversation := map[string]*MLSPendingChange{}
@@ -587,7 +596,7 @@ func (s *Store) ListMLSPendingChanges(ctx context.Context, accountID, deviceID s
 		}
 		rows, err := queryPendingChanges(ctx, tx, query, kind, deviceID, accountID, now)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if len(rows) > mlsPendingChangeLimit {
 			overall = true
@@ -625,12 +634,12 @@ func (s *Store) ListMLSPendingChanges(ctx context.Context, accountID, deviceID s
 			JOIN memberships m ON m.conversation_id = r.conversation_id AND m.account_id = r.account_id
 			WHERE r.conversation_id = ? AND r.removed_after_event_id IS NULL`,
 			item.ConversationID).Scan(&item.CoordinatorDeviceID); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		result = append(result, *item)
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ConversationID < result[j].ConversationID })
-	return result, nil
+	return result, overall, nil
 }
 
 // mlsPendingChangeLimit caps the rows read for each kind of change, across
