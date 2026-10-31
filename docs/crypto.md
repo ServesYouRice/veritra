@@ -421,8 +421,8 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     above, migration 0044). Before, it skipped that check by asking from
     event 0.
   - **Tests.** `mobile/test/sync_recovery_test.dart` ("signing in again
-    as the same identity") covers both stores. The demo e2e covers a
-    restore after sign-out followed by sign-in.
+    as the same identity") covers both stores. Since D71 the demo e2e
+    covers a restore that finishes by linking from another device.
 
 - **Periodic self-update (2026-10-31, research round 2):** no payload or
   local schema change, no new symbol and no ABI number change; server
