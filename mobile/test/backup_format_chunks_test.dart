@@ -98,8 +98,8 @@ void main() {
     final target = _PlainStore(const <int>[]);
     await expectLater(
         serviceFor(target).recover(code),
-        throwsA(isA<BackupException>().having(
-            (error) => error.kind, 'kind', BackupFailureKind.corrupt)));
+        throwsA(isA<BackupException>()
+            .having((error) => error.kind, 'kind', BackupFailureKind.corrupt)));
     expect(target.restored, isEmpty);
   }
 

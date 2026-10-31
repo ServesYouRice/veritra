@@ -57,8 +57,8 @@ void main() {
     await File('${directory.path}/veritra-local.db').writeAsBytes([1, 2, 3]);
     await expectLater(
         store().loadSession(),
-        throwsA(isA<LocalStoreUnavailableException>().having(
-            (e) => e.kind, 'kind', LocalStoreFailureKind.keyRejected)));
+        throwsA(isA<LocalStoreUnavailableException>()
+            .having((e) => e.kind, 'kind', LocalStoreFailureKind.keyRejected)));
     expect(opened, hasLength(1));
     expect(opened.single.closed, isTrue);
   });

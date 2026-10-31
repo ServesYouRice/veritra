@@ -246,14 +246,13 @@ void main() {
       expect(harness.state.syncRecovery!.kind, SyncFailureKind.localStorage);
       expect(harness.state.deviceRecoveryRequired, isTrue);
       expect(harness.state.connectionStatus, ConnectionStatus.offline);
-      expect((await store.loadSyncRecovery())!.kind,
-          SyncFailureKind.localStorage);
+      expect(
+          (await store.loadSyncRecovery())!.kind, SyncFailureKind.localStorage);
       expect(api.syncCalls, 0);
       harness.dispose();
     });
 
-    test('a refused write of the record still stops sync in memory',
-        () async {
+    test('a refused write of the record still stops sync in memory', () async {
       final api = _ScriptedApi()
         ..events = <SyncEvent>[_projectionEvent(4, 'conversation.updated')];
       final store = _FlakyStore()
@@ -303,8 +302,8 @@ void main() {
 
     test('a burst of device events costs one device and list refresh',
         () async {
-      final one = await catchUp(
-          <SyncEvent>[_projectionEvent(1, 'device.updated')], 1);
+      final one =
+          await catchUp(<SyncEvent>[_projectionEvent(1, 'device.updated')], 1);
       final burst = await catchUp(<SyncEvent>[
         for (var id = 1; id <= 50; id++) _projectionEvent(id, 'device.updated'),
       ], 50);

@@ -141,15 +141,16 @@ void main() {
   });
 
   group('sync events that can never succeed (D54, TASK-058)', () {
-    test('a message from an epoch this device never held is passed with a '
+    test(
+        'a message from an epoch this device never held is passed with a '
         'placeholder', () async {
       final bindings = NativeCryptoBindings.open(libraryPath!);
       final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
       final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
       final carol = await _Client.enroll(bindings, 'acct_carol', 'dev_carol');
       await _startConversation(alice, bob);
-      final early =
-          await alice.send(AppPayloadType.text, <String, Object?>{'text': 'e1'});
+      final early = await alice
+          .send(AppPayloadType.text, <String, Object?>{'text': 'e1'});
       await alice.service.stageMembershipChange('conv_1',
           adds: <DeviceKeyPackage>[await carol.keyPackage()]);
       await _accept(alice, <_Client>[carol], <_Client>[bob]);
@@ -164,8 +165,8 @@ void main() {
       await _expectPlaceholder(carol, envelope, event);
       expect((await carol.store.loadCryptoState())!.counter, counter + 1);
       // Sync goes on, and the group still decrypts.
-      final next =
-          await alice.send(AppPayloadType.text, <String, Object?>{'text': 'hi'});
+      final next = await alice
+          .send(AppPayloadType.text, <String, Object?>{'text': 'hi'});
       await carol.receive(alice, next);
       expect((await carol.history()).map((row) => row.body), contains('hi'));
     }, skip: skip);
@@ -192,14 +193,15 @@ void main() {
       expect((await alice.history()).map((row) => row.body), contains('two'));
     }, skip: skip);
 
-    test('a replayed message whose secrets are gone is passed with a '
+    test(
+        'a replayed message whose secrets are gone is passed with a '
         'placeholder', () async {
       final bindings = NativeCryptoBindings.open(libraryPath!);
       final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
       final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
       await _startConversation(alice, bob);
-      final sent =
-          await bob.send(AppPayloadType.text, <String, Object?>{'text': 'once'});
+      final sent = await bob
+          .send(AppPayloadType.text, <String, Object?>{'text': 'once'});
       await alice.receive(bob, sent);
 
       // The same ciphertext again, as a new event: its key was used up.
@@ -293,8 +295,8 @@ void main() {
           throwsA(anything));
 
       await _expectUnmoved(bob, cursor, counter);
-      final hello =
-          await alice.send(AppPayloadType.text, <String, Object?>{'text': 'hi'});
+      final hello = await alice
+          .send(AppPayloadType.text, <String, Object?>{'text': 'hi'});
       await bob.receive(alice, hello);
       expect((await bob.history()).single.body, 'hi');
     }, skip: skip);
@@ -325,7 +327,8 @@ void main() {
               _commit(bob, from: alice, item: item, payload: <int>[1, 2, 3])),
           throwsA(anything));
       await _expectUnmoved(bob, cursor, counter);
-      expect(await bob.service.groupEpoch('conv_1'), (epoch: 2, pending: false));
+      expect(
+          await bob.service.groupEpoch('conv_1'), (epoch: 2, pending: false));
     }, skip: skip);
   });
 }
