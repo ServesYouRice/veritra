@@ -9,11 +9,17 @@ import Darwin
   private var pushInstance: String?
   private var ownedEngine: FlutterEngine?
   private(set) var backgroundLaunchHint = false
+  // Set once in didFinishLaunching; false until the crypto boundary checks.
+  private var cryptoBoundaryReady = false
   private let wakeCoordinator = IOSWakeCoordinator()
 
   func sharedEngine(background: Bool = false) -> FlutterEngine? {
     dispatchPrecondition(condition: .onQueue(.main))
     if let ownedEngine { return ownedEngine }
+    // UIKit ignores didFinishLaunching's false and still connects the scene,
+    // so the crypto check is enforced here: no Dart runs against a
+    // mismatched or prematurely enabled crypto library.
+    guard cryptoBoundaryReady else { return nil }
     let startingInBackground = background || backgroundLaunchHint
     guard !startingInBackground || IOSWakeCoordinator.coldExecutionEnabled else { return nil }
     let engine = FlutterEngine(name: "veritra.shared", project: nil, allowHeadlessExecution: true)
@@ -40,10 +46,9 @@ import Darwin
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     backgroundLaunchHint = launchOptions?[.remoteNotification] != nil && application.applicationState != .active
-    guard pm_crypto_abi_version() == PM_CRYPTO_ABI_VERSION,
-          pm_crypto_available() == PM_CRYPTO_UNAVAILABLE else {
-      return false
-    }
+    cryptoBoundaryReady = pm_crypto_abi_version() == PM_CRYPTO_ABI_VERSION &&
+      pm_crypto_available() == PM_CRYPTO_UNAVAILABLE
+    guard cryptoBoundaryReady else { return false }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
@@ -201,15 +206,26 @@ import Darwin
     guard userInfo["version"] as? String == "v1" else { completionHandler(.noData); return }
     guard (try? wakeCoordinator.journal.mark()) != nil else { completionHandler(.failed); return }
     pushEvents?(["type": "wake"])
-    if application.applicationState != .active {
+    // D53: a current server sends this wake as a visible alert that iOS shows
+    // itself, so a local notice would be a duplicate. Only an older server's
+    // background-only push still needs one. No delegate shows either while
+    // the app is active.
+    if !Self.carriesSystemAlert(userInfo) && application.applicationState != .active {
       let content = UNMutableNotificationContent()
       content.title = "Veritra"
-      content.body = "New encrypted message"
+      content.body = NSLocalizedString("veritra.notification.new_message", value: "New message",
+                                       comment: "Generic notification; no sender or content (D53)")
       content.sound = .default
       UNUserNotificationCenter.current().add(
         UNNotificationRequest(identifier: "veritra-new-message", content: content, trigger: nil))
     }
     completionHandler(.newData)
+  }
+
+  /// Whether APNs already carries a visible alert for this push (D53).
+  static func carriesSystemAlert(_ userInfo: [AnyHashable: Any]) -> Bool {
+    guard let aps = userInfo["aps"] as? [String: Any], let alert = aps["alert"] else { return false }
+    return !(alert is NSNull)
   }
 }
 

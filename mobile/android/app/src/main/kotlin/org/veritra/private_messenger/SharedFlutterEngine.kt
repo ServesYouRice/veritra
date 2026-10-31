@@ -47,9 +47,7 @@ object SharedFlutterEngine {
                     val target = call.argument<String>("instance") ?: PushRegistrationConfig.instance
                     if (!target.isNullOrBlank()) UnifiedPush.unregister(app, target)
                     if (FirebaseApp.getApps(app).isNotEmpty()) FirebaseMessaging.getInstance().deleteToken()
-                    PushRegistrationConfig.instance = null
-                    PushRegistrationConfig.vapid = null
-                    PushRegistrationConfig.providers = emptyList()
+                    PushRegistrationConfig.clear(app)
                     result.success(null)
                 }
                 else -> activity.get()?.handlePushMethod(call, result)
