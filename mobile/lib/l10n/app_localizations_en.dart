@@ -1130,6 +1130,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get bannerRelink => 'Link this device again';
 
   @override
+  String get bannerRestoreBackup => 'Restore from backup';
+
+  @override
   String get bannerRelinkTitle => 'Link this device again?';
 
   @override

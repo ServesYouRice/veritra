@@ -143,7 +143,8 @@ void main() {
     state.dispose();
   });
 
-  test('loading downloads, decrypts in memory and leaves no files', () async {
+  test('loading stages the decrypted file, reads it back and removes it',
+      () async {
     final api = _AttachmentApi();
     final crypto = _FakeAttachmentCrypto(tempDir);
     final state = _state(api, _FakeMls(), crypto);
@@ -171,6 +172,46 @@ void main() {
     expect(crypto.decryptedCiphertext, isNull);
     expect(tempDir.listSync().where((item) => item.path.contains('.veritra-')),
         isEmpty);
+    state.dispose();
+  });
+
+  test('a decryption that fails after writing part of the file leaves none',
+      () async {
+    final api = _AttachmentApi();
+    final crypto = _FakeAttachmentCrypto(tempDir)..failAfterPartialWrite = true;
+    final state = _state(api, _FakeMls(), crypto);
+    final entry = AttachmentEntry.tryParse(
+        _entry(cipher: api.download.length, plain: 5))!;
+
+    await expectLater(state.loadAttachment(entry, conversationId: 'conv_1'),
+        throwsFormatException);
+    // The fake really wrote plaintext before throwing.
+    expect(crypto.partialDestinationPath, isNotNull);
+    expect(File(crypto.partialDestinationPath!).existsSync(), isFalse);
+    expect(tempDir.listSync().where((item) => item.path.contains('.veritra-')),
+        isEmpty);
+    state.dispose();
+  });
+
+  test('the start-up sweep removes stale staged plaintext and nothing else',
+      () async {
+    final crypto = _FakeAttachmentCrypto(tempDir);
+    final state = _state(_AttachmentApi(), _FakeMls(), crypto);
+    final old = DateTime.now().subtract(const Duration(hours: 3));
+    final stale = File('${tempDir.path}/.veritra-attachment-0a1b2c.plaintext')
+      ..writeAsStringSync('left by a crash')
+      ..setLastModifiedSync(old);
+    final unrelated = File('${tempDir.path}/notes.plaintext')
+      ..writeAsStringSync('keep')
+      ..setLastModifiedSync(old);
+
+    state.startAttachmentOrphanSweep();
+    for (var i = 0; i < 50 && stale.existsSync(); i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+
+    expect(stale.existsSync(), isFalse);
+    expect(unrelated.existsSync(), isTrue);
     state.dispose();
   });
 
@@ -273,6 +314,8 @@ class _FakeAttachmentCrypto implements AttachmentCryptoService {
   final List<int> ciphertext = List<int>.filled(56, 3);
   String? lastCiphertextPath;
   List<int>? decryptedCiphertext;
+  bool failAfterPartialWrite = false;
+  String? partialDestinationPath;
 
   @override
   Future<PreparedEncryptedAttachment> encryptFile({
@@ -313,6 +356,11 @@ class _FakeAttachmentCrypto implements AttachmentCryptoService {
     AttachmentCancellationToken? cancellation,
   }) async {
     decryptedCiphertext = await File(ciphertextPath).readAsBytes();
+    if (failAfterPartialWrite) {
+      await File(destinationPath).writeAsString('hel');
+      partialDestinationPath = destinationPath;
+      throw const FormatException('attachment authentication failed');
+    }
     await File(destinationPath).writeAsString('hello');
   }
 

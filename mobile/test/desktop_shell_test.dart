@@ -246,10 +246,22 @@ void main() {
     await messages.handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
     expect(notifier.shown, isEmpty);
 
+    // m2 has a stored message, so it reaches the mute lookup, which fails.
+    history(<LocalMessage>[_local('m1'), _local('m2')]);
     state.mutedOnServer.clear();
     state.muteReadable = false;
+    final readsBefore = state.muteReads;
     await messages.handle(<ReceivedMessageEnvelope>[_envelope('m2')]);
+    expect(state.muteReads, readsBefore + 1);
     expect(notifier.shown, isEmpty);
+  });
+
+  test('the same envelope notifies once its mute reads as not muted', () async {
+    history(<LocalMessage>[_local('m1'), _local('m2')]);
+    state.muteReadable = true;
+    await messages.handle(<ReceivedMessageEnvelope>[_envelope('m2')]);
+    expect(state.muteReads, 1);
+    expect(notifier.shown, hasLength(1));
   });
 
   test('hide preview makes the text generic', () async {

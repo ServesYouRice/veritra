@@ -1140,6 +1140,9 @@ class AppLocalizationsSr extends AppLocalizations {
   String get bannerRelink => 'Поново повежи овај уређај';
 
   @override
+  String get bannerRestoreBackup => 'Врати из резервне копије';
+
+  @override
   String get bannerRelinkTitle => 'Поново повезати овај уређај?';
 
   @override
@@ -3674,6 +3677,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get bannerRelink => 'Ponovo poveži ovaj uređaj';
+
+  @override
+  String get bannerRestoreBackup => 'Vrati iz rezervne kopije';
 
   @override
   String get bannerRelinkTitle => 'Ponovo povezati ovaj uređaj?';
