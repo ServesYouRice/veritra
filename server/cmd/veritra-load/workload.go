@@ -795,9 +795,14 @@ func (w *world) runCatchUp(ctx context.Context, dev *device, wake, cold <-chan s
 			}
 		}
 		if cursor < 0 {
+			// The request that sets the cursor is a measured sync too, so
+			// a client that cannot start shows up as failed syncs.
 			var page syncPage
-			status, err := w.client.json(ctx, http.MethodGet, "/api/v1/sync/events?after=0&limit=1", dev, "", nil, &page, nil)
-			if expect(status, err, http.StatusOK) != nil {
+			_, err := w.timed(opSync, func() (int, error) {
+				status, err := w.client.json(ctx, http.MethodGet, "/api/v1/sync/events?after=0&limit=1", dev, "", nil, &page, nil)
+				return status, expect(status, err, http.StatusOK)
+			})
+			if err != nil {
 				continue
 			}
 			cursor = page.Latest
