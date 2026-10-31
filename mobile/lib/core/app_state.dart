@@ -3043,16 +3043,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       flush = true;
     });
     if (!flush) return;
-    try {
-      // The worker checks its session after every request and clears it on
-      // a 401 only while that session is still current.
-      await _flushOutbox();
-    } catch (err) {
-      if (_sameSession(owner)) {
-        _opErrors[Ops.send] = describeError(err, l10n);
-        notifyListeners();
-      }
-    }
+    // The worker checks its session after every request and clears it on a
+    // 401 only while that session is still current. It never throws; a
+    // local failure of the pass carrying this retry is reported under
+    // [Ops.send] by the worker itself.
+    await _flushOutbox();
   }
 
   Future<void> discardEnvelope(String idempotencyKey) async {
@@ -5463,15 +5458,25 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     try {
       do {
         _flushOutboxRequested = false;
+        final manualRetry = _manualRetryKey;
+        final owner = session;
         try {
           await _flushOutboxOnce();
           _outboxLocalFailures = 0;
-        } catch (_) {
+        } catch (err) {
           // A local storage failure leaves every envelope queued. Callers
           // leave this future unawaited, so nothing may escape; the retry
-          // timer tries again with backoff (TASK-042). Not written to the
-          // shared [error]: no user action failed.
+          // timer tries again with backoff (TASK-042). Only a pass that
+          // carried a retry the person tapped reports it, under
+          // [Ops.send]; a background pass is no user action.
           _outboxLocalFailures++;
+          if (manualRetry != null &&
+              owner != null &&
+              _manualRetryKey == manualRetry &&
+              _sameSession(owner)) {
+            _opErrors[Ops.send] = describeError(err, l10n);
+            notifyListeners();
+          }
         }
       } while (_flushOutboxRequested && !_disposed);
     } finally {
