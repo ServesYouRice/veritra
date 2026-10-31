@@ -1883,6 +1883,10 @@ class AppLocalizationsSr extends AppLocalizations {
       'Овај уређај није могао да сачува резервну копију.';
 
   @override
+  String get backupErrorSignInAgain =>
+      'Резервна копија је враћена на овај уређај, али њена сесија више није важећа. Пријавите се лозинком да бисте наставили.';
+
+  @override
   String get syncErrorCursorExpired =>
       'Овај уређај је био одсутан дуже него што сервер чува ажурирања. Вратите резервну копију или поново повежите овај уређај.';
 
@@ -4417,6 +4421,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get backupErrorStorage =>
       'Ovaj uređaj nije mogao da sačuva rezervnu kopiju.';
+
+  @override
+  String get backupErrorSignInAgain =>
+      'Rezervna kopija je vraćena na ovaj uređaj, ali njena sesija više nije važeća. Prijavite se lozinkom da biste nastavili.';
 
   @override
   String get syncErrorCursorExpired =>

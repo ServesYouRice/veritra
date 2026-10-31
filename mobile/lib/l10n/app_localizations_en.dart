@@ -1868,6 +1868,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get backupErrorStorage => 'This device could not store the backup.';
 
   @override
+  String get backupErrorSignInAgain =>
+      'The backup is restored on this device, but its session is no longer valid. Sign in with your password to continue.';
+
+  @override
   String get syncErrorCursorExpired =>
       'This device was away longer than the server keeps updates. Restore a backup or link this device again.';
 

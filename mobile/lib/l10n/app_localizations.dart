@@ -3069,6 +3069,12 @@ abstract class AppLocalizations {
   /// **'This device could not store the backup.'**
   String get backupErrorStorage;
 
+  /// No description provided for @backupErrorSignInAgain.
+  ///
+  /// In en, this message translates to:
+  /// **'The backup is restored on this device, but its session is no longer valid. Sign in with your password to continue.'**
+  String get backupErrorSignInAgain;
+
   /// No description provided for @syncErrorCursorExpired.
   ///
   /// In en, this message translates to:

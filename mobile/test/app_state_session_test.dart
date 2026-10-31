@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/crypto/backup_service.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
@@ -304,12 +305,81 @@ void main() {
       h.dispose();
     });
   });
+
+  group('TASK-038: a restore reports a session that did not come up', () {
+    Future<_Harness> restored(_BackupMode mode,
+        {_FaultStore? store, _Api? api}) async {
+      final faults = store ?? _FaultStore();
+      final h =
+          _Harness(store: faults, api: api, backups: _Backups(faults, mode));
+      return h;
+    }
+
+    test('a session that comes up is a success', () async {
+      final h = await restored(_BackupMode.session);
+      expect(await h.state.restoreFromBackup('v1.code'), isTrue);
+      expect(h.state.errorFor(Ops.restore), isNull);
+      expect(h.state.session?.token, _owner.token);
+      expect(h.state.lifecycle, SessionLifecycle.ready);
+      h.dispose();
+    });
+
+    test('an unreachable server still restores from the cache', () async {
+      final api = _Api()..conversationsFailure = const SocketException('x');
+      final h = await restored(_BackupMode.session, api: api);
+      expect(await h.state.restoreFromBackup('v1.code'), isTrue);
+      expect(h.state.errorFor(Ops.restore), isNull);
+      expect(h.state.session?.token, _owner.token);
+      h.dispose();
+    });
+
+    test('a session the server rejects asks for a password sign-in', () async {
+      final api = _Api()
+        ..conversationsFailure = ApiException(401, '{"error":"unauthorized"}');
+      final h = await restored(_BackupMode.session, api: api);
+      expect(await h.state.restoreFromBackup('v1.code'), isFalse);
+      expect(h.state.session, isNull);
+      expect(h.state.errorFor(Ops.restore),
+          contains('Sign in with your password'));
+      // The identity stays for that sign-in.
+      expect((await h.store.loadSession())?.deviceId, _owner.deviceId);
+      h.dispose();
+    });
+
+    test('nothing stored after the restore is a failure', () async {
+      final h = await restored(_BackupMode.nothing);
+      expect(await h.state.restoreFromBackup('v1.code'), isFalse);
+      expect(h.state.session, isNull);
+      expect(h.state.errorFor(Ops.restore), isNotNull);
+      h.dispose();
+    });
+
+    test('a store that cannot be read keeps the recovery screen', () async {
+      final store = _FaultStore()..loadSessionFailures = 1;
+      final h = await restored(_BackupMode.session, store: store);
+      expect(await h.state.restoreFromBackup('v1.code'), isFalse);
+      expect(h.state.lifecycle, SessionLifecycle.recoveryRequired);
+      expect(h.state.recoveryMessage, isNotNull);
+      expect(h.state.errorFor(Ops.restore), isNotNull);
+      h.dispose();
+    });
+  });
 }
 
 /// A memory store whose sync-lease steps fail a set number of times.
 class _FaultStore extends MemoryLocalStore {
   int acquireFailures = 0;
   int releaseFailures = 0;
+  int loadSessionFailures = 0;
+
+  @override
+  Future<Session?> loadSession() async {
+    if (loadSessionFailures > 0) {
+      loadSessionFailures--;
+      throw StateError('keystore unavailable');
+    }
+    return super.loadSession();
+  }
 
   @override
   Future<void> acquireSyncLease(LocalSyncLease lease) async {
@@ -334,8 +404,12 @@ class _FaultStore extends MemoryLocalStore {
 /// factory. With [mls] it runs a minimal MLS crypto fake, so key packages
 /// are created and published.
 class _Harness {
-  _Harness({bool mls = false, MemoryLocalStore? store, _Api? api})
-      : store = store ?? MemoryLocalStore(),
+  _Harness({
+    bool mls = false,
+    MemoryLocalStore? store,
+    _Api? api,
+    this.backups,
+  })  : store = store ?? MemoryLocalStore(),
         api = api ?? _Api(),
         crypto = mls ? _MlsCrypto() : null {
     state = build();
@@ -344,6 +418,7 @@ class _Harness {
   final MemoryLocalStore store;
   final _Api api;
   final _MlsCrypto? crypto;
+  final BackupService? backups;
   late AppState state;
   int syncStarts = 0;
 
@@ -355,6 +430,7 @@ class _Harness {
           syncStarts++;
           return _QuietSync();
         },
+        backupService: backups,
       );
 
   void dispose() => state.dispose();
@@ -491,6 +567,26 @@ class _Api extends ApiClient {
 
   @override
   Future<void> logout(String token) async {}
+}
+
+enum _BackupMode { session, nothing }
+
+/// Stands in for the download and decryption: a successful recover leaves
+/// the backup's session in the store, or (with [_BackupMode.nothing]) none.
+class _Backups implements BackupService {
+  _Backups(this.store, this.mode);
+
+  final MemoryLocalStore store;
+  final _BackupMode mode;
+
+  @override
+  Future<void> recover(String recoveryCode) async {
+    if (mode == _BackupMode.session) await store.saveSession(_owner);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName}');
 }
 
 /// The MLS calls the session paths make, and nothing else.
