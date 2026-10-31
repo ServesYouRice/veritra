@@ -140,6 +140,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'The setting could not be changed. Check your connection and try again.';
 
   @override
+  String get settingsReadReceiptsNotSaved =>
+      'This device could not save the setting. It applies for now but may reset when the app restarts.';
+
+  @override
   String get settingsSectionAbout => 'About';
 
   @override

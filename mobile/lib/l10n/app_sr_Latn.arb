@@ -41,6 +41,7 @@
   "settingsReadReceiptsTitle": "Potvrde o čitanju",
   "settingsReadReceiptsDetail": "Važi za sve vaše uređaje. Kada je isključeno, ne šaljete potvrde o čitanju i ne vidite kada su drugi pročitali vaše poruke. Oznake poslato i dostavljeno ostaju.",
   "settingsReadReceiptsFailed": "Podešavanje nije moglo da se promeni. Proverite vezu i pokušajte ponovo.",
+  "settingsReadReceiptsNotSaved": "Ovaj uređaj nije mogao da sačuva podešavanje. Važi za sada, ali može da se vrati kada se aplikacija ponovo pokrene.",
   "settingsSectionAbout": "O aplikaciji",
   "settingsSectionDangerZone": "Opasna zona",
   "settingsAccountId": "ID naloga",
