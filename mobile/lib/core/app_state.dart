@@ -4714,7 +4714,19 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       throw ArgumentError.value(confirmed, 'confirmed',
           'relinking deletes local history and needs confirmation');
     }
+    final requested = session;
     await _run(() async {
+      // The confirmation dialog may have stayed open while recovery ended,
+      // changed kind or the session changed (C-f4bf51f0c756): relinking
+      // deletes local data, so it runs only while the same session is
+      // still stopped at a failure that offers it.
+      final recovery = syncRecovery;
+      if (requested == null ||
+          !identical(session, requested) ||
+          recovery == null ||
+          !recovery.choices.contains(SyncRecoveryChoice.relink)) {
+        return;
+      }
       final current = session;
       final client = api;
       await _stopPush(current, client);
