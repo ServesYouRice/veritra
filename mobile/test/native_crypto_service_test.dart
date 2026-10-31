@@ -15,7 +15,16 @@ import 'package:private_messenger/storage/local_store.dart';
 /// Two real OpenMLS devices exchanging every message payload type through
 /// [NativeCryptoService], with the server's role played by the test.
 void main() {
-  final libraryPath = Platform.environment['VERITRA_CRYPTO_LIBRARY'];
+  final configured = Platform.environment['VERITRA_CRYPTO_LIBRARY'];
+  // An empty value counts as missing, so it never reaches the loader.
+  final libraryPath =
+      configured == null || configured.isEmpty ? null : configured;
+  if (libraryPath == null && Platform.environment['CI'] == 'true') {
+    test('CI provides the native crypto library', () {
+      fail('VERITRA_CRYPTO_LIBRARY is required when CI=true: set it to a '
+          'built libprivate_messenger_crypto');
+    });
+  }
   final skip = libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false;
 
   test('decrypted history is kept for text, reply, edit, reaction, delete',
@@ -161,11 +170,29 @@ void main() {
     await alice.service.stageMembershipChange('conv_1', removes: <MlsDeviceRef>[
       (accountId: 'acct_bob', deviceId: 'dev_tablet')
     ]);
-    await _accept(alice, const <_Client>[], <_Client>[bob]);
+    expect(await alice.service.groupEpoch('conv_1'), (epoch: 2, pending: true));
+    await _accept(alice, const <_Client>[], <_Client>[bob, tablet]);
+    expect(
+        await alice.service.groupEpoch('conv_1'), (epoch: 3, pending: false));
+    expect(await bob.service.groupEpoch('conv_1'), (epoch: 3, pending: false));
+    // The tablet applies its own removal and can no longer send.
+    expect(
+        await tablet.service.groupEpoch('conv_1'), (epoch: 3, pending: false));
+    await expectLater(
+        tablet.send(AppPayloadType.text, <String, Object?>{'text': 'still?'}),
+        throwsA(isA<NativeCryptoException>()));
+
     final after =
         await alice.send(AppPayloadType.text, <String, Object?>{'text': 'bye'});
     await bob.receive(alice, after);
     expect((await bob.history()).last.body, 'bye');
+    // Nor can it read what the group sends after the removal.
+    await expectLater(
+        tablet.receive(alice, after),
+        throwsA(isA<NativeCryptoException>().having(
+            (error) => error.kind, 'kind', NativeCryptoError.operationFailed)));
+    expect((await tablet.history()).map((message) => message.body),
+        <String?>['hi']);
   }, skip: skip);
 
   test('a refused commit is dropped and the winner applies cleanly', () async {
@@ -179,16 +206,54 @@ void main() {
         adds: <DeviceKeyPackage>[await carol.keyPackage()]);
     await bob.service.stageMembershipChange('conv_1',
         adds: <DeviceKeyPackage>[await carol.keyPackage()]);
-    await _accept(alice, <_Client>[carol], const <_Client>[]);
+    expect(await bob.service.groupEpoch('conv_1'), (epoch: 1, pending: true));
 
     // Bob's commit lost. The winning commit arrives before his refusal:
     // his staged commit is dropped and the winner applied.
-    final alicesCommit = (await alice.store.pendingMlsMessages()).isEmpty;
-    expect(alicesCommit, isTrue);
+    await _accept(alice, <_Client>[carol], <_Client>[bob]);
+    expect(await bob.service.groupEpoch('conv_1'), (epoch: 2, pending: false));
+    final bobsBundle = (await bob.store.pendingMlsMessages()).single;
+    await bob.service.abandonCommitBundle(bobsBundle);
+    expect(await bob.store.pendingMlsMessages(), isEmpty);
+    expect(await bob.service.groupEpoch('conv_1'), (epoch: 2, pending: false));
+    expect(
+        await alice.service.groupEpoch('conv_1'), (epoch: 2, pending: false));
+    expect(
+        await carol.service.groupEpoch('conv_1'), (epoch: 2, pending: false));
+
+    final after = await alice
+        .send(AppPayloadType.text, <String, Object?>{'text': 'converged'});
+    await bob.receive(alice, after);
+    expect((await bob.history()).last.body, 'converged');
+  }, skip: skip);
+
+  test('a commit refused before the winner arrives still applies the winner',
+      () async {
+    final bindings = NativeCryptoBindings.open(libraryPath!);
+    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+    final carol = await _Client.enroll(bindings, 'acct_carol', 'dev_carol');
+    await _startConversation(alice, bob);
+
+    await alice.service.stageMembershipChange('conv_1',
+        adds: <DeviceKeyPackage>[await carol.keyPackage()]);
+    await bob.service.stageMembershipChange('conv_1',
+        adds: <DeviceKeyPackage>[await carol.keyPackage()]);
+    final winner = await _accept(alice, <_Client>[carol], const <_Client>[]);
+
+    // Bob's refusal comes first: his staged commit is dropped, and the
+    // winning commit that arrives later applies to the old epoch.
     final bobsBundle = (await bob.store.pendingMlsMessages()).single;
     await bob.service.abandonCommitBundle(bobsBundle);
     expect(await bob.store.pendingMlsMessages(), isEmpty);
     expect(await bob.service.groupEpoch('conv_1'), (epoch: 1, pending: false));
+    await _deliverCommit(alice, bob, winner);
+    expect(await bob.service.groupEpoch('conv_1'), (epoch: 2, pending: false));
+
+    final after = await alice
+        .send(AppPayloadType.text, <String, Object?>{'text': 'converged'});
+    await bob.receive(alice, after);
+    expect((await bob.history()).last.body, 'converged');
   }, skip: skip);
 
   test('an own commit echo merges the staged commit once', () async {
@@ -204,7 +269,7 @@ void main() {
 
     // The sync stream delivers Alice's accepted commit before her outbox
     // worker saw the server's answer.
-    await alice.service.processMlsMessage(MlsMessage(
+    final echo = MlsMessage(
       id: 'mls_echo',
       conversationId: 'conv_1',
       senderAccountId: 'acct_alice',
@@ -214,10 +279,33 @@ void main() {
       idempotencyKey: item.idempotencyKey,
       syncEventId: alice.nextEvent(),
       createdAt: DateTime.now().toUtc(),
-    ));
+    );
+    final before = (await alice.service.groupEpoch('conv_1'))!;
+    await alice.service.processMlsMessage(echo);
     expect(await alice.store.pendingMlsMessages(), isEmpty);
-    expect(
-        await alice.service.groupEpoch('conv_1'), (epoch: 2, pending: false));
+    final merged = (epoch: before.epoch + 1, pending: false);
+    expect(await alice.service.groupEpoch('conv_1'), merged);
+
+    // Her outbox worker then sees the server's answer for the same bundle,
+    // and the stream redelivers the echo: neither merges a second time.
+    await alice.service.completeCommitBundle(item);
+    expect(await alice.service.groupEpoch('conv_1'), merged);
+    await alice.service.processMlsMessage(echo);
+    expect(await alice.service.groupEpoch('conv_1'), merged);
+    // The same commit in a later sync event finds no bundle left to merge.
+    await alice.service.processMlsMessage(MlsMessage(
+      id: 'mls_echo_again',
+      conversationId: 'conv_1',
+      senderAccountId: 'acct_alice',
+      senderDeviceId: 'dev_alice',
+      kind: 'commit',
+      payload: bundle.commit,
+      idempotencyKey: item.idempotencyKey,
+      syncEventId: alice.nextEvent(),
+      createdAt: DateTime.now().toUtc(),
+    ));
+    expect(await alice.service.groupEpoch('conv_1'), merged);
+    expect(await alice.store.pendingMlsMessages(), isEmpty);
   }, skip: skip);
 
   test('a self-update lands only once accepted, and every member follows',
@@ -313,8 +401,9 @@ Future<void> _startConversation(_Client alice, _Client bob) async {
 }
 
 /// Plays the server accepting [from]'s queued commit bundle: [from] merges
-/// it, [joiners] get the Welcome and [members] the commit.
-Future<void> _accept(
+/// it, [joiners] get the Welcome and [members] the commit. Returns the
+/// accepted outbox item, so a test can deliver its commit later.
+Future<PendingMlsMessage> _accept(
     _Client from, List<_Client> joiners, List<_Client> members) async {
   final item = (await from.store.pendingMlsMessages()).single;
   expect(item.kind, MlsCommitBundle.kind);
@@ -322,17 +411,7 @@ Future<void> _accept(
   await from.service.completeCommitBundle(item);
   expect(await from.store.pendingMlsMessages(), isEmpty);
   for (final member in members) {
-    await member.service.processMlsMessage(MlsMessage(
-      id: 'mls_${++_serverIds}',
-      conversationId: 'conv_1',
-      senderAccountId: from.accountId,
-      senderDeviceId: from.deviceId,
-      kind: 'commit',
-      payload: bundle.commit,
-      idempotencyKey: item.idempotencyKey,
-      syncEventId: member.nextEvent(),
-      createdAt: DateTime.now().toUtc(),
-    ));
+    await _deliverCommit(from, member, item);
   }
   for (final joiner in joiners) {
     await joiner.service.processMlsMessage(MlsMessage(
@@ -348,6 +427,24 @@ Future<void> _accept(
       recipientDeviceId: joiner.deviceId,
     ));
   }
+  return item;
+}
+
+/// Plays the sync stream delivering the commit of [from]'s accepted [item]
+/// to [member].
+Future<void> _deliverCommit(
+    _Client from, _Client member, PendingMlsMessage item) async {
+  await member.service.processMlsMessage(MlsMessage(
+    id: 'mls_${++_serverIds}',
+    conversationId: 'conv_1',
+    senderAccountId: from.accountId,
+    senderDeviceId: from.deviceId,
+    kind: 'commit',
+    payload: MlsCommitBundle.decode(item.payload).commit,
+    idempotencyKey: item.idempotencyKey,
+    syncEventId: member.nextEvent(),
+    createdAt: DateTime.now().toUtc(),
+  ));
 }
 
 int _serverIds = 0;

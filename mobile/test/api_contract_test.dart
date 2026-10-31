@@ -373,6 +373,10 @@ void main() {
     final accountExport = await client.exportAccountPage(owner.token);
     expect(accountExport['manifest_version'], 'v2');
     expect(accountExport['messages'], isA<List<Object?>>());
+    // Smoke check only: this server refuses push registration above, so the
+    // export holds no subscription that could carry a secret. The guarantee
+    // is TestAccountExportOmitsPushSubscriptionAuthSecret in
+    // server/internal/httpapi/export_push_secret_test.go, which seeds one.
     expect(jsonEncode(accountExport), isNot(contains('auth_secret')));
 
     final linkSecret = List<int>.filled(16, 0x55);
@@ -389,24 +393,6 @@ void main() {
       linkReservation.deviceId,
     );
     addTearDown(linkedNative.close);
-    final claim = await client.claimDeviceLink(
-      code: link.code!,
-      deviceName: 'contract linked device',
-      enrollment: linkReservation,
-      credential: linkedNative.createEnrollmentCredential(
-        linkReservation.challenge,
-      ),
-      verification: linkedNative.deriveDeviceLinkVerification(
-        protocolVersion: linkReservation.protocolVersion!,
-        serverOrigin: client.baseUrl,
-        linkId: link.id,
-        linkSecret: linkSecret,
-        peerDeviceId: linkReservation.existingDeviceId!,
-        peerSigningKey: linkReservation.existingSigningKey!,
-        linkNonce: linkReservation.linkNonce!,
-        localIsExistingDevice: false,
-      ),
-    );
     final linkedVerification = linkedNative.deriveDeviceLinkVerification(
       protocolVersion: linkReservation.protocolVersion!,
       serverOrigin: client.baseUrl,
@@ -417,20 +403,40 @@ void main() {
       linkNonce: linkReservation.linkNonce!,
       localIsExistingDevice: false,
     );
+    final claim = await client.claimDeviceLink(
+      code: link.code!,
+      deviceName: 'contract linked device',
+      enrollment: linkReservation,
+      credential: linkedNative.createEnrollmentCredential(
+        linkReservation.challenge,
+      ),
+      verification: linkedVerification,
+    );
     expect(
         await client.completeDeviceLinkClaim(link.id, claim.claimToken,
             linkedVerification.transcriptHash, linkedVerification.approvalTag),
         isNull);
+    // The existing device learns the claimant's device ID, signing key and
+    // transcript only through the server, as refreshActiveDeviceLink does,
+    // so the SAS below would expose a relayed key the server substituted.
+    final claimedLink = await client.deviceLink(owner.token, link.id);
+    expect(claimedLink.state, 'claimed');
+    expect(claimedLink.protocolVersion, linkReservation.protocolVersion);
+    expect(claimedLink.claimedDeviceId, linkReservation.deviceId);
+    expect(claimedLink.claimedSigningKey, linkedNative.signingPublicKey());
+    expect(claimedLink.linkNonce, linkReservation.linkNonce);
     final ownerVerification = ownerNative.deriveDeviceLinkVerification(
-      protocolVersion: linkReservation.protocolVersion!,
+      protocolVersion: claimedLink.protocolVersion!,
       serverOrigin: client.baseUrl,
       linkId: link.id,
       linkSecret: linkSecret,
-      peerDeviceId: linkReservation.deviceId,
-      peerSigningKey: linkedNative.signingPublicKey(),
-      linkNonce: linkReservation.linkNonce!,
+      peerDeviceId: claimedLink.claimedDeviceId!,
+      peerSigningKey: claimedLink.claimedSigningKey!,
+      linkNonce: claimedLink.linkNonce!,
       localIsExistingDevice: true,
     );
+    expect(ownerVerification.transcriptHash, claimedLink.transcriptHash);
+    expect(ownerVerification.claimTag, claimedLink.claimTag);
     expect(ownerVerification.sas, linkedVerification.sas);
     await client.approveDeviceLink(
       owner.token,
