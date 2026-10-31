@@ -756,7 +756,7 @@ class ApiClient {
         queryParameters: <String, String>{'conversation_id': conversationId},
       ).toString(),
     );
-    final request = await _httpClient.postUrl(uri).timeout(_requestTimeout);
+    final request = await _openRequest('POST', uri);
     request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
     request.headers.set('X-Private-Messenger-Encrypted', '1');
     request.headers.set('X-Crypto-Metadata', jsonEncode(cryptoMetadata));
@@ -774,7 +774,7 @@ class ApiClient {
     final uri = Uri.parse(
       baseUrl,
     ).resolve('/api/v1/attachments/${Uri.encodeComponent(attachmentId)}');
-    final request = await _httpClient.getUrl(uri).timeout(_requestTimeout);
+    final request = await _openRequest('GET', uri);
     request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
     final response = await request.close().timeout(_requestTimeout);
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -795,9 +795,10 @@ class ApiClient {
         recoveryToken.length != 32) {
       throw ArgumentError('invalid encrypted backup');
     }
-    final request = await _httpClient
-        .postUrl(Uri.parse(baseUrl).resolve('/api/v1/backups'))
-        .timeout(_requestTimeout);
+    final request = await _openRequest(
+      'POST',
+      Uri.parse(baseUrl).resolve('/api/v1/backups'),
+    );
     request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
     request.headers.set('X-Private-Messenger-Encrypted', '1');
     request.headers.set(
@@ -828,9 +829,10 @@ class ApiClient {
       throw ArgumentError('invalid recovery range');
     }
     final encoded = base64Url.encode(recoveryToken).replaceAll('=', '');
-    final request = await _httpClient
-        .getUrl(Uri.parse(baseUrl).resolve('/api/v1/recovery'))
-        .timeout(_requestTimeout);
+    final request = await _openRequest(
+      'GET',
+      Uri.parse(baseUrl).resolve('/api/v1/recovery'),
+    );
     request.headers.set('X-Recovery-Token', encoded);
     if (startOffset != null) {
       final rangeEnd = endOffset == null ? '' : '$endOffset';
@@ -1575,6 +1577,17 @@ class ApiClient {
     return null;
   }
 
+  /// Opens every request this client makes. API credentials, including the
+  /// custom recovery, claim and setup tokens that dart:io does not strip on a
+  /// redirect, are bound to this origin, so a 3xx is never followed: it
+  /// reaches the caller as an [ApiException] carrying the 3xx status.
+  Future<HttpClientRequest> _openRequest(String method, Uri uri) async {
+    final request =
+        await _httpClient.openUrl(method, uri).timeout(_requestTimeout);
+    request.followRedirects = false;
+    return request;
+  }
+
   Future<Map<String, Object?>> _jsonRequest(
     String method,
     String path, {
@@ -1584,10 +1597,7 @@ class ApiClient {
     int maxResponseBytes = _maxJsonResponseBytes,
   }) async {
     final uri = Uri.parse(baseUrl).resolve(path);
-    final request =
-        await _httpClient.openUrl(method, uri).timeout(_requestTimeout);
-    // API credentials are bound to this origin, including custom claim tokens.
-    request.followRedirects = false;
+    final request = await _openRequest(method, uri);
     request.headers.contentType = ContentType.json;
     if (token != null) {
       request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
