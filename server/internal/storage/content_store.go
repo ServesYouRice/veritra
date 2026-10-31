@@ -22,7 +22,13 @@ import (
 const RecoveryCapabilityLifetime = 15 * time.Minute
 
 // RecoveryLeaseLifetime is deliberately shorter than the capability lifetime
-// so a crashed process cannot strand a resumable transfer until expiry.
+// so a crashed process cannot strand a resumable transfer until expiry. The
+// holder of a lease keeps it with RenewRecoveryTransfer while it streams, so a
+// slow transfer is not taken over; a holder that stops renewing loses it after
+// this long. A lease is not cut off at the capability deadline: a transfer
+// leased before expiry may finish after it. What bounds a renewing stream is
+// the recovery route's request deadline (15 minutes, routeTimeouts in
+// internal/app), which ends the handler that renews.
 const RecoveryLeaseLifetime = 2 * time.Minute
 
 // RecoveryTransfer is an approved, serialized range of an encrypted backup.
@@ -971,9 +977,6 @@ func (s *Store) BeginRecoveryTransfer(ctx context.Context, recoveryTokenHash []b
 		return RecoveryTransfer{}, ErrRecoveryRange
 	}
 	leaseDeadline := now.Add(RecoveryLeaseLifetime)
-	if leaseDeadline.After(expiresAt) {
-		leaseDeadline = expiresAt
-	}
 	result, err := tx.ExecContext(ctx, `UPDATE backup_blobs SET recovery_lease_id = ?,
 		recovery_lease_expires_at = ? WHERE id = ? AND recovery_token_hash = ?
 		AND recovery_next_offset = ? AND (recovery_lease_id IS NULL OR recovery_lease_expires_at <= ?)`,
@@ -993,6 +996,30 @@ func (s *Store) BeginRecoveryTransfer(ctx context.Context, recoveryTokenHash []b
 	transfer.LeaseID = leaseID
 	transfer.StartOffset = start
 	return transfer, nil
+}
+
+// RenewRecoveryTransfer extends a lease that is still live by another
+// RecoveryLeaseLifetime. A lease that has lapsed or was taken over is not
+// revived: the caller gets ErrRecoveryBusy and must stop sending.
+func (s *Store) RenewRecoveryTransfer(ctx context.Context, leaseID string) error {
+	if leaseID == "" {
+		return ErrInvalidInput
+	}
+	now := time.Now().UTC()
+	result, err := s.db.ExecContext(ctx, `UPDATE backup_blobs SET recovery_lease_expires_at = ?
+		WHERE recovery_lease_id = ? AND recovery_lease_expires_at > ?`,
+		formatTime(now.Add(RecoveryLeaseLifetime)), leaseID, formatTime(now))
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return ErrRecoveryBusy
+	}
+	return nil
 }
 
 // CompleteRecoveryTransfer advances a leased transfer by the bytes that the
