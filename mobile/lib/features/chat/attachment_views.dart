@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' show Random;
 import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
@@ -82,6 +83,34 @@ Future<void> purgeOpenedAttachments() async {
 /// How long a decrypted copy stays in the cache once another app has it.
 const Duration _openedFileLifetime = Duration(minutes: 10);
 
+/// Where the decrypted copy named [fileName] goes: a new, unguessable folder
+/// under [root], so no two opens ever share a path and one copy's expiry can
+/// never delete another's.
+Future<File> newOpenedCopy(Directory root, String fileName) async {
+  final random = Random.secure();
+  final id = List<String>.generate(
+    16,
+    (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+  ).join();
+  final folder = Directory('${root.path}${Platform.pathSeparator}$id');
+  await folder.create(recursive: true);
+  return File('${folder.path}${Platform.pathSeparator}$fileName');
+}
+
+/// Deletes the folder of [copy] (made by [newOpenedCopy]) after [lifetime].
+Timer expireOpenedCopy(
+  File copy, {
+  Duration lifetime = _openedFileLifetime,
+}) {
+  return Timer(lifetime, () async {
+    try {
+      await copy.parent.delete(recursive: true);
+    } on FileSystemException {
+      // Purged at the next start instead.
+    }
+  });
+}
+
 /// Decrypts [entry] to a temporary file in the app cache and opens it with
 /// the system's handler for its type. The copy is deleted after
 /// [_openedFileLifetime], at the next open and at the next start.
@@ -93,29 +122,30 @@ Future<void> openAttachmentExternally(
 }) async {
   final messenger = ScaffoldMessenger.of(context);
   final l10n = context.l10n;
-  final File file;
+  File? created;
   try {
     await purgeOpenedAttachments();
     final directory = await _openedFilesDirectory();
-    await directory.create(recursive: true);
-    file = File('${directory.path}${Platform.pathSeparator}${entry.fileName}');
+    created = await newOpenedCopy(directory, entry.fileName);
     await state.saveAttachment(
       entry,
-      file.path,
+      created.path,
       conversationId: conversationId,
     );
   } catch (_) {
+    if (created != null) {
+      try {
+        await created.parent.delete(recursive: true);
+      } on FileSystemException {
+        // Purged at the next start instead.
+      }
+    }
     messenger
         .showSnackBar(SnackBar(content: Text(l10n.attachmentDownloadFailed)));
     return;
   }
-  Timer(_openedFileLifetime, () async {
-    try {
-      if (await file.exists()) await file.delete();
-    } on FileSystemException {
-      // Purged at the next start instead.
-    }
-  });
+  final file = created;
+  expireOpenedCopy(file);
   final OpenResult result;
   try {
     result = await OpenFilex.open(file.path);
