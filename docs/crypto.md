@@ -208,8 +208,12 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     most one per foreground sync pass, a minute apart, after revocations
     and reconcile, never in a background wake, and skips a group with a
     pending revocation, a listed removal, queued MLS work, a staged
-    commit or a paused MLS outbox. Any 4xx refusal of an update-only
-    bundle (other than 401 and 408) drops the staged commit and backs off
+    commit or a paused MLS outbox. A commit tells every member that this
+    device is online, so, like a read receipt, none goes to a message
+    request (or a declined one, D48) or to a DM whose peer is blocked
+    (blocks loaded first); their counters wait for acceptance. Any 4xx
+    refusal of an update-only bundle (other than 401 and 408) drops the
+    staged commit and backs off
     (409: 10 min, the budget's 429: 1 h, others such as an older
     server's 400: 24 h), so a self-update never pauses a conversation
     the way a refused membership commit does. An accepted self-update, or
@@ -232,7 +236,11 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   - **Open.** Commits that only add devices still carry no path, so the
     committer's key is not refreshed by them. A device that loses its
     local policy state updates early or late, never more often than the
-    budget allows.
+    budget allows. A Welcome handled in a background wake notes the join
+    only in memory, saved by the next foreground pass. If the process
+    ends first, the note is lost: the chat is later first seen, and its
+    first update is spread over 7 days instead of coming shortly after
+    the join.
 
 - **Attachment size padding, manifest v2 (2026-10-31, research round 2):**
   no ABI, chunk-crypto, AAD or upload change. Before this the server

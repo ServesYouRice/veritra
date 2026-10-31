@@ -5543,6 +5543,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       List<MlsPendingChange>? changes;
       for (final conversationId in due) {
         if (!_syncOwnerActive(current, ownerGeneration)) return;
+        // A commit tells every member this device is online, so a request
+        // (or a declined one) and a DM with a blocked peer get none, as
+        // they get no read receipt. Their records stay for later.
+        if (!_selfUpdateAllowed(conversationId)) continue;
         if (_revocationPendingGroups.contains(conversationId) ||
             _failedMlsConversations.contains(conversationId) ||
             await _hasPendingMlsWork(conversationId)) {
@@ -5583,6 +5587,17 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     } finally {
       await _saveSelfUpdates();
     }
+  }
+
+  /// Whether a self-update may go to [conversationId]: an accepted chat,
+  /// and for a DM a peer known not to be blocked (blocks loaded first).
+  bool _selfUpdateAllowed(String conversationId) {
+    if (!conversationOpen(conversationId)) return false;
+    final conversation =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    if (conversation == null || !conversation.isDm) return conversation != null;
+    final peer = conversation.peerAccountId;
+    return blocksLoaded && peer != null && !isBlocked(peer);
   }
 
   Future<bool> _hasPendingMlsWork(String conversationId) async =>

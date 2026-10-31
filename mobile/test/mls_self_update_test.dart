@@ -191,6 +191,52 @@ void main() {
     restarted.dispose();
   });
 
+  test('a group request gets no update until it is accepted', () async {
+    final store = await _storeWith(_countDue('conv_a'));
+    // A fresh device: a group a stranger created is a request (D48).
+    final api = _Api()
+      ..convA = () => Conversation(
+          id: 'conv_a',
+          kind: 'group',
+          createdBy: 'acct_stranger',
+          lastMessageAt: DateTime.now().toUtc());
+    final crypto = _Crypto(store);
+    final state = await _start(api, store, crypto);
+    expect(state.isMessageRequestId('conv_a'), isTrue);
+    await _waitFor(() => api.revocationReads >= 1 && api.pendingReads >= 1);
+    await _settle();
+    expect(crypto.staged, isEmpty);
+    // The count is kept for when the request is accepted.
+    expect(_record(await _saved(store), 'conv_a')['sent'],
+        MlsSelfUpdatePolicy.messageThreshold);
+    state.dispose();
+  });
+
+  test('a DM with a blocked peer gets no update', () async {
+    final store = await _storeWith(_countDue('conv_a'));
+    final api = _Api()
+      ..convA = () => Conversation(
+          id: 'conv_a',
+          kind: 'dm',
+          createdBy: 'acct_me',
+          peerAccountId: 'acct_peer',
+          lastMessageAt: DateTime.now().toUtc());
+    api.blocks = <BlockedAccount>[BlockedAccount(accountId: 'acct_peer')];
+    final crypto = _Crypto(store);
+    final state = await _start(api, store, crypto);
+    await _waitFor(() => api.blockReads >= 1 && api.pendingReads >= 1);
+    await _settle();
+    expect(state.isBlocked('acct_peer'), isTrue);
+    expect(crypto.staged, isEmpty);
+    state.dispose();
+
+    // The same DM with the peer not blocked is updated.
+    final again = _Crypto(store);
+    final restarted = await _start(_Api()..convA = api.convA, store, again);
+    await _waitFor(() => again.completed.contains('conv_a'));
+    restarted.dispose();
+  });
+
   test('a crypto service without self-update is never asked', () async {
     final store = await _storeWith(_countDue('conv_a'));
     final api = _Api();
@@ -296,13 +342,25 @@ class _Api extends ApiClient {
   @override
   void close() {}
 
+  /// conv_a as returned by the server; the default has no creator, so it
+  /// is never a request.
+  Conversation Function() convA = () => Conversation(
+      id: 'conv_a', kind: 'group', lastMessageAt: DateTime.now().toUtc());
+  List<BlockedAccount> blocks = <BlockedAccount>[];
+  int blockReads = 0;
+
   @override
   Future<List<Conversation>> conversations(String token) async =>
       <Conversation>[
-        Conversation(
-            id: 'conv_a', kind: 'group', lastMessageAt: DateTime.now().toUtc()),
+        convA(),
         Conversation(id: 'conv_b', kind: 'group'),
       ];
+
+  @override
+  Future<List<BlockedAccount>> listBlocks(String token) async {
+    blockReads++;
+    return blocks;
+  }
 
   @override
   Future<List<ConversationMember>> conversationMembers(
