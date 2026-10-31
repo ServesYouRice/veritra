@@ -103,6 +103,7 @@ jobs:
       - run: flutter test --coverage
         env:
           VERITRA_CRYPTO_LIBRARY: ${{ github.workspace }}/crypto/rust/target/release/libprivate_messenger_crypto.so
+          VERITRA_REQUIRE_NATIVE_CRYPTO: "1"
         working-directory: mobile
       - name: Check Flutter coverage floor
         run: >-
