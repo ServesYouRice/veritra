@@ -105,7 +105,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/communities", a.withAuth(a.listCommunities))
 	mux.HandleFunc("POST /api/v1/conversations", a.withAuth(a.withWriteBudget(a.createConversation)))
 	mux.HandleFunc("GET /api/v1/conversations", a.withAuth(a.listConversations))
-	mux.HandleFunc("POST /api/v1/conversations/{id}/key-packages/claim", a.withAuth(a.claimConversationKeyPackages))
+	mux.HandleFunc("POST /api/v1/conversations/{id}/key-packages/claim", a.withAuth(a.withWriteBudget(a.claimConversationKeyPackages)))
 	mux.HandleFunc("POST /api/v1/conversations/{id}/mls/messages", a.withAuth(a.withWriteBudget(a.createMLSMessage)))
 	mux.HandleFunc("POST /api/v1/conversations/{id}/mls/commits", a.withAuth(a.withWriteBudget(a.createMLSCommitBundle)))
 	mux.HandleFunc("GET /api/v1/mls/pending-changes", a.withAuth(a.listMLSPendingChanges))
