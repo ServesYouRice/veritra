@@ -9,6 +9,7 @@ import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
+import 'package:private_messenger/sync/sync_recovery.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
 /// The catch-up loop in [AppState]: received messages whose publication
@@ -104,7 +105,125 @@ void main() {
       harness.dispose();
     });
   });
+
+  group('a peer message that can never be decrypted (D54, TASK-032)', () {
+    test('gets a placeholder and sync goes on for other conversations',
+        () async {
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[
+          _envelopeEvent(4, 'msg_locked', ciphertext: _neverDecrypts),
+          _envelopeEvent(5, 'msg_ok', conversationId: 'conv_2'),
+        ];
+      final store = MemoryLocalStore();
+      await _keepIdentity(store);
+      final harness = await _Harness.start(api, store: store);
+
+      await harness.waitFor(() async => await store.loadSyncCursor() == 5);
+      await harness.waitFor(() => harness.state.lastSyncedAt != null);
+      expect(harness.state.syncRecovery, isNull);
+      expect(await store.loadSyncRecovery(), isNull);
+      expect(harness.crypto.applied, <String>['msg_locked', 'msg_ok']);
+      expect(harness.state.messagesFor('conv_2').single.id, 'msg_ok');
+      // The locked one is shown as its placeholder, with no content.
+      final locked = harness.state.messagesFor('conv_1').single;
+      final row = harness.state.historyFor('conv_1').forEnvelope(locked)!;
+      expect(row.key, 'undecryptable:4:msg_locked');
+      expect(row.kind, LocalMessageKind.invalid);
+      expect(row.body, isNull);
+      harness.dispose();
+    });
+
+    test('a failed MLS control message still stops all sync (I33)', () async {
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[
+          _mlsEvent(4, 'mls_bad'),
+          _envelopeEvent(5, 'msg_ok', conversationId: 'conv_2'),
+        ];
+      final store = MemoryLocalStore();
+      final harness = await _Harness.start(api, store: store);
+      harness.crypto.rejectedMls.add('mls_bad');
+
+      await harness.waitFor(() => harness.state.syncRecovery != null);
+      expect(harness.state.syncRecovery!.kind, SyncFailureKind.mlsState);
+      expect((await store.loadSyncRecovery())!.eventId, 4);
+      expect(await store.loadSyncCursor(), 0);
+      expect(harness.crypto.applied, isEmpty);
+      harness.dispose();
+    });
+
+    test('a stop recorded for it before D54 is cleared once and applied',
+        () async {
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[
+          _envelopeEvent(4, 'msg_locked', ciphertext: _neverDecrypts),
+          _envelopeEvent(5, 'msg_ok'),
+        ];
+      final store = MemoryLocalStore();
+      await _keepIdentity(store);
+      await store.saveSyncRecovery(SyncRecovery(
+        kind: SyncFailureKind.applicationUndecryptable,
+        recordedAt: DateTime.utc(2026, 10, 1),
+        eventId: 4,
+        eventType: 'message.envelope.created',
+        conversationId: 'conv_1',
+      ));
+      final harness = await _Harness.start(api, store: store);
+
+      await harness.waitFor(() async => await store.loadSyncCursor() == 5);
+      await harness.waitFor(() => harness.state.lastSyncedAt != null);
+      expect(harness.state.syncRecovery, isNull);
+      expect(harness.state.deviceRecoveryRequired, isFalse);
+      expect(await store.loadSyncRecovery(), isNull);
+      expect(harness.crypto.applied, <String>['msg_locked', 'msg_ok']);
+
+      // Only once: a later stop of this kind (a failure the crypto service
+      // still refuses) stays until the person picks a recovery choice.
+      final calls = api.syncCalls;
+      await store.saveSyncRecovery(SyncRecovery(
+        kind: SyncFailureKind.applicationUndecryptable,
+        recordedAt: DateTime.utc(2026, 11, 1),
+        eventId: 6,
+      ));
+      harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await harness.waitFor(() => harness.state.syncRecovery != null);
+      await harness.settle();
+      expect(harness.state.syncRecovery!.eventId, 6);
+      expect(await store.loadSyncRecovery(), isNotNull);
+      expect(api.syncCalls, calls);
+      harness.dispose();
+    });
+
+    test('other stored stops are not cleared', () async {
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[_envelopeEvent(4, 'msg_ok')];
+      final store = MemoryLocalStore();
+      await store.saveSyncRecovery(SyncRecovery(
+        kind: SyncFailureKind.mlsState,
+        recordedAt: DateTime.utc(2026, 10, 1),
+        eventId: 3,
+      ));
+      final harness = await _Harness.start(api, store: store);
+      await harness.waitFor(() => harness.state.syncRecovery != null);
+      await harness.settle();
+      expect(harness.state.syncRecovery!.kind, SyncFailureKind.mlsState);
+      expect(await store.loadSyncRecovery(), isNotNull);
+      expect(api.syncCalls, 0);
+      harness.dispose();
+    });
+  });
 }
+
+/// The ciphertext [_FakeMlsCrypto] treats as one this device can never
+/// decrypt (D54).
+const _neverDecrypts = <int>[9];
+
+SyncEvent _mlsEvent(int id, String messageId) => SyncEvent(
+      id: id,
+      type: 'mls.message.created',
+      conversationId: 'conv_1',
+      payload: <String, Object?>{'mls_message_id': messageId},
+      createdAt: DateTime.utc(2026, 9, 24),
+    );
 
 void Function(AppState) _recordPublished(List<String> published) =>
     (state) => state.onMessagesPublished =
@@ -281,6 +400,36 @@ class _ScriptedApi extends ApiClient {
   Future<ReceivedMessageEnvelope> message(
           String token, String messageId) async =>
       throw ApiException(404, '{"error":"not_found"}');
+
+  MlsMessage _mls(SyncEvent event) => MlsMessage(
+        id: (event.payload as Map)['mls_message_id'] as String,
+        conversationId: event.conversationId!,
+        senderAccountId: 'acct_peer',
+        senderDeviceId: 'dev_peer',
+        kind: 'commit',
+        payload: const <int>[1],
+        idempotencyKey: 'idem_${event.id}',
+        syncEventId: event.id,
+        createdAt: DateTime.utc(2026, 9, 24),
+      );
+
+  @override
+  Future<List<MlsMessage>> mlsMessages(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
+      <MlsMessage>[
+        for (final event in events)
+          if (event.type == 'mls.message.created' && event.id > after)
+            _mls(event),
+      ].take(limit).toList(growable: false);
+
+  @override
+  Future<MlsMessage> mlsMessage(String token, String messageId) async =>
+      _mls(events.firstWhere((event) =>
+          event.type == 'mls.message.created' &&
+          (event.payload as Map)['mls_message_id'] == messageId));
 }
 
 class _FakeMlsCrypto implements MlsConversationCryptoService {
@@ -288,14 +437,58 @@ class _FakeMlsCrypto implements MlsConversationCryptoService {
 
   final LocalStore store;
   final List<String> applied = <String>[];
+  final Set<String> rejectedMls = <String>{};
 
   @override
   Future<void> activateSession(Session session) async {}
 
   @override
+  Future<void> processMlsMessage(MlsMessage message) async {
+    if (rejectedMls.contains(message.id)) throw StateError('commit rejected');
+    await store.commitSyncEvent(SyncEventCommit(
+      eventKey: 'mls:${message.syncEventId}:${message.id}',
+      conversationId: message.conversationId,
+      expectedCursor: await store.loadSyncCursor(),
+      cursor: message.syncEventId,
+    ));
+  }
+
+  @override
   Future<List<int>?> processApplicationMessage(
       ReceivedMessageEnvelope envelope, int syncEventId) async {
     applied.add(envelope.id);
+    if (envelope.ciphertext.length == 1 &&
+        envelope.ciphertext.single == _neverDecrypts.single) {
+      // What NativeCryptoService commits for a message it can never
+      // decrypt (D54): the same group state, the cursor, and a placeholder
+      // row with no content.
+      final previous = (await store.loadCryptoState())!;
+      await store.commitMlsTransition(MlsStateTransition(
+        messageId: 'application:$syncEventId:${envelope.id}',
+        conversationId: envelope.conversationId,
+        expectedCounter: previous.counter,
+        expectedCursor: await store.loadSyncCursor(),
+        state: StoredCryptoState(
+            counter: previous.counter + 1,
+            stateKey: previous.stateKey,
+            sealedState: previous.sealedState),
+        cursor: syncEventId,
+        upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
+        messageEffects: <MessageEffect>[
+          InsertMessageEffect(
+            key: 'undecryptable:$syncEventId:${envelope.id}',
+            serverMessageId: envelope.id,
+            conversationId: envelope.conversationId,
+            senderAccountId: envelope.senderAccountId,
+            senderDeviceId: envelope.senderDeviceId,
+            kind: LocalMessageKind.invalid,
+            createdAt: envelope.createdAt.millisecondsSinceEpoch,
+            state: LocalMessageState.received,
+          ),
+        ],
+      ));
+      return null;
+    }
     await store.commitSyncEvent(SyncEventCommit(
       eventKey: 'application:$syncEventId:${envelope.id}',
       conversationId: envelope.conversationId,

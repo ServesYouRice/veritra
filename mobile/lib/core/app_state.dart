@@ -4012,8 +4012,20 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     }
     // A stopped device stays stopped until the user picks a recovery choice
     // (I33): retrying the same event on every wake would be a poison loop.
-    final stored = await localStore.loadSyncRecovery();
+    var stored = await localStore.loadSyncRecovery();
     if (!_syncOwnerActive(current, ownerGeneration)) return;
+    if (stored?.kind == SyncFailureKind.applicationUndecryptable &&
+        wake == null &&
+        await localStore.loadSetting(_undecryptableRetrySetting) == null) {
+      // Under D54 a peer message this device can never decrypt no longer
+      // stops sync. A stop recorded for one before that rule is cleared,
+      // once per store, so its event is applied again. If it still fails,
+      // the new record stays.
+      await localStore.saveSetting(_undecryptableRetrySetting, 'done');
+      await localStore.saveSyncRecovery(null);
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      stored = null;
+    }
     if (stored != null) {
       _enterSyncRecovery(stored);
       return;
@@ -4194,6 +4206,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           retryAfter: err is ApiException ? err.retryAfter : null);
     }
   }
+
+  /// Set once a stop recorded for an undecryptable message has been cleared
+  /// for D54 (see [_runOwnedCatchUp]).
+  static const _undecryptableRetrySetting = 'sync.d54_undecryptable_retried';
 
   /// A catch-up that failed for a reason that passes (no connection, a
   /// rate limit, a server error) is tried again with backoff, so the device
@@ -4506,6 +4522,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         }
         await _ensureConversationAuthority(resolved.conversationId,
             client: client);
+        // A message this device can never decrypt does not throw: the
+        // crypto service commits past it with a placeholder row (D54), and
+        // the envelope is shown as that placeholder. What still throws here
+        // is a malformed event or a local failure, and that stops sync.
         try {
           if (bounded != null) {
             await bounded.processApplicationMessageBounded(resolved, event.id,
@@ -4573,7 +4593,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// failed to apply may be passed over only when its own expiry proves it
   /// would be gone anyway. The tombstone moves the cursor past the event and
   /// stores nothing else: no text, no envelope. Control messages never get
-  /// one.
+  /// one. (One the crypto service can never decrypt does not fail: it is
+  /// committed past with a placeholder, D54.)
   Future<void> _commitExpiredTombstone(
       SyncEvent event, String targetId, WakeRunContext? wake) async {
     final cursor = await localStore.loadSyncCursor();
