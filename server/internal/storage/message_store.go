@@ -153,7 +153,13 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 		}
 	}
 	if recipients != nil && withSyncEvent {
-		rows, err := tx.QueryContext(ctx, `SELECT account_id FROM memberships WHERE conversation_id = ? ORDER BY account_id`, envelope.ConversationID)
+		// Accounts that blocked the sender never see the envelope, on any read
+		// path, so they are not sent it live either.
+		rows, err := tx.QueryContext(ctx, `
+			SELECT account_id FROM memberships
+			WHERE conversation_id = ?
+			  AND NOT EXISTS (SELECT 1 FROM account_blocks b WHERE b.blocker_account_id = memberships.account_id AND b.blocked_account_id = ?)
+			ORDER BY account_id`, envelope.ConversationID, envelope.SenderAccountID)
 		if err != nil {
 			return domain.MessageEnvelope{}, false, 0, err
 		}
