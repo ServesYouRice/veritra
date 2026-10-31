@@ -278,6 +278,28 @@ class LocalCryptoStates extends Table {
   Set<Column<Object>> get primaryKey => {singleton};
 }
 
+/// Per-record sealed MLS state (D70, format 4): one row per sealed record
+/// (device, group or key package), listed by the root that
+/// [LocalCryptoStates.sealedState] will hold. Inert until the ABI-10 package
+/// (D70 S3) writes it. Until then, and after, every transaction that deletes
+/// the [LocalCryptoStates] singleton also deletes these rows, so records
+/// never outlive their root.
+class LocalCryptoRecords extends Table {
+  /// The record kind from the sealed header (1 device, 2 group, 3 kp).
+  IntColumn get kind => integer()();
+
+  /// The raw record id: a group id or key-package hash ref; empty for the
+  /// device record.
+  BlobColumn get recordId => blob()();
+
+  /// The generation (root counter) the record was last sealed at.
+  IntColumn get generation => integer()();
+  BlobColumn get sealed => blob()();
+
+  @override
+  Set<Column<Object>> get primaryKey => {kind, recordId};
+}
+
 class LocalMetadata extends Table {
   TextColumn get name => text()();
   TextColumn get value => text()();
@@ -445,6 +467,7 @@ class LocalConversationMutes extends Table {
   LocalSyncStates,
   LocalOutboxEntries,
   LocalCryptoStates,
+  LocalCryptoRecords,
   LocalMetadata,
   LocalMlsTransitions,
   LocalMlsOutboxEntries,
@@ -461,7 +484,7 @@ class LocalConversationMutes extends Table {
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   EncryptedLocalDatabase(super.executor, {this.requireExistingSchema = false});
 
-  static const currentSchemaVersion = 15;
+  static const currentSchemaVersion = 16;
   final bool requireExistingSchema;
 
   static const outboxDraftPrefix = 'outbox.draft.';
@@ -687,6 +710,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           if (requireExistingSchema) throw const ExistingDatabaseUnavailable();
           _upgradeStarted = true;
           await transaction(() async {
+            // D70: per-record sealed MLS state. New table only.
+            if (from < 16) await migrator.createTable(localCryptoRecords);
             if (from < 15) await _createNoticeOutbox();
             if (from < 14) await _createHistoryNamespace();
             // Older expiry/backfill steps read through current generated rows.
@@ -829,6 +854,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
                     ])))
               .go();
           await delete(localCryptoStates).go();
+          await delete(localCryptoRecords).go();
           // The cursor went with the MLS state it was committed with. An
           // upsert of only the key would keep the old value.
           await into(localSyncStates).insertOnConflictUpdate(
@@ -876,6 +902,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localConversations).go();
         await delete(localOutboxEntries).go();
         await delete(localCryptoStates).go();
+        await delete(localCryptoRecords).go();
         await delete(localAccounts).go();
         if (sessionJson != null) {
           await into(localAccounts).insert(
@@ -1020,6 +1047,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localCiphertextEnvelopes).go();
         await delete(localConversations).go();
         await delete(localCryptoStates).go();
+        await delete(localCryptoRecords).go();
         await delete(localAccounts).go();
         await into(localAccounts).insert(
           LocalAccountsCompanion.insert(
@@ -1918,6 +1946,16 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     );
   }
 
+  /// Every sealed MLS record (D70), ordered by kind and id. Nothing calls
+  /// this before the ABI-10 restore (D70 S3).
+  Future<List<LocalCryptoRecord>> readCryptoRecords() =>
+      (select(localCryptoRecords)
+            ..orderBy([
+              (t) => OrderingTerm(expression: t.kind),
+              (t) => OrderingTerm(expression: t.recordId)
+            ]))
+          .get();
+
   Future<void> clearCachedState(
           {bool preserveOutbox = false, bool keepDrafts = false}) =>
       transaction(() async {
@@ -1946,6 +1984,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localConversations).go();
         await delete(localOutboxEntries).go();
         await delete(localCryptoStates).go();
+        await delete(localCryptoRecords).go();
         await delete(localAccounts).go();
         await delete(localMetadata).go();
         await delete(localMlsTransitions).go();
