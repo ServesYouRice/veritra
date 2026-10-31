@@ -197,6 +197,9 @@ func (s *Store) CreateMLSCommitBundle(ctx context.Context, input MLSCommitBundle
 			VALUES(?, ?, ?, 0, 0)`, input.ConversationID, input.SenderDeviceID, input.SenderAccountID); err != nil {
 			return MLSCommitBundleResult{}, err
 		}
+		if err := dropStaleMLSRevocations(ctx, tx, input.ConversationID); err != nil {
+			return MLSCommitBundleResult{}, err
+		}
 	} else {
 		active, err := activeMLSDevice(ctx, tx, input.ConversationID, input.SenderDeviceID)
 		if err != nil {
@@ -330,6 +333,9 @@ func (s *Store) CreateMLSCommitBundle(ctx context.Context, input MLSCommitBundle
 		if err != nil {
 			return MLSCommitBundleResult{}, err
 		}
+	}
+	if err := dropStaleMLSRevocations(ctx, tx, input.ConversationID); err != nil {
+		return MLSCommitBundleResult{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return MLSCommitBundleResult{}, err

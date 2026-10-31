@@ -193,6 +193,7 @@ func TestLegacyRevocationCoordinatorFallsBackWhenItsAccountLeaves(t *testing.T) 
 	addTestDevice(t, ctx, store, bob.Account.ID, coordBob)
 	const tablet = "dev-z-owner-tablet"
 	addTestDevice(t, ctx, store, owner.Account.ID, tablet)
+	makeLegacyMLSGroup(t, ctx, store, conversation.ID, owner)
 	if _, err := store.RevokeDeviceWithSyncEvent(ctx, owner.Account.ID, tablet); err != nil {
 		t.Fatal(err)
 	}

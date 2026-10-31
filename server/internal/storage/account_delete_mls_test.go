@@ -33,6 +33,7 @@ func TestDeleteAccountQueuesMLSRevocationsForItsDevices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	makeLegacyMLSGroup(t, ctx, store, legacy.ID, owner)
 	const bobTablet = "dev-z-bob-tablet"
 	addTestDevice(t, ctx, store, bob.Account.ID, bobTablet)
 	if _, err := store.CreateMLSCommitBundle(ctx, MLSCommitBundleInput{

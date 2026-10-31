@@ -179,6 +179,11 @@ func (s *Store) DeleteAccountData(ctx context.Context, accountID string) ([]stri
 		if err := queueMLSRevocations(ctx, tx, accountID, deviceID, now); err != nil {
 			return nil, err
 		}
+		// A device that will never confirm another device's revocation
+		// stops it waiting.
+		if err := releaseMLSRevocationConfirmations(ctx, tx, deviceID, parseTime(now)); err != nil {
+			return nil, err
+		}
 	}
 	// Call metadata carries session descriptions the account produced. The
 	// pseudonymous ids stay for the other participant's call history; open
