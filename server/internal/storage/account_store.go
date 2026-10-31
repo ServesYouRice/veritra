@@ -163,8 +163,22 @@ func (s *Store) DeleteAccountData(ctx context.Context, accountID string) ([]stri
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE account_id = ?`, accountID); err != nil {
 		return nil, err
 	}
+	deviceIDs, err := accountDeviceIDs(ctx, tx, accountID)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE devices SET name = 'Deleted device', key_package = X'', signing_key = NULL, auth_secret_hash = NULL, revoked_at = COALESCE(revoked_at, ?) WHERE account_id = ?`, now, accountID); err != nil {
 		return nil, err
+	}
+	// The devices leave every MLS group the way a revoked device does: the
+	// remaining members commit their removal. Every device is revoked first,
+	// so none of them coordinates or has to confirm another's removal, and
+	// the memberships are dropped only afterwards, since groups without a
+	// recorded roster are found through them.
+	for _, deviceID := range deviceIDs {
+		if err := queueMLSRevocations(ctx, tx, accountID, deviceID, now); err != nil {
+			return nil, err
+		}
 	}
 	// Call metadata carries session descriptions the account produced. The
 	// pseudonymous ids stay for the other participant's call history; open
@@ -209,6 +223,24 @@ func (s *Store) DeleteAccountData(ctx context.Context, accountID string) ([]stri
 		return nil, err
 	}
 	return storageKeys, nil
+}
+
+// accountDeviceIDs lists every device of the account, revoked ones included.
+func accountDeviceIDs(ctx context.Context, tx *sql.Tx, accountID string) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM devices WHERE account_id = ? ORDER BY id`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 func (s *Store) accountByID(ctx context.Context, accountID string) (domain.Account, error) {

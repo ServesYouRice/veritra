@@ -205,6 +205,29 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     not wired yet, so no shipped path hits this.
   - **Cost.** Quotas and the write budget count padded bytes
     (`docs/operations.md`, Admission limits).
+- **Server revocation and delete fixes (2026-10-31, storage review):** no
+  ABI, wire or schema change.
+  - The coordinator of a pending device revocation is now computed when
+    read or committed: the one recorded when the revocation was queued while
+    it is still an eligible group device (not revoked, its account a member,
+    an active roster device in a rostered group), otherwise the lowest
+    eligible device id. Before, a revoked or departed coordinator left the
+    revocation pending for good. `GET /api/v1/mls/revocations` reports that
+    device in `coordinator_device_id` and lists a pending revocation for it
+    even when it joined the group later and has nothing to confirm. Only it
+    may submit the revocation commit; the group's epoch check, not the
+    coordinator rule, is what stops two commits from both landing.
+  - Deleting an account queues the same per-group revocations as revoking
+    each of its devices, so the remaining members commit the removal of its
+    leaves. They are still not on the reconcile remove list, because a plain
+    bundle may not remove a device with a pending revocation (Q-004).
+  - A message deleted through the server's delete route has its created and
+    edited sync events redacted and hidden; only `message.envelope.deleted`
+    replays. A client never sees a created event without its envelope.
+  - Open: a device that must confirm a revocation and is itself revoked, or
+    whose account leaves, never confirms, so that revocation stays
+    `commit_submitted` and its `mls.revocation.completed` event never comes.
+    Nothing waits on that state today.
 
 - **W8 pin rule (2026-10-31, owner decision):** any member of a DM or a
   group may pin; community conversations keep moderator roles until C4. The

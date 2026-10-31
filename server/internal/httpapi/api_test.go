@@ -183,6 +183,16 @@ func TestMessageLifecycleAndSyncRoutes(t *testing.T) {
 		t.Fatalf("read receipt status=%d body=%s", status, response)
 	}
 
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/sync/events?after=0", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("sync events status=%d body=%s", status, response)
+	}
+	for _, eventType := range []string{"message.envelope.created", "message.envelope.edited", "reaction.created", "read_receipt.updated"} {
+		if !bytes.Contains(response, []byte(eventType)) {
+			t.Fatalf("sync response before the delete missing %s: %s", eventType, response)
+		}
+	}
+
 	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/messages/"+messageID+"/delete", token, map[string]interface{}{
 		"ciphertext":      base64.StdEncoding.EncodeToString([]byte("encrypted delete marker")),
 		"crypto_protocol": "mls10-openmls-v1",
@@ -198,9 +208,17 @@ func TestMessageLifecycleAndSyncRoutes(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("sync events status=%d body=%s", status, response)
 	}
-	for _, eventType := range []string{"message.envelope.created", "message.envelope.edited", "reaction.created", "read_receipt.updated", "message.envelope.deleted"} {
+	for _, eventType := range []string{"reaction.created", "read_receipt.updated", "message.envelope.deleted"} {
 		if !bytes.Contains(response, []byte(eventType)) {
 			t.Fatalf("sync response missing %s: %s", eventType, response)
+		}
+	}
+	// A deleted message replays only its delete marker; the versions it
+	// replaced are neither served nor kept.
+	for _, hidden := range []string{"message.envelope.created", "message.envelope.edited",
+		base64.StdEncoding.EncodeToString([]byte("ciphertext-v1")), base64.StdEncoding.EncodeToString([]byte("ciphertext-v2"))} {
+		if bytes.Contains(response, []byte(hidden)) {
+			t.Fatalf("sync response after the delete still has %s: %s", hidden, response)
 		}
 	}
 }

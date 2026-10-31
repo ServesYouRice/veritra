@@ -100,7 +100,8 @@ const legacyListConversationsPageQuery = `
 // It also states the rule of the TASK-207/208 fix, which the merge query
 // shares: a message.envelope.* event is served only while its message
 // envelope row exists and has not expired, so an expired or removed message
-// is never replayed to a device with an old cursor. The reference applies it
+// is never replayed to a device with an old cursor; once the message is
+// deleted, only its deleted event is served. The reference applies it
 // as a plain correlated EXISTS against the Go-side clock, where the merge
 // query reads SQLite's clock, so the two are written independently.
 const legacyListSyncEventsQuery = `
@@ -130,6 +131,7 @@ const legacyListSyncEventsQuery = `
 			    SELECT 1 FROM message_envelopes live
 			    WHERE live.id = json_extract(se.payload_json, '$.message_id')
 			      AND (live.expires_at IS NULL OR live.expires_at > ?)
+			      AND (live.deleted_at IS NULL OR se.event_type = 'message.envelope.deleted')
 			  ))
 			  AND NOT EXISTS (
 			    SELECT 1 FROM account_blocks b

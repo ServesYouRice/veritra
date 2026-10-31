@@ -619,6 +619,16 @@ after 64 batches or 10 seconds per class. Monitor
 above 1,200 rows or an oldest age above one sweep interval after two sweeps.
 The metrics contain aggregate counts and ages only.
 
+Sync events keep a copy of each message envelope version. An expired message
+and a message deleted through the server's delete route lose those copies:
+the event rows stay for cursors, cut down to the message id and sender, and
+sync no longer serves them (a deleted message keeps only its delete marker
+event). Each sweep also redacts, in a bounded window of event ids, copies left
+by expiries and deletes from before an upgrade. The mobile app deletes a
+message with an encrypted action message instead, which the server cannot
+tell apart from any other message; that message's original ciphertext stays
+until it expires or sync-event retention removes it.
+
 ## Push providers
 
 Configure only the providers you can operate. Clients register with what

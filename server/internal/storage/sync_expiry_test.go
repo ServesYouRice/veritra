@@ -34,9 +34,10 @@ func TestExpiredMessageEventsAreNeitherReplayedNorKept(t *testing.T) {
 	_ = kept
 	events := []int64{createdEvent, editedEvent, deletedEvent}
 
-	// Before expiry the whole history replays, immutable envelopes included.
+	// Before expiry the delete marker and the other message replay; the
+	// versions the delete replaced do not (TestDeletedMessageVersionsAreNeitherReplayedNorKept).
 	seen := f.eventIDs(t, ctx, f.bystander)
-	for _, id := range append(events, keptEvent) {
+	for _, id := range []int64{deletedEvent, keptEvent} {
 		if !seen[id] {
 			t.Fatalf("event %d is missing before the message expired: %v", id, seen)
 		}
