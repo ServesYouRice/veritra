@@ -2803,8 +2803,12 @@ class SecureLocalStore implements LocalStore {
           } catch (_) {}
           rethrow;
         }
-        if (database != null && database.upgradeStarted) {
-          // The key opened the file and the upgrade rolled back. Drift
+        if (database != null &&
+            (database.upgradeStarted || database.createStarted)) {
+          // The key opened the file (or it was empty) and the create or
+          // upgrade rolled back, as when a first create filled the disk and
+          // left an empty version-0 file. Never a wrong key, so no reset is
+          // offered that would delete the legacy record. Drift
           // refuses any further use of this handle, so close it; a retry
           // opens a new one. Nothing is deleted or reset.
           try {
