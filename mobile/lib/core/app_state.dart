@@ -5507,20 +5507,43 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       ].join('|');
 
   /// Records one delivery failure and says whether it is terminal. Server
-  /// rejections are terminal; connection problems and busy servers retry
-  /// with bounded exponential backoff.
+  /// rejections are terminal, and so are local errors that cannot pass by
+  /// themselves: an item that does not decode, a bad argument, a durable
+  /// storage error (TASK-052). They pause the conversation, with the item
+  /// kept; nothing resumes it yet but the device's own recovery (bug-hunt
+  /// Q-006 is open). Connection problems, busy servers, a malformed
+  /// response, transient storage errors and unknown errors retry with
+  /// bounded exponential backoff.
   Future<bool> _recordMlsOutboxFailure(
       PendingMlsMessage message, Object error) async {
     final apiError = error is ApiException ? error : null;
-    final retryable = (apiError != null && _isTransientSyncError(apiError)) ||
-        (apiError == null && _isTransientSyncError(error));
-    final terminal = apiError != null && !retryable;
+    final bool terminal;
+    final String failureClass;
+    if (apiError != null) {
+      terminal = !_isTransientSyncError(apiError);
+      failureClass = terminal
+          ? 'terminal:${apiError.statusCode}:${apiError.serverCode ?? 'rejected'}'
+          : 'retryable:${apiError.statusCode}';
+    } else if (_isDurableLocalError(error)) {
+      terminal = true;
+      failureClass = 'terminal:local:${error.runtimeType}';
+    } else {
+      terminal = false;
+      failureClass = error is ApiResponseException
+          ? 'retryable:response'
+          : error is SocketException ||
+                  error is TimeoutException ||
+                  error is HttpException ||
+                  error is HandshakeException
+              ? 'retryable:network'
+              : _isTransientSyncError(error)
+                  ? 'retryable:local'
+                  : 'retryable:unknown';
+    }
     final exponent = min(message.attemptCount, 8);
     await localStore.recordMlsOutboxFailure(
       message.idempotencyKey,
-      failureClass: terminal
-          ? 'terminal:${apiError.statusCode}:${apiError.serverCode ?? 'rejected'}'
-          : 'retryable:${apiError?.statusCode ?? 'network'}',
+      failureClass: failureClass,
       terminal: terminal,
       nextAttemptAt: terminal
           ? null
@@ -5528,6 +5551,13 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     );
     return terminal;
   }
+
+  /// A local error a retry cannot fix. A malformed server response is a
+  /// [FormatException] too, but the next answer may be fine.
+  static bool _isDurableLocalError(Object error) =>
+      (error is FormatException && error is! ApiResponseException) ||
+      error is ArgumentError ||
+      _isDurableStorageError(error);
 
   /// Items the server accepted whose local finishing (merging the commit,
   /// or removing the item) failed; the next pass only finishes them. Memory

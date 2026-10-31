@@ -2,11 +2,13 @@
 // off and are reconciled again by a wake timer (TASK-029); accepted items
 // whose local finish failed are retried (TASK-030); storage failures in the
 // outbox workers are contained and retried with backoff (TASK-042); a drained
-// revocation commit is not made twice (TASK-051).
+// revocation commit is not made twice (TASK-051); durable local failures are
+// terminal and labelled (TASK-052).
 @Timeout(Duration(seconds: 60))
 library;
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -386,6 +388,99 @@ void main() {
       h.state.dispose();
     });
   });
+
+  group('a local MLS outbox failure', () {
+    Future<(PendingMlsMessage, bool)> fail(
+        PendingMlsMessage message, Object? error) async {
+      final h = await _Harness.start(pending: const <String>{});
+      await _settle();
+      if (error != null) h.api.messageFailures[message.idempotencyKey] = error;
+      await _queue(h.store, <PendingMlsMessage>[message]);
+      h.sync.frame();
+      await _waitFor(() async =>
+          (await h.store.pendingMlsMessages()).single.attemptCount == 1);
+      final recorded = (await h.store.pendingMlsMessages()).single;
+      await _waitFor(() => h.state.mlsConversationFailed('conv_a') ==
+          recorded.terminal);
+      final failed = h.state.mlsConversationFailed('conv_a');
+      h.state.dispose();
+      return (recorded, failed);
+    }
+
+    test('an undecodable bundle is terminal and pauses its conversation',
+        () async {
+      final (recorded, failed) = await fail(
+          const PendingMlsMessage(
+            idempotencyKey: 'b1',
+            conversationId: 'conv_a',
+            kind: MlsCommitBundle.kind,
+            payload: <int>[1],
+          ),
+          null);
+      expect(recorded.terminal, isTrue);
+      expect(recorded.failureClass, 'terminal:local:FormatException');
+      expect(recorded.nextAttemptAt, isNull);
+      expect(failed, isTrue);
+    });
+
+    test('an argument error is terminal', () async {
+      final (recorded, failed) = await fail(
+          _message('c1', 'conv_a'), ArgumentError('bad payload'));
+      expect(recorded.terminal, isTrue);
+      expect(recorded.failureClass, 'terminal:local:ArgumentError');
+      expect(failed, isTrue);
+    });
+
+    test('a durable storage error is terminal', () async {
+      final (recorded, failed) = await fail(
+          _message('c1', 'conv_a'),
+          const FileSystemException(
+              'open failed', '/data/x', OSError('No such file', 2)));
+      expect(recorded.terminal, isTrue);
+      expect(recorded.failureClass, 'terminal:local:FileSystemException');
+      expect(failed, isTrue);
+    });
+
+    test('a transient storage error retries, labelled local', () async {
+      final (recorded, failed) = await fail(
+          _message('c1', 'conv_a'),
+          const FileSystemException(
+              'write failed', '/data/x', OSError('No space left', 28)));
+      expect(recorded.terminal, isFalse);
+      expect(recorded.failureClass, 'retryable:local');
+      expect(recorded.nextAttemptAt, isNotNull);
+      expect(failed, isFalse);
+    });
+
+    test('a network error still retries, labelled network', () async {
+      final (recorded, failed) = await fail(
+          _message('c1', 'conv_a'), const SocketException('down'));
+      expect(recorded.terminal, isFalse);
+      expect(recorded.failureClass, 'retryable:network');
+      expect(recorded.nextAttemptAt, isNotNull);
+      expect(failed, isFalse);
+    });
+
+    test('a malformed server response retries, labelled response',
+        () async {
+      // ApiResponseException is a FormatException, but the server's next
+      // answer may be fine (a captive portal's page, say).
+      final (recorded, failed) = await fail(
+          _message('c1', 'conv_a'), const ApiResponseException());
+      expect(recorded.terminal, isFalse);
+      expect(recorded.failureClass, 'retryable:response');
+      expect(failed, isFalse);
+    });
+
+    test('an unknown error retries, labelled unknown', () async {
+      final (recorded, failed) =
+          await fail(_message('c1', 'conv_a'), StateError('odd'));
+      expect(recorded.terminal, isFalse);
+      expect(recorded.failureClass, 'retryable:unknown');
+      expect(recorded.nextAttemptAt, isNotNull);
+      expect(failed, isFalse);
+    });
+  });
 }
 
 const _origin = 'https://localhost:8080';
@@ -503,6 +598,7 @@ class _Api extends ApiClient {
   final List<String> bundles = <String>[];
   final List<String> messages = <String>[];
   final List<String> envelopes = <String>[];
+  final Map<String, Object> messageFailures = <String, Object>{};
   int pendingChangeCalls = 0;
   int syncCalls = 0;
   bool hangBundles = false;
@@ -619,6 +715,8 @@ class _Api extends ApiClient {
     String? recipientDeviceId,
     String? revocationDeviceId,
   }) async {
+    final failure = messageFailures.remove(idempotencyKey);
+    if (failure != null) throw failure;
     messages.add(idempotencyKey);
     return MlsMessage(
       id: 'mls_$idempotencyKey',
