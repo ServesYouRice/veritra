@@ -463,14 +463,14 @@ func checkReadModelsMatch(t *testing.T, store *Store, ds benchDataset) {
 			devices = append(devices, "dev_hot_2", "")
 		}
 		checkSyncEventsMatch(t, store, account, devices, paged, i == 0, ds.MidEventID)
-		_, oldest, latest, err := store.SyncBounds(ctx, account)
-		if err != nil {
-			t.Fatal(err)
-		}
+		// The T49A rewrite matches the reference exactly. SyncBounds also
+		// leaves envelope-hidden events out (sync_bounds_visibility_test.go).
+		oldest, latest := rewrittenSyncBounds(t, store, account)
 		wantOldest, wantLatest := legacySyncBounds(t, store, account)
 		if oldest != wantOldest || latest != wantLatest {
 			t.Fatalf("sync bounds differ: got %d..%d want %d..%d", oldest, latest, wantOldest, wantLatest)
 		}
+		checkSyncBoundsVisible(t, ctx, store, account)
 
 		for _, limit := range []int{7, 1000} {
 			if limit == 7 && !paged {

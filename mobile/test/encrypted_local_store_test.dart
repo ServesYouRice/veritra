@@ -734,7 +734,8 @@ void main() {
     FlutterSecureStorage.setMockInitialValues(<String, String>{
       'veritra.account_state.v2': '{not-json',
     });
-    expect(createStore().loadSession(), throwsStateError);
+    expect(createStore().loadSession(),
+        throwsA(_storeFailure(LocalStoreFailureKind.upgradeFailed)));
   });
 
   test('concurrent stores do not lose outbox writes', () async {
@@ -1538,11 +1539,13 @@ void main() {
       expect(await restarted.loadSyncCursor(), 1, reason: stage.name);
       expect((await restarted.loadCryptoState())?.counter, 1,
           reason: stage.name);
+      final snapshot = await restarted.loadSnapshot();
+      expect(snapshot, isNotNull, reason: stage.name);
       expect(
-        (await restarted.loadSnapshot())
-            ?.messagesByConversation['conv_1']
-            ?.map((item) => item.id),
-        isNot(contains('msg_2')),
+        snapshot!.messagesByConversation['conv_1']
+            ?.map((item) => item.id)
+            .toList(),
+        <String>['msg_1'],
         reason: stage.name,
       );
       await databases.last.close();
@@ -1557,7 +1560,7 @@ void main() {
       (await successful.loadSnapshot())
           ?.messagesByConversation['conv_1']
           ?.map((item) => item.id),
-      contains('msg_2'),
+      unorderedEquals(<String>['msg_1', 'msg_2']),
     );
   });
 

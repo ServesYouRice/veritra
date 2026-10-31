@@ -6,6 +6,8 @@ import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/backup_service.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
+
+import 'native_test_env.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
 
@@ -13,24 +15,31 @@ import 'package:private_messenger/storage/local_store.dart';
 /// library and a loopback server: create, upload, restore, and the ways a
 /// restore can fail without touching the device.
 void main() {
-  final libraryPath = Platform.environment['VERITRA_CRYPTO_LIBRARY'];
-  final skip = libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false;
+  final skip = nativeCryptoSkip();
 
   late _BackupServer server;
   late Directory scratch;
   late NativeCryptoBindings bindings;
+  // setUp can throw before these are set (required but missing library).
+  _BackupServer? startedServer;
+  Directory? createdScratch;
 
   setUp(() async {
-    if (libraryPath == null) return;
-    bindings = NativeCryptoBindings.open(libraryPath);
-    server = await _BackupServer.start();
-    scratch = await Directory.systemTemp.createTemp('veritra-backup-');
+    startedServer = null;
+    createdScratch = null;
+    if (skip != false) return;
+    bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
+    server = startedServer = await _BackupServer.start();
+    scratch = createdScratch =
+        await Directory.systemTemp.createTemp('veritra-backup-');
   });
 
   tearDown(() async {
-    if (libraryPath == null) return;
-    await server.close();
-    if (await scratch.exists()) await scratch.delete(recursive: true);
+    await startedServer?.close();
+    final directory = createdScratch;
+    if (directory != null && await directory.exists()) {
+      await directory.delete(recursive: true);
+    }
   });
 
   BackupService serviceFor(LocalStore store) => BackupService(
@@ -105,7 +114,7 @@ void main() {
 
   test('an interrupted download continues after a restart', () async {
     final code = await makeBackup();
-    server.dropAfterBytes = 40;
+    server.dropAfterBytes = 100;
     final target = MemoryLocalStore();
     await expectLater(serviceFor(target).recover(code),
         throwsA(failure(BackupFailureKind.network)));
@@ -130,7 +139,7 @@ void main() {
         'a resume the server ${mode == 'ignores Range' ? 'cannot honour' : 'refuses'} '
         'restarts from the beginning ($mode)', () async {
       final code = await makeBackup();
-      server.dropAfterBytes = 40;
+      server.dropAfterBytes = 100;
       final target = MemoryLocalStore();
       await expectLater(serviceFor(target).recover(code),
           throwsA(failure(BackupFailureKind.network)));
@@ -143,7 +152,7 @@ void main() {
         server.refuseRange = true;
       }
       await serviceFor(target).recover(code);
-      expect(server.rangeStarts, <int>[0, 40, 0]);
+      expect(server.rangeStarts, <int>[0, 100, 0]);
       expect((await target.loadMessages('conv_1')).single.body,
           'kept across devices');
       expect(scratch.listSync(), isEmpty);
@@ -152,7 +161,7 @@ void main() {
 
   test('a restarted download still refuses a wrong recovery code', () async {
     final code = await makeBackup();
-    server.dropAfterBytes = 40;
+    server.dropAfterBytes = 100;
     final target = MemoryLocalStore();
     await expectLater(serviceFor(target).recover(code),
         throwsA(failure(BackupFailureKind.network)));
@@ -163,10 +172,14 @@ void main() {
         '${'A' * parts[3].length}';
     await expectLater(serviceFor(target).recover(wrongKey),
         throwsA(failure(BackupFailureKind.wrongKey)));
-    // One restart from byte 0, not a second download for the same answer.
-    expect(server.rangeStarts, <int>[0, 40, 0]);
+    // The saved prefix does not open with this code, so it is not
+    // continued: one restart from byte 0, not a second download for the
+    // same answer.
+    expect(server.rangeStarts, <int>[0, 0]);
     expect(await target.loadSession(), isNull);
-    expect(scratch.listSync(), isEmpty);
+    // The server accepted the token, so the downloaded file is this backup
+    // and is kept for the corrected code.
+    expect(scratch.listSync().whereType<File>(), hasLength(1));
   }, skip: skip);
 
   test('a device that already has an account is not overwritten', () async {

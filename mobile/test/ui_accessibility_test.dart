@@ -88,17 +88,20 @@ void main() {
 
   testWidgets('shared text surfaces build at 320dp and 200 percent text',
       (tester) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    const column = Key('surfaces');
     await tester.pumpWidget(
       MaterialApp(
         theme: veritraLightTheme(),
-        home: MediaQuery(
-          data: MediaQueryData(
-            size: const Size(320, 640),
-            textScaler: TextScaler.linear(2.0),
-          ),
-          child: const SizedBox(
-            width: 320,
-            child: Column(
+        home: Builder(
+          // Only the text scale is overridden; the size comes from the view.
+          builder: (context) => MediaQuery(
+            data: MediaQuery.of(context)
+                .copyWith(textScaler: TextScaler.linear(2.0)),
+            child: const Column(
+              key: column,
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
                 SectionHeader('A very long settings section'),
@@ -110,6 +113,12 @@ void main() {
       ),
     );
 
+    expect(tester.getSize(find.byKey(column)).width, 320);
+    expect(
+        MediaQuery.of(tester.element(find.byType(SectionHeader)))
+            .textScaler
+            .scale(10),
+        20);
     expect(tester.takeException(), isNull);
   });
 }

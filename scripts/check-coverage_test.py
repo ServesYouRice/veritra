@@ -81,6 +81,38 @@ private-messenger/server/internal/domain/types.go:5.2,8.10 5 10
             pass
 
 
+def test_go_repeated_blocks_are_merged() -> None:
+    """Repeated blocks merge like golang.org/x/tools/cover ParseProfiles."""
+    # One block reported covered by one test binary and uncovered by another
+    # is one covered block, in every mode.
+    for mode in ("set", "count", "atomic"):
+        profile = f"mode: {mode}\np.go:1.1,2.2 1 1\np.go:1.1,2.2 1 0\n"
+        hit, found, pct, sources = checker.parse_go_report(profile)
+        assert (hit, found) == (1, 1), mode
+        assert pct == 100.0, mode
+        assert sources == {"p.go"}
+
+    # A covered block repeated twice counts its statements once, so it cannot
+    # outweigh an uncovered block of the same size.
+    profile = "mode: count\np.go:1.1,2.2 3 1\np.go:1.1,2.2 3 4\np.go:3.1,4.2 3 0\n"
+    hit, found, pct, _ = checker.parse_go_report(profile)
+    assert (hit, found) == (3, 6)
+    assert abs(pct - 50.0) < 1e-6
+
+    # Sources are compared after normalisation; distinct ranges stay distinct.
+    profile = "mode: set\n./p.go:1.1,2.2 2 0\np.go:1.1,2.2 2 1\np.go:1.1,2.3 2 0\nq.go:1.1,2.2 2 0\n"
+    hit, found, _, sources = checker.parse_go_report(profile)
+    assert (hit, found) == (2, 6)
+    assert sources == {"p.go", "q.go"}
+
+    # Repeated blocks must agree on their statement count.
+    try:
+        checker.parse_go_report("mode: set\np.go:1.1,2.2 1 1\np.go:1.1,2.2 2 0\n")
+        raise AssertionError("expected inconsistent NumStmt to fail validation")
+    except ValueError:
+        pass
+
+
 def test_floor_and_source_matching() -> None:
     assert checker.check_floor("Test", 85.0, 80.0) is True
     assert checker.check_floor("Test", 80.0, 80.0) is True
@@ -202,6 +234,7 @@ private-messenger/server/internal/cryptoapi/cryptoapi.go:1.1,2.2 5 1
 if __name__ == "__main__":
     test_parse_lcov()
     test_parse_go_coverprofile()
+    test_go_repeated_blocks_are_merged()
     test_floor_and_source_matching()
     test_cli_execution()
     print("Coverage parser, floor, and required-source tests passed")

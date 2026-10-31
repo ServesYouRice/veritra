@@ -1,0 +1,2 @@
+/* The generic iOS notification (D53): fixed text, no sender, no content. */
+"veritra.notification.new_message" = "Нова порука";

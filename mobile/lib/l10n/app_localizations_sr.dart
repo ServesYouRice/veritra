@@ -141,6 +141,10 @@ class AppLocalizationsSr extends AppLocalizations {
       'Подешавање није могло да се промени. Проверите везу и покушајте поново.';
 
   @override
+  String get settingsReadReceiptsNotSaved =>
+      'Овај уређај није могао да сачува подешавање. Важи за сада, али може да се врати када се апликација поново покрене.';
+
+  @override
   String get settingsSectionAbout => 'О апликацији';
 
   @override
@@ -1140,6 +1144,9 @@ class AppLocalizationsSr extends AppLocalizations {
   String get bannerRelink => 'Поново повежи овај уређај';
 
   @override
+  String get bannerRestoreBackup => 'Врати из резервне копије';
+
+  @override
   String get bannerRelinkTitle => 'Поново повезати овај уређај?';
 
   @override
@@ -1754,6 +1761,9 @@ class AppLocalizationsSr extends AppLocalizations {
   String get chatMessageInvalid => 'Једна порука није могла да се прочита';
 
   @override
+  String get chatMessageUndecryptable => 'Ова порука није могла да се откључа';
+
+  @override
   String chatReactionCount(String reaction, int count) {
     final intl.NumberFormat countNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -2181,6 +2191,10 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get recoveryUpgradeError =>
       'Овај уређај није могао да ажурира складиште порука за ову верзију апликације Veritra. Ништа није промењено нити обрисано. Покушајте поново. Ако и даље не успева, можете да ресетујете овај уређај и поново га повежете.';
+
+  @override
+  String get recoveryStorageDamaged =>
+      'Складиште порука на овом уређају је оштећено и не може да се прочита, па је синхронизација заустављена. Ништа није обрисано. Покушајте поново или ресетујте овај уређај и поново га повежите.';
 
   @override
   String get recoverySqliteFeatureMissing =>
@@ -2675,6 +2689,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get settingsReadReceiptsFailed =>
       'Podešavanje nije moglo da se promeni. Proverite vezu i pokušajte ponovo.';
+
+  @override
+  String get settingsReadReceiptsNotSaved =>
+      'Ovaj uređaj nije mogao da sačuva podešavanje. Važi za sada, ali može da se vrati kada se aplikacija ponovo pokrene.';
 
   @override
   String get settingsSectionAbout => 'O aplikaciji';
@@ -3676,6 +3694,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get bannerRelink => 'Ponovo poveži ovaj uređaj';
 
   @override
+  String get bannerRestoreBackup => 'Vrati iz rezervne kopije';
+
+  @override
   String get bannerRelinkTitle => 'Ponovo povezati ovaj uređaj?';
 
   @override
@@ -4290,6 +4311,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get chatMessageInvalid => 'Jedna poruka nije mogla da se pročita';
 
   @override
+  String get chatMessageUndecryptable => 'Ova poruka nije mogla da se otključa';
+
+  @override
   String chatReactionCount(String reaction, int count) {
     final intl.NumberFormat countNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -4720,6 +4744,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get recoveryUpgradeError =>
       'Ovaj uređaj nije mogao da ažurira skladište poruka za ovu verziju aplikacije Veritra. Ništa nije promenjeno niti obrisano. Pokušajte ponovo. Ako i dalje ne uspeva, možete da resetujete ovaj uređaj i ponovo ga povežete.';
+
+  @override
+  String get recoveryStorageDamaged =>
+      'Skladište poruka na ovom uređaju je oštećeno i ne može da se pročita, pa je sinhronizacija zaustavljena. Ništa nije obrisano. Pokušajte ponovo ili resetujte ovaj uređaj i ponovo ga povežite.';
 
   @override
   String get recoverySqliteFeatureMissing =>

@@ -187,6 +187,10 @@ func TestPlainBundleCannotRemoveADeviceWithAPendingRevocation(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("add laptop: %v", err)
 	}
+	// Removals are taken only from the pending-change set: Bob leaves.
+	if _, err := store.RemoveConversationMember(ctx, conversation.ID, owner.Account.ID, bob.Account.ID); err != nil {
+		t.Fatalf("remove bob: %v", err)
+	}
 	if _, err := store.CreateMLSCommitBundle(ctx, MLSCommitBundleInput{
 		ConversationID: conversation.ID, SenderAccountID: owner.Account.ID, SenderDeviceID: owner.Device.ID,
 		Epoch: 3, IdempotencyKey: "remove-laptop", Commit: []byte("commit-remove"),

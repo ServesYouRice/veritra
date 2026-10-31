@@ -29,13 +29,41 @@ class _BackupScreenState extends State<BackupScreen> {
   /// code exists only in this call, so leaving now would lose it for good.
   bool _creating = false;
 
+  /// Whether this device has a backup is read when the screen opens. Until
+  /// that read succeeds a backup may exist that the screen does not show,
+  /// so the button waits; if it failed, a new backup is confirmed as a
+  /// replacement. Only a status known to be "none" skips the warning.
+  bool _statusLoading = true;
+  bool _statusFailed = false;
+
   @override
   void initState() {
     super.initState();
     scheduleMicrotask(() {
-      if (mounted) widget.state.refreshBackupStatus();
+      if (mounted) _loadStatus();
     });
   }
+
+  Future<void> _loadStatus() async {
+    setState(() {
+      _statusLoading = true;
+      _statusFailed = false;
+    });
+    var failed = false;
+    try {
+      await widget.state.refreshBackupStatus();
+    } catch (_) {
+      failed = true;
+    }
+    if (!mounted) return;
+    setState(() {
+      _statusLoading = false;
+      _statusFailed = failed;
+    });
+  }
+
+  bool get _knownNone =>
+      !_statusLoading && !_statusFailed && widget.state.lastBackupAt == null;
 
   @override
   Widget build(BuildContext context) {
@@ -66,19 +94,33 @@ class _BackupScreenState extends State<BackupScreen> {
                     ListTile(
                       leading: const Icon(Icons.cloud_done_outlined),
                       title: Text(
-                        last == null
-                            ? context.l10n.backupNone
-                            : context.l10n.backupLast(
+                        last != null
+                            ? context.l10n.backupLast(
                                 formatDateTime(context, last.toLocal()),
-                              ),
+                              )
+                            : _knownNone
+                                ? context.l10n.backupNone
+                                : context.l10n.settingsAccountIdUnknown,
                       ),
                       subtitle: Text(context.l10n.backupReplacesPrevious),
+                      trailing: _statusLoading
+                          ? const SizedBox.square(
+                              dimension: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : _statusFailed
+                              ? TextButton(
+                                  onPressed: _loadStatus,
+                                  child: Text(context.l10n.commonRetry),
+                                )
+                              : null,
                     ),
                   ],
                 ),
                 const SizedBox(height: BoneSpacing.lg),
                 FilledButton.icon(
-                  onPressed: busy ? null : () => _create(context),
+                  onPressed:
+                      busy || _statusLoading ? null : () => _create(context),
                   icon: busy
                       ? const SizedBox.square(
                           dimension: 16,
@@ -109,8 +151,9 @@ class _BackupScreenState extends State<BackupScreen> {
 
   Future<void> _create(BuildContext context) async {
     // A new backup replaces the previous one and its recovery code stops
-    // working, so replacing an existing backup is confirmed first.
-    if (widget.state.lastBackupAt != null) {
+    // working, so it is confirmed first unless no backup is known to exist
+    // (a status that failed to load counts as maybe one).
+    if (!_knownNone) {
       final confirmed = await confirmAction(
         context,
         title: context.l10n.backupReplaceTitle,

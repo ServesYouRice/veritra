@@ -233,17 +233,12 @@ func TestRosteredRevocationOfADeviceOutsideTheRosterIsDropped(t *testing.T) {
 func TestRevocationWithNoEligibleDeviceReportsNoCoordinator(t *testing.T) {
 	ctx := context.Background()
 	f := newRosteredRevocation(t, ctx)
-	// The owner takes Bob's and Carol's phones out of the group, then is
+	// Bob's and Carol's phones are out of the roster, then the owner is
 	// revoked itself: Carol's phone still has to confirm, but nobody can
-	// commit.
-	if _, err := f.store.CreateMLSCommitBundle(ctx, MLSCommitBundleInput{
-		ConversationID: f.conversation.ID, SenderAccountID: f.owner.Account.ID, SenderDeviceID: f.owner.Device.ID,
-		Epoch: 1, IdempotencyKey: "remove-phones", Commit: []byte("commit-remove"),
-		Removed: []MLSDeviceRef{
-			{AccountID: f.bob.Account.ID, DeviceID: coordBob},
-			{AccountID: f.carol.Account.ID, DeviceID: coordCarol},
-		},
-	}); err != nil {
+	// commit. A commit bundle cannot evict an active member's device, so
+	// the roster state is set directly.
+	if _, err := f.store.db.ExecContext(ctx, `UPDATE conversation_mls_devices SET removed_after_event_id = 1
+		WHERE conversation_id = ? AND device_id IN (?, ?)`, f.conversation.ID, coordBob, coordCarol); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.store.RevokeDeviceWithSyncEvent(ctx, f.owner.Account.ID, f.owner.Device.ID); err != nil {

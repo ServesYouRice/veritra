@@ -66,16 +66,34 @@ func scheduledBackup(ctx context.Context, cfg config.Config, options scheduledBa
 	if err := backup(ctx, cfg, []string{local}, io.Discard); err != nil {
 		return fail(backupstatus.StepBackup, err)
 	}
+	// From here this run has added a local backup, and LocalDir defaults to
+	// the live data volume: every failure still prunes it to Keep. The
+	// failure keeps its own step; a prune error is joined to it. The
+	// off-host directory is left alone when the copy there failed.
+	failAfterBackup := func(step string, err error) error {
+		if pruneErr := pruneBackups(options.LocalDir, options.Keep); pruneErr != nil {
+			err = errors.Join(err, fmt.Errorf("prune local backups: %w", pruneErr))
+		}
+		return fail(step, err)
+	}
 	drillErr := verifyBackup(ctx, cfg, []string{local}, io.Discard)
+	if drillErr != nil {
+		// A backup that failed its restore drill is not counted toward Keep,
+		// where it could push out a verified one. backup() refuses an
+		// existing destination, so local is this run's own directory.
+		if err := os.RemoveAll(local); err != nil {
+			drillErr = errors.Join(drillErr, fmt.Errorf("remove the backup that failed its restore drill: %w", err))
+		}
+	}
 	if err := backupstatus.RecordDrill(cfg.DataDir, drillErr == nil, options.Now()); err != nil {
-		return fail(backupstatus.StepVerify, errors.Join(drillErr, err))
+		return failAfterBackup(backupstatus.StepVerify, errors.Join(drillErr, err))
 	}
 	if drillErr != nil {
-		return fail(backupstatus.StepVerify, drillErr)
+		return failAfterBackup(backupstatus.StepVerify, drillErr)
 	}
 	if options.OffsiteDir != "" {
 		if err := copyBackupOffsite(local, filepath.Join(options.OffsiteDir, name)); err != nil {
-			return fail(backupstatus.StepOffsite, err)
+			return failAfterBackup(backupstatus.StepOffsite, err)
 		}
 	}
 	if err := pruneBackups(options.LocalDir, options.Keep); err != nil {

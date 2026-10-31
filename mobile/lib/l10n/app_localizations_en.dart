@@ -140,6 +140,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'The setting could not be changed. Check your connection and try again.';
 
   @override
+  String get settingsReadReceiptsNotSaved =>
+      'This device could not save the setting. It applies for now but may reset when the app restarts.';
+
+  @override
   String get settingsSectionAbout => 'About';
 
   @override
@@ -1130,6 +1134,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get bannerRelink => 'Link this device again';
 
   @override
+  String get bannerRestoreBackup => 'Restore from backup';
+
+  @override
   String get bannerRelinkTitle => 'Link this device again?';
 
   @override
@@ -1740,6 +1747,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatMessageInvalid => 'A message could not be read';
 
   @override
+  String get chatMessageUndecryptable => 'Couldn\'t unlock this message';
+
+  @override
   String chatReactionCount(String reaction, int count) {
     final intl.NumberFormat countNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -2165,6 +2175,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get recoveryUpgradeError =>
       'This device could not update its message storage for this version of Veritra. Nothing has been changed or deleted. Retry. If it keeps failing, you can reset this device and link it again.';
+
+  @override
+  String get recoveryStorageDamaged =>
+      'This device\'s message storage is damaged and cannot be read, so sync has stopped. Nothing has been deleted. Retry, or reset this device and link it again.';
 
   @override
   String get recoverySqliteFeatureMissing =>

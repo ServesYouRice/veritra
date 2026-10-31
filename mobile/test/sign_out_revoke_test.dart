@@ -13,6 +13,7 @@ import 'package:private_messenger/core/client_config.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/core/transport_policy.dart';
 import 'package:private_messenger/storage/local_store.dart';
+import 'package:private_messenger/sync/sync_recovery.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
 import 'test_crypto_service.dart';
@@ -87,6 +88,10 @@ void main() {
       () async {
     final (:state, :store) = signedIn();
     await store.saveSession(state.session!);
+    state.syncRecovery = SyncRecovery(
+      kind: SyncFailureKind.cursorExpired,
+      recordedAt: DateTime.utc(2026, 10, 31),
+    );
     await state.relinkAfterSyncRecovery(confirmed: true);
 
     expect(requests, contains('POST /api/v1/auth/logout Bearer owner-token'));

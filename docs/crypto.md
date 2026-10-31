@@ -132,6 +132,36 @@ a real account. L1, the signed approved-device list, must give the core:
 With L1 the identity-only check on past-epoch senders (TASK-008) can also
 compare signing keys.
 
+### Rejoining a conversation
+
+A device removed from a conversation and later re-added (an account that
+leaves and is invited back) still stores the old group under the same id:
+OpenMLS keeps a group after its own removal, marked inactive.
+`join_group` (`pm_crypto_group_join`, no ABI change) lets a Welcome replace
+a stored group only when that group is inactive, that is, the device has
+applied its own removal commit. The old group's state is deleted before the
+new one is stored. The Welcome then has the trust of any fresh join, which
+includes the L1 gap above: the core checks its structure, not who may be in
+the group or who may invite.
+
+An active stored group is never replaced, whoever sends the Welcome and
+whatever its epoch. A Welcome cannot prove the device was removed. If it
+could replace an active group, a malicious server together with any
+member, even one already removed, could make the device delete its real
+group for a fork at an epoch of their choosing. Withholding events alone
+cannot do that. The refusal comes before the Welcome is staged, so the
+group and the key package are both kept.
+
+So a device removed while offline must be given its removal commit before
+its new Welcome. The server does not do that yet: the re-add upsert in
+`server/internal/storage/mls_group_store.go` (`ON CONFLICT ... DO UPDATE`)
+overwrites the old roster window, `joined_after_event_id` and
+`removed_after_event_id`. Sync then hides the removal commit, the Welcome
+is refused, and the device's sync stops under I33. The server change is
+pending.
+
+Tests: `crypto/rust/tests/rejoin_after_removal.rs`.
+
 ## Message size
 
 Three limits apply to an MLS application message, smallest first:
@@ -154,10 +184,95 @@ is spent on a message that cannot be sent. A test encrypts exactly the cap
 and checks that a full request body stays within 1 MiB. The server limit is
 not raised; if it changes, change the derivation with it.
 
+## Encrypted backup file (VBK2)
+
+The encrypted backup (I45) the device uploads is one file, written by
+`BackupService.createAndUpload` (`mobile/lib/crypto/backup_service.dart`). The
+plaintext inside is the backup JSON (`backupFormatVersion` in
+`local_store.dart`); this section is only the container. Integers are
+big-endian. The key K (32 bytes), the nonce prefix N (8 bytes) and the
+recovery token T (32 bytes) are random per backup; the recovery code is
+`v1.<origin>.<T>.<K>` and does not change with this format.
+
+```
+header  = "VBK2" || N || u32 chunkCount || u64 plaintextSize          24 bytes
+frame 0 = u32 len || seal(K, N, 0, "veritra-backup-v2-header" || T || header[0..12],
+                          header[12..24])                              len = 28
+frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
+                          chunk i-1)                         i = 1..chunkCount
+```
+
+- `seal` is the existing native chunk AEAD (`attachment.rs`): AES-256-GCM
+  with nonce `N || u32 index`, the index also bound in the associated data.
+  No ABI change. Frame indices are distinct, so no nonce repeats under K.
+- Chunks are 1 MiB except the last; `chunkCount = ceil(plaintextSize / 1 MiB)`,
+  at most 64 MiB of plaintext. `last` is one byte: 1 for frame `chunkCount`,
+  0 before it.
+- Restore reads the header, opens frame 0 and requires its plaintext to equal
+  the cleartext count and size. Frame 0 failing means the recovery code does
+  not open the backup (`wrongKey`); any later failure, a mismatched count or
+  size, a bad frame length or bytes after the last frame mean the file was
+  changed (`corrupt`). Nothing reaches the local store until every frame,
+  the last-flagged one included, has authenticated.
+- Because each data frame binds the whole header and its `last` flag, a file
+  cut at a chunk boundary fails whether or not its header was rewritten.
+  VBK1 bound chunks only to `"veritra-backup-v1" || T` and its index, so such
+  a cut restored a silent prefix.
+- VBK1 files are refused (`corrupt`) (D55: no real users yet, no
+  compatibility path). The upload's `crypto_metadata` stays `version: 1`
+  because the server accepts only that value; the magic tells the formats
+  apart.
+
 ## Change log since the Stage 1 freeze
 
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
+
+- **D54, undecryptable peer messages (2026-10-31, owner decision):** no
+  ABI, payload, schema or server change. A peer's application message or
+  call signal this device can never decrypt no longer stops the global
+  sync cursor (I33); MLS control messages still do.
+  - **Which errors qualify.** Only `operationFailed`, `nativePanic` and
+    `invalidOutput` from `decrypt`. `invalidArgument`, `unknown` and any
+    other kind roll back and stop sync as before. `senderMismatch` and
+    `senderRemoved` keep D25 (`unverifiable` row).
+  - **Restore, retry, restore, reseal.** After a qualifying error the
+    committed group is restored from the sealed state and `decrypt` runs
+    once more on the fresh handle: the failed attempt may have changed the
+    group in memory, and a Rust panic poisons the old handle's mutex, so
+    one failure never costs a message. Only a second qualifying failure
+    passes the event: the group is restored again, then the same state is
+    resealed with the event's marker and the cursor.
+  - **Row.** An application message gets an `invalid` row keyed
+    `undecryptable:<syncEventId>:<envelopeId>`, with no body, shown as
+    "Couldn't unlock this message". A call signal is dropped with no row.
+  - **`groupEpoch`** after a native error probes the handle with a call
+    that takes the same device lock. A handle that answers and holds the
+    stored state means the group is simply missing (no restore); otherwise
+    it reloads the committed state and asks again, so a poisoned handle
+    never reads as "no group".
+  - **Fork check.** An own-device commit with no queued bundle passes only
+    when the group is already past the epoch in the commit's clear MLS
+    header (the outbox worker merged and settled it). Otherwise, as for a
+    clone-restored twin or an accepted commit this device dropped, sync
+    stops there instead of turning the fork into placeholders.
+  - **Abandon** clears a pending commit only when it is pending on the
+    bundle's own epoch, so a refusal that arrives after another device's
+    commit won cannot drop a newer staged commit.
+  - **Residuals.** An empty or oversized ciphertext (`invalidArgument`)
+    still stops sync. A bundle (a self-update too) whose acceptance was
+    lost and whose retry got 403 `forbidden` is abandoned; its own commit
+    would then stop sync at the fork check. The server answers 403 there
+    only when the account left the conversation or the device was
+    revoked, and sync no longer delivers a left conversation's events, so
+    only a revoked device can meet it. Second case: the account left, the
+    bundle was abandoned, and the account is re-invited. Until the MLS
+    re-add lands, the old roster window shows the old own commit again
+    (`mls_group_store.go`, join filter) and the fork check stops sync.
+    This is transient: the re-add moves `joined_after_event_id` past it.
+  - Tests: `native_crypto_service_policy_test.dart`,
+    `native_crypto_service_d54_review_test.dart` (fault-injected native
+    errors) and `chat_undecryptable_placeholder_test.dart`.
 
 - **Sync cursor expiry from prune watermarks (2026-10-31):** server
   migration 0044; no ABI, payload, client or API change. I33 still holds:
@@ -587,6 +702,8 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   provably expired. The expired-message tombstone commits only the cursor and
   an `expired:<event>:<target>` marker. The durable recovery record lives in
   local metadata (`sync.recovery`) and holds no content or key material.
+  D54 (2026-10-31, above) later passes a peer message or call signal that
+  can never be decrypted.
 - **Stage 5, I34 (2026-09-24):** local schema v8 adds `attempt_count`,
   `next_attempt_at`, `failure_class` and `terminal` to
   `local_mls_outbox_entries` (additive migration). Messages from one MLS
@@ -723,7 +840,8 @@ Stage 1. Every later change is listed here for the G25 reviewer.
 
   Step 0 does not stop undecryptable MLS ciphertext from halting the
   global cursor: an MLS decryption failure stays fail-closed by design, and
-  a later design has to decide how to isolate it.
+  a later design has to decide how to isolate it. (Decided by D54, see its
+  entry above.)
 
   MLS-level failures keep the I33 behaviour. The precedent is D25, which
   already commits a sender-mismatched message as `unverifiable`. Step 0
@@ -824,13 +942,15 @@ once all six hold:
 - **P6. Unknown top-level keys are not rejected at `v` ≥ 2.** Only the
   frozen keys below are required.
 
-**Outcomes after a successful decrypt.** The checks run in this order:
+**Outcomes.** All rows but `undecryptable` follow a successful decrypt;
+those checks run in this order:
 
 | Outcome | When | Row key | Row body | Shown as |
 |---|---|---|---|---|
 | `invalid` | Framing or UTF-8/JSON broken; `v` not an integer ≥ 1; a context field missing or not equal to the envelope's (`conversation_id`, `sender_device_id`, `action_id`, and `channel_id` per §2); a **known** type at a supported version whose required fields fail validation; or any other exception before the storage write (P1) | `invalid:<syncEventId>:<envelopeId>` | none | A warning: "A message could not be read". Never content |
 | `unsupported` | Context matches, and either `v` is above the highest version this app supports, or `v` is supported but the type is one this app does not know or has not turned on (reserved types, §4). The step-0 app supports only v1, so any `v: 2` there is `unsupported` | `messageKey()` | The inner JSON exactly as decrypted (≤ 64 KiB, encrypted local database only), so that a later app version can reinterpret it. Reprocessing is a later decision; storing it now is the only chance, because MLS cannot decrypt the message twice | "This message needs a newer version of Veritra", or **nothing** when the payload has `hidden: true` |
 | known | Everything validates | `messageKey()` | As today | As today |
+| `undecryptable` (D54) | MLS decryption failed twice with `operationFailed`, `nativePanic` or `invalidOutput`, the committed group restored before the retry and again after it; stored with kind `invalid` | `undecryptable:<syncEventId>:<envelopeId>` | none | "Couldn't unlock this message". Never content. A call signal gets no row |
 
 **Rules for `unsupported` rows** (S3):
 
@@ -841,8 +961,12 @@ once all six hold:
 
 **What stays fail-closed under I33:**
 
-- MLS decryption failures;
-- control messages;
+- MLS decryption failures outside D54: any native error kind other than
+  `operationFailed`, `nativePanic` and `invalidOutput` (such as
+  `invalidArgument` or `unknown`);
+- control messages (Welcome and commits), including an own-device commit
+  with no queued bundle while the group is not yet past its epoch (a
+  fork);
 - sync events that are missing or malformed (including P2);
 - unknown `mls.`, `message.` and `call.` events (P5);
 - the expired-message tombstone rule.

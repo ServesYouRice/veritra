@@ -23,6 +23,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/hmac"
@@ -126,20 +127,27 @@ func waitReady(args []string) error {
 	if err != nil {
 		return err
 	}
+	// Every probe (connect, TLS handshake, headers and body) runs under the
+	// overall deadline, so one stalled probe cannot outlast -timeout.
 	deadline := time.Now().Add(*timeout)
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
 	for {
-		status, err := c.status("GET", "/readyz")
+		status, err := c.statusContext(ctx, "GET", "/readyz")
 		if err == nil && status == http.StatusOK {
 			fmt.Println("ok: ready", *base)
 			return nil
 		}
-		if time.Now().After(deadline) {
+		if !time.Now().Before(deadline) {
 			if err != nil {
 				return fmt.Errorf("%s not ready: %v", *base, err)
 			}
 			return fmt.Errorf("%s not ready: status %d", *base, status)
 		}
-		time.Sleep(time.Second)
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Second):
+		}
 	}
 }
 
@@ -693,7 +701,7 @@ func newClient(base, caFile string) (*client, error) {
 	}
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	transport := &http.Transport{Proxy: nil, DialContext: dialer.DialContext, TLSClientConfig: tlsConfig,
-		ForceAttemptHTTP2: true, ResponseHeaderTimeout: 2 * time.Minute}
+		ForceAttemptHTTP2: true, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 2 * time.Minute}
 	wsTLS := tlsConfig.Clone()
 	wsTLS.NextProtos = []string{"http/1.1"}
 	wsTransport := &http.Transport{Proxy: nil, DialContext: dialer.DialContext, TLSClientConfig: wsTLS,
@@ -710,7 +718,11 @@ func (c *client) url(path string) string {
 }
 
 func (c *client) request(method, path string, body io.Reader, headers map[string]string) (*http.Response, error) {
-	request, err := http.NewRequest(method, c.url(path), body)
+	return c.requestContext(context.Background(), method, path, body, headers)
+}
+
+func (c *client) requestContext(ctx context.Context, method, path string, body io.Reader, headers map[string]string) (*http.Response, error) {
+	request, err := http.NewRequestWithContext(ctx, method, c.url(path), body)
 	if err != nil {
 		return nil, err
 	}
@@ -727,12 +739,20 @@ func (c *client) request(method, path string, body io.Reader, headers map[string
 }
 
 func (c *client) status(method, path string) (int, error) {
-	response, err := c.request(method, path, nil, nil)
+	return c.statusContext(context.Background(), method, path)
+}
+
+// statusContext is status under ctx, which bounds the body read too. A
+// body that cannot be read fails the request: a status alone is no answer.
+func (c *client) statusContext(ctx context.Context, method, path string) (int, error) {
+	response, err := c.requestContext(ctx, method, path, nil, nil)
 	if err != nil {
 		return 0, err
 	}
 	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
+	if _, err := io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20)); err != nil {
+		return 0, fmt.Errorf("%s %s: reading the response: %w", method, routeName(path), err)
+	}
 	return response.StatusCode, nil
 }
 

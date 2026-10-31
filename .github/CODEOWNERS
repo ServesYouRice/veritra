@@ -22,12 +22,23 @@
 /scripts/check-ci-evidence_test.py @ServesYouRice
 /scripts/release-readiness.sh @ServesYouRice
 /scripts/release-image.sh @ServesYouRice
+/scripts/release-image_test.py @ServesYouRice
 /scripts/check-go-toolchain.sh @ServesYouRice
+/scripts/check-go-toolchain_test.py @ServesYouRice
 /scripts/check-rust-audit-expiry.sh @ServesYouRice
 /scripts/check-rust-audit-policy.py @ServesYouRice
 /scripts/check-demo-boundary.sh @ServesYouRice
+/scripts/check-demo-boundary_test.py @ServesYouRice
+/scripts/check-demo-boundary-imports_test.py @ServesYouRice
 /scripts/audit-rust.sh @ServesYouRice
 /scripts/smoke-deploy.sh @ServesYouRice
+/scripts/check-go-toolchain_test.py @ServesYouRice
+/scripts/release-image_test.py @ServesYouRice
+/scripts/build-crypto_test.py @ServesYouRice
+/scripts/check-dart-licenses.py @ServesYouRice
+/scripts/check-dart-licenses_test.py @ServesYouRice
+/scripts/check-gradle-inputs.py @ServesYouRice
+/scripts/check-gradle-inputs_test.py @ServesYouRice
 
 # The G27 advisory exceptions the gate checks for expiry.
 /crypto/rust/audit-policy.json @ServesYouRice

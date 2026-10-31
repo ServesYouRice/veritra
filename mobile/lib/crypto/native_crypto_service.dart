@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
 
 import '../core/models.dart';
 import '../core/server_origin.dart';
@@ -89,6 +90,8 @@ class NativeCryptoService
           reservation.deviceId,
         );
         _device = device;
+        // The fresh device holds no stored state yet (C-b5dfd921d890).
+        _deviceCounter = null;
         _accountId = reservation.accountId;
         _deviceId = reservation.deviceId;
         _pendingEnrollment = true;
@@ -295,6 +298,11 @@ class NativeCryptoService
   Future<void> completeCommitBundle(PendingMlsMessage item) =>
       _serial(() async {
         final bundle = MlsCommitBundle.decode(item.payload);
+        // Sync may have merged this accepted commit while the outbox worker
+        // waited for the server's answer, settling its entry, and later
+        // commits may have moved the group on since. Nothing is left to do,
+        // and the epoch check below would see a fork that is not there.
+        if (!await _isQueuedBundle(item)) return;
         final previous = await _requiredState();
         try {
           if (bundle.hasCommit) {
@@ -323,12 +331,19 @@ class NativeCryptoService
   @override
   Future<void> abandonCommitBundle(PendingMlsMessage item) => _serial(() async {
         final bundle = MlsCommitBundle.decode(item.payload);
+        // Already settled: a commit staged since belongs to a newer entry,
+        // so clearing the pending commit here would drop that one instead.
+        if (!await _isQueuedBundle(item)) return;
         final previous = await _requiredState();
         try {
           if (bundle.hasCommit) {
             final device = _requiredDevice();
             final status = device.groupEpoch(item.conversationId);
-            if (status.pending) {
+            // Only a commit pending on the bundle's own epoch is this
+            // bundle's. Sync may have applied another device's winning
+            // commit meanwhile without settling this entry, and a commit
+            // staged after that is newer: keep it.
+            if (status.pending && status.epoch == bundle.epoch) {
               device.clearPendingCommit(item.conversationId);
             }
           }
@@ -344,15 +359,51 @@ class NativeCryptoService
         }
       });
 
+  /// Whether [item] is still an unsettled entry of the MLS outbox. Run only
+  /// inside [_serial], so sync cannot settle it between this check and the
+  /// change that follows.
+  Future<bool> _isQueuedBundle(PendingMlsMessage item) async =>
+      (await localStore.pendingMlsMessages()).any((queued) =>
+          queued.kind == MlsCommitBundle.kind &&
+          queued.idempotencyKey == item.idempotencyKey);
+
   @override
   Future<({int epoch, bool pending})?> groupEpoch(String conversationId) =>
       _serial(() async {
         try {
           return _requiredDevice().groupEpoch(conversationId);
         } on NativeCryptoException {
+          // A missing group and a handle a native panic left poisoned both
+          // answer operationFailed. A call that takes the same device lock
+          // tells them apart: if it succeeds and the handle holds the
+          // committed state, the group is simply missing. Otherwise reload
+          // the committed state and ask once more, so a poisoned or stale
+          // handle never reads as "no group" and is not kept.
+          final stored = await localStore.loadCryptoState();
+          if (stored == null) return null;
+          if (stored.counter == _deviceCounter && _handleAnswers()) {
+            return null;
+          }
+          await _restorePrevious(stored);
+        }
+        try {
+          return _requiredDevice().groupEpoch(conversationId);
+        } on NativeCryptoException {
           return null;
         }
       });
+
+  /// Whether the device handle still answers a call that takes its lock
+  /// (`with_device` in `crypto/rust/src/ffi.rs`). A native panic poisons that
+  /// lock, after which every call fails.
+  bool _handleAnswers() {
+    try {
+      _requiredDevice().signingPublicKey();
+      return true;
+    } on NativeCryptoException {
+      return false;
+    }
+  }
 
   MlsCommitBundle _stage(
     NativeCryptoDevice device,
@@ -451,6 +502,22 @@ class NativeCryptoService
                 resolvedMlsOutboxKey: bundle.idempotencyKey,
               ));
               return;
+            }
+            if (message.kind == 'commit') {
+              // No queued bundle: the outbox worker already merged and
+              // settled it, so the group is past the epoch the commit was
+              // built on. Anything else means this device never merged a
+              // commit the server holds under its identity (a clone-restored
+              // twin, or an accepted commit it dropped): the group forked,
+              // so stop here rather than fill the chat with D54
+              // placeholders.
+              final built =
+                  mlsMessageEpoch(message.payload, message.conversationId);
+              final group =
+                  _requiredDevice().groupEpoch(message.conversationId);
+              if (built == null || group.epoch <= built) {
+                throw StateError('own MLS commit was never merged here');
+              }
             }
             await localStore.commitSyncEvent(SyncEventCommit(
               checkCanCommit: checkCanCommit,
@@ -638,23 +705,28 @@ class NativeCryptoService
             : call.createdBy;
         try {
           checkCanCommit?.call();
+          final ciphertext = base64Decode(encoded);
           List<int>? plaintext;
           try {
-            plaintext = _requiredDevice().decrypt(
-              call.conversationId,
-              base64Decode(encoded),
-              senderAccountId: senderAccountId,
-              senderDeviceId: senderDeviceId,
-            );
+            // Null when this device can never decrypt the signal (D54): it
+            // is dropped and sync moves past it.
+            plaintext = await _decryptOrUndecryptable(
+                previous,
+                () => _requiredDevice().decrypt(
+                      call.conversationId,
+                      ciphertext,
+                      senderAccountId: senderAccountId,
+                      senderDeviceId: senderDeviceId,
+                    ));
           } on NativeCryptoException catch (error) {
             // The server also delivers a caller's signals to the caller's
             // other devices, where the guessed sender account is wrong. The
             // ratchet already advanced, so commit and drop the signal (P4).
             if (!error.kind.ratchetAdvanced) rethrow;
           }
-          // Once decryption succeeds the ratchet has moved, so the state and
-          // cursor always commit (P4). A payload that is not a valid call
-          // signal is dropped: no row and no signal.
+          // The state and cursor always commit from here (P4, D54). A
+          // payload that is not a valid call signal is dropped: no row and
+          // no signal.
           final outcome = plaintext == null
               ? const InvalidAppPayload()
               : AppPayloadCodec().classify(plaintext,
@@ -869,12 +941,41 @@ class NativeCryptoService
         operationFence();
         final List<int> plaintext;
         try {
-          plaintext = _requiredDevice().decrypt(
-            envelope.conversationId,
-            envelope.ciphertext,
-            senderAccountId: envelope.senderAccountId,
-            senderDeviceId: envelope.senderDeviceId,
-          );
+          final decrypted = await _decryptOrUndecryptable(
+              previous,
+              () => _requiredDevice().decrypt(
+                    envelope.conversationId,
+                    envelope.ciphertext,
+                    senderAccountId: envelope.senderAccountId,
+                    senderDeviceId: envelope.senderDeviceId,
+                  ));
+          if (decrypted == null) {
+            // This device can never decrypt the message (D54): an epoch it
+            // never held or whose secrets are gone, or damaged bytes. Sync
+            // moves past it and the conversation shows a placeholder with
+            // no content. The committed group is already back in memory.
+            await localStore.commitMlsTransition(MlsStateTransition(
+              checkCanCommit: operationFence,
+              messageId: marker,
+              conversationId: envelope.conversationId,
+              expectedCounter: previous.counter,
+              expectedCursor: cursor,
+              state: _sealNext(previous),
+              cursor: syncEventId,
+              upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
+              messageEffects: <MessageEffect>[
+                // An `invalid` row holds no content and offers no action;
+                // the timeline reads this key prefix to say "couldn't
+                // unlock" rather than "couldn't read".
+                _placeholderRow(
+                    envelope,
+                    'undecryptable:$syncEventId:${envelope.id}',
+                    LocalMessageKind.invalid),
+              ],
+            ));
+            return null;
+          }
+          plaintext = decrypted;
         } on NativeCryptoException catch (error) {
           if (!error.kind.ratchetAdvanced) rethrow;
           // The ratchet already advanced, so the message can never be
@@ -1088,6 +1189,11 @@ class NativeCryptoService
 
   Future<StoredCryptoState> _requiredState(
       {void Function()? checkCanCommit}) async {
+    // A pending enrollment's fresh device must never be sealed over the state
+    // already stored here; only activateSession may adopt or replace it.
+    if (_pendingEnrollment) {
+      throw StateError('MLS state is unavailable until enrollment completes');
+    }
     _requiredDevice();
     final state = await localStore.loadCryptoState();
     checkCanCommit?.call();
@@ -1130,15 +1236,62 @@ class NativeCryptoService
     );
   }
 
-  Future<void> _restorePrevious(StoredCryptoState previous) async {
-    _device?.close();
-    _deviceCounter = null;
-    final restored = _restoreDevice(_accountId!, _deviceId!, previous);
-    if (restored.counter != previous.counter) {
-      restored.device.close();
-      _device = null;
-      throw StateError('failed to restore the previous MLS state');
+  /// Native errors after which a peer's message may be one this device can
+  /// never decrypt (D54). Every other kind, such as invalidArgument or
+  /// unknown, stops sync under I33.
+  static const _undecryptableErrors = <NativeCryptoError>{
+    NativeCryptoError.operationFailed,
+    NativeCryptoError.nativePanic,
+    NativeCryptoError.invalidOutput,
+  };
+
+  /// Runs [decrypt] for a peer's message. After a failure in
+  /// [_undecryptableErrors] the committed group comes back from [previous]
+  /// and [decrypt] runs once more on the fresh handle: the failed attempt
+  /// may have changed the group in memory, and a native panic leaves the
+  /// handle poisoned, so one failure alone must not cost the message.
+  /// Returns null only when the retry fails the same way, with the committed
+  /// group restored again. Any other error, including a [ratchetAdvanced]
+  /// one from either attempt, is rethrown.
+  Future<List<int>?> _decryptOrUndecryptable(
+      StoredCryptoState previous, List<int> Function() decrypt) async {
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        return decrypt();
+      } on NativeCryptoException catch (error) {
+        if (!_undecryptableErrors.contains(error.kind)) rethrow;
+      }
+      await _restorePrevious(previous);
     }
+    return null;
+  }
+
+  /// Replaces the device handle with one restored from [previous]. The new
+  /// handle is built before the old one is closed, so [_device] never points
+  /// at a closed handle. If the restore fails, the old handle (whose group
+  /// state can no longer be trusted) is closed and the device left inactive:
+  /// callers fail closed until the session is activated again.
+  Future<void> _restorePrevious(StoredCryptoState previous) async {
+    // A pending enrollment holds a fresh device whose key is in the issued
+    // credential; reloading stored state would replace it and activation
+    // would then seal the wrong device. Refuse before touching the handle.
+    if (_pendingEnrollment) {
+      throw StateError('crypto state cannot be restored during enrollment');
+    }
+    _deviceCounter = null;
+    ({NativeCryptoDevice device, int counter}) restored;
+    try {
+      restored = _restoreDevice(_accountId!, _deviceId!, previous);
+      if (restored.counter != previous.counter) {
+        restored.device.close();
+        throw StateError('failed to restore the previous MLS state');
+      }
+    } catch (_) {
+      _device?.close();
+      _device = null;
+      rethrow;
+    }
+    _device?.close();
     _device = restored.device;
     _deviceCounter = restored.counter;
   }
@@ -1312,3 +1465,52 @@ List<MessageEffect> messageEffectsFor(
 String _randomIdempotencyKey() => _randomBytes(24)
     .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
     .join();
+
+/// The epoch an MLS commit was built on, read from its clear header, or null
+/// when [message] is not an MLS 1.0 public or private message of the group
+/// [groupId]. RFC 9420 §6: `MLSMessage` starts with the protocol version
+/// (u16, 1) and wire format (u16: 1 public, 2 private); both framings then
+/// carry `opaque group_id<V>` and `uint64 epoch`.
+int? mlsMessageEpoch(List<int> message, String groupId) {
+  var offset = 0;
+  int? u16() {
+    if (offset + 2 > message.length) return null;
+    final value = (message[offset] << 8) | message[offset + 1];
+    offset += 2;
+    return value;
+  }
+
+  if (u16() != 1) return null;
+  final wireFormat = u16();
+  if (wireFormat != 1 && wireFormat != 2) return null;
+  // The variable-length size of group_id (RFC 9420 §2.1.2): the top two
+  // bits of the first byte give 1, 2 or 4 bytes; 0b11 is invalid.
+  if (offset >= message.length) return null;
+  final prefix = message[offset] >> 6;
+  if (prefix == 3) return null;
+  final sizeBytes = 1 << prefix;
+  if (offset + sizeBytes > message.length) return null;
+  var length = message[offset] & 0x3f;
+  for (var index = 1; index < sizeBytes; index++) {
+    length = (length << 8) | message[offset + index];
+  }
+  offset += sizeBytes;
+  // The bytes the bindings send as the group ID (`native_crypto_bindings.dart`
+  // passes `Uint8List.fromList(groupId.codeUnits)`), so a header matches the
+  // group the native side created, whatever characters the ID holds.
+  final expected = Uint8List.fromList(groupId.codeUnits);
+  if (length != expected.length || offset + length + 8 > message.length) {
+    return null;
+  }
+  for (var index = 0; index < length; index++) {
+    if (message[offset + index] != expected[index]) return null;
+  }
+  offset += length;
+  // An epoch above 2^63 - 1 is not one this app could have reached.
+  if (message[offset] & 0x80 != 0) return null;
+  var epoch = 0;
+  for (var index = 0; index < 8; index++) {
+    epoch = (epoch << 8) | message[offset + index];
+  }
+  return epoch;
+}

@@ -1,25 +1,14 @@
 #!/usr/bin/env sh
+# Every resolved Dart dependency (hosted, git, path and SDK) must ship a
+# license file. The inventory is what pub resolved for mobile/, read from
+# mobile/.dart_tool/package_config.json and matched against pubspec.lock,
+# not whatever happens to be in the pub cache. See check-dart-licenses.py.
 set -eu
 
-cache=${PUB_CACHE:-$HOME/.pub-cache}/hosted/pub.dev
-if [ ! -d "$cache" ]; then
-  echo "Dart package cache is unavailable; run flutter pub get first" >&2
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+CONFIG="$ROOT/mobile/.dart_tool/package_config.json"
+if [ ! -f "$CONFIG" ]; then
+  echo "Dart package configuration is unavailable ($CONFIG); run flutter pub get first" >&2
   exit 1
 fi
-
-missing=0
-count=0
-for package in "$cache"/*; do
-  [ -d "$package" ] || continue
-  count=$((count + 1))
-  if ! find "$package" -maxdepth 1 -type f \
-    \( -iname 'LICENSE*' -o -iname 'COPYING*' \) | grep -q .; then
-    echo "Dart dependency lacks a packaged license: $(basename "$package")" >&2
-    missing=1
-  fi
-done
-
-if [ "$missing" -ne 0 ]; then
-  exit 1
-fi
-echo "Dart dependency license files present: $count packages"
+exec python3 "$ROOT/scripts/check-dart-licenses.py" --config "$CONFIG" --lock "$ROOT/mobile/pubspec.lock"

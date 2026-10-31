@@ -650,17 +650,33 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   bool get upgradeStarted => _upgradeStarted;
   bool _upgradeStarted = false;
 
+  /// Whether opening this database started creating the schema. Like
+  /// [upgradeStarted]: onCreate runs only after the key has opened the file
+  /// (its first read of `sqlite_master` fails on a wrong key) or the file was
+  /// empty, so a create that then fails rolls back to an empty version-0
+  /// file and is not a wrong key.
+  bool get createStarted => _createStarted;
+  bool _createStarted = false;
+
   @override
   MigrationStrategy get migration => MigrationStrategy(
+        // Drift runs this outside a transaction and writes the version only
+        // after it returns. One transaction with the version inside it means a
+        // failed or interrupted create leaves an empty version-0 file that the
+        // next open creates again, never committed tables at version 0.
         onCreate: (migrator) async {
           if (requireExistingSchema) throw const ExistingDatabaseUnavailable();
-          await migrator.createAll();
-          await _createHistoryNamespace();
-          await _createNoticeOutbox();
-          await _createSearchIndex();
-          await into(localSyncStates).insert(
-            LocalSyncStatesCompanion.insert(singleton: const Value(1)),
-          );
+          _createStarted = true;
+          await transaction(() async {
+            await migrator.createAll();
+            await _createHistoryNamespace();
+            await _createNoticeOutbox();
+            await _createSearchIndex();
+            await into(localSyncStates).insert(
+              LocalSyncStatesCompanion.insert(singleton: const Value(1)),
+            );
+            await customStatement('PRAGMA user_version = $schemaVersion');
+          });
         },
         // One transaction for every step and the new version number: a failed
         // upgrade leaves the old schema and version untouched and the next
@@ -880,12 +896,16 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           );
         }
         for (final envelope in envelopes) {
+          // The expiry column drives the purge and its timer (W2), as for
+          // restored and refreshed envelopes. Nothing is purged here: the
+          // migration first compares what was imported with the record.
           await into(localCiphertextEnvelopes).insert(
             LocalCiphertextEnvelopesCompanion.insert(
               id: envelope.id,
               conversationId: envelope.conversationId,
               position: envelope.position,
               payloadJson: envelope.payloadJson,
+              expiresAt: Value(envelopeExpiryMillis(envelope.payloadJson)),
             ),
           );
         }
@@ -947,7 +967,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               String kind,
               String? recipientDeviceId,
               String? revocationDeviceId,
-              List<int> payload
+              List<int> payload,
+              int attemptCount,
+              int? nextAttemptAt,
+              String? failureClass,
+              bool terminal
             })>
         mlsOutbox,
     required ({
@@ -1074,7 +1098,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
                   revocationDeviceId: Value(item.revocationDeviceId),
                   payload: Uint8List.fromList(item.payload),
                   stateCounter: cryptoState.counter,
-                  queuedAt: queuedAt + index));
+                  queuedAt: queuedAt + index,
+                  attemptCount: Value(item.attemptCount),
+                  nextAttemptAt: Value(item.nextAttemptAt),
+                  failureClass: Value(item.failureClass),
+                  terminal: Value(item.terminal)));
         }
         await into(localSyncStates).insertOnConflictUpdate(
             LocalSyncStatesCompanion.insert(
@@ -1114,7 +1142,10 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
       'expires_at = excluded.expires_at '
       'WHERE conversation_id IS NOT excluded.conversation_id '
       'OR position IS NOT excluded.position '
-      'OR payload_json IS NOT excluded.payload_json';
+      'OR payload_json IS NOT excluded.payload_json '
+      // The bound expiry is derived from the same JSON, so this rewrites only
+      // a row whose stored expiry was never filled in (a legacy import).
+      'OR expires_at IS NOT excluded.expires_at';
 
   /// Makes the cached conversation list and ciphertext snapshot exactly
   /// [conversations] (positioned in order) and [envelopes], in one
@@ -2441,6 +2472,39 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
       );
     }
   }
+
+  /// Metadata marker: [repairNullEnvelopeExpiry] has run on this database.
+  static const envelopeExpiryRepairName = 'envelope_expiry_backfill.v1';
+
+  /// Fills in the expiry of cached envelopes stored without one: older
+  /// builds imported the legacy secure-storage record that way, and the
+  /// migration marker stops that import from running again. Runs once per
+  /// database. Only rows whose expiry is NULL are written, with the value
+  /// [envelopeExpiryMillis] derives from their own JSON; a stored expiry is
+  /// never changed. The marker commits with the rows, so an interrupted
+  /// repair runs again in full on the next call. Purging is left to the
+  /// normal expiry pass.
+  Future<void> repairNullEnvelopeExpiry() => transaction(() async {
+        if (await _readMetadataInTransaction(envelopeExpiryRepairName) !=
+            null) {
+          return;
+        }
+        final rows = await customSelect(
+          'SELECT id, payload_json FROM local_ciphertext_envelopes '
+          "WHERE expires_at IS NULL AND payload_json LIKE '%\"expires_at\"%'",
+        ).get();
+        for (final row in rows) {
+          final expiresAt =
+              envelopeExpiryMillis(row.read<String>('payload_json'));
+          if (expiresAt == null) continue;
+          await customStatement(
+            'UPDATE local_ciphertext_envelopes SET expires_at = ? '
+            'WHERE id = ? AND expires_at IS NULL',
+            <Object?>[expiresAt, row.read<String>('id')],
+          );
+        }
+        await _writeMetadataInTransaction(envelopeExpiryRepairName, '1');
+      });
 
   // ---- on-device message search (W10) ----------------------------------
 

@@ -104,10 +104,12 @@ def parse_go_report(content: str) -> tuple[int, int, float, set[str]]:
     if lines[0] not in {"mode: set", "mode: count", "mode: atomic"}:
         raise ValueError(f"invalid mode header in Go coverprofile: {lines[0]}")
 
-    total_stmts = 0
-    stmts_hit = 0
-    valid_blocks = 0
-    sources: set[str] = set()
+    set_mode = lines[0] == "mode: set"
+    # Repeated blocks (one per test binary that compiled the file) are merged
+    # the way golang.org/x/tools/cover ParseProfiles does: same source and
+    # range is one block, counts OR in set mode and add otherwise, and the
+    # statement count must agree. Each block's statements then count once.
+    blocks: dict[tuple[str, str], list[int]] = {}
 
     for line in lines[1:]:
         line = line.strip()
@@ -131,11 +133,22 @@ def parse_go_report(content: str) -> tuple[int, int, float, set[str]]:
         if num_stmts < 0 or count < 0:
             raise ValueError(f"negative statement count in line: {line}")
 
-        total_stmts += num_stmts
-        if count > 0:
-            stmts_hit += num_stmts
-        sources.add(normalize_source(source))
-        valid_blocks += 1
+        key = (normalize_source(source), positions)
+        block = blocks.get(key)
+        if block is None:
+            blocks[key] = [num_stmts, count]
+            continue
+        if block[0] != num_stmts:
+            raise ValueError(
+                f"inconsistent statement count for repeated Go cover block "
+                f"(was {block[0]}): {line}"
+            )
+        block[1] = block[1] | count if set_mode else block[1] + count
+
+    valid_blocks = len(blocks)
+    total_stmts = sum(num_stmts for num_stmts, _ in blocks.values())
+    stmts_hit = sum(num_stmts for num_stmts, count in blocks.values() if count > 0)
+    sources = {source for source, _ in blocks}
 
     if valid_blocks == 0 or total_stmts <= 0:
         raise ValueError("no valid coverage blocks found in Go coverprofile")

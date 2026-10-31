@@ -13,6 +13,12 @@ if command -v python3 >/dev/null 2>&1; then
   python3 "$ROOT/scripts/write-release-evidence_test.py"
   python3 "$ROOT/scripts/check-coverage_test.py"
   python3 "$ROOT/scripts/l10n-sr-latn_test.py"
+  python3 "$ROOT/scripts/build-crypto_test.py"
+  python3 "$ROOT/scripts/check-dart-licenses_test.py"
+  python3 "$ROOT/scripts/check-demo-boundary_test.py"
+  python3 "$ROOT/scripts/check-go-toolchain_test.py"
+  python3 "$ROOT/scripts/check-gradle-inputs_test.py"
+  python3 "$ROOT/scripts/release-image_test.py"
 elif command -v python >/dev/null 2>&1; then
   python "$ROOT/scripts/check-release-evidence_test.py"
   python "$ROOT/scripts/check-dart-retractions_test.py"
@@ -20,6 +26,12 @@ elif command -v python >/dev/null 2>&1; then
   python "$ROOT/scripts/write-release-evidence_test.py"
   python "$ROOT/scripts/check-coverage_test.py"
   python "$ROOT/scripts/l10n-sr-latn_test.py"
+  python "$ROOT/scripts/build-crypto_test.py"
+  python "$ROOT/scripts/check-dart-licenses_test.py"
+  python "$ROOT/scripts/check-demo-boundary_test.py"
+  python "$ROOT/scripts/check-go-toolchain_test.py"
+  python "$ROOT/scripts/check-gradle-inputs_test.py"
+  python "$ROOT/scripts/release-image_test.py"
 else
   echo "release-policy fixtures need python3 or python; none found" >&2
   exit 1
@@ -35,6 +47,15 @@ if command -v cargo >/dev/null 2>&1; then
   (cd "$ROOT/crypto/rust" && cargo test)
 else
   docker run --rm -v "$ROOT:/workspace" -w /workspace/crypto/rust rust:1.91@sha256:867f1d1162913c401378a8504fb17fe2032c760dc316448766f150a130204aad cargo test
+fi
+
+# The native crypto tests must run, not skip: build the host library and
+# require it (TASK-098). Docker runs below have no host library.
+if command -v cargo >/dev/null 2>&1 && [ "$(uname -s)" = "Linux" ]; then
+  (cd "$ROOT/crypto/rust" && cargo build --release --locked)
+  VERITRA_CRYPTO_LIBRARY="$ROOT/crypto/rust/target/release/libprivate_messenger_crypto.so"
+  VERITRA_REQUIRE_NATIVE_CRYPTO=1
+  export VERITRA_CRYPTO_LIBRARY VERITRA_REQUIRE_NATIVE_CRYPTO
 fi
 
 if command -v flutter >/dev/null 2>&1; then

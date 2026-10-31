@@ -19,7 +19,9 @@ longer needs or retains this one-time capability.
 
 Rotate the owner password through the authenticated client. For offline owner
 recovery, stop the server and use `reset-owner-password --account ...
---password-file ...` with a mode-0600 password file. Rotating VAPID keys
+--password-file ...` with a mode-0600 password file (a regular file; on
+Windows the file's ACL is not checked, so keep it in a folder only the
+operator can read). Rotating VAPID keys
 requires clients to register new push subscriptions; never place private keys
 in command arguments or logs.
 
@@ -73,6 +75,27 @@ with a trusted certificate. For a private LAN server, Caddy's `tls internal`
 mode is the supported direction; install the corresponding CA certificate on
 the device. iOS also declares local-network usage so the OS can present its
 LAN permission prompt.
+
+### Reverse proxy and client addresses
+
+The server takes the client address from forwarding headers only when the
+direct peer is in `PRIVATE_MESSENGER_TRUSTED_PROXIES`. It reads
+`X-Forwarded-For` first, right to left, and `X-Real-IP` only when
+`X-Forwarded-For` is absent. That address keys the login and registration
+throttles, setup authorization and the realtime connection limits.
+
+The shipped profiles are safe: Caddy overwrites both headers with the peer
+it saw (`deploy/caddy/Caddyfile`), and the Traefik ingress drops
+`X-Forwarded-For` from untrusted clients (`deploy/kubernetes/base`). **Any
+other reverse proxy must overwrite `X-Forwarded-For`** (or append the peer
+it saw to a chain it has validated), not just set `X-Real-IP`. A proxy that
+passes the client's own `X-Forwarded-For` through lets every client pick
+its own address and escape the throttles. For nginx, set both:
+
+```nginx
+proxy_set_header X-Forwarded-For $remote_addr;
+proxy_set_header X-Real-IP       $remote_addr;
+```
 
 **Demo builds only (D11, D12).** `mobile/lib/main_demo.dart`, built with
 `--dart-define=VERITRA_DEMO=true`, also accepts plain `http://` for loopback
@@ -302,9 +325,16 @@ process exits and never go stale.
 ## Release image
 
 `scripts/release-image.sh` is the one local release command (no hosted CI).
-It refuses a dirty tree; runs gofmt, go vet, the server tests, govulncheck
-and `scripts/audit-rust.sh`; builds `server/Dockerfile` from `git archive
-HEAD` (only committed files reach the build); scans the image with Trivy and
+It refuses a dirty tree and any commit that is not on `origin/main` (fetched
+fresh); runs `scripts/check-go-toolchain.sh` with
+`VERITRA_VERIFY_GO_IMAGE_DIGEST=1`, which asks Docker Hub for the image
+config behind the `golang` digest pinned in `server/Dockerfile` and stops
+unless every platform image has the `GOLANG_VERSION` in `.go-version` (this
+needs buildx and network, and anonymous Docker Hub rate limits can make it
+fail; `docker login` first or retry later); runs gofmt, go vet, the server
+tests, govulncheck and `scripts/audit-rust.sh`; builds `server/Dockerfile`
+from `git archive` of that captured commit (only committed files reach the
+build, and it stops if HEAD moved meanwhile); scans the image with Trivy and
 stops on any HIGH or CRITICAL finding or embedded secret; runs
 `scripts/smoke-deploy.sh` on that exact image (`--skip-smoke` skips it, and
 the release record should say so); pushes
@@ -766,7 +796,11 @@ restore is rolled back to the previous instance, a finished one is kept. A
 damaged journal, or one naming other paths, stops startup until an operator
 resolves it. Staging directories are removed only when they carry the
 `.veritra-staging` marker that this tool writes, so no other path is ever
-cleaned. A migration applies its SQL and its `schema_migrations` record in one
+cleaned. Restore and recovery hold `<database>.restore.lock` and a
+`.veritra-restore.lock` in the database's directory; these small files stay
+in place and must not be deleted while a command runs. Two instances whose
+databases share a directory cannot restore at the same time, and a crashed
+restore of one blocks recovery of the other until it is settled. A migration applies its SQL and its `schema_migrations` record in one
 transaction; a failing migration leaves the database as it was. Rolling back
 across an incompatible migration means restoring the matching backup, never a
 hand-written down migration.

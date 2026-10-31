@@ -168,6 +168,10 @@ class Ops {
 
 enum RequestBucket { chat, request, hidden }
 
+/// Why the stored message-request state is not in use: the read failed
+/// (tried again later) or the value could not be decoded.
+enum _RequestStateFault { unreadable, undecodable }
+
 class AppState extends ChangeNotifier implements ConversationAuthority {
   AppState({
     required this.apiClientFactory,
@@ -588,7 +592,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
 
   /// Restores a backup onto this empty device and signs it in (card I45).
   /// Returns false with a typed error under [Ops.restore]; an interrupted
-  /// download continues on the next attempt.
+  /// download continues on the next attempt. True once the restored session
+  /// is up (which includes running offline from its cache), and also when
+  /// the backup's identity and history are restored but its session expired
+  /// or was revoked: the device then shows sign-in and a password sign-in
+  /// finishes it.
   Future<bool> restoreFromBackup(String recoveryCode) {
     return _runScoped(Ops.restore, () async {
       final service = backupService;
@@ -600,6 +608,30 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       }
       await service.recover(recoveryCode);
       await _tryRestoreSession();
+      // _tryRestoreSession handles its own failures without throwing: the
+      // recovery screen, a session the server rejected, nothing stored.
+      // The recovery screen and nothing stored mean the restore did not
+      // finish; their screen and message stay as they are.
+      if (session != null && lifecycle == SessionLifecycle.ready) return;
+      if (lifecycle != SessionLifecycle.recoveryRequired) {
+        Session? stored;
+        try {
+          stored = await localStore.loadSession();
+        } catch (_) {
+          // Reported as a storage failure below.
+        }
+        if (stored != null &&
+            stored.token.isEmpty &&
+            (stored.deviceId?.isNotEmpty ?? false)) {
+          // The backup's session expired or was revoked. Its identity and
+          // history are on this device: the restore is done and a password
+          // sign-in finishes it.
+          return;
+        }
+      }
+      // The local store or keystore failed (the recovery screen says how),
+      // or the restored session did not reach the store.
+      throw const BackupException(BackupFailureKind.storage);
     });
   }
 
@@ -715,12 +747,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     return conversation != null && isMessageRequest(conversation);
   }
 
-  bool _heldBack(String conversationId) {
-    final conversation =
-        conversations.where((c) => c.id == conversationId).firstOrNull;
-    return conversation != null &&
-        requestBucket(conversation) != RequestBucket.chat;
-  }
+  /// Whether nothing may be fetched or acknowledged for the conversation: a
+  /// request, a hidden one, or one not in the list (which may well be a
+  /// stranger's that the list has not caught up with).
+  bool _heldBack(String conversationId) => !conversationOpen(conversationId);
 
   /// Whether the conversation's content may be shown, read or fetched.
   /// Unknown conversations are not.
@@ -736,18 +766,46 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// conversations already there, so an update never turns existing chats
   /// into requests. A fresh device (link, reinstall, restore) starts with
   /// only what this account created accepted.
+  ///
+  /// Only an absent value (or one written for another account) is a first
+  /// run. A value that cannot be read or decoded fails closed: every DM and
+  /// group from someone else is held back as a request, nothing is
+  /// grandfathered, and the stored value is not overwritten. A read error is
+  /// tried again on the next load; decisions made meanwhile are kept in
+  /// memory and merged in then.
   Future<void> _loadRequestState({required bool grandfather}) async {
     final me = session?.accountId;
-    if (me == null || _acceptedPeers != null) return;
+    if (me == null) return;
+    if (_acceptedPeers == null) {
+      // A fresh session's state: nothing carries over from an earlier one.
+      _requestStateFault = null;
+      _requestGrandfatherPending = null;
+      _requestUndeclinedPending.clear();
+      _requestDecisionsPending = false;
+    } else if (_requestStateFault != _RequestStateFault.unreadable) {
+      return;
+    }
+    final generation = _sessionGeneration;
+    bool owned() =>
+        generation == _sessionGeneration && session?.accountId == me;
     final accepted = <String>{};
     final groups = <String>{};
     final declined = <String, DateTime>{};
     var known = false;
+    _RequestStateFault? fault;
+    String? raw;
     try {
-      final raw = await localStore.loadSetting(_requestSettingName);
-      if (raw != null) {
+      raw = await localStore.loadSetting(_requestSettingName);
+    } catch (_) {
+      fault = _RequestStateFault.unreadable;
+    }
+    if (!owned()) return;
+    if (raw != null) {
+      try {
         final decoded = jsonDecode(raw);
-        if (decoded is Map && decoded['account'] == me) {
+        if (decoded is! Map) {
+          fault = _RequestStateFault.undecodable;
+        } else if (decoded['account'] == me) {
           known = true;
           final peers = decoded['accepted'];
           if (peers is List) accepted.addAll(peers.whereType<String>());
@@ -765,20 +823,48 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             }
           }
         }
+      } catch (_) {
+        fault = _RequestStateFault.undecodable;
       }
-    } catch (_) {
-      // An unreadable value is treated as first run.
+    }
+    if (fault != null) {
+      // Fail closed: hold back what is not this account's own, keep any
+      // decision already made in this run, and write nothing.
+      if (grandfather) {
+        _requestGrandfatherPending ??= List.of(conversations);
+      }
+      _requestStateFault = fault;
+      _acceptedPeers ??= <String>{};
+      return;
+    }
+    // Decisions made while the value could not be read are newer than it.
+    final pending = _acceptedPeers;
+    final save = !known || _requestDecisionsPending;
+    if (pending != null) {
+      accepted.addAll(pending);
+      groups.addAll(_acceptedGroups);
+      declined
+        ..removeWhere((id, _) => _requestUndeclinedPending.contains(id))
+        ..addAll(_declined);
     }
     if (!known) {
-      if (grandfather) {
-        for (final conversation in conversations) {
+      final earlier = _requestGrandfatherPending;
+      if (grandfather || earlier != null) {
+        for (final conversation in earlier ?? conversations) {
           final peer = conversation.peerAccountId;
           if (conversation.isDm && peer != null) accepted.add(peer);
           if (conversation.isGroup) groups.add(conversation.id);
         }
       }
-      await _saveRequestState(me, accepted, groups, declined);
     }
+    if (save) {
+      await _saveRequestState(me, accepted, groups, declined);
+      if (!owned()) return;
+    }
+    _requestStateFault = null;
+    _requestGrandfatherPending = null;
+    _requestUndeclinedPending.clear();
+    _requestDecisionsPending = false;
     _acceptedPeers = accepted;
     _acceptedGroups
       ..clear()
@@ -788,11 +874,34 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       ..addAll(declined);
   }
 
+  /// Why the stored request state could not be used, or null when it was.
+  _RequestStateFault? _requestStateFault;
+
+  /// The conversations a failed upgrade load would have grandfathered, kept
+  /// for the retry so it does not turn existing chats into requests.
+  List<Conversation>? _requestGrandfatherPending;
+
+  /// Conversations accepted while the stored value could not be read: their
+  /// stored declines are cleared when it is merged.
+  final Set<String> _requestUndeclinedPending = <String>{};
+
+  /// A decision was made while the stored value could not be read.
+  bool _requestDecisionsPending = false;
+
+  /// Saves the request state after a user decision. While the stored value
+  /// cannot be read, the decision is kept for the merge on the next good
+  /// read instead, so nothing stored is lost. A value that cannot be decoded
+  /// is replaced only here, by the user's own decision.
   Future<void> _persistRequestState() async {
     final me = session?.accountId;
     final accepted = _acceptedPeers;
     if (me == null || accepted == null) return;
+    if (_requestStateFault == _RequestStateFault.unreadable) {
+      _requestDecisionsPending = true;
+      return;
+    }
     await _saveRequestState(me, accepted, _acceptedGroups, _declined);
+    if (session?.accountId == me) _requestStateFault = null;
   }
 
   Future<void> _saveRequestState(
@@ -830,6 +939,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       accepted.add(sender);
     }
     _declined.remove(conversation.id);
+    if (_requestStateFault == _RequestStateFault.unreadable) {
+      _requestUndeclinedPending.add(conversation.id);
+    }
     await _persistRequestState();
     notifyListeners();
     return true;
@@ -994,16 +1106,24 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           if (envelope.conversationId == conversationId)
             ConversationHistory.keyOf(ownDeviceId, envelope.idempotencyKey),
     };
+    // A row past its expiry is never shown, even while the cached history
+    // still holds it (its purge or the reload after it has not landed yet).
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    bool expired(LocalMessage? local) =>
+        local?.expiresAt != null && local!.expiresAt! <= nowMs;
     final byKey = <String, ReceivedMessageEnvelope>{};
     for (final envelope in envelopes) {
       // A placeholder row is keyed by its sync event, so ask the history
       // which row an envelope belongs to before using its claimed key.
-      byKey[history.forEnvelope(envelope)?.key ??
+      final local = history.forEnvelope(envelope);
+      if (expired(local)) continue;
+      byKey[local?.key ??
           ConversationHistory.keyOf(
               envelope.senderDeviceId, envelope.idempotencyKey)] = envelope;
     }
     for (final local in history.messages) {
       if (local.kind == LocalMessageKind.action ||
+          expired(local) ||
           pendingKeys.contains(local.key) ||
           byKey.containsKey(local.key)) {
         continue;
@@ -1190,6 +1310,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     lifecycle = SessionLifecycle.initializing;
     recoveryMessage = null;
     localStoreFailure = null;
+    _localDataDamaged = false;
     notifyListeners();
     try {
       final stored = await localStore.loadSession();
@@ -1277,7 +1398,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       } catch (_) {
         // Keep the encrypted cache available while offline.
       }
-      _startSync();
+      unawaited(_startSync());
+      unawaited(_ensureKeyPackageSupply().catchError((Object _) {}));
       unawaited(_scheduleExpiryPurge());
       lifecycle = SessionLifecycle.ready;
       notifyListeners();
@@ -1338,9 +1460,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// Why the encrypted local database could not be opened (I39), or null.
   LocalStoreFailureKind? localStoreFailure;
 
+  /// Sync found the open local database damaged (corrupt or not a
+  /// database); see [_enterDamagedStorageRecovery].
+  bool _localDataDamaged = false;
+
   /// Signing in cannot work while the local database is unreadable, so the
   /// recovery screen offers it only for other restore failures.
-  bool get canContinueWithoutRestore => localStoreFailure == null;
+  bool get canContinueWithoutRestore =>
+      localStoreFailure == null && !_localDataDamaged;
 
   /// A reset moves the database and its key aside (it never deletes them),
   /// so it is always reachable and the user is never stuck. An upgrade that
@@ -1348,6 +1475,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// and retrying is the fix: the reset is offered for it only once a retry
   /// has failed the same way again.
   bool get canResetLocalData {
+    if (_localDataDamaged) return true;
     final failure = localStoreFailure;
     if (failure == null) return false;
     if (failure == LocalStoreFailureKind.upgradeStorageFull) {
@@ -1383,7 +1511,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       notifyListeners();
       try {
         await localStore.quarantineUnreadableDatabase(confirmed: true);
+        // The MLS outbox these marks follow went with the database.
+        _mlsAcceptedUnfinished.clear();
         localStoreFailure = null;
+        _localDataDamaged = false;
         _storageFullFailures = 0;
         recoveryMessage = null;
         lifecycle = SessionLifecycle.ready;
@@ -1413,13 +1544,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         credential: credential,
         setupToken: setupToken,
       );
+      await _oweInitialKeyPackages(session!);
       await localStore.saveSession(session!);
       await _mlsCrypto?.activateSession(session!);
-      await _publishInitialMlsKeyPackages();
       await localStore.saveSyncCursor(0);
-      await _refreshConversations(notify: true);
-      await _refreshDevices();
-      _startSync();
+      await _finishSignIn(() async {
+        await _publishInitialMlsKeyPackages();
+        await _refreshConversations(notify: true);
+        await _refreshDevices();
+      });
     });
   }
 
@@ -1436,7 +1569,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           deviceId.isEmpty ||
           deviceSecret == null ||
           deviceSecret.isEmpty) {
-        throw StateError(l10n.errorPasswordLoginNeedsLink);
+        throw UserFacingException(l10n.errorPasswordLoginNeedsLink);
       }
       // Read before saving the new session: a different identity wipes the
       // MLS state with it.
@@ -1461,10 +1594,31 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (!sameIdentity || !hadMlsState) {
         await localStore.saveSyncCursor(0);
       }
-      await _refreshConversations(notify: true);
-      await _refreshDevices();
-      _startSync();
+      await _finishSignIn(() async {
+        await _refreshConversations(notify: true);
+        await _refreshDevices();
+        await _ensureKeyPackageSupply();
+      });
     });
+  }
+
+  /// The network steps after a sign-in: [steps] runs once the session is
+  /// saved and MLS is active. Sync starts even when a step fails, so a
+  /// signed-in app is never left without it; the error is still rethrown
+  /// for [_run] to report. A rejected session (401) starts nothing: [_run]
+  /// clears it.
+  Future<void> _finishSignIn(Future<void> Function() steps) async {
+    try {
+      await steps();
+    } catch (err) {
+      if (err is! ApiException ||
+          err.statusCode != 401 ||
+          err.serverCode == 'invalid_credentials') {
+        unawaited(_startSync());
+      }
+      rethrow;
+    }
+    unawaited(_startSync());
   }
 
   /// Puts the drafts kept through a session expiry back into the composer.
@@ -1492,10 +1646,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     Future<void> Function() load,
   ) async {
     final current = session;
+    final generation = _sessionGeneration;
+    // A refresh started by a session that has since ended or been replaced
+    // reports nothing to its successor, success or failure (TASK-027).
+    bool owned() => current != null && _refreshOwned(current, generation);
     try {
       await load();
-      if (_opErrors.remove(op) != null) notifyListeners();
+      if (owned() && _opErrors.remove(op) != null) notifyListeners();
     } catch (err) {
+      if (!owned()) return;
       if (err is ApiException &&
           err.statusCode == 401 &&
           identical(session, current)) {
@@ -1518,11 +1677,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (current == null || client == null) {
       return;
     }
+    final generation = _sessionGeneration;
     try {
-      devices = await client.devices(current.token);
+      final list = await client.devices(current.token);
+      if (!_refreshOwned(current, generation)) return;
+      devices = list;
       _opErrors.remove(Ops.devices);
     } finally {
-      devicesLoaded = true;
+      if (_refreshOwned(current, generation)) devicesLoaded = true;
     }
     notifyListeners();
   }
@@ -1536,17 +1698,26 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (current == null || client == null) {
       return;
     }
+    final generation = _sessionGeneration;
+    List<Invite>? list;
     try {
-      invites = await client.listInvites(current.token);
-      invitesLoadFailed = false;
+      list = await client.listInvites(current.token);
     } catch (_) {
       // Not surfaced here: invite listing is a privilege, not a core flow.
-      invitesLoadFailed = true;
-    } finally {
-      invitesLoaded = true;
-      notifyListeners();
     }
+    // A reply for a session that has since ended or been replaced is
+    // dropped whole, success or failure.
+    if (!_refreshOwned(current, generation)) return;
+    if (list != null) invites = list;
+    invitesLoadFailed = list == null;
+    invitesLoaded = true;
+    notifyListeners();
   }
+
+  /// Whether a refresh that started under [current] at [generation] may
+  /// still publish: that session is the live one.
+  bool _refreshOwned(Session current, int generation) =>
+      !_disposed && _syncOwnerActive(current, generation);
 
   /// Refreshes communities (and their channels) the account belongs to.
   /// Best-effort for the same reason as [refreshInvites].
@@ -1556,26 +1727,31 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (current == null || client == null) {
       return;
     }
+    final generation = _sessionGeneration;
     try {
       final list = await client.listCommunities(current.token);
       final channels = <String, List<Channel>>{};
       for (final community in list) {
+        if (!_refreshOwned(current, generation)) return;
         try {
           channels[community.id] =
               await client.listChannels(current.token, community.id);
         } catch (_) {
+          if (!_refreshOwned(current, generation)) return;
           channels[community.id] =
               channelsByCommunity[community.id] ?? const <Channel>[];
         }
       }
+      if (!_refreshOwned(current, generation)) return;
       communities = list;
       channelsByCommunity = channels;
     } catch (_) {
       // Keep the locally-known records if the server can't list right now.
-    } finally {
-      communitiesLoaded = true;
-      notifyListeners();
     }
+    // Nothing from a session that has since ended or been replaced.
+    if (!_refreshOwned(current, generation)) return;
+    communitiesLoaded = true;
+    notifyListeners();
   }
 
   Future<void> _refreshConversations({
@@ -1587,20 +1763,34 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (current == null || client == null) {
       return;
     }
-    conversations = await client.conversations(current.token);
-    conversationPrefs = {
-      for (final p in await localStore.loadConversationPrefs())
-        p.conversationId: p
-    };
-    mentionsInMutedChats =
-        await localStore.loadSetting('w8.mentions_muted') != 'false';
+    final generation = _sessionGeneration;
+    // Everything is read first and published only while the session that
+    // asked is still the live one. A stale reply, or its error, is dropped
+    // without a trace.
+    final List<Conversation> list;
+    final List<LocalConversationPref> prefs;
+    final String? mentionsMuted;
+    try {
+      list = await client.conversations(current.token);
+      prefs = await localStore.loadConversationPrefs();
+      mentionsMuted = await localStore.loadSetting('w8.mentions_muted');
+    } catch (_) {
+      if (!_refreshOwned(current, generation)) return;
+      rethrow;
+    }
+    if (!_refreshOwned(current, generation)) return;
+    conversations = list;
+    conversationPrefs = {for (final p in prefs) p.conversationId: p};
+    mentionsInMutedChats = mentionsMuted != 'false';
     await _loadRequestState(grandfather: false);
+    if (!_refreshOwned(current, generation)) return;
     // The server's list is the truth: a conversation no longer in it (an
     // admin removed this account, say) keeps no draft here.
     composerDrafts.retainOnly(conversations.map((item) => item.id));
     conversationsLoaded = true;
     _opErrors.remove(Ops.conversations);
     if (persist) await _persistSnapshot();
+    if (!_refreshOwned(current, generation)) return;
     if (notify) {
       notifyListeners();
     }
@@ -1644,7 +1834,16 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       ...messagesByConversation,
       conversationId: <ReceivedMessageEnvelope>[...page.messages, ...older],
     };
-    _historyCursors[conversationId] = page.nextBefore;
+    // When the fresh page meets what is cached, the older pages already
+    // merged in stay reachable, so the deepest cursor (null once history is
+    // exhausted) still applies. A gap rewinds to the fresh page's cursor so
+    // the missing messages are fetched.
+    final overlaps = existing.any((message) => fresh.contains(message.id));
+    if (!overlaps ||
+        older.isEmpty ||
+        !_historyCursors.containsKey(conversationId)) {
+      _historyCursors[conversationId] = page.nextBefore;
+    }
     // A message that just landed ends its sender's "typing…" line.
     final newest = page.messages.firstOrNull;
     if (newest != null &&
@@ -1723,7 +1922,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (_mlsCrypto != null) await refreshHistory(conversationId);
       await _fetchMessages(conversationId);
       if (_mlsCrypto != null) await refreshHistory(conversationId);
-      unawaited(markNewestMessageRead(conversationId));
+      // Read only what is on screen: not a conversation the user has since
+      // left, and nothing while the app is in the background.
+      if (selectedConversationId == conversationId && _isForeground) {
+        unawaited(markNewestMessageRead(conversationId));
+      }
     } catch (err) {
       _messageLoadErrors[conversationId] = describeError(err, l10n);
     } finally {
@@ -1781,12 +1984,25 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         retentionSeconds: retentionSeconds,
       );
       final conversation = created!;
-      await _setUpConversationGroup(conversation.id);
-      conversations = <Conversation>[conversation, ...conversations];
-      // The server may hand back a DM the peer created first.
+      // The server hands back the existing DM for a pair instead of making a
+      // second one. One the peer created already has its group, and this
+      // device joins it through the peer's Welcome; one whose group this
+      // device already holds needs nothing either. Only a new conversation
+      // gets a group here.
+      final mls = _mlsCrypto;
+      final existingDm = conversation.isDm &&
+          ((conversation.createdBy != null &&
+                  conversation.createdBy != current.accountId) ||
+              (mls != null && await mls.groupEpoch(conversation.id) != null));
+      if (!existingDm) await _setUpConversationGroup(conversation.id);
+      conversations = <Conversation>[
+        conversation,
+        ...conversations.where((item) => item.id != conversation.id),
+      ];
       if (conversation.isDm) await _acceptConversation(conversation);
       selectedConversationId = conversation.id;
-      messagesByConversation[conversation.id] = <ReceivedMessageEnvelope>[];
+      messagesByConversation.putIfAbsent(
+          conversation.id, () => <ReceivedMessageEnvelope>[]);
     });
     return error == null ? created : null;
   }
@@ -1810,13 +2026,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         enrollment: enrollment,
         credential: credential,
       );
+      await _oweInitialKeyPackages(session!);
       await localStore.saveSession(session!);
       await _mlsCrypto?.activateSession(session!);
-      await _publishInitialMlsKeyPackages();
       await localStore.saveSyncCursor(0);
-      await _refreshConversations(notify: true);
-      await _refreshDevices();
-      _startSync();
+      await _finishSignIn(() async {
+        await _publishInitialMlsKeyPackages();
+        await _refreshConversations(notify: true);
+        await _refreshDevices();
+      });
     });
   }
 
@@ -1911,9 +2129,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         accountId,
         role: role,
       );
-      // Their devices join the MLS group through reconcile (card I51).
+      // Their devices join the MLS group through reconcile (card I51). The
+      // change is new, so an earlier one's backoff does not hold it.
       _mlsReconcileRequested = true;
       _mlsReconcileNow.add(conversationId);
+      _mlsChangeRetries.remove(conversationId);
       unawaited(_catchUpSyncEvents());
     });
   }
@@ -1952,9 +2172,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         conversationId,
         accountId,
       );
-      // Their devices leave the MLS group through reconcile (card I51).
+      // Their devices leave the MLS group through reconcile (card I51). The
+      // change is new, so an earlier one's backoff does not hold it.
       _mlsReconcileRequested = true;
       _mlsReconcileNow.add(conversationId);
+      _mlsChangeRetries.remove(conversationId);
       unawaited(_catchUpSyncEvents());
       membersByConversation = <String, List<ConversationMember>>{
         ...membersByConversation,
@@ -2257,9 +2479,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     }
     try {
       // With the switch off the receipt is private: the server keeps this
-      // account's own cursor for the unread count and shares nothing.
+      // account's own cursor for the unread count and shares nothing. The
+      // same holds while the saved choice cannot be read.
       await receiptPreferences.loaded;
-      if (receiptPreferences.sendReadReceipts) {
+      // The app may have gone to the background while the choice was read.
+      if (!_isForeground) return;
+      if (receiptPreferences.shareReadReceipts) {
         await client.markRead(current.token, conversationId, messages.first.id);
       } else {
         await client.markReadPrivate(
@@ -2298,86 +2523,137 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// Streams bounded server pages into a local JSON file. The file contains
   /// page objects so a large account never needs to be assembled in memory.
   /// The server's export remains ciphertext-only for message content.
+  ///
+  /// The paging runs outside the session queue, so sends and sign-out never
+  /// wait behind it. It belongs to the session it started under: once that
+  /// session ends or changes, the export stops, leaves no file and sets no
+  /// error or busy state on whatever session comes next.
   Future<String?> exportAccount() async {
-    String? path;
-    await _run(() async {
-      final current = session;
-      final client = api;
-      if (current == null || client == null) {
-        return;
+    final owner = session;
+    final client = api;
+    if (owner == null || client == null) {
+      return null;
+    }
+    final ends = _sessionEnds;
+    bool owns() =>
+        !_disposed &&
+        ends == _sessionEnds &&
+        _sessionsEnding == 0 &&
+        _sameSession(owner);
+    if (!owns()) return null;
+    busy = true;
+    error = null;
+    notifyListeners();
+    try {
+      return await _writeAccountExport(client, owner.token, owns);
+    } catch (err) {
+      if (err is ApiException && err.statusCode == 401) {
+        // Cleared through the queue, and only while the session that got
+        // the 401 is still the current one.
+        await _enqueueSessionTransition(() async {
+          if (!owns()) return;
+          await _clearLocalSession(
+              preserveDeviceIdentity: true,
+              keepDrafts: true,
+              preserveOutbox: true);
+          error = describeError(err, l10n);
+        });
+      } else if (owns()) {
+        error = describeError(err, l10n);
       }
+      return null;
+    } finally {
+      // A queued action running now owns the busy flag and clears it itself.
+      if (_runsActive == 0) busy = false;
+      notifyListeners();
+    }
+  }
 
-      final directory = await getApplicationDocumentsDirectory();
-      final stamp = DateTime.now().toUtc().toIso8601String().replaceAll(
-            RegExp(r'[^0-9]'),
-            '',
-          );
-      final file = File(
-        '${directory.path}${Platform.pathSeparator}'
-        'veritra-account-export-v2-$stamp.json',
-      );
-      final temporaryFile = File('${file.path}.part');
-      IOSink? sink;
-      var completed = false;
-      try {
-        const header = '{"manifest_version":"v2","pages":[';
-        const footer = ']}';
-        const maxExportBytes = 256 * 1024 * 1024;
-        var totalBytes = utf8.encode(header).length;
-        sink = temporaryFile.openWrite();
-        sink.write(header);
-        String? before;
-        var firstPage = true;
-        var pageCount = 0;
-        while (true) {
-          if (pageCount >= 2000) {
-            throw StateError('Account export has too many pages');
-          }
-          final page = await client.exportAccountPage(
-            current.token,
-            limit: 250,
-            before: before,
-          );
-          final encodedPage = utf8.encode(jsonEncode(page));
-          final separatorBytes = firstPage ? 0 : 1;
-          if (totalBytes +
-                  separatorBytes +
-                  encodedPage.length +
-                  utf8.encode(footer).length >
-              maxExportBytes) {
-            throw StateError('Account export exceeds the size limit');
-          }
-          if (!firstPage) {
-            sink.add(const <int>[0x2c]);
-          }
-          sink.add(encodedPage);
-          totalBytes += separatorBytes + encodedPage.length;
-          firstPage = false;
-          pageCount++;
-          final next = page['next_before'];
-          if (next == null) {
-            break;
-          }
-          if (next is! String || next.isEmpty || next == before) {
-            throw StateError('Account export cursor did not advance');
-          }
-          before = next;
+  /// The paging and file work of [exportAccount]. [owns] is checked after
+  /// every await, before its result is used: an export whose session ended
+  /// returns null, and the finally removes its '.part' file.
+  Future<String?> _writeAccountExport(
+      ApiClient client, String token, bool Function() owns) async {
+    final directory = await getApplicationDocumentsDirectory();
+    if (!owns()) return null;
+    final stamp = DateTime.now().toUtc().toIso8601String().replaceAll(
+          RegExp(r'[^0-9]'),
+          '',
+        );
+    final file = File(
+      '${directory.path}${Platform.pathSeparator}'
+      'veritra-account-export-v2-$stamp.json',
+    );
+    final temporaryFile = File('${file.path}.part');
+    IOSink? sink;
+    var completed = false;
+    try {
+      const header = '{"manifest_version":"v2","pages":[';
+      const footer = ']}';
+      const maxExportBytes = 256 * 1024 * 1024;
+      var totalBytes = utf8.encode(header).length;
+      sink = temporaryFile.openWrite();
+      sink.write(header);
+      String? before;
+      var firstPage = true;
+      var pageCount = 0;
+      while (true) {
+        if (!owns()) return null;
+        if (pageCount >= 2000) {
+          throw StateError('Account export has too many pages');
         }
-        sink.write(footer);
-        await sink.flush();
-        await sink.close();
-        sink = null;
-        await temporaryFile.rename(file.path);
-        completed = true;
-        path = file.path;
-      } finally {
-        await sink?.close();
-        if (!completed && await temporaryFile.exists()) {
-          await temporaryFile.delete();
+        final page = await client.exportAccountPage(
+          token,
+          limit: 250,
+          before: before,
+        );
+        if (!owns()) return null;
+        final encodedPage = utf8.encode(jsonEncode(page));
+        final separatorBytes = firstPage ? 0 : 1;
+        if (totalBytes +
+                separatorBytes +
+                encodedPage.length +
+                utf8.encode(footer).length >
+            maxExportBytes) {
+          throw StateError('Account export exceeds the size limit');
         }
+        if (!firstPage) {
+          sink.add(const <int>[0x2c]);
+        }
+        sink.add(encodedPage);
+        totalBytes += separatorBytes + encodedPage.length;
+        firstPage = false;
+        pageCount++;
+        final next = page['next_before'];
+        if (next == null) {
+          break;
+        }
+        if (next is! String || next.isEmpty || next == before) {
+          throw StateError('Account export cursor did not advance');
+        }
+        before = next;
       }
-    });
-    return error == null ? path : null;
+      sink.write(footer);
+      await sink.flush();
+      await sink.close();
+      sink = null;
+      if (!owns()) return null;
+      await temporaryFile.rename(file.path);
+      completed = true;
+      if (!owns()) {
+        // The session ended during the rename: its export is not kept.
+        try {
+          await file.delete();
+        } catch (_) {}
+        return null;
+      }
+      return file.path;
+    } finally {
+      await sink?.close();
+      if (!completed && await temporaryFile.exists()) {
+        await temporaryFile.delete();
+      }
+    }
   }
 
   Future<void> sendMessage(String plaintext) async {
@@ -2602,10 +2878,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     }
   }
 
-  /// Downloads one attachment's ciphertext and decrypts it in memory. The
-  /// ciphertext and plaintext only touch disk as temporary files, which are
-  /// removed before this returns. Forwarding sets [memoryOnly], which never
-  /// creates a decrypted temporary file.
+  /// Downloads one attachment's ciphertext to a temporary file and decrypts
+  /// it. By default it decrypts to a temporary plaintext file and reads that
+  /// back. With [memoryOnly] (used by forwarding) it decrypts straight to
+  /// bytes and creates no plaintext file. Both temporary files are deleted
+  /// in `finally`, best effort: a crash or kill before then can leave them
+  /// in the working directory.
   Future<Uint8List> loadAttachment(
     AttachmentEntry entry, {
     required String conversationId,
@@ -2762,20 +3040,34 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     }).then((succeeded) => succeeded && queued);
   }
 
+  /// Marks [idempotencyKey] for an immediate retry and runs the delivery
+  /// worker. Only the marking is queued; the network delivery runs outside
+  /// the session queue, so sends and sign-out never wait on it. Completes
+  /// after that flush.
   Future<void> retryEnvelope(String idempotencyKey) async {
+    final owner = session;
+    if (owner == null) return;
+    var flush = false;
     await _runScoped(Ops.send, () async {
+      if (!_sameSession(owner)) return;
       final record = _outboxRecords[idempotencyKey] ??
           (await localStore.pendingEnvelopeRecords())
               .where((item) => item.envelope.idempotencyKey == idempotencyKey)
               .firstOrNull;
-      if (record == null || record.terminal) {
+      if (record == null || record.terminal || !_sameSession(owner)) {
         return;
       }
       _outboxStates[idempotencyKey] = OutboxDeliveryState.sending;
       notifyListeners();
       _manualRetryKey = idempotencyKey;
-      await _flushOutbox();
+      flush = true;
     });
+    if (!flush) return;
+    // The worker checks its session after every request and clears it on a
+    // 401 only while that session is still current. It never throws; a
+    // local failure of the pass carrying this retry is reported under
+    // [Ops.send] by the worker itself.
+    await _flushOutbox();
   }
 
   Future<void> discardEnvelope(String idempotencyKey) async {
@@ -3060,13 +3352,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         role: linkedSession.role,
       );
       pendingDeviceLinkClaim = null;
+      await _oweInitialKeyPackages(session!);
       await localStore.saveSession(session!);
       await _mlsCrypto?.activateSession(session!);
-      await _publishInitialMlsKeyPackages();
       await localStore.saveSyncCursor(0);
-      await _refreshConversations(notify: true);
-      await _refreshDevices();
-      _startSync();
+      await _finishSignIn(() async {
+        await _publishInitialMlsKeyPackages();
+        await _refreshConversations(notify: true);
+        await _refreshDevices();
+      });
     });
   }
 
@@ -3119,7 +3413,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       final client = api;
       final deviceSecret = current?.deviceSecret;
       if (current == null || client == null || deviceSecret == null) {
-        throw StateError(l10n.errorRelinkRequired);
+        throw UserFacingException(l10n.errorRelinkRequired);
       }
       final rotated =
           await client.reauthenticate(current.token, password, deviceSecret);
@@ -3292,15 +3586,22 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     return true;
   }
 
+  /// Bumped when this device starts and finishes changing the read-receipts
+  /// switch, so a server answer read before the change never undoes it.
+  int _readReceiptsChanges = 0;
+
   /// Adopts the account's read-receipts switch from the server, so a change
   /// made on another linked device shows here. Best effort.
   Future<void> refreshReadReceiptsSetting() async {
     final current = session;
     final client = api;
     if (current == null || client == null) return;
+    final changes = _readReceiptsChanges;
     try {
       final enabled = await client.readReceiptsEnabled(current.token);
       if (_disposed || !_sameSession(current)) return;
+      // The switch changed here while the answer was on its way.
+      if (changes != _readReceiptsChanges) return;
       await receiptPreferences.setSendReadReceipts(enabled);
     } catch (_) {
       // The saved choice on this device stands.
@@ -3313,10 +3614,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final current = session;
     final client = api;
     if (current == null || client == null) return false;
+    _readReceiptsChanges++;
     try {
       await client.setReadReceiptsEnabled(current.token, enabled);
     } catch (_) {
       return false;
+    } finally {
+      // A refresh that started while the change was being sent may have
+      // read the old value.
+      _readReceiptsChanges++;
     }
     await receiptPreferences.setSendReadReceipts(enabled);
     return true;
@@ -3366,71 +3672,91 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     );
   }
 
+  /// Starts the sync owner and socket for the current session. Callers do
+  /// not wait for it, so it never throws: a failed lease, drain or dispose
+  /// step shows as offline with [syncError], and [_catchUpSyncEvents] (the
+  /// retry timer, foreground resume, a push wake) starts it again.
   Future<void> _startSync() async {
     final current = session;
     if (current == null) {
       return;
     }
     final ownerGeneration = ++_sessionGeneration;
-    final previousOwner = _syncOwner;
-    final previousLease = _syncLease;
-    _syncOwner = null;
-    _syncLease = null;
-    previousOwner?.dispose();
-    await previousOwner?.cancelAndDrain();
-    if (previousLease != null) {
-      await localStore.releaseSyncLease(previousLease);
-    }
-    if (ownerGeneration != _sessionGeneration || !_sameSession(current)) {
+    _syncStartFailed = null;
+    LocalSyncLease? acquired;
+    AccountSyncEngine? installed;
+    SyncService? opened;
+    try {
+      final previousOwner = _syncOwner;
+      final previousLease = _syncLease;
+      _syncOwner = null;
+      _syncLease = null;
+      previousOwner?.dispose();
+      await previousOwner?.cancelAndDrain();
+      if (previousLease != null) {
+        await localStore.releaseSyncLease(previousLease);
+      }
+      if (ownerGeneration != _sessionGeneration || !_sameSession(current)) {
+        return;
+      }
+      final accountId = current.accountId;
+      final deviceId = current.deviceId;
+      if (accountId == null || deviceId == null) return;
+      final lease = LocalSyncLease(
+        origin: current.baseUrl,
+        accountId: accountId,
+        deviceId: deviceId,
+        generation: ownerGeneration,
+      );
+      // Noted before the await: a failure after the write still releases it.
+      acquired = lease;
+      await localStore.acquireSyncLease(lease);
+      if (ownerGeneration != _sessionGeneration || !_sameSession(current)) {
+        await localStore.releaseSyncLease(lease);
+        return;
+      }
+      _syncLease = lease;
+      _syncOwner = installed = AccountSyncEngine(
+        isOwner: () =>
+            ownerGeneration == _sessionGeneration && _sameSession(current),
+        work: () => _runOwnedCatchUp(current, ownerGeneration),
+      );
+      final previousSubscription = _syncSubscription;
+      _syncSubscription = null;
+      await previousSubscription?.cancel();
+      final previousSync = sync;
+      sync = null;
+      // Close the old socket before opening one for this session so two
+      // authenticated sockets never overlap.
+      await previousSync?.dispose();
+      if (ownerGeneration != _sessionGeneration || !_sameSession(current)) {
+        return;
+      }
+      sync = opened = syncServiceFactory(current.baseUrl, current.token);
+      _setConnectionStatus(ConnectionStatus.connecting);
+      _syncSubscription = opened.events.listen(
+        (frame) {
+          // Ephemeral frames carry nothing to catch up on.
+          if (handleEphemeralFrame(frame)) return;
+          unawaited(_catchUpSyncEvents());
+          unawaited(_flushMlsOutbox());
+        },
+        onError: (_) {
+          // A dropped socket alone is not proof the server is unreachable;
+          // the catch-up attempt that follows decides online vs. offline.
+          unawaited(_catchUpSyncEvents());
+          unawaited(_flushMlsOutbox());
+        },
+      );
+    } catch (err) {
+      if (opened != null && identical(sync, opened)) {
+        sync = null;
+        unawaited(opened.dispose().catchError((Object _) {}));
+      }
+      await _abandonSyncStart(current, ownerGeneration, err,
+          lease: acquired, owner: installed);
       return;
     }
-    final accountId = current.accountId;
-    final deviceId = current.deviceId;
-    if (accountId == null || deviceId == null) return;
-    final lease = LocalSyncLease(
-      origin: current.baseUrl,
-      accountId: accountId,
-      deviceId: deviceId,
-      generation: ownerGeneration,
-    );
-    await localStore.acquireSyncLease(lease);
-    if (ownerGeneration != _sessionGeneration || !_sameSession(current)) {
-      await localStore.releaseSyncLease(lease);
-      return;
-    }
-    _syncLease = lease;
-    _syncOwner = AccountSyncEngine(
-      isOwner: () =>
-          ownerGeneration == _sessionGeneration && _sameSession(current),
-      work: () => _runOwnedCatchUp(current, ownerGeneration),
-    );
-    final previousSubscription = _syncSubscription;
-    _syncSubscription = null;
-    await previousSubscription?.cancel();
-    final previousSync = sync;
-    sync = null;
-    // Close the old socket before opening one for this session so two
-    // authenticated sockets never overlap.
-    await previousSync?.dispose();
-    if (ownerGeneration != _sessionGeneration || !_sameSession(current)) {
-      return;
-    }
-    sync = syncServiceFactory(current.baseUrl, current.token);
-    _setConnectionStatus(ConnectionStatus.connecting);
-    _syncSubscription = sync!.events.listen(
-      (frame) {
-        // Ephemeral frames carry nothing to catch up on.
-        if (handleEphemeralFrame(frame)) return;
-        unawaited(_catchUpSyncEvents());
-        unawaited(_flushMlsOutbox());
-      },
-      onError: (_) {
-        // A dropped socket alone is not proof the server is unreachable; the
-        // catch-up attempt that follows decides online vs. offline.
-        unawaited(_catchUpSyncEvents());
-        unawaited(_flushMlsOutbox());
-      },
-    );
     unawaited(_catchUpSyncEvents());
     unawaited(_flushOutbox());
     unawaited(_flushMlsOutbox());
@@ -3442,6 +3768,64 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     unawaited(refreshBlocks());
     unawaited(refreshReadReceiptsSetting());
     unawaited(_startPush());
+  }
+
+  /// The session whose sync startup failed and left no owner. Only this
+  /// session is started again: one that never got as far as [_startSync]
+  /// (its MLS activation failed, say) stays without sync.
+  Session? _syncStartFailed;
+  bool _syncRestartQueued = false;
+
+  /// Undoes a [_startSync] that threw: the owner and lease it installed go,
+  /// and, while [current] is still the session, the failure shows as
+  /// offline (a connection fact, not the outcome of a sign-in) and a retry
+  /// is scheduled with backoff.
+  Future<void> _abandonSyncStart(
+    Session current,
+    int ownerGeneration,
+    Object err, {
+    LocalSyncLease? lease,
+    AccountSyncEngine? owner,
+  }) async {
+    if (owner != null && identical(_syncOwner, owner)) {
+      _syncOwner = null;
+      owner.dispose();
+    }
+    if (lease != null) {
+      if (identical(_syncLease, lease)) _syncLease = null;
+      try {
+        await localStore.releaseSyncLease(lease);
+      } catch (_) {
+        // The next startup's lease takes its place.
+      }
+    }
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
+    _syncStartFailed = current;
+    syncError = _isTransientStorageError(err)
+        ? l10n.syncErrorStorageBusy
+        : describeError(err, l10n);
+    _setConnectionStatus(ConnectionStatus.offline);
+    notifyListeners();
+    _scheduleCatchUpRetry();
+  }
+
+  /// Starts sync again for [failed], whose startup failed. Queued, so it
+  /// never runs inside a session transition, which the generation bump in
+  /// [_startSync] would cut short; fired and not awaited, so a caller that
+  /// is itself queued cannot wait on it.
+  void _restartSync(Session failed) {
+    if (_syncRestartQueued) return;
+    _syncRestartQueued = true;
+    unawaited(_enqueueSessionTransition(() async {
+      _syncRestartQueued = false;
+      if (_disposed ||
+          _syncOwner != null ||
+          !identical(_syncStartFailed, failed) ||
+          !_sameSession(failed)) {
+        return;
+      }
+      await _startSync();
+    }));
   }
 
   void _setConnectionStatus(ConnectionStatus status) {
@@ -3831,6 +4215,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   Future<void> _finishDeferredWakeWork() async {
     final current = session;
     if (current == null) return;
+    final generation = _sessionGeneration;
     await _suppressForegroundNotices(current, always: true);
     if (_refreshAfterWake) {
       _refreshAfterWake = false;
@@ -3838,9 +4223,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         await _refreshConversations(notify: true);
         await _refreshDevices();
       } catch (_) {
-        _refreshAfterWake = true;
+        // Owed again only to the session that owed it.
+        if (_refreshOwned(current, generation)) _refreshAfterWake = true;
       }
     }
+    if (!_refreshOwned(current, generation)) return;
     if (_replenishAfterWake) {
       _replenishAfterWake = false;
       await _replenishKeyPackage();
@@ -3990,7 +4377,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
 
   Future<void> _catchUpSyncEvents() async {
     if (!_isForeground) return;
+    final failed = _syncStartFailed;
+    if (_syncOwner == null && failed != null && _sameSession(failed)) {
+      // The owner never came up; a successful start runs its own catch-up.
+      _restartSync(failed);
+      return;
+    }
     await _syncOwner?.request();
+    _retryOwedKeyPackages();
   }
 
   Future<void> _runOwnedCatchUp(Session current, int ownerGeneration) async {
@@ -4010,15 +4404,39 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (client == null) {
       return;
     }
-    // A stopped device stays stopped until the user picks a recovery choice
-    // (I33): retrying the same event on every wake would be a poison loop.
-    final stored = await localStore.loadSyncRecovery();
-    if (!_syncOwnerActive(current, ownerGeneration)) return;
-    if (stored != null) {
-      _enterSyncRecovery(stored);
-      return;
-    }
     try {
+      // A stopped device stays stopped until the user picks a recovery
+      // choice (I33): retrying the same event on every wake would be a
+      // poison loop. A storage error reading the record is handled below
+      // like any other.
+      var stored = await localStore.loadSyncRecovery();
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      if (stored?.kind == SyncFailureKind.applicationUndecryptable &&
+          wake == null &&
+          await localStore.loadSetting(_undecryptableRetrySetting) == null) {
+        // Under D54 a peer message this device can never decrypt no longer
+        // stops sync. A stop recorded for one before that rule is cleared,
+        // once per store, so its event is applied again. If it still
+        // fails, the new record stays. The record is cleared before the
+        // one-time flag is saved: a failed clear must leave it to be tried
+        // again, not marked done with the stop still in place.
+        await localStore.saveSyncRecovery(null);
+        await localStore.saveSetting(_undecryptableRetrySetting, 'done');
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        stored = null;
+      }
+      if (stored != null) {
+        _enterSyncRecovery(stored);
+        return;
+      }
+      // Envelopes an earlier pass committed but could not show. A history
+      // that still cannot be read keeps them for the next pass; it must not
+      // stop this one, or one bad read would block all sync.
+      try {
+        await _publishReceived(
+            <ReceivedMessageEnvelope>[], current, ownerGeneration);
+      } catch (_) {}
+      if (!mayRun() || !_syncOwnerActive(current, ownerGeneration)) return;
       var pageCursor = await localStore.loadSyncCursor();
       const pageSize = 200;
       while (true) {
@@ -4053,6 +4471,36 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         // a conversation's whole history after every message made a burst
         // quadratic (T49C).
         final received = <ReceivedMessageEnvelope>[];
+        // Projection events only ask for a refresh. A run of them in a row
+        // is refreshed once per kind, then each is committed in order, all
+        // before the next crypto event is applied; a failed refresh commits
+        // none of the run. Returns false once this run no longer owns sync.
+        final projections = <SyncEvent>[];
+        Future<bool> commitProjections() async {
+          if (projections.isEmpty) return true;
+          if (wake != null) {
+            // A background pass makes no list/device requests; the next
+            // foreground resume refreshes instead.
+            projections.forEach(_deferProjectionRefresh);
+          } else {
+            await _refreshProjectionForSyncEvents(projections);
+          }
+          for (final event in projections) {
+            if (!_syncOwnerActive(current, ownerGeneration)) return false;
+            final expectedCursor = await localStore.loadSyncCursor();
+            await localStore.commitSyncEvent(SyncEventCommit(
+              eventKey: 'sync:${event.id}',
+              conversationId: event.conversationId ?? '',
+              expectedCursor: expectedCursor,
+              cursor: event.id,
+              checkCanCommit: wake?.checkCanCommit,
+            ));
+          }
+          projections.clear();
+          notifyListeners();
+          return true;
+        }
+
         try {
           for (final event in events) {
             final committedCursor = await localStore.loadSyncCursor();
@@ -4061,6 +4509,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             await wake?.check();
 
             if (_isCryptoSyncEvent(event.type)) {
+              if (!await commitProjections()) return;
               if (_mlsCrypto == null) {
                 throw SyncEventFailure(SyncFailureKind.cryptoUnavailable,
                     eventId: event.id,
@@ -4079,35 +4528,24 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             } else {
               // An unknown type outside the crypto namespaces only asks for
               // a refresh, so it is skipped and the cursor moves past it
-              // (P5). Unknown crypto types still stop sync.
+              // (P5). Unknown crypto types still stop sync, at this event.
               if (!_knownProjectionEvent(event.type) &&
                   _failsClosedEvent(event.type)) {
+                if (!await commitProjections()) return;
                 throw SyncEventFailure(SyncFailureKind.unsupportedEvent,
                     eventId: event.id,
                     eventType: event.type,
                     conversationId: event.conversationId);
               }
-              if (wake != null) {
-                // Projection events carry no ciphertext and only ask for a
-                // refresh. A background pass makes no list/device requests;
-                // the next foreground resume refreshes instead.
-                _deferProjectionRefresh(event);
-              } else {
-                await _refreshProjectionForSyncEvent(event);
-              }
-              final expectedCursor = await localStore.loadSyncCursor();
-              await localStore.commitSyncEvent(SyncEventCommit(
-                eventKey: 'sync:${event.id}',
-                conversationId: event.conversationId ?? '',
-                expectedCursor: expectedCursor,
-                cursor: event.id,
-                checkCanCommit: wake?.checkCanCommit,
-              ));
+              projections.add(event);
+              continue;
             }
             notifyListeners();
           }
+          if (!await commitProjections()) return;
         } catch (_) {
-          // Messages committed before the failure still reach the UI; the
+          // Messages committed before the failure still reach the UI (or,
+          // if their history cannot be read now, the next catch-up); the
           // failure itself is what the caller handles.
           try {
             await _publishReceived(received, current, ownerGeneration);
@@ -4127,7 +4565,16 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       }
       await _suppressForegroundNotices(current);
       if (_mlsCrypto != null) {
-        await _processMlsRevocations();
+        try {
+          await _processMlsRevocations();
+        } catch (err) {
+          // Like reconcile below, revocations never block sync: a failure
+          // is retried after its own backoff (TASK-035).
+          if (err is ApiException && err.statusCode == 401) rethrow;
+          if (_syncOwnerActive(current, ownerGeneration)) {
+            _mlsStepSettled('revocations', failed: true);
+          }
+        }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         if (_mlsReconcileRequested || _mlsPendingSeen.isNotEmpty) {
           _mlsReconcileRequested = false;
@@ -4162,17 +4609,38 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (wake != null) rethrow;
       if (!_syncOwnerActive(current, ownerGeneration)) return;
       if (err is ApiException && err.statusCode == 401) {
-        await _clearLocalSession(
-            preserveDeviceIdentity: true,
-            keepDrafts: true,
-            preserveOutbox: true,
-            drainSyncOwner: false);
+        try {
+          await _clearLocalSession(
+              preserveDeviceIdentity: true,
+              keepDrafts: true,
+              preserveOutbox: true,
+              drainSyncOwner: false);
+        } catch (_) {
+          // Signing out failed in local storage. Callers do not await this
+          // run, so nothing may escape it: stay offline and try again.
+          if (!_syncOwnerActive(current, ownerGeneration)) return;
+          syncError = describeError(err, l10n);
+          _setConnectionStatus(ConnectionStatus.offline);
+          notifyListeners();
+          _scheduleCatchUpRetry();
+        }
         return;
       }
       final failure = _recoveryFailureFor(err);
+      if (failure != null && failure.damagedStorage) {
+        // No record is written: the write would land in the damaged file,
+        // or reload later as a stop that only offers Retry.
+        _enterDamagedStorageRecovery();
+        return;
+      }
       if (failure != null) {
         final recovery = SyncRecovery.fromFailure(failure, DateTime.now());
-        await localStore.saveSyncRecovery(recovery);
+        try {
+          await localStore.saveSyncRecovery(recovery);
+        } catch (_) {
+          // A failing store may refuse this write too. The device still
+          // stops here; the record is written when a later pass stops.
+        }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         _enterSyncRecovery(recovery);
         return;
@@ -4190,6 +4658,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           retryAfter: err is ApiException ? err.retryAfter : null);
     }
   }
+
+  /// Set once a stop recorded for an undecryptable message has been cleared
+  /// for D54 (see [_runOwnedCatchUp]).
+  static const _undecryptableRetrySetting = 'sync.d54_undecryptable_retried';
 
   /// A catch-up that failed for a reason that passes (no connection, a
   /// rate limit, a server error) is tried again with backoff, so the device
@@ -4231,7 +4703,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       return const SyncEventFailure(SyncFailureKind.cursorExpired);
     }
     if (_isDurableStorageError(err)) {
-      return const SyncEventFailure(SyncFailureKind.localStorage);
+      return SyncEventFailure(SyncFailureKind.localStorage,
+          damagedStorage: _isDamagedStorage(err));
     }
     // Anything else happened outside one event's processing (a page or a
     // projection refresh failed) and is retried on the next wake. Event
@@ -4272,7 +4745,19 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       throw ArgumentError.value(confirmed, 'confirmed',
           'relinking deletes local history and needs confirmation');
     }
+    final requested = session;
     await _run(() async {
+      // The confirmation dialog may have stayed open while recovery ended,
+      // changed kind or the session changed (C-f4bf51f0c756): relinking
+      // deletes local data, so it runs only while the same session is
+      // still stopped at a failure that offers it.
+      final recovery = syncRecovery;
+      if (requested == null ||
+          !identical(session, requested) ||
+          recovery == null ||
+          !recovery.choices.contains(SyncRecoveryChoice.relink)) {
+        return;
+      }
       final current = session;
       final client = api;
       await _stopPush(current, client);
@@ -4295,6 +4780,56 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       return _transientFileErrors.contains(err.osError?.errorCode);
     }
     return false;
+  }
+
+  /// SQLite CORRUPT (11) or NOTADB (26): the database file is damaged.
+  static bool _isDamagedStorage(Object err) {
+    final code = localStorageErrorCode(err);
+    return code == 11 || code == 26;
+  }
+
+  /// Sync found the local database damaged while the app ran. The session
+  /// is put down in memory; the only store call is a best-effort release of
+  /// the sync lease, whose failure is ignored. The app then shows the
+  /// recovery screen a failed restore shows. Retry restores the session
+  /// from the same open database handle (the store keeps it cached), so it
+  /// helps only if the damage does not touch what a restore reads; the
+  /// confirmed reset moves the database aside (C-d0ba626ecdd7). This runs
+  /// inside the sync owner's own pass, so the owner is disposed, never
+  /// drained.
+  void _enterDamagedStorageRecovery() {
+    _sessionGeneration++;
+    _syncStartFailed = null;
+    final owner = _syncOwner;
+    _syncOwner = null;
+    owner?.dispose();
+    final lease = _syncLease;
+    _syncLease = null;
+    if (lease != null) {
+      unawaited(localStore.releaseSyncLease(lease).catchError((Object _) {}));
+    }
+    final mls = _mlsCrypto;
+    if (mls != null) unawaited(mls.dispose().catchError((Object _) {}));
+    final subscription = _syncSubscription;
+    _syncSubscription = null;
+    if (subscription != null) {
+      unawaited(subscription.cancel().catchError((Object _) {}));
+    }
+    final previousSync = sync;
+    sync = null;
+    if (previousSync != null) {
+      unawaited(previousSync.dispose().catchError((Object _) {}));
+    }
+    _wakeRun?.cancel();
+    api?.close();
+    api = null;
+    session = null;
+    _resetSessionMemory();
+    localStoreFailure = null;
+    _localDataDamaged = true;
+    lifecycle = SessionLifecycle.recoveryRequired;
+    recoveryMessage = l10n.recoveryStorageDamaged;
+    notifyListeners();
   }
 
   /// A local storage failure that will not pass by itself: another SQLite
@@ -4345,46 +4880,60 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       type == 'mls.revocation.pending' ||
       type == 'mls.revocation.completed';
 
-  Future<void> _refreshProjectionForSyncEvent(SyncEvent event) async {
-    final type = event.type;
-    if (type.startsWith('device.') ||
-        type.startsWith('membership.') ||
-        type.startsWith('conversation.')) {
-      _mlsReconcileRequested = true;
-    }
-    if (type.startsWith('device.')) {
-      await _refreshDevices();
-      await _refreshConversations(notify: false, persist: false);
-      return;
-    }
-    if (type.startsWith('conversation.') ||
-        type.startsWith('membership.') ||
-        type == 'retention.updated') {
-      if (event.conversationId != null) {
-        membersByConversation = Map.of(membersByConversation)
-          ..remove(event.conversationId);
-      } else if (type.startsWith('membership.')) {
-        membersByConversation = {};
+  /// Refreshes what a run of projection events asks for, once per kind: a
+  /// burst of device or membership events costs one device-list and one
+  /// conversation-list request, not one per event. Devices are read before
+  /// conversations, as for a single event, and the open chat is reloaded
+  /// only when an event in the run names it.
+  Future<void> _refreshProjectionForSyncEvents(List<SyncEvent> events) async {
+    var devices = false;
+    var conversationList = false;
+    var selectedMessages = false;
+    final receipts = <String>{};
+    for (final event in events) {
+      final type = event.type;
+      if (type.startsWith('device.') ||
+          type.startsWith('membership.') ||
+          type.startsWith('conversation.')) {
+        _mlsReconcileRequested = true;
       }
-      await _refreshConversations(notify: false, persist: false);
-      return;
-    }
-    if (type.startsWith('reaction.') || type == 'read_receipt.updated') {
-      if (event.conversationId == selectedConversationId) {
-        await refreshSelectedMessages(notify: false, persist: false);
-        if (type == 'read_receipt.updated') {
-          unawaited(refreshReceipts(event.conversationId!));
+      if (type.startsWith('device.')) {
+        devices = true;
+        conversationList = true;
+      } else if (type.startsWith('conversation.') ||
+          type.startsWith('membership.') ||
+          type == 'retention.updated') {
+        if (event.conversationId != null) {
+          membersByConversation = Map.of(membersByConversation)
+            ..remove(event.conversationId);
+        } else if (type.startsWith('membership.')) {
+          membersByConversation = {};
         }
+        conversationList = true;
+      } else if (type.startsWith('reaction.') ||
+          type == 'read_receipt.updated') {
+        if (event.conversationId == selectedConversationId) {
+          selectedMessages = true;
+          if (type == 'read_receipt.updated' && event.conversationId != null) {
+            receipts.add(event.conversationId!);
+          }
+        }
+      } else if (type != 'mls.revocation.pending' &&
+          type != 'mls.revocation.completed' &&
+          _failsClosedEvent(type)) {
+        throw SyncEventFailure(SyncFailureKind.unsupportedEvent,
+            eventId: event.id, eventType: type);
       }
-      return;
     }
-    if (type == 'mls.revocation.pending' ||
-        type == 'mls.revocation.completed') {
-      return;
+    if (devices) await _refreshDevices();
+    if (conversationList) {
+      await _refreshConversations(notify: false, persist: false);
     }
-    if (_failsClosedEvent(type)) {
-      throw SyncEventFailure(SyncFailureKind.unsupportedEvent,
-          eventId: event.id, eventType: type);
+    if (selectedMessages) {
+      await refreshSelectedMessages(notify: false, persist: false);
+    }
+    for (final conversationId in receipts) {
+      unawaited(refreshReceipts(conversationId));
     }
   }
 
@@ -4410,10 +4959,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         : mls is BoundedMlsConversationCryptoService
             ? mls
             : throw const WakeWorkCancelled();
-    SyncEventFailure failure(SyncFailureKind kind) => SyncEventFailure(kind,
-        eventId: event.id,
-        eventType: event.type,
-        conversationId: event.conversationId);
+    SyncEventFailure failure(SyncFailureKind kind, [Object? cause]) =>
+        SyncEventFailure(kind,
+            eventId: event.id,
+            eventType: event.type,
+            conversationId: event.conversationId,
+            damagedStorage: cause != null && _isDamagedStorage(cause));
     switch (event.type) {
       case 'mls.message.created':
         // Control messages are never skipped: missing, malformed or
@@ -4433,6 +4984,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         final ownPathCommit = message.kind == 'commit' &&
             message.senderDeviceId == current.deviceId &&
             await _queuedPathCommit(message.idempotencyKey);
+        if (message.kind == 'welcome' &&
+            message.recipientDeviceId == current.deviceId) {
+          // Write-ahead (TASK-028): a Welcome uses up one of this device's
+          // published key packages, so its replacement is owed durably
+          // before the Welcome commits. Counted once per Welcome; one that
+          // then fails stays counted (over-supply, capped).
+          await _oweKeyPackages(current, 1, welcome: message.id);
+        }
         try {
           if (bounded != null) {
             await bounded.processMlsMessageBounded(message,
@@ -4443,7 +5002,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         } catch (err) {
           if (_isTransientSyncError(err)) rethrow;
           if (_isDurableStorageError(err)) {
-            throw failure(SyncFailureKind.localStorage);
+            throw failure(SyncFailureKind.localStorage, err);
           }
           throw failure(err is FormatException
               ? SyncFailureKind.mlsControlMalformed
@@ -4502,6 +5061,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         }
         await _ensureConversationAuthority(resolved.conversationId,
             client: client);
+        // A message this device can never decrypt does not throw: the
+        // crypto service commits past it with a placeholder row (D54), and
+        // the envelope is shown as that placeholder. What still throws here
+        // is a malformed event or a local failure, and that stops sync.
         try {
           if (bounded != null) {
             await bounded.processApplicationMessageBounded(resolved, event.id,
@@ -4512,7 +5075,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         } catch (err) {
           if (_isTransientSyncError(err)) rethrow;
           if (_isDurableStorageError(err)) {
-            throw failure(SyncFailureKind.localStorage);
+            throw failure(SyncFailureKind.localStorage, err);
           }
           if (_provenExpired(resolved.expiresAt)) {
             await _commitExpiredTombstone(event, id, wake);
@@ -4542,7 +5105,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         } catch (err) {
           if (_isTransientSyncError(err)) rethrow;
           if (_isDurableStorageError(err)) {
-            throw failure(SyncFailureKind.localStorage);
+            throw failure(SyncFailureKind.localStorage, err);
           }
           if (_provenExpired(call.expiresAt)) {
             await _commitExpiredTombstone(event, call.id, wake);
@@ -4569,7 +5132,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// failed to apply may be passed over only when its own expiry proves it
   /// would be gone anyway. The tombstone moves the cursor past the event and
   /// stores nothing else: no text, no envelope. Control messages never get
-  /// one.
+  /// one. (One the crypto service can never decrypt does not fail: it is
+  /// committed past with a placeholder, D54.)
   Future<void> _commitExpiredTombstone(
       SyncEvent event, String targetId, WakeRunContext? wake) async {
     final cursor = await localStore.loadSyncCursor();
@@ -4594,20 +5158,48 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// them; the rest of a sync page is shown when the page ends.
   static const _receivedBatchLimit = 50;
 
+  /// Received envelopes already committed whose history could not be read
+  /// to show them, and the sync owner generation that committed them. The
+  /// cursor is past them, so a later catch-up of that owner shows them, even
+  /// with no new events; no other owner ever does.
+  final _unpublishedReceived = <ReceivedMessageEnvelope>[];
+  int? _unpublishedGeneration;
+
   /// Shows [received] (already committed) with the decrypted history of
-  /// their conversations in one notification, then empties the list. The
-  /// history is read first, so no frame draws a decrypted message as
-  /// ciphertext; if that read fails the list is kept for the caller's
-  /// retry. Nothing is applied once another session owns sync.
+  /// their conversations in one notification, then empties the list.
+  /// Envelopes an earlier try of the same owner could not show go first.
+  /// The history is read first, so no frame draws a decrypted message as
+  /// ciphertext; if that read fails, the envelopes move to
+  /// [_unpublishedReceived] for the owner's next try and the error is
+  /// rethrown. Nothing is applied once another session owns sync, and work
+  /// kept for an owner that no longer runs is dropped.
   Future<void> _publishReceived(
     List<ReceivedMessageEnvelope> received,
     Session owner,
     int ownerGeneration,
   ) async {
+    if (_unpublishedGeneration != _sessionGeneration) {
+      _unpublishedReceived.clear();
+      _unpublishedGeneration = null;
+    }
+    if (_unpublishedGeneration == ownerGeneration) {
+      received.insertAll(0, _unpublishedReceived);
+      _unpublishedReceived.clear();
+      _unpublishedGeneration = null;
+    }
     if (received.isEmpty) return;
     final histories = <String, ConversationHistory>{};
-    for (final id in received.map((item) => item.conversationId).toSet()) {
-      histories[id] = await _loadHistory(id);
+    try {
+      for (final id in received.map((item) => item.conversationId).toSet()) {
+        histories[id] = await _loadHistory(id);
+      }
+    } catch (_) {
+      if (_syncOwnerActive(owner, ownerGeneration)) {
+        _unpublishedReceived.addAll(received);
+        _unpublishedGeneration = ownerGeneration;
+      }
+      received.clear();
+      rethrow;
     }
     if (_syncOwnerActive(owner, ownerGeneration)) {
       _mergeReceivedEnvelopes(received);
@@ -4684,6 +5276,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     required bool keepApiOpen,
   }) async {
     _sessionGeneration++;
+    _syncStartFailed = null;
+    _keyPackagesOwed = true;
+    _keyPackageRetryFailures = 0;
+    _keyPackageRetryAt = null;
     // Native permits go first, then capture, then the private notice state
     // (cleared with the rest of the local session below).
     _wakeRun?.cancel();
@@ -4736,11 +5332,36 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           preserveOutbox: preserveOutbox, keepDrafts: keepDrafts);
     } else {
       await localStore.clear();
+      // The MLS outbox went with the store; an item kept for a later
+      // session (the branch above) keeps its "accepted, unfinished" mark,
+      // or a re-send could meet a refusal that drops an accepted commit.
+      _mlsAcceptedUnfinished.clear();
     }
     session = null;
     final detachedApi = api;
     api = null;
     if (!keepApiOpen) detachedApi?.close();
+    _resetSessionMemory();
+    lifecycle = SessionLifecycle.ready;
+    recoveryMessage = null;
+    return keepApiOpen ? detachedApi : null;
+  }
+
+  /// Drops everything one session kept in memory: lists, flags, caches,
+  /// request decisions, retry state and timers. It makes no store call and
+  /// leaves [session], [api], [lifecycle] and [recoveryMessage] to the
+  /// caller. Shared by sign-out and the damaged-storage stop, so nothing of
+  /// one account carries over to the next (C-d0ba626ecdd7). The MLS
+  /// "accepted, unfinished" marks are not dropped here: they follow the
+  /// stored MLS outbox, not the session.
+  void _resetSessionMemory() {
+    _keyPackagesOwed = true;
+    _keyPackageRetryFailures = 0;
+    _keyPackageRetryAt = null;
+    if (cryptoService case final NoticeCaptureConsumer capture) {
+      capture.noticeCaptureEnabled = false;
+    }
+    _cancelDraftTimers();
     conversations = <Conversation>[];
     conversationsLoaded = false;
     communitiesLoaded = false;
@@ -4760,6 +5381,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     _outboxRetryTimer = null;
     _mlsOutboxRetryTimer?.cancel();
     _mlsOutboxRetryTimer = null;
+    _resetMlsRetries();
+    _outboxLocalFailures = 0;
+    _mlsOutboxLocalFailures = 0;
     _expiryTimer?.cancel();
     _expiryTimer = null;
     _cancelCatchUpRetry();
@@ -4768,6 +5392,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     _mlsReconcileNow.clear();
     _mlsReconcileRequested = true;
     _manualRetryKey = null;
+    _refreshAfterWake = false;
+    _replenishAfterWake = false;
+    _unpublishedReceived.clear();
+    _unpublishedGeneration = null;
     _loadingMessageConversations.clear();
     _messageLoadErrors.clear();
     selectedConversationId = null;
@@ -4801,9 +5429,6 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     _pendingWakeGeneration = 0;
     deviceRecoveryRequired = false;
     syncRecovery = null;
-    lifecycle = SessionLifecycle.ready;
-    recoveryMessage = null;
-    return keepApiOpen ? detachedApi : null;
   }
 
   Future<void> _persistSnapshot() async {
@@ -4819,17 +5444,29 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     return at != null && !at.isAfter(now);
   }
 
+  /// Conversations whose history reload after a purge failed, and the
+  /// session they belong to. Retried by the next purge, which is armed even
+  /// when nothing else is due to expire.
+  final Set<String> _historyReloadPending = <String>{};
+  Session? _historyReloadSession;
+
   /// Deletes what has expired from the encrypted database, then from the
   /// lists the screens read, and arms the timer for the next expiry (W2).
   Future<void> purgeExpiredMessages() async {
-    if (session == null || _purgingExpired) return;
+    final current = session;
+    if (current == null || _purgingExpired) return;
     _purgingExpired = true;
     final generation = _sessionGeneration;
+    final reloadSession = _historyReloadSession;
+    if (reloadSession == null || !_sameSession(reloadSession)) {
+      _historyReloadPending.clear();
+    }
     try {
       Set<String> touched;
       try {
         touched = await localStore.purgeExpiredMessages();
-        _expiryBackoff = Duration.zero;
+        // A reload that keeps failing keeps its growing pause.
+        if (_historyReloadPending.isEmpty) _expiryBackoff = Duration.zero;
       } catch (_) {
         // The delete is retried with a growing pause, on resume and on
         // restart. The lists below are still pruned, so expired text leaves
@@ -4851,21 +5488,52 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         }
         next[entry.key] = live;
       }
-      if (changed) {
-        messagesByConversation = next;
-        if (_mlsCrypto != null) {
-          for (final id in touched) {
-            if (_history.containsKey(id) || id == selectedConversationId) {
-              _history[id] = await _loadHistory(id);
-            }
+      if (changed) messagesByConversation = next;
+      final reload = <String>{...touched, ..._historyReloadPending};
+      if (_mlsCrypto != null && reload.isNotEmpty) {
+        var failed = false;
+        for (final id in reload) {
+          if (!_history.containsKey(id) && id != selectedConversationId) {
+            _historyReloadPending.remove(id);
+            continue;
           }
+          try {
+            final history = await _loadHistory(id);
+            if (generation != _sessionGeneration) return;
+            _history[id] = history;
+            _historyReloadPending.remove(id);
+          } catch (_) {
+            // The cached history still holds the deleted rows. Drop the
+            // expired ones now, so no view (timeline, replies, pins,
+            // starred) shows them; reactions come back with the reload,
+            // which is tried again.
+            if (generation != _sessionGeneration) return;
+            final cached = _history[id];
+            final nowMs = DateTime.now().millisecondsSinceEpoch;
+            bool live(LocalMessage m) =>
+                m.expiresAt == null || m.expiresAt! > nowMs;
+            if (cached != null && !cached.messages.every(live)) {
+              _history[id] = ConversationHistory(
+                conversationId: id,
+                messages: cached.messages.where(live).toList(),
+                reactions: const [],
+                copiedKeys: cached.copiedKeys,
+              );
+            }
+            _historyReloadPending.add(id);
+            _historyReloadSession = current;
+            failed = true;
+          }
+          changed = true;
         }
+        if (failed) _expiryBackoff = _nextExpiryBackoff(_expiryBackoff);
+      }
+      if (changed) {
         if (generation != _sessionGeneration) return;
         notifyListeners();
       }
     } catch (_) {
-      // Reloading a history failed; reads already hide what has expired, and
-      // the next purge tries again. Never blocks the app.
+      // Never blocks the app; the next purge tries again.
       _expiryBackoff = _nextExpiryBackoff(_expiryBackoff);
     } finally {
       _purgingExpired = false;
@@ -4885,8 +5553,16 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (generation != _sessionGeneration || _disposed) return;
     _expiryTimer?.cancel();
     _expiryTimer = null;
-    if (next == null) return;
-    var delay = next.difference(DateTime.now().toUtc());
+    final reloadSession = _historyReloadSession;
+    final reloadPending = _historyReloadPending.isNotEmpty &&
+        reloadSession != null &&
+        _sameSession(reloadSession);
+    if (next == null && !reloadPending) return;
+    // A failed history reload is retried after the pause even when nothing
+    // else is due to expire.
+    var delay =
+        next?.difference(DateTime.now().toUtc()) ?? const Duration(days: 1);
+    if (reloadPending && delay > _expiryBackoff) delay = _expiryBackoff;
     if (delay < const Duration(milliseconds: 500)) {
       delay = const Duration(milliseconds: 500);
     }
@@ -4899,7 +5575,35 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     });
   }
 
-  Future<void> _flushOutbox() async {
+  /// Outbox workers, their retry schedulers and the sync drain that
+  /// [dispose] starts without awaiting. Tracking only records the futures
+  /// AppState already creates; it changes no scheduling.
+  final Set<Future<void>> _backgroundWork = <Future<void>>{};
+
+  Future<void> _trackBackground(Future<void> Function() work) {
+    final future = work();
+    late final Future<void> settled;
+    settled = future
+        .then<void>((_) {}, onError: (Object _) {})
+        .whenComplete(() => _backgroundWork.remove(settled));
+    _backgroundWork.add(settled);
+    return future;
+  }
+
+  /// Completes once every tracked background operation (outbox and MLS
+  /// outbox passes, their retry scheduling, and the sync drain [dispose]
+  /// starts) has settled, including ones started while waiting. Tests
+  /// await it before closing the store under a disposed AppState.
+  @visibleForTesting
+  Future<void> get backgroundWorkIdle async {
+    while (_backgroundWork.isNotEmpty) {
+      await Future.wait(_backgroundWork.toList());
+    }
+  }
+
+  Future<void> _flushOutbox() => _trackBackground(_flushOutboxRun);
+
+  Future<void> _flushOutboxRun() async {
     if (_flushingOutbox) {
       _flushOutboxRequested = true;
       return;
@@ -4908,7 +5612,26 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     try {
       do {
         _flushOutboxRequested = false;
-        await _flushOutboxOnce();
+        final manualRetry = _manualRetryKey;
+        final owner = session;
+        try {
+          await _flushOutboxOnce();
+          _outboxLocalFailures = 0;
+        } catch (err) {
+          // A local storage failure leaves every envelope queued. Callers
+          // leave this future unawaited, so nothing may escape; the retry
+          // timer tries again with backoff (TASK-042). Only a pass that
+          // carried a retry the person tapped reports it, under
+          // [Ops.send]; a background pass is no user action.
+          _outboxLocalFailures++;
+          if (manualRetry != null &&
+              owner != null &&
+              _manualRetryKey == manualRetry &&
+              _sameSession(owner)) {
+            _opErrors[Ops.send] = describeError(err, l10n);
+            notifyListeners();
+          }
+        }
       } while (_flushOutboxRequested && !_disposed);
     } finally {
       _flushingOutbox = false;
@@ -5020,18 +5743,38 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     }
   }
 
-  Future<void> _scheduleOutboxRetry() async {
+  /// Consecutive application outbox passes or reads that failed locally.
+  int _outboxLocalFailures = 0;
+
+  Future<void> _scheduleOutboxRetry() =>
+      _trackBackground(_scheduleOutboxRetryRun);
+
+  Future<void> _scheduleOutboxRetryRun() async {
     _outboxRetryTimer?.cancel();
     _outboxRetryTimer = null;
-    if (_disposed || session == null || api == null) return;
-    final records = await localStore.pendingEnvelopeRecords();
-    // Held-back conversations wait for the MLS worker, which flushes when
-    // it finishes; scheduling them here would spin.
-    final heldBack = _mlsCrypto == null
-        ? const <String>{}
-        : (await localStore.pendingMlsMessages())
-            .map((message) => message.conversationId)
-            .toSet();
+    // The timer belongs to the session that read the outbox: one that ended
+    // or was replaced during the read arms nothing for its successor.
+    final owner = session;
+    final generation = _sessionGeneration;
+    if (_disposed || owner == null || api == null) return;
+    final List<PendingEnvelopeRecord> records;
+    final Set<String> heldBack;
+    try {
+      records = await localStore.pendingEnvelopeRecords();
+      // Held-back conversations wait for the MLS worker, which flushes when
+      // it finishes; scheduling them here would spin.
+      heldBack = _mlsCrypto == null
+          ? const <String>{}
+          : (await localStore.pendingMlsMessages())
+              .map((message) => message.conversationId)
+              .toSet();
+    } catch (_) {
+      // Unreadable outbox: try again later rather than wait for a wake.
+      if (_disposed || !_syncOwnerActive(owner, generation)) return;
+      _outboxLocalFailures++;
+      _armOutboxRetry(_localRetryDelay(_outboxLocalFailures));
+      return;
+    }
     final now = DateTime.now().toUtc();
     DateTime? earliest;
     for (final record in records) {
@@ -5045,8 +5788,22 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       // once; skipping it would strand it until the next wake.
       if (earliest == null || due.isBefore(earliest)) earliest = due;
     }
-    if (earliest == null || _disposed) return;
-    final delay = earliest.difference(now);
+    var delay = earliest?.difference(now);
+    // After a local failure a queued envelope may have no due time (it was
+    // never tried) or a stale one, so wait at least the local backoff.
+    if (_outboxLocalFailures > 0) {
+      final fallback = _localRetryDelay(_outboxLocalFailures);
+      if (delay == null || delay < fallback) delay = fallback;
+    }
+    if (delay == null || _disposed || !_syncOwnerActive(owner, generation)) {
+      return;
+    }
+    _armOutboxRetry(delay);
+  }
+
+  void _armOutboxRetry(Duration delay) {
+    // Two schedulers may overlap their reads; only the last timer stays.
+    _outboxRetryTimer?.cancel();
     _outboxRetryTimer =
         Timer(delay < _minimumRetryDelay ? _minimumRetryDelay : delay, () {
       _outboxRetryTimer = null;
@@ -5057,7 +5814,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// Delivers MLS control messages (I34). One worker runs at a time; a call
   /// while it runs asks for one more pass. It never throws, so callers may
   /// leave its future unawaited.
-  Future<void> _flushMlsOutbox() async {
+  Future<void> _flushMlsOutbox() => _trackBackground(_flushMlsOutboxRun);
+
+  Future<void> _flushMlsOutboxRun() async {
     if (_flushingMlsOutbox) {
       _flushMlsOutboxRequested = true;
       return;
@@ -5068,9 +5827,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         _flushMlsOutboxRequested = false;
         try {
           await _flushMlsOutboxOnce();
+          _mlsOutboxLocalFailures = 0;
         } catch (_) {
           // A local storage failure leaves every item queued; the retry
-          // timer or the next wake tries again.
+          // timer tries again with backoff, even for an item that names no
+          // due time.
+          _mlsOutboxLocalFailures++;
         }
       } while (_flushMlsOutboxRequested && !_disposed);
     } finally {
@@ -5092,6 +5854,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final ownerGeneration = _sessionGeneration;
     final messages = await localStore.pendingMlsMessages();
     if (!_syncOwnerActive(current, ownerGeneration)) return;
+    // Items settled some other way no longer need finishing.
+    _mlsAcceptedUnfinished.removeWhere(
+        (key) => !messages.any((message) => message.idempotencyKey == key));
     final byConversation = <String, List<PendingMlsMessage>>{};
     for (final message in messages) {
       byConversation
@@ -5110,7 +5875,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         if (message.nextAttemptAt?.isAfter(now) ?? false) break;
         final isBundle = message.kind == MlsCommitBundle.kind;
         try {
-          if (isBundle) {
+          if (_mlsAcceptedUnfinished.contains(message.idempotencyKey)) {
+            // The server already accepted it; only finishing it here
+            // failed. Sending it again could meet a refusal (this device
+            // removed meanwhile, say) that would drop an accepted commit.
+          } else if (isBundle) {
             await client.sendMlsCommitBundle(
               current.token,
               message.conversationId,
@@ -5146,6 +5915,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             // its duplicate check drops it, so it does not pause the
             // conversation, and the policy waits before trying again.
             await _mlsCrypto?.abandonCommitBundle(message);
+            if (!_syncOwnerActive(current, ownerGeneration)) return;
             _selfUpdatePolicyFor(current)?.recordBackoff(
                 message.conversationId, DateTime.now(), backoff);
             await _saveSelfUpdates();
@@ -5162,8 +5932,13 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             // Another commit won this epoch, or the change is no longer
             // valid. The staged commit was never merged, so dropping it
             // leaves this device in step with the group (card I51). Catch
-            // up, then reconcile again.
+            // up, then reconcile again: at once on a new epoch, otherwise
+            // after the change's backoff.
             await _mlsCrypto?.abandonCommitBundle(message);
+            // The retry maps belong to this session; once it ended they
+            // were cleared and must stay so.
+            if (!_syncOwnerActive(current, ownerGeneration)) return;
+            _mlsBundleRefused(message);
             _mlsReconcileRequested = true;
             unawaited(_catchUpSyncEvents());
             break;
@@ -5173,8 +5948,23 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           break;
         }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
+        try {
+          if (isBundle) {
+            await _mlsCrypto?.completeCommitBundle(message);
+          } else {
+            await localStore.removePendingMlsMessage(message.idempotencyKey);
+          }
+        } catch (err) {
+          // Accepted but not finished here: it is never dropped, and it
+          // holds back the rest of its conversation until a timed retry
+          // finishes it.
+          if (!_syncOwnerActive(current, ownerGeneration)) return;
+          _mlsAcceptedUnfinished.add(message.idempotencyKey);
+          await _recordMlsFinishFailure(message, err);
+          break;
+        }
+        _mlsAcceptedUnfinished.remove(message.idempotencyKey);
         if (isBundle) {
-          await _mlsCrypto?.completeCommitBundle(message);
           final bundle = MlsCommitBundle.decode(message.payload);
           // A self-update, and any commit that removes someone, carries an
           // update path: this device's leaf key is fresh again.
@@ -5183,8 +5973,6 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
                 ?.recordPathCommit(message.conversationId, DateTime.now());
             await _saveSelfUpdates();
           }
-        } else {
-          await localStore.removePendingMlsMessage(message.idempotencyKey);
         }
       }
     }
@@ -5214,6 +6002,31 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final client = api;
     final mls = _mlsCrypto;
     if (current == null || client == null || mls == null) return;
+    // Results are recorded only for the session that ran the pass: the
+    // retry maps of one that ended were cleared and stay so.
+    final ownerGeneration = _sessionGeneration;
+    try {
+      await _reconcileMlsMembershipOnce(current, client, mls);
+      if (_syncOwnerActive(current, ownerGeneration)) {
+        _mlsStepSettled('reconcile', failed: false);
+      }
+    } catch (err) {
+      // The pending-changes list could not be read: try again later, not
+      // only on the next catch-up something else starts.
+      if ((err is! ApiException || err.statusCode != 401) &&
+          _syncOwnerActive(current, ownerGeneration)) {
+        _mlsStepSettled('reconcile', failed: true);
+      }
+      rethrow;
+    } finally {
+      // Every pass, failed or not, re-arms the wake for the earliest change
+      // still backing off.
+      if (_syncOwnerActive(current, ownerGeneration)) _armMlsRetryWake();
+    }
+  }
+
+  Future<void> _reconcileMlsMembershipOnce(Session current, ApiClient client,
+      MlsConversationCryptoService mls) async {
     final ownerGeneration = _sessionGeneration;
     final changes = await client.mlsPendingChanges(current.token);
     if (!_syncOwnerActive(current, ownerGeneration)) return;
@@ -5225,6 +6038,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       final key = _pendingChangeKey(change);
       stillPending.add(key);
       final firstSeen = _mlsPendingSeen.putIfAbsent(key, () => now);
+      // A change whose bundle was refused is neither claimed nor staged
+      // again until its backoff passes.
+      if (_mlsChangeWaiting(change.conversationId, change.epoch, now)) {
+        continue;
+      }
       // The device that made the change commits it too, without waiting.
       final coordinator = change.coordinatorDeviceId == null ||
           change.coordinatorDeviceId == current.deviceId ||
@@ -5261,6 +6079,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         if (err is ApiException && err.statusCode == 401) rethrow;
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         failed = true;
+        // Not claimed again on every catch-up: it waits out a backoff.
+        _mlsChangeFailed(change.conversationId, change.epoch);
         // Body-free: no conversation, device or server text.
         developer.log(
             'mls_reconcile_conversation_failed '
@@ -5268,14 +6088,205 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             name: 'veritra.sync');
       }
     }
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
     _mlsPendingSeen.removeWhere((key, _) => !stillPending.contains(key));
     _mlsReconcileNow.removeWhere((conversationId) =>
         !changes.any((change) => change.conversationId == conversationId));
+    // A change the server no longer lists, or lists at another epoch, starts
+    // afresh.
+    _mlsChangeRetries.removeWhere((conversationId, retry) => !changes.any(
+        (change) =>
+            change.conversationId == conversationId &&
+            change.epoch == retry.epoch));
     if (failed) _mlsReconcileRequested = true;
     if (staged) await _flushMlsOutbox();
   }
 
   static const _reconcileFallback = Duration(minutes: 3);
+
+  // Membership changes that failed or whose commit bundle the server refused
+  // back off (TASK-029). Plan defaults for bug-hunt Q-003 and Q-005: a
+  // bounded, capped backoff and no terminal pause, since no source shows
+  // which refusals are permanent. A change is neither claimed nor staged
+  // again for [mlsRetryBase], doubling per attempt up to [mlsRetryCap], so a
+  // permanent refusal costs at most one key-package claim and one bundle
+  // per cap interval. A new epoch (another commit landed: a 409 epoch
+  // conflict) or the change leaving the server's list starts it afresh.
+  // Memory only; a restart or a session change resets it.
+
+  /// The first wait after a failed MLS membership change or catch-up step.
+  @visibleForTesting
+  Duration mlsRetryBase = const Duration(seconds: 1);
+
+  /// The longest wait between two attempts of one change or step.
+  @visibleForTesting
+  Duration mlsRetryCap = const Duration(minutes: 10);
+
+  /// Per conversation: the epoch the change failed at, how often, and when
+  /// it may go again. A null [due] has been handed to a pass already.
+  final Map<String, ({int epoch, int attempts, DateTime? due})>
+      _mlsChangeRetries =
+      <String, ({int epoch, int attempts, DateTime? due})>{};
+
+  /// Per catch-up step ('revocations', 'reconcile') that failed as a whole
+  /// or in part: how often in a row, and when the wake retries it.
+  final Map<String, ({int attempts, DateTime? due})> _mlsStepRetries =
+      <String, ({int attempts, DateTime? due})>{};
+
+  /// One timer for the earliest deadline above, so an idle session still
+  /// reconciles when a backoff ends. Separate from the catch-up and outbox
+  /// retry timers, which a successful catch-up or an empty outbox cancel.
+  Timer? _mlsRetryWake;
+
+  Duration _mlsRetryDelay(int attempts) {
+    var delay = mlsRetryBase;
+    for (var i = 1; i < attempts && delay < mlsRetryCap; i++) {
+      delay *= 2;
+    }
+    return delay > mlsRetryCap ? mlsRetryCap : delay;
+  }
+
+  /// Backs off the change of [conversationId] at [epoch] after a failure.
+  void _mlsChangeFailed(String conversationId, int epoch) {
+    final previous = _mlsChangeRetries[conversationId];
+    final attempts =
+        previous != null && previous.epoch == epoch ? previous.attempts + 1 : 1;
+    _mlsChangeRetries[conversationId] = (
+      epoch: epoch,
+      attempts: attempts,
+      due: DateTime.now().toUtc().add(_mlsRetryDelay(attempts)),
+    );
+  }
+
+  /// Whether the change of [conversationId] at [epoch] still waits out its
+  /// backoff at [now]. A change that may go takes its deadline with it, so
+  /// the wake does not fire for it again while the attempt runs.
+  bool _mlsChangeWaiting(String conversationId, int epoch, DateTime now) {
+    final retry = _mlsChangeRetries[conversationId];
+    if (retry == null) return false;
+    if (retry.epoch != epoch) {
+      _mlsChangeRetries.remove(conversationId);
+      return false;
+    }
+    final due = retry.due;
+    if (due == null) return false;
+    if (now.isBefore(due)) return true;
+    _mlsChangeRetries[conversationId] =
+        (epoch: retry.epoch, attempts: retry.attempts, due: null);
+    return false;
+  }
+
+  /// Records how a catch-up [step] went. A failed one is retried by the
+  /// wake after a backoff that grows while it keeps failing; it runs on
+  /// every catch-up meanwhile, as before.
+  void _mlsStepSettled(String step, {required bool failed}) {
+    if (failed) {
+      final attempts = (_mlsStepRetries[step]?.attempts ?? 0) + 1;
+      _mlsStepRetries[step] = (
+        attempts: attempts,
+        due: DateTime.now().toUtc().add(_mlsRetryDelay(attempts)),
+      );
+    } else if (_mlsStepRetries.remove(step) == null) {
+      return;
+    }
+    _armMlsRetryWake();
+  }
+
+  /// The server refused the membership bundle [message] for good or for
+  /// this epoch: its change backs off. A revocation commit has its own path.
+  void _mlsBundleRefused(PendingMlsMessage message) {
+    final MlsCommitBundle bundle;
+    try {
+      bundle = MlsCommitBundle.decode(message.payload);
+    } catch (_) {
+      return;
+    }
+    if (bundle.revocationDeviceId != null) return;
+    _mlsChangeFailed(message.conversationId, bundle.epoch);
+    _armMlsRetryWake();
+  }
+
+  /// Arms the wake for the earliest backoff deadline, replacing any earlier
+  /// one. It belongs to the session that armed it: once that session ends
+  /// or sync restarts, it does nothing.
+  void _armMlsRetryWake() {
+    _mlsRetryWake?.cancel();
+    _mlsRetryWake = null;
+    final owner = session;
+    if (_disposed || owner == null) return;
+    DateTime? earliest;
+    for (final due in _mlsRetryDeadlines()) {
+      if (earliest == null || due.isBefore(earliest)) earliest = due;
+    }
+    if (earliest == null) return;
+    final generation = _sessionGeneration;
+    final delay = earliest.difference(DateTime.now().toUtc());
+    _mlsRetryWake =
+        Timer(delay < _minimumRetryDelay ? _minimumRetryDelay : delay, () {
+      _mlsRetryWake = null;
+      if (_disposed) return;
+      if (!_syncOwnerActive(owner, generation)) {
+        // A rotated token or a sync restart keeps this device signed in:
+        // its backoffs are still in place (a session end clears them and
+        // cancels this timer), so the wake moves to the live owner instead
+        // of being lost.
+        final live = session;
+        if (live != null &&
+            live.baseUrl == owner.baseUrl &&
+            live.accountId == owner.accountId &&
+            live.deviceId == owner.deviceId) {
+          _armMlsRetryWake();
+        }
+        return;
+      }
+      // Hand every expired deadline to the catch-up below, so a pass that
+      // cannot reach the change (a failed fetch, say) does not re-fire the
+      // wake at once.
+      _consumeMlsRetryDeadlines(DateTime.now().toUtc());
+      _mlsReconcileRequested = true;
+      unawaited(_catchUpSyncEvents());
+      _armMlsRetryWake();
+    });
+  }
+
+  Iterable<DateTime> _mlsRetryDeadlines() sync* {
+    for (final retry in _mlsChangeRetries.values) {
+      final due = retry.due;
+      if (due != null) yield due;
+    }
+    for (final retry in _mlsStepRetries.values) {
+      final due = retry.due;
+      if (due != null) yield due;
+    }
+  }
+
+  void _consumeMlsRetryDeadlines(DateTime now) {
+    for (final entry in _mlsChangeRetries.entries.toList()) {
+      final due = entry.value.due;
+      if (due != null && !due.isAfter(now)) {
+        _mlsChangeRetries[entry.key] = (
+          epoch: entry.value.epoch,
+          attempts: entry.value.attempts,
+          due: null
+        );
+      }
+    }
+    for (final entry in _mlsStepRetries.entries.toList()) {
+      final due = entry.value.due;
+      if (due != null && !due.isAfter(now)) {
+        _mlsStepRetries[entry.key] =
+            (attempts: entry.value.attempts, due: null);
+      }
+    }
+  }
+
+  /// Drops every backoff and the wake: the session ended or the app closes.
+  void _resetMlsRetries() {
+    _mlsRetryWake?.cancel();
+    _mlsRetryWake = null;
+    _mlsChangeRetries.clear();
+    _mlsStepRetries.clear();
+  }
 
   /// A floor on retry timers, so an item a pass cannot send yet never
   /// turns the retry timer into a busy loop.
@@ -5289,20 +6300,43 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       ].join('|');
 
   /// Records one delivery failure and says whether it is terminal. Server
-  /// rejections are terminal; connection problems and busy servers retry
-  /// with bounded exponential backoff.
+  /// rejections are terminal, and so are local errors that cannot pass by
+  /// themselves: an item that does not decode, a bad argument, a durable
+  /// storage error (TASK-052). They pause the conversation, with the item
+  /// kept; nothing resumes it yet but the device's own recovery (bug-hunt
+  /// Q-006 is open). Connection problems, busy servers, a malformed
+  /// response, transient storage errors and unknown errors retry with
+  /// bounded exponential backoff.
   Future<bool> _recordMlsOutboxFailure(
       PendingMlsMessage message, Object error) async {
     final apiError = error is ApiException ? error : null;
-    final retryable = (apiError != null && _isTransientSyncError(apiError)) ||
-        (apiError == null && _isTransientSyncError(error));
-    final terminal = apiError != null && !retryable;
+    final bool terminal;
+    final String failureClass;
+    if (apiError != null) {
+      terminal = !_isTransientSyncError(apiError);
+      failureClass = terminal
+          ? 'terminal:${apiError.statusCode}:${apiError.serverCode ?? 'rejected'}'
+          : 'retryable:${apiError.statusCode}';
+    } else if (_isDurableLocalError(error)) {
+      terminal = true;
+      failureClass = 'terminal:local:${error.runtimeType}';
+    } else {
+      terminal = false;
+      failureClass = error is ApiResponseException
+          ? 'retryable:response'
+          : error is SocketException ||
+                  error is TimeoutException ||
+                  error is HttpException ||
+                  error is HandshakeException
+              ? 'retryable:network'
+              : _isTransientSyncError(error)
+                  ? 'retryable:local'
+                  : 'retryable:unknown';
+    }
     final exponent = min(message.attemptCount, 8);
     await localStore.recordMlsOutboxFailure(
       message.idempotencyKey,
-      failureClass: terminal
-          ? 'terminal:${apiError.statusCode}:${apiError.serverCode ?? 'rejected'}'
-          : 'retryable:${apiError?.statusCode ?? 'network'}',
+      failureClass: failureClass,
       terminal: terminal,
       nextAttemptAt: terminal
           ? null
@@ -5311,16 +6345,66 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     return terminal;
   }
 
-  Future<void> _scheduleMlsOutboxRetry() async {
+  /// A local error a retry cannot fix. A malformed server response is a
+  /// [FormatException] too, but the next answer may be fine.
+  static bool _isDurableLocalError(Object error) =>
+      (error is FormatException && error is! ApiResponseException) ||
+      error is ArgumentError ||
+      _isDurableStorageError(error);
+
+  /// Items the server accepted whose local finishing (merging the commit,
+  /// or removing the item) failed; the next pass only finishes them. Memory
+  /// only: after a restart the item is sent again, and the server answers
+  /// a repeated idempotency key with the original result.
+  final Set<String> _mlsAcceptedUnfinished = <String>{};
+
+  /// Consecutive MLS outbox passes or queue reads that failed locally.
+  int _mlsOutboxLocalFailures = 0;
+
+  /// Records that the server accepted [message] but finishing it here
+  /// failed with [error]. Always a timed retry with the item's own backoff,
+  /// never terminal: the group already moved on with it (TASK-030).
+  Future<void> _recordMlsFinishFailure(
+      PendingMlsMessage message, Object error) async {
+    // Body-free: no conversation, device or server text.
+    developer.log('mls_outbox_finish_failed ${error.runtimeType}',
+        name: 'veritra.sync');
+    final exponent = min(message.attemptCount, 8);
+    await localStore.recordMlsOutboxFailure(
+      message.idempotencyKey,
+      failureClass: 'retryable:finish',
+      terminal: false,
+      nextAttemptAt:
+          DateTime.now().toUtc().add(Duration(seconds: 1 << exponent)),
+    );
+  }
+
+  /// The wait after [failures] consecutive local storage failures of an
+  /// outbox worker: 1 s, doubling to 256 s, like an item's own retries.
+  static Duration _localRetryDelay(int failures) =>
+      Duration(seconds: 1 << min(max(failures - 1, 0), 8));
+
+  Future<void> _scheduleMlsOutboxRetry() =>
+      _trackBackground(_scheduleMlsOutboxRetryRun);
+
+  Future<void> _scheduleMlsOutboxRetryRun() async {
     _mlsOutboxRetryTimer?.cancel();
     _mlsOutboxRetryTimer = null;
-    if (_disposed || session == null || api == null || _mlsCrypto == null) {
+    // Armed only for the session that read the queue (see
+    // [_scheduleOutboxRetry]).
+    final owner = session;
+    final generation = _sessionGeneration;
+    if (_disposed || owner == null || api == null || _mlsCrypto == null) {
       return;
     }
     final List<PendingMlsMessage> messages;
     try {
       messages = await localStore.pendingMlsMessages();
     } catch (_) {
+      // Unreadable queue: try again later rather than wait for a wake.
+      if (_disposed || !_syncOwnerActive(owner, generation)) return;
+      _mlsOutboxLocalFailures++;
+      _armMlsOutboxRetry(_localRetryDelay(_mlsOutboxLocalFailures));
       return;
     }
     // Only the head of each conversation can be sent next; a conversation
@@ -5338,8 +6422,23 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (head.terminal || due == null) continue;
       if (earliest == null || due.isBefore(earliest)) earliest = due;
     }
-    if (earliest == null || _disposed) return;
-    final delay = earliest.difference(now);
+    var delay = earliest?.difference(now);
+    // After a local failure the stored due times may be stale or missing
+    // (the failure could not be recorded), so wait at least the local
+    // backoff: a due head would otherwise be retried at the floor forever.
+    if (_mlsOutboxLocalFailures > 0) {
+      final fallback = _localRetryDelay(_mlsOutboxLocalFailures);
+      if (delay == null || delay < fallback) delay = fallback;
+    }
+    if (delay == null || _disposed || !_syncOwnerActive(owner, generation)) {
+      return;
+    }
+    _armMlsOutboxRetry(delay);
+  }
+
+  void _armMlsOutboxRetry(Duration delay) {
+    // Two schedulers may overlap their reads; only the last timer stays.
+    _mlsOutboxRetryTimer?.cancel();
     _mlsOutboxRetryTimer =
         Timer(delay < _minimumRetryDelay ? _minimumRetryDelay : delay, () {
       _mlsOutboxRetryTimer = null;
@@ -5372,30 +6471,223 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     await _flushMlsOutbox();
   }
 
-  /// Every Welcome consumes one of this device's published key packages.
-  /// Publishing one back keeps the supply steady, so the device can keep
-  /// being added to new conversations. A failure only delays the top-up to
-  /// the next Welcome; the Welcome itself is already committed.
+  /// Every Welcome consumes one of this device's published key packages,
+  /// and the Welcome path has already owed its replacement durably.
+  /// Publishing what is owed keeps the supply steady, so the device can keep
+  /// being added to new conversations. Sync never fails over it: what a
+  /// failure leaves owed goes with the next Welcome or catch-up.
   Future<void> _replenishKeyPackage() async {
-    final current = session;
-    final client = api;
-    final mls = _mlsCrypto;
-    if (current == null || client == null || mls == null) return;
     try {
-      final packages = await mls.createReplenishmentKeyPackages(count: 1);
-      await client.publishDeviceKeyPackages(current.token, packages);
+      await _publishOwedKeyPackages();
     } catch (_) {
-      // Retried on the next Welcome.
+      // Still owed; retried later.
     }
   }
 
-  Future<void> _publishInitialMlsKeyPackages() async {
+  /// A new device's first key packages. Owed by [_oweInitialKeyPackages]
+  /// before its session was saved, so a failure here (reported by the
+  /// sign-in) or a crash is retried by restore, sign-in or catch-up.
+  Future<void> _publishInitialMlsKeyPackages() => _publishOwedKeyPackages();
+
+  // Key-package supply (TASK-028). The server never says how many unclaimed
+  // packages this device has left, so the device keeps a durable count of
+  // those it owes: the first batch of a new device, plus one per Welcome.
+  // The count lives in one local setting, scoped to the origin, account and
+  // device that owe it; a record of another identity counts as nothing and
+  // is replaced. It only goes down after the server accepted a publish (or
+  // answered that it holds its most). Residual: a crash after the server
+  // accepted a publish but before the count went down publishes that batch
+  // again (at most [_keyPackageBatchCap] spare packages). Each batch is
+  // generated, and its private keys stored, before it is sent: a batch that
+  // is never accepted stays in local MLS state unused, at most one batch
+  // per attempt, as no discard call exists.
+  static const _keyPackageNeedSetting = 'mls.key_package_need';
+
+  /// Most packages one publish carries, and most the record owes: the
+  /// native batch limit and the server's per-request limit.
+  static const _keyPackageBatchCap = 10;
+
+  /// A new device's first batch (the native default).
+  static const _initialKeyPackages = 5;
+
+  /// False only once this process has seen nothing owed for this session;
+  /// spares a store read on every catch-up.
+  bool _keyPackagesOwed = true;
+  int _keyPackageRetryFailures = 0;
+  DateTime? _keyPackageRetryAt;
+  Future<void> _keyPackageNeedLock = Future<void>.value();
+  Future<void>? _keyPackagePublish;
+  Session? _keyPackagePublishOwner;
+
+  String _keyPackageScope(Session owner) {
+    String origin;
+    try {
+      origin = canonicalizeServerOrigin(owner.baseUrl);
+    } on FormatException {
+      origin = owner.baseUrl;
+    }
+    return '$origin\u0000${owner.accountId}\u0000${owner.deviceId}';
+  }
+
+  /// The stored record when it belongs to [owner]'s identity, else null.
+  Future<({int need, String? welcome})?> _readKeyPackageNeed(
+      Session owner) async {
+    final raw = await localStore.loadSetting(_keyPackageNeedSetting);
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final record = jsonDecode(raw);
+      if (record is! Map || record['scope'] != _keyPackageScope(owner)) {
+        return null;
+      }
+      final need = record['need'];
+      final welcome = record['welcome'];
+      return (
+        need: need is int ? need.clamp(0, _keyPackageBatchCap) : 0,
+        welcome: welcome is String ? welcome : null,
+      );
+    } on FormatException {
+      return null;
+    }
+  }
+
+  /// One read-modify-write of [owner]'s record ([change] returns null to
+  /// leave it); they never interleave, so an increment and a decrement
+  /// cannot lose each other. Returns what [owner] owes afterwards.
+  Future<int> _changeKeyPackageNeed(
+      Session owner,
+      ({int need, String? welcome})? Function(
+              ({int need, String? welcome})? current)
+          change) {
+    final done = _keyPackageNeedLock.then((_) async {
+      final current = await _readKeyPackageNeed(owner);
+      final next = change(current);
+      final need = (next ?? current)?.need.clamp(0, _keyPackageBatchCap) ?? 0;
+      if (next != null) {
+        await localStore.saveSetting(
+            _keyPackageNeedSetting,
+            jsonEncode(<String, Object?>{
+              'scope': _keyPackageScope(owner),
+              'need': need,
+              if (next.welcome != null) 'welcome': next.welcome,
+            }));
+      }
+      if (_sameSession(owner)) _keyPackagesOwed = need > 0;
+      return need;
+    });
+    _keyPackageNeedLock =
+        done.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    return done;
+  }
+
+  /// Owes [count] more packages for [owner]. With [welcome], counts that
+  /// Welcome once: a replay or a retried event adds nothing.
+  Future<int> _oweKeyPackages(Session owner, int count, {String? welcome}) {
+    _keyPackagesOwed = true;
+    return _changeKeyPackageNeed(owner, (current) {
+      if (welcome != null && current?.welcome == welcome) return null;
+      return (
+        need: (current?.need ?? 0) + count,
+        welcome: welcome ?? current?.welcome,
+      );
+    });
+  }
+
+  /// Records [published] packages the server accepted for [owner].
+  Future<int> _settleKeyPackages(Session owner, int published) =>
+      _changeKeyPackageNeed(
+          owner,
+          (current) => current == null
+              ? null
+              : (need: current.need - published, welcome: current.welcome));
+
+  /// Written before a new device's session is saved, so even a crash right
+  /// after the save leaves its first batch owed.
+  Future<void> _oweInitialKeyPackages(Session created) async {
+    if (_mlsCrypto == null) return;
+    await _oweKeyPackages(created, _initialKeyPackages);
+  }
+
+  /// Publishes what this device owes, best effort: a failure stays owed.
+  /// Only a rejected session (401) is rethrown.
+  Future<void> _ensureKeyPackageSupply() async {
+    try {
+      await _publishOwedKeyPackages();
+    } catch (err) {
+      if (err is ApiException && err.statusCode == 401) rethrow;
+    }
+  }
+
+  /// After a catch-up pass that ended online: publishes anything still
+  /// owed, at once the first time and then with backoff (1 minute doubling
+  /// to an hour), as every attempt stores a batch of private keys first.
+  void _retryOwedKeyPackages() {
     final current = session;
+    if (!_keyPackagesOwed ||
+        current == null ||
+        _mlsCrypto == null ||
+        connectionStatus != ConnectionStatus.online) {
+      return;
+    }
+    final now = DateTime.now();
+    final at = _keyPackageRetryAt;
+    if (at != null && now.isBefore(at)) return;
+    _keyPackageRetryAt = now
+        .add(Duration(minutes: min(60, 1 << min(_keyPackageRetryFailures, 6))));
+    unawaited(_publishOwedKeyPackages().then((_) {
+      if (_sameSession(current)) {
+        _keyPackageRetryFailures = 0;
+        _keyPackageRetryAt = null;
+      }
+    }, onError: (Object _) {
+      if (_sameSession(current)) _keyPackageRetryFailures++;
+    }));
+  }
+
+  /// Publishes one capped batch of what the current session owes and
+  /// settles it once the server accepted it. One publish per session runs
+  /// at a time; a second caller joins it.
+  Future<void> _publishOwedKeyPackages() {
+    final current = session;
+    if (current == null) return Future<void>.value();
+    final running = _keyPackagePublish;
+    if (running != null && identical(_keyPackagePublishOwner, current)) {
+      return running;
+    }
+    final publish = _publishOwedKeyPackagesOnce(current);
+    _keyPackagePublish = publish;
+    _keyPackagePublishOwner = current;
+    unawaited(publish.then<void>((_) {}, onError: (Object _) {}).then((_) {
+      if (identical(_keyPackagePublish, publish)) {
+        _keyPackagePublish = null;
+        _keyPackagePublishOwner = null;
+      }
+    }));
+    return publish;
+  }
+
+  Future<void> _publishOwedKeyPackagesOnce(Session current) async {
     final client = api;
     final mls = _mlsCrypto;
-    if (current == null || client == null || mls == null) return;
-    final packages = await mls.createReplenishmentKeyPackages();
-    await client.publishDeviceKeyPackages(current.token, packages);
+    if (client == null || mls == null || !_sameSession(current)) return;
+    final owed = await _changeKeyPackageNeed(current, (_) => null);
+    if (owed <= 0 || !_sameSession(current)) return;
+    final packages = await mls.createReplenishmentKeyPackages(
+        count: min(owed, _keyPackageBatchCap));
+    // Generated for this session; never published for another.
+    if (!_sameSession(current)) return;
+    try {
+      await client.publishDeviceKeyPackages(current.token, packages);
+    } on ApiException catch (err) {
+      if (err.statusCode != 409 ||
+          err.serverCode != 'key_package_quota_exceeded') {
+        rethrow;
+      }
+      // The server already holds its most unclaimed packages for this
+      // device (50): nothing is owed.
+      await _settleKeyPackages(current, owed);
+      return;
+    }
+    await _settleKeyPackages(current, packages.length);
   }
 
   Future<void> _processMlsRevocations() async {
@@ -5403,17 +6695,40 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final client = api;
     final mls = _mlsCrypto;
     if (current == null || client == null || mls == null) return;
-    final revocations = await client.mlsRevocations(current.token);
+    // Recorded only for the session that ran the pass (see
+    // [_reconcileMlsMembership]).
+    final ownerGeneration = _sessionGeneration;
+    final List<MlsRevocation> revocations;
+    try {
+      revocations = await client.mlsRevocations(current.token);
+    } catch (err) {
+      // A revoked session ends the whole pass; otherwise reconcile still
+      // runs, and the list is read again after a backoff (TASK-035).
+      if (err is ApiException && err.statusCode == 401) rethrow;
+      // Body-free: no server text.
+      developer.log(
+          'mls_revocations_unavailable '
+          '${err is ApiException ? err.statusCode : err.runtimeType}',
+          name: 'veritra.sync');
+      if (_syncOwnerActive(current, ownerGeneration)) {
+        _mlsStepSettled('revocations', failed: true);
+      }
+      return;
+    }
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
+    var failed = false;
     _revocationPendingGroups
       ..clear()
       ..addAll(revocations
           .where((revocation) => revocation.state == 'pending')
           .map((revocation) => revocation.conversationId));
     for (final revocation in revocations) {
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
       // Each revocation is handled on its own: one that cannot be committed
       // here (no local group, or no leaf for the device) must not fail the
       // pass, or reconcile and the wake ACK never run. It is listed again,
-      // and tried again, on the next pass.
+      // and tried again on the next pass, which the wake starts after a
+      // backoff when nothing else does.
       try {
         if (revocation.state == 'pending' &&
             revocation.coordinatorDeviceId == current.deviceId) {
@@ -5421,11 +6736,27 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           // particular, a revocation commit queued before a restart is
           // still "pending" on the server until it is delivered; making
           // another one would fork the group.
+          var target = revocation;
           if (await _hasPendingMlsWork(revocation.conversationId)) {
             await _flushMlsOutbox();
             if (await _hasPendingMlsWork(revocation.conversationId)) continue;
+            // The drain may have delivered this revocation's own commit, and
+            // the list above predates it: read the revocation again and
+            // commit only if the server still waits for this device.
+            final fresh = (await client.mlsRevocations(current.token))
+                .where((item) =>
+                    item.conversationId == revocation.conversationId &&
+                    item.revokedDeviceId == revocation.revokedDeviceId)
+                .firstOrNull;
+            if (fresh == null ||
+                fresh.state != 'pending' ||
+                fresh.coordinatorDeviceId != current.deviceId ||
+                await _hasPendingMlsWork(revocation.conversationId)) {
+              continue;
+            }
+            target = fresh;
           }
-          await mls.createRevocationCommit(revocation);
+          await mls.createRevocationCommit(target);
           await _flushMlsOutbox();
           continue;
         }
@@ -5442,6 +6773,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       } catch (err) {
         // A revoked session ends the whole pass.
         if (err is ApiException && err.statusCode == 401) rethrow;
+        failed = true;
         // Body-free: no conversation, device or server text.
         developer.log(
             'mls_revocation_failed '
@@ -5449,6 +6781,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             name: 'veritra.sync');
       }
     }
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
+    _mlsStepSettled('revocations', failed: failed);
   }
 
   /// How long the self-update policy waits after the server refused the
@@ -5700,7 +7034,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     // The UI validates too, but this is the one place every connection path
     // (setup, registration, sign-in, device link, restore) goes through.
     if (!config.transport.allows(baseUrl)) {
-      throw StateError(l10n.errorServerNotAllowed(baseUrl));
+      throw UserFacingException(l10n.errorServerNotAllowed(baseUrl));
     }
     api?.close();
     api = apiClientFactory(baseUrl);
@@ -5735,8 +7069,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     return succeeded;
   }
 
+  /// Bodies of [_run] executing right now (0 or 1: they are queued).
+  int _runsActive = 0;
+
   Future<void> _run(Future<void> Function() body) async {
     await _enqueueSessionTransition(() async {
+      _runsActive++;
       busy = true;
       error = null;
       notifyListeners();
@@ -5756,6 +7094,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         }
         error = describeError(err, l10n);
       } finally {
+        _runsActive--;
         busy = false;
         notifyListeners();
       }
@@ -5783,12 +7122,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     receipts.dispose();
     _sessionGeneration++;
     _syncOwner?.dispose();
-    unawaited(_syncOwner?.cancelAndDrain());
+    final drain = _syncOwner?.cancelAndDrain();
+    if (drain != null) unawaited(_trackBackground(() => drain));
     _syncOwner = null;
     _outboxRetryTimer?.cancel();
     _outboxRetryTimer = null;
     _mlsOutboxRetryTimer?.cancel();
     _mlsOutboxRetryTimer = null;
+    _resetMlsRetries();
     _expiryTimer?.cancel();
     _expiryTimer = null;
     _muteTimer?.cancel();

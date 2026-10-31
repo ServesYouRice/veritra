@@ -339,6 +339,12 @@ abstract class AppLocalizations {
   /// **'The setting could not be changed. Check your connection and try again.'**
   String get settingsReadReceiptsFailed;
 
+  /// No description provided for @settingsReadReceiptsNotSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'This device could not save the setting. It applies for now but may reset when the app restarts.'**
+  String get settingsReadReceiptsNotSaved;
+
   /// No description provided for @settingsSectionAbout.
   ///
   /// In en, this message translates to:
@@ -1989,6 +1995,12 @@ abstract class AppLocalizations {
   /// **'Link this device again'**
   String get bannerRelink;
 
+  /// No description provided for @bannerRestoreBackup.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore from backup'**
+  String get bannerRestoreBackup;
+
   /// No description provided for @bannerRelinkTitle.
   ///
   /// In en, this message translates to:
@@ -2895,6 +2907,12 @@ abstract class AppLocalizations {
   /// **'A message could not be read'**
   String get chatMessageInvalid;
 
+  /// No description provided for @chatMessageUndecryptable.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t unlock this message'**
+  String get chatMessageUndecryptable;
+
   /// No description provided for @chatReactionCount.
   ///
   /// In en, this message translates to:
@@ -3542,6 +3560,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This device could not update its message storage for this version of Veritra. Nothing has been changed or deleted. Retry. If it keeps failing, you can reset this device and link it again.'**
   String get recoveryUpgradeError;
+
+  /// Recovery screen message when sync found the encrypted local database corrupt or not a database while the app was running. Retry reopens it; the reset it mentions moves the old data aside and needs confirmation.
+  ///
+  /// In en, this message translates to:
+  /// **'This device\'s message storage is damaged and cannot be read, so sync has stopped. Nothing has been deleted. Retry, or reset this device and link it again.'**
+  String get recoveryStorageDamaged;
 
   /// Recovery screen message when the SQLite library in this build has no encryption cipher or no FTS5 search support. The database and key are untouched; retrying or resetting cannot help.
   ///

@@ -27,8 +27,10 @@ PRIVATE_MESSENGER_LOG_LEVEL=error \
 SERVER_PID=$!
 
 ready=0
+# Each probe is bounded too, so one hung request cannot stall the wait:
+# at most 80 x (2 s + 0.25 s).
 for _ in $(seq 1 80); do
-  if curl --fail --silent "$BASE_URL/healthz" >/dev/null 2>&1; then
+  if curl --fail --silent --connect-timeout 1 --max-time 2 "$BASE_URL/healthz" >/dev/null 2>&1; then
     ready=1
     break
   fi

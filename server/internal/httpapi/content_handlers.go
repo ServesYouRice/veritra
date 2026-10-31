@@ -155,7 +155,8 @@ func (a *API) uploadBackup(w http.ResponseWriter, r *http.Request, principal dom
 		writeError(w, http.StatusBadRequest, "key_derivation_metadata_required")
 		return
 	}
-	if !validBackupCryptoMetadata(metadata) {
+	metadata, ok := canonicalBackupCryptoMetadata(metadata)
+	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid_key_derivation_metadata")
 		return
 	}
@@ -187,17 +188,44 @@ func (a *API) uploadBackup(w http.ResponseWriter, r *http.Request, principal dom
 	writeJSON(w, http.StatusCreated, map[string]interface{}{"storage_key": blob.StorageKey, "ciphertext_sha256": blob.SHA256, "size_bytes": blob.Size})
 }
 
-func validBackupCryptoMetadata(raw json.RawMessage) bool {
-	var metadata struct {
-		Version      int    `json:"version"`
-		Algorithm    string `json:"algorithm"`
-		ChunkSize    int    `json:"chunk_size"`
-		StateCounter int64  `json:"state_counter"`
-	}
+// backupCryptoMetadata is the key derivation metadata of an encrypted backup.
+type backupCryptoMetadata struct {
+	Version      int    `json:"version"`
+	Algorithm    string `json:"algorithm"`
+	ChunkSize    int    `json:"chunk_size"`
+	StateCounter int64  `json:"state_counter"`
+}
+
+// canonicalBackupCryptoMetadata validates backup key derivation metadata and
+// returns it re-encoded. Each field is read from its exact lowercase key:
+// encoding/json matches struct fields case-insensitively, and storage reads
+// the counter back with json_extract('$.state_counter'), so a document with
+// "STATE_COUNTER" (or a repeated key) could pass validation with one counter
+// and be stored with another. The re-encoded document is what is stored.
+func canonicalBackupCryptoMetadata(raw json.RawMessage) (json.RawMessage, bool) {
 	var fields map[string]json.RawMessage
-	return json.Unmarshal(raw, &metadata) == nil && json.Unmarshal(raw, &fields) == nil &&
-		len(fields) == 4 && metadata.Version == 1 && metadata.Algorithm == "AES-256-GCM-chunked" &&
-		metadata.ChunkSize == 1024*1024 && metadata.StateCounter > 0
+	if json.Unmarshal(raw, &fields) != nil || len(fields) != 4 {
+		return nil, false
+	}
+	var metadata backupCryptoMetadata
+	for key, target := range map[string]interface{}{
+		"version": &metadata.Version, "algorithm": &metadata.Algorithm,
+		"chunk_size": &metadata.ChunkSize, "state_counter": &metadata.StateCounter,
+	} {
+		value, ok := fields[key]
+		if !ok || json.Unmarshal(value, target) != nil {
+			return nil, false
+		}
+	}
+	if metadata.Version != 1 || metadata.Algorithm != "AES-256-GCM-chunked" ||
+		metadata.ChunkSize != 1024*1024 || metadata.StateCounter <= 0 {
+		return nil, false
+	}
+	canonical, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, false
+	}
+	return canonical, true
 }
 
 func (a *API) recoverBackup(w http.ResponseWriter, r *http.Request) {
@@ -629,26 +657,44 @@ func (a *API) serveEncryptedBlob(w http.ResponseWriter, r *http.Request, ref upl
 	}
 }
 
+// blobCleanupTimeout bounds each step of an inline blob cleanup: the delete,
+// and separately the durable record that keeps a failed delete from being
+// forgotten. Tests shorten it.
+var blobCleanupTimeout = 5 * time.Second
+
+// blobCleanupContext is a fresh cleanup deadline detached from the request.
+// Each step takes its own, so a delete that used up its time cannot leave
+// the fallback record that follows it with an expired context.
+func blobCleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), blobCleanupTimeout)
+}
+
 func (a *API) cleanupUncommittedBlob(ctx context.Context, storageKey string) {
-	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cancel()
-	if err := a.Blobs.Delete(cleanupCtx, storageKey); err == nil {
+	deleteCtx, cancelDelete := blobCleanupContext(ctx)
+	err := a.Blobs.Delete(deleteCtx, storageKey)
+	cancelDelete()
+	if err == nil {
 		return
 	}
-	if err := a.Store.QueueBlobDeletion(cleanupCtx, storageKey); err != nil {
+	queueCtx, cancelQueue := blobCleanupContext(ctx)
+	defer cancelQueue()
+	if err := a.Store.QueueBlobDeletion(queueCtx, storageKey); err != nil {
 		a.warn("blob_cleanup_queue_failed")
 	}
 }
 
 func (a *API) completeQueuedBlobDeletion(ctx context.Context, storageKey string) {
-	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cancel()
-	if err := a.Blobs.Delete(cleanupCtx, storageKey); err != nil {
-		_ = a.Store.RecordBlobDeletionFailure(cleanupCtx, storageKey)
+	deleteCtx, cancelDelete := blobCleanupContext(ctx)
+	err := a.Blobs.Delete(deleteCtx, storageKey)
+	cancelDelete()
+	recordCtx, cancelRecord := blobCleanupContext(ctx)
+	defer cancelRecord()
+	if err != nil {
+		_ = a.Store.RecordBlobDeletionFailure(recordCtx, storageKey)
 		a.warn("blob_cleanup_deferred")
 		return
 	}
-	if err := a.Store.CompleteBlobDeletion(cleanupCtx, storageKey); err != nil {
+	if err := a.Store.CompleteBlobDeletion(recordCtx, storageKey); err != nil {
 		a.warn("blob_cleanup_completion_failed")
 	}
 }

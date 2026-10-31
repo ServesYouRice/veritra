@@ -65,7 +65,10 @@ enum LocalStoreFailureKind {
 
   /// The key opened the database, but upgrading or opening it for this app
   /// version failed for another reason, for example a damaged page or a step
-  /// that cannot complete. The upgrade rolled back and nothing was changed.
+  /// that cannot complete, such as moving a corrupt legacy secure-storage
+  /// record into the database or a move that did not check out. The upgrade
+  /// rolled back and nothing was changed; a legacy record is kept. A reset
+  /// discards that record along with the database.
   /// A retry runs it again; if that keeps failing, only the confirmed
   /// [LocalStore.quarantineUnreadableDatabase] moves the database aside.
   upgradeFailed,
@@ -2332,6 +2335,10 @@ class SecureLocalStore implements LocalStore {
                 recipientDeviceId: item.recipientDeviceId,
                 revocationDeviceId: item.revocationDeviceId,
                 payload: item.payload,
+                attemptCount: item.attemptCount,
+                nextAttemptAt: item.nextAttemptAt?.millisecondsSinceEpoch,
+                failureClass: item.failureClass,
+                terminal: item.terminal,
               ))
           .toList(),
       cryptoState: (
@@ -2472,28 +2479,83 @@ class SecureLocalStore implements LocalStore {
       throw ArgumentError.value(confirmed, 'confirmed',
           'resetting the local database needs explicit confirmation');
     }
+    // Synchronously, before any await: from here on no _database() call is
+    // given the cached handle on the files this reset moves, and every new
+    // open waits until the reset has finished.
     final opening = _openingDatabase;
-    _openingDatabase = null;
-    if (opening != null) {
-      try {
-        await (await opening).close();
-      } catch (_) {
-        // It never opened; there is nothing to close.
+    _resetGeneration++;
+    final previousReset = _resetBarrier;
+    final finished = Completer<void>();
+    _resetBarrier = finished.future;
+    EncryptedLocalDatabase? stale;
+    var staleClosed = false;
+    try {
+      if (previousReset != null) await previousReset;
+      // An open already requested finishes first. It may be queued on the
+      // profile chain, so it is awaited before the reset joins that chain.
+      if (opening != null) {
+        try {
+          stale = await opening;
+        } catch (_) {
+          // It never opened; there is nothing to close.
+        }
       }
+      final directory = await _profileDirectory();
+      await _serializeProfile(_databaseFileIn(directory).absolute.path,
+          () async {
+        final releaseLocks = await _acquireProfileLocks(directory);
+        try {
+          // Closed before any file moves. The database object is closed
+          // directly: _database() would wait for this reset.
+          staleClosed = true;
+          try {
+            await stale?.close();
+          } catch (_) {
+            // It is not used again either way.
+          }
+          await _writeResetIntent(directory);
+          await _completeReset(directory);
+        } finally {
+          await releaseLocks();
+        }
+      });
+      _syncLeaseKey = null;
+    } finally {
+      if (!staleClosed) {
+        // The reset stopped before its locked section and moved nothing;
+        // the old handle is not handed out again, so it is closed here.
+        try {
+          await stale?.close();
+        } catch (_) {}
+      }
+      // Only the open this reset replaced; a newer one is left alone.
+      if (identical(_openingDatabase, opening)) _openingDatabase = null;
+      if (identical(_resetBarrier, finished.future)) _resetBarrier = null;
+      finished.complete();
     }
-    final directory = await _profileDirectory();
-    await _writeResetIntent(directory);
-    await _completeReset(directory);
-    _syncLeaseKey = null;
   }
+
+  /// Raised by each requested reset. A cached open from an earlier
+  /// generation belongs to files a reset moves, so it is never reused.
+  int _resetGeneration = 0;
+  int _openingGeneration = 0;
+
+  /// Completes when the latest requested reset has finished (or failed).
+  Future<void>? _resetBarrier;
 
   /// A failed open is not cached: the next call opens again, so a key that
   /// becomes readable later (after unlock, say) is picked up by a retry.
   Future<EncryptedLocalDatabase> _database() {
     final existing = _openingDatabase;
-    if (existing != null) return existing;
-    final opening = _openDatabase();
+    if (existing != null && _openingGeneration == _resetGeneration) {
+      return existing;
+    }
+    final barrier = _resetBarrier;
+    final opening = barrier == null
+        ? _openDatabase()
+        : barrier.then((_) => _openDatabase());
     _openingDatabase = opening;
+    _openingGeneration = _resetGeneration;
     unawaited(opening.then<void>((_) {}, onError: (Object error) {
       if (identical(_openingDatabase, opening)) _openingDatabase = null;
     }));
@@ -2549,15 +2611,26 @@ class SecureLocalStore implements LocalStore {
         'unreadable-$stamp');
     await quarantine.create(recursive: true);
     // Keep the key with the files so the copy stays readable if the key was
-    // only temporarily unreadable. Copy before moving any file.
+    // only temporarily unreadable. Copy before moving any file. A read that
+    // failed is not an absent key, and the original entry is deleted only
+    // once its copy was written and read back equal: otherwise it stays, so
+    // the moved files always have a stored key that opens them.
     String? key;
+    var keyReadFailed = false;
     try {
       key = await _storage.read(key: _databaseKeyName);
     } catch (_) {
-      key = null;
+      keyReadFailed = true;
     }
+    var keyArchived = false;
     if (key != null) {
-      await _storage.write(key: '$_quarantinedKeyPrefix$stamp', value: key);
+      final archiveName = '$_quarantinedKeyPrefix$stamp';
+      try {
+        await _storage.write(key: archiveName, value: key);
+        keyArchived = await _storage.read(key: archiveName) == key;
+      } catch (_) {
+        keyArchived = false;
+      }
     }
     for (final name in _databaseFileNames) {
       final file = File('${directory.path}${Platform.pathSeparator}$name');
@@ -2565,32 +2638,76 @@ class SecureLocalStore implements LocalStore {
         await file.rename('${quarantine.path}${Platform.pathSeparator}$name');
       }
     }
-    await _storage.delete(key: _databaseKeyName);
+    if (!keyReadFailed && (key == null || keyArchived)) {
+      await _storage.delete(key: _databaseKeyName);
+    }
     await _storage.delete(key: _legacyRecordKeyName);
     await intent.delete();
   }
 
+  static File _databaseFileIn(Directory directory) =>
+      File('${directory.path}${Platform.pathSeparator}veritra-local.db');
+
   Future<EncryptedLocalDatabase> _openDatabase() async {
     final existingOnly = _existingOnly;
     final directory = await _profileDirectory(existingOnly: existingOnly);
-    final databaseFile =
-        File('${directory.path}${Platform.pathSeparator}veritra-local.db');
+    final databaseFile = _databaseFileIn(directory);
     final path = databaseFile.absolute.path;
     _databasePath = path;
+    return _serializeProfile(
+        path,
+        () => _openDatabaseLocked(directory, databaseFile,
+            existingOnly: existingOnly));
+  }
+
+  /// Runs [action] after every open or reset of the database at [path] that
+  /// this isolate requested earlier, and before any requested later.
+  static Future<T> _serializeProfile<T>(
+      String path, Future<T> Function() action) async {
     final previous = _databaseOpenTails[path] ?? Future<void>.value();
     final release = Completer<void>();
     final current = previous.then((_) => release.future);
     _databaseOpenTails[path] = current;
     await previous;
     try {
-      return await _openDatabaseLocked(directory, databaseFile,
-          existingOnly: existingOnly);
+      return await action();
     } finally {
       release.complete();
       if (identical(_databaseOpenTails[path], current)) {
         _databaseOpenTails.remove(path);
       }
     }
+  }
+
+  /// Takes the profile's ownership locks, used by both open and reset: the
+  /// instance lock this process keeps (a profile another process owns is
+  /// refused as [LocalStoreFailureKind.profileLocked], before anything is
+  /// touched) and the exclusive `veritra-local.lock` until the returned
+  /// function releases it.
+  static Future<Future<void> Function()> _acquireProfileLocks(
+      Directory directory) async {
+    try {
+      await _holdInstanceLock(directory);
+    } on StateError {
+      throw const LocalStoreUnavailableException(
+          LocalStoreFailureKind.profileLocked);
+    }
+    final lockFile =
+        File('${directory.path}${Platform.pathSeparator}veritra-local.lock');
+    final lock = await lockFile.open(mode: FileMode.append);
+    try {
+      await lock.lock(FileLock.exclusive);
+    } catch (_) {
+      await lock.close();
+      rethrow;
+    }
+    return () async {
+      try {
+        await lock.unlock();
+      } finally {
+        await lock.close();
+      }
+    };
   }
 
   Future<EncryptedLocalDatabase> _openDatabaseLocked(
@@ -2621,16 +2738,7 @@ class SecureLocalStore implements LocalStore {
             LocalStoreFailureKind.keyUnavailable);
       }
     }
-    try {
-      await _holdInstanceLock(directory);
-    } on StateError {
-      throw const LocalStoreUnavailableException(
-          LocalStoreFailureKind.profileLocked);
-    }
-    final lockFile =
-        File('${directory.path}${Platform.pathSeparator}veritra-local.lock');
-    final lock = await lockFile.open(mode: FileMode.append);
-    await lock.lock(FileLock.exclusive);
+    final releaseLocks = await _acquireProfileLocks(directory);
     try {
       // Before anything can fail: a database from an older build that this
       // one cannot open is excluded too, and a new database file is created
@@ -2687,9 +2795,20 @@ class SecureLocalStore implements LocalStore {
           throw const LocalStoreUnavailableException(
               LocalStoreFailureKind.sqliteFeatureMissing);
         }
-        if (!databaseExists) rethrow;
-        if (database != null && database.upgradeStarted) {
-          // The key opened the file and the upgrade rolled back. Drift
+        if (!databaseExists) {
+          // A new database that failed to open: close the handle so nothing
+          // holds the file (Windows refuses to move an open one).
+          try {
+            await database?.close();
+          } catch (_) {}
+          rethrow;
+        }
+        if (database != null &&
+            (database.upgradeStarted || database.createStarted)) {
+          // The key opened the file (or it was empty) and the create or
+          // upgrade rolled back, as when a first create filled the disk and
+          // left an empty version-0 file. Never a wrong key, so no reset is
+          // offered that would delete the legacy record. Drift
           // refuses any further use of this handle, so close it; a retry
           // opens a new one. Nothing is deleted or reset.
           try {
@@ -2722,14 +2841,27 @@ class SecureLocalStore implements LocalStore {
           rethrow;
         }
       } else {
-        await _migrateLegacyRecord(database);
+        try {
+          await _migrateLegacyRecord(database);
+        } catch (error) {
+          // The key opened the file, but this open still fails, so the handle
+          // is closed as after a failed upgrade. Nothing was deleted: the
+          // legacy record stays, and a retry runs the migration again.
+          try {
+            await database.close();
+          } catch (_) {}
+          if (error is LocalStoreUnavailableException) rethrow;
+          throw LocalStoreUnavailableException(isStorageFullError(error)
+              ? LocalStoreFailureKind.upgradeStorageFull
+              : LocalStoreFailureKind.upgradeFailed);
+        }
+        await _repairEnvelopeExpiry(database);
       }
       // Again now that the database, WAL and SHM files exist.
       await _excludeFromBackup(directory);
       return database;
     } finally {
-      await lock.unlock();
-      await lock.close();
+      await releaseLocks();
     }
   }
 
@@ -2798,11 +2930,29 @@ class SecureLocalStore implements LocalStore {
     _instanceLocks[path] = handle;
   }
 
+  /// Moves the legacy secure-storage record into the database once. A
+  /// record that cannot be read throws [LocalStoreFailureKind.keyUnavailable];
+  /// a corrupt record or a failed check throws for the caller to classify.
+  /// The record is deleted only after the check passed and the marker was
+  /// written.
   Future<void> _migrateLegacyRecord(EncryptedLocalDatabase database) async {
-    final raw = await _storage.read(key: _legacyRecordKeyName);
+    // The marker first: once the migration finished, a keystore that cannot
+    // be read must not stop the database from opening. Removing a leftover
+    // record is then best effort; a later open tries again.
     if (await database.readMetadata(_migrationMarker) == '1') {
-      if (raw != null) await _storage.delete(key: _legacyRecordKeyName);
+      try {
+        if (await _storage.read(key: _legacyRecordKeyName) != null) {
+          await _storage.delete(key: _legacyRecordKeyName);
+        }
+      } catch (_) {}
       return;
+    }
+    final String? raw;
+    try {
+      raw = await _storage.read(key: _legacyRecordKeyName);
+    } catch (_) {
+      throw const LocalStoreUnavailableException(
+          LocalStoreFailureKind.keyUnavailable);
     }
     if (raw == null || raw.isEmpty) {
       await database.writeMetadata(_migrationMarker, '1');
@@ -2820,7 +2970,22 @@ class SecureLocalStore implements LocalStore {
     );
     await _verifyLegacyMigration(database, legacy);
     await database.writeMetadata(_migrationMarker, '1');
-    await _storage.delete(key: _legacyRecordKeyName);
+    try {
+      await _storage.delete(key: _legacyRecordKeyName);
+    } catch (_) {
+      // Migrated and marked: the next open removes the leftover record.
+    }
+  }
+
+  /// Runs after the legacy migration has finished or found nothing to do,
+  /// and before anything reads the next expiry. Best effort: a failure
+  /// writes no marker, so the repair runs again on the next open, and the
+  /// database still opens.
+  static Future<void> _repairEnvelopeExpiry(
+      EncryptedLocalDatabase database) async {
+    try {
+      await database.repairNullEnvelopeExpiry();
+    } catch (_) {}
   }
 
   Future<void> _verifyLegacyMigration(
@@ -3150,6 +3315,16 @@ List<int> _encodeBackup(LocalBackupData data) => utf8.encode(jsonEncode(
                   if (item.revocationDeviceId != null)
                     'revocation_device_id': item.revocationDeviceId,
                   'payload': base64Encode(item.payload),
+                  // Delivery state (I34): a terminal item keeps blocking its
+                  // conversation and a backed-off one keeps its wait. Older
+                  // backups lack these keys; they decode to the defaults.
+                  'attempt_count': item.attemptCount,
+                  if (item.nextAttemptAt != null)
+                    'next_attempt_at':
+                        item.nextAttemptAt!.toUtc().millisecondsSinceEpoch,
+                  if (item.failureClass != null)
+                    'failure_class': item.failureClass,
+                  'terminal': item.terminal,
                 })
             .toList(),
         'crypto_state': <String, Object?>{
@@ -3226,6 +3401,22 @@ LocalBackupData _decodeBackup(List<int> encoded) {
         recipientDeviceId: value['recipient_device_id'] as String?,
         revocationDeviceId: value['revocation_device_id'] as String?,
         payload: base64Decode(value['payload'] as String),
+        attemptCount: _optionalBackupInt(value, 'attempt_count') ?? 0,
+        nextAttemptAt: switch (_optionalBackupInt(value, 'next_attempt_at')) {
+          null => null,
+          final millis =>
+            DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true),
+        },
+        failureClass: switch (value['failure_class']) {
+          null => null,
+          final String failureClass => failureClass,
+          _ => throw const FormatException('invalid backup failure class'),
+        },
+        terminal: switch (value['terminal']) {
+          null => false,
+          final bool terminal => terminal,
+          _ => throw const FormatException('invalid backup terminal flag'),
+        },
       );
     }).toList(growable: false);
     final cursor = (root['cursor'] as num).toInt();
@@ -3290,6 +3481,17 @@ LocalBackupData _decodeBackup(List<int> encoded) {
     if (error is FormatException) rethrow;
     throw const FormatException('invalid backup encoding');
   }
+}
+
+/// A non-negative integer under [name] in a backup entry, or null when the
+/// key is absent (an older backup).
+int? _optionalBackupInt(Map<String, Object?> value, String name) {
+  final raw = value[name];
+  if (raw == null) return null;
+  if (raw is! int || raw < 0) {
+    throw FormatException('invalid backup $name');
+  }
+  return raw;
 }
 
 void _validateCryptoState(StoredCryptoState state) {

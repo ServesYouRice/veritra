@@ -327,6 +327,11 @@ void main() {
       final upgraded = createStore();
       expect(await found(upgraded, 'index'), <String>['dev_peer:a']);
       final reopened = databases.last;
+      // The backfill takes message text only: an attachment body (which
+      // carries key material) is not indexed.
+      expect(await found(upgraded, 'attachment'), isEmpty);
+      expect(await indexedTerms(reopened),
+          <String>{'written', 'before', 'the', 'index'});
       final version =
           await reopened.customSelect('PRAGMA user_version').getSingle();
       expect(version.read<int>('user_version'),
@@ -487,6 +492,7 @@ void main() {
 
   group('search screen', () {
     late MemoryLocalStore store;
+    late _RecordingHttpClient http;
     late _SearchApi api;
     late AppState state;
 
@@ -530,7 +536,8 @@ void main() {
           ),
         ],
       ));
-      api = _SearchApi();
+      http = _RecordingHttpClient();
+      api = _SearchApi(httpClient: http);
       state = AppState(
         apiClientFactory: (_) => api,
         cryptoService: TestOnlyCryptoService(),
@@ -572,6 +579,20 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       await tester.pumpAndSettle();
       expect(api.metadataQueries, <String>['alice']);
+
+      // Every request any other endpoint made went through the recording
+      // client: none carried the words or the text they matched.
+      for (final request in http.requests) {
+        for (final secret in <String>['swordfish', 'launch code']) {
+          expect(request.toLowerCase(), isNot(contains(secret)),
+              reason: request);
+        }
+      }
+      // The spy does see what goes past the overrides.
+      final before = http.requests.length;
+      await tester.runAsync(() => expectLater(
+          api.syncEvents('token', after: 0, limit: 1), throwsA(anything)));
+      expect(http.requests.length, before + 1);
       state.dispose();
     });
 
@@ -602,7 +623,7 @@ class _MlsStub implements MlsConversationCryptoService {
 }
 
 class _SearchApi extends ApiClient {
-  _SearchApi() : super(baseUrl: 'https://localhost:8080');
+  _SearchApi({super.httpClient}) : super(baseUrl: 'https://localhost:8080');
 
   final List<String> metadataQueries = <String>[];
 
@@ -643,6 +664,91 @@ class _SearchApi extends ApiClient {
   }) async {
     metadataQueries.add(query);
     return <MetadataSearchResult>[];
+  }
+}
+
+/// Records every request the real [ApiClient] code opens: method, URL,
+/// headers and body, then fails it as if offline. Nothing leaves the test.
+class _RecordingHttpClient implements HttpClient {
+  final List<_RecordingRequest> _opened = <_RecordingRequest>[];
+
+  /// Each request as `METHOD url | header | body…`.
+  List<String> get requests => <String>[
+        for (final request in _opened) request.record,
+      ];
+
+  @override
+  Future<HttpClientRequest> openUrl(String method, Uri url) async {
+    final request = _RecordingRequest('$method $url');
+    _opened.add(request);
+    return request;
+  }
+
+  @override
+  void close({bool force = false}) {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) {
+    // Settings such as connectionTimeout are accepted and ignored.
+    if (invocation.isSetter) return null;
+    throw UnimplementedError('${invocation.memberName}');
+  }
+}
+
+class _RecordingRequest implements HttpClientRequest {
+  _RecordingRequest(this.record);
+
+  String record;
+
+  void _add(Object? data) => record = '$record | $data';
+
+  @override
+  late final HttpHeaders headers = _RecordingHeaders(_add);
+
+  @override
+  void write(Object? object) => _add(object);
+
+  @override
+  void add(List<int> data) => _add(String.fromCharCodes(data));
+
+  @override
+  Future<void> addStream(Stream<List<int>> stream) async {
+    await for (final chunk in stream) {
+      add(chunk);
+    }
+  }
+
+  @override
+  Future<HttpClientResponse> close() async =>
+      throw const SocketException('offline in this test');
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) {
+    if (invocation.isSetter) return null;
+    throw UnimplementedError('${invocation.memberName}');
+  }
+}
+
+class _RecordingHeaders implements HttpHeaders {
+  _RecordingHeaders(this._add);
+
+  final void Function(Object?) _add;
+
+  @override
+  void set(String name, Object value, {bool preserveHeaderCase = false}) =>
+      _add('$name: $value');
+
+  @override
+  void add(String name, Object value, {bool preserveHeaderCase = false}) =>
+      _add('$name: $value');
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) {
+    if (invocation.isSetter) {
+      _add('${invocation.memberName}: ${invocation.positionalArguments}');
+      return null;
+    }
+    throw UnimplementedError('${invocation.memberName}');
   }
 }
 

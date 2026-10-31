@@ -23,7 +23,12 @@ enum SyncFailureKind {
   /// The local MLS state rejected a control message or could not be saved.
   mlsState,
 
-  /// An application message that has not expired could not be decrypted.
+  /// An application message or call signal that has not expired is
+  /// malformed, or applying it failed for a reason that is neither a local
+  /// storage error nor a passing one. A peer's message this device can
+  /// never decrypt is not one of these: under D54 it is committed past with
+  /// a placeholder and sync continues. Records of this kind written before
+  /// that rule are cleared once so their event is applied again.
   applicationUndecryptable,
 
   /// An application event names an envelope the server no longer returns,
@@ -52,12 +57,19 @@ class SyncEventFailure implements Exception {
     this.eventId,
     this.eventType,
     this.conversationId,
+    this.damagedStorage = false,
   });
 
   final SyncFailureKind kind;
   final int? eventId;
   final String? eventType;
   final String? conversationId;
+
+  /// A [SyncFailureKind.localStorage] failure where SQLite reported the
+  /// database corrupt or not a database. Retrying cannot help, and the
+  /// record cannot be stored in it, so the app offers the confirmed local
+  /// data reset instead (C-d0ba626ecdd7).
+  final bool damagedStorage;
 
   @override
   String toString() => 'SyncEventFailure(${kind.name}, event $eventId)';

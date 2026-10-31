@@ -87,13 +87,13 @@ class MainActivity : FlutterActivity() {
                 if (nextInstance.isNullOrBlank()) {
                     result.error("invalid_arguments", "Push instance is required", null)
                 } else {
-                    instance = nextInstance
-                    vapid = nextVapid
-                    offeredProviders = providers
-                    val usingFcm = "fcm" in providers && registerWithFCM()
+                    // A new registration supersedes every callback still
+                    // pending from an earlier one (TASK-013).
+                    val attempt = PushRegistrationConfig.configure(nextInstance, nextVapid, providers)
+                    val usingFcm = "fcm" in providers && registerWithFCM(attempt)
                     if (!usingFcm) {
                         if ("webpush" in providers && nextVapid != null) {
-                            registerWithDistributor(usePicker = false)
+                            registerWithDistributor(usePicker = false, attempt = attempt)
                         } else {
                             PushEventBridge.emit(mapOf(
                                 "type" to "registration_failed",
@@ -123,19 +123,12 @@ class MainActivity : FlutterActivity() {
                 if (instance == null || vapid == null || "webpush" !in offeredProviders) {
                     result.error("not_configured", "Push must be configured first", null)
                 } else {
-                    registerWithDistributor(usePicker = true)
+                    registerWithDistributor(usePicker = true, attempt = PushRegistrationConfig.generation)
                     result.success(null)
                 }
             }
-            "unregister" -> {
-                val target = call.argument<String>("instance")
-                if (!target.isNullOrBlank()) UnifiedPush.unregister(applicationContext, target)
-                if (FirebaseApp.getApps(applicationContext).isNotEmpty()) {
-                    FirebaseMessaging.getInstance().deleteToken()
-                }
-                PushEventBridge.clearPendingWake(applicationContext)
-                result.success(null)
-            }
+            // "unregister" is answered by SharedFlutterEngine's channel
+            // handler, which never forwards it here.
             "pendingWakeGeneration" ->
                 result.success(PushEventBridge.pendingWakeGeneration(applicationContext))
             "acknowledgeWake" -> {
@@ -150,14 +143,17 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun registerWithDistributor(usePicker: Boolean) {
+    private fun registerWithDistributor(usePicker: Boolean, attempt: Long) {
+        if (!PushRegistrationConfig.current(attempt)) return
         val targetInstance = instance ?: return
         val targetVapid = vapid ?: return
         val callback: (Boolean) -> Unit = { success ->
-            if (success) {
-                UnifiedPush.register(applicationContext, targetInstance, "Veritra", targetVapid)
-            } else {
-                PushEventBridge.emit(mapOf(
+            // Unregister or a newer register may have run while the
+            // distributor picker was open; then this answer is stale.
+            when {
+                !PushRegistrationConfig.current(attempt) -> {}
+                success -> UnifiedPush.register(applicationContext, targetInstance, "Veritra", targetVapid)
+                else -> PushEventBridge.emit(mapOf(
                     "type" to "registration_failed",
                     "instance" to targetInstance,
                     "provider" to "webpush"))
@@ -170,7 +166,7 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun registerWithFCM(): Boolean {
+    private fun registerWithFCM(attempt: Long): Boolean {
         val targetInstance = instance ?: return false
         if (BuildConfig.VERITRA_FCM_APPLICATION_ID.isBlank() ||
             BuildConfig.VERITRA_FCM_API_KEY.isBlank() ||
@@ -187,17 +183,23 @@ class MainActivity : FlutterActivity() {
         applicationContext.getSharedPreferences("veritra_push_state", Context.MODE_PRIVATE)
             .edit().putString("fcm_instance", targetInstance).apply()
         FirebaseMessaging.getInstance().token
-            .addOnSuccessListener { token -> PushEventBridge.emit(mapOf(
-                "type" to "endpoint", "provider" to "fcm",
-                "instance" to targetInstance, "endpoint" to token,
-                "publicKey" to "", "authSecret" to "")) }
+            .addOnSuccessListener { token ->
+                if (!PushRegistrationConfig.current(attempt)) return@addOnSuccessListener
+                PushEventBridge.emit(mapOf(
+                    "type" to "endpoint", "provider" to "fcm",
+                    "instance" to targetInstance, "endpoint" to token,
+                    "publicKey" to "", "authSecret" to ""))
+            }
             .addOnFailureListener {
+                // A late failure after unregister must not fall back to
+                // UnifiedPush and register again (TASK-013).
+                if (!PushRegistrationConfig.current(attempt)) return@addOnFailureListener
                 PushEventBridge.emit(mapOf(
                     "type" to "registration_failed",
                     "instance" to targetInstance,
                     "provider" to "fcm"))
                 if ("webpush" in offeredProviders && vapid != null) {
-                    registerWithDistributor(usePicker = false)
+                    registerWithDistributor(usePicker = false, attempt = attempt)
                 }
             }
         return true
@@ -268,8 +270,32 @@ object PushEventBridge : EventChannel.StreamHandler {
     fun clearPendingWake(context: Context) { WakeMarkerStore.clear(context) }
 }
 
+/** Main-thread confined. [generation] changes on every register and
+ * unregister; an async callback acts only if the generation it captured is
+ * still current, so unregister leaves a stable unregistered state. */
 object PushRegistrationConfig {
     var instance: String? = null
     var vapid: String? = null
     var providers: List<String> = emptyList()
+    @Volatile var generation: Long = 0
+        private set
+
+    fun current(attempt: Long): Boolean = attempt == generation
+
+    fun configure(nextInstance: String, nextVapid: String?, nextProviders: List<String>): Long {
+        instance = nextInstance
+        vapid = nextVapid
+        providers = nextProviders
+        return ++generation
+    }
+
+    fun clear(context: Context) {
+        generation++
+        instance = null
+        vapid = null
+        providers = emptyList()
+        // Without a bound instance, a later FCM token refresh is not forwarded.
+        context.getSharedPreferences("veritra_push_state", Context.MODE_PRIVATE)
+            .edit().remove("fcm_instance").commit()
+    }
 }
