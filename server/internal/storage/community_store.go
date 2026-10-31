@@ -755,15 +755,24 @@ type CreateConversationInput struct {
 }
 
 func (s *Store) CreateConversation(ctx context.Context, input CreateConversationInput) (domain.Conversation, error) {
+	conversation, _, err := s.CreateOrGetConversation(ctx, input)
+	return conversation, err
+}
+
+// CreateOrGetConversation is CreateConversation that also reports whether
+// the conversation was made now. It is false only for a DM whose pair
+// already had one, which is returned instead (D67): its MLS group may
+// already exist, so the caller must not build another.
+func (s *Store) CreateOrGetConversation(ctx context.Context, input CreateConversationInput) (domain.Conversation, bool, error) {
 	if len(input.MemberAccountIDs) > 100 || !domain.ValidID("acct", input.CreatedBy) {
-		return domain.Conversation{}, ErrInvalidInput
+		return domain.Conversation{}, false, ErrInvalidInput
 	}
 	normalizedMembers := make([]string, 0, len(input.MemberAccountIDs))
 	seenMembers := map[string]struct{}{input.CreatedBy: {}}
 	for _, accountID := range input.MemberAccountIDs {
 		accountID = strings.TrimSpace(accountID)
 		if !domain.ValidID("acct", accountID) {
-			return domain.Conversation{}, ErrInvalidInput
+			return domain.Conversation{}, false, ErrInvalidInput
 		}
 		if _, exists := seenMembers[accountID]; exists {
 			continue
@@ -775,34 +784,34 @@ func (s *Store) CreateConversation(ctx context.Context, input CreateConversation
 	if input.Title != nil {
 		trimmed := strings.TrimSpace(*input.Title)
 		if trimmed == "" || len(trimmed) > 64 {
-			return domain.Conversation{}, ErrInvalidInput
+			return domain.Conversation{}, false, ErrInvalidInput
 		}
 		input.Title = &trimmed
 	}
 	switch input.Kind {
 	case "dm":
 		if len(input.MemberAccountIDs) != 1 || input.Title != nil || input.CommunityID != nil || input.ChannelID != nil {
-			return domain.Conversation{}, ErrInvalidInput
+			return domain.Conversation{}, false, ErrInvalidInput
 		}
 	case "group":
 		if input.CommunityID != nil || input.ChannelID != nil {
-			return domain.Conversation{}, ErrInvalidInput
+			return domain.Conversation{}, false, ErrInvalidInput
 		}
 	case "community_channel":
 		if input.CommunityID == nil || input.ChannelID == nil {
-			return domain.Conversation{}, ErrInvalidInput
+			return domain.Conversation{}, false, ErrInvalidInput
 		}
 	default:
-		return domain.Conversation{}, ErrInvalidInput
+		return domain.Conversation{}, false, ErrInvalidInput
 	}
 	id, err := domain.NewID("conv")
 	if err != nil {
-		return domain.Conversation{}, err
+		return domain.Conversation{}, false, err
 	}
 	createdAt := nowString()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return domain.Conversation{}, err
+		return domain.Conversation{}, false, err
 	}
 	defer tx.Rollback()
 	// A community-channel conversation must point at a channel the creator may
@@ -812,44 +821,44 @@ func (s *Store) CreateConversation(ctx context.Context, input CreateConversation
 	if input.Kind == "community_channel" {
 		var memberCount int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM memberships WHERE account_id = ? AND community_id = ?`, input.CreatedBy, *input.CommunityID).Scan(&memberCount); err != nil {
-			return domain.Conversation{}, err
+			return domain.Conversation{}, false, err
 		}
 		if memberCount == 0 {
-			return domain.Conversation{}, ErrForbidden
+			return domain.Conversation{}, false, ErrForbidden
 		}
 		var channelCommunity string
 		if err := tx.QueryRowContext(ctx, `SELECT community_id FROM channels WHERE id = ?`, *input.ChannelID).Scan(&channelCommunity); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return domain.Conversation{}, ErrNotFound
+				return domain.Conversation{}, false, ErrNotFound
 			}
-			return domain.Conversation{}, err
+			return domain.Conversation{}, false, err
 		}
 		if channelCommunity != *input.CommunityID {
-			return domain.Conversation{}, ErrForbidden
+			return domain.Conversation{}, false, ErrForbidden
 		}
 	}
 	for _, accountID := range input.MemberAccountIDs {
 		var blocked int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM account_blocks WHERE (blocker_account_id = ? AND blocked_account_id = ?) OR (blocker_account_id = ? AND blocked_account_id = ?)`, input.CreatedBy, accountID, accountID, input.CreatedBy).Scan(&blocked); err != nil {
-			return domain.Conversation{}, err
+			return domain.Conversation{}, false, err
 		}
 		if blocked > 0 {
-			return domain.Conversation{}, ErrForbidden
+			return domain.Conversation{}, false, ErrForbidden
 		}
 		var active int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM accounts WHERE id = ? AND deleted_at IS NULL`, accountID).Scan(&active); err != nil {
-			return domain.Conversation{}, err
+			return domain.Conversation{}, false, err
 		}
 		if active == 0 {
-			return domain.Conversation{}, ErrNotFound
+			return domain.Conversation{}, false, ErrNotFound
 		}
 		if input.Kind == "community_channel" {
 			var communityMember int
 			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM memberships WHERE community_id = ? AND account_id = ?`, *input.CommunityID, accountID).Scan(&communityMember); err != nil {
-				return domain.Conversation{}, err
+				return domain.Conversation{}, false, err
 			}
 			if communityMember == 0 {
-				return domain.Conversation{}, ErrForbidden
+				return domain.Conversation{}, false, ErrForbidden
 			}
 		}
 	}
@@ -861,71 +870,71 @@ func (s *Store) CreateConversation(ctx context.Context, input CreateConversation
 		if err == nil {
 			conversation, err := scanConversation(tx.QueryRowContext(ctx, `SELECT id, kind, title, community_id, channel_id, created_by, retention_seconds, created_at FROM conversations WHERE id = ?`, existingID))
 			if err != nil {
-				return domain.Conversation{}, err
+				return domain.Conversation{}, false, err
 			}
-			return conversation, nil
+			return conversation, false, nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
-			return domain.Conversation{}, err
+			return domain.Conversation{}, false, err
 		}
 	}
 	if err := s.checkMembers(0, 1+len(input.MemberAccountIDs)); err != nil {
-		return domain.Conversation{}, err
+		return domain.Conversation{}, false, err
 	}
 	if err := s.checkOwnConversations(ctx, tx, input.CreatedBy, 1); err != nil {
-		return domain.Conversation{}, err
+		return domain.Conversation{}, false, err
 	}
 	for _, accountID := range input.MemberAccountIDs {
 		if err := s.checkOtherConversations(ctx, tx, accountID, 1); err != nil {
-			return domain.Conversation{}, err
+			return domain.Conversation{}, false, err
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO conversations(id, kind, title, community_id, channel_id, created_by, retention_seconds, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, id, input.Kind, nullableString(input.Title), nullableString(input.CommunityID), nullableString(input.ChannelID), input.CreatedBy, nullableInt64(input.RetentionSeconds), createdAt); err != nil {
-		return domain.Conversation{}, err
+		return domain.Conversation{}, false, err
 	}
 	membershipID, err := domain.NewID("mbr")
 	if err != nil {
-		return domain.Conversation{}, err
+		return domain.Conversation{}, false, err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO memberships(id, account_id, conversation_id, role, created_at) VALUES(?, ?, ?, 'owner', ?)`, membershipID, input.CreatedBy, id, createdAt); err != nil {
-		return domain.Conversation{}, err
+		return domain.Conversation{}, false, err
 	}
 	// Initial members are added in the same transaction so a mid-loop failure
 	// cannot leave a half-populated conversation (the whole create rolls back).
 	for _, accountID := range input.MemberAccountIDs {
 		memberRowID, err := domain.NewID("mbr")
 		if err != nil {
-			return domain.Conversation{}, err
+			return domain.Conversation{}, false, err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO memberships(id, account_id, conversation_id, role, created_at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(account_id, conversation_id) DO NOTHING`, memberRowID, accountID, id, domain.RoleMember, createdAt); err != nil {
-			return domain.Conversation{}, err
+			return domain.Conversation{}, false, err
 		}
 		payload, err := json.Marshal(map[string]string{"conversation_id": id, "role": domain.RoleMember})
 		if err != nil {
-			return domain.Conversation{}, err
+			return domain.Conversation{}, false, err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO sync_events(event_type, account_id, conversation_id, payload_json, created_at) VALUES('membership.updated', ?, ?, ?, ?)`, accountID, id, string(payload), createdAt); err != nil {
-			return domain.Conversation{}, err
+			return domain.Conversation{}, false, err
 		}
 	}
 	if input.Kind == "dm" {
 		result, err := tx.ExecContext(ctx, `INSERT INTO dm_conversation_pairs(account_id_low, account_id_high, conversation_id) VALUES(?, ?, ?) ON CONFLICT(account_id_low, account_id_high) DO NOTHING`, dmLow, dmHigh, id)
 		if err != nil {
-			return domain.Conversation{}, err
+			return domain.Conversation{}, false, err
 		}
 		inserted, err := result.RowsAffected()
 		if err != nil {
-			return domain.Conversation{}, err
+			return domain.Conversation{}, false, err
 		}
 		if inserted != 1 {
-			return domain.Conversation{}, ErrIdempotencyConflict
+			return domain.Conversation{}, false, ErrIdempotencyConflict
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return domain.Conversation{}, err
+		return domain.Conversation{}, false, err
 	}
 	created, _ := time.Parse(time.RFC3339Nano, createdAt)
-	return domain.Conversation{ID: id, Kind: input.Kind, Title: input.Title, CommunityID: input.CommunityID, ChannelID: input.ChannelID, CreatedBy: input.CreatedBy, RetentionSeconds: input.RetentionSeconds, CreatedAt: created}, nil
+	return domain.Conversation{ID: id, Kind: input.Kind, Title: input.Title, CommunityID: input.CommunityID, ChannelID: input.ChannelID, CreatedBy: input.CreatedBy, RetentionSeconds: input.RetentionSeconds, CreatedAt: created}, true, nil
 }
 
 func dmAccountPair(first, second string) (string, string) {

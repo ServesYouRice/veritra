@@ -1985,13 +1985,16 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       );
       final conversation = created!;
       // The server hands back the existing DM for a pair instead of making a
-      // second one. One the peer created already has its group, and this
-      // device joins it through the peer's Welcome; one whose group this
-      // device already holds needs nothing either. Only a new conversation
-      // gets a group here.
+      // second one, and says so with 200 instead of 201 (D67). Its group was
+      // built by whoever created it (the peer, or another device of this
+      // account), and this device joins it through that Welcome; one whose
+      // group this device already holds needs nothing either. Only a new
+      // conversation gets a group here. The creator and local-group checks
+      // stay for a server that answers 201 either way.
       final mls = _mlsCrypto;
       final existingDm = conversation.isDm &&
-          ((conversation.createdBy != null &&
+          (conversation.existedOnServer ||
+              (conversation.createdBy != null &&
                   conversation.createdBy != current.accountId) ||
               (mls != null && await mls.groupEpoch(conversation.id) != null));
       if (!existingDm) await _setUpConversationGroup(conversation.id);
