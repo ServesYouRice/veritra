@@ -830,6 +830,10 @@ pub unsafe extern "C" fn pm_crypto_group_self_update(
     out_commit: *mut PmOwnedBuffer,
 ) -> i32 {
     ffi_call(|| {
+        // Checked before the merge, so a refused output never advances the group.
+        if out_commit.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
         let group_id = unsafe { borrowed(group_id, MAX_ID_BYTES)? };
         let commit = unsafe {
             with_device(handle, |device| {
@@ -894,6 +898,10 @@ pub unsafe extern "C" fn pm_crypto_group_remove_member(
     out_commit: *mut PmOwnedBuffer,
 ) -> i32 {
     ffi_call(|| {
+        // Checked before the merge, so a refused output never advances the group.
+        if out_commit.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
         let group_id = unsafe { borrowed(group_id, MAX_ID_BYTES)? };
         let account_id = unsafe { borrowed(account_id, MAX_ID_BYTES)? };
         let device_id = unsafe { borrowed(device_id, MAX_ID_BYTES)? };
@@ -1576,6 +1584,83 @@ mod tests {
             PM_CRYPTO_ERROR
         );
         assert!(forbidden.data.is_null());
+        unsafe {
+            pm_crypto_device_destroy(alice);
+            pm_crypto_device_destroy(bob);
+        }
+    }
+
+    #[test]
+    fn eager_commits_refuse_a_null_output_before_merging() {
+        let mut alice = ptr::null_mut();
+        let mut bob = ptr::null_mut();
+        assert_eq!(
+            unsafe { pm_crypto_device_create(slice(b"acct_a"), slice(b"dev_a"), &mut alice) },
+            PM_CRYPTO_OK
+        );
+        assert_eq!(
+            unsafe { pm_crypto_device_create(slice(b"acct_b"), slice(b"dev_b"), &mut bob) },
+            PM_CRYPTO_OK
+        );
+        let mut package = PmOwnedBuffer::default();
+        assert_eq!(
+            unsafe { pm_crypto_device_create_key_package(bob, &mut package) },
+            PM_CRYPTO_OK
+        );
+        let package = unsafe { take(package) };
+        assert_eq!(
+            unsafe { pm_crypto_group_create(alice, slice(b"conv_null")) },
+            PM_CRYPTO_OK
+        );
+        let (mut commit, mut welcome) = (PmOwnedBuffer::default(), PmOwnedBuffer::default());
+        assert_eq!(
+            unsafe {
+                pm_crypto_group_add_member(
+                    alice,
+                    slice(b"conv_null"),
+                    slice(&package),
+                    slice(b"acct_b"),
+                    slice(b"dev_b"),
+                    &mut commit,
+                    &mut welcome,
+                )
+            },
+            PM_CRYPTO_OK
+        );
+        let _ = unsafe { take(commit) };
+        let _ = unsafe { take(welcome) };
+        let epoch = |handle| {
+            let (mut epoch, mut pending) = (0u64, 0u8);
+            assert_eq!(
+                unsafe {
+                    pm_crypto_group_epoch(handle, slice(b"conv_null"), &mut epoch, &mut pending)
+                },
+                PM_CRYPTO_OK
+            );
+            (epoch, pending)
+        };
+        let before = epoch(alice);
+
+        // A NULL output must fail before the group advances, or the caller
+        // gets an error and no commit while this device moved on alone.
+        assert_eq!(
+            unsafe { pm_crypto_group_self_update(alice, slice(b"conv_null"), ptr::null_mut()) },
+            PM_CRYPTO_INVALID_ARGUMENT
+        );
+        assert_eq!(epoch(alice), before);
+        assert_eq!(
+            unsafe {
+                pm_crypto_group_remove_member(
+                    alice,
+                    slice(b"conv_null"),
+                    slice(b"acct_b"),
+                    slice(b"dev_b"),
+                    ptr::null_mut(),
+                )
+            },
+            PM_CRYPTO_INVALID_ARGUMENT
+        );
+        assert_eq!(epoch(alice), before);
         unsafe {
             pm_crypto_device_destroy(alice);
             pm_crypto_device_destroy(bob);
