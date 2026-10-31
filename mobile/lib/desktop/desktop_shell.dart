@@ -71,21 +71,43 @@ class PluginDesktopShell
     required String quitLabel,
     required String tooltip,
   }) async {
-    await windowManager.ensureInitialized();
-    await windowManager.setPreventClose(true);
-    windowManager.addListener(this);
-    trayManager.addListener(this);
-    await trayManager.setIcon(
-      Platform.isWindows
-          ? 'assets/tray/veritra.ico'
-          : 'assets/tray/veritra.png',
-    );
-    if (!Platform.isLinux) await trayManager.setToolTip(tooltip);
-    await trayManager.setContextMenu(Menu(items: <MenuItem>[
-      MenuItem(key: _openKey, label: openLabel),
-      MenuItem.separator(),
-      MenuItem(key: _quitKey, label: quitLabel),
-    ]));
+    try {
+      await windowManager.ensureInitialized();
+      // The tray comes first: closing the window only hides it, which is safe
+      // only while there is a tray icon to bring it back. If any step fails
+      // the window must keep its normal close.
+      await trayManager.setIcon(
+        Platform.isWindows
+            ? 'assets/tray/veritra.ico'
+            : 'assets/tray/veritra.png',
+      );
+      if (!Platform.isLinux) await trayManager.setToolTip(tooltip);
+      await trayManager.setContextMenu(Menu(items: <MenuItem>[
+        MenuItem(key: _openKey, label: openLabel),
+        MenuItem.separator(),
+        MenuItem(key: _quitKey, label: quitLabel),
+      ]));
+      trayManager.addListener(this);
+      windowManager.addListener(this);
+      await windowManager.setPreventClose(true);
+    } catch (_) {
+      await _undoStart();
+      rethrow;
+    }
+  }
+
+  /// Puts the window back to its normal close after a failed [start]. Every
+  /// step is tried on its own, so one that fails does not skip the rest, and
+  /// none of them replaces the error being reported.
+  Future<void> _undoStart() async {
+    windowManager.removeListener(this);
+    trayManager.removeListener(this);
+    try {
+      await windowManager.setPreventClose(false);
+    } catch (_) {}
+    try {
+      await trayManager.destroy();
+    } catch (_) {}
   }
 
   @override
