@@ -57,8 +57,22 @@ String ftsQueryFor(List<String> terms) {
   return parts.join(' ');
 }
 
+/// [index] moved back one when it falls between the two halves of a
+/// surrogate pair (an emoji or other character outside the BMP), so that an
+/// excerpt cut there keeps the character whole or leaves it out.
+int _wholeCharacterAt(String text, int index) {
+  if (index <= 0 || index >= text.length) return index;
+  final unit = text.codeUnitAt(index);
+  final before = text.codeUnitAt(index - 1);
+  final splits =
+      unit >= 0xdc00 && unit <= 0xdfff && before >= 0xd800 && before <= 0xdbff;
+  return splits ? index - 1 : index;
+}
+
 /// An excerpt of [text] around the first matched term, with matches marked,
 /// built the way the database builds it. Used where there is no FTS index.
+/// The window edges never split a surrogate pair, so it can be a code unit
+/// shorter or longer at each end than 2 * [radius].
 String snippetFor(String text, List<String> terms, {int radius = 48}) {
   final flat = text.replaceAll(RegExp(r'\s+'), ' ').trim();
   final lower = flat.toLowerCase();
@@ -67,16 +81,17 @@ String snippetFor(String text, List<String> terms, {int radius = 48}) {
   if (lower.length != flat.length) {
     return flat.length <= 2 * radius
         ? flat
-        : '${flat.substring(0, 2 * radius)}…';
+        : '${flat.substring(0, _wholeCharacterAt(flat, 2 * radius))}…';
   }
   var first = -1;
   for (final term in terms) {
     final at = lower.indexOf(term);
     if (at >= 0 && (first < 0 || at < first)) first = at;
   }
-  final start = first <= radius ? 0 : first - radius;
-  final end =
-      flat.length <= start + 2 * radius ? flat.length : start + 2 * radius;
+  final start = first <= radius ? 0 : _wholeCharacterAt(flat, first - radius);
+  final end = flat.length <= start + 2 * radius
+      ? flat.length
+      : _wholeCharacterAt(flat, start + 2 * radius);
   final buffer = StringBuffer();
   if (start > 0) buffer.write('…');
   var index = start;
