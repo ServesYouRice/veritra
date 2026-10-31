@@ -76,12 +76,15 @@ func makeStagingDir(parent, prefix string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	marker := filepath.Join(dir, stagingMarkerName)
-	if err := os.WriteFile(marker, []byte(fmt.Sprintf("pid=%d\n", os.Getpid())), 0o600); err != nil {
+	if err := writeStagingMarker(dir); err != nil {
 		_ = os.Remove(dir)
 		return "", err
 	}
 	return dir, nil
+}
+
+func writeStagingMarker(dir string) error {
+	return os.WriteFile(filepath.Join(dir, stagingMarkerName), []byte(fmt.Sprintf("pid=%d\n", os.Getpid())), 0o600)
 }
 
 // removeStagingDir removes dir only when it carries the staging marker.
@@ -529,9 +532,12 @@ func restore(cfg config.Config, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	crashed := false
+	path := journalPath(live)
+	// Recovery moves restored files back into staging before it puts an
+	// original back, so staging goes only once no journal names it. A crash
+	// leaves the journal, and so leaves staging as well.
 	defer func() {
-		if !crashed {
+		if _, err := os.Lstat(path); os.IsNotExist(err) {
 			_ = removeStagingDir(staged.dir)
 		}
 	}()
@@ -566,7 +572,6 @@ func restore(cfg config.Config, args []string, stdout io.Writer) error {
 			journal.BlobsRollback = liveBlobs + suffix
 		}
 	}
-	path := journalPath(live)
 	if err := writeJournal(path, journal); err != nil {
 		return fmt.Errorf("write restore journal: %w", err)
 	}
@@ -615,23 +620,21 @@ func restore(cfg config.Config, args []string, stdout io.Writer) error {
 	}
 	if err := activate(); err != nil {
 		if errors.Is(err, errSimulatedCrash) {
-			crashed = true
 			return err
 		}
 		if rollbackErr := rollBackRestore(journal); rollbackErr != nil {
 			return errors.Join(err, rollbackErr)
 		}
-		_ = os.Remove(path)
+		if os.Remove(path) == nil {
+			_ = syncDir(filepath.Dir(live))
+		}
 		return err
 	}
 	journal.State = "activated"
-	if err := writeJournal(path, journal); err != nil {
+	if err := step("restore:record-activated", func() error { return writeJournal(path, journal) }); err != nil {
 		return fmt.Errorf("record finished restore: %w", err)
 	}
 	if err := step("restore:finish", func() error { return os.Remove(path) }); err != nil {
-		if errors.Is(err, errSimulatedCrash) {
-			crashed = true
-		}
 		return err
 	}
 	_ = syncDir(filepath.Dir(live))
@@ -651,6 +654,9 @@ func restore(cfg config.Config, args []string, stdout io.Writer) error {
 // removed only where an original is waiting to replace them, or when they
 // sit at the live path with no original to lose.
 func rollBackRestore(journal restoreJournal) error {
+	if err := ensureStagingDir(journal.StagingDir); err != nil {
+		return err
+	}
 	var result error
 	putBack := func(live, rollback string, directory bool) {
 		if rollback == "" {
@@ -698,6 +704,27 @@ func rollBackRestore(journal restoreJournal) error {
 		result = errors.Join(result, err)
 	}
 	return result
+}
+
+// ensureStagingDir recreates a journal's staging directory when it is gone,
+// so a rollback has somewhere to put the restored copies. Older builds could
+// remove it while the journal stayed. The caller has checked the path
+// against the live instance (journalMatches) or created it itself.
+func ensureStagingDir(dir string) error {
+	info, err := os.Lstat(dir)
+	if os.IsNotExist(err) {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			return fmt.Errorf("recreate restore staging: %w", err)
+		}
+		return writeStagingMarker(dir)
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("restore staging %s is not a directory", dir)
+	}
+	return nil
 }
 
 // recoverInterruptedRestore settles a restore that a crash cut short: an
