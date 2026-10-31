@@ -90,6 +90,8 @@ class NativeCryptoService
           reservation.deviceId,
         );
         _device = device;
+        // The fresh device holds no stored state yet (C-b5dfd921d890).
+        _deviceCounter = null;
         _accountId = reservation.accountId;
         _deviceId = reservation.deviceId;
         _pendingEnrollment = true;
@@ -1187,6 +1189,11 @@ class NativeCryptoService
 
   Future<StoredCryptoState> _requiredState(
       {void Function()? checkCanCommit}) async {
+    // A pending enrollment's fresh device must never be sealed over the state
+    // already stored here; only activateSession may adopt or replace it.
+    if (_pendingEnrollment) {
+      throw StateError('MLS state is unavailable until enrollment completes');
+    }
     _requiredDevice();
     final state = await localStore.loadCryptoState();
     checkCanCommit?.call();
