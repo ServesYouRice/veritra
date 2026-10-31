@@ -168,6 +168,10 @@ class Ops {
 
 enum RequestBucket { chat, request, hidden }
 
+/// Why the stored message-request state is not in use: the read failed
+/// (tried again later) or the value could not be decoded.
+enum _RequestStateFault { unreadable, undecodable }
+
 class AppState extends ChangeNotifier implements ConversationAuthority {
   AppState({
     required this.apiClientFactory,
@@ -715,12 +719,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     return conversation != null && isMessageRequest(conversation);
   }
 
-  bool _heldBack(String conversationId) {
-    final conversation =
-        conversations.where((c) => c.id == conversationId).firstOrNull;
-    return conversation != null &&
-        requestBucket(conversation) != RequestBucket.chat;
-  }
+  /// Whether nothing may be fetched or acknowledged for the conversation: a
+  /// request, a hidden one, or one not in the list (which may well be a
+  /// stranger's that the list has not caught up with).
+  bool _heldBack(String conversationId) => !conversationOpen(conversationId);
 
   /// Whether the conversation's content may be shown, read or fetched.
   /// Unknown conversations are not.
@@ -736,18 +738,46 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// conversations already there, so an update never turns existing chats
   /// into requests. A fresh device (link, reinstall, restore) starts with
   /// only what this account created accepted.
+  ///
+  /// Only an absent value (or one written for another account) is a first
+  /// run. A value that cannot be read or decoded fails closed: every DM and
+  /// group from someone else is held back as a request, nothing is
+  /// grandfathered, and the stored value is not overwritten. A read error is
+  /// tried again on the next load; decisions made meanwhile are kept in
+  /// memory and merged in then.
   Future<void> _loadRequestState({required bool grandfather}) async {
     final me = session?.accountId;
-    if (me == null || _acceptedPeers != null) return;
+    if (me == null) return;
+    if (_acceptedPeers == null) {
+      // A fresh session's state: nothing carries over from an earlier one.
+      _requestStateFault = null;
+      _requestGrandfatherPending = null;
+      _requestUndeclinedPending.clear();
+      _requestDecisionsPending = false;
+    } else if (_requestStateFault != _RequestStateFault.unreadable) {
+      return;
+    }
+    final generation = _sessionGeneration;
+    bool owned() =>
+        generation == _sessionGeneration && session?.accountId == me;
     final accepted = <String>{};
     final groups = <String>{};
     final declined = <String, DateTime>{};
     var known = false;
+    _RequestStateFault? fault;
+    String? raw;
     try {
-      final raw = await localStore.loadSetting(_requestSettingName);
-      if (raw != null) {
+      raw = await localStore.loadSetting(_requestSettingName);
+    } catch (_) {
+      fault = _RequestStateFault.unreadable;
+    }
+    if (!owned()) return;
+    if (raw != null) {
+      try {
         final decoded = jsonDecode(raw);
-        if (decoded is Map && decoded['account'] == me) {
+        if (decoded is! Map) {
+          fault = _RequestStateFault.undecodable;
+        } else if (decoded['account'] == me) {
           known = true;
           final peers = decoded['accepted'];
           if (peers is List) accepted.addAll(peers.whereType<String>());
@@ -765,20 +795,48 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             }
           }
         }
+      } catch (_) {
+        fault = _RequestStateFault.undecodable;
       }
-    } catch (_) {
-      // An unreadable value is treated as first run.
+    }
+    if (fault != null) {
+      // Fail closed: hold back what is not this account's own, keep any
+      // decision already made in this run, and write nothing.
+      if (grandfather) {
+        _requestGrandfatherPending ??= List.of(conversations);
+      }
+      _requestStateFault = fault;
+      _acceptedPeers ??= <String>{};
+      return;
+    }
+    // Decisions made while the value could not be read are newer than it.
+    final pending = _acceptedPeers;
+    final save = !known || _requestDecisionsPending;
+    if (pending != null) {
+      accepted.addAll(pending);
+      groups.addAll(_acceptedGroups);
+      declined
+        ..removeWhere((id, _) => _requestUndeclinedPending.contains(id))
+        ..addAll(_declined);
     }
     if (!known) {
-      if (grandfather) {
-        for (final conversation in conversations) {
+      final earlier = _requestGrandfatherPending;
+      if (grandfather || earlier != null) {
+        for (final conversation in earlier ?? conversations) {
           final peer = conversation.peerAccountId;
           if (conversation.isDm && peer != null) accepted.add(peer);
           if (conversation.isGroup) groups.add(conversation.id);
         }
       }
-      await _saveRequestState(me, accepted, groups, declined);
     }
+    if (save) {
+      await _saveRequestState(me, accepted, groups, declined);
+      if (!owned()) return;
+    }
+    _requestStateFault = null;
+    _requestGrandfatherPending = null;
+    _requestUndeclinedPending.clear();
+    _requestDecisionsPending = false;
     _acceptedPeers = accepted;
     _acceptedGroups
       ..clear()
@@ -788,11 +846,34 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       ..addAll(declined);
   }
 
+  /// Why the stored request state could not be used, or null when it was.
+  _RequestStateFault? _requestStateFault;
+
+  /// The conversations a failed upgrade load would have grandfathered, kept
+  /// for the retry so it does not turn existing chats into requests.
+  List<Conversation>? _requestGrandfatherPending;
+
+  /// Conversations accepted while the stored value could not be read: their
+  /// stored declines are cleared when it is merged.
+  final Set<String> _requestUndeclinedPending = <String>{};
+
+  /// A decision was made while the stored value could not be read.
+  bool _requestDecisionsPending = false;
+
+  /// Saves the request state after a user decision. While the stored value
+  /// cannot be read, the decision is kept for the merge on the next good
+  /// read instead, so nothing stored is lost. A value that cannot be decoded
+  /// is replaced only here, by the user's own decision.
   Future<void> _persistRequestState() async {
     final me = session?.accountId;
     final accepted = _acceptedPeers;
     if (me == null || accepted == null) return;
+    if (_requestStateFault == _RequestStateFault.unreadable) {
+      _requestDecisionsPending = true;
+      return;
+    }
     await _saveRequestState(me, accepted, _acceptedGroups, _declined);
+    if (session?.accountId == me) _requestStateFault = null;
   }
 
   Future<void> _saveRequestState(
@@ -830,6 +911,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       accepted.add(sender);
     }
     _declined.remove(conversation.id);
+    if (_requestStateFault == _RequestStateFault.unreadable) {
+      _requestUndeclinedPending.add(conversation.id);
+    }
     await _persistRequestState();
     notifyListeners();
     return true;
@@ -994,16 +1078,24 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           if (envelope.conversationId == conversationId)
             ConversationHistory.keyOf(ownDeviceId, envelope.idempotencyKey),
     };
+    // A row past its expiry is never shown, even while the cached history
+    // still holds it (its purge or the reload after it has not landed yet).
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    bool expired(LocalMessage? local) =>
+        local?.expiresAt != null && local!.expiresAt! <= nowMs;
     final byKey = <String, ReceivedMessageEnvelope>{};
     for (final envelope in envelopes) {
       // A placeholder row is keyed by its sync event, so ask the history
       // which row an envelope belongs to before using its claimed key.
-      byKey[history.forEnvelope(envelope)?.key ??
+      final local = history.forEnvelope(envelope);
+      if (expired(local)) continue;
+      byKey[local?.key ??
           ConversationHistory.keyOf(
               envelope.senderDeviceId, envelope.idempotencyKey)] = envelope;
     }
     for (final local in history.messages) {
       if (local.kind == LocalMessageKind.action ||
+          expired(local) ||
           pendingKeys.contains(local.key) ||
           byKey.containsKey(local.key)) {
         continue;
@@ -1536,17 +1628,26 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (current == null || client == null) {
       return;
     }
+    final generation = _sessionGeneration;
+    List<Invite>? list;
     try {
-      invites = await client.listInvites(current.token);
-      invitesLoadFailed = false;
+      list = await client.listInvites(current.token);
     } catch (_) {
       // Not surfaced here: invite listing is a privilege, not a core flow.
-      invitesLoadFailed = true;
-    } finally {
-      invitesLoaded = true;
-      notifyListeners();
     }
+    // A reply for a session that has since ended or been replaced is
+    // dropped whole, success or failure.
+    if (!_refreshOwned(current, generation)) return;
+    if (list != null) invites = list;
+    invitesLoadFailed = list == null;
+    invitesLoaded = true;
+    notifyListeners();
   }
+
+  /// Whether a refresh that started under [current] at [generation] may
+  /// still publish: that session is the live one.
+  bool _refreshOwned(Session current, int generation) =>
+      !_disposed && _syncOwnerActive(current, generation);
 
   /// Refreshes communities (and their channels) the account belongs to.
   /// Best-effort for the same reason as [refreshInvites].
@@ -1556,26 +1657,31 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (current == null || client == null) {
       return;
     }
+    final generation = _sessionGeneration;
     try {
       final list = await client.listCommunities(current.token);
       final channels = <String, List<Channel>>{};
       for (final community in list) {
+        if (!_refreshOwned(current, generation)) return;
         try {
           channels[community.id] =
               await client.listChannels(current.token, community.id);
         } catch (_) {
+          if (!_refreshOwned(current, generation)) return;
           channels[community.id] =
               channelsByCommunity[community.id] ?? const <Channel>[];
         }
       }
+      if (!_refreshOwned(current, generation)) return;
       communities = list;
       channelsByCommunity = channels;
     } catch (_) {
       // Keep the locally-known records if the server can't list right now.
-    } finally {
-      communitiesLoaded = true;
-      notifyListeners();
     }
+    // Nothing from a session that has since ended or been replaced.
+    if (!_refreshOwned(current, generation)) return;
+    communitiesLoaded = true;
+    notifyListeners();
   }
 
   Future<void> _refreshConversations({
@@ -1587,20 +1693,34 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (current == null || client == null) {
       return;
     }
-    conversations = await client.conversations(current.token);
-    conversationPrefs = {
-      for (final p in await localStore.loadConversationPrefs())
-        p.conversationId: p
-    };
-    mentionsInMutedChats =
-        await localStore.loadSetting('w8.mentions_muted') != 'false';
+    final generation = _sessionGeneration;
+    // Everything is read first and published only while the session that
+    // asked is still the live one. A stale reply, or its error, is dropped
+    // without a trace.
+    final List<Conversation> list;
+    final List<LocalConversationPref> prefs;
+    final String? mentionsMuted;
+    try {
+      list = await client.conversations(current.token);
+      prefs = await localStore.loadConversationPrefs();
+      mentionsMuted = await localStore.loadSetting('w8.mentions_muted');
+    } catch (_) {
+      if (!_refreshOwned(current, generation)) return;
+      rethrow;
+    }
+    if (!_refreshOwned(current, generation)) return;
+    conversations = list;
+    conversationPrefs = {for (final p in prefs) p.conversationId: p};
+    mentionsInMutedChats = mentionsMuted != 'false';
     await _loadRequestState(grandfather: false);
+    if (!_refreshOwned(current, generation)) return;
     // The server's list is the truth: a conversation no longer in it (an
     // admin removed this account, say) keeps no draft here.
     composerDrafts.retainOnly(conversations.map((item) => item.id));
     conversationsLoaded = true;
     _opErrors.remove(Ops.conversations);
     if (persist) await _persistSnapshot();
+    if (!_refreshOwned(current, generation)) return;
     if (notify) {
       notifyListeners();
     }
@@ -1644,7 +1764,16 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       ...messagesByConversation,
       conversationId: <ReceivedMessageEnvelope>[...page.messages, ...older],
     };
-    _historyCursors[conversationId] = page.nextBefore;
+    // When the fresh page meets what is cached, the older pages already
+    // merged in stay reachable, so the deepest cursor (null once history is
+    // exhausted) still applies. A gap rewinds to the fresh page's cursor so
+    // the missing messages are fetched.
+    final overlaps = existing.any((message) => fresh.contains(message.id));
+    if (!overlaps ||
+        older.isEmpty ||
+        !_historyCursors.containsKey(conversationId)) {
+      _historyCursors[conversationId] = page.nextBefore;
+    }
     // A message that just landed ends its sender's "typing…" line.
     final newest = page.messages.firstOrNull;
     if (newest != null &&
@@ -1723,7 +1852,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (_mlsCrypto != null) await refreshHistory(conversationId);
       await _fetchMessages(conversationId);
       if (_mlsCrypto != null) await refreshHistory(conversationId);
-      unawaited(markNewestMessageRead(conversationId));
+      // Read only what is on screen: not a conversation the user has since
+      // left, and nothing while the app is in the background.
+      if (selectedConversationId == conversationId && _isForeground) {
+        unawaited(markNewestMessageRead(conversationId));
+      }
     } catch (err) {
       _messageLoadErrors[conversationId] = describeError(err, l10n);
     } finally {
@@ -1781,12 +1914,25 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         retentionSeconds: retentionSeconds,
       );
       final conversation = created!;
-      await _setUpConversationGroup(conversation.id);
-      conversations = <Conversation>[conversation, ...conversations];
-      // The server may hand back a DM the peer created first.
+      // The server hands back the existing DM for a pair instead of making a
+      // second one. One the peer created already has its group, and this
+      // device joins it through the peer's Welcome; one whose group this
+      // device already holds needs nothing either. Only a new conversation
+      // gets a group here.
+      final mls = _mlsCrypto;
+      final existingDm = conversation.isDm &&
+          ((conversation.createdBy != null &&
+                  conversation.createdBy != current.accountId) ||
+              (mls != null && await mls.groupEpoch(conversation.id) != null));
+      if (!existingDm) await _setUpConversationGroup(conversation.id);
+      conversations = <Conversation>[
+        conversation,
+        ...conversations.where((item) => item.id != conversation.id),
+      ];
       if (conversation.isDm) await _acceptConversation(conversation);
       selectedConversationId = conversation.id;
-      messagesByConversation[conversation.id] = <ReceivedMessageEnvelope>[];
+      messagesByConversation.putIfAbsent(
+          conversation.id, () => <ReceivedMessageEnvelope>[]);
     });
     return error == null ? created : null;
   }
@@ -2257,9 +2403,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     }
     try {
       // With the switch off the receipt is private: the server keeps this
-      // account's own cursor for the unread count and shares nothing.
+      // account's own cursor for the unread count and shares nothing. The
+      // same holds while the saved choice cannot be read.
       await receiptPreferences.loaded;
-      if (receiptPreferences.sendReadReceipts) {
+      // The app may have gone to the background while the choice was read.
+      if (!_isForeground) return;
+      if (receiptPreferences.shareReadReceipts) {
         await client.markRead(current.token, conversationId, messages.first.id);
       } else {
         await client.markReadPrivate(
@@ -4819,17 +4968,29 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     return at != null && !at.isAfter(now);
   }
 
+  /// Conversations whose history reload after a purge failed, and the
+  /// session they belong to. Retried by the next purge, which is armed even
+  /// when nothing else is due to expire.
+  final Set<String> _historyReloadPending = <String>{};
+  Session? _historyReloadSession;
+
   /// Deletes what has expired from the encrypted database, then from the
   /// lists the screens read, and arms the timer for the next expiry (W2).
   Future<void> purgeExpiredMessages() async {
-    if (session == null || _purgingExpired) return;
+    final current = session;
+    if (current == null || _purgingExpired) return;
     _purgingExpired = true;
     final generation = _sessionGeneration;
+    final reloadSession = _historyReloadSession;
+    if (reloadSession == null || !_sameSession(reloadSession)) {
+      _historyReloadPending.clear();
+    }
     try {
       Set<String> touched;
       try {
         touched = await localStore.purgeExpiredMessages();
-        _expiryBackoff = Duration.zero;
+        // A reload that keeps failing keeps its growing pause.
+        if (_historyReloadPending.isEmpty) _expiryBackoff = Duration.zero;
       } catch (_) {
         // The delete is retried with a growing pause, on resume and on
         // restart. The lists below are still pruned, so expired text leaves
@@ -4851,21 +5012,52 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         }
         next[entry.key] = live;
       }
-      if (changed) {
-        messagesByConversation = next;
-        if (_mlsCrypto != null) {
-          for (final id in touched) {
-            if (_history.containsKey(id) || id == selectedConversationId) {
-              _history[id] = await _loadHistory(id);
-            }
+      if (changed) messagesByConversation = next;
+      final reload = <String>{...touched, ..._historyReloadPending};
+      if (_mlsCrypto != null && reload.isNotEmpty) {
+        var failed = false;
+        for (final id in reload) {
+          if (!_history.containsKey(id) && id != selectedConversationId) {
+            _historyReloadPending.remove(id);
+            continue;
           }
+          try {
+            final history = await _loadHistory(id);
+            if (generation != _sessionGeneration) return;
+            _history[id] = history;
+            _historyReloadPending.remove(id);
+          } catch (_) {
+            // The cached history still holds the deleted rows. Drop the
+            // expired ones now, so no view (timeline, replies, pins,
+            // starred) shows them; reactions come back with the reload,
+            // which is tried again.
+            if (generation != _sessionGeneration) return;
+            final cached = _history[id];
+            final nowMs = DateTime.now().millisecondsSinceEpoch;
+            bool live(LocalMessage m) =>
+                m.expiresAt == null || m.expiresAt! > nowMs;
+            if (cached != null && !cached.messages.every(live)) {
+              _history[id] = ConversationHistory(
+                conversationId: id,
+                messages: cached.messages.where(live).toList(),
+                reactions: const [],
+                copiedKeys: cached.copiedKeys,
+              );
+            }
+            _historyReloadPending.add(id);
+            _historyReloadSession = current;
+            failed = true;
+          }
+          changed = true;
         }
+        if (failed) _expiryBackoff = _nextExpiryBackoff(_expiryBackoff);
+      }
+      if (changed) {
         if (generation != _sessionGeneration) return;
         notifyListeners();
       }
     } catch (_) {
-      // Reloading a history failed; reads already hide what has expired, and
-      // the next purge tries again. Never blocks the app.
+      // Never blocks the app; the next purge tries again.
       _expiryBackoff = _nextExpiryBackoff(_expiryBackoff);
     } finally {
       _purgingExpired = false;
@@ -4885,8 +5077,16 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (generation != _sessionGeneration || _disposed) return;
     _expiryTimer?.cancel();
     _expiryTimer = null;
-    if (next == null) return;
-    var delay = next.difference(DateTime.now().toUtc());
+    final reloadSession = _historyReloadSession;
+    final reloadPending = _historyReloadPending.isNotEmpty &&
+        reloadSession != null &&
+        _sameSession(reloadSession);
+    if (next == null && !reloadPending) return;
+    // A failed history reload is retried after the pause even when nothing
+    // else is due to expire.
+    var delay =
+        next?.difference(DateTime.now().toUtc()) ?? const Duration(days: 1);
+    if (reloadPending && delay > _expiryBackoff) delay = _expiryBackoff;
     if (delay < const Duration(milliseconds: 500)) {
       delay = const Duration(milliseconds: 500);
     }
