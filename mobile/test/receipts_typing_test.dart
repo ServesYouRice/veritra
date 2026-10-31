@@ -245,6 +245,7 @@ void main() {
     test('the switch decides whether a receipt is public or private', () async {
       final api = _Api();
       final state = _state(api)
+        ..conversations = <Conversation>[Conversation(id: 'c1', kind: 'group')]
         ..messagesByConversation = <String, List<ReceivedMessageEnvelope>>{
           'c1': <ReceivedMessageEnvelope>[_message('m1', created)],
         };
@@ -271,6 +272,7 @@ void main() {
       )
         ..api = api
         ..session = _session
+        ..conversations = <Conversation>[Conversation(id: 'c1', kind: 'group')]
         ..messagesByConversation = <String, List<ReceivedMessageEnvelope>>{
           'c1': <ReceivedMessageEnvelope>[_message('m1', created)],
         };

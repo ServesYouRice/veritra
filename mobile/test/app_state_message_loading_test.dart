@@ -1,0 +1,162 @@
+// Message loading in AppState: what may be fetched or marked read, and the
+// history cursor across refreshes.
+
+import 'dart:async';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:private_messenger/core/api_client.dart';
+import 'package:private_messenger/core/app_state.dart';
+import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/storage/local_store.dart';
+import 'package:private_messenger/sync/sync_service.dart';
+
+import 'test_crypto_service.dart';
+
+const _session = Session(
+  baseUrl: 'https://localhost:8080',
+  token: 'token',
+  accountId: 'acct_me',
+  deviceId: 'dev_me',
+);
+
+ReceivedMessageEnvelope _message(String id, int minute,
+        {String conversationId = 'conv'}) =>
+    ReceivedMessageEnvelope.fromJson(<String, Object?>{
+      'id': id,
+      'conversation_id': conversationId,
+      'sender_account_id': 'acct_peer',
+      'sender_device_id': 'dev_peer',
+      'idempotency_key': id,
+      'ciphertext': '',
+      'crypto_protocol': 'test',
+      'created_at': DateTime.utc(2026, 6, 2, 12, minute).toIso8601String(),
+    });
+
+class _Api extends ApiClient {
+  _Api() : super(baseUrl: 'https://localhost:8080');
+
+  /// Pages served for a conversation, keyed by the `before` cursor (null
+  /// for the newest page).
+  final Map<String?, MessagePage> pages = <String?, MessagePage>{};
+  final List<String?> pageRequests = <String?>[];
+  final List<String> pageConversations = <String>[];
+  final List<String> receiptReads = <String>[];
+  final List<String> reads = <String>[];
+  final List<String> privateReads = <String>[];
+  Completer<void>? pageGate;
+
+  @override
+  Future<MessagePage> listMessagePage(
+    String token,
+    String conversationId, {
+    int limit = 50,
+    String? before,
+  }) async {
+    pageConversations.add(conversationId);
+    pageRequests.add(before);
+    final gate = pageGate;
+    if (gate != null) {
+      pageGate = null;
+      await gate.future;
+    }
+    return pages[before] ??
+        const MessagePage(messages: <ReceivedMessageEnvelope>[]);
+  }
+
+  @override
+  Future<List<MemberReceipt>> listReceipts(
+      String token, String conversationId) async {
+    receiptReads.add(conversationId);
+    return const <MemberReceipt>[];
+  }
+
+  @override
+  Future<void> markRead(String token, String conversationId, String id) async {
+    reads.add(conversationId);
+  }
+
+  @override
+  Future<void> markReadPrivate(
+      String token, String conversationId, String id) async {
+    privateReads.add(conversationId);
+  }
+}
+
+class _FakeSync implements SyncService {
+  final _events = StreamController<Map<String, Object?>>.broadcast();
+
+  @override
+  Stream<Map<String, Object?>> get events => _events.stream;
+
+  @override
+  Future<void> connect() async {}
+
+  @override
+  Future<void> dispose() => _events.close();
+}
+
+AppState _state(_Api api, {List<Conversation>? conversations}) => AppState(
+      apiClientFactory: (_) => api,
+      cryptoService: TestOnlyCryptoService(),
+      localStore: MemoryLocalStore(),
+      syncServiceFactory: (_, __) => _FakeSync(),
+    )
+      ..api = api
+      ..session = _session
+      ..conversations = conversations ??
+          <Conversation>[
+            Conversation(id: 'conv', kind: 'group', createdBy: 'acct_me'),
+            Conversation(id: 'other', kind: 'group', createdBy: 'acct_me'),
+          ];
+
+Future<void> _settle() async {
+  for (var i = 0; i < 30; i++) {
+    await Future<void>.delayed(Duration.zero);
+  }
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('C-c20d1ce84e57: an unknown conversation is held back', () {
+    test('selecting it fetches nothing and sends no receipt', () async {
+      final api = _Api()
+        ..pages[null] = MessagePage(messages: <ReceivedMessageEnvelope>[
+          _message('m1', 1, conversationId: 'unknown')
+        ]);
+      final state = _state(api);
+      state.selectConversation('unknown');
+      await _settle();
+      expect(api.pageConversations, isEmpty);
+      expect(api.receiptReads, isEmpty);
+      expect(api.reads, isEmpty);
+      expect(api.privateReads, isEmpty);
+      state.dispose();
+    });
+
+    test('markNewestMessageRead sends nothing for it', () async {
+      final api = _Api();
+      final state = _state(api);
+      state.messagesByConversation['unknown'] = <ReceivedMessageEnvelope>[
+        _message('m1', 1, conversationId: 'unknown'),
+      ];
+      await state.markNewestMessageRead('unknown');
+      expect(api.reads, isEmpty);
+      expect(api.privateReads, isEmpty);
+      state.dispose();
+    });
+
+    test('a known open conversation still loads and is marked read', () async {
+      final api = _Api()
+        ..pages[null] =
+            MessagePage(messages: <ReceivedMessageEnvelope>[_message('m1', 1)]);
+      final state = _state(api);
+      state.selectConversation('conv');
+      await _settle();
+      expect(api.pageConversations, <String>['conv']);
+      expect(api.receiptReads, <String>['conv']);
+      expect(api.reads, <String>['conv']);
+      state.dispose();
+    });
+  });
+}

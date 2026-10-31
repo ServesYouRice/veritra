@@ -719,12 +719,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     return conversation != null && isMessageRequest(conversation);
   }
 
-  bool _heldBack(String conversationId) {
-    final conversation =
-        conversations.where((c) => c.id == conversationId).firstOrNull;
-    return conversation != null &&
-        requestBucket(conversation) != RequestBucket.chat;
-  }
+  /// Whether nothing may be fetched or acknowledged for the conversation: a
+  /// request, a hidden one, or one not in the list (which may well be a
+  /// stranger's that the list has not caught up with).
+  bool _heldBack(String conversationId) => !conversationOpen(conversationId);
 
   /// Whether the conversation's content may be shown, read or fetched.
   /// Unknown conversations are not.
