@@ -212,14 +212,23 @@ class AttachmentCryptoService {
             ..setRange(0, sourceLength, source);
         }
         read += sourceLength;
-        cancellation?.throwIfCancelled();
-        final encrypted = bindings.encryptAttachmentChunk(
-          key: key,
-          noncePrefix: nonce,
-          chunkIndex: chunks,
-          context: context,
-          plaintext: plaintext,
-        );
+        final List<int> encrypted;
+        try {
+          cancellation?.throwIfCancelled();
+          encrypted = bindings.encryptAttachmentChunk(
+            key: key,
+            noncePrefix: nonce,
+            chunkIndex: chunks,
+            context: context,
+            plaintext: plaintext,
+          );
+        } finally {
+          // The padded copy of the last chunk holds file bytes: wipe it,
+          // since the forward path keeps no plaintext copies.
+          if (sourceLength != expectedLength) {
+            plaintext.fillRange(0, plaintext.length, 0);
+          }
+        }
         if (encrypted.length != plaintext.length + 16) {
           throw const FormatException('invalid encrypted attachment framing');
         }

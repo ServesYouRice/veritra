@@ -189,7 +189,10 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     ones. Bytes past `plaintext_size` must be zero, or decryption fails
     closed with nothing published, and only `plaintext_size` bytes are
     written. AEAD integrity and the exact-length framing check now cover
-    the padded stream. The manifest (MLS-authenticated, from the sender)
+    the padded stream. The server's whole-blob SHA-256 and chunk digests
+    (`server/internal/uploads/local.go`) are computed over the uploaded
+    bytes, the padded ciphertext, so they still cover exactly what a
+    client downloads. The manifest (MLS-authenticated, from the sender)
     alone decides the true length, as it already decided the key.
   - **Old attachments.** Version 1 manifests decrypt as before, which a
     hand-built version 1 test shows.
