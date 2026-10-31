@@ -211,7 +211,94 @@ void main() {
       harness.dispose();
     });
   });
+
+  // Each test fails on an uncaught asynchronous error: catch-ups run
+  // unawaited, so nothing may escape them.
+  group('storage errors around the recovery record (TASK-034)', () {
+    test('a passing error reading it goes offline and is retried', () async {
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[_projectionEvent(4, 'conversation.updated')];
+      final store = _FlakyStore()..recoveryReadFailures = 1;
+      final harness = await _Harness.start(api, store: store);
+
+      await harness.waitFor(() =>
+          harness.state.syncError == harness.state.l10n.syncErrorStorageBusy);
+      expect(harness.state.connectionStatus, ConnectionStatus.offline);
+      expect(harness.state.syncRecovery, isNull);
+      expect(api.syncCalls, 0);
+      // The scheduled retry catches up without any wake.
+      await harness.waitFor(() async => await store.loadSyncCursor() == 4);
+      await harness.waitFor(() => harness.state.syncError == null);
+      expect(harness.state.connectionStatus, ConnectionStatus.online);
+      harness.dispose();
+    });
+
+    test('a lasting error reading it records a local storage recovery',
+        () async {
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[_projectionEvent(4, 'conversation.updated')];
+      final store = _FlakyStore()
+        ..recoveryReadFailures = 1
+        ..recoveryReadError = _refused;
+      final harness = await _Harness.start(api, store: store);
+
+      await harness.waitFor(() => harness.state.syncRecovery != null);
+      expect(harness.state.syncRecovery!.kind, SyncFailureKind.localStorage);
+      expect(harness.state.deviceRecoveryRequired, isTrue);
+      expect(harness.state.connectionStatus, ConnectionStatus.offline);
+      expect((await store.loadSyncRecovery())!.kind,
+          SyncFailureKind.localStorage);
+      expect(api.syncCalls, 0);
+      harness.dispose();
+    });
+
+    test('a refused write of the record still stops sync in memory',
+        () async {
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[_projectionEvent(4, 'conversation.updated')];
+      final store = _FlakyStore()
+        ..syncCommitFailures = 1
+        ..refuseRecoveryWrites = true;
+      final harness = await _Harness.start(api, store: store);
+
+      await harness.waitFor(() => harness.state.syncRecovery != null);
+      await harness.settle();
+      expect(harness.state.syncRecovery!.kind, SyncFailureKind.localStorage);
+      expect(harness.state.deviceRecoveryRequired, isTrue);
+      expect(harness.state.connectionStatus, ConnectionStatus.offline);
+      expect(harness.state.syncError, isNotNull);
+      store.refuseRecoveryWrites = false;
+      expect(await store.loadSyncRecovery(), isNull);
+      expect(await store.loadSyncCursor(), 0);
+      harness.dispose();
+    });
+
+    test('a sign-out that fails in storage after a 401 does not escape',
+        () async {
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[_projectionEvent(4, 'conversation.updated')]
+        ..syncStatus = 401;
+      final store = _FlakyStore()..refuseClear = true;
+      final harness = await _Harness.start(api, store: store);
+
+      await harness.waitFor(() => store.clearAttempts > 0);
+      await harness.settle();
+      expect(harness.state.syncRecovery, isNull);
+      expect(await store.loadSyncRecovery(), isNull);
+      harness.dispose();
+    });
+  });
 }
+
+SyncEvent _projectionEvent(int id, String type,
+        {String? conversationId = 'conv_1'}) =>
+    SyncEvent(
+      id: id,
+      type: type,
+      conversationId: conversationId,
+      payload: const <String, Object?>{},
+      createdAt: DateTime.utc(2026, 9, 24),
+    );
 
 /// The ciphertext [_FakeMlsCrypto] treats as one this device can never
 /// decrypt (D54).
@@ -311,18 +398,62 @@ class _Harness {
   void dispose() => state.dispose();
 }
 
-/// A memory store whose history reads fail a set number of times.
+/// EBUSY: a storage error that passes by itself.
+const _busy = FileSystemException('busy', '', OSError('busy', 16));
+
+/// EACCES: a storage error that does not pass by itself.
+const _refused = FileSystemException('refused', '', OSError('refused', 13));
+
+/// A memory store whose reads and writes fail a set number of times.
 class _FlakyStore extends MemoryLocalStore {
   int historyFailures = 0;
+  int recoveryReadFailures = 0;
+  Object recoveryReadError = _busy;
+  bool refuseRecoveryWrites = false;
+  int syncCommitFailures = 0;
+  bool refuseClear = false;
+  int clearAttempts = 0;
 
   @override
   Future<List<LocalMessage>> loadMessages(String conversationId) async {
     if (historyFailures > 0) {
       historyFailures--;
-      // EBUSY: a storage error that passes by itself.
-      throw const FileSystemException('busy', '', OSError('busy', 16));
+      throw _busy;
     }
     return super.loadMessages(conversationId);
+  }
+
+  @override
+  Future<SyncRecovery?> loadSyncRecovery() async {
+    if (recoveryReadFailures > 0) {
+      recoveryReadFailures--;
+      throw recoveryReadError;
+    }
+    return super.loadSyncRecovery();
+  }
+
+  @override
+  Future<void> saveSyncRecovery(SyncRecovery? recovery) async {
+    if (refuseRecoveryWrites) throw _refused;
+    return super.saveSyncRecovery(recovery);
+  }
+
+  @override
+  Future<void> commitSyncEvent(SyncEventCommit commit) async {
+    if (syncCommitFailures > 0 && commit.eventKey.startsWith('sync:')) {
+      syncCommitFailures--;
+      throw _refused;
+    }
+    return super.commitSyncEvent(commit);
+  }
+
+  @override
+  Future<void> clearCachedState(
+      {bool preserveOutbox = false, bool keepDrafts = false}) async {
+    clearAttempts++;
+    if (refuseClear) throw _refused;
+    return super.clearCachedState(
+        preserveOutbox: preserveOutbox, keepDrafts: keepDrafts);
   }
 }
 

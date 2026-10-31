@@ -4010,27 +4010,29 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (client == null) {
       return;
     }
-    // A stopped device stays stopped until the user picks a recovery choice
-    // (I33): retrying the same event on every wake would be a poison loop.
-    var stored = await localStore.loadSyncRecovery();
-    if (!_syncOwnerActive(current, ownerGeneration)) return;
-    if (stored?.kind == SyncFailureKind.applicationUndecryptable &&
-        wake == null &&
-        await localStore.loadSetting(_undecryptableRetrySetting) == null) {
-      // Under D54 a peer message this device can never decrypt no longer
-      // stops sync. A stop recorded for one before that rule is cleared,
-      // once per store, so its event is applied again. If it still fails,
-      // the new record stays.
-      await localStore.saveSetting(_undecryptableRetrySetting, 'done');
-      await localStore.saveSyncRecovery(null);
-      if (!_syncOwnerActive(current, ownerGeneration)) return;
-      stored = null;
-    }
-    if (stored != null) {
-      _enterSyncRecovery(stored);
-      return;
-    }
     try {
+      // A stopped device stays stopped until the user picks a recovery
+      // choice (I33): retrying the same event on every wake would be a
+      // poison loop. A storage error reading the record is handled below
+      // like any other.
+      var stored = await localStore.loadSyncRecovery();
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      if (stored?.kind == SyncFailureKind.applicationUndecryptable &&
+          wake == null &&
+          await localStore.loadSetting(_undecryptableRetrySetting) == null) {
+        // Under D54 a peer message this device can never decrypt no longer
+        // stops sync. A stop recorded for one before that rule is cleared,
+        // once per store, so its event is applied again. If it still
+        // fails, the new record stays.
+        await localStore.saveSetting(_undecryptableRetrySetting, 'done');
+        await localStore.saveSyncRecovery(null);
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        stored = null;
+      }
+      if (stored != null) {
+        _enterSyncRecovery(stored);
+        return;
+      }
       // Envelopes an earlier pass committed but could not show.
       await _publishReceived(
           <ReceivedMessageEnvelope>[], current, ownerGeneration);
@@ -4178,17 +4180,32 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (wake != null) rethrow;
       if (!_syncOwnerActive(current, ownerGeneration)) return;
       if (err is ApiException && err.statusCode == 401) {
-        await _clearLocalSession(
-            preserveDeviceIdentity: true,
-            keepDrafts: true,
-            preserveOutbox: true,
-            drainSyncOwner: false);
+        try {
+          await _clearLocalSession(
+              preserveDeviceIdentity: true,
+              keepDrafts: true,
+              preserveOutbox: true,
+              drainSyncOwner: false);
+        } catch (_) {
+          // Signing out failed in local storage. Callers do not await this
+          // run, so nothing may escape it: stay offline and try again.
+          if (!_syncOwnerActive(current, ownerGeneration)) return;
+          syncError = describeError(err, l10n);
+          _setConnectionStatus(ConnectionStatus.offline);
+          notifyListeners();
+          _scheduleCatchUpRetry();
+        }
         return;
       }
       final failure = _recoveryFailureFor(err);
       if (failure != null) {
         final recovery = SyncRecovery.fromFailure(failure, DateTime.now());
-        await localStore.saveSyncRecovery(recovery);
+        try {
+          await localStore.saveSyncRecovery(recovery);
+        } catch (_) {
+          // A failing store may refuse this write too. The device still
+          // stops here; the record is written when a later pass stops.
+        }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         _enterSyncRecovery(recovery);
         return;
