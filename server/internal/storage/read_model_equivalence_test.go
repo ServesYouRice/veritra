@@ -15,10 +15,9 @@ import (
 
 // T49A/T49B: the rewritten sync-bounds, conversation-list and quota queries
 // must return exactly what the original queries returned. The originals are
-// kept here as the reference (with D48's reverse read-receipt block added,
-// and for the bounds the envelope visibility sync applies to message events).
+// kept here as the reference (with D48's reverse read-receipt block added).
 
-var legacySyncBoundsQuery = `
+const legacySyncBoundsQuery = `
 		SELECT MIN(id), MAX(id) FROM (
 			SELECT id FROM sync_events WHERE account_id = ?
 			UNION ALL
@@ -40,11 +39,6 @@ var legacySyncBoundsQuery = `
 			    WHERE rb.blocker_account_id = json_extract(se.payload_json, '$.account_id')
 			      AND rb.blocked_account_id = m.account_id
 			  ))
-			  AND (se.event_type NOT LIKE 'message.envelope.%' OR EXISTS (
-			    SELECT 1 FROM message_envelopes live
-			    WHERE live.id = json_extract(se.payload_json, '$.message_id')
-			      AND (live.expires_at IS NULL OR live.expires_at > ` + sqlNowText + `)
-			      AND (live.deleted_at IS NULL OR se.event_type = 'message.envelope.deleted')))
 		)`
 
 const legacyListConversationsPageQuery = `
@@ -469,14 +463,14 @@ func checkReadModelsMatch(t *testing.T, store *Store, ds benchDataset) {
 			devices = append(devices, "dev_hot_2", "")
 		}
 		checkSyncEventsMatch(t, store, account, devices, paged, i == 0, ds.MidEventID)
-		_, oldest, latest, err := store.SyncBounds(ctx, account)
-		if err != nil {
-			t.Fatal(err)
-		}
+		// The T49A rewrite matches the reference exactly. SyncBounds also
+		// leaves envelope-hidden events out (sync_bounds_visibility_test.go).
+		oldest, latest := rewrittenSyncBounds(t, store, account)
 		wantOldest, wantLatest := legacySyncBounds(t, store, account)
 		if oldest != wantOldest || latest != wantLatest {
 			t.Fatalf("sync bounds differ: got %d..%d want %d..%d", oldest, latest, wantOldest, wantLatest)
 		}
+		checkSyncBoundsVisible(t, ctx, store, account)
 
 		for _, limit := range []int{7, 1000} {
 			if limit == 7 && !paged {
