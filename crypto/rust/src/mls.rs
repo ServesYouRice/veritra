@@ -164,18 +164,13 @@ impl MlsDevice {
         )
     }
 
-    /// Signs a server challenge with the same Ed25519 identity key carried by
-    /// this device's MLS credential. The server must domain-separate and bind
-    /// the challenge to its reserved account and device identifiers.
-    pub fn sign_enrollment_challenge(&self, challenge: &[u8]) -> Result<Vec<u8>, MlsError> {
-        if challenge.is_empty() {
-            return Err(MlsError::InvalidIdentity);
-        }
-        self.signer
-            .sign(challenge)
-            .map_err(|_| MlsError::KeyGeneration)
-    }
-
+    /// Creates a key package and signs the server's enrollment proof with
+    /// the Ed25519 key of this device's MLS credential. The signed message is
+    /// always `veritra-enrollment-proof-v1 || u16 len || challenge ||
+    /// signing key || SHA-256(key package)`: the fixed ASCII prefix cannot
+    /// start an RFC 9420 SignContent (a varint length, then "MLS 1.0 "), so
+    /// the server cannot use this to obtain an MLS signature. There is no
+    /// raw signing entry point.
     pub fn create_enrollment_credential(
         &self,
         challenge: &[u8],
@@ -190,7 +185,10 @@ impl MlsDevice {
         proof.extend_from_slice(challenge);
         proof.extend_from_slice(&signing_public_key);
         proof.extend_from_slice(&Sha256::digest(&key_package));
-        let challenge_signature = self.sign_enrollment_challenge(&proof)?;
+        let challenge_signature = self
+            .signer
+            .sign(&proof)
+            .map_err(|_| MlsError::KeyGeneration)?;
         Ok(EnrollmentCredential {
             key_package,
             signing_public_key,
@@ -1681,23 +1679,38 @@ mod tests {
     }
 
     #[test]
-    fn enrollment_challenge_uses_mls_credential_signer() {
+    fn enrollment_signature_covers_only_the_prefixed_proof() {
         let device = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
-        let signature = device
-            .sign_enrollment_challenge(b"veritra-enrollment-v1 challenge")
-            .unwrap();
-        assert_eq!(device.signing_public_key().len(), 32);
-        assert_eq!(signature.len(), 64);
-        assert_eq!(
-            device.sign_enrollment_challenge(b""),
-            Err(MlsError::InvalidIdentity)
-        );
-        let enrollment = device
-            .create_enrollment_credential(b"reserved server challenge")
-            .unwrap();
+        let challenge = b"reserved server challenge";
+        let enrollment = device.create_enrollment_credential(challenge).unwrap();
         assert!(enrollment.key_package.len() >= crate::MIN_KEY_PACKAGE_BYTES);
         assert_eq!(enrollment.signing_public_key, device.signing_public_key());
         assert_eq!(enrollment.challenge_signature.len(), 64);
+        assert_eq!(
+            device.create_enrollment_credential(b""),
+            Err(MlsError::InvalidIdentity)
+        );
+
+        let mut proof = b"veritra-enrollment-proof-v1".to_vec();
+        proof.extend_from_slice(&(challenge.len() as u16).to_be_bytes());
+        proof.extend_from_slice(challenge);
+        proof.extend_from_slice(&enrollment.signing_public_key);
+        proof.extend_from_slice(&Sha256::digest(&enrollment.key_package));
+        let verify = |message: &[u8]| {
+            device.provider.crypto().verify_signature(
+                SignatureScheme::ED25519,
+                message,
+                device.signing_public_key(),
+                &enrollment.challenge_signature,
+            )
+        };
+        assert!(verify(&proof).is_ok());
+        assert!(verify(challenge).is_err());
+        // The prefix cannot be read as an RFC 9420 SignContent: its first
+        // byte (0x76) is a two-byte varint, after which "MLS 1.0 " would
+        // have to follow.
+        assert_eq!(proof[0] >> 6, 1);
+        assert_ne!(&proof[2..10], b"MLS 1.0 ");
     }
 
     #[test]

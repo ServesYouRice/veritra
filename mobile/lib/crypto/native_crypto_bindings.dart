@@ -193,9 +193,6 @@ class NativeCryptoBindings {
         _deviceLinkTranscript = library.lookupFunction<
             _DeviceLinkTranscriptNative,
             _DeviceLinkTranscriptDart>('pm_crypto_device_link_transcript_hash'),
-        _signChallenge = library
-            .lookupFunction<_HandleSliceOutputNative, _HandleSliceOutputDart>(
-                'pm_crypto_device_sign_enrollment_challenge'),
         _createKeyPackage =
             library.lookupFunction<_HandleOutputNative, _HandleOutputDart>(
                 'pm_crypto_device_create_key_package'),
@@ -237,7 +234,7 @@ class NativeCryptoBindings {
             _AttachmentChunkDart>('pm_crypto_attachment_encrypt_chunk'),
         _attachmentDecrypt = library.lookupFunction<_AttachmentChunkNative,
             _AttachmentChunkDart>('pm_crypto_attachment_decrypt_chunk') {
-    if (_abiVersion() != 8) {
+    if (_abiVersion() != 9) {
       throw const NativeCryptoException(NativeCryptoError.abiMismatch);
     }
     _k2Controls = {
@@ -286,7 +283,6 @@ class NativeCryptoBindings {
     return bytes.map((b) => b.toRadixString(16).padLeft(2, "0")).join();
   }
 
-  final _HandleSliceOutputDart _signChallenge;
   final _HandleOutputDart _createKeyPackage;
   final _SealDart _seal;
   final _HandleSliceDart _groupCreate;
@@ -695,14 +691,6 @@ class NativeCryptoDevice implements Finalizable {
       approvalTag: transcriptHash.sublist(64, 96),
       sas: sasValue.toString().padLeft(8, '0'),
     );
-  }
-
-  List<int> signEnrollmentChallenge(List<int> challenge) {
-    _bindings._bounded(challenge, 4096);
-    return _bindings._withSlice(
-        Uint8List.fromList(challenge),
-        (slice) => _bindings._output(
-            (out) => _bindings._signChallenge(_liveHandle, slice, out)));
   }
 
   List<int> createKeyPackage() =>

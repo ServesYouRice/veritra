@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define PM_CRYPTO_UNAVAILABLE (-1)
-#define PM_CRYPTO_ABI_VERSION (8u)
+#define PM_CRYPTO_ABI_VERSION (9u)
 #define PM_CRYPTO_OK (0)
 #define PM_CRYPTO_INVALID_ARGUMENT (-2)
 #define PM_CRYPTO_ERROR (-3)
@@ -45,7 +45,9 @@ const char *pm_crypto_protocol(void);
 /*
  * Device handles and owned buffers are library-owned. A successful handle must
  * be destroyed exactly once. A non-empty owned buffer must be freed exactly
- * once; freeing zeroes its contents before releasing memory.
+ * once; freeing zeroes its contents before releasing memory. Each buffer is
+ * an exact-length allocation, and the library wipes any copy it drops,
+ * including an output refused because its target pointer was NULL.
  *
  * These ownership and group-lifecycle primitives are available for binding
  * development, but pm_crypto_available() remains PM_CRYPTO_UNAVAILABLE until
@@ -106,11 +108,11 @@ int32_t pm_crypto_device_link_transcript_hash(
     PmByteSlice peer_device_id,
     PmByteSlice peer_signing_public_key, PmByteSlice link_nonce,
     uint8_t local_is_existing_device, PmOwnedBuffer *out);
-int32_t pm_crypto_device_sign_enrollment_challenge(PmCryptoHandle *handle,
-                                                   PmByteSlice challenge,
-                                                   PmOwnedBuffer *out);
 int32_t pm_crypto_device_create_key_package(PmCryptoHandle *handle,
                                             PmOwnedBuffer *out);
+/* ABI 9: the only enrollment signature. It covers
+ * "veritra-enrollment-proof-v1" || u16-BE len || challenge || signing key ||
+ * SHA-256(key package); the raw challenge signer was removed. */
 int32_t pm_crypto_device_create_enrollment_credential(
     PmCryptoHandle *handle, PmByteSlice challenge,
     PmOwnedBuffer *out_key_package, PmOwnedBuffer *out_signing_public_key,

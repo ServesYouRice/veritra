@@ -5,13 +5,12 @@ import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 
 void main() {
   final libraryPath = Platform.environment['VERITRA_CRYPTO_LIBRARY'];
-  test('ABI v8 lifecycle owns outputs and handles safely', () {
+  test('ABI v9 lifecycle owns outputs and handles safely', () {
     final bindings = NativeCryptoBindings.open(libraryPath!);
     final alice = bindings.createDevice('acct_alice', 'dev_alice');
     final bob = bindings.createDevice('acct_bob', 'dev_bob');
     expect(alice.signingPublicKey(), hasLength(32));
     expect(alice.signingPublicKey(), hasLength(32));
-    expect(alice.signEnrollmentChallenge([1, 2, 3]), hasLength(64));
     final enrollment = alice.createEnrollmentCredential([7, 8, 9]);
     expect(enrollment.signingKey, hasLength(32));
     final linked = bindings.createDevice('acct_alice', 'dev_linked');

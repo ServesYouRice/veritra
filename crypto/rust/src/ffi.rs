@@ -355,29 +355,6 @@ pub unsafe extern "C" fn pm_crypto_device_link_locator(
     })
 }
 
-/// Signs the server-provided, domain-separated enrollment challenge.
-///
-/// # Safety
-/// `handle` must be live, the challenge readable, and `out` writable.
-#[no_mangle]
-pub unsafe extern "C" fn pm_crypto_device_sign_enrollment_challenge(
-    handle: *mut PmCryptoHandle,
-    challenge: PmByteSlice,
-    out: *mut PmOwnedBuffer,
-) -> i32 {
-    ffi_call(|| {
-        let challenge = unsafe { borrowed(challenge, MAX_CHALLENGE_BYTES)? };
-        let signature = unsafe {
-            with_device(handle, |device| {
-                device
-                    .sign_enrollment_challenge(challenge)
-                    .map_err(|_| PM_CRYPTO_ERROR)
-            })?
-        };
-        unsafe { output(out, signature) }
-    })
-}
-
 /// Creates a signed, single-use MLS key package for this device.
 ///
 /// # Safety

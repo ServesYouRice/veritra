@@ -3,9 +3,9 @@
 The selected production direction is MLS through OpenMLS. This Rust crate now
 pins OpenMLS 0.9.2 and contains a tested native core for signed key packages,
 group creation/join, and authenticated application messages. It also exposes a
-versioned C ABI and Rust-side credential/key-package boundary types. ABI v8 has
+versioned C ABI and Rust-side credential/key-package boundary types. ABI v9 has
 tested opaque device handles, zeroing owned buffers, credential public-key
-export, enrollment-challenge signing, key-package creation, state sealing, and
+export, domain-separated enrollment proofs, key-package creation, state sealing, and
 rollback-checked restore, plus group create/join/add/remove/update, staged
 membership commits, commit processing, and application encrypt/decrypt. The legacy handle-free
 encrypt/decrypt entry points still return `PM_CRYPTO_UNAVAILABLE`, so mobile code cannot
@@ -16,16 +16,17 @@ The server now reserves final account/device IDs before key generation and
 atomically verifies and consumes a signed enrollment proof covering the server
 challenge, Ed25519 public key, and SHA-256 key-package commitment. The Flutter
 client models this preflight, and its low-level Dart FFI binding requires ABI
-version 8 exactly (`native_crypto_bindings.dart`) and uses the owned
+version 9 exactly (`native_crypto_bindings.dart`) and uses the owned
 device/buffer calls. Native libraries are packaged for Android/iOS, while the
 production service remains behind the release gate.
 
 The public header is `crypto/rust/include/veritra_crypto.h`, which pins
-`PM_CRYPTO_ABI_VERSION` at 8. That version defines:
+`PM_CRYPTO_ABI_VERSION` at 9. That version defines:
 
 - account/device-bound opaque handles with exactly-once destruction
 - library-owned, zero-on-free output buffers
-- enrollment challenge signing with the MLS credential key
+- enrollment proofs signed with the MLS credential key over a fixed
+  `veritra-enrollment-proof-v1` prefix (no raw-challenge signer since ABI 9)
 - sealed provider-state export and rollback-checked restore
 - conversation-bound Welcome processing and credential-bound member addition
 - the versioned protocol identifier `mls10-openmls-v1`
@@ -94,6 +95,36 @@ Legacy links must be recreated. Existing account/device sessions remain valid.
 
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
+
+- **Crypto-core fixes, ABI 9 (2026-10-31, audit plan 2026-10-25):** one
+  ABI bump for the whole set; the Dart binding requires 9 exactly.
+  - TASK-007: `pm_crypto_device_sign_enrollment_challenge` is removed. It
+    signed caller-chosen bytes with the MLS identity key, so a server could
+    obtain a valid signature over any RFC 9420 `SignContent` (a leaf node,
+    key package or framed content). No server or app path verified a
+    raw-challenge signature (only the prefixed proof of
+    `pm_crypto_device_create_enrollment_credential`, unchanged), so nothing
+    on the server changes.
+  - TASK-001: every output buffer is an exact-length allocation; a Vec with
+    spare capacity is copied and the original wiped instead of shrunk by a
+    realloc that could free it unwiped. Outputs refused for a NULL target are
+    wiped. encrypt/decrypt check the output pointer before using a ratchet
+    step. `pm_crypto_buffer_free` already wiped non-elidably.
+  - TASK-002: decrypt accepts MLS ciphertext up to 1 MiB + 4096 bytes and
+    encrypt never returns more, so every 1 MiB plaintext round-trips.
+  - TASK-003: an account/device identity occupies one leaf. Adds that would
+    repeat an identity in the resulting roster are refused, and removing a
+    device removes every leaf that carries its credential.
+  - TASK-004: a remote commit is inspected before it is merged: member
+    sender only; Add, Remove and Update proposals only; Basic credentials
+    holding well-formed, unique device identities; updates keep the leaf's
+    identity. A refused commit leaves the stored epoch unchanged.
+  - TASK-005: a Welcome is checked before its group is stored: expected
+    group id, well-formed unique identities, this device's own identity and
+    signing key on its leaf, a sender that is another leaf. A refused
+    Welcome stores nothing, but staging has already consumed the key package.
+  - Not closed here: which identities may hold which keys, and who may
+    commit or invite (TASK-006), needs the L1 approved-device list.
 
 - **K2 ABI8 controls (2026-10-28):** adds bounded local binary control
   operations and matching Dart bindings for protocol v3. Claim proof validates
