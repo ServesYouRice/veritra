@@ -179,7 +179,11 @@ void main() {
     await database.deleteMetadata(_repairMarker);
     final rows = <(String, String, int?)>[
       ('env_past', jsonEncode(_envelope('env_past', past).toJson()), null),
-      ('env_future', jsonEncode(_envelope('env_future', future).toJson()), null),
+      (
+        'env_future',
+        jsonEncode(_envelope('env_future', future).toJson()),
+        null
+      ),
       ('env_none', jsonEncode(_envelope('env_none', null).toJson()), null),
       // Already carries an expiry that differs from its JSON: kept.
       (

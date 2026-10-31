@@ -47,8 +47,8 @@ class _ScriptedStorage extends FlutterSecureStorage {
     WindowsOptions? wOptions,
   }) {
     if (failWrite(key)) throw StateError('keystore refused the write');
-    return super.write(
-        key: key, value: value == null ? null : stored(key, value));
+    return super
+        .write(key: key, value: value == null ? null : stored(key, value));
   }
 }
 
@@ -145,8 +145,8 @@ void main() {
   test('a key whose copy reads back different is not deleted', () async {
     final original = await seed();
     final storage = _ScriptedStorage()
-      ..stored = (key, value) =>
-          key.startsWith(_archivePrefix) ? 'ab' * 32 : value;
+      ..stored =
+          (key, value) => key.startsWith(_archivePrefix) ? 'ab' * 32 : value;
     await storeWith(storage).quarantineUnreadableDatabase(confirmed: true);
 
     expect(await plain.read(key: _keyName), original.key);
@@ -189,7 +189,9 @@ void main() {
     await expectLater(
         storeWith(storage).loadSyncCursor(),
         throwsA(isA<LocalStoreUnavailableException>().having(
-            (error) => error.kind, 'kind', LocalStoreFailureKind.keyUnavailable)));
+            (error) => error.kind,
+            'kind',
+            LocalStoreFailureKind.keyUnavailable)));
     expect(await plain.read(key: _keyName), original.key);
     final moved = File('${directory.path}/unreadable-$stamp/veritra-local.db');
     expect(await cursorOf(moved, original.key), 4);

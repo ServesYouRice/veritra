@@ -119,7 +119,8 @@ void main() {
     databases.clear();
   }
 
-  Future<void> settle() => Future<void>.delayed(const Duration(milliseconds: 50));
+  Future<void> settle() =>
+      Future<void>.delayed(const Duration(milliseconds: 50));
 
   test('an open requested before the reset takes its locks waits for it',
       () async {
@@ -236,9 +237,7 @@ void main() {
     expect(File('${directory.path}/veritra-local.reset-intent').existsSync(),
         isFalse);
     expect(
-        directory
-            .listSync()
-            .where((item) => item.path.contains('unreadable-')),
+        directory.listSync().where((item) => item.path.contains('unreadable-')),
         isEmpty);
     expect(await storage.read(key: 'veritra.database_key.v1'), key);
   },
