@@ -295,6 +295,11 @@ class NativeCryptoService
   Future<void> completeCommitBundle(PendingMlsMessage item) =>
       _serial(() async {
         final bundle = MlsCommitBundle.decode(item.payload);
+        // Sync may have merged this accepted commit while the outbox worker
+        // waited for the server's answer, settling its entry, and later
+        // commits may have moved the group on since. Nothing is left to do,
+        // and the epoch check below would see a fork that is not there.
+        if (!await _isQueuedBundle(item)) return;
         final previous = await _requiredState();
         try {
           if (bundle.hasCommit) {
@@ -323,6 +328,9 @@ class NativeCryptoService
   @override
   Future<void> abandonCommitBundle(PendingMlsMessage item) => _serial(() async {
         final bundle = MlsCommitBundle.decode(item.payload);
+        // Already settled: a commit staged since belongs to a newer entry,
+        // so clearing the pending commit here would drop that one instead.
+        if (!await _isQueuedBundle(item)) return;
         final previous = await _requiredState();
         try {
           if (bundle.hasCommit) {
@@ -343,6 +351,14 @@ class NativeCryptoService
           rethrow;
         }
       });
+
+  /// Whether [item] is still an unsettled entry of the MLS outbox. Run only
+  /// inside [_serial], so sync cannot settle it between this check and the
+  /// change that follows.
+  Future<bool> _isQueuedBundle(PendingMlsMessage item) async =>
+      (await localStore.pendingMlsMessages()).any((queued) =>
+          queued.kind == MlsCommitBundle.kind &&
+          queued.idempotencyKey == item.idempotencyKey);
 
   @override
   Future<({int epoch, bool pending})?> groupEpoch(String conversationId) =>
