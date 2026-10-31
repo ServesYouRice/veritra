@@ -1,11 +1,14 @@
-use super::{encode_device_identity, transfer, MlsDevice, MlsError, CIPHERSUITE};
+use super::{
+    encode_device_identity,
+    storage::{PartitionedStorage, VeritraProvider},
+    transfer, MlsDevice, MlsError, CIPHERSUITE,
+};
 use aes_gcm::{
     aead::{Aead, KeyInit, Payload},
     Aes256Gcm, Nonce,
 };
 use openmls::prelude::{BasicCredential, CredentialWithKey};
 use openmls_basic_credential::SignatureKeyPair;
-use openmls_rust_crypto::OpenMlsRustCrypto;
 use openmls_traits::{random::OpenMlsRand, OpenMlsProvider};
 use std::collections::HashMap;
 use tls_codec::SecretVLBytes;
@@ -30,13 +33,8 @@ impl MlsDevice {
         if state_key.len() != KEY_BYTES || counter == 0 {
             return Err(MlsError::InvalidState);
         }
-        let values = self
-            .provider
-            .storage()
-            .values
-            .read()
-            .map_err(|_| MlsError::Storage)?;
-        let records: SecretVLBytes = encode_records(&values)?.into();
+        // The union of every owner's store: format 3 is the flat map.
+        let records: SecretVLBytes = self.provider.storage().with_records(encode_records)?.into();
         let transfers = transfer::encode(
             &self.pending_transfers,
             &self.account_id,
@@ -152,9 +150,10 @@ impl MlsDevice {
             )
             .map_err(|_| MlsError::InvalidState)?
             .into();
-        let provider = OpenMlsRustCrypto::default();
-        let (records, pending_transfers) = if version == LEGACY_FORMAT_VERSION {
-            (decode_records(plaintext.as_slice())?, Default::default())
+        // Every restore splits the flat map by owner (D70 S1), so the
+        // classifier runs on real state before any format depends on it.
+        let (records, transfers) = if version == LEGACY_FORMAT_VERSION {
+            (decode_records(plaintext.as_slice())?, None)
         } else {
             let mut payload = Reader::new(plaintext.as_slice());
             if payload.take(PLAINTEXT_MAGIC.len())? != PLAINTEXT_MAGIC {
@@ -165,20 +164,13 @@ impl MlsDevice {
                 return Err(MlsError::InvalidState);
             }
             let records = decode_records(payload.take(record_bytes)?)?;
-            let transfers = transfer::decode(
-                &plaintext.as_slice()[payload.offset..],
-                account_id,
-                device_id,
-                &public_key,
-                &provider,
-            )?;
-            (records, transfers)
+            (records, Some(&plaintext.as_slice()[payload.offset..]))
         };
-        *provider
-            .storage()
-            .values
-            .write()
-            .map_err(|_| MlsError::Storage)? = records;
+        let provider = VeritraProvider::with_storage(PartitionedStorage::from_records(records)?);
+        let pending_transfers = match transfers {
+            Some(bytes) => transfer::decode(bytes, account_id, device_id, &public_key, &provider)?,
+            None => Default::default(),
+        };
         let signer = SignatureKeyPair::read(
             provider.storage(),
             &public_key,
@@ -204,12 +196,13 @@ impl MlsDevice {
     }
 }
 
-fn encode_records(values: &HashMap<Vec<u8>, Vec<u8>>) -> Result<Vec<u8>, MlsError> {
-    if values.len() > MAX_RECORDS {
+/// `records` must be sorted by key and unique (`with_records` ensures it).
+fn encode_records(records: &[(&[u8], &[u8])]) -> Result<Vec<u8>, MlsError> {
+    if records.len() > MAX_RECORDS {
         return Err(MlsError::InvalidState);
     }
     let mut output_size = 4usize;
-    for (key, value) in values {
+    for (key, value) in records {
         if key.len() > MAX_RECORD_BYTES || value.len() > MAX_RECORD_BYTES {
             return Err(MlsError::InvalidState);
         }
@@ -223,9 +216,7 @@ fn encode_records(values: &HashMap<Vec<u8>, Vec<u8>>) -> Result<Vec<u8>, MlsErro
         }
     }
     let mut output = Vec::with_capacity(output_size);
-    output.extend_from_slice(&(values.len() as u32).to_be_bytes());
-    let mut records: Vec<_> = values.iter().collect();
-    records.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+    output.extend_from_slice(&(records.len() as u32).to_be_bytes());
     for (key, value) in records {
         if key.len() > MAX_RECORD_BYTES || value.len() > MAX_RECORD_BYTES {
             return Err(MlsError::InvalidState);
