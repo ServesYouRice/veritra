@@ -59,6 +59,15 @@ var (
 // always a credential request. Any other path ending in /enrollment stays
 // an enrollment request, as before.
 func ClassifyRoute(urlPath string) RouteClass {
+	// K0 recovery: the reservation keeps the enrollment budget; every other
+	// path under the prefix, in any spelling, can check a password, a
+	// recovery proof or a claim token.
+	if urlPath == accountRecoveryPrefix+"/enrollment" {
+		return EnrollmentRoute
+	}
+	if urlPath == accountRecoveryPrefix || strings.HasPrefix(urlPath, accountRecoveryPrefix+"/") {
+		return CredentialRoute
+	}
 	switch {
 	case credentialRoutes[urlPath]:
 		return CredentialRoute
