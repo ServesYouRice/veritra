@@ -1640,8 +1640,83 @@ def codeowners_cases() -> None:
             assert "/" + path in owners, f"CODEOWNERS does not cover {path}, which the release gate runs"
 
 
+def release_readiness_cases() -> None:
+    """scripts/release-readiness.sh says which gates ran (review finding).
+
+    Without release evidence it runs only the preflight, which release.yml
+    does on purpose before anything is built, and it used to end with
+    "release readiness gates passed" all the same. The script runs here in
+    a scratch root next to stub gates that pass, with no crypto markers.
+    """
+    temp = Path(tempfile.mkdtemp(prefix="veritra-release-readiness-"))
+    try:
+        scripts = temp / "scripts"
+        scripts.mkdir()
+        shutil.copy(ROOT / "scripts/release-readiness.sh", scripts)
+        for stub in ("check-go-toolchain.sh", "check-rust-audit-expiry.sh", "check-demo-boundary.sh"):
+            (scripts / stub).write_text("exit 0\n", encoding="utf-8")
+        calls = temp / "checker-calls"
+        # The stub checker logs its arguments, and fails a full (non-preflight) run on request.
+        (scripts / "check-release-evidence.py").write_text(
+            "import os, sys\n"
+            f"with open({str(calls)!r}, 'a', encoding='utf-8') as log:\n"
+            "    log.write(' '.join(sys.argv[1:]) + '\\n')\n"
+            "sys.exit(1 if os.environ.get('STUB_EVIDENCE_FAILS') and '--preflight' not in sys.argv else 0)\n",
+            encoding="utf-8",
+        )
+        (temp / "crypto/rust/src").mkdir(parents=True)
+        (temp / "crypto/rust/src/lib.rs").write_text("// production crypto wired\n", encoding="utf-8")
+        (temp / "mobile/lib").mkdir(parents=True)
+        (temp / "mobile/lib/main.dart").write_text("// production crypto wired\n", encoding="utf-8")
+        base = {key: value for key, value in os.environ.items() if not key.startswith(("RELEASE_", "GIT_", "STUB_"))}
+        base.update(RELEASE_COMMIT=OTHER_COMMIT, RELEASE_APPROVALS_COMMIT=OTHER_COMMIT)
+
+        def readiness(**env: str) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+            calls.unlink(missing_ok=True)
+            result = subprocess.run(["sh", str(scripts / "release-readiness.sh")], text=True, capture_output=True,
+                                    check=False, env={**base, **env})
+            logged = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
+            return result, logged
+
+        # Preflight only: it passes, and says the evidence was not checked.
+        result, logged = readiness()
+        assert result.returncode == 0, result.stderr
+        assert len(logged) == 1 and "--preflight" in logged[0], logged
+        assert "release readiness preflight gates passed" in result.stdout, result.stdout
+        assert "release evidence was not checked" in result.stdout, result.stdout
+        assert "release readiness gates passed" not in result.stdout, result.stdout
+        # With evidence: the full check runs, and the output says so.
+        evidence = temp / "evidence.json"
+        result, logged = readiness(RELEASE_EVIDENCE_FILE=str(evidence))
+        assert result.returncode == 0, result.stderr
+        assert len(logged) == 2 and f"--evidence {evidence}" in logged[1] and "--preflight" not in logged[1], logged
+        assert f"release readiness gates passed, including the release evidence in {evidence}" in result.stdout
+        result, logged = readiness(RELEASE_EVIDENCE_FILE=str(evidence), STUB_EVIDENCE_FAILS="1")
+        assert result.returncode != 0 and "gates passed" not in result.stdout, result.stdout
+        # Set but empty is a misconfigured final gate, not a preflight.
+        result, logged = readiness(RELEASE_EVIDENCE_FILE="")
+        assert result.returncode != 0, result.stdout
+        assert "RELEASE_EVIDENCE_FILE is set but empty" in result.stderr, result.stderr
+        assert "gates passed" not in result.stdout, result.stdout
+        # A local dist/release-evidence.json is checked when present.
+        (temp / "dist").mkdir()
+        (temp / "dist/release-evidence.json").write_text("{}", encoding="utf-8")
+        result, logged = readiness()
+        assert result.returncode == 0 and len(logged) == 2, (result.stderr, logged)
+        assert "--evidence " + str(temp / "dist/release-evidence.json") in logged[1], logged
+        assert "including the release evidence" in result.stdout, result.stdout
+        # Crypto not wired: blocked before anything is reported as passed.
+        (temp / "mobile/lib/main.dart").write_text("UnavailableCryptoService()\n", encoding="utf-8")
+        result, _ = readiness()
+        assert result.returncode != 0 and "production MLS crypto is not wired" in result.stderr, result.stderr
+        assert "gates passed" not in result.stdout, result.stdout
+    finally:
+        shutil.rmtree(temp)
+
+
 def main() -> int:
     codeowners_cases()
+    release_readiness_cases()
     root, manifest = fixture()
     try:
         expect_valid(root, manifest)
