@@ -3586,15 +3586,22 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     return true;
   }
 
+  /// Bumped when this device starts and finishes changing the read-receipts
+  /// switch, so a server answer read before the change never undoes it.
+  int _readReceiptsChanges = 0;
+
   /// Adopts the account's read-receipts switch from the server, so a change
   /// made on another linked device shows here. Best effort.
   Future<void> refreshReadReceiptsSetting() async {
     final current = session;
     final client = api;
     if (current == null || client == null) return;
+    final changes = _readReceiptsChanges;
     try {
       final enabled = await client.readReceiptsEnabled(current.token);
       if (_disposed || !_sameSession(current)) return;
+      // The switch changed here while the answer was on its way.
+      if (changes != _readReceiptsChanges) return;
       await receiptPreferences.setSendReadReceipts(enabled);
     } catch (_) {
       // The saved choice on this device stands.
@@ -3607,10 +3614,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final current = session;
     final client = api;
     if (current == null || client == null) return false;
+    _readReceiptsChanges++;
     try {
       await client.setReadReceiptsEnabled(current.token, enabled);
     } catch (_) {
       return false;
+    } finally {
+      // A refresh that started while the change was being sent may have
+      // read the old value.
+      _readReceiptsChanges++;
     }
     await receiptPreferences.setSendReadReceipts(enabled);
     return true;
