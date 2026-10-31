@@ -75,6 +75,11 @@ class NativeCryptoService
   }
 
   bool _pendingEnrollment = false;
+
+  /// The enrolling device's first sealed state, kept until it is stored: a
+  /// seal moves the device's generation, so a retried activation must store
+  /// this same state rather than seal again (D70).
+  StoredCryptoState? _firstState;
   Future<void> _operationTail = Future<void>.value();
 
   @override
@@ -95,6 +100,7 @@ class NativeCryptoService
         _accountId = reservation.accountId;
         _deviceId = reservation.deviceId;
         _pendingEnrollment = true;
+        _firstState = null;
         return device.createEnrollmentCredential(reservation.challenge);
       });
 
@@ -117,12 +123,15 @@ class NativeCryptoService
               _device == null) {
             throw StateError('protected MLS state is unavailable');
           }
-          final key = _randomBytes(32);
-          final sealed = _device!.sealChanges(key, 1);
+          final first = _firstState ??= () {
+            final key = _randomBytes(32);
+            return _sealedState(1, key, _device!.sealChanges(key, 1));
+          }();
           await localStore.saveCryptoState(
-            _sealedState(1, key, sealed),
+            first,
             await localStore.loadSyncCursor(),
           );
+          _firstState = null;
           _deviceCounter = 1;
         } else {
           _device?.close();
@@ -359,6 +368,38 @@ class NativeCryptoService
             state: _sealNext(previous),
             resolvedMlsOutboxKey: item.idempotencyKey,
           );
+        } catch (_) {
+          await _restorePrevious(previous);
+          rethrow;
+        }
+      });
+
+  /// Drops key packages that expired more than 24 hours before [now] and
+  /// stores the change (D70). Returns how many went. The trigger, after a
+  /// caught-up sync pass, is S4.
+  Future<int> pruneExpiredKeyPackages(DateTime now) => _serial(() async {
+        final previous = await _requiredState();
+        try {
+          final removed = _requiredDevice().pruneKeyPackages(now);
+          if (removed > 0) await _commitLocalMutation(previous);
+          return removed;
+        } catch (_) {
+          await _restorePrevious(previous);
+          rethrow;
+        }
+      });
+
+  /// Drops this device's state for a conversation the user deleted (D70),
+  /// and stores the change. Only a user action may call this, never a
+  /// server event: a removal already dropped the group. Returns whether a
+  /// group was stored. The leave and delete triggers are S4 and C1.
+  Future<bool> deleteConversationState(String conversationId) =>
+      _serial(() async {
+        final previous = await _requiredState();
+        try {
+          final deleted = _requiredDevice().deleteGroup(conversationId);
+          if (deleted) await _commitLocalMutation(previous);
+          return deleted;
         } catch (_) {
           await _restorePrevious(previous);
           rethrow;
@@ -1319,12 +1360,10 @@ class NativeCryptoService
     _deviceCounter = null;
     ({NativeCryptoDevice device, int counter}) restored;
     try {
+      // The committed state, which is [previous] unless a commit landed
+      // whose outcome was lost; never an older one.
       restored = await _restoreCommitted(_accountId!, _deviceId!,
           minimumCounter: previous.counter);
-      if (restored.counter != previous.counter) {
-        restored.device.close();
-        throw StateError('failed to restore the previous MLS state');
-      }
     } catch (_) {
       _device?.close();
       _device = null;
@@ -1453,6 +1492,7 @@ class NativeCryptoService
         _device?.close();
         _device = null;
         _deviceCounter = null;
+        _firstState = null;
         _accountId = null;
         _deviceId = null;
       });

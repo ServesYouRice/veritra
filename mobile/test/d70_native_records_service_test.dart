@@ -222,6 +222,94 @@ void main() {
     ));
     expect(await bob.service.groupEpoch('conv_1'), isNotNull);
   }, skip: skip);
+
+  test('a first activation whose store failed can be retried', () async {
+    final bindings = NativeCryptoBindings.open(libraryPath!);
+    final store = _FailFirstSave();
+    final service = NativeCryptoService(bindings: bindings, localStore: store);
+    await service.createEnrollmentCredential(EnrollmentReservation(
+      id: 'res_dev_a',
+      accountId: 'acct_a',
+      deviceId: 'dev_a',
+      challenge: const <int>[1, 2, 3],
+    ));
+    final session = _session('acct_a', 'dev_a');
+    await expectLater(service.activateSession(session), throwsStateError);
+    expect(await store.loadCryptoState(), isNull);
+    // The retry stores the same first state instead of sealing again.
+    await service.activateSession(session);
+    expect((await store.loadCryptoState())!.counter, 1);
+    await service.dispose();
+    final restarted =
+        NativeCryptoService(bindings: bindings, localStore: store);
+    await restarted.activateSession(session);
+    await restarted.dispose();
+  }, skip: skip);
+
+  test('deleting a conversation drops its record; its messages are D54',
+      () async {
+    final bindings = NativeCryptoBindings.open(libraryPath!);
+    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+    await _startConversation(alice, bob);
+
+    expect(await bob.service.deleteConversationState('conv_1'), isTrue);
+    expect(await bob.service.deleteConversationState('conv_1'), isFalse);
+    expect(await bob.service.groupEpoch('conv_1'), isNull);
+    expect(
+        (await bob.store.loadCryptoRecords())
+            .where((r) => r.kind == cryptoRecordKindGroup),
+        isEmpty);
+
+    // A message to the deleted group fails like one to an inactive group
+    // did: a placeholder, and sync moves on.
+    final hello =
+        await alice.send(AppPayloadType.text, <String, Object?>{'text': 'hi'});
+    await bob.receive(alice, hello);
+    expect(await bob.store.loadSyncCursor(), bob.events);
+    expect((await bob.history()).last.key, startsWith('undecryptable:'));
+
+    final restarted = await bob.restart(bindings);
+    expect(await restarted.service.groupEpoch('conv_1'), isNull);
+  }, skip: skip);
+
+  test('expired key packages are pruned and the change is stored', () async {
+    final bindings = NativeCryptoBindings.open(libraryPath!);
+    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+    await alice.service.createReplenishmentKeyPackages(count: 3);
+    Future<int> stored() async => (await alice.store.loadCryptoRecords())
+        .where((r) => r.kind == cryptoRecordKindKeyPackage)
+        .length;
+    expect(await stored(), 4);
+    final counter = (await alice.store.loadCryptoState())!.counter;
+
+    // Nothing has expired yet: no change, no new state.
+    expect(await alice.service.pruneExpiredKeyPackages(DateTime.now()), 0);
+    expect((await alice.store.loadCryptoState())!.counter, counter);
+
+    // 84 days of lifetime plus the 24-hour grace have passed.
+    final later = DateTime.now().add(const Duration(days: 86));
+    expect(await alice.service.pruneExpiredKeyPackages(later), 4);
+    expect(await stored(), 0);
+    expect((await alice.store.loadCryptoState())!.counter, counter + 1);
+    final restarted = await alice.restart(bindings);
+    expect(await restarted.service.createReplenishmentKeyPackages(count: 1),
+        hasLength(1));
+  }, skip: skip);
+}
+
+/// A store whose first crypto-state write fails, as a full disk would.
+class _FailFirstSave extends MemoryLocalStore {
+  bool _failed = false;
+
+  @override
+  Future<void> saveCryptoState(StoredCryptoState state, int syncCursor) {
+    if (!_failed) {
+      _failed = true;
+      throw StateError('injected store failure');
+    }
+    return super.saveCryptoState(state, syncCursor);
+  }
 }
 
 int _version(List<int> sealed) => (sealed[8] << 8) | sealed[9];

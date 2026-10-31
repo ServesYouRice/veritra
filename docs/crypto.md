@@ -356,9 +356,11 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   - **Migration.** One way, at activation, in one compare-and-swap
     transaction that does not move the sync cursor. A build before ABI 10
     cannot read the migrated state; it reports `stateFormatUnsupported`.
-  - **Not wired yet (S4).** The app does not call `group_delete` or
-    `prune_key_packages`, and has no screen for `PM_CRYPTO_RECORD_LIMIT`
-    (the operation fails and rolls back).
+  - **Not wired yet (S4).** `NativeCryptoService.pruneExpiredKeyPackages`
+    and `deleteConversationState` store their changes, but nothing in the
+    app calls them yet (prune after a caught-up sync; delete from C1's
+    leave). There is no screen for `PM_CRYPTO_RECORD_LIMIT`: the operation
+    fails and rolls back.
   - Tests: `crypto/rust/src/mls/records_tests.rs`,
     `crypto/rust/src/ffi/records_tests.rs`,
     `crypto/rust/tests/rejoin_after_removal.rs`,
