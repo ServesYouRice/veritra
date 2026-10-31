@@ -81,7 +81,9 @@ if [ -n "$INFRA_DIR" ]; then
 fi
 
 step "checks"
-sh scripts/check-go-toolchain.sh
+# The release builds FROM golang@digest, so confirm with the registry that the
+# pinned digest really is golang:$GO_VERSION (needs docker buildx and network).
+VERITRA_VERIFY_GO_IMAGE_DIGEST=1 sh scripts/check-go-toolchain.sh
 (
   cd server
   unformatted="$(gofmt -l .)"
