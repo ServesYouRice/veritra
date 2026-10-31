@@ -220,6 +220,67 @@ void main() {
         await alice.service.groupEpoch('conv_1'), (epoch: 2, pending: false));
   }, skip: skip);
 
+  test('a self-update lands only once accepted, and every member follows',
+      () async {
+    final bindings = NativeCryptoBindings.open(libraryPath!);
+    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+    final carol = await _Client.enroll(bindings, 'acct_carol', 'dev_carol');
+    await _startConversation(alice, bob);
+    await alice.service.stageMembershipChange('conv_1',
+        adds: <DeviceKeyPackage>[await carol.keyPackage()]);
+    await _accept(alice, <_Client>[carol], <_Client>[bob]);
+    final safety = await alice.service.conversationSafetyNumber('conv_1');
+
+    await bob.service.stageSelfUpdate('conv_1');
+    // Staged, not merged, until the server accepts it (D28).
+    expect(await bob.service.groupEpoch('conv_1'), (epoch: 2, pending: true));
+    final bundle = MlsCommitBundle.decode(
+        (await bob.store.pendingMlsMessages()).single.payload);
+    expect(bundle.isUpdateOnly, isTrue);
+    expect(bundle.epoch, 2);
+    await _accept(bob, const <_Client>[], <_Client>[alice, carol]);
+    for (final member in <_Client>[alice, bob, carol]) {
+      expect(await member.service.groupEpoch('conv_1'),
+          (epoch: 3, pending: false));
+    }
+    // Same members and signing keys, so the safety number holds.
+    expect((await alice.service.conversationSafetyNumber('conv_1')).digits,
+        safety.digits);
+
+    final hello = await alice
+        .send(AppPayloadType.text, <String, Object?>{'text': 'after'});
+    await bob.receive(alice, hello);
+    await carol.receive(alice, hello);
+    expect((await bob.history()).last.body, 'after');
+    final reply =
+        await bob.send(AppPayloadType.text, <String, Object?>{'text': 'ok'});
+    await carol.receive(bob, reply);
+    expect((await carol.history()).last.body, 'ok');
+  }, skip: skip);
+
+  test('a self-update that loses the epoch is dropped without a fork',
+      () async {
+    final bindings = NativeCryptoBindings.open(libraryPath!);
+    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+    await _startConversation(alice, bob);
+
+    await bob.service.stageSelfUpdate('conv_1');
+    final bobs = (await bob.store.pendingMlsMessages()).single;
+    await alice.service.stageSelfUpdate('conv_1');
+    await _accept(alice, const <_Client>[], <_Client>[bob]);
+    // The server refused Bob's commit (409): it is dropped, and the
+    // winner already applied.
+    await bob.service.abandonCommitBundle(bobs);
+    expect(await bob.store.pendingMlsMessages(), isEmpty);
+    expect(await bob.service.groupEpoch('conv_1'), (epoch: 2, pending: false));
+    final next =
+        await bob.send(AppPayloadType.text, <String, Object?>{'text': 'next'});
+    await alice.receive(bob, next);
+    expect((await alice.history()).last.body, 'next');
+  }, skip: skip);
+
   test('a spoofed sender is kept as unverifiable and sync continues', () async {
     final bindings = NativeCryptoBindings.open(libraryPath!);
     final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
