@@ -626,7 +626,8 @@ fn parse_membership_changes(input: &[u8]) -> Result<MembershipChanges<'_>, i32> 
         });
     }
     let remove_count = reader.u16()?;
-    if remove_count > MAX_MEMBERSHIP_CHANGES || add_count + remove_count == 0 {
+    // An empty list (no adds, no removes) asks for a self-update commit.
+    if remove_count > MAX_MEMBERSHIP_CHANGES {
         return Err(PM_CRYPTO_INVALID_ARGUMENT);
     }
     let mut removes = Vec::with_capacity(remove_count);
@@ -650,6 +651,11 @@ fn parse_membership_changes(input: &[u8]) -> Result<MembershipChanges<'_>, i32> 
 /// with [`pm_crypto_group_merge_pending_commit`] once the server accepts the
 /// commit, or drops it with [`pm_crypto_group_clear_pending_commit`].
 ///
+/// An empty change list (no adds and no removes) stages a self-update: a
+/// commit with an update path and no proposals that refreshes this device's
+/// leaf key (`MlsDevice::stage_self_update`). Before this, an empty list was
+/// refused, so an older ABI 9 library still fails closed on it.
+///
 /// # Safety
 /// `handle` must be live, slices readable, and all outputs writable.
 #[no_mangle]
@@ -671,6 +677,11 @@ pub unsafe extern "C" fn pm_crypto_group_stage_commit(
         let staged = unsafe {
             with_device(handle, |device| {
                 let mut group = device.load_group(group_id).map_err(|_| PM_CRYPTO_ERROR)?;
+                if changes.adds.is_empty() && changes.removes.is_empty() {
+                    return device
+                        .stage_self_update(&mut group)
+                        .map_err(|_| PM_CRYPTO_ERROR);
+                }
                 device
                     .stage_membership_commit(&mut group, &changes.adds, &changes.removes)
                     .map_err(|_| PM_CRYPTO_ERROR)
@@ -799,6 +810,10 @@ pub unsafe extern "C" fn pm_crypto_group_process_commit(
 }
 
 /// Rotates this member's leaf and returns the committed update message.
+/// It merges at once, before any server has accepted the commit, so a
+/// commit that loses the epoch race forks this device from the group. The
+/// app does not call it; it stages self-updates through
+/// [`pm_crypto_group_stage_commit`] with an empty change list.
 ///
 /// # Safety
 /// `handle` must be live, `group_id` readable, and `out_commit` writable.
@@ -1050,8 +1065,10 @@ mod tests {
         assert!(super::parse_membership_changes(&trailing).is_err());
         assert!(super::parse_membership_changes(&valid[..valid.len() - 1]).is_err());
         assert!(super::parse_membership_changes(&[2, 0, 0, 0, 0]).is_err());
-        // Nothing to change.
-        assert!(super::parse_membership_changes(&[1, 0, 0, 0, 0]).is_err());
+        // Nothing to change is a self-update request.
+        let empty = super::parse_membership_changes(&[1, 0, 0, 0, 0]).unwrap();
+        assert!(empty.adds.is_empty() && empty.removes.is_empty());
+        assert!(super::parse_membership_changes(&[1, 0, 0, 0, 0, 0]).is_err());
         // Empty identity.
         let mut empty_id = vec![1u8, 0, 0, 0, 1];
         empty_id.extend_from_slice(&[0, 0, 0, 1, b'x']);

@@ -152,6 +152,9 @@ int32_t pm_crypto_group_add_member(PmCryptoHandle *handle,
  * device_len:u16 device}*, big-endian. out_welcome is empty (NULL, 0) when
  * nothing is added. Merge after the server accepts the commit; clear it
  * after a refusal.
+ * An empty list (add_count 0, remove_count 0) stages a self-update: a commit
+ * with an update path and no proposals that refreshes this device's leaf key
+ * (2026-10-31; earlier ABI 9 builds refuse an empty list).
  */
 int32_t pm_crypto_group_stage_commit(PmCryptoHandle *handle,
                                      PmByteSlice group_id, PmByteSlice changes,
@@ -167,6 +170,11 @@ int32_t pm_crypto_group_epoch(PmCryptoHandle *handle, PmByteSlice group_id,
 int32_t pm_crypto_group_process_commit(PmCryptoHandle *handle,
                                        PmByteSlice group_id,
                                        PmByteSlice commit);
+/*
+ * Merges its update commit at once, before the server has accepted it, so a
+ * commit that loses the epoch race forks this device. Not used by the app;
+ * use pm_crypto_group_stage_commit with an empty change list.
+ */
 int32_t pm_crypto_group_self_update(PmCryptoHandle *handle,
                                     PmByteSlice group_id,
                                     PmOwnedBuffer *out_commit);

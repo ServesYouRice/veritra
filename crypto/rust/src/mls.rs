@@ -339,6 +339,58 @@ impl MlsDevice {
         })
     }
 
+    /// Stages one commit that adds and removes no one and carries an update
+    /// path (periodic self-update): this device's leaf gets a fresh HPKE key
+    /// and every path secret from it to the root changes, which is what
+    /// gives post-compromise security. The credential and signature key stay
+    /// the same, so the safety number does not change. Like
+    /// [`Self::stage_membership_commit`] it is not merged: the caller merges
+    /// only after the server accepts it on this epoch, or clears it.
+    ///
+    /// No proposal goes in, not even a queued one, so the commit is exactly
+    /// an update path. A commit that came out without one is cleared and
+    /// refused rather than sent.
+    pub fn stage_self_update(
+        &self,
+        group: &mut MlsGroup,
+    ) -> Result<StagedCommitMessages, MlsError> {
+        if group.pending_commit().is_some() {
+            return Err(MlsError::InvalidState);
+        }
+        let epoch = group.epoch().as_u64();
+        let bundle = group
+            .commit_builder()
+            .consume_proposal_store(false)
+            .force_self_update(true)
+            .load_psks(self.provider.storage())
+            .map_err(|_| MlsError::GroupOperation)?
+            .build(
+                self.provider.rand(),
+                self.provider.crypto(),
+                &self.signer,
+                |_| false,
+            )
+            .map_err(|_| MlsError::GroupOperation)?
+            .stage_commit(&self.provider)
+            .map_err(|_| MlsError::GroupOperation)?;
+        let path_only = group.pending_commit().is_some_and(|staged| {
+            staged.queued_proposals().next().is_none() && staged.update_path_leaf_node().is_some()
+        });
+        let (commit, welcome, _) = bundle.into_messages();
+        if !path_only || welcome.is_some() {
+            let _ = group.clear_pending_commit(self.provider.storage());
+            return Err(MlsError::GroupOperation);
+        }
+        let commit = commit
+            .tls_serialize_detached()
+            .map_err(|_| MlsError::GroupOperation)?;
+        Ok(StagedCommitMessages {
+            commit,
+            welcome: Vec::new(),
+            epoch,
+        })
+    }
+
     /// Drops a staged commit the server did not accept.
     pub fn clear_pending_commit(&self, group: &mut MlsGroup) -> Result<(), MlsError> {
         group
@@ -360,6 +412,10 @@ impl MlsDevice {
             .map_err(|_| MlsError::GroupOperation)
     }
 
+    /// Builds and stages an update commit; the FFI caller merges it at once.
+    /// The app never uses this path, because merging before the server
+    /// accepts the commit can fork the group. Periodic updates go through
+    /// [`Self::stage_self_update`].
     pub fn self_update(&self, group: &mut MlsGroup) -> Result<Vec<u8>, MlsError> {
         let bundle = group
             .self_update(&self.provider, &self.signer, LeafNodeParameters::default())
@@ -1546,6 +1602,95 @@ mod tests {
         );
         assert!(bob.load_group(b"conv_real").is_err());
         assert!(bob.load_group(b"conv_expected").is_err());
+    }
+
+    #[test]
+    fn a_staged_self_update_refreshes_the_leaf_only_after_acceptance() {
+        let group_id = b"conv_self_update";
+        let (devices, mut groups) = three_members(group_id);
+        let [alice, bob, carol] = &devices;
+        let [alice_group, bob_group, carol_group] = &mut groups;
+        let epoch = carol.group_epoch(carol_group);
+        let leaf_key = carol_group
+            .own_leaf_node()
+            .unwrap()
+            .encryption_key()
+            .clone();
+        let safety = carol.conversation_safety_number(carol_group).unwrap();
+
+        let staged = carol.stage_self_update(carol_group).unwrap();
+        assert_eq!(staged.epoch, epoch);
+        assert!(staged.welcome.is_empty());
+        // Staged, not merged: the epoch waits for the server.
+        assert!(carol.has_pending_commit(carol_group));
+        assert_eq!(carol.group_epoch(carol_group), epoch);
+        // A second stage on top of a waiting commit is refused.
+        assert_eq!(
+            carol.stage_self_update(carol_group).err(),
+            Some(MlsError::InvalidState)
+        );
+
+        carol.merge_pending_commit(carol_group).unwrap();
+        assert_eq!(carol.group_epoch(carol_group), epoch + 1);
+        // The commit carried an update path: Carol's leaf key is new.
+        assert_ne!(
+            carol_group.own_leaf_node().unwrap().encryption_key(),
+            &leaf_key
+        );
+        for (device, group) in [(alice, &mut *alice_group), (bob, &mut *bob_group)] {
+            device.process_commit(group, &staged.commit).unwrap();
+            assert_eq!(device.group_epoch(group), epoch + 1);
+            assert_eq!(
+                group.epoch_authenticator().as_slice(),
+                carol_group.epoch_authenticator().as_slice()
+            );
+        }
+        // Identities and signature keys are unchanged, so is the number.
+        assert_eq!(
+            carol
+                .conversation_safety_number(carol_group)
+                .unwrap()
+                .transcript_hash,
+            safety.transcript_hash
+        );
+
+        let message = alice.encrypt(alice_group, b"after update").unwrap();
+        assert_eq!(
+            carol
+                .decrypt(carol_group, &message, b"acct_alice", b"dev_alice")
+                .unwrap(),
+            b"after update"
+        );
+        let reply = carol.encrypt(carol_group, b"reply").unwrap();
+        assert_eq!(
+            bob.decrypt(bob_group, &reply, b"acct_carol", b"dev_carol")
+                .unwrap(),
+            b"reply"
+        );
+    }
+
+    #[test]
+    fn a_refused_self_update_is_cleared_and_the_winner_applies() {
+        let group_id = b"conv_self_update_race";
+        let (devices, mut groups) = three_members(group_id);
+        let [alice, bob, _] = &devices;
+        let [alice_group, bob_group, _] = &mut groups;
+        let epoch = alice.group_epoch(alice_group);
+        alice.stage_self_update(alice_group).unwrap();
+        let winner = bob.stage_self_update(bob_group).unwrap();
+        bob.merge_pending_commit(bob_group).unwrap();
+        // Bob's commit won the epoch: Alice drops hers and applies his.
+        alice.clear_pending_commit(alice_group).unwrap();
+        alice.process_commit(alice_group, &winner.commit).unwrap();
+        assert_eq!(alice.group_epoch(alice_group), epoch + 1);
+        assert!(!alice.has_pending_commit(alice_group));
+        let message = bob.encrypt(bob_group, b"still in step").unwrap();
+        assert_eq!(
+            alice
+                .decrypt(alice_group, &message, b"acct_bob", b"dev_bob")
+                .unwrap(),
+            b"still in step"
+        );
     }
 
     #[test]
