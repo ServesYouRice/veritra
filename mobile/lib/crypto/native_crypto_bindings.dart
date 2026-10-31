@@ -882,7 +882,8 @@ class NativeCryptoDevice implements Finalizable {
     required String senderDeviceId,
   }) {
     _bindings._bounded(groupId.codeUnits, 128);
-    _bindings._bounded(ciphertext, 1024 * 1024);
+    // The native ciphertext ceiling: 1 MiB of plaintext plus MLS overhead.
+    _bindings._bounded(ciphertext, 1024 * 1024 + 4096);
     _bindings._bounded(senderAccountId.codeUnits, 128);
     _bindings._bounded(senderDeviceId.codeUnits, 128);
     return _bindings._withByteLists(

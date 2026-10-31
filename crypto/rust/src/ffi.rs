@@ -25,7 +25,15 @@ const MAX_STATE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_CHALLENGE_BYTES: usize = 4096;
 const MAX_KEY_PACKAGE_BYTES: usize = 48 * 1024;
 const MAX_HANDSHAKE_BYTES: usize = 4 * 1024 * 1024;
+/// Largest application plaintext pm_crypto_group_encrypt accepts.
 const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
+/// Largest MLS application ciphertext pm_crypto_group_decrypt accepts. The
+/// margin covers padding to 256 bytes, the framing (group id of at most 128
+/// bytes, epoch, encrypted sender data), the AEAD tag, the Ed25519 signature
+/// and the length prefixes; a MAX_MESSAGE_BYTES plaintext needs 312 bytes of
+/// it with an 8-byte group id (tested). Encrypt refuses output above it, so every successful
+/// encrypt can be decrypted.
+const MAX_CIPHERTEXT_BYTES: usize = MAX_MESSAGE_BYTES + 4096;
 const ATTACHMENT_KEY_BYTES: usize = 32;
 const MEMBERSHIP_CHANGES_VERSION: u8 = 1;
 const MAX_MEMBERSHIP_CHANGES: usize = 256;
@@ -911,6 +919,13 @@ pub unsafe extern "C" fn pm_crypto_group_encrypt(
                     .map_err(|_| PM_CRYPTO_ERROR)
             })?
         };
+        if ciphertext.len() > MAX_CIPHERTEXT_BYTES {
+            // Unreachable with the margin above. The sender ratchet has
+            // advanced; the message is dropped rather than returned
+            // undecryptable.
+            wipe(ciphertext);
+            return Err(PM_CRYPTO_ERROR);
+        }
         unsafe { output(out_ciphertext, ciphertext) }
     })
 }
@@ -934,7 +949,7 @@ pub unsafe extern "C" fn pm_crypto_group_decrypt(
             return Err(PM_CRYPTO_INVALID_ARGUMENT);
         }
         let group_id = unsafe { borrowed(group_id, MAX_ID_BYTES)? };
-        let ciphertext = unsafe { borrowed(ciphertext, MAX_MESSAGE_BYTES)? };
+        let ciphertext = unsafe { borrowed(ciphertext, MAX_CIPHERTEXT_BYTES)? };
         let sender_account_id = unsafe { borrowed(sender_account_id, MAX_ID_BYTES)? };
         let sender_device_id = unsafe { borrowed(sender_device_id, MAX_ID_BYTES)? };
         let plaintext = unsafe {
@@ -1152,6 +1167,100 @@ mod tests {
         unsafe {
             pm_crypto_buffer_free(pair[0]);
             pm_crypto_buffer_free(pair[1]);
+        }
+    }
+
+    #[test]
+    fn largest_plaintext_round_trips_through_the_ffi() {
+        let mut alice = ptr::null_mut();
+        let mut bob = ptr::null_mut();
+        assert_eq!(
+            unsafe { pm_crypto_device_create(slice(b"acct_a"), slice(b"dev_a"), &mut alice) },
+            PM_CRYPTO_OK
+        );
+        assert_eq!(
+            unsafe { pm_crypto_device_create(slice(b"acct_b"), slice(b"dev_b"), &mut bob) },
+            PM_CRYPTO_OK
+        );
+        let mut package = PmOwnedBuffer::default();
+        assert_eq!(
+            unsafe { pm_crypto_device_create_key_package(bob, &mut package) },
+            PM_CRYPTO_OK
+        );
+        let package = unsafe { take(package) };
+        assert_eq!(
+            unsafe { pm_crypto_group_create(alice, slice(b"conv_big")) },
+            PM_CRYPTO_OK
+        );
+        let (mut commit, mut welcome) = (PmOwnedBuffer::default(), PmOwnedBuffer::default());
+        assert_eq!(
+            unsafe {
+                pm_crypto_group_add_member(
+                    alice,
+                    slice(b"conv_big"),
+                    slice(&package),
+                    slice(b"acct_b"),
+                    slice(b"dev_b"),
+                    &mut commit,
+                    &mut welcome,
+                )
+            },
+            PM_CRYPTO_OK
+        );
+        let _ = unsafe { take(commit) };
+        let welcome = unsafe { take(welcome) };
+        assert_eq!(
+            unsafe { pm_crypto_group_join(bob, slice(b"conv_big"), slice(&welcome)) },
+            PM_CRYPTO_OK
+        );
+
+        let plaintext = vec![0x5a; MAX_MESSAGE_BYTES];
+        let mut ciphertext = PmOwnedBuffer::default();
+        assert_eq!(
+            unsafe {
+                pm_crypto_group_encrypt(
+                    alice,
+                    slice(b"conv_big"),
+                    slice(&plaintext),
+                    &mut ciphertext,
+                )
+            },
+            PM_CRYPTO_OK
+        );
+        let ciphertext = unsafe { take(ciphertext) };
+        assert!(ciphertext.len() > MAX_MESSAGE_BYTES);
+        assert!(ciphertext.len() <= MAX_MESSAGE_BYTES + 1024);
+        let mut decrypted = PmOwnedBuffer::default();
+        assert_eq!(
+            unsafe {
+                pm_crypto_group_decrypt(
+                    bob,
+                    slice(b"conv_big"),
+                    slice(&ciphertext),
+                    slice(b"acct_a"),
+                    slice(b"dev_a"),
+                    &mut decrypted,
+                )
+            },
+            PM_CRYPTO_OK
+        );
+        assert!(unsafe { take(decrypted) } == plaintext);
+        // One byte more is refused before anything is encrypted.
+        let mut refused = PmOwnedBuffer::default();
+        assert_eq!(
+            unsafe {
+                pm_crypto_group_encrypt(
+                    alice,
+                    slice(b"conv_big"),
+                    slice(&vec![0x5a; MAX_MESSAGE_BYTES + 1]),
+                    &mut refused,
+                )
+            },
+            PM_CRYPTO_INVALID_ARGUMENT
+        );
+        unsafe {
+            pm_crypto_device_destroy(alice);
+            pm_crypto_device_destroy(bob);
         }
     }
 

@@ -161,6 +161,11 @@ int32_t pm_crypto_group_safety_number(PmCryptoHandle *handle,
 int32_t pm_crypto_group_remove_member(
     PmCryptoHandle *handle, PmByteSlice group_id, PmByteSlice account_id,
     PmByteSlice device_id, PmOwnedBuffer *out_commit);
+/*
+ * Plaintext is at most 1 MiB (1048576 bytes); ciphertext accepted by decrypt
+ * is at most 1 MiB + 4096 bytes. Encrypt never returns ciphertext above the
+ * decrypt ceiling, so every successful encrypt can be decrypted.
+ */
 int32_t pm_crypto_group_encrypt(PmCryptoHandle *handle, PmByteSlice group_id,
                                 PmByteSlice plaintext,
                                 PmOwnedBuffer *out_ciphertext);
