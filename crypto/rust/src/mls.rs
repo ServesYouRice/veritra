@@ -449,19 +449,49 @@ impl MlsDevice {
         let MlsMessageBodyIn::Welcome(welcome) = message.extract() else {
             return Err(MlsError::UnexpectedMessage);
         };
-        let group = StagedWelcome::new_from_welcome(
+        // Staging decrypts the Welcome (and consumes the key package) but
+        // stores no group; into_group persists it, so every check runs first.
+        let staged = StagedWelcome::new_from_welcome(
             &self.provider,
             group_create_config().join_config(),
             welcome,
             None,
         )
-        .map_err(|_| MlsError::GroupOperation)?
-        .into_group(&self.provider)
         .map_err(|_| MlsError::GroupOperation)?;
-        if group.group_id().as_slice() != expected_group_id {
+        if staged.group_context().group_id().as_slice() != expected_group_id {
             return Err(MlsError::InvalidMessage);
         }
-        Ok(group)
+        self.inspect_welcome(&staged)?;
+        staged
+            .into_group(&self.provider)
+            .map_err(|_| MlsError::GroupOperation)
+    }
+
+    /// The structural checks a Welcome must pass before its group is stored:
+    /// every leaf holds a well-formed, unique device identity; this device's
+    /// leaf carries its own identity and signing key; the sender is another
+    /// leaf in the tree. Which members and inviters to expect needs a trust
+    /// anchor (L1) and is not decided here.
+    fn inspect_welcome(&self, staged: &StagedWelcome) -> Result<(), MlsError> {
+        let refused = MlsError::InvalidIdentity;
+        let identities = staged
+            .members()
+            .map(|member| basic_identity(&member.credential))
+            .collect::<Result<Vec<_>, _>>()?;
+        ensure_added_identities_unique(&[], &identities)?;
+        let own = staged.own_leaf_node().ok_or(refused)?;
+        if basic_identity(own.credential())?
+            != encode_device_identity(&self.account_id, &self.device_id)?
+            || own.signature_key().as_slice() != self.signing_public_key()
+        {
+            return Err(refused);
+        }
+        if staged.welcome_sender_index() == staged.own_leaf_index()
+            || staged.welcome_sender().is_err()
+        {
+            return Err(refused);
+        }
+        Ok(())
     }
 
     pub fn encrypt(&self, group: &mut MlsGroup, plaintext: &[u8]) -> Result<Vec<u8>, MlsError> {
@@ -1319,6 +1349,101 @@ mod tests {
                 .unwrap()
         };
         assert_refused_then_recovers(&devices, &mut groups, b"conv_rename", &commit);
+    }
+
+    /// A key package stored in `holder`'s provider (so `holder` can open a
+    /// Welcome built from it) but carrying `identity` under `signer`.
+    fn key_package_in(
+        holder: &MlsDevice,
+        signer: &SignatureKeyPair,
+        identity: &[u8],
+    ) -> KeyPackage {
+        let credential = CredentialWithKey {
+            credential: BasicCredential::new(identity.to_vec()).into(),
+            signature_key: signer.public().into(),
+        };
+        KeyPackage::builder()
+            .build(CIPHERSUITE, &holder.provider, signer, credential)
+            .unwrap()
+            .key_package()
+            .clone()
+    }
+
+    /// Alice builds a group through OpenMLS directly from `packages` and
+    /// returns the Welcome; `bob` must refuse it and persist nothing.
+    fn assert_welcome_refused(group_id: &[u8], bob: &MlsDevice, packages: &[KeyPackage]) {
+        let alice = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
+        let mut group = alice.create_group(group_id).unwrap();
+        let (_, welcome, _) = group
+            .add_members(&alice.provider, &alice.signer, packages)
+            .unwrap();
+        let welcome = welcome.tls_serialize_detached().unwrap();
+        assert!(bob.join_group(group_id, &welcome).is_err());
+        assert_eq!(bob.load_group(group_id).err(), Some(MlsError::InvalidState));
+    }
+
+    #[test]
+    fn a_welcome_with_a_malformed_or_repeated_identity_is_refused() {
+        let bob = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+        assert_welcome_refused(
+            b"conv_w_garbage",
+            &bob,
+            &[raw_key_package(&bob), forged_key_package(b"garbage")],
+        );
+        let carol = encode_device_identity(b"acct_carol", b"dev_carol").unwrap();
+        assert_welcome_refused(
+            b"conv_w_twins",
+            &bob,
+            &[
+                raw_key_package(&bob),
+                forged_key_package(&carol),
+                forged_key_package(&carol),
+            ],
+        );
+        // A second leaf claiming Bob himself.
+        let own = encode_device_identity(b"acct_bob", b"dev_bob").unwrap();
+        assert_welcome_refused(
+            b"conv_w_self_twin",
+            &bob,
+            &[raw_key_package(&bob), forged_key_package(&own)],
+        );
+    }
+
+    #[test]
+    fn a_welcome_must_place_this_device_under_its_own_identity_and_key() {
+        let bob = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+        // Bob's own key material, but another identity on the leaf.
+        let mallory = encode_device_identity(b"acct_mallory", b"dev_mallory").unwrap();
+        assert_welcome_refused(
+            b"conv_w_identity",
+            &bob,
+            &[key_package_in(&bob, &bob.signer, &mallory)],
+        );
+        // Bob's identity, but a signing key that is not his.
+        let other = SignatureKeyPair::new(CIPHERSUITE.signature_algorithm()).unwrap();
+        let own = encode_device_identity(b"acct_bob", b"dev_bob").unwrap();
+        assert_welcome_refused(b"conv_w_key", &bob, &[key_package_in(&bob, &other, &own)]);
+    }
+
+    #[test]
+    fn a_welcome_for_another_group_persists_nothing() {
+        let alice = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
+        let bob = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+        let mut group = alice.create_group(b"conv_real").unwrap();
+        let add = alice
+            .add_member(
+                &mut group,
+                &bob.create_key_package().unwrap(),
+                b"acct_bob",
+                b"dev_bob",
+            )
+            .unwrap();
+        assert_eq!(
+            bob.join_group(b"conv_expected", &add.welcome).err(),
+            Some(MlsError::InvalidMessage)
+        );
+        assert!(bob.load_group(b"conv_real").is_err());
+        assert!(bob.load_group(b"conv_expected").is_err());
     }
 
     #[test]
