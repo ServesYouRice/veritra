@@ -74,6 +74,27 @@ mode is the supported direction; install the corresponding CA certificate on
 the device. iOS also declares local-network usage so the OS can present its
 LAN permission prompt.
 
+### Reverse proxy and client addresses
+
+The server takes the client address from forwarding headers only when the
+direct peer is in `PRIVATE_MESSENGER_TRUSTED_PROXIES`. It reads
+`X-Forwarded-For` first, right to left, and `X-Real-IP` only when
+`X-Forwarded-For` is absent. That address keys the login and registration
+throttles, setup authorization and the realtime connection limits.
+
+The shipped profiles are safe: Caddy overwrites both headers with the peer
+it saw (`deploy/caddy/Caddyfile`), and the Traefik ingress drops
+`X-Forwarded-For` from untrusted clients (`deploy/kubernetes/base`). **Any
+other reverse proxy must overwrite `X-Forwarded-For`** (or append the peer
+it saw to a chain it has validated), not just set `X-Real-IP`. A proxy that
+passes the client's own `X-Forwarded-For` through lets every client pick
+its own address and escape the throttles. For nginx, set both:
+
+```nginx
+proxy_set_header X-Forwarded-For $remote_addr;
+proxy_set_header X-Real-IP       $remote_addr;
+```
+
 **Demo builds only (D11, D12).** `mobile/lib/main_demo.dart`, built with
 `--dart-define=VERITRA_DEMO=true`, also accepts plain `http://` for loopback
 hosts (`localhost`, `127.0.0.0/8`, `::1`) so it can reach
