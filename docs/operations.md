@@ -169,7 +169,10 @@ metadata, not server blob bytes. Push subscription exports retain endpoint
 metadata needed for portability but omit the reusable `auth_secret`; bearer,
 session and recovery capabilities are never export fields. Server audit history
 is intentionally excluded; the export audit record contains only fixed schema
-and scope metadata. The mobile client writes the bounded pages to a local
+and scope metadata. Only messages are paged (`limit`, then `before` with the
+previous page's `next_before`): the `categories` object comes with the first
+page, and later pages carry an empty `categories`, so a full export holds
+every category row once. The mobile client writes the bounded pages to a local
 `veritra-account-export-v2-*.json` file without logging its contents.
 
 ## Upgrade and rollback
