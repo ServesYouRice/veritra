@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -168,10 +169,63 @@ final RegExp _attachmentOrphanName = RegExp(
 /// profile shares the directory) or an upload still running may own them.
 const Duration attachmentOrphanMinAge = Duration(hours: 1);
 
+/// How often a running app sweeps again. A file is old enough to go after
+/// [attachmentOrphanMinAge], so one left by a failure while the app keeps
+/// running is gone within about two hours instead of at the next start.
+const Duration attachmentOrphanSweepInterval = Duration(hours: 1);
+
+/// Runs [cleanupAttachmentOrphans] at [start] and then every [interval]
+/// until [stop]. Sweeps never overlap, and a failure (no directory, no path
+/// provider) only skips that sweep. The [minAge] guard keeps the files of
+/// operations that are still running.
+class AttachmentOrphanSweeper {
+  AttachmentOrphanSweeper(
+    this._directory, {
+    this.interval = attachmentOrphanSweepInterval,
+    this.minAge = attachmentOrphanMinAge,
+  });
+
+  final Future<Directory?> Function() _directory;
+  final Duration interval;
+  final Duration minAge;
+  Timer? _timer;
+  bool _sweeping = false;
+  bool _stopped = false;
+
+  /// Sweeps now and arms the periodic sweep. A second call does nothing.
+  void start() {
+    if (_stopped || _timer != null) return;
+    _timer = Timer.periodic(interval, (_) => unawaited(sweep()));
+    unawaited(sweep());
+  }
+
+  Future<void> sweep() async {
+    if (_stopped || _sweeping) return;
+    _sweeping = true;
+    try {
+      final directory = await _directory();
+      if (directory != null && !_stopped) {
+        await cleanupAttachmentOrphans(directory, minAge: minAge);
+      }
+    } catch (_) {
+      // Best effort; the next tick tries again.
+    } finally {
+      _sweeping = false;
+    }
+  }
+
+  void stop() {
+    _stopped = true;
+    _timer?.cancel();
+    _timer = null;
+  }
+}
+
 /// Deletes the attachment working files a killed or crashed process left in
-/// [directory], plaintext `.part` files included. Run it once at start, before
-/// attachments are used. Best effort: a file that cannot be deleted is skipped
-/// and nothing is thrown.
+/// [directory], plaintext `.part` files included. Runs at start, before
+/// attachments are used, and then periodically ([AttachmentOrphanSweeper]).
+/// Best effort: a file that cannot be deleted is skipped and nothing is
+/// thrown.
 Future<void> cleanupAttachmentOrphans(
   Directory directory, {
   Duration minAge = attachmentOrphanMinAge,

@@ -97,6 +97,39 @@ void main() {
     await subscription.cancel();
   });
 
+  test('a redirect is refused, so the token never follows it', () async {
+    // dart:io copies Authorization to a redirect on the same host (and on
+    // subdomains), so a 3xx would hand the bearer token to wherever the
+    // server, or a proxy in front of it, points.
+    final sync = service();
+    final paths = <String>[];
+    final failed = Completer<Object>();
+    final subscription = sync.events.listen((_) {}, onError: (Object err) {
+      if (!failed.isCompleted) failed.complete(err);
+    });
+    final served = requests.stream.listen((request) async {
+      paths
+          .add('${request.uri.path} ${request.headers.value('authorization')}');
+      if (request.uri.path == '/api/v1/sync/ws') {
+        request.response
+          ..statusCode = HttpStatus.found
+          ..headers.set(HttpHeaders.locationHeader, '/elsewhere');
+        await request.response.close();
+        return;
+      }
+      // The redirect target would accept the upgrade.
+      final socket = await WebSocketTransformer.upgrade(request);
+      unawaited(socket.drain<void>());
+    });
+    await sync.connect();
+    final error = await failed.future.timeout(const Duration(seconds: 5));
+    expect(error, isA<WebSocketException>());
+    await sync.dispose();
+    await subscription.cancel();
+    await served.cancel();
+    expect(paths, <String>['/api/v1/sync/ws Bearer session-token']);
+  });
+
   test('dispose is idempotent and connect after dispose is inert', () async {
     final sync = service();
     await sync.dispose();

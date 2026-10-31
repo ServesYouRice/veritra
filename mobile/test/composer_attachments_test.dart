@@ -72,6 +72,23 @@ void main() {
       expect(pasted.mimeType, 'image/png');
     });
 
+    test('the paste folders are private to their owner', () async {
+      // As an older version or a permissive umask left them.
+      final parent = Directory('${cache.path}${sep}veritra-paste');
+      final folder = Directory('${parent.path}${sep}demo-alice')
+        ..createSync(recursive: true);
+      for (final path in <String>[parent.path, folder.path]) {
+        final result = await Process.run('chmod', <String>['755', path]);
+        expect(result.exitCode, 0);
+      }
+      usePastedImageProfile('demo-alice');
+      await writePastedImage(Uint8List.fromList([1]));
+      for (final directory in <Directory>[parent, folder]) {
+        expect(directory.statSync().mode & 0x1ff, 0x1c0,
+            reason: '${directory.path} is 0700');
+      }
+    }, skip: Platform.isLinux || Platform.isMacOS ? false : 'POSIX modes');
+
     test('two profiles keep their pastes apart', () async {
       usePastedImageProfile('demo-alice');
       final alice = await writePastedImage(Uint8List.fromList([1]));

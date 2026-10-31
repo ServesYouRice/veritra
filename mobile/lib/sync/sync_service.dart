@@ -184,7 +184,7 @@ class WebSocketSyncService implements SyncService {
       socket = await WebSocket.connect(
         uri.toString(),
         headers: <String, dynamic>{'Authorization': 'Bearer $token'},
-        customClient: client,
+        customClient: _NoRedirectClient(client),
       ).timeout(const Duration(seconds: 15));
     } catch (_) {
       client.close(force: true);
@@ -264,4 +264,30 @@ class WebSocketSyncService implements SyncService {
       // Already closed or the peer vanished; either way it is no longer open.
     }
   }
+}
+
+/// The handshake client [WebSocket.connect] is given. It opens every request
+/// with `followRedirects = false`, so a 3xx reaches the handshake as a
+/// non-101 answer and fails. Followed, dart:io would copy the bearer token
+/// in `Authorization` to the new location on the same host or a subdomain.
+/// [WebSocket.connect] only calls [openUrl]; any other use fails loudly
+/// rather than reaching a client that follows redirects.
+class _NoRedirectClient implements HttpClient {
+  _NoRedirectClient(this._inner);
+
+  final HttpClient _inner;
+
+  @override
+  Future<HttpClientRequest> openUrl(String method, Uri url) async {
+    final request = await _inner.openUrl(method, url);
+    request.followRedirects = false;
+    return request;
+  }
+
+  @override
+  void close({bool force = false}) => _inner.close(force: force);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnsupportedError('the sync handshake client only opens requests');
 }

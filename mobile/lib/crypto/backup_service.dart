@@ -44,6 +44,12 @@ enum BackupFailureKind {
   storage,
 }
 
+/// The server will not continue a saved prefix (416, or a 200 to a range
+/// request). Never leaves [BackupService]: the download restarts from 0.
+class _RangeRefused implements Exception {
+  const _RangeRefused();
+}
+
 class BackupException implements Exception {
   const BackupException(this.kind);
 
@@ -210,8 +216,7 @@ class BackupService {
     final file =
         File('${directory.path}${Platform.pathSeparator}$_partialName');
     try {
-      var resumed = await file.exists() && await file.length() > 0;
-      await _download(client, recoveryToken, file);
+      var resumed = await _download(client, recoveryToken, file);
       try {
         await _decryptAndRestore(file, recoveryToken, key);
       } on BackupException catch (error) {
@@ -241,10 +246,41 @@ class BackupService {
   }
 
   /// Appends the rest of the backup to [file], starting after what it
-  /// already holds.
-  Future<void> _download(
+  /// already holds. Returns whether the file now continues a prefix saved
+  /// by an earlier attempt.
+  ///
+  /// A saved prefix the server cannot continue (a 416, or a 200 to the range
+  /// request, as from a proxy that drops `Range`) is dropped and the backup
+  /// is downloaded again from byte 0, once, in this call. Whether the prefix
+  /// was stale or the range unsupported, a fresh copy is the answer, and the
+  /// full digest and authentication checks still run on what is restored.
+  Future<bool> _download(
       ApiClient client, List<int> recoveryToken, File file) async {
     final start = await file.exists() ? await file.length() : 0;
+    if (start == 0) {
+      await _downloadFrom(client, recoveryToken, file, 0);
+      return false;
+    }
+    try {
+      await _downloadFrom(client, recoveryToken, file, start);
+      return true;
+    } on _RangeRefused {
+      await _deletePartial(file);
+      await _downloadFrom(client, recoveryToken, file, 0);
+      return false;
+    }
+  }
+
+  static Future<void> _deletePartial(File file) async {
+    try {
+      if (await file.exists()) await file.delete();
+    } on FileSystemException {
+      throw const BackupException(BackupFailureKind.storage);
+    }
+  }
+
+  Future<void> _downloadFrom(
+      ApiClient client, List<int> recoveryToken, File file, int start) async {
     IOSink? sink;
     try {
       final stream = await client.recoverEncryptedBackup(recoveryToken,
@@ -260,10 +296,9 @@ class BackupService {
         throw const BackupException(BackupFailureKind.busy);
       }
       if (error.statusCode == 416) {
-        // The saved prefix is not from this backup any more.
-        await sink?.close();
-        sink = null;
-        await file.delete();
+        // The saved prefix cannot be continued: the caller restarts from
+        // byte 0. A 416 to a request without a range is not expected.
+        if (start > 0) throw const _RangeRefused();
         throw const BackupException(BackupFailureKind.corrupt);
       }
       if (error.statusCode >= 500 || error.statusCode == 429) {
