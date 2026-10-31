@@ -3240,7 +3240,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// either a commit was applied since the epoch it was listed at, the
   /// server never listed it (nothing to commit), or every removed account
   /// is a member again (the removal was withdrawn). A conversation that is
-  /// gone, or has no local group, holds nothing.
+  /// gone, or has no local group, holds nothing. A read the server cut at
+  /// its cap releases only holds of conversations that are gone.
   Future<void> _updateRemovalHolds(
     List<MlsPendingChange> changes,
     int readSeq,
@@ -3273,11 +3274,16 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         ..epoch = max(hold.epoch, change.epoch)
         ..accounts.addAll(accounts);
     }
+    // A read the server cut at its cap flags every item truncated and may
+    // leave whole conversations out: one missing from it proves nothing.
+    // (A single conversation over its own cap is flagged too, but listed.)
+    final cut = changes.isNotEmpty && changes.every((item) => item.truncated);
     for (final conversationId in _removalHolds.keys.toList()) {
       if (listed.containsKey(conversationId)) continue;
       final hold = _removalHolds[conversationId];
       if (hold == null || hold.seq > readSeq) continue;
       var release = !conversations.any((item) => item.id == conversationId);
+      if (!release && cut) continue;
       if (!release) {
         if (await _hasPendingMlsWork(conversationId)) continue;
         final local = await mls.groupEpoch(conversationId);

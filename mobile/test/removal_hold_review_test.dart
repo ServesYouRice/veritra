@@ -39,6 +39,32 @@ void main() {
     expect(await held.timeout(const Duration(seconds: 5)), isTrue);
     expect(h.crypto.encrypted.single.removalApplied, isTrue);
   });
+
+  test('a truncated pending-changes read releases no hold it leaves out',
+      () async {
+    final h = await _Harness.start(
+        pendingRemovals: {'conv_a'},
+        fakes: (api, crypto) =>
+            crypto.stageFailures.addAll({'conv_a', 'conv_c'}));
+    addTearDown(h.state.dispose);
+    await _waitFor(() => h.state.sendHeldForRemoval('conv_a'));
+    // The server cut its list at the cap: conv_a is left out although its
+    // removal is still pending, and a later commit moved the local epoch.
+    h.api
+      ..truncateReads = true
+      ..pendingRemovals.remove('conv_a')
+      ..pendingRemovals.add('conv_c');
+    h.crypto.epochs['conv_a'] = 4;
+    final reads = h.api.pendingChangeCalls;
+    await h.frames(const Duration(milliseconds: 300));
+    expect(h.api.pendingChangeCalls, greaterThan(reads));
+    expect(h.state.sendHeldForRemoval('conv_a'), isTrue,
+        reason: 'a conversation missing from a cut list may still be pending');
+    // A complete read that leaves it out releases it.
+    h.api.truncateReads = false;
+    await h.frames(const Duration(milliseconds: 300));
+    await _waitFor(() => !h.state.sendHeldForRemoval('conv_a'));
+  });
 }
 
 const _origin = 'https://example.test';
@@ -119,6 +145,10 @@ class _Api extends ApiClient {
   final List<String> bundles = <String>[];
   final List<String> envelopes = <String>[];
   int pendingChangeCalls = 0;
+
+  /// While true, every read is flagged truncated, as the server does when
+  /// it cut the whole list at its cap.
+  bool truncateReads = false;
 
   /// While set and not completed, a bundle's answer waits for it.
   Completer<void>? bundleGate;
@@ -203,6 +233,7 @@ class _Api extends ApiClient {
           epoch: epochOf(conversationId),
           add: const <MlsDeviceRef>[],
           remove: const <MlsDeviceRef>[_bob],
+          truncated: truncateReads,
         ),
     ];
     final gate = readGate;
