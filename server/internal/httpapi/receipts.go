@@ -141,15 +141,6 @@ func (q *deliveryQueue) requeue(accountID string, advances []storage.DeliveryAdv
 	}
 }
 
-// drop discards everything pending and reports how many cursors it was.
-func (q *deliveryQueue) drop() int {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	n := len(q.pending)
-	clear(q.pending)
-	return n
-}
-
 func (q *deliveryQueue) isStopped() bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -163,24 +154,31 @@ func (a *API) runDeliveryWorker() {
 		if !ok {
 			return
 		}
-		failed := false
+		failed := map[string][]storage.DeliveryAdvance{}
 		for accountID, candidates := range batch {
 			if !a.writeDeliveries(accountID, candidates) {
-				failed = true
-				a.deliveries.requeue(accountID, candidates)
+				failed[accountID] = candidates
 			}
 		}
-		if !failed {
+		if len(failed) == 0 {
 			failures = 0
 			continue
 		}
-		// The store refused the write: keep the advances and retry after a
+		// The store refused a write: keep those advances and retry after a
 		// growing pause, a bounded number of times. Past that, or once
-		// shutdown stopped waiting, they are dropped (counted, not named).
+		// shutdown stopped waiting, only the failed advances are dropped
+		// (counted, not named); cursors other accounts queued meanwhile stay.
 		if failures++; failures > maxDeliveryRetries || a.deliveries.isStopped() {
-			a.warn("delivery_receipts_dropped", "cursors", a.deliveries.drop())
+			dropped := 0
+			for _, candidates := range failed {
+				dropped += len(candidates)
+			}
+			a.warn("delivery_receipts_dropped", "cursors", dropped)
 			failures = 0
 			continue
+		}
+		for accountID, candidates := range failed {
+			a.deliveries.requeue(accountID, candidates)
 		}
 		time.Sleep(min(deliveryRetryBase<<(failures-1), deliveryRetryCap))
 	}
