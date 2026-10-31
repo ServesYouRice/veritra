@@ -1156,12 +1156,17 @@ class MemoryLocalStore implements LocalStore {
     _cryptoState = null;
     _processedMlsMessages.clear();
     _peerVerifications.clear();
-    _history.replace(backup.history, backup.reactions);
+    final kept = withoutPendingHistory(
+        history: backup.history,
+        reactions: backup.reactions,
+        pins: backup.pins,
+        starred: backup.starred);
+    _history.replace(kept.history, kept.reactions);
     _noticeState = LocalNoticeState();
     _historyNamespace = backup.historyNamespace?.copy() ?? HistoryNamespace();
-    _history.pins.addEntries(backup.pins.map((p) => MapEntry(p.targetKey, p)));
+    _history.pins.addEntries(kept.pins.map((p) => MapEntry(p.targetKey, p)));
     _history.pendingPins.clear();
-    _history.starred.addAll(backup.starred);
+    _history.starred.addAll(kept.starred);
     _conversationPrefs
       ..clear()
       ..addEntries(
