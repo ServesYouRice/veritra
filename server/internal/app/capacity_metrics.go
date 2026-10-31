@@ -32,6 +32,10 @@ type capacityMetrics struct {
 	blobBytes     atomic.Int64
 	sampleErrors  atomic.Int64
 	volumes       [2]volumeGauge
+	// lowVolumes holds each volume's last known diskLow result, indexed like
+	// capacityVolumes. A failed probe leaves it unchanged, so an unobservable
+	// volume that was low keeps the write guard on.
+	lowVolumes [2]atomic.Bool
 }
 
 var capacityVolumes = [...]string{"database", "blobs"}
@@ -86,20 +90,23 @@ func (a *App) sampleCapacity(ctx context.Context) {
 			m.blobBytes.Store(coarseBytes(blobBytes))
 		}
 	}
-	low := false
 	for i, path := range []string{filepath.Dir(a.Config.DatabasePath), a.Config.StoragePath} {
 		gauge := &m.volumes[i]
 		avail, size, ok := statFilesystem(path)
 		if !ok {
+			// A failed probe does not show that capacity recovered: keep the
+			// volume's last known low state.
 			gauge.known.Store(false)
 			continue
 		}
-		if diskLow(avail, size) {
-			low = true
-		}
+		m.lowVolumes[i].Store(diskLow(avail, size))
 		gauge.avail.Store(coarseBytes(int64(min(avail, math.MaxInt64))))
 		gauge.size.Store(coarseBytes(int64(min(size, math.MaxInt64))))
 		gauge.known.Store(true)
+	}
+	low := false
+	for i := range m.lowVolumes {
+		low = low || m.lowVolumes[i].Load()
 	}
 	if a.lowDisk.Swap(low) != low {
 		a.Log.Warn("low_disk_write_guard", "active", low)

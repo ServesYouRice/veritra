@@ -152,6 +152,55 @@ func TestCapacityMetricsAreAggregateAndClosedLabelled(t *testing.T) {
 	}
 }
 
+// A volume that was low and then cannot be probed stays low: a failed probe
+// proves nothing about recovery. A successful, not-low probe clears it, and
+// a platform whose probe always fails never sets the guard (VAL-206).
+func TestSampleCapacityKeepsLowDiskWhenProbeFails(t *testing.T) {
+	type probe struct {
+		avail, size uint64
+		ok          bool
+	}
+	const gib = 1 << 30
+	low := probe{avail: gib / 100, size: 100 * gib, ok: true}
+	roomy := probe{avail: 90 * gib, size: 100 * gib, ok: true}
+	failing := probe{}
+
+	run := func(t *testing.T, steps [][2]probe, want []bool) {
+		t.Helper()
+		var current [2]probe
+		previous := statFilesystem
+		t.Cleanup(func() { statFilesystem = previous })
+		calls := 0
+		statFilesystem = func(string) (uint64, uint64, bool) {
+			p := current[calls%2]
+			calls++
+			return p.avail, p.size, p.ok
+		}
+		application := &App{
+			Config:  config.Config{DatabasePath: filepath.Join(t.TempDir(), "db", "private-messenger.db"), StoragePath: t.TempDir()},
+			metrics: &httpMetrics{},
+			Log:     slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)),
+		}
+		for i, step := range steps {
+			current = step
+			application.sampleCapacity(context.Background())
+			if got := application.lowDisk.Load(); got != want[i] {
+				t.Fatalf("sample %d: lowDisk = %v, want %v", i, got, want[i])
+			}
+		}
+	}
+
+	t.Run("failure keeps the guard until a not-low probe", func(t *testing.T) {
+		run(t, [][2]probe{{low, roomy}, {failing, roomy}, {failing, failing}, {roomy, roomy}}, []bool{true, true, true, false})
+	})
+	t.Run("each volume keeps its own state", func(t *testing.T) {
+		run(t, [][2]probe{{roomy, low}, {roomy, failing}, {roomy, roomy}}, []bool{true, true, false})
+	})
+	t.Run("probes that never work leave the guard off", func(t *testing.T) {
+		run(t, [][2]probe{{failing, failing}, {failing, failing}}, []bool{false, false})
+	})
+}
+
 func TestBackupDrillMetricDistinguishesNeverFailedAndPassed(t *testing.T) {
 	cases := []struct {
 		name   string

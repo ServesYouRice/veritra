@@ -116,6 +116,110 @@ func TestBudgetOveruseIsChargedAndEntriesAreBounded(t *testing.T) {
 	}
 }
 
+// A depleted account's bucket is never evicted to make room: the next
+// account would otherwise start with a full bucket (VAL-205).
+func TestBudgetEvictionNeverForgetsDepletedBuckets(t *testing.T) {
+	budget := NewBudget(100, 1<<20, nil)
+	budget.maxEntries = 2
+	now := time.Unix(1_000_000, 0)
+	for _, id := range []string{"acct_a", "acct_b"} {
+		ticket, _ := budget.Reserve(id, 100, 0, now)
+		if ticket == nil {
+			t.Fatalf("%s: first reservation refused", id)
+		}
+		ticket.Settle(100, 0)
+	}
+	for i := 0; i < 20; i++ {
+		id := "new_" + time.Duration(i).String()
+		if ticket, _ := budget.Reserve(id, 1, 0, now); ticket != nil {
+			ticket.Settle(1, 0)
+		}
+		if n := budget.Len(); n > 2 {
+			t.Fatalf("budget holds %d accounts, cap is 2", n)
+		}
+	}
+	for _, id := range []string{"acct_a", "acct_b"} {
+		ticket, wait := budget.Reserve(id, 1, 0, now)
+		if ticket != nil || wait < time.Second {
+			t.Fatalf("%s: depleted account was forgiven (ticket %v, wait %s)", id, ticket != nil, wait)
+		}
+	}
+}
+
+// Accounts admitted through the overflow bucket share it, and a ticket from
+// it settles against it (VAL-205).
+func TestBudgetOverflowBucketIsSharedAndSettled(t *testing.T) {
+	budget := NewBudget(100, 1<<20, nil)
+	budget.maxEntries = 1
+	now := time.Unix(1_000_000, 0)
+	held, _ := budget.Reserve("acct_a", 100, 0, now)
+	if held == nil {
+		t.Fatal("first reservation refused")
+	}
+	ticket, _ := budget.Reserve("acct_b", 60, 0, now)
+	if ticket == nil {
+		t.Fatal("overflow account refused its first reservation")
+	}
+	if budget.Len() != 1 {
+		t.Fatalf("overflow account got a map entry: %d", budget.Len())
+	}
+	if other, _ := budget.Reserve("acct_c", 60, 0, now); other != nil {
+		t.Fatal("overflow accounts did not share one bucket")
+	}
+	// Overuse on the overflow ticket is charged to the overflow bucket.
+	ticket.Settle(100, 0)
+	if again, _ := budget.Reserve("acct_d", 1, 0, now); again != nil {
+		t.Fatal("overflow ticket settled against the wrong bucket")
+	}
+	held.Settle(100, 0)
+}
+
+// A bucket with an unsettled ticket survives eviction even after it has
+// refilled, so later debt reaches the bucket the account uses next (VAL-298).
+// A settled, refilled bucket is still evictable (positive control).
+func TestBudgetEvictionKeepsBucketsWithOutstandingTickets(t *testing.T) {
+	run := func(settleBeforeFill bool) {
+		budget := NewBudget(100, 1<<20, nil)
+		budget.maxEntries = 2
+		now := time.Unix(1_000_000, 0)
+		ticket, _ := budget.Reserve("acct_a", 10, 0, now)
+		if ticket == nil {
+			t.Fatal("first reservation refused")
+		}
+		if settleBeforeFill {
+			ticket.Settle(10, 0)
+		}
+		later := now.Add(2 * time.Hour) // acct_a's bucket is full again
+		for _, id := range []string{"acct_b", "acct_c", "acct_d", "acct_e"} {
+			if tk, _ := budget.Reserve(id, 1, 0, later); tk != nil {
+				tk.Settle(1, 0)
+			}
+			if n := budget.Len(); n > 2 {
+				t.Fatalf("budget holds %d accounts, cap is 2", n)
+			}
+		}
+		budget.mu.Lock()
+		_, kept := budget.buckets["acct_a"]
+		budget.mu.Unlock()
+		if settleBeforeFill {
+			if kept {
+				t.Fatal("a settled, refilled bucket was never evicted")
+			}
+			return
+		}
+		if !kept {
+			t.Fatal("a bucket with an outstanding ticket was evicted")
+		}
+		ticket.Settle(500, 0) // far beyond the window
+		next, wait := budget.Reserve("acct_a", 1, 0, later)
+		if next != nil || wait < time.Second {
+			t.Fatalf("debt on an outstanding ticket was lost (ticket %v, wait %s)", next != nil, wait)
+		}
+	}
+	run(false)
+	run(true)
+}
+
 func TestCountersIgnoreUnknownAndNil(t *testing.T) {
 	var nilCounters *Counters
 	nilCounters.Reject(Storage)
