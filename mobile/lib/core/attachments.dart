@@ -100,11 +100,33 @@ class AttachmentEntry {
   }
 }
 
+/// Control, format and separator characters: C0, DEL and C1 controls (Cc),
+/// bidi controls, zero-width and other format characters (Cf) and the line
+/// and paragraph separators (Zl, Zp). A sender uses them to make
+/// `invoice<RLO>fdp.exe` read as `invoiceexe.pdf`. Removing Cf also removes
+/// the zero-width joiner, which splits emoji ZWJ sequences into their parts;
+/// a name that is safe on every platform matters more than that.
+final RegExp _invisibleNameCharacters =
+    RegExp(r'[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]', unicode: true);
+
+/// Characters Windows does not allow in a file name (the path separators are
+/// split off before this).
+final RegExp _windowsInvalidNameCharacters = RegExp(r'[<>:"|?*]');
+
+/// Device names Windows reserves, with or without an extension.
+final RegExp _windowsReservedName =
+    RegExp(r'^(con|prn|aux|nul|com[1-9]|lpt[1-9])$', caseSensitive: false);
+
 /// A file name that is safe to show and to use as a suggested save name:
-/// no directories, no control characters, bounded length.
+/// no directories, no invisible or direction-changing characters, valid on
+/// Windows as well as elsewhere (the desktop build saves with this name, and
+/// the chat shows the same name), bounded length.
 String safeAttachmentName(String raw) {
   var name = raw.split(RegExp(r'[/\\]')).last;
-  name = name.replaceAll(RegExp(r'[\x00-\x1f\x7f]'), '').trim();
+  name = name
+      .replaceAll(_invisibleNameCharacters, '')
+      .replaceAll(_windowsInvalidNameCharacters, '_')
+      .trim();
   if (name.startsWith('.')) name = name.replaceFirst(RegExp(r'^\.+'), '');
   if (name.length > 120) {
     final dot = name.lastIndexOf('.');
@@ -112,6 +134,10 @@ String safeAttachmentName(String raw) {
         dot > 0 && name.length - dot <= 10 ? name.substring(dot) : '';
     name = '${name.substring(0, 120 - extension.length)}$extension';
   }
+  // Windows drops trailing dots and spaces, so "a.pdf." is "a.pdf" there.
+  name = name.replaceFirst(RegExp(r'[. ]+$'), '');
+  final base = name.split('.').first.trimRight();
+  if (_windowsReservedName.hasMatch(base)) name = '_$name';
   return name.isEmpty ? 'attachment' : name;
 }
 
