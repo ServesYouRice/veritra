@@ -168,7 +168,7 @@ func singleScanSyncPage(tb testing.TB, store *Store, accountID, deviceID string,
 	if _, _, _, err := store.SyncBounds(ctx, accountID); err != nil {
 		tb.Fatal(err)
 	}
-	rows, err := store.db.QueryContext(ctx, legacyListSyncEventsQuery, afterID, accountID, deviceID, afterID, accountID, deviceID, limit)
+	rows, err := store.db.QueryContext(ctx, legacyListSyncEventsQuery, afterID, accountID, deviceID, afterID, accountID, deviceID, nowString(), limit)
 	if err != nil {
 		tb.Fatal(err)
 	}
