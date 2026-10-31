@@ -592,7 +592,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
 
   /// Restores a backup onto this empty device and signs it in (card I45).
   /// Returns false with a typed error under [Ops.restore]; an interrupted
-  /// download continues on the next attempt.
+  /// download continues on the next attempt. True once the restored session
+  /// is up (which includes running offline from its cache), and also when
+  /// the backup's identity and history are restored but its session expired
+  /// or was revoked: the device then shows sign-in and a password sign-in
+  /// finishes it.
   Future<bool> restoreFromBackup(String recoveryCode) {
     return _runScoped(Ops.restore, () async {
       final service = backupService;
@@ -604,6 +608,30 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       }
       await service.recover(recoveryCode);
       await _tryRestoreSession();
+      // _tryRestoreSession handles its own failures without throwing: the
+      // recovery screen, a session the server rejected, nothing stored.
+      // The recovery screen and nothing stored mean the restore did not
+      // finish; their screen and message stay as they are.
+      if (session != null && lifecycle == SessionLifecycle.ready) return;
+      if (lifecycle != SessionLifecycle.recoveryRequired) {
+        Session? stored;
+        try {
+          stored = await localStore.loadSession();
+        } catch (_) {
+          // Reported as a storage failure below.
+        }
+        if (stored != null &&
+            stored.token.isEmpty &&
+            (stored.deviceId?.isNotEmpty ?? false)) {
+          // The backup's session expired or was revoked. Its identity and
+          // history are on this device: the restore is done and a password
+          // sign-in finishes it.
+          return;
+        }
+      }
+      // The local store or keystore failed (the recovery screen says how),
+      // or the restored session did not reach the store.
+      throw const BackupException(BackupFailureKind.storage);
     });
   }
 
@@ -1369,7 +1397,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       } catch (_) {
         // Keep the encrypted cache available while offline.
       }
-      _startSync();
+      unawaited(_startSync());
+      unawaited(_ensureKeyPackageSupply().catchError((Object _) {}));
       unawaited(_scheduleExpiryPurge());
       lifecycle = SessionLifecycle.ready;
       notifyListeners();
@@ -1505,13 +1534,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         credential: credential,
         setupToken: setupToken,
       );
+      await _oweInitialKeyPackages(session!);
       await localStore.saveSession(session!);
       await _mlsCrypto?.activateSession(session!);
-      await _publishInitialMlsKeyPackages();
       await localStore.saveSyncCursor(0);
-      await _refreshConversations(notify: true);
-      await _refreshDevices();
-      _startSync();
+      await _finishSignIn(() async {
+        await _publishInitialMlsKeyPackages();
+        await _refreshConversations(notify: true);
+        await _refreshDevices();
+      });
     });
   }
 
@@ -1553,10 +1584,31 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (!sameIdentity || !hadMlsState) {
         await localStore.saveSyncCursor(0);
       }
-      await _refreshConversations(notify: true);
-      await _refreshDevices();
-      _startSync();
+      await _finishSignIn(() async {
+        await _refreshConversations(notify: true);
+        await _refreshDevices();
+        await _ensureKeyPackageSupply();
+      });
     });
+  }
+
+  /// The network steps after a sign-in: [steps] runs once the session is
+  /// saved and MLS is active. Sync starts even when a step fails, so a
+  /// signed-in app is never left without it; the error is still rethrown
+  /// for [_run] to report. A rejected session (401) starts nothing: [_run]
+  /// clears it.
+  Future<void> _finishSignIn(Future<void> Function() steps) async {
+    try {
+      await steps();
+    } catch (err) {
+      if (err is! ApiException ||
+          err.statusCode != 401 ||
+          err.serverCode == 'invalid_credentials') {
+        unawaited(_startSync());
+      }
+      rethrow;
+    }
+    unawaited(_startSync());
   }
 
   /// Puts the drafts kept through a session expiry back into the composer.
@@ -1956,13 +2008,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         enrollment: enrollment,
         credential: credential,
       );
+      await _oweInitialKeyPackages(session!);
       await localStore.saveSession(session!);
       await _mlsCrypto?.activateSession(session!);
-      await _publishInitialMlsKeyPackages();
       await localStore.saveSyncCursor(0);
-      await _refreshConversations(notify: true);
-      await _refreshDevices();
-      _startSync();
+      await _finishSignIn(() async {
+        await _publishInitialMlsKeyPackages();
+        await _refreshConversations(notify: true);
+        await _refreshDevices();
+      });
     });
   }
 
@@ -2447,86 +2501,137 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// Streams bounded server pages into a local JSON file. The file contains
   /// page objects so a large account never needs to be assembled in memory.
   /// The server's export remains ciphertext-only for message content.
+  ///
+  /// The paging runs outside the session queue, so sends and sign-out never
+  /// wait behind it. It belongs to the session it started under: once that
+  /// session ends or changes, the export stops, leaves no file and sets no
+  /// error or busy state on whatever session comes next.
   Future<String?> exportAccount() async {
-    String? path;
-    await _run(() async {
-      final current = session;
-      final client = api;
-      if (current == null || client == null) {
-        return;
+    final owner = session;
+    final client = api;
+    if (owner == null || client == null) {
+      return null;
+    }
+    final ends = _sessionEnds;
+    bool owns() =>
+        !_disposed &&
+        ends == _sessionEnds &&
+        _sessionsEnding == 0 &&
+        _sameSession(owner);
+    if (!owns()) return null;
+    busy = true;
+    error = null;
+    notifyListeners();
+    try {
+      return await _writeAccountExport(client, owner.token, owns);
+    } catch (err) {
+      if (err is ApiException && err.statusCode == 401) {
+        // Cleared through the queue, and only while the session that got
+        // the 401 is still the current one.
+        await _enqueueSessionTransition(() async {
+          if (!owns()) return;
+          await _clearLocalSession(
+              preserveDeviceIdentity: true,
+              keepDrafts: true,
+              preserveOutbox: true);
+          error = describeError(err, l10n);
+        });
+      } else if (owns()) {
+        error = describeError(err, l10n);
       }
+      return null;
+    } finally {
+      // A queued action running now owns the busy flag and clears it itself.
+      if (_runsActive == 0) busy = false;
+      notifyListeners();
+    }
+  }
 
-      final directory = await getApplicationDocumentsDirectory();
-      final stamp = DateTime.now().toUtc().toIso8601String().replaceAll(
-            RegExp(r'[^0-9]'),
-            '',
-          );
-      final file = File(
-        '${directory.path}${Platform.pathSeparator}'
-        'veritra-account-export-v2-$stamp.json',
-      );
-      final temporaryFile = File('${file.path}.part');
-      IOSink? sink;
-      var completed = false;
-      try {
-        const header = '{"manifest_version":"v2","pages":[';
-        const footer = ']}';
-        const maxExportBytes = 256 * 1024 * 1024;
-        var totalBytes = utf8.encode(header).length;
-        sink = temporaryFile.openWrite();
-        sink.write(header);
-        String? before;
-        var firstPage = true;
-        var pageCount = 0;
-        while (true) {
-          if (pageCount >= 2000) {
-            throw StateError('Account export has too many pages');
-          }
-          final page = await client.exportAccountPage(
-            current.token,
-            limit: 250,
-            before: before,
-          );
-          final encodedPage = utf8.encode(jsonEncode(page));
-          final separatorBytes = firstPage ? 0 : 1;
-          if (totalBytes +
-                  separatorBytes +
-                  encodedPage.length +
-                  utf8.encode(footer).length >
-              maxExportBytes) {
-            throw StateError('Account export exceeds the size limit');
-          }
-          if (!firstPage) {
-            sink.add(const <int>[0x2c]);
-          }
-          sink.add(encodedPage);
-          totalBytes += separatorBytes + encodedPage.length;
-          firstPage = false;
-          pageCount++;
-          final next = page['next_before'];
-          if (next == null) {
-            break;
-          }
-          if (next is! String || next.isEmpty || next == before) {
-            throw StateError('Account export cursor did not advance');
-          }
-          before = next;
+  /// The paging and file work of [exportAccount]. [owns] is checked after
+  /// every await, before its result is used: an export whose session ended
+  /// returns null, and the finally removes its '.part' file.
+  Future<String?> _writeAccountExport(
+      ApiClient client, String token, bool Function() owns) async {
+    final directory = await getApplicationDocumentsDirectory();
+    if (!owns()) return null;
+    final stamp = DateTime.now().toUtc().toIso8601String().replaceAll(
+          RegExp(r'[^0-9]'),
+          '',
+        );
+    final file = File(
+      '${directory.path}${Platform.pathSeparator}'
+      'veritra-account-export-v2-$stamp.json',
+    );
+    final temporaryFile = File('${file.path}.part');
+    IOSink? sink;
+    var completed = false;
+    try {
+      const header = '{"manifest_version":"v2","pages":[';
+      const footer = ']}';
+      const maxExportBytes = 256 * 1024 * 1024;
+      var totalBytes = utf8.encode(header).length;
+      sink = temporaryFile.openWrite();
+      sink.write(header);
+      String? before;
+      var firstPage = true;
+      var pageCount = 0;
+      while (true) {
+        if (!owns()) return null;
+        if (pageCount >= 2000) {
+          throw StateError('Account export has too many pages');
         }
-        sink.write(footer);
-        await sink.flush();
-        await sink.close();
-        sink = null;
-        await temporaryFile.rename(file.path);
-        completed = true;
-        path = file.path;
-      } finally {
-        await sink?.close();
-        if (!completed && await temporaryFile.exists()) {
-          await temporaryFile.delete();
+        final page = await client.exportAccountPage(
+          token,
+          limit: 250,
+          before: before,
+        );
+        if (!owns()) return null;
+        final encodedPage = utf8.encode(jsonEncode(page));
+        final separatorBytes = firstPage ? 0 : 1;
+        if (totalBytes +
+                separatorBytes +
+                encodedPage.length +
+                utf8.encode(footer).length >
+            maxExportBytes) {
+          throw StateError('Account export exceeds the size limit');
         }
+        if (!firstPage) {
+          sink.add(const <int>[0x2c]);
+        }
+        sink.add(encodedPage);
+        totalBytes += separatorBytes + encodedPage.length;
+        firstPage = false;
+        pageCount++;
+        final next = page['next_before'];
+        if (next == null) {
+          break;
+        }
+        if (next is! String || next.isEmpty || next == before) {
+          throw StateError('Account export cursor did not advance');
+        }
+        before = next;
       }
-    });
-    return error == null ? path : null;
+      sink.write(footer);
+      await sink.flush();
+      await sink.close();
+      sink = null;
+      if (!owns()) return null;
+      await temporaryFile.rename(file.path);
+      completed = true;
+      if (!owns()) {
+        // The session ended during the rename: its export is not kept.
+        try {
+          await file.delete();
+        } catch (_) {}
+        return null;
+      }
+      return file.path;
+    } finally {
+      await sink?.close();
+      if (!completed && await temporaryFile.exists()) {
+        await temporaryFile.delete();
+      }
+    }
   }
 
   Future<void> sendMessage(String plaintext) async {
@@ -2911,20 +3016,39 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     }).then((succeeded) => succeeded && queued);
   }
 
+  /// Marks [idempotencyKey] for an immediate retry and runs the delivery
+  /// worker. Only the marking is queued; the network delivery runs outside
+  /// the session queue, so sends and sign-out never wait on it. Completes
+  /// after that flush.
   Future<void> retryEnvelope(String idempotencyKey) async {
+    final owner = session;
+    if (owner == null) return;
+    var flush = false;
     await _runScoped(Ops.send, () async {
+      if (!_sameSession(owner)) return;
       final record = _outboxRecords[idempotencyKey] ??
           (await localStore.pendingEnvelopeRecords())
               .where((item) => item.envelope.idempotencyKey == idempotencyKey)
               .firstOrNull;
-      if (record == null || record.terminal) {
+      if (record == null || record.terminal || !_sameSession(owner)) {
         return;
       }
       _outboxStates[idempotencyKey] = OutboxDeliveryState.sending;
       notifyListeners();
       _manualRetryKey = idempotencyKey;
-      await _flushOutbox();
+      flush = true;
     });
+    if (!flush) return;
+    try {
+      // The worker checks its session after every request and clears it on
+      // a 401 only while that session is still current.
+      await _flushOutbox();
+    } catch (err) {
+      if (_sameSession(owner)) {
+        _opErrors[Ops.send] = describeError(err, l10n);
+        notifyListeners();
+      }
+    }
   }
 
   Future<void> discardEnvelope(String idempotencyKey) async {
@@ -3209,13 +3333,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         role: linkedSession.role,
       );
       pendingDeviceLinkClaim = null;
+      await _oweInitialKeyPackages(session!);
       await localStore.saveSession(session!);
       await _mlsCrypto?.activateSession(session!);
-      await _publishInitialMlsKeyPackages();
       await localStore.saveSyncCursor(0);
-      await _refreshConversations(notify: true);
-      await _refreshDevices();
-      _startSync();
+      await _finishSignIn(() async {
+        await _publishInitialMlsKeyPackages();
+        await _refreshConversations(notify: true);
+        await _refreshDevices();
+      });
     });
   }
 
@@ -3515,71 +3641,91 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     );
   }
 
+  /// Starts the sync owner and socket for the current session. Callers do
+  /// not wait for it, so it never throws: a failed lease, drain or dispose
+  /// step shows as offline with [syncError], and [_catchUpSyncEvents] (the
+  /// retry timer, foreground resume, a push wake) starts it again.
   Future<void> _startSync() async {
     final current = session;
     if (current == null) {
       return;
     }
     final ownerGeneration = ++_sessionGeneration;
-    final previousOwner = _syncOwner;
-    final previousLease = _syncLease;
-    _syncOwner = null;
-    _syncLease = null;
-    previousOwner?.dispose();
-    await previousOwner?.cancelAndDrain();
-    if (previousLease != null) {
-      await localStore.releaseSyncLease(previousLease);
-    }
-    if (ownerGeneration != _sessionGeneration || !_sameSession(current)) {
+    _syncStartFailed = null;
+    LocalSyncLease? acquired;
+    AccountSyncEngine? installed;
+    SyncService? opened;
+    try {
+      final previousOwner = _syncOwner;
+      final previousLease = _syncLease;
+      _syncOwner = null;
+      _syncLease = null;
+      previousOwner?.dispose();
+      await previousOwner?.cancelAndDrain();
+      if (previousLease != null) {
+        await localStore.releaseSyncLease(previousLease);
+      }
+      if (ownerGeneration != _sessionGeneration || !_sameSession(current)) {
+        return;
+      }
+      final accountId = current.accountId;
+      final deviceId = current.deviceId;
+      if (accountId == null || deviceId == null) return;
+      final lease = LocalSyncLease(
+        origin: current.baseUrl,
+        accountId: accountId,
+        deviceId: deviceId,
+        generation: ownerGeneration,
+      );
+      // Noted before the await: a failure after the write still releases it.
+      acquired = lease;
+      await localStore.acquireSyncLease(lease);
+      if (ownerGeneration != _sessionGeneration || !_sameSession(current)) {
+        await localStore.releaseSyncLease(lease);
+        return;
+      }
+      _syncLease = lease;
+      _syncOwner = installed = AccountSyncEngine(
+        isOwner: () =>
+            ownerGeneration == _sessionGeneration && _sameSession(current),
+        work: () => _runOwnedCatchUp(current, ownerGeneration),
+      );
+      final previousSubscription = _syncSubscription;
+      _syncSubscription = null;
+      await previousSubscription?.cancel();
+      final previousSync = sync;
+      sync = null;
+      // Close the old socket before opening one for this session so two
+      // authenticated sockets never overlap.
+      await previousSync?.dispose();
+      if (ownerGeneration != _sessionGeneration || !_sameSession(current)) {
+        return;
+      }
+      sync = opened = syncServiceFactory(current.baseUrl, current.token);
+      _setConnectionStatus(ConnectionStatus.connecting);
+      _syncSubscription = opened.events.listen(
+        (frame) {
+          // Ephemeral frames carry nothing to catch up on.
+          if (handleEphemeralFrame(frame)) return;
+          unawaited(_catchUpSyncEvents());
+          unawaited(_flushMlsOutbox());
+        },
+        onError: (_) {
+          // A dropped socket alone is not proof the server is unreachable;
+          // the catch-up attempt that follows decides online vs. offline.
+          unawaited(_catchUpSyncEvents());
+          unawaited(_flushMlsOutbox());
+        },
+      );
+    } catch (err) {
+      if (opened != null && identical(sync, opened)) {
+        sync = null;
+        unawaited(opened.dispose().catchError((Object _) {}));
+      }
+      await _abandonSyncStart(current, ownerGeneration, err,
+          lease: acquired, owner: installed);
       return;
     }
-    final accountId = current.accountId;
-    final deviceId = current.deviceId;
-    if (accountId == null || deviceId == null) return;
-    final lease = LocalSyncLease(
-      origin: current.baseUrl,
-      accountId: accountId,
-      deviceId: deviceId,
-      generation: ownerGeneration,
-    );
-    await localStore.acquireSyncLease(lease);
-    if (ownerGeneration != _sessionGeneration || !_sameSession(current)) {
-      await localStore.releaseSyncLease(lease);
-      return;
-    }
-    _syncLease = lease;
-    _syncOwner = AccountSyncEngine(
-      isOwner: () =>
-          ownerGeneration == _sessionGeneration && _sameSession(current),
-      work: () => _runOwnedCatchUp(current, ownerGeneration),
-    );
-    final previousSubscription = _syncSubscription;
-    _syncSubscription = null;
-    await previousSubscription?.cancel();
-    final previousSync = sync;
-    sync = null;
-    // Close the old socket before opening one for this session so two
-    // authenticated sockets never overlap.
-    await previousSync?.dispose();
-    if (ownerGeneration != _sessionGeneration || !_sameSession(current)) {
-      return;
-    }
-    sync = syncServiceFactory(current.baseUrl, current.token);
-    _setConnectionStatus(ConnectionStatus.connecting);
-    _syncSubscription = sync!.events.listen(
-      (frame) {
-        // Ephemeral frames carry nothing to catch up on.
-        if (handleEphemeralFrame(frame)) return;
-        unawaited(_catchUpSyncEvents());
-        unawaited(_flushMlsOutbox());
-      },
-      onError: (_) {
-        // A dropped socket alone is not proof the server is unreachable; the
-        // catch-up attempt that follows decides online vs. offline.
-        unawaited(_catchUpSyncEvents());
-        unawaited(_flushMlsOutbox());
-      },
-    );
     unawaited(_catchUpSyncEvents());
     unawaited(_flushOutbox());
     unawaited(_flushMlsOutbox());
@@ -3591,6 +3737,64 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     unawaited(refreshBlocks());
     unawaited(refreshReadReceiptsSetting());
     unawaited(_startPush());
+  }
+
+  /// The session whose sync startup failed and left no owner. Only this
+  /// session is started again: one that never got as far as [_startSync]
+  /// (its MLS activation failed, say) stays without sync.
+  Session? _syncStartFailed;
+  bool _syncRestartQueued = false;
+
+  /// Undoes a [_startSync] that threw: the owner and lease it installed go,
+  /// and, while [current] is still the session, the failure shows as
+  /// offline (a connection fact, not the outcome of a sign-in) and a retry
+  /// is scheduled with backoff.
+  Future<void> _abandonSyncStart(
+    Session current,
+    int ownerGeneration,
+    Object err, {
+    LocalSyncLease? lease,
+    AccountSyncEngine? owner,
+  }) async {
+    if (owner != null && identical(_syncOwner, owner)) {
+      _syncOwner = null;
+      owner.dispose();
+    }
+    if (lease != null) {
+      if (identical(_syncLease, lease)) _syncLease = null;
+      try {
+        await localStore.releaseSyncLease(lease);
+      } catch (_) {
+        // The next startup's lease takes its place.
+      }
+    }
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
+    _syncStartFailed = current;
+    syncError = _isTransientStorageError(err)
+        ? l10n.syncErrorStorageBusy
+        : describeError(err, l10n);
+    _setConnectionStatus(ConnectionStatus.offline);
+    notifyListeners();
+    _scheduleCatchUpRetry();
+  }
+
+  /// Starts sync again for [failed], whose startup failed. Queued, so it
+  /// never runs inside a session transition, which the generation bump in
+  /// [_startSync] would cut short; fired and not awaited, so a caller that
+  /// is itself queued cannot wait on it.
+  void _restartSync(Session failed) {
+    if (_syncRestartQueued) return;
+    _syncRestartQueued = true;
+    unawaited(_enqueueSessionTransition(() async {
+      _syncRestartQueued = false;
+      if (_disposed ||
+          _syncOwner != null ||
+          !identical(_syncStartFailed, failed) ||
+          !_sameSession(failed)) {
+        return;
+      }
+      await _startSync();
+    }));
   }
 
   void _setConnectionStatus(ConnectionStatus status) {
@@ -4139,7 +4343,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
 
   Future<void> _catchUpSyncEvents() async {
     if (!_isForeground) return;
+    final failed = _syncStartFailed;
+    if (_syncOwner == null && failed != null && _sameSession(failed)) {
+      // The owner never came up; a successful start runs its own catch-up.
+      _restartSync(failed);
+      return;
+    }
     await _syncOwner?.request();
+    _retryOwedKeyPackages();
   }
 
   Future<void> _runOwnedCatchUp(Session current, int ownerGeneration) async {
@@ -4582,6 +4793,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         final ownPathCommit = message.kind == 'commit' &&
             message.senderDeviceId == current.deviceId &&
             await _queuedPathCommit(message.idempotencyKey);
+        if (message.kind == 'welcome' &&
+            message.recipientDeviceId == current.deviceId) {
+          // Write-ahead (TASK-028): a Welcome uses up one of this device's
+          // published key packages, so its replacement is owed durably
+          // before the Welcome commits. Counted once per Welcome; one that
+          // then fails stays counted (over-supply, capped).
+          await _oweKeyPackages(current, 1, welcome: message.id);
+        }
         try {
           if (bounded != null) {
             await bounded.processMlsMessageBounded(message,
@@ -4833,6 +5052,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     required bool keepApiOpen,
   }) async {
     _sessionGeneration++;
+    _syncStartFailed = null;
+    _keyPackagesOwed = true;
+    _keyPackageRetryFailures = 0;
+    _keyPackageRetryAt = null;
     // Native permits go first, then capture, then the private notice state
     // (cleared with the rest of the local session below).
     _wakeRun?.cancel();
@@ -5572,30 +5795,223 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     await _flushMlsOutbox();
   }
 
-  /// Every Welcome consumes one of this device's published key packages.
-  /// Publishing one back keeps the supply steady, so the device can keep
-  /// being added to new conversations. A failure only delays the top-up to
-  /// the next Welcome; the Welcome itself is already committed.
+  /// Every Welcome consumes one of this device's published key packages,
+  /// and the Welcome path has already owed its replacement durably.
+  /// Publishing what is owed keeps the supply steady, so the device can keep
+  /// being added to new conversations. Sync never fails over it: what a
+  /// failure leaves owed goes with the next Welcome or catch-up.
   Future<void> _replenishKeyPackage() async {
-    final current = session;
-    final client = api;
-    final mls = _mlsCrypto;
-    if (current == null || client == null || mls == null) return;
     try {
-      final packages = await mls.createReplenishmentKeyPackages(count: 1);
-      await client.publishDeviceKeyPackages(current.token, packages);
+      await _publishOwedKeyPackages();
     } catch (_) {
-      // Retried on the next Welcome.
+      // Still owed; retried later.
     }
   }
 
-  Future<void> _publishInitialMlsKeyPackages() async {
+  /// A new device's first key packages. Owed by [_oweInitialKeyPackages]
+  /// before its session was saved, so a failure here (reported by the
+  /// sign-in) or a crash is retried by restore, sign-in or catch-up.
+  Future<void> _publishInitialMlsKeyPackages() => _publishOwedKeyPackages();
+
+  // Key-package supply (TASK-028). The server never says how many unclaimed
+  // packages this device has left, so the device keeps a durable count of
+  // those it owes: the first batch of a new device, plus one per Welcome.
+  // The count lives in one local setting, scoped to the origin, account and
+  // device that owe it; a record of another identity counts as nothing and
+  // is replaced. It only goes down after the server accepted a publish (or
+  // answered that it holds its most). Residual: a crash after the server
+  // accepted a publish but before the count went down publishes that batch
+  // again (at most [_keyPackageBatchCap] spare packages). Each batch is
+  // generated, and its private keys stored, before it is sent: a batch that
+  // is never accepted stays in local MLS state unused, at most one batch
+  // per attempt, as no discard call exists.
+  static const _keyPackageNeedSetting = 'mls.key_package_need';
+
+  /// Most packages one publish carries, and most the record owes: the
+  /// native batch limit and the server's per-request limit.
+  static const _keyPackageBatchCap = 10;
+
+  /// A new device's first batch (the native default).
+  static const _initialKeyPackages = 5;
+
+  /// False only once this process has seen nothing owed for this session;
+  /// spares a store read on every catch-up.
+  bool _keyPackagesOwed = true;
+  int _keyPackageRetryFailures = 0;
+  DateTime? _keyPackageRetryAt;
+  Future<void> _keyPackageNeedLock = Future<void>.value();
+  Future<void>? _keyPackagePublish;
+  Session? _keyPackagePublishOwner;
+
+  String _keyPackageScope(Session owner) {
+    String origin;
+    try {
+      origin = canonicalizeServerOrigin(owner.baseUrl);
+    } on FormatException {
+      origin = owner.baseUrl;
+    }
+    return '$origin\u0000${owner.accountId}\u0000${owner.deviceId}';
+  }
+
+  /// The stored record when it belongs to [owner]'s identity, else null.
+  Future<({int need, String? welcome})?> _readKeyPackageNeed(
+      Session owner) async {
+    final raw = await localStore.loadSetting(_keyPackageNeedSetting);
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final record = jsonDecode(raw);
+      if (record is! Map || record['scope'] != _keyPackageScope(owner)) {
+        return null;
+      }
+      final need = record['need'];
+      final welcome = record['welcome'];
+      return (
+        need: need is int ? need.clamp(0, _keyPackageBatchCap) : 0,
+        welcome: welcome is String ? welcome : null,
+      );
+    } on FormatException {
+      return null;
+    }
+  }
+
+  /// One read-modify-write of [owner]'s record ([change] returns null to
+  /// leave it); they never interleave, so an increment and a decrement
+  /// cannot lose each other. Returns what [owner] owes afterwards.
+  Future<int> _changeKeyPackageNeed(
+      Session owner,
+      ({int need, String? welcome})? Function(
+              ({int need, String? welcome})? current)
+          change) {
+    final done = _keyPackageNeedLock.then((_) async {
+      final current = await _readKeyPackageNeed(owner);
+      final next = change(current);
+      final need = (next ?? current)?.need.clamp(0, _keyPackageBatchCap) ?? 0;
+      if (next != null) {
+        await localStore.saveSetting(
+            _keyPackageNeedSetting,
+            jsonEncode(<String, Object?>{
+              'scope': _keyPackageScope(owner),
+              'need': need,
+              if (next.welcome != null) 'welcome': next.welcome,
+            }));
+      }
+      if (_sameSession(owner)) _keyPackagesOwed = need > 0;
+      return need;
+    });
+    _keyPackageNeedLock =
+        done.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    return done;
+  }
+
+  /// Owes [count] more packages for [owner]. With [welcome], counts that
+  /// Welcome once: a replay or a retried event adds nothing.
+  Future<int> _oweKeyPackages(Session owner, int count, {String? welcome}) {
+    _keyPackagesOwed = true;
+    return _changeKeyPackageNeed(owner, (current) {
+      if (welcome != null && current?.welcome == welcome) return null;
+      return (
+        need: (current?.need ?? 0) + count,
+        welcome: welcome ?? current?.welcome,
+      );
+    });
+  }
+
+  /// Records [published] packages the server accepted for [owner].
+  Future<int> _settleKeyPackages(Session owner, int published) =>
+      _changeKeyPackageNeed(
+          owner,
+          (current) => current == null
+              ? null
+              : (need: current.need - published, welcome: current.welcome));
+
+  /// Written before a new device's session is saved, so even a crash right
+  /// after the save leaves its first batch owed.
+  Future<void> _oweInitialKeyPackages(Session created) async {
+    if (_mlsCrypto == null) return;
+    await _oweKeyPackages(created, _initialKeyPackages);
+  }
+
+  /// Publishes what this device owes, best effort: a failure stays owed.
+  /// Only a rejected session (401) is rethrown.
+  Future<void> _ensureKeyPackageSupply() async {
+    try {
+      await _publishOwedKeyPackages();
+    } catch (err) {
+      if (err is ApiException && err.statusCode == 401) rethrow;
+    }
+  }
+
+  /// After a catch-up pass that ended online: publishes anything still
+  /// owed, at once the first time and then with backoff (1 minute doubling
+  /// to an hour), as every attempt stores a batch of private keys first.
+  void _retryOwedKeyPackages() {
     final current = session;
+    if (!_keyPackagesOwed ||
+        current == null ||
+        _mlsCrypto == null ||
+        connectionStatus != ConnectionStatus.online) {
+      return;
+    }
+    final now = DateTime.now();
+    final at = _keyPackageRetryAt;
+    if (at != null && now.isBefore(at)) return;
+    _keyPackageRetryAt = now
+        .add(Duration(minutes: min(60, 1 << min(_keyPackageRetryFailures, 6))));
+    unawaited(_publishOwedKeyPackages().then((_) {
+      if (_sameSession(current)) {
+        _keyPackageRetryFailures = 0;
+        _keyPackageRetryAt = null;
+      }
+    }, onError: (Object _) {
+      if (_sameSession(current)) _keyPackageRetryFailures++;
+    }));
+  }
+
+  /// Publishes one capped batch of what the current session owes and
+  /// settles it once the server accepted it. One publish per session runs
+  /// at a time; a second caller joins it.
+  Future<void> _publishOwedKeyPackages() {
+    final current = session;
+    if (current == null) return Future<void>.value();
+    final running = _keyPackagePublish;
+    if (running != null && identical(_keyPackagePublishOwner, current)) {
+      return running;
+    }
+    final publish = _publishOwedKeyPackagesOnce(current);
+    _keyPackagePublish = publish;
+    _keyPackagePublishOwner = current;
+    unawaited(publish.then<void>((_) {}, onError: (Object _) {}).then((_) {
+      if (identical(_keyPackagePublish, publish)) {
+        _keyPackagePublish = null;
+        _keyPackagePublishOwner = null;
+      }
+    }));
+    return publish;
+  }
+
+  Future<void> _publishOwedKeyPackagesOnce(Session current) async {
     final client = api;
     final mls = _mlsCrypto;
-    if (current == null || client == null || mls == null) return;
-    final packages = await mls.createReplenishmentKeyPackages();
-    await client.publishDeviceKeyPackages(current.token, packages);
+    if (client == null || mls == null || !_sameSession(current)) return;
+    final owed = await _changeKeyPackageNeed(current, (_) => null);
+    if (owed <= 0 || !_sameSession(current)) return;
+    final packages = await mls.createReplenishmentKeyPackages(
+        count: min(owed, _keyPackageBatchCap));
+    // Generated for this session; never published for another.
+    if (!_sameSession(current)) return;
+    try {
+      await client.publishDeviceKeyPackages(current.token, packages);
+    } on ApiException catch (err) {
+      if (err.statusCode != 409 ||
+          err.serverCode != 'key_package_quota_exceeded') {
+        rethrow;
+      }
+      // The server already holds its most unclaimed packages for this
+      // device (50): nothing is owed.
+      await _settleKeyPackages(current, owed);
+      return;
+    }
+    await _settleKeyPackages(current, packages.length);
   }
 
   Future<void> _processMlsRevocations() async {
@@ -5935,8 +6351,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     return succeeded;
   }
 
+  /// Bodies of [_run] executing right now (0 or 1: they are queued).
+  int _runsActive = 0;
+
   Future<void> _run(Future<void> Function() body) async {
     await _enqueueSessionTransition(() async {
+      _runsActive++;
       busy = true;
       error = null;
       notifyListeners();
@@ -5956,6 +6376,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         }
         error = describeError(err, l10n);
       } finally {
+        _runsActive--;
         busy = false;
         notifyListeners();
       }
