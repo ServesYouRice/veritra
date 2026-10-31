@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -57,7 +58,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	fs.StringVar(&dbPath, "db", "", "SQLite database path")
 	fs.StringVar(&storagePath, "storage", "", "encrypted blob storage path")
 	fs.StringVar(&recoveryAccount, "account", "", "owner username for offline recovery")
-	fs.StringVar(&passwordFile, "password-file", "", "path to a file containing the new password")
+	fs.StringVar(&passwordFile, "password-file", "", "path to a file containing the new password; it must not be readable by group or others (not checked on Windows, where its ACL is not checked either)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -147,21 +148,10 @@ func resetOwnerPassword(ctx context.Context, cfg config.Config, username, passwo
 	if strings.TrimSpace(username) == "" || strings.TrimSpace(passwordFile) == "" {
 		return errors.New("reset-owner-password requires --account and --password-file")
 	}
-	info, err := os.Stat(passwordFile)
+	password, err := readPasswordFile(passwordFile)
 	if err != nil {
 		return err
 	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return errors.New("password file must not be readable by group or others")
-	}
-	raw, err := os.ReadFile(passwordFile)
-	if err != nil {
-		return err
-	}
-	if len(raw) > 1024 {
-		return errors.New("password file is too large")
-	}
-	password := strings.TrimRight(string(raw), "\r\n")
 	hash, err := auth.HashPasswordContext(ctx, auth.Anonymous, password)
 	if err != nil {
 		return fmt.Errorf("new password rejected: %w", err)
@@ -195,6 +185,61 @@ func resetOwnerPassword(ctx context.Context, cfg config.Config, username, passwo
 	}
 	fmt.Fprintln(stdout, "owner password reset; all existing sessions were revoked")
 	return nil
+}
+
+// maxPasswordFileBytes bounds the password file reset-owner-password reads.
+const maxPasswordFileBytes = 1024
+
+// readPasswordFile reads a private, regular password file of at most
+// maxPasswordFileBytes, without trailing line breaks. A FIFO or device is
+// refused from its metadata, before an open could block on it, and the size
+// is checked before anything is read.
+func readPasswordFile(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", errors.New("password file must be a regular file")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil {
+		return "", err
+	}
+	if !os.SameFile(info, opened) {
+		return "", errors.New("password file changed while it was opened")
+	}
+	if !passwordFileModeAllowed(runtime.GOOS, opened.Mode()) {
+		return "", errors.New("password file must not be readable by group or others")
+	}
+	if opened.Size() > maxPasswordFileBytes {
+		return "", errors.New("password file is too large")
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, maxPasswordFileBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if len(raw) > maxPasswordFileBytes {
+		return "", errors.New("password file is too large")
+	}
+	return strings.TrimRight(string(raw), "\r\n"), nil
+}
+
+// passwordFileModeAllowed reports whether a password file's mode keeps it
+// private. On Windows, Go derives the mode from the read-only attribute
+// alone (0666 or 0444), which says nothing about who may read the file, so
+// it is not checked there; the file's ACL is not checked either (bug-hunt
+// Q-003).
+func passwordFileModeAllowed(goos string, mode os.FileMode) bool {
+	if goos == "windows" {
+		return true
+	}
+	return mode.Perm()&0o077 == 0
 }
 
 func serve(ctx context.Context, cfg config.Config) error {
