@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Tests for the opt-in golang image digest verification in check-go-toolchain.sh.
 
-A stub docker first on PATH stands in for `docker buildx imagetools inspect`,
-so no case reaches the network. The real script runs against the real
-repository files. POSIX only (the check is sh).
+A stub docker first on PATH stands in for `docker buildx imagetools inspect`
+(the image config of the pinned digest), so no case reaches the network. The
+real script runs against the real repository files. POSIX only (the check is sh).
 """
 
 from __future__ import annotations
@@ -27,8 +27,6 @@ PINNED = re.search(
     (ROOT / "server/Dockerfile").read_text(encoding="utf-8"),
     re.MULTILINE,
 ).group(1)
-OTHER = "sha256:" + "1" * 64
-ANOTHER = "sha256:" + "2" * 64
 
 DOCKER_STUB = """#!/bin/sh
 printf '%s\\n' "$*" >> "$STUB_LOG"
@@ -39,32 +37,17 @@ esac
 """
 
 
-def index(digest: str, *manifests: dict[str, object]) -> dict[str, object]:
+def image(version: str | None = GO_VERSION, arch: str = "amd64", env: object = None) -> dict[str, object]:
+    if env is None:
+        env = ["PATH=/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "GOTOOLCHAIN=local", "GOPATH=/go"]
+        if version is not None:
+            env.insert(1, f"GOLANG_VERSION={version}")
     return {
-        "schemaVersion": 2,
-        "mediaType": "application/vnd.oci.image.index.v1+json",
-        "digest": digest,
-        "size": 10208,
-        "manifests": list(manifests),
-    }
-
-
-def platform(digest: str, arch: str = "amd64") -> dict[str, object]:
-    return {
-        "mediaType": "application/vnd.oci.image.manifest.v1+json",
-        "digest": digest,
-        "size": 2324,
-        "platform": {"architecture": arch, "os": "linux"},
-    }
-
-
-def attestation(digest: str) -> dict[str, object]:
-    return {
-        "mediaType": "application/vnd.oci.image.manifest.v1+json",
-        "digest": digest,
-        "size": 840,
-        "annotations": {"vnd.docker.reference.type": "attestation-manifest"},
-        "platform": {"architecture": "unknown", "os": "unknown"},
+        "created": "2026-10-01T00:00:00Z",
+        "architecture": arch,
+        "os": "linux",
+        "config": {"Env": env, "Cmd": ["bash"], "WorkingDir": "/go"},
+        "rootfs": {"type": "layers", "diff_ids": ["sha256:" + "3" * 64]},
     }
 
 
@@ -77,17 +60,17 @@ class Stub:
         docker.write_text(DOCKER_STUB, encoding="utf-8")
         docker.chmod(docker.stat().st_mode | stat.S_IXUSR)
         self.log = temp / "docker.log"
-        self.json = temp / "manifest.json"
+        self.json = temp / "image.json"
 
     def run(
         self,
         verify: str | None,
-        manifest: object = None,
+        config: object = None,
         mode: str = "json",
         path: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         self.log.write_text("", encoding="utf-8")
-        self.json.write_text(manifest if isinstance(manifest, str) else json.dumps(manifest), encoding="utf-8")
+        self.json.write_text(config if isinstance(config, str) else json.dumps(config), encoding="utf-8")
         env = {key: value for key, value in os.environ.items() if key != "VERITRA_VERIFY_GO_IMAGE_DIGEST"}
         env.update(
             {
@@ -117,39 +100,89 @@ def with_stub(test):
 @with_stub
 def test_offline_by_default(stub: Stub) -> None:
     for verify in (None, "", "0"):
-        result = stub.run(verify, index(OTHER))
+        result = stub.run(verify, image("0.0.1"))
         assert result.returncode == 0, (verify, result.stderr)
         assert stub.calls() == [], (verify, "docker was called without opting in")
 
 
 @with_stub
-def test_matching_digest_passes(stub: Stub) -> None:
-    result = stub.run("1", index(PINNED, platform(OTHER), platform(ANOTHER, "arm64")))
+def test_docker_command_line(stub: Stub) -> None:
+    result = stub.run("1", image())
     assert result.returncode == 0, result.stderr
-    assert stub.calls() == [f"buildx imagetools inspect golang:{GO_VERSION} --format {{{{json .Manifest}}}}"], stub.calls()
-    # A platform manifest of the tag's index is also golang:$GO_VERSION.
-    result = stub.run("1", index(OTHER, platform(ANOTHER, "arm64"), platform(PINNED)))
+    # The pinned digest itself, not whatever golang:$GO_VERSION points to today.
+    assert stub.calls() == [f"buildx imagetools inspect golang@{PINNED} --format {{{{json .Image}}}}"], stub.calls()
+
+
+@with_stub
+def test_single_image_passes(stub: Stub) -> None:
+    result = stub.run("1", image())
+    assert result.returncode == 0, result.stderr
+    assert f"verified as Go {GO_VERSION}" in result.stdout, result.stdout
+
+
+@with_stub
+def test_multi_platform_passes(stub: Stub) -> None:
+    configs = {
+        "linux/amd64": image(),
+        "linux/arm64/v8": image(arch="arm64"),
+        "windows/amd64": image(arch="amd64"),
+    }
+    result = stub.run("1", configs)
     assert result.returncode == 0, result.stderr
 
 
 @with_stub
-def test_stale_digest_fails(stub: Stub) -> None:
-    result = stub.run("1", index(OTHER, platform(ANOTHER)))
+def test_wrong_version_fails(stub: Stub) -> None:
+    result = stub.run("1", image("1.25.9"))
     assert result.returncode != 0, result.stdout
-    assert "Go image drift" in result.stderr, result.stderr
-    # An attestation manifest is not a runnable image of the tag.
-    result = stub.run("1", index(OTHER, platform(ANOTHER), attestation(PINNED)))
-    assert result.returncode != 0, result.stdout
+    assert "Go image drift" in result.stderr and "GOLANG_VERSION=1.25.9" in result.stderr, result.stderr
+    # A prefix match is not the pinned version.
+    assert stub.run("1", image(GO_VERSION + "0")).returncode != 0
+    assert stub.run("1", image(GO_VERSION.rsplit(".", 1)[0])).returncode != 0
 
 
 @with_stub
-def test_inspection_failures_fail_closed(stub: Stub) -> None:
-    assert stub.run("1", mode="fail").returncode != 0
-    assert stub.run("1", "not json").returncode != 0
-    assert stub.run("1", {"manifests": [platform(PINNED)]}).returncode != 0
-    assert stub.run("1", index("sha256:short", platform(PINNED))).returncode != 0
-    assert stub.run("1", index(OTHER, {"digest": 7})).returncode != 0
-    assert stub.run("1", ["not", "an", "object"]).returncode != 0
+def test_missing_golang_version_fails(stub: Stub) -> None:
+    result = stub.run("1", image(None))
+    assert result.returncode != 0, result.stdout
+    assert "no GOLANG_VERSION" in result.stderr, result.stderr
+    # Missing Env or config entirely.
+    no_env = image()
+    del no_env["config"]["Env"]
+    assert stub.run("1", no_env).returncode != 0
+    no_config = image()
+    del no_config["config"]
+    assert stub.run("1", no_config).returncode != 0
+    assert stub.run("1", image(env="GOLANG_VERSION=" + GO_VERSION)).returncode != 0
+    assert stub.run("1", {"linux/amd64": image(), "linux/arm64": image(None, "arm64")}).returncode != 0
+
+
+@with_stub
+def test_one_platform_with_other_version_fails(stub: Stub) -> None:
+    configs = {"linux/amd64": image(), "linux/arm64": image("1.25.9", "arm64")}
+    result = stub.run("1", configs)
+    assert result.returncode != 0, result.stdout
+    assert "linux/arm64" in result.stderr, result.stderr
+    # Two GOLANG_VERSION entries, one of them wrong, is not exactly the pin.
+    both = image(env=[f"GOLANG_VERSION={GO_VERSION}", "GOLANG_VERSION=1.25.9"])
+    assert stub.run("1", {"linux/amd64": both}).returncode != 0
+
+
+@with_stub
+def test_unreadable_json_fails(stub: Stub) -> None:
+    for config in ("not json", "", "{", json.dumps([image()]), "{}", "null", json.dumps({"linux/amd64": "x"})):
+        result = stub.run("1", config)
+        assert result.returncode != 0, (config, result.stdout)
+        assert "Go image" in result.stderr, (config, result.stderr)
+    # Only attestation entries means no image was checked.
+    assert stub.run("1", {"unknown/unknown": image(None)}).returncode != 0
+
+
+@with_stub
+def test_docker_failure_fails(stub: Stub) -> None:
+    result = stub.run("1", image(), mode="fail")
+    assert result.returncode != 0, result.stdout
+    assert f"cannot inspect golang@{PINNED}" in result.stderr, result.stderr
 
 
 @with_stub
@@ -171,7 +204,7 @@ def test_missing_docker_fails_closed(stub: Stub) -> None:
 @with_stub
 def test_unknown_switch_value_fails(stub: Stub) -> None:
     for verify in ("yes", "true", "2"):
-        result = stub.run(verify, index(PINNED))
+        result = stub.run(verify, image())
         assert result.returncode != 0, verify
         assert stub.calls() == [], verify
 
@@ -180,9 +213,14 @@ if __name__ == "__main__":
     failures = 0
     for test in (
         test_offline_by_default,
-        test_matching_digest_passes,
-        test_stale_digest_fails,
-        test_inspection_failures_fail_closed,
+        test_docker_command_line,
+        test_single_image_passes,
+        test_multi_platform_passes,
+        test_wrong_version_fails,
+        test_missing_golang_version_fails,
+        test_one_platform_with_other_version_fails,
+        test_unreadable_json_fails,
+        test_docker_failure_fails,
         test_missing_docker_fails_closed,
         test_unknown_switch_value_fails,
     ):

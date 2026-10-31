@@ -22,10 +22,13 @@
 /scripts/check-ci-evidence_test.py @ServesYouRice
 /scripts/release-readiness.sh @ServesYouRice
 /scripts/release-image.sh @ServesYouRice
+/scripts/release-image_test.py @ServesYouRice
 /scripts/check-go-toolchain.sh @ServesYouRice
+/scripts/check-go-toolchain_test.py @ServesYouRice
 /scripts/check-rust-audit-expiry.sh @ServesYouRice
 /scripts/check-rust-audit-policy.py @ServesYouRice
 /scripts/check-demo-boundary.sh @ServesYouRice
+/scripts/check-demo-boundary_test.py @ServesYouRice
 /scripts/audit-rust.sh @ServesYouRice
 /scripts/smoke-deploy.sh @ServesYouRice
 /scripts/check-demo-boundary_test.py @ServesYouRice

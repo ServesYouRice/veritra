@@ -323,9 +323,16 @@ process exits and never go stale.
 ## Release image
 
 `scripts/release-image.sh` is the one local release command (no hosted CI).
-It refuses a dirty tree; runs gofmt, go vet, the server tests, govulncheck
-and `scripts/audit-rust.sh`; builds `server/Dockerfile` from `git archive
-HEAD` (only committed files reach the build); scans the image with Trivy and
+It refuses a dirty tree and any commit that is not on `origin/main` (fetched
+fresh); runs `scripts/check-go-toolchain.sh` with
+`VERITRA_VERIFY_GO_IMAGE_DIGEST=1`, which asks Docker Hub for the image
+config behind the `golang` digest pinned in `server/Dockerfile` and stops
+unless every platform image has the `GOLANG_VERSION` in `.go-version` (this
+needs buildx and network, and anonymous Docker Hub rate limits can make it
+fail; `docker login` first or retry later); runs gofmt, go vet, the server
+tests, govulncheck and `scripts/audit-rust.sh`; builds `server/Dockerfile`
+from `git archive` of that captured commit (only committed files reach the
+build, and it stops if HEAD moved meanwhile); scans the image with Trivy and
 stops on any HIGH or CRITICAL finding or embedded secret; runs
 `scripts/smoke-deploy.sh` on that exact image (`--skip-smoke` skips it, and
 the release record should say so); pushes
