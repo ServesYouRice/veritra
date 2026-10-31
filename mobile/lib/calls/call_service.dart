@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
@@ -219,6 +220,25 @@ class NativeCallService {
   /// succeeded yet, so end(callId) can retry.
   final Map<String, CallSession> _terminating = <String, CallSession>{};
   final Map<String, Future<void>> _endings = <String, Future<void>>{};
+
+  /// Ids of calls that reached a terminal state, newest last, so late
+  /// signals for them are dropped instead of re-buffered. Bounded.
+  final LinkedHashSet<String> _terminated = LinkedHashSet<String>();
+  static const int maxRecentlyTerminated = 256;
+
+  /// A call held here ended remotely (hung up, rejected, missed): its media
+  /// is already released. Not emitted for a hang-up started with end().
+  Stream<({String callId, String state})> get terminations =>
+      _terminations.stream;
+  final StreamController<({String callId, String state})> _terminations =
+      StreamController<({String callId, String state})>.broadcast();
+
+  @visibleForTesting
+  List<String> get pendingCallIds => List<String>.unmodifiable(
+      <String>{..._pendingSessions.keys, ..._earlySignals.keys});
+
+  @visibleForTesting
+  int get recentlyTerminatedCount => _terminated.length;
   final StreamController<IncomingCallSignal> _incomingOffers =
       StreamController<IncomingCallSignal>.broadcast();
   Stream<IncomingCallSignal> get incomingOffers => _incomingOffers.stream;
@@ -304,8 +324,7 @@ class NativeCallService {
       // Already over (the caller hung up): nothing left to reject.
       if (!isTerminalCallState(error.state)) rethrow;
     }
-    _pendingSessions.remove(call.id);
-    _earlySignals.remove(call.id);
+    _markTerminated(call.id);
   }
 
   /// Hangs up. Local media stops at once, whatever the server answers. The
@@ -342,6 +361,8 @@ class NativeCallService {
       }
       return;
     }
+    // Already over (ended remotely, or an earlier end() got through).
+    if (_terminated.contains(callId)) return;
     if (pending != null) _recordTerminating(pending);
     final known = _terminating[callId];
     if (expectedVersion == null && known != null) {
@@ -356,7 +377,7 @@ class NativeCallService {
     // conversation to refresh from, so this is a single attempt.
     await api.transitionCall(token, callId, 'ended',
         expectedVersion: expectedVersion);
-    _terminating.remove(callId);
+    _markTerminated(callId);
   }
 
   Future<void> _sendEnded(String callId, CallSession Function() latest) async {
@@ -367,7 +388,42 @@ class NativeCallService {
     } on CallUnavailableException {
       // The server already shows the call as over.
     }
+    _markTerminated(callId);
+  }
+
+  /// Forgets every pending trace of [callId] and remembers it as over, so
+  /// late signals for it are dropped.
+  void _markTerminated(String callId) {
+    _pendingSessions.remove(callId);
+    _earlySignals.remove(callId);
     _terminating.remove(callId);
+    _terminated.remove(callId);
+    _terminated.add(callId);
+    while (_terminated.length > maxRecentlyTerminated) {
+      _terminated.remove(_terminated.first);
+    }
+  }
+
+  /// Handles a session in a terminal state, inside the inbound lane. Its
+  /// signal is not applied: the server keeps the previous metadata on a
+  /// terminal transition, so it may be a replayed answer or candidate.
+  Future<void> _handleTerminal(CallSession session) async {
+    final callId = session.id;
+    final active = _calls.remove(callId);
+    final wasPending = _pendingSessions.containsKey(callId) ||
+        _earlySignals.containsKey(callId);
+    _markTerminated(callId);
+    if (active != null) {
+      _adopt(active, session);
+      active._ending = true;
+      await active._media.release();
+      // Not awaited: a stuck request must not stall inbound handling for
+      // every call. Streams close once the queued work has finished.
+      unawaited(active._outbound.then((_) => _closeCall(active)));
+    }
+    if ((active != null || wasPending) && !_terminations.isClosed) {
+      _terminations.add((callId: callId, state: session.state));
+    }
   }
 
   void _recordTerminating(CallSession session) {
@@ -381,6 +437,10 @@ class NativeCallService {
   /// synchronously, so nothing can observe a half-registered call.
   ActiveCall _activate(CallSession call, _CallMedia media) {
     if (_disposed) throw StateError('Call service was disposed during setup');
+    if (_terminated.contains(call.id)) {
+      // The other side ended the call before setup finished.
+      throw CallUnavailableException(call.id, 'ended');
+    }
     final active = ActiveCall._(
         session: call,
         media: media,
@@ -566,6 +626,12 @@ class NativeCallService {
 
   Future<void> _handleIncoming(IncomingCallSignal incoming) async {
     final callId = incoming.call.id;
+    if (isTerminalCallState(incoming.call.state)) {
+      await _handleTerminal(incoming.call);
+      return;
+    }
+    // A late signal for a call that is already over.
+    if (_terminated.contains(callId)) return;
     if (_terminating.containsKey(callId)) {
       // Being hung up here: keep the newest version for a retried end(),
       // and apply nothing to the released peer.
@@ -668,7 +734,9 @@ class NativeCallService {
     _earlySignals.clear();
     _pendingSessions.clear();
     _terminating.clear();
+    _terminated.clear();
     await _incomingOffers.close();
+    await _terminations.close();
     await _errors.close();
   }
 }

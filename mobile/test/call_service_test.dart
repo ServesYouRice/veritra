@@ -69,6 +69,7 @@ void main() {
   _task017();
   _task018();
   _task019();
+  _task020();
   group('TASK-015 setup failure releases media', () {
     const startSteps = <String>[
       'getUserMedia',
@@ -597,7 +598,10 @@ void _task019() {
       expect(h.api.server['call_1']!.state, 'ended');
       expect(h.media.peer.remoteDescriptions, isEmpty,
           reason: 'no signal is applied to a released peer');
-      await expectLater(h.service.end(call.session.id), throwsStateError);
+      // Ending again is a no-op once the server accepted it (TASK-020).
+      final sent = h.api.transitions.length;
+      await h.service.end(call.session.id);
+      expect(h.api.transitions, hasLength(sent));
     });
 
     test('end() of a call the server already ended succeeds', () async {
@@ -617,6 +621,118 @@ void _task019() {
       await h.service.end(call.session.id);
       expect(h.api.transitions.map((t) => '${t.state}@${t.expectedVersion}'),
           <String>['ended@1', 'ended@4']);
+    });
+  });
+}
+
+void _task020() {
+  group('TASK-020 remote termination', () {
+    for (final state in <String>['ended', 'rejected', 'missed']) {
+      test('a remote $state tears down the active call', () async {
+        final h = _harness();
+        final terminations = <({String callId, String state})>[];
+        h.service.terminations.listen(terminations.add);
+        final call = await h.service.start('conv_1');
+        final errors = <Object>[];
+        call.signalErrors.stream.listen(errors.add);
+
+        // The server keeps the previous metadata on a terminal transition,
+        // so the push can carry a replayed answer; it must not be applied.
+        h.incoming.add(
+            IncomingCallSignal(callSession(state: state, version: 3), _answer));
+        await _settle();
+
+        _expectReleasedOnce(h.media, hadStream: true);
+        expect(h.media.peer.remoteDescriptions, isEmpty);
+        expect(h.service.activeCallIds, isEmpty);
+        expect(terminations, <({String callId, String state})>[
+          (callId: 'call_1', state: state)
+        ]);
+        expect(errors, isEmpty);
+
+        h.incoming.add(IncomingCallSignal(
+            callSession(state: 'active', version: 4), _ice('late')));
+        await _settle();
+        expect(h.service.pendingCallIds, isEmpty);
+        expect(h.media.peer.addedCandidates, isEmpty);
+
+        await h.service.end('call_1');
+        expect(h.api.transitions, isEmpty, reason: 'nothing left to end');
+      });
+    }
+
+    test('a caller cancel clears a ringing call', () async {
+      final h = _harness();
+      final terminations = <({String callId, String state})>[];
+      h.service.terminations.listen(terminations.add);
+      final offer = h.service.incomingOffers.first;
+      h.incoming.add(IncomingCallSignal(callSession(version: 1), _offer));
+      await offer;
+      h.incoming.add(IncomingCallSignal(
+          callSession(version: 2), _ice('early', sdpMid: '0')));
+      await _settle();
+      expect(h.service.pendingCallIds, <String>['call_1']);
+
+      h.incoming.add(IncomingCallSignal(
+          callSession(state: 'ended', version: 3), _ice('early')));
+      await _settle();
+      expect(h.service.pendingCallIds, isEmpty);
+      expect(terminations.single.state, 'ended');
+
+      h.incoming.add(IncomingCallSignal(
+          callSession(state: 'ringing', version: 2), _ice('late')));
+      await _settle();
+      expect(h.service.pendingCallIds, isEmpty);
+    });
+
+    test('a terminal push while hanging up does not double-dispose',
+        () async {
+      final h = _harness();
+      final terminations = <({String callId, String state})>[];
+      h.service.terminations.listen(terminations.add);
+      final call = await h.service.start('conv_1');
+      final gate = Completer<void>();
+      h.api.transitionGate = (request) => gate.future;
+
+      final ended = h.service.end(call.session.id);
+      await _settle();
+      h.api.server['call_1'] = callSession(state: 'ended', version: 2);
+      h.incoming.add(
+          IncomingCallSignal(callSession(state: 'ended', version: 2), _answer));
+      await _settle();
+      gate.complete();
+      await ended;
+
+      _expectReleasedOnce(h.media, hadStream: true);
+      expect(terminations, isEmpty);
+    });
+
+    test('local end and reject stop late signals from refilling', () async {
+      final h = _harness();
+      final call = await h.service.start('conv_1');
+      await h.service.end(call.session.id);
+      h.incoming.add(IncomingCallSignal(
+          callSession(state: 'active', version: 2), _ice('late')));
+
+      final ringing = callSession(id: 'call_2');
+      h.api.server['call_2'] = ringing;
+      await h.service.reject(ringing);
+      h.incoming
+          .add(IncomingCallSignal(callSession(id: 'call_2'), _ice('late')));
+      await _settle();
+      expect(h.service.pendingCallIds, isEmpty);
+    });
+
+    test('the recently terminated set is bounded', () async {
+      final h = _harness();
+      for (var i = 0; i < 300; i++) {
+        h.incoming.add(IncomingCallSignal(
+            callSession(id: 'call_$i', state: 'ended', version: 2),
+            const <String, Object?>{}));
+      }
+      await _settle();
+      expect(h.service.recentlyTerminatedCount,
+          NativeCallService.maxRecentlyTerminated);
     });
   });
 }
