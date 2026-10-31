@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"time"
 
 	"private-messenger/server/internal/domain"
@@ -84,25 +83,9 @@ func (s *Store) ConfirmMLSRevocation(ctx context.Context, conversationID, revoke
 		}
 		return 0, nil
 	}
-	now := time.Now().UTC()
-	if err := completeMLSRevocationIfConfirmed(ctx, tx, conversationID, revokedDeviceID, now); err != nil {
+	eventID, err := completeMLSRevocationIfConfirmed(ctx, tx, conversationID, revokedDeviceID, time.Now().UTC())
+	if err != nil {
 		return 0, err
-	}
-	var completed bool
-	if err := tx.QueryRowContext(ctx, `SELECT state = 'completed' FROM mls_revocations
-		WHERE conversation_id = ? AND revoked_device_id = ?`, conversationID, revokedDeviceID).Scan(&completed); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return 0, ErrNotFound
-		}
-		return 0, err
-	}
-	var eventID int64
-	if completed {
-		eventID, err = insertSyncEvent(ctx, tx, "mls.revocation.completed", nil,
-			conversationID, map[string]string{"device_id": revokedDeviceID}, formatTime(now))
-		if err != nil {
-			return 0, err
-		}
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, err

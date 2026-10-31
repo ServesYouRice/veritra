@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -57,6 +58,7 @@ func (a *API) createMLSMessage(w http.ResponseWriter, r *http.Request, principal
 				CreatedAt:      message.CreatedAt,
 			})
 		}
+		a.publishRevocationCompleted(r.Context(), conversationID, principal.AccountID, message.RevocationDeviceID, message.RevocationCompletedEventID)
 	}
 	status := http.StatusCreated
 	if duplicate {
@@ -90,18 +92,27 @@ func (a *API) confirmMLSRevocation(w http.ResponseWriter, r *http.Request, princ
 		handleStorageError(w, err)
 		return
 	}
-	if eventID > 0 {
-		members, err := a.Store.ListConversationMembers(r.Context(), conversationID, principal.AccountID)
-		if err == nil {
-			accounts := make([]string, 0, len(members))
-			for _, member := range members {
-				accounts = append(accounts, member.AccountID)
-			}
-			a.publishCommittedEvent(r.Context(), accounts, realtime.Event{Version: "v1", Type: "mls.revocation.completed", ID: eventID,
-				ConversationID: conversationID, Payload: map[string]string{"device_id": revokedDeviceID}, CreatedAt: time.Now().UTC()})
-		}
-	}
+	a.publishRevocationCompleted(r.Context(), conversationID, principal.AccountID, revokedDeviceID, eventID)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// publishRevocationCompleted announces the mls.revocation.completed event a
+// commit or a confirmation recorded (eventID > 0) to the conversation's
+// members, however the revocation reached completed.
+func (a *API) publishRevocationCompleted(ctx context.Context, conversationID, requesterAccountID, revokedDeviceID string, eventID int64) {
+	if eventID <= 0 {
+		return
+	}
+	members, err := a.Store.ListConversationMembers(ctx, conversationID, requesterAccountID)
+	if err != nil {
+		return
+	}
+	accounts := make([]string, 0, len(members))
+	for _, member := range members {
+		accounts = append(accounts, member.AccountID)
+	}
+	a.publishCommittedEvent(ctx, accounts, realtime.Event{Version: "v1", Type: "mls.revocation.completed", ID: eventID,
+		ConversationID: conversationID, Payload: map[string]string{"device_id": revokedDeviceID}, CreatedAt: time.Now().UTC()})
 }
 
 func (a *API) getMLSMessage(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
@@ -214,6 +225,7 @@ func (a *API) createMLSCommitBundle(w http.ResponseWriter, r *http.Request, prin
 				CreatedAt:      welcome.CreatedAt,
 			})
 		}
+		a.publishRevocationCompleted(r.Context(), conversationID, principal.AccountID, request.RevocationDeviceID, result.RevocationCompletedEventID)
 	}
 	status := http.StatusCreated
 	if result.Duplicate {

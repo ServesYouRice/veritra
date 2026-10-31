@@ -111,6 +111,10 @@ type MLSMessage struct {
 	IdempotencyKey     string    `json:"idempotency_key"`
 	SyncEventID        int64     `json:"sync_event_id"`
 	CreatedAt          time.Time `json:"created_at"`
+	// RevocationCompletedEventID is the mls.revocation.completed event this
+	// commit caused, for the HTTP layer to publish. It is zero otherwise and
+	// never leaves the server.
+	RevocationCompletedEventID int64 `json:"-"`
 }
 
 type MLSRevocation struct {

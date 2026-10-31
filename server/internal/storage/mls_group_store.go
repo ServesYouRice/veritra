@@ -62,6 +62,9 @@ type MLSCommitBundleResult struct {
 	Welcomes  []domain.MLSMessage
 	Epoch     int64
 	Duplicate bool
+	// RevocationCompletedEventID is the mls.revocation.completed event the
+	// bundle caused when its commit finished a revocation, else zero.
+	RevocationCompletedEventID int64
 }
 
 // MLSPendingChange lists the devices a group should add or remove.
@@ -295,6 +298,7 @@ func (s *Store) CreateMLSCommitBundle(ctx context.Context, input MLSCommitBundle
 		}
 		welcomes = append(welcomes, welcome)
 	}
+	var completedEventID int64
 	if input.RevocationDeviceID != "" {
 		if _, err := tx.ExecContext(ctx, `UPDATE mls_revocations SET state = 'commit_submitted', commit_message_id = ?
 			WHERE conversation_id = ? AND revoked_device_id = ? AND state = 'pending'`,
@@ -306,14 +310,15 @@ func (s *Store) CreateMLSCommitBundle(ctx context.Context, input MLSCommitBundle
 			formatTime(now), input.ConversationID, input.RevocationDeviceID, input.SenderDeviceID); err != nil {
 			return MLSCommitBundleResult{}, err
 		}
-		if err := completeMLSRevocationIfConfirmed(ctx, tx, input.ConversationID, input.RevocationDeviceID, now); err != nil {
+		completedEventID, err = completeMLSRevocationIfConfirmed(ctx, tx, input.ConversationID, input.RevocationDeviceID, now)
+		if err != nil {
 			return MLSCommitBundleResult{}, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return MLSCommitBundleResult{}, err
 	}
-	return MLSCommitBundleResult{Commit: &commit, Welcomes: welcomes, Epoch: epoch + 1}, nil
+	return MLSCommitBundleResult{Commit: &commit, Welcomes: welcomes, Epoch: epoch + 1, RevocationCompletedEventID: completedEventID}, nil
 }
 
 type mlsMessageRow struct {
