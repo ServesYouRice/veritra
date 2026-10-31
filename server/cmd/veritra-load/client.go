@@ -36,7 +36,16 @@ func newAPIClient(base *url.URL, connections int) *apiClient {
 	transport.MaxIdleConns = connections
 	transport.MaxIdleConnsPerHost = connections
 	transport.MaxConnsPerHost = 0
-	return &apiClient{base: base, http: &http.Client{Transport: transport, Timeout: 2 * time.Minute}}
+	return &apiClient{base: base, http: &http.Client{
+		Transport: transport,
+		Timeout:   2 * time.Minute,
+		// checkTarget vetted only the -target host. Following a redirect
+		// would send seeding and load (with X-Forwarded-For and custom
+		// headers) to whatever host the Location names, so a redirect is
+		// returned as its 3xx status, which expect turns into an error. The
+		// API paths are fixed, so no supported target needs one.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}}
 }
 
 // statusError keeps only the status code: response bodies may carry
