@@ -253,8 +253,19 @@ func ValidateDatabaseFile(ctx context.Context, path string) error {
 	return foreignKeys.Err()
 }
 
+// ProbeDatabaseExclusive reports whether the database at path can be locked
+// for writing right now: it fails while another connection holds a write
+// lock. It is an extra check, not proof that no server runs: in WAL mode an
+// idle or reading connection does not stop it, so callers that need to exclude
+// a running server must also take the server's process locks. It never
+// creates a database: a missing path is an error.
 func ProbeDatabaseExclusive(ctx context.Context, path string) error {
-	db, err := sql.Open("sqlite", sqliteDSN(path))
+	if _, err := os.Stat(path); err != nil {
+		return err
+	}
+	// mode=rw opens an existing file only, so a path that vanishes after the
+	// check still does not become a new empty database.
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=rw&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return err
 	}

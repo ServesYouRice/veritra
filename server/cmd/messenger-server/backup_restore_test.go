@@ -114,7 +114,8 @@ func expectNoStaging(t *testing.T, dirs ...string) {
 				}
 				continue
 			}
-			if strings.HasPrefix(entry.Name(), ".veritra-") && entry.Name() != restoreJournalName {
+			// The process lock file is permanent: restore takes it, as serve does.
+			if strings.HasPrefix(entry.Name(), ".veritra-") && entry.Name() != restoreJournalName && entry.Name() != instanceLockName {
 				t.Fatalf("staging left behind: %s", filepath.Join(dir, entry.Name()))
 			}
 			if entry.Name() == restoreJournalName {
