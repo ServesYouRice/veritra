@@ -724,7 +724,7 @@ func (s *Store) PruneExpiredContent(ctx context.Context, now time.Time) (int64, 
 	if err != nil {
 		return 0, nil, err
 	}
-	orphanCutoff := formatTime(now.UTC().Add(-24 * time.Hour))
+	orphanCutoff := formatTime(now.UTC().Add(-OrphanedAttachmentGrace))
 	orphans, err := tx.QueryContext(ctx, `SELECT storage_key FROM attachment_envelopes WHERE created_at < ? AND NOT EXISTS (SELECT 1 FROM message_attachments ma WHERE ma.attachment_id = attachment_envelopes.id) ORDER BY created_at, id LIMIT 500`, orphanCutoff)
 	if err != nil {
 		return 0, nil, err

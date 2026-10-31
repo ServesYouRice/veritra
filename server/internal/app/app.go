@@ -372,10 +372,7 @@ func routeTimeouts(next http.Handler) http.Handler {
 // runRetentionSweeper periodically prunes expired message envelopes plus
 // sync_events and audit_events older than the retention window. The event
 func (a *App) runRetentionSweeper(ctx context.Context) {
-	retention := a.Config.SyncRetention
-	if retention <= 0 {
-		retention = 30 * 24 * time.Hour
-	}
+	retention := a.syncRetention()
 	ticker := time.NewTicker(6 * time.Hour)
 	defer ticker.Stop()
 	sweep := func() {
@@ -721,8 +718,17 @@ func (a *App) updatePushWakeMetrics(ctx context.Context) {
 	}
 }
 
+// syncRetention is how long sync and audit events are kept: the configured
+// window, or 30 days when none is set.
+func (a *App) syncRetention() time.Duration {
+	if a.Config.SyncRetention > 0 {
+		return a.Config.SyncRetention
+	}
+	return 30 * 24 * time.Hour
+}
+
 func (a *App) updateRetentionMetrics(ctx context.Context, now time.Time) {
-	backlog, err := a.Store.RetentionBacklog(ctx, now)
+	backlog, err := a.Store.RetentionBacklogWithSyncRetention(ctx, now, a.syncRetention())
 	if err != nil {
 		a.Log.Warn("retention_backlog_read_failed", "err", err)
 		return
