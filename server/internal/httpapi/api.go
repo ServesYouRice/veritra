@@ -182,11 +182,15 @@ func (a *API) withAuth(next authedHandler) http.HandlerFunc {
 		}
 		if activity.SessionTouchDue(now) {
 			if err := a.Store.TouchSession(r.Context(), tokenHash); err != nil {
-				if !errors.Is(err, storage.ErrUnauthorized) {
-					a.warn("session_touch_failed", "err", err)
+				// Only a session that vanished between the read and the
+				// write is refused. Any other failure is a transient
+				// bookkeeping error on an already validated session: log it
+				// and serve the request (a skipped touch is routine).
+				if errors.Is(err, storage.ErrUnauthorized) {
+					refuseUnauthenticated(w, r)
+					return
 				}
-				writeError(w, http.StatusUnauthorized, "unauthorized")
-				return
+				a.warn("session_touch_failed", "err", err)
 			}
 		}
 		next(w, r, principal)
