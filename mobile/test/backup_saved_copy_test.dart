@@ -101,7 +101,7 @@ void main() {
 
     // The corrected code still restores the kept copy.
     await serviceFor(target).recover(code);
-    expect((await target.loadSession())?.deviceId, 'dev_1');
+    expect((await target.loadSession())?.accountId, 'acct_1');
     expect(scratch.listSync(), isEmpty);
   }, skip: skip);
 
@@ -114,7 +114,7 @@ void main() {
     server.consumeOnComplete = true;
     final target = MemoryLocalStore();
     await serviceFor(target).recover(code);
-    expect((await target.loadSession())?.deviceId, 'dev_1');
+    expect((await target.loadSession())?.accountId, 'acct_1');
     // No range request: this code's tail never lands on the other prefix.
     expect(server.rangeStarts, <int>[0]);
     expect(scratch.listSync(), isEmpty);
@@ -126,7 +126,7 @@ void main() {
     server.consumeOnComplete = true;
     final target = MemoryLocalStore();
     await serviceFor(target).recover(code);
-    expect((await target.loadSession())?.deviceId, 'dev_1');
+    expect((await target.loadSession())?.accountId, 'acct_1');
     expect(server.rangeStarts, <int>[100]);
     expect(scratch.listSync(), isEmpty);
   }, skip: skip);
@@ -145,7 +145,7 @@ void main() {
 
       server.recoveryStatus = null;
       await serviceFor(target).recover(code);
-      expect((await target.loadSession())?.deviceId, 'dev_1');
+      expect((await target.loadSession())?.accountId, 'acct_1');
       expect(scratch.listSync(), isEmpty);
     }, skip: skip);
   }
@@ -165,7 +165,7 @@ void main() {
     expect(partial().readAsBytesSync(), ciphertext);
 
     await serviceFor(target).recover(code);
-    expect((await target.loadSession())?.deviceId, 'dev_1');
+    expect((await target.loadSession())?.accountId, 'acct_1');
     expect(scratch.listSync(), isEmpty);
   }, skip: skip);
 
@@ -179,7 +179,7 @@ void main() {
     expect(partial().readAsBytesSync(), ciphertext);
 
     await serviceFor(target).recover(code);
-    expect((await target.loadSession())?.deviceId, 'dev_1');
+    expect((await target.loadSession())?.accountId, 'acct_1');
     expect(scratch.listSync(), isEmpty);
   }, skip: skip);
 
@@ -199,7 +199,7 @@ void main() {
     expect(partial().readAsBytesSync(), prefix);
 
     await serviceFor(target).recover(code);
-    expect((await target.loadSession())?.deviceId, 'dev_1');
+    expect((await target.loadSession())?.accountId, 'acct_1');
     expect(scratch.listSync(), isEmpty);
   }, skip: skip);
 
@@ -209,7 +209,7 @@ void main() {
     server.omitContentRange = true;
     final target = MemoryLocalStore();
     await serviceFor(target).recover(code);
-    expect((await target.loadSession())?.deviceId, 'dev_1');
+    expect((await target.loadSession())?.accountId, 'acct_1');
     expect(server.rangeStarts, <int>[100, 0]);
     expect(scratch.listSync(), isEmpty);
   }, skip: skip);

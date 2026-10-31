@@ -281,14 +281,6 @@ void main() {
         sessionJson: '{}',
         conversations: const [],
         envelopes: const [],
-        outbox: const [],
-        mlsOutbox: const [],
-        cryptoState: (
-          counter: 1,
-          stateKey: List<int>.filled(32, 1),
-          sealedState: <int>[1]
-        ),
-        cursor: 0,
         // Reversed, so the old index numbers arrive out of order.
         history: history.reversed.toList(),
       );

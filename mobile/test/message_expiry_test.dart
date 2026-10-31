@@ -423,14 +423,6 @@ void main() {
           payloadJson: jsonEncode(_envelope('old', expiresAt: past).toJson()),
         ),
       ],
-      outbox: const [],
-      mlsOutbox: const [],
-      cryptoState: (
-        counter: 1,
-        stateKey: List<int>.filled(32, 1),
-        sealedState: <int>[1]
-      ),
-      cursor: 0,
       backfillExpiryFor: const {'old'},
       history: [
         // A version 2 backup carries no expiry for the message.
@@ -479,6 +471,8 @@ void main() {
     final exported = await store.exportBackup();
 
     // Format 3 restores history as it is: envelopes never set its expiry.
+    // A restore needs an empty device (D71).
+    await store.clear();
     await store.restoreBackup(exported);
     expect(await bodies(store), <String>['old text']);
 
@@ -487,7 +481,9 @@ void main() {
     final legacy =
         Map<String, Object?>.from(jsonDecode(utf8.decode(exported)) as Map)
           ..['version'] = 2;
+    _bindLegacySession(legacy);
     expect(jsonEncode(legacy['messages']), isNot(contains('"old"')));
+    await store.clear();
     await store.restoreBackup(utf8.encode(jsonEncode(legacy)));
     expect(await bodies(store), <String>['old text']);
   });
@@ -587,6 +583,7 @@ void main() {
     // A version 2 file whose entry "missing" has no expiresAt key at all, and
     // whose entry "explicit" carries the key with null: that one never expires.
     backup['version'] = 2;
+    _bindLegacySession(backup);
     for (final item in backup['history'] as List) {
       final entry = item as Map;
       if (entry['serverMessageId'] == 'missing') entry.remove('expiresAt');
@@ -594,6 +591,7 @@ void main() {
         entry['expiresAt'] = null;
       }
     }
+    await store.clear();
     await store.restoreBackup(utf8.encode(jsonEncode(backup)));
     final rows = await databases.last
         .customSelect('SELECT server_message_id AS id, expires_at AS at '
@@ -775,4 +773,18 @@ class _HistoryMls implements MlsConversationCryptoService {
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw UnimplementedError('${invocation.memberName}');
+}
+
+/// A version 1 to 5 backup carried the device's session, bound to the
+/// account and device; a current export carries the account only (D71).
+void _bindLegacySession(Map<String, Object?> backup) {
+  backup
+    ..['session'] = <String, Object?>{
+      'base_url': 'https://localhost:8080',
+      'token': 'token',
+      'account_id': 'acct_own',
+      'device_id': 'dev_own',
+    }
+    ..['account_id'] = 'acct_own'
+    ..['device_id'] = 'dev_own';
 }

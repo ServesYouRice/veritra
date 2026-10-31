@@ -262,7 +262,11 @@ class BackupService {
     }
     try {
       final existing = await localStore.loadSession();
-      if (existing != null && (existing.deviceId?.isNotEmpty ?? false)) {
+      // A device, signed in or not, and an earlier restore still waiting
+      // for its device (D71) both hold history a restore would replace.
+      if (existing != null &&
+          ((existing.deviceId?.isNotEmpty ?? false) ||
+              isRestoredAccountSession(existing))) {
         throw const BackupException(BackupFailureKind.deviceNotEmpty);
       }
     } on BackupException {

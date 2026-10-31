@@ -131,12 +131,12 @@ void main() {
       final backup = decode(await export);
       await commit;
 
-      // The export read the state before the commit, so all of it is from
-      // before: the counter, the cursor and the queued MLS messages.
-      expect((backup['crypto_state'] as Map)['counter'], counter);
-      expect(backup['cursor'], cursor);
-      expect(
-          (backup['mls_outbox'] as List).length, counter - 1 - (cursor - 10));
+      // The MLS state, its cursor and its queued messages stay on the
+      // device (D71, D73): the export completes without any of them.
+      expect(backup.keys,
+          isNot(anyOf(contains('crypto_state'), contains('cursor'))));
+      expect(backup.containsKey('mls_outbox'), isFalse);
+      expect(backup['version'], backupFormatVersion);
     }
   });
 }
