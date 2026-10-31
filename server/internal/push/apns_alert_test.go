@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"private-messenger/server/internal/domain"
 )
@@ -84,5 +86,24 @@ func TestAPNsLocalDecryptWakeStaysSilent(t *testing.T) {
 	}
 	if !reflect.DeepEqual(body, want) {
 		t.Fatalf("APNs body=%v", body)
+	}
+}
+
+// A visible alert outlives a short offline spell; a silent wake does not.
+func TestAPNsExpiryByPushKind(t *testing.T) {
+	for mode, want := range map[string]time.Duration{
+		domain.PushNotificationLegacy:       apnsAlertExpiry,
+		domain.PushNotificationLocalDecrypt: apnsWakeExpiry,
+	} {
+		before := time.Now()
+		header, _ := sendAPNs(t, mode)
+		expiry, err := strconv.ParseInt(header.Get("apns-expiration"), 10, 64)
+		if err != nil {
+			t.Fatalf("mode %q: apns-expiration=%q", mode, header.Get("apns-expiration"))
+		}
+		got := time.Unix(expiry, 0).Sub(before)
+		if got < want-2*time.Second || got > want+2*time.Second {
+			t.Fatalf("mode %q: expiry in %v, want about %v", mode, got, want)
+		}
 	}
 }
