@@ -169,6 +169,10 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     post-compromise security rarely happened. A path commit soon after a
     join also fills the device's path in the tree, which makes later
     removals cheaper (research notes on post-quantum groups, cold trees).
+    A self-update renews the leaf's encryption (HPKE) key and the path
+    secrets, not the signature key or the credential: a thief holding
+    the signature key can still sign as the device until it is relinked
+    or removed, and L1 is what binds leaves to the signed device list.
   - **Native.** `pm_crypto_group_stage_commit` with an empty change list
     (version 1, no adds, no removes) stages a commit with an update path
     and no proposals (`MlsDevice::stage_self_update`): the proposal store
@@ -211,15 +215,21 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     commit or a paused MLS outbox. A commit tells every member that this
     device is online, so, like a read receipt, none goes to a message
     request (or a declined one, D48) or to a DM whose peer is blocked
-    (blocks loaded first); their counters wait for acceptance. Any 4xx
-    refusal of an update-only bundle (other than 401 and 408) drops the
-    staged commit and backs off
-    (409: 10 min, the budget's 429: 1 h, others such as an older
-    server's 400: 24 h), so a self-update never pauses a conversation
-    the way a refused membership commit does. An accepted self-update, or
-    any own commit that removes a device, resets the counters. State is
-    a JSON setting in the encrypted local store, bound to the account and
-    device.
+    (blocks loaded first); their counters wait for acceptance. Only
+    refusals the server gives after its duplicate check drop the staged
+    commit and back off: 409 `mls_epoch_conflict` or `mls_change_pending`
+    (10 min), 429 `mls_self_update_limit` (Retry-After, at least 1 h),
+    and 400, 403 or 422, such as an older server's `invalid_input`
+    (24 h). These do not pause the conversation. Any other answer,
+    including the write budget's 429 `write_rate_limited`, which comes
+    before the duplicate check, may hide a bundle the server already
+    accepted with its answer lost. Dropping it would leave this device
+    an epoch behind its own commit, so the same bundle is retried
+    unchanged through the MLS outbox (I34). An accepted self-update, or
+    any own commit that removes a device, resets the counters, whether
+    the outbox completes it or sync merges it after a lost answer. State
+    is a JSON setting in the encrypted local store, bound to the account
+    and device.
   - **Trust model.** The server cannot read a commit. "Update only" is
     what the sender declares, exactly as Added and Removed are for every
     other bundle, and nothing cross-checks the declaration: not the

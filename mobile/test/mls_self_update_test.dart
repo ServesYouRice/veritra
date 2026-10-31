@@ -4,6 +4,7 @@
 // and backs off instead of pausing the conversation.
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -130,6 +131,12 @@ void main() {
       MlsSelfUpdatePolicy.minInterval,
     ),
     (
+      'a budget set above the default',
+      ApiException(
+          429, '{"error":"mls_self_update_limit"}', const Duration(days: 3)),
+      const Duration(days: 3),
+    ),
+    (
       'an older server',
       ApiException(400, '{"error":"invalid_input"}'),
       MlsSelfUpdatePolicy.refusedBackoff,
@@ -152,6 +159,67 @@ void main() {
       state.dispose();
     });
   }
+
+  test('a retry refused before the duplicate check keeps the update', () async {
+    // The first POST may have been accepted with its answer lost; the write
+    // budget's 429 comes before the server's duplicate check, so it says
+    // nothing about the bundle. Dropping the staged commit here would leave
+    // this device an epoch behind its own accepted commit.
+    final store = await _storeWith(_countDue('conv_a'));
+    final api = _Api()
+      ..failures.addAll(<Object>[
+        const SocketException('connection reset'),
+        ApiException(429, '{"error":"write_rate_limited"}'),
+      ]);
+    final crypto = _Crypto(store);
+    final state = await _start(api, store, crypto);
+    await _waitFor(() => crypto.completed.contains('conv_a'),
+        timeout: const Duration(seconds: 30));
+    expect(crypto.abandoned, isEmpty);
+    expect(state.mlsConversationFailed('conv_a'), isFalse);
+    // The same bundle each time, so the server can answer the duplicate.
+    expect(api.sentKeys, hasLength(3));
+    expect(api.sentKeys.toSet(), hasLength(1));
+    expect(api.bundles.single.isUpdateOnly, isTrue);
+    expect(await store.pendingMlsMessages(), isEmpty);
+    state.dispose();
+  });
+
+  test('an accepted update merged by sync resets the counters', () async {
+    // The update was staged and accepted, but its answer never arrived
+    // (crash, lost connection); sync brings the device's own commit.
+    final store = await _storeWith(_countDue('conv_a'));
+    final crypto = _Crypto(store);
+    await crypto.stageSelfUpdate('conv_a');
+    crypto.staged.clear();
+    final api = _Api()
+      ..failures.addAll(<Object>[
+        for (var i = 0; i < 5; i++) ApiException(503, '{"error":"busy"}'),
+      ])
+      ..events = <SyncEvent>[
+        SyncEvent(
+          id: 1,
+          type: 'mls.message.created',
+          conversationId: 'conv_a',
+          payload: const <String, Object?>{
+            'mls_message_id': 'mls_own',
+            'kind': 'commit',
+            'idempotency_key': 'update_1',
+          },
+          createdAt: DateTime.now().toUtc(),
+        ),
+      ];
+    final state = await _start(api, store, crypto);
+    await _waitFor(() => crypto.processed.contains('mls_own'));
+    await _waitFor(() async => !(await _saved(store)).contains('"sent"'));
+    final record = _record(await _saved(store), 'conv_a');
+    expect(
+        DateTime.now().toUtc().difference(_at(record['last'])).inMinutes.abs(),
+        lessThan(2));
+    expect(await store.pendingMlsMessages(), isEmpty);
+    expect(crypto.staged, isEmpty);
+    state.dispose();
+  });
 
   test('a Welcome records the join; the update waits for its delay', () async {
     final store = await _storeWith(null);
@@ -333,6 +401,7 @@ class _Api extends ApiClient {
 
   final List<MlsCommitBundle> bundles = <MlsCommitBundle>[];
   final List<Object> failures = <Object>[];
+  final List<String> sentKeys = <String>[];
   List<MlsRevocation> revocations = <MlsRevocation>[];
   List<MlsPendingChange> pending = <MlsPendingChange>[];
   List<SyncEvent> events = <SyncEvent>[];
@@ -383,18 +452,32 @@ class _Api extends ApiClient {
       <MlsMessage>[
         for (final event in events)
           if (event.id > after)
-            MlsMessage(
-              id: 'mls_welcome',
-              conversationId: 'conv_a',
-              senderAccountId: 'acct_other',
-              senderDeviceId: 'dev_other',
-              recipientDeviceId: 'dev_me',
-              kind: 'welcome',
-              payload: const <int>[7],
-              idempotencyKey: 'welcome',
-              syncEventId: event.id,
-              createdAt: event.createdAt,
-            ),
+            (event.payload! as Map)['kind'] == 'commit'
+                // This device's own commit, as the server relays it.
+                ? MlsMessage(
+                    id: (event.payload! as Map)['mls_message_id'] as String,
+                    conversationId: 'conv_a',
+                    senderAccountId: 'acct_me',
+                    senderDeviceId: 'dev_me',
+                    kind: 'commit',
+                    payload: const <int>[9],
+                    idempotencyKey:
+                        (event.payload! as Map)['idempotency_key'] as String,
+                    syncEventId: event.id,
+                    createdAt: event.createdAt,
+                  )
+                : MlsMessage(
+                    id: 'mls_welcome',
+                    conversationId: 'conv_a',
+                    senderAccountId: 'acct_other',
+                    senderDeviceId: 'dev_other',
+                    recipientDeviceId: 'dev_me',
+                    kind: 'welcome',
+                    payload: const <int>[7],
+                    idempotencyKey: 'welcome',
+                    syncEventId: event.id,
+                    createdAt: event.createdAt,
+                  ),
       ];
 
   @override
@@ -424,6 +507,7 @@ class _Api extends ApiClient {
     required String idempotencyKey,
     required MlsCommitBundle bundle,
   }) async {
+    sentKeys.add(idempotencyKey);
     if (failures.isNotEmpty) throw failures.removeAt(0);
     bundles.add(bundle);
     return bundle.epoch + 1;
@@ -485,6 +569,11 @@ class _Crypto
   @override
   Future<void> processMlsMessage(MlsMessage message) async {
     processed.add(message.id);
+    if (message.senderDeviceId == 'dev_me') {
+      // Accepted on the server: merged, and its bundle resolved.
+      completed.add(message.conversationId);
+      await store.removePendingMlsMessage(message.idempotencyKey);
+    }
     await store.commitSyncEvent(SyncEventCommit(
       eventKey: 'mls:${message.syncEventId}:${message.id}',
       conversationId: message.conversationId,
