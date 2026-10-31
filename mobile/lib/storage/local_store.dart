@@ -141,6 +141,24 @@ class StoredCryptoState {
   final List<int> sealedState;
 }
 
+/// One sealed MLS record of the per-record state (D70, format 4), as the
+/// root in [StoredCryptoState.sealedState] lists it. Nothing writes records
+/// before the ABI-10 package (D70 S3); every path that drops the crypto
+/// state drops them with it.
+class StoredCryptoRecord {
+  StoredCryptoRecord({
+    required this.kind,
+    required this.recordId,
+    required this.generation,
+    required this.sealed,
+  });
+
+  final int kind;
+  final List<int> recordId;
+  final int generation;
+  final List<int> sealed;
+}
+
 class MlsStateTransition {
   const MlsStateTransition({
     required this.messageId,
@@ -475,6 +493,10 @@ abstract class LocalStore {
     String? resolvedMlsOutboxKey,
   });
   Future<StoredCryptoState?> loadCryptoState();
+
+  /// The sealed MLS records (D70), ordered by kind, then id. Empty until
+  /// the ABI-10 package writes them; cleared with the crypto state.
+  Future<List<StoredCryptoRecord>> loadCryptoRecords();
   Future<List<int>> exportHistorySnapshot();
   Future<void> importHistorySnapshot(
       List<int> encoded, HistoryImportContext context);
@@ -565,6 +587,11 @@ class MemoryLocalStore implements LocalStore {
   final Map<String, PendingEnvelopeRecord> _outboxRecords =
       <String, PendingEnvelopeRecord>{};
   StoredCryptoState? _cryptoState;
+
+  /// Sealed MLS records (D70) by `kind:hex(recordId)`. Dropped wherever
+  /// [_cryptoState] is.
+  final Map<String, StoredCryptoRecord> _cryptoRecords =
+      <String, StoredCryptoRecord>{};
   final Set<String> _processedMlsMessages = <String>{};
   final Map<String, PendingMlsMessage> _mlsOutbox =
       <String, PendingMlsMessage>{};
@@ -619,6 +646,7 @@ class MemoryLocalStore implements LocalStore {
       await clearCachedState();
       _syncCursor = 0;
       _cryptoState = null;
+      _cryptoRecords.clear();
       _processedMlsMessages.clear();
       _mlsOutbox.clear();
       _peerVerifications.clear();
@@ -995,6 +1023,22 @@ class MemoryLocalStore implements LocalStore {
   Future<StoredCryptoState?> loadCryptoState() async =>
       _cryptoState == null ? null : _copyCryptoState(_cryptoState!);
 
+  @override
+  Future<List<StoredCryptoRecord>> loadCryptoRecords() async {
+    final keys = _cryptoRecords.keys.toList()..sort();
+    return [for (final k in keys) _copyCryptoRecord(_cryptoRecords[k]!)];
+  }
+
+  /// Puts records in place the way the ABI-10 package will, so tests can
+  /// check that every crypto-state clear drops them (D70 S2).
+  @visibleForTesting
+  void seedCryptoRecordsForTest(Iterable<StoredCryptoRecord> records) {
+    for (final r in records) {
+      _cryptoRecords[_cryptoRecordKey(r.kind, r.recordId)] =
+          _copyCryptoRecord(r);
+    }
+  }
+
   void _applyHistoryEffects(List<MessageEffect> effects) {
     final next = _history.copy();
     final namespace = _historyNamespace.copy();
@@ -1154,6 +1198,7 @@ class MemoryLocalStore implements LocalStore {
     _outboxRecords.clear();
     _mlsOutbox.clear();
     _cryptoState = null;
+    _cryptoRecords.clear();
     _processedMlsMessages.clear();
     _peerVerifications.clear();
     _history.replace(backup.history, backup.reactions);
@@ -1202,6 +1247,7 @@ class MemoryLocalStore implements LocalStore {
     _noticeState = LocalNoticeState();
     _session = null;
     _cryptoState = null;
+    _cryptoRecords.clear();
     _processedMlsMessages.clear();
     _mlsOutbox.clear();
     _peerVerifications.clear();
@@ -1817,8 +1863,7 @@ class SecureLocalStore implements LocalStore {
   Future<void> saveSession(Session session) async {
     final database = await _database();
     final previous = _sessionFromJson(await database.readSessionJson());
-    final changed =
-        previous != null && _identityChanged(previous, session);
+    final changed = previous != null && _identityChanged(previous, session);
     await database.writeSessionJson(
       jsonEncode(_sessionJson(session)),
       clearIdentityState: changed,
@@ -2194,6 +2239,17 @@ class SecureLocalStore implements LocalStore {
     _validateCryptoState(state);
     return state;
   }
+
+  @override
+  Future<List<StoredCryptoRecord>> loadCryptoRecords() async => [
+        for (final row in await (await _database()).readCryptoRecords())
+          StoredCryptoRecord(
+            kind: row.kind,
+            recordId: List<int>.from(row.recordId),
+            generation: row.generation,
+            sealed: List<int>.from(row.sealed),
+          ),
+      ];
 
   @override
   Future<List<LocalNoticeReference>> pendingNoticeReferences(
@@ -3249,6 +3305,19 @@ StoredCryptoState _copyCryptoState(StoredCryptoState state) =>
       stateKey: List<int>.from(state.stateKey),
       sealedState: List<int>.from(state.sealedState),
     );
+
+StoredCryptoRecord _copyCryptoRecord(StoredCryptoRecord r) =>
+    StoredCryptoRecord(
+      kind: r.kind,
+      recordId: List<int>.from(r.recordId),
+      generation: r.generation,
+      sealed: List<int>.from(r.sealed),
+    );
+
+/// Sorts like SQLite's (kind, record_id BLOB) order: hex keeps byte order.
+String _cryptoRecordKey(int kind, List<int> recordId) =>
+    '${kind.toString().padLeft(5, '0')}:'
+    '${recordId.map((b) => b.toRadixString(16).padLeft(2, '0')).join()}';
 
 List<int> _encodeBackup(LocalBackupData data) {
   final accountId = data.session.accountId;
