@@ -13,6 +13,10 @@ import (
 
 const maxLoginBackoffEntries = 32768
 
+// loginBackoffNow is the clock the login handlers give the backoff. Tests
+// freeze it so a slow password check cannot outlast a one-second block.
+var loginBackoffNow = time.Now
+
 const backoffEvictionSampleSize = 32
 
 type LoginBackoff struct {

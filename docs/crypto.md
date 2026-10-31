@@ -159,6 +159,121 @@ not raised; if it changes, change the derivation with it.
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **Sync cursor expiry from prune watermarks (2026-10-31):** server
+  migration 0044; no ABI, payload, client or API change. I33 still holds:
+  an expired cursor gets 409 `device_recovery_required` and the app never
+  jumps ahead.
+  - **Bug.** The server said a cursor had expired when the cursor's own
+    event was pruned and the account's oldest remaining visible event was
+    more than one id past it. Sync event ids are global, so other accounts'
+    events nearly always filled that gap. A device that missed nothing got
+    409, and Relink, the only recovery the app offers, needs a second
+    device. After the previous entry this hit sign-in after more than event
+    retention (30 days by default). It also hit a quiet account that stayed
+    signed in, and any cursor below the account's first event, with
+    nothing pruned at all.
+  - **Rule.** A cursor has expired when retention pruned an event after it
+    that the device could have been sent. Triggers on `sync_events` keep,
+    in the same transaction as each delete, the highest pruned id in three
+    places:
+    - each account, per target device (`''` for events every device of the
+      account receives);
+    - each conversation, split into the events sync filters by the MLS join
+      cursor (`mls.message.created`, `message.envelope.*`, `call.*`) and the
+      rest;
+    - the whole table (`sync_prune_state.pruned_through`).
+    A cursor at or past the table's mark lost nothing: one primary-key read,
+    the usual case. Otherwise it has expired when any of these is past it:
+    - the account's mark for every device, or for this device;
+    - the plain mark of a conversation the account is a member of now;
+    - the MLS-filtered mark M of such a conversation, when there is no MLS
+      group, or when the device's roster row has M > `joined_after_event_id`
+      and either no `removed_after_event_id` or one past both the cursor and
+      the join.
+  - **Not counted.**
+    - Another device's Welcome.
+    - A conversation the account left. Its own `membership.left` event is an
+      account event, which does count.
+    - MLS events from before the device joined.
+    - Message events whose message had expired, was deleted (apart from the
+      delete marker) or was gone when pruned. Sync hides those from every
+      cursor, so disappearing messages do not expire a cursor.
+  - **Still conservative (expired although nothing visible was lost).**
+    - A pruned event from a sender the account blocked. Marks keep no
+      sender, because a mark per sender would keep who wrote where, and in
+      what order, beyond retention.
+    - A late message from an epoch before the device's `joined_epoch`.
+    - A removed device whose roster window reaches past the cursor while
+      the newest pruned MLS event lies after the removal.
+    - Plain conversation events (membership changes, reactions, read
+      receipts, `conversation.updated`) from before the account was added.
+      Memberships have no join cursor, so sync serves these to every
+      current member, and the old check counted them too. A user added to
+      an active group while away for longer than retention still gets 409.
+      Fixing it needs a per-membership join cursor (a schema change).
+    Each needs the device's cursor to fall more than one retention period
+    behind, and the only events it lost must be of one of these kinds. A
+    device online and polling can still fall that far behind: hidden events
+    do not move its cursor (STATE.md, "Hidden tail on every poll"). So a
+    blocked sender who keeps writing into a DM can get the blocker 409 once
+    the blocker has had no visible event anywhere for a retention period.
+    The real fix is a next cursor past hidden events, an API change.
+  - **Upgrade.** Migration 0044 seeds `legacy_through` with the ids pruned
+    before it: the oldest remaining event id less one, or the last id ever
+    issued when the table is empty. A cursor below that also gets the old
+    test, which is safe but keeps its false refusals. Below that bound the
+    cursor's own event is always gone, so the old test refuses as soon as
+    the account has any event left: every device whose last received event
+    is older than the oldest event kept at the upgrade gets 409 at its next
+    event, even a quiet one that stayed online. Nothing records what those
+    earlier prunes held, so treating them as lost nothing would fail open.
+    Only pre-release demo databases predate 0044. The marks hold one event
+    id per conversation and per account and device. They are never removed,
+    so a dormant conversation's mark tells roughly when it was last active,
+    even past retention.
+  - **Ordering.** The check now runs after the page is read. Run before,
+    a prune landing between the check and the page could drop events
+    without a 409.
+  - **Tests.** `server/internal/storage/sync_prune_marks_test.go`:
+    - the review's reproduction;
+    - real gaps (account, own-device, conversation and MLS events);
+    - the cases that do not count, and the blocked-sender expiry;
+    - the upgrade of an existing database;
+    - the query plan.
+    The read-model equivalence tests bound every cursor between "lost an
+    event it could see" (must expire) and "lost an event in its streams"
+    (may expire). `mobile/test/sync_recovery_test.dart` covers sign-in
+    receiving `device_recovery_required`.
+
+- **Sign-in keeps the sync cursor (2026-10-31):** no ABI, payload, schema
+  or server change; I33 and D28 unchanged.
+  - **Bug.** Password sign-in reset the sync cursor to 0. The cursor and
+    the MLS state commit together and a sign-in keeps the state, so
+    sync replayed events that state had already consumed:
+    - After an I45 restore, the restore drops the applied-event markers.
+      The first old commit failed and I33 stopped sync. Seen when the
+      original device signed out, which revoked the session the backup
+      carries.
+    - After a session expiry or a sign-out, the markers skip the old
+      events but do not move the cursor. With 200 or more retained events,
+      sync fetched the same first page forever and never reached new
+      events. Every pass also re-handled an old Welcome and published a
+      new key package.
+  - **Fix.** `AppState.login` keeps the cursor when the account, device
+    and server are unchanged and protected MLS state was present before
+    the sign-in. Otherwise it resets the cursor to 0, as before. The stores
+    own the same rule: clearing cached state keeps the cursor, and a new
+    identity or a full wipe sets it to 0. Before this, the database kept
+    the old value on both, and only the callers' explicit reset hid that.
+  - **Effect.** A device signed out for longer than server event retention
+    now gets `device_recovery_required` (relink or backup) at sign-in, but
+    only when retention pruned an event it could have been sent (entry
+    above, migration 0044). Before, it skipped that check by asking from
+    event 0.
+  - **Tests.** `mobile/test/sync_recovery_test.dart` ("signing in again
+    as the same identity") covers both stores. The demo e2e covers a
+    restore after sign-out followed by sign-in.
+
 - **Periodic self-update (2026-10-31, research round 2):** no payload or
   local schema change, no new symbol and no ABI number change; server
   migration 0043.
@@ -169,6 +284,10 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     post-compromise security rarely happened. A path commit soon after a
     join also fills the device's path in the tree, which makes later
     removals cheaper (research notes on post-quantum groups, cold trees).
+    A self-update renews the leaf's encryption (HPKE) key and the path
+    secrets, not the signature key or the credential: a thief holding
+    the signature key can still sign as the device until it is relinked
+    or removed, and L1 is what binds leaves to the signed device list.
   - **Native.** `pm_crypto_group_stage_commit` with an empty change list
     (version 1, no adds, no removes) stages a commit with an update path
     and no proposals (`MlsDevice::stage_self_update`): the proposal store
@@ -211,15 +330,21 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     commit or a paused MLS outbox. A commit tells every member that this
     device is online, so, like a read receipt, none goes to a message
     request (or a declined one, D48) or to a DM whose peer is blocked
-    (blocks loaded first); their counters wait for acceptance. Any 4xx
-    refusal of an update-only bundle (other than 401 and 408) drops the
-    staged commit and backs off
-    (409: 10 min, the budget's 429: 1 h, others such as an older
-    server's 400: 24 h), so a self-update never pauses a conversation
-    the way a refused membership commit does. An accepted self-update, or
-    any own commit that removes a device, resets the counters. State is
-    a JSON setting in the encrypted local store, bound to the account and
-    device.
+    (blocks loaded first); their counters wait for acceptance. Only
+    refusals the server gives after its duplicate check drop the staged
+    commit and back off: 409 `mls_epoch_conflict` or `mls_change_pending`
+    (10 min), 429 `mls_self_update_limit` (Retry-After, at least 1 h),
+    and 400, 403 or 422, such as an older server's `invalid_input`
+    (24 h). These do not pause the conversation. Any other answer,
+    including the write budget's 429 `write_rate_limited`, which comes
+    before the duplicate check, may hide a bundle the server already
+    accepted with its answer lost. Dropping it would leave this device
+    an epoch behind its own commit, so the same bundle is retried
+    unchanged through the MLS outbox (I34). An accepted self-update, or
+    any own commit that removes a device, resets the counters, whether
+    the outbox completes it or sync merges it after a lost answer. State
+    is a JSON setting in the encrypted local store, bound to the account
+    and device.
   - **Trust model.** The server cannot read a commit. "Update only" is
     what the sender declares, exactly as Added and Removed are for every
     other bundle, and nothing cross-checks the declaration: not the

@@ -188,8 +188,10 @@ void main() {
         reason: owner.state.errorFor(Ops.backup));
     expect(code, isNotNull);
     final ownerAccountId = owner.accountId;
+    // The original device stops, as the clone-restore guidance asks. Here
+    // it does not sign out, so the restore comes back signed in; the round
+    // below covers a restore whose session was revoked.
     owner.dispose();
-    await owner.state.logout();
     final replacement = _DemoClient(bindings, baseUrl);
     addTearDown(replacement.dispose);
     expect(await replacement.state.restoreFromBackup(code!), isTrue,
@@ -204,7 +206,33 @@ void main() {
     final again = _DemoClient(bindings, baseUrl);
     addTearDown(again.dispose);
     expect(await again.state.restoreFromBackup(code), isFalse);
-  }, skip: skip, timeout: const Timeout(Duration(minutes: 6)));
+
+    // Signing in again after a restore: this device backs up and signs out,
+    // which revokes the session the backup carries. The next restore comes
+    // back signed out, and signing in as the same account and device goes
+    // on from the backup's cursor. Replaying from the first event would meet
+    // commits the restored MLS state has already applied and stop sync
+    // (I33).
+    final second = await replacement.state.createBackup();
+    expect(replacement.state.errorFor(Ops.backup), isNull,
+        reason: replacement.state.errorFor(Ops.backup));
+    expect(second, isNotNull);
+    await replacement.state.logout();
+    replacement.dispose();
+    final signedOut = _DemoClient(bindings, baseUrl);
+    addTearDown(signedOut.dispose);
+    expect(await signedOut.state.restoreFromBackup(second!), isTrue,
+        reason: signedOut.state.errorFor(Ops.restore));
+    expect(signedOut.state.session, isNull);
+    await signedOut.state.login(baseUrl, 'owner', 'owner-password-123');
+    signedOut.expectOk();
+    expect(signedOut.state.session?.accountId, ownerAccountId);
+    expect(await offline.state.sendMessageTo(conv, 'after sign-in'), isTrue);
+    await signedOut.waitFor(conv, (m) => m.body == 'after sign-in',
+        timeout: const Duration(seconds: 60));
+    expect(signedOut.state.syncRecovery, isNull);
+    expect(signedOut.state.deviceRecoveryRequired, isFalse);
+  }, skip: skip, timeout: const Timeout(Duration(minutes: 8)));
 }
 
 class _Server {

@@ -629,6 +629,38 @@ message with an encrypted action message instead, which the server cannot
 tell apart from any other message; that message's original ciphertext stays
 until it expires or sync-event retention removes it.
 
+**Sync cursors after retention.** `PRIVATE_MESSENGER_SYNC_EVENT_RETENTION_DAYS`
+(30 by default) also limits how long a device can be away. Pruning records
+the highest pruned event id for each account and device and for each
+conversation (migration 0044, triggers on `sync_events`). A device asking
+for events after its cursor gets 409 `device_recovery_required` only when
+an event it could have been sent was pruned after that cursor. Events of
+other accounts, other devices' Welcomes, conversations the account left and
+expired messages do not count. A device that missed one can recover only by
+being linked again from another device; the app does not yet offer its
+backup restore here (`STATE.md`, open work). The answer errs only towards
+409:
+
+- a pruned event from someone the account blocked counts;
+- so does a late MLS message from before the device's first epoch;
+- so do plain conversation events (membership changes, reactions, read
+  receipts) from before the account was added to that conversation.
+
+Hidden events do not move a device's cursor, so a device can fall a
+retention period behind while online. A blocked sender who keeps writing
+into a DM can then get the blocker 409 once the blocker has had no visible
+event anywhere for a retention period.
+
+The marks hold one event id per conversation and per account and device,
+and no sender. They are never removed, and an event id is a rough time, so
+a dormant conversation's mark tells roughly when it was last active. Cursors
+into ids that were pruned before the upgrade to 0044 keep the old, stricter
+test, which also refused cursors that had missed nothing: every device whose
+last received event is older than the oldest event kept at the upgrade gets
+409 at its next event, even one that stayed online. An older server binary ignores the
+marks and uses the old test; the triggers keep the marks current under it,
+so rolling back past 0044 needs no restore.
+
 ## Push providers
 
 Configure only the providers you can operate. Clients register with what
@@ -867,7 +899,7 @@ write transaction, so concurrent requests cannot both take the last slot.
 | `CONVERSATION_MEMBERS` | 100 | 2-1,000 | members of a group, a community and each of its channels | 409 `conversation_member_limit_reached` |
 | `CONVERSATIONS_PER_ACCOUNT` | 1,000 | 10-10,000 | conversations an account belongs to | 409 `conversation_limit_reached` to that account; adding an account that is full answers 403 `forbidden`, as a block does |
 | `KEY_PACKAGE_CLAIMS_PER_TARGET` | 25 (half the 50 single-use key packages a device may hold) | 1-50 | key packages one account claims from one device of another account in 24 hours; claiming from its own devices is not limited | 429 `key_package_claim_limit` with `Retry-After`; adding devices to an existing group skips a device over its limit, as it skips one with no package left |
-| `MLS_SELF_UPDATE_MINUTES` | 60 | 1-10,080 | update-only MLS commits (a device's periodic key refresh, adding and removing no one) per device and conversation; each moves the group to a new epoch | 429 `mls_self_update_limit` with `Retry-After`; the app drops that update and tries again later |
+| `MLS_SELF_UPDATE_MINUTES` | 60 | 1-10,080 | update-only MLS commits (a device's periodic key refresh, adding and removing no one) per device and conversation; each moves the group to a new epoch | 429 `mls_self_update_limit` with `Retry-After`; the app drops that update and waits for the `Retry-After` (at least an hour) |
 | `DELIVERIES_PER_MINUTE` | 1,000 | 60-1,000,000, and at least 2 × (1 + members) | per account, each fan-out write counts 1 plus every account it is published to | 429 `write_rate_limited` with `Retry-After` |
 | `WRITE_MIB_PER_HOUR` | 64 | 16-65,536 | request bodies of those writes | 429 `write_rate_limited` |
 | `ATTACHMENT_MIB` | 48 | 1-48 | the largest file one attachment may hold (plaintext with its padding; the upload route allows the chunk framing on top) | 413 `upload_too_large` |

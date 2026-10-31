@@ -1438,16 +1438,29 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           deviceSecret.isEmpty) {
         throw StateError(l10n.errorPasswordLoginNeedsLink);
       }
+      // Read before saving the new session: a different identity wipes the
+      // MLS state with it.
+      final hadMlsState = await localStore.loadCryptoState() != null;
       session = await api!.login(
         username: username,
         password: password,
         deviceId: deviceId,
         deviceSecret: deviceSecret,
       );
+      final sameIdentity = localSession!.accountId != null &&
+          localSession.baseUrl == session!.baseUrl &&
+          localSession.accountId == session!.accountId &&
+          localSession.deviceId == session!.deviceId;
       await localStore.saveSession(session!);
       await _reloadStoredDrafts();
       await _mlsCrypto?.activateSession(session!);
-      await localStore.saveSyncCursor(0);
+      // The same device signing in again keeps its cursor: it was committed
+      // with the MLS state, and replaying from event 0 would meet commits
+      // and messages that state has already consumed (I33 stops sync on
+      // them after a restore) or loop on a page of applied events.
+      if (!sameIdentity || !hadMlsState) {
+        await localStore.saveSyncCursor(0);
+      }
       await _refreshConversations(notify: true);
       await _refreshDevices();
       _startSync();
@@ -4414,6 +4427,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
                 message.conversationId != event.conversationId)) {
           throw failure(SyncFailureKind.mlsControlMalformed);
         }
+        // This device's own commit, accepted but not yet completed by the
+        // outbox (answer lost, or the app stopped): sync merges it, so
+        // note its update path here as the outbox would have.
+        final ownPathCommit = message.kind == 'commit' &&
+            message.senderDeviceId == current.deviceId &&
+            await _queuedPathCommit(message.idempotencyKey);
         try {
           if (bounded != null) {
             await bounded.processMlsMessageBounded(message,
@@ -4429,6 +4448,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           throw failure(err is FormatException
               ? SyncFailureKind.mlsControlMalformed
               : SyncFailureKind.mlsState);
+        }
+        if (ownPathCommit) {
+          await _noteSelfUpdate(
+              current,
+              (policy) => policy.recordPathCommit(
+                  message.conversationId, DateTime.now()));
         }
         if (message.kind == 'welcome' &&
             message.recipientDeviceId == current.deviceId) {
@@ -5117,9 +5142,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
               ? _selfUpdateRefusal(message, err)
               : null;
           if (backoff != null) {
-            // A self-update is optional: any refusal drops it, so it never
-            // pauses the conversation or holds its messages back, and the
-            // policy waits before trying again.
+            // A self-update is optional: a refusal the server gives after
+            // its duplicate check drops it, so it does not pause the
+            // conversation, and the policy waits before trying again.
             await _mlsCrypto?.abandonCommitBundle(message);
             _selfUpdatePolicyFor(current)?.recordBackoff(
                 message.conversationId, DateTime.now(), backoff);
@@ -5130,7 +5155,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             }
             break;
           }
-          if (isBundle && err is ApiException && _refusedBundle(err)) {
+          if (isBundle &&
+              err is ApiException &&
+              _refusedBundle(err) &&
+              !_isUpdateOnlyBundle(message)) {
             // Another commit won this epoch, or the change is no longer
             // valid. The staged commit was never merged, so dropping it
             // leaves this device in step with the group (card I51). Catch
@@ -5425,30 +5453,61 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
 
   /// How long the self-update policy waits after the server refused the
   /// update-only bundle [message] with [err], or null when [message] is not
-  /// one or [err] is worth retrying as sent (network, 408, 5xx).
+  /// one or [err] is to be retried unchanged.
+  ///
+  /// Only refusals the server gives after its duplicate check drop the
+  /// bundle: a retry of a bundle the server already accepted (its answer
+  /// lost) gets 200, never one of these. Anything else, such as the write
+  /// budget's 429 that is checked before the duplicate check, may hide an
+  /// accepted bundle; dropping it would leave this device an epoch behind
+  /// its own commit, so the same bundle is retried as sent.
   static Duration? _selfUpdateRefusal(
       PendingMlsMessage message, ApiException err) {
-    if (err.statusCode < 400 ||
-        err.statusCode >= 500 ||
-        err.statusCode == 408) {
-      return null;
+    final Duration backoff;
+    switch ((err.statusCode, err.serverCode)) {
+      // The server's budget; an operator may set it above the default.
+      case (429, 'mls_self_update_limit'):
+        final retryAfter = err.retryAfter;
+        backoff =
+            retryAfter != null && retryAfter > MlsSelfUpdatePolicy.minInterval
+                ? retryAfter
+                : MlsSelfUpdatePolicy.minInterval;
+      // Another commit won the epoch, or a removal must land first.
+      case (409, 'mls_epoch_conflict' || 'mls_change_pending'):
+        backoff = MlsSelfUpdatePolicy.conflictBackoff;
+      // Will not pass soon; an older server answers 400 invalid_input.
+      case (400 || 403 || 422, _):
+        backoff = MlsSelfUpdatePolicy.refusedBackoff;
+      default:
+        return null;
     }
-    final MlsCommitBundle bundle;
+    return _isUpdateOnlyBundle(message) ? backoff : null;
+  }
+
+  /// Whether the outbox holds this device's commit bundle [idempotencyKey]
+  /// and it carries an update path (a self-update, or a removal). Never
+  /// throws: a wrong answer costs at most an early or late self-update.
+  Future<bool> _queuedPathCommit(String idempotencyKey) async {
     try {
-      bundle = MlsCommitBundle.decode(message.payload);
+      final queued = (await localStore.pendingMlsMessages())
+          .where((item) =>
+              item.kind == MlsCommitBundle.kind &&
+              item.idempotencyKey == idempotencyKey)
+          .firstOrNull;
+      if (queued == null) return false;
+      final bundle = MlsCommitBundle.decode(queued.payload);
+      return bundle.isUpdateOnly || bundle.removed.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static bool _isUpdateOnlyBundle(PendingMlsMessage message) {
+    try {
+      return MlsCommitBundle.decode(message.payload).isUpdateOnly;
     } on FormatException {
-      return null;
+      return false;
     }
-    if (!bundle.isUpdateOnly) return null;
-    if (err.statusCode == 429) {
-      return err.serverCode == 'mls_self_update_limit'
-          ? MlsSelfUpdatePolicy.minInterval
-          : MlsSelfUpdatePolicy.conflictBackoff;
-    }
-    // Another commit won the epoch, or a removal must land first.
-    if (err.statusCode == 409) return MlsSelfUpdatePolicy.conflictBackoff;
-    // Anything else will not pass soon; an older server answers 400.
-    return MlsSelfUpdatePolicy.refusedBackoff;
   }
 
   /// The policy for [current]'s device, loading its saved state on first
@@ -5532,7 +5591,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       // Every device a commit adds joins at once; the group's size spreads
       // their join updates, so learn it first.
       for (final conversationId in policy.joinsPending.toList()) {
-        if (membersByConversation.containsKey(conversationId)) continue;
+        // A stale record for a chat no longer listed costs no request.
+        if (membersByConversation.containsKey(conversationId) ||
+            !conversations.any((c) => c.id == conversationId)) {
+          continue;
+        }
         try {
           await _ensureConversationAuthority(conversationId);
         } catch (err) {

@@ -948,22 +948,35 @@ func insertSyncEvent(ctx context.Context, execer syncEventExecer, eventType stri
 // ListSyncEvents returns the events after afterID that the account's
 // device may see: account events (a Welcome only for its own device) and
 // events of its conversations, where encrypted ones follow the device's MLS
-// join cursor (card I51).
+// join cursor (card I51). It returns ErrSyncCursorExpired when retention
+// pruned an event after afterID that the device could have been sent
+// (syncCursorExpired).
 func (s *Store) ListSyncEvents(ctx context.Context, accountID, deviceID string, afterID int64, limit int) ([]domain.SyncEvent, error) {
-	// Only a cursor past the start can have expired, and only the oldest
-	// bound tells; the latest bound would cost as much again.
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	events, err := s.listSyncEventsPage(ctx, accountID, deviceID, afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	// The expiry check runs after the page, which is one statement and so
+	// one snapshot: a prune that removed events the page lacks committed
+	// before the page was read, so its marks are visible here. Checked
+	// first, a prune landing between the check and the page would leave a
+	// silent gap. Only a cursor past the start can have expired.
 	if afterID > 0 {
-		var expired bool
-		if err := s.db.QueryRowContext(ctx, syncCursorExpiredQuery, accountID, afterID).Scan(&expired); err != nil {
+		expired, err := s.syncCursorExpired(ctx, accountID, deviceID, afterID)
+		if err != nil {
 			return nil, err
 		}
 		if expired {
 			return nil, ErrSyncCursorExpired
 		}
 	}
-	if limit <= 0 || limit > 200 {
-		limit = 100
-	}
+	return events, nil
+}
+
+func (s *Store) listSyncEventsPage(ctx context.Context, accountID, deviceID string, afterID int64, limit int) ([]domain.SyncEvent, error) {
 	// The query streams candidates in id order and has no LIMIT, since
 	// hidden ones do not count towards the page: the page ends here, after
 	// limit visible events, and closing rows stops the merge.
@@ -993,6 +1006,76 @@ func (s *Store) ListSyncEvents(ctx context.Context, accountID, deviceID string, 
 	}
 	return events, rows.Err()
 }
+
+// syncCursorExpired reports whether retention pruned an event after afterID
+// that device deviceID of account accountID could have been sent. It reads
+// the prune watermarks that migration 0044's triggers keep:
+//
+//   - a cursor at or past the highest id ever pruned has lost nothing (one
+//     primary-key read; the usual case, since the newest pruned event is
+//     about the event retention period old);
+//   - otherwise syncPruneMarksExpiredQuery: point reads for the account's
+//     marks and one primary-key read per membership;
+//   - a cursor below legacy_through, the ids pruned before the marks
+//     existed, also gets the old test (legacySyncCursorExpiredQuery).
+//
+// It errs only towards expired; docs/operations.md lists when.
+func (s *Store) syncCursorExpired(ctx context.Context, accountID, deviceID string, afterID int64) (bool, error) {
+	var legacyThrough, prunedThrough int64
+	err := s.db.QueryRowContext(ctx, `SELECT legacy_through, pruned_through FROM sync_prune_state WHERE id = 1`).Scan(&legacyThrough, &prunedThrough)
+	known := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	if known && afterID >= prunedThrough {
+		return false, nil
+	}
+	var expired bool
+	if err := s.db.QueryRowContext(ctx, syncPruneMarksExpiredQuery, accountID, afterID, deviceID).Scan(&expired); err != nil {
+		return false, err
+	}
+	// Without the state row nothing says where the marks start, so the old
+	// test runs too.
+	if expired || (known && afterID >= legacyThrough) {
+		return expired, nil
+	}
+	if err := s.db.QueryRowContext(ctx, legacySyncCursorExpiredQuery, accountID, afterID).Scan(&expired); err != nil {
+		return false, err
+	}
+	return expired, nil
+}
+
+// syncPruneMarksExpiredQuery is true when a pruned event after cursor ?2
+// could have gone to device ?3 of account ?1: its account's events for every
+// device or for ?3, or the events of a conversation it is a member of. A
+// conversation's MLS-filtered events (roster_filtered) count only when the
+// device's roster row would have shown the newest of them that was pruned,
+// mark M: M > joined_after_event_id and the device not removed before M. When
+// it was removed before M, an older pruned event inside its window may still
+// be one it lost, so the window counts if it reaches past the cursor.
+// Membership is the current one, as in listSyncEventsQuery: a conversation
+// the account left sends it nothing any more, and its own membership.left
+// event is an account event. Blocks and joined_epoch are not applied, so a
+// pruned event of a blocked sender, or a late message from before the
+// device's first epoch, still counts (conservative).
+//
+// The membership walk is on memberships(account_id, conversation_id) with a
+// primary-key read of each mark; the account marks are two primary-key reads.
+var syncPruneMarksExpiredQuery = `SELECT EXISTS (
+	  SELECT 1 FROM sync_prune_account_marks
+	  WHERE account_id = ?1 AND device_id IN ('', ?3) AND pruned_through > ?2
+	) OR EXISTS (
+	  SELECT 1 FROM memberships m
+	  JOIN sync_prune_conversation_marks k ON k.conversation_id = m.conversation_id
+	  WHERE m.account_id = ?1 AND k.pruned_through > ?2
+	    AND (k.roster_filtered = 0
+	      OR NOT EXISTS (SELECT 1 FROM conversation_mls_groups jg WHERE jg.conversation_id = k.conversation_id)
+	      OR EXISTS (SELECT 1 FROM conversation_mls_devices jd
+	        WHERE jd.conversation_id = k.conversation_id AND jd.device_id = ?3
+	          AND k.pruned_through > jd.joined_after_event_id
+	          AND (jd.removed_after_event_id IS NULL
+	            OR (jd.removed_after_event_id > ?2 AND jd.removed_after_event_id > jd.joined_after_event_id))))
+	)`
 
 // syncCandidateScanner reads a listSyncEventsQuery row: the visible flag,
 // then the columns scanSyncEvent reads.
@@ -1128,14 +1211,17 @@ func syncEventBlockedFor(blocker string) string {
 // idx_sync_events_account, which would scan every conversation event.
 var syncBoundsQuery = `SELECT ` + syncOldestExpr + `, ` + syncLatestExpr
 
-// syncCursorExpiredQuery is true when cursor ?2 of account ?1 is older than
-// the oldest event the account may see (syncOldestExpr) less one. That
-// bound walks each conversation from its start to its first unblocked
-// event, which is long when a blocked sender's events lead it. The usual
-// cursor is the last event of a page; while that event is still there and
-// counts towards the bound, the bound is at most the cursor, so one
-// primary-key read settles it and the CASE never evaluates the bound.
-var syncCursorExpiredQuery = `SELECT CASE WHEN EXISTS (
+// legacySyncCursorExpiredQuery is the cursor test from before migration
+// 0044, kept for cursors into ids pruned before the marks existed. It is
+// true when cursor ?2 of account ?1 is older than the oldest event the
+// account may see (syncOldestExpr) less one. Sync event ids are global, so
+// other accounts' events in that gap make it refuse cursors that missed
+// nothing; it never passes one that missed something. That bound walks each
+// conversation from its start to its first unblocked event. While the
+// cursor's own event is still there and counts towards the bound, the bound
+// is at most the cursor, so one primary-key read settles it and the CASE
+// never evaluates the bound.
+var legacySyncCursorExpiredQuery = `SELECT CASE WHEN EXISTS (
 	  SELECT 1 FROM sync_events se
 	  WHERE se.id = ?2 AND (se.account_id = ?1 OR (se.account_id IS NULL
 	    AND EXISTS (SELECT 1 FROM memberships m WHERE m.account_id = ?1 AND m.conversation_id = se.conversation_id)

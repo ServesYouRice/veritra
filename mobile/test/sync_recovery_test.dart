@@ -378,6 +378,225 @@ void main() {
     });
   }
 
+  // Signing in again as the same account and device keeps the sync cursor:
+  // the MLS state and the cursor were committed together, so replaying from
+  // event 0 only meets events this state has already consumed.
+  group('signing in again as the same identity', () {
+    late Directory directory;
+    late List<EncryptedLocalDatabase> databases;
+
+    setUp(() async {
+      FlutterSecureStorage.setMockInitialValues(<String, String>{});
+      directory = await Directory.systemTemp.createTemp('veritra-resign-in-');
+      databases = <EncryptedLocalDatabase>[];
+    });
+
+    tearDown(() async {
+      for (final database in databases) {
+        await database.close();
+      }
+      if (await directory.exists()) await directory.delete(recursive: true);
+    });
+
+    final stores =
+        <String, LocalStore Function(List<EncryptedLocalDatabase>, Directory)>{
+      'memory store': (_, __) => MemoryLocalStore(),
+      'encrypted store': (databases, directory) => SecureLocalStore(
+            storage: const FlutterSecureStorage(),
+            directoryProvider: () async => directory,
+            databaseFactory: (file, keyHex) {
+              final database = openEncryptedLocalDatabase(file, keyHex);
+              databases.add(database);
+              return database;
+            },
+          ),
+    };
+
+    for (final entry in stores.entries) {
+      /// A device with its session and protected MLS state, at cursor 0.
+      Future<LocalStore> device({bool withCryptoState = true}) async {
+        final store = entry.value(databases, directory);
+        await store.saveSession(_session);
+        if (withCryptoState) {
+          await store.saveCryptoState(
+              StoredCryptoState(
+                  counter: 1,
+                  stateKey: List<int>.filled(32, 7),
+                  sealedState: const <int>[1]),
+              0);
+        }
+        return store;
+      }
+
+      /// The server rejects the token; the app keeps the device identity.
+      Future<void> expire(_Harness harness, _ScriptedApi api) async {
+        api.syncStatus = 401;
+        harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+        await harness.waitFor(() => harness.state.session == null);
+        api.syncStatus = null;
+      }
+
+      /// Lets the sync pass after sign-in finish before the store closes.
+      Future<void> finish(_Harness harness) async {
+        await harness.waitFor(() => harness.state.lastSyncedAt != null);
+        await harness.settle();
+        harness.dispose();
+      }
+
+      test(
+          '${entry.key}: after a session expiry, sign-in resumes from the '
+          'stored cursor', () async {
+        // More than one page (200) of events this device has applied,
+        // with a Welcome to it among them.
+        final api = _ScriptedApi()
+          ..welcomes.add('mls_1')
+          ..events = <SyncEvent>[
+            _mlsEvent(1, 'mls_1'),
+            for (var id = 2; id <= 230; id++)
+              if (id % 10 == 0)
+                _mlsEvent(id, 'mls_$id')
+              else
+                _projectionEvent(id),
+          ];
+        final store = await device();
+        final harness = await _Harness.start(api, store: store);
+        await harness.waitFor(() async => await store.loadSyncCursor() == 230);
+        final created = harness.crypto.keyPackagesCreated;
+
+        await expire(harness, api);
+        expect(await store.loadSyncCursor(), 230);
+
+        api.events = <SyncEvent>[
+          ...api.events,
+          _mlsEvent(231, 'mls_231'),
+        ];
+        api.syncAfters.clear();
+        await harness.state.login('https://localhost:8080', 'me', 'password');
+        expect(harness.state.session?.token, 'token_again');
+        await harness.waitFor(() async => await store.loadSyncCursor() == 231);
+
+        expect(api.runaway, isFalse);
+        expect(api.syncAfters.first, 230);
+        expect(harness.state.syncRecovery, isNull);
+        expect(await store.loadSyncRecovery(), isNull);
+        expect(harness.crypto.processedMls.last, 'mls_231');
+        // The old Welcome is not seen again, so no key package is replaced.
+        expect(harness.crypto.keyPackagesCreated, created);
+        await finish(harness);
+      });
+
+      test(
+          '${entry.key}: after a clone restore whose session was revoked, '
+          'sign-in resumes from the backup cursor', () async {
+        final api = _ScriptedApi()
+          ..events = <SyncEvent>[
+            _mlsEvent(1, 'mls_1'),
+            _mlsEvent(2, 'mls_2'),
+            _mlsEvent(3, 'mls_3'),
+          ];
+        final store = await device();
+        final harness = await _Harness.start(api, store: store);
+        await harness.waitFor(() async => await store.loadSyncCursor() == 3);
+
+        // The backup carries the MLS state and its cursor, not which events
+        // were applied: restoring it drops those markers (I45).
+        await store.restoreBackup(await store.exportBackup());
+        expect(await store.loadSyncCursor(), 3);
+        await expire(harness, api);
+
+        api.events = <SyncEvent>[...api.events, _mlsEvent(4, 'mls_4')];
+        api.syncAfters.clear();
+        await harness.state.login('https://localhost:8080', 'me', 'password');
+        await harness.waitFor(() async => await store.loadSyncCursor() == 4);
+
+        expect(api.syncAfters.first, 3);
+        expect(harness.state.syncRecovery, isNull);
+        expect(harness.state.deviceRecoveryRequired, isFalse);
+        expect(harness.crypto.processedMls, <String>[
+          'mls_1',
+          'mls_2',
+          'mls_3',
+          'mls_4',
+        ]);
+        await finish(harness);
+      });
+
+      test(
+          '${entry.key}: when the server pruned events the device could see, '
+          'sign-in stores the expired-cursor recovery', () async {
+        final api = _ScriptedApi()
+          ..events = <SyncEvent>[
+            _mlsEvent(1, 'mls_1'),
+            _mlsEvent(2, 'mls_2'),
+            _mlsEvent(3, 'mls_3'),
+          ];
+        final store = await device();
+        final harness = await _Harness.start(api, store: store);
+        await harness.waitFor(() async => await store.loadSyncCursor() == 3);
+        await expire(harness, api);
+
+        // Away longer than event retention: the server answers the kept
+        // cursor with device_recovery_required.
+        api.syncStatus = 409;
+        api.syncAfters.clear();
+        await harness.state.login('https://localhost:8080', 'me', 'password');
+        expect(harness.state.session?.token, 'token_again');
+        await harness.waitFor(() => harness.state.syncRecovery != null);
+
+        expect(api.syncAfters.first, 3);
+        final recovery = harness.state.syncRecovery!;
+        expect(recovery.kind, SyncFailureKind.cursorExpired);
+        expect(recovery.choices, contains(SyncRecoveryChoice.relink));
+        expect(recovery.choices, isNot(contains(SyncRecoveryChoice.retry)));
+        expect((await store.loadSyncRecovery())?.kind,
+            SyncFailureKind.cursorExpired);
+        // Never a jump: the cursor stays where the device stopped.
+        expect(await store.loadSyncCursor(), 3);
+        expect(api.syncAfters, everyElement(3));
+        await harness.settle();
+        harness.dispose();
+      });
+
+      test(
+          '${entry.key}: without protected MLS state, sign-in starts again '
+          'from the first event', () async {
+        final api = _ScriptedApi()..events = <SyncEvent>[_projectionEvent(1)];
+        final store = await device(withCryptoState: false);
+        await store.saveSyncCursor(1);
+        final harness = await _Harness.start(api, store: store);
+        await expire(harness, api);
+        api.syncAfters.clear();
+        await harness.state.login('https://localhost:8080', 'me', 'password');
+        await harness.waitFor(() => api.syncAfters.isNotEmpty);
+        expect(api.syncAfters.first, 0);
+        await finish(harness);
+      });
+
+      test(
+          '${entry.key}: a session for another identity starts at cursor 0 '
+          'with no MLS state', () async {
+        final store = await device();
+        await store.saveSyncCursor(42);
+        await store.saveSession(const Session(
+          baseUrl: 'https://localhost:8080',
+          token: 'other',
+          accountId: 'acct_other',
+          deviceId: 'dev_other',
+        ));
+        expect(await store.loadSyncCursor(), 0);
+        expect(await store.loadCryptoState(), isNull);
+        expect(await store.hasProcessedMlsMessage('mls:1:mls_1'), isFalse);
+      });
+
+      test('${entry.key}: wiping the store resets the cursor', () async {
+        final store = await device();
+        await store.saveSyncCursor(42);
+        await store.clear();
+        expect(await store.loadSyncCursor(), 0);
+      });
+    }
+  });
+
   test('recovery records round-trip and reject damaged values', () {
     final recovery = SyncRecovery(
       kind: SyncFailureKind.applicationMissing,
@@ -622,6 +841,15 @@ class _ScriptedApi extends ApiClient {
 
   List<SyncEvent> events = <SyncEvent>[];
   final Set<String> mlsMissing = <String>{};
+  // MLS messages that are a Welcome to this device rather than a commit.
+  final Set<String> welcomes = <String>{};
+  // The `after` of every sync request, in order.
+  final List<int> syncAfters = <int>[];
+  // A sync loop that asks for more pages than this is running away: the
+  // request is answered empty so the test fails instead of hanging.
+  int maxSyncCalls = 1000;
+  bool runaway = false;
+  int keyPackagePublishes = 0;
   final Set<String> expiredEnvelopes = <String>{};
   final Map<String, int> mlsEventIdOverride = <String, int>{};
   bool networkDown = false;
@@ -637,7 +865,8 @@ class _ScriptedApi extends ApiClient {
         conversationId: 'conv_1',
         senderAccountId: 'acct_peer',
         senderDeviceId: 'dev_peer',
-        kind: 'commit',
+        kind: welcomes.contains(id) ? 'welcome' : 'commit',
+        recipientDeviceId: welcomes.contains(id) ? 'dev_me' : null,
         payload: const <int>[1],
         idempotencyKey: 'idem_$id',
         syncEventId: mlsEventIdOverride[id] ?? eventId,
@@ -666,6 +895,11 @@ class _ScriptedApi extends ApiClient {
     int limit = 100,
   }) async {
     syncCalls++;
+    syncAfters.add(after);
+    if (syncCalls > maxSyncCalls) {
+      runaway = true;
+      return const <SyncEvent>[];
+    }
     if (networkDown) throw const SocketException('offline');
     final status = syncStatus;
     if (status == 401) throw ApiException(401, '{"error":"unauthorized"}');
@@ -679,6 +913,33 @@ class _ScriptedApi extends ApiClient {
         .where((event) => event.id > after)
         .take(limit)
         .toList(growable: false);
+  }
+
+  @override
+  Future<Session> login({
+    required String username,
+    required String password,
+    required String deviceId,
+    required String deviceSecret,
+  }) async =>
+      Session(
+        baseUrl: baseUrl,
+        token: 'token_again',
+        accountId: loginAccountId,
+        deviceId: deviceId,
+        username: username,
+      );
+
+  /// The account the server names on a password sign-in.
+  String loginAccountId = 'acct_me';
+
+  @override
+  Future<void> publishDeviceKeyPackages(
+    String token,
+    List<List<int>> keyPackages, {
+    Duration lifetime = const Duration(days: 14),
+  }) async {
+    keyPackagePublishes++;
   }
 
   @override
@@ -739,6 +1000,11 @@ class _FakeMlsCrypto implements MlsConversationCryptoService {
     if (rejectedMls.contains(message.id)) {
       throw StateError('commit rejected');
     }
+    // Like a real group: a commit this state has already applied belongs
+    // to a past epoch and is refused.
+    if (processedMls.contains(message.id)) {
+      throw StateError('commit is for a past epoch');
+    }
     processedMls.add(message.id);
     await store.commitSyncEvent(SyncEventCommit(
       eventKey: marker,
@@ -762,6 +1028,17 @@ class _FakeMlsCrypto implements MlsConversationCryptoService {
       cursor: syncEventId,
     ));
     return null;
+  }
+
+  int keyPackagesCreated = 0;
+
+  @override
+  Future<List<List<int>>> createReplenishmentKeyPackages(
+      {int count = 5}) async {
+    keyPackagesCreated++;
+    return <List<int>>[
+      for (var i = 0; i < count; i++) <int>[i]
+    ];
   }
 
   @override
