@@ -1073,11 +1073,19 @@ func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 }
 
 func (r *statusRecorder) Flush() {
-	if flusher, ok := r.ResponseWriter.(http.Flusher); ok {
+	_ = r.FlushError()
+}
+
+// FlushError is what http.ResponseController calls, so a handler that needs to
+// know whether a flush reached the connection (recovery progress) sees the
+// error instead of the Flusher interface swallowing it.
+func (r *statusRecorder) FlushError() error {
+	err := http.NewResponseController(r.ResponseWriter).Flush()
+	if !errors.Is(err, http.ErrNotSupported) {
 		// Flushing sends the status line (an implicit 200) if none was.
 		r.wroteHeader = true
-		flusher.Flush()
 	}
+	return err
 }
 
 func requestRoute(pattern string) string {
