@@ -13,12 +13,14 @@ import (
 func seedStaleRevocation(t *testing.T, ctx context.Context, store *Store, conversationID, revokedDeviceID, revokedAccountID, coordinator string, required ...string) {
 	t.Helper()
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO mls_revocations(conversation_id, revoked_device_id, revoked_account_id,
-		coordinator_device_id, state, requested_at) VALUES(?, ?, ?, ?, 'pending', ?)`,
+		coordinator_device_id, state, requested_at) VALUES(?, ?, ?, ?, 'pending', ?)
+		ON CONFLICT(conversation_id, revoked_device_id) DO UPDATE SET
+			coordinator_device_id = excluded.coordinator_device_id, state = 'pending'`,
 		conversationID, revokedDeviceID, revokedAccountID, coordinator, nowString()); err != nil {
 		t.Fatal(err)
 	}
 	for _, deviceID := range required {
-		if _, err := store.db.ExecContext(ctx, `INSERT INTO mls_revocation_required_devices(conversation_id, revoked_device_id, device_id)
+		if _, err := store.db.ExecContext(ctx, `INSERT OR IGNORE INTO mls_revocation_required_devices(conversation_id, revoked_device_id, device_id)
 			VALUES(?, ?, ?)`, conversationID, revokedDeviceID, deviceID); err != nil {
 			t.Fatal(err)
 		}
