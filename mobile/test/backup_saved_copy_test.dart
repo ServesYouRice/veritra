@@ -202,6 +202,32 @@ void main() {
     expect((await target.loadSession())?.deviceId, 'dev_1');
     expect(scratch.listSync(), isEmpty);
   }, skip: skip);
+
+  test('a malformed answer to a range request restarts from byte 0', () async {
+    final (code, ciphertext) = await makeBackup();
+    partial().writeAsBytesSync(ciphertext.sublist(0, 100));
+    server.omitContentRange = true;
+    final target = MemoryLocalStore();
+    await serviceFor(target).recover(code);
+    expect((await target.loadSession())?.deviceId, 'dev_1');
+    expect(server.rangeStarts, <int>[100, 0]);
+    expect(scratch.listSync(), isEmpty);
+  }, skip: skip);
+
+  test('a malformed answer from byte 0 is a network error and keeps the file',
+      () async {
+    final (_, other) = await makeBackup();
+    final (code, _) = await makeBackup();
+    final saved = other.sublist(0, 100);
+    partial().writeAsBytesSync(saved);
+    // A 2xx that is not the 200 an unranged request needs.
+    server.recoveryStatus = 203;
+    final target = MemoryLocalStore();
+    await expectLater(serviceFor(target).recover(code),
+        throwsA(failure(BackupFailureKind.network)));
+    expect(server.rangeStarts, <int>[0]);
+    expect(partial().readAsBytesSync(), saved);
+  }, skip: skip);
 }
 
 /// Makes appending to [file] fail: read-only for a normal user, immutable

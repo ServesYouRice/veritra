@@ -460,6 +460,13 @@ class BackupService {
       // sends, as from a proxy or captive portal) says nothing about the
       // backup: keep the download and let the user try again.
       throw const BackupException(BackupFailureKind.network);
+    } on FormatException {
+      // A malformed answer (ApiResponseException), as from a proxy: a range
+      // the server did not prove is refused like a 416, so the saved file is
+      // tried and the download restarts from 0; from byte 0 it says nothing
+      // about the backup, so the file is kept for a retry.
+      if (start > 0) throw const _RangeRefused();
+      throw const BackupException(BackupFailureKind.network);
     } on SocketException {
       throw const BackupException(BackupFailureKind.network);
     } on HttpException {
