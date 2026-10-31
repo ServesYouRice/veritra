@@ -516,12 +516,14 @@ class BackupService {
     return length;
   }
 
+  /// Deletes upload files left by a create that stopped. The recovery
+  /// download is not aged out: it may be the only copy of a backup whose
+  /// code its finished transfer used up, and [recover] deletes it itself
+  /// once it is restored or definitively fails.
   Future<void> _cleanupOrphans(Directory directory) async {
     if (!await directory.exists()) return;
     await for (final entity in directory.list()) {
-      if (entity is File &&
-          (entity.path.endsWith('.backup-ciphertext') ||
-              entity.path.endsWith(_partialName))) {
+      if (entity is File && entity.path.endsWith('.backup-ciphertext')) {
         final modified = await entity.lastModified();
         if (DateTime.now().difference(modified) > const Duration(hours: 24)) {
           await entity.delete();

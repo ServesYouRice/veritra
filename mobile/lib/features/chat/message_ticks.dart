@@ -38,7 +38,8 @@ class MessageTickBuilder extends StatelessWidget {
           conversationId,
           createdAt,
           // With your own receipts off you see delivery only, never read.
-          showRead: state.receiptPreferences.sendReadReceipts,
+          // Until the stored choice is known it may be off, so the same.
+          showRead: state.receiptPreferences.shareReadReceipts,
         ),
       ),
     );

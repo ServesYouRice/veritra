@@ -1572,7 +1572,7 @@ class _MessageBubble extends StatelessWidget {
       local?.kind == LocalMessageKind.unsupported ||
       local?.kind == LocalMessageKind.invalid;
 
-  /// A peer message this device can never decrypt (D54). NativeCryptoService
+  /// A peer message this device can never decrypt (D54). The crypto service
   /// stores it as an `invalid` row, which holds no content and offers no
   /// action, keyed `undecryptable:<sync event>:<server id>`.
   bool get _isUndecryptable =>
@@ -1998,14 +1998,28 @@ class _Composer extends StatelessWidget {
     );
   }
 
-  /// Desktop input extras around the field: paste of files, Up to edit.
-  Widget _wrapDesktopInput(Widget field) {
+  /// Desktop input extras around the field: Enter to send, paste of files,
+  /// Up to edit.
+  Widget _wrapDesktopInput(Widget field, {required bool canSend}) {
     final paste = onPasteFiles;
     final editLast = onEditLast;
     return Focus(
       canRequestFocus: false,
       skipTraversal: true,
       onKeyEvent: (node, event) {
+        // On desktop, Enter sends and Shift+Enter starts a new line. While an
+        // IME is composing, Enter confirms the candidate instead, so the key
+        // is left to the text field and the draft is not sent.
+        if (_enterSends &&
+            const SingleActivator(LogicalKeyboardKey.enter)
+                .accepts(event, HardwareKeyboard.instance)) {
+          final composing = controller.value.composing;
+          if (composing.isValid && !composing.isCollapsed) {
+            return KeyEventResult.ignored;
+          }
+          if (canSend) onSend();
+          return KeyEventResult.handled;
+        }
         if (editLast != null &&
             event is KeyDownEvent &&
             event.logicalKey == LogicalKeyboardKey.arrowUp &&
@@ -2072,61 +2086,54 @@ class _Composer extends StatelessWidget {
                       : context.l10n.chatAttachFile,
                 ),
               Expanded(
-                // On desktop, Enter sends and Shift+Enter starts a new line.
-                child: CallbackShortcuts(
-                  bindings: <ShortcutActivator, VoidCallback>{
-                    if (_enterSends)
-                      const SingleActivator(LogicalKeyboardKey.enter): () {
-                        if (canSend) onSend();
-                      },
-                  },
-                  child: _wrapDesktopInput(TextField(
-                    controller: controller,
-                    enabled: enabled,
-                    minLines: 1,
-                    maxLines: 4,
-                    keyboardType: TextInputType.multiline,
-                    textInputAction: TextInputAction.newline,
-                    textCapitalization: TextCapitalization.sentences,
-                    style: theme.textTheme.bodyMedium,
-                    // The field's own fill and border are cleared: the pill
-                    // around it is the input surface now, and the theme's
-                    // `inputDecorationTheme` would otherwise draw a rounded box
-                    // inside a rounded box.
-                    decoration: InputDecoration(
-                      hintText: context.l10n.chatComposerHint,
-                      filled: false,
-                      isDense: true,
-                      border: InputBorder.none,
-                      enabledBorder: InputBorder.none,
-                      focusedBorder: InputBorder.none,
-                      disabledBorder: InputBorder.none,
-                      errorBorder: InputBorder.none,
-                      focusedErrorBorder: InputBorder.none,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: BoneSpacing.xs,
-                        vertical: 12,
+                child: _wrapDesktopInput(
+                    canSend: canSend,
+                    TextField(
+                      controller: controller,
+                      enabled: enabled,
+                      minLines: 1,
+                      maxLines: 4,
+                      keyboardType: TextInputType.multiline,
+                      textInputAction: TextInputAction.newline,
+                      textCapitalization: TextCapitalization.sentences,
+                      style: theme.textTheme.bodyMedium,
+                      // The field's own fill and border are cleared: the pill
+                      // around it is the input surface now, and the theme's
+                      // `inputDecorationTheme` would otherwise draw a rounded box
+                      // inside a rounded box.
+                      decoration: InputDecoration(
+                        hintText: context.l10n.chatComposerHint,
+                        filled: false,
+                        isDense: true,
+                        border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                        disabledBorder: InputBorder.none,
+                        errorBorder: InputBorder.none,
+                        focusedErrorBorder: InputBorder.none,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: BoneSpacing.xs,
+                          vertical: 12,
+                        ),
+                        hintStyle: theme.textTheme.bodyMedium?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                        // Silent only until the draft nears the limit; past it
+                        // the count turns into an error and Send disables.
+                        // Nothing is truncated, so a long paste is never lost.
+                        counterText: nearLimit
+                            ? context.l10n
+                                .chatComposerCounter(length, maxAppTextLength)
+                            : null,
+                        counterStyle: overLimit
+                            ? theme.textTheme.bodySmall
+                                ?.copyWith(color: scheme.error)
+                            : theme.textTheme.bodySmall,
+                        errorText: overLimit
+                            ? context.l10n.validationMessageTooLong
+                            : null,
                       ),
-                      hintStyle: theme.textTheme.bodyMedium?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                      // Silent only until the draft nears the limit; past it
-                      // the count turns into an error and Send disables.
-                      // Nothing is truncated, so a long paste is never lost.
-                      counterText: nearLimit
-                          ? context.l10n
-                              .chatComposerCounter(length, maxAppTextLength)
-                          : null,
-                      counterStyle: overLimit
-                          ? theme.textTheme.bodySmall
-                              ?.copyWith(color: scheme.error)
-                          : theme.textTheme.bodySmall,
-                      errorText: overLimit
-                          ? context.l10n.validationMessageTooLong
-                          : null,
-                    ),
-                  )),
-                ),
+                    )),
               ),
               const SizedBox(width: BoneSpacing.xs),
               IconButton.filled(

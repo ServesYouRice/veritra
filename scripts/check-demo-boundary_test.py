@@ -162,3 +162,14 @@ if __name__ == "__main__":
             print(f"  {name}", file=sys.stderr)
         raise SystemExit(1)
     print("Demo boundary fixture tests passed")
+    # CI and scripts/test.sh run only this file; the import-graph cases live
+    # in their own file and load this one as a module, so no recursion.
+    import importlib.util
+
+    _graph = importlib.util.spec_from_file_location(
+        "check_demo_boundary_imports_test", SCRIPT.with_name("check-demo-boundary-imports_test.py")
+    )
+    assert _graph is not None and _graph.loader is not None
+    _module = importlib.util.module_from_spec(_graph)
+    _graph.loader.exec_module(_module)
+    _module.main()

@@ -14,8 +14,10 @@ import (
 // cannot show in WAL mode, so a command that must not run beside a server
 // (restore, reset-owner-password) takes them without blocking and stops if it
 // cannot. The blob-storage lock is left out on purpose: a restore swaps the
-// blob directory, which holds that lock file. A server always holds all
-// three, so the first two are enough to find one.
+// blob directory, which holds that lock file. Restore and
+// reset-owner-password still probe the blob lock separately (a server for a
+// different database can share the blob directory); restore releases that
+// probe before it swaps the directory.
 type serverExclusion struct {
 	instance *instanceLock
 	database *os.File

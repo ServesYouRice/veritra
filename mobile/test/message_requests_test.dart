@@ -7,6 +7,8 @@ import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/attachments.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/crypto/attachment_crypto.dart';
+import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/features/chat/chat_list_screen.dart';
 import 'package:private_messenger/features/chat/chat_screen.dart';
 import 'package:private_messenger/l10n/app_localizations.dart';
@@ -47,9 +49,34 @@ class _Api extends ApiClient {
   final List<String> reads = <String>[];
   final List<String> left = <String>[];
   final List<String> blocked = <String>[];
+  final List<String> pageFetches = <String>[];
+  int downloads = 0;
+
+  /// What a page fetch returns for each conversation.
+  Map<String, List<ReceivedMessageEnvelope>> pages =
+      <String, List<ReceivedMessageEnvelope>>{};
 
   @override
   Future<List<Conversation>> conversations(String token) async => list;
+
+  @override
+  Future<MessagePage> listMessagePage(
+    String token,
+    String conversationId, {
+    int limit = 50,
+    String? before,
+  }) async {
+    pageFetches.add(conversationId);
+    return MessagePage(
+        messages: pages[conversationId] ?? const <ReceivedMessageEnvelope>[]);
+  }
+
+  @override
+  Future<Stream<List<int>>> downloadEncryptedAttachment(
+      String token, String attachmentId) async {
+    downloads++;
+    return const Stream<List<int>>.empty();
+  }
 
   @override
   Future<void> markRead(String token, String conversationId, String id) async {
@@ -98,11 +125,35 @@ const _session = Session(
   deviceId: 'dev_me',
 );
 
+/// Never called: the request gate and manifest binding refuse first.
+class _NoBindings implements NativeCryptoBindings {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+ReceivedMessageEnvelope _envelope(String id, String conversationId) =>
+    ReceivedMessageEnvelope.fromJson(<String, Object?>{
+      'id': id,
+      'conversation_id': conversationId,
+      'sender_account_id': 'acct_stranger',
+      'sender_device_id': 'd',
+      'idempotency_key': id,
+      'ciphertext': '',
+      'crypto_protocol': 'test',
+      'created_at': '2026-06-02T12:30:00Z',
+    });
+
+Matcher _refusedWith(String text) => throwsA(isA<StateError>()
+    .having((error) => error.message, 'message', contains(text)));
+
 AppState _state(_Api api, LocalStore store) => AppState(
       apiClientFactory: (_) => api,
       cryptoService: TestOnlyCryptoService(),
       localStore: store,
       syncServiceFactory: (_, __) => _FakeSync(),
+      // Present, so "attachments are unavailable" never answers for the
+      // request gate or the manifest binding.
+      attachmentService: AttachmentCryptoService(_NoBindings()),
     )
       ..api = api
       ..session = _session;
@@ -178,16 +229,7 @@ void main() {
     expect(_bucket(state, 'g'), RequestBucket.request);
 
     state.messagesByConversation['new'] = <ReceivedMessageEnvelope>[
-      ReceivedMessageEnvelope.fromJson(<String, Object?>{
-        'id': 'm1',
-        'conversation_id': 'new',
-        'sender_account_id': 'acct_stranger',
-        'sender_device_id': 'd',
-        'idempotency_key': 'm1',
-        'ciphertext': '',
-        'crypto_protocol': 'test',
-        'created_at': '2026-06-02T12:30:00Z',
-      }),
+      _envelope('m1', 'new'),
     ];
     await state.markNewestMessageRead('new');
     expect(api.reads, isEmpty);
@@ -200,27 +242,29 @@ void main() {
           ciphertextSize: 30,
           manifest: <String, Object?>{'conversation_id': conversation},
         );
-    expect(state.loadAttachment(entry('new'), conversationId: 'new'),
-        throwsA(isA<StateError>()));
-    // The caller's conversation decides: a manifest naming a different (or
-    // no) conversation is refused rather than trusted.
-    expect(state.loadAttachment(entry('other'), conversationId: 'new'),
-        throwsA(isA<StateError>()));
-    expect(
-        state.loadAttachment(
-          AttachmentEntry(
-            id: 'att',
-            fileName: 'a.png',
-            mediaType: 'image/png',
-            plaintextSize: 10,
-            ciphertextSize: 30,
-            manifest: const <String, Object?>{},
-          ),
-          conversationId: 'new',
-        ),
-        throwsA(isA<StateError>()));
+    final noConversation = AttachmentEntry(
+      id: 'att',
+      fileName: 'a.png',
+      mediaType: 'image/png',
+      plaintextSize: 10,
+      ciphertextSize: 30,
+      manifest: const <String, Object?>{},
+    );
+    // While a request, the gate refuses even a matching manifest.
+    await expectLater(state.loadAttachment(entry('new'), conversationId: 'new'),
+        _refusedWith('wait until the request is accepted'));
 
     expect(await state.acceptMessageRequest('new'), isTrue);
+    // Past the gate, the caller's conversation decides: a manifest naming a
+    // different (or no) conversation is refused rather than trusted.
+    await expectLater(
+        state.loadAttachment(entry('other'), conversationId: 'new'),
+        _refusedWith('belongs to another conversation'));
+    await expectLater(
+        state.loadAttachment(noConversation, conversationId: 'new'),
+        _refusedWith('belongs to another conversation'));
+    expect(api.downloads, 0);
+
     expect(await state.acceptMessageRequest('g'), isTrue);
     expect(_bucket(state, 'new'), RequestBucket.chat);
     expect(_bucket(state, 'g'), RequestBucket.chat);
@@ -347,9 +391,17 @@ void main() {
       ..list = <Conversation>[
         _dm('mine', 'acct_old', 'acct_me'),
         _dm('new', 'acct_stranger', 'acct_stranger'),
-      ];
+      ]
+      // The request has a message to read and a page to fetch, so the
+      // checks below can see a read or fetch if one happened.
+      ..pages = <String, List<ReceivedMessageEnvelope>>{
+        'new': <ReceivedMessageEnvelope>[_envelope('m1', 'new')],
+      };
     final state = _state(api, MemoryLocalStore());
     await state.refreshConversations();
+    state.messagesByConversation['new'] = <ReceivedMessageEnvelope>[
+      _envelope('m1', 'new'),
+    ];
 
     await tester.pumpWidget(app(ChatListScreen(state: state)));
     await tester.pump();
@@ -362,6 +414,7 @@ void main() {
     expect(find.text('Delete'), findsOneWidget);
     // Nothing was read or fetched by opening it.
     expect(api.reads, isEmpty);
+    expect(api.pageFetches, isEmpty);
 
     await tester.tap(find.text('Delete'));
     await tester.pumpAndSettle();
