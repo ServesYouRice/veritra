@@ -171,7 +171,8 @@ void main() {
           cursor: 0),
       'backup restore': (db) => db.restoreBackupState(
           sessionJson: _sessionJson, conversations: [], envelopes: []),
-      'clearAll (clear, sign-out wipe, quarantine)': (db) => db.clearAll(),
+      'clearAll (LocalStore.clear: sign-out without a kept device)': (db) =>
+          db.clearAll(),
     };
     for (final entry in paths.entries) {
       test(entry.key, () async {
@@ -180,7 +181,9 @@ void main() {
       });
     }
 
-    test('paths that keep the crypto state keep the records', () async {
+    test(
+        'sign-out keeping the device (cached clear), and MLS commits, keep the records',
+        () async {
       await db.clearCachedState();
       await db.writeSessionJson(null);
       await db.writeSessionJson(_sessionJson);
