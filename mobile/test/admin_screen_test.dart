@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -9,6 +10,7 @@ import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/features/settings/admin_screen.dart';
 import 'package:private_messenger/l10n/app_localizations.dart';
+import 'package:private_messenger/l10n/l10n.dart' show englishL10n;
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
@@ -20,6 +22,9 @@ class _AdminApi extends ApiClient {
   bool needsReauth = true;
   final List<bool> statusCalls = <bool>[];
   bool bobSuspended = false;
+  bool failAccounts = false;
+  bool failEvents = false;
+  bool emptyEvents = false;
 
   @override
   Future<AdminPage<AdminAccount>> listAdminAccounts(
@@ -27,6 +32,7 @@ class _AdminApi extends ApiClient {
     String? after,
     int limit = 50,
   }) async {
+    if (failAccounts) throw const SocketException('offline');
     return AdminPage<AdminAccount>(<AdminAccount>[
       AdminAccount(
         id: 'acct_me',
@@ -50,6 +56,9 @@ class _AdminApi extends ApiClient {
     String? before,
     int limit = 50,
   }) async {
+    if (failEvents) throw const SocketException('offline');
+    if (emptyEvents)
+      return AdminPage<AdminAuditEvent>(<AdminAuditEvent>[], null);
     return AdminPage<AdminAuditEvent>(<AdminAuditEvent>[
       AdminAuditEvent(
         id: 1,
@@ -192,5 +201,94 @@ void main() {
     await openAs(tester, _AdminApi(), accountId: 'acct_owner2', role: 'owner');
     // Only the member row: an owner is not suspendable, even by an owner.
     expect(find.text('Suspend'), findsOneWidget);
+  });
+
+  group('each tab keeps its own error', () {
+    final unreachable = englishL10n.errorUnreachable;
+
+    Future<void> openWith(WidgetTester tester, _AdminApi api) async {
+      await openAs(tester, api, accountId: 'acct_me', role: 'owner');
+    }
+
+    Future<void> pullToRefresh(WidgetTester tester) async {
+      // Refresh the tab on screen: the first indicator is the accounts tab's
+      // and the last the audit tab's, and only the visible one is hittable.
+      final indicator = find.byType(RefreshIndicator).hitTestable();
+      await tester.drag(indicator.first, const Offset(0, 400));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets(
+        'a failed audit load is not an empty log after the accounts '
+        'tab refreshes', (tester) async {
+      final api = _AdminApi()..failEvents = true;
+      await openWith(tester, api);
+      await tester.tap(find.text('Audit log'));
+      await tester.pumpAndSettle();
+      expect(find.text(unreachable), findsOneWidget);
+      expect(find.text(englishL10n.adminNoEvents), findsNothing);
+
+      await tester.tap(find.text('Accounts'));
+      await tester.pumpAndSettle();
+      await pullToRefresh(tester);
+      expect(find.text('@bob'), findsOneWidget);
+
+      await tester.tap(find.text('Audit log'));
+      await tester.pumpAndSettle();
+      expect(find.text(unreachable), findsOneWidget,
+          reason: 'the audit tab still says its load failed');
+      expect(find.text(englishL10n.adminNoEvents), findsNothing);
+    });
+
+    testWidgets('an accounts error is not shown on the audit tab',
+        (tester) async {
+      final api = _AdminApi()..failAccounts = true;
+      await openWith(tester, api);
+      expect(find.text(unreachable), findsOneWidget);
+      expect(find.text('@bob'), findsNothing);
+      expect(find.text(englishL10n.adminNoAccounts), findsNothing);
+
+      await tester.tap(find.text('Audit log'));
+      await tester.pumpAndSettle();
+      expect(find.text('account.status.updated'), findsOneWidget);
+      expect(find.text(unreachable), findsNothing);
+    });
+
+    testWidgets('a successful audit refresh clears the audit error',
+        (tester) async {
+      final api = _AdminApi()..failEvents = true;
+      await openWith(tester, api);
+      await tester.tap(find.text('Audit log'));
+      await tester.pumpAndSettle();
+      expect(find.text(unreachable), findsOneWidget);
+
+      api.failEvents = false;
+      await pullToRefresh(tester);
+      expect(find.text(unreachable), findsNothing);
+      expect(find.text('account.status.updated'), findsOneWidget);
+    });
+
+    testWidgets('a log that really is empty says so', (tester) async {
+      final api = _AdminApi()..emptyEvents = true;
+      await openWith(tester, api);
+      await tester.tap(find.text('Audit log'));
+      await tester.pumpAndSettle();
+      expect(find.text(englishL10n.adminNoEvents), findsOneWidget);
+      expect(find.text(unreachable), findsNothing);
+    });
+
+    testWidgets('retrying one tab reloads only that tab', (tester) async {
+      final api = _AdminApi()..failEvents = true;
+      await openWith(tester, api);
+      api.failAccounts = true;
+      // Refreshing the accounts tab fails on its own; the audit error stays
+      // on the audit tab only.
+      await pullToRefresh(tester);
+      expect(find.text(unreachable), findsOneWidget);
+      await tester.tap(find.text('Audit log'));
+      await tester.pumpAndSettle();
+      expect(find.text(unreachable), findsOneWidget);
+      expect(find.text('@bob'), findsNothing);
+    });
   });
 }
