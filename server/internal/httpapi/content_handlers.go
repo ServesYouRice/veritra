@@ -670,7 +670,7 @@ func (a *API) sendTestPush(w http.ResponseWriter, r *http.Request, principal dom
 		case err == nil:
 		case errors.Is(err, push.ErrSubscriptionGone):
 			result = "gone"
-			_ = a.Store.DisablePushTarget(r.Context(), subscription.ID)
+			_ = a.Store.DisablePushTarget(r.Context(), target)
 		case errors.Is(err, push.ErrNoProvider):
 			result = "provider_unavailable"
 		default:

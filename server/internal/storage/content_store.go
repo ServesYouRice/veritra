@@ -503,8 +503,16 @@ func (s *Store) DevicePushSubscriptionForDevice(ctx context.Context, id, account
 	return item, nil
 }
 
-func (s *Store) DisablePushTarget(ctx context.Context, subscriptionID string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE push_subscriptions SET disabled_at = COALESCE(disabled_at, ?) WHERE id = ?`, nowString(), subscriptionID)
+// DisablePushTarget disables target's subscription only while it still holds
+// the endpoint and credentials that failed. Re-registering keeps the id and
+// replaces them, so a late failure of the old registration must not disable
+// the refreshed one.
+func (s *Store) DisablePushTarget(ctx context.Context, target PushTarget) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE push_subscriptions SET disabled_at = COALESCE(disabled_at, ?)
+		WHERE id = ? AND provider = ? AND endpoint = ?
+		  AND COALESCE(public_key, '') = ? AND COALESCE(auth_secret, '') = ?`,
+		nowString(), target.ID, target.Provider, target.Endpoint, target.PublicKey, target.AuthSecret)
 	return err
 }
 

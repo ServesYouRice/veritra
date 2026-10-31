@@ -116,7 +116,11 @@ func TestPushNotificationModeIsSubscriptionScopedAndDowngradeSafe(t *testing.T) 
 	if err := store.AddConversationMember(ctx, conversation.ID, peer.Account.ID, domain.RoleMember); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.DisablePushTarget(ctx, id); err != nil {
+	current, err := store.DevicePushSubscriptionForDevice(ctx, id, peer.Account.ID, peer.Device.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DisablePushTarget(ctx, current.Target()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.RefreshPushWakeJob(ctx, jobs[0], time.Now()); !errors.Is(err, ErrNotFound) {
