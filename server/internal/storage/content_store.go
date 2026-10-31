@@ -674,6 +674,12 @@ func (s *Store) transitionCallSession(ctx context.Context, callID, accountID str
 	if err != nil {
 		return domain.CallSession{}, 0, err
 	}
+	// Pruning deletes expired calls on a timer; until it runs the row is still
+	// here, and it must answer as it will after pruning rather than let a stale
+	// ringing call be accepted and given a fresh expiry.
+	if call.ExpiresAt != nil && !call.ExpiresAt.After(time.Now().UTC()) {
+		return domain.CallSession{}, 0, ErrNotFound
+	}
 	var kind string
 	var memberCount int
 	if err := tx.QueryRowContext(ctx, `SELECT c.kind, COUNT(a.id) FROM conversations c LEFT JOIN memberships m ON m.conversation_id = c.id LEFT JOIN accounts a ON a.id = m.account_id AND a.status = 'active' AND a.deleted_at IS NULL WHERE c.id = ? GROUP BY c.id, c.kind`, call.ConversationID).Scan(&kind, &memberCount); err != nil {
