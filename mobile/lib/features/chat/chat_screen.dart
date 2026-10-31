@@ -1263,7 +1263,11 @@ String quotedPreview(AppLocalizations l10n, LocalMessage? target) {
     return _attachmentSummary(l10n, target, target.conversationId);
   }
   final text = target.body!.replaceAll(RegExp(r'\s+'), ' ').trim();
-  return text.length <= 80 ? text : '${text.substring(0, 80)}…';
+  // Cut by user-perceived character: a UTF-16 cut can leave half a surrogate
+  // pair (text Flutter's paragraph builder rejects) or split an emoji
+  // sequence.
+  final characters = text.characters;
+  return characters.length <= 80 ? text : '${characters.take(80)}…';
 }
 
 /// Top-of-list affordance for older history: a spinner while a page is in
