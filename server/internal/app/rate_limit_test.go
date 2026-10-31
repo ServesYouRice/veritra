@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -136,7 +137,7 @@ func TestDeviceLinkRoutesUseTheirFixedBudgets(t *testing.T) {
 	}
 }
 
-func TestRateLimiterEvictsInsteadOfRefusingNewClients(t *testing.T) {
+func TestRateLimiterAdmitsNewClientsThroughOverflowWhenFull(t *testing.T) {
 	limiter, err := newRateLimiter(httpapi.NewClientIdentityResolver(nil), rateLimits{general: 100, auth: 100, enrollment: 100, account: 100, signedIn: 100})
 	if err != nil {
 		t.Fatalf("new limiter: %v", err)
@@ -159,6 +160,86 @@ func TestRateLimiterEvictsInsteadOfRefusingNewClients(t *testing.T) {
 	}
 	if limiter.evictions.Load() != 1 {
 		t.Fatalf("evictions=%d want 1", limiter.evictions.Load())
+	}
+}
+
+// A full table of live buckets must not recycle an exhausted credential
+// budget: new keys share an overflow bucket instead of evicting (VAL-207).
+func TestRateLimiterFullTableKeepsExhaustedCredentialBudget(t *testing.T) {
+	limiter, err := newRateLimiter(httpapi.NewClientIdentityResolver(nil), rateLimits{general: 100, auth: 2, enrollment: 2, account: 100, signedIn: 100})
+	if err != nil {
+		t.Fatalf("new limiter: %v", err)
+	}
+	limiter.maxEntries = 4
+	handler := limiter.middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	send := func(ip, method, path string) int {
+		request := httptest.NewRequest(method, path, nil)
+		request.RemoteAddr = ip + ":4000"
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder.Code
+	}
+	const attacker = "203.0.113.9"
+	for i := 0; i < 2; i++ {
+		if code := send(attacker, http.MethodPost, "/api/v1/auth/login"); code == http.StatusTooManyRequests {
+			t.Fatalf("login %d refused too early", i+1)
+		}
+	}
+	if code := send(attacker, http.MethodPost, "/api/v1/auth/login"); code != http.StatusTooManyRequests {
+		t.Fatalf("third login status=%d, want 429", code)
+	}
+	for i := 0; i < 20; i++ {
+		send(fmt.Sprintf("198.51.100.%d", i+1), http.MethodGet, "/api/v1/health")
+		limiter.mu.Lock()
+		entries := len(limiter.buckets)
+		limiter.mu.Unlock()
+		if entries > limiter.maxEntries {
+			t.Fatalf("address table holds %d buckets, cap is %d", entries, limiter.maxEntries)
+		}
+	}
+	before := limiter.rejections[scopeAuth].Load()
+	if code := send(attacker, http.MethodPost, "/api/v1/auth/login"); code != http.StatusTooManyRequests {
+		t.Fatalf("credential budget was reset under table pressure: status=%d", code)
+	}
+	if got := limiter.rejections[scopeAuth].Load(); got != before+1 {
+		t.Fatalf("auth rejections %d -> %d", before, got)
+	}
+	// Keys that found the table full are counted, and the table never grew.
+	if _, overflowed := limiter.stats(); overflowed == 0 {
+		t.Fatal("overflow admissions were not counted")
+	}
+}
+
+// Account keys use the same rule in their own table.
+func TestRateLimiterFullAccountTableKeepsLiveBuckets(t *testing.T) {
+	limiter, err := newRateLimiter(httpapi.NewClientIdentityResolver(nil), rateLimits{general: 100, auth: 2, enrollment: 2, account: 1, signedIn: 100})
+	if err != nil {
+		t.Fatalf("new limiter: %v", err)
+	}
+	limiter.maxEntries = 3
+	charge := func(account string) bool {
+		ok, _ := (&accountCharge{limiter: limiter, host: "192.0.2.7"}).Authenticated(account)
+		return ok
+	}
+	if !charge("acct_first") {
+		t.Fatal("first account request refused")
+	}
+	if charge("acct_first") {
+		t.Fatal("second request within the limit of 1 admitted")
+	}
+	for i := 0; i < 10; i++ {
+		charge(fmt.Sprintf("acct_other_%d", i))
+		limiter.mu.Lock()
+		entries := len(limiter.accountBuckets)
+		limiter.mu.Unlock()
+		if entries > limiter.maxEntries {
+			t.Fatalf("account table holds %d buckets, cap is %d", entries, limiter.maxEntries)
+		}
+	}
+	if charge("acct_first") {
+		t.Fatal("exhausted account budget was reset under table pressure")
 	}
 }
 

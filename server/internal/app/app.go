@@ -1073,11 +1073,19 @@ func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 }
 
 func (r *statusRecorder) Flush() {
-	if flusher, ok := r.ResponseWriter.(http.Flusher); ok {
+	_ = r.FlushError()
+}
+
+// FlushError is what http.ResponseController calls, so a handler that needs to
+// know whether a flush reached the connection (recovery progress) sees the
+// error instead of the Flusher interface swallowing it.
+func (r *statusRecorder) FlushError() error {
+	err := http.NewResponseController(r.ResponseWriter).Flush()
+	if !errors.Is(err, http.ErrNotSupported) {
 		// Flushing sends the status line (an implicit 200) if none was.
 		r.wroteHeader = true
-		flusher.Flush()
 	}
+	return err
 }
 
 func requestRoute(pattern string) string {
@@ -1130,6 +1138,9 @@ type rateLimiter struct {
 	salt             [16]byte
 	clientIdentities *httpapi.ClientIdentityResolver
 	limits           rateLimits
+	// maxEntries bounds each bucket table; it defaults to maxRateLimitEntries
+	// and tests lower it.
+	maxEntries int
 
 	mu sync.Mutex
 	// buckets holds address buckets (every budget of one client address,
@@ -1139,8 +1150,12 @@ type rateLimiter struct {
 	// other addresses' buckets and reset their credential budgets.
 	buckets        map[string]*bucket
 	accountBuckets map[string]*bucket
-	evictions      atomic.Int64
-	rejections     [len(rateLimitScopes)]atomic.Int64
+	// overflow and accountOverflow serve keys that arrive while the matching
+	// table is full of live buckets. They are not table entries.
+	overflow        bucket
+	accountOverflow bucket
+	evictions       atomic.Int64
+	rejections      [len(rateLimitScopes)]atomic.Int64
 }
 
 // rateLimitScopes name the limit a rejected request hit, for metrics only.
@@ -1173,6 +1188,7 @@ func newRateLimiter(clientIdentities *httpapi.ClientIdentityResolver, limits rat
 	rl := &rateLimiter{
 		clientIdentities: clientIdentities,
 		limits:           limits,
+		maxEntries:       maxRateLimitEntries,
 		buckets:          map[string]*bucket{},
 		accountBuckets:   map[string]*bucket{},
 	}
@@ -1206,13 +1222,21 @@ func (rl *rateLimiter) cleanupLoop(ctx context.Context) {
 // bucketLocked returns key's bucket in table for the current minute,
 // starting a new one (and evicting from the same table under pressure)
 // when needed. rl.mu must be held.
-func (rl *rateLimiter) bucketLocked(table map[string]*bucket, key string, now time.Time) *bucket {
+func (rl *rateLimiter) bucketLocked(table map[string]*bucket, overflow *bucket, key string, now time.Time) *bucket {
 	b, ok := table[key]
 	if ok && !b.reset.Before(now) {
 		return b
 	}
-	if !ok && len(table) >= maxRateLimitEntries {
-		rl.evictOneLocked(table, now)
+	if !ok && len(table) >= rl.maxEntries && !rl.evictOneLocked(table, now) {
+		// Every entry is live. Evicting one would give its key a fresh
+		// budget before its minute ends, so a flood of new keys could reset
+		// the credential budgets it exhausted. New keys share the table's
+		// overflow bucket instead: the cap holds and nothing is forgotten.
+		rl.evictions.Add(1)
+		if overflow.reset.Before(now) {
+			*overflow = bucket{reset: now.Add(time.Minute)}
+		}
+		return overflow
 	}
 	b = &bucket{reset: now.Add(time.Minute)}
 	table[key] = b
@@ -1234,7 +1258,7 @@ func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
 		signedIn := class == httpapi.OrdinaryRoute && httpapi.HasBearerToken(r)
 
 		rl.mu.Lock()
-		b := rl.bucketLocked(rl.buckets, remoteHash(rl.salt[:], host), now)
+		b := rl.bucketLocked(rl.buckets, &rl.overflow, remoteHash(rl.salt[:], host), now)
 		if signedIn {
 			b.signedIn++
 		} else {
@@ -1303,7 +1327,7 @@ func (c *accountCharge) Authenticated(accountID string) (bool, int) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	if !c.done {
-		c.settleLocked(rl.accountBuckets, rl.accountKey(accountID, c.host), rl.limits.account, scopeAccount)
+		c.settleLocked(rl.accountBuckets, &rl.accountOverflow, rl.accountKey(accountID, c.host), rl.limits.account, scopeAccount)
 	}
 	return c.ok, c.retryAfter
 }
@@ -1317,7 +1341,7 @@ func (c *accountCharge) Unauthenticated() (bool, int) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	if !c.done {
-		c.settleLocked(rl.buckets, remoteHash(rl.salt[:], c.host), rl.limits.general, scopeGeneral)
+		c.settleLocked(rl.buckets, &rl.overflow, remoteHash(rl.salt[:], c.host), rl.limits.general, scopeGeneral)
 	}
 	return c.ok, c.retryAfter
 }
@@ -1330,18 +1354,18 @@ func (c *accountCharge) settleUnused() {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	if !c.done {
-		c.settleLocked(rl.buckets, remoteHash(rl.salt[:], c.host), rl.limits.general, -1)
+		c.settleLocked(rl.buckets, &rl.overflow, remoteHash(rl.salt[:], c.host), rl.limits.general, -1)
 	}
 }
 
 // settleLocked charges key's general count in table for the current minute
 // against limit, counting a refusal under scope unless it is -1. rl.mu
 // must be held.
-func (c *accountCharge) settleLocked(table map[string]*bucket, key string, limit, scope int) {
+func (c *accountCharge) settleLocked(table map[string]*bucket, overflow *bucket, key string, limit, scope int) {
 	rl := c.limiter
 	now := time.Now()
 	c.done = true
-	b := rl.bucketLocked(table, key, now)
+	b := rl.bucketLocked(table, overflow, key, now)
 	b.general++
 	c.ok = b.general <= limit
 	c.retryAfter = boundedRetryAfter(b.reset.Sub(now))
@@ -1399,36 +1423,34 @@ func rateLimitHost(host string) string {
 	return host
 }
 
-func (rl *rateLimiter) evictOneLocked(table map[string]*bucket, now time.Time) {
-	if len(table) < maxRateLimitEntries {
-		return
+// evictOneLocked drops expired buckets (sampling at most
+// rateLimitEvictionSampleSize live ones) and reports whether the table now
+// has room. It never deletes a bucket whose minute has not ended.
+func (rl *rateLimiter) evictOneLocked(table map[string]*bucket, now time.Time) bool {
+	if len(table) < rl.maxEntries {
+		return true
 	}
-	var candidate string
-	var candidateReset time.Time
 	sampled := 0
 	for key, b := range table {
 		if !b.reset.After(now) {
 			delete(table, key)
-			if len(table) < maxRateLimitEntries {
-				return
+			if len(table) < rl.maxEntries {
+				return true
 			}
 			continue
-		}
-		if candidate == "" || b.reset.Before(candidateReset) {
-			candidate, candidateReset = key, b.reset
 		}
 		sampled++
 		if sampled >= rateLimitEvictionSampleSize {
 			break
 		}
 	}
-	if candidate != "" {
-		delete(table, candidate)
-		rl.evictions.Add(1)
-	}
+	return false
 }
 
-// stats reports the entries of both tables together and their evictions.
+// stats reports the entries of both tables together and how many keys were
+// admitted through an overflow bucket because their table was full of live
+// buckets. The metric keeps its name, veritra_rate_limit_evictions_total,
+// but live buckets are no longer evicted: it counts table-pressure events.
 func (rl *rateLimiter) stats() (entries int, evictions int64) {
 	rl.mu.Lock()
 	entries = len(rl.buckets) + len(rl.accountBuckets)

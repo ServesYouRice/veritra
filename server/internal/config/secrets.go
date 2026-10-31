@@ -34,7 +34,14 @@ func secretEnv(key string) (string, error) {
 }
 
 func readSecretFile(path string) (string, error) {
-	file, err := os.Open(path)
+	// Opening a FIFO read-only waits for a writer, so reject anything that is
+	// not a regular file before opening. openSecretFile also avoids blocking
+	// if the path is swapped for a FIFO between this check and the open; the
+	// post-open check below covers that case.
+	if before, err := os.Stat(path); err == nil && !before.Mode().IsRegular() {
+		return "", fmt.Errorf("secret file %q is not a regular file", path)
+	}
+	file, err := openSecretFile(path)
 	if err != nil {
 		return "", fmt.Errorf("open secret file %q: %w", path, pathCause(err))
 	}

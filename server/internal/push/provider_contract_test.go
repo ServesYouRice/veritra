@@ -125,10 +125,17 @@ func TestFCMClassifiesProviderAnswers(t *testing.T) {
 		body   string
 		gone   bool
 	}{
-		"not found":    {404, `{}`, true},
-		"unregistered": {400, `{"error":{"details":[{"errorCode":"UNREGISTERED"}]}}`, true},
-		"server error": {503, `{}`, false},
-		"huge body":    {500, strings.Repeat("x", 1<<20), false},
+		// A bare 404 (an unknown project, say) says nothing about the token.
+		"not found":                 {404, `{}`, false},
+		"not found empty":           {404, ``, false},
+		"not found other detail":    {404, `{"error":{"status":"NOT_FOUND","details":[{"errorCode":"SENDER_ID_MISMATCH"}]}}`, false},
+		"unregistered only in text": {404, `{"error":{"message":"token UNREGISTERED somewhere"}}`, false},
+		"unparseable":               {404, `not json UNREGISTERED`, false},
+		"gone":                      {410, `{}`, true},
+		"not found unregistered":    {404, `{"error":{"status":"NOT_FOUND","details":[{"@type":"type.googleapis.com/google.firebase.fcm.v1.FcmError","errorCode":"UNREGISTERED"}]}}`, true},
+		"unregistered":              {400, `{"error":{"details":[{"errorCode":"UNREGISTERED"}]}}`, true},
+		"server error":              {503, `{}`, false},
+		"huge body":                 {500, strings.Repeat("x", 1<<20), false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			provider := newTestFCM(t, func(r *http.Request) (*http.Response, error) {
@@ -196,13 +203,28 @@ func TestAPNsRequestContractAndPKCS8Keys(t *testing.T) {
 	if aps["content-available"] != float64(1) || len(aps) != 1 || body["event"] != "new_encrypted_event_available" {
 		t.Fatalf("body=%v", body)
 	}
+	// Only HTTP 410 and the exact reason Unregistered retire a subscription.
+	// BadDeviceToken is also what Apple answers for a token sent to the wrong
+	// (sandbox/production) environment, so it must not delete a valid one.
 	for _, answerCase := range []struct {
 		status int
 		body   string
-	}{{410, `{}`}, {400, `{"reason":"BadDeviceToken"}`}} {
+		gone   bool
+	}{
+		{410, `{}`, true},
+		{410, `{"reason":"ExpiredToken"}`, true},
+		{400, `{"reason":"Unregistered"}`, true},
+		{400, `{"reason":"BadDeviceToken"}`, false},
+		{400, `{"reason":"DeviceTokenNotForTopic"}`, false},
+		{400, `{"reason":"PayloadEmpty","detail":"BadDeviceToken Unregistered"}`, false},
+		{403, `{"reason":"InvalidProviderToken","note":"Unregistered"}`, false},
+		{400, `not json BadDeviceToken`, false},
+		{400, ``, false},
+	} {
 		status, answer = answerCase.status, answerCase.body
-		if err := provider.SendEncryptedEventAvailable(context.Background(), Notification{Provider: "apns", Endpoint: token}); !errors.Is(err, ErrSubscriptionGone) {
-			t.Fatalf("%d %s err=%v", status, answer, err)
+		err := provider.SendEncryptedEventAvailable(context.Background(), Notification{Provider: "apns", Endpoint: token})
+		if err == nil || errors.Is(err, ErrSubscriptionGone) != answerCase.gone {
+			t.Fatalf("%d %s err=%v, want gone=%v", status, answer, err, answerCase.gone)
 		}
 	}
 	status, answer = 503, `{}`

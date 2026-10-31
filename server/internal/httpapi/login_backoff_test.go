@@ -29,6 +29,38 @@ func TestLoginBackoffEvictsAndContinuesApplyingNewEntries(t *testing.T) {
 	}
 }
 
+// Filler identities must not be able to push out an account that is being
+// guessed: eviction prefers the entries with the fewest failures (VAL-226).
+func TestLoginBackoffEvictionPreservesHighFailureEntries(t *testing.T) {
+	backoff, err := NewLoginBackoff()
+	if err != nil {
+		t.Fatalf("new backoff: %v", err)
+	}
+	backoff.maxEntries = 64
+	now := time.Now()
+	for i := 0; i < 10; i++ {
+		backoff.Failed("hot-account", now)
+	}
+	// Past the block window, the hot entry is unblocked and its expiry is
+	// older than every filler's.
+	later := now.Add(2 * time.Minute)
+	for i := 0; i < 1000; i++ {
+		backoff.Failed("filler-"+itoa(i), later)
+		if entries, _ := backoff.Stats(); entries > 64 {
+			t.Fatalf("entries=%d exceed the capacity of 64", entries)
+		}
+	}
+	backoff.mu.Lock()
+	entry, ok := backoff.byID[backoff.key("hot-account")]
+	backoff.mu.Unlock()
+	if !ok || entry.failures != 10 {
+		t.Fatalf("hot entry lost its accumulated failures: present=%v failures=%d", ok, entry.failures)
+	}
+	if retry := backoff.Failed("hot-account", later); retry < 16*time.Second {
+		t.Fatalf("next failure of the hot account waits only %s", retry)
+	}
+}
+
 func TestLoginBackoffCleanupLoopExpiresEntries(t *testing.T) {
 	backoff, err := NewLoginBackoff()
 	if err != nil {

@@ -3,6 +3,7 @@ package realtime
 import (
 	"encoding/json"
 	"errors"
+	"net/netip"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -32,7 +33,7 @@ type Event struct {
 // Hub tracks live sockets. subscribers indexes sockets by account (which
 // bounds per-account and per-device counting to at most
 // maxConnectionsPerAccount entries) and perIP counts sockets per remote
-// address, so Register never scans every live socket. Every removal goes
+// address bucket (ipBucket), so Register never scans every live socket. Every removal goes
 // through removeLocked so the indexes and total stay consistent.
 type Hub struct {
 	mu          sync.RWMutex
@@ -58,7 +59,26 @@ func (h *Hub) ConnectionCount() int {
 	return h.total
 }
 
+// ipBucket is the key the per-address cap counts a remote address under. An
+// IPv6 client normally controls at least a /64 and could otherwise rotate
+// addresses inside it past the cap, so IPv6 counts per /64. IPv4 (including
+// IPv4-mapped IPv6 forms) counts per address; clients behind carrier-grade or
+// corporate NAT share one bucket, and the cap value is a separate open
+// product question. An unparsable address is its own bucket.
+func ipBucket(remoteIP string) string {
+	addr, err := netip.ParseAddr(remoteIP)
+	if err != nil {
+		return remoteIP
+	}
+	addr = addr.Unmap()
+	if addr.Is4() {
+		return addr.String()
+	}
+	return netip.PrefixFrom(addr, 64).Masked().String()
+}
+
 func (h *Hub) Register(accountID, deviceID, remoteIP string) (*Client, error) {
+	ipKey := ipBucket(remoteIP)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.draining {
@@ -66,7 +86,7 @@ func (h *Hub) Register(accountID, deviceID, remoteIP string) (*Client, error) {
 		return nil, ErrHubDraining
 	}
 	accountClients := h.subscribers[accountID]
-	accountCount, deviceCount, ipCount := len(accountClients), 0, h.perIP[remoteIP]
+	accountCount, deviceCount, ipCount := len(accountClients), 0, h.perIP[ipKey]
 	// At most maxConnectionsPerAccount sockets can share an account.
 	for existing := range accountClients {
 		if existing.deviceID == deviceID {
@@ -78,12 +98,12 @@ func (h *Hub) Register(accountID, deviceID, remoteIP string) (*Client, error) {
 		h.rejectedLimit.Add(1)
 		return nil, ErrConnectionLimit
 	}
-	client := &Client{accountID: accountID, deviceID: deviceID, remoteIP: remoteIP, send: make(chan []byte, 32)}
+	client := &Client{accountID: accountID, deviceID: deviceID, remoteIP: remoteIP, ipKey: ipKey, send: make(chan []byte, 32)}
 	if h.subscribers[accountID] == nil {
 		h.subscribers[accountID] = map[*Client]struct{}{}
 	}
 	h.subscribers[accountID][client] = struct{}{}
-	h.perIP[remoteIP]++
+	h.perIP[ipKey]++
 	h.total++
 	return client, nil
 }
@@ -94,10 +114,10 @@ func (h *Hub) Register(accountID, deviceID, remoteIP string) (*Client, error) {
 func (h *Hub) removeLocked(clients map[*Client]struct{}, client *Client) {
 	delete(clients, client)
 	h.total--
-	if n := h.perIP[client.remoteIP] - 1; n > 0 {
-		h.perIP[client.remoteIP] = n
+	if n := h.perIP[client.ipKey] - 1; n > 0 {
+		h.perIP[client.ipKey] = n
 	} else {
-		delete(h.perIP, client.remoteIP)
+		delete(h.perIP, client.ipKey)
 	}
 	if len(clients) == 0 {
 		delete(h.subscribers, client.accountID)
@@ -205,6 +225,7 @@ type Client struct {
 	accountID string
 	deviceID  string
 	remoteIP  string
+	ipKey     string // ipBucket(remoteIP), the key h.perIP counts this socket under
 	send      chan []byte
 	closeOnce sync.Once
 	mu        sync.RWMutex

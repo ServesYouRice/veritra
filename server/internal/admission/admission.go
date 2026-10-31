@@ -73,19 +73,32 @@ type Budget struct {
 	bytesPerHour        float64
 	counters            *Counters
 
+	// maxEntries bounds len(buckets); tests lower it.
+	maxEntries int
+
 	mu      sync.Mutex
 	buckets map[string]*bucket
+	// overflow serves accounts that arrive while the table is full of live
+	// buckets. It is not a map entry and is never removed.
+	overflow *bucket
 }
 
 type bucket struct {
 	deliveries float64
 	bytes      float64
 	updated    time.Time
+	// outstanding counts tickets issued from this bucket and not yet
+	// settled. A bucket with any is never evicted, so Settle always charges
+	// the bucket the account's next Reserve uses.
+	outstanding int
 }
 
 // maxBudgetEntries bounds memory. Accounts are invite-only, so the map
-// rarely approaches it; past it, buckets that have refilled completely (and
-// so are equivalent to a new one) are dropped first.
+// rarely approaches it. Only a bucket that has refilled completely and holds
+// no unsettled ticket (so it is equivalent to a new one) is ever dropped. If
+// none is found, a new account is admitted through one shared overflow
+// bucket instead of a map entry: the bound holds and no account's consumed
+// allowance or debt is forgotten.
 const maxBudgetEntries = 65536
 
 func NewBudget(deliveriesPerMinute int, bytesPerHour int64, counters *Counters) *Budget {
@@ -93,7 +106,9 @@ func NewBudget(deliveriesPerMinute int, bytesPerHour int64, counters *Counters) 
 		deliveriesPerMinute: float64(deliveriesPerMinute),
 		bytesPerHour:        float64(bytesPerHour),
 		counters:            counters,
+		maxEntries:          maxBudgetEntries,
 		buckets:             map[string]*bucket{},
+		overflow:            &bucket{deliveries: float64(deliveriesPerMinute), bytes: float64(bytesPerHour)},
 	}
 }
 
@@ -112,7 +127,7 @@ func (b *Budget) full(bk *bucket) bool {
 // Ticket is one admitted reservation.
 type Ticket struct {
 	budget     *Budget
-	accountID  string
+	bk         *bucket // the bucket Reserve debited; Settle charges it again
 	deliveries float64
 	bytes      float64
 	once       sync.Once
@@ -127,11 +142,15 @@ func (b *Budget) Reserve(accountID string, deliveries int, bytes int64, now time
 	defer b.mu.Unlock()
 	bk := b.buckets[accountID]
 	if bk == nil {
-		if len(b.buckets) >= maxBudgetEntries {
-			b.evictLocked(now)
+		if len(b.buckets) < b.maxEntries || b.evictLocked(now) {
+			bk = &bucket{deliveries: b.deliveriesPerMinute, bytes: b.bytesPerHour, updated: now}
+			b.buckets[accountID] = bk
+		} else {
+			bk = b.overflow
+			if bk.updated.IsZero() {
+				bk.updated = now
+			}
 		}
-		bk = &bucket{deliveries: b.deliveriesPerMinute, bytes: b.bytesPerHour, updated: now}
-		b.buckets[accountID] = bk
 	}
 	b.refill(bk, now)
 	var wait time.Duration
@@ -152,7 +171,8 @@ func (b *Budget) Reserve(accountID string, deliveries int, bytes int64, now time
 	}
 	bk.deliveries -= need
 	bk.bytes -= needBytes
-	return &Ticket{budget: b, accountID: accountID, deliveries: need, bytes: needBytes}, 0
+	bk.outstanding++
+	return &Ticket{budget: b, bk: bk, deliveries: need, bytes: needBytes}, 0
 }
 
 // Settle charges what the write used and refunds the rest of its
@@ -166,33 +186,32 @@ func (t *Ticket) Settle(deliveries int, bytes int64) {
 		b := t.budget
 		b.mu.Lock()
 		defer b.mu.Unlock()
-		bk := b.buckets[t.accountID]
-		if bk == nil {
-			return
+		bk := t.bk
+		if bk.outstanding > 0 {
+			bk.outstanding--
 		}
 		bk.deliveries = math.Min(b.deliveriesPerMinute, bk.deliveries+t.deliveries-float64(max(deliveries, 0)))
 		bk.bytes = math.Min(b.bytesPerHour, bk.bytes+t.bytes-float64(max(bytes, 0)))
 	})
 }
 
-func (b *Budget) evictLocked(now time.Time) {
-	var oldestKey string
-	var oldest time.Time
+// evictLocked removes one bucket that has refilled completely and has no
+// unsettled ticket, sampling at most 64 buckets, and reports whether it did.
+// A bucket that is depleted, in debt or still referenced by a ticket is never
+// removed: forgetting it would hand its account a full allowance.
+func (b *Budget) evictLocked(now time.Time) bool {
 	sampled := 0
 	for key, bk := range b.buckets {
 		b.refill(bk, now)
-		if b.full(bk) {
+		if bk.outstanding == 0 && b.full(bk) {
 			delete(b.buckets, key)
-			return
-		}
-		if oldestKey == "" || bk.updated.Before(oldest) {
-			oldestKey, oldest = key, bk.updated
+			return true
 		}
 		if sampled++; sampled >= 64 {
 			break
 		}
 	}
-	delete(b.buckets, oldestKey)
+	return false
 }
 
 // Len reports how many accounts hold a bucket (for tests).

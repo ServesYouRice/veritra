@@ -781,9 +781,8 @@ func TestDeviceLinkRequiresApprovalBeforeSession(t *testing.T) {
 	if linked.Account.ID != owner.Account.ID || linked.Device.ID != device.ID {
 		t.Fatalf("unexpected linked account/device: %#v", linked)
 	}
-	hash, tag, err := store.DeviceLinkTranscriptForClaim(ctx, link.ID, claimTokenHash)
-	if err != nil || !bytes.Equal(hash, transcriptHash) || !bytes.Equal(tag, bytes.Repeat([]byte{9}, 32)) {
-		t.Fatalf("confirmation roundtrip: %v", err)
+	if !bytes.Equal(linked.TranscriptHash, transcriptHash) || !bytes.Equal(linked.ApprovalTag, bytes.Repeat([]byte{9}, 32)) {
+		t.Fatalf("consume returned transcript %x tag %x", linked.TranscriptHash, linked.ApprovalTag)
 	}
 	principal, err := store.PrincipalByTokenHash(ctx, sessionTokenHash)
 	if err != nil {

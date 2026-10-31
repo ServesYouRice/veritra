@@ -232,8 +232,8 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "device_id_required")
 		return
 	}
-	backoffKeys := a.loginBackoffKeys(r, req.Username, req.DeviceID)
-	if retryAfter := a.LoginBackoff.RetryAfterAny(time.Now(), backoffKeys...); retryAfter > 0 {
+	sourceKey, accountDeviceKey := a.loginBackoffKeys(r, req.Username, req.DeviceID)
+	if retryAfter := a.LoginBackoff.RetryAfterAny(time.Now(), sourceKey); retryAfter > 0 {
 		writeRetryError(w, "login_backoff", retryAfter)
 		return
 	}
@@ -252,8 +252,24 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	deviceOK := lookupErr == nil && record.DeviceAuthHash != "" && subtle.ConstantTimeCompare([]byte(auth.HashToken(req.DeviceSecret)), []byte(record.DeviceAuthHash)) == 1
+	// The cross-source budget for this account and device applies only to a
+	// caller that presented the device's secret. Anyone else is limited by
+	// the source key alone, so a third party cannot lock the owner out by
+	// failing logins for a known username. Nothing below branches on whether
+	// the password was right unless the device secret was, so a caller
+	// without the secret learns nothing about the password.
+	if deviceOK {
+		if retryAfter := a.LoginBackoff.RetryAfterAny(time.Now(), accountDeviceKey); retryAfter > 0 {
+			writeRetryError(w, "login_backoff", retryAfter)
+			return
+		}
+	}
 	if lookupErr != nil || !check.OK || !deviceOK {
-		if retryAfter := a.LoginBackoff.FailedAny(time.Now(), backoffKeys...); retryAfter > 0 {
+		failedKeys := []string{sourceKey}
+		if deviceOK {
+			failedKeys = append(failedKeys, accountDeviceKey)
+		}
+		if retryAfter := a.LoginBackoff.FailedAny(time.Now(), failedKeys...); retryAfter > 0 {
 			writeRetryError(w, "login_backoff", retryAfter)
 			return
 		}
@@ -262,7 +278,7 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	}
 	// Only now, with every credential checked, may a legacy hash migrate.
 	passwords.Upgrade(r.Context(), record.AccountID, record.PasswordHash, req.Password, check)
-	a.LoginBackoff.SucceededAny(backoffKeys...)
+	a.LoginBackoff.SucceededAny(sourceKey, accountDeviceKey)
 	token, tokenHash, err := auth.NewToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "token_create_failed")
@@ -722,12 +738,9 @@ func (a *API) deviceLinkSubroute(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		transcriptHash, approvalTag, err := a.Store.DeviceLinkTranscriptForClaim(r.Context(), linkID, auth.HashToken(claimToken))
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_device_link")
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"account": linked.Account, "device": linked.Device, "token": sessionToken, "transcript_hash": transcriptHash, "approval_tag": approvalTag})
+		// The transcript and tag come from the transaction that consumed the
+		// link, so a committed session token is always delivered.
+		writeJSON(w, http.StatusOK, map[string]interface{}{"account": linked.Account, "device": linked.Device, "token": sessionToken, "transcript_hash": linked.TranscriptHash, "approval_tag": linked.ApprovalTag})
 	default:
 		writeError(w, http.StatusNotFound, "not_found")
 	}
@@ -824,11 +837,15 @@ func (a *API) rotateReauthenticatedSession(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]string{"token": token})
 }
 
-func (a *API) loginBackoffKeys(r *http.Request, username, deviceID string) []string {
-	return []string{
-		"login-account\x00" + strings.ToLower(strings.TrimSpace(username)),
-		"login-source-device\x00" + a.clientIP(r) + "\x00" + strings.TrimSpace(deviceID) + "\x00" + strings.ToLower(strings.TrimSpace(username)),
-	}
+// loginBackoffKeys returns the two budgets a login attempt can count against.
+// The source key (client address, device, username) takes every failure. The
+// account-device key (username and device, from any source) is checked and
+// counted only for requests that presented that device's valid secret.
+func (a *API) loginBackoffKeys(r *http.Request, username, deviceID string) (source, accountDevice string) {
+	user := strings.ToLower(strings.TrimSpace(username))
+	device := strings.TrimSpace(deviceID)
+	return "login-source-device\x00" + a.clientIP(r) + "\x00" + device + "\x00" + user,
+		"login-account-device\x00" + user + "\x00" + device
 }
 
 func (a *API) reauthenticationBackoffKeys(r *http.Request, principal domain.Principal) []string {

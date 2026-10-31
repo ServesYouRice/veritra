@@ -16,10 +16,13 @@ const maxLoginBackoffEntries = 32768
 const backoffEvictionSampleSize = 32
 
 type LoginBackoff struct {
-	salt      [32]byte
-	mu        sync.Mutex
-	byID      map[[32]byte]loginBackoffEntry
-	evictions atomic.Int64
+	// maxEntries bounds the table; it defaults to maxLoginBackoffEntries and
+	// tests lower it.
+	maxEntries int
+	salt       [32]byte
+	mu         sync.Mutex
+	byID       map[[32]byte]loginBackoffEntry
+	evictions  atomic.Int64
 }
 
 type loginBackoffEntry struct {
@@ -29,7 +32,7 @@ type loginBackoffEntry struct {
 }
 
 func NewLoginBackoff() (*LoginBackoff, error) {
-	backoff := &LoginBackoff{byID: make(map[[32]byte]loginBackoffEntry)}
+	backoff := &LoginBackoff{maxEntries: maxLoginBackoffEntries, byID: make(map[[32]byte]loginBackoffEntry)}
 	if _, err := rand.Read(backoff.salt[:]); err != nil {
 		return nil, fmt.Errorf("initialize login backoff: %w", err)
 	}
@@ -88,7 +91,7 @@ func (backoff *LoginBackoff) FailedAny(now time.Time, identities ...string) time
 			delete(backoff.byID, key)
 			exists = false
 		}
-		if !exists && len(backoff.byID) >= maxLoginBackoffEntries {
+		if !exists && len(backoff.byID) >= backoff.maxEntries {
 			backoff.evictOneLocked(now)
 		}
 		entry.failures++
@@ -167,44 +170,51 @@ func (backoff *LoginBackoff) removeExpiredLocked(now time.Time) {
 	}
 }
 
+// evictOneLocked makes room by dropping one entry. Expired entries go first.
+// Otherwise it samples backoffEvictionSampleSize entries and evicts the one
+// that has recorded the fewest failures, so identities that are being guessed
+// (many failures) outlast the one-failure filler entries an attacker can mint
+// to push them out. Among equal counts an unblocked entry goes before a
+// blocked one, then the earliest expiry.
 func (backoff *LoginBackoff) evictOneLocked(now time.Time) {
-	if len(backoff.byID) < maxLoginBackoffEntries {
+	if len(backoff.byID) < backoff.maxEntries {
 		return
 	}
-	var fallback [32]byte
-	var fallbackEntry loginBackoffEntry
-	fallbackFound := false
-	var preferred [32]byte
-	var preferredEntry loginBackoffEntry
-	preferredFound := false
+	var victim [32]byte
+	var victimEntry loginBackoffEntry
+	found := false
 	sampled := 0
 	for key, entry := range backoff.byID {
 		if !entry.expiresAt.After(now) {
 			delete(backoff.byID, key)
-			if len(backoff.byID) < maxLoginBackoffEntries {
+			if len(backoff.byID) < backoff.maxEntries {
 				return
 			}
 			continue
 		}
-		if !fallbackFound || entry.expiresAt.Before(fallbackEntry.expiresAt) {
-			fallback, fallbackEntry, fallbackFound = key, entry, true
-		}
-		if !entry.blockedUntil.After(now) && (!preferredFound || entry.expiresAt.Before(preferredEntry.expiresAt)) {
-			preferred, preferredEntry, preferredFound = key, entry, true
+		if !found || evictsBefore(now, entry, victimEntry) {
+			victim, victimEntry, found = key, entry, true
 		}
 		sampled++
 		if sampled >= backoffEvictionSampleSize {
 			break
 		}
 	}
-	candidate := fallback
-	if preferredFound {
-		candidate = preferred
-	}
-	if fallbackFound {
-		delete(backoff.byID, candidate)
+	if found {
+		delete(backoff.byID, victim)
 		backoff.evictions.Add(1)
 	}
+}
+
+// evictsBefore reports whether a is a better eviction victim than b.
+func evictsBefore(now time.Time, a, b loginBackoffEntry) bool {
+	if a.failures != b.failures {
+		return a.failures < b.failures
+	}
+	if aBlocked, bBlocked := a.blockedUntil.After(now), b.blockedUntil.After(now); aBlocked != bBlocked {
+		return !aBlocked
+	}
+	return a.expiresAt.Before(b.expiresAt)
 }
 
 func uniqueBackoffIdentities(identities []string) []string {

@@ -40,7 +40,10 @@ const (
 
 	// MaxConcurrentPasswordHashes bounds simultaneous hash and verify work
 	// process-wide, so a burst holds at most this many Argon2id buffers
-	// (3 x 64 MiB) instead of one per request. ReservedSignedInHashes of
+	// instead of one per request: 3 x 64 MiB for new hashes, and up to
+	// 3 x maxStoredArgon2idMemoryKiB (256 MiB each) while verifying a stored
+	// hash that names the largest parameters parseArgon2id accepts.
+	// ReservedSignedInHashes of
 	// them serve only callers that already hold a valid session
 	// (reauthentication, password change, rehash after a full sign-in), so a
 	// flood of anonymous sign-in attempts cannot block step-up
@@ -306,6 +309,18 @@ type PasswordCheck struct {
 // VerifyPassword checks password against stored. An empty stored hash means
 // the account does not exist; the work done is the same as for a real
 // account, and it never depends on whether the password matched.
+//
+// Open residual (the owner has not chosen a timing policy; nothing here
+// closes it): work cannot be equalized exactly across stored profiles. A hash
+// with older Argon2id parameters, or a bcrypt hash whose cost differs from
+// opts.LegacyBcryptCost, runs at its own cost, which an unknown account (no
+// profile to imitate) cannot copy. A real hash is only reached after the
+// caller names a valid username and device, and rehash-on-success removes the
+// difference. No padding is added, and any added must not depend on the
+// outcome: padding only failed checks would reveal whether a password was
+// right to a request whose device secret is invalid.
+// TestVerificationWorkUnitsDoNotDependOnOutcome pins the outcome independence
+// and records today's residual so a change to it is visible.
 func VerifyPassword(ctx context.Context, stored, password string, opts VerifyOptions) (PasswordCheck, error) {
 	release, err := acquirePasswordSlot(ctx, opts.Caller)
 	if err != nil {
@@ -314,6 +329,14 @@ func VerifyPassword(ctx context.Context, stored, password string, opts VerifyOpt
 	defer release()
 	secret := []byte(password)
 	if IsLegacyPasswordHash(stored) {
+		// bcrypt accepts costs up to 31 and cannot be interrupted once
+		// started, so a stored hash outside the policy range is unusable:
+		// pay the dummy comparison instead of running its cost.
+		if cost, err := bcrypt.Cost([]byte(stored)); err != nil || cost > MaxBcryptCost {
+			_ = bcryptCompare(dummyHashForCost(opts.LegacyBcryptCost), secret)
+			dummyArgon2id(secret)
+			return PasswordCheck{Legacy: true}, nil
+		}
 		ok := bcryptCompare([]byte(stored), secret) == nil
 		dummyArgon2id(secret)
 		return PasswordCheck{OK: ok, Rehash: ok, Legacy: true}, nil

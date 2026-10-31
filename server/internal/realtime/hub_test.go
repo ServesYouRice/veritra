@@ -23,7 +23,7 @@ func checkHubIndexes(t *testing.T, h *Hub) {
 			if client.accountID != accountID {
 				t.Fatalf("client indexed under wrong account")
 			}
-			perIP[client.remoteIP]++
+			perIP[client.ipKey]++
 			total++
 		}
 	}
@@ -112,6 +112,64 @@ func TestHubPerIPLimit(t *testing.T) {
 		t.Fatalf("double unregister freed an extra slot: %v", err)
 	}
 	checkHubIndexes(t, hub)
+}
+
+// An IPv6 client controls at least a /64, so the per-address cap counts the
+// prefix, not the single address (VAL-238). IPv4 and IPv4-mapped forms of one
+// address share a bucket.
+func TestHubPerIPLimitAggregatesIPv6Slash64(t *testing.T) {
+	hub := NewHub()
+	for i := 0; i < maxConnectionsPerIP; i++ {
+		if _, err := hub.Register(fmt.Sprintf("acct%d", i), "dev", fmt.Sprintf("2001:db8:1::%x", i+1)); err != nil {
+			t.Fatalf("register %d: %v", i, err)
+		}
+	}
+	if _, err := hub.Register("rotator", "dev", "2001:db8:1::ffff"); !errors.Is(err, ErrConnectionLimit) {
+		t.Fatalf("a fresh address in the same /64 escaped the cap: %v", err)
+	}
+	if _, err := hub.Register("rotator", "dev", "2001:db8:1:0:abcd::1"); !errors.Is(err, ErrConnectionLimit) {
+		t.Fatalf("another interface identifier in the same /64 escaped the cap: %v", err)
+	}
+	if _, err := hub.Register("neighbour", "dev", "2001:db8:2::1"); err != nil {
+		t.Fatalf("a different /64 must be unaffected: %v", err)
+	}
+	checkHubIndexes(t, hub)
+
+	mapped := NewHub()
+	for i := 0; i < maxConnectionsPerIP; i++ {
+		ip := "192.0.2.1"
+		if i%2 == 1 {
+			ip = "::ffff:192.0.2.1"
+		}
+		if _, err := mapped.Register(fmt.Sprintf("acct%d", i), "dev", ip); err != nil {
+			t.Fatalf("register %d: %v", i, err)
+		}
+	}
+	if _, err := mapped.Register("extra", "dev", "::ffff:192.0.2.1"); !errors.Is(err, ErrConnectionLimit) {
+		t.Fatalf("mapped and plain IPv4 forms did not share a bucket: %v", err)
+	}
+	if _, err := mapped.Register("extra", "dev", "192.0.2.2"); err != nil {
+		t.Fatalf("another IPv4 address must be unaffected: %v", err)
+	}
+	checkHubIndexes(t, mapped)
+}
+
+func TestIPBucket(t *testing.T) {
+	for in, want := range map[string]string{
+		"192.0.2.1":                "192.0.2.1",
+		"::ffff:192.0.2.1":         "192.0.2.1",
+		"2001:db8:1:2:3:4:5:6":     "2001:db8:1:2::/64",
+		"2001:db8:1:2:ffff::1":     "2001:db8:1:2::/64",
+		"2001:db8:1:3::1":          "2001:db8:1:3::/64",
+		"not an address":           "not an address",
+		"":                         "",
+		"fe80::1%eth0":             "fe80::/64",
+		"2001:db8:1::1/64 garbage": "2001:db8:1::1/64 garbage",
+	} {
+		if got := ipBucket(in); got != want {
+			t.Errorf("ipBucket(%q) = %q, want %q", in, got, want)
+		}
+	}
 }
 
 func TestHubTotalLimit(t *testing.T) {
