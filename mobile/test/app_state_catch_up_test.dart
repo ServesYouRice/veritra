@@ -288,6 +288,84 @@ void main() {
       harness.dispose();
     });
   });
+
+  group('projection refreshes per run of events (TASK-036)', () {
+    Future<_ScriptedApi> catchUp(List<SyncEvent> events, int cursor) async {
+      final api = _ScriptedApi()..events = events;
+      final store = MemoryLocalStore();
+      final harness = await _Harness.start(api, store: store);
+      await harness.waitFor(() async => await store.loadSyncCursor() == cursor);
+      await harness.waitFor(() => harness.state.lastSyncedAt != null);
+      await harness.settle();
+      harness.dispose();
+      return api;
+    }
+
+    test('a burst of device events costs one device and list refresh',
+        () async {
+      final one = await catchUp(
+          <SyncEvent>[_projectionEvent(1, 'device.updated')], 1);
+      final burst = await catchUp(<SyncEvent>[
+        for (var id = 1; id <= 50; id++) _projectionEvent(id, 'device.updated'),
+      ], 50);
+      expect(burst.deviceCalls, one.deviceCalls);
+      expect(burst.conversationCalls, one.conversationCalls);
+    });
+
+    test('each run is refreshed and committed before the next message',
+        () async {
+      // The same two runs, of one event each.
+      final single = await catchUp(<SyncEvent>[
+        _projectionEvent(1, 'conversation.updated'),
+        _envelopeEvent(2, 'msg_a'),
+        _projectionEvent(3, 'conversation.updated'),
+        _envelopeEvent(4, 'msg_b'),
+      ], 4);
+
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[
+          _projectionEvent(1, 'conversation.updated'),
+          _projectionEvent(2, 'membership.added'),
+          _envelopeEvent(3, 'msg_a'),
+          _projectionEvent(4, 'conversation.updated'),
+          _projectionEvent(5, 'retention.updated'),
+          _envelopeEvent(6, 'msg_b'),
+        ];
+      final store = MemoryLocalStore();
+      final harness = await _Harness.start(api, store: store);
+      await harness.waitFor(() async => await store.loadSyncCursor() == 6);
+      await harness.waitFor(() => harness.state.lastSyncedAt != null);
+      await harness.settle();
+
+      // A message is applied only once the run before it is committed.
+      expect(harness.crypto.cursorAtApply, <int>[2, 5]);
+      expect(api.conversationCalls, single.conversationCalls);
+      harness.dispose();
+    });
+
+    test('a failed refresh commits none of its run', () async {
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[
+          _projectionEvent(1, 'conversation.updated'),
+          _envelopeEvent(2, 'msg_a'),
+          _projectionEvent(3, 'conversation.updated'),
+          _projectionEvent(4, 'device.updated'),
+        ]
+        ..failDevicesDuringSync = true;
+      final store = MemoryLocalStore();
+      final harness = await _Harness.start(api, store: store);
+
+      await harness.waitFor(() => harness.state.syncError != null);
+      expect(await store.loadSyncCursor(), 2);
+      expect(harness.crypto.applied, <String>['msg_a']);
+
+      api.failDevicesDuringSync = false;
+      harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await harness.waitFor(() async => await store.loadSyncCursor() == 4);
+      expect(harness.crypto.applied, <String>['msg_a']);
+      harness.dispose();
+    });
+  });
 }
 
 SyncEvent _projectionEvent(int id, String type,
@@ -465,6 +543,7 @@ class _ScriptedApi extends ApiClient {
   int syncCalls = 0;
   int conversationCalls = 0;
   int deviceCalls = 0;
+  bool failDevicesDuringSync = false;
 
   @override
   Future<List<Conversation>> conversations(String token) async {
@@ -478,6 +557,9 @@ class _ScriptedApi extends ApiClient {
   @override
   Future<List<Device>> devices(String token) async {
     deviceCalls++;
+    if (failDevicesDuringSync && syncCalls > 0) {
+      throw ApiException(503, '{"error":"unavailable"}');
+    }
     return const <Device>[];
   }
 
@@ -568,6 +650,7 @@ class _FakeMlsCrypto implements MlsConversationCryptoService {
 
   final LocalStore store;
   final List<String> applied = <String>[];
+  final List<int> cursorAtApply = <int>[];
   final Set<String> rejectedMls = <String>{};
 
   @override
@@ -588,6 +671,7 @@ class _FakeMlsCrypto implements MlsConversationCryptoService {
   Future<List<int>?> processApplicationMessage(
       ReceivedMessageEnvelope envelope, int syncEventId) async {
     applied.add(envelope.id);
+    cursorAtApply.add(await store.loadSyncCursor());
     if (envelope.ciphertext.length == 1 &&
         envelope.ciphertext.single == _neverDecrypts.single) {
       // What NativeCryptoService commits for a message it can never

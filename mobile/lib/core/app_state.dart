@@ -4070,6 +4070,36 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         // a conversation's whole history after every message made a burst
         // quadratic (T49C).
         final received = <ReceivedMessageEnvelope>[];
+        // Projection events only ask for a refresh. A run of them in a row
+        // is refreshed once per kind, then each is committed in order, all
+        // before the next crypto event is applied; a failed refresh commits
+        // none of the run. Returns false once this run no longer owns sync.
+        final projections = <SyncEvent>[];
+        Future<bool> commitProjections() async {
+          if (projections.isEmpty) return true;
+          if (wake != null) {
+            // A background pass makes no list/device requests; the next
+            // foreground resume refreshes instead.
+            projections.forEach(_deferProjectionRefresh);
+          } else {
+            await _refreshProjectionForSyncEvents(projections);
+          }
+          for (final event in projections) {
+            if (!_syncOwnerActive(current, ownerGeneration)) return false;
+            final expectedCursor = await localStore.loadSyncCursor();
+            await localStore.commitSyncEvent(SyncEventCommit(
+              eventKey: 'sync:${event.id}',
+              conversationId: event.conversationId ?? '',
+              expectedCursor: expectedCursor,
+              cursor: event.id,
+              checkCanCommit: wake?.checkCanCommit,
+            ));
+          }
+          projections.clear();
+          notifyListeners();
+          return true;
+        }
+
         try {
           for (final event in events) {
             final committedCursor = await localStore.loadSyncCursor();
@@ -4078,6 +4108,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             await wake?.check();
 
             if (_isCryptoSyncEvent(event.type)) {
+              if (!await commitProjections()) return;
               if (_mlsCrypto == null) {
                 throw SyncEventFailure(SyncFailureKind.cryptoUnavailable,
                     eventId: event.id,
@@ -4096,33 +4127,21 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             } else {
               // An unknown type outside the crypto namespaces only asks for
               // a refresh, so it is skipped and the cursor moves past it
-              // (P5). Unknown crypto types still stop sync.
+              // (P5). Unknown crypto types still stop sync, at this event.
               if (!_knownProjectionEvent(event.type) &&
                   _failsClosedEvent(event.type)) {
+                if (!await commitProjections()) return;
                 throw SyncEventFailure(SyncFailureKind.unsupportedEvent,
                     eventId: event.id,
                     eventType: event.type,
                     conversationId: event.conversationId);
               }
-              if (wake != null) {
-                // Projection events carry no ciphertext and only ask for a
-                // refresh. A background pass makes no list/device requests;
-                // the next foreground resume refreshes instead.
-                _deferProjectionRefresh(event);
-              } else {
-                await _refreshProjectionForSyncEvent(event);
-              }
-              final expectedCursor = await localStore.loadSyncCursor();
-              await localStore.commitSyncEvent(SyncEventCommit(
-                eventKey: 'sync:${event.id}',
-                conversationId: event.conversationId ?? '',
-                expectedCursor: expectedCursor,
-                cursor: event.id,
-                checkCanCommit: wake?.checkCanCommit,
-              ));
+              projections.add(event);
+              continue;
             }
             notifyListeners();
           }
+          if (!await commitProjections()) return;
         } catch (_) {
           // Messages committed before the failure still reach the UI (or,
           // if their history cannot be read now, the next catch-up); the
@@ -4382,46 +4401,60 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       type == 'mls.revocation.pending' ||
       type == 'mls.revocation.completed';
 
-  Future<void> _refreshProjectionForSyncEvent(SyncEvent event) async {
-    final type = event.type;
-    if (type.startsWith('device.') ||
-        type.startsWith('membership.') ||
-        type.startsWith('conversation.')) {
-      _mlsReconcileRequested = true;
-    }
-    if (type.startsWith('device.')) {
-      await _refreshDevices();
-      await _refreshConversations(notify: false, persist: false);
-      return;
-    }
-    if (type.startsWith('conversation.') ||
-        type.startsWith('membership.') ||
-        type == 'retention.updated') {
-      if (event.conversationId != null) {
-        membersByConversation = Map.of(membersByConversation)
-          ..remove(event.conversationId);
-      } else if (type.startsWith('membership.')) {
-        membersByConversation = {};
+  /// Refreshes what a run of projection events asks for, once per kind: a
+  /// burst of device or membership events costs one device-list and one
+  /// conversation-list request, not one per event. Devices are read before
+  /// conversations, as for a single event, and the open chat is reloaded
+  /// only when an event in the run names it.
+  Future<void> _refreshProjectionForSyncEvents(List<SyncEvent> events) async {
+    var devices = false;
+    var conversationList = false;
+    var selectedMessages = false;
+    final receipts = <String>{};
+    for (final event in events) {
+      final type = event.type;
+      if (type.startsWith('device.') ||
+          type.startsWith('membership.') ||
+          type.startsWith('conversation.')) {
+        _mlsReconcileRequested = true;
       }
-      await _refreshConversations(notify: false, persist: false);
-      return;
-    }
-    if (type.startsWith('reaction.') || type == 'read_receipt.updated') {
-      if (event.conversationId == selectedConversationId) {
-        await refreshSelectedMessages(notify: false, persist: false);
-        if (type == 'read_receipt.updated') {
-          unawaited(refreshReceipts(event.conversationId!));
+      if (type.startsWith('device.')) {
+        devices = true;
+        conversationList = true;
+      } else if (type.startsWith('conversation.') ||
+          type.startsWith('membership.') ||
+          type == 'retention.updated') {
+        if (event.conversationId != null) {
+          membersByConversation = Map.of(membersByConversation)
+            ..remove(event.conversationId);
+        } else if (type.startsWith('membership.')) {
+          membersByConversation = {};
         }
+        conversationList = true;
+      } else if (type.startsWith('reaction.') ||
+          type == 'read_receipt.updated') {
+        if (event.conversationId == selectedConversationId) {
+          selectedMessages = true;
+          if (type == 'read_receipt.updated' && event.conversationId != null) {
+            receipts.add(event.conversationId!);
+          }
+        }
+      } else if (type != 'mls.revocation.pending' &&
+          type != 'mls.revocation.completed' &&
+          _failsClosedEvent(type)) {
+        throw SyncEventFailure(SyncFailureKind.unsupportedEvent,
+            eventId: event.id, eventType: type);
       }
-      return;
     }
-    if (type == 'mls.revocation.pending' ||
-        type == 'mls.revocation.completed') {
-      return;
+    if (devices) await _refreshDevices();
+    if (conversationList) {
+      await _refreshConversations(notify: false, persist: false);
     }
-    if (_failsClosedEvent(type)) {
-      throw SyncEventFailure(SyncFailureKind.unsupportedEvent,
-          eventId: event.id, eventType: type);
+    if (selectedMessages) {
+      await refreshSelectedMessages(notify: false, persist: false);
+    }
+    for (final conversationId in receipts) {
+      unawaited(refreshReceipts(conversationId));
     }
   }
 
