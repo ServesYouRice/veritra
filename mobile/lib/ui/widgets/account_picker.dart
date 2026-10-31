@@ -55,6 +55,7 @@ class _AccountPickerState extends State<AccountPicker> {
   @override
   void dispose() {
     _debounce?.cancel();
+    _lookupGeneration++;
     controller.dispose();
     super.dispose();
   }
@@ -66,12 +67,25 @@ class _AccountPickerState extends State<AccountPicker> {
 
   void _onChanged(String value) {
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 400), () => _lookup(value));
+    // Every edit makes what was asked before it out of date at once, not only
+    // when the new text finally gets looked up: an older answer that arrives
+    // while the debounce runs is dropped, and the results on screen belong to
+    // text that is gone, so they go too.
+    final generation = ++_lookupGeneration;
+    setState(() {
+      matches = <SelectedAccount>[];
+      searching = false;
+      searched = false;
+    });
+    _debounce = Timer(
+      const Duration(milliseconds: 400),
+      () => _lookup(value, generation),
+    );
   }
 
-  Future<void> _lookup(String value) async {
+  Future<void> _lookup(String value, int generation) async {
     final query = value.trim();
-    final generation = ++_lookupGeneration;
+    if (!mounted || generation != _lookupGeneration) return;
     if (query.isEmpty) {
       setState(() {
         matches = <SelectedAccount>[];
@@ -107,7 +121,16 @@ class _AccountPickerState extends State<AccountPicker> {
   }
 
   void _add(SelectedAccount account) {
+    final alreadyChosen = selected.any((existing) => existing.id == account.id);
+    // The field is off at the limit, but a tap on a tile drawn before it was
+    // reached must not add one more.
+    if (_atLimit && !alreadyChosen) return;
+    // Choosing ends the search: nothing asked before may answer, and a
+    // debounce still waiting must not start one.
+    _debounce?.cancel();
+    _lookupGeneration++;
     setState(() {
+      searching = false;
       if (widget.maxSelection == 1) {
         selected.clear();
       }
