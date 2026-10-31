@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -34,7 +35,7 @@ func printStep(w io.Writer, step stepResult) {
 	if !step.Verdict.Pass {
 		status = "MISS"
 	}
-	_, _ = fmt.Fprintf(w, "\nstep %.2f msgs/device/min: %s\n", step.Rate, status)
+	_, _ = fmt.Fprintf(w, "\nstep %.2f msgs/device/min (offered %.2f): %s\n", step.Rate, step.Offered, status)
 	_, _ = fmt.Fprintf(w, "%-18s %8s %8s %6s %6s %6s %9s %9s %9s %9s\n", "op", "count", "per_s", "err", "429", "4xx", "p50_ms", "p95_ms", "p99_ms", "max_ms")
 	for _, s := range step.Ops {
 		if s.Count == 0 {
@@ -48,6 +49,9 @@ func printStep(w io.Writer, step stepResult) {
 		_, _ = fmt.Fprintf(w, ", first error at %.0f s, recovered after %.0f s", t.FirstErrorAtS, t.RecoveredAfterS)
 	}
 	_, _ = fmt.Fprintln(w)
+	if step.ServerError != "" {
+		_, _ = fmt.Fprintln(w, "server metrics:", step.ServerError)
+	}
 	if len(step.Server) > 0 {
 		keys := make([]string, 0, len(step.Server))
 		for key := range step.Server {
@@ -72,7 +76,31 @@ const (
 	outcomeClientError
 	outcomeServerError
 	outcomeTransportError
+	// outcomeDropped is work the tool generated but could not start
+	// because too much was still waiting on the server (a device's send
+	// cap). It counts as an error, never as skipped work.
+	outcomeDropped
+	// outcomeUnfinished is work started in a window that had not finished
+	// when the window's grace period ran out, or that was given up on
+	// cancellation. It counts as an error.
+	outcomeUnfinished
+	// outcomeMissed is an expected realtime delivery that its recipient
+	// client did not see before the delivery deadline.
+	outcomeMissed
 )
+
+// failedOutcome reports whether result means the server did not complete
+// the work, for the outage timeline: errors, no answer, work dropped
+// because the server had not finished earlier work, and work still
+// unanswered after the grace period. Rate limits and client errors are
+// answers, so they do not count.
+func failedOutcome(result outcome) bool {
+	switch result {
+	case outcomeServerError, outcomeTransportError, outcomeDropped, outcomeUnfinished:
+		return true
+	}
+	return false
+}
 
 type sample struct {
 	at      time.Duration // since the load started
@@ -81,14 +109,119 @@ type sample struct {
 	result  outcome
 }
 
+// recorder collects one sample per operation. Work in progress is
+// registered with begin and ends exactly once with end or abandon, so a
+// step's summary can wait (settle) for everything started in its window.
 type recorder struct {
 	started time.Time
 	mu      sync.Mutex
 	samples []sample
+	// live holds only handles that have not ended, so it is bounded by
+	// the work in flight.
+	live map[*inflight]struct{}
+	// changed is closed when a live handle ends while settle waits.
+	changed chan struct{}
+}
+
+// inflight is one registered operation; done is guarded by recorder.mu.
+type inflight struct {
+	op    uint8
+	start time.Time
+	at    time.Duration // start since the recorder started
+	done  bool
 }
 
 func newRecorder() *recorder {
-	return &recorder{started: time.Now(), samples: make([]sample, 0, 1<<16)}
+	return &recorder{started: time.Now(), samples: make([]sample, 0, 1<<16), live: map[*inflight]struct{}{}}
+}
+
+// begin registers an operation that started at start, which may be
+// earlier than now (a queued job keeps its enqueue time).
+func (r *recorder) begin(op int, start time.Time) *inflight {
+	h := &inflight{op: uint8(op), start: start, at: start.Sub(r.started)}
+	r.mu.Lock()
+	r.live[h] = struct{}{}
+	r.mu.Unlock()
+	return h
+}
+
+// end records h's one sample. It reports false, and records nothing, when
+// h has already ended (settle may have counted it as unfinished).
+func (r *recorder) end(h *inflight, result outcome, latency time.Duration) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if h.done {
+		return false
+	}
+	r.endLocked(h, result, latency)
+	return true
+}
+
+// abandon ends h as unfinished, for work given up on cancellation.
+func (r *recorder) abandon(h *inflight) bool {
+	return r.end(h, outcomeUnfinished, time.Since(h.start))
+}
+
+func (r *recorder) endLocked(h *inflight, result outcome, latency time.Duration) {
+	h.done = true
+	delete(r.live, h)
+	r.samples = append(r.samples, sample{at: h.at, latency: latency, op: h.op, result: result})
+	if r.changed != nil {
+		close(r.changed)
+		r.changed = nil
+	}
+}
+
+// liveCount is the number of handles that have not ended.
+func (r *recorder) liveCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.live)
+}
+
+// settle waits, without holding the lock, until no live handle started
+// before to (an offset like summarize's). When grace runs out first, each
+// handle still live that started before to is recorded once as unfinished
+// and its later end is a no-op. It returns how many it forced, and returns
+// early when ctx is done.
+func (r *recorder) settle(ctx context.Context, to, grace time.Duration) int {
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	for {
+		r.mu.Lock()
+		pending := false
+		for h := range r.live {
+			if h.at < to {
+				pending = true
+				break
+			}
+		}
+		if !pending {
+			r.mu.Unlock()
+			return 0
+		}
+		if r.changed == nil {
+			r.changed = make(chan struct{})
+		}
+		changed := r.changed
+		r.mu.Unlock()
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return 0
+		case <-timer.C:
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			forced := 0
+			for h := range r.live {
+				if h.at < to {
+					r.endLocked(h, outcomeUnfinished, time.Since(h.start))
+					forced++
+				}
+			}
+			return forced
+		}
+	}
 }
 
 func classify(status int, err error) outcome {
@@ -117,6 +250,10 @@ func (r *recorder) record(op int, started time.Time, latency time.Duration, resu
 	r.mu.Unlock()
 }
 
+// opSummary is one operation class over a window. The latency percentiles
+// and max cover successful operations; for realtime_delivery they also rank
+// missed and unfinished deliveries at the time waited for them (a lower
+// bound), so max_ms sits near the delivery deadline when any was missed.
 type opSummary struct {
 	Op           string  `json:"op"`
 	Count        int     `json:"count"`
@@ -165,6 +302,12 @@ func (r *recorder) summarize(from, to time.Duration) ([]opSummary, timelineSumma
 			summary.ClientErrors++
 		default:
 			summary.Errors++
+			// A delivery nobody saw took at least the time waited for it,
+			// so it ranks with that wait as a lower bound: a lost delivery
+			// can never make the delivery percentiles look better.
+			if s.op == opDelivery {
+				latencies[s.op] = append(latencies[s.op], s.latency)
+			}
 		}
 	}
 	for i := range summaries {
@@ -199,7 +342,7 @@ func timeline(samples []sample) timelineSummary {
 			bucket = &second{}
 			buckets[index] = bucket
 		}
-		if s.result == outcomeServerError || s.result == outcomeTransportError {
+		if failedOutcome(s.result) {
 			bucket.failed++
 		} else {
 			bucket.ok++
@@ -295,6 +438,12 @@ func evaluateStep(step stepResult) verdict {
 	}
 	if d := step.Ops[opDelivery]; d.Count > 0 && d.P99Ms > targetDeliveryP99S*1000 {
 		v.Missed = append(v.Missed, fmt.Sprintf("realtime delivery p99 %.0f ms > %d s", d.P99Ms, targetDeliveryP99S))
+	}
+	// The latency percentiles cover the deliveries that were seen. A missed
+	// one took longer than the delivery deadline (above the target), so
+	// when more than 1% are missed the p99 is above the target too.
+	if d := step.Ops[opDelivery]; d.Errors > 0 && float64(d.Errors) > 0.01*float64(d.Count) {
+		v.Missed = append(v.Missed, fmt.Sprintf("realtime delivery: %d of %d expected deliveries missed, so p99 > %d s", d.Errors, d.Count, targetDeliveryP99S))
 	}
 	v.Pass = len(v.Missed) == 0
 	return v

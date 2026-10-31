@@ -21,15 +21,16 @@ import (
 )
 
 // profile is a synthetic dataset. The workload model is per online device:
-// one sync socket; Poisson sends at -rate per minute through
+// one sync socket; open-loop Poisson sends at -rate per minute through
 // POST /messages/envelopes (the app's send path); one message in
 // AttachmentEvery carries an attachment that every online recipient
 // downloads, and one attachment in LargeEvery is LargeAttachmentBytes;
 // every realtime event runs the app's catch-up (GET /sync/events until
 // empty, coalesced while one runs, as mobile/lib/core/app_state.dart does);
 // a conversation-list read and a history page about every two minutes.
-// -companions adds a second client for that share of accounts (sockets,
-// catch-up and reads, no sends) and -cold makes that share of devices catch
+// -companions adds a second, separately linked device for that share of
+// online accounts (its own session, address, socket, catch-up, reads and
+// downloads; no sends) and -cold makes that share of devices catch
 // up once from the middle of the instance's history, as after a night
 // offline.
 type profile struct {
@@ -61,6 +62,28 @@ const (
 	attachmentMetadata = `{"version":1,"algorithm":"AES-256-GCM-chunked","chunk_size":1048576}`
 	seedWorkers        = 8
 	readEvery          = 2 * time.Minute
+	// maxSendsInFlight caps one device's concurrent arrivals (upload plus
+	// send). Arrivals over it are recorded as dropped sends, so a stalled
+	// server shows as failures instead of lowering the offered load.
+	maxSendsInFlight = 8
+	// rateCheckEvery bounds how long a new step's rate waits to apply.
+	rateCheckEvery = time.Second
+	// settleGrace is how long a step's summary waits for operations that
+	// started in its window: the API client's timeout plus a margin, so
+	// every HTTP request ends on its own first. What is still running then
+	// is counted once as unfinished.
+	settleGrace = clientTimeout + 10*time.Second
+	// defaultDeliveryDeadline is how long after a send's start a recipient
+	// client may take to see its realtime event before the delivery counts
+	// as missed (-delivery-deadline). It is well above the 2 s p99 target,
+	// so a slow delivery stays a latency sample, and below settleGrace, so
+	// a step's summary waits for every delivery to end.
+	defaultDeliveryDeadline = 30 * time.Second
+	// downloadQueue is how many attachments one client may have waiting.
+	// Each client downloads in order on its own; an attachment arriving
+	// when its queue is full is recorded as a dropped download, because
+	// that client has fallen far behind.
+	downloadQueue = 32
 )
 
 type conversation struct {
@@ -76,16 +99,25 @@ type world struct {
 	convs    []conversation
 	byDevice [][]int
 	rec      *recorder
-	// pending maps a message's idempotency key to its send start, for the
-	// realtime delivery latency seen by recipients.
-	pending    sync.Map
+	// companions holds each account's separately linked companion device,
+	// nil when it has none. Companions never send.
+	companions []*device
+	// clients holds, per online device index, the devices its simulated
+	// clients use: slot 0 is the primary client, slot 1 a companion. It is
+	// nil for devices that are offline during the load.
+	clients [][]*device
+	// deliveries measures the realtime delivery of each acknowledged send
+	// to every expected recipient client.
+	deliveries *deliveryTracker
 	ackMu      sync.Mutex
 	acked      []ackedMessage
 	reconnects atomic.Int64
-	downloads  chan download
 	// rate is the current messages per device per minute (float64 bits);
 	// each load step sets it.
 	rate atomic.Uint64
+	// arrivals counts scheduled send arrivals, dropped ones included, for
+	// the offered rate of each step.
+	arrivals atomic.Int64
 }
 
 type ackedMessage struct {
@@ -93,9 +125,14 @@ type ackedMessage struct {
 	sender int
 }
 
+// download is one attachment a client fetches after its realtime event.
+// Its recorder handle was opened when the event arrived, so queueing time
+// counts and the window that saw the event waits for it.
 type download struct {
 	dev *device
 	id  string
+	at  time.Time // when the event arrived
+	h   *inflight
 }
 
 type runResult struct {
@@ -119,11 +156,17 @@ type runResult struct {
 
 // stepResult is one measured window at one send rate.
 type stepResult struct {
-	Rate     float64            `json:"messages_per_device_minute"`
+	Rate float64 `json:"messages_per_device_minute"`
+	// Offered is the send rate actually generated in the window: arrivals
+	// (dropped ones included) per online device per minute.
+	Offered  float64            `json:"offered_messages_per_device_minute"`
 	Ops      []opSummary        `json:"ops"`
 	Timeline timelineSummary    `json:"timeline"`
 	Server   map[string]float64 `json:"server_metrics,omitempty"`
-	Verdict  verdict            `json:"verdict"`
+	// ServerError says why server metrics are missing or lack the counter
+	// deltas; it is a fixed message without URLs or response text.
+	ServerError string  `json:"server_metrics_error,omitempty"`
+	Verdict     verdict `json:"verdict"`
 }
 
 type verifyResult struct {
@@ -135,53 +178,71 @@ type verifyResult struct {
 func execute(ctx context.Context, target *url.URL, setupToken string, opts options, progress io.Writer) (*runResult, error) {
 	rng := mrand.New(mrand.NewPCG(opts.Seed, uint64(opts.Profile.Accounts)))
 	w := &world{
-		client:    newAPIClient(target, 4*opts.Profile.Accounts+seedWorkers),
-		base:      target,
-		profile:   opts.Profile,
-		rec:       newRecorder(),
-		downloads: make(chan download, 1024),
+		client:  newAPIClient(target, 4*opts.Profile.Accounts+seedWorkers),
+		base:    target,
+		profile: opts.Profile,
+		rec:     newRecorder(),
 	}
 	w.rate.Store(math.Float64bits(opts.Rates[0]))
 	result := &runResult{StartedAt: time.Now().UTC().Format(time.RFC3339), Profile: opts.Profile, Online: opts.Online,
 		Warmup: opts.Warmup.String(), Measured: opts.Duration.String()}
+	// Plan the online devices first: the seed links a device for each
+	// companion, and every device's clients must be known before any of
+	// them sends, so each send knows all the clients that should see it.
+	type devicePlan struct {
+		rng      *mrand.Rand
+		coldWake chan struct{}
+	}
+	plans := make([]devicePlan, opts.Online)
+	companions := make([]bool, opts.Online)
+	var coldWakes []chan struct{}
+	for i := range plans {
+		plan := devicePlan{rng: mrand.New(mrand.NewPCG(opts.Seed, uint64(1000+i)))}
+		if plan.rng.Float64() < opts.Cold {
+			plan.coldWake = make(chan struct{}, 1)
+			coldWakes = append(coldWakes, plan.coldWake)
+		}
+		companions[i] = plan.rng.Float64() < opts.Companions
+		plans[i] = plan
+	}
 	seedStarted := time.Now()
-	if err := w.seed(ctx, setupToken, rng, progress); err != nil {
+	if err := w.seed(ctx, setupToken, rng, progress, companions); err != nil {
 		return nil, fmt.Errorf("seed: %w", err)
 	}
 	result.SeedDuration = time.Since(seedStarted).Round(time.Second).String()
 	result.Conversations = len(w.convs)
+	w.clients = make([][]*device, len(w.devices))
+	for i := range plans {
+		w.clients[i] = []*device{w.devices[i]}
+		if companion := w.companions[i]; companion != nil {
+			result.Companions++
+			w.clients[i] = append(w.clients[i], companion)
+		}
+	}
 
 	loadCtx, stopLoad := context.WithCancel(ctx)
 	defer stopLoad()
 	var running sync.WaitGroup
 	w.rec = newRecorder()
-	var coldWakes []chan struct{}
-	for i := 0; i < opts.Online; i++ {
+	deadline := opts.DeliveryDeadline
+	if deadline <= 0 {
+		deadline = defaultDeliveryDeadline
+	}
+	w.deliveries = newDeliveryTracker(w.rec, deadline)
+	for i, plan := range plans {
 		dev := w.devices[i]
-		deviceRNG := mrand.New(mrand.NewPCG(opts.Seed, uint64(1000+i)))
-		var coldWake chan struct{}
-		if deviceRNG.Float64() < opts.Cold {
-			coldWake = make(chan struct{}, 1)
-			coldWakes = append(coldWakes, coldWake)
-		}
-		companion := deviceRNG.Float64() < opts.Companions
-		if companion {
-			result.Companions++
-		}
 		running.Add(1)
 		go func() {
 			defer running.Done()
-			w.runDevice(loadCtx, dev, coldWake, companion, deviceRNG)
+			w.runDevice(loadCtx, dev, plan.coldWake, plan.rng)
 		}()
 	}
+	running.Add(1)
+	go func() {
+		defer running.Done()
+		w.deliveries.sweep(loadCtx, time.Second)
+	}()
 	result.Cold = len(coldWakes)
-	for i := 0; i < 4; i++ {
-		running.Add(1)
-		go func() {
-			defer running.Done()
-			w.runDownloads(loadCtx)
-		}()
-	}
 	stepRNG := mrand.New(mrand.NewPCG(opts.Seed, 3))
 	for _, rate := range opts.Rates {
 		w.rate.Store(math.Float64bits(rate))
@@ -195,16 +256,26 @@ func execute(ctx context.Context, target *url.URL, setupToken string, opts optio
 			coldWake := coldWake
 			time.AfterFunc(time.Duration(stepRNG.Int64N(int64(opts.Duration*3/4)+1)), func() { wake(coldWake) })
 		}
-		before := scrape(ctx, opts.MetricsURL)
+		before, beforeErr := scrape(ctx, opts.MetricsURL)
 		fmt.Fprintf(progress, "load: measuring for %s\n", opts.Duration)
 		measureFrom := time.Since(w.rec.started)
+		arrivalsFrom := w.arrivals.Load()
 		sleepCtx(ctx, opts.Duration)
 		measureTo := time.Since(w.rec.started)
-		after := scrape(ctx, opts.MetricsURL)
+		arrivalsTo := w.arrivals.Load()
+		after, afterErr := scrape(ctx, opts.MetricsURL)
 		step := stepResult{Rate: rate}
+		if minutes := (measureTo - measureFrom).Minutes(); minutes > 0 {
+			step.Offered = float64(arrivalsTo-arrivalsFrom) / float64(opts.Online) / minutes
+		}
+		// Operations started in the window are summarized only once they
+		// have ended, the slowest included; load goes on meanwhile.
+		if forced := w.rec.settle(ctx, measureTo, settleGrace); forced > 0 {
+			fmt.Fprintf(progress, "load: %d operations from the window still unfinished after %s, counted as errors\n", forced, settleGrace)
+		}
 		step.Ops, step.Timeline = w.rec.summarize(measureFrom, measureTo)
 		if opts.MetricsURL != "" {
-			step.Server = serverSummary(before, after, (measureTo - measureFrom).Seconds())
+			step.Server, step.ServerError = serverMetrics(before, beforeErr, after, afterErr, (measureTo - measureFrom).Seconds())
 		}
 		step.Verdict = evaluateStep(step)
 		result.Steps = append(result.Steps, step)
@@ -214,12 +285,21 @@ func execute(ctx context.Context, target *url.URL, setupToken string, opts optio
 	}
 	stopLoad()
 	running.Wait()
+	w.deliveries.drain()
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
 	result.SocketReconnects = w.reconnects.Load()
 	if opts.Verify {
-		result.Verify = w.verify(ctx)
+		verified, err := w.verify(ctx)
+		if err == nil {
+			err = ctx.Err()
+		}
+		if err != nil {
+			// A cancelled verification checked only part of the messages.
+			return nil, err
+		}
+		result.Verify = verified
 	}
 	finish(result)
 	return result, nil
@@ -253,7 +333,13 @@ func randomSecret() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
 }
 
-func (w *world) seed(ctx context.Context, setupToken string, rng *mrand.Rand, progress io.Writer) error {
+// companionIP gives account i's companion device its own client address,
+// apart from the primaries' (deviceIP) and seeding's (seedIP) ranges.
+func companionIP(i int) string { return fmt.Sprintf("10.79.%d.%d", i/250, i%250+1) }
+
+// seed creates the dataset. companions[i] asks for a second, separately
+// linked device for account i.
+func (w *world) seed(ctx context.Context, setupToken string, rng *mrand.Rand, progress io.Writer, companions []bool) error {
 	p := w.profile
 	password, err := randomSecret()
 	if err != nil {
@@ -266,14 +352,24 @@ func (w *world) seed(ctx context.Context, setupToken string, rng *mrand.Rand, pr
 		return fmt.Errorf("owner setup (the instance must be fresh): %w", err)
 	}
 	w.devices = make([]*device, p.Accounts)
+	w.companions = make([]*device, p.Accounts)
 	w.devices[0] = &device{index: 0, token: owner.Token, accountID: owner.Account.ID, deviceID: owner.Device.ID, ip: deviceIP(0)}
+	linked := 0
+	for i := range min(len(companions), p.Accounts) {
+		if companions[i] {
+			linked++
+		}
+	}
+	fmt.Fprintf(progress, "seed: registering %d accounts and linking %d companion devices\n", p.Accounts-1, linked)
+	if err := w.linkCompanion(ctx, 0, companions); err != nil {
+		return err
+	}
 	var invite struct {
 		Code string `json:"code"`
 	}
 	if err := expect(w.client.json(ctx, http.MethodPost, "/api/v1/invites", w.devices[0], "", map[string]any{"max_uses": p.Accounts - 1}, &invite, nil)); err != nil {
 		return fmt.Errorf("create invite: %w", err)
 	}
-	fmt.Fprintf(progress, "seed: registering %d accounts\n", p.Accounts-1)
 	if err := parallel(ctx, p.Accounts-1, 4, func(ctx context.Context, n int) error {
 		i := n + 1
 		session, err := w.client.enroll(ctx, "/api/v1/register/enrollment", "/api/v1/register", deviceIP(i), nil,
@@ -283,7 +379,7 @@ func (w *world) seed(ctx context.Context, setupToken string, rng *mrand.Rand, pr
 			return err
 		}
 		w.devices[i] = &device{index: i, token: session.Token, accountID: session.Account.ID, deviceID: session.Device.ID, ip: deviceIP(i)}
-		return nil
+		return w.linkCompanion(ctx, i, companions)
 	}); err != nil {
 		return fmt.Errorf("register: %w", err)
 	}
@@ -344,6 +440,22 @@ func (w *world) seed(ctx context.Context, setupToken string, rng *mrand.Rand, pr
 	}); err != nil {
 		return fmt.Errorf("history: %w", err)
 	}
+	return nil
+}
+
+// linkCompanion links account i's companion device when one is planned. It
+// runs right after the account is created, because linking needs a
+// sign-in from the last five minutes, which a long history seed outlasts,
+// and so the companion is a member device before any conversation exists.
+func (w *world) linkCompanion(ctx context.Context, i int, companions []bool) error {
+	if i >= len(companions) || !companions[i] {
+		return nil
+	}
+	session, err := w.client.linkDevice(ctx, w.devices[i], companionIP(i), "load companion")
+	if err != nil {
+		return fmt.Errorf("link companion: %w", err)
+	}
+	w.companions[i] = &device{index: i, token: session.Token, accountID: session.Account.ID, deviceID: session.Device.ID, ip: companionIP(i)}
 	return nil
 }
 
@@ -474,94 +586,169 @@ func (w *world) sendMessage(ctx context.Context, dev *device, conversationID str
 }
 
 func (w *world) timed(op int, fn func() (int, error)) (int, error) {
-	started := time.Now()
+	return w.timedFrom(op, time.Now(), fn)
+}
+
+// timedFrom measures fn from started, which may be earlier than the call:
+// a send is timed from its scheduled arrival, so delay on the client side
+// counts against it (no coordinated omission).
+func (w *world) timedFrom(op int, started time.Time, fn func() (int, error)) (int, error) {
+	h := w.rec.begin(op, started)
 	status, err := fn()
-	w.rec.record(op, started, time.Since(started), classify(status, err))
+	w.rec.end(h, classify(status, err), time.Since(started))
 	return status, err
 }
 
-func (w *world) runDevice(ctx context.Context, dev *device, coldWake <-chan struct{}, companion bool, rng *mrand.Rand) {
+func (w *world) runDevice(ctx context.Context, dev *device, coldWake <-chan struct{}, rng *mrand.Rand) {
 	var wg sync.WaitGroup
-	clients := 1
-	if companion {
-		clients = 2
-	}
-	for c := 0; c < clients; c++ {
+	for slot, clientDev := range w.clients[dev.index] {
 		catchUp := make(chan struct{}, 1)
 		var cold <-chan struct{}
-		if c == 0 {
+		if slot == 0 {
 			cold = coldWake
 		}
 		seed := rng.Uint64()
-		wg.Add(3)
-		go func() { defer wg.Done(); w.runSocket(ctx, dev, catchUp) }()
-		go func() { defer wg.Done(); w.runCatchUp(ctx, dev, catchUp, cold) }()
-		go func() { defer wg.Done(); w.runReads(ctx, dev, seed) }()
+		client := clientSlot{dev: dev.index, slot: slot}
+		downloads := make(chan download, downloadQueue)
+		wg.Add(4)
+		go func() {
+			defer wg.Done()
+			// Only the producer closes the queue, once it can send no more.
+			defer close(downloads)
+			w.runSocket(ctx, clientDev, client, catchUp, downloads)
+		}()
+		go func() { defer wg.Done(); w.runDownloads(ctx, downloads) }()
+		go func() { defer wg.Done(); w.runCatchUp(ctx, clientDev, catchUp, cold) }()
+		go func() { defer wg.Done(); w.runReads(ctx, clientDev, seed) }()
 	}
 	w.runSender(ctx, dev, rng)
 	wg.Wait()
 }
 
+// sendRate is the current step's messages per device per minute.
+func (w *world) sendRate() float64 { return math.Float64frombits(w.rate.Load()) }
+
+// nextGap draws one exponential interarrival gap at rate messages a minute.
+// It is never truncated: these gaps make an exact Poisson process.
+func nextGap(rng *mrand.Rand, rate float64) time.Duration {
+	gap := rng.ExpFloat64() * float64(time.Minute) / rate
+	// Keep the conversion defined for a vanishing rate; the sender rechecks
+	// the rate every second anyway.
+	return time.Duration(min(gap, float64(100*365*24*time.Hour)))
+}
+
+// runSender generates the device's sends as an open loop: arrivals follow a
+// Poisson process at the current rate whether or not earlier sends have
+// finished, so a slow server cannot lower the load it is offered. The wait
+// is checked against the rate at least every rateCheckEvery; on a change
+// the remaining wait is redrawn at the new rate, which exponential gaps
+// allow without bias. Each arrival runs on its own goroutine, at most
+// maxSendsInFlight at once; an arrival over that cap is recorded as a
+// dropped send. runSender returns only after its sends have finished.
 func (w *world) runSender(ctx context.Context, dev *device, rng *mrand.Rand) {
 	convs := w.byDevice[dev.index]
 	if len(convs) == 0 {
 		<-ctx.Done()
 		return
 	}
+	var inFlight sync.WaitGroup
+	defer inFlight.Wait()
+	slots := make(chan struct{}, maxSendsInFlight)
+	rate := w.sendRate()
+	next := time.Now()
+	if rate > 0 {
+		next = next.Add(nextGap(rng, rate))
+	}
 	for {
-		rate := math.Float64frombits(w.rate.Load())
-		if rate <= 0 {
-			if !sleepCtx(ctx, time.Second) {
+		if now := time.Now(); rate <= 0 || now.Before(next) {
+			wait := rateCheckEvery
+			if rate > 0 {
+				wait = min(wait, next.Sub(now))
+			}
+			if !sleepCtx(ctx, wait) {
 				return
+			}
+			if current := w.sendRate(); current != rate {
+				rate = current
+				if rate > 0 {
+					next = time.Now().Add(nextGap(rng, rate))
+				}
 			}
 			continue
 		}
-		// Poisson arrivals; a gap is capped so a rate change applies soon.
-		meanGap := float64(time.Minute) / rate
-		gap := time.Duration(min(-math.Log(1-rng.Float64())*meanGap, float64(2*time.Minute)))
-		if !sleepCtx(ctx, gap) {
-			return
-		}
+		// The next arrival is drawn from this one's scheduled time, not from
+		// when the loop got here, so a late wake-up does not stretch gaps.
+		arrival := next
+		next = arrival.Add(nextGap(rng, rate))
+		w.arrivals.Add(1)
+		// rng is not safe for concurrent use: draw everything here.
 		conv := w.convs[convs[rng.IntN(len(convs))]]
-		var refs []string
+		attachment := 0
 		if w.profile.AttachmentEvery > 0 && rng.IntN(w.profile.AttachmentEvery) == 0 {
-			var id string
-			_, err := w.timed(opUpload, func() (int, error) {
-				var err error
-				size := w.profile.AttachmentBytes
-				if w.profile.LargeEvery > 0 && rng.IntN(w.profile.LargeEvery) == 0 {
-					size = w.profile.LargeBytes
-				}
-				id, err = w.uploadAttachment(ctx, dev, conv.id, "", size)
-				return http.StatusCreated, err
-			})
-			if err != nil {
-				continue
+			attachment = w.profile.AttachmentBytes
+			if w.profile.LargeEvery > 0 && rng.IntN(w.profile.LargeEvery) == 0 {
+				attachment = w.profile.LargeBytes
 			}
-			refs = []string{id}
 		}
-		key, err := randomSecret()
+		select {
+		case slots <- struct{}{}:
+		default:
+			w.rec.record(opSend, arrival, 0, outcomeDropped)
+			continue
+		}
+		inFlight.Add(1)
+		go func() {
+			defer inFlight.Done()
+			defer func() { <-slots }()
+			w.sendArrival(ctx, dev, conv, attachment, arrival)
+		}()
+	}
+}
+
+// sendArrival performs one arrival: the attachment upload first, when there
+// is one, then the send that references it. The upload is timed from the
+// scheduled arrival and the send from when it could start.
+func (w *world) sendArrival(ctx context.Context, dev *device, conv conversation, attachment int, arrival time.Time) {
+	var refs []string
+	var send *inflight
+	if attachment > 0 {
+		upload := w.rec.begin(opUpload, arrival)
+		id, err := w.uploadAttachment(ctx, dev, conv.id, "", attachment)
+		if err == nil {
+			refs = []string{id}
+			// Register the send before the upload ends, so a step's
+			// settle never sees this arrival with nothing in flight.
+			send = w.rec.begin(opSend, time.Now())
+		}
+		w.rec.end(upload, classify(http.StatusCreated, err), time.Since(arrival))
 		if err != nil {
 			return
 		}
-		body := map[string]any{"conversation_id": conv.id, "idempotency_key": key,
-			"ciphertext": w.ciphertext(w.profile.CiphertextBytes), "crypto_protocol": cryptoProtocol}
-		if len(refs) > 0 {
-			body["attachment_refs"] = refs
-		}
-		w.pending.Store(key, time.Now())
-		var created struct {
-			ID string `json:"id"`
-		}
-		_, err = w.timed(opSend, func() (int, error) {
-			status, err := w.client.json(ctx, http.MethodPost, "/api/v1/messages/envelopes", dev, "", body, &created, nil)
-			return status, expect(status, err, http.StatusCreated)
-		})
-		if err == nil && created.ID != "" {
-			w.ackMu.Lock()
-			w.acked = append(w.acked, ackedMessage{id: created.ID, sender: dev.index})
-			w.ackMu.Unlock()
-		}
+	} else {
+		send = w.rec.begin(opSend, arrival)
+	}
+	key, err := randomSecret()
+	if err != nil {
+		w.rec.end(send, outcomeTransportError, time.Since(send.start))
+		return
+	}
+	body := map[string]any{"conversation_id": conv.id, "idempotency_key": key,
+		"ciphertext": w.ciphertext(w.profile.CiphertextBytes), "crypto_protocol": cryptoProtocol}
+	if len(refs) > 0 {
+		body["attachment_refs"] = refs
+	}
+	w.deliveries.start(key, send.start, w.expectedRecipients(dev, conv))
+	var created struct {
+		ID string `json:"id"`
+	}
+	status, err := w.client.json(ctx, http.MethodPost, "/api/v1/messages/envelopes", dev, "", body, &created, nil)
+	err = expect(status, err, http.StatusCreated)
+	w.deliveries.sent(key, err == nil && created.ID != "")
+	w.rec.end(send, classify(status, err), time.Since(send.start))
+	if err == nil && created.ID != "" {
+		w.ackMu.Lock()
+		w.acked = append(w.acked, ackedMessage{id: created.ID, sender: dev.index})
+		w.ackMu.Unlock()
 	}
 }
 
@@ -574,7 +761,7 @@ type realtimeEvent struct {
 	} `json:"payload"`
 }
 
-func (w *world) runSocket(ctx context.Context, dev *device, catchUp chan<- struct{}) {
+func (w *world) runSocket(ctx context.Context, dev *device, client clientSlot, catchUp chan<- struct{}, downloads chan<- download) {
 	backoff := time.Second
 	for ctx.Err() == nil {
 		var socket *syncSocket
@@ -608,16 +795,8 @@ func (w *world) runSocket(ctx context.Context, dev *device, catchUp chan<- struc
 			now := time.Now()
 			var event realtimeEvent
 			if json.Unmarshal(payload, &event) == nil && event.Type == "message.envelope.created" && event.Payload.SenderDeviceID != dev.deviceID {
-				if sent, ok := w.pending.Load(event.Payload.IdempotencyKey); ok {
-					started := sent.(time.Time)
-					w.rec.record(opDelivery, started, now.Sub(started), outcomeOK)
-				}
-				for _, id := range event.Payload.AttachmentRefs {
-					select {
-					case w.downloads <- download{dev: dev, id: id}:
-					default:
-					}
-				}
+				w.deliveries.observe(event.Payload.IdempotencyKey, client, now)
+				w.queueDownloads(downloads, dev, event.Payload.AttachmentRefs, now)
 			}
 			wake(catchUp)
 		}
@@ -663,9 +842,14 @@ func (w *world) runCatchUp(ctx context.Context, dev *device, wake, cold <-chan s
 			}
 		}
 		if cursor < 0 {
+			// The request that sets the cursor is a measured sync too, so
+			// a client that cannot start shows up as failed syncs.
 			var page syncPage
-			status, err := w.client.json(ctx, http.MethodGet, "/api/v1/sync/events?after=0&limit=1", dev, "", nil, &page, nil)
-			if expect(status, err, http.StatusOK) != nil {
+			_, err := w.timed(opSync, func() (int, error) {
+				status, err := w.client.json(ctx, http.MethodGet, "/api/v1/sync/events?after=0&limit=1", dev, "", nil, &page, nil)
+				return status, expect(status, err, http.StatusOK)
+			})
+			if err != nil {
 				continue
 			}
 			cursor = page.Latest
@@ -711,36 +895,62 @@ func (w *world) runReads(ctx context.Context, dev *device, seed uint64) {
 	}
 }
 
-func (w *world) runDownloads(ctx context.Context) {
-	for {
+// queueDownloads queues every attachment of one realtime event for the
+// client's downloader. Each download is registered when the event arrives;
+// when the client's queue is full it is recorded as dropped at once.
+func (w *world) queueDownloads(queue chan<- download, dev *device, ids []string, at time.Time) {
+	for _, id := range ids {
+		h := w.rec.begin(opDownload, at)
 		select {
-		case <-ctx.Done():
-			return
-		case job := <-w.downloads:
-			_, _ = w.timed(opDownload, func() (int, error) {
-				status, _, err := w.client.do(ctx, request{method: http.MethodGet, path: "/api/v1/attachments/" + url.PathEscape(job.id), dev: job.dev}, nil)
-				return status, expect(status, err, http.StatusOK)
-			})
+		case queue <- download{dev: dev, id: id, at: at, h: h}:
+		default:
+			w.rec.end(h, outcomeDropped, 0)
 		}
+	}
+}
+
+// runDownloads fetches one client's attachments in order, as the app does,
+// and drains each body without keeping it. A download is timed from its
+// event, so queueing counts. Once ctx is done every job left, and one cut
+// short by the cancellation, ends as unfinished. It returns when the
+// producer closes the queue, so no handle is left live.
+func (w *world) runDownloads(ctx context.Context, queue <-chan download) {
+	for job := range queue {
+		if ctx.Err() != nil {
+			w.rec.abandon(job.h)
+			continue
+		}
+		status, _, err := w.client.do(ctx, request{method: http.MethodGet, path: "/api/v1/attachments/" + url.PathEscape(job.id), dev: job.dev}, nil)
+		if ctx.Err() != nil {
+			w.rec.abandon(job.h)
+			continue
+		}
+		w.rec.end(job.h, classify(status, expect(status, err, http.StatusOK)), time.Since(job.at))
 	}
 }
 
 // verify fetches every acknowledged message after the load: a committed
 // message that is missing (for example after a restart) is a lost write.
-func (w *world) verify(ctx context.Context) *verifyResult {
+// Checked counts only fetches that completed; a fetch cut short by
+// cancellation is neither checked nor an error, and the cancellation is
+// returned so no complete-looking result is reported.
+func (w *world) verify(ctx context.Context) (*verifyResult, error) {
 	w.ackMu.Lock()
 	acked := append([]ackedMessage(nil), w.acked...)
 	w.ackMu.Unlock()
-	result := &verifyResult{Checked: len(acked)}
-	var missing, failed atomic.Int64
+	var checked, missing, failed atomic.Int64
 	rng := mrand.New(mrand.NewPCG(99, uint64(len(acked))))
 	ips := make([]string, len(acked))
 	for i := range ips {
 		ips[i] = seedIP(rng)
 	}
-	_ = parallel(ctx, len(acked), seedWorkers, func(ctx context.Context, i int) error {
+	err := parallel(ctx, len(acked), seedWorkers, func(ctx context.Context, i int) error {
 		message := acked[i]
 		status, _, err := w.client.do(ctx, request{method: http.MethodGet, path: "/api/v1/messages/" + url.PathEscape(message.id), dev: w.devices[message.sender], ip: ips[i]}, nil)
+		if err != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
+		checked.Add(1)
 		switch {
 		case err == nil && status == http.StatusOK:
 		case err == nil && status == http.StatusNotFound:
@@ -750,29 +960,47 @@ func (w *world) verify(ctx context.Context) *verifyResult {
 		}
 		return nil
 	})
-	result.Missing, result.Errors = int(missing.Load()), int(failed.Load())
-	return result
+	return &verifyResult{Checked: int(checked.Load()), Missing: int(missing.Load()), Errors: int(failed.Load())}, err
 }
 
+// Fixed scrape errors: they reach the report, so they never carry the URL,
+// a response body or an underlying error text.
+var (
+	errScrapeRequest = errors.New("metrics request failed")
+	errScrapeStatus  = errors.New("metrics endpoint did not answer 200")
+	errScrapeBody    = errors.New("metrics body was unreadable or too large")
+)
+
+const maxScrapeBytes = 16 << 20
+
 // scrape reads the private /metrics text. It keeps only veritra_* series;
-// none of them carries an identifier.
-func scrape(ctx context.Context, metricsURL string) map[string]float64 {
+// none of them carries an identifier. It returns nil, nil when no URL is
+// set, and an error whenever the scrape failed or may be partial: a
+// missing baseline would otherwise turn lifetime counters into a window's
+// deltas.
+func scrape(ctx context.Context, metricsURL string) (map[string]float64, error) {
 	if metricsURL == "" {
-		return nil
+		return nil, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metricsURL, nil)
 	if err != nil {
-		return nil
+		return nil, errScrapeRequest
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil
+		return nil, errScrapeRequest
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+		return nil, errScrapeStatus
+	}
 	values := map[string]float64{}
-	scanner := bufio.NewScanner(io.LimitReader(resp.Body, 16<<20))
+	// One byte over the limit tells a body that was cut off by it.
+	body := &io.LimitedReader{R: resp.Body, N: maxScrapeBytes + 1}
+	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 64<<10), 1<<20)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -789,12 +1017,50 @@ func scrape(ctx context.Context, metricsURL string) map[string]float64 {
 		}
 		values[line[:cut]] = value
 	}
-	return values
+	if scanner.Err() != nil || body.N == 0 {
+		return nil, errScrapeBody
+	}
+	return values, nil
 }
 
 var writerBuckets = []string{"0.001", "0.005", "0.01", "0.025", "0.05", "0.1", "0.25", "0.5", "1", "5"}
 
-// serverSummary reduces two scrapes to the capacity signals in the report.
+// serverMetrics reduces the scrapes around one window to the step's server
+// signals. Counter deltas need a complete baseline: without one a key
+// missing from before would read as 0 and report the lifetime counter as
+// the window's figure, so they are left out and the returned message says
+// why. Gauges come from the end-of-window scrape alone.
+func serverMetrics(before map[string]float64, beforeErr error, after map[string]float64, afterErr error, seconds float64) (map[string]float64, string) {
+	switch {
+	case afterErr != nil && beforeErr != nil:
+		return nil, "both scrapes failed"
+	case afterErr != nil:
+		return nil, "end-of-window scrape failed"
+	case len(after) == 0:
+		return nil, "end-of-window scrape had no veritra metrics"
+	case beforeErr != nil:
+		return serverGauges(after), "baseline scrape failed; counter deltas omitted"
+	}
+	return serverSummary(before, after, seconds), ""
+}
+
+// serverGauges holds the values read from the end-of-window scrape alone.
+func serverGauges(after map[string]float64) map[string]float64 {
+	return map[string]float64{
+		"go_memory_bytes":        after["veritra_go_memory_bytes"],
+		"go_heap_live_bytes":     after["veritra_go_heap_live_bytes"],
+		"go_goroutines":          after["veritra_go_goroutines"],
+		"realtime_connections":   after["veritra_realtime_connections"],
+		"retention_backlog_rows": after["veritra_retention_backlog_rows"],
+		"storage_database_bytes": after[`veritra_storage_bytes{component="database"}`],
+		"storage_wal_bytes":      after[`veritra_storage_bytes{component="wal"}`],
+		"storage_blob_bytes":     after[`veritra_storage_bytes{component="blobs"}`],
+	}
+}
+
+// serverSummary reduces two complete scrapes to the capacity signals in the
+// report: the gauges plus counter deltas over the window. A counter absent
+// from a complete baseline did not exist yet, so it counts from zero.
 func serverSummary(before, after map[string]float64, seconds float64) map[string]float64 {
 	if len(after) == 0 {
 		return nil
@@ -807,23 +1073,18 @@ func serverSummary(before, after map[string]float64, seconds float64) map[string
 		}
 		return after[key] - before[key]
 	}
-	summary := map[string]float64{
-		"go_memory_bytes":                 after["veritra_go_memory_bytes"],
-		"go_heap_live_bytes":              after["veritra_go_heap_live_bytes"],
-		"go_goroutines":                   after["veritra_go_goroutines"],
-		"realtime_connections":            after["veritra_realtime_connections"],
+	summary := serverGauges(after)
+	for key, value := range map[string]float64{
 		"realtime_dropped_events_delta":   delta("veritra_realtime_dropped_events_total"),
 		"http_5xx_delta":                  delta(`veritra_http_responses_total{status_class="5xx"}`),
-		"retention_backlog_rows":          after["veritra_retention_backlog_rows"],
-		"storage_database_bytes":          after[`veritra_storage_bytes{component="database"}`],
-		"storage_wal_bytes":               after[`veritra_storage_bytes{component="wal"}`],
-		"storage_blob_bytes":              after[`veritra_storage_bytes{component="blobs"}`],
 		"writer_waits_delta":              delta(`veritra_sqlite_pool_waits_total{pool="writer"}`),
 		"writer_mean_queue":               delta(`veritra_sqlite_pool_wait_seconds_total{pool="writer"}`) / seconds,
 		"reader_waits_delta":              delta(`veritra_sqlite_pool_waits_total{pool="reader"}`),
 		"rate_limit_rejections_delta":     delta(`veritra_rate_limit_rejections_total{scope="general"}`) + delta(`veritra_rate_limit_rejections_total{scope="auth"}`) + delta(`veritra_rate_limit_rejections_total{scope="enrollment"}`),
 		"writer_acquire_count_delta":      delta("veritra_sqlite_writer_acquire_duration_seconds_count"),
 		"writer_acquire_mean_ms_in_delta": 0,
+	} {
+		summary[key] = value
 	}
 	if count := summary["writer_acquire_count_delta"]; count > 0 {
 		summary["writer_acquire_mean_ms_in_delta"] = 1000 * delta("veritra_sqlite_writer_acquire_duration_seconds_sum") / count
