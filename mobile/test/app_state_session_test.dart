@@ -337,14 +337,14 @@ void main() {
       h.dispose();
     });
 
-    test('a session the server rejects asks for a password sign-in', () async {
+    test('a session the server rejects restores for a password sign-in',
+        () async {
       final api = _Api()
         ..conversationsFailure = ApiException(401, '{"error":"unauthorized"}');
       final h = await restored(_BackupMode.session, api: api);
-      expect(await h.state.restoreFromBackup('v1.code'), isFalse);
+      expect(await h.state.restoreFromBackup('v1.code'), isTrue);
       expect(h.state.session, isNull);
-      expect(h.state.errorFor(Ops.restore),
-          contains('Sign in with your password'));
+      expect(h.state.errorFor(Ops.restore), isNull);
       // The identity stays for that sign-in.
       expect((await h.store.loadSession())?.deviceId, _owner.deviceId);
       h.dispose();

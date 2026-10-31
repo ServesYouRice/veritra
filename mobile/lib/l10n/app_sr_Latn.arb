@@ -496,7 +496,6 @@
   "backupErrorDeviceNotEmpty": "Ovaj uređaj već ima nalog. Odjavite se i resetujte uređaj pre vraćanja rezervne kopije.",
   "backupErrorTooLarge": "Rezervna kopija je veća od onoga što ova aplikacija podržava.",
   "backupErrorStorage": "Ovaj uređaj nije mogao da sačuva rezervnu kopiju.",
-  "backupErrorSignInAgain": "Rezervna kopija je vraćena na ovaj uređaj, ali njena sesija više nije važeća. Prijavite se lozinkom da biste nastavili.",
   "syncErrorCursorExpired": "Ovaj uređaj je bio odsutan duže nego što server čuva ažuriranja. Vratite rezervnu kopiju ili ponovo povežite ovaj uređaj.",
   "syncErrorControlMissing": "Ažuriranje šifrovanja za neki razgovor nedostaje ili je oštećeno. Poruke su pauzirane da nijedna ne bi bila preskočena.",
   "syncErrorMlsState": "Ovaj uređaj nije mogao da ažurira svoje stanje šifrovanja. Poruke su pauzirane da nijedna ne bi bila preskočena.",
