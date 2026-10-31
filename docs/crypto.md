@@ -257,9 +257,12 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     bundle's own epoch, so a refusal that arrives after another device's
     commit won cannot drop a newer staged commit.
   - **Residuals.** An empty or oversized ciphertext (`invalidArgument`)
-    still stops sync. A non-update bundle the server accepted, then
-    refused on retry with 403 (sender no longer a member) is abandoned;
-    its own commit then stops sync at the fork check.
+    still stops sync. A bundle (a self-update too) whose acceptance was
+    lost and whose retry got 403 `forbidden` is abandoned; its own commit
+    would then stop sync at the fork check. The server answers 403 there
+    only when the account left the conversation or the device was
+    revoked, and sync no longer delivers a left conversation's events, so
+    only a revoked device can meet it.
   - Tests: `native_crypto_service_policy_test.dart`,
     `native_crypto_service_d54_review_test.dart` (fault-injected native
     errors) and `chat_undecryptable_placeholder_test.dart`.

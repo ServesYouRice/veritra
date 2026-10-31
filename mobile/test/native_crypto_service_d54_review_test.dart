@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/app_payload.dart';
@@ -9,14 +7,14 @@ import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
 
+import 'native_test_env.dart';
+
 /// Real OpenMLS devices driven through [NativeCryptoService], for the review
 /// of D54: which native errors count as "can never decrypt", and what stays
 /// fail-closed.
 void main() {
-  final configured = Platform.environment['VERITRA_CRYPTO_LIBRARY'];
-  final libraryPath =
-      configured == null || configured.isEmpty ? null : configured;
-  final skip = libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false;
+  // Skipped without the library, unless VERITRA_REQUIRE_NATIVE_CRYPTO=1.
+  final skip = nativeCryptoSkip();
 
   group('a decrypt error is retried once on a fresh handle (D54)', () {
     for (final kind in <NativeCryptoError>[
@@ -25,7 +23,8 @@ void main() {
       NativeCryptoError.invalidOutput,
     ]) {
       test('one ${kind.name} still decrypts the message', () async {
-        final faults = _FaultyBindings(NativeCryptoBindings.open(libraryPath!));
+        final faults = _FaultyBindings(
+            NativeCryptoBindings.open(requireNativeCryptoLibrary()));
         final alice = await _Client.enroll(faults, 'acct_alice', 'dev_alice');
         final bob = await _Client.enroll(faults, 'acct_bob', 'dev_bob');
         await _startConversation(alice, bob);
@@ -51,7 +50,8 @@ void main() {
     }
 
     test('a second failure of the same kind gives the placeholder', () async {
-      final faults = _FaultyBindings(NativeCryptoBindings.open(libraryPath!));
+      final faults = _FaultyBindings(
+          NativeCryptoBindings.open(requireNativeCryptoLibrary()));
       final alice = await _Client.enroll(faults, 'acct_alice', 'dev_alice');
       final bob = await _Client.enroll(faults, 'acct_bob', 'dev_bob');
       await _startConversation(alice, bob);
@@ -81,7 +81,8 @@ void main() {
       NativeCryptoError.unknown,
     ]) {
       test('${kind.name} stops sync with nothing consumed (I33)', () async {
-        final faults = _FaultyBindings(NativeCryptoBindings.open(libraryPath!));
+        final faults = _FaultyBindings(
+            NativeCryptoBindings.open(requireNativeCryptoLibrary()));
         final alice = await _Client.enroll(faults, 'acct_alice', 'dev_alice');
         final bob = await _Client.enroll(faults, 'acct_bob', 'dev_bob');
         await _startConversation(alice, bob);
@@ -108,7 +109,8 @@ void main() {
     }
 
     test('a call signal survives one operationFailed', () async {
-      final faults = _FaultyBindings(NativeCryptoBindings.open(libraryPath!));
+      final faults = _FaultyBindings(
+          NativeCryptoBindings.open(requireNativeCryptoLibrary()));
       final alice = await _Client.enroll(faults, 'acct_alice', 'dev_alice');
       final bob = await _Client.enroll(faults, 'acct_bob', 'dev_bob');
       await _startConversation(alice, bob);
@@ -124,7 +126,8 @@ void main() {
     }, skip: skip);
 
     test('a call signal with invalidArgument stops sync (I33)', () async {
-      final faults = _FaultyBindings(NativeCryptoBindings.open(libraryPath!));
+      final faults = _FaultyBindings(
+          NativeCryptoBindings.open(requireNativeCryptoLibrary()));
       final alice = await _Client.enroll(faults, 'acct_alice', 'dev_alice');
       final bob = await _Client.enroll(faults, 'acct_bob', 'dev_bob');
       await _startConversation(alice, bob);
@@ -146,7 +149,8 @@ void main() {
 
   group('groupEpoch', () {
     test('a poisoned handle is replaced, not read as "no group"', () async {
-      final faults = _FaultyBindings(NativeCryptoBindings.open(libraryPath!));
+      final faults = _FaultyBindings(
+          NativeCryptoBindings.open(requireNativeCryptoLibrary()));
       final alice = await _Client.enroll(faults, 'acct_alice', 'dev_alice');
       final bob = await _Client.enroll(faults, 'acct_bob', 'dev_bob');
       await _startConversation(alice, bob);
@@ -163,7 +167,8 @@ void main() {
     }, skip: skip);
 
     test('a group this device does not hold is still null', () async {
-      final faults = _FaultyBindings(NativeCryptoBindings.open(libraryPath!));
+      final faults = _FaultyBindings(
+          NativeCryptoBindings.open(requireNativeCryptoLibrary()));
       final alice = await _Client.enroll(faults, 'acct_alice', 'dev_alice');
       expect(await alice.service.groupEpoch('conv_none'), isNull);
     }, skip: skip);
@@ -171,7 +176,7 @@ void main() {
 
   group('an own commit with no queued bundle (fork check)', () {
     test('the clear header gives the epoch the commit was built on', () async {
-      final bindings = NativeCryptoBindings.open(libraryPath!);
+      final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
       final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
       final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
       final carol = await _Client.enroll(bindings, 'acct_carol', 'dev_carol');
@@ -196,7 +201,7 @@ void main() {
     }, skip: skip);
 
     test('a bundle the worker already settled passes', () async {
-      final bindings = NativeCryptoBindings.open(libraryPath!);
+      final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
       final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
       final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
       await _startConversation(alice, bob);
@@ -216,7 +221,7 @@ void main() {
     }, skip: skip);
 
     test('a commit this device never merged stops sync', () async {
-      final bindings = NativeCryptoBindings.open(libraryPath!);
+      final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
       final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
       final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
       await _startConversation(alice, bob);
@@ -247,7 +252,7 @@ void main() {
 
   test('abandoning a bundle that lost its epoch keeps a newer staged commit',
       () async {
-    final bindings = NativeCryptoBindings.open(libraryPath!);
+    final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
     final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
     final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
     final carol = await _Client.enroll(bindings, 'acct_carol', 'dev_carol');

@@ -193,8 +193,8 @@ void main() {
     final history = await tablet.history();
     expect(history.map((message) => message.body), <String?>['hi', null]);
     final placeholder = history.last;
-    expect(placeholder.key,
-        'undecryptable:$event:${placeholder.serverMessageId}');
+    expect(
+        placeholder.key, 'undecryptable:$event:${placeholder.serverMessageId}');
     expect(placeholder.kind, LocalMessageKind.invalid);
     expect(placeholder.formatJson, isNull);
   }, skip: skip);
