@@ -2549,15 +2549,26 @@ class SecureLocalStore implements LocalStore {
         'unreadable-$stamp');
     await quarantine.create(recursive: true);
     // Keep the key with the files so the copy stays readable if the key was
-    // only temporarily unreadable. Copy before moving any file.
+    // only temporarily unreadable. Copy before moving any file. A read that
+    // failed is not an absent key, and the original entry is deleted only
+    // once its copy was written and read back equal: otherwise it stays, so
+    // the moved files always have a stored key that opens them.
     String? key;
+    var keyReadFailed = false;
     try {
       key = await _storage.read(key: _databaseKeyName);
     } catch (_) {
-      key = null;
+      keyReadFailed = true;
     }
+    var keyArchived = false;
     if (key != null) {
-      await _storage.write(key: '$_quarantinedKeyPrefix$stamp', value: key);
+      final archiveName = '$_quarantinedKeyPrefix$stamp';
+      try {
+        await _storage.write(key: archiveName, value: key);
+        keyArchived = await _storage.read(key: archiveName) == key;
+      } catch (_) {
+        keyArchived = false;
+      }
     }
     for (final name in _databaseFileNames) {
       final file = File('${directory.path}${Platform.pathSeparator}$name');
@@ -2565,7 +2576,9 @@ class SecureLocalStore implements LocalStore {
         await file.rename('${quarantine.path}${Platform.pathSeparator}$name');
       }
     }
-    await _storage.delete(key: _databaseKeyName);
+    if (!keyReadFailed && (key == null || keyArchived)) {
+      await _storage.delete(key: _databaseKeyName);
+    }
     await _storage.delete(key: _legacyRecordKeyName);
     await intent.delete();
   }
