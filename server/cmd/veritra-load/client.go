@@ -31,6 +31,9 @@ type apiClient struct {
 	http *http.Client
 }
 
+// clientTimeout bounds every API request, response body included.
+const clientTimeout = 2 * time.Minute
+
 func newAPIClient(base *url.URL, connections int) *apiClient {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConns = connections
@@ -38,7 +41,7 @@ func newAPIClient(base *url.URL, connections int) *apiClient {
 	transport.MaxConnsPerHost = 0
 	return &apiClient{base: base, http: &http.Client{
 		Transport: transport,
-		Timeout:   2 * time.Minute,
+		Timeout:   clientTimeout,
 		// checkTarget vetted only the -target host. Following a redirect
 		// would send seeding and load (with X-Forwarded-For and custom
 		// headers) to whatever host the Location names, so a redirect is

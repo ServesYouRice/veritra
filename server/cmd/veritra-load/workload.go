@@ -67,6 +67,11 @@ const (
 	maxSendsInFlight = 8
 	// rateCheckEvery bounds how long a new step's rate waits to apply.
 	rateCheckEvery = time.Second
+	// settleGrace is how long a step's summary waits for operations that
+	// started in its window: the API client's timeout plus a margin, so
+	// every HTTP request ends on its own first. What is still running then
+	// is counted once as unfinished.
+	settleGrace = clientTimeout + 10*time.Second
 )
 
 type conversation struct {
@@ -221,6 +226,11 @@ func execute(ctx context.Context, target *url.URL, setupToken string, opts optio
 		step := stepResult{Rate: rate}
 		if minutes := (measureTo - measureFrom).Minutes(); minutes > 0 {
 			step.Offered = float64(arrivalsTo-arrivalsFrom) / float64(opts.Online) / minutes
+		}
+		// Operations started in the window are summarized only once they
+		// have ended, the slowest included; load goes on meanwhile.
+		if forced := w.rec.settle(ctx, measureTo, settleGrace); forced > 0 {
+			fmt.Fprintf(progress, "load: %d operations from the window still unfinished after %s, counted as errors\n", forced, settleGrace)
 		}
 		step.Ops, step.Timeline = w.rec.summarize(measureFrom, measureTo)
 		if opts.MetricsURL != "" {
@@ -501,8 +511,9 @@ func (w *world) timed(op int, fn func() (int, error)) (int, error) {
 // a send is timed from its scheduled arrival, so delay on the client side
 // counts against it (no coordinated omission).
 func (w *world) timedFrom(op int, started time.Time, fn func() (int, error)) (int, error) {
+	h := w.rec.begin(op, started)
 	status, err := fn()
-	w.rec.record(op, started, time.Since(started), classify(status, err))
+	w.rec.end(h, classify(status, err), time.Since(started))
 	return status, err
 }
 
@@ -612,24 +623,27 @@ func (w *world) runSender(ctx context.Context, dev *device, rng *mrand.Rand) {
 // is one, then the send that references it. The upload is timed from the
 // scheduled arrival and the send from when it could start.
 func (w *world) sendArrival(ctx context.Context, dev *device, conv conversation, attachment int, arrival time.Time) {
-	sendStart := arrival
 	var refs []string
+	var send *inflight
 	if attachment > 0 {
-		var id string
-		_, err := w.timedFrom(opUpload, arrival, func() (int, error) {
-			var err error
-			id, err = w.uploadAttachment(ctx, dev, conv.id, "", attachment)
-			return http.StatusCreated, err
-		})
+		upload := w.rec.begin(opUpload, arrival)
+		id, err := w.uploadAttachment(ctx, dev, conv.id, "", attachment)
+		if err == nil {
+			refs = []string{id}
+			// Register the send before the upload ends, so a step's
+			// settle never sees this arrival with nothing in flight.
+			send = w.rec.begin(opSend, time.Now())
+		}
+		w.rec.end(upload, classify(http.StatusCreated, err), time.Since(arrival))
 		if err != nil {
 			return
 		}
-		refs = []string{id}
-		sendStart = time.Now()
+	} else {
+		send = w.rec.begin(opSend, arrival)
 	}
 	key, err := randomSecret()
 	if err != nil {
-		w.rec.record(opSend, sendStart, time.Since(sendStart), outcomeTransportError)
+		w.rec.end(send, outcomeTransportError, time.Since(send.start))
 		return
 	}
 	body := map[string]any{"conversation_id": conv.id, "idempotency_key": key,
@@ -637,14 +651,13 @@ func (w *world) sendArrival(ctx context.Context, dev *device, conv conversation,
 	if len(refs) > 0 {
 		body["attachment_refs"] = refs
 	}
-	w.pending.Store(key, sendStart)
+	w.pending.Store(key, send.start)
 	var created struct {
 		ID string `json:"id"`
 	}
-	_, err = w.timedFrom(opSend, sendStart, func() (int, error) {
-		status, err := w.client.json(ctx, http.MethodPost, "/api/v1/messages/envelopes", dev, "", body, &created, nil)
-		return status, expect(status, err, http.StatusCreated)
-	})
+	status, err := w.client.json(ctx, http.MethodPost, "/api/v1/messages/envelopes", dev, "", body, &created, nil)
+	err = expect(status, err, http.StatusCreated)
+	w.rec.end(send, classify(status, err), time.Since(send.start))
 	if err == nil && created.ID != "" {
 		w.ackMu.Lock()
 		w.acked = append(w.acked, ackedMessage{id: created.ID, sender: dev.index})
