@@ -636,11 +636,15 @@ conversation (migration 0044, triggers on `sync_events`). A device asking
 for events after its cursor gets 409 `device_recovery_required` only when
 an event it could have been sent was pruned after that cursor. Events of
 other accounts, other devices' Welcomes, conversations the account left and
-expired messages do not count. A device that misses one has to be linked
-again or restored from a backup. The answer errs only towards 409:
+expired messages do not count. A device that missed one can recover only by
+being linked again from another device; the app does not yet offer its
+backup restore here (`STATE.md`, open work). The answer errs only towards
+409:
 
 - a pruned event from someone the account blocked counts;
-- so does a late MLS message from before the device's first epoch.
+- so does a late MLS message from before the device's first epoch;
+- so do plain conversation events (membership changes, reactions, read
+  receipts) from before the account was added to that conversation.
 
 The marks hold one event id per conversation and per account and device,
 and no sender or time. Cursors into ids that were pruned before the upgrade

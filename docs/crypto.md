@@ -205,6 +205,12 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     - A late message from an epoch before the device's `joined_epoch`.
     - A removed device whose roster window reaches past the cursor while
       the newest pruned MLS event lies after the removal.
+    - Plain conversation events (membership changes, reactions, read
+      receipts, `conversation.updated`) from before the account was added.
+      Memberships have no join cursor, so sync serves these to every
+      current member, and the old check counted them too. A user added to
+      an active group while away for longer than retention still gets 409.
+      Fixing it needs a per-membership join cursor (a schema change).
     Each needs the device away for longer than retention, and the only
     events it lost must be of one of these kinds.
   - **Upgrade.** Migration 0044 seeds `legacy_through` with the ids pruned
