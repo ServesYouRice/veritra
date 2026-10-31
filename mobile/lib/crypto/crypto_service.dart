@@ -138,6 +138,16 @@ class CryptoOperationCancelled implements Exception {
   String toString() => 'crypto operation ownership changed';
 }
 
+/// The protected MLS state on this device was sealed in a format this build
+/// cannot read (ABI 9 `PM_CRYPTO_STATE_FORMAT_UNSUPPORTED`). The state stays
+/// refused; linking the device again is the way forward. The format version
+/// is not authenticated, so this never relaxes a check.
+class CryptoStateFormatUnsupported implements Exception {
+  const CryptoStateFormatUnsupported();
+  @override
+  String toString() => 'protected MLS state format is unsupported';
+}
+
 class UnavailableCryptoService implements CryptoService {
   @override
   Future<String> deviceLinkLocator(List<int> secret) async =>

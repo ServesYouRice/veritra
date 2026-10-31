@@ -122,13 +122,7 @@ class NativeCryptoService
           _deviceCounter = 1;
         } else {
           _device?.close();
-          final restored = bindings.restoreDevice(
-            accountId,
-            deviceId,
-            stored.stateKey,
-            stored.counter,
-            stored.sealedState,
-          );
+          final restored = _restoreDevice(accountId, deviceId, stored);
           if (restored.counter != stored.counter) {
             restored.device.close();
             throw StateError('MLS rollback counter mismatch');
@@ -168,8 +162,7 @@ class NativeCryptoService
           _adoptNoticeOrigin(origin, accountId, deviceId);
           return;
         }
-        final restored = bindings.restoreDevice(accountId, deviceId,
-            stored.stateKey, stored.counter, stored.sealedState);
+        final restored = _restoreDevice(accountId, deviceId, stored);
         var adopted = false;
         try {
           checkCanCommit();
@@ -1112,13 +1105,7 @@ class NativeCryptoService
   Future<void> _restorePrevious(StoredCryptoState previous) async {
     _device?.close();
     _deviceCounter = null;
-    final restored = bindings.restoreDevice(
-      _accountId!,
-      _deviceId!,
-      previous.stateKey,
-      previous.counter,
-      previous.sealedState,
-    );
+    final restored = _restoreDevice(_accountId!, _deviceId!, previous);
     if (restored.counter != previous.counter) {
       restored.device.close();
       _device = null;
@@ -1126,6 +1113,22 @@ class NativeCryptoService
     }
     _device = restored.device;
     _deviceCounter = restored.counter;
+  }
+
+  /// Restores sealed state, turning an unsupported format into
+  /// [CryptoStateFormatUnsupported] so the app can offer re-linking. Every
+  /// other failure is rethrown unchanged; both stay fail-closed.
+  ({NativeCryptoDevice device, int counter}) _restoreDevice(
+      String accountId, String deviceId, StoredCryptoState stored) {
+    try {
+      return bindings.restoreDevice(accountId, deviceId, stored.stateKey,
+          stored.counter, stored.sealedState);
+    } on NativeCryptoException catch (error) {
+      if (error.kind == NativeCryptoError.stateFormatUnsupported) {
+        throw const CryptoStateFormatUnsupported();
+      }
+      rethrow;
+    }
   }
 
   Future<T> _serial<T>(Future<T> Function() operation) async {

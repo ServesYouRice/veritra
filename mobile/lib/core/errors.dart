@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'api_client.dart';
 import '../crypto/backup_service.dart';
+import '../crypto/crypto_service.dart' show CryptoStateFormatUnsupported;
 import '../storage/local_store.dart';
 import '../l10n/l10n.dart';
 
@@ -60,6 +61,9 @@ String describeError(Object error, [AppLocalizations? l10n]) {
   }
   if (error is ConversationPausedException) {
     return strings.errorConversationPausedDetail;
+  }
+  if (error is CryptoStateFormatUnsupported) {
+    return strings.errorCryptoStateFormatUnsupported;
   }
   if (error is UserFacingException) {
     return error.message;
