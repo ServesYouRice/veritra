@@ -4387,9 +4387,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         // Under D54 a peer message this device can never decrypt no longer
         // stops sync. A stop recorded for one before that rule is cleared,
         // once per store, so its event is applied again. If it still
-        // fails, the new record stays.
-        await localStore.saveSetting(_undecryptableRetrySetting, 'done');
+        // fails, the new record stays. The record is cleared before the
+        // one-time flag is saved: a failed clear must leave it to be tried
+        // again, not marked done with the stop still in place.
         await localStore.saveSyncRecovery(null);
+        await localStore.saveSetting(_undecryptableRetrySetting, 'done');
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         stored = null;
       }
@@ -4397,9 +4399,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         _enterSyncRecovery(stored);
         return;
       }
-      // Envelopes an earlier pass committed but could not show.
-      await _publishReceived(
-          <ReceivedMessageEnvelope>[], current, ownerGeneration);
+      // Envelopes an earlier pass committed but could not show. A history
+      // that still cannot be read keeps them for the next pass; it must not
+      // stop this one, or one bad read would block all sync.
+      try {
+        await _publishReceived(
+            <ReceivedMessageEnvelope>[], current, ownerGeneration);
+      } catch (_) {}
+      if (!mayRun() || !_syncOwnerActive(current, ownerGeneration)) return;
       var pageCursor = await localStore.loadSyncCursor();
       const pageSize = 200;
       while (true) {
@@ -5255,6 +5262,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     _mlsReconcileNow.clear();
     _mlsReconcileRequested = true;
     _manualRetryKey = null;
+    _unpublishedReceived.clear();
+    _unpublishedGeneration = null;
     _loadingMessageConversations.clear();
     _messageLoadErrors.clear();
     selectedConversationId = null;
