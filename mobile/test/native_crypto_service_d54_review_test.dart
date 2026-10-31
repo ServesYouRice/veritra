@@ -202,6 +202,45 @@ void main() {
     }, skip: skip);
   });
 
+  test('a failed restore leaves no closed handle in use', () async {
+    final faults = _FaultyBindings(
+        NativeCryptoBindings.open(requireNativeCryptoLibrary()));
+    final alice = await _Client.enroll(faults, 'acct_alice', 'dev_alice');
+    final bob = await _Client.enroll(faults, 'acct_bob', 'dev_bob');
+    await _startConversation(alice, bob);
+    final sent =
+        await bob.send(AppPayloadType.text, <String, Object?>{'text': 'x'});
+    final cursor = await alice.store.loadSyncCursor();
+    final counter = (await alice.store.loadCryptoState())!.counter;
+
+    faults.decryptFaults.add(NativeCryptoError.operationFailed);
+    // Both the retry's restore and the rollback's restore fail.
+    faults.restoreFaults.addAll(
+        [NativeCryptoError.operationFailed, NativeCryptoError.operationFailed]);
+    await expectLater(
+        alice.service.processApplicationMessage(
+            alice.envelopeFrom(bob, sent), alice.nextEvent()),
+        throwsA(isA<NativeCryptoException>()));
+    expect(await alice.store.loadSyncCursor(), cursor);
+    expect((await alice.store.loadCryptoState())!.counter, counter);
+
+    // Callers fail closed on "no device", never on a closed handle.
+    await expectLater(
+        alice.service.groupEpoch('conv_1'),
+        throwsA(isA<StateError>().having((error) => error.message, 'message',
+            'native MLS device is not active')));
+    await alice.service.activateExistingSessionBounded(
+        Session(
+          baseUrl: 'https://localhost:8443',
+          token: 'token',
+          accountId: alice.accountId,
+          deviceId: alice.deviceId,
+        ),
+        checkCanCommit: () {});
+    expect(
+        await alice.service.groupEpoch('conv_1'), (epoch: 1, pending: false));
+  }, skip: skip);
+
   group('mlsMessageEpoch reads the group ID as the bindings send it', () {
     // The bindings pass `Uint8List.fromList(groupId.codeUnits)` to the native
     // side: one byte per UTF-16 unit, its low byte.
@@ -340,6 +379,8 @@ class _FaultyBindings implements NativeCryptoBindings {
   final List<NativeCryptoError> decryptFaults = <NativeCryptoError>[];
   final List<NativeCryptoError> epochFaults = <NativeCryptoError>[];
 
+  final List<NativeCryptoError> restoreFaults = <NativeCryptoError>[];
+
   /// How many times a device was restored from sealed state.
   int restores = 0;
 
@@ -355,6 +396,9 @@ class _FaultyBindings implements NativeCryptoBindings {
       int minimumCounter,
       List<int> sealedState) {
     restores++;
+    if (restoreFaults.isNotEmpty) {
+      throw NativeCryptoException(restoreFaults.removeAt(0));
+    }
     final restored = real.restoreDevice(
         accountId, deviceId, stateKey, minimumCounter, sealedState);
     return (

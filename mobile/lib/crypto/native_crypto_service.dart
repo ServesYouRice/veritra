@@ -1259,15 +1259,26 @@ class NativeCryptoService
     return null;
   }
 
+  /// Replaces the device handle with one restored from [previous]. The new
+  /// handle is built before the old one is closed, so [_device] never points
+  /// at a closed handle. If the restore fails, the old handle (whose group
+  /// state can no longer be trusted) is closed and the device left inactive:
+  /// callers fail closed until the session is activated again.
   Future<void> _restorePrevious(StoredCryptoState previous) async {
-    _device?.close();
     _deviceCounter = null;
-    final restored = _restoreDevice(_accountId!, _deviceId!, previous);
-    if (restored.counter != previous.counter) {
-      restored.device.close();
+    ({NativeCryptoDevice device, int counter}) restored;
+    try {
+      restored = _restoreDevice(_accountId!, _deviceId!, previous);
+      if (restored.counter != previous.counter) {
+        restored.device.close();
+        throw StateError('failed to restore the previous MLS state');
+      }
+    } catch (_) {
+      _device?.close();
       _device = null;
-      throw StateError('failed to restore the previous MLS state');
+      rethrow;
     }
+    _device?.close();
     _device = restored.device;
     _deviceCounter = restored.counter;
   }
