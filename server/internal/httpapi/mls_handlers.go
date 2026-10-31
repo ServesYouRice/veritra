@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -191,6 +192,12 @@ func (a *API) createMLSCommitBundle(w http.ResponseWriter, r *http.Request, prin
 			return
 		}
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "mls_epoch_conflict", "epoch": epoch})
+		return
+	}
+	if wait, limited := storage.MLSSelfUpdateRetryAfter(err); limited {
+		// One update-only commit per device and conversation per interval.
+		w.Header().Set("Retry-After", strconv.Itoa(int(math.Max(1, math.Ceil(wait.Seconds())))))
+		writeError(w, http.StatusTooManyRequests, "mls_self_update_limit")
 		return
 	}
 	if err != nil {

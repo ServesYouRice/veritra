@@ -475,6 +475,8 @@ func handleStorageError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "mls_group_legacy")
 	case errors.Is(err, storage.ErrMLSBundleRequired):
 		writeError(w, http.StatusConflict, "mls_commit_bundle_required")
+	case errors.Is(err, storage.ErrMLSChangePending):
+		writeError(w, http.StatusConflict, "mls_change_pending")
 	case errors.Is(err, storage.ErrMLSNotInGroup):
 		writeError(w, http.StatusForbidden, "mls_not_in_group")
 	case errors.Is(err, storage.ErrInvalidInput):
