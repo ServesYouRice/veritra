@@ -6,11 +6,12 @@ import (
 	"testing"
 )
 
-// visibleSyncBoundsReference is legacySyncBoundsQuery with the envelope
-// visibility sync applies to message events: an event for an expired, gone
-// or deleted envelope is never served, so it is not a bound.
-const visibleSyncBoundsReference = `
-		SELECT MIN(id), MAX(id) FROM (
+// visibleSyncLatestReference is the latest edge of legacySyncBoundsQuery
+// with the envelope visibility sync applies to message events: an event for
+// an expired, gone or deleted envelope is never served, so it is not the
+// latest bound. The oldest bound is the legacy one.
+const visibleSyncLatestReference = `
+		SELECT MAX(id) FROM (
 			SELECT id FROM sync_events WHERE account_id = ?
 			UNION ALL
 			SELECT se.id FROM sync_events se
@@ -49,13 +50,16 @@ func rewrittenSyncBounds(t testing.TB, store *Store, accountID string) (int64, i
 	return oldest.Int64, latest.Int64
 }
 
+// visibleSyncBounds is the oldest bound of legacySyncBoundsQuery and the
+// latest of visibleSyncLatestReference.
 func visibleSyncBounds(t testing.TB, store *Store, accountID string) (int64, int64) {
 	t.Helper()
-	var oldest, latest sql.NullInt64
-	if err := store.db.QueryRowContext(context.Background(), visibleSyncBoundsReference, accountID, accountID).Scan(&oldest, &latest); err != nil {
+	oldest, _ := legacySyncBounds(t, store, accountID)
+	var latest sql.NullInt64
+	if err := store.db.QueryRowContext(context.Background(), visibleSyncLatestReference, accountID, accountID).Scan(&latest); err != nil {
 		t.Fatal(err)
 	}
-	return oldest.Int64, latest.Int64
+	return oldest, latest.Int64
 }
 
 // checkSyncBoundsVisible compares SyncBounds with the visible reference.

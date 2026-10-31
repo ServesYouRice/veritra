@@ -1213,26 +1213,26 @@ func syncEventBlockedFor(blocker string) string {
 // predicate runs only on the few rows at each edge instead of on every event
 // on the instance (T49A). The unary + keeps account_id IS NULL off
 // idx_sync_events_account, which would scan every conversation event.
-// A message event sync hides for its envelope (expired and not yet pruned,
-// gone, or deleted) is not a bound either: no device is ever served it.
-var syncBoundsQuery = `SELECT ` + syncVisibleEdgeExpr("MIN", "ASC") + `, ` + syncVisibleEdgeExpr("MAX", "DESC")
+// The latest bound also skips a message event sync hides for its envelope
+// (expired and not yet pruned, gone, or deleted): no device is ever served
+// it. The oldest bound does not: expired messages collect at the old end
+// until pruned, so that walk would cross all of them on every sync page,
+// and only the latest bound is read by clients.
+var syncBoundsQuery = `SELECT ` + syncOldestExpr + `, ` + syncVisibleLatestExpr
 
-// syncVisibleEdgeExpr is syncOldestExpr (MIN, ASC) or syncLatestExpr (MAX,
-// DESC) with the envelope visibility of syncEventVisibleTo added. The
-// legacy cursor test keeps syncOldestExpr unchanged.
-func syncVisibleEdgeExpr(aggregate, order string) string {
-	return `
-	  (SELECT ` + aggregate + `(v) FROM (
-	     SELECT ` + aggregate + `(id) AS v FROM sync_events WHERE account_id = ?1
+// syncVisibleLatestExpr is syncLatestExpr with the envelope visibility of
+// syncEventVisibleTo added.
+var syncVisibleLatestExpr = `
+	  (SELECT MAX(v) FROM (
+	     SELECT MAX(id) AS v FROM sync_events WHERE account_id = ?1
 	     UNION ALL
 	     SELECT (SELECT se.id FROM sync_events se
 	             WHERE se.conversation_id = m.conversation_id AND +se.account_id IS NULL
 	               AND NOT ` + syncEventBlockedFor("?1") + `
 	               AND ` + syncEventEnvelopeLive + `
-	             ORDER BY se.id ` + order + ` LIMIT 1)
+	             ORDER BY se.id DESC LIMIT 1)
 	     FROM memberships m WHERE m.account_id = ?1 AND m.conversation_id IS NOT NULL
 	  ))`
-}
 
 // legacySyncCursorExpiredQuery is the cursor test from before migration
 // 0044, kept for cursors into ids pruned before the marks existed. It is
