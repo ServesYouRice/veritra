@@ -770,23 +770,31 @@ func settleRestoreJournal(cfg config.Config, live, path string, stdout io.Writer
 }
 
 func journalMatches(journal restoreJournal, live, liveBlobs string) bool {
-	within := func(path, base string) bool {
-		return path == "" || strings.HasPrefix(path, base+".pre-restore-")
+	rollback := func(path, base string) bool {
+		return path == "" || contained(path, filepath.Dir(base), filepath.Base(base)+".pre-restore-")
 	}
-	if journal.Database != live || !within(journal.DatabaseRollback, live) {
+	if journal.Database != live || !rollback(journal.DatabaseRollback, live) {
 		return false
 	}
-	for companion, rollback := range journal.Companions {
-		if (companion != live+"-wal" && companion != live+"-shm") || !within(rollback, companion) {
+	for companion, path := range journal.Companions {
+		if (companion != live+"-wal" && companion != live+"-shm") || !rollback(path, companion) {
 			return false
 		}
 	}
-	if journal.Blobs != "" && (journal.Blobs != liveBlobs || !within(journal.BlobsRollback, liveBlobs)) {
+	if journal.Blobs != "" && (journal.Blobs != liveBlobs || !rollback(journal.BlobsRollback, liveBlobs)) {
 		return false
 	}
-	staging := filepath.Dir(journal.StagingDir) == filepath.Dir(live) &&
-		strings.HasPrefix(filepath.Base(journal.StagingDir), ".veritra-restore-")
-	return staging
+	return contained(journal.StagingDir, filepath.Dir(live), ".veritra-restore-")
+}
+
+// contained reports whether path names an entry directly in parent whose
+// name starts with prefix. The path must already be clean, so it cannot
+// leave parent through "..", a trailing separator or a subdirectory: the
+// kernel resolves those against whatever the directories hold, while the
+// check here only sees the text.
+func contained(path, parent, prefix string) bool {
+	return path != "" && filepath.Clean(path) == path && filepath.Dir(path) == parent &&
+		strings.HasPrefix(filepath.Base(path), prefix)
 }
 
 // makeDrillDir creates an invocation-owned, marked scratch directory under
