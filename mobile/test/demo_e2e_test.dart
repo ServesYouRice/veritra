@@ -142,6 +142,23 @@ void main() {
     expect(await alice.state.sendMessageTo(group.id, 'without bob'), isTrue);
     await carol.waitFor(group.id, (m) => m.body == 'without bob');
     await owner.waitFor(group.id, (m) => m.body == 'without bob');
+    // Catch-up barrier: the server lists an account's sync events in id
+    // order and the app commits them one by one, refusing a page out of
+    // order. A marker sent after 'without bob', in a chat Bob is still in,
+    // proves Bob's sync has passed every earlier event before his store is
+    // read, so a slow or rate-limited catch-up cannot pass the check.
+    final bobDm = await owner.state.startConversation(
+      kind: 'dm',
+      memberAccountIds: <String>[bob.accountId],
+    );
+    owner.expectOk();
+    expect(await owner.state.sendMessageTo(bobDm!.id, 'after removal'),
+        isTrue);
+    await bob.waitFor(bobDm.id, (m) => m.body == 'after removal',
+        timeout: const Duration(seconds: 120));
+    // Bob's own view reflects the removal: the group leaves his list.
+    await bob.waitUntil(
+        () async => !bob.state.conversations.any((c) => c.id == group.id));
     expect((await bob.store.loadMessages(group.id)).map((m) => m.body),
         isNot(contains('without bob')));
 
