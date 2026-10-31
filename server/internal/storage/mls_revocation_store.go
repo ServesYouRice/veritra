@@ -66,7 +66,7 @@ func (s *Store) ListMLSRevocations(ctx context.Context, accountID, deviceID stri
 			SELECT r.conversation_id, r.revoked_device_id, r.revoked_account_id,
 			       r.coordinator_device_id, r.state, r.commit_message_id,
 			       r.requested_at, r.completed_at,
-			       `+mlsRevocationCoordinator("r")+` AS coordinator,
+			       CASE WHEN r.state = 'pending' THEN `+mlsRevocationCoordinator("r")+` END AS coordinator,
 			       rd.device_id AS required_device_id, rd.confirmed_at AS confirmed_at
 			FROM mls_revocations r
 			JOIN memberships m ON m.conversation_id = r.conversation_id AND m.account_id = ?1
