@@ -3,7 +3,7 @@
 #
 #   scripts/release-image.sh [--image REPO] [--infra-dir DIR] [--no-push] [--skip-smoke]
 #
-# 1. Refuses a dirty tree, so the image always matches a commit.
+# 1. Refuses a dirty tree and any commit not on freshly fetched origin/main.
 # 2. Runs the server checks and dependency scans: gofmt, go vet, go test,
 #    govulncheck and cargo audit (scripts/audit-rust.sh).
 # 3. Builds the image from `git archive` of the checked commit (only committed
@@ -57,6 +57,12 @@ if [ -n "$INFRA_DIR" ] && [ "$PUSH" -eq 0 ]; then
   fail "--infra-dir needs a pushed digest; drop --no-push"
 fi
 command -v git >/dev/null 2>&1 || fail "git is not installed"
+# History must read as committed: a replace ref or a grafts file (in .git or
+# from GIT_GRAFT_FILE) could make an unpublished commit look like part of the
+# default branch, or change what git archive packages. Same guard as
+# scripts/check-release-evidence.py; the graft path cannot exist.
+export GIT_NO_REPLACE_OBJECTS=1
+export GIT_GRAFT_FILE=/dev/null/grafts
 cd "$ROOT"
 TREE_STATUS="$(git status --porcelain --untracked-files=normal)" || fail "cannot read the working tree status"
 if [ -n "$TREE_STATUS" ]; then
@@ -71,6 +77,17 @@ COMMIT="$(git rev-parse --verify 'HEAD^{commit}')"
 TAG="$(git rev-parse --short=12 "$COMMIT")"
 VERSION="$(git describe --tags --always "$COMMIT")"
 GO_VERSION="$(tr -d '[:space:]' < .go-version)"
+
+# Only reviewed, published commits are released: $COMMIT must be on the
+# protected default branch as origin serves it now (the anchor
+# scripts/release-readiness.sh uses for mobile approvals). A failed fetch stops
+# the release rather than trusting a stale origin/main.
+DEFAULT_BRANCH=main
+step "published commit"
+git fetch --no-tags --quiet origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH" ||
+  fail "cannot fetch $DEFAULT_BRANCH from origin; the release commit must be checked against it"
+git merge-base --is-ancestor "$COMMIT" "refs/remotes/origin/$DEFAULT_BRANCH" ||
+  fail "commit $COMMIT is not on origin/$DEFAULT_BRANCH; push it through review first"
 
 if [ -n "$INFRA_DIR" ]; then
   KUSTOMIZATION="$INFRA_DIR/kustomization.yaml"

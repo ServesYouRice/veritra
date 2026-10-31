@@ -199,12 +199,87 @@ def test_dirty_tree_at_start_is_refused(scratch: Scratch) -> None:
     assert not scratch.log_lines("checks"), "checks ran on a dirty tree"
 
 
+def assert_refused_before_checks(scratch: Scratch, result: subprocess.CompletedProcess[str], label: str) -> None:
+    assert result.returncode != 0, (label, result.stdout)
+    assert not scratch.log_lines("checks"), (label, "checks ran")
+    assert not scratch.log_lines("docker build"), (label, "the image was built")
+
+
+@with_scratch
+def test_unpublished_commit_is_refused(scratch: Scratch) -> None:
+    local = scratch.commit("local only")
+    result = scratch.run()
+    assert_refused_before_checks(scratch, result, "unpushed commit")
+    assert local in result.stderr, result.stderr
+    # A pushed branch that is not the default branch is refused as well.
+    scratch.git(scratch.work, "push", "-q", "origin", "HEAD:refs/heads/feature")
+    assert_refused_before_checks(scratch, scratch.run(), "feature branch")
+
+
+@with_scratch
+def test_commit_behind_the_default_branch_is_accepted(scratch: Scratch) -> None:
+    # Someone else pushed after this commit; it is still on origin/main.
+    other = scratch.temp / "other"
+    scratch.git(scratch.temp, "clone", "-q", str(scratch.origin), str(other))
+    scratch.git(other, "commit", "-q", "--allow-empty", "-m", "later")
+    scratch.git(other, "push", "-q", "origin", "main")
+    result = scratch.run()
+    assert result.returncode == 0, result.stderr
+    assert len(scratch.log_lines("docker build")) == 1
+
+
+@with_scratch
+def test_stale_remote_tracking_ref_is_not_trusted(scratch: Scratch) -> None:
+    # origin/main in this clone still names the commit, but the remote's main
+    # was rewound past it: only a fresh fetch shows that.
+    first = scratch.git(scratch.work, "rev-parse", "HEAD")
+    scratch.git(scratch.work, "commit", "-q", "--allow-empty", "-m", "second")
+    scratch.git(scratch.work, "push", "-q", "origin", "main")
+    scratch.git(scratch.origin, "update-ref", "refs/heads/main", first)
+    assert_refused_before_checks(scratch, scratch.run(), "rewound remote")
+
+
+@with_scratch
+def test_unreachable_origin_fails_closed(scratch: Scratch) -> None:
+    scratch.git(scratch.work, "remote", "set-url", "origin", str(scratch.temp / "missing.git"))
+    assert_refused_before_checks(scratch, scratch.run(), "unreachable origin")
+
+
+@with_scratch
+def test_replaced_history_cannot_publish_a_local_commit(scratch: Scratch) -> None:
+    tip = scratch.git(scratch.work, "rev-parse", "HEAD")
+    local = scratch.commit("local only")
+    # Rewrite origin/main's tip locally so that it appears to descend from the
+    # unpublished commit.
+    scratch.git(scratch.work, "fetch", "-q", "origin")
+    scratch.git(scratch.work, "replace", "--graft", tip, local)
+    assert scratch.git(scratch.work, "merge-base", "--is-ancestor", local, "origin/main") == ""
+    assert_refused_before_checks(scratch, scratch.run(), "replace ref")
+    scratch.git(scratch.work, "replace", "-d", tip)
+
+    grafts = scratch.work / ".git/info/grafts"
+    grafts.parent.mkdir(parents=True, exist_ok=True)
+    grafts.write_text(f"{tip} {local}\n", encoding="utf-8")
+    assert_refused_before_checks(scratch, scratch.run(), "info/grafts")
+    grafts.unlink()
+
+    caller_grafts = scratch.temp / "grafts"
+    caller_grafts.write_text(f"{tip} {local}\n", encoding="utf-8")
+    result = scratch.run(extra_env={"GIT_GRAFT_FILE": str(caller_grafts)})
+    assert_refused_before_checks(scratch, result, "GIT_GRAFT_FILE")
+
+
 TESTS = (
     test_clean_release_builds_the_checked_commit,
     test_head_moving_during_checks_aborts,
     test_checkout_during_checks_aborts,
     test_tree_changing_during_checks_aborts,
     test_dirty_tree_at_start_is_refused,
+    test_unpublished_commit_is_refused,
+    test_commit_behind_the_default_branch_is_accepted,
+    test_stale_remote_tracking_ref_is_not_trusted,
+    test_unreachable_origin_fails_closed,
+    test_replaced_history_cannot_publish_a_local_commit,
 )
 
 
