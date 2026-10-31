@@ -216,28 +216,66 @@ String pastedImageName(DateTime now) {
       '${two(now.hour)}${two(now.minute)}${two(now.second)}.png';
 }
 
-/// Writes clipboard image bytes to a private cache file, for the tray.
+/// The folder name that keeps one profile's pasted images apart from
+/// another's. Demo builds run several profiles side by side on one machine
+/// and share one cache directory; each sets its own with
+/// [usePastedImageProfile] before anything is pasted or purged.
+String _pasteScope = 'default';
+
+/// Names the profile whose pasted images this process keeps and purges. Only
+/// lower-case letters, digits and '-' are kept, so the name can never leave
+/// the paste folder.
+void usePastedImageProfile(String? profile) {
+  final clean = (profile ?? '').toLowerCase().replaceAll(
+        RegExp(r'[^a-z0-9-]'),
+        '',
+      );
+  _pasteScope = clean.isEmpty ? 'default' : clean;
+}
+
+/// Where this profile's pasted images live: a folder of its own under the
+/// per-user application cache. The cache is private to the signed-in user on
+/// every platform (unlike the shared temporary directory, often /tmp) and is
+/// left out of backups and device transfers.
+Future<Directory> _pastedImagesDirectory() async {
+  final cache = await getApplicationCacheDirectory();
+  final sep = Platform.pathSeparator;
+  return Directory('${cache.path}${sep}veritra-paste$sep$_pasteScope');
+}
+
+/// Writes clipboard image bytes to a file in this profile's folder under the
+/// per-user application cache, for the tray. The folder is not encrypted at
+/// rest; it holds a pasted image only until it is sent or removed.
 Future<XFile> writePastedImage(Uint8List bytes) async {
-  final directory = await getTemporaryDirectory();
-  final folder = Directory(
-    '${directory.path}${Platform.pathSeparator}veritra-paste',
-  );
+  final folder = await _pastedImagesDirectory();
   await folder.create(recursive: true);
   final random = Random.secure().nextInt(1 << 32).toRadixString(16);
   final name = pastedImageName(DateTime.now());
   final file = File('${folder.path}${Platform.pathSeparator}$random-$name');
+  // Exclusive: never write through a file or link that is already there.
+  await file.create(exclusive: true);
   await file.writeAsBytes(bytes, flush: true);
   return XFile(file.path, name: name, mimeType: 'image/png');
 }
 
-/// Deletes pasted images left behind by an earlier run. Call at startup.
+/// Deletes this profile's pasted images left behind by an earlier run, and
+/// the shared temporary folder older versions wrote to. Another profile's
+/// folder is never touched. Call at startup.
 Future<void> purgePastedImages() async {
   try {
-    final directory = await getTemporaryDirectory();
-    final folder = Directory(
-      '${directory.path}${Platform.pathSeparator}veritra-paste',
-    );
+    final folder = await _pastedImagesDirectory();
     if (await folder.exists()) await folder.delete(recursive: true);
+  } on FileSystemException {
+    // Best effort.
+  } on MissingPluginException {
+    // No path provider (a test host).
+  }
+  try {
+    final temp = await getTemporaryDirectory();
+    final legacy = Directory(
+      '${temp.path}${Platform.pathSeparator}veritra-paste',
+    );
+    if (await legacy.exists()) await legacy.delete(recursive: true);
   } on FileSystemException {
     // Best effort.
   } on MissingPluginException {

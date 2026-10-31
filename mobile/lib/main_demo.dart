@@ -14,7 +14,8 @@ import 'crypto/backup_service.dart';
 import 'crypto/native_crypto_bindings.dart';
 import 'crypto/native_crypto_service.dart';
 import 'features/chat/attachment_views.dart' show purgeOpenedAttachments;
-import 'features/chat/composer_attachments.dart' show purgePastedImages;
+import 'features/chat/composer_attachments.dart'
+    show purgePastedImages, usePastedImageProfile;
 import 'main.dart' show VeritraApp, StartupFailureApp;
 import 'push/push_service.dart';
 import 'push/wake_worker_bridge.dart';
@@ -52,6 +53,7 @@ Future<void> main(List<String> args) async {
     return;
   }
   final namespace = profile == null ? 'demo' : 'demo-$profile';
+  usePastedImageProfile(namespace);
   final bridge = PlatformWakeWorkerBridge();
   final launch = WakeLaunchCoordinator(
     bridge: bridge,
