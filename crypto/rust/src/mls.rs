@@ -236,6 +236,7 @@ impl MlsDevice {
         if key_package.leaf_node().credential().serialized_content() != expected_identity {
             return Err(MlsError::InvalidKeyPackage);
         }
+        ensure_added_identities_unique(&roster_identities(group, &[]), &[expected_identity])?;
         let (commit, welcome, _) = group
             .add_members(&self.provider, &self.signer, &[key_package])
             .map_err(|_| MlsError::GroupOperation)?;
@@ -265,6 +266,7 @@ impl MlsDevice {
             return Err(MlsError::InvalidState);
         }
         let mut key_packages = Vec::with_capacity(adds.len());
+        let mut added = Vec::with_capacity(adds.len());
         for add in adds {
             let key_package = KeyPackageIn::tls_deserialize_exact(add.key_package)
                 .map_err(|_| MlsError::InvalidKeyPackage)?
@@ -275,11 +277,16 @@ impl MlsDevice {
                 return Err(MlsError::InvalidKeyPackage);
             }
             key_packages.push(key_package);
+            added.push(expected);
         }
+        // A removed device loses every leaf that carries its identity.
         let mut removed = Vec::with_capacity(removes.len());
         for member in removes {
-            removed.push(self.member_index(group, member.account_id, member.device_id)?);
+            removed.extend(self.member_indices(group, member.account_id, member.device_id)?);
         }
+        removed.sort();
+        removed.dedup();
+        ensure_added_identities_unique(&roster_identities(group, &removed), &added)?;
         let epoch = group.epoch().as_u64();
         let bundle = group
             .commit_builder()
@@ -347,13 +354,16 @@ impl MlsDevice {
             .map_err(|_| MlsError::GroupOperation)
     }
 
-    pub fn remove_member(
+    pub fn remove_members(
         &self,
         group: &mut MlsGroup,
-        member: LeafNodeIndex,
+        members: &[LeafNodeIndex],
     ) -> Result<Vec<u8>, MlsError> {
+        if members.is_empty() {
+            return Err(MlsError::InvalidIdentity);
+        }
         let (commit, _, _) = group
-            .remove_members(&self.provider, &self.signer, &[member])
+            .remove_members(&self.provider, &self.signer, members)
             .map_err(|_| MlsError::GroupOperation)?;
         commit
             .tls_serialize_detached()
@@ -377,18 +387,25 @@ impl MlsDevice {
             .map_err(|_| MlsError::GroupOperation)
     }
 
-    pub fn member_index(
+    /// Every leaf carrying this account/device credential. A device is one
+    /// logical member, so removing it removes all of them. Fails when there
+    /// is none.
+    pub fn member_indices(
         &self,
         group: &MlsGroup,
         account_id: &[u8],
         device_id: &[u8],
-    ) -> Result<LeafNodeIndex, MlsError> {
+    ) -> Result<Vec<LeafNodeIndex>, MlsError> {
         let identity = encode_device_identity(account_id, device_id)?;
-        group
+        let indices: Vec<_> = group
             .members()
-            .find(|member| member.credential.serialized_content() == identity)
+            .filter(|member| member.credential.serialized_content() == identity)
             .map(|member| member.index)
-            .ok_or(MlsError::InvalidIdentity)
+            .collect();
+        if indices.is_empty() {
+            return Err(MlsError::InvalidIdentity);
+        }
+        Ok(indices)
     }
 
     /// The conversation's safety number (v2): the group id and every member
@@ -702,6 +719,57 @@ fn encode_device_identity(account_id: &[u8], device_id: &[u8]) -> Result<Vec<u8>
     Ok(identity)
 }
 
+/// Splits a credential identity written by [`encode_device_identity`] into
+/// its account and device IDs. Anything else is refused.
+fn decode_device_identity(identity: &[u8]) -> Result<(&[u8], &[u8]), MlsError> {
+    let invalid = MlsError::InvalidIdentity;
+    let (&version, rest) = identity.split_first().ok_or(invalid)?;
+    if version != CREDENTIAL_FORMAT_VERSION {
+        return Err(invalid);
+    }
+    let field = |input: &[u8]| -> Result<usize, MlsError> {
+        let length = input.get(..2).ok_or(invalid)?;
+        let length = usize::from(u16::from_be_bytes([length[0], length[1]]));
+        if length == 0 || length > MAX_ID_BYTES || input.len() < 2 + length {
+            return Err(invalid);
+        }
+        Ok(2 + length)
+    };
+    let end = field(rest)?;
+    let (account, rest) = (&rest[2..end], &rest[end..]);
+    let end = field(rest)?;
+    if end != rest.len() {
+        return Err(invalid);
+    }
+    Ok((account, &rest[2..end]))
+}
+
+/// Identities of the current members, leaving out the `removed` leaves.
+fn roster_identities(group: &MlsGroup, removed: &[LeafNodeIndex]) -> Vec<Vec<u8>> {
+    group
+        .members()
+        .filter(|member| !removed.contains(&member.index))
+        .map(|member| member.credential.serialized_content().to_vec())
+        .collect()
+}
+
+/// Each added identity must be well-formed and appear once in the roster a
+/// change produces: the members that remain plus everything added. Only the
+/// additions are judged, so a group that already holds a duplicate can still
+/// remove it.
+fn ensure_added_identities_unique(
+    remaining: &[Vec<u8>],
+    added: &[Vec<u8>],
+) -> Result<(), MlsError> {
+    for (position, identity) in added.iter().enumerate() {
+        decode_device_identity(identity)?;
+        if remaining.contains(identity) || added[..position].contains(identity) {
+            return Err(MlsError::InvalidIdentity);
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -826,6 +894,192 @@ mod tests {
             bob.decrypt(&mut bob_group, &after, b"acct_alice", b"dev_alice")
                 .unwrap(),
             b"without phone"
+        );
+    }
+
+    /// Parses a device's own key package, so a test can add it through
+    /// OpenMLS directly and bypass this wrapper's checks.
+    fn raw_key_package(device: &MlsDevice) -> KeyPackage {
+        KeyPackageIn::tls_deserialize_exact(device.create_key_package().unwrap())
+            .unwrap()
+            .validate(device.provider.crypto(), ProtocolVersion::Mls10)
+            .unwrap()
+    }
+
+    fn identities(group: &MlsGroup) -> Vec<Vec<u8>> {
+        let mut all: Vec<_> = group
+            .members()
+            .map(|member| member.credential.serialized_content().to_vec())
+            .collect();
+        all.sort();
+        all
+    }
+
+    #[test]
+    fn adding_an_identity_twice_is_refused() {
+        let alice = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
+        let bob = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+        // A second key with the same account/device credential.
+        let twin = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+        let mut group = alice.create_group(b"conv_dup").unwrap();
+        alice
+            .add_member(
+                &mut group,
+                &bob.create_key_package().unwrap(),
+                b"acct_bob",
+                b"dev_bob",
+            )
+            .unwrap();
+        alice.merge_pending_commit(&mut group).unwrap();
+
+        // Already in the roster.
+        let twin_kp = twin.create_key_package().unwrap();
+        assert_eq!(
+            alice.add_member(&mut group, &twin_kp, b"acct_bob", b"dev_bob"),
+            Err(MlsError::InvalidIdentity)
+        );
+        assert_eq!(
+            alice.stage_membership_commit(
+                &mut group,
+                &[MemberAdd {
+                    key_package: &twin_kp,
+                    account_id: b"acct_bob",
+                    device_id: b"dev_bob",
+                }],
+                &[],
+            ),
+            Err(MlsError::InvalidIdentity)
+        );
+        // Repeated within one batch.
+        let carol = MlsDevice::new(b"acct_carol", b"dev_carol").unwrap();
+        let carol_twin = MlsDevice::new(b"acct_carol", b"dev_carol").unwrap();
+        let (carol_kp, carol_twin_kp) = (
+            carol.create_key_package().unwrap(),
+            carol_twin.create_key_package().unwrap(),
+        );
+        assert_eq!(
+            alice.stage_membership_commit(
+                &mut group,
+                &[
+                    MemberAdd {
+                        key_package: &carol_kp,
+                        account_id: b"acct_carol",
+                        device_id: b"dev_carol",
+                    },
+                    MemberAdd {
+                        key_package: &carol_twin_kp,
+                        account_id: b"acct_carol",
+                        device_id: b"dev_carol",
+                    },
+                ],
+                &[],
+            ),
+            Err(MlsError::InvalidIdentity)
+        );
+        assert!(!alice.has_pending_commit(&group));
+        // Replacing a device in one commit (remove, then add the same
+        // identity with a new key) leaves one leaf, so it is allowed.
+        alice
+            .stage_membership_commit(
+                &mut group,
+                &[MemberAdd {
+                    key_package: &twin_kp,
+                    account_id: b"acct_bob",
+                    device_id: b"dev_bob",
+                }],
+                &[MemberIdentity {
+                    account_id: b"acct_bob",
+                    device_id: b"dev_bob",
+                }],
+            )
+            .unwrap();
+        alice.merge_pending_commit(&mut group).unwrap();
+        assert_eq!(group.members().count(), 2);
+    }
+
+    #[test]
+    fn device_identities_decode_exactly() {
+        let identity = encode_device_identity(b"acct_a", b"dev_a").unwrap();
+        assert_eq!(
+            decode_device_identity(&identity),
+            Ok((b"acct_a".as_slice(), b"dev_a".as_slice()))
+        );
+        let mut trailing = identity.clone();
+        trailing.push(0);
+        let mut version = identity.clone();
+        version[0] = 2;
+        for bad in [
+            &[][..],
+            &identity[..identity.len() - 1],
+            &trailing,
+            &version,
+            &[1, 0, 0, 0, 1, b'd'],
+            &[1, 0, 1, b'a', 0, 0],
+            b"not an identity",
+        ] {
+            assert_eq!(decode_device_identity(bad), Err(MlsError::InvalidIdentity));
+        }
+    }
+
+    #[test]
+    fn removing_a_device_removes_every_leaf_with_its_identity() {
+        let alice = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
+        let bob = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+        let twin = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+        let carol = MlsDevice::new(b"acct_carol", b"dev_carol").unwrap();
+        let mut group = alice.create_group(b"conv_twins").unwrap();
+        // Duplicates can only come in through another client (or a test
+        // that calls OpenMLS directly).
+        group
+            .add_members(
+                &alice.provider,
+                &alice.signer,
+                &[
+                    raw_key_package(&bob),
+                    raw_key_package(&twin),
+                    raw_key_package(&carol),
+                ],
+            )
+            .unwrap();
+        alice.merge_pending_commit(&mut group).unwrap();
+        assert_eq!(group.members().count(), 4);
+
+        let staged = alice
+            .stage_membership_commit(
+                &mut group,
+                &[],
+                &[MemberIdentity {
+                    account_id: b"acct_bob",
+                    device_id: b"dev_bob",
+                }],
+            )
+            .unwrap();
+        assert!(staged.welcome.is_empty());
+        alice.merge_pending_commit(&mut group).unwrap();
+        let bob_identity = encode_device_identity(b"acct_bob", b"dev_bob").unwrap();
+        assert!(!identities(&group).contains(&bob_identity));
+        assert_eq!(group.members().count(), 2);
+
+        // The single-device FFI path removes every leaf too.
+        let mut group = alice.create_group(b"conv_twins_ffi").unwrap();
+        group
+            .add_members(
+                &alice.provider,
+                &alice.signer,
+                &[raw_key_package(&bob), raw_key_package(&twin)],
+            )
+            .unwrap();
+        alice.merge_pending_commit(&mut group).unwrap();
+        let indices = alice
+            .member_indices(&group, b"acct_bob", b"dev_bob")
+            .unwrap();
+        assert_eq!(indices.len(), 2);
+        alice.remove_members(&mut group, &indices).unwrap();
+        alice.merge_pending_commit(&mut group).unwrap();
+        assert_eq!(group.members().count(), 1);
+        assert_eq!(
+            alice.member_indices(&group, b"acct_bob", b"dev_bob"),
+            Err(MlsError::InvalidIdentity)
         );
     }
 
@@ -1024,10 +1278,10 @@ mod tests {
             b"after update"
         );
 
-        let bob_index = alice
-            .member_index(&alice_group, b"acct_bob", b"dev_bob")
+        let bob_leaves = alice
+            .member_indices(&alice_group, b"acct_bob", b"dev_bob")
             .unwrap();
-        let removal = alice.remove_member(&mut alice_group, bob_index).unwrap();
+        let removal = alice.remove_members(&mut alice_group, &bob_leaves).unwrap();
         alice.merge_pending_commit(&mut alice_group).unwrap();
         bob.process_commit(&mut bob_group, &removal).unwrap();
         assert!(!bob_group.is_active());

@@ -859,7 +859,8 @@ pub unsafe extern "C" fn pm_crypto_group_safety_number(
     })
 }
 
-/// Removes the account/device credential and returns the committed removal.
+/// Removes every leaf carrying the account/device credential and returns the
+/// committed removal.
 ///
 /// # Safety
 /// `handle` must be live, slices readable, and `out_commit` writable.
@@ -878,11 +879,12 @@ pub unsafe extern "C" fn pm_crypto_group_remove_member(
         let commit = unsafe {
             with_device(handle, |device| {
                 let mut group = device.load_group(group_id).map_err(|_| PM_CRYPTO_ERROR)?;
-                let index = device
-                    .member_index(&group, account_id, device_id)
+                // Every leaf carrying this identity goes.
+                let leaves = device
+                    .member_indices(&group, account_id, device_id)
                     .map_err(|_| PM_CRYPTO_ERROR)?;
                 let commit = device
-                    .remove_member(&mut group, index)
+                    .remove_members(&mut group, &leaves)
                     .map_err(|_| PM_CRYPTO_ERROR)?;
                 device
                     .merge_pending_commit(&mut group)
