@@ -248,13 +248,50 @@ func (a *API) syncWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	remoteIP := a.clientIP(r)
+	if a.beforeWebSocketRegister != nil {
+		a.beforeWebSocketRegister()
+	}
 	client, err := a.Hub.Register(principal.AccountID, principal.DeviceID, remoteIP)
 	if err != nil {
 		w.Header().Set("Retry-After", "60")
 		writeError(w, http.StatusTooManyRequests, "realtime_connection_limit")
 		return
 	}
+	// Revocation deletes the session and then disconnects the device's
+	// registered sockets, so a handshake that registered after that
+	// disconnect would keep its subscription. Re-reading the session now,
+	// after registration, closes the window: either the disconnect saw this
+	// registration or this read sees the deleted session.
+	if err := a.recheckSession(r, principal); err != nil {
+		a.Hub.Unregister(client)
+		if errors.Is(err, storage.ErrUnauthorized) {
+			refuseUnauthenticated(w, r)
+			return
+		}
+		a.warn("websocket_session_recheck_failed", "err", err)
+		w.Header().Set("Retry-After", "1")
+		writeError(w, http.StatusServiceUnavailable, "session_check_unavailable")
+		return
+	}
 	_ = realtime.ServeWebSocket(w, r, client, principal.ExpiresAt, func() { a.Hub.Unregister(client) })
+}
+
+// recheckSession re-reads the request's session and returns
+// storage.ErrUnauthorized unless it still belongs to principal. Any other
+// error is a storage failure, not a verdict on the session.
+func (a *API) recheckSession(r *http.Request, principal domain.Principal) error {
+	tokenHash, ok := bearerTokenHash(r)
+	if !ok {
+		return storage.ErrUnauthorized
+	}
+	current, err := a.Store.PrincipalByTokenHash(r.Context(), tokenHash)
+	if err != nil {
+		return err
+	}
+	if current.AccountID != principal.AccountID || current.DeviceID != principal.DeviceID {
+		return storage.ErrUnauthorized
+	}
+	return nil
 }
 
 type authedHandler func(http.ResponseWriter, *http.Request, domain.Principal)

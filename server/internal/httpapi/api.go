@@ -53,6 +53,9 @@ type API struct {
 	Budget    *admission.Budget
 	Admission *admission.Counters
 	LowDisk   func() bool
+	// beforeWebSocketRegister is a test hook run between WebSocket
+	// authentication and hub registration. It is nil in production.
+	beforeWebSocketRegister func()
 	// MaxAttachmentBytes is the operator's per-file cap (plaintext); zero
 	// means the default. The setup status tells clients, the upload enforces it.
 	MaxAttachmentBytes int64
