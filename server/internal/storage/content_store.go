@@ -886,9 +886,13 @@ func (s *Store) CreateBackupBlobWithChunkDigests(ctx context.Context, accountID,
 	}{StateCounter: &stateCounter}); err != nil || stateCounter <= 0 {
 		return ErrInvalidInput
 	}
+	// A session without a device stores a NULL device_id; IS matches that NULL
+	// where = never does, so device-less backups share one counter sequence and
+	// one live recovery capability.
+	storedDeviceID := nullableEmptyString(deviceID)
 	var previousCounter sql.NullInt64
 	if err := tx.QueryRowContext(ctx, `SELECT MAX(CAST(json_extract(key_derivation_metadata_json, '$.state_counter') AS INTEGER))
-		FROM backup_blobs WHERE account_id = ? AND device_id = ?`, accountID, deviceID).Scan(&previousCounter); err != nil {
+		FROM backup_blobs WHERE account_id = ? AND device_id IS ?`, accountID, storedDeviceID).Scan(&previousCounter); err != nil {
 		return err
 	}
 	if previousCounter.Valid && stateCounter <= previousCounter.Int64 {
@@ -897,10 +901,10 @@ func (s *Store) CreateBackupBlobWithChunkDigests(ctx context.Context, accountID,
 	recoveryExpiresAt := time.Now().UTC().Add(RecoveryCapabilityLifetime)
 	if _, err := tx.ExecContext(ctx, `UPDATE backup_blobs SET recovery_token_hash = NULL,
 		recovery_expires_at = NULL, recovery_next_offset = 0, recovery_lease_id = NULL,
-		recovery_lease_expires_at = NULL WHERE account_id = ? AND device_id = ?`, accountID, deviceID); err != nil {
+		recovery_lease_expires_at = NULL WHERE account_id = ? AND device_id IS ?`, accountID, storedDeviceID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO backup_blobs(id, account_id, device_id, storage_key, ciphertext_sha256, size_bytes, key_derivation_metadata_json, created_at, recovery_token_hash, recovery_expires_at, recovery_next_offset, chunk_digests) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`, id, accountID, nullableEmptyString(deviceID), storageKey, ciphertextSHA256, sizeBytes, string(keyDerivationMetadata), nowString(), recoveryTokenHash, formatTime(recoveryExpiresAt), nullableBytes(chunkDigests)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO backup_blobs(id, account_id, device_id, storage_key, ciphertext_sha256, size_bytes, key_derivation_metadata_json, created_at, recovery_token_hash, recovery_expires_at, recovery_next_offset, chunk_digests) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`, id, accountID, storedDeviceID, storageKey, ciphertextSHA256, sizeBytes, string(keyDerivationMetadata), nowString(), recoveryTokenHash, formatTime(recoveryExpiresAt), nullableBytes(chunkDigests)); err != nil {
 		return err
 	}
 	return tx.Commit()
