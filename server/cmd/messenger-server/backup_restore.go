@@ -709,11 +709,11 @@ func recoverInterruptedRestore(cfg config.Config, stdout io.Writer) error {
 		return err
 	}
 	path := journalPath(live)
-	raw, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
+	// The lock is taken only when there is a journal, so a plain start
+	// leaves no lock file behind.
+	if _, err := os.Lstat(path); os.IsNotExist(err) {
 		return nil
-	}
-	if err != nil {
+	} else if err != nil {
 		return fmt.Errorf("read restore journal: %w", err)
 	}
 	// The journal may belong to a restore that is still running; settling
@@ -723,6 +723,23 @@ func recoverInterruptedRestore(cfg config.Config, stdout io.Writer) error {
 		return err
 	}
 	defer lock.Release()
+	if err := faultHook("recover:locked"); err != nil {
+		return err
+	}
+	return settleRestoreJournal(cfg, live, path, stdout)
+}
+
+// settleRestoreJournal reads the journal while the caller holds the restore
+// lock, so it acts on what the last restore wrote, never on an older copy.
+func settleRestoreJournal(cfg config.Config, live, path string, stdout io.Writer) error {
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		// The restore that owned it finished before the lock was taken.
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read restore journal: %w", err)
+	}
 	var journal restoreJournal
 	if err := json.Unmarshal(raw, &journal); err != nil || journal.Version != 1 {
 		return fmt.Errorf("restore journal %s is damaged; resolve it by hand before starting", path)
