@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -5026,6 +5027,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final now = DateTime.now().toUtc();
     final stillPending = <String>{};
     var staged = false;
+    var failed = false;
     for (final change in changes) {
       final key = _pendingChangeKey(change);
       stillPending.add(key);
@@ -5037,29 +5039,46 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (!coordinator && now.difference(firstSeen) < _reconcileFallback) {
         continue;
       }
-      if (await _hasPendingMlsWork(change.conversationId)) continue;
-      final local = await mls.groupEpoch(change.conversationId);
-      // Behind or ahead of the server means sync is not finished yet.
-      if (local == null || local.pending || local.epoch != change.epoch) {
-        continue;
+      // Each conversation is reconciled on its own: one refusal (a device
+      // the server lists that is already a member, say) must not stop the
+      // others. A failed one stays pending and is tried on the next pass.
+      try {
+        if (await _hasPendingMlsWork(change.conversationId)) continue;
+        final local = await mls.groupEpoch(change.conversationId);
+        // Behind or ahead of the server means sync is not finished yet.
+        if (local == null || local.pending || local.epoch != change.epoch) {
+          continue;
+        }
+        final adds = change.add.isEmpty
+            ? const <DeviceKeyPackage>[]
+            : await client.claimDeviceKeyPackages(
+                current.token,
+                change.conversationId,
+                change.add.map((item) => item.deviceId).toList(growable: false),
+              );
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        if (adds.isEmpty && change.remove.isEmpty) continue;
+        await mls.stageMembershipChange(change.conversationId,
+            adds: adds, removes: change.remove);
+        _mlsReconcileNow.remove(change.conversationId);
+        staged = true;
+      } catch (err) {
+        // A revoked session ends the whole pass; anything else is local to
+        // this conversation.
+        if (err is ApiException && err.statusCode == 401) rethrow;
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        failed = true;
+        // Body-free: no conversation, device or server text.
+        developer.log(
+            'mls_reconcile_conversation_failed '
+            '${err is ApiException ? err.statusCode : err.runtimeType}',
+            name: 'veritra.sync');
       }
-      final adds = change.add.isEmpty
-          ? const <DeviceKeyPackage>[]
-          : await client.claimDeviceKeyPackages(
-              current.token,
-              change.conversationId,
-              change.add.map((item) => item.deviceId).toList(growable: false),
-            );
-      if (!_syncOwnerActive(current, ownerGeneration)) return;
-      if (adds.isEmpty && change.remove.isEmpty) continue;
-      await mls.stageMembershipChange(change.conversationId,
-          adds: adds, removes: change.remove);
-      _mlsReconcileNow.remove(change.conversationId);
-      staged = true;
     }
     _mlsPendingSeen.removeWhere((key, _) => !stillPending.contains(key));
     _mlsReconcileNow.removeWhere((conversationId) =>
         !changes.any((change) => change.conversationId == conversationId));
+    if (failed) _mlsReconcileRequested = true;
     if (staged) await _flushMlsOutbox();
   }
 
