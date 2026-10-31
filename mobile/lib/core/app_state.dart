@@ -373,6 +373,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   AccountSyncEngine? _syncOwner;
   LocalSyncLease? _syncLease;
   int _sessionGeneration = 0;
+  int _sessionEnds = 0;
+
+  /// Bumped as the first step of every local sign-out, before any await,
+  /// and by nothing else. `session` stays set for several awaits while the
+  /// sign-out runs; work that captured this value under the old session and
+  /// sees it changed must drop its result. Unlike the private session
+  /// generation it does not move when sync restarts, so it never drops
+  /// work of a session that is still running.
+  int get sessionEndGeneration => _sessionEnds;
 
   // D52 bounded background work (phones). Off unless the demo entry point
   // installs the native worker; release builds never construct it.
@@ -2005,8 +2014,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (current == null || client == null) {
       return false;
     }
+    final ends = _sessionEnds;
     try {
       final mute = await client.conversationMute(current.token, conversationId);
+      // A reply that lands during or after a sign-out belongs to the old
+      // session; storing it would leave a row behind the wipe.
+      if (ends != _sessionEnds || session == null) return false;
       _setMuteLocally(conversationId, mute);
       return true;
     } catch (_) {
@@ -2030,12 +2043,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         return;
       }
       final length = duration.length;
+      final ends = _sessionEnds;
       final applied = await client.setConversationMute(
         current.token,
         conversationId,
         muted: duration != MuteDuration.off,
         forDuration: length,
       );
+      if (ends != _sessionEnds || session == null) return;
       _setMuteLocally(conversationId, applied);
     });
   }
@@ -4566,6 +4581,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     bool keepDrafts = false,
     bool keepApiOpen = false,
   }) async {
+    _sessionEnds++;
     _sessionGeneration++;
     // Native permits go first, then capture, then the private notice state
     // (cleared with the rest of the local session below).

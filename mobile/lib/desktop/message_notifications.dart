@@ -174,9 +174,13 @@ class MessageNotifier {
     // The text below belongs to this session. If the notifier is detached or
     // the account or device changes while this call waits, nothing is shown.
     final generation = _generation;
+    // A sign-out keeps `session` set for several awaits; it counts as ended
+    // from its first step.
+    final sessionEnds = state.sessionEndGeneration;
     bool current() {
       final active = state.session;
       return generation == _generation &&
+          sessionEnds == state.sessionEndGeneration &&
           active != null &&
           active.accountId == session.accountId &&
           active.deviceId == session.deviceId;

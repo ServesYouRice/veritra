@@ -381,6 +381,29 @@ void main() {
         expect(notifier.shown, isEmpty);
       });
 
+      test('a sign-out that has started during ${wait.key} shows nothing',
+          () async {
+        // The session stays set for several awaits while sign-out runs.
+        final entered = Completer<void>();
+        final release = Completer<void>();
+        state.beforeLocalSessionClear = () async {
+          entered.complete();
+          await release.future;
+        };
+        final gate = Completer<void>();
+        wait.value(gate);
+        final pending = start();
+        await Future<void>.delayed(Duration.zero);
+        final signOut = state.logout();
+        await entered.future;
+        expect(state.session, isNotNull);
+        gate.complete();
+        await pending;
+        expect(notifier.shown, isEmpty);
+        release.complete();
+        await signOut;
+      });
+
       test('an account switch during ${wait.key} shows nothing', () async {
         final gate = Completer<void>();
         wait.value(gate);
