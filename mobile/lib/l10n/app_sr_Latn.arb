@@ -485,6 +485,7 @@
   "chatComposerHint": "Poruka",
   "chatComposerCounter": "{length} / {max}",
   "chatPausedNotice": "Slanje je ovde pauzirano: server je odbio ažuriranje šifrovanja za ovaj razgovor. Ostali razgovori i dalje rade.",
+  "chatRemovalHoldNotice": "Vaša poruka čeka da se završi ažuriranje šifrovanja posle uklanjanja člana, a zatim se šalje.",
   "chatAttachment": "Prilog",
   "chatAttachmentOne": "Prilog: {name}",
   "chatAttachmentMany": "Prilozi: {name} i još {count}",
