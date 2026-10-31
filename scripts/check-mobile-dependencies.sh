@@ -54,8 +54,11 @@ if [ -n "$gradle_repo_hits" ]; then
   echo "$gradle_repo_hits" >&2
   exit 1
 fi
-if grep -R -n -E ':(latest|release|snapshot|[0-9]+\.[0-9]+\.[0-9]+\+)' "$ANDROID/app/build.gradle.kts"; then
-  echo "mobile dependency check failed: dynamic Gradle dependency version found" >&2
+# Every Gradle build, settings and version-catalog file, comments skipped,
+# for +, range, latest.* and SNAPSHOT versions; fails if the app build script
+# is missing or any file cannot be read.
+if ! python3 "$ROOT/scripts/check-gradle-inputs.py" "$ANDROID"; then
+  echo "mobile dependency check failed: dynamic Gradle version or unreadable Gradle input" >&2
   exit 1
 fi
 
