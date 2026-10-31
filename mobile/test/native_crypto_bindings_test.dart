@@ -96,14 +96,23 @@ void main() {
     bob.processCommit('conv_test', update.commit);
     expect(
         bob.groupEpoch('conv_test'), (epoch: before.epoch + 1, pending: false));
+    // Both sides now share the new epoch's keys, so a message round-trips.
+    final afterUpdate = alice.encrypt('conv_test', [8, 9]);
     expect(
-        () => bob.decrypt('conv_test', [1],
+        bob.decrypt('conv_test', afterUpdate,
             senderAccountId: 'acct_alice', senderDeviceId: 'dev_alice'),
-        throwsA(isA<NativeCryptoException>().having(
-            (error) => error.kind, 'kind', NativeCryptoError.operationFailed)));
+        [8, 9]);
     final removal = alice.removeMember('conv_test', 'acct_bob', 'dev_bob');
+    expect(alice.groupEpoch('conv_test'),
+        (epoch: before.epoch + 2, pending: false));
     bob.processCommit('conv_test', removal);
     expect(() => bob.encrypt('conv_test', [1]),
+        throwsA(isA<NativeCryptoException>()));
+    // A removed member cannot read what the group sends after the removal.
+    final afterRemoval = alice.encrypt('conv_test', [10, 11]);
+    expect(
+        () => bob.decrypt('conv_test', afterRemoval,
+            senderAccountId: 'acct_alice', senderDeviceId: 'dev_alice'),
         throwsA(isA<NativeCryptoException>()));
 
     final key = List<int>.filled(32, 9);
