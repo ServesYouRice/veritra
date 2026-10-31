@@ -433,6 +433,14 @@ func (s *Store) ListMLSPendingChanges(ctx context.Context, accountID, deviceID s
 	// a device without one stays pending (claiming skips it), and would
 	// otherwise fill the list for good while a claimable device waits behind.
 	// Each query reads one row past a cap so that clipping can be told.
+	// One read transaction, so the epoch, both lists and the coordinator of an
+	// item come from the same snapshot: a commit landing between the queries
+	// must not give a list built for one epoch the coordinator of the next.
+	tx, err := s.db.reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
 	byConversation := map[string]*MLSPendingChange{}
 	overall := false
 	removeSQL := `
@@ -473,7 +481,7 @@ func (s *Store) ListMLSPendingChanges(ctx context.Context, accountID, deviceID s
 		if kind == "add" {
 			query = addSQL
 		}
-		rows, err := s.queryPendingChanges(ctx, query, kind, deviceID, accountID, now)
+		rows, err := queryPendingChanges(ctx, tx, query, kind, deviceID, accountID, now)
 		if err != nil {
 			return nil, err
 		}
@@ -498,6 +506,9 @@ func (s *Store) ListMLSPendingChanges(ctx context.Context, accountID, deviceID s
 			*list = append(*list, row.ref)
 		}
 	}
+	if s.afterPendingChangesRead != nil {
+		s.afterPendingChangesRead()
+	}
 	result := make([]MLSPendingChange, 0, len(byConversation))
 	for _, item := range byConversation {
 		if overall {
@@ -505,7 +516,7 @@ func (s *Store) ListMLSPendingChanges(ctx context.Context, accountID, deviceID s
 			// tell which, so every list says it may be incomplete.
 			item.Truncated = true
 		}
-		if err := s.db.QueryRowContext(ctx, `SELECT MIN(r.device_id) FROM conversation_mls_devices r
+		if err := tx.QueryRowContext(ctx, `SELECT MIN(r.device_id) FROM conversation_mls_devices r
 			JOIN devices d ON d.id = r.device_id AND d.revoked_at IS NULL
 			JOIN memberships m ON m.conversation_id = r.conversation_id AND m.account_id = r.account_id
 			WHERE r.conversation_id = ? AND r.removed_after_event_id IS NULL`,
@@ -532,12 +543,12 @@ type pendingChangeRow struct {
 // queryPendingChanges runs one of the two pending-change queries: at most
 // maxMLSBundleChanges+1 rows per conversation and mlsPendingChangeLimit+1 in
 // all.
-func (s *Store) queryPendingChanges(ctx context.Context, query, kind, deviceID, accountID, now string) ([]pendingChangeRow, error) {
+func queryPendingChanges(ctx context.Context, tx *sql.Tx, query, kind, deviceID, accountID, now string) ([]pendingChangeRow, error) {
 	args := []interface{}{deviceID, accountID, maxMLSBundleChanges + 1, mlsPendingChangeLimit + 1}
 	if kind == "add" {
 		args = append(args, now)
 	}
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
