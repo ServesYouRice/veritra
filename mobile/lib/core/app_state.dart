@@ -1277,7 +1277,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       } catch (_) {
         // Keep the encrypted cache available while offline.
       }
-      _startSync();
+      unawaited(_startSync());
       unawaited(_scheduleExpiryPurge());
       lifecycle = SessionLifecycle.ready;
       notifyListeners();
@@ -3389,71 +3389,91 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     );
   }
 
+  /// Starts the sync owner and socket for the current session. Callers do
+  /// not wait for it, so it never throws: a failed lease, drain or dispose
+  /// step shows as offline with [syncError], and [_catchUpSyncEvents] (the
+  /// retry timer, foreground resume, a push wake) starts it again.
   Future<void> _startSync() async {
     final current = session;
     if (current == null) {
       return;
     }
     final ownerGeneration = ++_sessionGeneration;
-    final previousOwner = _syncOwner;
-    final previousLease = _syncLease;
-    _syncOwner = null;
-    _syncLease = null;
-    previousOwner?.dispose();
-    await previousOwner?.cancelAndDrain();
-    if (previousLease != null) {
-      await localStore.releaseSyncLease(previousLease);
-    }
-    if (ownerGeneration != _sessionGeneration || !_sameSession(current)) {
+    _syncStartFailed = null;
+    LocalSyncLease? acquired;
+    AccountSyncEngine? installed;
+    SyncService? opened;
+    try {
+      final previousOwner = _syncOwner;
+      final previousLease = _syncLease;
+      _syncOwner = null;
+      _syncLease = null;
+      previousOwner?.dispose();
+      await previousOwner?.cancelAndDrain();
+      if (previousLease != null) {
+        await localStore.releaseSyncLease(previousLease);
+      }
+      if (ownerGeneration != _sessionGeneration || !_sameSession(current)) {
+        return;
+      }
+      final accountId = current.accountId;
+      final deviceId = current.deviceId;
+      if (accountId == null || deviceId == null) return;
+      final lease = LocalSyncLease(
+        origin: current.baseUrl,
+        accountId: accountId,
+        deviceId: deviceId,
+        generation: ownerGeneration,
+      );
+      // Noted before the await: a failure after the write still releases it.
+      acquired = lease;
+      await localStore.acquireSyncLease(lease);
+      if (ownerGeneration != _sessionGeneration || !_sameSession(current)) {
+        await localStore.releaseSyncLease(lease);
+        return;
+      }
+      _syncLease = lease;
+      _syncOwner = installed = AccountSyncEngine(
+        isOwner: () =>
+            ownerGeneration == _sessionGeneration && _sameSession(current),
+        work: () => _runOwnedCatchUp(current, ownerGeneration),
+      );
+      final previousSubscription = _syncSubscription;
+      _syncSubscription = null;
+      await previousSubscription?.cancel();
+      final previousSync = sync;
+      sync = null;
+      // Close the old socket before opening one for this session so two
+      // authenticated sockets never overlap.
+      await previousSync?.dispose();
+      if (ownerGeneration != _sessionGeneration || !_sameSession(current)) {
+        return;
+      }
+      sync = opened = syncServiceFactory(current.baseUrl, current.token);
+      _setConnectionStatus(ConnectionStatus.connecting);
+      _syncSubscription = opened.events.listen(
+        (frame) {
+          // Ephemeral frames carry nothing to catch up on.
+          if (handleEphemeralFrame(frame)) return;
+          unawaited(_catchUpSyncEvents());
+          unawaited(_flushMlsOutbox());
+        },
+        onError: (_) {
+          // A dropped socket alone is not proof the server is unreachable;
+          // the catch-up attempt that follows decides online vs. offline.
+          unawaited(_catchUpSyncEvents());
+          unawaited(_flushMlsOutbox());
+        },
+      );
+    } catch (err) {
+      if (opened != null && identical(sync, opened)) {
+        sync = null;
+        unawaited(opened.dispose().catchError((Object _) {}));
+      }
+      await _abandonSyncStart(current, ownerGeneration, err,
+          lease: acquired, owner: installed);
       return;
     }
-    final accountId = current.accountId;
-    final deviceId = current.deviceId;
-    if (accountId == null || deviceId == null) return;
-    final lease = LocalSyncLease(
-      origin: current.baseUrl,
-      accountId: accountId,
-      deviceId: deviceId,
-      generation: ownerGeneration,
-    );
-    await localStore.acquireSyncLease(lease);
-    if (ownerGeneration != _sessionGeneration || !_sameSession(current)) {
-      await localStore.releaseSyncLease(lease);
-      return;
-    }
-    _syncLease = lease;
-    _syncOwner = AccountSyncEngine(
-      isOwner: () =>
-          ownerGeneration == _sessionGeneration && _sameSession(current),
-      work: () => _runOwnedCatchUp(current, ownerGeneration),
-    );
-    final previousSubscription = _syncSubscription;
-    _syncSubscription = null;
-    await previousSubscription?.cancel();
-    final previousSync = sync;
-    sync = null;
-    // Close the old socket before opening one for this session so two
-    // authenticated sockets never overlap.
-    await previousSync?.dispose();
-    if (ownerGeneration != _sessionGeneration || !_sameSession(current)) {
-      return;
-    }
-    sync = syncServiceFactory(current.baseUrl, current.token);
-    _setConnectionStatus(ConnectionStatus.connecting);
-    _syncSubscription = sync!.events.listen(
-      (frame) {
-        // Ephemeral frames carry nothing to catch up on.
-        if (handleEphemeralFrame(frame)) return;
-        unawaited(_catchUpSyncEvents());
-        unawaited(_flushMlsOutbox());
-      },
-      onError: (_) {
-        // A dropped socket alone is not proof the server is unreachable; the
-        // catch-up attempt that follows decides online vs. offline.
-        unawaited(_catchUpSyncEvents());
-        unawaited(_flushMlsOutbox());
-      },
-    );
     unawaited(_catchUpSyncEvents());
     unawaited(_flushOutbox());
     unawaited(_flushMlsOutbox());
@@ -3465,6 +3485,64 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     unawaited(refreshBlocks());
     unawaited(refreshReadReceiptsSetting());
     unawaited(_startPush());
+  }
+
+  /// The session whose sync startup failed and left no owner. Only this
+  /// session is started again: one that never got as far as [_startSync]
+  /// (its MLS activation failed, say) stays without sync.
+  Session? _syncStartFailed;
+  bool _syncRestartQueued = false;
+
+  /// Undoes a [_startSync] that threw: the owner and lease it installed go,
+  /// and, while [current] is still the session, the failure shows as
+  /// offline (a connection fact, not the outcome of a sign-in) and a retry
+  /// is scheduled with backoff.
+  Future<void> _abandonSyncStart(
+    Session current,
+    int ownerGeneration,
+    Object err, {
+    LocalSyncLease? lease,
+    AccountSyncEngine? owner,
+  }) async {
+    if (owner != null && identical(_syncOwner, owner)) {
+      _syncOwner = null;
+      owner.dispose();
+    }
+    if (lease != null) {
+      if (identical(_syncLease, lease)) _syncLease = null;
+      try {
+        await localStore.releaseSyncLease(lease);
+      } catch (_) {
+        // The next startup's lease takes its place.
+      }
+    }
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
+    _syncStartFailed = current;
+    syncError = _isTransientStorageError(err)
+        ? l10n.syncErrorStorageBusy
+        : describeError(err, l10n);
+    _setConnectionStatus(ConnectionStatus.offline);
+    notifyListeners();
+    _scheduleCatchUpRetry();
+  }
+
+  /// Starts sync again for [failed], whose startup failed. Queued, so it
+  /// never runs inside a session transition, which the generation bump in
+  /// [_startSync] would cut short; fired and not awaited, so a caller that
+  /// is itself queued cannot wait on it.
+  void _restartSync(Session failed) {
+    if (_syncRestartQueued) return;
+    _syncRestartQueued = true;
+    unawaited(_enqueueSessionTransition(() async {
+      _syncRestartQueued = false;
+      if (_disposed ||
+          _syncOwner != null ||
+          !identical(_syncStartFailed, failed) ||
+          !_sameSession(failed)) {
+        return;
+      }
+      await _startSync();
+    }));
   }
 
   void _setConnectionStatus(ConnectionStatus status) {
@@ -4013,6 +4091,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
 
   Future<void> _catchUpSyncEvents() async {
     if (!_isForeground) return;
+    final failed = _syncStartFailed;
+    if (_syncOwner == null && failed != null && _sameSession(failed)) {
+      // The owner never came up; a successful start runs its own catch-up.
+      _restartSync(failed);
+      return;
+    }
     await _syncOwner?.request();
   }
 
@@ -4707,6 +4791,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     required bool keepApiOpen,
   }) async {
     _sessionGeneration++;
+    _syncStartFailed = null;
     // Native permits go first, then capture, then the private notice state
     // (cleared with the rest of the local session below).
     _wakeRun?.cancel();

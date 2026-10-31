@@ -5,6 +5,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
@@ -32,6 +33,30 @@ void main() {
     for (var i = 0; i < 40; i++) {
       await Future<void>.delayed(Duration.zero);
     }
+  }
+
+  Future<void> waitFor(FutureOr<bool> Function() condition) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 10));
+    while (DateTime.now().isBefore(deadline)) {
+      if (await condition()) return;
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+    }
+    fail('condition not reached');
+  }
+
+  /// Runs [body] in a zone that collects every uncaught asynchronous error
+  /// into [errors] instead of failing the test on its own.
+  Future<void> guarded(List<Object> errors, Future<void> Function() body) {
+    final done = Completer<void>();
+    runZonedGuarded(() async {
+      try {
+        await body();
+        done.complete();
+      } catch (error, stack) {
+        done.completeError(error, stack);
+      }
+    }, (error, _) => errors.add(error));
+    return done.future;
   }
 
   group('TASK-055: sync starts after a sign-in step fails', () {
@@ -146,6 +171,163 @@ void main() {
       h.dispose();
     });
   });
+
+  group('TASK-037: a failed sync startup is visible and recovers', () {
+    test('restore: a lease failure shows offline, and resume starts sync',
+        () async {
+      final errors = <Object>[];
+      await guarded(errors, () async {
+        final store = _FaultStore()..acquireFailures = 1;
+        await store.saveSession(_owner);
+        final h = _Harness(store: store);
+
+        await h.state.tryRestoreSession();
+        await settle();
+
+        expect(errors, isEmpty);
+        expect(h.state.lifecycle, SessionLifecycle.ready);
+        expect(h.state.session?.token, _owner.token);
+        expect(h.state.syncError, isNotNull);
+        expect(h.state.connectionStatus, ConnectionStatus.offline);
+        expect(h.syncStarts, 0);
+        expect(h.api.syncCalls, 0);
+
+        h.state.handleAppLifecycleState(AppLifecycleState.resumed);
+        await waitFor(() => h.api.syncCalls > 0);
+        expect(h.syncStarts, 1);
+        await waitFor(
+            () => h.state.connectionStatus == ConnectionStatus.online);
+        expect(h.state.syncError, isNull);
+        h.dispose();
+      });
+      expect(errors, isEmpty);
+    });
+
+    test('login: a lease failure is not a sign-in failure', () async {
+      final errors = <Object>[];
+      await guarded(errors, () async {
+        final store = _FaultStore()..acquireFailures = 1;
+        await store.saveSession(const Session(
+          baseUrl: _origin,
+          token: '',
+          accountId: 'acct_owner',
+          deviceId: 'dev_owner',
+          deviceSecret: 'secret',
+        ));
+        final h = _Harness(store: store);
+
+        await h.state.login(_origin, 'owner', 'password');
+        await settle();
+
+        expect(h.state.error, isNull);
+        expect(h.state.session?.token, _owner.token);
+        expect(h.state.connectionStatus, ConnectionStatus.offline);
+        expect(h.state.syncError, isNotNull);
+
+        h.state.handleAppLifecycleState(AppLifecycleState.resumed);
+        await waitFor(() => h.api.syncCalls > 0);
+        expect(h.syncStarts, 1);
+        h.dispose();
+      });
+      expect(errors, isEmpty);
+    });
+
+    test('reauthenticate: a failed release of the old lease recovers',
+        () async {
+      final errors = <Object>[];
+      await guarded(errors, () async {
+        final store = _FaultStore();
+        await store.saveSession(const Session(
+          baseUrl: _origin,
+          token: 'token-owner',
+          accountId: 'acct_owner',
+          deviceId: 'dev_owner',
+          deviceSecret: 'secret',
+        ));
+        final h = _Harness(store: store);
+        await h.state.tryRestoreSession();
+        await waitFor(() => h.api.syncCalls > 0);
+        expect(h.syncStarts, 1);
+
+        store.releaseFailures = 1;
+        h.api.rotatedToken = 'token-rotated';
+        expect(await h.state.reauthenticate('password'), isTrue);
+        await settle();
+        expect(h.state.connectionStatus, ConnectionStatus.offline);
+        expect(h.syncStarts, 1);
+
+        h.state.handleAppLifecycleState(AppLifecycleState.resumed);
+        await waitFor(() => h.api.syncTokens.contains('token-rotated'));
+        expect(h.syncStarts, 2);
+        h.dispose();
+      });
+      expect(errors, isEmpty);
+    });
+
+    test('resume never starts sync for a session that was replaced', () async {
+      final errors = <Object>[];
+      await guarded(errors, () async {
+        final store = _FaultStore()..acquireFailures = 1;
+        await store.saveSession(_owner);
+        final h = _Harness(store: store);
+        await h.state.tryRestoreSession();
+        await settle();
+        expect(h.state.connectionStatus, ConnectionStatus.offline);
+
+        await h.state.logout();
+        h.state.handleAppLifecycleState(AppLifecycleState.resumed);
+        await settle();
+        expect(h.state.session, isNull);
+        expect(h.syncStarts, 0);
+        h.dispose();
+      });
+      expect(errors, isEmpty);
+    });
+
+    test('resume never starts sync for a session whose MLS activation failed',
+        () async {
+      final h = _Harness(mls: true);
+      h.crypto!.activationFailure = StateError('keystore locked');
+      await h.store.saveSession(const Session(
+        baseUrl: _origin,
+        token: '',
+        accountId: 'acct_owner',
+        deviceId: 'dev_owner',
+        deviceSecret: 'secret',
+      ));
+
+      await h.state.login(_origin, 'owner', 'password');
+      expect(h.state.error, isNotNull);
+      h.state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await settle();
+      expect(h.syncStarts, 0);
+      h.dispose();
+    });
+  });
+}
+
+/// A memory store whose sync-lease steps fail a set number of times.
+class _FaultStore extends MemoryLocalStore {
+  int acquireFailures = 0;
+  int releaseFailures = 0;
+
+  @override
+  Future<void> acquireSyncLease(LocalSyncLease lease) async {
+    if (acquireFailures > 0) {
+      acquireFailures--;
+      throw StateError('sync lease unavailable');
+    }
+    await super.acquireSyncLease(lease);
+  }
+
+  @override
+  Future<void> releaseSyncLease(LocalSyncLease lease) async {
+    if (releaseFailures > 0) {
+      releaseFailures--;
+      throw StateError('sync lease unavailable');
+    }
+    await super.releaseSyncLease(lease);
+  }
 }
 
 /// One AppState over a memory store, a scripted API and a counting sync
@@ -182,6 +364,7 @@ class _Api extends ApiClient {
   _Api() : super(baseUrl: _origin);
 
   Session signedIn = _owner;
+  String? rotatedToken;
   Object? devicesFailure;
   Object? conversationsFailure;
 
@@ -191,6 +374,7 @@ class _Api extends ApiClient {
   /// The number of packages in each publish the server accepted.
   final List<int> published = <int>[];
   int syncCalls = 0;
+  final List<String> syncTokens = <String>[];
 
   static const _reservation = EnrollmentReservation(
     id: 'enroll_1',
@@ -281,6 +465,7 @@ class _Api extends ApiClient {
     int limit = 100,
   }) async {
     syncCalls++;
+    syncTokens.add(token);
     return const <SyncEvent>[];
   }
 
@@ -300,6 +485,11 @@ class _Api extends ApiClient {
       const <Community>[];
 
   @override
+  Future<String?> reauthenticate(
+          String token, String password, String deviceSecret) async =>
+      rotatedToken;
+
+  @override
   Future<void> logout(String token) async {}
 }
 
@@ -308,9 +498,13 @@ class _MlsCrypto extends TestOnlyCryptoService
     implements MlsConversationCryptoService {
   /// The count asked for in each key-package batch.
   final List<int> created = <int>[];
+  Object? activationFailure;
 
   @override
-  Future<void> activateSession(Session session) async {}
+  Future<void> activateSession(Session session) async {
+    final failure = activationFailure;
+    if (failure != null) throw failure;
+  }
 
   @override
   Future<List<List<int>>> createReplenishmentKeyPackages(
