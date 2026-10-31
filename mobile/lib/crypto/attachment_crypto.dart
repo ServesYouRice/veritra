@@ -51,6 +51,50 @@ class AttachmentCryptoService {
   /// files while an attachment is encrypted, uploaded or opened.
   Future<Directory> workingDirectory() => _directoryProvider();
 
+  /// Working files of an interrupted encryption (`.attachment-<hex>.ciphertext`)
+  /// or opening (`.veritra-attachment-<hex>.ciphertext`, `.plaintext` and its
+  /// `.part`). Nothing else in the directory, which also holds the database,
+  /// its key and backup files, matches.
+  static final RegExp _orphanName = RegExp(
+    r'^\.(attachment-[0-9a-f]{32}\.ciphertext'
+    r'|veritra-attachment-[0-9a-f]+\.(ciphertext|plaintext|plaintext\.part))$',
+  );
+
+  /// Files younger than this are left alone: another process (a second demo
+  /// profile shares this directory) or an upload still running may own them.
+  static const orphanMinAge = Duration(hours: 1);
+
+  /// Deletes the working files a killed or crashed process left behind in
+  /// [workingDirectory], plaintext `.part` files included. Run it once at
+  /// start, before attachments are used. It is best effort: a file that
+  /// cannot be deleted is skipped, and nothing is thrown.
+  Future<void> cleanupOrphans({
+    Duration minAge = orphanMinAge,
+    DateTime? now,
+  }) async {
+    final cutoff = (now ?? DateTime.now()).subtract(minAge);
+    final List<FileSystemEntity> entries;
+    try {
+      final directory = await workingDirectory();
+      if (!await directory.exists()) return;
+      entries = await directory.list(followLinks: false).toList();
+    } catch (_) {
+      // No path provider (a test host) or an unreadable directory.
+      return;
+    }
+    for (final entry in entries) {
+      if (entry is! File) continue;
+      final name = entry.uri.pathSegments.last;
+      if (!_orphanName.hasMatch(name)) continue;
+      try {
+        if ((await entry.lastModified()).isAfter(cutoff)) continue;
+        await entry.delete();
+      } on FileSystemException {
+        // One file that cannot go must not keep the others.
+      }
+    }
+  }
+
   Future<PreparedEncryptedAttachment> encryptFile({
     required String sourcePath,
     required String conversationId,

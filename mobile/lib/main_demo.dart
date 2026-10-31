@@ -101,6 +101,7 @@ Future<void> main(List<String> args) async {
       runApp(VeritraApp(state: state, desktop: desktop));
       unawaited(purgeOpenedAttachments());
       unawaited(purgePastedImages());
+      unawaited(state.attachmentService?.cleanupOrphans());
       unawaited(state.tryRestoreSession());
     },
     // Cold demo work is added only through this normal compiled entry point,
