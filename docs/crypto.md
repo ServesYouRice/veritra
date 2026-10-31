@@ -132,6 +132,36 @@ a real account. L1, the signed approved-device list, must give the core:
 With L1 the identity-only check on past-epoch senders (TASK-008) can also
 compare signing keys.
 
+### Rejoining a conversation
+
+A device removed from a conversation and later re-added (an account that
+leaves and is invited back) still stores the old group under the same id:
+OpenMLS keeps a group after its own removal, marked inactive.
+`join_group` (`pm_crypto_group_join`, no ABI change) lets a Welcome replace
+a stored group only when that group is inactive, that is, the device has
+applied its own removal commit. The old group's state is deleted before the
+new one is stored. The Welcome then has the trust of any fresh join, which
+includes the L1 gap above: the core checks its structure, not who may be in
+the group or who may invite.
+
+An active stored group is never replaced, whoever sends the Welcome and
+whatever its epoch. A Welcome cannot prove the device was removed. If it
+could replace an active group, a malicious server together with any
+member, even one already removed, could make the device delete its real
+group for a fork at an epoch of their choosing. Withholding events alone
+cannot do that. The refusal comes before the Welcome is staged, so the
+group and the key package are both kept.
+
+So a device removed while offline must be given its removal commit before
+its new Welcome. The server does not do that yet: the re-add upsert in
+`server/internal/storage/mls_group_store.go` (`ON CONFLICT ... DO UPDATE`)
+overwrites the old roster window, `joined_after_event_id` and
+`removed_after_event_id`. Sync then hides the removal commit, the Welcome
+is refused, and the device's sync stops under I33. The server change is
+pending.
+
+Tests: `crypto/rust/tests/rejoin_after_removal.rs`.
+
 ## Message size
 
 Three limits apply to an MLS application message, smallest first:
