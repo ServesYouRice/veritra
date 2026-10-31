@@ -103,6 +103,10 @@ def test_build_manifest() -> None:
     expect_value_error(
         "empty approval path", policy={"schema_version": 3, "approvals": {**POLICY["approvals"], "bad": {"path": ""}}}
     )
+    # A path not keyed by the candidate would serve one approval file to
+    # every candidate.
+    unkeyed = {**POLICY["approvals"], "production_crypto": {"path": "release/approvals/crypto.json"}}
+    expect_value_error("approval path without {commit}", policy={"schema_version": 3, "approvals": unkeyed})
     # A missing or empty approvals section, or one without a required
     # approval, cannot produce a manifest (before, both gave one with no
     # approvals at all).
@@ -410,7 +414,38 @@ def test_approvals_commit_is_required() -> None:
         for approvals_commit in (None, ""):
             expect_refused(repo.run(RELEASE_APPROVALS_COMMIT=approvals_commit), "RELEASE_APPROVALS_COMMIT must be")
         expect_refused(repo.run(RELEASE_APPROVALS_COMMIT="f" * 40), "approval is missing")
+        # An approval that is not a JSON object.
+        listed = commit_files(repo.root, repo.candidate, {
+            f"release/approvals/{repo.candidate}/crypto.json": "[]",
+            f"release/approvals/{repo.candidate}/review.json": json.dumps({"reviewer": "sec-team"}),
+        }, "approve with a list")
+        expect_refused(repo.run(RELEASE_APPROVALS_COMMIT=listed), "is not a JSON object")
     finally:
+        repo.close()
+
+
+def test_git_reads_only_the_repository() -> None:
+    """The caller's GIT_* variables cannot point git at other objects: an
+    approvals commit only another copy of the repository holds is not found
+    through an alternate object directory or GIT_DIR."""
+    repo = Repository()
+    other = repo.root.parent / (repo.root.name + "-other")
+    try:
+        shutil.copytree(repo.root, other)
+        outside = commit_files(other, repo.candidate, {
+            f"release/approvals/{repo.candidate}/crypto.json": json.dumps({"reviewer": "someone"}),
+            f"release/approvals/{repo.candidate}/review.json": json.dumps({"reviewer": "someone"}),
+        }, "approve outside the repository")
+        for redirect in ({"GIT_ALTERNATE_OBJECT_DIRECTORIES": str(other / ".git/objects")},
+                         {"GIT_OBJECT_DIRECTORY": str(other / ".git/objects")},
+                         {"GIT_DIR": str(other / ".git")}):
+            expect_refused(repo.run(RELEASE_APPROVALS_COMMIT=outside, **redirect), "approval is missing")
+        # The redirected policy is not read either: here GIT_DIR's copy
+        # holds a candidate the repository does not.
+        moved = commit_files(other, repo.candidate, {".go-version": "9.9.9\n"}, "other toolchain")
+        expect_refused(repo.run(RELEASE_COMMIT=moved, GIT_DIR=str(other / ".git")), "is missing from candidate commit")
+    finally:
+        shutil.rmtree(other, ignore_errors=True)
         repo.close()
 
 
@@ -422,4 +457,5 @@ if __name__ == "__main__":
     test_policy_and_toolchain_come_from_the_candidate_commit()
     test_missing_mobile_evidence_fails_closed()
     test_approvals_commit_is_required()
+    test_git_reads_only_the_repository()
     print("Release evidence manifest construction tests passed")

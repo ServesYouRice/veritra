@@ -50,13 +50,17 @@ def validate_commit(commit: str, name: str = "RELEASE_COMMIT") -> None:
 def git_blob(commit: str, path: str, root: Path = ROOT) -> bytes:
     """``path`` as stored in ``commit``; CalledProcessError when it is not there.
 
-    Replace refs and grafts are ignored (``GIT_HISTORY_ENV``).
+    Replace refs and grafts are ignored (``GIT_HISTORY_ENV``), and so is
+    every GIT_* variable of the caller: GIT_DIR, GIT_OBJECT_DIRECTORY,
+    GIT_ALTERNATE_OBJECT_DIRECTORIES and the like could point git at objects
+    outside the repository at ``root``.
     """
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     return subprocess.run(
         ["git", "--no-replace-objects", "-C", str(root), "cat-file", "blob", f"{commit}:{path}"],
         capture_output=True,
         check=True,
-        env={**os.environ, **GIT_HISTORY_ENV},
+        env={**environment, **GIT_HISTORY_ENV},
     ).stdout
 
 
@@ -109,10 +113,13 @@ def build_manifest(
     missing = sorted(set(REQUIRED_APPROVALS) - set(approvals))
     if missing:
         raise ValueError(f"release policy is missing required approvals: {', '.join(missing)}")
-    # Every entry is checked before any approval is loaded.
+    # Every entry is checked before any approval is loaded. Each path must be
+    # keyed by the candidate, or one file would approve every candidate.
     for name, config in approvals.items():
         if not isinstance(config, dict) or not isinstance(config.get("path"), str) or not config["path"]:
             raise ValueError(f"invalid approval configuration: {name}")
+        if "{commit}" not in config["path"]:
+            raise ValueError(f"approval path is not keyed by the candidate commit: {name}")
     # Mobile records come only from the separate mobile artifact file, never
     # from CI job evidence, so a simulator CI run cannot add signed evidence.
     if not isinstance(mobile_artifacts, list) or not all(isinstance(r, dict) for r in mobile_artifacts):
@@ -149,6 +156,8 @@ def git_approval_loader(approvals_commit: str, root: Path = ROOT) -> Callable[[s
         except subprocess.CalledProcessError as exc:
             raise ValueError(f"approval is missing from approvals commit {approvals_commit}: {path}") from exc
         record = json.loads(blob.decode("utf-8"))
+        if not isinstance(record, dict):
+            raise ValueError(f"approval at {path} is not a JSON object")
         return {"path": path, "digest": "sha256:" + hashlib.sha256(blob).hexdigest(), "record": record}
 
     return load_approval

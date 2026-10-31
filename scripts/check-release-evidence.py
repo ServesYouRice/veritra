@@ -227,16 +227,25 @@ def require(value: Any, description: str, errors: list[str]) -> None:
 GIT_HISTORY_ENV = {"GIT_NO_REPLACE_OBJECTS": "1", "GIT_GRAFT_FILE": os.path.join(os.devnull, "grafts")}
 
 
+def git_environment() -> dict[str, str]:
+    """The caller's environment without any GIT_* variable, plus GIT_HISTORY_ENV.
+
+    GIT_DIR, GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES,
+    GIT_CONFIG_* and the like could point git at other objects or history
+    than the repository at --root, so none of them reaches it.
+    """
+    return {**{key: value for key, value in os.environ.items() if not key.startswith("GIT_")}, **GIT_HISTORY_ENV}
+
+
 def git(root: Path, *args: str) -> bytes | None:
     """Run a read-only git query; None when git fails, so callers fail closed.
 
-    Replace refs and grafts are ignored (``GIT_HISTORY_ENV``).
+    Replace refs and grafts are ignored, and so is the caller's GIT_*
+    environment (``git_environment``).
     """
     command = ["git", "--no-replace-objects", "-C", str(root), *args]
     try:
-        return subprocess.run(
-            command, capture_output=True, check=True, env={**os.environ, **GIT_HISTORY_ENV}
-        ).stdout
+        return subprocess.run(command, capture_output=True, check=True, env=git_environment()).stdout
     except (OSError, subprocess.CalledProcessError):
         return None
 

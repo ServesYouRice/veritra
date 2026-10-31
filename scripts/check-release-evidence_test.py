@@ -790,6 +790,30 @@ def approval_cases(root: Path, valid: dict[str, object]) -> None:
     caller_grafts.write_text(graft_line, encoding="utf-8")
     expect_blocked(root, copy.deepcopy(valid), "approvals commit does not descend from the candidate commit",
                    extra=("--approvals-commit", orphan), env={"GIT_GRAFT_FILE": str(caller_grafts)})
+    # git reads only the --root repository (review finding): the caller's
+    # GIT_* variables cannot point it at other objects. Here the approvals
+    # sit in a commit that only another copy of the repository holds, found
+    # through an alternate object directory, or with GIT_DIR naming that copy.
+    other = root.parent / (root.name + "-other")
+    shutil.copytree(root, other, ignore=shutil.ignore_patterns("dist", "*-artifacts"))
+    try:
+        outside = commit_on(other, COMMIT, approval_files(), "approve outside the repository")
+        try:
+            git(root, "cat-file", "-e", f"{outside}^{{commit}}")
+            raise AssertionError("the outside approvals commit is in the repository")
+        except subprocess.CalledProcessError:
+            pass
+        manifest = copy.deepcopy(valid)
+        manifest["approvals"] = manifest_approvals(other, outside)
+        for redirect in ({"GIT_ALTERNATE_OBJECT_DIRECTORIES": str(other / ".git/objects")},
+                         {"GIT_OBJECT_DIRECTORY": str(other / ".git/objects")},
+                         {"GIT_DIR": str(other / ".git")}):
+            expect_blocked(root, manifest, "approvals commit is not in this repository",
+                           extra=("--approvals-commit", outside), env=redirect)
+            expect_blocked(root, manifest, "approvals commit is not in this repository",
+                           extra=("--approvals-commit", outside, "--preflight"), env=redirect)
+    finally:
+        shutil.rmtree(other)
 
     # Approvals for another commit, or at another commit's path.
     check(approved(production_crypto=approval_record("production_crypto", reviewed_commit=OTHER_COMMIT)),
