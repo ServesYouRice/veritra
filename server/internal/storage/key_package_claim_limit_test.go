@@ -64,11 +64,11 @@ func TestConversationKeyPackageClaimsAreCappedPerRequesterAndTarget(t *testing.T
 	if err := store.AddConversationMember(ctx, conversation.ID, owner.Account.ID, "member"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ClaimConversationKeyPackages(ctx, conversation.ID, owner.Account.ID, owner.Device.ID); err != nil && !errors.Is(err, ErrKeyPackageUnavailable) {
+	if _, err := store.ClaimConversationKeyPackages(ctx, conversation.ID, owner.Account.ID, owner.Device.ID); err != nil {
 		t.Fatalf("another account's first claim: %v", err)
 	}
-	if got := unclaimedKeyPackages(t, ctx, store, bob.Device.ID); got > 7 {
-		t.Fatalf("bob has %d packages, the owner's claim should not have been refused", got)
+	if got := unclaimedKeyPackages(t, ctx, store, bob.Device.ID); got != 6 {
+		t.Fatalf("bob has %d packages left, want 6: the owner claims on its own allowance", got)
 	}
 
 	// Claims older than the window stop counting.
