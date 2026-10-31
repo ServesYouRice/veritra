@@ -383,6 +383,19 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// work of a session that is still running.
   int get sessionEndGeneration => _sessionEnds;
 
+  AttachmentOrphanSweeper? _orphanSweeper;
+
+  /// Removes attachment working files a crash left behind, now and every
+  /// hour until [dispose] (TASK-050). Only the UI process calls it. It keeps
+  /// running across sign-out: the working directory belongs to the device,
+  /// not the account, and files left from before a sign-out are exactly what
+  /// it removes.
+  void startAttachmentOrphanSweep() {
+    final service = attachmentService;
+    if (service == null || _disposed || _orphanSweeper != null) return;
+    _orphanSweeper = AttachmentOrphanSweeper(service.workingDirectory)..start();
+  }
+
   // D52 bounded background work (phones). Off unless the demo entry point
   // installs the native worker; release builds never construct it.
   WakeRunContext? _wakeRun;
@@ -5394,6 +5407,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   @override
   void dispose() {
     _disposed = true;
+    _orphanSweeper?.stop();
+    _orphanSweeper = null;
     _clearLinkSecret();
     pendingDeviceLinkClaim = null;
     _receiptsRefreshTimer?.cancel();

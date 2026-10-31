@@ -98,4 +98,52 @@ void main() {
     await cleanupAttachmentOrphans(dir);
     await dir.create();
   });
+
+  group('while the app runs', () {
+    // Real time, not fakeAsync: the sweep does file I/O.
+    const tick = Duration(milliseconds: 150);
+
+    Future<void> ticks(int count) =>
+        Future<void>.delayed(tick * count + const Duration(milliseconds: 50));
+
+    test('a file left after start is swept on a later tick', () async {
+      final sweeper = AttachmentOrphanSweeper(() async => dir, interval: tick)
+        ..start();
+      addTearDown(sweeper.stop);
+      await ticks(1);
+      // A crash of an earlier run of this process's work, found later.
+      final late = await seed('.veritra-attachment-$_id32.plaintext.part');
+      final young = await seed('.veritra-attachment-$_id16.plaintext',
+          age: const Duration(minutes: 5));
+      await ticks(2);
+      expect(await late.exists(), isFalse);
+      expect(await young.exists(), isTrue,
+          reason: 'an operation that may still run keeps its file');
+    });
+
+    test('nothing is swept after stop', () async {
+      final sweeper = AttachmentOrphanSweeper(() async => dir, interval: tick)
+        ..start();
+      await ticks(1);
+      sweeper.stop();
+      final orphan = await seed('.veritra-attachment-$_id32.plaintext');
+      await ticks(3);
+      expect(await orphan.exists(), isTrue);
+    });
+
+    test('a directory that cannot be found does not stop the sweeps', () async {
+      var calls = 0;
+      final sweeper = AttachmentOrphanSweeper(() async {
+        calls++;
+        if (calls == 1) throw const FileSystemException('no provider');
+        return dir;
+      }, interval: tick)
+        ..start();
+      addTearDown(sweeper.stop);
+      final orphan = await seed('.veritra-attachment-$_id32.ciphertext');
+      await ticks(2);
+      expect(calls, greaterThan(1));
+      expect(await orphan.exists(), isFalse);
+    });
+  });
 }
