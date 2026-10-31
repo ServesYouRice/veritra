@@ -11,6 +11,16 @@ import '../core/models.dart';
 part 'k2_native_controls.dart';
 part 'k2_native_streams.dart';
 
+/// Largest MLS application plaintext the app encrypts, so its ciphertext
+/// always fits the server's message routes (docs/crypto.md, "Message size").
+///
+/// The routes read at most 1 MiB of JSON (`readLimitedJSON`) with the
+/// ciphertext base64-encoded. Reserving 64 KiB for the other JSON fields
+/// leaves (1 MiB - 64 KiB) * 3 / 4 = 737,280 ciphertext bytes; MLS framing
+/// (312 bytes measured) gets a 4 KiB margin. The FFI ceiling (1 MiB) is
+/// larger and only bounds the native call.
+const int maxSendablePlaintextBytes = (1024 * 1024 - 64 * 1024) * 3 ~/ 4 - 4096;
+
 final class _PmByteSlice extends Struct {
   external Pointer<Uint8> data;
 
@@ -633,6 +643,11 @@ enum NativeCryptoError {
   /// format this build does not read (ABI 9). Unauthenticated: it may lead
   /// to re-linking the device, never to a weaker check.
   stateFormatUnsupported,
+
+  /// [NativeCryptoDevice.encrypt] only: the plaintext is larger than
+  /// [maxSendablePlaintextBytes], so its ciphertext could not be sent.
+  /// Refused before encrypting; the group state is unchanged.
+  plaintextTooLarge,
   invalidOutput,
   unknown
 }
@@ -901,9 +916,14 @@ class NativeCryptoDevice implements Finalizable {
             _liveHandle, slices[0], slices[1], slices[2], out)));
   }
 
+  /// Throws [NativeCryptoError.plaintextTooLarge] above
+  /// [maxSendablePlaintextBytes], before any ratchet step.
   List<int> encrypt(String groupId, List<int> plaintext) {
     _bindings._bounded(groupId.codeUnits, 128);
-    _bindings._bounded(plaintext, 1024 * 1024);
+    if (plaintext.length > maxSendablePlaintextBytes) {
+      throw const NativeCryptoException(NativeCryptoError.plaintextTooLarge);
+    }
+    _bindings._bounded(plaintext, maxSendablePlaintextBytes);
     return _withTwoOutput(
         groupId.codeUnits, plaintext, _bindings._groupEncrypt);
   }
