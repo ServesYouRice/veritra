@@ -184,6 +184,45 @@ is spent on a message that cannot be sent. A test encrypts exactly the cap
 and checks that a full request body stays within 1 MiB. The server limit is
 not raised; if it changes, change the derivation with it.
 
+## Encrypted backup file (VBK2)
+
+The encrypted backup (I45) the device uploads is one file, written by
+`BackupService.createAndUpload` (`mobile/lib/crypto/backup_service.dart`). The
+plaintext inside is the backup JSON (`backupFormatVersion` in
+`local_store.dart`); this section is only the container. Integers are
+big-endian. The key K (32 bytes), the nonce prefix N (8 bytes) and the
+recovery token T (32 bytes) are random per backup; the recovery code is
+`v1.<origin>.<T>.<K>` and does not change with this format.
+
+```
+header  = "VBK2" || N || u32 chunkCount || u64 plaintextSize          24 bytes
+frame 0 = u32 len || seal(K, N, 0, "veritra-backup-v2-header" || T || header[0..12],
+                          header[12..24])                              len = 28
+frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
+                          chunk i-1)                         i = 1..chunkCount
+```
+
+- `seal` is the existing native chunk AEAD (`attachment.rs`): AES-256-GCM
+  with nonce `N || u32 index`, the index also bound in the associated data.
+  No ABI change. Frame indices are distinct, so no nonce repeats under K.
+- Chunks are 1 MiB except the last; `chunkCount = ceil(plaintextSize / 1 MiB)`,
+  at most 64 MiB of plaintext. `last` is one byte: 1 for frame `chunkCount`,
+  0 before it.
+- Restore reads the header, opens frame 0 and requires its plaintext to equal
+  the cleartext count and size. Frame 0 failing means the recovery code does
+  not open the backup (`wrongKey`); any later failure, a mismatched count or
+  size, a bad frame length or bytes after the last frame mean the file was
+  changed (`corrupt`). Nothing reaches the local store until every frame,
+  the last-flagged one included, has authenticated.
+- Because each data frame binds the whole header and its `last` flag, a file
+  cut at a chunk boundary fails whether or not its header was rewritten.
+  VBK1 bound chunks only to `"veritra-backup-v1" || T` and its index, so such
+  a cut restored a silent prefix.
+- VBK1 files are refused (`corrupt`) (D55: no real users yet, no
+  compatibility path). The upload's `crypto_metadata` stays `version: 1`
+  because the server accepts only that value; the magic tells the formats
+  apart.
+
 ## Change log since the Stage 1 freeze
 
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after

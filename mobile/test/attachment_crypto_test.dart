@@ -8,6 +8,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/crypto/attachment_crypto.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 
+import 'native_test_env.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -221,16 +223,15 @@ void main() {
     });
   });
 
-  final libraryPath = Platform.environment['VERITRA_CRYPTO_LIBRARY'];
+  final nativeSkip = nativeCryptoSkip();
 
   group('real native attachment crypto pipeline', () {
     late AttachmentCryptoService service;
 
     setUp(() {
-      if (libraryPath != null) {
-        service =
-            AttachmentCryptoService(NativeCryptoBindings.open(libraryPath));
-      }
+      if (nativeSkip != false) return;
+      service = AttachmentCryptoService(
+          NativeCryptoBindings.open(requireNativeCryptoLibrary()));
     });
 
     test('round-trips one byte and the one-MiB boundaries canonically',
@@ -272,7 +273,7 @@ void main() {
         expect(await destFile.readAsBytes(), plaintext);
         await encrypted.cleanup();
       }
-    }, skip: libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false);
+    }, skip: nativeSkip);
 
     test(
         'tampered ciphertext fails decryption and leaves no destination or part file',
@@ -309,7 +310,7 @@ void main() {
       expect(await File('${destFile.path}.part').exists(), isFalse);
 
       await encrypted.cleanup();
-    }, skip: libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false);
+    }, skip: nativeSkip);
 
     test('wrong key, conversation, and action fail authentication', () async {
       final sourceFile = File('${tempDir.path}/context_source.bin');
@@ -342,7 +343,7 @@ void main() {
         expect(await File('${destFile.path}.part').exists(), isFalse);
       }
       await encrypted.cleanup();
-    }, skip: libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false);
+    }, skip: nativeSkip);
 
     test('wrong chunk count and plaintext size fail closed', () async {
       final encrypted = await _encryptBytes(
@@ -373,7 +374,7 @@ void main() {
         expect(await File('$destination.part').exists(), isFalse);
       }
       await encrypted.cleanup();
-    }, skip: libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false);
+    }, skip: nativeSkip);
 
     test('truncation, extension, and non-canonical headers fail framing',
         () async {
@@ -407,7 +408,7 @@ void main() {
         expect(await File('$destination.part').exists(), isFalse);
       }
       await encrypted.cleanup();
-    }, skip: libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false);
+    }, skip: nativeSkip);
 
     test('cancellation cleans only files owned by the operation', () async {
       final source = File('${tempDir.path}/cancel_source.bin');
@@ -475,7 +476,7 @@ void main() {
         isFalse,
       );
       await encrypted.cleanup();
-    }, skip: libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false);
+    }, skip: nativeSkip);
 
     test('pre-existing destination and part files are preserved', () async {
       final encrypted = await _encryptBytes(
@@ -510,7 +511,7 @@ void main() {
       expect(await secondDestination.exists(), isFalse);
       expect(await existingPart.readAsBytes(), [6, 5, 4]);
       await encrypted.cleanup();
-    }, skip: libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false);
+    }, skip: nativeSkip);
 
     test('ciphertext length shows the bucket, not the file size', () async {
       // Without padding these lengths would all differ.
@@ -531,7 +532,7 @@ void main() {
       expect(a.ciphertextLength, paddedAttachmentSize(100000) + 20);
       await a.cleanup();
       await b.cleanup();
-    }, skip: libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false);
+    }, skip: nativeSkip);
 
     test('padded files round-trip exactly through files and memory', () async {
       for (final size in <int>[
@@ -577,7 +578,7 @@ void main() {
         bytes,
       );
       await forwarded.cleanup();
-    }, skip: libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false);
+    }, skip: nativeSkip);
 
     test('padding stops at the server cap, inside its upload limit', () async {
       // A lower operator cap: a file just under it would pad past it.
@@ -606,7 +607,7 @@ void main() {
         plaintext,
       );
       await encrypted.cleanup();
-    }, skip: libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false);
+    }, skip: nativeSkip);
 
     test('old version 1 attachments still decrypt', () async {
       // Written the way the version 1 sender did: no padding at all.
@@ -628,7 +629,7 @@ void main() {
           plaintext,
         );
       }
-    }, skip: libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false);
+    }, skip: nativeSkip);
 
     test('non-zero padding fails closed', () async {
       // A version 2 file whose padding is not zero, sealed with a valid key.
@@ -652,7 +653,7 @@ void main() {
         service.decryptBytes(ciphertextPath: v1.path, manifest: manifest),
         throwsA(isA<FormatException>()),
       );
-    }, skip: libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false);
+    }, skip: nativeSkip);
   });
 }
 
