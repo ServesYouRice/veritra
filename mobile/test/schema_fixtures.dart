@@ -32,6 +32,7 @@ Future<void> stripW8Schema(EncryptedLocalDatabase database) async {
 
 /// Remove schema15's private device-only outbox from a historical fixture.
 Future<void> stripNoticeSchema(EncryptedLocalDatabase database) async {
+  await stripCryptoRecordsSchema(database);
   for (final table in [
     'local_notice_references',
     'local_notice_decisions',
@@ -39,4 +40,10 @@ Future<void> stripNoticeSchema(EncryptedLocalDatabase database) async {
   ]) {
     await database.customStatement('DROP TABLE IF EXISTS $table');
   }
+}
+
+/// Remove schema16's per-record sealed MLS state (D70) from a historical
+/// fixture.
+Future<void> stripCryptoRecordsSchema(EncryptedLocalDatabase database) async {
+  await database.customStatement('DROP TABLE IF EXISTS local_crypto_records');
 }
