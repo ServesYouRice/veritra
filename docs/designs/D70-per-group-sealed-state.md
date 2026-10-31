@@ -166,7 +166,7 @@ limits:
   reads "missing group" (D54), and a late application message still becomes
   a placeholder, not an I33 stop. S3 tests this.
 
-## 4. Local storage (next free schema version; K2 has claimed 16)
+## 4. Local storage (local schema 16, landed in S2; K2 moves to 17)
 
 - **New table** `local_crypto_records(kind INT, record_id BLOB,
   generation INT, sealed BLOB, PK(kind, record_id))`.
@@ -271,9 +271,15 @@ members, against v3.
    (no commit-key leak to prune; see section 1). No ABI or format change: `seal_state` still writes v3 as the
    union of partitions, and v3 restore runs the classifier, so it is
    exercised on every restore before anything depends on it.
-2. **S2, local schema (Opus review).** Table, `changes` plumbing,
-   singleton-clear coverage, in-memory store. Inert until S3 (`changes`
-   always empty).
+2. **S2, local schema (Opus review). Landed (schema 16).** Table,
+   singleton-clear coverage, in-memory store, read API. `changes` plumbing
+   moved to S3. S3 notes from the S2 review: (a) every write that replaces
+   the crypto-state singleton, not only deletes, must apply `changes` in
+   the same transaction (including rollback and D54 retry paths); (b) an
+   older build opening a v16 database rewrites `user_version` without
+   knowing the table, so records can be left without a root. Treat records
+   next to a v3 root as leftovers and delete them in the migration commit
+   instead of requiring an empty table; test that case.
 3. **S3, ABI 10 with Dart bindings and service, one PR (Opus review).**
    Format 4, change-set seal, loader restore, `migrate_v3`, `group_delete`,
    key-package pruning, -8, migration commit; the `docs/crypto.md` change
