@@ -188,8 +188,11 @@ void main() {
         reason: owner.state.errorFor(Ops.backup));
     expect(code, isNotNull);
     final ownerAccountId = owner.accountId;
+    // The original device stops, as the clone-restore guidance asks. It
+    // does not sign out: sign-out revokes the session on the server, and
+    // the backup carries that same session (I45 clone restore). Signing in
+    // again after a restore is tracked in STATE.md Open work.
     owner.dispose();
-    await owner.state.logout();
     final replacement = _DemoClient(bindings, baseUrl);
     addTearDown(replacement.dispose);
     expect(await replacement.state.restoreFromBackup(code!), isTrue,
