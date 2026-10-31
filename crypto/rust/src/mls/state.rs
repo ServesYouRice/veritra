@@ -101,7 +101,9 @@ impl MlsDevice {
 
     /// Restores a state only when its identity and rollback counter match the
     /// platform-protected record. Authentication failure is deliberately
-    /// indistinguishable from corrupt state.
+    /// indistinguishable from corrupt state. The one exception is a sealed
+    /// blob with the right magic and a format version this build does not
+    /// read, reported as [`MlsError::UnsupportedFormat`] (still refused).
     pub fn restore_state(
         account_id: &[u8],
         device_id: &[u8],
@@ -119,7 +121,9 @@ impl MlsDevice {
         }
         let version = reader.u16()?;
         if version != FORMAT_VERSION && version != LEGACY_FORMAT_VERSION {
-            return Err(MlsError::InvalidState);
+            // Unauthenticated, like the rest of the header at this point: a
+            // hint that sends the app to re-linking, never a weaker check.
+            return Err(MlsError::UnsupportedFormat);
         }
         let counter = reader.u64()?;
         if counter < minimum_counter || counter == 0 {
@@ -504,11 +508,43 @@ mod tests {
     #[test]
     fn older_format_version_fails_closed() {
         let alice = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
-        let mut sealed = alice.seal_state(&KEY, 3).unwrap();
+        let sealed = alice.seal_state(&KEY, 3).unwrap();
         let version = MAGIC.len();
-        sealed[version..version + 2].copy_from_slice(&1u16.to_be_bytes());
+        // Format 1 (OpenMLS 0.8.1) and an unknown newer format are refused
+        // with their own error, so the app can offer a re-link, not a
+        // "corrupt or attacked" message.
+        for unsupported in [0u16, 1, 4, u16::MAX] {
+            let mut blob = sealed.clone();
+            blob[version..version + 2].copy_from_slice(&unsupported.to_be_bytes());
+            assert!(matches!(
+                MlsDevice::restore_state(b"acct_alice", b"dev_alice", &KEY, 3, &blob),
+                Err(MlsError::UnsupportedFormat)
+            ));
+        }
+        // Everything else stays indistinguishable from corruption.
+        let mut magic = sealed.clone();
+        magic[0] ^= 1;
+        let mut tampered = sealed.clone();
+        *tampered.last_mut().unwrap() ^= 1;
+        let mut trailing = sealed.clone();
+        trailing.push(0);
+        for blob in [
+            &magic,
+            &tampered,
+            &trailing,
+            &sealed[..version + 1].to_vec(),
+        ] {
+            assert!(matches!(
+                MlsDevice::restore_state(b"acct_alice", b"dev_alice", &KEY, 3, blob),
+                Err(MlsError::InvalidState)
+            ));
+        }
         assert!(matches!(
-            MlsDevice::restore_state(b"acct_alice", b"dev_alice", &KEY, 3, &sealed),
+            MlsDevice::restore_state(b"acct_alice", b"dev_alice", &[8; 32], 3, &sealed),
+            Err(MlsError::InvalidState)
+        ));
+        assert!(matches!(
+            MlsDevice::restore_state(b"acct_mallory", b"dev_alice", &KEY, 3, &sealed),
             Err(MlsError::InvalidState)
         ));
     }

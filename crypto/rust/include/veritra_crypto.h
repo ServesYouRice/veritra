@@ -12,6 +12,12 @@
 #define PM_CRYPTO_PANIC (-4)
 /* Decrypted, but the MLS sender is not the claimed account/device (ABI 5). */
 #define PM_CRYPTO_SENDER_MISMATCH (-5)
+/* ABI 9, pm_crypto_device_restore only: the sealed state has the right magic
+ * but a format version this build does not read (format 1 from OpenMLS
+ * 0.8.1, or a newer build). The version is NOT authenticated: it may lead
+ * only to a re-link/re-provision flow, never to weaker checks. Wrong key,
+ * tampering, identity mismatch and corruption stay PM_CRYPTO_ERROR. */
+#define PM_CRYPTO_STATE_FORMAT_UNSUPPORTED (-6)
 /* ABI 9: decrypted from a retained past epoch, but the sender has left the
  * group. The ratchet has advanced: commit state, keep no content, exactly as
  * for PM_CRYPTO_SENDER_MISMATCH. */

@@ -530,6 +530,7 @@ class NativeCryptoBindings {
       -3 => NativeCryptoError.operationFailed,
       -4 => NativeCryptoError.nativePanic,
       -5 => NativeCryptoError.senderMismatch,
+      -6 => NativeCryptoError.stateFormatUnsupported,
       -7 => NativeCryptoError.senderRemoved,
       _ => NativeCryptoError.unknown,
     });
@@ -599,6 +600,11 @@ enum NativeCryptoError {
   /// left the group (ABI 9). The ratchet has already advanced: handle it as
   /// [senderMismatch].
   senderRemoved,
+
+  /// [NativeCryptoBindings.restoreDevice] only: the sealed state is in a
+  /// format this build does not read (ABI 9). Unauthenticated: it may lead
+  /// to re-linking the device, never to a weaker check.
+  stateFormatUnsupported,
   invalidOutput,
   unknown
 }

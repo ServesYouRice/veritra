@@ -94,6 +94,18 @@ void main() {
     final restored =
         bindings.restoreDevice('acct_alice', 'dev_alice', key, 7, sealed);
     expect(restored.counter, 7);
+    final oldFormat = List<int>.of(sealed)..setRange(8, 10, const [0, 1]);
+    expect(
+        () => bindings.restoreDevice(
+            'acct_alice', 'dev_alice', key, 7, oldFormat),
+        throwsA(isA<NativeCryptoException>().having((error) => error.kind,
+            'kind', NativeCryptoError.stateFormatUnsupported)));
+    final tampered = List<int>.of(sealed)..[sealed.length - 1] ^= 1;
+    expect(
+        () =>
+            bindings.restoreDevice('acct_alice', 'dev_alice', key, 7, tampered),
+        throwsA(isA<NativeCryptoException>().having(
+            (error) => error.kind, 'kind', NativeCryptoError.operationFailed)));
     expect(() => restored.device.encrypt('conv_test', const []),
         throwsArgumentError);
     restored.device.close();

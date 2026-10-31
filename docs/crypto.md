@@ -49,7 +49,7 @@ compatible license choices recorded in `THIRD_PARTY_NOTICES.md`. Sealed state
 reads envelope formats 2 and 3 and writes format 3, including through existing
 ABI v7 state-sealing calls. Genuine format 2 state preserves its signer and live
 groups during migration. Version 1 blobs written under OpenMLS 0.8.1 and unknown
-versions fail closed. No debug feature that exposes
+versions fail closed, with their own restore code since ABI 9. No debug feature that exposes
 message content or cryptographic material is enabled.
 
 Before production message sending:
@@ -134,6 +134,13 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     `PM_CRYPTO_ERROR` instead would roll back and stop global sync (I33)
     on that honest race. The check compares identities only; past-epoch
     signature keys are not exposed by OpenMLS.
+  - TASK-009: `pm_crypto_device_restore` returns
+    `PM_CRYPTO_STATE_FORMAT_UNSUPPORTED` (-6) for sealed state with the
+    right magic and a format version this build does not read (format 1,
+    or a newer one), so the app can tell "state from another version" from
+    corruption. The version is not authenticated: the code may lead only to
+    re-linking, never to a weaker check. Everything else stays
+    `PM_CRYPTO_ERROR`; old blobs are still refused.
   - Not closed here: which identities may hold which keys, and who may
     commit or invite (TASK-006), needs the L1 approved-device list.
 

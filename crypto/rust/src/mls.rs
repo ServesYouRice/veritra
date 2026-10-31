@@ -42,6 +42,11 @@ pub enum MlsError {
     /// The message decrypted from a retained past epoch, but its sender is
     /// no longer in the group. The ratchet has already advanced.
     SenderRemoved,
+    /// Sealed state with the right magic but a format version this build
+    /// does not read (format 1 from OpenMLS 0.8.1, or a newer build). The
+    /// version is read before authentication: a hint for the recovery path,
+    /// never a reason to relax a check.
+    UnsupportedFormat,
 }
 
 /// One MLS device identity and its private provider state.

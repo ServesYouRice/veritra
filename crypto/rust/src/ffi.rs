@@ -18,6 +18,11 @@ pub const PM_CRYPTO_PANIC: i32 = -4;
 /// Decryption succeeded but the MLS sender is not the claimed account/device.
 /// The group ratchet has already advanced past the message.
 pub const PM_CRYPTO_SENDER_MISMATCH: i32 = -5;
+/// Sealed state with a format version this build does not read (ABI 9). The
+/// version is not authenticated: use it only to offer re-linking the
+/// device, never to relax a check. Every other restore failure stays
+/// [`PM_CRYPTO_ERROR`].
+pub const PM_CRYPTO_STATE_FORMAT_UNSUPPORTED: i32 = -6;
 /// Decryption succeeded from a retained past epoch, but the sender is no
 /// longer a member of the group (ABI 9). The ratchet has already advanced;
 /// handle it like [`PM_CRYPTO_SENDER_MISMATCH`]: commit, show no content.
@@ -207,6 +212,8 @@ pub unsafe extern "C" fn pm_crypto_device_create(
 }
 
 /// Restores a sealed device after checking its identity and rollback counter.
+/// Returns [`PM_CRYPTO_STATE_FORMAT_UNSUPPORTED`] for a sealed format this
+/// build does not read and [`PM_CRYPTO_ERROR`] for every other failure.
 ///
 /// # Safety
 /// All slices must remain readable for the call. Output pointers must be valid
@@ -234,7 +241,10 @@ pub unsafe extern "C" fn pm_crypto_device_restore(
         let sealed = unsafe { borrowed(sealed_state, MAX_STATE_BYTES)? };
         let (device, counter) =
             MlsDevice::restore_state(account_id, device_id, state_key, minimum_counter, sealed)
-                .map_err(|_| PM_CRYPTO_ERROR)?;
+                .map_err(|error| match error {
+                    MlsError::UnsupportedFormat => PM_CRYPTO_STATE_FORMAT_UNSUPPORTED,
+                    _ => PM_CRYPTO_ERROR,
+                })?;
         let handle = Box::into_raw(Box::new(PmCryptoHandle {
             device: Arc::new(Mutex::new(device)),
             active_stream: Mutex::new(Weak::new()),
@@ -1356,6 +1366,48 @@ mod tests {
         );
         assert_eq!(counter, 7);
         unsafe { pm_crypto_device_destroy(restored) };
+    }
+
+    #[test]
+    fn restore_reports_an_unsupported_state_format_separately() {
+        let mut handle = ptr::null_mut();
+        assert_eq!(
+            unsafe { pm_crypto_device_create(slice(b"acct_a"), slice(b"dev_a"), &mut handle) },
+            PM_CRYPTO_OK
+        );
+        let key = [9_u8; STATE_KEY_BYTES];
+        let mut sealed = PmOwnedBuffer::default();
+        assert_eq!(
+            unsafe { pm_crypto_device_seal_state(handle, slice(&key), 4, &mut sealed) },
+            PM_CRYPTO_OK
+        );
+        let sealed = unsafe { take(sealed) };
+        unsafe { pm_crypto_device_destroy(handle) };
+        let restore = |blob: &[u8]| {
+            let mut restored = ptr::null_mut();
+            let mut counter = 0;
+            let code = unsafe {
+                pm_crypto_device_restore(
+                    slice(b"acct_a"),
+                    slice(b"dev_a"),
+                    slice(&key),
+                    4,
+                    slice(blob),
+                    &mut restored,
+                    &mut counter,
+                )
+            };
+            assert!(code != PM_CRYPTO_OK || !restored.is_null());
+            unsafe { pm_crypto_device_destroy(restored) };
+            code
+        };
+        assert_eq!(restore(&sealed), PM_CRYPTO_OK);
+        let mut old_format = sealed.clone();
+        old_format[8..10].copy_from_slice(&1u16.to_be_bytes());
+        assert_eq!(restore(&old_format), PM_CRYPTO_STATE_FORMAT_UNSUPPORTED);
+        let mut tampered = sealed.clone();
+        *tampered.last_mut().unwrap() ^= 1;
+        assert_eq!(restore(&tampered), PM_CRYPTO_ERROR);
     }
 
     #[test]
