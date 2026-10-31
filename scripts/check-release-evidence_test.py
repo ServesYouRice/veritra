@@ -221,6 +221,7 @@ def lp(data: bytes) -> bytes:
 ANDROID_NS = "http://schemas.android.com/apk/res/android"
 ATTR_DEBUGGABLE = 0x0101000F
 ATTR_MIN_SDK = 0x0101020C
+ATTR_TARGET_SDK = 0x01010270
 
 
 def string_pool(strings: list[str]) -> bytes:
@@ -260,6 +261,7 @@ def axml(
     uses_sdk_in_application: bool = False,
     after_root: str | None = None,
     root_ends: int = 1,
+    target_sdk_first: bool = False,
 ) -> bytes:
     """A compiled AndroidManifest.xml: <manifest package><uses-sdk
     minSdkVersion?><application debuggable?>.
@@ -279,9 +281,14 @@ def axml(
     one; ``uses_sdk_in_application`` moves <uses-sdk> inside <application>.
     ``after_root`` adds an empty element after the root closes, and
     ``root_ends`` is how many end nodes close the root (0 leaves it open).
+    ``target_sdk_first`` puts a framework targetSdkVersion (a higher resource
+    ID) before minSdkVersion in <uses-sdk>.
     """
     attr_names = [debuggable_name, "minSdkVersion"] + ([extra_debuggable] if extra_debuggable else [])
     attr_ids = [ATTR_DEBUGGABLE, ATTR_MIN_SDK] + ([ATTR_DEBUGGABLE] if extra_debuggable else [])
+    if target_sdk_first:
+        attr_names.append("targetSdkVersion")
+        attr_ids.append(ATTR_TARGET_SDK)
     strings = attr_names + ["package", "manifest", "application", "uses-sdk", "android", ANDROID_NS, package]
     package_specs = package_attrs if package_attrs is not None else ((None, package, package),)
     unmapped_namespaces = [namespace for namespace, _, _ in unmapped_min_sdk]
@@ -319,6 +326,8 @@ def axml(
     if extra_debuggable:
         application_attrs.append(attribute(ANDROID_NS, extra_debuggable, None, 0x12, 0))
     sdk_attrs = []
+    if target_sdk_first:
+        sdk_attrs.append(attribute(ANDROID_NS, "targetSdkVersion", None, 0x10, 35))
     if min_sdk is not None:
         value_type, value = min_sdk if isinstance(min_sdk, tuple) else (0x10, min_sdk)
         sdk_attrs.append(attribute(ANDROID_NS, "minSdkVersion", None, value_type, value))
@@ -1527,6 +1536,9 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
     for name, manifest in (
         ("debuggable-twice.apk", axml(debuggable=False, repeat_debuggable=True)),
         ("debuggable-two-names.apk", axml(debuggable=False, extra_debuggable="debuggable2")),
+        # Android 6 walks attributes in ascending resource-ID order, so a
+        # minSdkVersion after targetSdkVersion is never seen there (review).
+        ("target-sdk-before-min-sdk.apk", axml(min_sdk=24, target_sdk_first=True)),
     ):
         expect_blocked(root, with_android(apk(name, manifest=manifest)), "signed android artifact is not a readable APK", no_signed)
 

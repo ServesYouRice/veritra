@@ -754,7 +754,10 @@ def manifest_facts(data: bytes) -> tuple[str | None, bool, int]:
     refused. So is a ``manifest`` element that is not the single root, since
     the platform takes the package from the root, an element after the root
     or unbalanced start and end nodes, and an element with two attributes of
-    one name or resource ID, since readers pick different ones. The package
+    one name or resource ID, since readers pick different ones. Android 6 and
+    older match attributes to IDs in one ascending walk, so an attribute
+    after a higher resource ID is invisible to them: resource IDs that are
+    not strictly ascending within an element are refused. The package
     is what Android reads: the ``package`` attribute with no namespace, as
     its raw string, which must also be the typed value.
     """
@@ -799,6 +802,7 @@ def manifest_facts(data: bytes) -> tuple[str | None, bool, int]:
             if root_uses_sdk:
                 min_sdks.append(1)
             seen: set[tuple[Any, ...]] = set()
+            last_id = 0
             for index in range(attr_count):
                 at = chunk_header + attr_start + index * attr_size
                 namespace, attr_name, raw, _, _, value_type, value = struct.unpack_from("<IIIHBBI", chunk, at)
@@ -807,6 +811,9 @@ def manifest_facts(data: bytes) -> tuple[str | None, bool, int]:
                 keys = {("name", None if namespace == AXML_NO_INDEX else strings[namespace], attr)}
                 if attr_id:
                     keys.add(("id", attr_id))
+                    if attr_id <= last_id:
+                        raise ValueError("attribute resource IDs out of order")
+                    last_id = attr_id
                 if not seen.isdisjoint(keys):
                     raise ValueError("duplicate attribute")
                 seen |= keys
