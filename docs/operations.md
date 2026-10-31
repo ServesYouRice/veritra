@@ -19,7 +19,9 @@ longer needs or retains this one-time capability.
 
 Rotate the owner password through the authenticated client. For offline owner
 recovery, stop the server and use `reset-owner-password --account ...
---password-file ...` with a mode-0600 password file. Rotating VAPID keys
+--password-file ...` with a mode-0600 password file (a regular file; on
+Windows the file's ACL is not checked, so keep it in a folder only the
+operator can read). Rotating VAPID keys
 requires clients to register new push subscriptions; never place private keys
 in command arguments or logs.
 
