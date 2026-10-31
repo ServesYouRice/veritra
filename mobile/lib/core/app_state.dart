@@ -16,6 +16,7 @@ import '../crypto/attachment_crypto.dart';
 import '../crypto/backup_service.dart';
 import '../crypto/mls_commit_bundle.dart';
 import '../crypto/crypto_service.dart';
+import 'mls_self_update_policy.dart';
 import '../push/push_service.dart';
 import '../push/background_wake_runner.dart';
 import '../push/notice_decisions.dart';
@@ -482,6 +483,20 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   final Map<String, DateTime> _mlsPendingSeen = <String, DateTime>{};
   final Set<String> _mlsReconcileNow = <String>{};
   bool _mlsReconcileRequested = true;
+
+  /// Periodic self-update state (MlsSelfUpdatePolicy), loaded for the
+  /// session's account and device on first use.
+  MlsSelfUpdatePolicy? _selfUpdatePolicy;
+
+  /// Groups with a pending revocation, from the latest revocation pass. A
+  /// self-update never competes with the revocation commit.
+  final Set<String> _revocationPendingGroups = <String>{};
+  DateTime? _lastSelfUpdateStagedAt;
+
+  /// At most one self-update is staged per pass, and none closer than this
+  /// to the previous one, so a device catching up on many chats spreads
+  /// them out.
+  static const _selfUpdateSpacing = Duration(minutes: 1);
   Future<void> _sessionTransitionTail = Future<void>.value();
   Stream<IncomingCallSignal> get callSignals => _callSignals.stream;
 
@@ -4113,6 +4128,13 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           }
           if (!_syncOwnerActive(current, ownerGeneration)) return;
         }
+        try {
+          await _maybeSelfUpdate(current, ownerGeneration);
+        } catch (err) {
+          // A self-update is optional; it never blocks sync.
+          if (err is ApiException && err.statusCode == 401) rethrow;
+        }
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
       }
       await _acknowledgePendingWake(current, ownerGeneration: ownerGeneration);
       lastSyncedAt = DateTime.now();
@@ -4410,6 +4432,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         }
         if (message.kind == 'welcome' &&
             message.recipientDeviceId == current.deviceId) {
+          // The leaf key came from a key package published earlier: update
+          // it soon. Only noted here; staging waits for a foreground pass.
+          await _noteSelfUpdate(
+              current,
+              (policy) =>
+                  policy.recordJoined(message.conversationId, DateTime.now()));
           if (wake != null) {
             // Publishing is an outbound write; the foreground does it.
             _replenishAfterWake = true;
@@ -4904,6 +4932,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         await client.sendEnvelope(current.token, envelope);
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         await _removeFromOutbox(envelope);
+        _selfUpdatePolicyFor(current)?.recordSent(envelope.conversationId);
       } catch (err) {
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         await _recordOutboxFailure(envelope, err, record.attemptCount);
@@ -5084,6 +5113,23 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
                 drainSyncOwner: false);
             return;
           }
+          final backoff = isBundle && err is ApiException
+              ? _selfUpdateRefusal(message, err)
+              : null;
+          if (backoff != null) {
+            // A self-update is optional: any refusal drops it, so it never
+            // pauses the conversation or holds its messages back, and the
+            // policy waits before trying again.
+            await _mlsCrypto?.abandonCommitBundle(message);
+            _selfUpdatePolicyFor(current)?.recordBackoff(
+                message.conversationId, DateTime.now(), backoff);
+            await _saveSelfUpdates();
+            if (err is ApiException && err.statusCode == 409) {
+              _mlsReconcileRequested = true;
+              unawaited(_catchUpSyncEvents());
+            }
+            break;
+          }
           if (isBundle && err is ApiException && _refusedBundle(err)) {
             // Another commit won this epoch, or the change is no longer
             // valid. The staged commit was never merged, so dropping it
@@ -5101,6 +5147,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         if (isBundle) {
           await _mlsCrypto?.completeCommitBundle(message);
+          final bundle = MlsCommitBundle.decode(message.payload);
+          // A self-update, and any commit that removes someone, carries an
+          // update path: this device's leaf key is fresh again.
+          if (bundle.isUpdateOnly || bundle.removed.isNotEmpty) {
+            _selfUpdatePolicyFor(current)
+                ?.recordPathCommit(message.conversationId, DateTime.now());
+            await _saveSelfUpdates();
+          }
         } else {
           await localStore.removePendingMlsMessage(message.idempotencyKey);
         }
@@ -5283,6 +5337,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final packages = await client.claimConversationKeyPackages(
         current.token, conversationId);
     await mls.initializeConversation(conversationId, packages);
+    // The creator's leaf key was made with the group.
+    await _noteSelfUpdate(current,
+        (policy) => policy.recordPathCommit(conversationId, DateTime.now()));
+    await _saveSelfUpdates();
     await _flushMlsOutbox();
   }
 
@@ -5317,7 +5375,13 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final client = api;
     final mls = _mlsCrypto;
     if (current == null || client == null || mls == null) return;
-    for (final revocation in await client.mlsRevocations(current.token)) {
+    final revocations = await client.mlsRevocations(current.token);
+    _revocationPendingGroups
+      ..clear()
+      ..addAll(revocations
+          .where((revocation) => revocation.state == 'pending')
+          .map((revocation) => revocation.conversationId));
+    for (final revocation in revocations) {
       if (revocation.state == 'pending' &&
           revocation.coordinatorDeviceId == current.deviceId) {
         // Earlier MLS work for this group drains first (I34). In
@@ -5342,6 +5406,170 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           revocation.revokedDeviceId,
         );
       }
+    }
+  }
+
+  /// How long the self-update policy waits after the server refused the
+  /// update-only bundle [message] with [err], or null when [message] is not
+  /// one or [err] is worth retrying as sent (network, 408, 5xx).
+  static Duration? _selfUpdateRefusal(
+      PendingMlsMessage message, ApiException err) {
+    if (err.statusCode < 400 ||
+        err.statusCode >= 500 ||
+        err.statusCode == 408) {
+      return null;
+    }
+    final MlsCommitBundle bundle;
+    try {
+      bundle = MlsCommitBundle.decode(message.payload);
+    } on FormatException {
+      return null;
+    }
+    if (!bundle.isUpdateOnly) return null;
+    if (err.statusCode == 429) {
+      return err.serverCode == 'mls_self_update_limit'
+          ? MlsSelfUpdatePolicy.minInterval
+          : MlsSelfUpdatePolicy.conflictBackoff;
+    }
+    // Another commit won the epoch, or a removal must land first.
+    if (err.statusCode == 409) return MlsSelfUpdatePolicy.conflictBackoff;
+    // Anything else will not pass soon; an older server answers 400.
+    return MlsSelfUpdatePolicy.refusedBackoff;
+  }
+
+  /// The policy for [current]'s device, loading its saved state on first
+  /// use; null without an MLS service that can stage self-updates.
+  Future<MlsSelfUpdatePolicy?> _selfUpdates(Session current) async {
+    final known = _selfUpdatePolicyFor(current);
+    if (known != null) return known;
+    final accountId = current.accountId;
+    final deviceId = current.deviceId;
+    if (cryptoService is! MlsSelfUpdateCryptoService ||
+        accountId == null ||
+        deviceId == null) {
+      return null;
+    }
+    final raw = await localStore
+        .loadSetting('${MlsSelfUpdatePolicy.settingName}:$deviceId');
+    // Another load may have finished meanwhile; keep the first.
+    return _selfUpdatePolicyFor(current) ??
+        (_selfUpdatePolicy = MlsSelfUpdatePolicy.decode(raw,
+            accountId: accountId, deviceId: deviceId));
+  }
+
+  /// Records [change] in the policy of [current]'s device. Never throws: a
+  /// lost note costs at most an early or late self-update, while a failure
+  /// here would fail the sync step or group setup that already committed.
+  Future<void> _noteSelfUpdate(
+      Session current, void Function(MlsSelfUpdatePolicy policy) change) async {
+    try {
+      final policy = await _selfUpdates(current);
+      if (policy != null) change(policy);
+    } catch (_) {}
+  }
+
+  /// The loaded policy when it belongs to [current]'s device, else null.
+  MlsSelfUpdatePolicy? _selfUpdatePolicyFor(Session current) {
+    final policy = _selfUpdatePolicy;
+    return policy != null &&
+            policy.accountId == current.accountId &&
+            policy.deviceId == current.deviceId
+        ? policy
+        : null;
+  }
+
+  /// Saves the policy state when it changed. A failure keeps it dirty for
+  /// the next save; losing it costs at most an early or late update.
+  Future<void> _saveSelfUpdates() async {
+    final policy = _selfUpdatePolicy;
+    if (policy == null || !policy.dirty) return;
+    policy.dirty = false;
+    try {
+      await localStore.saveSetting(
+          '${MlsSelfUpdatePolicy.settingName}:${policy.deviceId}',
+          policy.encode());
+    } catch (_) {
+      policy.dirty = true;
+    }
+  }
+
+  /// Periodic self-update (docs/crypto.md): stages at most one update-only
+  /// commit per foreground pass, for the conversation the policy finds most
+  /// due, through the same staged-commit path as membership changes (D28).
+  /// Never in a background wake, and never for a group that has a pending
+  /// revocation or removal, MLS work queued, or a commit staged.
+  Future<void> _maybeSelfUpdate(Session current, int ownerGeneration) async {
+    final service = cryptoService;
+    final crypto = service is MlsSelfUpdateCryptoService
+        ? service as MlsSelfUpdateCryptoService
+        : null;
+    final mls = _mlsCrypto;
+    final client = api;
+    if (crypto == null ||
+        mls == null ||
+        client == null ||
+        conversations.isEmpty) {
+      return;
+    }
+    final policy = await _selfUpdates(current);
+    if (policy == null || !_syncOwnerActive(current, ownerGeneration)) return;
+    final now = DateTime.now().toUtc();
+    try {
+      final due = policy.due(<SelfUpdateCandidate>[
+        for (final conversation in conversations)
+          (
+            id: conversation.id,
+            lastActivity: conversation.lastMessageAt,
+            members: membersFor(conversation.id).length,
+          ),
+      ], now);
+      final previous = _lastSelfUpdateStagedAt;
+      if (due.isEmpty ||
+          (previous != null && now.difference(previous) < _selfUpdateSpacing)) {
+        return;
+      }
+      List<MlsPendingChange>? changes;
+      for (final conversationId in due) {
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        if (_revocationPendingGroups.contains(conversationId) ||
+            _failedMlsConversations.contains(conversationId) ||
+            await _hasPendingMlsWork(conversationId)) {
+          continue;
+        }
+        final local = await mls.groupEpoch(conversationId);
+        if (local == null) {
+          // No group on this device (yet): look again much later.
+          policy.recordBackoff(
+              conversationId, now, MlsSelfUpdatePolicy.refusedBackoff);
+          continue;
+        }
+        if (local.pending) continue;
+        changes ??= await client.mlsPendingChanges(current.token);
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        final change = changes
+            .where((item) => item.conversationId == conversationId)
+            .firstOrNull;
+        // A removal goes first; a different epoch means sync is not done.
+        if (change != null &&
+            (change.remove.isNotEmpty || change.epoch != local.epoch)) {
+          continue;
+        }
+        try {
+          await crypto.stageSelfUpdate(conversationId);
+        } catch (err) {
+          policy.recordBackoff(
+              conversationId, now, MlsSelfUpdatePolicy.failureBackoff);
+          // Body-free: no conversation, device or server text.
+          developer.log('mls_self_update_stage_failed ${err.runtimeType}',
+              name: 'veritra.sync');
+          continue;
+        }
+        _lastSelfUpdateStagedAt = now;
+        await _flushMlsOutbox();
+        break;
+      }
+    } finally {
+      await _saveSelfUpdates();
     }
   }
 

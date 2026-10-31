@@ -110,6 +110,17 @@ abstract interface class BoundedMlsConversationCryptoService
       {required void Function() checkCanCommit});
 }
 
+/// Periodic MLS self-update (docs/crypto.md, change log 2026-10-31). Kept
+/// apart from [MlsConversationCryptoService] so a service that cannot
+/// refresh keys is simply never asked to.
+abstract interface class MlsSelfUpdateCryptoService {
+  /// Stages one commit that adds and removes no one and gives this device's
+  /// leaf a fresh key in [conversationId], and queues it as an update-only
+  /// commit bundle. Like every staged commit (D28) it is merged only once
+  /// the server accepts it, and dropped when the server refuses it.
+  Future<void> stageSelfUpdate(String conversationId);
+}
+
 /// Cached server roles today; C4 will replace this source with encrypted roles.
 abstract interface class ConversationAuthority {
   String? roleOf(String conversationId, String accountId);

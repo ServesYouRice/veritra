@@ -29,6 +29,14 @@ class MlsCommitBundle {
 
   bool get hasCommit => commit.isNotEmpty;
 
+  /// A commit that adds and removes no one: a periodic self-update.
+  bool get isUpdateOnly =>
+      hasCommit &&
+      added.isEmpty &&
+      removed.isEmpty &&
+      welcome.isEmpty &&
+      revocationDeviceId == null;
+
   Map<String, Object?> toRequestJson(String idempotencyKey) =>
       <String, Object?>{
         'epoch': epoch,
