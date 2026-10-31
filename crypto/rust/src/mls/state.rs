@@ -1,11 +1,14 @@
-use super::{encode_device_identity, transfer, MlsDevice, MlsError, CIPHERSUITE};
+use super::{
+    encode_device_identity,
+    storage::{PartitionedStorage, VeritraProvider},
+    transfer, MlsDevice, MlsError, CIPHERSUITE,
+};
 use aes_gcm::{
     aead::{Aead, KeyInit, Payload},
     Aes256Gcm, Nonce,
 };
 use openmls::prelude::{BasicCredential, CredentialWithKey};
 use openmls_basic_credential::SignatureKeyPair;
-use openmls_rust_crypto::OpenMlsRustCrypto;
 use openmls_traits::{random::OpenMlsRand, OpenMlsProvider};
 use std::collections::HashMap;
 use tls_codec::SecretVLBytes;
@@ -30,13 +33,8 @@ impl MlsDevice {
         if state_key.len() != KEY_BYTES || counter == 0 {
             return Err(MlsError::InvalidState);
         }
-        let values = self
-            .provider
-            .storage()
-            .values
-            .read()
-            .map_err(|_| MlsError::Storage)?;
-        let records: SecretVLBytes = encode_records(&values)?.into();
+        // The union of every owner's store: format 3 is the flat map.
+        let records: SecretVLBytes = self.provider.storage().with_records(encode_records)?.into();
         let transfers = transfer::encode(
             &self.pending_transfers,
             &self.account_id,
@@ -152,9 +150,10 @@ impl MlsDevice {
             )
             .map_err(|_| MlsError::InvalidState)?
             .into();
-        let provider = OpenMlsRustCrypto::default();
-        let (records, pending_transfers) = if version == LEGACY_FORMAT_VERSION {
-            (decode_records(plaintext.as_slice())?, Default::default())
+        // Every restore splits the flat map by owner (D70 S1), so the
+        // classifier runs on real state before any format depends on it.
+        let (records, transfers) = if version == LEGACY_FORMAT_VERSION {
+            (decode_records(plaintext.as_slice())?, None)
         } else {
             let mut payload = Reader::new(plaintext.as_slice());
             if payload.take(PLAINTEXT_MAGIC.len())? != PLAINTEXT_MAGIC {
@@ -165,20 +164,13 @@ impl MlsDevice {
                 return Err(MlsError::InvalidState);
             }
             let records = decode_records(payload.take(record_bytes)?)?;
-            let transfers = transfer::decode(
-                &plaintext.as_slice()[payload.offset..],
-                account_id,
-                device_id,
-                &public_key,
-                &provider,
-            )?;
-            (records, transfers)
+            (records, Some(&plaintext.as_slice()[payload.offset..]))
         };
-        *provider
-            .storage()
-            .values
-            .write()
-            .map_err(|_| MlsError::Storage)? = records;
+        let provider = VeritraProvider::with_storage(PartitionedStorage::from_records(records)?);
+        let pending_transfers = match transfers {
+            Some(bytes) => transfer::decode(bytes, account_id, device_id, &public_key, &provider)?,
+            None => Default::default(),
+        };
         let signer = SignatureKeyPair::read(
             provider.storage(),
             &public_key,
@@ -204,12 +196,13 @@ impl MlsDevice {
     }
 }
 
-fn encode_records(values: &HashMap<Vec<u8>, Vec<u8>>) -> Result<Vec<u8>, MlsError> {
-    if values.len() > MAX_RECORDS {
+/// `records` must be sorted by key and unique (`with_records` ensures it).
+fn encode_records(records: &[(&[u8], &[u8])]) -> Result<Vec<u8>, MlsError> {
+    if records.len() > MAX_RECORDS {
         return Err(MlsError::InvalidState);
     }
     let mut output_size = 4usize;
-    for (key, value) in values {
+    for (key, value) in records {
         if key.len() > MAX_RECORD_BYTES || value.len() > MAX_RECORD_BYTES {
             return Err(MlsError::InvalidState);
         }
@@ -223,9 +216,7 @@ fn encode_records(values: &HashMap<Vec<u8>, Vec<u8>>) -> Result<Vec<u8>, MlsErro
         }
     }
     let mut output = Vec::with_capacity(output_size);
-    output.extend_from_slice(&(values.len() as u32).to_be_bytes());
-    let mut records: Vec<_> = values.iter().collect();
-    records.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+    output.extend_from_slice(&(records.len() as u32).to_be_bytes());
     for (key, value) in records {
         if key.len() > MAX_RECORD_BYTES || value.len() > MAX_RECORD_BYTES {
             return Err(MlsError::InvalidState);
@@ -398,6 +389,184 @@ mod tests {
             MlsDevice::restore_state(b"acct_fixture", b"dev_old", &[0x71; 32], 43, &upgraded),
             Err(MlsError::Rollback)
         ));
+    }
+
+    /// The authenticated plaintext of a sealed format-2/3 blob.
+    fn open_plaintext(sealed: &[u8], key: &[u8]) -> Vec<u8> {
+        let mut reader = Reader::new(sealed);
+        reader.take(8).unwrap();
+        reader.u16().unwrap();
+        reader.u64().unwrap();
+        for _ in 0..3 {
+            reader.u16_bytes().unwrap();
+        }
+        let nonce = reader.take(NONCE_BYTES).unwrap().to_vec();
+        let aad_end = reader.offset;
+        let length = reader.u32().unwrap() as usize;
+        let ciphertext = reader.take(length).unwrap();
+        Aes256Gcm::new_from_slice(key)
+            .unwrap()
+            .decrypt(
+                &Nonce::try_from(nonce.as_slice()).unwrap(),
+                Payload {
+                    msg: ciphertext,
+                    aad: &sealed[..aad_end],
+                },
+            )
+            .unwrap()
+    }
+
+    /// D70 S1: the genuine v3 fixture (sealed before the storage split)
+    /// splits by owner, re-seals to the same plaintext byte for byte, and
+    /// every part of it still works: the staged commit merges, the peer
+    /// interoperates, the inactive group stays inactive, the unclaimed key
+    /// packages open a Welcome and the K2 transfers survive.
+    #[test]
+    fn genuine_v3_fixture_splits_by_owner_and_reseals_byte_identically() {
+        use super::super::storage::hex;
+        use openmls::prelude::{KeyPackageIn, ProtocolVersion};
+        use tls_codec::Deserialize as _;
+        const SOURCE_KEY: [u8; 32] = [0x73; 32];
+        let sealed = include_bytes!("../../tests/fixtures/state-v3/source.bin");
+        assert_eq!(&sealed[8..10], &3u16.to_be_bytes());
+        let original = open_plaintext(sealed, &SOURCE_KEY);
+        let (source, counter) =
+            MlsDevice::restore_state(b"acct_fixture3", b"dev_src", &SOURCE_KEY, 51, sealed)
+                .unwrap();
+        assert_eq!(counter, 51);
+        assert_eq!(
+            source.signing_public_key(),
+            include_bytes!("../../tests/fixtures/state-v3/source-public.bin")
+        );
+        assert_eq!(source.pending_transfers.len(), 2);
+
+        let unclaimed = [
+            &include_bytes!("../../tests/fixtures/state-v3/unclaimed-1.bin")[..],
+            include_bytes!("../../tests/fixtures/state-v3/unclaimed-2.bin"),
+        ];
+        let package_owner = |bytes: &[u8]| {
+            let package = KeyPackageIn::tls_deserialize_exact(bytes)
+                .unwrap()
+                .validate(source.provider.crypto(), ProtocolVersion::Mls10)
+                .unwrap();
+            let id = package.hash_ref(source.provider.crypto()).unwrap();
+            format!("kp:{}", hex(id.as_slice()))
+        };
+        let snapshot = source.provider.storage().snapshot();
+        let mut expected: Vec<String> = [
+            "device",
+            "group:conv_alpha",
+            "group:conv_beta",
+            "group:conv_gamma",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        expected.extend(unclaimed.iter().map(|bytes| package_owner(bytes)));
+        expected.sort();
+        assert_eq!(snapshot.keys().cloned().collect::<Vec<_>>(), expected);
+        assert_eq!(snapshot["device"].len(), 1);
+        assert_eq!(source.provider.storage().unowned_count(), 0);
+
+        // Restore -> classify -> re-seal reproduces the exact plaintext.
+        let resealed = source.seal_state(&SOURCE_KEY, 51).unwrap();
+        assert_ne!(&resealed[..], &sealed[..]);
+        assert_eq!(open_plaintext(&resealed, &SOURCE_KEY), original);
+        let (again, _) =
+            MlsDevice::restore_state(b"acct_fixture3", b"dev_src", &SOURCE_KEY, 51, &resealed)
+                .unwrap();
+        assert_eq!(again.provider.storage().snapshot(), snapshot);
+        drop(again);
+
+        // The staged self-update merges and the peer follows it.
+        let (peer, _) = MlsDevice::restore_state(
+            b"acct_peer3",
+            b"dev_peer",
+            &[0x74; 32],
+            52,
+            include_bytes!("../../tests/fixtures/state-v3/peer.bin"),
+        )
+        .unwrap();
+        let mut alpha = source.load_group(b"conv_alpha").unwrap();
+        assert!(source.has_pending_commit(&alpha));
+        let epoch = source.group_epoch(&alpha);
+        source.merge_pending_commit(&mut alpha).unwrap();
+        let mut peer_alpha = peer.load_group(b"conv_alpha").unwrap();
+        peer.process_commit(
+            &mut peer_alpha,
+            include_bytes!("../../tests/fixtures/state-v3/staged-update.bin"),
+        )
+        .unwrap();
+        assert_eq!(peer.group_epoch(&peer_alpha), epoch + 1);
+        let message = source.encrypt(&mut alpha, b"synthetic-alpha-3").unwrap();
+        assert_eq!(
+            peer.decrypt(&mut peer_alpha, &message, b"acct_fixture3", b"dev_src")
+                .unwrap(),
+            b"synthetic-alpha-3"
+        );
+        let reply = peer.encrypt(&mut peer_alpha, b"synthetic-alpha-4").unwrap();
+        assert_eq!(
+            source
+                .decrypt(&mut alpha, &reply, b"acct_peer3", b"dev_peer")
+                .unwrap(),
+            b"synthetic-alpha-4"
+        );
+
+        // The peer's continuation in conv_beta decrypts.
+        let mut beta = source.load_group(b"conv_beta").unwrap();
+        assert_eq!(
+            source
+                .decrypt(
+                    &mut beta,
+                    include_bytes!("../../tests/fixtures/state-v3/peer-next.bin"),
+                    b"acct_peer3",
+                    b"dev_peer"
+                )
+                .unwrap(),
+            b"synthetic-beta-after-upgrade"
+        );
+
+        // The inactive group is kept as it was (S1 prunes nothing).
+        assert!(!source.load_group(b"conv_gamma").unwrap().is_active());
+
+        // An unclaimed key package still opens a Welcome; its store goes.
+        let mut fresh = peer.create_group(b"conv_delta").unwrap();
+        let add = peer
+            .add_member(&mut fresh, unclaimed[0], b"acct_fixture3", b"dev_src")
+            .unwrap();
+        peer.merge_pending_commit(&mut fresh).unwrap();
+        source.join_group(b"conv_delta", &add.welcome).unwrap();
+        let owners = source.provider.storage().snapshot();
+        assert!(!owners.contains_key(&package_owner(unclaimed[0])));
+        assert!(owners.contains_key(&package_owner(unclaimed[1])));
+        assert!(owners.contains_key("group:conv_delta"));
+    }
+
+    #[test]
+    fn genuine_v2_fixture_splits_by_owner_and_reseals_its_records_unchanged() {
+        let sealed = include_bytes!("../../tests/fixtures/state-v2/source.bin");
+        let original = open_plaintext(sealed, &[0x71; 32]);
+        let (source, _) =
+            MlsDevice::restore_state(b"acct_fixture", b"dev_old", &[0x71; 32], 41, sealed).unwrap();
+        assert_eq!(
+            source
+                .provider
+                .storage()
+                .snapshot()
+                .into_keys()
+                .collect::<Vec<_>>(),
+            ["device", "group:conv_fixture"]
+        );
+        // v2 plaintext is the bare record map (its writer did not sort it);
+        // v3 wraps the same records, sorted, and an empty transfer list.
+        let resealed = open_plaintext(&source.seal_state(&[0x71; 32], 41).unwrap(), &[0x71; 32]);
+        let mut reader = Reader::new(&resealed);
+        assert_eq!(reader.take(8).unwrap(), PLAINTEXT_MAGIC);
+        let length = reader.u32().unwrap() as usize;
+        let records = reader.take(length).unwrap();
+        assert_eq!(records.len(), original.len());
+        assert!(decode_records(records).unwrap() == decode_records(&original).unwrap());
+        assert_eq!(reader.take(2).unwrap(), [0, 0]);
+        assert!(reader.finished());
     }
 
     #[test]

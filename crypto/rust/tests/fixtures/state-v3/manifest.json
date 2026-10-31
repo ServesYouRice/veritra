@@ -1,0 +1,20 @@
+{
+  "generated_before_d70_s1": true,
+  "source_account": "acct_fixture3",
+  "source_device": "dev_src",
+  "source_key_hex": "7373737373737373737373737373737373737373737373737373737373737373",
+  "source_counter": 51,
+  "peer_account": "acct_peer3",
+  "peer_device": "dev_peer",
+  "peer_key_hex": "7474747474747474747474747474747474747474747474747474747474747474",
+  "peer_counter": 52,
+  "files": {
+    "peer-next.bin": "a33e0e8a895b79615d49013257a5b70400397cdc397fc1eb7c6695be5e5591ab",
+    "peer.bin": "97d7536891b36e80a27c209d29e883d866bd7bea5b1c7c223a8f127eb073f1ee",
+    "source-public.bin": "ea389bf63dda790fed613f7d6f9fcd511b6eec375bb0258cd44709e3a8ddbd17",
+    "source.bin": "eb495200f7cbf5ad508288a0f0d1e9966ec1bb1961647dc89070d58b57d05ae5",
+    "staged-update.bin": "5ccf9d969653017bb9224b0fe5e316d810a7ea991299a81c80f584097e545251",
+    "unclaimed-1.bin": "19825279fe38e8cf87a7d9af709e8858014df5e17b344301dfe0ab726d43799b",
+    "unclaimed-2.bin": "b0d229595638d6f42200d78822a0ee6dd52016538b92ede8fe21bcd4786b9906"
+  }
+}
