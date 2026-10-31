@@ -1302,6 +1302,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         // Keep the encrypted cache available while offline.
       }
       unawaited(_startSync());
+      unawaited(_ensureKeyPackageSupply().catchError((Object _) {}));
       unawaited(_scheduleExpiryPurge());
       lifecycle = SessionLifecycle.ready;
       notifyListeners();
@@ -1437,6 +1438,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         credential: credential,
         setupToken: setupToken,
       );
+      await _oweInitialKeyPackages(session!);
       await localStore.saveSession(session!);
       await _mlsCrypto?.activateSession(session!);
       await localStore.saveSyncCursor(0);
@@ -1489,6 +1491,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       await _finishSignIn(() async {
         await _refreshConversations(notify: true);
         await _refreshDevices();
+        await _ensureKeyPackageSupply();
       });
     });
   }
@@ -1855,6 +1858,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         enrollment: enrollment,
         credential: credential,
       );
+      await _oweInitialKeyPackages(session!);
       await localStore.saveSession(session!);
       await _mlsCrypto?.activateSession(session!);
       await localStore.saveSyncCursor(0);
@@ -3176,6 +3180,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         role: linkedSession.role,
       );
       pendingDeviceLinkClaim = null;
+      await _oweInitialKeyPackages(session!);
       await localStore.saveSession(session!);
       await _mlsCrypto?.activateSession(session!);
       await localStore.saveSyncCursor(0);
@@ -4192,6 +4197,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       return;
     }
     await _syncOwner?.request();
+    _retryOwedKeyPackages();
   }
 
   Future<void> _runOwnedCatchUp(Session current, int ownerGeneration) async {
@@ -4634,6 +4640,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         final ownPathCommit = message.kind == 'commit' &&
             message.senderDeviceId == current.deviceId &&
             await _queuedPathCommit(message.idempotencyKey);
+        if (message.kind == 'welcome' &&
+            message.recipientDeviceId == current.deviceId) {
+          // Write-ahead (TASK-028): a Welcome uses up one of this device's
+          // published key packages, so its replacement is owed durably
+          // before the Welcome commits. Counted once per Welcome; one that
+          // then fails stays counted (over-supply, capped).
+          await _oweKeyPackages(current, 1, welcome: message.id);
+        }
         try {
           if (bounded != null) {
             await bounded.processMlsMessageBounded(message,
@@ -4886,6 +4900,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   }) async {
     _sessionGeneration++;
     _syncStartFailed = null;
+    _keyPackagesOwed = true;
+    _keyPackageRetryFailures = 0;
+    _keyPackageRetryAt = null;
     // Native permits go first, then capture, then the private notice state
     // (cleared with the rest of the local session below).
     _wakeRun?.cancel();
@@ -5574,30 +5591,223 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     await _flushMlsOutbox();
   }
 
-  /// Every Welcome consumes one of this device's published key packages.
-  /// Publishing one back keeps the supply steady, so the device can keep
-  /// being added to new conversations. A failure only delays the top-up to
-  /// the next Welcome; the Welcome itself is already committed.
+  /// Every Welcome consumes one of this device's published key packages,
+  /// and the Welcome path has already owed its replacement durably.
+  /// Publishing what is owed keeps the supply steady, so the device can keep
+  /// being added to new conversations. Sync never fails over it: what a
+  /// failure leaves owed goes with the next Welcome or catch-up.
   Future<void> _replenishKeyPackage() async {
-    final current = session;
-    final client = api;
-    final mls = _mlsCrypto;
-    if (current == null || client == null || mls == null) return;
     try {
-      final packages = await mls.createReplenishmentKeyPackages(count: 1);
-      await client.publishDeviceKeyPackages(current.token, packages);
+      await _publishOwedKeyPackages();
     } catch (_) {
-      // Retried on the next Welcome.
+      // Still owed; retried later.
     }
   }
 
-  Future<void> _publishInitialMlsKeyPackages() async {
+  /// A new device's first key packages. Owed by [_oweInitialKeyPackages]
+  /// before its session was saved, so a failure here (reported by the
+  /// sign-in) or a crash is retried by restore, sign-in or catch-up.
+  Future<void> _publishInitialMlsKeyPackages() => _publishOwedKeyPackages();
+
+  // Key-package supply (TASK-028). The server never says how many unclaimed
+  // packages this device has left, so the device keeps a durable count of
+  // those it owes: the first batch of a new device, plus one per Welcome.
+  // The count lives in one local setting, scoped to the origin, account and
+  // device that owe it; a record of another identity counts as nothing and
+  // is replaced. It only goes down after the server accepted a publish (or
+  // answered that it holds its most). Residual: a crash after the server
+  // accepted a publish but before the count went down publishes that batch
+  // again (at most [_keyPackageBatchCap] spare packages). Each batch is
+  // generated, and its private keys stored, before it is sent: a batch that
+  // is never accepted stays in local MLS state unused, at most one batch
+  // per attempt, as no discard call exists.
+  static const _keyPackageNeedSetting = 'mls.key_package_need';
+
+  /// Most packages one publish carries, and most the record owes: the
+  /// native batch limit and the server's per-request limit.
+  static const _keyPackageBatchCap = 10;
+
+  /// A new device's first batch (the native default).
+  static const _initialKeyPackages = 5;
+
+  /// False only once this process has seen nothing owed for this session;
+  /// spares a store read on every catch-up.
+  bool _keyPackagesOwed = true;
+  int _keyPackageRetryFailures = 0;
+  DateTime? _keyPackageRetryAt;
+  Future<void> _keyPackageNeedLock = Future<void>.value();
+  Future<void>? _keyPackagePublish;
+  Session? _keyPackagePublishOwner;
+
+  String _keyPackageScope(Session owner) {
+    String origin;
+    try {
+      origin = canonicalizeServerOrigin(owner.baseUrl);
+    } on FormatException {
+      origin = owner.baseUrl;
+    }
+    return '$origin\u0000${owner.accountId}\u0000${owner.deviceId}';
+  }
+
+  /// The stored record when it belongs to [owner]'s identity, else null.
+  Future<({int need, String? welcome})?> _readKeyPackageNeed(
+      Session owner) async {
+    final raw = await localStore.loadSetting(_keyPackageNeedSetting);
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final record = jsonDecode(raw);
+      if (record is! Map || record['scope'] != _keyPackageScope(owner)) {
+        return null;
+      }
+      final need = record['need'];
+      final welcome = record['welcome'];
+      return (
+        need: need is int ? need.clamp(0, _keyPackageBatchCap) : 0,
+        welcome: welcome is String ? welcome : null,
+      );
+    } on FormatException {
+      return null;
+    }
+  }
+
+  /// One read-modify-write of [owner]'s record ([change] returns null to
+  /// leave it); they never interleave, so an increment and a decrement
+  /// cannot lose each other. Returns what [owner] owes afterwards.
+  Future<int> _changeKeyPackageNeed(
+      Session owner,
+      ({int need, String? welcome})? Function(
+              ({int need, String? welcome})? current)
+          change) {
+    final done = _keyPackageNeedLock.then((_) async {
+      final current = await _readKeyPackageNeed(owner);
+      final next = change(current);
+      final need = (next ?? current)?.need.clamp(0, _keyPackageBatchCap) ?? 0;
+      if (next != null) {
+        await localStore.saveSetting(
+            _keyPackageNeedSetting,
+            jsonEncode(<String, Object?>{
+              'scope': _keyPackageScope(owner),
+              'need': need,
+              if (next.welcome != null) 'welcome': next.welcome,
+            }));
+      }
+      if (_sameSession(owner)) _keyPackagesOwed = need > 0;
+      return need;
+    });
+    _keyPackageNeedLock =
+        done.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    return done;
+  }
+
+  /// Owes [count] more packages for [owner]. With [welcome], counts that
+  /// Welcome once: a replay or a retried event adds nothing.
+  Future<int> _oweKeyPackages(Session owner, int count, {String? welcome}) {
+    _keyPackagesOwed = true;
+    return _changeKeyPackageNeed(owner, (current) {
+      if (welcome != null && current?.welcome == welcome) return null;
+      return (
+        need: (current?.need ?? 0) + count,
+        welcome: welcome ?? current?.welcome,
+      );
+    });
+  }
+
+  /// Records [published] packages the server accepted for [owner].
+  Future<int> _settleKeyPackages(Session owner, int published) =>
+      _changeKeyPackageNeed(
+          owner,
+          (current) => current == null
+              ? null
+              : (need: current.need - published, welcome: current.welcome));
+
+  /// Written before a new device's session is saved, so even a crash right
+  /// after the save leaves its first batch owed.
+  Future<void> _oweInitialKeyPackages(Session created) async {
+    if (_mlsCrypto == null) return;
+    await _oweKeyPackages(created, _initialKeyPackages);
+  }
+
+  /// Publishes what this device owes, best effort: a failure stays owed.
+  /// Only a rejected session (401) is rethrown.
+  Future<void> _ensureKeyPackageSupply() async {
+    try {
+      await _publishOwedKeyPackages();
+    } catch (err) {
+      if (err is ApiException && err.statusCode == 401) rethrow;
+    }
+  }
+
+  /// After a catch-up pass that ended online: publishes anything still
+  /// owed, at once the first time and then with backoff (1 minute doubling
+  /// to an hour), as every attempt stores a batch of private keys first.
+  void _retryOwedKeyPackages() {
     final current = session;
+    if (!_keyPackagesOwed ||
+        current == null ||
+        _mlsCrypto == null ||
+        connectionStatus != ConnectionStatus.online) {
+      return;
+    }
+    final now = DateTime.now();
+    final at = _keyPackageRetryAt;
+    if (at != null && now.isBefore(at)) return;
+    _keyPackageRetryAt = now
+        .add(Duration(minutes: min(60, 1 << min(_keyPackageRetryFailures, 6))));
+    unawaited(_publishOwedKeyPackages().then((_) {
+      if (_sameSession(current)) {
+        _keyPackageRetryFailures = 0;
+        _keyPackageRetryAt = null;
+      }
+    }, onError: (Object _) {
+      if (_sameSession(current)) _keyPackageRetryFailures++;
+    }));
+  }
+
+  /// Publishes one capped batch of what the current session owes and
+  /// settles it once the server accepted it. One publish per session runs
+  /// at a time; a second caller joins it.
+  Future<void> _publishOwedKeyPackages() {
+    final current = session;
+    if (current == null) return Future<void>.value();
+    final running = _keyPackagePublish;
+    if (running != null && identical(_keyPackagePublishOwner, current)) {
+      return running;
+    }
+    final publish = _publishOwedKeyPackagesOnce(current);
+    _keyPackagePublish = publish;
+    _keyPackagePublishOwner = current;
+    unawaited(publish.then<void>((_) {}, onError: (Object _) {}).then((_) {
+      if (identical(_keyPackagePublish, publish)) {
+        _keyPackagePublish = null;
+        _keyPackagePublishOwner = null;
+      }
+    }));
+    return publish;
+  }
+
+  Future<void> _publishOwedKeyPackagesOnce(Session current) async {
     final client = api;
     final mls = _mlsCrypto;
-    if (current == null || client == null || mls == null) return;
-    final packages = await mls.createReplenishmentKeyPackages();
-    await client.publishDeviceKeyPackages(current.token, packages);
+    if (client == null || mls == null || !_sameSession(current)) return;
+    final owed = await _changeKeyPackageNeed(current, (_) => null);
+    if (owed <= 0 || !_sameSession(current)) return;
+    final packages = await mls.createReplenishmentKeyPackages(
+        count: min(owed, _keyPackageBatchCap));
+    // Generated for this session; never published for another.
+    if (!_sameSession(current)) return;
+    try {
+      await client.publishDeviceKeyPackages(current.token, packages);
+    } on ApiException catch (err) {
+      if (err.statusCode != 409 ||
+          err.serverCode != 'key_package_quota_exceeded') {
+        rethrow;
+      }
+      // The server already holds its most unclaimed packages for this
+      // device (50): nothing is owed.
+      await _settleKeyPackages(current, owed);
+      return;
+    }
+    await _settleKeyPackages(current, packages.length);
   }
 
   Future<void> _processMlsRevocations() async {

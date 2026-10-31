@@ -3,9 +3,11 @@
 // session queue, and how this device keeps its MLS key packages supplied.
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
@@ -13,6 +15,7 @@ import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/backup_service.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
+import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
@@ -517,7 +520,256 @@ void main() {
       h.dispose();
     });
   });
+
+  group('TASK-028: key-package supply survives failures and restarts', () {
+    setUp(_deaths.clear);
+
+    const deviceSession = Session(
+      baseUrl: _origin,
+      token: '',
+      accountId: 'acct_owner',
+      deviceId: 'dev_owner',
+      deviceSecret: 'secret',
+    );
+
+    Future<int> owed(LocalStore store) async {
+      final raw = await store.loadSetting('mls.key_package_need');
+      if (raw == null || raw.isEmpty) return 0;
+      final record = jsonDecode(raw) as Map;
+      return record['need'] as int;
+    }
+
+    int sum(List<int> counts) => counts.fold(0, (a, b) => a + b);
+
+    test('createOwner: a failed first publish goes out after the catch-up',
+        () async {
+      final h = _Harness(mls: true);
+      h.api.publishFailures.add(ApiException(503, '{"error":"unavailable"}'));
+
+      await h.state.createOwner(_origin, 'owner', 'password', 'setup');
+      expect(h.state.error, isNotNull);
+      expect(await owed(h.store), 5);
+
+      await waitFor(() => h.api.published.isNotEmpty);
+      expect(h.api.published, <int>[5]);
+      await waitFor(() async => await owed(h.store) == 0);
+      h.dispose();
+    });
+
+    test('registerWithInvite: a failed first publish goes out after a restart',
+        () async {
+      final first = _Harness(mls: true);
+      first.api.publishFailures
+        ..add(const SocketException('offline'))
+        ..add(const SocketException('offline'));
+      await first.state.registerWithInvite(_origin, 'JOIN', 'owner', 'pw');
+      expect(first.state.error, isNotNull);
+      // The catch-up retry fails too; nothing went out.
+      await waitFor(() => first.api.publishAttempts == 2);
+      expect(first.api.published, isEmpty);
+      first.dispose();
+
+      final second = _Harness(mls: true, store: first.store, api: first.api);
+      await second.state.tryRestoreSession();
+      await waitFor(() => second.api.published.isNotEmpty);
+      expect(second.api.published, <int>[5]);
+      await waitFor(() async => await owed(second.store) == 0);
+      second.dispose();
+    });
+
+    test('password sign-in publishes what the device still owes', () async {
+      final h = _Harness(mls: true);
+      await h.store.saveSession(deviceSession);
+      await h.store.saveSetting(
+          'mls.key_package_need',
+          jsonEncode(<String, Object?>{
+            'scope': '$_origin\u0000acct_owner\u0000dev_owner',
+            'need': 3,
+          }));
+
+      await h.state.login(_origin, 'owner', 'password');
+      expect(h.state.error, isNull);
+      expect(h.api.published, <int>[3]);
+      expect(await owed(h.store), 0);
+      h.dispose();
+    });
+
+    test('a failed top-up is made up by the next publish', () async {
+      final h = _Harness(mls: true);
+      await h.store.saveSession(_owner);
+      h.api.events.add(_welcomeEvent(1));
+      await h.state.tryRestoreSession();
+      await waitFor(() async => await h.store.loadSyncCursor() == 1);
+      await waitFor(() => h.api.published.isNotEmpty);
+      expect(h.api.published, <int>[1]);
+
+      // The second Welcome's top-up and the catch-up retry both fail.
+      h.api.publishFailures
+        ..add(const SocketException('offline'))
+        ..add(const SocketException('offline'));
+      h.api.events.add(_welcomeEvent(2));
+      h.state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await waitFor(() => h.api.publishAttempts == 3);
+      await waitFor(() async => await h.store.loadSyncCursor() == 2);
+      expect(await owed(h.store), 1);
+
+      h.api.events.add(_welcomeEvent(3));
+      h.state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await waitFor(() async => await owed(h.store) == 0);
+      expect(h.api.published, <int>[1, 2]);
+      expect(sum(h.api.published), 3, reason: 'one per Welcome');
+      h.dispose();
+    });
+
+    // A simulated process death: the step never returns, the app is
+    // dropped, and a new one restores from the same store and server.
+    for (final point in <String>[
+      'before-commit',
+      'after-commit',
+      'after-generation',
+      'after-publish',
+    ]) {
+      test('a death $point still replaces the consumed package', () async {
+        final api = _Api()..events.add(_welcomeEvent(1));
+        final first = _Harness(mls: true, api: api);
+        await first.store.saveSession(_owner);
+        if (point == 'after-publish') {
+          api.dieAfterPublish = true;
+        } else {
+          first.crypto!.dieAt = point;
+        }
+        await first.state.tryRestoreSession();
+        await waitFor(() => _deaths.contains(point));
+        expect(await owed(first.store), 1,
+            reason: 'the need was not durable before the death');
+        first.dispose();
+        _deaths.clear();
+        api.dieAfterPublish = false;
+
+        final second = _Harness(mls: true, store: first.store, api: api);
+        await second.state.tryRestoreSession();
+        await waitFor(() async => await second.store.loadSyncCursor() == 1);
+        await waitFor(() async => await owed(second.store) == 0);
+        final published = sum(api.published);
+        expect(published, greaterThanOrEqualTo(1));
+        expect(published, lessThanOrEqualTo(1 + 10));
+        expect(published, point == 'after-publish' ? 2 : 1);
+        second.dispose();
+      });
+    }
+
+    for (final register in <bool>[false, true]) {
+      final name = register ? 'registerWithInvite' : 'createOwner';
+      test('$name: a death during the first publish is redone on restore',
+          () async {
+        final first = _Harness(mls: true);
+        first.crypto!.dieAt = 'after-generation';
+        unawaited(register
+            ? first.state.registerWithInvite(_origin, 'JOIN', 'owner', 'pw')
+            : first.state.createOwner(_origin, 'owner', 'pw', 'setup'));
+        await waitFor(() => _deaths.contains('after-generation'));
+        expect((await first.store.loadSession())?.deviceId, 'dev_owner');
+        expect(await owed(first.store), 5);
+        first.dispose();
+        _deaths.clear();
+
+        final second = _Harness(mls: true, store: first.store, api: first.api);
+        await second.state.tryRestoreSession();
+        await waitFor(() async => await owed(second.store) == 0);
+        expect(first.api.published, <int>[5]);
+        second.dispose();
+      });
+    }
+
+    test('a record of another account or device is never applied', () async {
+      final h = _Harness(mls: true);
+      await h.store.saveSession(_owner);
+      await h.store.saveSetting(
+          'mls.key_package_need',
+          jsonEncode(<String, Object?>{
+            'scope': '$_origin\u0000acct_other\u0000dev_other',
+            'need': 5,
+          }));
+      await h.state.tryRestoreSession();
+      await waitFor(() => h.state.connectionStatus == ConnectionStatus.online);
+      await settle();
+      expect(h.api.publishAttempts, 0);
+      expect(h.crypto!.created, isEmpty);
+      h.dispose();
+    });
+
+    group('with the encrypted store', () {
+      late Directory directory;
+      late List<EncryptedLocalDatabase> databases;
+
+      setUp(() async {
+        FlutterSecureStorage.setMockInitialValues(<String, String>{});
+        directory = await Directory.systemTemp.createTemp('session-kp-');
+        databases = <EncryptedLocalDatabase>[];
+      });
+
+      tearDown(() async {
+        for (final database in databases) {
+          await database.close();
+        }
+        await SecureLocalStore.releaseInstanceLocks();
+        if (await directory.exists()) await directory.delete(recursive: true);
+      });
+
+      SecureLocalStore open() => SecureLocalStore(
+            storage: const FlutterSecureStorage(),
+            directoryProvider: () async => directory,
+            databaseFactory: (file, keyHex) {
+              final database = openEncryptedLocalDatabase(file, keyHex);
+              databases.add(database);
+              return database;
+            },
+          );
+
+      test('the owed first batch survives reopening the store', () async {
+        final api = _Api();
+        api.publishFailures
+          ..add(const SocketException('offline'))
+          ..add(const SocketException('offline'));
+        final first = _Harness(mls: true, store: open(), api: api);
+        await first.state.createOwner(_origin, 'owner', 'password', 'setup');
+        await waitFor(() => api.publishAttempts == 2);
+        first.dispose();
+        await settle();
+        for (final database in databases) {
+          await database.close();
+        }
+        databases.clear();
+        await SecureLocalStore.releaseInstanceLocks();
+
+        final reopened = open();
+        expect(await owed(reopened), 5);
+        final second = _Harness(mls: true, store: reopened, api: api);
+        await second.state.tryRestoreSession();
+        await waitFor(() async => await owed(reopened) == 0);
+        expect(api.published, <int>[5]);
+        second.dispose();
+        await settle();
+      });
+    });
+  });
 }
+
+/// Steps that a test made "die": they never return.
+final List<String> _deaths = <String>[];
+
+Future<void> _die(String point) {
+  _deaths.add(point);
+  return Completer<void>().future;
+}
+
+SyncEvent _welcomeEvent(int id) => SyncEvent(
+      id: id,
+      type: 'mls.message.created',
+      conversationId: 'conv_$id',
+      payload: <String, Object?>{'mls_message_id': 'welcome_$id'},
+      createdAt: DateTime.utc(2026, 10, 1),
+    );
 
 MessageEnvelope _envelope(String key) => MessageEnvelope(
       conversationId: 'conv_1',
@@ -566,18 +818,18 @@ class _FaultStore extends MemoryLocalStore {
 class _Harness {
   _Harness({
     bool mls = false,
-    MemoryLocalStore? store,
+    LocalStore? store,
     _Api? api,
     this.backups,
   })  : store = store ?? MemoryLocalStore(),
-        api = api ?? _Api(),
-        crypto = mls ? _MlsCrypto() : null {
+        api = api ?? _Api() {
+    crypto = mls ? _MlsCrypto(this.store) : null;
     state = build();
   }
 
-  final MemoryLocalStore store;
+  final LocalStore store;
   final _Api api;
-  final _MlsCrypto? crypto;
+  late final _MlsCrypto? crypto;
   final BackupService? backups;
   late AppState state;
   int syncStarts = 0;
@@ -609,6 +861,13 @@ class _Api extends ApiClient {
 
   /// The number of packages in each publish the server accepted.
   final List<int> published = <int>[];
+  int publishAttempts = 0;
+
+  /// The next accepted publish never returns.
+  bool dieAfterPublish = false;
+
+  /// Scripted sync events; every MLS message is a Welcome to dev_owner.
+  final List<SyncEvent> events = <SyncEvent>[];
   int syncCalls = 0;
   final List<String> syncTokens = <String>[];
 
@@ -701,9 +960,46 @@ class _Api extends ApiClient {
     List<List<int>> keyPackages, {
     Duration lifetime = const Duration(days: 14),
   }) async {
+    publishAttempts++;
     if (publishFailures.isNotEmpty) throw publishFailures.removeAt(0);
     published.add(keyPackages.length);
+    if (dieAfterPublish) {
+      dieAfterPublish = false;
+      await _die('after-publish');
+    }
   }
+
+  MlsMessage _welcome(SyncEvent event) {
+    final id = (event.payload as Map)['mls_message_id'] as String;
+    return MlsMessage(
+      id: id,
+      conversationId: event.conversationId!,
+      senderAccountId: 'acct_peer',
+      senderDeviceId: 'dev_peer',
+      kind: 'welcome',
+      recipientDeviceId: 'dev_owner',
+      payload: const <int>[1],
+      idempotencyKey: 'idem_$id',
+      syncEventId: event.id,
+      createdAt: event.createdAt,
+    );
+  }
+
+  @override
+  Future<List<MlsMessage>> mlsMessages(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
+      <MlsMessage>[
+        for (final event in events)
+          if (event.id > after) _welcome(event),
+      ].take(limit).toList();
+
+  @override
+  Future<MlsMessage> mlsMessage(String token, String messageId) async =>
+      _welcome(events.firstWhere(
+          (event) => (event.payload as Map)['mls_message_id'] == messageId));
 
   @override
   Future<List<SyncEvent>> syncEvents(
@@ -713,7 +1009,10 @@ class _Api extends ApiClient {
   }) async {
     syncCalls++;
     syncTokens.add(token);
-    return const <SyncEvent>[];
+    return events
+        .where((event) => event.id > after)
+        .take(limit)
+        .toList(growable: false);
   }
 
   @override
@@ -804,9 +1103,31 @@ class _Backups implements BackupService {
 /// The MLS calls the session paths make, and nothing else.
 class _MlsCrypto extends TestOnlyCryptoService
     implements MlsConversationCryptoService {
+  _MlsCrypto(this.store);
+
+  final LocalStore store;
+
   /// The count asked for in each key-package batch.
   final List<int> created = <int>[];
   Object? activationFailure;
+
+  /// The step that never returns: 'before-commit' or 'after-commit' of a
+  /// Welcome, or 'after-generation' of a key-package batch.
+  String? dieAt;
+
+  @override
+  Future<void> processMlsMessage(MlsMessage message) async {
+    final marker = 'mls:${message.syncEventId}:${message.id}';
+    if (await store.hasProcessedMlsMessage(marker)) return;
+    if (dieAt == 'before-commit') await _die('before-commit');
+    await store.commitSyncEvent(SyncEventCommit(
+      eventKey: marker,
+      conversationId: message.conversationId,
+      expectedCursor: await store.loadSyncCursor(),
+      cursor: message.syncEventId,
+    ));
+    if (dieAt == 'after-commit') await _die('after-commit');
+  }
 
   @override
   Future<void> activateSession(Session session) async {
@@ -818,6 +1139,7 @@ class _MlsCrypto extends TestOnlyCryptoService
   Future<List<List<int>>> createReplenishmentKeyPackages(
       {int count = 5}) async {
     created.add(count);
+    if (dieAt == 'after-generation') await _die('after-generation');
     return <List<int>>[
       for (var i = 0; i < count; i++) <int>[i]
     ];
