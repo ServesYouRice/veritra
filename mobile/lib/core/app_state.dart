@@ -3292,10 +3292,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         ..epoch = max(hold.epoch, change.epoch)
         ..accounts.addAll(accounts);
     }
-    // A read the server cut at its cap flags every item truncated and may
-    // leave whole conversations out: one missing from it proves nothing.
-    // (A single conversation over its own cap is flagged too, but listed.)
-    final cut = changes.isNotEmpty && changes.every((item) => item.truncated);
+    // A read the server cut at its overall cap may leave whole conversations
+    // out: one missing from it proves nothing. The server says so in a
+    // response-level flag; an item's own truncated flag may only mean that
+    // conversation hit its own cap, which must not hold every other one.
+    // A server without the flag flags every item of a cut read: fail closed.
+    final serverCut = changes is MlsPendingChanges ? changes.cut : null;
+    final cut = serverCut ??
+        (changes.isNotEmpty && changes.every((item) => item.truncated));
     for (final conversationId in _removalHolds.keys.toList()) {
       if (listed.containsKey(conversationId)) continue;
       final hold = _removalHolds[conversationId];
@@ -3307,8 +3311,19 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         // fetch then brings in any commit the server held at this read.
         final unlistedAt = hold.unlistedAt ??= read;
         if (unlistedAt == read) followUp = true;
-        if (await _hasPendingMlsWork(conversationId)) continue;
-        final local = await mls.groupEpoch(conversationId);
+        final ({int epoch, bool pending})? local;
+        try {
+          if (await _hasPendingMlsWork(conversationId)) continue;
+          local = await mls.groupEpoch(conversationId);
+        } catch (err) {
+          // One unreadable conversation keeps its hold; the others are
+          // still looked at, and the pass still asks for a follow-up.
+          if (!_syncOwnerActive(current, generation)) return;
+          // Body-free: no conversation, device or crypto text.
+          developer.log('mls_removal_hold_epoch_failed ${err.runtimeType}',
+              name: 'veritra.sync');
+          continue;
+        }
         if (local == null) {
           release = true;
         } else if (local.pending || _removalFetchedAfterRead < unlistedAt) {

@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:convert';
 
 /// One device in a group membership change (card I51).
@@ -82,6 +83,32 @@ class MlsCommitBundle {
 
   static Map<String, String> _refJson(MlsDeviceRef ref) =>
       <String, String>{'account_id': ref.accountId, 'device_id': ref.deviceId};
+}
+
+/// One `GET /api/v1/mls/pending-changes` read, with the response-level flag
+/// that says whether the server cut the whole read at its overall cap (so
+/// conversations may be missing). [cut] is null when the server did not say
+/// (an older server); one item's own [MlsPendingChange.truncated] alone may
+/// come from that conversation's own cap and does not mean the read was cut.
+class MlsPendingChanges extends ListBase<MlsPendingChange> {
+  MlsPendingChanges(List<MlsPendingChange> items, {this.cut})
+      : _items = List<MlsPendingChange>.unmodifiable(items);
+
+  final List<MlsPendingChange> _items;
+  final bool? cut;
+
+  @override
+  int get length => _items.length;
+
+  @override
+  set length(int value) => throw UnsupportedError('unmodifiable');
+
+  @override
+  MlsPendingChange operator [](int index) => _items[index];
+
+  @override
+  void operator []=(int index, MlsPendingChange value) =>
+      throw UnsupportedError('unmodifiable');
 }
 
 /// What one group should change, from `GET /api/v1/mls/pending-changes`.

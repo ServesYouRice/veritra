@@ -168,6 +168,46 @@ pending.
 
 Tests: `crypto/rust/tests/rejoin_after_removal.rs`.
 
+## Member removal send hold (D68)
+
+After a member is removed, application sends to that conversation wait,
+unencrypted, until the MLS commit that removes the member's devices is
+applied on this device, so nothing is encrypted to them. A hold starts when
+this device removes a member, when the server's pending-changes list
+(`GET /api/v1/mls/pending-changes`) shows a removal, or while a queued
+commit bundle removes a member. Holds are kept per device across restarts
+(`_removalHolds` in `mobile/lib/core/app_state.dart`).
+
+**Release.** A hold set before a pending-changes read is released when that
+read no longer lists the conversation (the unlisted marker records the
+first such read), and a complete sync fetch that started after that read has
+finished, and no MLS work for it is queued. Then it is released when the
+group is gone, the local epoch is past the listed one (or the server never
+listed it), or every removed account is a member again. A read the server
+cut at its overall cap may leave conversations out, so it releases nothing
+it leaves out. The response says so in the top-level `list_truncated` flag.
+One conversation over its own cap is flagged `truncated` on its item only
+and does not hold the others. Without the flag (an older server) a read
+whose items are all `truncated` is taken as cut. A conversation whose group
+state cannot be read keeps its hold; the others are still looked at.
+
+**Premises.** The release is sound only while all three hold:
+
+1. The server writes a commit, its sync event, the roster change and the new
+   epoch in one transaction. A read that no longer lists a removal means its
+   commit's event is already in the stream.
+2. Reconcile reads pending changes and updates holds in one serialized pass,
+   and a hold is compared only after a full sync fetch that began after the
+   read. That fetch then brought in every commit the server held at it.
+3. An MLS control message that cannot be applied stops sync at its event
+   (I33). The fetch then never completes, so the hold stays.
+
+**Residual.** The release trusts the server's roster. Device revocation and
+account deletion drop a removed device from the roster without a commit, and
+no FFI call lists a group's members, so the client cannot confirm the device
+really left the group. A malicious server could release a hold early this
+way. The L1 gap above covers the same trust.
+
 ## Message size
 
 Three limits apply to an MLS application message, smallest first:

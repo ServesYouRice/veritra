@@ -1043,11 +1043,16 @@ class ApiClient {
       '/api/v1/mls/pending-changes',
       token: token,
     );
-    return _rows(
-      json,
-      'pending_changes',
-      MlsPendingChange.fromJson,
-    ).toList(growable: false);
+    final cut = json['list_truncated'];
+    return MlsPendingChanges(
+      _rows(
+        json,
+        'pending_changes',
+        MlsPendingChange.fromJson,
+      ).toList(growable: false),
+      // Absent from older servers: the caller then falls back.
+      cut: cut is bool ? cut : null,
+    );
   }
 
   /// Claims one key package for each listed device, to add them to an
