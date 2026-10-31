@@ -105,6 +105,7 @@ LocalMessage _local(
   String body = 'secret words',
   String? formatJson,
   int? hiddenAt,
+  DateTime? createdAt,
 }) {
   return LocalMessage(
     key: 'dev_other:key_$id'.replaceFirst('dev_other', device),
@@ -115,7 +116,8 @@ LocalMessage _local(
     body: body,
     formatJson: formatJson,
     hiddenAt: hiddenAt,
-    createdAt: 1,
+    // The notice policy compares the row's time with the envelope's.
+    createdAt: (createdAt ?? _now).millisecondsSinceEpoch,
     state: LocalMessageState.received,
   );
 }
@@ -275,10 +277,13 @@ void main() {
 
   test('a burst in one chat gives one notification with the newest text',
       () async {
-    history(
-        <LocalMessage>[_local('a', body: 'first'), _local('b', body: 'last')]);
+    final earlier = _now.subtract(const Duration(seconds: 5));
+    history(<LocalMessage>[
+      _local('a', body: 'first', createdAt: earlier),
+      _local('b', body: 'last'),
+    ]);
     await messages.handle(<ReceivedMessageEnvelope>[
-      _envelope('a', createdAt: _now.subtract(const Duration(seconds: 5))),
+      _envelope('a', createdAt: earlier),
       _envelope('b'),
     ]);
     expect(notifier.shown.single.body, 'last');
