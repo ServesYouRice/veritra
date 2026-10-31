@@ -602,8 +602,31 @@ impl PartitionedStorage {
             self.flat() == shadow,
             "partitions differ from the flat twin"
         );
-        for (_, store) in self.groups.read().unwrap().iter() {
+        // Every key OpenMLS really wrote classifies to the store holding
+        // it. A group store may also hold standalone pairs (Unowned).
+        let check = |store: &MemoryStorage, owner: &dyn Fn(&Owner) -> bool| {
+            for key in store.values.read().unwrap().keys() {
+                let classified = classify(key);
+                assert!(
+                    classified.as_ref().is_some_and(owner),
+                    "key {} classifies as {classified:?}",
+                    String::from_utf8_lossy(key)
+                );
+            }
+        };
+        check(&self.device, &|owner| *owner == Owner::Device);
+        check(&self.unowned, &|owner| *owner == Owner::Unowned);
+        for (id, store) in self.groups.read().unwrap().iter() {
             assert!(!is_empty(store));
+            check(store, &|owner| match owner {
+                Owner::Group(owner) => owner == id,
+                Owner::Unowned => true,
+                _ => false,
+            });
+        }
+        for (id, store) in self.key_packages.read().unwrap().iter() {
+            assert!(!is_empty(store));
+            check(store, &|owner| *owner == Owner::KeyPackage(id.clone()));
         }
     }
 
