@@ -5474,7 +5474,35 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     });
   }
 
-  Future<void> _flushOutbox() async {
+  /// Outbox workers, their retry schedulers and the sync drain that
+  /// [dispose] starts without awaiting. Tracking only records the futures
+  /// AppState already creates; it changes no scheduling.
+  final Set<Future<void>> _backgroundWork = <Future<void>>{};
+
+  Future<void> _trackBackground(Future<void> Function() work) {
+    final future = work();
+    late final Future<void> settled;
+    settled = future
+        .then<void>((_) {}, onError: (Object _) {})
+        .whenComplete(() => _backgroundWork.remove(settled));
+    _backgroundWork.add(settled);
+    return future;
+  }
+
+  /// Completes once every tracked background operation (outbox and MLS
+  /// outbox passes, their retry scheduling, and the sync drain [dispose]
+  /// starts) has settled, including ones started while waiting. Tests
+  /// await it before closing the store under a disposed AppState.
+  @visibleForTesting
+  Future<void> get backgroundWorkIdle async {
+    while (_backgroundWork.isNotEmpty) {
+      await Future.wait(_backgroundWork.toList());
+    }
+  }
+
+  Future<void> _flushOutbox() => _trackBackground(_flushOutboxRun);
+
+  Future<void> _flushOutboxRun() async {
     if (_flushingOutbox) {
       _flushOutboxRequested = true;
       return;
@@ -5617,7 +5645,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// Consecutive application outbox passes or reads that failed locally.
   int _outboxLocalFailures = 0;
 
-  Future<void> _scheduleOutboxRetry() async {
+  Future<void> _scheduleOutboxRetry() =>
+      _trackBackground(_scheduleOutboxRetryRun);
+
+  Future<void> _scheduleOutboxRetryRun() async {
     _outboxRetryTimer?.cancel();
     _outboxRetryTimer = null;
     // The timer belongs to the session that read the outbox: one that ended
@@ -5682,7 +5713,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// Delivers MLS control messages (I34). One worker runs at a time; a call
   /// while it runs asks for one more pass. It never throws, so callers may
   /// leave its future unawaited.
-  Future<void> _flushMlsOutbox() async {
+  Future<void> _flushMlsOutbox() => _trackBackground(_flushMlsOutboxRun);
+
+  Future<void> _flushMlsOutboxRun() async {
     if (_flushingMlsOutbox) {
       _flushMlsOutboxRequested = true;
       return;
@@ -6250,7 +6283,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   static Duration _localRetryDelay(int failures) =>
       Duration(seconds: 1 << min(max(failures - 1, 0), 8));
 
-  Future<void> _scheduleMlsOutboxRetry() async {
+  Future<void> _scheduleMlsOutboxRetry() =>
+      _trackBackground(_scheduleMlsOutboxRetryRun);
+
+  Future<void> _scheduleMlsOutboxRetryRun() async {
     _mlsOutboxRetryTimer?.cancel();
     _mlsOutboxRetryTimer = null;
     // Armed only for the session that read the queue (see
@@ -6985,7 +7021,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     receipts.dispose();
     _sessionGeneration++;
     _syncOwner?.dispose();
-    unawaited(_syncOwner?.cancelAndDrain());
+    final drain = _syncOwner?.cancelAndDrain();
+    if (drain != null) unawaited(_trackBackground(() => drain));
     _syncOwner = null;
     _outboxRetryTimer?.cancel();
     _outboxRetryTimer = null;
