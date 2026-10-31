@@ -198,6 +198,7 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 | **D73** (2026-10-31, owner; D70 O1) | Backups also drop the MLS/crypto state (with D71): a restored device keeps history but re-joins group key exchange instead of cloning the old device. |
 | **D74** (2026-10-31, owner; D70 O2) | A Welcome whose key package expired or was pruned is skipped with an "ask to be re-added" notice; sync keeps going. |
 | **D75** (2026-10-31, owner) | Order: the D70 sealed-state redesign (ABI 10) lands before K2's crypto changes. |
+| **D76** (2026-10-31, owner; D69 follow-up) | iOS quiet reactions/edits: the phone decides — an iOS Notification Service Extension decrypts and drops reaction/edit alerts. No cleartext kind hint to the server. Needs Apple's notification-filtering entitlement and MLS state shared with the extension, so it lands after the D70 redesign. `serde_json` as a direct crypto dependency: not yet approved. |
 
 ## Roadmap
 
