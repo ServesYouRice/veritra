@@ -1672,6 +1672,11 @@ def release_readiness_cases() -> None:
     "release readiness gates passed" all the same. The script runs here in
     a scratch root next to stub gates that pass, with no crypto markers.
     """
+    if shutil.which("sh") is None:
+        # scripts/test.ps1 runs this suite on Windows, where the script
+        # itself cannot run either.
+        print("release readiness cases skipped: no sh on PATH")
+        return
     temp = Path(tempfile.mkdtemp(prefix="veritra-release-readiness-"))
     try:
         scripts = temp / "scripts"
