@@ -374,11 +374,18 @@ func (s *Store) deleteMessageEnvelope(ctx context.Context, messageID, accountID 
 	// The created and edited events still hold the ciphertext the delete
 	// replaced. They are hidden from sync from now on (syncEventVisibleTo),
 	// and their copies go here, the way expiry removes them. The deleted
-	// event, written below, carries the marker and stays visible.
+	// event, written below, carries the marker and stays visible. Every
+	// copy is at or after the created event, so the update reads only the
+	// conversation's events from there on (idx_sync_events_conversation),
+	// not its whole retained history.
+	from, err := messageCreatedEventID(ctx, tx, envelope.ConversationID, messageID, envelope.CreatedAt)
+	if err != nil {
+		return domain.MessageEnvelope{}, 0, err
+	}
 	if _, err := tx.ExecContext(ctx, redactMessageSyncEventsSQL+`
-		WHERE conversation_id = ? AND event_type IN (`+messageVersionEventTypes+`)
+		WHERE conversation_id = ? AND id >= ? AND event_type IN (`+messageVersionEventTypes+`)
 		  AND json_extract(payload_json, '$.message_id') = ?
-		  AND json_extract(payload_json, '$.envelope') IS NOT NULL`, envelope.ConversationID, messageID); err != nil {
+		  AND json_extract(payload_json, '$.envelope') IS NOT NULL`, envelope.ConversationID, from, messageID); err != nil {
 		return domain.MessageEnvelope{}, 0, err
 	}
 	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, nil, envelope.ConversationID, messageSyncEventPayload(envelope), now)
@@ -389,6 +396,23 @@ func (s *Store) deleteMessageEnvelope(ctx context.Context, messageID, accountID 
 		return domain.MessageEnvelope{}, 0, err
 	}
 	return envelope, eventID, nil
+}
+
+// messageCreatedEventID is the id of the message's created sync event, or 0
+// when retention already pruned it. The event was written in the message's
+// own transaction with the message's created_at, so the lookup walks the
+// conversation's events back from the newest and stops there; that is the
+// events after the message, not the conversation's whole history.
+func messageCreatedEventID(ctx context.Context, tx *sql.Tx, conversationID, messageID string, createdAt time.Time) (int64, error) {
+	var id int64
+	err := tx.QueryRowContext(ctx, `SELECT id FROM sync_events
+		WHERE conversation_id = ? AND event_type = 'message.envelope.created' AND created_at = ?
+		  AND json_extract(payload_json, '$.message_id') = ?
+		ORDER BY id DESC LIMIT 1`, conversationID, formatTime(createdAt), messageID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return id, err
 }
 
 // releaseMessageAttachments drops the attachment links of a message that was

@@ -224,10 +224,36 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   - A message deleted through the server's delete route has its created and
     edited sync events redacted and hidden; only `message.envelope.deleted`
     replays. A client never sees a created event without its envelope.
-  - Open: a device that must confirm a revocation and is itself revoked, or
-    whose account leaves, never confirms, so that revocation stays
-    `commit_submitted` and its `mls.revocation.completed` event never comes.
-    Nothing waits on that state today.
+  - A device that must confirm a revocation and is then revoked, or whose
+    account is deleted, no longer holds it: its unconfirmed rows count as
+    confirmed, and a revocation whose commit is in completes with its one
+    `mls.revocation.completed` event (found by sync, not pushed live).
+  - Open: a device whose account only leaves the conversation still never
+    confirms (confirming needs membership), so that revocation stays
+    `commit_submitted`. Nothing waits on that state today.
+- **Revocations only where a leaf exists (2026-10-31, roster review):** no
+  ABI, wire or schema change.
+  - A revoked device gets a revocation in a rostered group it is an active
+    device of, and, without a roster, only in a legacy group: one with MLS
+    messages, the test `CreateMLSCommitBundle` uses. Before, every
+    conversation without a group row got one, including groups never
+    created (setup failed, or the first bundle still in the creator's
+    outbox); the named coordinator could never commit it.
+  - A pending revocation whose device has no leaf (rostered group, device
+    not an active roster device; or no group and no MLS messages) names no
+    coordinator, so no commit for it is accepted.
+    `GET /api/v1/mls/revocations` reports `coordinator_device_id` as `""`
+    for a pending revocation no device can commit now, not the stale
+    recorded one.
+  - Creating a group, and every later commit bundle, deletes the group's
+    pending revocations whose device is not an active roster device (a
+    revoked device can never join, so they could never complete).
+  - The client handles each listed revocation on its own: one that fails
+    (no local group, no leaf) is logged without identifiers and retried on
+    the next pass, and reconcile and the wake ACK still run.
+  - A server-route delete redacts the message's events from its created
+    event on (`idx_sync_events_conversation`), not the conversation's whole
+    retained history.
 
 - **W8 pin rule (2026-10-31, owner decision):** any member of a DM or a
   group may pin; community conversations keep moderator roles until C4. The

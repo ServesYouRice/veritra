@@ -5318,29 +5318,43 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final mls = _mlsCrypto;
     if (current == null || client == null || mls == null) return;
     for (final revocation in await client.mlsRevocations(current.token)) {
-      if (revocation.state == 'pending' &&
-          revocation.coordinatorDeviceId == current.deviceId) {
-        // Earlier MLS work for this group drains first (I34). In
-        // particular, a revocation commit queued before a restart is still
-        // "pending" on the server until it is delivered; making another one
-        // would fork the group.
-        if (await _hasPendingMlsWork(revocation.conversationId)) {
+      // Each revocation is handled on its own: one that cannot be committed
+      // here (no local group, or no leaf for the device) must not fail the
+      // pass, or reconcile and the wake ACK never run. It is listed again,
+      // and tried again, on the next pass.
+      try {
+        if (revocation.state == 'pending' &&
+            revocation.coordinatorDeviceId == current.deviceId) {
+          // Earlier MLS work for this group drains first (I34). In
+          // particular, a revocation commit queued before a restart is
+          // still "pending" on the server until it is delivered; making
+          // another one would fork the group.
+          if (await _hasPendingMlsWork(revocation.conversationId)) {
+            await _flushMlsOutbox();
+            if (await _hasPendingMlsWork(revocation.conversationId)) continue;
+          }
+          await mls.createRevocationCommit(revocation);
           await _flushMlsOutbox();
-          if (await _hasPendingMlsWork(revocation.conversationId)) continue;
+          continue;
         }
-        await mls.createRevocationCommit(revocation);
-        await _flushMlsOutbox();
-        continue;
-      }
-      final messageId = revocation.commitMessageId;
-      if (revocation.state == 'commit_submitted' &&
-          messageId != null &&
-          await localStore.hasAppliedMlsControlMessage(messageId)) {
-        await client.confirmMlsRevocation(
-          current.token,
-          revocation.conversationId,
-          revocation.revokedDeviceId,
-        );
+        final messageId = revocation.commitMessageId;
+        if (revocation.state == 'commit_submitted' &&
+            messageId != null &&
+            await localStore.hasAppliedMlsControlMessage(messageId)) {
+          await client.confirmMlsRevocation(
+            current.token,
+            revocation.conversationId,
+            revocation.revokedDeviceId,
+          );
+        }
+      } catch (err) {
+        // A revoked session ends the whole pass.
+        if (err is ApiException && err.statusCode == 401) rethrow;
+        // Body-free: no conversation, device or server text.
+        developer.log(
+            'mls_revocation_failed '
+            '${err is ApiException ? err.statusCode : err.runtimeType}',
+            name: 'veritra.sync');
       }
     }
   }

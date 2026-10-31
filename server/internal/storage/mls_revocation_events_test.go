@@ -8,6 +8,19 @@ import (
 	"private-messenger/server/internal/domain"
 )
 
+// makeLegacyMLSGroup gives the conversation the MLS history of a group
+// created before rosters were tracked (card I51): an MLS message and no
+// conversation_mls_groups row.
+func makeLegacyMLSGroup(t *testing.T, ctx context.Context, store *Store, conversationID string, sender AccountDevice) {
+	t.Helper()
+	if _, _, err := store.CreateMLSMessage(ctx, CreateMLSMessageInput{
+		ConversationID: conversationID, SenderAccountID: sender.Account.ID, SenderDeviceID: sender.Device.ID,
+		Kind: "commit", Payload: []byte("legacy-commit"), IdempotencyKey: "legacy-" + conversationID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func completedRevocationEvents(t *testing.T, ctx context.Context, store *Store, conversationID, deviceID string) int {
 	t.Helper()
 	return testRowCount(t, ctx, store, `SELECT COUNT(*) FROM sync_events WHERE event_type = 'mls.revocation.completed' AND conversation_id = ? AND json_extract(payload_json, '$.device_id') = ?`, conversationID, deviceID)
@@ -82,6 +95,7 @@ func TestCoordinatorOnlyRevocationEmitsOneCompletionEventFromALegacyCommit(t *te
 	}
 	const tablet = "dev_owner_tablet"
 	addTestDevice(t, ctx, store, owner.Account.ID, tablet)
+	makeLegacyMLSGroup(t, ctx, store, conversation.ID, owner)
 	if _, err := store.RevokeDeviceWithSyncEvent(ctx, owner.Account.ID, tablet); err != nil {
 		t.Fatal(err)
 	}

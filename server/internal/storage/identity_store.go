@@ -606,6 +606,9 @@ func (s *Store) revokeDevice(ctx context.Context, accountID, deviceID, eventType
 		if err := queueMLSRevocations(ctx, tx, accountID, deviceID, now); err != nil {
 			return 0, err
 		}
+		if err := releaseMLSRevocationConfirmations(ctx, tx, deviceID, parseTime(now)); err != nil {
+			return 0, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
@@ -623,6 +626,10 @@ func (s *Store) revokeDevice(ctx context.Context, accountID, deviceID, eventType
 func queueMLSRevocations(ctx context.Context, tx *sql.Tx, accountID, deviceID, now string) error {
 	// Rostered groups (card I51) need a revocation only when the device is
 	// in the group, and only group devices can coordinate or confirm it.
+	// Without a roster only a legacy group (pre-I51: it has MLS messages, the
+	// test CreateMLSCommitBundle uses) gets one. A conversation whose group
+	// was never created has no leaf to remove, and a revoked device is never
+	// added to a group created later.
 	rows, err := tx.QueryContext(ctx, `
 		SELECT m.conversation_id, MIN(d.id)
 		FROM memberships m
@@ -630,6 +637,7 @@ func queueMLSRevocations(ctx context.Context, tx *sql.Tx, accountID, deviceID, n
 		JOIN devices d ON d.account_id = participants.account_id
 		WHERE m.account_id = ? AND d.revoked_at IS NULL AND d.id <> ?
 		  AND NOT EXISTS (SELECT 1 FROM conversation_mls_groups g WHERE g.conversation_id = m.conversation_id)
+		  AND EXISTS (SELECT 1 FROM conversation_mls_messages lm WHERE lm.conversation_id = m.conversation_id)
 		GROUP BY m.conversation_id
 		UNION ALL
 		SELECT r.conversation_id, MIN(r.device_id)
