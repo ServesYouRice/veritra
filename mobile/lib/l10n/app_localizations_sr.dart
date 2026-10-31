@@ -391,6 +391,20 @@ class AppLocalizationsSr extends AppLocalizations {
       'Апликација се и даље синхронизује када се пробуди, али ништа не приказује. Дозволите обавештења за Veritra у системским подешавањима.';
 
   @override
+  String get settingsPushNotAllowedTitle => 'Обавештења још нису дозвољена';
+
+  @override
+  String get settingsPushNotAllowedDetail =>
+      'Дозволите обавештења испод да бисте били обавештавани. До тада се апликација синхронизује када се пробуди, али ништа не приказује.';
+
+  @override
+  String get settingsPushUnconfirmedTitle => 'Обавештења се не могу потврдити';
+
+  @override
+  String get settingsPushUnconfirmedDetail =>
+      'Овај уређај није потврдио да су обавештења дозвољена, па можда ништа неће бити приказано. Проверите системска подешавања за Veritra.';
+
+  @override
   String get settingsPushActiveTitle => 'Push обавештења су активна';
 
   @override
@@ -2887,6 +2901,20 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get settingsPushDeniedDetail =>
       'Aplikacija se i dalje sinhronizuje kada se probudi, ali ništa ne prikazuje. Dozvolite obaveštenja za Veritra u sistemskim podešavanjima.';
+
+  @override
+  String get settingsPushNotAllowedTitle => 'Obaveštenja još nisu dozvoljena';
+
+  @override
+  String get settingsPushNotAllowedDetail =>
+      'Dozvolite obaveštenja ispod da biste bili obaveštavani. Do tada se aplikacija sinhronizuje kada se probudi, ali ništa ne prikazuje.';
+
+  @override
+  String get settingsPushUnconfirmedTitle => 'Obaveštenja se ne mogu potvrditi';
+
+  @override
+  String get settingsPushUnconfirmedDetail =>
+      'Ovaj uređaj nije potvrdio da su obaveštenja dozvoljena, pa možda ništa neće biti prikazano. Proverite sistemska podešavanja za Veritra.';
 
   @override
   String get settingsPushActiveTitle => 'Push obaveštenja su aktivna';

@@ -777,6 +777,30 @@ abstract class AppLocalizations {
   /// **'The app still syncs when woken, but shows nothing. Allow notifications for Veritra in the system settings.'**
   String get settingsPushDeniedDetail;
 
+  /// No description provided for @settingsPushNotAllowedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications are not allowed yet'**
+  String get settingsPushNotAllowedTitle;
+
+  /// No description provided for @settingsPushNotAllowedDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow notifications below to be alerted. Until then the app syncs when woken but shows nothing.'**
+  String get settingsPushNotAllowedDetail;
+
+  /// No description provided for @settingsPushUnconfirmedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications cannot be confirmed'**
+  String get settingsPushUnconfirmedTitle;
+
+  /// No description provided for @settingsPushUnconfirmedDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'This device did not confirm that notifications are allowed, so none may be shown. Check the system settings for Veritra.'**
+  String get settingsPushUnconfirmedDetail;
+
   /// No description provided for @settingsPushActiveTitle.
   ///
   /// In en, this message translates to:

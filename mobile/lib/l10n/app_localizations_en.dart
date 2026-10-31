@@ -389,6 +389,21 @@ class AppLocalizationsEn extends AppLocalizations {
       'The app still syncs when woken, but shows nothing. Allow notifications for Veritra in the system settings.';
 
   @override
+  String get settingsPushNotAllowedTitle => 'Notifications are not allowed yet';
+
+  @override
+  String get settingsPushNotAllowedDetail =>
+      'Allow notifications below to be alerted. Until then the app syncs when woken but shows nothing.';
+
+  @override
+  String get settingsPushUnconfirmedTitle =>
+      'Notifications cannot be confirmed';
+
+  @override
+  String get settingsPushUnconfirmedDetail =>
+      'This device did not confirm that notifications are allowed, so none may be shown. Check the system settings for Veritra.';
+
+  @override
   String get settingsPushActiveTitle => 'Push notifications are active';
 
   @override
