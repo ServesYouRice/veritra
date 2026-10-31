@@ -187,6 +187,14 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 | **D62** (2026-10-31, owner) | Post-quantum MLS groups (X-Wing suite in the pinned OpenMLS, `openmls_rust_crypto` feature only) are built and measured behind a switch that stays off until the IETF code point is final and an independent review passes. Never marketed as "quantum-proof" |
 | **D63** (2026-10-31, owner) | The K0 passphrase option (D57) stays free-form. Because the server can test guesses offline, the passphrase path uses heavy Argon2id, a strength floor, refuses the account's login password, and tells the user plainly that a weak passphrase can be guessed by whoever holds the server data |
 | **D64** (2026-10-31, coordinator; bug hunt TASK-216) | Key-package claims are capped per claimer: one account may claim at most 25 packages of one target device per 24 h (`PRIVATE_MESSENGER_LIMIT_KEY_PACKAGE_CLAIMS_PER_TARGET`, 1–50); the target's own account is exempt. Creating a group past the cap answers 429 `key_package_claim_limit` and takes nothing; adding devices to an existing group skips a capped device, which stays listed so another member (or its own account) adds it later. Accepted cost: one account creating more than 25 groups a day with the same device gets 429. Residual: two accounts can still empty a 50-package pool in a day; invites limit account creation. Follow-up: the 3-minute client fallback lets every member retry a skipped device at once and burn packages; add jitter |
+| **D65** (2026-10-31, owner; bug hunt) | Drafts: a debounced, unsaved draft is flushed at sign-out and session expiry before data is cleared (TASK-103). |
+| **D66** (2026-10-31, owner; TASK-038) | A backup restore whose restored session the server rejects (401) counts as a failed restore, not a success (VAL-053). |
+| **D67** (2026-10-31, owner; TASK-054 Q-004) | The server may tell the client whether a DM already existed (e.g. 200 existing vs 201 created) so the app never builds a second MLS group for it. |
+| **D68** (2026-10-31, owner; TASK-039 Q-001) | After a member removal, application sends to that conversation are held until the MLS removal commit is applied. |
+| **D69** (2026-10-31, owner) | iOS D53 visible alert is for new messages only; reactions and edits stay silent wakes. |
+| **D70** (2026-10-31, owner; C-c7c5faecddbb) | Sealed MLS state is redesigned now (per-group, incremental sealing; new state format) instead of raising caps. Needs an Opus design first; FFI/format change allowed for this. |
+| **D71** (2026-10-31, owner; C-7121f7bb1452) | Backups no longer carry the bearer token (and device-cloning credentials); a restore finishes with a password sign-in. |
+| **D72** (2026-10-31, owner) | Windows restore: the password-file ACL is not checked; the docs note is enough. Releases build only from `main`. Gradle distribution checksum stays a warning. Load-tool delivery deadline stays 30 s. |
 
 ## Roadmap
 
