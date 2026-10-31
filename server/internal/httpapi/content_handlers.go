@@ -657,26 +657,44 @@ func (a *API) serveEncryptedBlob(w http.ResponseWriter, r *http.Request, ref upl
 	}
 }
 
+// blobCleanupTimeout bounds each step of an inline blob cleanup: the delete,
+// and separately the durable record that keeps a failed delete from being
+// forgotten. Tests shorten it.
+var blobCleanupTimeout = 5 * time.Second
+
+// blobCleanupContext is a fresh cleanup deadline detached from the request.
+// Each step takes its own, so a delete that used up its time cannot leave
+// the fallback record that follows it with an expired context.
+func blobCleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), blobCleanupTimeout)
+}
+
 func (a *API) cleanupUncommittedBlob(ctx context.Context, storageKey string) {
-	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cancel()
-	if err := a.Blobs.Delete(cleanupCtx, storageKey); err == nil {
+	deleteCtx, cancelDelete := blobCleanupContext(ctx)
+	err := a.Blobs.Delete(deleteCtx, storageKey)
+	cancelDelete()
+	if err == nil {
 		return
 	}
-	if err := a.Store.QueueBlobDeletion(cleanupCtx, storageKey); err != nil {
+	queueCtx, cancelQueue := blobCleanupContext(ctx)
+	defer cancelQueue()
+	if err := a.Store.QueueBlobDeletion(queueCtx, storageKey); err != nil {
 		a.warn("blob_cleanup_queue_failed")
 	}
 }
 
 func (a *API) completeQueuedBlobDeletion(ctx context.Context, storageKey string) {
-	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cancel()
-	if err := a.Blobs.Delete(cleanupCtx, storageKey); err != nil {
-		_ = a.Store.RecordBlobDeletionFailure(cleanupCtx, storageKey)
+	deleteCtx, cancelDelete := blobCleanupContext(ctx)
+	err := a.Blobs.Delete(deleteCtx, storageKey)
+	cancelDelete()
+	recordCtx, cancelRecord := blobCleanupContext(ctx)
+	defer cancelRecord()
+	if err != nil {
+		_ = a.Store.RecordBlobDeletionFailure(recordCtx, storageKey)
 		a.warn("blob_cleanup_deferred")
 		return
 	}
-	if err := a.Store.CompleteBlobDeletion(cleanupCtx, storageKey); err != nil {
+	if err := a.Store.CompleteBlobDeletion(recordCtx, storageKey); err != nil {
 		a.warn("blob_cleanup_completion_failed")
 	}
 }
