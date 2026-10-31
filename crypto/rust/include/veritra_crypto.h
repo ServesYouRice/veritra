@@ -139,10 +139,10 @@ int32_t pm_crypto_group_create(PmCryptoHandle *handle, PmByteSlice group_id);
  * Joins the group carried by a Welcome for expected_group_id. A device
  * removed and later re-added still stores the old group under that id; the
  * Welcome replaces it only when the stored group is inactive (this device
- * applied its own removal), or when the Welcome is a later epoch and its
- * sender is a member of the stored group with the same credential and
- * signing key. Otherwise PM_CRYPTO_ERROR, and the stored group is kept.
- * See docs/crypto.md, "Rejoining a conversation".
+ * applied its own removal). An active stored group is never replaced:
+ * PM_CRYPTO_ERROR, with the group and the key package kept, until the
+ * device has processed its removal commit. See docs/crypto.md, "Rejoining a
+ * conversation".
  */
 int32_t pm_crypto_group_join(PmCryptoHandle *handle,
                              PmByteSlice expected_group_id,

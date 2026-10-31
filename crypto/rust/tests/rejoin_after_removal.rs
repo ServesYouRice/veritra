@@ -1,11 +1,10 @@
 //! A device removed from a conversation and later re-added must be able to
-//! join again from the new Welcome, whether or not it processed its own
-//! removal commit first. The server resets the device's roster window on a
-//! re-add, so a device that was offline during its removal never sees that
-//! commit: its first event after the re-add is the Welcome.
+//! join again from the new Welcome once it has applied its own removal: the
+//! stored group is then inactive and the Welcome replaces it.
 //!
-//! A Welcome must still never replace an active group on the say-so of a
-//! device that was not a member of it (see `docs/crypto.md`, "Rejoining a
+//! An active stored group is never replaced. A device that never saw its
+//! removal is refused, and keeps its group and its key package, until its
+//! removal commit is delivered (see `docs/crypto.md`, "Rejoining a
 //! conversation").
 
 use openmls::prelude::MlsGroup;
@@ -166,15 +165,19 @@ fn a_device_that_processed_its_removal_rejoins_through_a_newer_member() {
     carol.send(&mut carol_group, &bob, &mut bob_group, b"hello again");
 }
 
+/// Bob was offline for several commits, his removal among them. Applying
+/// them in order leaves his group inactive, and the re-add then works.
 #[test]
-fn a_device_that_never_saw_its_removal_rejoins() {
-    let (alice, bob, mut alice_group, bob_group) = alice_and_bob();
-    let (_removal, _) = alice.commit(&mut alice_group, &[], &[&bob]);
-    alice.self_update(&mut alice_group);
-    // Bob was offline: his stored group is still active at the old epoch.
-    assert!(bob_group.is_active());
-
+fn a_device_that_catches_up_on_missed_commits_rejoins() {
+    let (alice, bob, mut alice_group, mut bob_group) = alice_and_bob();
+    let update = alice.self_update(&mut alice_group);
+    let (removal, _) = alice.commit(&mut alice_group, &[], &[&bob]);
     let (_, welcome) = alice.commit(&mut alice_group, &[&bob], &[]);
+
+    bob.device.process_commit(&mut bob_group, &update).unwrap();
+    assert!(bob_group.is_active());
+    bob.device.process_commit(&mut bob_group, &removal).unwrap();
+    assert!(!bob_group.is_active());
     assert_rejoined(&alice, &mut alice_group, &bob, &welcome);
 }
 
@@ -185,13 +188,34 @@ fn assert_untouched(bob: &Member, epoch: u64) {
     assert_eq!(stored.epoch().as_u64(), epoch);
 }
 
+/// A Welcome cannot prove the device was removed, so a device that never
+/// saw its removal is refused, even when a real member re-adds it at a
+/// later epoch. The refusal comes before staging, so the key package is
+/// kept: once the removal commit arrives, the same Welcome joins.
+#[test]
+fn a_device_that_never_saw_its_removal_is_refused_until_it_does() {
+    let (alice, bob, mut alice_group, mut bob_group) = alice_and_bob();
+    let epoch = bob_group.epoch().as_u64();
+    let (removal, _) = alice.commit(&mut alice_group, &[], &[&bob]);
+    let (_, welcome) = alice.commit(&mut alice_group, &[&bob], &[]);
+    assert!(alice_group.epoch().as_u64() > epoch);
+
+    assert_eq!(
+        bob.device.join_group(GROUP_ID, &welcome).err(),
+        Some(MlsError::GroupOperation)
+    );
+    assert_untouched(&bob, epoch);
+
+    bob.device.process_commit(&mut bob_group, &removal).unwrap();
+    assert_rejoined(&alice, &mut alice_group, &bob, &welcome);
+}
+
+/// A device the server made up builds its own group under the same id, at a
+/// later epoch, and adds Bob. Bob's active group stays.
 #[test]
 fn a_device_outside_the_active_group_cannot_replace_it() {
     let (_alice, bob, _alice_group, bob_group) = alice_and_bob();
     let epoch = bob_group.epoch().as_u64();
-
-    // A device the server made up builds its own group under the same id
-    // and pushes its epoch past Bob's, so only the sender rule can refuse.
     let mallory = Member::new("mallory");
     let mut forged = mallory.device.create_group(GROUP_ID).unwrap();
     for _ in 0..3 {
@@ -200,72 +224,6 @@ fn a_device_outside_the_active_group_cannot_replace_it() {
     let (_, welcome) = mallory.commit(&mut forged, &[&bob], &[]);
     assert!(forged.epoch().as_u64() > epoch);
 
-    assert_eq!(
-        bob.device.join_group(GROUP_ID, &welcome).err(),
-        Some(MlsError::GroupOperation)
-    );
-    assert_untouched(&bob, epoch);
-}
-
-/// The server can publish a key package under a real member's identity
-/// (until L1); a sender with Alice's identity but not her signing key is
-/// not Alice.
-#[test]
-fn a_look_alike_of_an_old_member_cannot_replace_the_active_group() {
-    let (_alice, bob, _alice_group, bob_group) = alice_and_bob();
-    let epoch = bob_group.epoch().as_u64();
-    let look_alike = Member::new("alice");
-    let mut forged = look_alike.device.create_group(GROUP_ID).unwrap();
-    for _ in 0..3 {
-        look_alike.self_update(&mut forged);
-    }
-    let (_, welcome) = look_alike.commit(&mut forged, &[&bob], &[]);
-    assert!(forged.epoch().as_u64() > epoch);
-
-    assert_eq!(
-        bob.device.join_group(GROUP_ID, &welcome).err(),
-        Some(MlsError::GroupOperation)
-    );
-    assert_untouched(&bob, epoch);
-}
-
-#[test]
-fn an_active_group_is_not_replaced_by_an_older_or_equal_epoch() {
-    let (alice, bob, mut alice_group, mut bob_group) = alice_and_bob();
-    // Bob's view moves ahead of Alice's (three of his updates she never
-    // applies), so her later Welcome carries an epoch no higher than his.
-    for _ in 0..3 {
-        bob.self_update(&mut bob_group);
-    }
-    let epoch = bob_group.epoch().as_u64();
-
-    // Alice forks: she removes and re-adds Bob from her view, at an epoch
-    // no higher than Bob's.
-    let (_removal, _) = alice.commit(&mut alice_group, &[], &[&bob]);
-    let (_, welcome) = alice.commit(&mut alice_group, &[&bob], &[]);
-    assert!(alice_group.epoch().as_u64() <= epoch);
-
-    assert_eq!(
-        bob.device.join_group(GROUP_ID, &welcome).err(),
-        Some(MlsError::GroupOperation)
-    );
-    assert_untouched(&bob, epoch);
-}
-
-/// Residual, pinned so a change to it is deliberate: when the device never
-/// saw its removal and the member re-adding it joined after that removal,
-/// nothing the device holds shows that member belongs to the group, so the
-/// join is refused and the stale group stays.
-#[test]
-fn a_rejoin_from_a_member_unknown_to_the_stale_group_is_refused() {
-    let (alice, bob, mut alice_group, bob_group) = alice_and_bob();
-    let epoch = bob_group.epoch().as_u64();
-    let carol = Member::new("carol");
-    let (_removal, _) = alice.commit(&mut alice_group, &[], &[&bob]);
-    let (_, carol_welcome) = alice.commit(&mut alice_group, &[&carol], &[]);
-    let mut carol_group = carol.device.join_group(GROUP_ID, &carol_welcome).unwrap();
-
-    let (_, welcome) = carol.commit(&mut carol_group, &[&bob], &[]);
     assert_eq!(
         bob.device.join_group(GROUP_ID, &welcome).err(),
         Some(MlsError::GroupOperation)

@@ -488,7 +488,7 @@ pub unsafe extern "C" fn pm_crypto_group_create(
 
 /// Joins and persists the group carried by an MLS Welcome. A stored group
 /// under the same id (a re-add after a removal) is replaced only when it is
-/// inactive, or when the Welcome is a later epoch sent by one of its members
+/// inactive, that is, this device applied its own removal
 /// (`MlsDevice::join_group`).
 ///
 /// # Safety
