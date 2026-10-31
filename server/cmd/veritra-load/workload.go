@@ -78,6 +78,11 @@ const (
 	// so a slow delivery stays a latency sample, and below settleGrace, so
 	// a step's summary waits for every delivery to end.
 	defaultDeliveryDeadline = 30 * time.Second
+	// downloadQueue is how many attachments one client may have waiting.
+	// Each client downloads in order on its own; an attachment arriving
+	// when its queue is full is recorded as a dropped download, because
+	// that client has fallen far behind.
+	downloadQueue = 32
 )
 
 type conversation struct {
@@ -103,7 +108,6 @@ type world struct {
 	ackMu      sync.Mutex
 	acked      []ackedMessage
 	reconnects atomic.Int64
-	downloads  chan download
 	// rate is the current messages per device per minute (float64 bits);
 	// each load step sets it.
 	rate atomic.Uint64
@@ -117,9 +121,14 @@ type ackedMessage struct {
 	sender int
 }
 
+// download is one attachment a client fetches after its realtime event.
+// Its recorder handle was opened when the event arrived, so queueing time
+// counts and the window that saw the event waits for it.
 type download struct {
 	dev *device
 	id  string
+	at  time.Time // when the event arrived
+	h   *inflight
 }
 
 type runResult struct {
@@ -165,11 +174,10 @@ type verifyResult struct {
 func execute(ctx context.Context, target *url.URL, setupToken string, opts options, progress io.Writer) (*runResult, error) {
 	rng := mrand.New(mrand.NewPCG(opts.Seed, uint64(opts.Profile.Accounts)))
 	w := &world{
-		client:    newAPIClient(target, 4*opts.Profile.Accounts+seedWorkers),
-		base:      target,
-		profile:   opts.Profile,
-		rec:       newRecorder(),
-		downloads: make(chan download, 1024),
+		client:  newAPIClient(target, 4*opts.Profile.Accounts+seedWorkers),
+		base:    target,
+		profile: opts.Profile,
+		rec:     newRecorder(),
 	}
 	w.rate.Store(math.Float64bits(opts.Rates[0]))
 	result := &runResult{StartedAt: time.Now().UTC().Format(time.RFC3339), Profile: opts.Profile, Online: opts.Online,
@@ -228,13 +236,6 @@ func execute(ctx context.Context, target *url.URL, setupToken string, opts optio
 		w.deliveries.sweep(loadCtx, time.Second)
 	}()
 	result.Cold = len(coldWakes)
-	for i := 0; i < 4; i++ {
-		running.Add(1)
-		go func() {
-			defer running.Done()
-			w.runDownloads(loadCtx)
-		}()
-	}
 	stepRNG := mrand.New(mrand.NewPCG(opts.Seed, 3))
 	for _, rate := range opts.Rates {
 		w.rate.Store(math.Float64bits(rate))
@@ -561,8 +562,15 @@ func (w *world) runDevice(ctx context.Context, dev *device, coldWake <-chan stru
 		}
 		seed := rng.Uint64()
 		client := clientSlot{dev: dev.index, slot: slot}
-		wg.Add(3)
-		go func() { defer wg.Done(); w.runSocket(ctx, clientDev, client, catchUp) }()
+		downloads := make(chan download, downloadQueue)
+		wg.Add(4)
+		go func() {
+			defer wg.Done()
+			// Only the producer closes the queue, once it can send no more.
+			defer close(downloads)
+			w.runSocket(ctx, clientDev, client, catchUp, downloads)
+		}()
+		go func() { defer wg.Done(); w.runDownloads(ctx, downloads) }()
 		go func() { defer wg.Done(); w.runCatchUp(ctx, clientDev, catchUp, cold) }()
 		go func() { defer wg.Done(); w.runReads(ctx, clientDev, seed) }()
 	}
@@ -706,7 +714,7 @@ type realtimeEvent struct {
 	} `json:"payload"`
 }
 
-func (w *world) runSocket(ctx context.Context, dev *device, client clientSlot, catchUp chan<- struct{}) {
+func (w *world) runSocket(ctx context.Context, dev *device, client clientSlot, catchUp chan<- struct{}, downloads chan<- download) {
 	backoff := time.Second
 	for ctx.Err() == nil {
 		var socket *syncSocket
@@ -741,12 +749,7 @@ func (w *world) runSocket(ctx context.Context, dev *device, client clientSlot, c
 			var event realtimeEvent
 			if json.Unmarshal(payload, &event) == nil && event.Type == "message.envelope.created" && event.Payload.SenderDeviceID != dev.deviceID {
 				w.deliveries.observe(event.Payload.IdempotencyKey, client, now)
-				for _, id := range event.Payload.AttachmentRefs {
-					select {
-					case w.downloads <- download{dev: dev, id: id}:
-					default:
-					}
-				}
+				w.queueDownloads(downloads, dev, event.Payload.AttachmentRefs, now)
 			}
 			wake(catchUp)
 		}
@@ -840,17 +843,37 @@ func (w *world) runReads(ctx context.Context, dev *device, seed uint64) {
 	}
 }
 
-func (w *world) runDownloads(ctx context.Context) {
-	for {
+// queueDownloads queues every attachment of one realtime event for the
+// client's downloader. Each download is registered when the event arrives;
+// when the client's queue is full it is recorded as dropped at once.
+func (w *world) queueDownloads(queue chan<- download, dev *device, ids []string, at time.Time) {
+	for _, id := range ids {
+		h := w.rec.begin(opDownload, at)
 		select {
-		case <-ctx.Done():
-			return
-		case job := <-w.downloads:
-			_, _ = w.timed(opDownload, func() (int, error) {
-				status, _, err := w.client.do(ctx, request{method: http.MethodGet, path: "/api/v1/attachments/" + url.PathEscape(job.id), dev: job.dev}, nil)
-				return status, expect(status, err, http.StatusOK)
-			})
+		case queue <- download{dev: dev, id: id, at: at, h: h}:
+		default:
+			w.rec.end(h, outcomeDropped, 0)
 		}
+	}
+}
+
+// runDownloads fetches one client's attachments in order, as the app does,
+// and drains each body without keeping it. A download is timed from its
+// event, so queueing counts. Once ctx is done every job left, and one cut
+// short by the cancellation, ends as unfinished. It returns when the
+// producer closes the queue, so no handle is left live.
+func (w *world) runDownloads(ctx context.Context, queue <-chan download) {
+	for job := range queue {
+		if ctx.Err() != nil {
+			w.rec.abandon(job.h)
+			continue
+		}
+		status, _, err := w.client.do(ctx, request{method: http.MethodGet, path: "/api/v1/attachments/" + url.PathEscape(job.id), dev: job.dev}, nil)
+		if ctx.Err() != nil {
+			w.rec.abandon(job.h)
+			continue
+		}
+		w.rec.end(job.h, classify(status, expect(status, err, http.StatusOK)), time.Since(job.at))
 	}
 }
 
