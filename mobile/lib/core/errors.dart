@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
+
 import 'api_client.dart';
 import '../crypto/backup_service.dart';
 import '../crypto/crypto_service.dart' show CryptoStateFormatUnsupported;
@@ -37,6 +39,27 @@ const Set<String> _dartStateErrors = <String>{
   'Cannot add new events after calling close',
 };
 
+/// The localized sentences app code throws as StateError; they are written
+/// for users, in any locale, so they show in release builds too.
+bool _isLocalizedSentence(String message, AppLocalizations strings) {
+  for (final s in <AppLocalizations>{strings, englishL10n}) {
+    if (message == s.errorPasswordLoginNeedsLink ||
+        message == s.errorRelinkRequired) {
+      return true;
+    }
+    // The one with a placeholder: match the text around the address.
+    const marker = '\u0000';
+    final parts = s.errorServerNotAllowed(marker).split(marker);
+    if (parts.length == 2 &&
+        message.length > parts[0].length + parts[1].length &&
+        message.startsWith(parts[0]) &&
+        message.endsWith(parts[1])) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool _isUserSentence(String message) {
   if (message.isEmpty || message.length > 200) return false;
   if (_dartStateErrors.contains(message)) return false;
@@ -51,7 +74,17 @@ bool _isUserSentence(String message) {
 /// "Bad state: …" prefixes), and never tells the user what to do next.
 ///
 /// The sentence comes from [l10n], English by default (card T44C).
-String describeError(Object error, [AppLocalizations? l10n]) {
+///
+/// [showDetail] (debug builds by default) lets an app-authored StateError
+/// sentence through as written, which helps a developer. Release builds
+/// show only the app's own localized sentences and otherwise a generic one,
+/// so developer text (device-link SAS and transcript checks, call ids)
+/// never reaches users.
+String describeError(
+  Object error, [
+  AppLocalizations? l10n,
+  bool showDetail = kDebugMode,
+]) {
   final strings = l10n ?? englishL10n;
   if (error is OutboxFullException) {
     return strings.errorOutboxFull;
@@ -84,8 +117,11 @@ String describeError(Object error, [AppLocalizations? l10n]) {
     // to be linked first."), so surface them without the "Bad state:"
     // prefix. Lower-case implementation messages and Dart's own StateErrors
     // never reach the UI (card T44A).
-    if (_isUserSentence(message)) return message;
-    if (message.contains('not available') || message.contains('unavailable')) {
+    if (_isLocalizedSentence(message, strings)) return message;
+    if (showDetail && _isUserSentence(message)) return message;
+    if (message.contains('not available') ||
+        message.contains('unavailable') ||
+        message.contains('not integrated')) {
       return strings.errorActionUnavailable;
     }
     return strings.errorGeneric;

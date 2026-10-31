@@ -27,7 +27,23 @@ class ReadReceiptsTile extends StatelessWidget {
       builder: (context, _) => SwitchListTile(
         secondary: const Icon(Icons.done_all),
         title: Text(l10n.settingsReadReceiptsTitle),
-        subtitle: Text(l10n.settingsReadReceiptsDetail),
+        // A choice this device could not store applies for now but may be
+        // lost at the next launch, so it says so instead of reverting
+        // silently.
+        subtitle: preferences.saveFailed
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(l10n.settingsReadReceiptsDetail),
+                  Text(
+                    l10n.settingsReadReceiptsNotSaved,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ],
+              )
+            : Text(l10n.settingsReadReceiptsDetail),
         value: preferences.sendReadReceipts,
         onChanged: (value) async {
           final messenger = ScaffoldMessenger.maybeOf(context);

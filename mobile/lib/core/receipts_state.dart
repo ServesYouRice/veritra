@@ -183,10 +183,10 @@ class ReceiptPreferences extends ChangeNotifier {
     }
     if (_changed) return true;
     _known = true;
-    if (saved != null && saved != _sendReadReceipts) {
-      _sendReadReceipts = saved;
-      notifyListeners();
-    }
+    if (saved != null) _sendReadReceipts = saved;
+    // Knowing the choice changes [shareReadReceipts] even when the switch
+    // keeps its default, and ticks follow it.
+    notifyListeners();
     return true;
   }
 

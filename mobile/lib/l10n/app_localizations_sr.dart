@@ -141,6 +141,10 @@ class AppLocalizationsSr extends AppLocalizations {
       'Подешавање није могло да се промени. Проверите везу и покушајте поново.';
 
   @override
+  String get settingsReadReceiptsNotSaved =>
+      'Овај уређај није могао да сачува подешавање. Важи за сада, али може да се врати када се апликација поново покрене.';
+
+  @override
   String get settingsSectionAbout => 'О апликацији';
 
   @override
@@ -2681,6 +2685,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get settingsReadReceiptsFailed =>
       'Podešavanje nije moglo da se promeni. Proverite vezu i pokušajte ponovo.';
+
+  @override
+  String get settingsReadReceiptsNotSaved =>
+      'Ovaj uređaj nije mogao da sačuva podešavanje. Važi za sada, ali može da se vrati kada se aplikacija ponovo pokrene.';
 
   @override
   String get settingsSectionAbout => 'O aplikaciji';

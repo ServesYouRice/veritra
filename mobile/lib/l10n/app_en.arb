@@ -86,6 +86,7 @@
   "settingsReadReceiptsTitle": "Read receipts",
   "settingsReadReceiptsDetail": "Applies to all your devices. When off, you send no read receipts and you do not see when others have read your messages. Sent and delivered ticks stay.",
   "settingsReadReceiptsFailed": "The setting could not be changed. Check your connection and try again.",
+  "settingsReadReceiptsNotSaved": "This device could not save the setting. It applies for now but may reset when the app restarts.",
   "settingsSectionAbout": "About",
   "settingsSectionDangerZone": "Danger zone",
   "settingsAccountId": "Account ID",

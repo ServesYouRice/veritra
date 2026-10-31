@@ -339,6 +339,12 @@ abstract class AppLocalizations {
   /// **'The setting could not be changed. Check your connection and try again.'**
   String get settingsReadReceiptsFailed;
 
+  /// No description provided for @settingsReadReceiptsNotSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'This device could not save the setting. It applies for now but may reset when the app restarts.'**
+  String get settingsReadReceiptsNotSaved;
+
   /// No description provided for @settingsSectionAbout.
   ///
   /// In en, this message translates to:
