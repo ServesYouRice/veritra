@@ -82,12 +82,11 @@ void main() {
     final update = alice.stageSelfUpdate('conv_test');
     expect(update.welcome, isEmpty);
     expect(update.epoch, before.epoch);
-    expect(alice.groupEpoch('conv_test'),
-        (epoch: before.epoch, pending: true));
+    expect(alice.groupEpoch('conv_test'), (epoch: before.epoch, pending: true));
     alice.mergePendingCommit('conv_test');
     bob.processCommit('conv_test', update.commit);
-    expect(bob.groupEpoch('conv_test'),
-        (epoch: before.epoch + 1, pending: false));
+    expect(
+        bob.groupEpoch('conv_test'), (epoch: before.epoch + 1, pending: false));
     expect(
         () => bob.decrypt('conv_test', [1],
             senderAccountId: 'acct_alice', senderDeviceId: 'dev_alice'),
