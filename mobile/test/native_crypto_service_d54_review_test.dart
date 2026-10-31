@@ -244,6 +244,36 @@ void main() {
       expect(await alice.store.loadSyncCursor(), cursor);
     }, skip: skip);
   });
+
+  test('abandoning a bundle that lost its epoch keeps a newer staged commit',
+      () async {
+    final bindings = NativeCryptoBindings.open(libraryPath!);
+    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+    final carol = await _Client.enroll(bindings, 'acct_carol', 'dev_carol');
+    await _startConversation(alice, bob);
+    await alice.service.stageMembershipChange('conv_1',
+        adds: <DeviceKeyPackage>[await carol.keyPackage()]);
+    await bob.service.stageSelfUpdate('conv_1');
+    final lost = (await bob.store.pendingMlsMessages()).single;
+
+    // Alice's commit wins epoch 1; sync drops Bob's staged commit but the
+    // entry stays queued until the server refuses it.
+    await _accept(alice, <_Client>[carol], <_Client>[bob]);
+    expect(await bob.service.groupEpoch('conv_1'), (epoch: 2, pending: false));
+    // A newer commit is staged on epoch 2 before the refusal arrives.
+    await bob.service.stageSelfUpdate('conv_1');
+    final newer = (await bob.store.pendingMlsMessages())
+        .singleWhere((item) => item.idempotencyKey != lost.idempotencyKey);
+
+    await bob.service.abandonCommitBundle(lost);
+
+    expect(await bob.service.groupEpoch('conv_1'), (epoch: 2, pending: true));
+    expect((await bob.store.pendingMlsMessages()).single.idempotencyKey,
+        newer.idempotencyKey);
+    await bob.service.completeCommitBundle(newer);
+    expect(await bob.service.groupEpoch('conv_1'), (epoch: 3, pending: false));
+  }, skip: skip);
 }
 
 /// Wraps the real bindings so a test can make the next native `decrypt` or

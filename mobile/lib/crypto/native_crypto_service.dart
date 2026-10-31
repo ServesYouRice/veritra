@@ -336,7 +336,11 @@ class NativeCryptoService
           if (bundle.hasCommit) {
             final device = _requiredDevice();
             final status = device.groupEpoch(item.conversationId);
-            if (status.pending) {
+            // Only a commit pending on the bundle's own epoch is this
+            // bundle's. Sync may have applied another device's winning
+            // commit meanwhile without settling this entry, and a commit
+            // staged after that is newer: keep it.
+            if (status.pending && status.epoch == bundle.epoch) {
               device.clearPendingCommit(item.conversationId);
             }
           }
