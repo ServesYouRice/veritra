@@ -36,7 +36,7 @@ var allowedLabelValues = map[string]map[string]bool{
 	"scope":        {"general": true, "auth": true, "enrollment": true, "account": true, "signed_in": true},
 	"reason":       {"limit": true, "draining": true},
 	"limit": {"storage": true, "blobs": true, "devices": true, "device_links": true, "conversations": true,
-		"conversation_members": true, "deliveries": true, "write_bytes": true, "disk": true},
+		"conversation_members": true, "key_package_claims": true, "deliveries": true, "write_bytes": true, "disk": true},
 }
 
 var routePattern = regexp.MustCompile(`^(unmatched|(GET|POST|PUT|PATCH|DELETE) )?/[a-z0-9/{}_.-]*$`)

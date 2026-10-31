@@ -15,7 +15,7 @@ func TestLimitsDefaultWhenUnset(t *testing.T) {
 	}
 	got := cfg.Limits.WithDefaults()
 	want := Limits{AccountStorageBytes: 512 << 20, AccountBlobs: 10000, DevicesPerAccount: 10, ConversationMembers: 100,
-		ConversationsPerAccount: 1000, DeliveriesPerMinute: 1000, WriteBytesPerHour: 64 << 20, AttachmentBytes: 48 << 20, SocketsPerIPv6Prefix: 200}
+		ConversationsPerAccount: 1000, KeyPackageClaimsPerTarget: 25, DeliveriesPerMinute: 1000, WriteBytesPerHour: 64 << 20, AttachmentBytes: 48 << 20, SocketsPerIPv6Prefix: 200}
 	if got != want {
 		t.Fatalf("defaults = %+v, want %+v", got, want)
 	}
@@ -32,16 +32,20 @@ func TestLimitsParseAndBound(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := cfg.Limits
+	if l.KeyPackageClaimsPerTarget != 0 {
+		t.Fatalf("key package claim limit set without its variable: %+v", l)
+	}
 	if l.AccountStorageBytes != 256<<20 || l.InstanceStorageBytes != 4096<<20 || l.DevicesPerAccount != 4 || l.ConversationMembers != 50 || l.DeliveriesPerMinute != 500 {
 		t.Fatalf("limits = %+v", l)
 	}
 	for key, value := range map[string]string{
-		"PRIVATE_MESSENGER_LIMIT_DEVICES_PER_ACCOUNT":       "11",
-		"PRIVATE_MESSENGER_LIMIT_CONVERSATION_MEMBERS":      "1",
-		"PRIVATE_MESSENGER_LIMIT_ACCOUNT_STORAGE_MIB":       "8",
-		"PRIVATE_MESSENGER_LIMIT_CONVERSATIONS_PER_ACCOUNT": "many",
-		"PRIVATE_MESSENGER_LIMIT_WRITE_MIB_PER_HOUR":        "-1",
-		"PRIVATE_MESSENGER_LIMIT_ATTACHMENT_MIB":            "49",
+		"PRIVATE_MESSENGER_LIMIT_DEVICES_PER_ACCOUNT":           "11",
+		"PRIVATE_MESSENGER_LIMIT_CONVERSATION_MEMBERS":          "1",
+		"PRIVATE_MESSENGER_LIMIT_ACCOUNT_STORAGE_MIB":           "8",
+		"PRIVATE_MESSENGER_LIMIT_CONVERSATIONS_PER_ACCOUNT":     "many",
+		"PRIVATE_MESSENGER_LIMIT_WRITE_MIB_PER_HOUR":            "-1",
+		"PRIVATE_MESSENGER_LIMIT_ATTACHMENT_MIB":                "49",
+		"PRIVATE_MESSENGER_LIMIT_KEY_PACKAGE_CLAIMS_PER_TARGET": "51",
 	} {
 		t.Run(key, func(t *testing.T) {
 			t.Setenv(key, value)

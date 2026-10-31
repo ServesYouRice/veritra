@@ -192,7 +192,10 @@ metadata, not server blob bytes. Push subscription exports retain endpoint
 metadata needed for portability but omit the reusable `auth_secret`; bearer,
 session and recovery capabilities are never export fields. Server audit history
 is intentionally excluded; the export audit record contains only fixed schema
-and scope metadata. The mobile client writes the bounded pages to a local
+and scope metadata. Only messages are paged (`limit`, then `before` with the
+previous page's `next_before`): the `categories` object comes with the first
+page, and later pages carry an empty `categories`, so a full export holds
+every category row once. The mobile client writes the bounded pages to a local
 `veritra-account-export-v2-*.json` file without logging its contents.
 
 ## Upgrade and rollback
@@ -790,6 +793,7 @@ write transaction, so concurrent requests cannot both take the last slot.
 | `DEVICES_PER_ACCOUNT` | 10 (the realtime hub allows 10 sockets per account) | 1-10 | active devices; also at most 3 open device links | 409 `device_limit_reached`, `device_link_limit_reached` |
 | `CONVERSATION_MEMBERS` | 100 | 2-1,000 | members of a group, a community and each of its channels | 409 `conversation_member_limit_reached` |
 | `CONVERSATIONS_PER_ACCOUNT` | 1,000 | 10-10,000 | conversations an account belongs to | 409 `conversation_limit_reached` to that account; adding an account that is full answers 403 `forbidden`, as a block does |
+| `KEY_PACKAGE_CLAIMS_PER_TARGET` | 25 (half the 50 single-use key packages a device may hold) | 1-50 | key packages one account claims from one device of another account in 24 hours; claiming from its own devices is not limited | 429 `key_package_claim_limit` with `Retry-After`; adding devices to an existing group skips a device over its limit, as it skips one with no package left |
 | `DELIVERIES_PER_MINUTE` | 1,000 | 60-1,000,000, and at least 2 × (1 + members) | per account, each fan-out write counts 1 plus every account it is published to | 429 `write_rate_limited` with `Retry-After` |
 | `WRITE_MIB_PER_HOUR` | 64 | 16-65,536 | request bodies of those writes | 429 `write_rate_limited` |
 | `ATTACHMENT_MIB` | 48 | 1-48 | the largest file one attachment may hold (plaintext; the upload route allows the chunk framing on top) | 413 `upload_too_large` |

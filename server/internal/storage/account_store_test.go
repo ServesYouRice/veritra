@@ -3,7 +3,11 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
+	"time"
+
+	"private-messenger/server/internal/domain"
 )
 
 func TestExportAccountFailsWhenCategoryIterationStopsEarly(t *testing.T) {
@@ -181,5 +185,67 @@ func TestDeleteAccountDataScrubsBlocksKeyPackagesPreferencesAndCalls(t *testing.
 		if string(call.Metadata) != `{}` {
 			t.Errorf("exported call metadata = %s, want {}", call.Metadata)
 		}
+	}
+}
+
+// The associated-data categories belong to the first export page only: paging
+// through the messages does not read them again, and the pages together hold
+// each category row once.
+func TestExportAccountReadsCategoriesOnTheFirstPageOnly(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	owner := createTestOwner(t, ctx, store)
+	conversation, err := store.CreateConversation(ctx, CreateConversationInput{Kind: "group", CreatedBy: owner.Account.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetConversationNotificationMute(ctx, conversation.ID, owner.Account.ID, true, nil); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		insertRawMessage(t, ctx, store, conversation.ID, owner, fmt.Sprintf("msg_export_%d", i), formatTime(time.Now().UTC().Add(time.Duration(i)*time.Second)))
+	}
+	counts := func(export domain.AccountExport) int {
+		n := 0
+		for _, items := range export.Categories {
+			n += len(items)
+		}
+		return n
+	}
+	first, err := store.ExportAccount(ctx, owner.Account.ID, ExportAccountOptions{Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Messages) != 2 || counts(first) == 0 || len(first.Categories["notification_preferences"]) != 1 {
+		t.Fatalf("first page: %d messages, %d category rows %v", len(first.Messages), counts(first), first.Categories)
+	}
+	total, pages, before := counts(first), 1, first.Messages[len(first.Messages)-1].ID
+	messages := len(first.Messages)
+	for {
+		page, err := store.ExportAccount(ctx, owner.Account.ID, ExportAccountOptions{Limit: 2, BeforeID: before})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if page.Categories == nil || counts(page) != 0 {
+			t.Fatalf("page %d carries categories %#v, want an empty set", pages+1, page.Categories)
+		}
+		pages++
+		messages += len(page.Messages)
+		total += counts(page)
+		if len(page.Messages) < 2 {
+			break
+		}
+		before = page.Messages[len(page.Messages)-1].ID
+	}
+	if pages != 3 || messages != 5 {
+		t.Fatalf("%d pages with %d messages, want 3 and 5", pages, messages)
+	}
+	whole, err := store.ExportAccount(ctx, owner.Account.ID, ExportAccountOptions{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != counts(whole) {
+		t.Fatalf("pages hold %d category rows, one page holds %d", total, counts(whole))
 	}
 }

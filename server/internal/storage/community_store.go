@@ -1297,10 +1297,12 @@ func (s *Store) ListConversationsPage(ctx context.Context, accountID string, lim
 	return s.ListConversationsPageFrom(ctx, accountID, limit, ConversationCursor{BeforeID: beforeID})
 }
 
-// ListConversationsPageFrom lists one page of the account's conversations. A
-// cursor naming a conversation the account no longer belongs to cannot give a
-// boundary without its activity time: that is ErrInvalidInput, not an empty
-// page that would look like the end of the list.
+// ListConversationsPageFrom lists one page of the account's conversations. An
+// id-only cursor naming a conversation the account does not belong to has no
+// boundary to take (its activity is not the account's to read), and answers an
+// empty page, as it always has: the app reads that as the end of the list.
+// With the activity time the page listed it with, the cursor needs no
+// membership and keeps working after the account left that conversation.
 func (s *Store) ListConversationsPageFrom(ctx context.Context, accountID string, limit int, cursor ConversationCursor) ([]domain.Conversation, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
@@ -1319,7 +1321,7 @@ func (s *Store) ListConversationsPageFrom(ctx context.Context, accountID string,
 			return nil, err
 		}
 		if !member {
-			return nil, ErrInvalidInput
+			return nil, nil
 		}
 	}
 	rows, err := s.db.QueryContext(ctx, query, args...)

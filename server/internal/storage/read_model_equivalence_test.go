@@ -95,7 +95,14 @@ const legacyListConversationsPageQuery = `
 
 // legacyListSyncEventsQuery is the single-scan page query before the
 // per-conversation merge (T49 follow-up), with the MLS join filter as it was
-// then. Parameters: after, account, device, after, account, device, limit.
+// then. Parameters: after, account, device, after, account, device, now, limit.
+//
+// It also states the rule of the TASK-207/208 fix, which the merge query
+// shares: a message.envelope.* event is served only while its message
+// envelope row exists and has not expired, so an expired or removed message
+// is never replayed to a device with an old cursor. The reference applies it
+// as a plain correlated EXISTS against the Go-side clock, where the merge
+// query reads SQLite's clock, so the two are written independently.
 const legacyListSyncEventsQuery = `
 		SELECT id, event_type, account_id, conversation_id, payload_json, created_at
 		FROM (
@@ -119,6 +126,11 @@ const legacyListSyncEventsQuery = `
 			OR json_type(se.payload_json, '$.envelope.crypto_metadata.mls_epoch') IS NOT 'integer'
 			OR json_extract(se.payload_json, '$.envelope.crypto_metadata.mls_epoch') >= jd.joined_epoch))
 ))
+			  AND (se.event_type NOT LIKE 'message.envelope.%' OR EXISTS (
+			    SELECT 1 FROM message_envelopes live
+			    WHERE live.id = json_extract(se.payload_json, '$.message_id')
+			      AND (live.expires_at IS NULL OR live.expires_at > ?)
+			  ))
 			  AND NOT EXISTS (
 			    SELECT 1 FROM account_blocks b
 			    WHERE b.blocker_account_id = m.account_id
@@ -152,7 +164,7 @@ func legacyListSyncEvents(t testing.TB, store *Store, oldest int64, accountID, d
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	rows, err := store.db.QueryContext(ctx, legacyListSyncEventsQuery, afterID, accountID, deviceID, afterID, accountID, deviceID, limit)
+	rows, err := store.db.QueryContext(ctx, legacyListSyncEventsQuery, afterID, accountID, deviceID, afterID, accountID, deviceID, nowString(), limit)
 	if err != nil {
 		t.Fatal(err)
 	}

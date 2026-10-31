@@ -460,9 +460,12 @@ func (a *API) serveRecoveryBlob(w http.ResponseWriter, r *http.Request, transfer
 	request.Header.Del("If-Modified-Since")
 	request.Header.Del("If-Unmodified-Since")
 	request.Header.Del("If-Range")
+	// The lease is renewed until the final flush is done: a client that stalls
+	// there must not let it lapse, or the completion below is refused and the
+	// capability stays usable.
 	stopRenewing := a.renewRecoveryLease(r.Context(), tracked, transfer)
+	defer stopRenewing()
 	http.ServeContent(tracked, request, "encrypted.bin", time.Time{}, blob)
-	stopRenewing()
 	validResponse := !tracked.integrityFailed && (tracked.status == http.StatusOK || tracked.status == http.StatusPartialContent)
 	if r.Header.Get("Range") != "" {
 		validResponse = validResponse && tracked.status == http.StatusPartialContent &&
@@ -484,6 +487,7 @@ func (a *API) serveRecoveryBlob(w http.ResponseWriter, r *http.Request, transfer
 		tracked.flushAll()
 	}
 	written := tracked.confirmed()
+	stopRenewing()
 	if !validResponse || written > expected {
 		written = 0
 	}

@@ -63,6 +63,10 @@ type Store struct {
 	// It lives in memory: a restart only repeats a cheap, bounded scan.
 	redactMu     sync.Mutex
 	redactCursor int64
+
+	// afterPendingChangesRead is a test seam: ListMLSPendingChanges calls it
+	// between its list queries and its coordinator read, inside its snapshot.
+	afterPendingChangesRead func()
 }
 
 type dbRouter struct {

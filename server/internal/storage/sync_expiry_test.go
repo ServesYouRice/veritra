@@ -139,6 +139,36 @@ func TestPruneBackfillRedactsEventsOfMessagesThatAreAlreadyGone(t *testing.T) {
 	}
 }
 
+// After PruneSyncEvents removed the oldest events, the surviving ones start far
+// above id zero. The backfill goes straight to them rather than crawling
+// through the empty range one window per sweep.
+func TestPruneBackfillSkipsTheGapLeftByPrunedSyncEvents(t *testing.T) {
+	ctx := context.Background()
+	f := newSyncVisibilityFixture(t, ctx)
+	// Move the id counter far past the window, as a long-running instance's
+	// pruned prefix does, then leave one leftover event up there.
+	if _, err := f.store.db.ExecContext(ctx, `UPDATE sqlite_sequence SET seq = 1000000 WHERE name = 'sync_events'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.db.ExecContext(ctx, `DELETE FROM sync_events`); err != nil {
+		t.Fatal(err)
+	}
+	payload := `{"message_id":"msg_gone_far","conversation_id":"` + f.conversation.ID + `","envelope":{"id":"msg_gone_far","sender_account_id":"` + f.sender.Account.ID + `","ciphertext":"` + encodeBase64ForTest("far-leftover-secret") + `"}}`
+	result, err := f.store.db.ExecContext(ctx, `INSERT INTO sync_events(event_type, account_id, conversation_id, payload_json, created_at) VALUES('message.envelope.created', NULL, ?, ?, ?)`, f.conversation.ID, payload, nowString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id, _ := result.LastInsertId(); id <= 1000000 {
+		t.Fatalf("leftover event id = %d, want it above the moved counter", id)
+	}
+	if _, _, err := f.store.PruneExpiredContent(ctx, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if n := syncPayloadsContain(t, ctx, f.store, encodeBase64ForTest("far-leftover-secret")); n != 0 {
+		t.Fatal("the backfill did not reach the surviving events in one sweep")
+	}
+}
+
 func TestIdempotentRetryRedactsTheExpiredMessagesEvents(t *testing.T) {
 	ctx := context.Background()
 	f := newSyncVisibilityFixture(t, ctx)

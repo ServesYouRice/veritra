@@ -129,3 +129,16 @@ func TestRestoreDrillRunsWhileAServerHoldsTheLiveLocks(t *testing.T) {
 		t.Fatalf("drill output = %q", output.String())
 	}
 }
+
+// A mistyped data directory must not be created by the command: the database
+// is looked for before any lock file is.
+func TestResetOwnerPasswordOnAMistypedPathCreatesNoDirectoryOrLockFile(t *testing.T) {
+	cfg := commandConfig(filepath.Join(t.TempDir(), "typo"))
+	err := resetOwnerPassword(context.Background(), cfg, "owner", writePasswordFile(t), &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "no database") {
+		t.Fatalf("reset on a missing database: err = %v, want a no-database error", err)
+	}
+	if _, statErr := os.Stat(cfg.DataDir); !os.IsNotExist(statErr) {
+		t.Fatalf("reset created the data directory %s (stat err = %v)", cfg.DataDir, statErr)
+	}
+}

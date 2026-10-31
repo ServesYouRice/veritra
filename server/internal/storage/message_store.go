@@ -770,27 +770,28 @@ func (s *Store) PruneExpiredContent(ctx context.Context, now time.Time) (int64, 
 
 // redactOrphanedMessageEvents redacts the message events whose envelope row is
 // already gone but whose payload still holds the envelope: the copies left by
-// expiries pruned before events were redacted with them. Each call looks at a
-// window of redactBackfillWindow event ids after the cursor, so the work per
-// sweep is bounded however large sync_events is; the cursor wraps to the start
-// when it passes the newest event. It returns the cursor for the next call,
-// which the caller stores once its transaction commits.
+// expiries pruned before events were redacted with them. Each call starts at
+// the first event after the cursor and looks at the next redactBackfillWindow
+// event ids, so the work per sweep is bounded however large sync_events is,
+// and a gap left by PruneSyncEvents is jumped, not crawled. The cursor wraps
+// to the start when nothing is left after it. It returns the cursor for the
+// next call, which the caller stores once its transaction commits.
 func (s *Store) redactOrphanedMessageEvents(ctx context.Context, tx *sql.Tx) (int64, error) {
 	s.redactMu.Lock()
 	from := s.redactCursor
 	s.redactMu.Unlock()
-	var newest int64
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM sync_events`).Scan(&newest); err != nil {
+	var first sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT MIN(id) FROM sync_events WHERE id > ?`, from).Scan(&first); err != nil {
 		return 0, err
 	}
-	if from >= newest {
+	if !first.Valid {
 		return 0, nil
 	}
-	to := from + redactBackfillWindow
+	to := first.Int64 + redactBackfillWindow - 1
 	if _, err := tx.ExecContext(ctx, redactMessageSyncEventsSQL+`
-		WHERE id > ? AND id <= ? AND event_type IN (`+messageEnvelopeEventTypes+`)
+		WHERE id >= ? AND id <= ? AND event_type IN (`+messageEnvelopeEventTypes+`)
 		  AND json_extract(payload_json, '$.envelope') IS NOT NULL
-		  AND NOT EXISTS (SELECT 1 FROM message_envelopes me WHERE me.id = json_extract(payload_json, '$.message_id'))`, from, to); err != nil {
+		  AND NOT EXISTS (SELECT 1 FROM message_envelopes me WHERE me.id = json_extract(payload_json, '$.message_id'))`, first.Int64, to); err != nil {
 		return 0, err
 	}
 	return to, nil

@@ -33,9 +33,17 @@ func (s *Store) ExportAccount(ctx context.Context, accountID string, opts Export
 	if err != nil {
 		return domain.AccountExport{}, err
 	}
-	categories, err := s.exportAssociatedData(ctx, accountID)
-	if err != nil {
-		return domain.AccountExport{}, err
+	// Only messages are paged. The associated-data categories are exported once,
+	// with the first page: reading them again for every message page repeated
+	// every category query and every row, and an export put together from
+	// its pages would hold each row once per page. Later pages carry the key
+	// with no categories in it.
+	categories := map[string][]json.RawMessage{}
+	if opts.BeforeID == "" {
+		categories, err = s.exportAssociatedData(ctx, accountID)
+		if err != nil {
+			return domain.AccountExport{}, err
+		}
 	}
 	return domain.AccountExport{ManifestVersion: "v2", Account: account, Devices: devices, Conversations: conversations, Messages: messages, Categories: categories}, nil
 }

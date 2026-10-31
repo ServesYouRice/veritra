@@ -29,7 +29,7 @@ func listConversationPage(t *testing.T, handler http.Handler, token, query strin
 	return status, page, body
 }
 
-func TestConversationListCursorCarriesActivityAndRejectsGoneConversation(t *testing.T) {
+func TestConversationListCursorCarriesActivityAndKeepsTheIDOnlyFormWorking(t *testing.T) {
 	handler, token, _ := newTestHandlerWithOwnerDevice(t)
 	first := createConversation(t, handler, token)
 	second := createConversation(t, handler, token)
@@ -50,10 +50,17 @@ func TestConversationListCursorCarriesActivityAndRejectsGoneConversation(t *test
 	if status != http.StatusOK || len(page.Conversations) != 1 || page.Conversations[0].ID != first {
 		t.Fatalf("id-only page status=%d body=%s, want %s", status, body, first)
 	}
+	// The app sends the id alone. A cursor conversation the account is not in
+	// (it left between two pages) is an empty page, not an error.
+	status, page, body = listConversationPage(t, handler, token, "limit=5&before=conv_00000000000000000000000000000000")
+	if status != http.StatusOK || len(page.Conversations) != 0 {
+		t.Fatalf("id-only cursor of an unknown conversation: status=%d body=%s, want 200 and no conversations", status, body)
+	}
+	// The new parameter is only ever sent by clients that know it, so a
+	// malformed use of it is an error.
 	for name, query := range map[string]string{
 		"activity without a cursor id": "before_activity=" + url.QueryEscape(time.Now().UTC().Format(time.RFC3339Nano)),
 		"unparsable activity":          "before=" + url.QueryEscape(second) + "&before_activity=yesterday",
-		"unknown conversation":         "before=conv_00000000000000000000000000000000",
 	} {
 		status, _, body = listConversationPage(t, handler, token, query)
 		if status != http.StatusBadRequest || !bytes.Contains(body, []byte("invalid_cursor")) {
