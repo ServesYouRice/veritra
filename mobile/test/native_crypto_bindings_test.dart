@@ -6,7 +6,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 
 void main() {
-  final libraryPath = Platform.environment['VERITRA_CRYPTO_LIBRARY'];
+  final configured = Platform.environment['VERITRA_CRYPTO_LIBRARY'];
+  // An empty value counts as missing, so it never reaches the loader.
+  final libraryPath =
+      configured == null || configured.isEmpty ? null : configured;
+  if (libraryPath == null && Platform.environment['CI'] == 'true') {
+    test('CI provides the native crypto library', () {
+      fail('VERITRA_CRYPTO_LIBRARY is required when CI=true: set it to a '
+          'built libprivate_messenger_crypto');
+    });
+  }
   test('ABI v9 lifecycle owns outputs and handles safely', () {
     final bindings = NativeCryptoBindings.open(libraryPath!);
     final alice = bindings.createDevice('acct_alice', 'dev_alice');

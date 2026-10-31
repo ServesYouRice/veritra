@@ -15,7 +15,16 @@ import 'package:private_messenger/storage/local_store.dart';
 /// Two real OpenMLS devices exchanging every message payload type through
 /// [NativeCryptoService], with the server's role played by the test.
 void main() {
-  final libraryPath = Platform.environment['VERITRA_CRYPTO_LIBRARY'];
+  final configured = Platform.environment['VERITRA_CRYPTO_LIBRARY'];
+  // An empty value counts as missing, so it never reaches the loader.
+  final libraryPath =
+      configured == null || configured.isEmpty ? null : configured;
+  if (libraryPath == null && Platform.environment['CI'] == 'true') {
+    test('CI provides the native crypto library', () {
+      fail('VERITRA_CRYPTO_LIBRARY is required when CI=true: set it to a '
+          'built libprivate_messenger_crypto');
+    });
+  }
   final skip = libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false;
 
   test('decrypted history is kept for text, reply, edit, reaction, delete',
