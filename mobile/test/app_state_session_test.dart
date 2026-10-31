@@ -5,6 +5,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
@@ -364,7 +365,166 @@ void main() {
       h.dispose();
     });
   });
+
+  group('TASK-043: export and manual retry stay off the session queue', () {
+    late Directory tempDir;
+    const pathChannel = MethodChannel('plugins.flutter.io/path_provider');
+    const bob = Session(
+      baseUrl: _origin,
+      token: 'token-bob',
+      accountId: 'acct_bob',
+      deviceId: 'dev_bob',
+    );
+    const blocked = Duration(seconds: 5);
+
+    setUp(() async {
+      tempDir = await Directory.systemTemp.createTemp('session_export_test_');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathChannel, (_) async => tempDir.path);
+    });
+
+    tearDown(() async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathChannel, null);
+      if (await tempDir.exists()) await tempDir.delete(recursive: true);
+    });
+
+    List<String> exportFiles() => tempDir
+        .listSync()
+        .map((entry) => entry.path)
+        .where((path) => path.contains('veritra-account-export'))
+        .toList();
+
+    _Harness signedIn() {
+      final h = _Harness();
+      h.state
+        ..api = h.api
+        ..session = _owner
+        ..conversations = <Conversation>[
+          Conversation(id: 'conv_1', kind: 'group'),
+        ];
+      return h;
+    }
+
+    test('a blocked export page holds neither a send nor sign-out', () async {
+      final h = signedIn();
+      final page = h.api.exportGates[0] = Completer<Object?>();
+      final export = h.state.exportAccount();
+      await waitFor(() => h.api.exportBefores.isNotEmpty);
+
+      expect(
+          await h.state.sendMessageTo('conv_1', 'hi').timeout(blocked), isTrue);
+      expect(await h.store.pendingEnvelopes(), hasLength(1));
+      await h.state.logout().timeout(blocked);
+      expect(h.state.session, isNull);
+
+      page.complete(null);
+      expect(await export, isNull);
+      expect(h.api.exportBefores, hasLength(1),
+          reason: 'the export kept paging after sign-out');
+      expect(exportFiles(), isEmpty);
+      h.dispose();
+    });
+
+    test('the final page answered after an account switch is not kept',
+        () async {
+      final h = signedIn();
+      final page = h.api.exportGates[1] = Completer<Object?>();
+      final export = h.state.exportAccount();
+      await waitFor(() => h.api.exportBefores.length == 2);
+
+      await h.state.logout().timeout(blocked);
+      h.state
+        ..api = h.api
+        ..session = bob;
+      page.complete(null);
+
+      expect(await export, isNull);
+      expect(exportFiles(), isEmpty);
+      expect(h.state.error, isNull);
+      expect(h.state.busy, isFalse);
+      expect(h.state.session?.token, bob.token);
+      h.dispose();
+    });
+
+    test('a 401 for the old session leaves the new session signed in',
+        () async {
+      final h = signedIn();
+      final page = h.api.exportGates[1] = Completer<Object?>();
+      final export = h.state.exportAccount();
+      await waitFor(() => h.api.exportBefores.length == 2);
+
+      await h.state.logout().timeout(blocked);
+      h.state
+        ..api = h.api
+        ..session = bob;
+      page.complete(ApiException(401, '{"error":"unauthorized"}'));
+
+      expect(await export, isNull);
+      await Future<void>.delayed(Duration.zero);
+      expect(h.state.session?.token, bob.token);
+      expect(h.state.error, isNull);
+      expect(exportFiles(), isEmpty);
+      h.dispose();
+    });
+
+    test('a 401 for the current session still signs it out', () async {
+      final h = signedIn();
+      h.api.exportGates[1] = Completer<Object?>()
+        ..complete(ApiException(401, '{"error":"unauthorized"}'));
+
+      expect(await h.state.exportAccount(), isNull);
+      expect(h.state.session, isNull);
+      expect(h.state.error, isNotNull);
+      expect(exportFiles(), isEmpty);
+      h.dispose();
+    });
+
+    test('a blocked manual retry holds neither a send nor sign-out', () async {
+      final h = signedIn();
+      await h.store.enqueueEnvelope(_envelope('env_1'));
+      final send = h.api.sendGate = Completer<Object?>();
+      final retry = h.state.retryEnvelope('env_1');
+      await waitFor(() => h.api.sent.contains('env_1'));
+      expect(h.state.outboxState('env_1'), OutboxDeliveryState.sending);
+
+      expect(
+          await h.state.sendMessageTo('conv_1', 'hi').timeout(blocked), isTrue);
+      send.complete(null);
+      await retry;
+      await waitFor(() async => (await h.store.pendingEnvelopes()).isEmpty);
+      expect(h.api.sent.first, 'env_1');
+      h.dispose();
+    });
+
+    test('a retry 401 for the old session leaves the new session signed in',
+        () async {
+      final h = signedIn();
+      await h.store.enqueueEnvelope(_envelope('env_1'));
+      final send = h.api.sendGate = Completer<Object?>();
+      final retry = h.state.retryEnvelope('env_1');
+      await waitFor(() => h.api.sent.contains('env_1'));
+
+      await h.state.logout().timeout(blocked);
+      h.state
+        ..api = h.api
+        ..session = bob;
+      send.complete(ApiException(401, '{"error":"unauthorized"}'));
+      await retry;
+      await Future<void>.delayed(Duration.zero);
+
+      expect(h.state.session?.token, bob.token);
+      h.dispose();
+    });
+  });
 }
+
+MessageEnvelope _envelope(String key) => MessageEnvelope(
+      conversationId: 'conv_1',
+      idempotencyKey: key,
+      ciphertext: <int>[1, 2, 3],
+      cryptoProtocol: 'test-only-not-production',
+    );
 
 /// A memory store whose sync-lease steps fail a set number of times.
 class _FaultStore extends MemoryLocalStore {
@@ -451,6 +611,17 @@ class _Api extends ApiClient {
   final List<int> published = <int>[];
   int syncCalls = 0;
   final List<String> syncTokens = <String>[];
+
+  /// The `before` of every export page request, in order.
+  final List<String?> exportBefores = <String?>[];
+
+  /// Holds export page N (from 0) until completed; completing with an
+  /// error object fails that page with it.
+  final Map<int, Completer<Object?>> exportGates = <int, Completer<Object?>>{};
+
+  /// Holds the next envelope delivery until completed, like [exportGates].
+  Completer<Object?>? sendGate;
+  final List<String> sent = <String>[];
 
   static const _reservation = EnrollmentReservation(
     id: 'enroll_1',
@@ -559,6 +730,47 @@ class _Api extends ApiClient {
   @override
   Future<List<Community>> listCommunities(String token) async =>
       const <Community>[];
+
+  @override
+  Future<Map<String, Object?>> exportAccountPage(
+    String token, {
+    int limit = 250,
+    String? before,
+  }) async {
+    final index = exportBefores.length;
+    exportBefores.add(before);
+    final gate = exportGates[index];
+    if (gate != null) {
+      final failure = await gate.future;
+      if (failure != null) throw failure;
+    }
+    return <String, Object?>{
+      'manifest_version': 'v2',
+      'messages': <Object?>[
+        <String, Object?>{'id': 'msg_page_$index'},
+      ],
+      if (index == 0) 'next_before': 'msg_page_0',
+    };
+  }
+
+  @override
+  Future<void> sendEnvelope(String token, MessageEnvelope envelope) async {
+    sent.add(envelope.idempotencyKey);
+    final gate = sendGate;
+    if (gate == null) return;
+    sendGate = null;
+    final failure = await gate.future;
+    if (failure != null) throw failure;
+  }
+
+  @override
+  Future<MessagePage> listMessagePage(
+    String token,
+    String conversationId, {
+    int limit = 50,
+    String? before,
+  }) async =>
+      const MessagePage(messages: <ReceivedMessageEnvelope>[]);
 
   @override
   Future<String?> reauthenticate(

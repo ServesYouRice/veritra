@@ -2344,86 +2344,137 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// Streams bounded server pages into a local JSON file. The file contains
   /// page objects so a large account never needs to be assembled in memory.
   /// The server's export remains ciphertext-only for message content.
+  ///
+  /// The paging runs outside the session queue, so sends and sign-out never
+  /// wait behind it. It belongs to the session it started under: once that
+  /// session ends or changes, the export stops, leaves no file and sets no
+  /// error or busy state on whatever session comes next.
   Future<String?> exportAccount() async {
-    String? path;
-    await _run(() async {
-      final current = session;
-      final client = api;
-      if (current == null || client == null) {
-        return;
+    final owner = session;
+    final client = api;
+    if (owner == null || client == null) {
+      return null;
+    }
+    final ends = _sessionEnds;
+    bool owns() =>
+        !_disposed &&
+        ends == _sessionEnds &&
+        _sessionsEnding == 0 &&
+        _sameSession(owner);
+    if (!owns()) return null;
+    busy = true;
+    error = null;
+    notifyListeners();
+    try {
+      return await _writeAccountExport(client, owner.token, owns);
+    } catch (err) {
+      if (err is ApiException && err.statusCode == 401) {
+        // Cleared through the queue, and only while the session that got
+        // the 401 is still the current one.
+        await _enqueueSessionTransition(() async {
+          if (!owns()) return;
+          await _clearLocalSession(
+              preserveDeviceIdentity: true,
+              keepDrafts: true,
+              preserveOutbox: true);
+          error = describeError(err, l10n);
+        });
+      } else if (owns()) {
+        error = describeError(err, l10n);
       }
+      return null;
+    } finally {
+      // A queued action running now owns the busy flag and clears it itself.
+      if (_runsActive == 0) busy = false;
+      notifyListeners();
+    }
+  }
 
-      final directory = await getApplicationDocumentsDirectory();
-      final stamp = DateTime.now().toUtc().toIso8601String().replaceAll(
-            RegExp(r'[^0-9]'),
-            '',
-          );
-      final file = File(
-        '${directory.path}${Platform.pathSeparator}'
-        'veritra-account-export-v2-$stamp.json',
-      );
-      final temporaryFile = File('${file.path}.part');
-      IOSink? sink;
-      var completed = false;
-      try {
-        const header = '{"manifest_version":"v2","pages":[';
-        const footer = ']}';
-        const maxExportBytes = 256 * 1024 * 1024;
-        var totalBytes = utf8.encode(header).length;
-        sink = temporaryFile.openWrite();
-        sink.write(header);
-        String? before;
-        var firstPage = true;
-        var pageCount = 0;
-        while (true) {
-          if (pageCount >= 2000) {
-            throw StateError('Account export has too many pages');
-          }
-          final page = await client.exportAccountPage(
-            current.token,
-            limit: 250,
-            before: before,
-          );
-          final encodedPage = utf8.encode(jsonEncode(page));
-          final separatorBytes = firstPage ? 0 : 1;
-          if (totalBytes +
-                  separatorBytes +
-                  encodedPage.length +
-                  utf8.encode(footer).length >
-              maxExportBytes) {
-            throw StateError('Account export exceeds the size limit');
-          }
-          if (!firstPage) {
-            sink.add(const <int>[0x2c]);
-          }
-          sink.add(encodedPage);
-          totalBytes += separatorBytes + encodedPage.length;
-          firstPage = false;
-          pageCount++;
-          final next = page['next_before'];
-          if (next == null) {
-            break;
-          }
-          if (next is! String || next.isEmpty || next == before) {
-            throw StateError('Account export cursor did not advance');
-          }
-          before = next;
+  /// The paging and file work of [exportAccount]. [owns] is checked after
+  /// every await, before its result is used: an export whose session ended
+  /// returns null, and the finally removes its '.part' file.
+  Future<String?> _writeAccountExport(
+      ApiClient client, String token, bool Function() owns) async {
+    final directory = await getApplicationDocumentsDirectory();
+    if (!owns()) return null;
+    final stamp = DateTime.now().toUtc().toIso8601String().replaceAll(
+          RegExp(r'[^0-9]'),
+          '',
+        );
+    final file = File(
+      '${directory.path}${Platform.pathSeparator}'
+      'veritra-account-export-v2-$stamp.json',
+    );
+    final temporaryFile = File('${file.path}.part');
+    IOSink? sink;
+    var completed = false;
+    try {
+      const header = '{"manifest_version":"v2","pages":[';
+      const footer = ']}';
+      const maxExportBytes = 256 * 1024 * 1024;
+      var totalBytes = utf8.encode(header).length;
+      sink = temporaryFile.openWrite();
+      sink.write(header);
+      String? before;
+      var firstPage = true;
+      var pageCount = 0;
+      while (true) {
+        if (!owns()) return null;
+        if (pageCount >= 2000) {
+          throw StateError('Account export has too many pages');
         }
-        sink.write(footer);
-        await sink.flush();
-        await sink.close();
-        sink = null;
-        await temporaryFile.rename(file.path);
-        completed = true;
-        path = file.path;
-      } finally {
-        await sink?.close();
-        if (!completed && await temporaryFile.exists()) {
-          await temporaryFile.delete();
+        final page = await client.exportAccountPage(
+          token,
+          limit: 250,
+          before: before,
+        );
+        if (!owns()) return null;
+        final encodedPage = utf8.encode(jsonEncode(page));
+        final separatorBytes = firstPage ? 0 : 1;
+        if (totalBytes +
+                separatorBytes +
+                encodedPage.length +
+                utf8.encode(footer).length >
+            maxExportBytes) {
+          throw StateError('Account export exceeds the size limit');
         }
+        if (!firstPage) {
+          sink.add(const <int>[0x2c]);
+        }
+        sink.add(encodedPage);
+        totalBytes += separatorBytes + encodedPage.length;
+        firstPage = false;
+        pageCount++;
+        final next = page['next_before'];
+        if (next == null) {
+          break;
+        }
+        if (next is! String || next.isEmpty || next == before) {
+          throw StateError('Account export cursor did not advance');
+        }
+        before = next;
       }
-    });
-    return error == null ? path : null;
+      sink.write(footer);
+      await sink.flush();
+      await sink.close();
+      sink = null;
+      if (!owns()) return null;
+      await temporaryFile.rename(file.path);
+      completed = true;
+      if (!owns()) {
+        // The session ended during the rename: its export is not kept.
+        try {
+          await file.delete();
+        } catch (_) {}
+        return null;
+      }
+      return file.path;
+    } finally {
+      await sink?.close();
+      if (!completed && await temporaryFile.exists()) {
+        await temporaryFile.delete();
+      }
+    }
   }
 
   Future<void> sendMessage(String plaintext) async {
@@ -2808,20 +2859,39 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     }).then((succeeded) => succeeded && queued);
   }
 
+  /// Marks [idempotencyKey] for an immediate retry and runs the delivery
+  /// worker. Only the marking is queued; the network delivery runs outside
+  /// the session queue, so sends and sign-out never wait on it. Completes
+  /// after that flush.
   Future<void> retryEnvelope(String idempotencyKey) async {
+    final owner = session;
+    if (owner == null) return;
+    var flush = false;
     await _runScoped(Ops.send, () async {
+      if (!_sameSession(owner)) return;
       final record = _outboxRecords[idempotencyKey] ??
           (await localStore.pendingEnvelopeRecords())
               .where((item) => item.envelope.idempotencyKey == idempotencyKey)
               .firstOrNull;
-      if (record == null || record.terminal) {
+      if (record == null || record.terminal || !_sameSession(owner)) {
         return;
       }
       _outboxStates[idempotencyKey] = OutboxDeliveryState.sending;
       notifyListeners();
       _manualRetryKey = idempotencyKey;
-      await _flushOutbox();
+      flush = true;
     });
+    if (!flush) return;
+    try {
+      // The worker checks its session after every request and clears it on
+      // a 401 only while that session is still current.
+      await _flushOutbox();
+    } catch (err) {
+      if (_sameSession(owner)) {
+        _opErrors[Ops.send] = describeError(err, l10n);
+        notifyListeners();
+      }
+    }
   }
 
   Future<void> discardEnvelope(String idempotencyKey) async {
@@ -5867,8 +5937,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     return succeeded;
   }
 
+  /// Bodies of [_run] executing right now (0 or 1: they are queued).
+  int _runsActive = 0;
+
   Future<void> _run(Future<void> Function() body) async {
     await _enqueueSessionTransition(() async {
+      _runsActive++;
       busy = true;
       error = null;
       notifyListeners();
@@ -5888,6 +5962,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         }
         error = describeError(err, l10n);
       } finally {
+        _runsActive--;
         busy = false;
         notifyListeners();
       }
