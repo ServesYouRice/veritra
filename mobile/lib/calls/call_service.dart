@@ -16,6 +16,43 @@ import 'call_media.dart';
 bool isTerminalCallState(String state) =>
     state == 'rejected' || state == 'missed' || state == 'ended';
 
+/// Whether an ICE server entry (`urls` as one string or a list, as the
+/// server's /api/v1/calls/config returns) names a turn: or turns: URL.
+bool _hasTurnUrl(Map<String, Object?> server) {
+  final urls = server['urls'];
+  final list = urls is String ? <Object?>[urls] : urls is List ? urls : null;
+  return list != null &&
+      list.any((url) =>
+          url is String &&
+          (url.toLowerCase().startsWith('turn:') ||
+              url.toLowerCase().startsWith('turns:')));
+}
+
+/// The relay-only candidate filter (D56), defence in depth behind
+/// `iceTransportPolicy: relay`. Returns [candidate] only if its `typ` is
+/// `relay`, with the related address (raddr/rport, which for a relay
+/// candidate is this device's public address as the TURN server saw it)
+/// replaced by the unspecified address, as libwebrtc itself does under a
+/// relay-only policy. Anything that cannot be parsed is dropped.
+@visibleForTesting
+String? relayCandidateOnly(String candidate) {
+  final body = candidate.startsWith('a=') ? candidate.substring(2) : candidate;
+  if (!body.startsWith('candidate:')) return null;
+  final tokens = candidate.split(' ');
+  final typ = tokens.indexOf('typ');
+  if (typ < 0 || typ + 1 >= tokens.length || tokens[typ + 1] != 'relay') {
+    return null;
+  }
+  for (var i = typ + 2; i + 1 < tokens.length; i += 2) {
+    if (tokens[i] == 'raddr') {
+      tokens[i + 1] = tokens[i + 1].contains(':') ? '::' : '0.0.0.0';
+    } else if (tokens[i] == 'rport') {
+      tokens[i + 1] = '0';
+    }
+  }
+  return tokens.join(' ');
+}
+
 /// A transition was abandoned because the server's current session no longer
 /// allows it, for example the call ended while this device was answering.
 class CallUnavailableException implements Exception {
@@ -108,11 +145,15 @@ class _CallMedia {
 
   /// Installs the peer's ICE and track handlers. Until [attach] runs, local
   /// candidates are buffered and remote streams only recorded.
-  void listen() {
+  /// [filter], when set, rewrites each local candidate before it is
+  /// signalled, or returns null to drop it.
+  void listen({String? Function(String candidate)? filter}) {
     peer.onIceCandidate = (candidate) {
-      final value = candidate.candidate;
+      final raw = candidate.candidate;
       // A null or empty candidate marks the end of gathering; not signalled.
-      if (_released || value == null || value.isEmpty) return;
+      if (_released || raw == null || raw.isEmpty) return;
+      final value = filter == null ? raw : filter(raw);
+      if (value == null) return;
       final signal = <String, Object?>{
         'kind': 'ice',
         'candidate': value,
@@ -184,7 +225,8 @@ class NativeCallService {
       required this.crypto,
       required Stream<IncomingCallSignal> incoming,
       CallMediaFactory? media,
-      Future<void> Function(Duration delay)? retryDelay})
+      Future<void> Function(Duration delay)? retryDelay,
+      this.allowDirectConnections = false})
       : media = media ?? const FlutterWebRtcMediaFactory(),
         _retryDelay = retryDelay ?? Future<void>.delayed {
     _subscription = incoming.listen(_onIncoming,
@@ -195,6 +237,12 @@ class NativeCallService {
   /// rejection. Both peers write the same per-call version (each ICE
   /// candidate, the answer, hang-up), so overlapping writes are expected.
   static const int maxConflictRetries = 5;
+
+  /// Calls relay through TURN by default (D56): ICE gathers only relay
+  /// candidates and only those are signalled, so the other side never
+  /// learns this device's addresses. When true (a user setting that warns
+  /// that the other side then sees their address), direct paths are allowed.
+  final bool allowDirectConnections;
 
   final Future<void> Function(Duration delay) _retryDelay;
   final Random _jitter = Random();
@@ -472,19 +520,23 @@ class NativeCallService {
   /// the error propagates.
   Future<_CallMedia> _createConnection({required bool video}) async {
     final iceServers = await api.callIceServers(token);
-    if (iceServers.isEmpty) {
-      throw StateError('A self-hosted TURN service is required for calls');
+    if (!iceServers.any(_hasTurnUrl)) {
+      // No server details here: they would carry TURN credentials.
+      throw StateError(
+          'Calls need a self-hosted TURN service, and none is configured');
     }
+    final relayOnly = !allowDirectConnections;
     final peer = await media.createPeer(<String, Object?>{
       'iceServers': iceServers,
-      'iceTransportPolicy': 'all',
+      'iceTransportPolicy': relayOnly ? 'relay' : 'all',
       'bundlePolicy': 'max-bundle',
       'rtcpMuxPolicy': 'require',
     });
     // Handlers go on before any description is set: gathering starts at
     // setLocalDescription, tracks arrive during setRemoteDescription, and
     // flutter_webrtc drops events while no handler is set.
-    final call = _CallMedia(peer)..listen();
+    final call = _CallMedia(peer)
+      ..listen(filter: relayOnly ? relayCandidateOnly : null);
     try {
       final stream = call.stream = await media.getUserMedia(<String, Object?>{
         'audio': <String, Object?>{

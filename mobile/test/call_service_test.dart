@@ -15,7 +15,7 @@ const Map<String, Object?> _offer = <String, Object?>{
 };
 
 class _Harness {
-  _Harness() {
+  _Harness({bool allowDirectConnections = false}) {
     api = FakeCallApi(log);
     crypto = FakeCallCrypto(log);
     media = FakeMediaFactory(log);
@@ -26,6 +26,7 @@ class _Harness {
       incoming: incoming.stream,
       media: media,
       retryDelay: (delay) async => delays.add(delay),
+      allowDirectConnections: allowDirectConnections,
     );
   }
 
@@ -45,8 +46,8 @@ class _Harness {
   }
 }
 
-_Harness _harness() {
-  final harness = _Harness();
+_Harness _harness({bool allowDirectConnections = false}) {
+  final harness = _Harness(allowDirectConnections: allowDirectConnections);
   addTearDown(harness.close);
   return harness;
 }
@@ -70,6 +71,7 @@ void main() {
   _task018();
   _task019();
   _task020();
+  _task021();
   group('TASK-015 setup failure releases media', () {
     const startSteps = <String>[
       'getUserMedia',
@@ -733,6 +735,97 @@ void _task020() {
       await _settle();
       expect(h.service.recentlyTerminatedCount,
           NativeCallService.maxRecentlyTerminated);
+    });
+  });
+}
+
+void _task021() {
+  group('TASK-021 relay-only ICE (D56)', () {
+    test('peers relay through TURN by default', () async {
+      final h = _harness();
+      await h.service.start('conv_1');
+      expect(h.media.peer.configuration['iceTransportPolicy'], 'relay');
+    });
+
+    for (final servers in <List<Map<String, Object?>>>[
+      <Map<String, Object?>>[],
+      <Map<String, Object?>>[
+        <String, Object?>{
+          'urls': <String>['stun:stun.secret-host.test:3478'],
+          'username': 'user-secret',
+          'credential': 'cred-secret',
+        }
+      ],
+      <Map<String, Object?>>[
+        <String, Object?>{'urls': 'stun:stun.secret-host.test'},
+        <String, Object?>{'urls': 42},
+      ],
+    ]) {
+      test('no TURN server refuses the call before media (${servers.length})',
+          () async {
+        final h = _harness();
+        h.api.iceServers = servers;
+        Object? error;
+        try {
+          await h.service.start('conv_1');
+        } catch (e) {
+          error = e;
+        }
+        expect(error, isA<StateError>());
+        expect('$error', isNot(contains('secret')));
+        await expectLater(
+            h.service.answer(callSession(), _offer), throwsStateError);
+        expect(h.media.peers, isEmpty);
+        expect(h.media.streams, isEmpty);
+      });
+    }
+
+    test('a single turns: URL string is accepted', () async {
+      final h = _harness();
+      h.api.iceServers = <Map<String, Object?>>[
+        <String, Object?>{'urls': 'stun:stun.example.test'},
+        <String, Object?>{'urls': 'TURNS:turn.example.test:5349'},
+      ];
+      await h.service.start('conv_1');
+      expect(h.media.peers, hasLength(1));
+    });
+
+    test('only relay candidates are signalled, related address hidden',
+        () async {
+      final h = _harness();
+      await h.service.start('conv_1');
+      final peer = h.media.peer;
+      peer.emitCandidate(
+          'candidate:1 1 udp 2122260223 192.168.1.20 54321 typ host');
+      peer.emitCandidate('candidate:2 1 udp 1686052607 198.51.100.7 54321 '
+          'typ srflx raddr 192.168.1.20 rport 54321');
+      peer.emitCandidate('candidate:3 1 tcp 1518280447 192.168.1.20 9 '
+          'typ prflx tcptype active');
+      peer.emitCandidate('garbage');
+      peer.emitCandidate('candidate:4 1 udp 41885439 203.0.113.9 50000 typ');
+      peer.emitCandidate('');
+      peer.emitCandidate('a=candidate:5 1 udp 41885439 203.0.113.9 50000 '
+          'typ relay raddr 198.51.100.7 rport 54321 generation 0');
+      peer.emitCandidate('candidate:6 1 udp 41885439 2001:db8::9 50000 '
+          'typ relay raddr 2001:db8::7 rport 54321');
+      await _settle();
+
+      expect(_sentCandidates(h.api), <String>[
+        'a=candidate:5 1 udp 41885439 203.0.113.9 50000 '
+            'typ relay raddr 0.0.0.0 rport 0 generation 0',
+        'candidate:6 1 udp 41885439 2001:db8::9 50000 '
+            'typ relay raddr :: rport 0',
+      ]);
+    });
+
+    test('the direct-connection setting allows every candidate', () async {
+      final h = _harness(allowDirectConnections: true);
+      await h.service.start('conv_1');
+      expect(h.media.peer.configuration['iceTransportPolicy'], 'all');
+      const host = 'candidate:1 1 udp 2122260223 192.168.1.20 54321 typ host';
+      h.media.peer.emitCandidate(host);
+      await _settle();
+      expect(_sentCandidates(h.api), <String>[host]);
     });
   });
 }
