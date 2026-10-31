@@ -13,7 +13,50 @@ import '../l10n/l10n.dart';
 
 const int _backupChunkSize = 1024 * 1024;
 const int _maxBackupPlaintext = 64 * 1024 * 1024;
-const List<int> _backupMagic = <int>[0x56, 0x42, 0x4b, 0x31];
+
+/// The encrypted backup file, format VBK2 (TASK-044). All integers are
+/// big-endian. With a random 32-byte key K, a random 8-byte nonce prefix N
+/// and the 32-byte recovery token T:
+///
+///     header   = "VBK2" || N || u32 chunkCount || u64 plaintextSize  (24 B)
+///     frame 0  = u32 length || seal(K, N, 0, "veritra-backup-v2-header"
+///                    || T || header[0..12], header[12..24])
+///     frame i  = u32 length || seal(K, N, i, "veritra-backup-v2" || T
+///                    || header || last, chunk i-1)       for i = 1..count
+///
+/// `seal` is the native chunk AEAD (AES-256-GCM, nonce N || u32 index, the
+/// index also in the associated data); `last` is one byte, 1 for frame
+/// `count` and 0 before it; chunks are 1 MiB except the last. Frame 0
+/// checks the key before the cleartext count and size are trusted, so a
+/// wrong recovery code is told apart from a damaged file. Every data frame
+/// binds the whole header and whether it is the last, so a rewritten header
+/// or a file cut at a chunk boundary fails to authenticate, and nothing is
+/// restored until every frame has. Restore refuses the legacy VBK1 format
+/// (D55), whose header was not authenticated. Described in docs/crypto.md,
+/// "Encrypted backup file (VBK2)".
+const List<int> _backupMagic = <int>[0x56, 0x42, 0x4b, 0x32];
+const int _backupHeaderLength = 24;
+const String _backupHeaderDomain = 'veritra-backup-v2-header';
+const String _backupChunkDomain = 'veritra-backup-v2';
+
+/// Associated data of frame 0, which seals the count and size.
+List<int> _headerFrameContext(List<int> recoveryToken, List<int> header) =>
+    <int>[
+      ...utf8.encode(_backupHeaderDomain),
+      ...recoveryToken,
+      ...header.sublist(0, 12),
+    ];
+
+/// Associated data of a data frame: the whole header, and whether this is
+/// the last chunk.
+List<int> _chunkContext(List<int> recoveryToken, List<int> header,
+        {required bool last}) =>
+    <int>[
+      ...utf8.encode(_backupChunkDomain),
+      ...recoveryToken,
+      ...header,
+      last ? 1 : 0,
+    ];
 
 /// Why creating or restoring an encrypted backup failed (card I45).
 enum BackupFailureKind {
@@ -112,10 +155,6 @@ class BackupService {
     final key = _randomBytes(32);
     final recoveryToken = _randomBytes(32);
     final nonce = _randomBytes(8);
-    final context = <int>[
-      ...utf8.encode('veritra-backup-v1'),
-      ...recoveryToken
-    ];
     final directory = await _directoryProvider();
     await _cleanupOrphans(directory);
     final file = File('${directory.path}${Platform.pathSeparator}'
@@ -123,27 +162,41 @@ class BackupService {
     RandomAccessFile? output;
     try {
       output = await file.open(mode: FileMode.writeOnly);
-      await output.writeFrom(_backupMagic);
-      await output.writeFrom(nonce);
       final chunkCount =
           (plaintext.length + _backupChunkSize - 1) ~/ _backupChunkSize;
       final metadata = ByteData(12)
         ..setUint32(0, chunkCount, Endian.big)
         ..setUint64(4, plaintext.length, Endian.big);
-      await output.writeFrom(metadata.buffer.asUint8List());
+      final header = <int>[
+        ..._backupMagic,
+        ...nonce,
+        ...metadata.buffer.asUint8List(),
+      ];
+      await output.writeFrom(header);
+      Future<void> writeFrame(List<int> encrypted) async {
+        final length = ByteData(4)..setUint32(0, encrypted.length, Endian.big);
+        await output!.writeFrom(length.buffer.asUint8List());
+        await output.writeFrom(encrypted);
+      }
+
+      await writeFrame(bindings.encryptAttachmentChunk(
+        key: key,
+        noncePrefix: nonce,
+        chunkIndex: 0,
+        context: _headerFrameContext(recoveryToken, header),
+        plaintext: header.sublist(12),
+      ));
       for (var index = 0; index < chunkCount; index++) {
         final start = index * _backupChunkSize;
         final end = min(start + _backupChunkSize, plaintext.length);
-        final encrypted = bindings.encryptAttachmentChunk(
+        await writeFrame(bindings.encryptAttachmentChunk(
           key: key,
           noncePrefix: nonce,
-          chunkIndex: index,
-          context: context,
+          chunkIndex: index + 1,
+          context: _chunkContext(recoveryToken, header,
+              last: index == chunkCount - 1),
           plaintext: plaintext.sublist(start, end),
-        );
-        final length = ByteData(4)..setUint32(0, encrypted.length, Endian.big);
-        await output.writeFrom(length.buffer.asUint8List());
-        await output.writeFrom(encrypted);
+        ));
       }
       await output.flush();
       await output.close();
@@ -328,13 +381,37 @@ class BackupService {
     final input = await file.open();
     Uint8List? decoded;
     try {
-      final magic = await _readExactly(input, 4);
-      final nonce = await _readExactly(input, 8);
-      final metadata = ByteData.sublistView(
-          Uint8List.fromList(await _readExactly(input, 12)));
-      if (!_constantTimeEqual(magic, _backupMagic)) {
+      final header = await _readExactly(input, _backupHeaderLength);
+      // Anything else, the legacy VBK1 format included (D55), is refused.
+      if (!_constantTimeEqual(header.sublist(0, 4), _backupMagic)) {
         throw const BackupException(BackupFailureKind.corrupt);
       }
+      final nonce = header.sublist(4, 12);
+      // Frame 0 first: it checks the key and seals the count and size, so
+      // nothing below trusts the cleartext header unchecked.
+      final headerFrameLength = await _readFrameLength(input);
+      if (headerFrameLength != 12 + 16) {
+        throw const BackupException(BackupFailureKind.corrupt);
+      }
+      final headerFrame = await _readExactly(input, headerFrameLength);
+      final List<int> sealedMetadata;
+      try {
+        sealedMetadata = bindings.decryptAttachmentChunk(
+          key: key,
+          noncePrefix: nonce,
+          chunkIndex: 0,
+          context: _headerFrameContext(recoveryToken, header),
+          ciphertext: headerFrame,
+        );
+      } on NativeCryptoException {
+        // The code does not open this backup (or its nonce was changed).
+        throw const BackupException(BackupFailureKind.wrongKey);
+      }
+      if (!_constantTimeEqual(sealedMetadata, header.sublist(12))) {
+        throw const BackupException(BackupFailureKind.corrupt);
+      }
+      final metadata =
+          ByteData.sublistView(Uint8List.fromList(header.sublist(12)));
       final chunkCount = metadata.getUint32(0, Endian.big);
       final plaintextSize = metadata.getUint64(4, Endian.big);
       if (plaintextSize > _maxBackupPlaintext) {
@@ -346,33 +423,22 @@ class BackupService {
               (plaintextSize + _backupChunkSize - 1) ~/ _backupChunkSize) {
         throw const BackupException(BackupFailureKind.corrupt);
       }
-      final context = <int>[
-        ...utf8.encode('veritra-backup-v1'),
-        ...recoveryToken
-      ];
       final plaintext = BytesBuilder(copy: false);
       for (var index = 0; index < chunkCount; index++) {
-        final lengthBytes = await _readExactly(input, 4);
-        final length = ByteData.sublistView(Uint8List.fromList(lengthBytes))
-            .getUint32(0, Endian.big);
-        if (length <= 16 || length > _backupChunkSize + 16) {
-          throw const BackupException(BackupFailureKind.corrupt);
-        }
+        final length = await _readFrameLength(input);
         final ciphertext = await _readExactly(input, length);
         try {
           plaintext.add(bindings.decryptAttachmentChunk(
             key: key,
             noncePrefix: nonce,
-            chunkIndex: index,
-            context: context,
+            chunkIndex: index + 1,
+            context: _chunkContext(recoveryToken, header,
+                last: index == chunkCount - 1),
             ciphertext: ciphertext,
           ));
         } on NativeCryptoException {
-          // The first chunk failing means the code does not match; a later
-          // one means the file was damaged.
-          throw BackupException(index == 0
-              ? BackupFailureKind.wrongKey
-              : BackupFailureKind.corrupt);
+          // The key already checked out on frame 0: the file was changed.
+          throw const BackupException(BackupFailureKind.corrupt);
         }
       }
       if ((await input.readByte()) != -1 || plaintext.length != plaintextSize) {
@@ -392,6 +458,18 @@ class BackupService {
       decoded?.fillRange(0, decoded.length, 0);
       await input.close();
     }
+  }
+
+  /// A frame's length: at least one byte of ciphertext and its 16-byte tag,
+  /// at most a full chunk and its tag.
+  static Future<int> _readFrameLength(RandomAccessFile input) async {
+    final length =
+        ByteData.sublistView(Uint8List.fromList(await _readExactly(input, 4)))
+            .getUint32(0, Endian.big);
+    if (length <= 16 || length > _backupChunkSize + 16) {
+      throw const BackupException(BackupFailureKind.corrupt);
+    }
+    return length;
   }
 
   Future<void> _cleanupOrphans(Directory directory) async {
