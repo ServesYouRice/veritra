@@ -1636,10 +1636,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     Future<void> Function() load,
   ) async {
     final current = session;
+    final generation = _sessionGeneration;
+    // A refresh started by a session that has since ended or been replaced
+    // reports nothing to its successor, success or failure (TASK-027).
+    bool owned() => current != null && _refreshOwned(current, generation);
     try {
       await load();
-      if (_opErrors.remove(op) != null) notifyListeners();
+      if (owned() && _opErrors.remove(op) != null) notifyListeners();
     } catch (err) {
+      if (!owned()) return;
       if (err is ApiException &&
           err.statusCode == 401 &&
           identical(session, current)) {
@@ -1662,11 +1667,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (current == null || client == null) {
       return;
     }
+    final generation = _sessionGeneration;
     try {
-      devices = await client.devices(current.token);
+      final list = await client.devices(current.token);
+      if (!_refreshOwned(current, generation)) return;
+      devices = list;
       _opErrors.remove(Ops.devices);
     } finally {
-      devicesLoaded = true;
+      if (_refreshOwned(current, generation)) devicesLoaded = true;
     }
     notifyListeners();
   }
@@ -4183,6 +4191,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   Future<void> _finishDeferredWakeWork() async {
     final current = session;
     if (current == null) return;
+    final generation = _sessionGeneration;
     await _suppressForegroundNotices(current, always: true);
     if (_refreshAfterWake) {
       _refreshAfterWake = false;
@@ -4190,9 +4199,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         await _refreshConversations(notify: true);
         await _refreshDevices();
       } catch (_) {
-        _refreshAfterWake = true;
+        // Owed again only to the session that owed it.
+        if (_refreshOwned(current, generation)) _refreshAfterWake = true;
       }
     }
+    if (!_refreshOwned(current, generation)) return;
     if (_replenishAfterWake) {
       _replenishAfterWake = false;
       await _replenishKeyPackage();
@@ -5265,6 +5276,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     _mlsReconcileNow.clear();
     _mlsReconcileRequested = true;
     _manualRetryKey = null;
+    _refreshAfterWake = false;
+    _replenishAfterWake = false;
     _unpublishedReceived.clear();
     _unpublishedGeneration = null;
     _loadingMessageConversations.clear();
