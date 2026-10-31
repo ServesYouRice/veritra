@@ -60,7 +60,7 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 		}
 	}
 	now := time.Now().UTC()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM message_envelopes WHERE sender_device_id = ? AND idempotency_key = ? AND expires_at IS NOT NULL AND expires_at <= ?`, envelope.SenderDeviceID, envelope.IdempotencyKey, formatTime(now)); err != nil {
+	if err := deleteExpiredMessageByIdempotency(ctx, tx, envelope.SenderDeviceID, envelope.IdempotencyKey, now); err != nil {
 		return domain.MessageEnvelope{}, false, 0, err
 	}
 	existing, err := scanMessage(tx.QueryRowContext(ctx, `SELECT id, conversation_id, sender_account_id, sender_device_id, idempotency_key, ciphertext, crypto_protocol, crypto_metadata_json, attachment_refs_json, reply_to_id, thread_root_id, created_at, edited_at, deleted_at, expires_at FROM message_envelopes WHERE sender_device_id = ? AND idempotency_key = ?`, envelope.SenderDeviceID, envelope.IdempotencyKey))
@@ -509,9 +509,53 @@ func (s *Store) conversationRetention(ctx context.Context, conversationID string
 }
 
 func (s *Store) pruneExpiredMessageByIdempotency(ctx context.Context, deviceID, key string, now time.Time) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM message_envelopes WHERE sender_device_id = ? AND idempotency_key = ? AND expires_at IS NOT NULL AND expires_at <= ?`, deviceID, key, formatTime(now.UTC()))
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := deleteExpiredMessageByIdempotency(ctx, tx, deviceID, key, now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// deleteExpiredMessageByIdempotency removes the device's expired envelope for
+// key, if there is one, together with the ciphertext copies in its sync
+// events, in the caller's transaction.
+func deleteExpiredMessageByIdempotency(ctx context.Context, tx *sql.Tx, deviceID, key string, now time.Time) error {
+	var messageID, conversationID string
+	err := tx.QueryRowContext(ctx, `SELECT id, conversation_id FROM message_envelopes WHERE sender_device_id = ? AND idempotency_key = ? AND expires_at IS NOT NULL AND expires_at <= ?`, deviceID, key, formatTime(now.UTC())).Scan(&messageID, &conversationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, redactMessageSyncEventsSQL+`
+		WHERE conversation_id = ? AND event_type IN (`+messageEnvelopeEventTypes+`)
+		  AND json_extract(payload_json, '$.message_id') = ?
+		  AND json_extract(payload_json, '$.envelope') IS NOT NULL`, conversationID, messageID); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `DELETE FROM message_envelopes WHERE id = ?`, messageID)
 	return err
 }
+
+// messageEnvelopeEventTypes lists the sync events that hold a copy of a
+// message envelope, ciphertext included (messageSyncEventPayload).
+const messageEnvelopeEventTypes = `'message.envelope.created', 'message.envelope.edited', 'message.envelope.deleted'`
+
+// redactMessageSyncEventsSQL starts an UPDATE that cuts a message event down
+// to the identifiers readers still need. The row and its id stay, so a cursor
+// on it keeps working; the ciphertext and every other envelope field go. The
+// sender stays so syncEventBlockedFor keeps hiding the event from accounts
+// that blocked it.
+const redactMessageSyncEventsSQL = `UPDATE sync_events SET payload_json = json_object(
+	'message_id', json_extract(payload_json, '$.message_id'),
+	'conversation_id', COALESCE(json_extract(payload_json, '$.conversation_id'), conversation_id),
+	'sender_account_id', COALESCE(json_extract(payload_json, '$.envelope.sender_account_id'), json_extract(payload_json, '$.sender_account_id')),
+	'redacted', 1)`
 
 // PruneExpiredMessages deletes server-held encrypted envelopes whose
 // disappearing-message expiry has passed.
@@ -589,6 +633,20 @@ func (s *Store) PruneExpiredContent(ctx context.Context, now time.Time) (int64, 
 	if err := rows.Close(); err != nil {
 		return 0, nil, err
 	}
+	// The envelope rows are about to go, and the sync events that copied them
+	// must not keep the ciphertext. Restricting by conversation lets the
+	// update use idx_sync_events_conversation.
+	if _, err := tx.ExecContext(ctx, redactMessageSyncEventsSQL+`
+		WHERE conversation_id IN (SELECT conversation_id FROM message_envelopes WHERE id IN (SELECT id FROM prune_expired_message_ids))
+		  AND event_type IN (`+messageEnvelopeEventTypes+`)
+		  AND json_extract(payload_json, '$.message_id') IN (SELECT id FROM prune_expired_message_ids)
+		  AND json_extract(payload_json, '$.envelope') IS NOT NULL`); err != nil {
+		return 0, nil, err
+	}
+	backfillTo, err := s.redactOrphanedMessageEvents(ctx, tx)
+	if err != nil {
+		return 0, nil, err
+	}
 	result, err := tx.ExecContext(ctx, `
 		DELETE FROM message_envelopes
 		WHERE id IN (SELECT id FROM prune_expired_message_ids)`)
@@ -637,8 +695,42 @@ func (s *Store) PruneExpiredContent(ctx context.Context, now time.Time) (int64, 
 	if err := tx.Commit(); err != nil {
 		return 0, nil, err
 	}
+	s.redactMu.Lock()
+	s.redactCursor = backfillTo
+	s.redactMu.Unlock()
 	return removed, storageKeys, nil
 }
+
+// redactOrphanedMessageEvents redacts the message events whose envelope row is
+// already gone but whose payload still holds the envelope: the copies left by
+// expiries pruned before events were redacted with them. Each call looks at a
+// window of redactBackfillWindow event ids after the cursor, so the work per
+// sweep is bounded however large sync_events is; the cursor wraps to the start
+// when it passes the newest event. It returns the cursor for the next call,
+// which the caller stores once its transaction commits.
+func (s *Store) redactOrphanedMessageEvents(ctx context.Context, tx *sql.Tx) (int64, error) {
+	s.redactMu.Lock()
+	from := s.redactCursor
+	s.redactMu.Unlock()
+	var newest int64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM sync_events`).Scan(&newest); err != nil {
+		return 0, err
+	}
+	if from >= newest {
+		return 0, nil
+	}
+	to := from + redactBackfillWindow
+	if _, err := tx.ExecContext(ctx, redactMessageSyncEventsSQL+`
+		WHERE id > ? AND id <= ? AND event_type IN (`+messageEnvelopeEventTypes+`)
+		  AND json_extract(payload_json, '$.envelope') IS NOT NULL
+		  AND NOT EXISTS (SELECT 1 FROM message_envelopes me WHERE me.id = json_extract(payload_json, '$.message_id'))`, from, to); err != nil {
+		return 0, err
+	}
+	return to, nil
+}
+
+// redactBackfillWindow is how many event ids one sweep's backfill covers.
+const redactBackfillWindow = 2000
 
 // PruneSyncEvents deletes sync events older than the cutoff. Returns the
 // number of rows removed. Intended to be run periodically by a background
@@ -796,10 +888,22 @@ func (c *syncCandidateScanner) Scan(dest ...interface{}) error {
 // syncEventVisibleTo is true when the conversation event se may go to the
 // device ?3 of account ?1: its encrypted events follow the device's MLS
 // join cursor, and nothing comes from an account ?1 blocked.
+//
+// A message event also needs its envelope row: once the message expired or
+// the row is gone, the event is hidden even from a cursor older than it, so
+// an expired envelope is never replayed. The clock is SQLite's, in the stored
+// fixed-width format, because the query takes no time parameter.
 var syncEventVisibleTo = `(NOT (se.event_type = 'mls.message.created' OR se.event_type LIKE 'message.envelope.%'
 	        OR se.event_type LIKE 'call.%')
 	   OR ` + mlsJoinFilterEventFor("?3") + `)
-	AND NOT ` + syncEventBlockedFor("?1")
+	AND NOT ` + syncEventBlockedFor("?1") + `
+	AND (se.event_type NOT LIKE 'message.envelope.%' OR EXISTS (
+	  SELECT 1 FROM message_envelopes live
+	  WHERE live.id = json_extract(se.payload_json, '$.message_id')
+	    AND (live.expires_at IS NULL OR live.expires_at > ` + sqlNowText + `)))`
+
+// sqlNowText is the current time in formatTime's layout, to the millisecond.
+const sqlNowText = `(strftime('%Y-%m-%dT%H:%M:%S', 'now') || substr(strftime('%f', 'now'), 3) || '000000Z')`
 
 // listSyncEventsQuery streams, in id order, the events after ?2 that could
 // go to device ?3 of account ?1, each with a flag that says whether it may

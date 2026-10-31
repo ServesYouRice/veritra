@@ -550,7 +550,9 @@ func TestMessageMarkersSyncSearchExportAndMembershipGuards(t *testing.T) {
 	if deleted.DeletedAt == nil || !bytes.Equal(deleted.Ciphertext, []byte("encrypted delete marker")) {
 		t.Fatalf("delete marker not persisted: %#v", deleted)
 	}
-	eventID, err := store.SaveSyncEvent(ctx, "message.envelope.deleted", nil, conversation.ID, deleted)
+	// Message events carry the payload the store itself writes (message_id plus
+	// the envelope); sync resolves the message through that id.
+	eventID, err := store.SaveSyncEvent(ctx, "message.envelope.deleted", nil, conversation.ID, messageSyncEventPayload(deleted))
 	if err != nil {
 		t.Fatalf("save sync event: %v", err)
 	}

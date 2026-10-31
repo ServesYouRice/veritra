@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -56,6 +57,12 @@ type Store struct {
 	// counts their refusals (admission_store.go).
 	limits    config.Limits
 	admission *admission.Counters
+
+	// redactCursor is where the next PruneExpiredContent looks for message
+	// sync events that outlived their envelope (redactOrphanedMessageEvents).
+	// It lives in memory: a restart only repeats a cheap, bounded scan.
+	redactMu     sync.Mutex
+	redactCursor int64
 }
 
 type dbRouter struct {
