@@ -56,6 +56,8 @@ type API struct {
 	// beforeWebSocketRegister is a test hook run between WebSocket
 	// authentication and hub registration. It is nil in production.
 	beforeWebSocketRegister func()
+	// applyDeliveries replaces Store.ApplyDeliveries in tests.
+	applyDeliveries func(ctx context.Context, accountID string, advances []storage.DeliveryAdvance) ([]storage.DeliveryAdvance, error)
 	// MaxAttachmentBytes is the operator's per-file cap (plaintext); zero
 	// means the default. The setup status tells clients, the upload enforces it.
 	MaxAttachmentBytes int64

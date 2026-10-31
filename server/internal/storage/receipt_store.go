@@ -50,6 +50,10 @@ func (s *Store) SetReadReceiptsEnabled(ctx context.Context, accountID string, en
 type DeliveryAdvance struct {
 	ConversationID string
 	MessageID      string
+	// CreatedAt is the message's created_at, the order ApplyDeliveries keeps
+	// the cursor monotonic by. It lets a queue of pending advances keep the
+	// furthest one without asking the database. Zero when unknown.
+	CreatedAt time.Time
 }
 
 // MemberReceipt is what one other member's cursors say about a conversation.
@@ -111,7 +115,7 @@ func (s *Store) DeliveryCandidates(ctx context.Context, accountID string, events
 			return nil, err
 		}
 		if moves {
-			out = append(out, DeliveryAdvance{ConversationID: conversationID, MessageID: message.id})
+			out = append(out, DeliveryAdvance{ConversationID: conversationID, MessageID: message.id, CreatedAt: message.createdAt})
 		}
 	}
 	return out, nil
