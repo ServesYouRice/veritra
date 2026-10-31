@@ -29,6 +29,17 @@ const maxForwardedHops = 16
 // such client shares the proxy's identity rather than choosing its own.
 // X-Real-IP is used only when X-Forwarded-For is absent, so the proxy must
 // overwrite it. The RFC 7239 Forwarded header is deliberately ignored.
+//
+// A trusted proxy must also overwrite X-Forwarded-For (or append the peer
+// it saw to a chain it has itself validated); setting X-Real-IP alone is
+// not enough. A non-empty X-Forwarded-For wins over X-Real-IP, so a proxy
+// that passes the client's own X-Forwarded-For through unchanged (nginx
+// does unless told to set it) lets the client choose the identity used for
+// throttles, setup authorization and realtime limits. The shipped Caddy
+// profile overwrites both headers and the shipped Traefik ingress drops
+// X-Forwarded-For from untrusted clients; any other proxy must be
+// configured the same way (docs/operations.md, "Reverse proxy and client
+// addresses").
 func (resolver *ClientIdentityResolver) ClientIP(r *http.Request) string {
 	direct := canonicalIP(remoteHost(r.RemoteAddr))
 	directIP := net.ParseIP(direct)

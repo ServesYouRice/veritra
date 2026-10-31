@@ -292,6 +292,22 @@ func (s *Store) CreateMLSCommitBundle(ctx context.Context, input MLSCommitBundle
 		if err != nil {
 			return MLSCommitBundleResult{}, err
 		}
+		// The server cannot read the commit, so a Removed entry is taken only
+		// when the server itself wants the device gone: its account left the
+		// conversation (the pending-change remove set, ListMLSPendingChanges)
+		// or the device was revoked or deleted. Otherwise any group device
+		// could evict any other from the roster, which then also locks the
+		// evicted device out of committing and claiming.
+		var removable bool
+		if err := tx.QueryRowContext(ctx, `SELECT
+			NOT EXISTS(SELECT 1 FROM memberships WHERE conversation_id = ? AND account_id = ?)
+			OR NOT EXISTS(SELECT 1 FROM devices WHERE id = ? AND revoked_at IS NULL)`,
+			input.ConversationID, accountID, removed.DeviceID).Scan(&removable); err != nil {
+			return MLSCommitBundleResult{}, err
+		}
+		if !removable {
+			return MLSCommitBundleResult{}, ErrForbidden
+		}
 		// A device whose revocation is pending leaves the roster only through
 		// its revocation commit, which the coordinator submits with
 		// RevocationDeviceID. Any other bundle removing it would leave the

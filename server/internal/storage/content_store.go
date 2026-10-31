@@ -892,10 +892,20 @@ func (s *Store) CreateBackupBlobWithChunkDigests(ctx context.Context, accountID,
 	if len(recoveryTokenHash) != 32 {
 		return ErrInvalidInput
 	}
-	var stateCounter int64
-	if err := json.Unmarshal(keyDerivationMetadata, &struct {
-		StateCounter *int64 `json:"state_counter"`
-	}{StateCounter: &stateCounter}); err != nil || stateCounter <= 0 {
+	// The counter is read the way the history check below reads stored
+	// documents, so the value checked is the value stored: encoding/json
+	// would also accept "STATE_COUNTER" or take the last of repeated keys.
+	var counterType sql.NullString
+	var stateCounter sql.NullInt64
+	if !json.Valid(keyDerivationMetadata) {
+		return ErrInvalidInput
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT json_type(?1, '$.state_counter'),
+		CASE WHEN json_type(?1, '$.state_counter') = 'integer' THEN json_extract(?1, '$.state_counter') END`,
+		string(keyDerivationMetadata)).Scan(&counterType, &stateCounter); err != nil {
+		return err
+	}
+	if counterType.String != "integer" || !stateCounter.Valid || stateCounter.Int64 <= 0 {
 		return ErrInvalidInput
 	}
 	// A session without a device stores a NULL device_id; IS matches that NULL
@@ -907,7 +917,7 @@ func (s *Store) CreateBackupBlobWithChunkDigests(ctx context.Context, accountID,
 		FROM backup_blobs WHERE account_id = ? AND device_id IS ?`, accountID, storedDeviceID).Scan(&previousCounter); err != nil {
 		return err
 	}
-	if previousCounter.Valid && stateCounter <= previousCounter.Int64 {
+	if previousCounter.Valid && stateCounter.Int64 <= previousCounter.Int64 {
 		return ErrInvalidInput
 	}
 	recoveryExpiresAt := time.Now().UTC().Add(RecoveryCapabilityLifetime)
