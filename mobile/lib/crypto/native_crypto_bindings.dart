@@ -218,8 +218,6 @@ class NativeCryptoBindings {
             'pm_crypto_group_add_member'),
         _groupCommit = library.lookupFunction<_HandleTwoSlicesNative,
             _HandleTwoSlicesDart>('pm_crypto_group_process_commit'),
-        _groupUpdate = library.lookupFunction<_HandleSliceOutputNative,
-            _HandleSliceOutputDart>('pm_crypto_group_self_update'),
         _groupSafety = library.lookupFunction<_HandleSliceTwoOutputsNative,
             _HandleSliceTwoOutputsDart>('pm_crypto_group_safety_number'),
         _groupRemove =
@@ -300,7 +298,6 @@ class NativeCryptoBindings {
   final _HandleTwoSlicesDart _groupJoin;
   final _AddMemberDart _groupAdd;
   final _HandleTwoSlicesDart _groupCommit;
-  final _HandleSliceOutputDart _groupUpdate;
   final _HandleSliceTwoOutputsDart _groupSafety;
   final _RemoveMemberDart _groupRemove;
   final _StageCommitDart _groupStageCommit;
@@ -810,8 +807,22 @@ class NativeCryptoDevice implements Finalizable {
         const [],
     List<({String accountId, String deviceId})> removes = const [],
   }) {
-    _bindings._bounded(groupId.codeUnits, 128);
     final changes = encodeMembershipChanges(adds: adds, removes: removes);
+    return _stage(groupId, changes, expectWelcome: adds.isNotEmpty);
+  }
+
+  /// Stages one unmerged self-update: a commit with an update path that
+  /// adds and removes no one and gives this device's leaf a fresh key
+  /// (periodic self-update). The native side reads an empty change list
+  /// this way. Merge it only after the server accepts it, like [stageCommit].
+  ({List<int> commit, List<int> welcome, int epoch}) stageSelfUpdate(
+          String groupId) =>
+      _stage(groupId, emptyMembershipChanges, expectWelcome: false);
+
+  ({List<int> commit, List<int> welcome, int epoch}) _stage(
+      String groupId, List<int> changes,
+      {required bool expectWelcome}) {
+    _bindings._bounded(groupId.codeUnits, 128);
     return _bindings._withByteLists([groupId.codeUnits, changes], (slices) {
       final commit = calloc<_PmOwnedBuffer>();
       final welcome = calloc<_PmOwnedBuffer>();
@@ -832,7 +843,7 @@ class NativeCryptoDevice implements Finalizable {
             ..data = nullptr
             ..len = 0;
         }
-        if (adds.isEmpty != welcomeBytes.isEmpty) {
+        if (expectWelcome == welcomeBytes.isEmpty) {
           throw const NativeCryptoException(NativeCryptoError.invalidOutput);
         }
         return (commit: commitBytes, welcome: welcomeBytes, epoch: epoch.value);
@@ -883,14 +894,6 @@ class NativeCryptoDevice implements Finalizable {
     _bindings._bounded(commit, 4 * 1024 * 1024);
     _withTwo(groupId.codeUnits, commit,
         (group, value) => _bindings._groupCommit(_liveHandle, group, value));
-  }
-
-  List<int> selfUpdate(String groupId) {
-    _bindings._bounded(groupId.codeUnits, 128);
-    return _bindings._withSlice(
-        Uint8List.fromList(groupId.codeUnits),
-        (group) => _bindings
-            ._output((out) => _bindings._groupUpdate(_liveHandle, group, out)));
   }
 
   ({List<int> transcriptHash, String digits}) conversationSafetyNumber(
@@ -984,6 +987,10 @@ class NativeCryptoDevice implements Finalizable {
 }
 
 /// Encodes the change list of `pm_crypto_group_stage_commit` (ABI 6).
+/// The change list that asks `pm_crypto_group_stage_commit` for a
+/// self-update: version 1, no adds, no removes.
+const List<int> emptyMembershipChanges = <int>[1, 0, 0, 0, 0];
+
 List<int> encodeMembershipChanges({
   required List<({List<int> keyPackage, String accountId, String deviceId})>
       adds,

@@ -15,7 +15,7 @@ func TestLimitsDefaultWhenUnset(t *testing.T) {
 	}
 	got := cfg.Limits.WithDefaults()
 	want := Limits{AccountStorageBytes: 512 << 20, AccountBlobs: 10000, DevicesPerAccount: 10, ConversationMembers: 100,
-		ConversationsPerAccount: 1000, KeyPackageClaimsPerTarget: 25, DeliveriesPerMinute: 1000, WriteBytesPerHour: 64 << 20, AttachmentBytes: 48 << 20, SocketsPerIPv6Prefix: 200}
+		ConversationsPerAccount: 1000, KeyPackageClaimsPerTarget: 25, MLSSelfUpdateMinutes: 60, DeliveriesPerMinute: 1000, WriteBytesPerHour: 64 << 20, AttachmentBytes: 48 << 20, SocketsPerIPv6Prefix: 200}
 	if got != want {
 		t.Fatalf("defaults = %+v, want %+v", got, want)
 	}
@@ -46,6 +46,7 @@ func TestLimitsParseAndBound(t *testing.T) {
 		"PRIVATE_MESSENGER_LIMIT_WRITE_MIB_PER_HOUR":            "-1",
 		"PRIVATE_MESSENGER_LIMIT_ATTACHMENT_MIB":                "49",
 		"PRIVATE_MESSENGER_LIMIT_KEY_PACKAGE_CLAIMS_PER_TARGET": "51",
+		"PRIVATE_MESSENGER_LIMIT_MLS_SELF_UPDATE_MINUTES":       "10081",
 	} {
 		t.Run(key, func(t *testing.T) {
 			t.Setenv(key, value)

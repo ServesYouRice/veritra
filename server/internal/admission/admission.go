@@ -25,13 +25,14 @@ const (
 	Conversations = "conversations"
 	Members       = "conversation_members"
 	KeyPackages   = "key_package_claims"
+	SelfUpdates   = "mls_self_updates"
 	Deliveries    = "deliveries"
 	WriteBytes    = "write_bytes"
 	Disk          = "disk"
 )
 
 // Names lists every limit in a fixed order.
-var Names = [...]string{Storage, Blobs, Devices, DeviceLinks, Conversations, Members, KeyPackages, Deliveries, WriteBytes, Disk}
+var Names = [...]string{Storage, Blobs, Devices, DeviceLinks, Conversations, Members, KeyPackages, SelfUpdates, Deliveries, WriteBytes, Disk}
 
 // Counters counts refused requests by limit. The zero value is ready; a nil
 // *Counters ignores Reject.

@@ -77,8 +77,16 @@ void main() {
             senderAccountId: 'acct_mallory', senderDeviceId: 'dev_mallory'),
         throwsA(isA<NativeCryptoException>().having(
             (error) => error.kind, 'kind', NativeCryptoError.senderMismatch)));
-    final update = alice.selfUpdate('conv_test');
-    bob.processCommit('conv_test', update);
+    // A self-update is staged and merged only once accepted (D28).
+    final before = alice.groupEpoch('conv_test');
+    final update = alice.stageSelfUpdate('conv_test');
+    expect(update.welcome, isEmpty);
+    expect(update.epoch, before.epoch);
+    expect(alice.groupEpoch('conv_test'), (epoch: before.epoch, pending: true));
+    alice.mergePendingCommit('conv_test');
+    bob.processCommit('conv_test', update.commit);
+    expect(
+        bob.groupEpoch('conv_test'), (epoch: before.epoch + 1, pending: false));
     expect(
         () => bob.decrypt('conv_test', [1],
             senderAccountId: 'acct_alice', senderDeviceId: 'dev_alice'),

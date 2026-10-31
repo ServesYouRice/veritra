@@ -25,6 +25,7 @@ class NativeCryptoService
     implements
         BoundedMlsConversationCryptoService,
         ConversationAuthorityConsumer,
+        MlsSelfUpdateCryptoService,
         NoticeCaptureConsumer {
   NativeCryptoService({
     required this.bindings,
@@ -254,6 +255,33 @@ class NativeCryptoService
               state: _sealNext(previous),
               messages: <PendingMlsMessage>[
                 _bundleItem(conversationId, bundle)
+              ],
+            ),
+          );
+        } catch (_) {
+          await _restorePrevious(previous);
+          rethrow;
+        }
+      });
+
+  @override
+  Future<void> stageSelfUpdate(String conversationId) => _serial(() async {
+        final previous = await _requiredState();
+        try {
+          final staged = _requiredDevice().stageSelfUpdate(conversationId);
+          if (staged.commit.isEmpty || staged.welcome.isNotEmpty) {
+            throw StateError('MLS self-update output is invalid');
+          }
+          await localStore.commitOutgoingMlsTransition(
+            OutgoingMlsStateTransition(
+              expectedCounter: previous.counter,
+              expectedCursor: await localStore.loadSyncCursor(),
+              state: _sealNext(previous),
+              messages: <PendingMlsMessage>[
+                _bundleItem(
+                  conversationId,
+                  MlsCommitBundle(epoch: staged.epoch, commit: staged.commit),
+                ),
               ],
             ),
           );

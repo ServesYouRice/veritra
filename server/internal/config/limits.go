@@ -24,8 +24,13 @@ type Limits struct {
 	// target's single-use pool (50 packages), so without it any conversation
 	// member could empty it.
 	KeyPackageClaimsPerTarget int
-	DeliveriesPerMinute       int
-	WriteBytesPerHour         int64
+	// MLSSelfUpdateMinutes is the shortest time between two update-only MLS
+	// commits (a self-update that adds and removes no one) from one device
+	// in one conversation. Each accepted commit moves the group to a new
+	// epoch, so without it one device could churn epochs for everyone.
+	MLSSelfUpdateMinutes int
+	DeliveriesPerMinute  int
+	WriteBytesPerHour    int64
 	// AttachmentBytes is the largest file (plaintext) one attachment may
 	// hold, counting the zero padding the app adds inside the encryption
 	// (it pads to at most this cap); the upload route accepts that plus the
@@ -53,12 +58,17 @@ const (
 	// which still covers setting up that many groups with it.
 	DefaultKeyPackageClaimsPerTarget = 25
 	MaxKeyPackageClaimsPerTarget     = 50
-	DefaultDeliveriesPerMinute       = 1000
-	DefaultWriteMiBPerHour           = 64
-	DefaultAttachmentMiB             = 48 // what the app encrypts at most
-	MaxAttachmentMiB                 = 48
-	DefaultSocketsPerIPv6Prefix      = 200
-	PendingDeviceLinksPerAccount     = 3
+	// DefaultMLSSelfUpdateMinutes allows one self-update an hour per device
+	// and conversation. Apps refresh after 100 sent messages or 7 days, so
+	// only a device sending more than 100 messages an hour in one chat waits.
+	DefaultMLSSelfUpdateMinutes  = 60
+	MaxMLSSelfUpdateMinutes      = 10080 // 7 days, the apps' time trigger
+	DefaultDeliveriesPerMinute   = 1000
+	DefaultWriteMiBPerHour       = 64
+	DefaultAttachmentMiB         = 48 // what the app encrypts at most
+	MaxAttachmentMiB             = 48
+	DefaultSocketsPerIPv6Prefix  = 200
+	PendingDeviceLinksPerAccount = 3
 )
 
 type limitSetting struct {
@@ -76,6 +86,7 @@ var limitSettings = []limitSetting{
 	{"PRIVATE_MESSENGER_LIMIT_CONVERSATION_MEMBERS", 2, 1000, 1, func(l *Limits, v int64) { l.ConversationMembers = int(v) }},
 	{"PRIVATE_MESSENGER_LIMIT_CONVERSATIONS_PER_ACCOUNT", 10, 10_000, 1, func(l *Limits, v int64) { l.ConversationsPerAccount = int(v) }},
 	{"PRIVATE_MESSENGER_LIMIT_KEY_PACKAGE_CLAIMS_PER_TARGET", 1, MaxKeyPackageClaimsPerTarget, 1, func(l *Limits, v int64) { l.KeyPackageClaimsPerTarget = int(v) }},
+	{"PRIVATE_MESSENGER_LIMIT_MLS_SELF_UPDATE_MINUTES", 1, MaxMLSSelfUpdateMinutes, 1, func(l *Limits, v int64) { l.MLSSelfUpdateMinutes = int(v) }},
 	{"PRIVATE_MESSENGER_LIMIT_DELIVERIES_PER_MINUTE", 60, 1_000_000, 1, func(l *Limits, v int64) { l.DeliveriesPerMinute = int(v) }},
 	{"PRIVATE_MESSENGER_LIMIT_WRITE_MIB_PER_HOUR", 16, 65_536, mib, func(l *Limits, v int64) { l.WriteBytesPerHour = v }},
 	{"PRIVATE_MESSENGER_LIMIT_ATTACHMENT_MIB", 1, MaxAttachmentMiB, mib, func(l *Limits, v int64) { l.AttachmentBytes = v }},
@@ -121,6 +132,9 @@ func (l Limits) WithDefaults() Limits {
 	}
 	if l.KeyPackageClaimsPerTarget == 0 {
 		l.KeyPackageClaimsPerTarget = DefaultKeyPackageClaimsPerTarget
+	}
+	if l.MLSSelfUpdateMinutes == 0 {
+		l.MLSSelfUpdateMinutes = DefaultMLSSelfUpdateMinutes
 	}
 	if l.DeliveriesPerMinute == 0 {
 		l.DeliveriesPerMinute = DefaultDeliveriesPerMinute

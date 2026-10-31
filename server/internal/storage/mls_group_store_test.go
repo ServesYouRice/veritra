@@ -276,7 +276,9 @@ func TestMLSCommitBundleRejectsOutsidersAndLegacyGroups(t *testing.T) {
 	for name, input := range map[string]MLSCommitBundleInput{
 		"welcome without add": {Epoch: 0, IdempotencyKey: "a", Commit: []byte("c"), Welcome: []byte("w"),
 			Removed: []MLSDeviceRef{{AccountID: bob.Account.ID, DeviceID: bob.Device.ID}}},
-		"commit without change": {Epoch: 0, IdempotencyKey: "b", Commit: []byte("c")},
+		// A commit without a declared change is an update-only commit
+		// (mls_self_update_test.go); it may not carry a Welcome.
+		"update with a welcome": {Epoch: 0, IdempotencyKey: "b", Commit: []byte("c"), Welcome: []byte("w")},
 		"self removal": {Epoch: 0, IdempotencyKey: "c", Commit: []byte("c"),
 			Removed: []MLSDeviceRef{{AccountID: owner.Account.ID, DeviceID: owner.Device.ID}}},
 	} {
