@@ -186,13 +186,17 @@ void main() {
         await alice.send(AppPayloadType.text, <String, Object?>{'text': 'bye'});
     await bob.receive(alice, after);
     expect((await bob.history()).last.body, 'bye');
-    // Nor can it read what the group sends after the removal.
-    await expectLater(
-        tablet.receive(alice, after),
-        throwsA(isA<NativeCryptoException>().having(
-            (error) => error.kind, 'kind', NativeCryptoError.operationFailed)));
-    expect((await tablet.history()).map((message) => message.body),
-        <String?>['hi']);
+    // Nor can it read what the group sends after the removal: sync moves
+    // past it and history holds a placeholder with no content (D54).
+    await tablet.receive(alice, after);
+    final event = await tablet.store.loadSyncCursor();
+    final history = await tablet.history();
+    expect(history.map((message) => message.body), <String?>['hi', null]);
+    final placeholder = history.last;
+    expect(placeholder.key,
+        'undecryptable:$event:${placeholder.serverMessageId}');
+    expect(placeholder.kind, LocalMessageKind.invalid);
+    expect(placeholder.formatJson, isNull);
   }, skip: skip);
 
   test('a refused commit is dropped and the winner applies cleanly', () async {
