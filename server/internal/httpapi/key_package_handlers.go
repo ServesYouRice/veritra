@@ -93,6 +93,12 @@ func (a *API) claimConversationKeyPackages(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusConflict, "key_package_unavailable")
 		return
 	}
+	if errors.Is(err, storage.ErrKeyPackageClaimLimit) {
+		// The claims count over a day; an hour is when asking again is worth it.
+		w.Header().Set("Retry-After", "3600")
+		writeError(w, http.StatusTooManyRequests, "key_package_claim_limit")
+		return
+	}
 	if err != nil {
 		handleStorageError(w, err)
 		return

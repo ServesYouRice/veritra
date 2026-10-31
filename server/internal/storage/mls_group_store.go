@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"private-messenger/server/internal/admission"
 	"private-messenger/server/internal/domain"
 )
 
@@ -597,6 +598,16 @@ func (s *Store) ClaimDeviceKeyPackages(ctx context.Context, conversationID, requ
 		}
 		if err != nil {
 			return nil, err
+		}
+		// A device over its claim limit is skipped like one with no package
+		// left: the caller adds it to the group later.
+		allowed, err := s.keyPackageClaimAllowed(ctx, tx, deviceID, accountID, requesterAccountID, claimedAt)
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
+			_ = s.refuse(admission.KeyPackages, ErrKeyPackageClaimLimit)
+			continue
 		}
 		var item domain.DeviceKeyPackage
 		var createdAt, expiresAt string
