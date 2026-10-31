@@ -16,6 +16,7 @@ import 'crypto/native_crypto_service.dart';
 import 'features/chat/attachment_views.dart' show purgeOpenedAttachments;
 import 'features/chat/composer_attachments.dart' show purgePastedImages;
 import 'main.dart' show VeritraApp, StartupFailureApp;
+import 'push/background_wake_runner.dart';
 import 'push/push_service.dart';
 import 'push/wake_worker_bridge.dart';
 import 'push/wake_launch_coordinator.dart';
@@ -53,58 +54,109 @@ Future<void> main(List<String> args) async {
   }
   final namespace = profile == null ? 'demo' : 'demo-$profile';
   final bridge = PlatformWakeWorkerBridge();
+  // One store and one AppState per process (D52 contract): a background
+  // wake and the UI share them, so two owners never race on MLS state.
+  SecureLocalStore? localStore;
+  AppState? appState;
+  AppState build({required bool background}) {
+    final existing = appState;
+    if (existing != null) return existing;
+    // A cold background start opens only existing protected state: no key,
+    // database or profile is created for a push.
+    final store = localStore =
+        SecureLocalStore(namespace: namespace, existingOnly: background);
+    final bindings = NativeCryptoBindings.load();
+    final state = AppState(
+      apiClientFactory: (baseUrl) => ApiClient(baseUrl: baseUrl),
+      cryptoService: NativeCryptoService(
+        bindings: bindings,
+        localStore: store,
+      ),
+      localStore: store,
+      backupService: BackupService(
+        bindings: bindings,
+        localStore: store,
+        clientFactory: (baseUrl) {
+          // A recovery code names its server; demo builds still accept only
+          // HTTPS or loopback (D12).
+          if (!TransportPolicy.demo.allows(baseUrl)) {
+            throw StateError('recovery code names a server this build refuses');
+          }
+          return ApiClient(baseUrl: baseUrl);
+        },
+      ),
+      attachmentService: AttachmentCryptoService(bindings),
+      receiptPreferences: ReceiptPreferences(SecureReceiptPreferenceStore()),
+      syncServiceFactory: (baseUrl, token) =>
+          WebSocketSyncService(baseUrl: baseUrl, token: token),
+      pushService: Platform.isAndroid || Platform.isIOS
+          ? PlatformMobilePushService()
+          : DisabledMobilePushService(),
+      config: ClientConfig(
+        demo: true,
+        transport: TransportPolicy.demo,
+        deviceName:
+            profile == null ? _deviceName() : '${_deviceName()} ($profile)',
+        defaultServerUrl: 'http://localhost:8080',
+        syncWhileUnfocused:
+            Platform.isWindows || Platform.isLinux || Platform.isMacOS,
+      ),
+    );
+    // A headless engine has no view: never treat it as resumed.
+    if (background) state.handleAppLifecycleState(AppLifecycleState.detached);
+    return appState = state;
+  }
+
+  BackgroundWakeRunner? runner;
   final launch = WakeLaunchCoordinator(
     bridge: bridge,
     profile: namespace,
-    onUi: () async {
-      final localStore = SecureLocalStore(
-          namespace: profile == null ? 'demo' : 'demo-$profile');
-      final bindings = NativeCryptoBindings.load();
-      final state = AppState(
-        apiClientFactory: (baseUrl) => ApiClient(baseUrl: baseUrl),
-        cryptoService: NativeCryptoService(
-          bindings: bindings,
-          localStore: localStore,
-        ),
-        localStore: localStore,
-        backupService: BackupService(
-          bindings: bindings,
-          localStore: localStore,
-          clientFactory: (baseUrl) {
-            // A recovery code names its server; demo builds still accept only
-            // HTTPS or loopback (D12).
-            if (!TransportPolicy.demo.allows(baseUrl)) {
-              throw StateError(
-                  'recovery code names a server this build refuses');
-            }
-            return ApiClient(baseUrl: baseUrl);
-          },
-        ),
-        attachmentService: AttachmentCryptoService(bindings),
-        receiptPreferences: ReceiptPreferences(SecureReceiptPreferenceStore()),
-        syncServiceFactory: (baseUrl, token) =>
-            WebSocketSyncService(baseUrl: baseUrl, token: token),
-        pushService: Platform.isAndroid || Platform.isIOS
-            ? PlatformMobilePushService()
-            : DisabledMobilePushService(),
-        config: ClientConfig(
-          demo: true,
-          transport: TransportPolicy.demo,
-          deviceName:
-              profile == null ? _deviceName() : '${_deviceName()} ($profile)',
-          defaultServerUrl: 'http://localhost:8080',
-          syncWhileUnfocused:
-              Platform.isWindows || Platform.isLinux || Platform.isMacOS,
-        ),
+    // Reached only when native reports a background launch bound to this
+    // compiled profile with its silent path installed. Native cold execution
+    // and server opt-in stay disabled (can_opt_in:false), so today this runs
+    // nowhere; it is the guarded D52 wiring for the later reviewed enablement.
+    onBackground: () async {
+      final state = build(background: true);
+      final worker = runner = BackgroundWakeRunner(
+        profile: namespace,
+        bridge: bridge,
+        restoreExisting: state.restoreForBackgroundWake,
+        catchUp: state.catchUpForBackgroundWake,
+        mayStart: () => !state.foregroundActive,
       );
+      // Sign-out revokes the native permit and scheduled work before the
+      // private notice state is cleared. It cancels without draining: the
+      // session generation already fences any late commit, and waiting here
+      // could wait on a restore queued behind this very sign-out. The worker
+      // stays uninstalled until the next process start.
+      state.beforeLocalSessionClear = () async {
+        worker.cancelForForeground();
+        await bridge.uninstall(namespace);
+      };
+      final installed = await bridge.install(
+          profile: namespace, onRun: worker.run, onCancel: worker.cancel);
+      if (!installed) {
+        state.beforeLocalSessionClear = null;
+        runner = null;
+      }
+    },
+    // The UI takes over: cancel any wake first, then wait for its atomic
+    // work to drain before the foreground owner starts.
+    beforeUi: () async {
+      final worker = runner;
+      if (worker == null) return;
+      worker.cancelForForeground();
+      await worker.drain();
+    },
+    onUi: () async {
+      final state = build(background: false);
+      localStore?.allowForegroundInitialization();
       final desktop = await DesktopServices.startIfSupported(state);
       runApp(VeritraApp(state: state, desktop: desktop));
       unawaited(purgeOpenedAttachments());
       unawaited(purgePastedImages());
       unawaited(state.tryRestoreSession());
     },
-    // Cold demo work is added only through this normal compiled entry point,
-    // after the existing-only store and bounded sync owner are installed.
     onUiError: () => runApp(const StartupFailureApp()),
   );
   await launch.start();
