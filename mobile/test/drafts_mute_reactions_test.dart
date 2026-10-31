@@ -277,12 +277,15 @@ void main() {
       // Clearing the cache for a sign-out drops the drafts with it.
       await store.clearCachedState(preserveOutbox: true);
       expect(await store.loadDrafts(), isEmpty);
+      expect(await store.loadConversationMutes(), isEmpty);
 
       await store.saveDraft('conv_1', 'secret draft');
+      await store.saveConversationMute('conv_1', muted: true);
+      expect(await store.loadConversationMutes(), hasLength(1));
       // A session that expired keeps the drafts for the next sign-in; the
       // mute copies are refetched from the server.
       await store.clearCachedState(preserveOutbox: true, keepDrafts: true);
-      expect(await store.loadDrafts(), hasLength(1));
+      expect((await store.loadDrafts())['conv_1']?.text, 'secret draft');
       expect(await store.loadConversationMutes(), isEmpty);
 
       await store.saveDraft('conv_1', 'secret draft');
