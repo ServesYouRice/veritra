@@ -2418,6 +2418,18 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     }
   }
 
+  /// Writes every pending draft and waits for the writes. Runs while the
+  /// session that owns the drafts is still current, before a session end
+  /// clears local data (D65): an expired session keeps the newest text, and
+  /// sign-out wipes it with the rest instead of a late timer writing it back.
+  Future<void> _flushDraftsBeforeSessionEnd() async {
+    final pending = _draftTimers.keys.toList(growable: false);
+    _cancelDraftTimers();
+    for (final id in pending) {
+      await _persistDraft(id);
+    }
+  }
+
   void _cancelDraftTimers() {
     for (final timer in _draftTimers.values) {
       timer.cancel();
@@ -5294,7 +5306,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (cryptoService case final NoticeCaptureConsumer capture) {
       capture.noticeCaptureEnabled = false;
     }
-    _cancelDraftTimers();
+    await _flushDraftsBeforeSessionEnd();
     final previousOwner = _syncOwner;
     _syncOwner = null;
     previousOwner?.dispose();
