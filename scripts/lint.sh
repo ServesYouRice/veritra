@@ -6,8 +6,10 @@ sh "$ROOT/scripts/check-go-toolchain.sh"
 GO_VERSION="$(tr -d '[:space:]' < "$ROOT/.go-version")"
 
 # Keep gofmt and go vet as distinct checks so a formatting failure does not mask
-# vet output (and vice versa); each reports its own result.
-go_lint='unformatted="$(gofmt -l .)"; if [ -n "$unformatted" ]; then echo "gofmt needed:"; echo "$unformatted"; exit 1; fi; go vet ./...'
+# vet output (and vice versa); each reports its own result. The child shell has
+# no errexit, so gofmt's own failure (a parse error prints nothing on stdout)
+# is checked explicitly.
+go_lint='unformatted="$(gofmt -l .)" || { echo "gofmt failed" >&2; exit 1; }; if [ -n "$unformatted" ]; then echo "gofmt needed:"; echo "$unformatted"; exit 1; fi; go vet ./...'
 if command -v go >/dev/null 2>&1; then
   (cd "$ROOT/server" && sh -c "$go_lint")
 else

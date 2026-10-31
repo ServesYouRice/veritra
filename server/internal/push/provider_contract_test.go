@@ -194,7 +194,7 @@ func TestAPNsRequestContractAndPKCS8Keys(t *testing.T) {
 	if request.URL.String() != "https://api.sandbox.push.apple.com/3/device/"+token {
 		t.Fatalf("url=%s", request.URL)
 	}
-	for header, want := range map[string]string{"apns-topic": "org.veritra.app", "apns-push-type": "background", "apns-priority": "5"} {
+	for header, want := range map[string]string{"apns-topic": "org.veritra.app", "apns-push-type": "alert", "apns-priority": "10"} {
 		if request.Header.Get(header) != want {
 			t.Fatalf("%s=%q", header, request.Header.Get(header))
 		}
@@ -204,7 +204,8 @@ func TestAPNsRequestContractAndPKCS8Keys(t *testing.T) {
 		t.Fatalf("jwt header=%v", header)
 	}
 	aps := body["aps"].(map[string]any)
-	if aps["content-available"] != float64(1) || len(aps) != 1 || body["event"] != "new_encrypted_event_available" {
+	// D53: a generic localized alert plus the sync wake (apns_alert_test.go).
+	if aps["content-available"] != float64(1) || aps["alert"] == nil || len(aps) != 3 || body["event"] != "new_encrypted_event_available" {
 		t.Fatalf("body=%v", body)
 	}
 	// Only HTTP 410 and the exact reason Unregistered retire a subscription.

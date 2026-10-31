@@ -1989,6 +1989,12 @@ abstract class AppLocalizations {
   /// **'Link this device again'**
   String get bannerRelink;
 
+  /// No description provided for @bannerRestoreBackup.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore from backup'**
+  String get bannerRestoreBackup;
+
   /// No description provided for @bannerRelinkTitle.
   ///
   /// In en, this message translates to:

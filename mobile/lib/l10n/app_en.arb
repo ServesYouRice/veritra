@@ -425,6 +425,7 @@
   "bannerPaused": "Messages paused",
   "bannerTryAgain": "Try again",
   "bannerRelink": "Link this device again",
+  "bannerRestoreBackup": "Restore from backup",
   "bannerRelinkTitle": "Link this device again?",
   "bannerRelinkMessage": "This signs this device out and deletes its messages and encryption keys. Link it again from another device afterwards. Messages that are only on this device cannot be recovered.",
   "bannerRelinkConfirm": "Delete and sign out",

@@ -59,6 +59,11 @@ func TestNotificationModeFCMAndAPNsContractsRemainSilent(t *testing.T) {
 			if message["android"].(map[string]any)["priority"] != "normal" {
 				t.Fatal("silent wake promoted priority")
 			}
+			if mode == domain.PushNotificationLegacy {
+				// D53: the legacy APNs wake is a visible generic alert;
+				// apns_alert_test.go checks it. Only FCM stays silent here.
+				return
+			}
 			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 			if err != nil {
 				t.Fatal(err)

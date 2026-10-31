@@ -277,12 +277,15 @@ void main() {
       // Clearing the cache for a sign-out drops the drafts with it.
       await store.clearCachedState(preserveOutbox: true);
       expect(await store.loadDrafts(), isEmpty);
+      expect(await store.loadConversationMutes(), isEmpty);
 
       await store.saveDraft('conv_1', 'secret draft');
+      await store.saveConversationMute('conv_1', muted: true);
+      expect(await store.loadConversationMutes(), hasLength(1));
       // A session that expired keeps the drafts for the next sign-in; the
       // mute copies are refetched from the server.
       await store.clearCachedState(preserveOutbox: true, keepDrafts: true);
-      expect(await store.loadDrafts(), hasLength(1));
+      expect((await store.loadDrafts())['conv_1']?.text, 'secret draft');
       expect(await store.loadConversationMutes(), isEmpty);
 
       await store.saveDraft('conv_1', 'secret draft');
@@ -376,6 +379,35 @@ void main() {
         expect(state.composerDrafts.textFor('conv_1'), isEmpty);
         state.dispose();
       });
+
+      test(
+          '${entry.key}: an edit still waiting to be saved does not come '
+          'back after sign-out', () async {
+        final (state, store, _) = await start();
+        state.composerDrafts.setText('conv_1', 'typed just before');
+        await state.logout();
+        // Longer than the save delay: a timer that survived would write now.
+        await Future<void>.delayed(const Duration(milliseconds: 800));
+        expect(await store.loadDrafts(), isEmpty);
+        state.dispose();
+      });
+
+      test(
+          '${entry.key}: an edit still waiting to be saved survives a '
+          'rejected session', () async {
+        final (state, store, api) = await start();
+        state.composerDrafts.setText('conv_1', 'typed just before');
+        api.rejectToken = true;
+        await state.refreshConversations();
+        await Future<void>.delayed(const Duration(milliseconds: 800));
+        expect(state.session, isNull);
+        expect((await store.loadDrafts())['conv_1']?.text, 'typed just before');
+        state.dispose();
+        // UQ-003: keepDrafts means the same person signs in again to their
+        // drafts, so a pending edit should be flushed, not dropped. Today
+        // _clearLocalSessionSteps cancels the draft timers first and the
+        // older saved text comes back. The fix is in app_state.dart.
+      }, skip: 'pending draft edits are dropped at session expiry (TASK-103)');
 
       test(
           '${entry.key}: a rejected session keeps the drafts and the next '

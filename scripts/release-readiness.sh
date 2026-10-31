@@ -31,13 +31,29 @@ if grep -q 'PM_CRYPTO_UNAVAILABLE' crypto/rust/src/lib.rs || \
   exit 1
 fi
 
-if [ -n "${RELEASE_EVIDENCE_FILE:-}" ] || [ -f "$ROOT/dist/release-evidence.json" ]; then
-  python3 "$ROOT/scripts/check-release-evidence.py" \
-    --root "$ROOT" \
-    --policy "${RELEASE_POLICY_FILE:-$ROOT/release/release-policy.json}" \
-    --evidence "${RELEASE_EVIDENCE_FILE:-$ROOT/dist/release-evidence.json}" \
-    --expected-commit "${RELEASE_COMMIT:-$(git rev-parse HEAD)}" \
-    --approvals-commit "$APPROVALS_COMMIT"
+# The full evidence check runs when RELEASE_EVIDENCE_FILE names the evidence
+# (release.yml's final gate) or a local dist/release-evidence.json exists.
+# Without either, only the preflight above ran (release.yml's first call,
+# before anything is built), and the last line says so. Set but empty is a
+# misconfigured final gate, so it fails instead of falling back.
+if [ -n "${RELEASE_EVIDENCE_FILE+set}" ] && [ -z "$RELEASE_EVIDENCE_FILE" ]; then
+  echo "release blocked: RELEASE_EVIDENCE_FILE is set but empty" >&2
+  exit 1
+fi
+EVIDENCE_FILE=${RELEASE_EVIDENCE_FILE:-}
+if [ -z "$EVIDENCE_FILE" ] && [ -f "$ROOT/dist/release-evidence.json" ]; then
+  EVIDENCE_FILE=$ROOT/dist/release-evidence.json
+fi
+if [ -z "$EVIDENCE_FILE" ]; then
+  echo "release readiness preflight gates passed; release evidence was not checked (RELEASE_EVIDENCE_FILE is unset and there is no dist/release-evidence.json)"
+  exit 0
 fi
 
-echo "release readiness gates passed"
+python3 "$ROOT/scripts/check-release-evidence.py" \
+  --root "$ROOT" \
+  --policy "${RELEASE_POLICY_FILE:-$ROOT/release/release-policy.json}" \
+  --evidence "$EVIDENCE_FILE" \
+  --expected-commit "${RELEASE_COMMIT:-$(git rev-parse HEAD)}" \
+  --approvals-commit "$APPROVALS_COMMIT"
+
+echo "release readiness gates passed, including the release evidence in $EVIDENCE_FILE"

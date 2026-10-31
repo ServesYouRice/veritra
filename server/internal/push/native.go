@@ -37,6 +37,14 @@ type FCMProvider struct {
 	expiresAt   time.Time
 }
 
+// apnsWakeExpiry bounds how long APNs keeps a silent wake; a stale wake is
+// worthless. apnsAlertExpiry keeps the generic visible alert (D53) for a phone
+// that is offline for a while.
+const (
+	apnsWakeExpiry  = time.Minute
+	apnsAlertExpiry = 4 * time.Hour
+)
+
 func NewFCMProvider(config FCMConfig) (*FCMProvider, error) {
 	if strings.TrimSpace(config.ProjectID) == "" || strings.TrimSpace(config.ClientEmail) == "" || strings.TrimSpace(config.PrivateKey) == "" {
 		return nil, ErrNoProvider
@@ -164,6 +172,10 @@ func (p *FCMProvider) token(ctx context.Context) (string, error) {
 	return p.accessToken, nil
 }
 
+// APNsNewMessageLocKey names the generic "New message" text in the iOS app's
+// Localizable.strings (mobile/ios/Runner/*.lproj).
+const APNsNewMessageLocKey = "veritra.notification.new_message"
+
 type APNsConfig struct {
 	TeamID, KeyID, BundleID, PrivateKey string
 	Sandbox                             bool
@@ -221,7 +233,25 @@ func (p *APNsProvider) SendEncryptedEventAvailable(ctx context.Context, notifica
 	if p.config.Sandbox {
 		host = "https://api.sandbox.push.apple.com"
 	}
-	bodyFields := map[string]any{"aps": map[string]any{"content-available": 1}}
+	aps := map[string]any{"content-available": 1}
+	pushType, priority, collapseID := "background", "5", "veritra-sync"
+	expiry := apnsWakeExpiry
+	if payload["presentation"] != "none" {
+		// D53: the legacy wake is a visible alert, so it shows even when iOS
+		// grants no background execution. Its only text is a fixed loc-key
+		// that the app bundle resolves per language; nothing about the
+		// message. The collapse id matches the identifier older apps use for
+		// their local notice, so one replaces the other. content-available
+		// still wakes the app for sync when iOS allows it. A local-decrypt
+		// (D52) wake stays silent: the device decides after decryption.
+		aps["alert"] = map[string]any{"loc-key": APNsNewMessageLocKey}
+		aps["sound"] = "default"
+		pushType, priority, collapseID = "alert", "10", "veritra-new-message"
+		// A visible alert must still reach a phone that was offline for a
+		// while (D53); the collapse id keeps it to one alert.
+		expiry = apnsAlertExpiry
+	}
+	bodyFields := map[string]any{"aps": aps}
 	for key, value := range payload {
 		bodyFields[key] = value
 	}
@@ -232,10 +262,10 @@ func (p *APNsProvider) SendEncryptedEventAvailable(ctx context.Context, notifica
 	}
 	req.Header.Set("Authorization", "bearer "+jwt)
 	req.Header.Set("apns-topic", p.config.BundleID)
-	req.Header.Set("apns-push-type", "background")
-	req.Header.Set("apns-priority", "5")
-	req.Header.Set("apns-expiration", fmt.Sprint(time.Now().Add(time.Minute).Unix()))
-	req.Header.Set("apns-collapse-id", "veritra-sync")
+	req.Header.Set("apns-push-type", pushType)
+	req.Header.Set("apns-priority", priority)
+	req.Header.Set("apns-expiration", fmt.Sprint(time.Now().Add(expiry).Unix()))
+	req.Header.Set("apns-collapse-id", collapseID)
 	response, err := p.client.Do(req)
 	if err != nil {
 		return err

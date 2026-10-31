@@ -272,6 +272,47 @@ void main() {
       expect(api.approvals, 1);
     });
 
+    testWidgets('a different 8-digit code is never approved', (tester) async {
+      final api = _ApproveApi();
+      final state = _state()..api = api;
+      await state.createDeviceLink();
+      state.activeDeviceLink = DeviceLink(
+        id: 'dl_1',
+        state: 'claimed',
+        verificationCode: '12345678',
+        expiresAt: DateTime.utc(2030),
+        code: 'PAIRCODE',
+        accountId: 'acct_0123456789abcdef',
+        transcriptHash: List<int>.filled(32, 7),
+        approvalTag: List<int>.filled(32, 9),
+      );
+      await tester.pumpWidget(
+        MaterialApp(home: DeviceLinkScreen(state: state)),
+      );
+      final approveButton = find.widgetWithText(
+        FilledButton,
+        'Approve device',
+      );
+      await tester.ensureVisible(approveButton);
+      await tester.tap(approveButton);
+      await tester.pumpAndSettle();
+
+      final dialogApprove = find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(FilledButton),
+      );
+      await tester.enterText(find.byType(TextField), '87654321');
+      await tester.pump();
+      // Whether the button stays disabled or the tap is refused, nothing
+      // reaches the server.
+      if (tester.widget<FilledButton>(dialogApprove).onPressed != null) {
+        await tester.tap(dialogApprove);
+        await tester.pumpAndSettle();
+      }
+      expect(api.approvals, 0);
+      expect(state.activeDeviceLink?.state, isNot('approved'));
+    });
+
     testWidgets('approve is disabled without a verified code', (tester) async {
       final state = _state()
         ..activeDeviceLink = DeviceLink(

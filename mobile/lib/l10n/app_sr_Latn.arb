@@ -316,6 +316,7 @@
   "bannerPaused": "Poruke su pauzirane",
   "bannerTryAgain": "Pokušaj ponovo",
   "bannerRelink": "Ponovo poveži ovaj uređaj",
+  "bannerRestoreBackup": "Vrati iz rezervne kopije",
   "bannerRelinkTitle": "Ponovo povezati ovaj uređaj?",
   "bannerRelinkMessage": "Ovo odjavljuje ovaj uređaj i briše njegove poruke i ključeve za šifrovanje. Posle toga ga ponovo povežite sa drugog uređaja. Poruke koje postoje samo na ovom uređaju ne mogu se povratiti.",
   "bannerRelinkConfirm": "Izbriši i odjavi",
