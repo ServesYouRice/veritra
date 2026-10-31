@@ -239,6 +239,37 @@ func TestSyncCursorFollowsTheMLSJoinCursor(t *testing.T) {
 	}
 }
 
+// A device removed after its cursor still lost the MLS events between the
+// cursor and its removal, even when the group's newest pruned MLS event is
+// past the removal.
+func TestSyncCursorCountsMLSEventsBeforeALaterRemoval(t *testing.T) {
+	ctx := context.Background()
+	f := newSyncVisibilityFixture(t, ctx)
+	conv := f.conversation.ID
+	if _, err := f.store.db.ExecContext(ctx, `INSERT INTO conversation_mls_groups(conversation_id, epoch, updated_at) VALUES(?, 1, ?)`, conv, nowString()); err != nil {
+		t.Fatal(err)
+	}
+	joined := accountSyncEvent(t, ctx, f.store, f.bystander.Account.ID, "")
+	if _, err := f.store.db.ExecContext(ctx, `INSERT INTO conversation_mls_devices(conversation_id, device_id, account_id, joined_after_event_id, joined_epoch) VALUES(?, ?, ?, ?, 1)`,
+		conv, f.bystander.Device.ID, f.bystander.Account.ID, joined); err != nil {
+		t.Fatal(err)
+	}
+	cursor := accountSyncEvent(t, ctx, f.store, f.bystander.Account.ID, "")
+	lost := conversationSyncEvent(t, ctx, f.store, "mls.message.created", conv)
+	if _, err := f.store.db.ExecContext(ctx, `UPDATE conversation_mls_devices SET removed_after_event_id = ? WHERE conversation_id = ? AND device_id = ?`, lost, conv, f.bystander.Device.ID); err != nil {
+		t.Fatal(err)
+	}
+	conversationSyncEvent(t, ctx, f.store, "mls.message.created", conv)
+	fresh := accountSyncEvent(t, ctx, f.store, f.bystander.Account.ID, "")
+	pruneSyncEventsThrough(t, ctx, f.store, fresh-1)
+	if !syncCursorExpiredFor(t, ctx, f.store, f.bystander, cursor) {
+		t.Fatalf("cursor %d survived the prune of MLS event %d, sent before the device's removal", cursor, lost)
+	}
+	if syncCursorExpiredFor(t, ctx, f.store, f.bystander, lost) {
+		t.Fatal("a cursor at the removal expired on an MLS event after it")
+	}
+}
+
 // A disappearing message that expired before retention pruned its events is
 // hidden from every cursor, so losing it loses nothing.
 func TestSyncCursorIgnoresPrunedEventsOfExpiredMessages(t *testing.T) {

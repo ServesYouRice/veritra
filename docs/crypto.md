@@ -211,15 +211,26 @@ Stage 1. Every later change is listed here for the G25 reviewer.
       current member, and the old check counted them too. A user added to
       an active group while away for longer than retention still gets 409.
       Fixing it needs a per-membership join cursor (a schema change).
-    Each needs the device away for longer than retention, and the only
-    events it lost must be of one of these kinds.
+    Each needs the device's cursor to fall more than one retention period
+    behind, and the only events it lost must be of one of these kinds. A
+    device online and polling can still fall that far behind: hidden events
+    do not move its cursor (STATE.md, "Hidden tail on every poll"). So a
+    blocked sender who keeps writing into a DM can get the blocker 409 once
+    the blocker has had no visible event anywhere for a retention period.
+    The real fix is a next cursor past hidden events, an API change.
   - **Upgrade.** Migration 0044 seeds `legacy_through` with the ids pruned
     before it: the oldest remaining event id less one, or the last id ever
     issued when the table is empty. A cursor below that also gets the old
-    test, which is safe but keeps its false refusals. Only devices whose
-    last sync was more than one retention period before the upgrade see
-    the old behaviour. The marks hold one event id per conversation and per
-    account and device, and nothing else.
+    test, which is safe but keeps its false refusals. Below that bound the
+    cursor's own event is always gone, so the old test refuses as soon as
+    the account has any event left: every device whose last received event
+    is older than the oldest event kept at the upgrade gets 409 at its next
+    event, even a quiet one that stayed online. Nothing records what those
+    earlier prunes held, so treating them as lost nothing would fail open.
+    Only pre-release demo databases predate 0044. The marks hold one event
+    id per conversation and per account and device. They are never removed,
+    so a dormant conversation's mark tells roughly when it was last active,
+    even past retention.
   - **Ordering.** The check now runs after the page is read. Run before,
     a prune landing between the check and the page could drop events
     without a 409.

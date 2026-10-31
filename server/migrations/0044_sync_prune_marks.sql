@@ -29,7 +29,10 @@
 -- has the false positives above.
 --
 -- The triggers run inside every DELETE on sync_events, so every path that
--- prunes (and the tests that delete directly) keeps the marks. An older
+-- prunes (and the tests that delete directly) keeps the marks. Retention is
+-- the only DELETE today. A later delete that is not retention (dropping a
+-- conversation's or an account's events) would leave marks too, and with
+-- them false 409s: skip the marks for it or clear them. An older
 -- server binary ignores the tables and keeps its old test; the triggers keep
 -- running under it, so rolling back and forward again needs no restore.
 

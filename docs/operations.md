@@ -646,11 +646,18 @@ backup restore here (`STATE.md`, open work). The answer errs only towards
 - so do plain conversation events (membership changes, reactions, read
   receipts) from before the account was added to that conversation.
 
+Hidden events do not move a device's cursor, so a device can fall a
+retention period behind while online. A blocked sender who keeps writing
+into a DM can then get the blocker 409 once the blocker has had no visible
+event anywhere for a retention period.
+
 The marks hold one event id per conversation and per account and device,
-and no sender or time. Cursors into ids that were pruned before the upgrade
-to 0044 keep the old, stricter test, which also refused cursors that had
-missed nothing. That affects only devices last synced more than one
-retention period before the upgrade. An older server binary ignores the
+and no sender. They are never removed, and an event id is a rough time, so
+a dormant conversation's mark tells roughly when it was last active. Cursors
+into ids that were pruned before the upgrade to 0044 keep the old, stricter
+test, which also refused cursors that had missed nothing: every device whose
+last received event is older than the oldest event kept at the upgrade gets
+409 at its next event, even one that stayed online. An older server binary ignores the
 marks and uses the old test; the triggers keep the marks current under it,
 so rolling back past 0044 needs no restore.
 
