@@ -1655,6 +1655,288 @@ class LocalCryptoStatesCompanion extends UpdateCompanion<LocalCryptoState> {
   }
 }
 
+class $LocalCryptoRecordsTable extends LocalCryptoRecords
+    with TableInfo<$LocalCryptoRecordsTable, LocalCryptoRecord> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $LocalCryptoRecordsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _kindMeta = const VerificationMeta('kind');
+  @override
+  late final GeneratedColumn<int> kind = GeneratedColumn<int>(
+      'kind', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _recordIdMeta =
+      const VerificationMeta('recordId');
+  @override
+  late final GeneratedColumn<Uint8List> recordId = GeneratedColumn<Uint8List>(
+      'record_id', aliasedName, false,
+      type: DriftSqlType.blob, requiredDuringInsert: true);
+  static const VerificationMeta _generationMeta =
+      const VerificationMeta('generation');
+  @override
+  late final GeneratedColumn<int> generation = GeneratedColumn<int>(
+      'generation', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _sealedMeta = const VerificationMeta('sealed');
+  @override
+  late final GeneratedColumn<Uint8List> sealed = GeneratedColumn<Uint8List>(
+      'sealed', aliasedName, false,
+      type: DriftSqlType.blob, requiredDuringInsert: true);
+  @override
+  List<GeneratedColumn> get $columns => [kind, recordId, generation, sealed];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'local_crypto_records';
+  @override
+  VerificationContext validateIntegrity(Insertable<LocalCryptoRecord> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('kind')) {
+      context.handle(
+          _kindMeta, kind.isAcceptableOrUnknown(data['kind']!, _kindMeta));
+    } else if (isInserting) {
+      context.missing(_kindMeta);
+    }
+    if (data.containsKey('record_id')) {
+      context.handle(_recordIdMeta,
+          recordId.isAcceptableOrUnknown(data['record_id']!, _recordIdMeta));
+    } else if (isInserting) {
+      context.missing(_recordIdMeta);
+    }
+    if (data.containsKey('generation')) {
+      context.handle(
+          _generationMeta,
+          generation.isAcceptableOrUnknown(
+              data['generation']!, _generationMeta));
+    } else if (isInserting) {
+      context.missing(_generationMeta);
+    }
+    if (data.containsKey('sealed')) {
+      context.handle(_sealedMeta,
+          sealed.isAcceptableOrUnknown(data['sealed']!, _sealedMeta));
+    } else if (isInserting) {
+      context.missing(_sealedMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {kind, recordId};
+  @override
+  LocalCryptoRecord map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return LocalCryptoRecord(
+      kind: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}kind'])!,
+      recordId: attachedDatabase.typeMapping
+          .read(DriftSqlType.blob, data['${effectivePrefix}record_id'])!,
+      generation: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}generation'])!,
+      sealed: attachedDatabase.typeMapping
+          .read(DriftSqlType.blob, data['${effectivePrefix}sealed'])!,
+    );
+  }
+
+  @override
+  $LocalCryptoRecordsTable createAlias(String alias) {
+    return $LocalCryptoRecordsTable(attachedDatabase, alias);
+  }
+}
+
+class LocalCryptoRecord extends DataClass
+    implements Insertable<LocalCryptoRecord> {
+  /// The record kind from the sealed header (1 device, 2 group, 3 kp).
+  final int kind;
+
+  /// The raw record id: a group id or key-package hash ref; empty for the
+  /// device record.
+  final Uint8List recordId;
+
+  /// The generation (root counter) the record was last sealed at.
+  final int generation;
+  final Uint8List sealed;
+  const LocalCryptoRecord(
+      {required this.kind,
+      required this.recordId,
+      required this.generation,
+      required this.sealed});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['kind'] = Variable<int>(kind);
+    map['record_id'] = Variable<Uint8List>(recordId);
+    map['generation'] = Variable<int>(generation);
+    map['sealed'] = Variable<Uint8List>(sealed);
+    return map;
+  }
+
+  LocalCryptoRecordsCompanion toCompanion(bool nullToAbsent) {
+    return LocalCryptoRecordsCompanion(
+      kind: Value(kind),
+      recordId: Value(recordId),
+      generation: Value(generation),
+      sealed: Value(sealed),
+    );
+  }
+
+  factory LocalCryptoRecord.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return LocalCryptoRecord(
+      kind: serializer.fromJson<int>(json['kind']),
+      recordId: serializer.fromJson<Uint8List>(json['recordId']),
+      generation: serializer.fromJson<int>(json['generation']),
+      sealed: serializer.fromJson<Uint8List>(json['sealed']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'kind': serializer.toJson<int>(kind),
+      'recordId': serializer.toJson<Uint8List>(recordId),
+      'generation': serializer.toJson<int>(generation),
+      'sealed': serializer.toJson<Uint8List>(sealed),
+    };
+  }
+
+  LocalCryptoRecord copyWith(
+          {int? kind,
+          Uint8List? recordId,
+          int? generation,
+          Uint8List? sealed}) =>
+      LocalCryptoRecord(
+        kind: kind ?? this.kind,
+        recordId: recordId ?? this.recordId,
+        generation: generation ?? this.generation,
+        sealed: sealed ?? this.sealed,
+      );
+  LocalCryptoRecord copyWithCompanion(LocalCryptoRecordsCompanion data) {
+    return LocalCryptoRecord(
+      kind: data.kind.present ? data.kind.value : this.kind,
+      recordId: data.recordId.present ? data.recordId.value : this.recordId,
+      generation:
+          data.generation.present ? data.generation.value : this.generation,
+      sealed: data.sealed.present ? data.sealed.value : this.sealed,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalCryptoRecord(')
+          ..write('kind: $kind, ')
+          ..write('recordId: $recordId, ')
+          ..write('generation: $generation, ')
+          ..write('sealed: $sealed')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(kind, $driftBlobEquality.hash(recordId),
+      generation, $driftBlobEquality.hash(sealed));
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is LocalCryptoRecord &&
+          other.kind == this.kind &&
+          $driftBlobEquality.equals(other.recordId, this.recordId) &&
+          other.generation == this.generation &&
+          $driftBlobEquality.equals(other.sealed, this.sealed));
+}
+
+class LocalCryptoRecordsCompanion extends UpdateCompanion<LocalCryptoRecord> {
+  final Value<int> kind;
+  final Value<Uint8List> recordId;
+  final Value<int> generation;
+  final Value<Uint8List> sealed;
+  final Value<int> rowid;
+  const LocalCryptoRecordsCompanion({
+    this.kind = const Value.absent(),
+    this.recordId = const Value.absent(),
+    this.generation = const Value.absent(),
+    this.sealed = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  LocalCryptoRecordsCompanion.insert({
+    required int kind,
+    required Uint8List recordId,
+    required int generation,
+    required Uint8List sealed,
+    this.rowid = const Value.absent(),
+  })  : kind = Value(kind),
+        recordId = Value(recordId),
+        generation = Value(generation),
+        sealed = Value(sealed);
+  static Insertable<LocalCryptoRecord> custom({
+    Expression<int>? kind,
+    Expression<Uint8List>? recordId,
+    Expression<int>? generation,
+    Expression<Uint8List>? sealed,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (kind != null) 'kind': kind,
+      if (recordId != null) 'record_id': recordId,
+      if (generation != null) 'generation': generation,
+      if (sealed != null) 'sealed': sealed,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  LocalCryptoRecordsCompanion copyWith(
+      {Value<int>? kind,
+      Value<Uint8List>? recordId,
+      Value<int>? generation,
+      Value<Uint8List>? sealed,
+      Value<int>? rowid}) {
+    return LocalCryptoRecordsCompanion(
+      kind: kind ?? this.kind,
+      recordId: recordId ?? this.recordId,
+      generation: generation ?? this.generation,
+      sealed: sealed ?? this.sealed,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (kind.present) {
+      map['kind'] = Variable<int>(kind.value);
+    }
+    if (recordId.present) {
+      map['record_id'] = Variable<Uint8List>(recordId.value);
+    }
+    if (generation.present) {
+      map['generation'] = Variable<int>(generation.value);
+    }
+    if (sealed.present) {
+      map['sealed'] = Variable<Uint8List>(sealed.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalCryptoRecordsCompanion(')
+          ..write('kind: $kind, ')
+          ..write('recordId: $recordId, ')
+          ..write('generation: $generation, ')
+          ..write('sealed: $sealed, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 class $LocalMetadataTable extends LocalMetadata
     with TableInfo<$LocalMetadataTable, LocalMetadataData> {
   @override
@@ -6017,6 +6299,8 @@ abstract class _$EncryptedLocalDatabase extends GeneratedDatabase {
       $LocalOutboxEntriesTable(this);
   late final $LocalCryptoStatesTable localCryptoStates =
       $LocalCryptoStatesTable(this);
+  late final $LocalCryptoRecordsTable localCryptoRecords =
+      $LocalCryptoRecordsTable(this);
   late final $LocalMetadataTable localMetadata = $LocalMetadataTable(this);
   late final $LocalMlsTransitionsTable localMlsTransitions =
       $LocalMlsTransitionsTable(this);
@@ -6057,6 +6341,7 @@ abstract class _$EncryptedLocalDatabase extends GeneratedDatabase {
         localSyncStates,
         localOutboxEntries,
         localCryptoStates,
+        localCryptoRecords,
         localMetadata,
         localMlsTransitions,
         localMlsOutboxEntries,
@@ -7073,6 +7358,175 @@ typedef $$LocalCryptoStatesTableProcessedTableManager = ProcessedTableManager<
           LocalCryptoState>
     ),
     LocalCryptoState,
+    PrefetchHooks Function()>;
+typedef $$LocalCryptoRecordsTableCreateCompanionBuilder
+    = LocalCryptoRecordsCompanion Function({
+  required int kind,
+  required Uint8List recordId,
+  required int generation,
+  required Uint8List sealed,
+  Value<int> rowid,
+});
+typedef $$LocalCryptoRecordsTableUpdateCompanionBuilder
+    = LocalCryptoRecordsCompanion Function({
+  Value<int> kind,
+  Value<Uint8List> recordId,
+  Value<int> generation,
+  Value<Uint8List> sealed,
+  Value<int> rowid,
+});
+
+class $$LocalCryptoRecordsTableFilterComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalCryptoRecordsTable> {
+  $$LocalCryptoRecordsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get kind => $composableBuilder(
+      column: $table.kind, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<Uint8List> get recordId => $composableBuilder(
+      column: $table.recordId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get generation => $composableBuilder(
+      column: $table.generation, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<Uint8List> get sealed => $composableBuilder(
+      column: $table.sealed, builder: (column) => ColumnFilters(column));
+}
+
+class $$LocalCryptoRecordsTableOrderingComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalCryptoRecordsTable> {
+  $$LocalCryptoRecordsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get kind => $composableBuilder(
+      column: $table.kind, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<Uint8List> get recordId => $composableBuilder(
+      column: $table.recordId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get generation => $composableBuilder(
+      column: $table.generation, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<Uint8List> get sealed => $composableBuilder(
+      column: $table.sealed, builder: (column) => ColumnOrderings(column));
+}
+
+class $$LocalCryptoRecordsTableAnnotationComposer
+    extends Composer<_$EncryptedLocalDatabase, $LocalCryptoRecordsTable> {
+  $$LocalCryptoRecordsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get kind =>
+      $composableBuilder(column: $table.kind, builder: (column) => column);
+
+  GeneratedColumn<Uint8List> get recordId =>
+      $composableBuilder(column: $table.recordId, builder: (column) => column);
+
+  GeneratedColumn<int> get generation => $composableBuilder(
+      column: $table.generation, builder: (column) => column);
+
+  GeneratedColumn<Uint8List> get sealed =>
+      $composableBuilder(column: $table.sealed, builder: (column) => column);
+}
+
+class $$LocalCryptoRecordsTableTableManager extends RootTableManager<
+    _$EncryptedLocalDatabase,
+    $LocalCryptoRecordsTable,
+    LocalCryptoRecord,
+    $$LocalCryptoRecordsTableFilterComposer,
+    $$LocalCryptoRecordsTableOrderingComposer,
+    $$LocalCryptoRecordsTableAnnotationComposer,
+    $$LocalCryptoRecordsTableCreateCompanionBuilder,
+    $$LocalCryptoRecordsTableUpdateCompanionBuilder,
+    (
+      LocalCryptoRecord,
+      BaseReferences<_$EncryptedLocalDatabase, $LocalCryptoRecordsTable,
+          LocalCryptoRecord>
+    ),
+    LocalCryptoRecord,
+    PrefetchHooks Function()> {
+  $$LocalCryptoRecordsTableTableManager(
+      _$EncryptedLocalDatabase db, $LocalCryptoRecordsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$LocalCryptoRecordsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$LocalCryptoRecordsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$LocalCryptoRecordsTableAnnotationComposer(
+                  $db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<int> kind = const Value.absent(),
+            Value<Uint8List> recordId = const Value.absent(),
+            Value<int> generation = const Value.absent(),
+            Value<Uint8List> sealed = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalCryptoRecordsCompanion(
+            kind: kind,
+            recordId: recordId,
+            generation: generation,
+            sealed: sealed,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required int kind,
+            required Uint8List recordId,
+            required int generation,
+            required Uint8List sealed,
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalCryptoRecordsCompanion.insert(
+            kind: kind,
+            recordId: recordId,
+            generation: generation,
+            sealed: sealed,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (
+                    e.readTable<$LocalCryptoRecordsTable, LocalCryptoRecord>(
+                        table),
+                    BaseReferences<
+                        _$EncryptedLocalDatabase,
+                        $LocalCryptoRecordsTable,
+                        LocalCryptoRecord>(db, table, e)
+                  ))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$LocalCryptoRecordsTableProcessedTableManager = ProcessedTableManager<
+    _$EncryptedLocalDatabase,
+    $LocalCryptoRecordsTable,
+    LocalCryptoRecord,
+    $$LocalCryptoRecordsTableFilterComposer,
+    $$LocalCryptoRecordsTableOrderingComposer,
+    $$LocalCryptoRecordsTableAnnotationComposer,
+    $$LocalCryptoRecordsTableCreateCompanionBuilder,
+    $$LocalCryptoRecordsTableUpdateCompanionBuilder,
+    (
+      LocalCryptoRecord,
+      BaseReferences<_$EncryptedLocalDatabase, $LocalCryptoRecordsTable,
+          LocalCryptoRecord>
+    ),
+    LocalCryptoRecord,
     PrefetchHooks Function()>;
 typedef $$LocalMetadataTableCreateCompanionBuilder = LocalMetadataCompanion
     Function({
@@ -9480,6 +9934,8 @@ class $EncryptedLocalDatabaseManager {
       $$LocalOutboxEntriesTableTableManager(_db, _db.localOutboxEntries);
   $$LocalCryptoStatesTableTableManager get localCryptoStates =>
       $$LocalCryptoStatesTableTableManager(_db, _db.localCryptoStates);
+  $$LocalCryptoRecordsTableTableManager get localCryptoRecords =>
+      $$LocalCryptoRecordsTableTableManager(_db, _db.localCryptoRecords);
   $$LocalMetadataTableTableManager get localMetadata =>
       $$LocalMetadataTableTableManager(_db, _db.localMetadata);
   $$LocalMlsTransitionsTableTableManager get localMlsTransitions =>

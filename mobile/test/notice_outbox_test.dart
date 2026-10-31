@@ -436,7 +436,7 @@ void main() {
         expect(
             (await db.customSelect('PRAGMA user_version').getSingle())
                 .read<int>('user_version'),
-            15);
+            EncryptedLocalDatabase.currentSchemaVersion);
       } finally {
         await db.close();
         await directory.delete(recursive: true);
