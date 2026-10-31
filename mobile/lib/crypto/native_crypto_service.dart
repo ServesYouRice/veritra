@@ -479,6 +479,22 @@ class NativeCryptoService
               ));
               return;
             }
+            if (message.kind == 'commit') {
+              // No queued bundle: the outbox worker already merged and
+              // settled it, so the group is past the epoch the commit was
+              // built on. Anything else means this device never merged a
+              // commit the server holds under its identity (a clone-restored
+              // twin, or an accepted commit it dropped): the group forked,
+              // so stop here rather than fill the chat with D54
+              // placeholders.
+              final built =
+                  mlsMessageEpoch(message.payload, message.conversationId);
+              final group =
+                  _requiredDevice().groupEpoch(message.conversationId);
+              if (built == null || group.epoch <= built) {
+                throw StateError('own MLS commit was never merged here');
+              }
+            }
             await localStore.commitSyncEvent(SyncEventCommit(
               checkCanCommit: checkCanCommit,
               eventKey: marker,
@@ -1403,3 +1419,49 @@ List<MessageEffect> messageEffectsFor(
 String _randomIdempotencyKey() => _randomBytes(24)
     .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
     .join();
+
+/// The epoch an MLS commit was built on, read from its clear header, or null
+/// when [message] is not an MLS 1.0 public or private message of the group
+/// [groupId]. RFC 9420 §6: `MLSMessage` starts with the protocol version
+/// (u16, 1) and wire format (u16: 1 public, 2 private); both framings then
+/// carry `opaque group_id<V>` and `uint64 epoch`.
+int? mlsMessageEpoch(List<int> message, String groupId) {
+  var offset = 0;
+  int? u16() {
+    if (offset + 2 > message.length) return null;
+    final value = (message[offset] << 8) | message[offset + 1];
+    offset += 2;
+    return value;
+  }
+
+  if (u16() != 1) return null;
+  final wireFormat = u16();
+  if (wireFormat != 1 && wireFormat != 2) return null;
+  // The variable-length size of group_id (RFC 9420 §2.1.2): the top two
+  // bits of the first byte give 1, 2 or 4 bytes; 0b11 is invalid.
+  if (offset >= message.length) return null;
+  final prefix = message[offset] >> 6;
+  if (prefix == 3) return null;
+  final sizeBytes = 1 << prefix;
+  if (offset + sizeBytes > message.length) return null;
+  var length = message[offset] & 0x3f;
+  for (var index = 1; index < sizeBytes; index++) {
+    length = (length << 8) | message[offset + index];
+  }
+  offset += sizeBytes;
+  final expected = utf8.encode(groupId);
+  if (length != expected.length || offset + length + 8 > message.length) {
+    return null;
+  }
+  for (var index = 0; index < length; index++) {
+    if (message[offset + index] != expected[index]) return null;
+  }
+  offset += length;
+  // An epoch above 2^63 - 1 is not one this app could have reached.
+  if (message[offset] & 0x80 != 0) return null;
+  var epoch = 0;
+  for (var index = 0; index < 8; index++) {
+    epoch = (epoch << 8) | message[offset + index];
+  }
+  return epoch;
+}

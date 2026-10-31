@@ -168,6 +168,82 @@ void main() {
       expect(await alice.service.groupEpoch('conv_none'), isNull);
     }, skip: skip);
   });
+
+  group('an own commit with no queued bundle (fork check)', () {
+    test('the clear header gives the epoch the commit was built on', () async {
+      final bindings = NativeCryptoBindings.open(libraryPath!);
+      final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+      final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+      final carol = await _Client.enroll(bindings, 'acct_carol', 'dev_carol');
+      await _startConversation(alice, bob);
+
+      await alice.service.stageMembershipChange('conv_1',
+          adds: <DeviceKeyPackage>[await carol.keyPackage()]);
+      final add = MlsCommitBundle.decode(
+          (await alice.store.pendingMlsMessages()).single.payload);
+      expect(mlsMessageEpoch(add.commit, 'conv_1'), add.epoch);
+      expect(add.epoch, 1);
+      expect(mlsMessageEpoch(add.commit, 'conv_2'), isNull);
+      expect(mlsMessageEpoch(add.commit.sublist(0, 12), 'conv_1'), isNull);
+      expect(mlsMessageEpoch(<int>[1, 2, 3], 'conv_1'), isNull);
+      await _accept(alice, <_Client>[carol], <_Client>[bob]);
+
+      await bob.service.stageSelfUpdate('conv_1');
+      final update = MlsCommitBundle.decode(
+          (await bob.store.pendingMlsMessages()).single.payload);
+      expect(mlsMessageEpoch(update.commit, 'conv_1'), update.epoch);
+      expect(update.epoch, 2);
+    }, skip: skip);
+
+    test('a bundle the worker already settled passes', () async {
+      final bindings = NativeCryptoBindings.open(libraryPath!);
+      final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+      final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+      await _startConversation(alice, bob);
+      await alice.service.stageSelfUpdate('conv_1');
+      final item = (await alice.store.pendingMlsMessages()).single;
+      final bundle = MlsCommitBundle.decode(item.payload);
+      // Accepted, then settled by the worker before sync sees the commit.
+      await alice.service.completeCommitBundle(item);
+      expect(await alice.store.pendingMlsMessages(), isEmpty);
+
+      final echo =
+          _commit(alice, from: alice, item: item, payload: bundle.commit);
+      await alice.service.processMlsMessage(echo);
+      expect(await alice.store.loadSyncCursor(), echo.syncEventId);
+      expect(
+          await alice.service.groupEpoch('conv_1'), (epoch: 2, pending: false));
+    }, skip: skip);
+
+    test('a commit this device never merged stops sync', () async {
+      final bindings = NativeCryptoBindings.open(libraryPath!);
+      final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+      final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+      await _startConversation(alice, bob);
+      await alice.service.stageSelfUpdate('conv_1');
+      final item = (await alice.store.pendingMlsMessages()).single;
+      final bundle = MlsCommitBundle.decode(item.payload);
+      // Dropped here, yet the server holds it under this device's identity
+      // (the state a clone-restored twin's commit leaves behind).
+      await alice.service.abandonCommitBundle(item);
+      final cursor = await alice.store.loadSyncCursor();
+      final counter = (await alice.store.loadCryptoState())!.counter;
+
+      await expectLater(
+          alice.service.processMlsMessage(
+              _commit(alice, from: alice, item: item, payload: bundle.commit)),
+          throwsA(isA<StateError>().having((error) => error.message, 'message',
+              'own MLS commit was never merged here')));
+      expect(await alice.store.loadSyncCursor(), cursor);
+      expect((await alice.store.loadCryptoState())!.counter, counter);
+      // Bytes that are not a commit of this group are refused too.
+      await expectLater(
+          alice.service.processMlsMessage(
+              _commit(alice, from: alice, item: item, payload: <int>[1, 2, 3])),
+          throwsA(isA<StateError>()));
+      expect(await alice.store.loadSyncCursor(), cursor);
+    }, skip: skip);
+  });
 }
 
 /// Wraps the real bindings so a test can make the next native `decrypt` or

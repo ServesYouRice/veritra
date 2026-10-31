@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/app_payload.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
+import 'package:private_messenger/crypto/mls_commit_bundle.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/storage/local_store.dart';
@@ -334,14 +335,19 @@ void main() {
     active = true;
     await pair.bob
         .processMlsMessageBounded(pair.welcome, checkCanCommit: fence);
+    // A real own commit the outbox worker already merged and settled: one
+    // this device never merged would stop sync as a fork.
+    await pair.bob.stageSelfUpdate(_conversation);
+    final own = (await pair.store.pendingMlsMessages()).single;
+    await pair.bob.completeCommitBundle(own);
     final echo = MlsMessage(
         id: 'own_control',
         conversationId: _conversation,
         senderAccountId: 'acct_bob',
         senderDeviceId: 'dev_bob',
         kind: 'commit',
-        payload: const [],
-        idempotencyKey: 'own_control',
+        payload: MlsCommitBundle.decode(own.payload).commit,
+        idempotencyKey: own.idempotencyKey,
         syncEventId: 2,
         createdAt: DateTime.now().toUtc());
     pair.store.beforeNextSyncCommit = () => active = false;
