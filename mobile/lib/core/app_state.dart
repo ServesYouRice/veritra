@@ -2214,18 +2214,22 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         final generation = _sessionGeneration;
         await _loadRemovalHolds();
         ({int epoch, bool pending})? local;
+        var unreadable = false;
         try {
           local = await mls.groupEpoch(conversationId);
         } catch (_) {
-          local = null;
+          // Held anyway, at epoch 0: reconcile releases it once the group
+          // is readable again, or drops it when there is no local group.
+          unreadable = true;
         }
-        if (generation == _sessionGeneration && local != null) {
+        if (generation == _sessionGeneration && (local != null || unreadable)) {
+          final epoch = local?.epoch ?? 0;
           final hold = _removalHolds.putIfAbsent(
-              conversationId, () => _RemovalHold(epoch: local!.epoch));
+              conversationId, () => _RemovalHold(epoch: epoch));
           hold
             ..seq = ++_removalHoldSeq
             ..accounts.add(accountId);
-          if (local.epoch > hold.epoch) hold.epoch = local.epoch;
+          if (epoch > hold.epoch) hold.epoch = epoch;
           await _saveRemovalHolds();
           _removalHoldsUpdated();
         }
