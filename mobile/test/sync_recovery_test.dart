@@ -522,6 +522,42 @@ void main() {
       });
 
       test(
+          '${entry.key}: when the server pruned events the device could see, '
+          'sign-in stores the expired-cursor recovery', () async {
+        final api = _ScriptedApi()
+          ..events = <SyncEvent>[
+            _mlsEvent(1, 'mls_1'),
+            _mlsEvent(2, 'mls_2'),
+            _mlsEvent(3, 'mls_3'),
+          ];
+        final store = await device();
+        final harness = await _Harness.start(api, store: store);
+        await harness.waitFor(() async => await store.loadSyncCursor() == 3);
+        await expire(harness, api);
+
+        // Away longer than event retention: the server answers the kept
+        // cursor with device_recovery_required.
+        api.syncStatus = 409;
+        api.syncAfters.clear();
+        await harness.state.login('https://localhost:8080', 'me', 'password');
+        expect(harness.state.session?.token, 'token_again');
+        await harness.waitFor(() => harness.state.syncRecovery != null);
+
+        expect(api.syncAfters.first, 3);
+        final recovery = harness.state.syncRecovery!;
+        expect(recovery.kind, SyncFailureKind.cursorExpired);
+        expect(recovery.choices, contains(SyncRecoveryChoice.relink));
+        expect(recovery.choices, isNot(contains(SyncRecoveryChoice.retry)));
+        expect((await store.loadSyncRecovery())?.kind,
+            SyncFailureKind.cursorExpired);
+        // Never a jump: the cursor stays where the device stopped.
+        expect(await store.loadSyncCursor(), 3);
+        expect(api.syncAfters, everyElement(3));
+        await harness.settle();
+        harness.dispose();
+      });
+
+      test(
           '${entry.key}: without protected MLS state, sign-in starts again '
           'from the first event', () async {
         final api = _ScriptedApi()..events = <SyncEvent>[_projectionEvent(1)];

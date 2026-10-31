@@ -629,6 +629,27 @@ message with an encrypted action message instead, which the server cannot
 tell apart from any other message; that message's original ciphertext stays
 until it expires or sync-event retention removes it.
 
+**Sync cursors after retention.** `PRIVATE_MESSENGER_SYNC_EVENT_RETENTION_DAYS`
+(30 by default) also limits how long a device can be away. Pruning records
+the highest pruned event id for each account and device and for each
+conversation (migration 0044, triggers on `sync_events`). A device asking
+for events after its cursor gets 409 `device_recovery_required` only when
+an event it could have been sent was pruned after that cursor. Events of
+other accounts, other devices' Welcomes, conversations the account left and
+expired messages do not count. A device that misses one has to be linked
+again or restored from a backup. The answer errs only towards 409:
+
+- a pruned event from someone the account blocked counts;
+- so does a late MLS message from before the device's first epoch.
+
+The marks hold one event id per conversation and per account and device,
+and no sender or time. Cursors into ids that were pruned before the upgrade
+to 0044 keep the old, stricter test, which also refused cursors that had
+missed nothing. That affects only devices last synced more than one
+retention period before the upgrade. An older server binary ignores the
+marks and uses the old test; the triggers keep the marks current under it,
+so rolling back past 0044 needs no restore.
+
 ## Push providers
 
 Configure only the providers you can operate. Clients register with what

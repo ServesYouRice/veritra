@@ -159,6 +159,75 @@ not raised; if it changes, change the derivation with it.
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **Sync cursor expiry from prune watermarks (2026-10-31):** server
+  migration 0044; no ABI, payload, client or API change. I33 still holds:
+  an expired cursor gets 409 `device_recovery_required` and the app never
+  jumps ahead.
+  - **Bug.** The server said a cursor had expired when the cursor's own
+    event was pruned and the account's oldest remaining visible event was
+    more than one id past it. Sync event ids are global, so other accounts'
+    events nearly always filled that gap. A device that missed nothing got
+    409, and Relink, the only recovery the app offers, needs a second
+    device. After the previous entry this hit sign-in after more than event
+    retention (30 days by default). It also hit a quiet account that stayed
+    signed in, and any cursor below the account's first event, with
+    nothing pruned at all.
+  - **Rule.** A cursor has expired when retention pruned an event after it
+    that the device could have been sent. Triggers on `sync_events` keep,
+    in the same transaction as each delete, the highest pruned id in three
+    places:
+    - each account, per target device (`''` for events every device of the
+      account receives);
+    - each conversation, split into the events sync filters by the MLS join
+      cursor (`mls.message.created`, `message.envelope.*`, `call.*`) and the
+      rest;
+    - the whole table (`sync_prune_state.pruned_through`).
+    A cursor at or past the table's mark lost nothing: one primary-key read,
+    the usual case. Otherwise it has expired when any of these is past it:
+    - the account's mark for every device, or for this device;
+    - the plain mark of a conversation the account is a member of now;
+    - the MLS-filtered mark M of such a conversation, when there is no MLS
+      group, or when the device's roster row has M > `joined_after_event_id`
+      and either no `removed_after_event_id` or one past both the cursor and
+      the join.
+  - **Not counted.**
+    - Another device's Welcome.
+    - A conversation the account left. Its own `membership.left` event is an
+      account event, which does count.
+    - MLS events from before the device joined.
+    - Message events whose message had expired, was deleted (apart from the
+      delete marker) or was gone when pruned. Sync hides those from every
+      cursor, so disappearing messages do not expire a cursor.
+  - **Still conservative (expired although nothing visible was lost).**
+    - A pruned event from a sender the account blocked. Marks keep no
+      sender, because a mark per sender would keep who wrote where, and in
+      what order, beyond retention.
+    - A late message from an epoch before the device's `joined_epoch`.
+    - A removed device whose roster window reaches past the cursor while
+      the newest pruned MLS event lies after the removal.
+    Each needs the device away for longer than retention, and the only
+    events it lost must be of one of these kinds.
+  - **Upgrade.** Migration 0044 seeds `legacy_through` with the ids pruned
+    before it: the oldest remaining event id less one, or the last id ever
+    issued when the table is empty. A cursor below that also gets the old
+    test, which is safe but keeps its false refusals. Only devices whose
+    last sync was more than one retention period before the upgrade see
+    the old behaviour. The marks hold one event id per conversation and per
+    account and device, and nothing else.
+  - **Ordering.** The check now runs after the page is read. Run before,
+    a prune landing between the check and the page could drop events
+    without a 409.
+  - **Tests.** `server/internal/storage/sync_prune_marks_test.go`:
+    - the review's reproduction;
+    - real gaps (account, own-device, conversation and MLS events);
+    - the cases that do not count, and the blocked-sender expiry;
+    - the upgrade of an existing database;
+    - the query plan.
+    The read-model equivalence tests bound every cursor between "lost an
+    event it could see" (must expire) and "lost an event in its streams"
+    (may expire). `mobile/test/sync_recovery_test.dart` covers sign-in
+    receiving `device_recovery_required`.
+
 - **Sign-in keeps the sync cursor (2026-10-31):** no ABI, payload, schema
   or server change; I33 and D28 unchanged.
   - **Bug.** Password sign-in reset the sync cursor to 0. The cursor and
@@ -180,8 +249,10 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     identity or a full wipe sets it to 0. Before this, the database kept
     the old value on both, and only the callers' explicit reset hid that.
   - **Effect.** A device signed out for longer than server event retention
-    now gets `device_recovery_required` (relink or backup) at sign-in.
-    Before, it skipped that check by asking from event 0.
+    now gets `device_recovery_required` (relink or backup) at sign-in, but
+    only when retention pruned an event it could have been sent (entry
+    above, migration 0044). Before, it skipped that check by asking from
+    event 0.
   - **Tests.** `mobile/test/sync_recovery_test.dart` ("signing in again
     as the same identity") covers both stores. The demo e2e covers a
     restore after sign-out followed by sign-in.
