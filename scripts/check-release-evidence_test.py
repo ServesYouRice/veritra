@@ -256,6 +256,10 @@ def axml(
     repeat_debuggable: bool = False,
     extra_debuggable: str | None = None,
     root_name: str = "manifest",
+    unmapped_min_sdk: tuple[tuple[str | None, int, int], ...] = (),
+    uses_sdk_in_application: bool = False,
+    after_root: str | None = None,
+    root_ends: int = 1,
 ) -> bytes:
     """A compiled AndroidManifest.xml: <manifest package><uses-sdk
     minSdkVersion?><application debuggable?>.
@@ -269,16 +273,25 @@ def axml(
     ``repeat_debuggable`` writes the debuggable attribute twice, and
     ``extra_debuggable`` adds a second, false one under another name with the
     same resource ID. ``min_sdk`` is None (no <uses-sdk>), an int, or a
-    (type, value) pair.
+    (type, value) pair. ``unmapped_min_sdk`` adds (namespace, type, value)
+    attributes to <uses-sdk> named "minSdkVersion" but with no resource ID
+    (a second copy of the name, past the resource map), after the framework
+    one; ``uses_sdk_in_application`` moves <uses-sdk> inside <application>.
+    ``after_root`` adds an empty element after the root closes, and
+    ``root_ends`` is how many end nodes close the root (0 leaves it open).
     """
     attr_names = [debuggable_name, "minSdkVersion"] + ([extra_debuggable] if extra_debuggable else [])
     attr_ids = [ATTR_DEBUGGABLE, ATTR_MIN_SDK] + ([ATTR_DEBUGGABLE] if extra_debuggable else [])
     strings = attr_names + ["package", "manifest", "application", "uses-sdk", "android", ANDROID_NS, package]
     package_specs = package_attrs if package_attrs is not None else ((None, package, package),)
-    for value in [part for spec in package_specs for part in spec] + [nested_manifest, wrapper, root_name]:
+    unmapped_namespaces = [namespace for namespace, _, _ in unmapped_min_sdk]
+    for value in [part for spec in package_specs for part in spec] + [nested_manifest, wrapper, root_name, after_root] + unmapped_namespaces:
         if value and value not in strings:
             strings.append(value)
     index = {value: position for position, value in enumerate(strings)}
+    unmapped_name = len(strings)  # index of the ID-less "minSdkVersion"
+    if unmapped_min_sdk:
+        strings.append("minSdkVersion")
     none = 0xFFFFFFFF
 
     def element(name: str, attributes: list[bytes]) -> bytes:
@@ -309,6 +322,10 @@ def axml(
     if min_sdk is not None:
         value_type, value = min_sdk if isinstance(min_sdk, tuple) else (0x10, min_sdk)
         sdk_attrs.append(attribute(ANDROID_NS, "minSdkVersion", None, value_type, value))
+    for sdk_namespace, value_type, value in unmapped_min_sdk:
+        sdk_attrs.append(struct.pack("<IIIHBBI", none if sdk_namespace is None else index[sdk_namespace], unmapped_name,
+                                     none, 8, 0, value_type, value))
+    uses_sdk = element("uses-sdk", sdk_attrs) + end("uses-sdk") if sdk_attrs or min_sdk is not None else b""
     namespace = struct.pack("<HHIIIII", 0x0100, 16, 24, 1, none, index["android"], index[ANDROID_NS])
     pools = string_pool(strings) * (2 if second_pool else 1)
     maps = resource_map(*attr_ids) * (2 if second_map else 1)
@@ -322,9 +339,13 @@ def axml(
     if nested_manifest:
         manifest += element("manifest", [attribute(None, "package", nested_manifest, 0x03, index[nested_manifest])])
         manifest += end("manifest")
-    if min_sdk is not None:
-        manifest += element("uses-sdk", sdk_attrs) + end("uses-sdk")
-    tree = manifest + element("application", application_attrs) + end("application") + end(root_name)
+    if not uses_sdk_in_application:
+        manifest += uses_sdk
+    application_body = uses_sdk if uses_sdk_in_application else b""
+    tree = manifest + element("application", application_attrs) + application_body + end("application")
+    tree += end(root_name) * root_ends
+    if after_root:
+        tree += element(after_root, []) + end(after_root)
     if wrapper:
         tree = element(wrapper, []) + tree + end(wrapper)
     body = head + namespace + late + tree
@@ -1222,6 +1243,26 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
                                  ("min-sdk-string.apk", (0x03, 0), 1), ("min-sdk-ref.apk", (0x01, 0x7F010000), 1)):
         expect_blocked(root, with_android(apk(name, manifest=axml(min_sdk=min_sdk))),
                        f"verify only v1 signatures (minSdkVersion {shown} < 24)", no_signed)
+    # Android reads minSdkVersion as Android does (review finding): a signed
+    # int, so 0xFFFFFFFF is -1, not 4294967295; only the framework attribute
+    # (resource ID 0x0101020C), so a "minSdkVersion" in no or another
+    # namespace neither sets nor overrides it; and only from a <uses-sdk>
+    # directly under the root manifest.
+    sdk_ns = "http://example.invalid/sdk"
+    for name, manifest, shown in (
+        ("min-sdk-minus-one.apk", axml(min_sdk=(0x10, 0xFFFFFFFF)), -1),
+        ("min-sdk-sign-bit.apk", axml(min_sdk=(0x11, 0x80000000)), -(1 << 31)),
+        ("min-sdk-other-ns.apk", axml(min_sdk=None, unmapped_min_sdk=((sdk_ns, 0x10, 24),)), 1),
+        ("min-sdk-no-ns.apk", axml(min_sdk=None, unmapped_min_sdk=((None, 0x10, 24),)), 1),
+        ("min-sdk-23-other-ns-24.apk", axml(min_sdk=23, unmapped_min_sdk=((sdk_ns, 0x10, 24),)), 23),
+        ("min-sdk-23-no-ns-24.apk", axml(min_sdk=23, unmapped_min_sdk=((None, 0x10, 24),)), 23),
+        ("min-sdk-in-application.apk", axml(uses_sdk_in_application=True), 1),
+    ):
+        expect_blocked(root, with_android(apk(name, manifest=manifest)),
+                       f"verify only v1 signatures (minSdkVersion {shown} < 24)", no_signed)
+    # An ID-less "minSdkVersion" next to the framework one changes nothing.
+    expect_valid(root, with_android(apk("min-sdk-24-other-ns-1.apk",
+                                        manifest=axml(min_sdk=24, unmapped_min_sdk=((sdk_ns, 0x10, 1),)))))
     emulator_digest = build_apk(dist / EMULATOR_APK, manifest=axml(debuggable=True), signers={APK_V2: [DEBUG_CERT]})
     emulator = writer.emulator_record(COMMIT, "790", dist / EMULATOR_APK)
     assert emulator["digest"] == emulator_digest
@@ -1390,6 +1431,11 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
         ("nested-manifest.apk", axml(package="org.example.other", nested_manifest=APP_ID)),
         ("wrapped-manifest.apk", axml(wrapper="root")),
         ("root-not-manifest.apk", axml(root_name="root")),
+        # Element nesting is tracked (for <uses-sdk>), so it must balance,
+        # and nothing may follow the root.
+        ("after-root.apk", axml(min_sdk=None, after_root="uses-sdk")),
+        ("root-left-open.apk", axml(root_ends=0)),
+        ("root-closed-twice.apk", axml(root_ends=2)),
     ):
         expect_blocked(root, with_android(apk(name, manifest=manifest)), "signed android artifact is not a readable APK", no_signed)
     # debuggable is found by its resource ID, whatever its name string says.

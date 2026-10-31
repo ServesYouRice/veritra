@@ -144,6 +144,7 @@ APK_SIGNATURE_V2 = 0x7109871A
 APK_SIGNATURE_SCHEMES = (APK_SIGNATURE_V2, 0xF05368C0, 0x1B93AD61)  # v2, v3, v3.1
 MAX_APK_BYTES = 512 * 1024 * 1024
 AXML_FILE, AXML_STRING_POOL, AXML_RESOURCE_MAP, AXML_START_ELEMENT = 0x0003, 0x0001, 0x0180, 0x0102
+AXML_END_ELEMENT = 0x0103
 AXML_FIRST_NODE, AXML_LAST_NODE = 0x0100, 0x017F  # namespace, element, end and CDATA nodes
 AXML_UTF8_FLAG = 0x100
 AXML_TYPE_STRING, AXML_TYPE_BOOLEAN = 0x03, 0x12
@@ -722,17 +723,21 @@ def manifest_facts(data: bytes) -> tuple[str | None, bool, int]:
     """(package, debuggable, lowest minSdkVersion) from a compiled AndroidManifest.xml.
 
     Any ``debuggable`` attribute that is not a literal false counts as
-    debuggable, so a resource reference fails closed. A missing or non-integer
-    ``minSdkVersion`` counts as 1, Android's default.
+    debuggable, so a resource reference fails closed. ``minSdkVersion`` is
+    read as Android reads it: only the framework attribute (resource ID
+    0x0101020C, whatever its name or namespace), only on a ``uses-sdk``
+    element directly under the root, and as a signed 32-bit int. A missing
+    or non-integer one counts as 1, Android's default.
 
     Android reads the string pool and resource map only before the first XML
     node, so one of either anywhere else, or a second one, could show this
     check other names or attribute IDs than the platform uses: both are
     refused. So is a ``manifest`` element that is not the single root, since
-    the platform takes the package from the root, and an element with two
-    attributes of one name or resource ID, since readers pick different ones.
-    The package is what Android reads: the ``package`` attribute with no
-    namespace, as its raw string, which must also be the typed value.
+    the platform takes the package from the root, an element after the root
+    or unbalanced start and end nodes, and an element with two attributes of
+    one name or resource ID, since readers pick different ones. The package
+    is what Android reads: the ``package`` attribute with no namespace, as
+    its raw string, which must also be the typed value.
     """
     kind, header_size, total = struct.unpack_from("<HHI", data, 0)
     if kind != AXML_FILE or total > len(data):
@@ -741,7 +746,7 @@ def manifest_facts(data: bytes) -> tuple[str | None, bool, int]:
     resource_ids: list[int] | None = None
     package, debuggable = None, False
     min_sdks: list[int] = []
-    in_nodes, elements = False, 0
+    in_nodes, elements, depth = False, 0, 0
     offset = header_size
     while offset + 8 <= total:
         kind, chunk_header, size = struct.unpack_from("<HHI", data, offset)
@@ -766,10 +771,13 @@ def manifest_facts(data: bytes) -> tuple[str | None, bool, int]:
             if attr_size < 20:
                 raise ValueError("short attribute")
             element = strings[name]
-            if (element == "manifest") != (elements == 0):
+            if (element == "manifest") != (elements == 0) or (elements and depth == 0):
                 raise ValueError("manifest is not the single root element")
             elements += 1
-            if element == "uses-sdk":
+            depth += 1
+            # Android reads <uses-sdk> only as a direct child of the root.
+            root_uses_sdk = element == "uses-sdk" and depth == 2
+            if root_uses_sdk:
                 min_sdks.append(1)
             seen: set[tuple[Any, ...]] = set()
             for index in range(attr_count):
@@ -791,9 +799,17 @@ def manifest_facts(data: bytes) -> tuple[str | None, bool, int]:
                 if element == "application" and (attr_id == ANDROID_ATTR_DEBUGGABLE or attr == "debuggable"):
                     if value_type != AXML_TYPE_BOOLEAN or value != 0:
                         debuggable = True
-                if element == "uses-sdk" and (attr_id == ANDROID_ATTR_MIN_SDK or attr == "minSdkVersion"):
-                    min_sdks[-1] = value if value_type in AXML_TYPE_INTEGERS else 1
+                if root_uses_sdk and attr_id == ANDROID_ATTR_MIN_SDK:
+                    # A Java int to Android: 0xFFFFFFFF is -1, not 4294967295.
+                    signed = value - (1 << 32) if value >= 1 << 31 else value
+                    min_sdks[-1] = signed if value_type in AXML_TYPE_INTEGERS else 1
+        elif kind == AXML_END_ELEMENT:
+            depth -= 1
+            if depth < 0:
+                raise ValueError("end element without a start")
         offset += size
+    if depth:
+        raise ValueError("element left open")
     return package, debuggable, min(min_sdks, default=1)
 
 
