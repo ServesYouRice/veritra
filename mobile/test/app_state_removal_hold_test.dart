@@ -271,6 +271,37 @@ void main() {
     await _waitFor(() => !h.state.sendHeldForRemoval('conv_a'));
   });
 
+  test('a failed outbox read while a send waits its turn is reported',
+      () async {
+    final h = await _Harness.start();
+    addTearDown(h.state.dispose);
+    h.store.capacityGate = Completer<void>();
+    final first = h.state.sendMessageTo('conv_a', 'A');
+    final second = h.state.sendMessageTo('conv_a', 'B');
+    h.store.failMlsReads = true;
+    h.store.capacityGate!.complete();
+    // Neither send throws: both fail closed and report it.
+    expect(await Future.wait([first, second]), [false, false]);
+    expect(h.state.errorFor(Ops.send), isNotNull);
+    expect(h.crypto.encrypted, isEmpty);
+    h.store.failMlsReads = false;
+  });
+
+  test('a hold that cannot be checked does not stop a staged commit', () async {
+    final h = await _Harness.start(
+        pendingRemovals: {'conv_a'},
+        fakes: (api, crypto) => crypto.stageFailures.add('conv_a'));
+    addTearDown(h.state.dispose);
+    await _waitFor(() => h.state.sendHeldForRemoval('conv_a'));
+    h.api.pendingRemovals
+      ..remove('conv_a')
+      ..add('conv_b');
+    h.crypto.epochFailures.add('conv_a');
+    h.sync.frame();
+    await _waitFor(() => h.api.bundles.contains('conv_b'),
+        timeout: const Duration(seconds: 2));
+  });
+
   test('this device\'s removal holds sends again after a restart', () async {
     final store = _CountingStore();
     final crypto = _Crypto(store)..stageFailures.add('conv_a');
@@ -517,6 +548,7 @@ class _Crypto implements MlsConversationCryptoService {
   final List<_Encrypted> encrypted = <_Encrypted>[];
   final Set<String> stageFailures = <String>{};
   final Set<String> noGroup = <String>{};
+  final Set<String> epochFailures = <String>{};
   int staged = 0;
 
   int epochOf(String conversationId) => epochs[conversationId] ?? 3;
@@ -525,11 +557,14 @@ class _Crypto implements MlsConversationCryptoService {
   Future<void> activateSession(Session session) async {}
 
   @override
-  Future<({int epoch, bool pending})?> groupEpoch(
-          String conversationId) async =>
-      noGroup.contains(conversationId)
-          ? null
-          : (epoch: epochOf(conversationId), pending: false);
+  Future<({int epoch, bool pending})?> groupEpoch(String conversationId) async {
+    if (epochFailures.remove(conversationId)) {
+      throw StateError('group state unreadable');
+    }
+    return noGroup.contains(conversationId)
+        ? null
+        : (epoch: epochOf(conversationId), pending: false);
+  }
 
   @override
   Future<void> stageMembershipChange(
@@ -631,6 +666,9 @@ class _Sync implements SyncService {
 class _CountingStore extends MemoryLocalStore {
   int mlsReads = 0;
 
+  /// While true, every read of the MLS outbox fails.
+  bool failMlsReads = false;
+
   /// While set and not completed, the outbox capacity check waits for it:
   /// a slow operation at the head of the session queue.
   Completer<void>? capacityGate;
@@ -645,6 +683,7 @@ class _CountingStore extends MemoryLocalStore {
   @override
   Future<List<PendingMlsMessage>> pendingMlsMessages() async {
     mlsReads++;
+    if (failMlsReads) throw StateError('database is locked');
     return super.pendingMlsMessages();
   }
 }

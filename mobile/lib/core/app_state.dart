@@ -3118,7 +3118,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         return true;
       }
       final changed = _removalHoldsChanged.future;
-      if (!await _heldForRemoval(conversationId)) {
+      final bool held;
+      try {
+        held = await _heldForRemoval(conversationId);
+      } catch (_) {
+        // Unreadable outbox: the attempt checks again inside the session
+        // queue, where the failure is reported and nothing is encrypted.
+        return !_disposed && _syncOwnerActive(owner, ownerGeneration);
+      }
+      if (!held) {
         return !_disposed && _syncOwnerActive(owner, ownerGeneration);
       }
       await changed;
@@ -3248,13 +3256,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       });
       final accounts = change.remove.map((item) => item.accountId);
       if (!hold.listed ||
-          hold.epoch != change.epoch ||
+          hold.epoch < change.epoch ||
           !hold.accounts.containsAll(accounts)) {
         changed = true;
       }
       hold
         ..listed = true
-        ..epoch = change.epoch
+        // A stale read never lowers the epoch a release compares against.
+        ..epoch = max(hold.epoch, change.epoch)
         ..accounts.addAll(accounts);
     }
     for (final conversationId in _removalHolds.keys.toList()) {
@@ -6443,7 +6452,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             change.conversationId == conversationId &&
             change.epoch == retry.epoch));
     if (failed) _mlsReconcileRequested = true;
-    await _updateRemovalHolds(changes, holdSeq, current, client, mls);
+    try {
+      await _updateRemovalHolds(changes, holdSeq, current, client, mls);
+    } catch (err) {
+      // The holds stay as they were and are looked at on the next pass; a
+      // commit staged above still goes out.
+      if (err is ApiException && err.statusCode == 401) rethrow;
+      _mlsReconcileRequested = true;
+    }
     if (!_syncOwnerActive(current, ownerGeneration)) return;
     if (staged) await _flushMlsOutbox();
   }
