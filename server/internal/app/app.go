@@ -62,7 +62,10 @@ type App struct {
 	// the jittered backoff; the capacity scenario tests shorten them.
 	pushSendTimeout time.Duration
 	pushRetryDelay  time.Duration
-	Log             *slog.Logger
+	// pushRejections counts provider refusals of a target that do not prove
+	// it dead (push_rejections.go).
+	pushRejections rejectedTargets
+	Log            *slog.Logger
 }
 
 // Shutdown timing (card I46). The whole stop sequence fits inside
@@ -635,6 +638,7 @@ func (a *App) deliverPushWake(ctx context.Context, metric *pushDeliveryMetrics, 
 		// again after the lease; a repeated generic wake only makes the
 		// device sync once more.
 		metric.delivered.Add(1)
+		a.pushRejections.clear(job.SubscriptionID)
 		completionCtx, completionCancel := context.WithTimeout(ctx, 2*time.Second)
 		completeErr := a.Store.CompletePushWakeJob(completionCtx, job)
 		completionCancel()
@@ -642,6 +646,27 @@ func (a *App) deliverPushWake(ctx context.Context, metric *pushDeliveryMetrics, 
 			a.Log.Warn("push_wake_completion_failed", "provider", job.Provider, "err", completeErr)
 		}
 		return
+	}
+	if errors.Is(err, push.ErrTargetRejected) {
+		// The provider refused this send in a way a retry would repeat but
+		// that does not prove the subscription dead. Drop the job (not a
+		// retry every five minutes for a day) and keep the subscription,
+		// unless it has been refused repeatedly for over a day.
+		if !a.pushRejections.note(job.SubscriptionID, time.Now().UTC()) {
+			dropCtx, dropCancel := context.WithTimeout(ctx, 2*time.Second)
+			dropErr := a.Store.DropPushWakeJob(dropCtx, job)
+			dropCancel()
+			if dropErr != nil {
+				// The job stays leased and is dropped after the lease.
+				metric.failed.Add(1)
+				a.Log.Warn("push_wake_drop_failed", "provider", job.Provider, "err", dropErr)
+				return
+			}
+			metric.abandoned.Add(1)
+			return
+		}
+		a.Log.Warn("push_target_retired_after_repeated_rejections", "provider", job.Provider)
+		err = push.ErrSubscriptionGone
 	}
 	if errors.Is(err, push.ErrSubscriptionGone) || errors.Is(err, push.ErrInvalidTarget) {
 		retireCtx, retireCancel := context.WithTimeout(ctx, 2*time.Second)

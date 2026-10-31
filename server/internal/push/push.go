@@ -22,6 +22,14 @@ var (
 	ErrNoProvider       = errors.New("push provider is not configured")
 	ErrInvalidTarget    = errors.New("invalid web push target")
 	ErrSubscriptionGone = errors.New("push subscription is no longer valid")
+	// ErrTargetRejected means the provider refused this one send in a way
+	// that says something about the target (APNs BadDeviceToken or
+	// DeviceTokenNotForTopic, an FCM 404 without UNREGISTERED) but is not
+	// proof that the subscription is dead: Apple also answers BadDeviceToken
+	// for a token sent to the wrong environment, and a 404 can come from the
+	// project. A retry would be refused the same way, so the caller drops the
+	// job without retiring the subscription and counts the rejection.
+	ErrTargetRejected = errors.New("push provider rejected the target")
 )
 
 type Notification struct {

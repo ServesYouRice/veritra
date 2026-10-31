@@ -87,10 +87,14 @@ func (p *FCMProvider) SendEncryptedEventAvailable(ctx context.Context, notificat
 	responseBody, _ := io.ReadAll(io.LimitReader(response.Body, 16<<10))
 	// The device token is retired only when FCM says so: HTTP 410, or an
 	// UNREGISTERED errorCode in error.details. A bare 404 can come from the
-	// project or the request rather than the token, so it stays an ordinary
-	// error; so does a body that is truncated or not JSON (retry, don't delete).
+	// project or the request rather than the token, so it does not retire the
+	// subscription; it is ErrTargetRejected (retrying would be refused the
+	// same way), and so is a 404 whose body is truncated or not JSON.
 	if response.StatusCode == http.StatusGone || (response.StatusCode >= 400 && fcmUnregistered(responseBody)) {
 		return ErrSubscriptionGone
+	}
+	if response.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("%w: FCM returned status %d", ErrTargetRejected, response.StatusCode)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return fmt.Errorf("FCM returned status %d", response.StatusCode)
@@ -249,6 +253,12 @@ func (p *APNsProvider) SendEncryptedEventAvailable(ctx context.Context, notifica
 	_ = json.Unmarshal(responseBody, &answer)
 	if response.StatusCode == http.StatusGone || answer.Reason == "Unregistered" {
 		return ErrSubscriptionGone
+	}
+	// Apple's own refusal of this token: not a reason to retry (the answer
+	// would repeat) and, because it also covers an environment mismatch, not
+	// proof that the subscription is dead.
+	if response.StatusCode == http.StatusBadRequest && (answer.Reason == "BadDeviceToken" || answer.Reason == "DeviceTokenNotForTopic") {
+		return fmt.Errorf("%w: APNs returned status %d (%s)", ErrTargetRejected, response.StatusCode, answer.Reason)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		if apnsReasonToken(answer.Reason) {

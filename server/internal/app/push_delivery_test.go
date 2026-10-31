@@ -261,6 +261,85 @@ func TestPushWakeGoneOrInvalidTargetRetiresSubscription(t *testing.T) {
 	}
 }
 
+// A refusal about the target that does not prove it dead (APNs BadDeviceToken,
+// an FCM 404) is repeated by every retry, so the job is dropped, not retried
+// for a day, and the subscription is kept.
+func TestPushWakeRejectedTargetDropsJobWithoutRetiring(t *testing.T) {
+	h := newPushHarness(t, func(context.Context, push.Notification) error {
+		return fmt.Errorf("%w: refused %s", push.ErrTargetRejected, pushTestEndpoint)
+	})
+	h.seed(t, 2)
+	h.app.drainPushWakeBatch(context.Background(), pushTestProvider)
+	if jobs := h.jobs(t); len(jobs) != 0 {
+		t.Fatalf("rejected jobs were kept for retry: %+v", jobs)
+	}
+	if h.subscriptionDisabled(t) {
+		t.Fatal("one rejection retired the subscription")
+	}
+	h.assertCounts(t, pushCounts{attempted: 2, abandoned: 2})
+	h.assertPrivate(t)
+}
+
+// Refused often enough over more than a day with no success in between, the
+// subscription is treated as dead and retired; a success starts the count
+// over.
+func TestPushWakeRepeatedRejectionsOverADayRetireSubscription(t *testing.T) {
+	var rejecting atomic.Bool
+	rejecting.Store(true)
+	h := newPushHarness(t, func(context.Context, push.Notification) error {
+		if rejecting.Load() {
+			return push.ErrTargetRejected
+		}
+		return nil
+	})
+	h.seed(t, 1)
+	// Nine refusals have been seen, the first more than a day ago.
+	h.app.pushRejections.byID = map[string]rejectedTarget{
+		pushTestSubscription: {first: time.Now().Add(-25 * time.Hour), count: rejectedTargetMinCount - 1},
+	}
+	h.app.drainPushWakeBatch(context.Background(), pushTestProvider)
+	if !h.subscriptionDisabled(t) {
+		t.Fatal("a target refused repeatedly for over a day was not retired")
+	}
+	if len(h.app.pushRejections.byID) != 0 {
+		t.Fatalf("tracker still holds the retired subscription: %v", h.app.pushRejections.byID)
+	}
+	h.assertPrivate(t)
+}
+
+func TestRejectedTargetsNeedCountAndSpanAndResetOnSuccess(t *testing.T) {
+	var tracker rejectedTargets
+	start := time.Now()
+	for i := 0; i < rejectedTargetMinCount*3; i++ {
+		if tracker.note("sub", start.Add(time.Duration(i)*time.Minute)) {
+			t.Fatalf("retired after %d refusals within an hour", i+1)
+		}
+	}
+	if !tracker.note("sub", start.Add(rejectedTargetMinSpan+time.Minute)) {
+		t.Fatal("not retired after many refusals spanning more than a day")
+	}
+	// Too few refusals, however long they span.
+	tracker.note("few", start)
+	if tracker.note("few", start.Add(48*time.Hour)) {
+		t.Fatal("retired after two refusals")
+	}
+	// A success forgets the history.
+	for i := 0; i < rejectedTargetMinCount-1; i++ {
+		tracker.note("ok", start)
+	}
+	tracker.clear("ok")
+	if tracker.note("ok", start.Add(48*time.Hour)) {
+		t.Fatal("history survived a successful send")
+	}
+	// Memory is bounded.
+	for i := 0; i < maxTrackedRejectedTargets*2; i++ {
+		tracker.note(fmt.Sprintf("sub-%d", i), start)
+	}
+	if len(tracker.byID) > maxTrackedRejectedTargets {
+		t.Fatalf("tracker holds %d subscriptions", len(tracker.byID))
+	}
+}
+
 func TestPushWakeTransientFailureSchedulesRetry(t *testing.T) {
 	// The provider error echoes the endpoint; the worker must not log it.
 	h := newPushHarness(t, func(context.Context, push.Notification) error {
