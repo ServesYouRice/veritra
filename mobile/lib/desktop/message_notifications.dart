@@ -170,7 +170,7 @@ class MessageNotifier {
 
   Future<void> handle(List<ReceivedMessageEnvelope> envelopes) async {
     final session = state.session;
-    if (session == null) return;
+    if (session == null || state.sessionEnding) return;
     // The text below belongs to this session. If the notifier is detached or
     // the account or device changes while this call waits, nothing is shown.
     final generation = _generation;
@@ -181,6 +181,7 @@ class MessageNotifier {
       final active = state.session;
       return generation == _generation &&
           sessionEnds == state.sessionEndGeneration &&
+          !state.sessionEnding &&
           active != null &&
           active.accountId == session.accountId &&
           active.deviceId == session.deviceId;

@@ -106,6 +106,15 @@ void main() {
     Future<void> ticks(int count) =>
         Future<void>.delayed(tick * count + const Duration(milliseconds: 50));
 
+    // Polls instead of sleeping a fixed time, so a slow tick on a busy test
+    // host does not fail the test.
+    Future<void> gone(File file) async {
+      final deadline = DateTime.now().add(const Duration(seconds: 5));
+      while (await file.exists() && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+    }
+
     test('a file left after start is swept on a later tick', () async {
       final sweeper = AttachmentOrphanSweeper(() async => dir, interval: tick)
         ..start();
@@ -115,7 +124,7 @@ void main() {
       final late = await seed('.veritra-attachment-$_id32.plaintext.part');
       final young = await seed('.veritra-attachment-$_id16.plaintext',
           age: const Duration(minutes: 5));
-      await ticks(2);
+      await gone(late);
       expect(await late.exists(), isFalse);
       expect(await young.exists(), isTrue,
           reason: 'an operation that may still run keeps its file');
@@ -141,7 +150,7 @@ void main() {
         ..start();
       addTearDown(sweeper.stop);
       final orphan = await seed('.veritra-attachment-$_id32.ciphertext');
-      await ticks(2);
+      await gone(orphan);
       expect(calls, greaterThan(1));
       expect(await orphan.exists(), isFalse);
     });

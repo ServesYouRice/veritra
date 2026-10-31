@@ -444,6 +444,22 @@ void main() {
       });
     }
 
+    test('a message handled while a sign-out runs shows nothing', () async {
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      state.beforeLocalSessionClear = () async {
+        entered.complete();
+        await release.future;
+      };
+      final signOut = state.logout();
+      await entered.future;
+      expect(state.session, isNotNull);
+      await start();
+      expect(notifier.shown, isEmpty);
+      release.complete();
+      await signOut;
+    });
+
     test('a notification after re-attaching is shown', () async {
       messages.attach();
       messages.detach();

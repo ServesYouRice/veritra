@@ -383,6 +383,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// work of a session that is still running.
   int get sessionEndGeneration => _sessionEnds;
 
+  int _sessionsEnding = 0;
+
+  /// True while a local sign-out runs. `session` is still set then, but it
+  /// already belongs to the past: nothing may be shown or stored for it.
+  /// Covers work that starts inside the window, which a value captured from
+  /// [sessionEndGeneration] at its start cannot see.
+  bool get sessionEnding => _sessionsEnding > 0;
+
   AttachmentOrphanSweeper? _orphanSweeper;
 
   /// Removes attachment working files a crash left behind, now and every
@@ -2024,7 +2032,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   Future<bool> loadConversationMuted(String conversationId) async {
     final current = session;
     final client = api;
-    if (current == null || client == null) {
+    if (current == null || client == null || sessionEnding) {
       return false;
     }
     final ends = _sessionEnds;
@@ -2032,7 +2040,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       final mute = await client.conversationMute(current.token, conversationId);
       // A reply that lands during or after a sign-out belongs to the old
       // session; storing it would leave a row behind the wipe.
-      if (ends != _sessionEnds || session == null) return false;
+      if (ends != _sessionEnds || sessionEnding || session == null)
+        return false;
       _setMuteLocally(conversationId, mute);
       return true;
     } catch (_) {
@@ -2063,7 +2072,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         muted: duration != MuteDuration.off,
         forDuration: length,
       );
-      if (ends != _sessionEnds || session == null) return;
+      if (ends != _sessionEnds || sessionEnding || session == null) return;
       _setMuteLocally(conversationId, applied);
     });
   }
@@ -4595,6 +4604,27 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     bool keepApiOpen = false,
   }) async {
     _sessionEnds++;
+    _sessionsEnding++;
+    try {
+      return await _clearLocalSessionSteps(
+        preserveDeviceIdentity: preserveDeviceIdentity,
+        preserveOutbox: preserveOutbox,
+        drainSyncOwner: drainSyncOwner,
+        keepDrafts: keepDrafts,
+        keepApiOpen: keepApiOpen,
+      );
+    } finally {
+      _sessionsEnding--;
+    }
+  }
+
+  Future<ApiClient?> _clearLocalSessionSteps({
+    required bool preserveDeviceIdentity,
+    required bool preserveOutbox,
+    required bool drainSyncOwner,
+    required bool keepDrafts,
+    required bool keepApiOpen,
+  }) async {
     _sessionGeneration++;
     // Native permits go first, then capture, then the private notice state
     // (cleared with the rest of the local session below).

@@ -81,6 +81,41 @@ void main() {
     expect(state.isMuted('conv_1'), isFalse);
     expect(await store.loadConversationMutes(), isEmpty);
   });
+
+  test('a mute read that starts while sign-out runs stores nothing', () async {
+    final store = MemoryLocalStore();
+    final api = _HeldMuteApi();
+    final state = AppState(
+      apiClientFactory: (_) => api,
+      cryptoService: TestOnlyCryptoService(),
+      localStore: store,
+      syncServiceFactory: (_, __) => _IdleSync(),
+    )
+      ..api = api
+      ..session = const Session(
+        baseUrl: 'https://localhost:8080',
+        token: 'owner-token',
+        accountId: 'acct_owner',
+        deviceId: 'dev_owner',
+      );
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    state.beforeLocalSessionClear = () async {
+      entered.complete();
+      await release.future;
+    };
+    final signOut = state.logout();
+    await entered.future;
+    expect(state.session, isNotNull);
+    expect(state.sessionEnding, isTrue);
+    api.reply.complete(const ConversationMute(muted: true));
+    expect(await state.loadConversationMuted('conv_1'), isFalse);
+    release.complete();
+    await signOut;
+    expect(state.sessionEnding, isFalse);
+    expect(state.isMuted('conv_1'), isFalse);
+    expect(await store.loadConversationMutes(), isEmpty);
+  });
 }
 
 class _HeldMuteApi extends ApiClient {
