@@ -4131,7 +4131,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       }
       await _suppressForegroundNotices(current);
       if (_mlsCrypto != null) {
-        await _processMlsRevocations();
+        try {
+          await _processMlsRevocations();
+        } catch (err) {
+          // Like reconcile below, revocations never block sync: a failure
+          // is retried after its own backoff (TASK-035).
+          if (err is ApiException && err.statusCode == 401) rethrow;
+          _mlsStepSettled('revocations', failed: true);
+        }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         if (_mlsReconcileRequested || _mlsPendingSeen.isNotEmpty) {
           _mlsReconcileRequested = false;
@@ -5134,8 +5141,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final messages = await localStore.pendingMlsMessages();
     if (!_syncOwnerActive(current, ownerGeneration)) return;
     // Items settled some other way no longer need finishing.
-    _mlsAcceptedUnfinished.removeWhere((key) =>
-        !messages.any((message) => message.idempotencyKey == key));
+    _mlsAcceptedUnfinished.removeWhere(
+        (key) => !messages.any((message) => message.idempotencyKey == key));
     final byConversation = <String, List<PendingMlsMessage>>{};
     for (final message in messages) {
       byConversation
@@ -5279,6 +5286,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (current == null || client == null || mls == null) return;
     try {
       await _reconcileMlsMembershipOnce(current, client, mls);
+      _mlsStepSettled('reconcile', failed: false);
+    } catch (err) {
+      // The pending-changes list could not be read: try again later, not
+      // only on the next catch-up something else starts.
+      if (err is! ApiException || err.statusCode != 401) {
+        _mlsStepSettled('reconcile', failed: true);
+      }
+      rethrow;
     } finally {
       // Every pass, failed or not, re-arms the wake for the earliest change
       // still backing off.
@@ -5340,6 +5355,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         if (err is ApiException && err.statusCode == 401) rethrow;
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         failed = true;
+        // Not claimed again on every catch-up: it waits out a backoff.
+        _mlsChangeFailed(change.conversationId, change.epoch);
         // Body-free: no conversation, device or server text.
         developer.log(
             'mls_reconcile_conversation_failed '
@@ -5383,7 +5400,13 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// Per conversation: the epoch the change failed at, how often, and when
   /// it may go again. A null [due] has been handed to a pass already.
   final Map<String, ({int epoch, int attempts, DateTime? due})>
-      _mlsChangeRetries = <String, ({int epoch, int attempts, DateTime? due})>{};
+      _mlsChangeRetries =
+      <String, ({int epoch, int attempts, DateTime? due})>{};
+
+  /// Per catch-up step ('revocations', 'reconcile') that failed as a whole
+  /// or in part: how often in a row, and when the wake retries it.
+  final Map<String, ({int attempts, DateTime? due})> _mlsStepRetries =
+      <String, ({int attempts, DateTime? due})>{};
 
   /// One timer for the earliest deadline above, so an idle session still
   /// reconciles when a backoff ends. Separate from the catch-up and outbox
@@ -5426,6 +5449,22 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     _mlsChangeRetries[conversationId] =
         (epoch: retry.epoch, attempts: retry.attempts, due: null);
     return false;
+  }
+
+  /// Records how a catch-up [step] went. A failed one is retried by the
+  /// wake after a backoff that grows while it keeps failing; it runs on
+  /// every catch-up meanwhile, as before.
+  void _mlsStepSettled(String step, {required bool failed}) {
+    if (failed) {
+      final attempts = (_mlsStepRetries[step]?.attempts ?? 0) + 1;
+      _mlsStepRetries[step] = (
+        attempts: attempts,
+        due: DateTime.now().toUtc().add(_mlsRetryDelay(attempts)),
+      );
+    } else if (_mlsStepRetries.remove(step) == null) {
+      return;
+    }
+    _armMlsRetryWake();
   }
 
   /// The server refused the membership bundle [message] for good or for
@@ -5476,14 +5515,28 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       final due = retry.due;
       if (due != null) yield due;
     }
+    for (final retry in _mlsStepRetries.values) {
+      final due = retry.due;
+      if (due != null) yield due;
+    }
   }
 
   void _consumeMlsRetryDeadlines(DateTime now) {
     for (final entry in _mlsChangeRetries.entries.toList()) {
       final due = entry.value.due;
       if (due != null && !due.isAfter(now)) {
-        _mlsChangeRetries[entry.key] =
-            (epoch: entry.value.epoch, attempts: entry.value.attempts, due: null);
+        _mlsChangeRetries[entry.key] = (
+          epoch: entry.value.epoch,
+          attempts: entry.value.attempts,
+          due: null
+        );
+      }
+    }
+    for (final entry in _mlsStepRetries.entries.toList()) {
+      final due = entry.value.due;
+      if (due != null && !due.isAfter(now)) {
+        _mlsStepRetries[entry.key] =
+            (attempts: entry.value.attempts, due: null);
       }
     }
   }
@@ -5493,6 +5546,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     _mlsRetryWake?.cancel();
     _mlsRetryWake = null;
     _mlsChangeRetries.clear();
+    _mlsStepRetries.clear();
   }
 
   /// A floor on retry timers, so an item a pass cannot send yet never
@@ -5701,7 +5755,22 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final client = api;
     final mls = _mlsCrypto;
     if (current == null || client == null || mls == null) return;
-    final revocations = await client.mlsRevocations(current.token);
+    final List<MlsRevocation> revocations;
+    try {
+      revocations = await client.mlsRevocations(current.token);
+    } catch (err) {
+      // A revoked session ends the whole pass; otherwise reconcile still
+      // runs, and the list is read again after a backoff (TASK-035).
+      if (err is ApiException && err.statusCode == 401) rethrow;
+      // Body-free: no server text.
+      developer.log(
+          'mls_revocations_unavailable '
+          '${err is ApiException ? err.statusCode : err.runtimeType}',
+          name: 'veritra.sync');
+      _mlsStepSettled('revocations', failed: true);
+      return;
+    }
+    var failed = false;
     _revocationPendingGroups
       ..clear()
       ..addAll(revocations
@@ -5711,7 +5780,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       // Each revocation is handled on its own: one that cannot be committed
       // here (no local group, or no leaf for the device) must not fail the
       // pass, or reconcile and the wake ACK never run. It is listed again,
-      // and tried again, on the next pass.
+      // and tried again on the next pass, which the wake starts after a
+      // backoff when nothing else does.
       try {
         if (revocation.state == 'pending' &&
             revocation.coordinatorDeviceId == current.deviceId) {
@@ -5756,6 +5826,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       } catch (err) {
         // A revoked session ends the whole pass.
         if (err is ApiException && err.statusCode == 401) rethrow;
+        failed = true;
         // Body-free: no conversation, device or server text.
         developer.log(
             'mls_revocation_failed '
@@ -5763,6 +5834,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             name: 'veritra.sync');
       }
     }
+    _mlsStepSettled('revocations', failed: failed);
   }
 
   /// How long the self-update policy waits after the server refused the
