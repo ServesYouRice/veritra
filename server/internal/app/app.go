@@ -176,7 +176,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		providers["apns"] = provider
 	}
 	pushProvider := push.NewRouter(providers)
-	hub := realtime.NewHub()
+	hub := realtime.NewHubWithLimits(realtime.HubLimits{PerIPv6Prefix: cfg.Limits.WithDefaults().SocketsPerIPv6Prefix})
 	metrics := newHTTPMetrics()
 	metrics.realtimeConnections = hub.ConnectionCount
 	dataDir := cfg.DataDir

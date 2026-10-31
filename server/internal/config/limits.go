@@ -25,6 +25,10 @@ type Limits struct {
 	// hold; the upload route accepts that plus the chunk framing, see
 	// MaxAttachmentCiphertext.
 	AttachmentBytes int64
+	// SocketsPerIPv6Prefix caps the realtime sockets of all addresses in one
+	// IPv6 /64 (an office or home network); one address always gets at most
+	// 20.
+	SocketsPerIPv6Prefix int
 }
 
 const mib = 1 << 20
@@ -42,6 +46,7 @@ const (
 	DefaultWriteMiBPerHour       = 64
 	DefaultAttachmentMiB         = 48 // what the app encrypts at most
 	MaxAttachmentMiB             = 48
+	DefaultSocketsPerIPv6Prefix  = 200
 	PendingDeviceLinksPerAccount = 3
 )
 
@@ -62,6 +67,7 @@ var limitSettings = []limitSetting{
 	{"PRIVATE_MESSENGER_LIMIT_DELIVERIES_PER_MINUTE", 60, 1_000_000, 1, func(l *Limits, v int64) { l.DeliveriesPerMinute = int(v) }},
 	{"PRIVATE_MESSENGER_LIMIT_WRITE_MIB_PER_HOUR", 16, 65_536, mib, func(l *Limits, v int64) { l.WriteBytesPerHour = v }},
 	{"PRIVATE_MESSENGER_LIMIT_ATTACHMENT_MIB", 1, MaxAttachmentMiB, mib, func(l *Limits, v int64) { l.AttachmentBytes = v }},
+	{"PRIVATE_MESSENGER_LIMIT_SOCKETS_PER_IPV6_PREFIX", 20, 10_000, 1, func(l *Limits, v int64) { l.SocketsPerIPv6Prefix = int(v) }},
 }
 
 func loadLimits() (Limits, error) {
@@ -109,6 +115,9 @@ func (l Limits) WithDefaults() Limits {
 	}
 	if l.AttachmentBytes == 0 {
 		l.AttachmentBytes = DefaultAttachmentMiB * mib
+	}
+	if l.SocketsPerIPv6Prefix == 0 {
+		l.SocketsPerIPv6Prefix = DefaultSocketsPerIPv6Prefix
 	}
 	return l
 }

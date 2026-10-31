@@ -15,10 +15,14 @@ var (
 )
 
 const (
-	maxConnections           = 10000
-	maxConnectionsPerIP      = 20
-	maxConnectionsPerAccount = 10
-	maxConnectionsPerDevice  = 3
+	maxConnections      = 10000
+	maxConnectionsPerIP = 20
+	// defaultMaxConnectionsPerIPv6Prefix is the cap for all addresses of one
+	// IPv6 /64, a single office or home network that hands out many
+	// addresses; it is configurable (HubLimits).
+	defaultMaxConnectionsPerIPv6Prefix = 200
+	maxConnectionsPerAccount           = 10
+	maxConnectionsPerDevice            = 3
 )
 
 type Event struct {
@@ -39,16 +43,37 @@ type Hub struct {
 	mu          sync.RWMutex
 	subscribers map[string]map[*Client]struct{}
 	perIP       map[string]int
-	draining    bool
-	total       int
+	// perPrefix counts sockets per IPv6 /64 (IPv4 sockets are not counted).
+	perPrefix map[string]int
+	// perPrefixLimit is the /64 cap.
+	perPrefixLimit int
+	draining       bool
+	total          int
 	// Aggregate counters for the private metrics endpoint (card I47).
 	dropped          atomic.Int64
 	rejectedLimit    atomic.Int64
 	rejectedDraining atomic.Int64
 }
 
-func NewHub() *Hub {
-	return &Hub{subscribers: map[string]map[*Client]struct{}{}, perIP: map[string]int{}}
+// HubLimits configures the per-network socket caps. A zero field means the
+// default. The per-address cap (maxConnectionsPerIP) is fixed.
+type HubLimits struct {
+	// PerIPv6Prefix caps the sockets of all addresses in one IPv6 /64.
+	PerIPv6Prefix int
+}
+
+func NewHub() *Hub { return NewHubWithLimits(HubLimits{}) }
+
+func NewHubWithLimits(limits HubLimits) *Hub {
+	if limits.PerIPv6Prefix <= 0 {
+		limits.PerIPv6Prefix = defaultMaxConnectionsPerIPv6Prefix
+	}
+	return &Hub{
+		subscribers:    map[string]map[*Client]struct{}{},
+		perIP:          map[string]int{},
+		perPrefix:      map[string]int{},
+		perPrefixLimit: limits.PerIPv6Prefix,
+	}
 }
 
 // ConnectionCount returns only an aggregate operational gauge. It never
@@ -59,26 +84,28 @@ func (h *Hub) ConnectionCount() int {
 	return h.total
 }
 
-// ipBucket is the key the per-address cap counts a remote address under. An
+// addressKeys names the two buckets a remote address is counted under: the
+// address itself (IPv4-mapped IPv6 forms unmapped, zones dropped) against
+// maxConnectionsPerIP, and for IPv6 its /64 against the prefix cap, because an
 // IPv6 client normally controls at least a /64 and could otherwise rotate
-// addresses inside it past the cap, so IPv6 counts per /64. IPv4 (including
-// IPv4-mapped IPv6 forms) counts per address; clients behind carrier-grade or
-// corporate NAT share one bucket, and the cap value is a separate open
-// product question. An unparsable address is its own bucket.
-func ipBucket(remoteIP string) string {
+// addresses inside it past the per-address cap. IPv4 has no prefix bucket;
+// clients behind carrier-grade or corporate NAT share one address and its cap,
+// whose value is a separate open product question. An unparsable address is
+// its own bucket.
+func addressKeys(remoteIP string) (address, prefix string) {
 	addr, err := netip.ParseAddr(remoteIP)
 	if err != nil {
-		return remoteIP
+		return remoteIP, ""
 	}
-	addr = addr.Unmap()
+	addr = addr.Unmap().WithZone("")
 	if addr.Is4() {
-		return addr.String()
+		return addr.String(), ""
 	}
-	return netip.PrefixFrom(addr, 64).Masked().String()
+	return addr.String(), netip.PrefixFrom(addr, 64).Masked().String()
 }
 
 func (h *Hub) Register(accountID, deviceID, remoteIP string) (*Client, error) {
-	ipKey := ipBucket(remoteIP)
+	ipKey, prefixKey := addressKeys(remoteIP)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.draining {
@@ -94,16 +121,20 @@ func (h *Hub) Register(accountID, deviceID, remoteIP string) (*Client, error) {
 		}
 	}
 	if h.total >= maxConnections || accountCount >= maxConnectionsPerAccount ||
-		deviceCount >= maxConnectionsPerDevice || ipCount >= maxConnectionsPerIP {
+		deviceCount >= maxConnectionsPerDevice || ipCount >= maxConnectionsPerIP ||
+		(prefixKey != "" && h.perPrefix[prefixKey] >= h.perPrefixLimit) {
 		h.rejectedLimit.Add(1)
 		return nil, ErrConnectionLimit
 	}
-	client := &Client{accountID: accountID, deviceID: deviceID, remoteIP: remoteIP, ipKey: ipKey, send: make(chan []byte, 32)}
+	client := &Client{accountID: accountID, deviceID: deviceID, remoteIP: remoteIP, ipKey: ipKey, prefixKey: prefixKey, send: make(chan []byte, 32)}
 	if h.subscribers[accountID] == nil {
 		h.subscribers[accountID] = map[*Client]struct{}{}
 	}
 	h.subscribers[accountID][client] = struct{}{}
 	h.perIP[ipKey]++
+	if prefixKey != "" {
+		h.perPrefix[prefixKey]++
+	}
 	h.total++
 	return client, nil
 }
@@ -118,6 +149,13 @@ func (h *Hub) removeLocked(clients map[*Client]struct{}, client *Client) {
 		h.perIP[client.ipKey] = n
 	} else {
 		delete(h.perIP, client.ipKey)
+	}
+	if client.prefixKey != "" {
+		if n := h.perPrefix[client.prefixKey] - 1; n > 0 {
+			h.perPrefix[client.prefixKey] = n
+		} else {
+			delete(h.perPrefix, client.prefixKey)
+		}
 	}
 	if len(clients) == 0 {
 		delete(h.subscribers, client.accountID)
@@ -181,6 +219,7 @@ func (h *Hub) Drain() {
 		delete(h.subscribers, accountID)
 	}
 	clear(h.perIP)
+	clear(h.perPrefix)
 	h.total = 0
 }
 
@@ -225,7 +264,8 @@ type Client struct {
 	accountID string
 	deviceID  string
 	remoteIP  string
-	ipKey     string // ipBucket(remoteIP), the key h.perIP counts this socket under
+	ipKey     string // address bucket (addressKeys): the key h.perIP counts this socket under
+	prefixKey string // IPv6 /64 bucket, empty for IPv4: the key h.perPrefix counts it under
 	send      chan []byte
 	closeOnce sync.Once
 	mu        sync.RWMutex
