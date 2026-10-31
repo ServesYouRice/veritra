@@ -132,6 +132,46 @@ a real account. L1, the signed approved-device list, must give the core:
 With L1 the identity-only check on past-epoch senders (TASK-008) can also
 compare signing keys.
 
+### Rejoining a conversation
+
+A device removed from a conversation and later re-added (an account that
+leaves and is invited back) still stores the old group under the same id:
+OpenMLS keeps a group after its own removal, marked inactive. The server
+resets the device's roster window on the re-add, so a device that was
+offline during its removal never sees that commit; its first event is the
+new Welcome. `join_group` (`pm_crypto_group_join`, no ABI change) lets the
+Welcome replace the stored group only when, after every usual Welcome check:
+
+- the stored group is inactive: the device applied its own removal, holds
+  no live group under that id, and the Welcome counts as a fresh join; or
+- the stored group is active, the Welcome's epoch is later than the stored
+  one, and the Welcome's sender (the leaf that signed its GroupInfo) is a
+  member of the stored group with the same credential and signing key.
+
+Otherwise the join fails and the stored group stays untouched. The old
+group's state is deleted before the new one is stored. A Welcome cannot
+replace an active group on the word of a device the server made up, even
+one carrying a real member's identity: the server can copy leaves out of
+published key packages but cannot sign for them.
+
+Limits:
+
+- A device that never saw its removal, re-added by a member who joined
+  after that removal, is refused: nothing it holds vouches for that member.
+  Its sync then stops under I33, as before this rule. Closing that needs L1
+  or a server-independent proof of the removal.
+- A member of the old group who works with the server can move a device
+  that is still in the group into a fork it controls. Honest members never
+  add an identity already in the group, so such a Welcome is never genuine,
+  but the device cannot tell. The safety number need not change: the fork
+  can hold the real members' leaves, copied from their key packages (they
+  just never receive its messages).
+- A refused Welcome has already used up its key package in memory. The app
+  restores the previous sealed state after any failed sync event; a direct
+  FFI caller must do the same.
+
+Tests: `crypto/rust/tests/rejoin_after_removal.rs`.
+
 ## Message size
 
 Three limits apply to an MLS application message, smallest first:

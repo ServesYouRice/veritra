@@ -523,17 +523,44 @@ impl MlsDevice {
         };
         // Staging decrypts the Welcome (and consumes the key package) but
         // stores no group; into_group persists it, so every check runs first.
-        let staged = StagedWelcome::new_from_welcome(
+        let builder = StagedWelcome::build_from_welcome(
             &self.provider,
             group_create_config().join_config(),
             welcome,
-            None,
         )
         .map_err(|_| MlsError::GroupOperation)?;
+        let group_id = GroupId::from_slice(expected_group_id);
+        if builder
+            .processed_welcome()
+            .unverified_group_info()
+            .group_id()
+            != &group_id
+        {
+            return Err(MlsError::InvalidMessage);
+        }
+        // A device removed and later re-added still holds the old group
+        // under this id. OpenMLS refuses to stage over it unless told to;
+        // whether it may go is decided below, once the Welcome is verified.
+        let stored =
+            MlsGroup::load(self.provider.storage(), &group_id).map_err(|_| MlsError::Storage)?;
+        let builder = if stored.is_some() {
+            builder.replace_old_group()
+        } else {
+            builder
+        };
+        let staged = builder.build().map_err(|_| MlsError::GroupOperation)?;
         if staged.group_context().group_id().as_slice() != expected_group_id {
             return Err(MlsError::InvalidMessage);
         }
         self.inspect_welcome(&staged)?;
+        if let Some(mut stored) = stored {
+            ensure_replaceable(&stored, &staged)?;
+            // into_group only writes, so the old group's leftovers (own leaf
+            // nodes, proposal queue, epoch key pairs) are deleted first.
+            stored
+                .delete(self.provider.storage())
+                .map_err(|_| MlsError::Storage)?;
+        }
         staged
             .into_group(&self.provider)
             .map_err(|_| MlsError::GroupOperation)
@@ -959,6 +986,41 @@ fn basic_identity(credential: &Credential) -> Result<Vec<u8>, MlsError> {
     let identity = credential.serialized_content();
     decode_device_identity(identity)?;
     Ok(identity.to_vec())
+}
+
+/// Whether a verified Welcome may replace the group this device already
+/// stores under the same id (a re-add after a removal).
+///
+/// - An inactive group (this device processed its own removal) can no
+///   longer be used, so the Welcome is taken as a fresh join.
+/// - An active group is the one this device still believes it is in. The
+///   server resets a device's roster window on a re-add, so a device offline
+///   during its removal never sees that commit. Its group goes only when the
+///   Welcome is a later epoch and its sender (the leaf that signed the
+///   GroupInfo) is a member of the stored group with the same credential and
+///   signature key. The server can copy real leaves out of published key
+///   packages but cannot sign for them, so a group it built from devices of
+///   its own cannot take over a conversation.
+fn ensure_replaceable(stored: &MlsGroup, staged: &StagedWelcome) -> Result<(), MlsError> {
+    if !stored.is_active() {
+        return Ok(());
+    }
+    let refused = Err(MlsError::GroupOperation);
+    if staged.group_context().epoch() <= stored.epoch() {
+        return refused;
+    }
+    let sender = staged
+        .welcome_sender()
+        .map_err(|_| MlsError::InvalidIdentity)?;
+    let identity = sender.credential().serialized_content();
+    let key = sender.signature_key().as_slice();
+    if stored.members().any(|member| {
+        member.credential.serialized_content() == identity && member.signature_key == key
+    }) {
+        Ok(())
+    } else {
+        refused
+    }
 }
 
 /// Identities of the current members, leaving out the `removed` leaves.

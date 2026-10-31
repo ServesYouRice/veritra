@@ -135,9 +135,24 @@ int32_t pm_crypto_device_seal_state(PmCryptoHandle *handle,
                                     PmByteSlice state_key, uint64_t counter,
                                     PmOwnedBuffer *out);
 int32_t pm_crypto_group_create(PmCryptoHandle *handle, PmByteSlice group_id);
+/*
+ * Joins the group carried by a Welcome for expected_group_id. A device
+ * removed and later re-added still stores the old group under that id; the
+ * Welcome replaces it only when the stored group is inactive (this device
+ * applied its own removal), or when the Welcome is a later epoch and its
+ * sender is a member of the stored group with the same credential and
+ * signing key. Otherwise PM_CRYPTO_ERROR, and the stored group is kept.
+ * See docs/crypto.md, "Rejoining a conversation".
+ */
 int32_t pm_crypto_group_join(PmCryptoHandle *handle,
                              PmByteSlice expected_group_id,
                              PmByteSlice welcome);
+/*
+ * Deprecated, tests only. Merges its commit at once, before the server has
+ * accepted it, so a commit that loses the epoch race forks this device. Not
+ * used by the app; use pm_crypto_group_stage_commit, then
+ * pm_crypto_group_merge_pending_commit after the server accepts it.
+ */
 int32_t pm_crypto_group_add_member(PmCryptoHandle *handle,
                                    PmByteSlice group_id,
                                    PmByteSlice key_package,
@@ -171,9 +186,10 @@ int32_t pm_crypto_group_process_commit(PmCryptoHandle *handle,
                                        PmByteSlice group_id,
                                        PmByteSlice commit);
 /*
- * Merges its update commit at once, before the server has accepted it, so a
- * commit that loses the epoch race forks this device. Not used by the app;
- * use pm_crypto_group_stage_commit with an empty change list.
+ * Deprecated, tests only. Merges its update commit at once, before the
+ * server has accepted it, so a commit that loses the epoch race forks this
+ * device. Not used by the app; use pm_crypto_group_stage_commit with an
+ * empty change list.
  */
 int32_t pm_crypto_group_self_update(PmCryptoHandle *handle,
                                     PmByteSlice group_id,
@@ -182,6 +198,11 @@ int32_t pm_crypto_group_safety_number(PmCryptoHandle *handle,
                                       PmByteSlice group_id,
                                       PmOwnedBuffer *out_hash,
                                       PmOwnedBuffer *out_digits);
+/*
+ * Deprecated, tests only. Merges its removal commit at once, before the
+ * server has accepted it, so a commit that loses the epoch race forks this
+ * device. Not used by the app; use pm_crypto_group_stage_commit.
+ */
 int32_t pm_crypto_group_remove_member(
     PmCryptoHandle *handle, PmByteSlice group_id, PmByteSlice account_id,
     PmByteSlice device_id, PmOwnedBuffer *out_commit);

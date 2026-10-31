@@ -486,7 +486,10 @@ pub unsafe extern "C" fn pm_crypto_group_create(
     })
 }
 
-/// Joins and persists the group carried by an MLS Welcome.
+/// Joins and persists the group carried by an MLS Welcome. A stored group
+/// under the same id (a re-add after a removal) is replaced only when it is
+/// inactive, or when the Welcome is a later epoch sent by one of its members
+/// (`MlsDevice::join_group`).
 ///
 /// # Safety
 /// `handle` must be live and `welcome` readable for the call.
@@ -511,6 +514,9 @@ pub unsafe extern "C" fn pm_crypto_group_join(
 }
 
 /// Adds one verified key package and returns the commit and Welcome.
+/// Deprecated, tests only: it merges before the server accepts the commit,
+/// so a lost epoch race forks this device. The app stages through
+/// [`pm_crypto_group_stage_commit`].
 ///
 /// # Safety
 /// `handle` must be live, slices readable, and both outputs writable.
@@ -873,7 +879,9 @@ pub unsafe extern "C" fn pm_crypto_group_safety_number(
 }
 
 /// Removes every leaf carrying the account/device credential and returns the
-/// committed removal.
+/// committed removal. Deprecated, tests only: it merges before the server
+/// accepts the commit, so a lost epoch race forks this device. The app
+/// stages through [`pm_crypto_group_stage_commit`].
 ///
 /// # Safety
 /// `handle` must be live, slices readable, and `out_commit` writable.
