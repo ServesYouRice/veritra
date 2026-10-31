@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -138,6 +139,254 @@ void main() {
           await alice.service.groupEpoch('conv_1'), (epoch: 3, pending: false));
     }, skip: skip);
   });
+
+  group('sync events that can never succeed (D54, TASK-058)', () {
+    test('a message from an epoch this device never held is passed with a '
+        'placeholder', () async {
+      final bindings = NativeCryptoBindings.open(libraryPath!);
+      final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+      final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+      final carol = await _Client.enroll(bindings, 'acct_carol', 'dev_carol');
+      await _startConversation(alice, bob);
+      final early =
+          await alice.send(AppPayloadType.text, <String, Object?>{'text': 'e1'});
+      await alice.service.stageMembershipChange('conv_1',
+          adds: <DeviceKeyPackage>[await carol.keyPackage()]);
+      await _accept(alice, <_Client>[carol], <_Client>[bob]);
+      final counter = (await carol.store.loadCryptoState())!.counter;
+
+      // Epoch 1 is from before Carol joined.
+      final envelope = carol.envelopeFrom(alice, early);
+      final event = carol.nextEvent();
+      expect(await carol.service.processApplicationMessage(envelope, event),
+          isNull);
+
+      await _expectPlaceholder(carol, envelope, event);
+      expect((await carol.store.loadCryptoState())!.counter, counter + 1);
+      // Sync goes on, and the group still decrypts.
+      final next =
+          await alice.send(AppPayloadType.text, <String, Object?>{'text': 'hi'});
+      await carol.receive(alice, next);
+      expect((await carol.history()).map((row) => row.body), contains('hi'));
+    }, skip: skip);
+
+    test('a damaged ciphertext is passed with a placeholder', () async {
+      final bindings = NativeCryptoBindings.open(libraryPath!);
+      final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+      final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+      await _startConversation(alice, bob);
+      final sent =
+          await bob.send(AppPayloadType.text, <String, Object?>{'text': 'one'});
+      final damaged = List<int>.of(sent.ciphertext);
+      damaged[damaged.length - 1] ^= 0xff;
+
+      final envelope = alice.envelopeFrom(bob, sent, ciphertext: damaged);
+      final event = alice.nextEvent();
+      expect(await alice.service.processApplicationMessage(envelope, event),
+          isNull);
+
+      await _expectPlaceholder(alice, envelope, event);
+      final next =
+          await bob.send(AppPayloadType.text, <String, Object?>{'text': 'two'});
+      await alice.receive(bob, next);
+      expect((await alice.history()).map((row) => row.body), contains('two'));
+    }, skip: skip);
+
+    test('a replayed message whose secrets are gone is passed with a '
+        'placeholder', () async {
+      final bindings = NativeCryptoBindings.open(libraryPath!);
+      final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+      final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+      await _startConversation(alice, bob);
+      final sent =
+          await bob.send(AppPayloadType.text, <String, Object?>{'text': 'once'});
+      await alice.receive(bob, sent);
+
+      // The same ciphertext again, as a new event: its key was used up.
+      final replay = alice.envelopeFrom(bob, sent);
+      final event = alice.nextEvent();
+      expect(
+          await alice.service.processApplicationMessage(replay, event), isNull);
+
+      await _expectPlaceholder(alice, replay, event);
+      expect((await alice.history()).map((row) => row.body), contains('once'));
+    }, skip: skip);
+
+    test('a call signal that can never be decrypted is passed and dropped',
+        () async {
+      final bindings = NativeCryptoBindings.open(libraryPath!);
+      final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+      final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+      await _startConversation(alice, bob);
+      final signal = await bob.service.encryptCallSignal(
+          'conv_1', <String, Object?>{'type': 'offer', 'sdp': 'v=0'});
+      final damaged = base64Decode(signal.metadata['ciphertext'] as String);
+      damaged[damaged.length - 1] ^= 0xff;
+      final counter = (await alice.store.loadCryptoState())!.counter;
+
+      final event = alice.nextEvent();
+      final result = await alice.service.processCallSignal(
+          _call(signal.metadata, ciphertext: damaged), event);
+
+      expect(result, isNull);
+      expect(await alice.store.loadSyncCursor(), event);
+      expect((await alice.store.loadCryptoState())!.counter, counter + 1);
+      expect(await alice.history(), isEmpty);
+      // A later signal still decrypts.
+      final later = await bob.service.encryptCallSignal(
+          'conv_1', <String, Object?>{'type': 'answer', 'sdp': 'v=0'});
+      expect(
+          await alice.service
+              .processCallSignal(_call(later.metadata), alice.nextEvent()),
+          <String, Object?>{'type': 'answer', 'sdp': 'v=0'});
+    }, skip: skip);
+
+    test('a storage failure while passing an event rolls back and retries',
+        () async {
+      final bindings = NativeCryptoBindings.open(libraryPath!);
+      final store = _FailingStore();
+      final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice',
+          store: store);
+      final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+      await _startConversation(alice, bob);
+      final sent =
+          await bob.send(AppPayloadType.text, <String, Object?>{'text': 'one'});
+      final damaged = List<int>.of(sent.ciphertext);
+      damaged[damaged.length - 1] ^= 0xff;
+      final envelope = alice.envelopeFrom(bob, sent, ciphertext: damaged);
+      final event = alice.nextEvent();
+      final cursor = await store.loadSyncCursor();
+      final counter = (await store.loadCryptoState())!.counter;
+
+      store.failNextTransition = true;
+      await expectLater(
+          alice.service.processApplicationMessage(envelope, event),
+          throwsA(isA<FileSystemException>()));
+      expect(await store.loadSyncCursor(), cursor);
+      expect((await store.loadCryptoState())!.counter, counter);
+      expect(await alice.history(), isEmpty);
+
+      expect(await alice.service.processApplicationMessage(envelope, event),
+          isNull);
+      await _expectPlaceholder(alice, envelope, event);
+    }, skip: skip);
+
+    test('a duplicate Welcome still stops sync (I33)', () async {
+      final bindings = NativeCryptoBindings.open(libraryPath!);
+      final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+      final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+      await alice.service.initializeConversation(
+          'conv_1', <DeviceKeyPackage>[await bob.keyPackage()]);
+      final item = (await alice.store.pendingMlsMessages()).single;
+      final bundle = MlsCommitBundle.decode(item.payload);
+      await alice.service.completeCommitBundle(item);
+      await bob.service.processMlsMessage(_welcome(bob,
+          from: alice, idempotencyKey: item.idempotencyKey, payload: bundle));
+      final cursor = await bob.store.loadSyncCursor();
+      final counter = (await bob.store.loadCryptoState())!.counter;
+
+      await expectLater(
+          bob.service.processMlsMessage(_welcome(bob,
+              from: alice,
+              idempotencyKey: item.idempotencyKey,
+              payload: bundle)),
+          throwsA(anything));
+
+      await _expectUnmoved(bob, cursor, counter);
+      final hello =
+          await alice.send(AppPayloadType.text, <String, Object?>{'text': 'hi'});
+      await bob.receive(alice, hello);
+      expect((await bob.history()).single.body, 'hi');
+    }, skip: skip);
+
+    test('a commit the group rejects still stops sync (I33)', () async {
+      final bindings = NativeCryptoBindings.open(libraryPath!);
+      final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+      final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+      final carol = await _Client.enroll(bindings, 'acct_carol', 'dev_carol');
+      await _startConversation(alice, bob);
+      await alice.service.stageMembershipChange('conv_1',
+          adds: <DeviceKeyPackage>[await carol.keyPackage()]);
+      final item = (await alice.store.pendingMlsMessages()).single;
+      final bundle = MlsCommitBundle.decode(item.payload);
+      await _accept(alice, <_Client>[carol], <_Client>[bob]);
+      final cursor = await bob.store.loadSyncCursor();
+      final counter = (await bob.store.loadCryptoState())!.counter;
+
+      // The commit Bob already applied, as a new message: a past epoch.
+      await expectLater(
+          bob.service.processMlsMessage(
+              _commit(bob, from: alice, item: item, payload: bundle.commit)),
+          throwsA(anything));
+      await _expectUnmoved(bob, cursor, counter);
+      // Damaged bytes are refused the same way.
+      await expectLater(
+          bob.service.processMlsMessage(
+              _commit(bob, from: alice, item: item, payload: <int>[1, 2, 3])),
+          throwsA(anything));
+      await _expectUnmoved(bob, cursor, counter);
+      expect(await bob.service.groupEpoch('conv_1'), (epoch: 2, pending: false));
+    }, skip: skip);
+  });
+}
+
+/// The D54 outcome: the cursor is past the event, which is recorded as
+/// processed, and history holds one placeholder row for the envelope with
+/// no content at all.
+Future<void> _expectPlaceholder(
+    _Client client, ReceivedMessageEnvelope envelope, int event) async {
+  expect(await client.store.loadSyncCursor(), event);
+  expect(
+      await client.store
+          .hasProcessedMlsMessage('application:$event:${envelope.id}'),
+      isTrue);
+  final rows = (await client.history())
+      .where((row) => row.serverMessageId == envelope.id)
+      .toList();
+  expect(rows, hasLength(1));
+  expect(rows.single.key, 'undecryptable:$event:${envelope.id}');
+  expect(rows.single.kind, LocalMessageKind.invalid);
+  expect(rows.single.body, isNull);
+  expect(rows.single.formatJson, isNull);
+  expect(rows.single.senderAccountId, envelope.senderAccountId);
+  // The envelope is kept so the timeline can show the placeholder.
+  final cached = (await client.store.loadSnapshot())!
+      .messagesByConversation['conv_1']!
+      .where((item) => item.id == envelope.id);
+  expect(cached, hasLength(1));
+}
+
+Future<void> _expectUnmoved(_Client client, int cursor, int counter) async {
+  expect(await client.store.loadSyncCursor(), cursor);
+  expect((await client.store.loadCryptoState())!.counter, counter);
+}
+
+CallSession _call(Map<String, Object?> metadata, {List<int>? ciphertext}) =>
+    CallSession(
+      id: 'call_${++_serverIds}',
+      conversationId: 'conv_1',
+      createdBy: 'acct_bob',
+      invitedAccountId: 'acct_alice',
+      state: 'ringing',
+      version: 1,
+      metadata: <String, Object?>{
+        ...metadata,
+        if (ciphertext != null) 'ciphertext': base64Encode(ciphertext),
+      },
+      createdAt: DateTime.now().toUtc(),
+    );
+
+class _FailingStore extends MemoryLocalStore {
+  bool failNextTransition = false;
+
+  @override
+  Future<void> commitMlsTransition(MlsStateTransition transition) async {
+    if (failNextTransition) {
+      failNextTransition = false;
+      throw const FileSystemException('write refused');
+    }
+    return super.commitMlsTransition(transition);
+  }
 }
 
 MlsMessage _commit(_Client to,

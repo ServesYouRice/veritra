@@ -500,6 +500,7 @@
   "chatSenderUnverified": "Пошиљалац није могао да се верификује. Порука је скривена.",
   "chatMessageUnsupported": "Ова порука захтева новију верзију апликације Veritra",
   "chatMessageInvalid": "Једна порука није могла да се прочита",
+  "chatMessageUndecryptable": "Ова порука није могла да се откључа",
   "chatReactionCount": "{reaction} {count}",
   "chatEdited": "измењено",
   "chatTickSent": "Послато",

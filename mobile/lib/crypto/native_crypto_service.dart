@@ -666,11 +666,16 @@ class NativeCryptoService
             // The server also delivers a caller's signals to the caller's
             // other devices, where the guessed sender account is wrong. The
             // ratchet already advanced, so commit and drop the signal (P4).
-            if (!error.kind.ratchetAdvanced) rethrow;
+            //
+            // Any other decrypt error means this device can never decrypt
+            // the signal (D54): it is dropped and sync moves past it.
+            // Nothing of it was used, so the committed group comes back
+            // first; the failed attempt may have changed the one in memory.
+            if (!error.kind.ratchetAdvanced) await _restorePrevious(previous);
           }
-          // Once decryption succeeds the ratchet has moved, so the state and
-          // cursor always commit (P4). A payload that is not a valid call
-          // signal is dropped: no row and no signal.
+          // The state and cursor always commit from here (P4, D54). A
+          // payload that is not a valid call signal is dropped: no row and
+          // no signal.
           final outcome = plaintext == null
               ? const InvalidAppPayload()
               : AppPayloadCodec().classify(plaintext,
@@ -892,7 +897,35 @@ class NativeCryptoService
             senderDeviceId: envelope.senderDeviceId,
           );
         } on NativeCryptoException catch (error) {
-          if (!error.kind.ratchetAdvanced) rethrow;
+          if (!error.kind.ratchetAdvanced) {
+            // This device can never decrypt the message (D54): an epoch it
+            // never held or whose secrets are gone, or damaged bytes. Sync
+            // moves past it and the conversation shows a placeholder with
+            // no content. Nothing of it was used, so the committed group
+            // comes back first: the failed attempt may have changed the one
+            // in memory.
+            await _restorePrevious(previous);
+            await localStore.commitMlsTransition(MlsStateTransition(
+              checkCanCommit: operationFence,
+              messageId: marker,
+              conversationId: envelope.conversationId,
+              expectedCounter: previous.counter,
+              expectedCursor: cursor,
+              state: _sealNext(previous),
+              cursor: syncEventId,
+              upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
+              messageEffects: <MessageEffect>[
+                // An `invalid` row holds no content and offers no action;
+                // the timeline reads this key prefix to say "couldn't
+                // unlock" rather than "couldn't read".
+                _placeholderRow(
+                    envelope,
+                    'undecryptable:$syncEventId:${envelope.id}',
+                    LocalMessageKind.invalid),
+              ],
+            ));
+            return null;
+          }
           // The ratchet already advanced, so the message can never be
           // decrypted again. Keep going and record a warning instead of
           // the claimed sender's words (D25).

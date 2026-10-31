@@ -1740,6 +1740,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatMessageInvalid => 'A message could not be read';
 
   @override
+  String get chatMessageUndecryptable => 'Couldn\'t unlock this message';
+
+  @override
   String chatReactionCount(String reaction, int count) {
     final intl.NumberFormat countNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
