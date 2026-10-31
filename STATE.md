@@ -173,7 +173,7 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 | **D56** (2026-10-31, owner) | Calls relay through TURN by default (`iceTransportPolicy: relay`); a user setting may allow direct connections, with a plain warning that the other side then sees their address (bug-hunt Q-2, TASK-021) |
 | **D57** (2026-10-31, owner) | K0 recovery key: a random key is the default, and users may choose a passphrase instead. The passphrase path needs Argon2id on the client (a new crate: licence review and `THIRD_PARTY_NOTICES.md` entry before it lands) and a strength floor. Clone-restore is retired once K2 ships |
 | **D58** (2026-10-31, owner) | Pins: in groups any member may pin by default, up to 50 pins per chat; a group's admins may restrict pinning to admins and moderators. Supersedes W7's "moderators only, 3 pins" default |
-| **D59** (2026-10-31, owner) | Only the owner and admins may change a group's name and photo (W11 question 4) |
+| **D59** (2026-10-31, owner) | Group permissions are open by default and admins may restrict them: any member may change a group's name and photo unless the group's admins limit it to admins. The same rule applies to other group settings (see D58 for pins). Supersedes W11's "owner and admin only" default |
 
 ## Roadmap
 
