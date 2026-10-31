@@ -550,8 +550,6 @@ func (s *Store) CreateChannelWithConversation(ctx context.Context, communityID, 
 	if !domain.CanManageMembers(actorRole) {
 		return domain.Channel{}, domain.Conversation{}, ErrForbidden
 	}
-	// Other members' conversation counts are not checked here: one creator
-	// adds them to at most its own conversation limit of channels.
 	communityMembers, err := communityMemberCount(ctx, tx, communityID)
 	if err != nil {
 		return domain.Channel{}, domain.Conversation{}, err
@@ -560,12 +558,6 @@ func (s *Store) CreateChannelWithConversation(ctx context.Context, communityID, 
 		return domain.Channel{}, domain.Conversation{}, err
 	}
 	if err := s.checkOwnConversations(ctx, tx, createdBy, 1); err != nil {
-		return domain.Channel{}, domain.Conversation{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO channels(id, community_id, name, kind, created_at) VALUES(?, ?, ?, ?, ?)`, channelID, communityID, strings.TrimSpace(name), kind, createdAt); err != nil {
-		return domain.Channel{}, domain.Conversation{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO conversations(id, kind, title, community_id, channel_id, created_by, created_at) VALUES(?, 'community_channel', ?, ?, ?, ?, ?)`, conversationID, strings.TrimSpace(name), communityID, channelID, createdBy, createdAt); err != nil {
 		return domain.Channel{}, domain.Conversation{}, err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT account_id, role FROM memberships WHERE community_id = ?`, communityID)
@@ -587,6 +579,23 @@ func (s *Store) CreateChannelWithConversation(ctx context.Context, communityID, 
 		return domain.Channel{}, domain.Conversation{}, err
 	}
 	if err := rows.Close(); err != nil {
+		return domain.Channel{}, domain.Conversation{}, err
+	}
+	// Every community member joins the new channel, so each one needs room for
+	// it, as CreateConversation requires of the members it adds. One member at
+	// the limit refuses the channel rather than being left out of it.
+	for _, item := range members {
+		if item.accountID == createdBy {
+			continue
+		}
+		if err := s.checkOtherConversations(ctx, tx, item.accountID, 1); err != nil {
+			return domain.Channel{}, domain.Conversation{}, err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO channels(id, community_id, name, kind, created_at) VALUES(?, ?, ?, ?, ?)`, channelID, communityID, strings.TrimSpace(name), kind, createdAt); err != nil {
+		return domain.Channel{}, domain.Conversation{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO conversations(id, kind, title, community_id, channel_id, created_by, created_at) VALUES(?, 'community_channel', ?, ?, ?, ?, ?)`, conversationID, strings.TrimSpace(name), communityID, channelID, createdBy, createdAt); err != nil {
 		return domain.Channel{}, domain.Conversation{}, err
 	}
 	for _, item := range members {

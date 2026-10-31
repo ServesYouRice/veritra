@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"private-messenger/server/internal/admission"
+	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/domain"
 )
 
@@ -77,6 +79,55 @@ func TestManageConversationMemberRefusesOutsiderInCommunityChannel(t *testing.T)
 	}
 	if _, err := f.store.ManageConversationMember(ctx, f.conversation.ID, f.owner.Account.ID, f.insider.Account.ID, domain.RoleModerator); err != nil {
 		t.Fatalf("role change of an existing channel member: %v", err)
+	}
+}
+
+func TestCreateChannelWithConversationRespectsMemberConversationLimit(t *testing.T) {
+	ctx := context.Background()
+	store := newLimitedStore(t, config.Limits{ConversationsPerAccount: 3})
+	owner := createTestOwner(t, ctx, store)
+	members := registerMembers(t, ctx, store, owner, "busy", "free")
+	busy := members[0]
+	community, err := store.CreateCommunity(ctx, "Club", owner.Account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, member := range members {
+		if _, err := store.ManageCommunityMember(ctx, community.ID, owner.Account.ID, member.Account.ID, domain.RoleMember); err != nil {
+			t.Fatalf("add %s: %v", member.Account.Username, err)
+		}
+	}
+	// busy sits at the limit after two groups plus the channel it will hold.
+	for i := 0; i < 2; i++ {
+		if _, err := store.CreateConversation(ctx, CreateConversationInput{Kind: "group", CreatedBy: busy.Account.ID}); err != nil {
+			t.Fatalf("busy group %d: %v", i, err)
+		}
+	}
+	if _, _, err := store.CreateChannelWithConversation(ctx, community.ID, "first", "", owner.Account.ID); err != nil {
+		t.Fatalf("channel below every member's limit: %v", err)
+	}
+	snapshot := func() [4]int {
+		var counts [4]int
+		for i, query := range []string{
+			`SELECT COUNT(*) FROM channels`,
+			`SELECT COUNT(*) FROM conversations`,
+			`SELECT COUNT(*) FROM memberships`,
+			`SELECT COUNT(*) FROM sync_events`,
+		} {
+			counts[i] = testRowCount(t, ctx, store, query)
+		}
+		return counts
+	}
+	before := snapshot()
+	_, _, err = store.CreateChannelWithConversation(ctx, community.ID, "second", "", owner.Account.ID)
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("channel that would exceed a member's conversation limit: err = %v, want %v", err, ErrForbidden)
+	}
+	if after := snapshot(); after != before {
+		t.Fatalf("refused channel changed rows: channels/conversations/memberships/sync_events %v -> %v", before, after)
+	}
+	if got := rejections(store, admission.Conversations); got != 1 {
+		t.Fatalf("conversation-limit rejections = %d, want 1", got)
 	}
 }
 
