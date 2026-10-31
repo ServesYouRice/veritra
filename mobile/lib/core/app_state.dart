@@ -1078,16 +1078,24 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           if (envelope.conversationId == conversationId)
             ConversationHistory.keyOf(ownDeviceId, envelope.idempotencyKey),
     };
+    // A row past its expiry is never shown, even while the cached history
+    // still holds it (its purge or the reload after it has not landed yet).
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    bool expired(LocalMessage? local) =>
+        local?.expiresAt != null && local!.expiresAt! <= nowMs;
     final byKey = <String, ReceivedMessageEnvelope>{};
     for (final envelope in envelopes) {
       // A placeholder row is keyed by its sync event, so ask the history
       // which row an envelope belongs to before using its claimed key.
-      byKey[history.forEnvelope(envelope)?.key ??
+      final local = history.forEnvelope(envelope);
+      if (expired(local)) continue;
+      byKey[local?.key ??
           ConversationHistory.keyOf(
               envelope.senderDeviceId, envelope.idempotencyKey)] = envelope;
     }
     for (final local in history.messages) {
       if (local.kind == LocalMessageKind.action ||
+          expired(local) ||
           pendingKeys.contains(local.key) ||
           byKey.containsKey(local.key)) {
         continue;
@@ -4947,17 +4955,29 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     return at != null && !at.isAfter(now);
   }
 
+  /// Conversations whose history reload after a purge failed, and the
+  /// session they belong to. Retried by the next purge, which is armed even
+  /// when nothing else is due to expire.
+  final Set<String> _historyReloadPending = <String>{};
+  Session? _historyReloadSession;
+
   /// Deletes what has expired from the encrypted database, then from the
   /// lists the screens read, and arms the timer for the next expiry (W2).
   Future<void> purgeExpiredMessages() async {
-    if (session == null || _purgingExpired) return;
+    final current = session;
+    if (current == null || _purgingExpired) return;
     _purgingExpired = true;
     final generation = _sessionGeneration;
+    final reloadSession = _historyReloadSession;
+    if (reloadSession == null || !_sameSession(reloadSession)) {
+      _historyReloadPending.clear();
+    }
     try {
       Set<String> touched;
       try {
         touched = await localStore.purgeExpiredMessages();
-        _expiryBackoff = Duration.zero;
+        // A reload that keeps failing keeps its growing pause.
+        if (_historyReloadPending.isEmpty) _expiryBackoff = Duration.zero;
       } catch (_) {
         // The delete is retried with a growing pause, on resume and on
         // restart. The lists below are still pruned, so expired text leaves
@@ -4979,21 +4999,38 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         }
         next[entry.key] = live;
       }
-      if (changed) {
-        messagesByConversation = next;
-        if (_mlsCrypto != null) {
-          for (final id in touched) {
-            if (_history.containsKey(id) || id == selectedConversationId) {
-              _history[id] = await _loadHistory(id);
-            }
+      if (changed) messagesByConversation = next;
+      final reload = <String>{...touched, ..._historyReloadPending};
+      if (_mlsCrypto != null && reload.isNotEmpty) {
+        var failed = false;
+        for (final id in reload) {
+          if (!_history.containsKey(id) && id != selectedConversationId) {
+            _historyReloadPending.remove(id);
+            continue;
           }
+          try {
+            final history = await _loadHistory(id);
+            if (generation != _sessionGeneration) return;
+            _history[id] = history;
+            _historyReloadPending.remove(id);
+          } catch (_) {
+            // The cached history still holds the deleted rows; timelineFor
+            // hides the expired ones, and the reload is tried again.
+            if (generation != _sessionGeneration) return;
+            _historyReloadPending.add(id);
+            _historyReloadSession = current;
+            failed = true;
+          }
+          changed = true;
         }
+        if (failed) _expiryBackoff = _nextExpiryBackoff(_expiryBackoff);
+      }
+      if (changed) {
         if (generation != _sessionGeneration) return;
         notifyListeners();
       }
     } catch (_) {
-      // Reloading a history failed; reads already hide what has expired, and
-      // the next purge tries again. Never blocks the app.
+      // Never blocks the app; the next purge tries again.
       _expiryBackoff = _nextExpiryBackoff(_expiryBackoff);
     } finally {
       _purgingExpired = false;
@@ -5013,8 +5050,16 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (generation != _sessionGeneration || _disposed) return;
     _expiryTimer?.cancel();
     _expiryTimer = null;
-    if (next == null) return;
-    var delay = next.difference(DateTime.now().toUtc());
+    final reloadSession = _historyReloadSession;
+    final reloadPending = _historyReloadPending.isNotEmpty &&
+        reloadSession != null &&
+        _sameSession(reloadSession);
+    if (next == null && !reloadPending) return;
+    // A failed history reload is retried after the pause even when nothing
+    // else is due to expire.
+    var delay =
+        next?.difference(DateTime.now().toUtc()) ?? const Duration(days: 1);
+    if (reloadPending && delay > _expiryBackoff) delay = _expiryBackoff;
     if (delay < const Duration(milliseconds: 500)) {
       delay = const Duration(milliseconds: 500);
     }
