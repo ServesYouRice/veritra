@@ -131,6 +131,71 @@ func TestCreateChannelWithConversationRespectsMemberConversationLimit(t *testing
 	}
 }
 
+func TestManageCommunityMemberRejectsBlockedAccounts(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// blocker and blocked pick who blocks whom among the owner (the actor)
+		// and the outsider (the target).
+		ownerBlocks bool
+	}{
+		{"actor blocks target", true},
+		{"target blocks actor", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			f := newCommunityFixture(t, ctx)
+			var err error
+			if tc.ownerBlocks {
+				_, err = f.store.BlockAccount(ctx, f.owner.Account.ID, f.outsider.Account.ID)
+			} else {
+				_, err = f.store.BlockAccount(ctx, f.outsider.Account.ID, f.owner.Account.ID)
+			}
+			if err != nil {
+				t.Fatalf("block: %v", err)
+			}
+			rowCounts := func() [2]int {
+				return [2]int{
+					testRowCount(t, ctx, f.store, `SELECT COUNT(*) FROM memberships`),
+					testRowCount(t, ctx, f.store, `SELECT COUNT(*) FROM sync_events WHERE event_type = 'membership.updated'`),
+				}
+			}
+			before := rowCounts()
+			if _, err := f.store.ManageCommunityMember(ctx, f.community.ID, f.owner.Account.ID, f.outsider.Account.ID, domain.RoleMember); !errors.Is(err, ErrForbidden) {
+				t.Fatalf("add across a block: err = %v, want %v", err, ErrForbidden)
+			}
+			if after := rowCounts(); after != before {
+				t.Fatalf("memberships/membership events %v -> %v, want nothing written", before, after)
+			}
+			// A role change of an existing member is refused the same way.
+			if tc.ownerBlocks {
+				_, err = f.store.BlockAccount(ctx, f.owner.Account.ID, f.insider.Account.ID)
+			} else {
+				_, err = f.store.BlockAccount(ctx, f.insider.Account.ID, f.owner.Account.ID)
+			}
+			if err != nil {
+				t.Fatalf("block insider: %v", err)
+			}
+			if _, err := f.store.ManageCommunityMember(ctx, f.community.ID, f.owner.Account.ID, f.insider.Account.ID, domain.RoleModerator); !errors.Is(err, ErrForbidden) {
+				t.Fatalf("role change across a block: err = %v, want %v", err, ErrForbidden)
+			}
+		})
+	}
+}
+
+func TestManageCommunityMemberAddsUnblockedAccounts(t *testing.T) {
+	ctx := context.Background()
+	f := newCommunityFixture(t, ctx)
+	if _, err := f.store.ManageCommunityMember(ctx, f.community.ID, f.owner.Account.ID, f.outsider.Account.ID, domain.RoleMember); err != nil {
+		t.Fatalf("add unblocked account: %v", err)
+	}
+	if member, err := f.store.IsConversationMember(ctx, f.conversation.ID, f.outsider.Account.ID); err != nil || !member {
+		t.Fatalf("new community member in channel = %v, err = %v, want member", member, err)
+	}
+	if _, err := f.store.ManageCommunityMember(ctx, f.community.ID, f.owner.Account.ID, f.outsider.Account.ID, domain.RoleModerator); err != nil {
+		t.Fatalf("unblocked role change: %v", err)
+	}
+}
+
 func TestManageConversationMemberStillAddsToGroupConversations(t *testing.T) {
 	ctx := context.Background()
 	f := newCommunityFixture(t, ctx)
