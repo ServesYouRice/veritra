@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type Config struct {
@@ -47,6 +48,15 @@ type Config struct {
 	SessionAbsoluteLifetime time.Duration
 	Limits                  Limits
 	RateLimits              RateLimits
+	// PublicOrigin is the canonical https://host[:port] clients use. The K0
+	// recovery proof is verified against it, never against Host or
+	// forwarded headers. Empty turns account recovery off (503).
+	PublicOrigin string
+	// RecoveryActiveWindow is how recently a device must have been seen to
+	// count as active; RecoveryWait is how long a recovery waits while one is
+	// (D49, D78). Zero means the default.
+	RecoveryActiveWindow time.Duration
+	RecoveryWait         time.Duration
 }
 
 const (
@@ -56,6 +66,10 @@ const (
 	DefaultPasswordCost = 10
 	MinPasswordCost     = 10
 	MaxPasswordCost     = 15
+
+	DefaultRecoveryActiveWindow = 7 * 24 * time.Hour
+	DefaultRecoveryWait         = 7 * 24 * time.Hour
+	maxRecoveryDays             = 90
 
 	DefaultSessionIdleLifetime     = 14 * 24 * time.Hour
 	DefaultSessionAbsoluteLifetime = 30 * 24 * time.Hour
@@ -127,6 +141,9 @@ func Load() (Config, error) {
 		SessionAbsoluteLifetime: DefaultSessionAbsoluteLifetime,
 		Limits:                  limits,
 		RateLimits:              rateLimits,
+		PublicOrigin:            strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_PUBLIC_ORIGIN")),
+		RecoveryActiveWindow:    DefaultRecoveryActiveWindow,
+		RecoveryWait:            DefaultRecoveryWait,
 	}
 	if cfg.Environment != "development" && cfg.Environment != "production" {
 		return Config{}, fmt.Errorf("PRIVATE_MESSENGER_ENV must be development or production")
@@ -156,6 +173,15 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if err := loadSessionLifetimes(&cfg); err != nil {
+		return Config{}, err
+	}
+	if cfg.PublicOrigin != "" && !ValidPublicOrigin(cfg.PublicOrigin) {
+		return Config{}, fmt.Errorf("PRIVATE_MESSENGER_PUBLIC_ORIGIN must be a canonical origin such as https://chat.example.com (lower-case host, no path, no default port)")
+	}
+	if _, err := daysEnv("PRIVATE_MESSENGER_RECOVERY_ACTIVE_WINDOW_DAYS", maxRecoveryDays, &cfg.RecoveryActiveWindow); err != nil {
+		return Config{}, err
+	}
+	if _, err := daysEnv("PRIVATE_MESSENGER_RECOVERY_WAIT_DAYS", maxRecoveryDays, &cfg.RecoveryWait); err != nil {
 		return Config{}, err
 	}
 	cfg.DatabasePath = getenv("PRIVATE_MESSENGER_DB_PATH", filepath.Join(cfg.DataDir, "private-messenger.db"))
@@ -206,6 +232,42 @@ func loadSessionLifetimes(cfg *Config) error {
 		cfg.SessionIdleLifetime = cfg.SessionAbsoluteLifetime
 	}
 	return nil
+}
+
+// ValidPublicOrigin accepts exactly the canonical origin clients sign:
+// scheme://host[:port], lower-case host, no default port, path, query,
+// fragment or user info. Plain http is allowed only for a loopback host
+// (local demos). It applies the rules of storage.ValidDeviceLinkV3Origin.
+func ValidPublicOrigin(origin string) bool {
+	if origin == "" || len(origin) > 2048 || !utf8.ValidString(origin) || strings.TrimSpace(origin) != origin {
+		return false
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Opaque != "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.ForceQuery || strings.Contains(origin, "#") || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+		return false
+	}
+	host := u.Hostname()
+	if host == "" || host != strings.ToLower(host) {
+		return false
+	}
+	if u.Scheme == "http" && host != "localhost" {
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			return false
+		}
+	}
+	canonicalHost := host
+	if strings.Contains(host, ":") {
+		canonicalHost = "[" + host + "]"
+	}
+	if port := u.Port(); port != "" {
+		value, err := strconv.Atoi(port)
+		if err != nil || value < 0 || value > 65535 || strconv.Itoa(value) != port || (u.Scheme == "https" && value == 443) || (u.Scheme == "http" && value == 80) {
+			return false
+		}
+		canonicalHost += ":" + port
+	}
+	return origin == u.Scheme+"://"+canonicalHost
 }
 
 // ValidateSetupToken accepts the one supported operator encoding: unpadded
