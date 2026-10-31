@@ -120,6 +120,40 @@ void main() {
     expect(state.canResetLocalData, isFalse);
     harness.dispose();
   });
+
+  test('a damaged database stop keeps nothing of the account for the next',
+      () async {
+    final api = _ScriptedApi()
+      ..events = <SyncEvent>[_envelopeEvent(4, 'msg_one')];
+    final store = MemoryLocalStore();
+    await _keepIdentity(store);
+    final harness = await _Harness.start(api, store: store);
+    final state = harness.state;
+    await harness.waitFor(() => state.lastSyncedAt != null);
+    state.blocksLoaded = true;
+    expect(state.conversations, isNotEmpty);
+    expect(state.requestStateLoaded, isTrue);
+
+    // The next pass finds the database damaged.
+    harness.crypto.applyError =
+        SqliteException(extendedResultCode: 11, message: 'test');
+    api.events = <SyncEvent>[...api.events, _envelopeEvent(5, 'msg_two')];
+    state.handleAppLifecycleState(AppLifecycleState.resumed);
+    await harness
+        .waitFor(() => state.lifecycle == SessionLifecycle.recoveryRequired);
+
+    await state.resetUnreadableLocalData(confirmed: true);
+    expect(state.lifecycle, SessionLifecycle.ready);
+    expect(state.requestStateLoaded, isFalse,
+        reason: "the old account's accepted peers must not carry over");
+    expect(state.conversations, isEmpty);
+    expect(state.conversationsLoaded, isFalse);
+    expect(state.historyOnlyConversations, isEmpty);
+    expect(state.blocksLoaded, isFalse);
+    expect(state.messagesFor('conv_1'), isEmpty);
+
+    harness.dispose();
+  });
 }
 
 /// The ciphertext [_FakeMlsCrypto] treats as one this device can never
