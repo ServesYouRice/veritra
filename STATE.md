@@ -201,6 +201,7 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 | **D76** (2026-10-31, owner; D69 follow-up) | iOS quiet reactions/edits: the phone decides — an iOS Notification Service Extension decrypts and drops reaction/edit alerts. No cleartext kind hint to the server. Needs Apple's notification-filtering entitlement and MLS state shared with the extension, so it lands after the D70 redesign. `serde_json` (MIT/Apache-2.0) is approved as a direct crypto dependency; list it in THIRD_PARTY_NOTICES. |
 | **D77** (2026-10-31, owner) | Until K0's recovery enrollment (password + recovery key) exists, a backup restore finishes only by linking from another signed-in device; someone who lost every device cannot restore yet. K0 recovery enrollment is the next follow-up. D66 no longer applies: a restore no longer brings back a server session. |
 | **D78** (2026-10-31, owner; K0 recovery design `docs/designs/K0-recovery-enrollment.md`) | O1: keep the 15-minute I45 backup window until K1. O2: add `ed25519-dalek` (BSD-3) as a direct crypto dependency for the recovery-key proof. O3: 7-day activity window, 7-day wait, 50 failures/day per username. O4: the passphrase option comes after K1. |
+| **D79** (2026-10-31, owner; K0 review) | The recovery failure cap (50/day) counts only right-password-wrong-recovery-key attempts, keyed by account or decoy id, answers the same 401 over the cap, and warns the account's devices that the password appears leaked. |
 
 ## Roadmap
 
