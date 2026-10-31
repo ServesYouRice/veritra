@@ -52,6 +52,12 @@ groups during migration. Version 1 blobs written under OpenMLS 0.8.1 and unknown
 versions fail closed, with their own restore code since ABI 9. No debug feature that exposes
 message content or cryptographic material is enabled.
 
+**OpenMLS upgrade checklist.** Any OpenMLS (or `openmls_rust_crypto` /
+`openmls_memory_storage`) version bump must re-check the storage labels
+and key shapes in `LABELS` (`crypto/rust/src/mls/storage.rs`) and the
+storage-method list in its routing test. A label the classifier does not
+know makes every restore fail closed with `InvalidState`.
+
 Before production message sending:
 
 - connect the native ABI to the mobile protected record; the Flutter store now

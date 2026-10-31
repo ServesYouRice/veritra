@@ -19,9 +19,11 @@
 //! swallows the storage error. A record can never be filed under the wrong
 //! owner.
 //!
-//! **No serde_json.** The group id bytes OpenMLS uses as keys come from a
-//! probe `MemoryStorage` (the same serializer), and restored keys are parsed
-//! by a strict parser for the one JSON shape OpenMLS writes for a
+//! **Keys.** The group id bytes OpenMLS uses as keys come from a probe
+//! `MemoryStorage` (the same serializer). A key package's hash reference is
+//! serialized once with `serde_json`, as `MemoryStorage` does, so a lookup
+//! goes straight to its store. Restored keys and references are parsed by
+//! a strict parser for the one JSON shape OpenMLS writes for a
 //! length-prefixed id (`{"value":{"vec":[..]}}`).
 
 use super::MlsError;
@@ -140,6 +142,10 @@ pub(crate) struct PartitionedStorage {
     shadow: MemoryStorage,
     #[cfg(test)]
     hits: Mutex<std::collections::BTreeSet<&'static str>>,
+    /// Test-only count of key-package stores consulted by lookups and
+    /// deletes by hash reference.
+    #[cfg(test)]
+    package_probes: std::sync::atomic::AtomicUsize,
 }
 
 /// Who owns one flat record.
@@ -304,6 +310,18 @@ fn group_json<G: traits::GroupId<CURRENT_VERSION>>(
         .ok_or(PartitionError::UnexpectedKey)
 }
 
+/// The raw hash reference that names a key package's store: the reference
+/// serialized once, as `MemoryStorage` does for its key, then parsed.
+fn package_id<R: traits::HashReference<CURRENT_VERSION>>(
+    hash_ref: &R,
+) -> Result<Vec<u8>, PartitionError> {
+    let json = serde_json::to_vec(hash_ref).map_err(|_| PartitionError::UnexpectedKey)?;
+    match parse_id(&json) {
+        Some((raw, used)) if used == json.len() => Ok(raw),
+        _ => Err(PartitionError::UnexpectedKey),
+    }
+}
+
 fn is_empty(store: &MemoryStorage) -> bool {
     store.values.read().map(|v| v.is_empty()).unwrap_or(false)
 }
@@ -442,6 +460,13 @@ impl PartitionedStorage {
         self.hits.lock().unwrap().insert(_name);
     }
 
+    /// Counts one key-package store consulted (test-only).
+    fn probe(&self) {
+        #[cfg(test)]
+        self.package_probes
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
     #[cfg(test)]
     fn mirror<T>(&self, operation: Op<'_, T>) {
         operation(&self.shadow).expect("shadow store refused a routed call");
@@ -577,13 +602,41 @@ impl PartitionedStorage {
             self.flat() == shadow,
             "partitions differ from the flat twin"
         );
-        for (_, store) in self.groups.read().unwrap().iter() {
+        // Every key OpenMLS really wrote classifies to the store holding
+        // it. A group store may also hold standalone pairs (Unowned).
+        let check = |store: &MemoryStorage, owner: &dyn Fn(&Owner) -> bool| {
+            for key in store.values.read().unwrap().keys() {
+                let classified = classify(key);
+                assert!(
+                    classified.as_ref().is_some_and(owner),
+                    "key {} classifies as {classified:?}",
+                    String::from_utf8_lossy(key)
+                );
+            }
+        };
+        check(&self.device, &|owner| *owner == Owner::Device);
+        check(&self.unowned, &|owner| *owner == Owner::Unowned);
+        for (id, store) in self.groups.read().unwrap().iter() {
             assert!(!is_empty(store));
+            check(store, &|owner| match owner {
+                Owner::Group(owner) => owner == id,
+                Owner::Unowned => true,
+                _ => false,
+            });
+        }
+        for (id, store) in self.key_packages.read().unwrap().iter() {
+            assert!(!is_empty(store));
+            check(store, &|owner| *owner == Owner::KeyPackage(id.clone()));
         }
     }
 
     pub(crate) fn hits(&self) -> std::collections::BTreeSet<&'static str> {
         self.hits.lock().unwrap().clone()
+    }
+
+    pub(crate) fn package_probes(&self) -> usize {
+        self.package_probes
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub(crate) fn unowned_count(&self) -> usize {
@@ -1075,18 +1128,18 @@ impl StorageProvider<CURRENT_VERSION> for PartitionedStorage {
         hash_ref: &KeyPackageRef,
     ) -> Result<Option<KeyPackage>, Self::Error> {
         self.hit("key_package");
-        // The reference cannot be turned into bytes without the
-        // serializer, so each package store is asked; only its own answers.
+        // One direct lookup: a Welcome names as many references as the
+        // server likes.
+        let id = package_id(hash_ref)?;
         let packages = self
             .key_packages
             .read()
             .map_err(|_| PartitionError::Poisoned)?;
-        for store in packages.values() {
-            if let Some(package) = store.key_package(hash_ref)? {
-                return Ok(Some(package));
-            }
-        }
-        Ok(None)
+        let Some(store) = packages.get(&id) else {
+            return Ok(None);
+        };
+        self.probe();
+        Ok(store.key_package(hash_ref)?)
     }
 
     fn psk<PskBundle: traits::PskBundle<CURRENT_VERSION>, PskId: traits::PskId<CURRENT_VERSION>>(
@@ -1261,15 +1314,19 @@ impl StorageProvider<CURRENT_VERSION> for PartitionedStorage {
         hash_ref: &KeyPackageRef,
     ) -> Result<(), Self::Error> {
         self.hit("delete_key_package");
+        let id = package_id(hash_ref)?;
         {
             let mut packages = self
                 .key_packages
                 .write()
                 .map_err(|_| PartitionError::Poisoned)?;
-            for store in packages.values() {
+            if let Some(store) = packages.get(&id) {
+                self.probe();
                 store.delete_key_package(hash_ref)?;
+                if is_empty(store) {
+                    packages.remove(&id);
+                }
             }
-            packages.retain(|_, store| !is_empty(store));
         }
         self.mirror(&|s| s.delete_key_package(hash_ref));
         Ok(())

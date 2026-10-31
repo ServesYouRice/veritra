@@ -24,6 +24,7 @@ if grep -Eq '^openmls[[:space:]]*=' "$ROOT/crypto/rust/Cargo.toml"; then
   check_notice "openmls_basic_credential"
   check_notice "openmls_rust_crypto"
   check_notice "openmls_traits"
+  check_notice "serde_json"
   check_notice "sha2"
   check_notice "tls_codec"
 fi
