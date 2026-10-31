@@ -74,9 +74,11 @@ is the I45 download credential route. In `ClassifyRoute`:
 **No enumeration oracle.**
 - The reservation must carry `account_id`, because the challenge encodes it
   (`createEnrollmentReservation`). A known username gets its real id.
-- Any other username gets a decoy, `"acct_" + HMAC(decoy key, normalized
-  username)`: the same format, and stable. The decoy key is 32 random bytes
-  in `instances`.
+- Any other username gets a decoy, `"acct_" + hex(HMAC-SHA256(decoy key,
+  NormalizeUsername(username))[:16])`: the same format (it passes
+  `domain.ValidID`), and stable. The decoy key is 32 random bytes in
+  `instances`; that row exists only after setup, so the migration backfills
+  it for an existing instance and setup creates it.
 - An account with no RK gets a normal reservation; its claim fails like any
   other.
 
@@ -101,8 +103,9 @@ On success, in one transaction:
   reveals whether the password was right.
 - `LoginBackoff` is lost on restart, so a durable `recovery_attempts` row
   also caps all failed claims per username (default 50/day). That bounds
-  distributed guessing of a passphrase RK after a password leak. Its cost:
-  someone who knows the username can delay a recovery by a day.
+  distributed guessing of a passphrase RK after a password leak. Its cost,
+  as written: someone who knows the username can block recovery for as long
+  as they keep sending 50 failed claims a day (under review).
 
 **Waiting period (D49).**
 - **Active devices:** not revoked, an unexpired session, and
@@ -127,13 +130,19 @@ On success, in one transaction:
    pattern. An owner who changes either during the wait has defeated the
    claim, even without pressing Cancel. Otherwise answer 410.
 2. **Revoke every other device before inserting the new one.**
-   - Set `revoked_at` on all of them, delete their sessions and retire their
-     v2/v3 links, then call `queueMLSRevocations` for each.
-   - Order matters in both directions. Its coordinator query picks
-     `MIN(device_id)` among non-revoked devices. Revoking one at a time would
-     let a doomed sibling coordinate, and the legacy branch and
-     `mls_revocation_required_devices` would pick up a new device inserted
-     first. Either way that revocation stalls.
+   - For each old device, run what `revokeDevice` (`identity_store.go`) runs,
+     as a helper in this transaction: set `revoked_at`, delete its sessions,
+     `retireDeviceLinksV3ForDevice`, `queueMLSRevocations` and
+     `releaseMLSRevocationConfirmations` (without it, a pending revocation
+     an old device had to confirm waits for good).
+   - Only the new device must come last. In a legacy group (no roster)
+     every non-revoked device of a member is eligible to coordinate
+     (`mlsRevocationEligibleDevice`) and `mls_revocation_required_devices`
+     is snapshotted at queue time, so a new device inserted first, which has
+     no leaf, could be named coordinator or a required confirmer and the
+     revocation would stall. Revoking old devices one at a time is safe:
+     `mlsRevocationCoordinator` re-elects once a recorded coordinator is
+     revoked, and the release clears a revoked sibling's confirmations.
 3. **Insert the new device** from the request, with its first key package
    and a session.
    - `recent_auth_at = now` only when there was no wait.
@@ -160,8 +169,9 @@ On success, in one transaction:
    the Rust decode before any network call. Then reserve.
 2. **Account check.** If the reservation's `account_id` differs from the
    restored session's, **stop** ("this backup is for another account").
-   Otherwise `_identityChanged` silently drops the restored history. Decoys
-   end here too, with the same generic wording.
+   Otherwise `_identityChanged` silently drops the restored history. On the
+   restored path decoys end here too, with the same generic wording; on the
+   no-history path a decoy only fails at the claim (401).
 3. **Claim.** `createEnrollmentCredential` (a fresh MLS identity), then the
    recovery proof (new ABI), then claim.
 4. **Persist the pending claim.** Store the claim token, device secret,
