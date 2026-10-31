@@ -424,45 +424,55 @@ class _RecoveryState extends StatelessWidget {
   Widget _build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: Center(
-          child: Padding(
+        // Centred when the content fits; scrolls when it does not (a short
+        // screen, large text, a long message), so no action is out of reach.
+        child: LayoutBuilder(
+          builder: (context, constraints) => SingleChildScrollView(
             padding: const EdgeInsets.all(BoneSpacing.xl),
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 480),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  const Icon(Icons.lock_reset_outlined, size: 48),
-                  const SizedBox(height: BoneSpacing.lg),
-                  Text(
-                    context.l10n.shellRecoveryTitle,
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.headlineSmall,
+              constraints: BoxConstraints(
+                minHeight: constraints.maxHeight - 2 * BoneSpacing.xl,
+              ),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 480),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      const Icon(Icons.lock_reset_outlined, size: 48),
+                      const SizedBox(height: BoneSpacing.lg),
+                      Text(
+                        context.l10n.shellRecoveryTitle,
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                      const SizedBox(height: BoneSpacing.sm),
+                      Text(
+                        state.recoveryMessage ??
+                            context.l10n.shellRecoveryFallback,
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: BoneSpacing.lg),
+                      FilledButton(
+                        onPressed: state.busy ? null : state.tryRestoreSession,
+                        child: Text(context.l10n.shellRetryRestore),
+                      ),
+                      if (state.canContinueWithoutRestore)
+                        TextButton(
+                          onPressed:
+                              state.busy ? null : state.continueWithoutRestore,
+                          child: Text(context.l10n.shellContinueToSignIn),
+                        )
+                      else if (state.canResetLocalData)
+                        TextButton(
+                          onPressed:
+                              state.busy ? null : () => _confirmReset(context),
+                          child: Text(context.l10n.shellResetDevice),
+                        ),
+                    ],
                   ),
-                  const SizedBox(height: BoneSpacing.sm),
-                  Text(
-                    state.recoveryMessage ?? context.l10n.shellRecoveryFallback,
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: BoneSpacing.lg),
-                  FilledButton(
-                    onPressed: state.busy ? null : state.tryRestoreSession,
-                    child: Text(context.l10n.shellRetryRestore),
-                  ),
-                  if (state.canContinueWithoutRestore)
-                    TextButton(
-                      onPressed:
-                          state.busy ? null : state.continueWithoutRestore,
-                      child: Text(context.l10n.shellContinueToSignIn),
-                    )
-                  else if (state.canResetLocalData)
-                    TextButton(
-                      onPressed:
-                          state.busy ? null : () => _confirmReset(context),
-                      child: Text(context.l10n.shellResetDevice),
-                    ),
-                ],
+                ),
               ),
             ),
           ),
