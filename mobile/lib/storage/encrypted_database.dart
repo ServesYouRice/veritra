@@ -18,6 +18,9 @@ part 'notice_outbox_sql.dart';
 
 enum MlsCommitStage {
   afterValidation,
+
+  /// The sealed MLS records (D70) are written; the root singleton is not.
+  afterRecords,
   afterState,
   afterEnvelopes,
   afterMessageEffects,
@@ -26,6 +29,24 @@ enum MlsCommitStage {
 }
 
 typedef MlsCommitFailureInjector = Future<void> Function(MlsCommitStage stage);
+
+bool _sameBytes(List<int> left, List<int> right) {
+  if (left.length != right.length) return false;
+  for (var i = 0; i < left.length; i++) {
+    if (left[i] != right[i]) return false;
+  }
+  return true;
+}
+
+/// One change to the sealed MLS records (D70, format 4): an upsert of
+/// [sealed] under ([kind], [recordId]) at [generation], or a delete when
+/// [sealed] is null.
+typedef CryptoRecordWrite = ({
+  int kind,
+  List<int> recordId,
+  int generation,
+  List<int>? sealed,
+});
 
 /// How a decrypted or locally sent application message changes local history
 /// (decisions D22, D23). Effects are applied inside the same transaction as
@@ -1427,11 +1448,15 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             .go();
       });
 
+  /// Writes a complete crypto state: the root and every record it lists
+  /// ([recordChanges]). Records from before are dropped in the same
+  /// transaction, so none can outlive the root they belonged to.
   Future<void> writeCryptoState({
     required int counter,
     required List<int> stateKey,
     required List<int> sealedState,
     required int cursor,
+    List<CryptoRecordWrite> recordChanges = const <CryptoRecordWrite>[],
   }) =>
       transaction(() async {
         final previous = await (select(localCryptoStates)
@@ -1440,6 +1465,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         if (previous != null && counter <= previous.counter) {
           throw StateError('crypto state counter must increase');
         }
+        await delete(localCryptoRecords).go();
+        await _applyCryptoRecordChanges(recordChanges);
         await into(localCryptoStates).insertOnConflictUpdate(
           LocalCryptoStatesCompanion.insert(
             singleton: const Value(1),
@@ -1466,6 +1493,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required List<({String id, String conversationId, String payloadJson})>
         upsertedEnvelopes,
     required List<String> deletedEnvelopeIds,
+    List<CryptoRecordWrite> recordChanges = const <CryptoRecordWrite>[],
     List<MessageEffect> messageEffects = const <MessageEffect>[],
     List<LocalNoticeReference> noticeReferences = const [],
     MlsCommitFailureInjector? failureInjector,
@@ -1502,6 +1530,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         }
         await failureInjector?.call(MlsCommitStage.afterValidation);
         checkCanCommit?.call();
+        await _applyCryptoRecordChanges(recordChanges);
+        await failureInjector?.call(MlsCommitStage.afterRecords);
         await into(localCryptoStates).insertOnConflictUpdate(
           LocalCryptoStatesCompanion.insert(
             singleton: const Value(1),
@@ -1753,6 +1783,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               List<int> payload,
             })>
         messages,
+    List<CryptoRecordWrite> recordChanges = const <CryptoRecordWrite>[],
     String? leaseKey,
   }) =>
       transaction(() async {
@@ -1769,6 +1800,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             messages.isEmpty) {
           throw StateError('stale or incomplete outgoing MLS transition');
         }
+        await _applyCryptoRecordChanges(recordChanges);
         await into(localCryptoStates).insertOnConflictUpdate(
           LocalCryptoStatesCompanion.insert(
             singleton: const Value(1),
@@ -1808,6 +1840,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required String? draftText,
     required int maxEntries,
     List<MessageEffect> messageEffects = const <MessageEffect>[],
+    List<CryptoRecordWrite> recordChanges = const <CryptoRecordWrite>[],
     String? leaseKey,
   }) =>
       transaction(() async {
@@ -1833,6 +1866,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         if (await outboxCount() >= maxEntries) {
           throw StateError('outbox_full');
         }
+        await _applyCryptoRecordChanges(recordChanges);
         await into(localCryptoStates).insertOnConflictUpdate(
           LocalCryptoStatesCompanion.insert(
             singleton: const Value(1),
@@ -1874,6 +1908,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required int counter,
     required List<int> stateKey,
     required List<int> sealedState,
+    List<CryptoRecordWrite> recordChanges = const <CryptoRecordWrite>[],
     String? leaseKey,
     String? resolvedMlsOutboxKey,
   }) =>
@@ -1890,6 +1925,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             counter != expectedCounter + 1) {
           throw StateError('stale local MLS transition');
         }
+        await _applyCryptoRecordChanges(recordChanges);
         await into(localCryptoStates).insertOnConflictUpdate(
           LocalCryptoStatesCompanion.insert(
             singleton: const Value(1),
@@ -2003,8 +2039,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     );
   }
 
-  /// Every sealed MLS record (D70), ordered by kind and id. Nothing calls
-  /// this before the ABI-10 restore (D70 S3).
+  /// Every sealed MLS record (D70), ordered by kind and id.
   Future<List<LocalCryptoRecord>> readCryptoRecords() =>
       (select(localCryptoRecords)
             ..orderBy([
@@ -2012,6 +2047,88 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               (t) => OrderingTerm(expression: t.recordId)
             ]))
           .get();
+
+  /// The root singleton and every record, read in one transaction so the
+  /// restore never mixes two states (D70).
+  Future<
+      ({
+        ({int counter, List<int> stateKey, List<int> sealedState})? state,
+        List<LocalCryptoRecord> records,
+      })> readCryptoSnapshot() => transaction(() async {
+        final state = await readCryptoState();
+        final records = await readCryptoRecords();
+        return (state: state, records: records);
+      });
+
+  /// The one-way format 2/3 to format 4 migration commit (D70 section 5), a
+  /// compare-and-swap: the singleton must still hold [expectedSealedState]
+  /// at [expectedCounter] under [stateKey]. Records found next to that old
+  /// blob are leftovers (an older build opened this database and rewrote
+  /// its version), so they are deleted; then every migrated record and the
+  /// new root are written at [counter], which must be one more. The sync
+  /// cursor does not move.
+  Future<void> commitCryptoMigration({
+    required int expectedCounter,
+    required List<int> expectedSealedState,
+    required int counter,
+    required List<int> stateKey,
+    required List<int> sealedState,
+    required List<CryptoRecordWrite> recordChanges,
+    String? leaseKey,
+    MlsCommitFailureInjector? failureInjector,
+    void Function()? checkCanCommit,
+  }) =>
+      transaction(() async {
+        checkCanCommit?.call();
+        await _assertSyncLeaseInTransaction(leaseKey);
+        final previous = await (select(localCryptoStates)
+              ..where((table) => table.singleton.equals(1)))
+            .getSingleOrNull();
+        if (previous == null ||
+            previous.counter != expectedCounter ||
+            counter != expectedCounter + 1 ||
+            !_sameBytes(previous.sealedState, expectedSealedState) ||
+            !_sameBytes(previous.stateKey, stateKey) ||
+            recordChanges.any((change) => change.sealed == null)) {
+          throw StateError('stale or changed crypto state migration');
+        }
+        await failureInjector?.call(MlsCommitStage.afterValidation);
+        await delete(localCryptoRecords).go();
+        await _applyCryptoRecordChanges(recordChanges);
+        await failureInjector?.call(MlsCommitStage.afterRecords);
+        checkCanCommit?.call();
+        await into(localCryptoStates).insertOnConflictUpdate(
+          LocalCryptoStatesCompanion.insert(
+            singleton: const Value(1),
+            counter: counter,
+            stateKey: Uint8List.fromList(stateKey),
+            sealedState: Uint8List.fromList(sealedState),
+          ),
+        );
+        await failureInjector?.call(MlsCommitStage.afterState);
+      });
+
+  Future<void> _applyCryptoRecordChanges(
+      List<CryptoRecordWrite> changes) async {
+    for (final change in changes) {
+      final sealed = change.sealed;
+      final id = Uint8List.fromList(change.recordId);
+      if (sealed == null) {
+        await (delete(localCryptoRecords)
+              ..where((t) => t.kind.equals(change.kind) & t.recordId.equals(id)))
+            .go();
+      } else {
+        await into(localCryptoRecords).insertOnConflictUpdate(
+          LocalCryptoRecordsCompanion.insert(
+            kind: change.kind,
+            recordId: id,
+            generation: change.generation,
+            sealed: Uint8List.fromList(sealed),
+          ),
+        );
+      }
+    }
+  }
 
   Future<void> clearCachedState(
           {bool preserveOutbox = false, bool keepDrafts = false}) =>
