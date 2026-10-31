@@ -303,10 +303,12 @@ class BackupService {
     } on BackupException catch (error) {
       // A wrong key is kept too: the server accepted the token, so the file
       // is this backup, and the transfer that fetched it may have used up
-      // the code. Only the corrected key part can restore it now.
+      // the code. Only the corrected key part can restore it now. A local
+      // storage failure says nothing about the file either.
       if (error.kind != BackupFailureKind.network &&
           error.kind != BackupFailureKind.busy &&
           error.kind != BackupFailureKind.wrongKey &&
+          error.kind != BackupFailureKind.storage &&
           await file.exists()) {
         await file.delete();
       }

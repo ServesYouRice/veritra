@@ -182,4 +182,52 @@ void main() {
     expect((await target.loadSession())?.deviceId, 'dev_1');
     expect(scratch.listSync(), isEmpty);
   }, skip: skip);
+
+  test('a storage failure keeps the saved download', () async {
+    final (code, ciphertext) = await makeBackup();
+    final prefix = ciphertext.sublist(0, 100);
+    partial().writeAsBytesSync(prefix);
+    if (!await _makeUnwritable(partial())) {
+      markTestSkipped('cannot make a file unwritable here');
+      return;
+    }
+    addTearDown(() => _makeWritable(partial()));
+    final target = MemoryLocalStore();
+    await expectLater(serviceFor(target).recover(code),
+        throwsA(failure(BackupFailureKind.storage)));
+    await _makeWritable(partial());
+    expect(partial().readAsBytesSync(), prefix);
+
+    await serviceFor(target).recover(code);
+    expect((await target.loadSession())?.deviceId, 'dev_1');
+    expect(scratch.listSync(), isEmpty);
+  }, skip: skip);
+}
+
+/// Makes appending to [file] fail: read-only for a normal user, immutable
+/// for root (which ignores the mode bits). False if neither works here.
+Future<bool> _makeUnwritable(File file) async {
+  final root = (await Process.run('id', ['-u'])).stdout.toString().trim();
+  try {
+    await Process.run(root == '0' ? 'chattr' : 'chmod',
+        [root == '0' ? '+i' : '444', file.path]);
+  } on ProcessException {
+    return false;
+  }
+  try {
+    file.openSync(mode: FileMode.append).closeSync();
+    return false;
+  } on FileSystemException {
+    return true;
+  }
+}
+
+Future<void> _makeWritable(File file) async {
+  if (!file.existsSync()) return;
+  try {
+    await Process.run('chattr', ['-i', file.path]);
+  } on ProcessException {
+    // Not root, or no chattr: the mode bits are enough.
+  }
+  await Process.run('chmod', ['644', file.path]);
 }
