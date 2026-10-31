@@ -438,7 +438,14 @@ func (s *Store) CompleteRecovery(ctx context.Context, id, claimTokenHash, sessio
 	completion := RecoveryCompletion{State: RecoveryStateCompleted, ReadyAt: record.ReadyAt, SessionIssued: true, RevokedDevices: oldDevices}
 	// Every old device is revoked before the new one exists, so the new
 	// device (no MLS leaf yet) can never be elected coordinator of, or be
-	// snapshotted as a required confirmer for, these revocations.
+	// snapshotted as a required confirmer for, these revocations. All of
+	// them are marked revoked first, as account deletion does: then no old
+	// device is recorded as coordinator of a sibling's revocation, which
+	// would hand the role, once that sibling is revoked too, to the lowest
+	// eligible device of a legacy group, possibly the new one.
+	if _, err := tx.ExecContext(ctx, `UPDATE devices SET revoked_at = ? WHERE account_id = ? AND revoked_at IS NULL`, nowText, record.AccountID); err != nil {
+		return RecoveryCompletion{}, err
+	}
 	for _, deviceID := range oldDevices {
 		eventID, err := revokeDeviceTx(ctx, tx, record.AccountID, deviceID, "device.revoked", nowText)
 		if err != nil {
