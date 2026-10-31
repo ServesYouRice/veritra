@@ -284,7 +284,15 @@ func execute(ctx context.Context, target *url.URL, setupToken string, opts optio
 	}
 	result.SocketReconnects = w.reconnects.Load()
 	if opts.Verify {
-		result.Verify = w.verify(ctx)
+		verified, err := w.verify(ctx)
+		if err == nil {
+			err = ctx.Err()
+		}
+		if err != nil {
+			// A cancelled verification checked only part of the messages.
+			return nil, err
+		}
+		result.Verify = verified
 	}
 	finish(result)
 	return result, nil
@@ -884,20 +892,26 @@ func (w *world) runDownloads(ctx context.Context, queue <-chan download) {
 
 // verify fetches every acknowledged message after the load: a committed
 // message that is missing (for example after a restart) is a lost write.
-func (w *world) verify(ctx context.Context) *verifyResult {
+// Checked counts only fetches that completed; a fetch cut short by
+// cancellation is neither checked nor an error, and the cancellation is
+// returned so no complete-looking result is reported.
+func (w *world) verify(ctx context.Context) (*verifyResult, error) {
 	w.ackMu.Lock()
 	acked := append([]ackedMessage(nil), w.acked...)
 	w.ackMu.Unlock()
-	result := &verifyResult{Checked: len(acked)}
-	var missing, failed atomic.Int64
+	var checked, missing, failed atomic.Int64
 	rng := mrand.New(mrand.NewPCG(99, uint64(len(acked))))
 	ips := make([]string, len(acked))
 	for i := range ips {
 		ips[i] = seedIP(rng)
 	}
-	_ = parallel(ctx, len(acked), seedWorkers, func(ctx context.Context, i int) error {
+	err := parallel(ctx, len(acked), seedWorkers, func(ctx context.Context, i int) error {
 		message := acked[i]
 		status, _, err := w.client.do(ctx, request{method: http.MethodGet, path: "/api/v1/messages/" + url.PathEscape(message.id), dev: w.devices[message.sender], ip: ips[i]}, nil)
+		if err != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
+		checked.Add(1)
 		switch {
 		case err == nil && status == http.StatusOK:
 		case err == nil && status == http.StatusNotFound:
@@ -907,8 +921,7 @@ func (w *world) verify(ctx context.Context) *verifyResult {
 		}
 		return nil
 	})
-	result.Missing, result.Errors = int(missing.Load()), int(failed.Load())
-	return result
+	return &verifyResult{Checked: int(checked.Load()), Missing: int(missing.Load()), Errors: int(failed.Load())}, err
 }
 
 // Fixed scrape errors: they reach the report, so they never carry the URL,
