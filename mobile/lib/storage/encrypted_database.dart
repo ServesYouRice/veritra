@@ -951,7 +951,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               String kind,
               String? recipientDeviceId,
               String? revocationDeviceId,
-              List<int> payload
+              List<int> payload,
+              int attemptCount,
+              int? nextAttemptAt,
+              String? failureClass,
+              bool terminal
             })>
         mlsOutbox,
     required ({
@@ -1078,7 +1082,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
                   revocationDeviceId: Value(item.revocationDeviceId),
                   payload: Uint8List.fromList(item.payload),
                   stateCounter: cryptoState.counter,
-                  queuedAt: queuedAt + index));
+                  queuedAt: queuedAt + index,
+                  attemptCount: Value(item.attemptCount),
+                  nextAttemptAt: Value(item.nextAttemptAt),
+                  failureClass: Value(item.failureClass),
+                  terminal: Value(item.terminal)));
         }
         await into(localSyncStates).insertOnConflictUpdate(
             LocalSyncStatesCompanion.insert(

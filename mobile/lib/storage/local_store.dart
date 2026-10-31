@@ -2335,6 +2335,10 @@ class SecureLocalStore implements LocalStore {
                 recipientDeviceId: item.recipientDeviceId,
                 revocationDeviceId: item.revocationDeviceId,
                 payload: item.payload,
+                attemptCount: item.attemptCount,
+                nextAttemptAt: item.nextAttemptAt?.millisecondsSinceEpoch,
+                failureClass: item.failureClass,
+                terminal: item.terminal,
               ))
           .toList(),
       cryptoState: (
@@ -3300,6 +3304,16 @@ List<int> _encodeBackup(LocalBackupData data) => utf8.encode(jsonEncode(
                   if (item.revocationDeviceId != null)
                     'revocation_device_id': item.revocationDeviceId,
                   'payload': base64Encode(item.payload),
+                  // Delivery state (I34): a terminal item keeps blocking its
+                  // conversation and a backed-off one keeps its wait. Older
+                  // backups lack these keys; they decode to the defaults.
+                  'attempt_count': item.attemptCount,
+                  if (item.nextAttemptAt != null)
+                    'next_attempt_at':
+                        item.nextAttemptAt!.toUtc().millisecondsSinceEpoch,
+                  if (item.failureClass != null)
+                    'failure_class': item.failureClass,
+                  'terminal': item.terminal,
                 })
             .toList(),
         'crypto_state': <String, Object?>{
@@ -3376,6 +3390,22 @@ LocalBackupData _decodeBackup(List<int> encoded) {
         recipientDeviceId: value['recipient_device_id'] as String?,
         revocationDeviceId: value['revocation_device_id'] as String?,
         payload: base64Decode(value['payload'] as String),
+        attemptCount: _optionalBackupInt(value, 'attempt_count') ?? 0,
+        nextAttemptAt: switch (_optionalBackupInt(value, 'next_attempt_at')) {
+          null => null,
+          final millis =>
+            DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true),
+        },
+        failureClass: switch (value['failure_class']) {
+          null => null,
+          final String failureClass => failureClass,
+          _ => throw const FormatException('invalid backup failure class'),
+        },
+        terminal: switch (value['terminal']) {
+          null => false,
+          final bool terminal => terminal,
+          _ => throw const FormatException('invalid backup terminal flag'),
+        },
       );
     }).toList(growable: false);
     final cursor = (root['cursor'] as num).toInt();
@@ -3440,6 +3470,17 @@ LocalBackupData _decodeBackup(List<int> encoded) {
     if (error is FormatException) rethrow;
     throw const FormatException('invalid backup encoding');
   }
+}
+
+/// A non-negative integer under [name] in a backup entry, or null when the
+/// key is absent (an older backup).
+int? _optionalBackupInt(Map<String, Object?> value, String name) {
+  final raw = value[name];
+  if (raw == null) return null;
+  if (raw is! int || raw < 0) {
+    throw FormatException('invalid backup $name');
+  }
+  return raw;
 }
 
 void _validateCryptoState(StoredCryptoState state) {
