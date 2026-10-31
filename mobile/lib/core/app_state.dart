@@ -5515,12 +5515,24 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (policy == null || !_syncOwnerActive(current, ownerGeneration)) return;
     final now = DateTime.now().toUtc();
     try {
+      // Every device a commit adds joins at once; the group's size spreads
+      // their join updates, so learn it first.
+      for (final conversationId in policy.joinsPending.toList()) {
+        if (membersByConversation.containsKey(conversationId)) continue;
+        try {
+          await _ensureConversationAuthority(conversationId);
+        } catch (err) {
+          if (err is ApiException && err.statusCode == 401) rethrow;
+        }
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+      }
       final due = policy.due(<SelfUpdateCandidate>[
         for (final conversation in conversations)
           (
             id: conversation.id,
             lastActivity: conversation.lastMessageAt,
-            members: membersFor(conversation.id).length,
+            // 0 means not known; a DM always has two members.
+            members: conversation.isDm ? 2 : membersFor(conversation.id).length,
           ),
       ], now);
       final previous = _lastSelfUpdateStagedAt;

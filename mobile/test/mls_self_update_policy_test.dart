@@ -81,6 +81,15 @@ void main() {
         lessThanOrEqualTo(Policy.joinDelay +
             Policy.joinJitterMax +
             const Duration(minutes: 1)));
+    // An unknown size (0) counts as a mid-sized group, not as a DM.
+    final unknown = _policy()..recordJoined('unknown', _t0);
+    expect(unknown.joinsPending, ['unknown']);
+    expect(
+        unknown.due(
+            [_chat('unknown', members: 0)],
+            _t0.add(Policy.joinDelay +
+                Policy.joinJitterPerMember * Policy.unknownMembers)),
+        ['unknown']);
     // Join updates come before count and time triggers.
     final mixed = _policy()
       ..recordPathCommit('busy', _t0.subtract(const Duration(days: 30)))

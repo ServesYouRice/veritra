@@ -53,6 +53,9 @@ class MlsSelfUpdatePolicy {
   static const joinJitterPerMember = Duration(minutes: 1);
   static const joinJitterMax = Duration(hours: 3);
 
+  /// The group size assumed when the member list is not known (0).
+  static const unknownMembers = 20;
+
   /// Never two path commits closer than this in one conversation. It equals
   /// the server's default budget (`PRIVATE_MESSENGER_LIMIT_MLS_SELF_UPDATE_MINUTES`).
   static const minInterval = Duration(hours: 1);
@@ -108,6 +111,12 @@ class MlsSelfUpdatePolicy {
     dirty = true;
   }
 
+  /// Conversations whose join update has not landed yet. Their member
+  /// count sets the join jitter, so the caller loads it first.
+  Iterable<String> get joinsPending => _records.entries
+      .where((entry) => entry.value.last == null)
+      .map((entry) => entry.key);
+
   /// The conversations due for a self-update at [now], join updates first,
   /// then the count trigger, then the time trigger. A conversation seen for
   /// the first time (an existing group after an update to this version) is
@@ -133,7 +142,9 @@ class MlsSelfUpdatePolicy {
       final last = record.last;
       if (last == null) {
         final joinedAt = record.joinedAt ?? now;
-        final spread = joinJitterPerMember * candidate.members;
+        final members =
+            candidate.members > 0 ? candidate.members : unknownMembers;
+        final spread = joinJitterPerMember * members;
         final wait = joinDelay +
             _jitter('${candidate.id}|join|${joinedAt.millisecondsSinceEpoch}',
                 spread > joinJitterMax ? joinJitterMax : spread);
