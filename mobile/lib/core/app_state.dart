@@ -1536,17 +1536,26 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (current == null || client == null) {
       return;
     }
+    final generation = _sessionGeneration;
+    List<Invite>? list;
     try {
-      invites = await client.listInvites(current.token);
-      invitesLoadFailed = false;
+      list = await client.listInvites(current.token);
     } catch (_) {
       // Not surfaced here: invite listing is a privilege, not a core flow.
-      invitesLoadFailed = true;
-    } finally {
-      invitesLoaded = true;
-      notifyListeners();
     }
+    // A reply for a session that has since ended or been replaced is
+    // dropped whole, success or failure.
+    if (!_refreshOwned(current, generation)) return;
+    if (list != null) invites = list;
+    invitesLoadFailed = list == null;
+    invitesLoaded = true;
+    notifyListeners();
   }
+
+  /// Whether a refresh that started under [current] at [generation] may
+  /// still publish: that session is the live one.
+  bool _refreshOwned(Session current, int generation) =>
+      !_disposed && _syncOwnerActive(current, generation);
 
   /// Refreshes communities (and their channels) the account belongs to.
   /// Best-effort for the same reason as [refreshInvites].
@@ -1556,26 +1565,31 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (current == null || client == null) {
       return;
     }
+    final generation = _sessionGeneration;
     try {
       final list = await client.listCommunities(current.token);
       final channels = <String, List<Channel>>{};
       for (final community in list) {
+        if (!_refreshOwned(current, generation)) return;
         try {
           channels[community.id] =
               await client.listChannels(current.token, community.id);
         } catch (_) {
+          if (!_refreshOwned(current, generation)) return;
           channels[community.id] =
               channelsByCommunity[community.id] ?? const <Channel>[];
         }
       }
+      if (!_refreshOwned(current, generation)) return;
       communities = list;
       channelsByCommunity = channels;
     } catch (_) {
       // Keep the locally-known records if the server can't list right now.
-    } finally {
-      communitiesLoaded = true;
-      notifyListeners();
     }
+    // Nothing from a session that has since ended or been replaced.
+    if (!_refreshOwned(current, generation)) return;
+    communitiesLoaded = true;
+    notifyListeners();
   }
 
   Future<void> _refreshConversations({
@@ -1587,20 +1601,34 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (current == null || client == null) {
       return;
     }
-    conversations = await client.conversations(current.token);
-    conversationPrefs = {
-      for (final p in await localStore.loadConversationPrefs())
-        p.conversationId: p
-    };
-    mentionsInMutedChats =
-        await localStore.loadSetting('w8.mentions_muted') != 'false';
+    final generation = _sessionGeneration;
+    // Everything is read first and published only while the session that
+    // asked is still the live one. A stale reply, or its error, is dropped
+    // without a trace.
+    final List<Conversation> list;
+    final List<LocalConversationPref> prefs;
+    final String? mentionsMuted;
+    try {
+      list = await client.conversations(current.token);
+      prefs = await localStore.loadConversationPrefs();
+      mentionsMuted = await localStore.loadSetting('w8.mentions_muted');
+    } catch (_) {
+      if (!_refreshOwned(current, generation)) return;
+      rethrow;
+    }
+    if (!_refreshOwned(current, generation)) return;
+    conversations = list;
+    conversationPrefs = {for (final p in prefs) p.conversationId: p};
+    mentionsInMutedChats = mentionsMuted != 'false';
     await _loadRequestState(grandfather: false);
+    if (!_refreshOwned(current, generation)) return;
     // The server's list is the truth: a conversation no longer in it (an
     // admin removed this account, say) keeps no draft here.
     composerDrafts.retainOnly(conversations.map((item) => item.id));
     conversationsLoaded = true;
     _opErrors.remove(Ops.conversations);
     if (persist) await _persistSnapshot();
+    if (!_refreshOwned(current, generation)) return;
     if (notify) {
       notifyListeners();
     }
