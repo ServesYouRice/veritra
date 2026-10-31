@@ -14,6 +14,9 @@ import 'desktop_shell.dart';
 /// Where the notification choice is kept. A device preference like the
 /// appearance: it survives sign-out and holds no message content.
 abstract class NotificationSettingsStore {
+  /// The saved choice, or null when none was ever saved. Throws when the
+  /// store cannot be read: that is not the same as "never saved", because an
+  /// unknown choice must not be treated as "show previews".
   Future<bool?> loadHidePreview();
   Future<void> saveHidePreview(bool value);
 }
@@ -31,12 +34,8 @@ class SecureNotificationSettingsStore implements NotificationSettingsStore {
 
   @override
   Future<bool?> loadHidePreview() async {
-    try {
-      final value = await _storage.read(key: key);
-      return value == null ? null : value == 'true';
-    } catch (_) {
-      return null;
-    }
+    final value = await _storage.read(key: key);
+    return value == null ? null : value == 'true';
   }
 
   @override
@@ -62,19 +61,34 @@ class MemoryNotificationSettingsStore implements NotificationSettingsStore {
 }
 
 /// Whether a notification may show message text. The preview is shown until
-/// the person hides it.
+/// the person hides it, but only once the saved choice is known: before it
+/// has loaded, and for the whole run when the store cannot be read, a
+/// notification carries no message text.
 class NotificationSettings extends ChangeNotifier {
   NotificationSettings(this._store);
 
   final NotificationSettingsStore _store;
   bool _hidePreview = false;
   bool _changed = false;
+  bool _loaded = false;
 
+  /// The choice the settings screen shows.
   bool get hidePreview => _hidePreview;
 
-  /// Reads the saved choice. A choice made before the read finishes wins.
+  /// Whether a notification may carry message text: the saved choice was
+  /// read (or the person chose in this run) and it is not "hide".
+  bool get previewAllowed => (_loaded || _changed) && !_hidePreview;
+
+  /// Reads the saved choice. A choice made before the read finishes wins. A
+  /// read that fails leaves the choice unknown, which hides previews.
   Future<void> load() async {
-    final saved = await _store.loadHidePreview();
+    final bool? saved;
+    try {
+      saved = await _store.loadHidePreview();
+    } catch (_) {
+      return;
+    }
+    _loaded = true;
     if (saved == null || _changed || saved == _hidePreview) return;
     _hidePreview = saved;
     notifyListeners();
@@ -193,7 +207,7 @@ class MessageNotifier {
       if (!await state.loadConversationMuted(entry.key)) continue;
       if (state.isMuted(entry.key) && !entry.value.mentioned) continue;
       final strings = l10n();
-      if (settings.hidePreview) {
+      if (!settings.previewAllowed) {
         await notifier.show(
           title: veritraProductName,
           body: strings.notificationNewMessage,

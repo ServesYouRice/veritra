@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -31,6 +32,32 @@ class _FakeNotifier implements DesktopNotifier {
   Future<void> show({required String title, required String body}) async {
     shown.add((title: title, body: body));
   }
+}
+
+/// A store whose read finishes only when the test releases it.
+class _HeldStore implements NotificationSettingsStore {
+  _HeldStore(this.saved);
+
+  final bool? saved;
+  final Completer<void> release = Completer<void>();
+
+  @override
+  Future<bool?> loadHidePreview() async {
+    await release.future;
+    return saved;
+  }
+
+  @override
+  Future<void> saveHidePreview(bool value) async {}
+}
+
+/// A store whose read fails, like a locked or broken keychain.
+class _UnreadableStore implements NotificationSettingsStore {
+  @override
+  Future<bool?> loadHidePreview() async => throw StateError('keychain');
+
+  @override
+  Future<void> saveHidePreview(bool value) async {}
 }
 
 class _NoSync implements SyncService {
@@ -137,7 +164,7 @@ void main() {
     );
   }
 
-  setUp(() {
+  setUp(() async {
     state = _State()
       ..session = const Session(
         baseUrl: 'https://localhost',
@@ -151,6 +178,8 @@ void main() {
     shell = _FakeShell();
     notifier = _FakeNotifier();
     settings = NotificationSettings(MemoryNotificationSettingsStore());
+    // Previews wait for the saved choice to be known.
+    await settings.load();
     messages = MessageNotifier(
       state: state,
       shell: shell,
@@ -210,6 +239,94 @@ void main() {
     await messages.handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
     expect(notifier.shown.single.title, 'Veritra');
     expect(notifier.shown.single.body, 'New message');
+  });
+
+  group('previews wait for the saved choice', () {
+    MessageNotifier notifierFor(NotificationSettings choice) => MessageNotifier(
+          state: state,
+          shell: shell,
+          notifier: notifier,
+          settings: choice,
+          l10n: () => englishL10n,
+          now: () => _now,
+        );
+
+    void expectGeneric() {
+      expect(notifier.shown, hasLength(1));
+      expect(notifier.shown.single.title, 'Veritra');
+      expect(notifier.shown.single.body, 'New message');
+    }
+
+    test('a saved "hide" is honoured before the load finishes', () async {
+      final store = _HeldStore(true);
+      final pending = NotificationSettings(store);
+      final loading = pending.load();
+      history(<LocalMessage>[_local('m1')]);
+      await notifierFor(pending)
+          .handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
+      expectGeneric();
+      expect(notifier.shown.single.body, isNot(contains('secret')));
+      store.release.complete();
+      await loading;
+    });
+
+    test('an unreadable store hides previews for the run', () async {
+      final unreadable = NotificationSettings(_UnreadableStore());
+      await unreadable.load();
+      history(<LocalMessage>[_local('m1'), _local('m2')]);
+      final notifier2 = notifierFor(unreadable);
+      await notifier2.handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
+      await unreadable.load();
+      await notifier2.handle(<ReceivedMessageEnvelope>[_envelope('m2')]);
+      expect(notifier.shown, hasLength(2));
+      for (final item in notifier.shown) {
+        expect(item.title, 'Veritra');
+        expect(item.body, 'New message');
+      }
+    });
+
+    test('a store that holds no choice shows previews after loading', () async {
+      final empty = NotificationSettings(MemoryNotificationSettingsStore());
+      await empty.load();
+      history(<LocalMessage>[_local('m1')]);
+      await notifierFor(empty)
+          .handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
+      expect(notifier.shown.single.body, 'secret words');
+    });
+
+    test('a choice made before the load finishes wins', () async {
+      final store = _HeldStore(true);
+      final pending = NotificationSettings(store);
+      final loading = pending.load();
+      await pending.setHidePreview(false);
+      store.release.complete();
+      await loading;
+      expect(pending.hidePreview, isFalse);
+      history(<LocalMessage>[_local('m1')]);
+      await notifierFor(pending)
+          .handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
+      expect(notifier.shown.single.body, 'secret words');
+    });
+
+    test('an explicit "show" is honoured even when the store is unreadable',
+        () async {
+      final unreadable = NotificationSettings(_UnreadableStore());
+      await unreadable.load();
+      await unreadable.setHidePreview(false);
+      history(<LocalMessage>[_local('m1')]);
+      await notifierFor(unreadable)
+          .handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
+      expect(notifier.shown.single.body, 'secret words');
+    });
+
+    test('a saved "hide" still applies after the load', () async {
+      final saved = NotificationSettings(MemoryNotificationSettingsStore(true));
+      await saved.load();
+      history(<LocalMessage>[_local('m1')]);
+      await notifierFor(saved)
+          .handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
+      expectGeneric();
+    });
   });
 
   test('a kept mention alerts in a muted chat, and its switch turns that off',
