@@ -170,11 +170,29 @@ void main() {
     await alice.service.stageMembershipChange('conv_1', removes: <MlsDeviceRef>[
       (accountId: 'acct_bob', deviceId: 'dev_tablet')
     ]);
-    await _accept(alice, const <_Client>[], <_Client>[bob]);
+    expect(await alice.service.groupEpoch('conv_1'), (epoch: 2, pending: true));
+    await _accept(alice, const <_Client>[], <_Client>[bob, tablet]);
+    expect(
+        await alice.service.groupEpoch('conv_1'), (epoch: 3, pending: false));
+    expect(await bob.service.groupEpoch('conv_1'), (epoch: 3, pending: false));
+    // The tablet applies its own removal and can no longer send.
+    expect(
+        await tablet.service.groupEpoch('conv_1'), (epoch: 3, pending: false));
+    await expectLater(
+        tablet.send(AppPayloadType.text, <String, Object?>{'text': 'still?'}),
+        throwsA(isA<NativeCryptoException>()));
+
     final after =
         await alice.send(AppPayloadType.text, <String, Object?>{'text': 'bye'});
     await bob.receive(alice, after);
     expect((await bob.history()).last.body, 'bye');
+    // Nor can it read what the group sends after the removal.
+    await expectLater(
+        tablet.receive(alice, after),
+        throwsA(isA<NativeCryptoException>().having(
+            (error) => error.kind, 'kind', NativeCryptoError.operationFailed)));
+    expect((await tablet.history()).map((message) => message.body),
+        <String?>['hi']);
   }, skip: skip);
 
   test('a refused commit is dropped and the winner applies cleanly', () async {
