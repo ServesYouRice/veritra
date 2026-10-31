@@ -2472,28 +2472,83 @@ class SecureLocalStore implements LocalStore {
       throw ArgumentError.value(confirmed, 'confirmed',
           'resetting the local database needs explicit confirmation');
     }
+    // Synchronously, before any await: from here on no _database() call is
+    // given the cached handle on the files this reset moves, and every new
+    // open waits until the reset has finished.
     final opening = _openingDatabase;
-    _openingDatabase = null;
-    if (opening != null) {
-      try {
-        await (await opening).close();
-      } catch (_) {
-        // It never opened; there is nothing to close.
+    _resetGeneration++;
+    final previousReset = _resetBarrier;
+    final finished = Completer<void>();
+    _resetBarrier = finished.future;
+    EncryptedLocalDatabase? stale;
+    var staleClosed = false;
+    try {
+      if (previousReset != null) await previousReset;
+      // An open already requested finishes first. It may be queued on the
+      // profile chain, so it is awaited before the reset joins that chain.
+      if (opening != null) {
+        try {
+          stale = await opening;
+        } catch (_) {
+          // It never opened; there is nothing to close.
+        }
       }
+      final directory = await _profileDirectory();
+      await _serializeProfile(_databaseFileIn(directory).absolute.path,
+          () async {
+        final releaseLocks = await _acquireProfileLocks(directory);
+        try {
+          // Closed before any file moves. The database object is closed
+          // directly: _database() would wait for this reset.
+          staleClosed = true;
+          try {
+            await stale?.close();
+          } catch (_) {
+            // It is not used again either way.
+          }
+          await _writeResetIntent(directory);
+          await _completeReset(directory);
+        } finally {
+          await releaseLocks();
+        }
+      });
+      _syncLeaseKey = null;
+    } finally {
+      if (!staleClosed) {
+        // The reset stopped before its locked section and moved nothing;
+        // the old handle is not handed out again, so it is closed here.
+        try {
+          await stale?.close();
+        } catch (_) {}
+      }
+      // Only the open this reset replaced; a newer one is left alone.
+      if (identical(_openingDatabase, opening)) _openingDatabase = null;
+      if (identical(_resetBarrier, finished.future)) _resetBarrier = null;
+      finished.complete();
     }
-    final directory = await _profileDirectory();
-    await _writeResetIntent(directory);
-    await _completeReset(directory);
-    _syncLeaseKey = null;
   }
+
+  /// Raised by each requested reset. A cached open from an earlier
+  /// generation belongs to files a reset moves, so it is never reused.
+  int _resetGeneration = 0;
+  int _openingGeneration = 0;
+
+  /// Completes when the latest requested reset has finished (or failed).
+  Future<void>? _resetBarrier;
 
   /// A failed open is not cached: the next call opens again, so a key that
   /// becomes readable later (after unlock, say) is picked up by a retry.
   Future<EncryptedLocalDatabase> _database() {
     final existing = _openingDatabase;
-    if (existing != null) return existing;
-    final opening = _openDatabase();
+    if (existing != null && _openingGeneration == _resetGeneration) {
+      return existing;
+    }
+    final barrier = _resetBarrier;
+    final opening = barrier == null
+        ? _openDatabase()
+        : barrier.then((_) => _openDatabase());
     _openingDatabase = opening;
+    _openingGeneration = _resetGeneration;
     unawaited(opening.then<void>((_) {}, onError: (Object error) {
       if (identical(_openingDatabase, opening)) _openingDatabase = null;
     }));
@@ -2583,27 +2638,69 @@ class SecureLocalStore implements LocalStore {
     await intent.delete();
   }
 
+  static File _databaseFileIn(Directory directory) =>
+      File('${directory.path}${Platform.pathSeparator}veritra-local.db');
+
   Future<EncryptedLocalDatabase> _openDatabase() async {
     final existingOnly = _existingOnly;
     final directory = await _profileDirectory(existingOnly: existingOnly);
-    final databaseFile =
-        File('${directory.path}${Platform.pathSeparator}veritra-local.db');
+    final databaseFile = _databaseFileIn(directory);
     final path = databaseFile.absolute.path;
     _databasePath = path;
+    return _serializeProfile(
+        path,
+        () => _openDatabaseLocked(directory, databaseFile,
+            existingOnly: existingOnly));
+  }
+
+  /// Runs [action] after every open or reset of the database at [path] that
+  /// this isolate requested earlier, and before any requested later.
+  static Future<T> _serializeProfile<T>(
+      String path, Future<T> Function() action) async {
     final previous = _databaseOpenTails[path] ?? Future<void>.value();
     final release = Completer<void>();
     final current = previous.then((_) => release.future);
     _databaseOpenTails[path] = current;
     await previous;
     try {
-      return await _openDatabaseLocked(directory, databaseFile,
-          existingOnly: existingOnly);
+      return await action();
     } finally {
       release.complete();
       if (identical(_databaseOpenTails[path], current)) {
         _databaseOpenTails.remove(path);
       }
     }
+  }
+
+  /// Takes the profile's ownership locks, used by both open and reset: the
+  /// instance lock this process keeps (a profile another process owns is
+  /// refused as [LocalStoreFailureKind.profileLocked], before anything is
+  /// touched) and the exclusive `veritra-local.lock` until the returned
+  /// function releases it.
+  static Future<Future<void> Function()> _acquireProfileLocks(
+      Directory directory) async {
+    try {
+      await _holdInstanceLock(directory);
+    } on StateError {
+      throw const LocalStoreUnavailableException(
+          LocalStoreFailureKind.profileLocked);
+    }
+    final lockFile =
+        File('${directory.path}${Platform.pathSeparator}veritra-local.lock');
+    final lock = await lockFile.open(mode: FileMode.append);
+    try {
+      await lock.lock(FileLock.exclusive);
+    } catch (_) {
+      await lock.close();
+      rethrow;
+    }
+    return () async {
+      try {
+        await lock.unlock();
+      } finally {
+        await lock.close();
+      }
+    };
   }
 
   Future<EncryptedLocalDatabase> _openDatabaseLocked(
@@ -2634,16 +2731,7 @@ class SecureLocalStore implements LocalStore {
             LocalStoreFailureKind.keyUnavailable);
       }
     }
-    try {
-      await _holdInstanceLock(directory);
-    } on StateError {
-      throw const LocalStoreUnavailableException(
-          LocalStoreFailureKind.profileLocked);
-    }
-    final lockFile =
-        File('${directory.path}${Platform.pathSeparator}veritra-local.lock');
-    final lock = await lockFile.open(mode: FileMode.append);
-    await lock.lock(FileLock.exclusive);
+    final releaseLocks = await _acquireProfileLocks(directory);
     try {
       // Before anything can fail: a database from an older build that this
       // one cannot open is excluded too, and a new database file is created
@@ -2741,8 +2829,7 @@ class SecureLocalStore implements LocalStore {
       await _excludeFromBackup(directory);
       return database;
     } finally {
-      await lock.unlock();
-      await lock.close();
+      await releaseLocks();
     }
   }
 
