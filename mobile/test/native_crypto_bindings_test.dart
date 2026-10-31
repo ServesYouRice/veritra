@@ -1,3 +1,4 @@
+import 'dart:ffi';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -151,5 +152,67 @@ void main() {
     alice.close();
     bob.close();
     carol.close();
+  }, skip: libraryPath == null ? 'host native library not built' : false);
+
+  test('every owned buffer is freed exactly once when the copy fails', () {
+    final bindings = NativeCryptoBindings.open(libraryPath!);
+    final alice = bindings.createDevice('acct_alice', 'dev_alice');
+    final bob = bindings.createDevice('acct_bob', 'dev_bob');
+    alice.createGroup('conv_free');
+    final freed = <int>[];
+    var copies = 0;
+    var failAt = 0;
+    void failingCopy(int copy, void Function() operation) {
+      freed.clear();
+      copies = 0;
+      failAt = copy;
+      expect(operation, throwsA(isA<StateError>()));
+    }
+
+    final originalCopy = NativeCryptoBindings.debugCopyOwnedBytes;
+    NativeCryptoBindings.debugFreeOwnedBuffer =
+        (Pointer<Uint8> data, int len) => freed.add(data.address);
+    NativeCryptoBindings.debugCopyOwnedBytes = (Pointer<Uint8> data, int len) {
+      if (++copies == failAt) throw StateError('copy failed');
+      return List<int>.of(data.asTypedList(len));
+    };
+    try {
+      // _output: one buffer.
+      failingCopy(1, alice.signingPublicKey);
+      expect(freed, hasLength(1));
+      // _twoOutputs: the copy fails on the first and on the second buffer.
+      for (final copy in [1, 2]) {
+        failingCopy(copy, () => alice.conversationSafetyNumber('conv_free'));
+        expect(freed, hasLength(2), reason: 'copy $copy');
+        expect(freed.toSet(), hasLength(2), reason: 'copy $copy');
+      }
+      // Three outputs, taken one by one.
+      for (final copy in [1, 2, 3]) {
+        failingCopy(copy, () => alice.createEnrollmentCredential([1, 2, 3]));
+        expect(freed, hasLength(3), reason: 'copy $copy');
+        expect(freed.toSet(), hasLength(3), reason: 'copy $copy');
+      }
+      // stageCommit's commit and Welcome.
+      final keyPackage = bob.createKeyPackage();
+      for (final copy in [1, 2]) {
+        failingCopy(
+            copy,
+            () => alice.stageCommit('conv_free', adds: [
+                  (
+                    keyPackage: keyPackage,
+                    accountId: 'acct_bob',
+                    deviceId: 'dev_bob'
+                  )
+                ]));
+        expect(freed, hasLength(2), reason: 'copy $copy');
+        expect(freed.toSet(), hasLength(2), reason: 'copy $copy');
+        alice.clearPendingCommit('conv_free');
+      }
+    } finally {
+      NativeCryptoBindings.debugFreeOwnedBuffer = null;
+      NativeCryptoBindings.debugCopyOwnedBytes = originalCopy;
+    }
+    alice.close();
+    bob.close();
   }, skip: libraryPath == null ? 'host native library not built' : false);
 }

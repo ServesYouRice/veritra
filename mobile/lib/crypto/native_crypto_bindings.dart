@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../core/models.dart';
 
@@ -461,14 +462,35 @@ class NativeCryptoBindings {
           challengeSignature: signatureBytes,
         );
       } finally {
-        if (keyPackage.ref.data != nullptr) _bufferFree(keyPackage.ref);
-        if (signingKey.ref.data != nullptr) _bufferFree(signingKey.ref);
-        if (signature.ref.data != nullptr) _bufferFree(signature.ref);
+        if (keyPackage.ref.data != nullptr) _free(keyPackage.ref);
+        if (signingKey.ref.data != nullptr) _free(signingKey.ref);
+        if (signature.ref.data != nullptr) _free(signature.ref);
         calloc.free(keyPackage);
         calloc.free(signingKey);
         calloc.free(signature);
       }
     });
+  }
+
+  /// Test seams (TASK-047): stand in for the copy out of an owned buffer and
+  /// for the native free, so a test can make the copy fail and count frees
+  /// without a real double free. Never set outside tests.
+  @visibleForTesting
+  static List<int> Function(Pointer<Uint8> data, int len) debugCopyOwnedBytes =
+      _copyOwnedBytes;
+  @visibleForTesting
+  static void Function(Pointer<Uint8> data, int len)? debugFreeOwnedBuffer;
+
+  static List<int> _copyOwnedBytes(Pointer<Uint8> data, int len) =>
+      Uint8List.fromList(data.asTypedList(len));
+
+  void _free(_PmOwnedBuffer buffer) {
+    final override = debugFreeOwnedBuffer;
+    if (override != null) {
+      override(buffer.data, buffer.len);
+    } else {
+      _bufferFree(buffer);
+    }
   }
 
   List<int> _take(_PmOwnedBuffer buffer) {
@@ -477,10 +499,16 @@ class NativeCryptoBindings {
         buffer.len > 32 * 1024 * 1024) {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
     }
+    // Once validated, _take is the single owner: it frees the buffer and
+    // nulls it, so the caller's cleanup cannot free it a second time when
+    // the copy throws.
     try {
-      return Uint8List.fromList(buffer.data.asTypedList(buffer.len));
+      return debugCopyOwnedBytes(buffer.data, buffer.len);
     } finally {
-      _bufferFree(buffer);
+      _free(buffer);
+      buffer
+        ..data = nullptr
+        ..len = 0;
     }
   }
 
@@ -494,7 +522,7 @@ class NativeCryptoBindings {
         ..len = 0;
       return bytes;
     } finally {
-      if (output.ref.data != nullptr) _bufferFree(output.ref);
+      if (output.ref.data != nullptr) _free(output.ref);
       calloc.free(output);
     }
   }
@@ -516,8 +544,8 @@ class NativeCryptoBindings {
         ..len = 0;
       return (first: firstBytes, second: secondBytes);
     } finally {
-      if (first.ref.data != nullptr) _bufferFree(first.ref);
-      if (second.ref.data != nullptr) _bufferFree(second.ref);
+      if (first.ref.data != nullptr) _free(first.ref);
+      if (second.ref.data != nullptr) _free(second.ref);
       calloc.free(first);
       calloc.free(second);
     }
@@ -794,8 +822,8 @@ class NativeCryptoDevice implements Finalizable {
         }
         return (commit: commitBytes, welcome: welcomeBytes, epoch: epoch.value);
       } finally {
-        if (commit.ref.data != nullptr) _bindings._bufferFree(commit.ref);
-        if (welcome.ref.data != nullptr) _bindings._bufferFree(welcome.ref);
+        if (commit.ref.data != nullptr) _bindings._free(commit.ref);
+        if (welcome.ref.data != nullptr) _bindings._free(welcome.ref);
         calloc.free(commit);
         calloc.free(welcome);
         calloc.free(epoch);
