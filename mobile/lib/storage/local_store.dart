@@ -2824,6 +2824,7 @@ class SecureLocalStore implements LocalStore {
         }
       } else {
         await _migrateLegacyRecord(database);
+        await _repairEnvelopeExpiry(database);
       }
       // Again now that the database, WAL and SHM files exist.
       await _excludeFromBackup(directory);
@@ -2921,6 +2922,17 @@ class SecureLocalStore implements LocalStore {
     await _verifyLegacyMigration(database, legacy);
     await database.writeMetadata(_migrationMarker, '1');
     await _storage.delete(key: _legacyRecordKeyName);
+  }
+
+  /// Runs after the legacy migration has finished or found nothing to do,
+  /// and before anything reads the next expiry. Best effort: a failure
+  /// writes no marker, so the repair runs again on the next open, and the
+  /// database still opens.
+  static Future<void> _repairEnvelopeExpiry(
+      EncryptedLocalDatabase database) async {
+    try {
+      await database.repairNullEnvelopeExpiry();
+    } catch (_) {}
   }
 
   Future<void> _verifyLegacyMigration(
