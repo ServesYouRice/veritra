@@ -40,7 +40,8 @@ run_step() {
 }
 
 run_step go-race sh -c "cd '$ROOT/server' && go test -race -coverprofile=coverage.out ./..."
-run_step go-lint sh -c "cd '$ROOT/server' && test -z \"\$(gofmt -l .)\" && go vet ./..."
+# gofmt's own exit status counts: a parse error prints nothing on stdout.
+run_step go-lint sh -c "cd '$ROOT/server' && unformatted=\$(gofmt -l .) && test -z \"\$unformatted\" && go vet ./..."
 run_step rust-release sh -c "cd '$ROOT/crypto/rust' && cargo test --release --locked && cargo fmt --check && cargo clippy --all-targets -- -D warnings"
 run_step dart-coverage sh -c "cd '$ROOT/mobile' && flutter test --coverage && flutter analyze && dart format --set-exit-if-changed ."
 run_step coverage-floor sh -c "python3 '$ROOT/scripts/check-coverage.py' \
