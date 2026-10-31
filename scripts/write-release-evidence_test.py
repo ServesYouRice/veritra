@@ -30,7 +30,7 @@ POLICY = {
     "schema_version": 3,
     "approvals": {
         "production_crypto": {"path": "release/approvals/{commit}/crypto.json"},
-        "security_review": {"path": "release/approvals/{commit}/review.json"},
+        "independent_review": {"path": "release/approvals/{commit}/review.json"},
     },
 }
 
@@ -92,8 +92,37 @@ def test_build_manifest() -> None:
     # 3. Invalid approvals structure in policy, or no approvals commit
     expect_value_error("non-dict approvals", policy={"schema_version": 3, "approvals": "not a dict"})
     expect_value_error(
-        "missing approval path", policy={"schema_version": 3, "approvals": {"bad": {"no_path": 1}}}
+        "missing approval path", policy={"schema_version": 3, "approvals": {**POLICY["approvals"], "bad": {"no_path": 1}}}
     )
+    expect_value_error(
+        "empty approval path", policy={"schema_version": 3, "approvals": {**POLICY["approvals"], "bad": {"path": ""}}}
+    )
+    # A missing or empty approvals section, or one without a required
+    # approval, cannot produce a manifest (before, both gave one with no
+    # approvals at all).
+    expect_value_error("no approvals key", policy={"schema_version": 3})
+    expect_value_error("empty approvals", policy={"schema_version": 3, "approvals": {}})
+    assert writer.REQUIRED_APPROVALS, "the writer requires no approvals"
+
+    def never_loaded(path: str) -> dict[str, object]:
+        raise AssertionError(f"loaded {path} although the policy is incomplete")
+
+    for name in writer.REQUIRED_APPROVALS:
+        partial = {key: value for key, value in POLICY["approvals"].items() if key != name}
+        partial["other"] = {"path": "release/approvals/{commit}/other.json"}
+        try:
+            build(policy={"schema_version": 3, "approvals": partial}, approval_loader=never_loaded)
+        except ValueError as exc:
+            assert name in str(exc), exc
+        else:
+            raise AssertionError(f"expected a policy without {name} to fail validation")
+    # An invalid entry is refused before anything is loaded.
+    try:
+        build(policy={"schema_version": 3, "approvals": {**POLICY["approvals"], "bad": 7}}, approval_loader=never_loaded)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected an invalid approval entry to fail validation")
     for bad_approvals in ["", "short", APPROVALS_COMMIT.upper(), APPROVALS_COMMIT + "0"]:
         expect_value_error(f"approvals commit {bad_approvals!r}", approvals_commit=bad_approvals)
 
@@ -121,7 +150,7 @@ def test_build_manifest() -> None:
     assert manifest["approvals"] == {
         "commit": APPROVALS_COMMIT,
         "production_crypto": MOCK_APPROVALS[f"release/approvals/{COMMIT}/crypto.json"],
-        "security_review": MOCK_APPROVALS[f"release/approvals/{COMMIT}/review.json"],
+        "independent_review": MOCK_APPROVALS[f"release/approvals/{COMMIT}/review.json"],
     }
     assert "production_crypto" not in manifest
 
@@ -130,6 +159,18 @@ def test_build_manifest() -> None:
     smuggled = dict(CI_EVIDENCE, mobile_artifacts=[{"artifact_type": "signed-release"}])
     assert build(ci=smuggled)["mobile_artifacts"] == MOBILE
     assert build(mobile_artifacts=[])["mobile_artifacts"] == []
+
+
+def test_required_approvals_match_the_gate() -> None:
+    """The writer requires exactly what the checker and the policy do."""
+    checker_path = MODULE_PATH.with_name("check-release-evidence.py")
+    checker_spec = importlib.util.spec_from_file_location("check_release_evidence", checker_path)
+    assert checker_spec and checker_spec.loader
+    checker = importlib.util.module_from_spec(checker_spec)
+    checker_spec.loader.exec_module(checker)
+    assert set(writer.REQUIRED_APPROVALS) == set(checker.REQUIRED_APPROVALS)
+    policy = json.loads((MODULE_PATH.parents[1] / "release/release-policy.json").read_text(encoding="utf-8"))
+    assert set(writer.REQUIRED_APPROVALS) == set(policy["approvals"])
 
 
 def test_simulator_record() -> None:
@@ -273,6 +314,7 @@ def test_approvals_commit_is_required() -> None:
 
 if __name__ == "__main__":
     test_build_manifest()
+    test_required_approvals_match_the_gate()
     test_simulator_record()
     test_emulator_record()
     test_missing_mobile_evidence_fails_closed()

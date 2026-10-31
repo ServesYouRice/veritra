@@ -24,6 +24,9 @@ MOBILE_RECORD_SCHEMA = "veritra-mobile-artifact/1"
 # As in check-release-evidence.py: no replace refs, no grafts (the path under
 # os.devnull can never exist). The checker compares the result with git anyway.
 GIT_HISTORY_ENV = {"GIT_NO_REPLACE_OBJECTS": "1", "GIT_GRAFT_FILE": os.path.join(os.devnull, "grafts")}
+# The approvals check-release-evidence.py requires (its REQUIRED_APPROVALS).
+# A policy without any of them cannot make a manifest.
+REQUIRED_APPROVALS = ("production_crypto", "independent_review")
 
 
 def load(path: Path) -> dict[str, object]:
@@ -58,9 +61,16 @@ def build_manifest(
     validate_commit(approvals_commit, "RELEASE_APPROVALS_COMMIT")
     if not image or not digest:
         raise ValueError("CONTAINER_IMAGE and CONTAINER_DIGEST are required")
-    approvals = policy.get("approvals", {})
-    if not isinstance(approvals, dict):
+    approvals = policy.get("approvals")
+    if not isinstance(approvals, dict) or not approvals:
         raise ValueError("release policy has no approvals")
+    missing = sorted(set(REQUIRED_APPROVALS) - set(approvals))
+    if missing:
+        raise ValueError(f"release policy is missing required approvals: {', '.join(missing)}")
+    # Every entry is checked before any approval is loaded.
+    for name, config in approvals.items():
+        if not isinstance(config, dict) or not isinstance(config.get("path"), str) or not config["path"]:
+            raise ValueError(f"invalid approval configuration: {name}")
     # Mobile records come only from the separate mobile artifact file, never
     # from CI job evidence, so a simulator CI run cannot add signed evidence.
     if not isinstance(mobile_artifacts, list) or not all(isinstance(r, dict) for r in mobile_artifacts):
@@ -85,8 +95,6 @@ def build_manifest(
     # with git again.
     recorded: dict[str, object] = {"commit": approvals_commit}
     for name, config in approvals.items():
-        if not isinstance(config, dict) or not isinstance(config.get("path"), str):
-            raise ValueError(f"invalid approval configuration: {name}")
         recorded[name] = approval_loader(config["path"].format(commit=commit))
     manifest["approvals"] = recorded
     return manifest
