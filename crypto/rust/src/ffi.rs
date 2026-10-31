@@ -18,6 +18,15 @@ pub const PM_CRYPTO_PANIC: i32 = -4;
 /// Decryption succeeded but the MLS sender is not the claimed account/device.
 /// The group ratchet has already advanced past the message.
 pub const PM_CRYPTO_SENDER_MISMATCH: i32 = -5;
+/// Sealed state with a format version this build does not read (ABI 9). The
+/// version is not authenticated: use it only to offer re-linking the
+/// device, never to relax a check. Every other restore failure stays
+/// [`PM_CRYPTO_ERROR`].
+pub const PM_CRYPTO_STATE_FORMAT_UNSUPPORTED: i32 = -6;
+/// Decryption succeeded from a retained past epoch, but the sender is no
+/// longer a member of the group (ABI 9). The ratchet has already advanced;
+/// handle it like [`PM_CRYPTO_SENDER_MISMATCH`]: commit, show no content.
+pub const PM_CRYPTO_SENDER_REMOVED: i32 = -7;
 
 const MAX_ID_BYTES: usize = 128;
 const STATE_KEY_BYTES: usize = 32;
@@ -25,7 +34,15 @@ const MAX_STATE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_CHALLENGE_BYTES: usize = 4096;
 const MAX_KEY_PACKAGE_BYTES: usize = 48 * 1024;
 const MAX_HANDSHAKE_BYTES: usize = 4 * 1024 * 1024;
+/// Largest application plaintext pm_crypto_group_encrypt accepts.
 const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
+/// Largest MLS application ciphertext pm_crypto_group_decrypt accepts. The
+/// margin covers padding to 256 bytes, the framing (group id of at most 128
+/// bytes, epoch, encrypted sender data), the AEAD tag, the Ed25519 signature
+/// and the length prefixes; a MAX_MESSAGE_BYTES plaintext needs 312 bytes of
+/// it with an 8-byte group id (tested). Encrypt refuses output above it, so every successful
+/// encrypt can be decrypted.
+const MAX_CIPHERTEXT_BYTES: usize = MAX_MESSAGE_BYTES + 4096;
 const ATTACHMENT_KEY_BYTES: usize = 32;
 const MEMBERSHIP_CHANGES_VERSION: u8 = 1;
 const MAX_MEMBERSHIP_CHANGES: usize = 256;
@@ -80,15 +97,42 @@ unsafe fn borrowed<'a>(input: PmByteSlice, maximum: usize) -> Result<&'a [u8], i
     Ok(unsafe { core::slice::from_raw_parts(input.data, input.len) })
 }
 
+/// Drops a Vec through a non-elidable wipe of its whole capacity.
+fn wipe(bytes: Vec<u8>) {
+    drop(tls_codec::SecretVLBytes::new(bytes));
+}
+
+/// Hands `bytes` over as a library-owned buffer of exactly its length. A Vec
+/// with spare capacity is copied and the original wiped, instead of being
+/// shrunk in place: a realloc may move the block and free the source with
+/// its contents intact. Empty input stays (null, 0).
+fn into_owned(bytes: Vec<u8>) -> PmOwnedBuffer {
+    if bytes.is_empty() {
+        wipe(bytes);
+        return PmOwnedBuffer::default();
+    }
+    let boxed = if bytes.capacity() == bytes.len() {
+        // No reallocation: capacity already equals length.
+        bytes.into_boxed_slice()
+    } else {
+        let copy = Box::<[u8]>::from(bytes.as_slice());
+        wipe(bytes);
+        copy
+    };
+    PmOwnedBuffer {
+        len: boxed.len(),
+        data: Box::into_raw(boxed).cast::<u8>(),
+    }
+}
+
 unsafe fn output(target: *mut PmOwnedBuffer, bytes: Vec<u8>) -> Result<(), i32> {
     if target.is_null() || bytes.is_empty() {
+        wipe(bytes);
         return Err(PM_CRYPTO_INVALID_ARGUMENT);
     }
-    let boxed = bytes.into_boxed_slice();
-    let len = boxed.len();
-    let data = Box::into_raw(boxed).cast::<u8>();
+    let buffer = into_owned(bytes);
     // SAFETY: The caller provides writable storage for one PmOwnedBuffer.
-    unsafe { target.write(PmOwnedBuffer { data, len }) };
+    unsafe { target.write(buffer) };
     Ok(())
 }
 
@@ -99,18 +143,12 @@ unsafe fn two_outputs(
     second: Vec<u8>,
 ) -> Result<(), i32> {
     if first_target.is_null() || second_target.is_null() || first.is_empty() || second.is_empty() {
+        wipe(first);
+        wipe(second);
         return Err(PM_CRYPTO_INVALID_ARGUMENT);
     }
-    let first = first.into_boxed_slice();
-    let second = second.into_boxed_slice();
-    let first_buffer = PmOwnedBuffer {
-        len: first.len(),
-        data: Box::into_raw(first).cast::<u8>(),
-    };
-    let second_buffer = PmOwnedBuffer {
-        len: second.len(),
-        data: Box::into_raw(second).cast::<u8>(),
-    };
+    let first_buffer = into_owned(first);
+    let second_buffer = into_owned(second);
     // SAFETY: Both targets were checked before either is written.
     unsafe {
         first_target.write(first_buffer);
@@ -122,13 +160,10 @@ unsafe fn two_outputs(
 unsafe fn three_outputs(targets: [*mut PmOwnedBuffer; 3], values: [Vec<u8>; 3]) -> Result<(), i32> {
     if targets.iter().any(|target| target.is_null()) || values.iter().any(|value| value.is_empty())
     {
+        values.into_iter().for_each(wipe);
         return Err(PM_CRYPTO_INVALID_ARGUMENT);
     }
-    let [first, second, third] = values.map(Vec::into_boxed_slice);
-    let buffers = [first, second, third].map(|value| PmOwnedBuffer {
-        len: value.len(),
-        data: Box::into_raw(value).cast::<u8>(),
-    });
+    let buffers = values.map(into_owned);
     // SAFETY: Every target was checked before any output is written.
     unsafe {
         targets[0].write(buffers[0]);
@@ -177,6 +212,8 @@ pub unsafe extern "C" fn pm_crypto_device_create(
 }
 
 /// Restores a sealed device after checking its identity and rollback counter.
+/// Returns [`PM_CRYPTO_STATE_FORMAT_UNSUPPORTED`] for a sealed format this
+/// build does not read and [`PM_CRYPTO_ERROR`] for every other failure.
 ///
 /// # Safety
 /// All slices must remain readable for the call. Output pointers must be valid
@@ -204,7 +241,10 @@ pub unsafe extern "C" fn pm_crypto_device_restore(
         let sealed = unsafe { borrowed(sealed_state, MAX_STATE_BYTES)? };
         let (device, counter) =
             MlsDevice::restore_state(account_id, device_id, state_key, minimum_counter, sealed)
-                .map_err(|_| PM_CRYPTO_ERROR)?;
+                .map_err(|error| match error {
+                    MlsError::UnsupportedFormat => PM_CRYPTO_STATE_FORMAT_UNSUPPORTED,
+                    _ => PM_CRYPTO_ERROR,
+                })?;
         let handle = Box::into_raw(Box::new(PmCryptoHandle {
             device: Arc::new(Mutex::new(device)),
             active_stream: Mutex::new(Weak::new()),
@@ -267,6 +307,13 @@ pub unsafe extern "C" fn pm_crypto_device_signing_public_key(
 }
 
 /// ABI v7: hash32 || claim_tag32 || approval_tag32 || sas_mac_prefix4.
+///
+/// The SAS shown to the user is the prefix as a big-endian integer modulo
+/// 10^8: 8 digits, about 26.6 bits. The prefix and both tags are MACs keyed
+/// from the 128-bit link secret, so a relay without the secret cannot grind
+/// keys to match them; if the secret leaks, the 8 digits alone fall to about
+/// 10^4 key generations per side. See
+/// [`crate::mls::derive_device_link_verification`].
 #[no_mangle]
 pub unsafe extern "C" fn pm_crypto_device_link_transcript_hash(
     handle: *mut PmCryptoHandle,
@@ -326,29 +373,6 @@ pub unsafe extern "C" fn pm_crypto_device_link_locator(
         let locator =
             crate::mls::device_link_locator(secret).map_err(|_| PM_CRYPTO_INVALID_ARGUMENT)?;
         unsafe { output(out, locator) }
-    })
-}
-
-/// Signs the server-provided, domain-separated enrollment challenge.
-///
-/// # Safety
-/// `handle` must be live, the challenge readable, and `out` writable.
-#[no_mangle]
-pub unsafe extern "C" fn pm_crypto_device_sign_enrollment_challenge(
-    handle: *mut PmCryptoHandle,
-    challenge: PmByteSlice,
-    out: *mut PmOwnedBuffer,
-) -> i32 {
-    ffi_call(|| {
-        let challenge = unsafe { borrowed(challenge, MAX_CHALLENGE_BYTES)? };
-        let signature = unsafe {
-            with_device(handle, |device| {
-                device
-                    .sign_enrollment_challenge(challenge)
-                    .map_err(|_| PM_CRYPTO_ERROR)
-            })?
-        };
-        unsafe { output(out, signature) }
     })
 }
 
@@ -653,19 +677,15 @@ pub unsafe extern "C" fn pm_crypto_group_stage_commit(
             })?
         };
         if staged.commit.is_empty() {
+            wipe(staged.welcome);
             return Err(PM_CRYPTO_ERROR);
         }
-        let welcome = if staged.welcome.is_empty() {
-            PmOwnedBuffer::default()
-        } else {
-            let boxed = staged.welcome.into_boxed_slice();
-            PmOwnedBuffer {
-                len: boxed.len(),
-                data: Box::into_raw(boxed).cast::<u8>(),
-            }
-        };
+        // All three targets were checked above, so nothing below can fail
+        // after a buffer has been handed over.
+        let commit = into_owned(staged.commit);
+        let welcome = into_owned(staged.welcome);
         unsafe {
-            output(out_commit, staged.commit)?;
+            out_commit.write(commit);
             out_welcome.write(welcome);
             out_epoch.write(staged.epoch);
         }
@@ -837,7 +857,8 @@ pub unsafe extern "C" fn pm_crypto_group_safety_number(
     })
 }
 
-/// Removes the account/device credential and returns the committed removal.
+/// Removes every leaf carrying the account/device credential and returns the
+/// committed removal.
 ///
 /// # Safety
 /// `handle` must be live, slices readable, and `out_commit` writable.
@@ -856,11 +877,12 @@ pub unsafe extern "C" fn pm_crypto_group_remove_member(
         let commit = unsafe {
             with_device(handle, |device| {
                 let mut group = device.load_group(group_id).map_err(|_| PM_CRYPTO_ERROR)?;
-                let index = device
-                    .member_index(&group, account_id, device_id)
+                // Every leaf carrying this identity goes.
+                let leaves = device
+                    .member_indices(&group, account_id, device_id)
                     .map_err(|_| PM_CRYPTO_ERROR)?;
                 let commit = device
-                    .remove_member(&mut group, index)
+                    .remove_members(&mut group, &leaves)
                     .map_err(|_| PM_CRYPTO_ERROR)?;
                 device
                     .merge_pending_commit(&mut group)
@@ -884,6 +906,9 @@ pub unsafe extern "C" fn pm_crypto_group_encrypt(
     out_ciphertext: *mut PmOwnedBuffer,
 ) -> i32 {
     ffi_call(|| {
+        if out_ciphertext.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
         let group_id = unsafe { borrowed(group_id, MAX_ID_BYTES)? };
         let plaintext = unsafe { borrowed(plaintext, MAX_MESSAGE_BYTES)? };
         let ciphertext = unsafe {
@@ -894,11 +919,22 @@ pub unsafe extern "C" fn pm_crypto_group_encrypt(
                     .map_err(|_| PM_CRYPTO_ERROR)
             })?
         };
+        if ciphertext.len() > MAX_CIPHERTEXT_BYTES {
+            // Unreachable with the margin above. The sender ratchet has
+            // advanced; the message is dropped rather than returned
+            // undecryptable.
+            wipe(ciphertext);
+            return Err(PM_CRYPTO_ERROR);
+        }
         unsafe { output(out_ciphertext, ciphertext) }
     })
 }
 
-/// Decrypts and authenticates one MLS application message.
+/// Decrypts and authenticates one MLS application message. Returns
+/// [`PM_CRYPTO_SENDER_MISMATCH`] when the MLS sender is not the claimed one
+/// and [`PM_CRYPTO_SENDER_REMOVED`] for a past-epoch message whose sender has
+/// left the group. In both cases the ratchet has advanced, so the caller
+/// commits its state and keeps no content.
 ///
 /// # Safety
 /// `handle` must be live, slices readable, and `out_plaintext` writable.
@@ -912,8 +948,12 @@ pub unsafe extern "C" fn pm_crypto_group_decrypt(
     out_plaintext: *mut PmOwnedBuffer,
 ) -> i32 {
     ffi_call(|| {
+        // Checked before decrypting: a decrypt consumes its ratchet step.
+        if out_plaintext.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
         let group_id = unsafe { borrowed(group_id, MAX_ID_BYTES)? };
-        let ciphertext = unsafe { borrowed(ciphertext, MAX_MESSAGE_BYTES)? };
+        let ciphertext = unsafe { borrowed(ciphertext, MAX_CIPHERTEXT_BYTES)? };
         let sender_account_id = unsafe { borrowed(sender_account_id, MAX_ID_BYTES)? };
         let sender_device_id = unsafe { borrowed(sender_device_id, MAX_ID_BYTES)? };
         let plaintext = unsafe {
@@ -923,6 +963,7 @@ pub unsafe extern "C" fn pm_crypto_group_decrypt(
                     .decrypt(&mut group, ciphertext, sender_account_id, sender_device_id)
                     .map_err(|error| match error {
                         MlsError::SenderMismatch => PM_CRYPTO_SENDER_MISMATCH,
+                        MlsError::SenderRemoved => PM_CRYPTO_SENDER_REMOVED,
                         _ => PM_CRYPTO_ERROR,
                     })
             })?
@@ -1036,6 +1077,233 @@ mod tests {
         value
     }
 
+    const SECRET: u8 = 0xa7;
+
+    fn secret_with_spare_capacity(len: usize) -> Vec<u8> {
+        let mut value = Vec::with_capacity(len * 4);
+        value.resize(len, SECRET);
+        value
+    }
+
+    #[test]
+    fn owned_outputs_never_release_an_unwiped_secret() {
+        // A Vec with spare capacity used to go through into_boxed_slice,
+        // whose realloc may free the original block unwiped.
+        let mut out = PmOwnedBuffer::default();
+        let value = secret_with_spare_capacity(1000);
+        crate::test_memory::watch_secret(SECRET);
+        assert_eq!(unsafe { output(&mut out, value) }, Ok(()));
+        assert_eq!(crate::test_memory::unwiped_releases(), 0);
+        assert_eq!(out.len, 1000);
+        let held = unsafe { core::slice::from_raw_parts(out.data, out.len) };
+        assert!(held.iter().all(|byte| *byte == SECRET));
+        crate::test_memory::watch_secret(SECRET);
+        unsafe { pm_crypto_buffer_free(out) };
+        assert_eq!(crate::test_memory::unwiped_releases(), 0);
+
+        // An exact-capacity Vec is handed over without a copy.
+        let exact = vec![SECRET; 64];
+        let address = exact.as_ptr();
+        let mut out = PmOwnedBuffer::default();
+        assert_eq!(unsafe { output(&mut out, exact) }, Ok(()));
+        assert_eq!(out.data.cast_const(), address);
+        unsafe { pm_crypto_buffer_free(out) };
+
+        // A rejected target wipes the output it refused.
+        crate::test_memory::watch_secret(SECRET);
+        assert_eq!(
+            unsafe { output(ptr::null_mut(), secret_with_spare_capacity(100)) },
+            Err(PM_CRYPTO_INVALID_ARGUMENT)
+        );
+        assert_eq!(crate::test_memory::unwiped_releases(), 0);
+
+        let mut first = PmOwnedBuffer::default();
+        crate::test_memory::watch_secret(SECRET);
+        assert_eq!(
+            unsafe {
+                two_outputs(
+                    &mut first,
+                    secret_with_spare_capacity(100),
+                    ptr::null_mut(),
+                    secret_with_spare_capacity(100),
+                )
+            },
+            Err(PM_CRYPTO_INVALID_ARGUMENT)
+        );
+        assert_eq!(crate::test_memory::unwiped_releases(), 0);
+        assert!(first.data.is_null());
+
+        let mut targets = [PmOwnedBuffer::default(); 2];
+        let [a, b] = &mut targets;
+        crate::test_memory::watch_secret(SECRET);
+        assert_eq!(
+            unsafe {
+                three_outputs(
+                    [a, b, ptr::null_mut()],
+                    [
+                        secret_with_spare_capacity(100),
+                        secret_with_spare_capacity(100),
+                        secret_with_spare_capacity(100),
+                    ],
+                )
+            },
+            Err(PM_CRYPTO_INVALID_ARGUMENT)
+        );
+        assert_eq!(crate::test_memory::unwiped_releases(), 0);
+        assert!(targets.iter().all(|target| target.data.is_null()));
+
+        // Success paths copy exactly and leave nothing unwiped behind.
+        let mut pair = [PmOwnedBuffer::default(); 2];
+        let [first, second] = &mut pair;
+        crate::test_memory::watch_secret(SECRET);
+        assert_eq!(
+            unsafe {
+                two_outputs(
+                    first,
+                    secret_with_spare_capacity(10),
+                    second,
+                    secret_with_spare_capacity(20),
+                )
+            },
+            Ok(())
+        );
+        assert_eq!(crate::test_memory::unwiped_releases(), 0);
+        assert_eq!((pair[0].len, pair[1].len), (10, 20));
+        unsafe {
+            pm_crypto_buffer_free(pair[0]);
+            pm_crypto_buffer_free(pair[1]);
+        }
+    }
+
+    #[test]
+    fn largest_plaintext_round_trips_through_the_ffi() {
+        let mut alice = ptr::null_mut();
+        let mut bob = ptr::null_mut();
+        assert_eq!(
+            unsafe { pm_crypto_device_create(slice(b"acct_a"), slice(b"dev_a"), &mut alice) },
+            PM_CRYPTO_OK
+        );
+        assert_eq!(
+            unsafe { pm_crypto_device_create(slice(b"acct_b"), slice(b"dev_b"), &mut bob) },
+            PM_CRYPTO_OK
+        );
+        let mut package = PmOwnedBuffer::default();
+        assert_eq!(
+            unsafe { pm_crypto_device_create_key_package(bob, &mut package) },
+            PM_CRYPTO_OK
+        );
+        let package = unsafe { take(package) };
+        assert_eq!(
+            unsafe { pm_crypto_group_create(alice, slice(b"conv_big")) },
+            PM_CRYPTO_OK
+        );
+        let (mut commit, mut welcome) = (PmOwnedBuffer::default(), PmOwnedBuffer::default());
+        assert_eq!(
+            unsafe {
+                pm_crypto_group_add_member(
+                    alice,
+                    slice(b"conv_big"),
+                    slice(&package),
+                    slice(b"acct_b"),
+                    slice(b"dev_b"),
+                    &mut commit,
+                    &mut welcome,
+                )
+            },
+            PM_CRYPTO_OK
+        );
+        let _ = unsafe { take(commit) };
+        let welcome = unsafe { take(welcome) };
+        assert_eq!(
+            unsafe { pm_crypto_group_join(bob, slice(b"conv_big"), slice(&welcome)) },
+            PM_CRYPTO_OK
+        );
+
+        let plaintext = vec![0x5a; MAX_MESSAGE_BYTES];
+        let mut ciphertext = PmOwnedBuffer::default();
+        assert_eq!(
+            unsafe {
+                pm_crypto_group_encrypt(
+                    alice,
+                    slice(b"conv_big"),
+                    slice(&plaintext),
+                    &mut ciphertext,
+                )
+            },
+            PM_CRYPTO_OK
+        );
+        let ciphertext = unsafe { take(ciphertext) };
+        assert!(ciphertext.len() > MAX_MESSAGE_BYTES);
+        assert!(ciphertext.len() <= MAX_MESSAGE_BYTES + 1024);
+        let mut decrypted = PmOwnedBuffer::default();
+        assert_eq!(
+            unsafe {
+                pm_crypto_group_decrypt(
+                    bob,
+                    slice(b"conv_big"),
+                    slice(&ciphertext),
+                    slice(b"acct_a"),
+                    slice(b"dev_a"),
+                    &mut decrypted,
+                )
+            },
+            PM_CRYPTO_OK
+        );
+        assert!(unsafe { take(decrypted) } == plaintext);
+        // One byte more is refused before anything is encrypted.
+        let mut refused = PmOwnedBuffer::default();
+        assert_eq!(
+            unsafe {
+                pm_crypto_group_encrypt(
+                    alice,
+                    slice(b"conv_big"),
+                    slice(&vec![0x5a; MAX_MESSAGE_BYTES + 1]),
+                    &mut refused,
+                )
+            },
+            PM_CRYPTO_INVALID_ARGUMENT
+        );
+        unsafe {
+            pm_crypto_device_destroy(alice);
+            pm_crypto_device_destroy(bob);
+        }
+    }
+
+    #[test]
+    fn decrypt_with_a_null_output_is_rejected() {
+        let mut alice = ptr::null_mut();
+        assert_eq!(
+            unsafe { pm_crypto_device_create(slice(b"acct_a"), slice(b"dev_a"), &mut alice) },
+            PM_CRYPTO_OK
+        );
+        assert_eq!(
+            unsafe { pm_crypto_group_create(alice, slice(b"conv_null")) },
+            PM_CRYPTO_OK
+        );
+        let mut ciphertext = PmOwnedBuffer::default();
+        assert_eq!(
+            unsafe {
+                pm_crypto_group_encrypt(alice, slice(b"conv_null"), slice(b"x"), &mut ciphertext)
+            },
+            PM_CRYPTO_OK
+        );
+        let ciphertext = unsafe { take(ciphertext) };
+        assert_eq!(
+            unsafe {
+                pm_crypto_group_decrypt(
+                    alice,
+                    slice(b"conv_null"),
+                    slice(&ciphertext),
+                    slice(b"acct_a"),
+                    slice(b"dev_a"),
+                    ptr::null_mut(),
+                )
+            },
+            PM_CRYPTO_INVALID_ARGUMENT
+        );
+        unsafe { pm_crypto_device_destroy(alice) };
+    }
+
     #[test]
     fn handle_ownership_state_restore_and_outputs_round_trip() {
         let mut handle = ptr::null_mut();
@@ -1105,6 +1373,48 @@ mod tests {
         );
         assert_eq!(counter, 7);
         unsafe { pm_crypto_device_destroy(restored) };
+    }
+
+    #[test]
+    fn restore_reports_an_unsupported_state_format_separately() {
+        let mut handle = ptr::null_mut();
+        assert_eq!(
+            unsafe { pm_crypto_device_create(slice(b"acct_a"), slice(b"dev_a"), &mut handle) },
+            PM_CRYPTO_OK
+        );
+        let key = [9_u8; STATE_KEY_BYTES];
+        let mut sealed = PmOwnedBuffer::default();
+        assert_eq!(
+            unsafe { pm_crypto_device_seal_state(handle, slice(&key), 4, &mut sealed) },
+            PM_CRYPTO_OK
+        );
+        let sealed = unsafe { take(sealed) };
+        unsafe { pm_crypto_device_destroy(handle) };
+        let restore = |blob: &[u8]| {
+            let mut restored = ptr::null_mut();
+            let mut counter = 0;
+            let code = unsafe {
+                pm_crypto_device_restore(
+                    slice(b"acct_a"),
+                    slice(b"dev_a"),
+                    slice(&key),
+                    4,
+                    slice(blob),
+                    &mut restored,
+                    &mut counter,
+                )
+            };
+            assert!(code != PM_CRYPTO_OK || !restored.is_null());
+            unsafe { pm_crypto_device_destroy(restored) };
+            code
+        };
+        assert_eq!(restore(&sealed), PM_CRYPTO_OK);
+        let mut old_format = sealed.clone();
+        old_format[8..10].copy_from_slice(&1u16.to_be_bytes());
+        assert_eq!(restore(&old_format), PM_CRYPTO_STATE_FORMAT_UNSUPPORTED);
+        let mut tampered = sealed.clone();
+        *tampered.last_mut().unwrap() ^= 1;
+        assert_eq!(restore(&tampered), PM_CRYPTO_ERROR);
     }
 
     #[test]

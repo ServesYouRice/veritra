@@ -5,13 +5,23 @@
 #include <stdint.h>
 
 #define PM_CRYPTO_UNAVAILABLE (-1)
-#define PM_CRYPTO_ABI_VERSION (8u)
+#define PM_CRYPTO_ABI_VERSION (9u)
 #define PM_CRYPTO_OK (0)
 #define PM_CRYPTO_INVALID_ARGUMENT (-2)
 #define PM_CRYPTO_ERROR (-3)
 #define PM_CRYPTO_PANIC (-4)
 /* Decrypted, but the MLS sender is not the claimed account/device (ABI 5). */
 #define PM_CRYPTO_SENDER_MISMATCH (-5)
+/* ABI 9, pm_crypto_device_restore only: the sealed state has the right magic
+ * but a format version this build does not read (format 1 from OpenMLS
+ * 0.8.1, or a newer build). The version is NOT authenticated: it may lead
+ * only to a re-link/re-provision flow, never to weaker checks. Wrong key,
+ * tampering, identity mismatch and corruption stay PM_CRYPTO_ERROR. */
+#define PM_CRYPTO_STATE_FORMAT_UNSUPPORTED (-6)
+/* ABI 9: decrypted from a retained past epoch, but the sender has left the
+ * group. The ratchet has advanced: commit state, keep no content, exactly as
+ * for PM_CRYPTO_SENDER_MISMATCH. */
+#define PM_CRYPTO_SENDER_REMOVED (-7)
 
 typedef struct {
   const uint8_t *data;
@@ -45,7 +55,9 @@ const char *pm_crypto_protocol(void);
 /*
  * Device handles and owned buffers are library-owned. A successful handle must
  * be destroyed exactly once. A non-empty owned buffer must be freed exactly
- * once; freeing zeroes its contents before releasing memory.
+ * once; freeing zeroes its contents before releasing memory. Each buffer is
+ * an exact-length allocation, and the library wipes any copy it drops,
+ * including an output refused because its target pointer was NULL.
  *
  * These ownership and group-lifecycle primitives are available for binding
  * development, but pm_crypto_available() remains PM_CRYPTO_UNAVAILABLE until
@@ -99,18 +111,22 @@ int32_t pm_crypto_k2_source_finish(PmCryptoHandle *, PmHistoryStream *,
 int32_t pm_crypto_k2_receive_finish(PmCryptoHandle *, PmHistoryStream *,
     PmByteSlice, PmOwnedBuffer *);
 void pm_crypto_k2_stream_destroy(PmHistoryStream *);
-/* ABI 7: returns hash32, claim MAC32, approval MAC32, SAS prefix4. */
+/* ABI 7: returns hash32, claim MAC32, approval MAC32, SAS prefix4. The SAS
+ * is prefix4 (big-endian) mod 10^8: 8 digits, about 26.6 bits. The prefix
+ * and both tags are MACs keyed from the 128-bit out-of-band link secret, so
+ * a relay without it cannot grind keys to match; if the secret leaks, the 8
+ * digits alone fall to about 10^4 key generations per side. */
 int32_t pm_crypto_device_link_transcript_hash(
     PmCryptoHandle *handle, PmByteSlice protocol_version,
     PmByteSlice server_origin, PmByteSlice link_id, PmByteSlice link_secret,
     PmByteSlice peer_device_id,
     PmByteSlice peer_signing_public_key, PmByteSlice link_nonce,
     uint8_t local_is_existing_device, PmOwnedBuffer *out);
-int32_t pm_crypto_device_sign_enrollment_challenge(PmCryptoHandle *handle,
-                                                   PmByteSlice challenge,
-                                                   PmOwnedBuffer *out);
 int32_t pm_crypto_device_create_key_package(PmCryptoHandle *handle,
                                             PmOwnedBuffer *out);
+/* ABI 9: the only enrollment signature. It covers
+ * "veritra-enrollment-proof-v1" || u16-BE len || challenge || signing key ||
+ * SHA-256(key package); the raw challenge signer was removed. */
 int32_t pm_crypto_device_create_enrollment_credential(
     PmCryptoHandle *handle, PmByteSlice challenge,
     PmOwnedBuffer *out_key_package, PmOwnedBuffer *out_signing_public_key,
@@ -161,6 +177,11 @@ int32_t pm_crypto_group_safety_number(PmCryptoHandle *handle,
 int32_t pm_crypto_group_remove_member(
     PmCryptoHandle *handle, PmByteSlice group_id, PmByteSlice account_id,
     PmByteSlice device_id, PmOwnedBuffer *out_commit);
+/*
+ * Plaintext is at most 1 MiB (1048576 bytes); ciphertext accepted by decrypt
+ * is at most 1 MiB + 4096 bytes. Encrypt never returns ciphertext above the
+ * decrypt ceiling, so every successful encrypt can be decrypted.
+ */
 int32_t pm_crypto_group_encrypt(PmCryptoHandle *handle, PmByteSlice group_id,
                                 PmByteSlice plaintext,
                                 PmOwnedBuffer *out_ciphertext);

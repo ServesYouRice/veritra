@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../core/models.dart';
 
@@ -193,9 +194,6 @@ class NativeCryptoBindings {
         _deviceLinkTranscript = library.lookupFunction<
             _DeviceLinkTranscriptNative,
             _DeviceLinkTranscriptDart>('pm_crypto_device_link_transcript_hash'),
-        _signChallenge = library
-            .lookupFunction<_HandleSliceOutputNative, _HandleSliceOutputDart>(
-                'pm_crypto_device_sign_enrollment_challenge'),
         _createKeyPackage =
             library.lookupFunction<_HandleOutputNative, _HandleOutputDart>(
                 'pm_crypto_device_create_key_package'),
@@ -237,7 +235,7 @@ class NativeCryptoBindings {
             _AttachmentChunkDart>('pm_crypto_attachment_encrypt_chunk'),
         _attachmentDecrypt = library.lookupFunction<_AttachmentChunkNative,
             _AttachmentChunkDart>('pm_crypto_attachment_decrypt_chunk') {
-    if (_abiVersion() != 8) {
+    if (_abiVersion() != 9) {
       throw const NativeCryptoException(NativeCryptoError.abiMismatch);
     }
     _k2Controls = {
@@ -286,7 +284,6 @@ class NativeCryptoBindings {
     return bytes.map((b) => b.toRadixString(16).padLeft(2, "0")).join();
   }
 
-  final _HandleSliceOutputDart _signChallenge;
   final _HandleOutputDart _createKeyPackage;
   final _SealDart _seal;
   final _HandleSliceDart _groupCreate;
@@ -465,14 +462,35 @@ class NativeCryptoBindings {
           challengeSignature: signatureBytes,
         );
       } finally {
-        if (keyPackage.ref.data != nullptr) _bufferFree(keyPackage.ref);
-        if (signingKey.ref.data != nullptr) _bufferFree(signingKey.ref);
-        if (signature.ref.data != nullptr) _bufferFree(signature.ref);
+        if (keyPackage.ref.data != nullptr) _free(keyPackage.ref);
+        if (signingKey.ref.data != nullptr) _free(signingKey.ref);
+        if (signature.ref.data != nullptr) _free(signature.ref);
         calloc.free(keyPackage);
         calloc.free(signingKey);
         calloc.free(signature);
       }
     });
+  }
+
+  /// Test seams (TASK-047): stand in for the copy out of an owned buffer and
+  /// for the native free, so a test can make the copy fail and count frees
+  /// without a real double free. Never set outside tests.
+  @visibleForTesting
+  static List<int> Function(Pointer<Uint8> data, int len) debugCopyOwnedBytes =
+      _copyOwnedBytes;
+  @visibleForTesting
+  static void Function(Pointer<Uint8> data, int len)? debugFreeOwnedBuffer;
+
+  static List<int> _copyOwnedBytes(Pointer<Uint8> data, int len) =>
+      Uint8List.fromList(data.asTypedList(len));
+
+  void _free(_PmOwnedBuffer buffer) {
+    final override = debugFreeOwnedBuffer;
+    if (override != null) {
+      override(buffer.data, buffer.len);
+    } else {
+      _bufferFree(buffer);
+    }
   }
 
   List<int> _take(_PmOwnedBuffer buffer) {
@@ -481,10 +499,16 @@ class NativeCryptoBindings {
         buffer.len > 32 * 1024 * 1024) {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
     }
+    // Once validated, _take is the single owner: it frees the buffer and
+    // nulls it, so the caller's cleanup cannot free it a second time when
+    // the copy throws.
     try {
-      return Uint8List.fromList(buffer.data.asTypedList(buffer.len));
+      return debugCopyOwnedBytes(buffer.data, buffer.len);
     } finally {
-      _bufferFree(buffer);
+      _free(buffer);
+      buffer
+        ..data = nullptr
+        ..len = 0;
     }
   }
 
@@ -498,7 +522,7 @@ class NativeCryptoBindings {
         ..len = 0;
       return bytes;
     } finally {
-      if (output.ref.data != nullptr) _bufferFree(output.ref);
+      if (output.ref.data != nullptr) _free(output.ref);
       calloc.free(output);
     }
   }
@@ -520,8 +544,8 @@ class NativeCryptoBindings {
         ..len = 0;
       return (first: firstBytes, second: secondBytes);
     } finally {
-      if (first.ref.data != nullptr) _bufferFree(first.ref);
-      if (second.ref.data != nullptr) _bufferFree(second.ref);
+      if (first.ref.data != nullptr) _free(first.ref);
+      if (second.ref.data != nullptr) _free(second.ref);
       calloc.free(first);
       calloc.free(second);
     }
@@ -534,6 +558,8 @@ class NativeCryptoBindings {
       -3 => NativeCryptoError.operationFailed,
       -4 => NativeCryptoError.nativePanic,
       -5 => NativeCryptoError.senderMismatch,
+      -6 => NativeCryptoError.stateFormatUnsupported,
+      -7 => NativeCryptoError.senderRemoved,
       _ => NativeCryptoError.unknown,
     });
   }
@@ -597,8 +623,26 @@ enum NativeCryptoError {
   /// The message decrypted, but its MLS sender is not the account/device the
   /// server claimed (ABI 5). The group ratchet has already advanced.
   senderMismatch,
+
+  /// The message decrypted from a retained past epoch, but its sender has
+  /// left the group (ABI 9). The ratchet has already advanced: handle it as
+  /// [senderMismatch].
+  senderRemoved,
+
+  /// [NativeCryptoBindings.restoreDevice] only: the sealed state is in a
+  /// format this build does not read (ABI 9). Unauthenticated: it may lead
+  /// to re-linking the device, never to a weaker check.
+  stateFormatUnsupported,
   invalidOutput,
   unknown
+}
+
+extension NativeCryptoErrorRatchet on NativeCryptoError {
+  /// Decryption used its ratchet step, so the message can never be decrypted
+  /// again, but its content must not be shown: commit and keep a warning.
+  bool get ratchetAdvanced =>
+      this == NativeCryptoError.senderMismatch ||
+      this == NativeCryptoError.senderRemoved;
 }
 
 class NativeCryptoException implements Exception {
@@ -697,14 +741,6 @@ class NativeCryptoDevice implements Finalizable {
     );
   }
 
-  List<int> signEnrollmentChallenge(List<int> challenge) {
-    _bindings._bounded(challenge, 4096);
-    return _bindings._withSlice(
-        Uint8List.fromList(challenge),
-        (slice) => _bindings._output(
-            (out) => _bindings._signChallenge(_liveHandle, slice, out)));
-  }
-
   List<int> createKeyPackage() =>
       _bindings._output((out) => _bindings._createKeyPackage(_liveHandle, out));
 
@@ -786,8 +822,8 @@ class NativeCryptoDevice implements Finalizable {
         }
         return (commit: commitBytes, welcome: welcomeBytes, epoch: epoch.value);
       } finally {
-        if (commit.ref.data != nullptr) _bindings._bufferFree(commit.ref);
-        if (welcome.ref.data != nullptr) _bindings._bufferFree(welcome.ref);
+        if (commit.ref.data != nullptr) _bindings._free(commit.ref);
+        if (welcome.ref.data != nullptr) _bindings._free(welcome.ref);
         calloc.free(commit);
         calloc.free(welcome);
         calloc.free(epoch);
@@ -874,7 +910,9 @@ class NativeCryptoDevice implements Finalizable {
 
   /// Decrypts [ciphertext] and checks that its MLS sender is
   /// [senderAccountId]/[senderDeviceId]. Throws
-  /// [NativeCryptoError.senderMismatch] when it is not.
+  /// [NativeCryptoError.senderMismatch] when it is not, and
+  /// [NativeCryptoError.senderRemoved] for a past-epoch message from a
+  /// sender who has left the group; the ratchet has advanced in both.
   List<int> decrypt(
     String groupId,
     List<int> ciphertext, {
@@ -882,7 +920,8 @@ class NativeCryptoDevice implements Finalizable {
     required String senderDeviceId,
   }) {
     _bindings._bounded(groupId.codeUnits, 128);
-    _bindings._bounded(ciphertext, 1024 * 1024);
+    // The native ciphertext ceiling: 1 MiB of plaintext plus MLS overhead.
+    _bindings._bounded(ciphertext, 1024 * 1024 + 4096);
     _bindings._bounded(senderAccountId.codeUnits, 128);
     _bindings._bounded(senderDeviceId.codeUnits, 128);
     return _bindings._withByteLists(

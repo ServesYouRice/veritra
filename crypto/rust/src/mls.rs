@@ -39,6 +39,14 @@ pub enum MlsError {
     /// The message decrypted, but its MLS sender credential is not the
     /// account/device the transport claimed. The ratchet has already advanced.
     SenderMismatch,
+    /// The message decrypted from a retained past epoch, but its sender is
+    /// no longer in the group. The ratchet has already advanced.
+    SenderRemoved,
+    /// Sealed state with the right magic but a format version this build
+    /// does not read (format 1 from OpenMLS 0.8.1, or a newer build). The
+    /// version is read before authentication: a hint for the recovery path,
+    /// never a reason to relax a check.
+    UnsupportedFormat,
 }
 
 /// One MLS device identity and its private provider state.
@@ -121,6 +129,8 @@ impl MlsDevice {
         self.signer.public()
     }
 
+    /// This device's side of [`derive_device_link_verification`]; see there
+    /// for what the 8-digit SAS (about 26.6 bits) protects and when.
     // Explicit transcript fields mirror the ABI and make their order reviewable.
     #[allow(clippy::too_many_arguments)]
     pub fn derive_device_link_verification(
@@ -164,18 +174,13 @@ impl MlsDevice {
         )
     }
 
-    /// Signs a server challenge with the same Ed25519 identity key carried by
-    /// this device's MLS credential. The server must domain-separate and bind
-    /// the challenge to its reserved account and device identifiers.
-    pub fn sign_enrollment_challenge(&self, challenge: &[u8]) -> Result<Vec<u8>, MlsError> {
-        if challenge.is_empty() {
-            return Err(MlsError::InvalidIdentity);
-        }
-        self.signer
-            .sign(challenge)
-            .map_err(|_| MlsError::KeyGeneration)
-    }
-
+    /// Creates a key package and signs the server's enrollment proof with
+    /// the Ed25519 key of this device's MLS credential. The signed message is
+    /// always `veritra-enrollment-proof-v1 || u16 len || challenge ||
+    /// signing key || SHA-256(key package)`: the fixed ASCII prefix cannot
+    /// start an RFC 9420 SignContent (a varint length, then "MLS 1.0 "), so
+    /// the server cannot use this to obtain an MLS signature. There is no
+    /// raw signing entry point.
     pub fn create_enrollment_credential(
         &self,
         challenge: &[u8],
@@ -190,7 +195,10 @@ impl MlsDevice {
         proof.extend_from_slice(challenge);
         proof.extend_from_slice(&signing_public_key);
         proof.extend_from_slice(&Sha256::digest(&key_package));
-        let challenge_signature = self.sign_enrollment_challenge(&proof)?;
+        let challenge_signature = self
+            .signer
+            .sign(&proof)
+            .map_err(|_| MlsError::KeyGeneration)?;
         Ok(EnrollmentCredential {
             key_package,
             signing_public_key,
@@ -236,6 +244,7 @@ impl MlsDevice {
         if key_package.leaf_node().credential().serialized_content() != expected_identity {
             return Err(MlsError::InvalidKeyPackage);
         }
+        ensure_added_identities_unique(&roster_identities(group, &[]), &[expected_identity])?;
         let (commit, welcome, _) = group
             .add_members(&self.provider, &self.signer, &[key_package])
             .map_err(|_| MlsError::GroupOperation)?;
@@ -265,6 +274,7 @@ impl MlsDevice {
             return Err(MlsError::InvalidState);
         }
         let mut key_packages = Vec::with_capacity(adds.len());
+        let mut added = Vec::with_capacity(adds.len());
         for add in adds {
             let key_package = KeyPackageIn::tls_deserialize_exact(add.key_package)
                 .map_err(|_| MlsError::InvalidKeyPackage)?
@@ -275,11 +285,16 @@ impl MlsDevice {
                 return Err(MlsError::InvalidKeyPackage);
             }
             key_packages.push(key_package);
+            added.push(expected);
         }
+        // A removed device loses every leaf that carries its identity.
         let mut removed = Vec::with_capacity(removes.len());
         for member in removes {
-            removed.push(self.member_index(group, member.account_id, member.device_id)?);
+            removed.extend(self.member_indices(group, member.account_id, member.device_id)?);
         }
+        removed.sort();
+        removed.dedup();
+        ensure_added_identities_unique(&roster_identities(group, &removed), &added)?;
         let epoch = group.epoch().as_u64();
         let bundle = group
             .commit_builder()
@@ -347,13 +362,16 @@ impl MlsDevice {
             .map_err(|_| MlsError::GroupOperation)
     }
 
-    pub fn remove_member(
+    pub fn remove_members(
         &self,
         group: &mut MlsGroup,
-        member: LeafNodeIndex,
+        members: &[LeafNodeIndex],
     ) -> Result<Vec<u8>, MlsError> {
+        if members.is_empty() {
+            return Err(MlsError::InvalidIdentity);
+        }
         let (commit, _, _) = group
-            .remove_members(&self.provider, &self.signer, &[member])
+            .remove_members(&self.provider, &self.signer, members)
             .map_err(|_| MlsError::GroupOperation)?;
         commit
             .tls_serialize_detached()
@@ -368,27 +386,42 @@ impl MlsDevice {
         let processed = group
             .process_message(&self.provider, protocol_message)
             .map_err(|_| MlsError::InvalidMessage)?;
+        // Veritra commits come from members only. An external commit would
+        // bring in a new leaf without an Add proposal to inspect.
+        let Sender::Member(committer) = *processed.sender() else {
+            return Err(MlsError::UnexpectedMessage);
+        };
         let ProcessedMessageContent::StagedCommitMessage(staged_commit) = processed.into_content()
         else {
             return Err(MlsError::UnexpectedMessage);
         };
+        // Inspect before merging: once merged, the leaves it brings in are
+        // what decrypt() attributes messages to.
+        inspect_commit(group, committer, &staged_commit)?;
         group
             .merge_staged_commit(&self.provider, *staged_commit)
             .map_err(|_| MlsError::GroupOperation)
     }
 
-    pub fn member_index(
+    /// Every leaf carrying this account/device credential. A device is one
+    /// logical member, so removing it removes all of them. Fails when there
+    /// is none.
+    pub fn member_indices(
         &self,
         group: &MlsGroup,
         account_id: &[u8],
         device_id: &[u8],
-    ) -> Result<LeafNodeIndex, MlsError> {
+    ) -> Result<Vec<LeafNodeIndex>, MlsError> {
         let identity = encode_device_identity(account_id, device_id)?;
-        group
+        let indices: Vec<_> = group
             .members()
-            .find(|member| member.credential.serialized_content() == identity)
+            .filter(|member| member.credential.serialized_content() == identity)
             .map(|member| member.index)
-            .ok_or(MlsError::InvalidIdentity)
+            .collect();
+        if indices.is_empty() {
+            return Err(MlsError::InvalidIdentity);
+        }
+        Ok(indices)
     }
 
     /// The conversation's safety number (v2): the group id and every member
@@ -424,19 +457,49 @@ impl MlsDevice {
         let MlsMessageBodyIn::Welcome(welcome) = message.extract() else {
             return Err(MlsError::UnexpectedMessage);
         };
-        let group = StagedWelcome::new_from_welcome(
+        // Staging decrypts the Welcome (and consumes the key package) but
+        // stores no group; into_group persists it, so every check runs first.
+        let staged = StagedWelcome::new_from_welcome(
             &self.provider,
             group_create_config().join_config(),
             welcome,
             None,
         )
-        .map_err(|_| MlsError::GroupOperation)?
-        .into_group(&self.provider)
         .map_err(|_| MlsError::GroupOperation)?;
-        if group.group_id().as_slice() != expected_group_id {
+        if staged.group_context().group_id().as_slice() != expected_group_id {
             return Err(MlsError::InvalidMessage);
         }
-        Ok(group)
+        self.inspect_welcome(&staged)?;
+        staged
+            .into_group(&self.provider)
+            .map_err(|_| MlsError::GroupOperation)
+    }
+
+    /// The structural checks a Welcome must pass before its group is stored:
+    /// every leaf holds a well-formed, unique device identity; this device's
+    /// leaf carries its own identity and signing key; the sender is another
+    /// leaf in the tree. Which members and inviters to expect needs a trust
+    /// anchor (L1) and is not decided here.
+    fn inspect_welcome(&self, staged: &StagedWelcome) -> Result<(), MlsError> {
+        let refused = MlsError::InvalidIdentity;
+        let identities = staged
+            .members()
+            .map(|member| basic_identity(&member.credential))
+            .collect::<Result<Vec<_>, _>>()?;
+        ensure_added_identities_unique(&[], &identities)?;
+        let own = staged.own_leaf_node().ok_or(refused)?;
+        if basic_identity(own.credential())?
+            != encode_device_identity(&self.account_id, &self.device_id)?
+            || own.signature_key().as_slice() != self.signing_public_key()
+        {
+            return Err(refused);
+        }
+        if staged.welcome_sender_index() == staged.own_leaf_index()
+            || staged.welcome_sender().is_err()
+        {
+            return Err(refused);
+        }
+        Ok(())
     }
 
     pub fn encrypt(&self, group: &mut MlsGroup, plaintext: &[u8]) -> Result<Vec<u8>, MlsError> {
@@ -471,16 +534,48 @@ impl MlsDevice {
             .process_message(&self.provider, protocol_message)
             .map_err(|_| MlsError::InvalidMessage)?;
         let sender_matches = processed.credential().serialized_content() == expected_identity;
+        // Two past epochs stay decryptable (I51), so a device removed at
+        // epoch N could keep writing in epoch N by never applying its
+        // removal. A past-epoch message counts only while its sender is
+        // still a member. Q-003: a genuine late message from a removed
+        // device is dropped too; the receiver cannot tell the two apart.
+        // Past-epoch signature keys are not exposed, so this compares the
+        // identity only (L1 binds identities to keys).
+        let removed = processed.epoch() != group.epoch()
+            && !group
+                .members()
+                .any(|member| member.credential.serialized_content() == expected_identity);
         match processed.into_content() {
-            ProcessedMessageContent::ApplicationMessage(message) if sender_matches => {
-                Ok(message.into_bytes())
+            ProcessedMessageContent::ApplicationMessage(message) if !sender_matches => {
+                wipe(message.into_bytes());
+                Err(MlsError::SenderMismatch)
             }
-            ProcessedMessageContent::ApplicationMessage(_) => Err(MlsError::SenderMismatch),
+            ProcessedMessageContent::ApplicationMessage(message) if removed => {
+                wipe(message.into_bytes());
+                Err(MlsError::SenderRemoved)
+            }
+            ProcessedMessageContent::ApplicationMessage(message) => Ok(message.into_bytes()),
             _ => Err(MlsError::UnexpectedMessage),
         }
     }
 }
 
+/// L0 device-link verification (`veritra-device-link-v2`).
+///
+/// The SAS is 8 decimal digits: the first four MAC bytes modulo 10^8, about
+/// 26.6 bits (the modulo bias is negligible). It is not a hash of public
+/// data. The SAS, the claim tag and the approval tag are HMAC-SHA256 over the
+/// transcript under keys derived from the 128-bit link secret, which reaches
+/// the new device only out of band (QR or typed code). A relay that does not
+/// know the secret cannot evaluate them, so it cannot grind substitute keys
+/// towards a matching SAS. A substituted new-device key fails the claim tag,
+/// so the old device never asks for or accepts the typed SAS; a substituted
+/// old-device key fails the approval tag, so the new device saves no
+/// session. This replaces a commit-then-reveal
+/// step (TASK-010/TASK-048). The 8 digits stand alone only if the secret
+/// leaks: an active relay that knows it chooses both keys and needs about
+/// 10^4 key generations per side for the two SAS values to collide. Any
+/// transcript change needs a new protocol string and a new stable vector.
 // Keep the complete ordered transcript visible at each derivation call.
 #[allow(clippy::too_many_arguments)]
 pub fn derive_device_link_verification(
@@ -685,6 +780,11 @@ fn group_create_config() -> MlsGroupCreateConfig {
         .build()
 }
 
+/// Drops plaintext that is not handed out through a non-elidable wipe.
+fn wipe(bytes: Vec<u8>) {
+    drop(tls_codec::SecretVLBytes::new(bytes));
+}
+
 fn encode_device_identity(account_id: &[u8], device_id: &[u8]) -> Result<Vec<u8>, MlsError> {
     if account_id.is_empty()
         || device_id.is_empty()
@@ -700,6 +800,127 @@ fn encode_device_identity(account_id: &[u8], device_id: &[u8]) -> Result<Vec<u8>
     identity.extend_from_slice(&(device_id.len() as u16).to_be_bytes());
     identity.extend_from_slice(device_id);
     Ok(identity)
+}
+
+/// Splits a credential identity written by [`encode_device_identity`] into
+/// its account and device IDs. Anything else is refused.
+fn decode_device_identity(identity: &[u8]) -> Result<(&[u8], &[u8]), MlsError> {
+    let invalid = MlsError::InvalidIdentity;
+    let (&version, rest) = identity.split_first().ok_or(invalid)?;
+    if version != CREDENTIAL_FORMAT_VERSION {
+        return Err(invalid);
+    }
+    let field = |input: &[u8]| -> Result<usize, MlsError> {
+        let length = input.get(..2).ok_or(invalid)?;
+        let length = usize::from(u16::from_be_bytes([length[0], length[1]]));
+        if length == 0 || length > MAX_ID_BYTES || input.len() < 2 + length {
+            return Err(invalid);
+        }
+        Ok(2 + length)
+    };
+    let end = field(rest)?;
+    let (account, rest) = (&rest[2..end], &rest[end..]);
+    let end = field(rest)?;
+    if end != rest.len() {
+        return Err(invalid);
+    }
+    Ok((account, &rest[2..end]))
+}
+
+/// The structural checks a remote commit must pass before it is merged.
+/// Who may commit, and whether an identity really belongs to its signing
+/// key, needs a trust anchor (L1) and is not decided here.
+///
+/// - Only Add, Remove and Update proposals: Veritra sends nothing else.
+/// - Every credential it brings in is a Basic credential holding a
+///   well-formed device identity.
+/// - An added identity appears once in the roster the commit produces.
+/// - An update (proposal or update path) keeps the leaf's identity.
+fn inspect_commit(
+    group: &MlsGroup,
+    committer: LeafNodeIndex,
+    staged: &StagedCommit,
+) -> Result<(), MlsError> {
+    let refused = MlsError::InvalidIdentity;
+    if staged.queued_proposals().any(|proposal| {
+        !matches!(
+            proposal.proposal(),
+            Proposal::Add(_) | Proposal::Remove(_) | Proposal::Update(_)
+        )
+    }) {
+        return Err(MlsError::UnexpectedMessage);
+    }
+    let removed: Vec<_> = staged
+        .remove_proposals()
+        .map(|proposal| proposal.remove_proposal().removed())
+        .collect();
+    let added = staged
+        .add_proposals()
+        .map(|proposal| {
+            basic_identity(
+                proposal
+                    .add_proposal()
+                    .key_package()
+                    .leaf_node()
+                    .credential(),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    ensure_added_identities_unique(&roster_identities(group, &removed), &added)?;
+
+    let keeps_identity = |leaf: LeafNodeIndex, credential: &Credential| {
+        let current = group.member_at(leaf).ok_or(refused)?;
+        if basic_identity(credential)? != current.credential.serialized_content() {
+            return Err(refused);
+        }
+        Ok(())
+    };
+    for update in staged.update_proposals() {
+        let Sender::Member(leaf) = *update.sender() else {
+            return Err(refused);
+        };
+        keeps_identity(leaf, update.update_proposal().leaf_node().credential())?;
+    }
+    if let Some(leaf_node) = staged.update_path_leaf_node() {
+        keeps_identity(committer, leaf_node.credential())?;
+    }
+    Ok(())
+}
+
+/// The device identity inside a Basic credential, checked for format.
+fn basic_identity(credential: &Credential) -> Result<Vec<u8>, MlsError> {
+    if credential.credential_type() != CredentialType::Basic {
+        return Err(MlsError::InvalidIdentity);
+    }
+    let identity = credential.serialized_content();
+    decode_device_identity(identity)?;
+    Ok(identity.to_vec())
+}
+
+/// Identities of the current members, leaving out the `removed` leaves.
+fn roster_identities(group: &MlsGroup, removed: &[LeafNodeIndex]) -> Vec<Vec<u8>> {
+    group
+        .members()
+        .filter(|member| !removed.contains(&member.index))
+        .map(|member| member.credential.serialized_content().to_vec())
+        .collect()
+}
+
+/// Each added identity must be well-formed and appear once in the roster a
+/// change produces: the members that remain plus everything added. Only the
+/// additions are judged, so a group that already holds a duplicate can still
+/// remove it.
+fn ensure_added_identities_unique(
+    remaining: &[Vec<u8>],
+    added: &[Vec<u8>],
+) -> Result<(), MlsError> {
+    for (position, identity) in added.iter().enumerate() {
+        decode_device_identity(identity)?;
+        if remaining.contains(identity) || added[..position].contains(identity) {
+            return Err(MlsError::InvalidIdentity);
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -829,6 +1050,447 @@ mod tests {
         );
     }
 
+    /// Parses a device's own key package, so a test can add it through
+    /// OpenMLS directly and bypass this wrapper's checks.
+    fn raw_key_package(device: &MlsDevice) -> KeyPackage {
+        KeyPackageIn::tls_deserialize_exact(device.create_key_package().unwrap())
+            .unwrap()
+            .validate(device.provider.crypto(), ProtocolVersion::Mls10)
+            .unwrap()
+    }
+
+    fn identities(group: &MlsGroup) -> Vec<Vec<u8>> {
+        let mut all: Vec<_> = group
+            .members()
+            .map(|member| member.credential.serialized_content().to_vec())
+            .collect();
+        all.sort();
+        all
+    }
+
+    #[test]
+    fn adding_an_identity_twice_is_refused() {
+        let alice = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
+        let bob = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+        // A second key with the same account/device credential.
+        let twin = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+        let mut group = alice.create_group(b"conv_dup").unwrap();
+        alice
+            .add_member(
+                &mut group,
+                &bob.create_key_package().unwrap(),
+                b"acct_bob",
+                b"dev_bob",
+            )
+            .unwrap();
+        alice.merge_pending_commit(&mut group).unwrap();
+
+        // Already in the roster.
+        let twin_kp = twin.create_key_package().unwrap();
+        assert_eq!(
+            alice.add_member(&mut group, &twin_kp, b"acct_bob", b"dev_bob"),
+            Err(MlsError::InvalidIdentity)
+        );
+        assert_eq!(
+            alice.stage_membership_commit(
+                &mut group,
+                &[MemberAdd {
+                    key_package: &twin_kp,
+                    account_id: b"acct_bob",
+                    device_id: b"dev_bob",
+                }],
+                &[],
+            ),
+            Err(MlsError::InvalidIdentity)
+        );
+        // Repeated within one batch.
+        let carol = MlsDevice::new(b"acct_carol", b"dev_carol").unwrap();
+        let carol_twin = MlsDevice::new(b"acct_carol", b"dev_carol").unwrap();
+        let (carol_kp, carol_twin_kp) = (
+            carol.create_key_package().unwrap(),
+            carol_twin.create_key_package().unwrap(),
+        );
+        assert_eq!(
+            alice.stage_membership_commit(
+                &mut group,
+                &[
+                    MemberAdd {
+                        key_package: &carol_kp,
+                        account_id: b"acct_carol",
+                        device_id: b"dev_carol",
+                    },
+                    MemberAdd {
+                        key_package: &carol_twin_kp,
+                        account_id: b"acct_carol",
+                        device_id: b"dev_carol",
+                    },
+                ],
+                &[],
+            ),
+            Err(MlsError::InvalidIdentity)
+        );
+        assert!(!alice.has_pending_commit(&group));
+        // Replacing a device in one commit (remove, then add the same
+        // identity with a new key) leaves one leaf, so it is allowed.
+        alice
+            .stage_membership_commit(
+                &mut group,
+                &[MemberAdd {
+                    key_package: &twin_kp,
+                    account_id: b"acct_bob",
+                    device_id: b"dev_bob",
+                }],
+                &[MemberIdentity {
+                    account_id: b"acct_bob",
+                    device_id: b"dev_bob",
+                }],
+            )
+            .unwrap();
+        alice.merge_pending_commit(&mut group).unwrap();
+        assert_eq!(group.members().count(), 2);
+    }
+
+    #[test]
+    fn device_identities_decode_exactly() {
+        let identity = encode_device_identity(b"acct_a", b"dev_a").unwrap();
+        assert_eq!(
+            decode_device_identity(&identity),
+            Ok((b"acct_a".as_slice(), b"dev_a".as_slice()))
+        );
+        let mut trailing = identity.clone();
+        trailing.push(0);
+        let mut version = identity.clone();
+        version[0] = 2;
+        for bad in [
+            &[][..],
+            &identity[..identity.len() - 1],
+            &trailing,
+            &version,
+            &[1, 0, 0, 0, 1, b'd'],
+            &[1, 0, 1, b'a', 0, 0],
+            b"not an identity",
+        ] {
+            assert_eq!(decode_device_identity(bad), Err(MlsError::InvalidIdentity));
+        }
+    }
+
+    #[test]
+    fn removing_a_device_removes_every_leaf_with_its_identity() {
+        let alice = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
+        let bob = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+        let twin = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+        let carol = MlsDevice::new(b"acct_carol", b"dev_carol").unwrap();
+        let mut group = alice.create_group(b"conv_twins").unwrap();
+        // Duplicates can only come in through another client (or a test
+        // that calls OpenMLS directly).
+        group
+            .add_members(
+                &alice.provider,
+                &alice.signer,
+                &[
+                    raw_key_package(&bob),
+                    raw_key_package(&twin),
+                    raw_key_package(&carol),
+                ],
+            )
+            .unwrap();
+        alice.merge_pending_commit(&mut group).unwrap();
+        assert_eq!(group.members().count(), 4);
+
+        let staged = alice
+            .stage_membership_commit(
+                &mut group,
+                &[],
+                &[MemberIdentity {
+                    account_id: b"acct_bob",
+                    device_id: b"dev_bob",
+                }],
+            )
+            .unwrap();
+        assert!(staged.welcome.is_empty());
+        alice.merge_pending_commit(&mut group).unwrap();
+        let bob_identity = encode_device_identity(b"acct_bob", b"dev_bob").unwrap();
+        assert!(!identities(&group).contains(&bob_identity));
+        assert_eq!(group.members().count(), 2);
+
+        // The single-device FFI path removes every leaf too.
+        let mut group = alice.create_group(b"conv_twins_ffi").unwrap();
+        group
+            .add_members(
+                &alice.provider,
+                &alice.signer,
+                &[raw_key_package(&bob), raw_key_package(&twin)],
+            )
+            .unwrap();
+        alice.merge_pending_commit(&mut group).unwrap();
+        let indices = alice
+            .member_indices(&group, b"acct_bob", b"dev_bob")
+            .unwrap();
+        assert_eq!(indices.len(), 2);
+        alice.remove_members(&mut group, &indices).unwrap();
+        alice.merge_pending_commit(&mut group).unwrap();
+        assert_eq!(group.members().count(), 1);
+        assert_eq!(
+            alice.member_indices(&group, b"acct_bob", b"dev_bob"),
+            Err(MlsError::InvalidIdentity)
+        );
+    }
+
+    /// A key package whose credential carries an arbitrary identity, signed
+    /// by a fresh key: what a hostile client or server can hand out.
+    fn forged_key_package(identity: &[u8]) -> KeyPackage {
+        let forger = MlsDevice::new(b"acct_forger", b"dev_forger").unwrap();
+        let credential = CredentialWithKey {
+            credential: BasicCredential::new(identity.to_vec()).into(),
+            signature_key: forger.signer.public().into(),
+        };
+        KeyPackage::builder()
+            .build(CIPHERSUITE, &forger.provider, &forger.signer, credential)
+            .unwrap()
+            .key_package()
+            .clone()
+    }
+
+    /// Alice, Bob and Carol in one group at epoch 1.
+    fn three_members(group_id: &[u8]) -> ([MlsDevice; 3], [MlsGroup; 3]) {
+        let alice = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
+        let bob = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+        let carol = MlsDevice::new(b"acct_carol", b"dev_carol").unwrap();
+        let mut alice_group = alice.create_group(group_id).unwrap();
+        let (bob_kp, carol_kp) = (
+            bob.create_key_package().unwrap(),
+            carol.create_key_package().unwrap(),
+        );
+        let staged = alice
+            .stage_membership_commit(
+                &mut alice_group,
+                &[
+                    MemberAdd {
+                        key_package: &bob_kp,
+                        account_id: b"acct_bob",
+                        device_id: b"dev_bob",
+                    },
+                    MemberAdd {
+                        key_package: &carol_kp,
+                        account_id: b"acct_carol",
+                        device_id: b"dev_carol",
+                    },
+                ],
+                &[],
+            )
+            .unwrap();
+        alice.merge_pending_commit(&mut alice_group).unwrap();
+        let bob_group = bob.join_group(group_id, &staged.welcome).unwrap();
+        let carol_group = carol.join_group(group_id, &staged.welcome).unwrap();
+        ([alice, bob, carol], [alice_group, bob_group, carol_group])
+    }
+
+    /// Alice refuses `commit`; her stored group keeps its epoch, and a valid
+    /// commit Bob makes afterwards on the same epoch still applies.
+    fn assert_refused_then_recovers(
+        devices: &[MlsDevice; 3],
+        groups: &mut [MlsGroup; 3],
+        group_id: &[u8],
+        commit: &[u8],
+    ) {
+        let [alice, bob, _] = devices;
+        let [alice_group, bob_group, _] = groups;
+        let epoch = alice.group_epoch(alice_group);
+        assert_eq!(
+            alice.process_commit(alice_group, commit),
+            Err(MlsError::InvalidIdentity)
+        );
+        assert_eq!(alice.group_epoch(alice_group), epoch);
+        let mut stored = alice.load_group(group_id).unwrap();
+        assert_eq!(alice.group_epoch(&stored), epoch);
+        // Bob's refused commit is dropped and he commits again.
+        bob.clear_pending_commit(bob_group).unwrap();
+        let update = bob.self_update(bob_group).unwrap();
+        bob.merge_pending_commit(bob_group).unwrap();
+        alice.process_commit(&mut stored, &update).unwrap();
+        assert_eq!(alice.group_epoch(&stored), epoch + 1);
+        let message = bob.encrypt(bob_group, b"after").unwrap();
+        assert_eq!(
+            alice
+                .decrypt(&mut stored, &message, b"acct_bob", b"dev_bob")
+                .unwrap(),
+            b"after"
+        );
+        *alice_group = stored;
+    }
+
+    #[test]
+    fn a_commit_adding_a_malformed_identity_is_refused() {
+        let (devices, mut groups) = three_members(b"conv_bad_add");
+        let commit = {
+            let [_, bob, _] = &devices;
+            let (commit, _, _) = groups[1]
+                .add_members(
+                    &bob.provider,
+                    &bob.signer,
+                    &[forged_key_package(b"garbage")],
+                )
+                .unwrap();
+            commit.tls_serialize_detached().unwrap()
+        };
+        assert_refused_then_recovers(&devices, &mut groups, b"conv_bad_add", &commit);
+    }
+
+    #[test]
+    fn a_commit_adding_an_identity_already_present_is_refused() {
+        let (devices, mut groups) = three_members(b"conv_twin_add");
+        let carol_identity = encode_device_identity(b"acct_carol", b"dev_carol").unwrap();
+        let commit = {
+            let [_, bob, _] = &devices;
+            let (commit, _, _) = groups[1]
+                .add_members(
+                    &bob.provider,
+                    &bob.signer,
+                    &[forged_key_package(&carol_identity)],
+                )
+                .unwrap();
+            commit.tls_serialize_detached().unwrap()
+        };
+        assert_refused_then_recovers(&devices, &mut groups, b"conv_twin_add", &commit);
+
+        // The same new identity twice in one commit.
+        let dave = encode_device_identity(b"acct_dave", b"dev_dave").unwrap();
+        let commit = {
+            let [_, bob, _] = &devices;
+            let (commit, _, _) = groups[1]
+                .add_members(
+                    &bob.provider,
+                    &bob.signer,
+                    &[forged_key_package(&dave), forged_key_package(&dave)],
+                )
+                .unwrap();
+            commit.tls_serialize_detached().unwrap()
+        };
+        assert_refused_then_recovers(&devices, &mut groups, b"conv_twin_add", &commit);
+    }
+
+    #[test]
+    fn a_commit_changing_a_leaf_identity_is_refused() {
+        let (devices, mut groups) = three_members(b"conv_rename");
+        // Bob's update path claims to be Alice, with his own key.
+        let commit = {
+            let [_, bob, _] = &devices;
+            let disguise = CredentialWithKey {
+                credential: BasicCredential::new(
+                    encode_device_identity(b"acct_alice", b"dev_alice").unwrap(),
+                )
+                .into(),
+                signature_key: bob.signer.public().into(),
+            };
+            let parameters = LeafNodeParameters::builder()
+                .with_credential_with_key(disguise)
+                .build();
+            groups[1]
+                .self_update(&bob.provider, &bob.signer, parameters)
+                .unwrap()
+                .into_contents()
+                .0
+                .tls_serialize_detached()
+                .unwrap()
+        };
+        assert_refused_then_recovers(&devices, &mut groups, b"conv_rename", &commit);
+    }
+
+    /// A key package stored in `holder`'s provider (so `holder` can open a
+    /// Welcome built from it) but carrying `identity` under `signer`.
+    fn key_package_in(
+        holder: &MlsDevice,
+        signer: &SignatureKeyPair,
+        identity: &[u8],
+    ) -> KeyPackage {
+        let credential = CredentialWithKey {
+            credential: BasicCredential::new(identity.to_vec()).into(),
+            signature_key: signer.public().into(),
+        };
+        KeyPackage::builder()
+            .build(CIPHERSUITE, &holder.provider, signer, credential)
+            .unwrap()
+            .key_package()
+            .clone()
+    }
+
+    /// Alice builds a group through OpenMLS directly from `packages` and
+    /// returns the Welcome; `bob` must refuse it and persist nothing.
+    fn assert_welcome_refused(group_id: &[u8], bob: &MlsDevice, packages: &[KeyPackage]) {
+        let alice = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
+        let mut group = alice.create_group(group_id).unwrap();
+        let (_, welcome, _) = group
+            .add_members(&alice.provider, &alice.signer, packages)
+            .unwrap();
+        let welcome = welcome.tls_serialize_detached().unwrap();
+        assert!(bob.join_group(group_id, &welcome).is_err());
+        assert_eq!(bob.load_group(group_id).err(), Some(MlsError::InvalidState));
+    }
+
+    #[test]
+    fn a_welcome_with_a_malformed_or_repeated_identity_is_refused() {
+        let bob = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+        assert_welcome_refused(
+            b"conv_w_garbage",
+            &bob,
+            &[raw_key_package(&bob), forged_key_package(b"garbage")],
+        );
+        let carol = encode_device_identity(b"acct_carol", b"dev_carol").unwrap();
+        assert_welcome_refused(
+            b"conv_w_twins",
+            &bob,
+            &[
+                raw_key_package(&bob),
+                forged_key_package(&carol),
+                forged_key_package(&carol),
+            ],
+        );
+        // A second leaf claiming Bob himself.
+        let own = encode_device_identity(b"acct_bob", b"dev_bob").unwrap();
+        assert_welcome_refused(
+            b"conv_w_self_twin",
+            &bob,
+            &[raw_key_package(&bob), forged_key_package(&own)],
+        );
+    }
+
+    #[test]
+    fn a_welcome_must_place_this_device_under_its_own_identity_and_key() {
+        let bob = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+        // Bob's own key material, but another identity on the leaf.
+        let mallory = encode_device_identity(b"acct_mallory", b"dev_mallory").unwrap();
+        assert_welcome_refused(
+            b"conv_w_identity",
+            &bob,
+            &[key_package_in(&bob, &bob.signer, &mallory)],
+        );
+        // Bob's identity, but a signing key that is not his.
+        let other = SignatureKeyPair::new(CIPHERSUITE.signature_algorithm()).unwrap();
+        let own = encode_device_identity(b"acct_bob", b"dev_bob").unwrap();
+        assert_welcome_refused(b"conv_w_key", &bob, &[key_package_in(&bob, &other, &own)]);
+    }
+
+    #[test]
+    fn a_welcome_for_another_group_persists_nothing() {
+        let alice = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
+        let bob = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+        let mut group = alice.create_group(b"conv_real").unwrap();
+        let add = alice
+            .add_member(
+                &mut group,
+                &bob.create_key_package().unwrap(),
+                b"acct_bob",
+                b"dev_bob",
+            )
+            .unwrap();
+        assert_eq!(
+            bob.join_group(b"conv_expected", &add.welcome).err(),
+            Some(MlsError::InvalidMessage)
+        );
+        assert!(bob.load_group(b"conv_real").is_err());
+        assert!(bob.load_group(b"conv_expected").is_err());
+    }
+
     #[test]
     fn a_refused_staged_commit_is_cleared_without_forking() {
         let alice = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
@@ -942,6 +1604,81 @@ mod tests {
     }
 
     #[test]
+    fn a_removed_device_cannot_inject_through_a_past_epoch() {
+        let ([alice, bob, carol], [mut alice_group, mut bob_group, mut carol_group]) =
+            three_members(b"conv_removed");
+        let removal = alice
+            .stage_membership_commit(
+                &mut alice_group,
+                &[],
+                &[MemberIdentity {
+                    account_id: b"acct_bob",
+                    device_id: b"dev_bob",
+                }],
+            )
+            .unwrap();
+        alice.merge_pending_commit(&mut alice_group).unwrap();
+        carol
+            .process_commit(&mut carol_group, &removal.commit)
+            .unwrap();
+
+        // Bob ignores his removal and keeps writing in the old epoch.
+        let injected = bob.encrypt(&mut bob_group, b"still here").unwrap();
+        assert_eq!(
+            carol.decrypt(&mut carol_group, &injected, b"acct_bob", b"dev_bob"),
+            Err(MlsError::SenderRemoved)
+        );
+        // A past-epoch message from a member who stays still decrypts.
+        let ([a, b, c], [mut ag, mut bg, mut cg]) = three_members(b"conv_stays");
+        let late = c.encrypt(&mut cg, b"late but welcome").unwrap();
+        let dave = MlsDevice::new(b"acct_dave", b"dev_dave").unwrap();
+        let dave_kp = dave.create_key_package().unwrap();
+        let add = a
+            .stage_membership_commit(
+                &mut ag,
+                &[MemberAdd {
+                    key_package: &dave_kp,
+                    account_id: b"acct_dave",
+                    device_id: b"dev_dave",
+                }],
+                &[],
+            )
+            .unwrap();
+        a.merge_pending_commit(&mut ag).unwrap();
+        b.process_commit(&mut bg, &add.commit).unwrap();
+        assert_eq!(
+            b.decrypt(&mut bg, &late, b"acct_carol", b"dev_carol")
+                .unwrap(),
+            b"late but welcome"
+        );
+    }
+
+    #[test]
+    fn the_committer_drops_a_late_message_from_the_device_it_removed() {
+        // The cost of the rule (Q-003): Bob's message is sent, and accepted
+        // by the server, before Alice's removal commit, but Alice merges her
+        // commit on acceptance and reads Bob's message afterwards.
+        let ([alice, bob, _carol], [mut alice_group, mut bob_group, _]) =
+            three_members(b"conv_race_removed");
+        let late = bob.encrypt(&mut bob_group, b"sent before removal").unwrap();
+        alice
+            .stage_membership_commit(
+                &mut alice_group,
+                &[],
+                &[MemberIdentity {
+                    account_id: b"acct_bob",
+                    device_id: b"dev_bob",
+                }],
+            )
+            .unwrap();
+        alice.merge_pending_commit(&mut alice_group).unwrap();
+        assert_eq!(
+            alice.decrypt(&mut alice_group, &late, b"acct_bob", b"dev_bob"),
+            Err(MlsError::SenderRemoved)
+        );
+    }
+
+    #[test]
     fn decrypt_rejects_a_spoofed_sender() {
         let alice = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
         let bob = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
@@ -1024,10 +1761,10 @@ mod tests {
             b"after update"
         );
 
-        let bob_index = alice
-            .member_index(&alice_group, b"acct_bob", b"dev_bob")
+        let bob_leaves = alice
+            .member_indices(&alice_group, b"acct_bob", b"dev_bob")
             .unwrap();
-        let removal = alice.remove_member(&mut alice_group, bob_index).unwrap();
+        let removal = alice.remove_members(&mut alice_group, &bob_leaves).unwrap();
         alice.merge_pending_commit(&mut alice_group).unwrap();
         bob.process_commit(&mut bob_group, &removal).unwrap();
         assert!(!bob_group.is_active());
@@ -1064,23 +1801,38 @@ mod tests {
     }
 
     #[test]
-    fn enrollment_challenge_uses_mls_credential_signer() {
+    fn enrollment_signature_covers_only_the_prefixed_proof() {
         let device = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
-        let signature = device
-            .sign_enrollment_challenge(b"veritra-enrollment-v1 challenge")
-            .unwrap();
-        assert_eq!(device.signing_public_key().len(), 32);
-        assert_eq!(signature.len(), 64);
-        assert_eq!(
-            device.sign_enrollment_challenge(b""),
-            Err(MlsError::InvalidIdentity)
-        );
-        let enrollment = device
-            .create_enrollment_credential(b"reserved server challenge")
-            .unwrap();
+        let challenge = b"reserved server challenge";
+        let enrollment = device.create_enrollment_credential(challenge).unwrap();
         assert!(enrollment.key_package.len() >= crate::MIN_KEY_PACKAGE_BYTES);
         assert_eq!(enrollment.signing_public_key, device.signing_public_key());
         assert_eq!(enrollment.challenge_signature.len(), 64);
+        assert_eq!(
+            device.create_enrollment_credential(b""),
+            Err(MlsError::InvalidIdentity)
+        );
+
+        let mut proof = b"veritra-enrollment-proof-v1".to_vec();
+        proof.extend_from_slice(&(challenge.len() as u16).to_be_bytes());
+        proof.extend_from_slice(challenge);
+        proof.extend_from_slice(&enrollment.signing_public_key);
+        proof.extend_from_slice(&Sha256::digest(&enrollment.key_package));
+        let verify = |message: &[u8]| {
+            device.provider.crypto().verify_signature(
+                SignatureScheme::ED25519,
+                message,
+                device.signing_public_key(),
+                &enrollment.challenge_signature,
+            )
+        };
+        assert!(verify(&proof).is_ok());
+        assert!(verify(challenge).is_err());
+        // The prefix cannot be read as an RFC 9420 SignContent: its first
+        // byte (0x76) is a two-byte varint, after which "MLS 1.0 " would
+        // have to follow.
+        assert_eq!(proof[0] >> 6, 1);
+        assert_ne!(&proof[2..10], b"MLS 1.0 ");
     }
 
     #[test]
@@ -1312,6 +2064,40 @@ mod tests {
             changed[3] = vec![1; length];
             assert_eq!(derive(&changed), Err(MlsError::InvalidIdentity));
         }
+    }
+
+    #[test]
+    fn a_relay_cannot_compute_the_sas_from_public_link_data() {
+        // TASK-010/TASK-048: grinding needs the SAS as a function of values
+        // the relay sees. Two secrets give the same public transcript hash
+        // but unrelated SAS values and tags, so a relay without the secret
+        // has nothing to grind against.
+        let derive = |secret: &[u8], new_key: &[u8]| {
+            derive_device_link_verification(
+                DEVICE_LINK_PROTOCOL_VERSION,
+                b"https://example.test",
+                b"link_01",
+                secret,
+                b"acct_01",
+                &[0x11; 32],
+                b"dev_old",
+                &[0x22; 32],
+                b"dev_new",
+                new_key,
+            )
+            .unwrap()
+        };
+        let real = derive(&[0x55; 16], &[0x33; 32]);
+        let guessed = derive(&[0x56; 16], &[0x33; 32]);
+        assert_eq!(real.transcript_hash, guessed.transcript_hash);
+        assert_ne!(real.sas_bytes, guessed.sas_bytes);
+        assert_ne!(real.claim_tag, guessed.claim_tag);
+        assert_ne!(real.approval_tag, guessed.approval_tag);
+        // A substituted new-device key needs a fresh claim tag under the
+        // secret; the old device rejects the honest one for it.
+        let substituted = derive(&[0x55; 16], &[0x34; 32]);
+        assert_ne!(real.claim_tag, substituted.claim_tag);
+        assert_eq!(real.sas.len(), 8);
     }
 
     #[test]
