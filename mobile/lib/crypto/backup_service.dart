@@ -105,6 +105,14 @@ class _RangeRefused implements Exception {
   const _RangeRefused();
 }
 
+/// The saved file does not open with this code, and the server has nothing
+/// for the code either. The file may be the only copy of this backup, and
+/// the key part of the code mistyped, so [BackupService.recover] keeps it
+/// and reports a wrong code.
+class _SavedFileKept implements Exception {
+  const _SavedFileKept();
+}
+
 class BackupException implements Exception {
   const BackupException(this.kind);
 
@@ -300,6 +308,8 @@ class BackupService {
         }
       }
       if (await file.exists()) await file.delete();
+    } on _SavedFileKept {
+      throw const BackupException(BackupFailureKind.wrongKey);
     } on BackupException catch (error) {
       if (error.kind != BackupFailureKind.network &&
           error.kind != BackupFailureKind.busy &&
@@ -325,10 +335,12 @@ class BackupService {
   /// before the restore, so [restoreSaved] tries it first; VBK2
   /// authenticates every frame and the last, so a cut or stale file never
   /// passes. If it does not restore, a refused range drops the file and
-  /// downloads again from byte 0, once, in this call; a 404 stays not found.
+  /// downloads again from byte 0, once, in this call; a 404 stays not found,
+  /// unless the saved file failed on the key: it is then kept
+  /// ([_SavedFileKept]) for the corrected code.
   Future<_Download> _download(
       ApiClient client, List<int> recoveryToken, File file,
-      {Future<bool> Function()? restoreSaved}) async {
+      {Future<BackupFailureKind?> Function()? restoreSaved}) async {
     final start = await file.exists() ? await file.length() : 0;
     if (start == 0) {
       await _downloadFrom(client, recoveryToken, file, 0);
@@ -338,33 +350,35 @@ class BackupService {
       await _downloadFrom(client, recoveryToken, file, start);
       return _Download.resumed;
     } on _RangeRefused {
-      if (restoreSaved != null && await restoreSaved()) {
+      if (restoreSaved != null && await restoreSaved() == null) {
         return _Download.restoredSaved;
       }
       await _deletePartial(file);
       await _downloadFrom(client, recoveryToken, file, 0);
       return _Download.fresh;
     } on BackupException catch (error) {
-      if (error.kind == BackupFailureKind.notFound &&
-          restoreSaved != null &&
-          await restoreSaved()) {
-        return _Download.restoredSaved;
+      if (error.kind == BackupFailureKind.notFound && restoreSaved != null) {
+        final failed = await restoreSaved();
+        if (failed == null) return _Download.restoredSaved;
+        if (failed == BackupFailureKind.wrongKey) throw const _SavedFileKept();
       }
       rethrow;
     }
   }
 
-  /// Restores [file] if it is a whole, authentic backup for this code.
-  /// False if it is not (partial, stale or damaged); a device that already
-  /// has an account still fails as such.
-  Future<bool> _restoreSaved(
+  /// Restores [file] if it is a whole, authentic backup for this code, and
+  /// returns null. Otherwise returns why not: [BackupFailureKind.wrongKey]
+  /// when its frame 0 does not open with this code, another kind when it is
+  /// partial or damaged. A device that already has an account still fails
+  /// as such.
+  Future<BackupFailureKind?> _restoreSaved(
       File file, List<int> recoveryToken, List<int> key) async {
     try {
       await _decryptAndRestore(file, recoveryToken, key);
-      return true;
+      return null;
     } on BackupException catch (error) {
       if (error.kind == BackupFailureKind.deviceNotEmpty) rethrow;
-      return false;
+      return error.kind;
     }
   }
 

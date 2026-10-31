@@ -13,6 +13,13 @@ class BackupRecoveryServer {
   String? token;
   final List<int> rangeStarts = <int>[];
 
+  /// Clears [stored] once a transfer reaches its end, as the server uses up
+  /// the recovery code.
+  bool consumeOnComplete = false;
+
+  /// Answers every recovery request with this status instead.
+  int? recoveryStatus;
+
   String get baseUrl => 'http://127.0.0.1:${_server.port}';
 
   static Future<BackupRecoveryServer> start() async {
@@ -48,6 +55,12 @@ class BackupRecoveryServer {
         start = int.parse(range.substring(6).split('-').first);
       }
       rangeStarts.add(start);
+      final forced = recoveryStatus;
+      if (forced != null) {
+        request.response.statusCode = forced;
+        await request.response.close();
+        return;
+      }
       if (data == null || request.headers.value('X-Recovery-Token') != token) {
         request.response
           ..statusCode = 404
@@ -72,6 +85,7 @@ class BackupRecoveryServer {
         ..contentLength = part.length
         ..add(part);
       await request.response.close();
+      if (consumeOnComplete) stored = null;
       return;
     }
     request.response.statusCode = 404;
