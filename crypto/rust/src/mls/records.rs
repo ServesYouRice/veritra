@@ -870,6 +870,38 @@ impl SealedTable {
     }
 }
 
+/// Seals every record at the next generation and restores a new device
+/// from them, as an app restart over a complete table would.
+#[cfg(test)]
+impl MlsDevice {
+    pub(crate) fn reload_for_test(&mut self, state_key: &[u8]) -> MlsDevice {
+        self.provider.storage().mark_all_dirty().unwrap();
+        let generation = self.sealed.last_generation + 1;
+        let set = self.seal_changes(state_key, generation).unwrap();
+        let mut loader = RestoreLoader::begin(
+            &self.account_id,
+            &self.device_id,
+            state_key,
+            generation,
+            &set.root,
+        )
+        .unwrap();
+        for change in &set.changes {
+            if let Some(sealed) = &change.sealed {
+                loader.add(sealed).unwrap();
+            }
+        }
+        loader.finish().unwrap().0
+    }
+
+    /// Puts one value over the per-value cap into group `id`.
+    pub(crate) fn oversize_group_for_test(&self, id: &[u8]) {
+        self.provider
+            .storage()
+            .pad_group_for_test(id, 0, MAX_GROUP_VALUE_BYTES + 1);
+    }
+}
+
 #[cfg(test)]
 #[path = "records_tests.rs"]
 mod tests;

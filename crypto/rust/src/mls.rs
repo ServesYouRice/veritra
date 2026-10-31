@@ -17,6 +17,7 @@ mod records;
 mod state;
 mod storage;
 pub use records::{ChangeSet, RecordChange, RestoreLoader, SealError};
+pub(crate) use records::{MAX_SEALED_RECORD_BYTES, MAX_SEALED_ROOT_BYTES};
 #[allow(dead_code)]
 pub(crate) mod transfer;
 

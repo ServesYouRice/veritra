@@ -77,6 +77,25 @@ typedef _RestoreNative = Int32 Function(
     Pointer<Uint64>);
 typedef _RestoreDart = int Function(_PmByteSlice, _PmByteSlice, _PmByteSlice,
     int, _PmByteSlice, Pointer<Pointer<_PmCryptoHandle>>, Pointer<Uint64>);
+typedef _RestoreBeginNative = Int32 Function(_PmByteSlice, _PmByteSlice,
+    _PmByteSlice, Uint64, _PmByteSlice, Pointer<Uint64>, Pointer<Uint64>);
+typedef _RestoreBeginDart = int Function(_PmByteSlice, _PmByteSlice,
+    _PmByteSlice, int, _PmByteSlice, Pointer<Uint64>, Pointer<Uint64>);
+typedef _RestoreAddNative = Int32 Function(Uint64, _PmByteSlice);
+typedef _RestoreAddDart = int Function(int, _PmByteSlice);
+typedef _RestoreFinishNative = Int32 Function(
+    Uint64, Pointer<Pointer<_PmCryptoHandle>>, Pointer<Uint64>);
+typedef _RestoreFinishDart = int Function(
+    int, Pointer<Pointer<_PmCryptoHandle>>, Pointer<Uint64>);
+typedef _RestoreAbortNative = Int32 Function(Uint64);
+typedef _RestoreAbortDart = int Function(int);
+typedef _GroupDeleteNative = Int32 Function(
+    Pointer<_PmCryptoHandle>, _PmByteSlice, Pointer<Uint8>);
+typedef _GroupDeleteDart = int Function(
+    Pointer<_PmCryptoHandle>, _PmByteSlice, Pointer<Uint8>);
+typedef _PruneNative = Int32 Function(
+    Pointer<_PmCryptoHandle>, Uint64, Pointer<Uint64>);
+typedef _PruneDart = int Function(Pointer<_PmCryptoHandle>, int, Pointer<Uint64>);
 typedef _HandleOutputNative = Int32 Function(
     Pointer<_PmCryptoHandle>, Pointer<_PmOwnedBuffer>);
 typedef _HandleOutputDart = int Function(
@@ -193,8 +212,25 @@ class NativeCryptoBindings {
         _createEnrollment =
             library.lookupFunction<_EnrollmentNative, _EnrollmentDart>(
                 'pm_crypto_device_create_enrollment_credential'),
-        _restore = library.lookupFunction<_RestoreNative, _RestoreDart>(
-            'pm_crypto_device_restore'),
+        _migrate = library.lookupFunction<_RestoreNative, _RestoreDart>(
+            'pm_crypto_device_migrate_v3'),
+        _restoreBegin =
+            library.lookupFunction<_RestoreBeginNative, _RestoreBeginDart>(
+                'pm_crypto_restore_begin'),
+        _restoreAdd =
+            library.lookupFunction<_RestoreAddNative, _RestoreAddDart>(
+                'pm_crypto_restore_add'),
+        _restoreFinish =
+            library.lookupFunction<_RestoreFinishNative, _RestoreFinishDart>(
+                'pm_crypto_restore_finish'),
+        _restoreAbort =
+            library.lookupFunction<_RestoreAbortNative, _RestoreAbortDart>(
+                'pm_crypto_restore_abort'),
+        _groupDelete =
+            library.lookupFunction<_GroupDeleteNative, _GroupDeleteDart>(
+                'pm_crypto_group_delete'),
+        _pruneKeyPackages = library.lookupFunction<_PruneNative, _PruneDart>(
+            'pm_crypto_device_prune_key_packages'),
         _signingKey =
             library.lookupFunction<_HandleOutputNative, _HandleOutputDart>(
                 'pm_crypto_device_signing_public_key'),
@@ -208,7 +244,7 @@ class NativeCryptoBindings {
             library.lookupFunction<_HandleOutputNative, _HandleOutputDart>(
                 'pm_crypto_device_create_key_package'),
         _seal = library.lookupFunction<_SealNative, _SealDart>(
-            'pm_crypto_device_seal_state'),
+            'pm_crypto_device_seal_changes'),
         _groupCreate =
             library.lookupFunction<_HandleSliceNative, _HandleSliceDart>(
                 'pm_crypto_group_create'),
@@ -243,7 +279,7 @@ class NativeCryptoBindings {
             _AttachmentChunkDart>('pm_crypto_attachment_encrypt_chunk'),
         _attachmentDecrypt = library.lookupFunction<_AttachmentChunkNative,
             _AttachmentChunkDart>('pm_crypto_attachment_decrypt_chunk') {
-    if (_abiVersion() != 9) {
+    if (_abiVersion() != 10) {
       throw const NativeCryptoException(NativeCryptoError.abiMismatch);
     }
     _k2Controls = {
@@ -278,7 +314,13 @@ class NativeCryptoBindings {
   final _DeviceDestroyDart _deviceDestroy;
   final _BufferFreeDart _bufferFree;
   final _EnrollmentDart _createEnrollment;
-  final _RestoreDart _restore;
+  final _RestoreDart _migrate;
+  final _RestoreBeginDart _restoreBegin;
+  final _RestoreAddDart _restoreAdd;
+  final _RestoreFinishDart _restoreFinish;
+  final _RestoreAbortDart _restoreAbort;
+  final _GroupDeleteDart _groupDelete;
+  final _PruneDart _pruneKeyPackages;
   final _HandleOutputDart _signingKey;
   final _DeviceLinkTranscriptDart _deviceLinkTranscript;
   final _LocatorDart _deviceLinkLocator;
@@ -406,36 +448,97 @@ class NativeCryptoBindings {
     );
   }
 
-  ({NativeCryptoDevice device, int counter}) restoreDevice(
+  /// Restores a format-4 state (D70): the [root] and every stored record,
+  /// read together. The root's generation must be at least
+  /// [minimumGeneration]; the caller requires it to equal its counter. Any
+  /// missing, extra, stale or altered record fails the restore.
+  ({NativeCryptoDevice device, int generation}) restoreRecords(
       String accountId,
       String deviceId,
       List<int> stateKey,
-      int minimumCounter,
-      List<int> sealedState) {
+      int minimumGeneration,
+      List<int> root,
+      Iterable<List<int>> records) {
     _bounded(accountId.codeUnits, 128);
     _bounded(deviceId.codeUnits, 128);
     _bounded(stateKey, 32, exact: true);
-    _bounded(sealedState, 32 * 1024 * 1024);
-    if (minimumCounter < 0) {
-      throw ArgumentError.value(minimumCounter, 'minimumCounter');
+    _bounded(root, _maxSealedRootBytes);
+    if (minimumGeneration < 0) {
+      throw ArgumentError.value(minimumGeneration, 'minimumGeneration');
     }
-    return _withByteLists(
-        [accountId.codeUnits, deviceId.codeUnits, stateKey, sealedState],
-        (slices) {
-      final handle = calloc<Pointer<_PmCryptoHandle>>();
-      final counter = calloc<Uint64>();
+    final loader = _withByteLists(
+        [accountId.codeUnits, deviceId.codeUnits, stateKey, root], (slices) {
+      final token = calloc<Uint64>();
+      final generation = calloc<Uint64>();
       try {
-        _check(_restore(slices[0], slices[1], slices[2], minimumCounter,
-            slices[3], handle, counter));
+        _check(_restoreBegin(slices[0], slices[1], slices[2],
+            minimumGeneration, slices[3], token, generation));
+        return token.value;
+      } finally {
+        calloc.free(generation);
+        calloc.free(token);
+      }
+    });
+    var open = true;
+    try {
+      for (final record in records) {
+        _bounded(record, _maxSealedRecordBytes);
+        _withSlice(Uint8List.fromList(record),
+            (slice) => _check(_restoreAdd(loader, slice)));
+      }
+      final handle = calloc<Pointer<_PmCryptoHandle>>();
+      final generation = calloc<Uint64>();
+      try {
+        open = false;
+        _check(_restoreFinish(loader, handle, generation));
         if (handle.value == nullptr) {
           throw const NativeCryptoException(NativeCryptoError.operationFailed);
         }
         return (
           device: NativeCryptoDevice._(this, handle.value),
-          counter: counter.value
+          generation: generation.value
         );
       } finally {
-        calloc.free(counter);
+        calloc.free(generation);
+        calloc.free(handle);
+      }
+    } finally {
+      if (open) _restoreAbort(loader);
+    }
+  }
+
+  /// Opens a format 2/3 blob stored at [counter] for the one-way migration
+  /// (D70 section 5). The returned device seals every record at
+  /// `counter + 1`; [dropped] counts inactive groups and unowned key pairs
+  /// left behind.
+  ({NativeCryptoDevice device, int dropped}) migrateLegacyState(
+      String accountId,
+      String deviceId,
+      List<int> stateKey,
+      int counter,
+      List<int> sealedState) {
+    _bounded(accountId.codeUnits, 128);
+    _bounded(deviceId.codeUnits, 128);
+    _bounded(stateKey, 32, exact: true);
+    _bounded(sealedState, 32 * 1024 * 1024);
+    if (counter <= 0) throw ArgumentError.value(counter, 'counter');
+    return _withByteLists(
+        [accountId.codeUnits, deviceId.codeUnits, stateKey, sealedState],
+        (slices) {
+      final handle = calloc<Pointer<_PmCryptoHandle>>();
+      final dropped = calloc<Uint64>();
+      try {
+        _check(_migrate(slices[0], slices[1], slices[2], counter, slices[3],
+            handle, dropped));
+        if (handle.value == nullptr) {
+          throw const NativeCryptoException(NativeCryptoError.operationFailed);
+        }
+        return (
+          device: NativeCryptoDevice._(this, handle.value),
+          dropped: dropped.value
+        );
+      } finally {
+        calloc.free(dropped);
         calloc.free(handle);
       }
     });
@@ -500,10 +603,8 @@ class NativeCryptoBindings {
     }
   }
 
-  List<int> _take(_PmOwnedBuffer buffer) {
-    if (buffer.data == nullptr ||
-        buffer.len == 0 ||
-        buffer.len > 32 * 1024 * 1024) {
+  List<int> _take(_PmOwnedBuffer buffer, {int maximum = 32 * 1024 * 1024}) {
+    if (buffer.data == nullptr || buffer.len == 0 || buffer.len > maximum) {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
     }
     // Once validated, _take is the single owner: it frees the buffer and
@@ -519,11 +620,12 @@ class NativeCryptoBindings {
     }
   }
 
-  List<int> _output(int Function(Pointer<_PmOwnedBuffer>) operation) {
+  List<int> _output(int Function(Pointer<_PmOwnedBuffer>) operation,
+      {int maximum = 32 * 1024 * 1024}) {
     final output = calloc<_PmOwnedBuffer>();
     try {
       _check(operation(output));
-      final bytes = _take(output.ref);
+      final bytes = _take(output.ref, maximum: maximum);
       output.ref
         ..data = nullptr
         ..len = 0;
@@ -567,6 +669,8 @@ class NativeCryptoBindings {
       -5 => NativeCryptoError.senderMismatch,
       -6 => NativeCryptoError.stateFormatUnsupported,
       -7 => NativeCryptoError.senderRemoved,
+      -8 => NativeCryptoError.recordLimit,
+      -9 => NativeCryptoError.welcomeKeyPackageUnavailable,
       _ => NativeCryptoError.unknown,
     });
   }
@@ -636,10 +740,19 @@ enum NativeCryptoError {
   /// [senderMismatch].
   senderRemoved,
 
-  /// [NativeCryptoBindings.restoreDevice] only: the sealed state is in a
-  /// format this build does not read (ABI 9). Unauthenticated: it may lead
-  /// to re-linking the device, never to a weaker check.
+  /// [NativeCryptoBindings.restoreRecords] and
+  /// [NativeCryptoBindings.migrateLegacyState] only: the sealed state is in
+  /// a format that call does not read (ABI 9). Unauthenticated: it may lead
+  /// to re-linking the device or to the migration, never to a weaker check.
   stateFormatUnsupported,
+
+  /// [NativeCryptoDevice.sealChanges] only: a record would be over its cap
+  /// (ABI 10, D70). Thrown as [NativeRecordLimitException], which names it.
+  recordLimit,
+
+  /// [NativeCryptoDevice.joinGroup] only: the Welcome names no key package
+  /// this device holds, or it expired (ABI 10, D74). Nothing was consumed.
+  welcomeKeyPackageUnavailable,
 
   /// [NativeCryptoDevice.encrypt] only: the plaintext is larger than
   /// [maxSendablePlaintextBytes], so its ciphertext could not be sent.
@@ -663,6 +776,89 @@ class NativeCryptoException implements Exception {
 
   @override
   String toString() => 'NativeCryptoException(${kind.name})';
+}
+
+/// A sealed record would be over its cap (D70): [recordKind] is 1 for the
+/// device, 2 for a group (then [recordId] is its conversation id), 3 for a
+/// key package. Nothing was sealed.
+class NativeRecordLimitException extends NativeCryptoException {
+  const NativeRecordLimitException(this.recordKind, this.recordId)
+      : super(NativeCryptoError.recordLimit);
+  final int recordKind;
+  final List<int> recordId;
+
+  @override
+  String toString() => 'NativeRecordLimitException(kind $recordKind)';
+}
+
+/// Largest sealed root and record (D70 caps plus the record overhead).
+const int _maxSealedRootBytes = 16 * 1024 * 1024 + 4096;
+const int _maxSealedRecordBytes = 32 * 1024 * 1024 + 4096;
+
+/// Largest change set [NativeCryptoDevice.sealChanges] accepts.
+const int _maxChangeSetBytes = 128 * 1024 * 1024;
+
+/// One record change of a [NativeChangeSet]; [sealed] null deletes it.
+typedef NativeRecordChange = ({
+  int kind,
+  List<int> id,
+  int generation,
+  List<int>? sealed,
+});
+
+/// The root at a new generation and every record that changed with it.
+typedef NativeChangeSet = ({List<int> root, List<NativeRecordChange> changes});
+
+NativeChangeSet _parseChangeSet(List<int> bytes, int generation) {
+  final data = ByteData.sublistView(Uint8List.fromList(bytes));
+  var offset = 0;
+  int need(int n) {
+    if (n < 0 || offset + n > data.lengthInBytes) {
+      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+    }
+    final start = offset;
+    offset += n;
+    return start;
+  }
+
+  List<int> take(int n) {
+    final start = need(n);
+    return Uint8List.sublistView(data, start, start + n);
+  }
+
+  int u32() => data.getUint32(need(4), Endian.big);
+  final rootLength = u32();
+  if (rootLength == 0 || rootLength > _maxSealedRootBytes) {
+    throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+  }
+  final root = take(rootLength);
+  final count = u32();
+  final changes = <NativeRecordChange>[];
+  for (var index = 0; index < count; index++) {
+    final kind = data.getUint8(need(1));
+    final id = take(data.getUint16(need(2), Endian.big));
+    final changeGeneration = data.getUint64(need(8), Endian.big);
+    final present = data.getUint8(need(1));
+    List<int>? sealed;
+    if (present == 1) {
+      final length = u32();
+      if (length == 0 || length > _maxSealedRecordBytes) {
+        throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+      }
+      sealed = take(length);
+    } else if (present != 0) {
+      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+    }
+    if (kind < 1 || kind > 3 || changeGeneration != generation) {
+      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+    }
+    changes.add(
+        (kind: kind, id: id, generation: changeGeneration, sealed: sealed));
+  }
+  if (offset != data.lengthInBytes) {
+    throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+  }
+  return (root: root, changes: changes);
 }
 
 class NativeCryptoDevice implements Finalizable {
@@ -756,13 +952,66 @@ class NativeCryptoDevice implements Finalizable {
   List<int> createKeyPackage() =>
       _bindings._output((out) => _bindings._createKeyPackage(_liveHandle, out));
 
-  List<int> sealState(List<int> stateKey, int counter) {
+  /// Seals what changed since the last seal or restore at [generation],
+  /// the stored counter plus one (D70). Store the root and every change in
+  /// one transaction; after any failure, restore the committed state.
+  /// Throws [NativeRecordLimitException] naming a record over its cap.
+  NativeChangeSet sealChanges(List<int> stateKey, int generation) {
     _bindings._bounded(stateKey, 32, exact: true);
-    if (counter <= 0) throw ArgumentError.value(counter, 'counter');
-    return _bindings._withSlice(
-        Uint8List.fromList(stateKey),
-        (key) => _bindings
-            ._output((out) => _bindings._seal(_liveHandle, key, counter, out)));
+    if (generation <= 0) throw ArgumentError.value(generation, 'generation');
+    final bytes = _bindings._withSlice(Uint8List.fromList(stateKey), (key) {
+      final output = calloc<_PmOwnedBuffer>();
+      try {
+        final code = _bindings._seal(_liveHandle, key, generation, output);
+        if (code == -8) {
+          final named = _bindings._take(output.ref);
+          output.ref
+            ..data = nullptr
+            ..len = 0;
+          throw NativeRecordLimitException(named.first, named.sublist(1));
+        }
+        _bindings._check(code);
+        final bytes = _bindings._take(output.ref, maximum: _maxChangeSetBytes);
+        output.ref
+          ..data = nullptr
+          ..len = 0;
+        return bytes;
+      } finally {
+        if (output.ref.data != nullptr) _bindings._free(output.ref);
+        calloc.free(output);
+      }
+    });
+    return _parseChangeSet(bytes, generation);
+  }
+
+  /// Drops this device's state for a chat the user deleted. Returns whether
+  /// one was stored. Never for a removal: that group is already gone.
+  bool deleteGroup(String groupId) {
+    _bindings._bounded(groupId.codeUnits, 128);
+    return _bindings._withSlice(Uint8List.fromList(groupId.codeUnits),
+        (group) {
+      final deleted = calloc<Uint8>();
+      try {
+        _bindings._check(_bindings._groupDelete(_liveHandle, group, deleted));
+        return deleted.value == 1;
+      } finally {
+        calloc.free(deleted);
+      }
+    });
+  }
+
+  /// Drops key packages that expired more than 24 hours before [now].
+  int pruneKeyPackages(DateTime now) {
+    final seconds = now.toUtc().millisecondsSinceEpoch ~/ 1000;
+    if (seconds < 0) throw ArgumentError.value(now, 'now');
+    final removed = calloc<Uint64>();
+    try {
+      _bindings
+          ._check(_bindings._pruneKeyPackages(_liveHandle, seconds, removed));
+      return removed.value;
+    } finally {
+      calloc.free(removed);
+    }
   }
 
   void createGroup(String groupId) => _withOne(groupId.codeUnits,

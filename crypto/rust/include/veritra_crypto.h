@@ -5,16 +5,18 @@
 #include <stdint.h>
 
 #define PM_CRYPTO_UNAVAILABLE (-1)
-#define PM_CRYPTO_ABI_VERSION (9u)
+#define PM_CRYPTO_ABI_VERSION (10u)
 #define PM_CRYPTO_OK (0)
 #define PM_CRYPTO_INVALID_ARGUMENT (-2)
 #define PM_CRYPTO_ERROR (-3)
 #define PM_CRYPTO_PANIC (-4)
 /* Decrypted, but the MLS sender is not the claimed account/device (ABI 5). */
 #define PM_CRYPTO_SENDER_MISMATCH (-5)
-/* ABI 9, pm_crypto_device_restore only: the sealed state has the right magic
- * but a format version this build does not read (format 1 from OpenMLS
- * 0.8.1, or a newer build). The version is NOT authenticated: it may lead
+/* pm_crypto_restore_begin and pm_crypto_device_migrate_v3 only (ABI 9,
+ * restore split in ABI 10): the sealed state has the right magic but a
+ * format version this call does not read (format 1 from OpenMLS 0.8.1, a
+ * format 2/3 blob given to the restore, a format 4 root given to the
+ * migration, or a newer build). The version is NOT authenticated: it may lead
  * only to a re-link/re-provision flow, never to weaker checks. Wrong key,
  * tampering, identity mismatch and corruption stay PM_CRYPTO_ERROR. */
 #define PM_CRYPTO_STATE_FORMAT_UNSUPPORTED (-6)
@@ -22,6 +24,15 @@
  * group. The ratchet has advanced: commit state, keep no content, exactly as
  * for PM_CRYPTO_SENDER_MISMATCH. */
 #define PM_CRYPTO_SENDER_REMOVED (-7)
+/* ABI 10, pm_crypto_device_seal_changes only: a sealed record would be over
+ * its cap (D70). Nothing was sealed; *out holds u8 kind || id (1 device,
+ * 2 group, 3 key package) and must be freed. Restore the committed state
+ * before going on. */
+#define PM_CRYPTO_RECORD_LIMIT (-8)
+/* ABI 10, pm_crypto_group_join only: the Welcome names no key package this
+ * device holds, or the one it names has expired (D74). Nothing was
+ * consumed; the device has to be added again. */
+#define PM_CRYPTO_WELCOME_KEY_PACKAGE_UNAVAILABLE (-9)
 
 typedef struct {
   const uint8_t *data;
@@ -66,10 +77,37 @@ const char *pm_crypto_protocol(void);
  */
 int32_t pm_crypto_device_create(PmByteSlice account_id, PmByteSlice device_id,
                                 PmCryptoHandle **out_handle);
-int32_t pm_crypto_device_restore(
-    PmByteSlice account_id, PmByteSlice device_id, PmByteSlice state_key,
-    uint64_t minimum_counter, PmByteSlice sealed_state,
-    PmCryptoHandle **out_handle, uint64_t *out_counter);
+/*
+ * ABI 10 (D70): the sealed state is a root (the singleton, at most 16 MiB +
+ * 4 KiB) and one record per owner (at most 32 MiB + 4 KiB each). A restore
+ * reads the root and every stored record in one transaction, then: begin
+ * (the root's generation, at least minimum_generation, must equal the
+ * stored counter), add each record, and finish. Any missing, extra, stale,
+ * foreign or altered record fails it. finish and abort spend the token;
+ * any later use is PM_CRYPTO_INVALID_ARGUMENT.
+ */
+int32_t pm_crypto_restore_begin(PmByteSlice account_id, PmByteSlice device_id,
+                                PmByteSlice state_key,
+                                uint64_t minimum_generation,
+                                PmByteSlice sealed_root, uint64_t *out_loader,
+                                uint64_t *out_generation);
+int32_t pm_crypto_restore_add(uint64_t loader, PmByteSlice sealed_record);
+int32_t pm_crypto_restore_finish(uint64_t loader, PmCryptoHandle **out_handle,
+                                 uint64_t *out_generation);
+int32_t pm_crypto_restore_abort(uint64_t loader);
+/*
+ * ABI 10: opens a format 2/3 blob (at most 32 MiB) stored at counter for the
+ * one-way migration. Inactive groups and unowned key pairs are dropped
+ * (*out_dropped). Every record is pending: seal_changes at counter + 1 and
+ * store the root and all records, deleting records stored beside the old
+ * blob, in one compare-and-swap transaction.
+ */
+int32_t pm_crypto_device_migrate_v3(PmByteSlice account_id,
+                                    PmByteSlice device_id,
+                                    PmByteSlice state_key, uint64_t counter,
+                                    PmByteSlice sealed_state,
+                                    PmCryptoHandle **out_handle,
+                                    uint64_t *out_dropped);
 void pm_crypto_device_destroy(PmCryptoHandle *handle);
 void pm_crypto_buffer_free(PmOwnedBuffer buffer);
 int32_t pm_crypto_device_signing_public_key(PmCryptoHandle *handle,
@@ -131,18 +169,35 @@ int32_t pm_crypto_device_create_enrollment_credential(
     PmCryptoHandle *handle, PmByteSlice challenge,
     PmOwnedBuffer *out_key_package, PmOwnedBuffer *out_signing_public_key,
     PmOwnedBuffer *out_challenge_signature);
-int32_t pm_crypto_device_seal_state(PmCryptoHandle *handle,
-                                    PmByteSlice state_key, uint64_t counter,
-                                    PmOwnedBuffer *out);
+/*
+ * ABI 10: seals what changed since the last seal or restore at generation,
+ * which must be the stored counter + 1. *out (at most 128 MiB) is
+ * u32 root_len || root || u32 count || count x (u8 kind || u16 id_len || id
+ * || u64 generation || u8 present || [u32 len || sealed if present]),
+ * big-endian; present 0 deletes the record. Store all of it with the root
+ * at generation in the same transaction as the change it records. After any
+ * failure, or a store that did not commit, restore the committed state.
+ */
+int32_t pm_crypto_device_seal_changes(PmCryptoHandle *handle,
+                                      PmByteSlice state_key,
+                                      uint64_t generation, PmOwnedBuffer *out);
+/* ABI 10: drops this device's state for a group the user deleted; never
+ * for a removal (already dropped). *out_deleted is 1 if one was stored. */
+int32_t pm_crypto_group_delete(PmCryptoHandle *handle, PmByteSlice group_id,
+                               uint8_t *out_deleted);
+/* ABI 10: drops key packages expired more than 24 hours before now. */
+int32_t pm_crypto_device_prune_key_packages(PmCryptoHandle *handle,
+                                            uint64_t now_unix_seconds,
+                                            uint64_t *out_removed);
 int32_t pm_crypto_group_create(PmCryptoHandle *handle, PmByteSlice group_id);
 /*
- * Joins the group carried by a Welcome for expected_group_id. A device
- * removed and later re-added still stores the old group under that id; the
- * Welcome replaces it only when the stored group is inactive (this device
- * applied its own removal). An active stored group is never replaced:
- * PM_CRYPTO_ERROR, with the group and the key package kept, until the
- * device has processed its removal commit. See docs/crypto.md, "Rejoining a
- * conversation".
+ * Joins the group carried by a Welcome for expected_group_id. Applying its
+ * own removal drops a device's group (ABI 10), so a re-add is a fresh join.
+ * An active stored group is never replaced: PM_CRYPTO_ERROR, with the group
+ * and the key package kept, until the device has processed its removal
+ * commit. A Welcome for a key package this device lacks or that expired is
+ * PM_CRYPTO_WELCOME_KEY_PACKAGE_UNAVAILABLE. See docs/crypto.md,
+ * "Rejoining a conversation".
  */
 int32_t pm_crypto_group_join(PmCryptoHandle *handle,
                              PmByteSlice expected_group_id,

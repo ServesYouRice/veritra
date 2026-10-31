@@ -2913,6 +2913,12 @@ abstract class AppLocalizations {
   /// **'Couldn\'t unlock this message'**
   String get chatMessageUndecryptable;
 
+  /// No description provided for @chatMessageWelcomeUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t join this chat. Ask a member to add you again.'**
+  String get chatMessageWelcomeUnavailable;
+
   /// No description provided for @chatReactionCount.
   ///
   /// In en, this message translates to:

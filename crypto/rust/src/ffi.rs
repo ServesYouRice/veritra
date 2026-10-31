@@ -1,12 +1,19 @@
 use crate::{
     attachment,
-    mls::{MemberAdd, MemberIdentity, MlsDevice, MlsError},
+    mls::{
+        ChangeSet, MemberAdd, MemberIdentity, MlsDevice, MlsError, RestoreLoader, SealError,
+        MAX_SEALED_RECORD_BYTES, MAX_SEALED_ROOT_BYTES,
+    },
     PmByteSlice,
 };
 use core::ptr;
 use std::{
+    collections::HashMap,
     panic::{catch_unwind, AssertUnwindSafe},
-    sync::{Arc, Mutex, Weak},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex, OnceLock, Weak,
+    },
 };
 
 mod k2;
@@ -27,10 +34,22 @@ pub const PM_CRYPTO_STATE_FORMAT_UNSUPPORTED: i32 = -6;
 /// longer a member of the group (ABI 9). The ratchet has already advanced;
 /// handle it like [`PM_CRYPTO_SENDER_MISMATCH`]: commit, show no content.
 pub const PM_CRYPTO_SENDER_REMOVED: i32 = -7;
+/// A sealed record would be over its cap (ABI 10, D70). Nothing was sealed
+/// and nothing is stored; the output buffer holds `u8 kind || id` so the
+/// app can name the chat. The caller restores the committed state.
+pub const PM_CRYPTO_RECORD_LIMIT: i32 = -8;
+/// The Welcome names no key package this device holds, or the one it names
+/// has expired (ABI 10, D74). Nothing was consumed: the device is not in
+/// the group and has to be added again.
+pub const PM_CRYPTO_WELCOME_KEY_PACKAGE_UNAVAILABLE: i32 = -9;
 
 const MAX_ID_BYTES: usize = 128;
 const STATE_KEY_BYTES: usize = 32;
-const MAX_STATE_BYTES: usize = 32 * 1024 * 1024;
+/// Largest format 2/3 blob the migration reads (the ABI-9 restore bound).
+const MAX_LEGACY_STATE_BYTES: usize = 32 * 1024 * 1024;
+/// Largest change set pm_crypto_device_seal_changes returns. A full set
+/// after migration holds every record, so it is above one record's cap.
+const MAX_CHANGE_SET_BYTES: usize = 128 * 1024 * 1024;
 const MAX_CHALLENGE_BYTES: usize = 4096;
 const MAX_KEY_PACKAGE_BYTES: usize = 48 * 1024;
 const MAX_HANDSHAKE_BYTES: usize = 4 * 1024 * 1024;
@@ -182,6 +201,22 @@ unsafe fn with_device<T>(
     operation(&guard)
 }
 
+unsafe fn with_device_mut<T>(
+    handle: *mut PmCryptoHandle,
+    operation: impl FnOnce(&mut MlsDevice) -> Result<T, i32>,
+) -> Result<T, i32> {
+    let handle = unsafe { handle.as_ref() }.ok_or(PM_CRYPTO_INVALID_ARGUMENT)?;
+    let mut guard = handle.device.lock().map_err(|_| PM_CRYPTO_ERROR)?;
+    operation(&mut guard)
+}
+
+fn new_handle(device: MlsDevice) -> *mut PmCryptoHandle {
+    Box::into_raw(Box::new(PmCryptoHandle {
+        device: Arc::new(Mutex::new(device)),
+        active_stream: Mutex::new(Weak::new()),
+    }))
+}
+
 /// Creates a device identity bound to the supplied reserved account/device IDs.
 ///
 /// # Safety
@@ -211,25 +246,51 @@ pub unsafe extern "C" fn pm_crypto_device_create(
     })
 }
 
-/// Restores a sealed device after checking its identity and rollback counter.
-/// Returns [`PM_CRYPTO_STATE_FORMAT_UNSUPPORTED`] for a sealed format this
-/// build does not read and [`PM_CRYPTO_ERROR`] for every other failure.
+/// Restores in progress, by token (ABI 10). A token is never reused; each
+/// entry leaves on finish or abort.
+fn loaders() -> &'static Mutex<HashMap<u64, RestoreLoader>> {
+    static LOADERS: OnceLock<Mutex<HashMap<u64, RestoreLoader>>> = OnceLock::new();
+    LOADERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+static NEXT_LOADER: AtomicU64 = AtomicU64::new(1);
+
+/// At most this many restores may be open at once, so a caller that never
+/// finishes cannot grow the registry without bound.
+const MAX_OPEN_LOADERS: usize = 16;
+
+fn restore_error(error: MlsError) -> i32 {
+    match error {
+        MlsError::UnsupportedFormat => PM_CRYPTO_STATE_FORMAT_UNSUPPORTED,
+        _ => PM_CRYPTO_ERROR,
+    }
+}
+
+/// Starts a format-4 restore (D70): opens and checks the sealed root for
+/// this account and device under `state_key`. Its generation must be at
+/// least `minimum_generation`; it is written to `out_generation`, and the
+/// caller must require it to equal its stored counter. Add every stored
+/// record with [`pm_crypto_restore_add`], then call
+/// [`pm_crypto_restore_finish`] or [`pm_crypto_restore_abort`]. Returns
+/// [`PM_CRYPTO_STATE_FORMAT_UNSUPPORTED`] for a root in a format this build
+/// does not read (a format 2/3 blob is migrated with
+/// [`pm_crypto_device_migrate_v3`] instead).
 ///
 /// # Safety
-/// All slices must remain readable for the call. Output pointers must be valid
-/// writable storage. The returned handle must be destroyed exactly once.
+/// All slices must remain readable for the call. Output pointers must be
+/// valid writable storage.
 #[no_mangle]
-pub unsafe extern "C" fn pm_crypto_device_restore(
+pub unsafe extern "C" fn pm_crypto_restore_begin(
     account_id: PmByteSlice,
     device_id: PmByteSlice,
     state_key: PmByteSlice,
-    minimum_counter: u64,
-    sealed_state: PmByteSlice,
-    out_handle: *mut *mut PmCryptoHandle,
-    out_counter: *mut u64,
+    minimum_generation: u64,
+    sealed_root: PmByteSlice,
+    out_loader: *mut u64,
+    out_generation: *mut u64,
 ) -> i32 {
     ffi_call(|| {
-        if out_handle.is_null() || out_counter.is_null() {
+        if out_loader.is_null() || out_generation.is_null() {
             return Err(PM_CRYPTO_INVALID_ARGUMENT);
         }
         let account_id = unsafe { borrowed(account_id, MAX_ID_BYTES)? };
@@ -238,22 +299,130 @@ pub unsafe extern "C" fn pm_crypto_device_restore(
         if state_key.len() != STATE_KEY_BYTES {
             return Err(PM_CRYPTO_INVALID_ARGUMENT);
         }
-        let sealed = unsafe { borrowed(sealed_state, MAX_STATE_BYTES)? };
-        let (device, counter) =
-            MlsDevice::restore_state(account_id, device_id, state_key, minimum_counter, sealed)
-                .map_err(|error| match error {
-                    MlsError::UnsupportedFormat => PM_CRYPTO_STATE_FORMAT_UNSUPPORTED,
-                    _ => PM_CRYPTO_ERROR,
-                })?;
-        let handle = Box::into_raw(Box::new(PmCryptoHandle {
-            device: Arc::new(Mutex::new(device)),
-            active_stream: Mutex::new(Weak::new()),
-        }));
-        // SAFETY: Both outputs were checked and are written only after a full
-        // restore succeeds.
+        let root = unsafe { borrowed(sealed_root, MAX_SEALED_ROOT_BYTES)? };
+        let loader =
+            RestoreLoader::begin(account_id, device_id, state_key, minimum_generation, root)
+                .map_err(restore_error)?;
+        let generation = loader.generation();
+        let mut open = loaders().lock().map_err(|_| PM_CRYPTO_ERROR)?;
+        if open.len() >= MAX_OPEN_LOADERS {
+            return Err(PM_CRYPTO_ERROR);
+        }
+        let token = NEXT_LOADER.fetch_add(1, Ordering::Relaxed);
+        open.insert(token, loader);
+        // SAFETY: Both outputs were checked above.
         unsafe {
-            out_counter.write(counter);
-            out_handle.write(handle);
+            out_loader.write(token);
+            out_generation.write(generation);
+        }
+        Ok(())
+    })
+}
+
+/// Adds one stored record to an open restore. It must be listed in the
+/// root, not added before, and match its listed generation and digest.
+/// Any failure poisons the restore: finish then fails too.
+///
+/// # Safety
+/// `sealed_record` must remain readable for the call.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_restore_add(loader: u64, sealed_record: PmByteSlice) -> i32 {
+    ffi_call(|| {
+        let sealed = unsafe { borrowed(sealed_record, MAX_SEALED_RECORD_BYTES)? };
+        let mut open = loaders().lock().map_err(|_| PM_CRYPTO_ERROR)?;
+        let loader = open.get_mut(&loader).ok_or(PM_CRYPTO_INVALID_ARGUMENT)?;
+        loader.add(sealed).map_err(|_| PM_CRYPTO_ERROR)
+    })
+}
+
+/// Ends an open restore. Succeeds only if every record the root lists was
+/// added and checked; then writes a new device handle and the generation.
+/// The token is spent either way.
+///
+/// # Safety
+/// Output pointers must be valid writable storage. The returned handle
+/// must be destroyed exactly once.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_restore_finish(
+    loader: u64,
+    out_handle: *mut *mut PmCryptoHandle,
+    out_generation: *mut u64,
+) -> i32 {
+    ffi_call(|| {
+        let loader = loaders()
+            .lock()
+            .map_err(|_| PM_CRYPTO_ERROR)?
+            .remove(&loader)
+            .ok_or(PM_CRYPTO_INVALID_ARGUMENT)?;
+        if out_handle.is_null() || out_generation.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let (device, generation) = loader.finish().map_err(|_| PM_CRYPTO_ERROR)?;
+        // SAFETY: Both outputs were checked and are written only after the
+        // whole state was restored.
+        unsafe {
+            out_generation.write(generation);
+            out_handle.write(new_handle(device));
+        }
+        Ok(())
+    })
+}
+
+/// Drops an open restore without a device. Returns
+/// [`PM_CRYPTO_INVALID_ARGUMENT`] for a token that is not open.
+#[no_mangle]
+pub extern "C" fn pm_crypto_restore_abort(loader: u64) -> i32 {
+    ffi_call(|| {
+        let removed = loaders()
+            .lock()
+            .map_err(|_| PM_CRYPTO_ERROR)?
+            .remove(&loader);
+        removed.map(drop).ok_or(PM_CRYPTO_INVALID_ARGUMENT)
+    })
+}
+
+/// Opens a format 2 or 3 blob for the one-way migration to format 4 (D70
+/// section 5). Runs every check of the old restore and requires its
+/// counter to equal `counter`. Inactive groups and key pairs no group owns
+/// are dropped; their number is written to `out_dropped`. Every record of
+/// the returned device is pending: the caller seals them with
+/// [`pm_crypto_device_seal_changes`] at `counter + 1` and stores the root
+/// and all records, deleting any records stored beside the old blob, in
+/// one transaction. Returns [`PM_CRYPTO_STATE_FORMAT_UNSUPPORTED`] for any
+/// other format.
+///
+/// # Safety
+/// All slices must remain readable for the call. Output pointers must be
+/// valid writable storage. The returned handle must be destroyed exactly
+/// once.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_device_migrate_v3(
+    account_id: PmByteSlice,
+    device_id: PmByteSlice,
+    state_key: PmByteSlice,
+    counter: u64,
+    sealed_state: PmByteSlice,
+    out_handle: *mut *mut PmCryptoHandle,
+    out_dropped: *mut u64,
+) -> i32 {
+    ffi_call(|| {
+        if out_handle.is_null() || out_dropped.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let account_id = unsafe { borrowed(account_id, MAX_ID_BYTES)? };
+        let device_id = unsafe { borrowed(device_id, MAX_ID_BYTES)? };
+        let state_key = unsafe { borrowed(state_key, STATE_KEY_BYTES)? };
+        if state_key.len() != STATE_KEY_BYTES || counter == 0 {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let sealed = unsafe { borrowed(sealed_state, MAX_LEGACY_STATE_BYTES)? };
+        let (device, dropped) =
+            MlsDevice::migrate_v3(account_id, device_id, state_key, counter, sealed)
+                .map_err(restore_error)?;
+        // SAFETY: Both outputs were checked above.
+        unsafe {
+            out_dropped.write(dropped as u64);
+            out_handle.write(new_handle(device));
         }
         Ok(())
     })
@@ -439,28 +608,155 @@ pub unsafe extern "C" fn pm_crypto_device_create_enrollment_credential(
     })
 }
 
-/// Seals all provider state under the platform-unwrapped state key.
+/// Frames a change set: `u32 root_len || root || u32 count`, then per
+/// change `u8 kind || u16 id_len || id || u64 generation || u8 present`
+/// and, when present, `u32 len || sealed`. Big-endian throughout.
+fn encode_change_set(set: ChangeSet) -> Result<Vec<u8>, i32> {
+    let mut size = 8usize.saturating_add(set.root.len());
+    for change in &set.changes {
+        size = size
+            .saturating_add(16 + change.id.len())
+            .saturating_add(change.sealed.as_ref().map_or(0, Vec::len));
+    }
+    if size > MAX_CHANGE_SET_BYTES
+        || set
+            .changes
+            .iter()
+            .any(|change| change.id.len() > usize::from(u16::MAX))
+    {
+        wipe_change_set(set);
+        return Err(PM_CRYPTO_ERROR);
+    }
+    let mut out = Vec::with_capacity(size);
+    out.extend_from_slice(&(set.root.len() as u32).to_be_bytes());
+    out.extend_from_slice(&set.root);
+    out.extend_from_slice(&(set.changes.len() as u32).to_be_bytes());
+    for change in &set.changes {
+        out.push(change.kind);
+        out.extend_from_slice(&(change.id.len() as u16).to_be_bytes());
+        out.extend_from_slice(&change.id);
+        out.extend_from_slice(&change.generation.to_be_bytes());
+        match &change.sealed {
+            Some(sealed) => {
+                out.push(1);
+                out.extend_from_slice(&(sealed.len() as u32).to_be_bytes());
+                out.extend_from_slice(sealed);
+            }
+            None => out.push(0),
+        }
+    }
+    wipe_change_set(set);
+    Ok(out)
+}
+
+fn wipe_change_set(set: ChangeSet) {
+    wipe(set.root);
+    for change in set.changes {
+        if let Some(sealed) = change.sealed {
+            wipe(sealed);
+        }
+    }
+}
+
+/// Seals what changed since the last seal or restore (ABI 10, D70) at
+/// `generation`, which must be the stored counter plus one. The output is
+/// the root and every changed record ([`encode_change_set`]); the caller
+/// stores all of it, with the root at `generation`, in one transaction.
+/// Returns [`PM_CRYPTO_RECORD_LIMIT`] with `u8 kind || id` in `out` when a
+/// record would be over its cap. After any failure, and after a store that
+/// did not commit, the caller restores the committed state before going on.
 ///
 /// # Safety
 /// `handle` must be live, `state_key` readable, and `out` writable.
 #[no_mangle]
-pub unsafe extern "C" fn pm_crypto_device_seal_state(
+pub unsafe extern "C" fn pm_crypto_device_seal_changes(
     handle: *mut PmCryptoHandle,
     state_key: PmByteSlice,
-    counter: u64,
+    generation: u64,
     out: *mut PmOwnedBuffer,
 ) -> i32 {
     ffi_call(|| {
         let key = unsafe { borrowed(state_key, STATE_KEY_BYTES)? };
-        if key.len() != STATE_KEY_BYTES || counter == 0 {
+        if key.len() != STATE_KEY_BYTES || generation == 0 || out.is_null() {
             return Err(PM_CRYPTO_INVALID_ARGUMENT);
         }
         let sealed = unsafe {
-            with_device(handle, |device| {
-                device.seal_state(key, counter).map_err(|_| PM_CRYPTO_ERROR)
+            with_device_mut(handle, |device| {
+                match device.seal_changes(key, generation) {
+                    Ok(set) => encode_change_set(set).map(Ok),
+                    Err(SealError::RecordLimit { kind, id }) => {
+                        let mut named = vec![kind];
+                        named.extend_from_slice(&id);
+                        Ok(Err(named))
+                    }
+                    Err(SealError::Mls(_)) => Err(PM_CRYPTO_ERROR),
+                }
             })?
         };
-        unsafe { output(out, sealed) }
+        match sealed {
+            Ok(bytes) => unsafe { output(out, bytes) },
+            Err(named) => {
+                unsafe { output(out, named)? };
+                Err(PM_CRYPTO_RECORD_LIMIT)
+            }
+        }
+    })
+}
+
+/// Deletes this device's state for `group_id` (D70): the user deleted the
+/// chat. Writes 1 to `out_deleted` if a group was stored, else 0. The next
+/// seal drops its record. Only a user action may call this: a group left
+/// by a removal is already gone.
+///
+/// # Safety
+/// `handle` must be live, `group_id` readable, and `out_deleted` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_group_delete(
+    handle: *mut PmCryptoHandle,
+    group_id: PmByteSlice,
+    out_deleted: *mut u8,
+) -> i32 {
+    ffi_call(|| {
+        if out_deleted.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let group_id = unsafe { borrowed(group_id, MAX_ID_BYTES)? };
+        let deleted = unsafe {
+            with_device(handle, |device| {
+                device.delete_group(group_id).map_err(|_| PM_CRYPTO_ERROR)
+            })?
+        };
+        // SAFETY: out_deleted was checked above.
+        unsafe { out_deleted.write(u8::from(deleted)) };
+        Ok(())
+    })
+}
+
+/// Drops every key package whose `not_after` passed more than 24 hours
+/// before `now_unix_seconds` (D70). Writes how many went to `out_removed`.
+///
+/// # Safety
+/// `handle` must be live and `out_removed` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_device_prune_key_packages(
+    handle: *mut PmCryptoHandle,
+    now_unix_seconds: u64,
+    out_removed: *mut u64,
+) -> i32 {
+    ffi_call(|| {
+        if out_removed.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let removed = unsafe {
+            with_device(handle, |device| {
+                device
+                    .prune_key_packages(now_unix_seconds)
+                    .map_err(|_| PM_CRYPTO_ERROR)
+            })?
+        };
+        // SAFETY: out_removed was checked above.
+        unsafe { out_removed.write(removed as u64) };
+        Ok(())
     })
 }
 
@@ -507,7 +803,12 @@ pub unsafe extern "C" fn pm_crypto_group_join(
                 device
                     .join_group(expected_group_id, welcome)
                     .map(|_| ())
-                    .map_err(|_| PM_CRYPTO_ERROR)
+                    .map_err(|error| match error {
+                        MlsError::KeyPackageUnavailable => {
+                            PM_CRYPTO_WELCOME_KEY_PACKAGE_UNAVAILABLE
+                        }
+                        _ => PM_CRYPTO_ERROR,
+                    })
             })
         }
     })
@@ -1062,6 +1363,10 @@ pub unsafe extern "C" fn pm_crypto_attachment_decrypt_chunk(
 }
 
 #[cfg(test)]
+#[path = "ffi/records_tests.rs"]
+mod records_tests;
+
+#[cfg(test)]
 mod tests {
     #[test]
     fn membership_change_lists_are_bounded_and_exact() {
@@ -1380,31 +1685,12 @@ mod tests {
         assert!(unsafe { take(package) }.len() >= crate::MIN_KEY_PACKAGE_BYTES);
 
         let key = [9_u8; STATE_KEY_BYTES];
-        let mut sealed = PmOwnedBuffer::default();
-        assert_eq!(
-            unsafe { pm_crypto_device_seal_state(handle, slice(&key), 7, &mut sealed) },
-            PM_CRYPTO_OK
-        );
-        let sealed = unsafe { take(sealed) };
+        let table = super::records_tests::seal(handle, &key, 1).unwrap();
         unsafe { pm_crypto_device_destroy(handle) };
 
-        let mut restored = ptr::null_mut();
-        let mut counter = 0;
-        assert_eq!(
-            unsafe {
-                pm_crypto_device_restore(
-                    slice(b"acct_a"),
-                    slice(b"dev_a"),
-                    slice(&key),
-                    7,
-                    slice(&sealed),
-                    &mut restored,
-                    &mut counter,
-                )
-            },
-            PM_CRYPTO_OK
-        );
-        assert_eq!(counter, 7);
+        let (restored, counter) =
+            super::records_tests::restore(b"acct_a", b"dev_a", &key, 1, &table).unwrap();
+        assert_eq!(counter, 1);
         unsafe { pm_crypto_device_destroy(restored) };
     }
 
@@ -1416,36 +1702,24 @@ mod tests {
             PM_CRYPTO_OK
         );
         let key = [9_u8; STATE_KEY_BYTES];
-        let mut sealed = PmOwnedBuffer::default();
-        assert_eq!(
-            unsafe { pm_crypto_device_seal_state(handle, slice(&key), 4, &mut sealed) },
-            PM_CRYPTO_OK
-        );
-        let sealed = unsafe { take(sealed) };
+        let table = super::records_tests::seal(handle, &key, 1).unwrap();
         unsafe { pm_crypto_device_destroy(handle) };
-        let restore = |blob: &[u8]| {
-            let mut restored = ptr::null_mut();
-            let mut counter = 0;
-            let code = unsafe {
-                pm_crypto_device_restore(
-                    slice(b"acct_a"),
-                    slice(b"dev_a"),
-                    slice(&key),
-                    4,
-                    slice(blob),
-                    &mut restored,
-                    &mut counter,
-                )
-            };
-            assert!(code != PM_CRYPTO_OK || !restored.is_null());
-            unsafe { pm_crypto_device_destroy(restored) };
-            code
+        let restore = |root: &[u8]| {
+            let mut table = table.clone();
+            table.root = root.to_vec();
+            match super::records_tests::restore(b"acct_a", b"dev_a", &key, 1, &table) {
+                Ok((restored, _)) => {
+                    unsafe { pm_crypto_device_destroy(restored) };
+                    PM_CRYPTO_OK
+                }
+                Err(code) => code,
+            }
         };
-        assert_eq!(restore(&sealed), PM_CRYPTO_OK);
-        let mut old_format = sealed.clone();
+        assert_eq!(restore(&table.root), PM_CRYPTO_OK);
+        let mut old_format = table.root.clone();
         old_format[8..10].copy_from_slice(&1u16.to_be_bytes());
         assert_eq!(restore(&old_format), PM_CRYPTO_STATE_FORMAT_UNSUPPORTED);
-        let mut tampered = sealed.clone();
+        let mut tampered = table.root.clone();
         *tampered.last_mut().unwrap() ^= 1;
         assert_eq!(restore(&tampered), PM_CRYPTO_ERROR);
     }

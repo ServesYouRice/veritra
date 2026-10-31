@@ -397,42 +397,13 @@ mod tests {
                 .unwrap()
         }
         fn restart(&mut self) {
-            let mut out = PmOwnedBuffer::default();
-            assert_eq!(
-                unsafe { pm_crypto_device_seal_state(self.0, slice(&[7; 32]), 11, &mut out) },
-                0
-            );
-            let state = take(out);
-            let mut handle = ptr::null_mut();
-            let mut counter = 0;
-            let device_id = unsafe { &*self.0 }
+            let restored = unsafe { &*self.0 }
                 .device
                 .lock()
                 .unwrap()
-                .history_transfer_context(&TransferId::new(b"https://example.test", b"link"), 100)
-                .unwrap();
-            let local_id = if self.key() == device_id.source_signing_key {
-                b"source".as_slice()
-            } else {
-                b"new".as_slice()
-            };
-            assert_eq!(
-                unsafe {
-                    pm_crypto_device_restore(
-                        slice(b"account"),
-                        slice(local_id),
-                        slice(&[7; 32]),
-                        11,
-                        slice(&state),
-                        &mut handle,
-                        &mut counter,
-                    )
-                },
-                0
-            );
-            assert_eq!(counter, 11);
+                .reload_for_test(&[7; 32]);
             unsafe { pm_crypto_device_destroy(self.0) };
-            self.0 = handle;
+            self.0 = new_handle(restored);
         }
         fn call(&self, op: u16, bytes: &[u8]) -> Result<Vec<u8>, i32> {
             let mut out = PmOwnedBuffer::default();

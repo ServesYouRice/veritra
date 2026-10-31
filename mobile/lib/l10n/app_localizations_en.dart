@@ -1750,6 +1750,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatMessageUndecryptable => 'Couldn\'t unlock this message';
 
   @override
+  String get chatMessageWelcomeUnavailable =>
+      'Couldn\'t join this chat. Ask a member to add you again.';
+
+  @override
   String chatReactionCount(String reaction, int count) {
     final intl.NumberFormat countNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);

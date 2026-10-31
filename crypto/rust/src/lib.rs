@@ -20,7 +20,7 @@ pub mod mls;
 pub use ffi::{PmCryptoHandle, PmOwnedBuffer};
 
 pub const PM_CRYPTO_UNAVAILABLE: i32 = -1;
-pub const PM_CRYPTO_ABI_VERSION: u32 = 9;
+pub const PM_CRYPTO_ABI_VERSION: u32 = 10;
 
 #[cfg(test)]
 mod test_memory;

@@ -116,22 +116,28 @@ void main() {
         throwsA(isA<NativeCryptoException>()));
 
     final key = List<int>.filled(32, 9);
-    final sealed = alice.sealState(key, 7);
+    final sealed = alice.sealChanges(key, 1);
+    final records = [
+      for (final change in sealed.changes)
+        if (change.sealed != null) change.sealed!,
+    ];
     alice.close();
     alice.close();
-    final restored =
-        bindings.restoreDevice('acct_alice', 'dev_alice', key, 7, sealed);
-    expect(restored.counter, 7);
-    final oldFormat = List<int>.of(sealed)..setRange(8, 10, const [0, 1]);
+    final restored = bindings.restoreRecords(
+        'acct_alice', 'dev_alice', key, 1, sealed.root, records);
+    expect(restored.generation, 1);
+    final oldFormat = List<int>.of(sealed.root)
+      ..setRange(8, 10, const [0, 1]);
     expect(
-        () => bindings.restoreDevice(
-            'acct_alice', 'dev_alice', key, 7, oldFormat),
+        () => bindings.restoreRecords(
+            'acct_alice', 'dev_alice', key, 1, oldFormat, records),
         throwsA(isA<NativeCryptoException>().having((error) => error.kind,
             'kind', NativeCryptoError.stateFormatUnsupported)));
-    final tampered = List<int>.of(sealed)..[sealed.length - 1] ^= 1;
+    final tampered = List<int>.of(sealed.root)
+      ..[sealed.root.length - 1] ^= 1;
     expect(
-        () =>
-            bindings.restoreDevice('acct_alice', 'dev_alice', key, 7, tampered),
+        () => bindings.restoreRecords(
+            'acct_alice', 'dev_alice', key, 1, tampered, records),
         throwsA(isA<NativeCryptoException>().having(
             (error) => error.kind, 'kind', NativeCryptoError.operationFailed)));
     expect(() => restored.device.encrypt('conv_test', const []),
