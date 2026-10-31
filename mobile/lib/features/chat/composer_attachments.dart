@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../core/app_state.dart';
 import '../../core/attachments.dart';
+import '../../core/owner_only.dart';
 import '../../l10n/l10n.dart';
 import '../../ui/format.dart';
 import '../../ui/tokens.dart';
@@ -245,10 +246,15 @@ Future<Directory> _pastedImagesDirectory() async {
 
 /// Writes clipboard image bytes to a file in this profile's folder under the
 /// per-user application cache, for the tray. The folder is not encrypted at
-/// rest; it holds a pasted image only until it is sent or removed.
+/// rest; it holds a pasted image only until it is sent or removed. On Linux
+/// and macOS the folders are set to owner-only (0700) before the image is
+/// written, also when an older version created them with the umask; if that
+/// fails, nothing is written.
 Future<XFile> writePastedImage(Uint8List bytes) async {
   final folder = await _pastedImagesDirectory();
   await folder.create(recursive: true);
+  restrictDirectoryToOwner(folder.parent);
+  restrictDirectoryToOwner(folder);
   final random = Random.secure().nextInt(1 << 32).toRadixString(16);
   final name = pastedImageName(DateTime.now());
   final file = File('${folder.path}${Platform.pathSeparator}$random-$name');
