@@ -101,9 +101,13 @@ build_android_target() {
     echo "Android linker missing for $target" >&2
     exit 1
   fi
+  # Pin the output directory over CARGO_TARGET_DIR and build.target-dir, and
+  # remove the old binary so a build that writes nothing cannot package it.
+  rm -f "$CRATE/target/$target/release/libprivate_messenger_crypto.so"
   env "CARGO_TARGET_${env_name}_LINKER=$linker" \
     "CC_${target}=$linker" \
-    cargo build --manifest-path "$CRATE/Cargo.toml" --locked --release --target "$target"
+    cargo build --manifest-path "$CRATE/Cargo.toml" --locked --release --target "$target" \
+      --target-dir "$CRATE/target"
   mkdir -p "$output/$abi"
   cp "$CRATE/target/$target/release/libprivate_messenger_crypto.so" "$output/$abi/"
 }
@@ -113,9 +117,11 @@ build_ios() {
   staging="$CRATE/target/veritra-ios-simulator"
   rm -rf "$output" "$staging"
   mkdir -p "$staging"
-  cargo build --manifest-path "$CRATE/Cargo.toml" --locked --release --target aarch64-apple-ios
-  cargo build --manifest-path "$CRATE/Cargo.toml" --locked --release --target aarch64-apple-ios-sim
-  cargo build --manifest-path "$CRATE/Cargo.toml" --locked --release --target x86_64-apple-ios
+  for target in aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios; do
+    rm -f "$CRATE/target/$target/release/libprivate_messenger_crypto.a"
+    cargo build --manifest-path "$CRATE/Cargo.toml" --locked --release --target "$target" \
+      --target-dir "$CRATE/target"
+  done
   lipo -create \
     "$CRATE/target/aarch64-apple-ios-sim/release/libprivate_messenger_crypto.a" \
     "$CRATE/target/x86_64-apple-ios/release/libprivate_messenger_crypto.a" \

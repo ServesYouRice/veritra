@@ -83,7 +83,10 @@ case "$PLATFORM" in
       exit 2
     fi
     capture_provenance
-    (cd "$CRATE" && cargo build --locked --release)
+    # Pin the output directory over CARGO_TARGET_DIR and build.target-dir, and
+    # remove the old binary so a build that writes nothing cannot package it.
+    rm -f "$CRATE/target/release/libprivate_messenger_crypto.so"
+    (cd "$CRATE" && cargo build --locked --release --target-dir "$CRATE/target")
     output="$ROOT/mobile/linux/crypto"
     mkdir -p "$output"
     cp "$CRATE/target/release/libprivate_messenger_crypto.so" "$output/"
@@ -99,7 +102,9 @@ case "$PLATFORM" in
     export MACOSX_DEPLOYMENT_TARGET=10.15
     capture_provenance
     for target in aarch64-apple-darwin x86_64-apple-darwin; do
-      cargo build --manifest-path "$CRATE/Cargo.toml" --locked --release --target "$target"
+      rm -f "$CRATE/target/$target/release/libprivate_messenger_crypto.a"
+      cargo build --manifest-path "$CRATE/Cargo.toml" --locked --release --target "$target" \
+        --target-dir "$CRATE/target"
     done
     output="$ROOT/mobile/macos/crypto"
     rm -rf "$output"

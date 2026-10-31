@@ -342,6 +342,76 @@ def test_toolchain_resolves_inside_the_repository(scratch: Scratch) -> None:
             assert Path(cwd).resolve().is_relative_to(scratch.root.resolve()), (platform, call)
 
 
+LIBRARY_SO = "libprivate_messenger_crypto.so"
+LIBRARY_A = "libprivate_messenger_crypto.a"
+# (script, platform, extra environment, artifacts under <crate>/target that the
+# script collects, packaged outputs relative to the root)
+ARTIFACT_CASES = (
+    ("build-desktop-crypto.sh", "linux", {}, (f"release/{LIBRARY_SO}",), (f"mobile/linux/crypto/{LIBRARY_SO}",)),
+    (
+        "build-desktop-crypto.sh",
+        "macos",
+        {"UNAME_STUB": "Darwin"},
+        (f"aarch64-apple-darwin/release/{LIBRARY_A}", f"x86_64-apple-darwin/release/{LIBRARY_A}"),
+        (f"mobile/macos/crypto/{LIBRARY_A}",),
+    ),
+    (
+        "build-mobile-crypto.sh",
+        "android",
+        {},
+        tuple(
+            f"{target}/release/{LIBRARY_SO}"
+            for target in ("aarch64-linux-android", "armv7-linux-androideabi", "x86_64-linux-android")
+        ),
+        tuple(f"mobile/android/app/src/main/jniLibs/{abi}/{LIBRARY_SO}" for abi in ("arm64-v8a", "armeabi-v7a", "x86_64")),
+    ),
+    (
+        "build-mobile-crypto.sh",
+        "ios",
+        {},
+        tuple(f"{target}/release/{LIBRARY_A}" for target in ("aarch64-apple-ios", "aarch64-apple-ios-sim", "x86_64-apple-ios")),
+        tuple(f"mobile/ios/Frameworks/VeritraCrypto.xcframework/library-{index}.a" for index in (0, 1)),
+    ),
+)
+
+
+def seed_stale_artifacts(scratch: Scratch, artifacts: tuple[str, ...]) -> None:
+    for artifact in artifacts:
+        path = scratch.crate / "target" / artifact
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("stale\n", encoding="utf-8")
+
+
+@with_scratch
+def test_artifacts_come_from_the_directory_cargo_built(scratch: Scratch) -> None:
+    # Cargo honours CARGO_TARGET_DIR; the scripts must still package what this
+    # build produced, never an older binary left in <crate>/target.
+    alternate = scratch.temp / "alternate-target"
+    for script, platform, env, artifacts, outputs in ARTIFACT_CASES:
+        seed_stale_artifacts(scratch, artifacts)
+        result = scratch.run(script, platform, {**env, "CARGO_TARGET_DIR": str(alternate)})
+        assert result.returncode == 0, (platform, result.stderr)
+        for output in outputs:
+            content = (scratch.root / output).read_text(encoding="utf-8")
+            assert "fresh" in content and "stale" not in content, (platform, output, content)
+        builds = [line for line in scratch.log_lines("cargo") if " build " in line]
+        assert builds, platform
+        for line in builds:
+            assert f"--target-dir {scratch.crate}/target" in line, (platform, line)
+
+
+@with_scratch
+def test_missing_fresh_artifact_fails(scratch: Scratch) -> None:
+    # A build that leaves no fresh artifact must fail, not package a stale one.
+    for script, platform, env, artifacts, outputs in ARTIFACT_CASES:
+        seed_stale_artifacts(scratch, artifacts)
+        result = scratch.run(script, platform, {**env, "CARGO_STUB_NO_ARTIFACT": "1"})
+        assert result.returncode != 0, (platform, result.stdout)
+        for output in outputs:
+            path = scratch.root / output
+            assert not path.exists() or "stale" not in path.read_text(encoding="utf-8"), (platform, output)
+
+
 TESTS = (
     test_clean_build_records_checked_provenance,
     test_dirty_crypto_sources_are_recorded,
@@ -349,6 +419,8 @@ TESTS = (
     test_lock_hash_failure_aborts,
     test_rustc_failure_aborts,
     test_toolchain_resolves_inside_the_repository,
+    test_artifacts_come_from_the_directory_cargo_built,
+    test_missing_fresh_artifact_fails,
 )
 
 

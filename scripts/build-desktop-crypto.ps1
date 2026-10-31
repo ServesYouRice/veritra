@@ -8,6 +8,8 @@ $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $Crate = Join-Path $Root "crypto\rust"
 $Destination = Join-Path $Root "mobile\windows\crypto"
 $Metadata = Join-Path $Destination "metadata"
+$TargetDir = Join-Path $Crate "target"
+$Dll = Join-Path $TargetDir "release\private_messenger_crypto.dll"
 
 # Read what is about to be built before cargo runs. $ErrorActionPreference
 # does not cover native exit codes, so each git and rustc call is checked, and
@@ -31,14 +33,18 @@ try {
   if ($Rustc.Count -eq 0 -or "$($Rustc[0])" -cnotmatch '^rustc ' -or -not ($Rustc -cmatch '^release: [0-9]')) {
     throw "crypto provenance: unexpected rustc -Vv output"
   }
-  cargo build --locked --release
+  # Pin the output directory over CARGO_TARGET_DIR and build.target-dir, and
+  # remove the old DLL so a build that writes nothing cannot package it. A
+  # failed removal throws ($ErrorActionPreference is Stop).
+  if (Test-Path -LiteralPath $Dll) { Remove-Item -LiteralPath $Dll -Force }
+  cargo build --locked --release --target-dir $TargetDir
   if ($LASTEXITCODE -ne 0) { throw "crypto library build failed" }
 } finally {
   Pop-Location
 }
 
 New-Item -ItemType Directory -Force -Path $Metadata | Out-Null
-Copy-Item (Join-Path $Crate "target\release\private_messenger_crypto.dll") $Destination -Force
+Copy-Item -LiteralPath $Dll $Destination -Force
 
 @("source_revision=$Revision", "cargo_lock_sha256=$LockHash", "source_tree_dirty=$TreeDirty") + $Rustc |
   Set-Content -Path (Join-Path $Metadata "build-info.txt")
