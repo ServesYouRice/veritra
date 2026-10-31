@@ -119,8 +119,10 @@ func (a *API) createOwner(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_identity")
 		return
 	}
-	passwordHash, err := auth.HashPasswordContext(r.Context(), auth.Anonymous, req.Password)
-	if err != nil {
+	// The policy check is cheap; the hash itself waits until the enrollment
+	// proof holds, so an anonymous caller without one cannot spend a
+	// password-hashing slot.
+	if err := auth.ValidatePassword(req.Password); err != nil {
 		writePasswordHashFailure(w, err)
 		return
 	}
@@ -145,6 +147,11 @@ func (a *API) createOwner(w http.ResponseWriter, r *http.Request) {
 	)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid_enrollment")
+		return
+	}
+	passwordHash, err := hashNewPassword(r.Context(), auth.Anonymous, req.Password)
+	if err != nil {
+		writePasswordHashFailure(w, err)
 		return
 	}
 	token, tokenHash, err := auth.NewToken()
@@ -184,6 +191,10 @@ func (a *API) createOwner(w http.ResponseWriter, r *http.Request) {
 	a.recordAuditEvent(r.Context(), &created.Account.ID, "owner.created", map[string]string{"device_id": created.Device.ID})
 	writeJSON(w, http.StatusCreated, map[string]interface{}{"account": created.Account, "device": created.Device, "token": token, "device_secret": deviceSecret})
 }
+
+// hashNewPassword hashes the password of a new account. Tests replace it to
+// see whether an enrollment request reached the hasher.
+var hashNewPassword = auth.HashPasswordContext
 
 func (a *API) setupAuthorized(r *http.Request) bool {
 	if a.SetupToken != "" {
@@ -352,8 +363,10 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_identity")
 		return
 	}
-	passwordHash, err := auth.HashPasswordContext(r.Context(), auth.Anonymous, req.Password)
-	if err != nil {
+	// The policy check is cheap; the hash itself waits until the enrollment
+	// proof holds, so an anonymous caller without one cannot spend a
+	// password-hashing slot.
+	if err := auth.ValidatePassword(req.Password); err != nil {
 		writePasswordHashFailure(w, err)
 		return
 	}
@@ -378,6 +391,11 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 	)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid_enrollment")
+		return
+	}
+	passwordHash, err := hashNewPassword(r.Context(), auth.Anonymous, req.Password)
+	if err != nil {
+		writePasswordHashFailure(w, err)
 		return
 	}
 	token, tokenHash, err := auth.NewToken()
