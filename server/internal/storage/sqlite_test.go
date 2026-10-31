@@ -26,13 +26,22 @@ func TestInviteDeviceAndEncryptedEnvelopeFlow(t *testing.T) {
 	ctx := context.Background()
 	store, cfg := newTestStore(t, ctx)
 	defer store.Close()
+	// The property checked at the end: raw secrets reach storage only as
+	// hashes. The sentinel is the member's raw password, generated before any
+	// write, so the store is handed it only through its hash; control is
+	// stored on purpose, to show the scan can find data in the files.
+	sentinel := runtimeSentinel(t)
+	control := runtimeSentinel(t)
 
 	owner := createTestOwner(t, ctx, store)
 	invite, err := store.CreateInvite(ctx, owner.Account.ID, 1, nil)
 	if err != nil {
 		t.Fatalf("create invite: %v", err)
 	}
-	memberHash, _ := auth.HashPassword("member-password-123")
+	memberHash, err := auth.HashPassword(sentinel)
+	if err != nil {
+		t.Fatalf("hash member password: %v", err)
+	}
 	memberReservation, err := store.ReserveRegistrationEnrollment(ctx, invite.Code)
 	if err != nil {
 		t.Fatalf("reserve member enrollment: %v", err)
@@ -181,14 +190,40 @@ func TestInviteDeviceAndEncryptedEnvelopeFlow(t *testing.T) {
 		t.Fatalf("versioned event omitted immutable envelope: %s", eventPayload)
 	}
 
-	plaintext := runtimeSentinel(t)
-	dbBytes, err := os.ReadFile(cfg.DatabasePath)
-	if err != nil {
-		t.Fatalf("read db: %v", err)
+	// Positive control: ciphertext stored now must be found by the same scan.
+	if _, _, err := store.SaveMessageEnvelope(ctx, domain.MessageEnvelope{
+		ConversationID: conversation.ID, SenderAccountID: owner.Account.ID, SenderDeviceID: owner.Device.ID,
+		IdempotencyKey: "on-disk-control", Ciphertext: []byte(control), CryptoProtocol: "mls-openmls-todo",
+	}); err != nil {
+		t.Fatalf("save control envelope: %v", err)
 	}
-	if bytes.Contains(dbBytes, []byte(plaintext)) {
-		t.Fatal("database contains runtime plaintext sentinel")
+	onDisk := onDiskBytes(t, cfg)
+	if !bytes.Contains(onDisk, []byte(control)) {
+		t.Fatal("the scan of the database, WAL and shared-memory files misses a marker that was stored")
 	}
+	if bytes.Contains(onDisk, []byte(sentinel)) {
+		t.Fatal("the member's raw password reached the database files")
+	}
+}
+
+// onDiskBytes is the main database file with its write-ahead log and
+// shared-memory file: in WAL mode recent commits live in the log until a
+// checkpoint, so the main file alone misses them. Files that do not exist are
+// skipped.
+func onDiskBytes(t *testing.T, cfg config.Config) []byte {
+	t.Helper()
+	var all []byte
+	for _, path := range []string{cfg.DatabasePath, cfg.DatabasePath + "-wal", cfg.DatabasePath + "-shm"} {
+		data, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		all = append(all, data...)
+	}
+	return all
 }
 
 func TestEverySQLiteConnectionEnforcesSafetyPragmas(t *testing.T) {
@@ -708,15 +743,47 @@ func TestExpiredInviteCannotRegister(t *testing.T) {
 	store, _ := newTestStore(t, ctx)
 	defer store.Close()
 	owner := createTestOwner(t, ctx, store)
+	hash, err := auth.HashPassword("member-password-123")
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+
+	// An invite that has already expired gives no reservation to register with.
 	expired := time.Now().UTC().Add(-time.Hour)
-	invite, err := store.CreateInvite(ctx, owner.Account.ID, 1, &expired)
+	expiredInvite, err := store.CreateInvite(ctx, owner.Account.ID, 1, &expired)
+	if err != nil {
+		t.Fatalf("create expired invite: %v", err)
+	}
+	if _, err := store.ReserveRegistrationEnrollment(ctx, expiredInvite.Code); !errors.Is(err, ErrInviteInvalid) {
+		t.Fatalf("reserving with an expired invite: err = %v, want %v", err, ErrInviteInvalid)
+	}
+
+	// An invite that expires after the reservation was made is refused at
+	// registration, for its expiry and not for the reservation: the
+	// reservation is valid and belongs to this invite.
+	soon := time.Now().UTC().Add(time.Hour)
+	invite, err := store.CreateInvite(ctx, owner.Account.ID, 2, &soon)
 	if err != nil {
 		t.Fatalf("create invite: %v", err)
 	}
-	hash, _ := auth.HashPassword("member-password-123")
-	_, err = store.RegisterWithInvite(ctx, RegisterInput{InviteCode: invite.Code, Username: "late", PasswordHash: hash, DeviceName: "phone", KeyPackage: []byte("key")})
-	if err == nil {
-		t.Fatal("expected expired invite registration to fail")
+	late, err := store.ReserveRegistrationEnrollment(ctx, invite.Code)
+	if err != nil {
+		t.Fatalf("reserve with a live invite: %v", err)
+	}
+	// Control: the same invite registers while it is live.
+	control, err := store.ReserveRegistrationEnrollment(ctx, invite.Code)
+	if err != nil {
+		t.Fatalf("reserve a second time: %v", err)
+	}
+	if _, err := store.RegisterWithInvite(ctx, RegisterInput{EnrollmentReservationID: control.ID, InviteCode: invite.Code, Username: "ontime", PasswordHash: hash, DeviceName: "phone", KeyPackage: []byte("key")}); err != nil {
+		t.Fatalf("register with a live invite: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE invites SET expires_at = ? WHERE id = ?`, formatTime(time.Now().UTC().Add(-time.Minute)), invite.ID); err != nil {
+		t.Fatalf("expire invite: %v", err)
+	}
+	_, err = store.RegisterWithInvite(ctx, RegisterInput{EnrollmentReservationID: late.ID, InviteCode: invite.Code, Username: "late", PasswordHash: hash, DeviceName: "phone", KeyPackage: []byte("key")})
+	if !errors.Is(err, ErrInviteInvalid) {
+		t.Fatalf("registering with an invite that expired: err = %v, want %v", err, ErrInviteInvalid)
 	}
 }
 
