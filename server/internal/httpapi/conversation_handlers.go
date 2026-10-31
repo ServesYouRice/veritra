@@ -163,7 +163,8 @@ func (a *API) listConversations(w http.ResponseWriter, r *http.Request, principa
 	// also sends that row's activity time as `before_activity` (its
 	// last_message_at, or created_at when it has none) gets a boundary that
 	// later activity cannot move; without it the boundary is recomputed from
-	// the conversation's current activity, as older clients expect.
+	// the conversation's current activity, as older clients expect. An id the
+	// account is not in answers an empty page, as before.
 	cursor := storage.ConversationCursor{BeforeID: strings.TrimSpace(r.URL.Query().Get("before"))}
 	if raw := strings.TrimSpace(r.URL.Query().Get("before_activity")); raw != "" {
 		activity, err := time.Parse(time.RFC3339Nano, raw)
@@ -176,8 +177,8 @@ func (a *API) listConversations(w http.ResponseWriter, r *http.Request, principa
 	conversations, err := a.Store.ListConversationsPageFrom(r.Context(), principal.AccountID, limit, cursor)
 	if err != nil {
 		if errors.Is(err, storage.ErrInvalidInput) {
-			// The cursor conversation is gone: an empty page would look like
-			// the end of the list.
+			// A cursor the store cannot use, from a client that sent the
+			// activity time without the conversation id.
 			writeError(w, http.StatusBadRequest, "invalid_cursor")
 			return
 		}

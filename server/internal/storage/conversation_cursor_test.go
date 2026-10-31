@@ -116,7 +116,11 @@ func TestListConversationsPageStableCursor(t *testing.T) {
 	}
 }
 
-func TestListConversationsPageIDOnlyCursorFailsWhenConversationIsGone(t *testing.T) {
+// The shipped app pages with the conversation id alone. When the account has
+// left the cursor conversation between two pages, that request keeps answering
+// an empty page (the app reads it as the end of the list) rather than an error
+// the app does not expect.
+func TestListConversationsPageIDOnlyCursorOfALeftConversationAnswersAnEmptyPage(t *testing.T) {
 	ctx := context.Background()
 	f := newConversationPageFixture(t, ctx, 4)
 	page1, err := f.store.ListConversationsPage(ctx, f.reader.Account.ID, 2, "")
@@ -131,8 +135,11 @@ func TestListConversationsPageIDOnlyCursorFailsWhenConversationIsGone(t *testing
 	if _, err := f.store.db.ExecContext(ctx, `DELETE FROM memberships WHERE conversation_id = ? AND account_id = ?`, cursor, f.reader.Account.ID); err != nil {
 		t.Fatal(err)
 	}
-	if page, err := f.store.ListConversationsPage(ctx, f.reader.Account.ID, 2, cursor); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("id-only cursor of a conversation the account left: %d conversations, err = %v, want %v", len(page), err, ErrInvalidInput)
+	if page, err := f.store.ListConversationsPage(ctx, f.reader.Account.ID, 2, cursor); err != nil || len(page) != 0 {
+		t.Fatalf("id-only cursor of a conversation the account left: %d conversations, err = %v, want an empty page", len(page), err)
+	}
+	if page, err := f.store.ListConversationsPage(ctx, f.reader.Account.ID, 2, "conv_missing"); err != nil || len(page) != 0 {
+		t.Fatalf("id-only cursor of an unknown conversation: %d conversations, err = %v, want an empty page", len(page), err)
 	}
 	if _, err := f.store.ListConversationsPageFrom(ctx, f.reader.Account.ID, 2, ConversationCursor{BeforeActivity: time.Now()}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("activity without a conversation id: err = %v, want %v", err, ErrInvalidInput)
