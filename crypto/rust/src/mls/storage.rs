@@ -27,17 +27,54 @@
 //! length-prefixed id (`{"value":{"vec":[..]}}`).
 
 use super::MlsError;
-use openmls::prelude::{GroupId, LeafNodeIndex};
+use openmls::prelude::{GroupId, KeyPackageBundle, LeafNode, LeafNodeIndex, MlsGroup};
 use openmls_rust_crypto::{MemoryStorage, MemoryStorageError, RustCrypto};
 use openmls_traits::{
     storage::{traits, StorageProvider, CURRENT_VERSION},
     OpenMlsProvider,
 };
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fmt,
     sync::{Mutex, RwLock},
 };
+
+/// Sealed record kinds of format 4 (D70). The root lists the others.
+pub(crate) const KIND_ROOT: u8 = 0;
+pub(crate) const KIND_DEVICE: u8 = 1;
+pub(crate) const KIND_GROUP: u8 = 2;
+pub(crate) const KIND_KEY_PACKAGE: u8 = 3;
+
+/// One sealed record's owner: its kind and raw id (a group id, a key
+/// package's hash reference, empty for the device record).
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct RecordKey {
+    pub(crate) kind: u8,
+    pub(crate) id: Vec<u8>,
+}
+
+impl RecordKey {
+    pub(crate) fn device() -> Self {
+        Self {
+            kind: KIND_DEVICE,
+            id: Vec::new(),
+        }
+    }
+
+    pub(crate) fn group(id: &[u8]) -> Self {
+        Self {
+            kind: KIND_GROUP,
+            id: id.to_vec(),
+        }
+    }
+
+    pub(crate) fn key_package(id: &[u8]) -> Self {
+        Self {
+            kind: KIND_KEY_PACKAGE,
+            id: id.to_vec(),
+        }
+    }
+}
 
 /// The OpenMLS provider of an `MlsDevice`: RustCrypto for crypto and
 /// randomness, partitioned in-memory storage.
@@ -121,7 +158,9 @@ struct Scope {
     violated: bool,
 }
 
-type Store = HashMap<Vec<u8>, Vec<u8>>;
+pub(crate) type Store = HashMap<Vec<u8>, Vec<u8>>;
+/// One owner's records, sorted by key.
+pub(crate) type Records = Vec<(Vec<u8>, Vec<u8>)>;
 
 #[derive(Default)]
 pub(crate) struct PartitionedStorage {
@@ -134,6 +173,10 @@ pub(crate) struct PartitionedStorage {
     /// format 3 re-seals byte-identically; never routed to OpenMLS.
     unowned: MemoryStorage,
     scope: Mutex<Scope>,
+    /// Owners written or deleted since the last seal (D70 format 4). Marked
+    /// on every routed write, even one that fails: resealing an unchanged
+    /// record is harmless, missing a changed one is not.
+    dirty: Mutex<BTreeSet<RecordKey>>,
     /// Always empty: reads of a group that has no store.
     empty: MemoryStorage,
     /// Test-only flat twin that receives every successful write and delete;
@@ -192,6 +235,7 @@ const LABELS: &[(&[u8], Shape)] = &[
 ];
 const OWN_LEAF_NODE_INDEX_LABEL: &[u8] = b"OwnLeafNodeIndex";
 const KEY_PACKAGE_LABEL: &[u8] = b"KeyPackage";
+const STANDALONE_LABEL: &[u8] = b"EncryptionKeyPair";
 const VERSION_SUFFIX: [u8; 2] = CURRENT_VERSION.to_be_bytes();
 const ID_PREFIX: &[u8] = br#"{"value":{"vec":["#;
 const ID_SUFFIX: &[u8] = b"]}}";
@@ -322,6 +366,12 @@ fn package_id<R: traits::HashReference<CURRENT_VERSION>>(
     }
 }
 
+fn store_from(values: Store) -> MemoryStorage {
+    let store = MemoryStorage::default();
+    *store.values.write().unwrap_or_else(|e| e.into_inner()) = values;
+    store
+}
+
 fn is_empty(store: &MemoryStorage) -> bool {
     store.values.read().map(|v| v.is_empty()).unwrap_or(false)
 }
@@ -428,6 +478,17 @@ impl PartitionedStorage {
         Ok(storage)
     }
 
+    /// Every record of every owner, copied into one flat map (the
+    /// migration self-check). A key held by two owners fails.
+    pub(crate) fn flat_records(&self) -> Result<Store, MlsError> {
+        self.with_records(|records| {
+            Ok(records
+                .iter()
+                .map(|(k, v)| (k.to_vec(), v.to_vec()))
+                .collect())
+        })
+    }
+
     /// Calls `encode` with every record of every owner, sorted by key: the
     /// flat map format 3 seals. Read locks are held throughout and nothing
     /// is copied. A key held by two owners fails.
@@ -453,6 +514,293 @@ impl PartitionedStorage {
             return Err(MlsError::InvalidState);
         }
         encode(&records)
+    }
+
+    fn mark(&self, key: RecordKey) {
+        let mut dirty = self.dirty.lock().unwrap_or_else(|e| e.into_inner());
+        dirty.insert(key);
+    }
+
+    /// The owners changed since the last seal.
+    pub(crate) fn dirty(&self) -> Result<BTreeSet<RecordKey>, MlsError> {
+        Ok(self.dirty.lock().map_err(|_| MlsError::Storage)?.clone())
+    }
+
+    /// Forgets the given owners after they were sealed; anything marked
+    /// since stays dirty.
+    pub(crate) fn clear_dirty(&self, sealed: &BTreeSet<RecordKey>) -> Result<(), MlsError> {
+        let mut dirty = self.dirty.lock().map_err(|_| MlsError::Storage)?;
+        dirty.retain(|key| !sealed.contains(key));
+        Ok(())
+    }
+
+    /// Marks every owner that holds records dirty (migration: every record
+    /// is new to format 4).
+    pub(crate) fn mark_all_dirty(&self) -> Result<(), MlsError> {
+        let mut keys = vec![RecordKey::device()];
+        keys.extend(self.group_ids()?.iter().map(|id| RecordKey::group(id)));
+        keys.extend(
+            self.key_package_ids()?
+                .iter()
+                .map(|id| RecordKey::key_package(id)),
+        );
+        let mut dirty = self.dirty.lock().map_err(|_| MlsError::Storage)?;
+        dirty.extend(keys);
+        Ok(())
+    }
+
+    pub(crate) fn group_ids(&self) -> Result<Vec<Vec<u8>>, MlsError> {
+        Ok(self
+            .groups
+            .read()
+            .map_err(|_| MlsError::Storage)?
+            .keys()
+            .cloned()
+            .collect())
+    }
+
+    pub(crate) fn key_package_ids(&self) -> Result<Vec<Vec<u8>>, MlsError> {
+        Ok(self
+            .key_packages
+            .read()
+            .map_err(|_| MlsError::Storage)?
+            .keys()
+            .cloned()
+            .collect())
+    }
+
+    pub(crate) fn key_package_count(&self) -> Result<usize, MlsError> {
+        Ok(self
+            .key_packages
+            .read()
+            .map_err(|_| MlsError::Storage)?
+            .len())
+    }
+
+    pub(crate) fn unowned_is_empty(&self) -> Result<bool, MlsError> {
+        Ok(self
+            .unowned
+            .values
+            .read()
+            .map_err(|_| MlsError::Storage)?
+            .is_empty())
+    }
+
+    /// The records of one owner, sorted by key and copied, or `None` when
+    /// the owner holds nothing (its store is gone). The caller wipes them.
+    pub(crate) fn owner_records(&self, key: &RecordKey) -> Result<Option<Records>, MlsError> {
+        fn sorted(store: &MemoryStorage) -> Result<Records, MlsError> {
+            let values = store.values.read().map_err(|_| MlsError::Storage)?;
+            let mut records: Vec<(Vec<u8>, Vec<u8>)> =
+                values.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            records.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+            Ok(records)
+        }
+        match key.kind {
+            KIND_DEVICE if key.id.is_empty() => sorted(&self.device).map(Some),
+            KIND_GROUP => {
+                let groups = self.groups.read().map_err(|_| MlsError::Storage)?;
+                groups.get(&key.id).map(sorted).transpose()
+            }
+            KIND_KEY_PACKAGE => {
+                let packages = self.key_packages.read().map_err(|_| MlsError::Storage)?;
+                packages.get(&key.id).map(sorted).transpose()
+            }
+            _ => Err(MlsError::InvalidState),
+        }
+    }
+
+    /// Rebuilds storage from format-4 records. Every key must classify to
+    /// the owner whose record holds it (a group record may also hold its
+    /// standalone update-leaf key pairs); anything else fails closed.
+    pub(crate) fn from_owners(
+        device: Store,
+        groups: BTreeMap<Vec<u8>, Store>,
+        key_packages: BTreeMap<Vec<u8>, Store>,
+    ) -> Result<Self, MlsError> {
+        let storage = Self::default();
+        for key in device.keys() {
+            if classify(key) != Some(Owner::Device) {
+                return Err(MlsError::InvalidState);
+            }
+        }
+        for (id, store) in &groups {
+            if store.is_empty() {
+                return Err(MlsError::InvalidState);
+            }
+            for key in store.keys() {
+                match classify(key) {
+                    Some(Owner::Group(owner)) if &owner == id => {}
+                    Some(Owner::Unowned) => {}
+                    _ => return Err(MlsError::InvalidState),
+                }
+            }
+        }
+        for (id, store) in &key_packages {
+            if store.is_empty() {
+                return Err(MlsError::InvalidState);
+            }
+            for key in store.keys() {
+                if classify(key) != Some(Owner::KeyPackage(id.clone())) {
+                    return Err(MlsError::InvalidState);
+                }
+            }
+        }
+        #[cfg(test)]
+        {
+            let mut shadow = storage
+                .shadow
+                .values
+                .write()
+                .map_err(|_| MlsError::Storage)?;
+            for store in std::iter::once(&device)
+                .chain(groups.values())
+                .chain(key_packages.values())
+            {
+                for (key, value) in store {
+                    if shadow.insert(key.clone(), value.clone()).is_some() {
+                        return Err(MlsError::InvalidState);
+                    }
+                }
+            }
+        }
+        *storage
+            .device
+            .values
+            .write()
+            .map_err(|_| MlsError::Storage)? = device;
+        *storage.groups.write().map_err(|_| MlsError::Storage)? = groups
+            .into_iter()
+            .map(|(id, store)| (id, store_from(store)))
+            .collect();
+        *storage
+            .key_packages
+            .write()
+            .map_err(|_| MlsError::Storage)? = key_packages
+            .into_iter()
+            .map(|(id, store)| (id, store_from(store)))
+            .collect();
+        Ok(storage)
+    }
+
+    /// Drops a group's whole store (own removal applied, or the user left or
+    /// deleted the chat). Returns whether there was one.
+    pub(crate) fn drop_group(&self, id: &[u8]) -> Result<bool, MlsError> {
+        let removed = self
+            .groups
+            .write()
+            .map_err(|_| MlsError::Storage)?
+            .remove(id);
+        self.mark(RecordKey::group(id));
+        #[cfg(test)]
+        if let Some(store) = &removed {
+            self.unshadow(store);
+        }
+        Ok(removed.is_some())
+    }
+
+    /// Drops a key package's store. Returns whether there was one.
+    pub(crate) fn drop_key_package(&self, id: &[u8]) -> Result<bool, MlsError> {
+        let removed = self
+            .key_packages
+            .write()
+            .map_err(|_| MlsError::Storage)?
+            .remove(id);
+        self.mark(RecordKey::key_package(id));
+        #[cfg(test)]
+        if let Some(store) = &removed {
+            self.unshadow(store);
+        }
+        Ok(removed.is_some())
+    }
+
+    #[cfg(test)]
+    fn unshadow(&self, store: &MemoryStorage) {
+        let mut shadow = self.shadow.values.write().unwrap();
+        for key in store.values.read().unwrap().keys() {
+            shadow.remove(key);
+        }
+    }
+
+    /// The `not_after` (Unix seconds) of every stored key package, by store
+    /// id. A store whose bundle does not parse fails the call.
+    pub(crate) fn key_package_expiries(&self) -> Result<Vec<(Vec<u8>, u64)>, MlsError> {
+        let packages = self.key_packages.read().map_err(|_| MlsError::Storage)?;
+        let mut out = Vec::with_capacity(packages.len());
+        for (id, store) in packages.iter() {
+            let values = store.values.read().map_err(|_| MlsError::Storage)?;
+            let mut not_after = None;
+            for (key, value) in values.iter() {
+                if !key.starts_with(KEY_PACKAGE_LABEL) {
+                    continue;
+                }
+                let bundle: KeyPackageBundle =
+                    serde_json::from_slice(value).map_err(|_| MlsError::InvalidState)?;
+                not_after = Some(bundle.key_package().life_time().not_after());
+            }
+            out.push((id.clone(), not_after.ok_or(MlsError::InvalidState)?));
+        }
+        Ok(out)
+    }
+
+    /// Migration (D70 section 5): drops inactive groups with every record,
+    /// files each standalone encryption key pair under the group whose own
+    /// leaf nodes carry that key, and drops the key pairs no group owns.
+    /// Returns the number of records dropped.
+    pub(crate) fn settle_for_migration(&self) -> Result<usize, MlsError> {
+        let mut dropped = 0usize;
+        let mut groups = self.groups.write().map_err(|_| MlsError::Storage)?;
+        let mut inactive = Vec::new();
+        for (id, store) in groups.iter() {
+            match MlsGroup::load(store, &GroupId::from_slice(id)) {
+                Ok(Some(group)) if !group.is_active() => inactive.push(id.clone()),
+                Ok(Some(_)) => {}
+                // A group store that does not load is not migrated.
+                _ => return Err(MlsError::InvalidState),
+            }
+        }
+        for id in inactive {
+            if let Some(store) = groups.remove(&id) {
+                dropped += store.values.read().map_err(|_| MlsError::Storage)?.len();
+                #[cfg(test)]
+                self.unshadow(&store);
+            }
+        }
+        // Own leaf-node encryption keys, serialized as MemoryStorage keys them.
+        let mut owners: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
+        for (id, store) in groups.iter() {
+            let leaves: Vec<LeafNode> = store
+                .own_leaf_nodes(&GroupId::from_slice(id))
+                .map_err(|_| MlsError::InvalidState)?;
+            for leaf in leaves {
+                let key = serde_json::to_vec(leaf.encryption_key())
+                    .map_err(|_| MlsError::InvalidState)?;
+                owners.insert(key, id.clone());
+            }
+        }
+        let standalone: Store =
+            std::mem::take(&mut *self.unowned.values.write().map_err(|_| MlsError::Storage)?);
+        for (key, value) in standalone {
+            let public = key
+                .strip_prefix(STANDALONE_LABEL)
+                .and_then(|rest| rest.strip_suffix(&VERSION_SUFFIX))
+                .ok_or(MlsError::InvalidState)?;
+            match owners.get(public).and_then(|id| groups.get(id)) {
+                Some(store) => {
+                    store
+                        .values
+                        .write()
+                        .map_err(|_| MlsError::Storage)?
+                        .insert(key, value);
+                }
+                None => {
+                    #[cfg(test)]
+                    self.shadow.values.write().unwrap().remove(&key);
+                    dropped += 1;
+                }
+            }
+        }
+        Ok(dropped)
     }
 
     fn hit(&self, _name: &'static str) {
@@ -529,6 +877,7 @@ impl PartitionedStorage {
         }
         // Deletes go through here too: MemoryStorage's list removal writes
         // an empty list for a missing key, and the flat map would hold it.
+        self.mark(RecordKey::group(&id));
         let result = {
             let mut groups = self.groups.write().map_err(|_| PartitionError::Poisoned)?;
             let store = groups.entry(id.clone()).or_default();
@@ -549,6 +898,9 @@ impl PartitionedStorage {
         operation: Op<'_, T>,
     ) -> Result<T, PartitionError> {
         self.hit(name);
+        if write {
+            self.mark(RecordKey::device());
+        }
         let result = operation(&self.device)?;
         if write {
             self.mirror(operation);
@@ -641,6 +993,59 @@ impl PartitionedStorage {
 
     pub(crate) fn unowned_count(&self) -> usize {
         self.unowned.values.read().unwrap().len()
+    }
+
+    /// Adds a fake queued proposal of `size` bytes to a group's store, so a
+    /// test can push the group over its cap. Returns its key.
+    pub(crate) fn pad_group_for_test(&self, id: &[u8], tag: u8, size: usize) -> Vec<u8> {
+        let json = group_json(&GroupId::from_slice(id)).unwrap();
+        let mut key = b"QueuedProposal[".to_vec();
+        key.extend_from_slice(&json);
+        key.extend_from_slice(format!(r#",{{"value":{{"vec":[{tag}]}}}}]"#).as_bytes());
+        key.extend_from_slice(&VERSION_SUFFIX);
+        assert_eq!(classify(&key), Some(Owner::Group(id.to_vec())));
+        let value = vec![0x42; size];
+        self.groups.read().unwrap()[id]
+            .values
+            .write()
+            .unwrap()
+            .insert(key.clone(), value.clone());
+        self.shadow
+            .values
+            .write()
+            .unwrap()
+            .insert(key.clone(), value);
+        self.mark(RecordKey::group(id));
+        key
+    }
+
+    pub(crate) fn unpad_group_for_test(&self, id: &[u8], key: &[u8]) {
+        self.groups.read().unwrap()[id]
+            .values
+            .write()
+            .unwrap()
+            .remove(key);
+        self.shadow.values.write().unwrap().remove(key);
+    }
+
+    /// Lets a test rewrite a stored key-package bundle as JSON.
+    pub(crate) fn edit_key_package_for_test(
+        &self,
+        id: &[u8],
+        edit: impl FnOnce(&mut serde_json::Value),
+    ) {
+        let packages = self.key_packages.read().unwrap();
+        let mut values = packages[id].values.write().unwrap();
+        let (key, value) = values
+            .iter_mut()
+            .find(|(key, _)| key.starts_with(KEY_PACKAGE_LABEL))
+            .unwrap();
+        let mut json: serde_json::Value = serde_json::from_slice(value).unwrap();
+        edit(&mut json);
+        *value = serde_json::to_vec(&json).unwrap();
+        let key = key.clone();
+        let value = value.clone();
+        self.shadow.values.write().unwrap().insert(key, value);
     }
 }
 
@@ -887,6 +1292,7 @@ impl StorageProvider<CURRENT_VERSION> for PartitionedStorage {
                 _ => return Err(PartitionError::UnexpectedKey),
             }
         };
+        self.mark(RecordKey::key_package(&id));
         {
             let mut packages = self
                 .key_packages
@@ -1322,6 +1728,7 @@ impl StorageProvider<CURRENT_VERSION> for PartitionedStorage {
                 .map_err(|_| PartitionError::Poisoned)?;
             if let Some(store) = packages.get(&id) {
                 self.probe();
+                self.mark(RecordKey::key_package(&id));
                 store.delete_key_package(hash_ref)?;
                 if is_empty(store) {
                     packages.remove(&id);

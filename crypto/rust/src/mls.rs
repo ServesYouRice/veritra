@@ -7,14 +7,16 @@
 use openmls::prelude::*;
 use openmls::treesync::LeafNodeParameters;
 use openmls_basic_credential::SignatureKeyPair;
-use openmls_traits::{signatures::Signer, OpenMlsProvider};
+use openmls_traits::{signatures::Signer, storage::StorageProvider as _, OpenMlsProvider};
 use sha2::{Digest, Sha256, Sha512};
 use tls_codec::{Deserialize as TlsDeserializeTrait, Serialize as TlsSerializeTrait};
 
 #[allow(dead_code)]
 pub(crate) mod link_v3;
+mod records;
 mod state;
 mod storage;
+pub use records::{ChangeSet, RecordChange, RestoreLoader, SealError};
 #[allow(dead_code)]
 pub(crate) mod transfer;
 
@@ -47,6 +49,11 @@ pub enum MlsError {
     /// version is read before authentication: a hint for the recovery path,
     /// never a reason to relax a check.
     UnsupportedFormat,
+    /// A Welcome names no key package this device holds, or the one it
+    /// names has expired (D74). Nothing was consumed. Refusing it forks
+    /// nothing: the device is just not in the group, and someone has to
+    /// add it again.
+    KeyPackageUnavailable,
 }
 
 /// One MLS device identity and its private provider state.
@@ -62,6 +69,8 @@ pub struct MlsDevice {
     account_id: Vec<u8>,
     device_id: Vec<u8>,
     pending_transfers: transfer::PendingTransfers,
+    /// What was last sealed or restored in format 4 (D70).
+    sealed: records::SealedState,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -107,10 +116,16 @@ impl MlsDevice {
             account_id: account_id.to_vec(),
             device_id: device_id.to_vec(),
             pending_transfers: Default::default(),
+            sealed: Default::default(),
         })
     }
 
     pub fn create_key_package(&self) -> Result<Vec<u8>, MlsError> {
+        // A full pool is refused at creation, so the sealed state never
+        // carries more key packages than restore accepts (D70).
+        if self.provider.storage().key_package_count()? >= records::MAX_KEY_PACKAGES {
+            return Err(MlsError::InvalidState);
+        }
         let bundle = KeyPackage::builder()
             .build(
                 CIPHERSUITE,
@@ -490,7 +505,46 @@ impl MlsDevice {
         let id = group.group_id().as_slice().to_vec();
         self.in_group(&id, || {
             self.process_commit_in_scope(group, protocol_message)
-        })
+        })?;
+        // Own removal applied: the group can never be used again, so its
+        // whole store goes now, past-epoch key pairs included (D70). A
+        // later Welcome for this id is a fresh join.
+        if !group.is_active() {
+            self.provider.storage().drop_group(&id)?;
+        }
+        Ok(())
+    }
+
+    /// Drops a group and every record it holds. Only for a user's action
+    /// (leaving or deleting a chat), never on a server's word: a server
+    /// could otherwise clear an active group and plant a forked Welcome
+    /// (docs/crypto.md, "Rejoining a conversation"). Returns whether the
+    /// group was stored.
+    pub fn delete_group(&self, group_id: &[u8]) -> Result<bool, MlsError> {
+        if group_id.is_empty() || group_id.len() > MAX_ID_BYTES {
+            return Err(MlsError::InvalidIdentity);
+        }
+        self.provider.storage().drop_group(group_id)
+    }
+
+    /// Drops every key package whose `not_after` passed more than 24 hours
+    /// before `now_unix_seconds` (D70). Returns how many went.
+    pub fn prune_key_packages(&self, now_unix_seconds: u64) -> Result<usize, MlsError> {
+        let storage = self.provider.storage();
+        let mut removed = 0;
+        for (id, not_after) in storage.key_package_expiries()? {
+            if not_after.saturating_add(records::KEY_PACKAGE_GRACE_SECONDS) < now_unix_seconds
+                && storage.drop_key_package(&id)?
+            {
+                removed += 1;
+            }
+        }
+        Ok(removed)
+    }
+
+    /// The number of key packages this device holds.
+    pub fn key_package_count(&self) -> Result<usize, MlsError> {
+        self.provider.storage().key_package_count()
     }
 
     fn process_commit_in_scope(
@@ -591,6 +645,7 @@ impl MlsDevice {
         if let Some(stored) = &stored {
             ensure_replaceable(stored)?;
         }
+        self.ensure_welcome_key_package(&welcome)?;
         // Staging decrypts the Welcome (and consumes the key package) but
         // stores no group; into_group persists it, so every check runs first.
         let builder = StagedWelcome::build_from_welcome(
@@ -628,6 +683,32 @@ impl MlsDevice {
         staged
             .into_group(&self.provider)
             .map_err(|_| MlsError::GroupOperation)
+    }
+
+    /// D74: the Welcome must name a key package this device still holds,
+    /// and that package must not have expired. Checked before anything is
+    /// consumed; OpenMLS would refuse both anyway (its join verifies leaf
+    /// lifetimes), but only as a generic failure that stops sync.
+    fn ensure_welcome_key_package(&self, welcome: &Welcome) -> Result<(), MlsError> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| MlsError::InvalidState)?
+            .as_secs();
+        for secrets in welcome.secrets() {
+            let bundle: Option<KeyPackageBundle> = self
+                .provider
+                .storage()
+                .key_package(&secrets.new_member())
+                .map_err(|_| MlsError::Storage)?;
+            if let Some(bundle) = bundle {
+                return if bundle.key_package().life_time().not_after() <= now {
+                    Err(MlsError::KeyPackageUnavailable)
+                } else {
+                    Ok(())
+                };
+            }
+        }
+        Err(MlsError::KeyPackageUnavailable)
     }
 
     /// The structural checks a Welcome must pass before its group is stored:

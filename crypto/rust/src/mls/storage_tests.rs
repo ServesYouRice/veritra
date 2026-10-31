@@ -604,14 +604,14 @@ fn a_welcome_with_many_bogus_secrets_costs_one_lookup_each() {
     };
 
     // Only bogus secrets: no package matches, the join fails and nothing
-    // changes.
+    // changes (D74: refused as naming no held key package).
     let before = storage(&bob).snapshot();
     let probes = storage(&bob).package_probes();
     let started = std::time::Instant::now();
     assert_eq!(
         bob.join_group(b"conv_bogus", &encode(bogus.clone()))
             .map(|_| ()),
-        Err(MlsError::GroupOperation)
+        Err(MlsError::KeyPackageUnavailable)
     );
     let elapsed = started.elapsed();
     let used = storage(&bob).package_probes() - probes;
