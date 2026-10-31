@@ -1,0 +1,2 @@
+/* The generic iOS notification (D53): fixed text, no sender, no content. The server sends only this key (APNs loc-key). Keep it in step with notificationNewMessage in lib/l10n. */
+"veritra.notification.new_message" = "New message";

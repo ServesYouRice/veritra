@@ -201,15 +201,26 @@ import Darwin
     guard userInfo["version"] as? String == "v1" else { completionHandler(.noData); return }
     guard (try? wakeCoordinator.journal.mark()) != nil else { completionHandler(.failed); return }
     pushEvents?(["type": "wake"])
-    if application.applicationState != .active {
+    // D53: a current server sends this wake as a visible alert that iOS shows
+    // itself, so a local notice would be a duplicate. Only an older server's
+    // background-only push still needs one. No delegate shows either while
+    // the app is active.
+    if !Self.carriesSystemAlert(userInfo) && application.applicationState != .active {
       let content = UNMutableNotificationContent()
       content.title = "Veritra"
-      content.body = "New encrypted message"
+      content.body = NSLocalizedString("veritra.notification.new_message", value: "New message",
+                                       comment: "Generic notification; no sender or content (D53)")
       content.sound = .default
       UNUserNotificationCenter.current().add(
         UNNotificationRequest(identifier: "veritra-new-message", content: content, trigger: nil))
     }
     completionHandler(.newData)
+  }
+
+  /// Whether APNs already carries a visible alert for this push (D53).
+  static func carriesSystemAlert(_ userInfo: [AnyHashable: Any]) -> Bool {
+    guard let aps = userInfo["aps"] as? [String: Any], let alert = aps["alert"] else { return false }
+    return !(alert is NSNull)
   }
 }
 
