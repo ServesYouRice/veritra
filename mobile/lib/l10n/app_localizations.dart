@@ -4058,6 +4058,42 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Copied history · device snapshot'**
   String get k2CopiedHistory;
+
+  /// No description provided for @k2HistoryOnlyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied history'**
+  String get k2HistoryOnlyTitle;
+
+  /// No description provided for @k2HistoryOnlyNotice.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied from your other device. Read-only: this device is not a member of this conversation, so nothing can be sent here.'**
+  String get k2HistoryOnlyNotice;
+
+  /// No description provided for @k2HistoryUntitled.
+  ///
+  /// In en, this message translates to:
+  /// **'Earlier conversation'**
+  String get k2HistoryUntitled;
+
+  /// No description provided for @k2HistoryOtherMember.
+  ///
+  /// In en, this message translates to:
+  /// **'Another member'**
+  String get k2HistoryOtherMember;
+
+  /// No description provided for @k2HistoryAttachment.
+  ///
+  /// In en, this message translates to:
+  /// **'Attachment, not downloaded on this device'**
+  String get k2HistoryAttachment;
+
+  /// No description provided for @k2HistoryEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No copied messages are left in this conversation.'**
+  String get k2HistoryEmpty;
 }
 
 class _AppLocalizationsDelegate

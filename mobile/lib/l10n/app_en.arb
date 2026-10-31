@@ -851,5 +851,11 @@
     "w8MentionsMutedDetail":  "Notify when a member mentions you, even in a muted chat.",
     "w8HiddenSpoiler":  "Message containing a hidden spoiler",
     "w8StarredMessages":  "Starred messages on this device",
-    "k2CopiedHistory": "Copied history · device snapshot"
+    "k2CopiedHistory": "Copied history · device snapshot",
+    "k2HistoryOnlyTitle": "Copied history",
+    "k2HistoryOnlyNotice": "Copied from your other device. Read-only: this device is not a member of this conversation, so nothing can be sent here.",
+    "k2HistoryUntitled": "Earlier conversation",
+    "k2HistoryOtherMember": "Another member",
+    "k2HistoryAttachment": "Attachment, not downloaded on this device",
+    "k2HistoryEmpty": "No copied messages are left in this conversation."
 }

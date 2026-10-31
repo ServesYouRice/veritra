@@ -14,6 +14,7 @@ import '../../ui/widgets/status_pill.dart';
 import '../search/search_screen.dart';
 import 'chat_screen.dart';
 import 'conversation_details_screen.dart';
+import 'copied_history_screen.dart';
 import 'mute_sheet.dart';
 import 'message_request_screen.dart';
 import 'new_conversation_sheet.dart';
@@ -98,6 +99,13 @@ class ChatListScreen extends StatelessWidget {
               icon: Icon(state.showArchivedChats
                   ? Icons.chat_outlined
                   : Icons.archive_outlined)),
+          if (state.historyOnlyConversations.isNotEmpty)
+            IconButton(
+                tooltip: context.l10n.k2HistoryOnlyTitle,
+                onPressed: () => Navigator.of(context).push(
+                    sharedAxisRoute<void>(
+                        (_) => CopiedHistoryListScreen(state: state))),
+                icon: const Icon(Icons.history)),
           RefreshAction(onRefresh: state.refreshConversations),
           IconButton(
             tooltip: context.l10n.chatListSearch,
@@ -346,6 +354,7 @@ List<Object?> _chatListSelection(AppState state, {required bool embedded}) {
     state.conversationPrefs,
     state.showArchivedChats,
     for (final conversation in conversations) state.requestBucket(conversation),
+    state.historyOnlyConversations.isNotEmpty,
   ];
 }
 

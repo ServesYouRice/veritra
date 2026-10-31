@@ -105,3 +105,79 @@ The isolated full test and lint scripts now pass. See
 [`verification-2026-10-28.md`](verification-2026-10-28.md) for scope, counts
 and log hashes. This supersedes the earlier lack of a Linux fallback; the
 Windows-specific failures and platform evidence limitations remain.
+
+## Owner decisions and D52 Dart integration (2026-10-31)
+
+**Pins (owner, 31 Oct).** Any member of a DM or group may pin; community
+conversations keep moderator roles. Up to **50** active pins per chat (per
+channel in a shared community conversation); the 51st evicts the oldest. The
+pin bar shows about three rows and scrolls. One rule (`pinAllowed`,
+`pinLimitPerChat` in `crypto/message_format.dart`) feeds sender, receiver,
+own-echo, memory, SQLite and K2 import paths. The admin-only switch for
+groups is **left for C4**: groups have no encrypted settings record yet.
+Mixed versions disagree until updated (older apps drop member pins in groups
+and keep 3). Group name/photo: open to any member by default, admins may
+restrict later (C4); recorded in W11 open question 4. No group profile
+editor exists yet, so no code changed for it.
+
+**Linux "done when".** A muted chat's account mention raises a desktop
+notice after decryption, and a plain message in that chat does not; the
+switch in Settings turns mention alerts off. Proven end to end through
+AppState catch-up → `onMessagesPublished` → `MessageNotifier`
+(`w8_background_wake_test.dart`, Linux desktop test). The six desktop
+notice tests in `desktop_shell_test.dart` had been failing since the D52
+timestamp-substitution check; their fixtures now use matching row times.
+
+**Phones (D52), Dart side wired behind the guard.**
+
+- `push/notice_decisions.dart`: notice outbox → policy (fresh mute read,
+  blocks, D48 acceptance, shared mention rule) → frozen opaque decision →
+  native generic notice → terminal state. Unknown policy data keeps the
+  reference pending; a lost native answer retries the same decision ID.
+- `AppState.restoreForBackgroundWake` / `catchUpForBackgroundWake`: one
+  AppState and one sync owner per process; existing state only; bounded
+  crypto calls fenced by the permit; job-owned HTTP client closed on
+  cancel; no websocket, push registration, outbox, key-package publish,
+  reconcile/revocation commit, wake ACK, recovery record or sign-out from
+  the background. UI resume cancels the wake, suppresses captured
+  references through the committed cursor and runs the deferred work.
+  Sign-out revokes native work and capture before private state is cleared.
+- `main_demo.dart` builds the store/AppState once for both launches; a cold
+  background start opens existing state only and is never "resumed".
+  `main.dart` is unchanged (release never installs a worker).
+
+**Still off, deliberately.** `noticeCaptureEnabled` is never set by app
+code; registration still omits `notification_mode`; native
+`COLD_EXECUTION_ENABLED`/`coldExecutionEnabled` stay false and both native
+replies say `can_opt_in:false`. So no phone gets muted-mention wakes yet.
+
+**What a real device must still show before enabling** (in this order):
+1. Android and iOS builds (normal and demo) with release markers intact; the
+   Swift engine/scene changes have never been built (no Xcode here).
+2. A reviewed change that sets capture on and registers
+   `local_decrypt_v1` only after `install` succeeds for the compiled
+   profile, and flips the native cold-execution/`can_opt_in` flags.
+3. On phones: warm paused and cold killed delivery share one engine/AppState;
+   UI resume during a job; Android `onStopJob`/retry, Doze, quota and
+   force-stop; iOS completion exactly once, expiration, before-first-unlock;
+   notification permission denied; logout during a job; dedupe after a crash
+   between decision and OS notice; muted/request/blocked/deleted/expired
+   messages stay silent; raw v2 pushes never alert by themselves.
+4. Independent review of the Dart integration (this change) alongside the
+   native slices.
+
+Checks (Linux, pinned Flutter 3.44.0, debug native library built here):
+`w8_background_wake_test.dart` 25 passed (18 processor cases on memory and
+SQLite, 6 AppState wake cases, 1 Linux desktop case); with the regression
+set (`app_state`, `receive_policy` real MLS, `background_wake_runner`,
+`notice_outbox`, `wake_launch_coordinator`, `desktop_shell`,
+`message_notice_policy`, `sync_service`, `push_state`, `session_switch`,
+`native_notice_capture`, `sync_recovery`, `demo_profile`, `native_outbox`,
+`outbox_delivery`, `mls_outbox`) 230 tests ran: all passed except one
+`sync_recovery_test` case that failed once under host load and passed in
+three reruns (alone and in a smaller batch). Pin change: `w8_ui`,
+`w8_message_actions`, `native_outbox`, `k2_history_snapshot` pass.
+`flutter analyze`: no issues. The full `scripts/test`/`scripts/lint` were
+not run (shared 4-CPU host; brief limits to touched and related tests).
+`scripts/check-demo-boundary.sh` still fails only on `api_client.dart` and
+`device_link_v3_models.dart`, which another agent owns.

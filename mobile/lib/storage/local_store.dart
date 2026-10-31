@@ -9,6 +9,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../core/models.dart';
+import '../crypto/message_format.dart' show pinLimitPerChat;
 import '../sync/sync_recovery.dart';
 import 'backup_exclusion.dart';
 import 'encrypted_database.dart';
@@ -1569,7 +1570,7 @@ class _MemoryMessageHistory {
               final t = b.pinnedAt.compareTo(a.pinnedAt);
               return t != 0 ? t : b.appliedOrder.compareTo(a.appliedOrder);
             });
-          while (scoped.length > 3) {
+          while (scoped.length > pinLimitPerChat) {
             final oldest = scoped.removeLast();
             pins.remove(oldest.targetKey);
           }

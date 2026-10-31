@@ -2492,6 +2492,26 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get k2CopiedHistory => 'Копирана историја · снимак са уређаја';
+
+  @override
+  String get k2HistoryOnlyTitle => 'Копирана историја';
+
+  @override
+  String get k2HistoryOnlyNotice =>
+      'Копирано са вашег другог уређаја. Само за читање: овај уређај није члан овог разговора, па се овде ништа не може послати.';
+
+  @override
+  String get k2HistoryUntitled => 'Ранији разговор';
+
+  @override
+  String get k2HistoryOtherMember => 'Други члан';
+
+  @override
+  String get k2HistoryAttachment => 'Прилог, није преузет на овом уређају';
+
+  @override
+  String get k2HistoryEmpty =>
+      'У овом разговору није остала ниједна копирана порука.';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -4985,4 +5005,24 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get k2CopiedHistory => 'Kopirana istorija · snimak sa uređaja';
+
+  @override
+  String get k2HistoryOnlyTitle => 'Kopirana istorija';
+
+  @override
+  String get k2HistoryOnlyNotice =>
+      'Kopirano sa vašeg drugog uređaja. Samo za čitanje: ovaj uređaj nije član ovog razgovora, pa se ovde ništa ne može poslati.';
+
+  @override
+  String get k2HistoryUntitled => 'Raniji razgovor';
+
+  @override
+  String get k2HistoryOtherMember => 'Drugi član';
+
+  @override
+  String get k2HistoryAttachment => 'Prilog, nije preuzet na ovom uređaju';
+
+  @override
+  String get k2HistoryEmpty =>
+      'U ovom razgovoru nije ostala nijedna kopirana poruka.';
 }

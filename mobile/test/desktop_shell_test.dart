@@ -105,6 +105,7 @@ LocalMessage _local(
   String body = 'secret words',
   String? formatJson,
   int? hiddenAt,
+  DateTime? createdAt,
 }) {
   return LocalMessage(
     key: 'dev_other:key_$id'.replaceFirst('dev_other', device),
@@ -115,7 +116,9 @@ LocalMessage _local(
     body: body,
     formatJson: formatJson,
     hiddenAt: hiddenAt,
-    createdAt: 1,
+    // The committed row's time must equal its envelope's: the notice policy
+    // refuses a substituted timestamp (D52).
+    createdAt: (createdAt ?? _now).millisecondsSinceEpoch,
     state: LocalMessageState.received,
   );
 }
@@ -255,7 +258,7 @@ void main() {
     history(<LocalMessage>[
       _local('own', account: 'acct_me', device: 'dev_me'),
       _local('act', kind: LocalMessageKind.action),
-      _local('old'),
+      _local('old', createdAt: _now.subtract(const Duration(hours: 1))),
       _local('gone'),
       _local('ok'),
     ]);
@@ -275,8 +278,11 @@ void main() {
 
   test('a burst in one chat gives one notification with the newest text',
       () async {
-    history(
-        <LocalMessage>[_local('a', body: 'first'), _local('b', body: 'last')]);
+    history(<LocalMessage>[
+      _local('a',
+          body: 'first', createdAt: _now.subtract(const Duration(seconds: 5))),
+      _local('b', body: 'last')
+    ]);
     await messages.handle(<ReceivedMessageEnvelope>[
       _envelope('a', createdAt: _now.subtract(const Duration(seconds: 5))),
       _envelope('b'),

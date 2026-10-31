@@ -11,6 +11,7 @@ import 'message_search.dart';
 import 'history_snapshot.dart';
 import 'notice_outbox.dart';
 import '../core/models.dart' show Conversation, Session;
+import '../crypto/message_format.dart' show pinLimitPerChat;
 
 part 'encrypted_database.g.dart';
 part 'notice_outbox_sql.dart';
@@ -2248,7 +2249,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
                   (t) => OrderingTerm.desc(t.appliedOrder)
                 ]))
               .get();
-          for (final old in scoped.skip(3)) {
+          for (final old in scoped.skip(pinLimitPerChat)) {
             await (delete(localPins)
                   ..where((t) =>
                       t.conversationId.equals(old.conversationId) &

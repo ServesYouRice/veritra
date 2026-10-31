@@ -2474,4 +2474,24 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get k2CopiedHistory => 'Copied history · device snapshot';
+
+  @override
+  String get k2HistoryOnlyTitle => 'Copied history';
+
+  @override
+  String get k2HistoryOnlyNotice =>
+      'Copied from your other device. Read-only: this device is not a member of this conversation, so nothing can be sent here.';
+
+  @override
+  String get k2HistoryUntitled => 'Earlier conversation';
+
+  @override
+  String get k2HistoryOtherMember => 'Another member';
+
+  @override
+  String get k2HistoryAttachment => 'Attachment, not downloaded on this device';
+
+  @override
+  String get k2HistoryEmpty =>
+      'No copied messages are left in this conversation.';
 }

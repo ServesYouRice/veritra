@@ -137,6 +137,13 @@ compare signing keys.
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **W8 pin rule (2026-10-31, owner decision):** any member of a DM or a
+  group may pin; community conversations keep moderator roles until C4. The
+  limit rises from 3 to **50** active pins per chat (per channel in a shared
+  community conversation); the 51st evicts the oldest by `pinned_at`. A
+  group admin-only switch waits for C4, because groups have no encrypted
+  settings record yet. Mixed versions disagree until updated: an older app
+  drops a group member's pin and keeps only 3. Payload bytes are unchanged.
 - **Crypto-core fixes, ABI 9 (2026-10-31, audit plan 2026-10-25):** one
   ABI bump for the whole set; the Dart binding requires 9 exactly.
   - TASK-007: `pm_crypto_device_sign_enrollment_challenge` is removed. It
@@ -189,7 +196,6 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   - Not closed here: which identities may hold which keys, and who may
     commit or invite (TASK-006), needs the L1 approved-device list. See
     "What L1 must provide".
-
 - **K2 ABI8 controls (2026-10-28):** adds bounded local binary control
   operations and matching Dart bindings for protocol v3. Claim proof validates
   the native key-package identity, and source SAS confirmation records intent
@@ -641,7 +647,7 @@ input can differ.
 | `delete` | 1 | `message_id` | Target's author account | Clears body and reactions. Kinds widen to `text`, `attachment`, `poll`, and `unsupported` (its raw JSON is cleared, §1); clearing an attachment row also drops its keys. A poll's votes and pin go with it |
 | `reaction` | 1 | `message_id`, `reaction` (≤ 32 UTF-16 units, empty clears) | Any member | As today, plus the conversation check |
 | `attachmentManifest` | 1/2 | `attachments` (≤ 32); *`forwarded`*, *`profile_key`*, *`group_profile_key`* | Any member | Row kind `attachment` |
-| `pin` | 2 | `message_id`, `pinned` (bool); `duration_seconds` when `pinned` is true: 86400, 604800 or 2592000 | DM: either member. Group/channel: moderator roles | §5.4 |
+| `pin` | 2 | `message_id`, `pinned` (bool); `duration_seconds` when `pinned` is true: 86400, 604800 or 2592000 | DM and group: any member (owner decision 2026-10-31; an admin-only group switch waits for C4). Community conversation/channel: moderator roles | §5.4 |
 | `poll` | 2 | `question`, `options` (list of strings), `multiple_choice` (bool); *`profile_key`*, *`group_profile_key`* | Any member | Row kind `poll` (new); body holds the poll JSON |
 | `poll_vote` | 2 | `message_id`, `choices` (list of option indexes; empty = retract) | Any member | §5.5 |
 | `poll_close` | 2 | `message_id` | The poll's author account | §5.5 |
@@ -761,8 +767,10 @@ markup:
 - **Conflicts and limits.** Pins apply in sync order, and the last pin
   action for a target wins. `pinned_at` is the pin envelope's server
   `created_at`, and ties go by sync order. A conversation has at most
-  **3** active pins; a `community_shared` conversation has at most 3 **per
-  channel**. A fourth evicts the oldest by `pinned_at`.
+  **50** active pins (owner decision 2026-10-31; W7 first set 3); a
+  `community_shared` conversation has at most 50 **per channel**. The 51st
+  evicts the oldest by `pinned_at`. The pin bar shows about three rows and
+  scrolls.
 - **Expiry and deletion.** Expired pins disappear from the pin bar when
   it is drawn, and are swept when the chat opens. Deleting the target,
   for everyone or for this device only, removes its pin here.
