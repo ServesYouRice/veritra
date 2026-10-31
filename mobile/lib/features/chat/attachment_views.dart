@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math' show Random;
+import 'dart:math' show Random, max;
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
@@ -269,11 +270,73 @@ class AttachmentImageScreen extends StatefulWidget {
   State<AttachmentImageScreen> createState() => _AttachmentImageScreenState();
 }
 
+/// The most pixels an image may declare and still be shown. The bytes come
+/// from a peer, and a small file can declare billions of pixels (a
+/// decompression bomb); decoding one allocates width x height x 4 bytes. 48
+/// million is a 48 MP photo (8000 x 6000), about 190 MB while decoding.
+const int maxViewerPixels = 48 * 1000 * 1000;
+
+/// The longest side an image is decoded at. Larger images are decoded
+/// smaller, which also bounds memory for the zoomable viewer (4096 x 3072 x 4
+/// is about 50 MB). For animated GIF and WebP the cost per frame is bounded
+/// the same way; the number of frames is not.
+const int maxViewerDecodeSide = 4096;
+
+/// The pixel size an image declares in its header, read without decoding it,
+/// or null when [bytes] are not an image the engine can open.
+Future<({int width, int height})?> readImageSize(Uint8List bytes) async {
+  ui.ImmutableBuffer? buffer;
+  ui.ImageDescriptor? descriptor;
+  try {
+    buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
+    descriptor = await ui.ImageDescriptor.encoded(buffer);
+    return (width: descriptor.width, height: descriptor.height);
+  } catch (_) {
+    return null;
+  } finally {
+    descriptor?.dispose();
+    buffer?.dispose();
+  }
+}
+
+/// The `cacheWidth` and `cacheHeight` that decode an image of [width] x
+/// [height] no larger than [maxViewerDecodeSide] on its longest side, keeping
+/// its proportions. Null for both when it already fits.
+({int? width, int? height}) viewerDecodeSize(int width, int height) {
+  if (max(width, height) <= maxViewerDecodeSide) {
+    return (width: null, height: null);
+  }
+  return width >= height
+      ? (width: maxViewerDecodeSide, height: null)
+      : (width: null, height: maxViewerDecodeSide);
+}
+
+class _LoadedImage {
+  const _LoadedImage(this.bytes, this.size);
+
+  final Uint8List bytes;
+  final ({int width, int height})? size;
+
+  /// Whether it is safe to hand to the decoder.
+  bool get showable =>
+      size != null &&
+      size!.width > 0 &&
+      size!.height > 0 &&
+      size!.width * size!.height <= maxViewerPixels;
+}
+
 class _AttachmentImageScreenState extends State<AttachmentImageScreen> {
-  late Future<Uint8List> _bytes = widget.state.loadAttachment(
-    widget.entry,
-    conversationId: widget.conversationId,
-  );
+  late Future<_LoadedImage> _image = _load();
+
+  /// Downloads and decrypts the image, then reads its declared size before
+  /// anything decodes it.
+  Future<_LoadedImage> _load() async {
+    final bytes = await widget.state.loadAttachment(
+      widget.entry,
+      conversationId: widget.conversationId,
+    );
+    return _LoadedImage(bytes, await readImageSize(bytes));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -294,8 +357,8 @@ class _AttachmentImageScreenState extends State<AttachmentImageScreen> {
             ),
         ],
       ),
-      body: FutureBuilder<Uint8List>(
-        future: _bytes,
+      body: FutureBuilder<_LoadedImage>(
+        future: _image,
         builder: (context, snapshot) {
           if (snapshot.hasError) {
             return Center(
@@ -306,10 +369,7 @@ class _AttachmentImageScreenState extends State<AttachmentImageScreen> {
                   const SizedBox(height: BoneSpacing.md),
                   OutlinedButton(
                     onPressed: () => setState(() {
-                      _bytes = widget.state.loadAttachment(
-                        widget.entry,
-                        conversationId: widget.conversationId,
-                      );
+                      _image = _load();
                     }),
                     child: Text(context.l10n.commonRetry),
                   ),
@@ -317,14 +377,23 @@ class _AttachmentImageScreenState extends State<AttachmentImageScreen> {
               ),
             );
           }
-          final bytes = snapshot.data;
-          if (bytes == null) {
+          final loaded = snapshot.data;
+          if (loaded == null) {
             return const Center(child: CircularProgressIndicator());
           }
+          if (!loaded.showable) {
+            return Center(child: Text(context.l10n.attachmentImageUnshowable));
+          }
+          final decode = viewerDecodeSize(
+            loaded.size!.width,
+            loaded.size!.height,
+          );
           return InteractiveViewer(
             child: Center(
               child: Image.memory(
-                bytes,
+                loaded.bytes,
+                cacheWidth: decode.width,
+                cacheHeight: decode.height,
                 semanticLabel: widget.entry.fileName,
                 errorBuilder: (context, _, __) =>
                     Text(context.l10n.attachmentImageUnshowable),
