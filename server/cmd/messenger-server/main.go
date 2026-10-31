@@ -212,8 +212,9 @@ const maxPasswordFileBytes = 1024
 
 // readPasswordFile reads a private, regular password file of at most
 // maxPasswordFileBytes, without trailing line breaks. A FIFO or device is
-// refused from its metadata, before an open could block on it, and the size
-// is checked before anything is read.
+// refused from its metadata, before an open could block on it, and again from
+// the opened handle, since the path can change in between. The size is
+// checked before anything is read.
 func readPasswordFile(path string) (string, error) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -222,7 +223,18 @@ func readPasswordFile(path string) (string, error) {
 	if !info.Mode().IsRegular() {
 		return "", errors.New("password file must be a regular file")
 	}
-	file, err := os.Open(path)
+	if err := faultHook("password-file:open"); err != nil {
+		return "", err
+	}
+	// The path can be swapped for a FIFO after the check above. On Unix the
+	// open is non-blocking, so it returns at once and the handle's own
+	// metadata decides; reads of a regular file ignore the flag. Windows has
+	// no FIFOs at a path, and there the flag would request overlapped I/O.
+	flags := os.O_RDONLY
+	if runtime.GOOS != "windows" {
+		flags |= syscall.O_NONBLOCK
+	}
+	file, err := os.OpenFile(path, flags, 0)
 	if err != nil {
 		return "", err
 	}
@@ -230,6 +242,9 @@ func readPasswordFile(path string) (string, error) {
 	opened, err := file.Stat()
 	if err != nil {
 		return "", err
+	}
+	if !opened.Mode().IsRegular() {
+		return "", errors.New("password file must be a regular file")
 	}
 	if !os.SameFile(info, opened) {
 		return "", errors.New("password file changed while it was opened")
