@@ -1914,12 +1914,25 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         retentionSeconds: retentionSeconds,
       );
       final conversation = created!;
-      await _setUpConversationGroup(conversation.id);
-      conversations = <Conversation>[conversation, ...conversations];
-      // The server may hand back a DM the peer created first.
+      // The server hands back the existing DM for a pair instead of making a
+      // second one. One the peer created already has its group, and this
+      // device joins it through the peer's Welcome; one whose group this
+      // device already holds needs nothing either. Only a new conversation
+      // gets a group here.
+      final mls = _mlsCrypto;
+      final existingDm = conversation.isDm &&
+          ((conversation.createdBy != null &&
+                  conversation.createdBy != current.accountId) ||
+              (mls != null && await mls.groupEpoch(conversation.id) != null));
+      if (!existingDm) await _setUpConversationGroup(conversation.id);
+      conversations = <Conversation>[
+        conversation,
+        ...conversations.where((item) => item.id != conversation.id),
+      ];
       if (conversation.isDm) await _acceptConversation(conversation);
       selectedConversationId = conversation.id;
-      messagesByConversation[conversation.id] = <ReceivedMessageEnvelope>[];
+      messagesByConversation.putIfAbsent(
+          conversation.id, () => <ReceivedMessageEnvelope>[]);
     });
     return error == null ? created : null;
   }
