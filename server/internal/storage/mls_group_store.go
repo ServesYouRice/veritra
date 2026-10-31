@@ -239,6 +239,20 @@ func (s *Store) CreateMLSCommitBundle(ctx context.Context, input MLSCommitBundle
 		if err != nil {
 			return MLSCommitBundleResult{}, err
 		}
+		// A device whose revocation is pending leaves the roster only through
+		// its revocation commit, which the coordinator submits with
+		// RevocationDeviceID. Any other bundle removing it would leave the
+		// revocation pending for good: the coordinator's commit could no longer
+		// name a device that is already gone. (Q-004: refuse, not reinterpret.)
+		var revocationPending bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM mls_revocations
+			WHERE conversation_id = ? AND revoked_device_id = ? AND state = 'pending')`,
+			input.ConversationID, removed.DeviceID).Scan(&revocationPending); err != nil {
+			return MLSCommitBundleResult{}, err
+		}
+		if revocationPending && removed.DeviceID != input.RevocationDeviceID {
+			return MLSCommitBundleResult{}, ErrForbidden
+		}
 	}
 	if input.RevocationDeviceID != "" {
 		var allowed bool

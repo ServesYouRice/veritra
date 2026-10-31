@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"private-messenger/server/internal/domain"
@@ -96,6 +97,88 @@ func TestCoordinatorOnlyRevocationEmitsOneCompletionEventFromALegacyCommit(t *te
 	}
 	if n := completedRevocationEvents(t, ctx, store, conversation.ID, tablet); n != 1 {
 		t.Fatalf("completion events = %d, want 1", n)
+	}
+}
+
+// A pending revocation is carried out by its coordinator's revocation commit.
+// A plain removal of the same device by anyone else would strand the
+// revocation, so it is refused.
+func TestPlainBundleCannotRemoveADeviceWithAPendingRevocation(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	owner := createTestOwner(t, ctx, store)
+	invite, err := store.CreateInvite(ctx, owner.Account.ID, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob := registerTestMember(t, ctx, store, invite.Code, "bob")
+	conversation, err := store.CreateConversation(ctx, CreateConversationInput{Kind: "group", CreatedBy: owner.Account.ID, MemberAccountIDs: []string{bob.Account.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const tablet = "dev_bob_tablet"
+	addTestDevice(t, ctx, store, bob.Account.ID, tablet)
+	if _, err := store.CreateMLSCommitBundle(ctx, MLSCommitBundleInput{
+		ConversationID: conversation.ID, SenderAccountID: owner.Account.ID, SenderDeviceID: owner.Device.ID,
+		Epoch: 0, IdempotencyKey: "genesis", Commit: []byte("commit-0"), Welcome: []byte("welcome-0"),
+		Added: []MLSDeviceRef{{AccountID: bob.Account.ID, DeviceID: bob.Device.ID}, {AccountID: bob.Account.ID, DeviceID: tablet}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RevokeDeviceWithSyncEvent(ctx, bob.Account.ID, tablet); err != nil {
+		t.Fatal(err)
+	}
+	revocations, err := store.ListMLSRevocations(ctx, owner.Account.ID, owner.Device.ID)
+	if err != nil || len(revocations) != 1 {
+		t.Fatalf("revocations = %#v, err = %v", revocations, err)
+	}
+	coordinator, bystander := owner, bob
+	if revocations[0].CoordinatorDeviceID == bob.Device.ID {
+		coordinator, bystander = bob, owner
+	}
+	removeTablet := MLSDeviceRef{AccountID: bob.Account.ID, DeviceID: tablet}
+	bundle := func(sender AccountDevice, key, revocation string) (MLSCommitBundleResult, error) {
+		return store.CreateMLSCommitBundle(ctx, MLSCommitBundleInput{
+			ConversationID: conversation.ID, SenderAccountID: sender.Account.ID, SenderDeviceID: sender.Device.ID,
+			Epoch: 1, IdempotencyKey: key, Commit: []byte("commit-" + key),
+			Removed: []MLSDeviceRef{removeTablet}, RevocationDeviceID: revocation,
+		})
+	}
+	if _, err := bundle(bystander, "plain-removal", ""); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("plain removal by a group device: err = %v, want %v", err, ErrForbidden)
+	}
+	// Not even the coordinator may remove it without naming the revocation.
+	if _, err := bundle(coordinator, "plain-removal-by-coordinator", ""); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("plain removal by the coordinator: err = %v, want %v", err, ErrForbidden)
+	}
+	var stillActive bool
+	if err := store.db.QueryRowContext(ctx, `SELECT removed_after_event_id IS NULL FROM conversation_mls_devices WHERE conversation_id = ? AND device_id = ?`, conversation.ID, tablet).Scan(&stillActive); err != nil || !stillActive {
+		t.Fatalf("the refused bundle removed the device: active = %v, err = %v", stillActive, err)
+	}
+	// The revocation commit itself still works and completes the cycle.
+	if _, err := bundle(coordinator, "revocation", tablet); err != nil {
+		t.Fatalf("revocation commit: %v", err)
+	}
+	var state string
+	if err := store.db.QueryRowContext(ctx, `SELECT state FROM mls_revocations WHERE conversation_id = ? AND revoked_device_id = ?`, conversation.ID, tablet).Scan(&state); err != nil || state != "commit_submitted" {
+		t.Fatalf("revocation state = %q, err = %v, want commit_submitted", state, err)
+	}
+	// A device without a revocation is removed by an ordinary bundle as before.
+	addTestDevice(t, ctx, store, bob.Account.ID, "dev_bob_laptop")
+	if _, err := store.CreateMLSCommitBundle(ctx, MLSCommitBundleInput{
+		ConversationID: conversation.ID, SenderAccountID: owner.Account.ID, SenderDeviceID: owner.Device.ID,
+		Epoch: 2, IdempotencyKey: "add-laptop", Commit: []byte("commit-add"), Welcome: []byte("welcome-add"),
+		Added: []MLSDeviceRef{{AccountID: bob.Account.ID, DeviceID: "dev_bob_laptop"}},
+	}); err != nil {
+		t.Fatalf("add laptop: %v", err)
+	}
+	if _, err := store.CreateMLSCommitBundle(ctx, MLSCommitBundleInput{
+		ConversationID: conversation.ID, SenderAccountID: owner.Account.ID, SenderDeviceID: owner.Device.ID,
+		Epoch: 3, IdempotencyKey: "remove-laptop", Commit: []byte("commit-remove"),
+		Removed: []MLSDeviceRef{{AccountID: bob.Account.ID, DeviceID: "dev_bob_laptop"}},
+	}); err != nil {
+		t.Fatalf("ordinary removal: %v", err)
 	}
 }
 
