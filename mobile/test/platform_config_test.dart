@@ -106,8 +106,13 @@ void main() {
     expect(delegate, contains('call.method == "excludeFromBackup"'));
     expect(dart, contains("'excludeFromBackup'"));
     expect(delegate, contains('values.isExcludedFromBackup = true'));
-    expect(delegate,
-        contains('registerStorageChannel(engineBridge.pluginRegistry)'));
+    // The shared engine (D52) registers the storage channel in the same
+    // main-thread turn that starts it, before any Dart bootstrap call runs.
+    final shared = delegate.substring(delegate.indexOf('func sharedEngine('),
+        delegate.indexOf('func setWakeUIAttached('));
+    expect(shared, contains('registerStorageChannel(engine)'));
+    expect(shared.indexOf('registerStorageChannel(engine)'),
+        lessThan(shared.indexOf('return engine')));
     // Every path is tried: a failure is counted inside the loop, never
     // returned from it, and reported once after it.
     final handler = delegate.substring(

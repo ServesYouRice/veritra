@@ -109,6 +109,7 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'invalid_name': ApiErrorKind.invalidRequest,
   'invalid_push_subscription': ApiErrorKind.invalidRequest,
   'invalid_recovery_range': ApiErrorKind.invalidRequest,
+  'multiple_ranges_not_supported': ApiErrorKind.invalidRequest,
   'invalid_retention_seconds': ApiErrorKind.invalidRequest,
   'invalid_role': ApiErrorKind.invalidRequest,
   'invalid_subscription_id': ApiErrorKind.invalidRequest,
@@ -152,6 +153,7 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'push_provider_unavailable': ApiErrorKind.unavailable,
   'setup_ui_unavailable': ApiErrorKind.unavailable,
   'password_hashing_busy': ApiErrorKind.unavailable,
+  'session_check_unavailable': ApiErrorKind.unavailable,
   // Internal server failures.
   'attachment_record_failed': ApiErrorKind.server,
   'backup_record_failed': ApiErrorKind.server,
