@@ -37,9 +37,15 @@ const (
 	// complete frame (a pong or anything else) within pongWait, so a half-open
 	// or slow-drip peer is reaped instead of pinning a goroutine and
 	// subscription indefinitely. writeWait bounds every write.
+	//
+	// A pong has pongWait-pingPeriod to come back after its ping is due. The
+	// ping can sit behind one outbound write (up to writeWait) and then needs
+	// its own write (up to writeWait) before the peer can even see it, so the
+	// difference must exceed 2*writeWait with room to spare for the round
+	// trip; a test asserts it. Half of pongWait leaves 30s against 20s.
 	writeWait  = 10 * time.Second
 	pongWait   = 60 * time.Second
-	pingPeriod = (pongWait * 9) / 10
+	pingPeriod = pongWait / 2
 	// closeWait bounds how long the server lingers for the peer's close
 	// after sending its own close frame.
 	closeWait = time.Second
@@ -136,6 +142,20 @@ func upgradeWebSocket(w http.ResponseWriter, r *http.Request) (net.Conn, *bufio.
 // serveConn runs the single writer loop and the frame reader. echo is only
 // set by the protocol test harness; it writes inbound data messages back.
 func serveConn(ctx context.Context, conn net.Conn, rw *bufio.ReadWriter, outbound <-chan []byte, sessionExpiresAt time.Time, echo bool) error {
+	return serveConnWithKeepalive(ctx, conn, rw, outbound, sessionExpiresAt, echo, productionKeepalive)
+}
+
+// keepalive holds the timings of the liveness protocol, so tests can run it
+// at a fraction of the production scale.
+type keepalive struct {
+	pingPeriod time.Duration // how often the server pings
+	pongWait   time.Duration // how long the peer may send nothing
+	writeWait  time.Duration // bound on every write
+}
+
+var productionKeepalive = keepalive{pingPeriod: pingPeriod, pongWait: pongWait, writeWait: writeWait}
+
+func serveConnWithKeepalive(ctx context.Context, conn net.Conn, rw *bufio.ReadWriter, outbound <-chan []byte, sessionExpiresAt time.Time, echo bool, k keepalive) error {
 	done := make(chan struct{})
 	stop := make(chan struct{})
 	defer close(stop)
@@ -152,18 +172,19 @@ func serveConn(ctx context.Context, conn net.Conn, rw *bufio.ReadWriter, outboun
 		pongs:       pongs,
 		messages:    inbound,
 		stop:        stop,
+		pongWait:    k.pongWait,
 	}
 	var reply closeReply
 	go func() {
 		defer close(done)
 		reply = reader.run()
 	}()
-	ticker := time.NewTicker(pingPeriod)
+	ticker := time.NewTicker(k.pingPeriod)
 	defer ticker.Stop()
 	expiryTimer := time.NewTimer(time.Until(sessionExpiresAt))
 	defer expiryTimer.Stop()
 	write := func(frame func(io.Writer) error) error {
-		_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
+		_ = conn.SetWriteDeadline(time.Now().Add(k.writeWait))
 		if err := frame(rw); err != nil {
 			return err
 		}
@@ -206,6 +227,16 @@ func serveConn(ctx context.Context, conn net.Conn, rw *bufio.ReadWriter, outboun
 		}
 	}
 	for {
+		// A due ping goes first. Go's select picks among ready cases at
+		// random, so a steady stream of outbound payloads could otherwise
+		// postpone the ping until the peer's read deadline passes.
+		select {
+		case <-ticker.C:
+			if err := write(writePingFrame); err != nil {
+				return err
+			}
+		default:
+		}
 		select {
 		case payload, ok := <-outbound:
 			if !ok {
@@ -343,10 +374,17 @@ type frameReader struct {
 	// echo only). Sends abort when stop is closed.
 	messages chan<- inboundMessage
 	stop     <-chan struct{}
+	// pongWait is how long the peer may stay silent; zero means the
+	// package default.
+	pongWait time.Duration
 }
 
 func (f *frameReader) run() closeReply {
-	_ = f.setDeadline(time.Now().Add(pongWait))
+	wait := f.pongWait
+	if wait <= 0 {
+		wait = pongWait
+	}
+	_ = f.setDeadline(time.Now().Add(wait))
 	var fragmentedOpcode byte
 	var fragmentedPayload []byte
 	utf8Checked := 0
@@ -465,7 +503,8 @@ func (f *frameReader) run() closeReply {
 		// A complete frame (data, ping, or pong) proves the peer is alive, so
 		// extend the read deadline. Compliant WebSocket clients answer our pings
 		// with pongs automatically, which keeps this refreshed on idle links.
-		_ = f.setDeadline(time.Now().Add(pongWait))
+		// Only inbound frames renew it: nothing the server writes does.
+		_ = f.setDeadline(time.Now().Add(wait))
 	}
 }
 
