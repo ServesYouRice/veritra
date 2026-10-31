@@ -862,6 +862,16 @@ func rollBackRestore(journal restoreJournal) error {
 	// -shm may only go back once the original database is live again.
 	err := faultHook("restore:rollback-database")
 	if err == nil {
+		// A -wal or -shm the journal does not list belongs to the restored
+		// database (a validation killed mid-way can leave them), never to
+		// the original, so it goes before the original database comes back.
+		for _, companion := range []string{journal.Database + "-wal", journal.Database + "-shm"} {
+			if _, listed := journal.Companions[companion]; !listed && err == nil {
+				err = withdraw(companion, journal.StagingDir, "rolled-back-"+filepath.Base(companion))
+			}
+		}
+	}
+	if err == nil {
 		if journal.DatabaseRollback != "" {
 			err = putBack(journal.Database, journal.DatabaseRollback, journal.StagingDir)
 		} else {
