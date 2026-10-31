@@ -91,6 +91,54 @@ abstract final class LocalMessageState {
   static const restored = 'restored';
 }
 
+/// Backup history without the outgoing rows still [LocalMessageState.pending]
+/// and the reactions, pins and stars on them. A restore drops the outboxes
+/// and the MLS state (D71, D73), so such a row could never be sent or
+/// resolve. Edits, deletes and reactions a pending action already applied to
+/// other rows stay, as in a history snapshot (`captureHistory`).
+({
+  List<LocalMessage> history,
+  List<LocalMessageReaction> reactions,
+  List<LocalPin> pins,
+  Map<String, int> starred,
+}) withoutPendingHistory({
+  required List<LocalMessage> history,
+  required List<LocalMessageReaction> reactions,
+  required List<LocalPin> pins,
+  required Map<String, int> starred,
+}) {
+  final dropped = <String>{
+    for (final message in history)
+      if (message.state == LocalMessageState.pending) message.key
+  };
+  if (dropped.isEmpty) {
+    return (
+      history: history,
+      reactions: reactions,
+      pins: pins,
+      starred: starred
+    );
+  }
+  return (
+    history: [
+      for (final message in history)
+        if (message.state != LocalMessageState.pending) message
+    ],
+    reactions: [
+      for (final reaction in reactions)
+        if (!dropped.contains(reaction.targetKey)) reaction
+    ],
+    pins: [
+      for (final pin in pins)
+        if (!dropped.contains(pin.targetKey)) pin
+    ],
+    starred: {
+      for (final entry in starred.entries)
+        if (!dropped.contains(entry.key)) entry.key: entry.value
+    },
+  );
+}
+
 final class InsertMessageEffect extends MessageEffect {
   const InsertMessageEffect({
     required this.key,
@@ -966,6 +1014,15 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     Set<String> backfillExpiryFor = const <String>{},
   }) =>
       transaction(() async {
+        final kept = withoutPendingHistory(
+            history: history,
+            reactions: reactions,
+            pins: pins,
+            starred: starred);
+        history = kept.history;
+        reactions = kept.reactions;
+        pins = kept.pins;
+        starred = kept.starred;
         await clearNoticeOutbox();
         final previousSession = await readSessionJson();
         final replacementNamespace =

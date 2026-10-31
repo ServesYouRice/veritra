@@ -235,16 +235,24 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
   the cached conversation list and envelopes, the decrypted history and
   reactions, pins, starred messages, conversation preferences and the K2
   history namespace. Nothing else.
-- **Never carried:** the bearer token, the device id, the device secret,
-  the sealed MLS state, its state key, the plain and MLS outboxes, pending
-  pin commands and the sync cursor. A stolen backup and its recovery code
-  therefore cannot sign in, and cannot act as the device that made it in
-  any MLS group. `mobile/test/backup_no_credentials_test.dart` scans the
-  plaintext for each of them.
+- **Never carried:** the bearer token, the device secret, the session's
+  device id, the sealed MLS state, its state key, the plain and MLS
+  outboxes, pending pin commands and the sync cursor. A stolen backup and
+  its recovery code therefore cannot sign in, and cannot act as the device
+  that made it in any MLS group. `mobile/test/backup_no_credentials_test.dart`
+  scans the plaintext for each of them.
+- **The old device id still appears as data.** History rows keep their
+  `senderDeviceId`, and message keys are `<sender device id>:<action id>`,
+  so the old device's id is in the history of the messages it sent (and
+  in K2 history provenance as `source_device_id`). It only labels those
+  rows: it is not a credential, and without the device secret it signs
+  nothing in.
 - **Restore makes no device.** It writes the history and an account-only
-  session (empty token, no device), sync cursor 0 and no MLS state. Sync
-  does not start. The device then joins the account as a new device. Today
-  that means a device link from a signed-in device. Saving the linked
+  session (empty token, no device), sync cursor 0 and no MLS state.
+  Outgoing rows still pending are not restored: without the outboxes they
+  could never be sent. Sync does not start. The device then joins the
+  account as a new device. Today that means a device link from a
+  signed-in device. Saving the linked
   session over the account-only one keeps the restored history when the
   server and account match; any other account drops it. The linked device
   starts fresh MLS state and publishes key packages. Its groups add it by

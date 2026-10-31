@@ -9,6 +9,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../core/models.dart';
+import '../core/server_origin.dart' show canonicalizeServerOrigin;
 import '../crypto/message_format.dart' show pinLimitPerChat;
 import '../sync/sync_recovery.dart';
 import 'backup_exclusion.dart';
@@ -1156,12 +1157,17 @@ class MemoryLocalStore implements LocalStore {
     _cryptoState = null;
     _processedMlsMessages.clear();
     _peerVerifications.clear();
-    _history.replace(backup.history, backup.reactions);
+    final kept = withoutPendingHistory(
+        history: backup.history,
+        reactions: backup.reactions,
+        pins: backup.pins,
+        starred: backup.starred);
+    _history.replace(kept.history, kept.reactions);
     _noticeState = LocalNoticeState();
     _historyNamespace = backup.historyNamespace?.copy() ?? HistoryNamespace();
-    _history.pins.addEntries(backup.pins.map((p) => MapEntry(p.targetKey, p)));
+    _history.pins.addEntries(kept.pins.map((p) => MapEntry(p.targetKey, p)));
     _history.pendingPins.clear();
-    _history.starred.addAll(backup.starred);
+    _history.starred.addAll(kept.starred);
     _conversationPrefs
       ..clear()
       ..addEntries(
@@ -3175,10 +3181,20 @@ String _identity(Session session) =>
 /// same server is enrolled over it; any other account still drops it.
 bool _identityChanged(Session previous, Session next) {
   if (isRestoredAccountSession(previous)) {
-    return previous.baseUrl != next.baseUrl ||
+    // The link canonicalizes the origin, so compare it the same way.
+    return _comparableOrigin(previous.baseUrl) !=
+            _comparableOrigin(next.baseUrl) ||
         previous.accountId != next.accountId;
   }
   return _identity(previous) != _identity(next);
+}
+
+String _comparableOrigin(String baseUrl) {
+  try {
+    return canonicalizeServerOrigin(baseUrl);
+  } on FormatException {
+    return baseUrl;
+  }
 }
 
 Map<String, Object?> _sessionJson(Session session) => <String, Object?>{

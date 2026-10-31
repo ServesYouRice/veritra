@@ -92,6 +92,7 @@ class MlsPendingChange {
     required this.add,
     required this.remove,
     this.coordinatorDeviceId,
+    this.truncated = false,
   });
 
   final String conversationId;
@@ -99,6 +100,11 @@ class MlsPendingChange {
   final List<MlsDeviceRef> add;
   final List<MlsDeviceRef> remove;
   final String? coordinatorDeviceId;
+
+  /// The server cut its lists at a cap: more may be pending than listed.
+  /// When the whole read was cut, every item says so and conversations may
+  /// be missing from it.
+  final bool truncated;
 
   factory MlsPendingChange.fromJson(Map<String, Object?> json) {
     List<MlsDeviceRef> refs(Object? value) =>
@@ -115,6 +121,7 @@ class MlsPendingChange {
       add: refs(json['add']),
       remove: refs(json['remove']),
       coordinatorDeviceId: json['coordinator_device_id'] as String?,
+      truncated: json['truncated'] == true,
     );
   }
 }
