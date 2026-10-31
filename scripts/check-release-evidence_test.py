@@ -256,6 +256,10 @@ def axml(
     repeat_debuggable: bool = False,
     extra_debuggable: str | None = None,
     root_name: str = "manifest",
+    unmapped_min_sdk: tuple[tuple[str | None, int, int], ...] = (),
+    uses_sdk_in_application: bool = False,
+    after_root: str | None = None,
+    root_ends: int = 1,
 ) -> bytes:
     """A compiled AndroidManifest.xml: <manifest package><uses-sdk
     minSdkVersion?><application debuggable?>.
@@ -269,16 +273,25 @@ def axml(
     ``repeat_debuggable`` writes the debuggable attribute twice, and
     ``extra_debuggable`` adds a second, false one under another name with the
     same resource ID. ``min_sdk`` is None (no <uses-sdk>), an int, or a
-    (type, value) pair.
+    (type, value) pair. ``unmapped_min_sdk`` adds (namespace, type, value)
+    attributes to <uses-sdk> named "minSdkVersion" but with no resource ID
+    (a second copy of the name, past the resource map), after the framework
+    one; ``uses_sdk_in_application`` moves <uses-sdk> inside <application>.
+    ``after_root`` adds an empty element after the root closes, and
+    ``root_ends`` is how many end nodes close the root (0 leaves it open).
     """
     attr_names = [debuggable_name, "minSdkVersion"] + ([extra_debuggable] if extra_debuggable else [])
     attr_ids = [ATTR_DEBUGGABLE, ATTR_MIN_SDK] + ([ATTR_DEBUGGABLE] if extra_debuggable else [])
     strings = attr_names + ["package", "manifest", "application", "uses-sdk", "android", ANDROID_NS, package]
     package_specs = package_attrs if package_attrs is not None else ((None, package, package),)
-    for value in [part for spec in package_specs for part in spec] + [nested_manifest, wrapper, root_name]:
+    unmapped_namespaces = [namespace for namespace, _, _ in unmapped_min_sdk]
+    for value in [part for spec in package_specs for part in spec] + [nested_manifest, wrapper, root_name, after_root] + unmapped_namespaces:
         if value and value not in strings:
             strings.append(value)
     index = {value: position for position, value in enumerate(strings)}
+    unmapped_name = len(strings)  # index of the ID-less "minSdkVersion"
+    if unmapped_min_sdk:
+        strings.append("minSdkVersion")
     none = 0xFFFFFFFF
 
     def element(name: str, attributes: list[bytes]) -> bytes:
@@ -309,6 +322,10 @@ def axml(
     if min_sdk is not None:
         value_type, value = min_sdk if isinstance(min_sdk, tuple) else (0x10, min_sdk)
         sdk_attrs.append(attribute(ANDROID_NS, "minSdkVersion", None, value_type, value))
+    for sdk_namespace, value_type, value in unmapped_min_sdk:
+        sdk_attrs.append(struct.pack("<IIIHBBI", none if sdk_namespace is None else index[sdk_namespace], unmapped_name,
+                                     none, 8, 0, value_type, value))
+    uses_sdk = element("uses-sdk", sdk_attrs) + end("uses-sdk") if sdk_attrs or min_sdk is not None else b""
     namespace = struct.pack("<HHIIIII", 0x0100, 16, 24, 1, none, index["android"], index[ANDROID_NS])
     pools = string_pool(strings) * (2 if second_pool else 1)
     maps = resource_map(*attr_ids) * (2 if second_map else 1)
@@ -322,9 +339,13 @@ def axml(
     if nested_manifest:
         manifest += element("manifest", [attribute(None, "package", nested_manifest, 0x03, index[nested_manifest])])
         manifest += end("manifest")
-    if min_sdk is not None:
-        manifest += element("uses-sdk", sdk_attrs) + end("uses-sdk")
-    tree = manifest + element("application", application_attrs) + end("application") + end(root_name)
+    if not uses_sdk_in_application:
+        manifest += uses_sdk
+    application_body = uses_sdk if uses_sdk_in_application else b""
+    tree = manifest + element("application", application_attrs) + application_body + end("application")
+    tree += end(root_name) * root_ends
+    if after_root:
+        tree += element(after_root, []) + end(after_root)
     if wrapper:
         tree = element(wrapper, []) + tree + end(wrapper)
     body = head + namespace + late + tree
@@ -769,6 +790,30 @@ def approval_cases(root: Path, valid: dict[str, object]) -> None:
     caller_grafts.write_text(graft_line, encoding="utf-8")
     expect_blocked(root, copy.deepcopy(valid), "approvals commit does not descend from the candidate commit",
                    extra=("--approvals-commit", orphan), env={"GIT_GRAFT_FILE": str(caller_grafts)})
+    # git reads only the --root repository (review finding): the caller's
+    # GIT_* variables cannot point it at other objects. Here the approvals
+    # sit in a commit that only another copy of the repository holds, found
+    # through an alternate object directory, or with GIT_DIR naming that copy.
+    other = root.parent / (root.name + "-other")
+    shutil.copytree(root, other, ignore=shutil.ignore_patterns("dist", "*-artifacts"))
+    try:
+        outside = commit_on(other, COMMIT, approval_files(), "approve outside the repository")
+        try:
+            git(root, "cat-file", "-e", f"{outside}^{{commit}}")
+            raise AssertionError("the outside approvals commit is in the repository")
+        except subprocess.CalledProcessError:
+            pass
+        manifest = copy.deepcopy(valid)
+        manifest["approvals"] = manifest_approvals(other, outside)
+        for redirect in ({"GIT_ALTERNATE_OBJECT_DIRECTORIES": str(other / ".git/objects")},
+                         {"GIT_OBJECT_DIRECTORY": str(other / ".git/objects")},
+                         {"GIT_DIR": str(other / ".git")}):
+            expect_blocked(root, manifest, "approvals commit is not in this repository",
+                           extra=("--approvals-commit", outside), env=redirect)
+            expect_blocked(root, manifest, "approvals commit is not in this repository",
+                           extra=("--approvals-commit", outside, "--preflight"), env=redirect)
+    finally:
+        shutil.rmtree(other)
 
     # Approvals for another commit, or at another commit's path.
     check(approved(production_crypto=approval_record("production_crypto", reviewed_commit=OTHER_COMMIT)),
@@ -1044,6 +1089,46 @@ def qa02_cases(root: Path, valid: dict[str, object]) -> None:
                    "signed ios artifact is not a readable iOS app archive")
     expect_blocked(root, with_record(signed_bytes("two-apps.ipa", extra_apps=("Other.app",))), "must hold exactly one Payload/*.app bundle")
 
+    # The central directory must end exactly at the end record (review
+    # finding). Otherwise zipfile silently shifts every offset by the
+    # difference and reads the directory before the end record, while a
+    # reader trusting the recorded offset, or walking local headers from
+    # byte 0, sees another archive. Bytes before the first entry that no
+    # directory entry names are refused too.
+    good_ipa = (dist / SIGNED_IPA).read_bytes()
+    ipa_end = len(good_ipa) - 22
+    ipa_cd_offset = struct.unpack_from("<I", good_ipa, ipa_end + 16)[0]
+
+    def ipa_raw(name: str, data: bytes) -> dict[str, object]:
+        (dist / name).write_bytes(data)
+        return record(file=name, digest="sha256:" + hashlib.sha256(data).hexdigest())
+
+    def cd_offset(data: bytes, value: int) -> bytes:
+        end = len(data) - 22
+        return data[:end + 16] + struct.pack("<I", value) + data[end + 20:]
+
+    misplaced = "signed ios artifact central directory is not where its end record says"
+    for name, data in (
+        ("prefixed.ipa", b"PREFIX" + good_ipa),
+        ("directory-offset-low.ipa", cd_offset(good_ipa, ipa_cd_offset - 1)),
+        ("directory-offset-high.ipa", cd_offset(good_ipa, ipa_cd_offset + 1)),
+    ):
+        expect_blocked(root, with_record(ipa_raw(name, data)), misplaced, no_signed)
+    # Prepended bytes with every offset moved to match: a consistent zip,
+    # but one whose first bytes no entry accounts for.
+    stub = b"PREFIX"
+    shifted_directory = bytearray(good_ipa[ipa_cd_offset:ipa_end])
+    position = 0
+    while position < len(shifted_directory):
+        name_size, extra_size, comment_size = struct.unpack_from("<HHH", shifted_directory, position + 28)
+        local = struct.unpack_from("<I", shifted_directory, position + 42)[0]
+        struct.pack_into("<I", shifted_directory, position + 42, local + len(stub))
+        position += 46 + name_size + extra_size + comment_size
+    stubbed = cd_offset(stub + good_ipa[:ipa_cd_offset] + bytes(shifted_directory) + good_ipa[ipa_end:],
+                        ipa_cd_offset + len(stub))
+    expect_blocked(root, with_record(ipa_raw("stubbed.ipa", stubbed)),
+                   "signed ios artifact has bytes before its first entry", no_signed, absent=(misplaced,))
+
     # Review finding: another app, a zip comment and two profiles (zipfile
     # reads the last, a distribution one; the first allows debugging) passed.
     reviewer_ipa = signed_bytes("reviewer.ipa", prefix="Payload/Other.app/", bundle_id="com.someone.else",
@@ -1222,6 +1307,26 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
                                  ("min-sdk-string.apk", (0x03, 0), 1), ("min-sdk-ref.apk", (0x01, 0x7F010000), 1)):
         expect_blocked(root, with_android(apk(name, manifest=axml(min_sdk=min_sdk))),
                        f"verify only v1 signatures (minSdkVersion {shown} < 24)", no_signed)
+    # Android reads minSdkVersion as Android does (review finding): a signed
+    # int, so 0xFFFFFFFF is -1, not 4294967295; only the framework attribute
+    # (resource ID 0x0101020C), so a "minSdkVersion" in no or another
+    # namespace neither sets nor overrides it; and only from a <uses-sdk>
+    # directly under the root manifest.
+    sdk_ns = "http://example.invalid/sdk"
+    for name, manifest, shown in (
+        ("min-sdk-minus-one.apk", axml(min_sdk=(0x10, 0xFFFFFFFF)), -1),
+        ("min-sdk-sign-bit.apk", axml(min_sdk=(0x11, 0x80000000)), -(1 << 31)),
+        ("min-sdk-other-ns.apk", axml(min_sdk=None, unmapped_min_sdk=((sdk_ns, 0x10, 24),)), 1),
+        ("min-sdk-no-ns.apk", axml(min_sdk=None, unmapped_min_sdk=((None, 0x10, 24),)), 1),
+        ("min-sdk-23-other-ns-24.apk", axml(min_sdk=23, unmapped_min_sdk=((sdk_ns, 0x10, 24),)), 23),
+        ("min-sdk-23-no-ns-24.apk", axml(min_sdk=23, unmapped_min_sdk=((None, 0x10, 24),)), 23),
+        ("min-sdk-in-application.apk", axml(uses_sdk_in_application=True), 1),
+    ):
+        expect_blocked(root, with_android(apk(name, manifest=manifest)),
+                       f"verify only v1 signatures (minSdkVersion {shown} < 24)", no_signed)
+    # An ID-less "minSdkVersion" next to the framework one changes nothing.
+    expect_valid(root, with_android(apk("min-sdk-24-other-ns-1.apk",
+                                        manifest=axml(min_sdk=24, unmapped_min_sdk=((sdk_ns, 0x10, 1),)))))
     emulator_digest = build_apk(dist / EMULATOR_APK, manifest=axml(debuggable=True), signers={APK_V2: [DEBUG_CERT]})
     emulator = writer.emulator_record(COMMIT, "790", dist / EMULATOR_APK)
     assert emulator["digest"] == emulator_digest
@@ -1390,6 +1495,11 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
         ("nested-manifest.apk", axml(package="org.example.other", nested_manifest=APP_ID)),
         ("wrapped-manifest.apk", axml(wrapper="root")),
         ("root-not-manifest.apk", axml(root_name="root")),
+        # Element nesting is tracked (for <uses-sdk>), so it must balance,
+        # and nothing may follow the root.
+        ("after-root.apk", axml(min_sdk=None, after_root="uses-sdk")),
+        ("root-left-open.apk", axml(root_ends=0)),
+        ("root-closed-twice.apk", axml(root_ends=2)),
     ):
         expect_blocked(root, with_android(apk(name, manifest=manifest)), "signed android artifact is not a readable APK", no_signed)
     # debuggable is found by its resource ID, whatever its name string says.
@@ -1554,8 +1664,88 @@ def codeowners_cases() -> None:
             assert "/" + path in owners, f"CODEOWNERS does not cover {path}, which the release gate runs"
 
 
+def release_readiness_cases() -> None:
+    """scripts/release-readiness.sh says which gates ran (review finding).
+
+    Without release evidence it runs only the preflight, which release.yml
+    does on purpose before anything is built, and it used to end with
+    "release readiness gates passed" all the same. The script runs here in
+    a scratch root next to stub gates that pass, with no crypto markers.
+    """
+    if shutil.which("sh") is None:
+        # scripts/test.ps1 runs this suite on Windows, where the script
+        # itself cannot run either.
+        print("release readiness cases skipped: no sh on PATH")
+        return
+    temp = Path(tempfile.mkdtemp(prefix="veritra-release-readiness-"))
+    try:
+        scripts = temp / "scripts"
+        scripts.mkdir()
+        shutil.copy(ROOT / "scripts/release-readiness.sh", scripts)
+        for stub in ("check-go-toolchain.sh", "check-rust-audit-expiry.sh", "check-demo-boundary.sh"):
+            (scripts / stub).write_text("exit 0\n", encoding="utf-8")
+        calls = temp / "checker-calls"
+        # The stub checker logs its arguments, and fails a full (non-preflight) run on request.
+        (scripts / "check-release-evidence.py").write_text(
+            "import os, sys\n"
+            f"with open({str(calls)!r}, 'a', encoding='utf-8') as log:\n"
+            "    log.write(' '.join(sys.argv[1:]) + '\\n')\n"
+            "sys.exit(1 if os.environ.get('STUB_EVIDENCE_FAILS') and '--preflight' not in sys.argv else 0)\n",
+            encoding="utf-8",
+        )
+        (temp / "crypto/rust/src").mkdir(parents=True)
+        (temp / "crypto/rust/src/lib.rs").write_text("// production crypto wired\n", encoding="utf-8")
+        (temp / "mobile/lib").mkdir(parents=True)
+        (temp / "mobile/lib/main.dart").write_text("// production crypto wired\n", encoding="utf-8")
+        base = {key: value for key, value in os.environ.items() if not key.startswith(("RELEASE_", "GIT_", "STUB_"))}
+        base.update(RELEASE_COMMIT=OTHER_COMMIT, RELEASE_APPROVALS_COMMIT=OTHER_COMMIT)
+
+        def readiness(**env: str) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+            calls.unlink(missing_ok=True)
+            result = subprocess.run(["sh", str(scripts / "release-readiness.sh")], text=True, capture_output=True,
+                                    check=False, env={**base, **env})
+            logged = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
+            return result, logged
+
+        # Preflight only: it passes, and says the evidence was not checked.
+        result, logged = readiness()
+        assert result.returncode == 0, result.stderr
+        assert len(logged) == 1 and "--preflight" in logged[0], logged
+        assert "release readiness preflight gates passed" in result.stdout, result.stdout
+        assert "release evidence was not checked" in result.stdout, result.stdout
+        assert "release readiness gates passed" not in result.stdout, result.stdout
+        # With evidence: the full check runs, and the output says so.
+        evidence = temp / "evidence.json"
+        result, logged = readiness(RELEASE_EVIDENCE_FILE=str(evidence))
+        assert result.returncode == 0, result.stderr
+        assert len(logged) == 2 and f"--evidence {evidence}" in logged[1] and "--preflight" not in logged[1], logged
+        assert f"release readiness gates passed, including the release evidence in {evidence}" in result.stdout
+        result, logged = readiness(RELEASE_EVIDENCE_FILE=str(evidence), STUB_EVIDENCE_FAILS="1")
+        assert result.returncode != 0 and "gates passed" not in result.stdout, result.stdout
+        # Set but empty is a misconfigured final gate, not a preflight.
+        result, logged = readiness(RELEASE_EVIDENCE_FILE="")
+        assert result.returncode != 0, result.stdout
+        assert "RELEASE_EVIDENCE_FILE is set but empty" in result.stderr, result.stderr
+        assert "gates passed" not in result.stdout, result.stdout
+        # A local dist/release-evidence.json is checked when present.
+        (temp / "dist").mkdir()
+        (temp / "dist/release-evidence.json").write_text("{}", encoding="utf-8")
+        result, logged = readiness()
+        assert result.returncode == 0 and len(logged) == 2, (result.stderr, logged)
+        assert "--evidence " + str(temp / "dist/release-evidence.json") in logged[1], logged
+        assert "including the release evidence" in result.stdout, result.stdout
+        # Crypto not wired: blocked before anything is reported as passed.
+        (temp / "mobile/lib/main.dart").write_text("UnavailableCryptoService()\n", encoding="utf-8")
+        result, _ = readiness()
+        assert result.returncode != 0 and "production MLS crypto is not wired" in result.stderr, result.stderr
+        assert "gates passed" not in result.stdout, result.stdout
+    finally:
+        shutil.rmtree(temp)
+
+
 def main() -> int:
     codeowners_cases()
+    release_readiness_cases()
     root, manifest = fixture()
     try:
         expect_valid(root, manifest)
