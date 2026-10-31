@@ -45,7 +45,6 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 37 `TASK-037` Make _startSync failures observable and recoverable
 - [x] 38 `TASK-038` Report restoreFromBackup failure when the restored session does not come up
   - Done; owner questions left: restore-failure kind (Q-003) and whether a 401-rejected restored session counts as failure (VAL-053).
-  - Partial: lifecycle fixes landed; remainder left open.
 - [ ] 39 `TASK-039` Hold sends after a member removal until the MLS removal commit is applied
   - Blocked on owner question Q-001.
 - [x] 40 `TASK-040` Keep the deepest history cursor across newest-page refreshes when pages overlap
