@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import '../crypto/attachment_crypto.dart' show maxPlaintextAttachmentBytes;
 
@@ -152,4 +153,47 @@ String attachmentMediaType(String fileName, String? pickerType) {
   if (lower.endsWith('.gif')) return 'image/gif';
   if (lower.endsWith('.webp')) return 'image/webp';
   return 'application/octet-stream';
+}
+
+/// Working files of an interrupted encryption (`.attachment-<hex>.ciphertext`)
+/// or opening (`.veritra-attachment-<hex>.ciphertext`, `.plaintext` and its
+/// `.part`). Nothing else in the working directory, which also holds the
+/// database, its key and backup files, matches.
+final RegExp _attachmentOrphanName = RegExp(
+  r'^\.(attachment-[0-9a-f]{32}\.ciphertext'
+  r'|veritra-attachment-[0-9a-f]+\.(ciphertext|plaintext|plaintext\.part))$',
+);
+
+/// Files younger than this are left alone: another process (a second demo
+/// profile shares the directory) or an upload still running may own them.
+const Duration attachmentOrphanMinAge = Duration(hours: 1);
+
+/// Deletes the attachment working files a killed or crashed process left in
+/// [directory], plaintext `.part` files included. Run it once at start, before
+/// attachments are used. Best effort: a file that cannot be deleted is skipped
+/// and nothing is thrown.
+Future<void> cleanupAttachmentOrphans(
+  Directory directory, {
+  Duration minAge = attachmentOrphanMinAge,
+  DateTime? now,
+}) async {
+  final cutoff = (now ?? DateTime.now()).subtract(minAge);
+  final List<FileSystemEntity> entries;
+  try {
+    if (!await directory.exists()) return;
+    entries = await directory.list(followLinks: false).toList();
+  } catch (_) {
+    return;
+  }
+  for (final entry in entries) {
+    if (entry is! File) continue;
+    final name = entry.uri.pathSegments.last;
+    if (!_attachmentOrphanName.hasMatch(name)) continue;
+    try {
+      if ((await entry.lastModified()).isAfter(cutoff)) continue;
+      await entry.delete();
+    } on FileSystemException {
+      // One file that cannot go must not keep the others.
+    }
+  }
 }

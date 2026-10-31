@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'core/api_client.dart';
 import 'core/app_state.dart';
+import 'core/attachments.dart' show cleanupAttachmentOrphans;
 import 'core/client_config.dart';
 import 'core/receipts_state.dart';
 import 'core/transport_policy.dart';
@@ -103,7 +104,7 @@ Future<void> main(List<String> args) async {
       runApp(VeritraApp(state: state, desktop: desktop));
       unawaited(purgeOpenedAttachments());
       unawaited(purgePastedImages());
-      unawaited(state.attachmentService?.cleanupOrphans());
+      unawaited(_sweepAttachmentOrphans(state));
       unawaited(state.tryRestoreSession());
     },
     // Cold demo work is added only through this normal compiled entry point,
@@ -111,6 +112,16 @@ Future<void> main(List<String> args) async {
     onUiError: () => runApp(const StartupFailureApp()),
   );
   await launch.start();
+}
+
+/// Removes attachment working files an interrupted run left behind.
+Future<void> _sweepAttachmentOrphans(AppState state) async {
+  try {
+    final directory = await state.attachmentService?.workingDirectory();
+    if (directory != null) await cleanupAttachmentOrphans(directory);
+  } catch (_) {
+    // Best effort; no path provider on a test host.
+  }
 }
 
 String _deviceName() {
