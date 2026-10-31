@@ -400,7 +400,7 @@ fn every_storage_method_is_routed() {
     };
     assert_eq!(standalone(&bob), 2);
     assert!(owners(&bob).contains("group:conv_all"));
-    let proposal = MlsMessageIn::tls_deserialize_exact(&proposal.tls_serialize_detached().unwrap())
+    let proposal = MlsMessageIn::tls_deserialize_exact(proposal.tls_serialize_detached().unwrap())
         .unwrap()
         .try_into_protocol_message()
         .unwrap();
@@ -424,7 +424,7 @@ fn every_storage_method_is_routed() {
     })
     .unwrap();
     alice.merge_pending_commit(&mut alice_group).unwrap();
-    let commit = MlsMessageIn::tls_deserialize_exact(&commit.tls_serialize_detached().unwrap())
+    let commit = MlsMessageIn::tls_deserialize_exact(commit.tls_serialize_detached().unwrap())
         .unwrap()
         .try_into_protocol_message()
         .unwrap();
