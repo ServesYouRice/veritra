@@ -195,6 +195,9 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 | **D70** (2026-10-31, owner; C-c7c5faecddbb) | Sealed MLS state is redesigned now (per-group, incremental sealing; new state format) instead of raising caps. Needs an Opus design first; FFI/format change allowed for this. |
 | **D71** (2026-10-31, owner; C-7121f7bb1452) | Backups no longer carry the bearer token (and device-cloning credentials); a restore finishes with a password sign-in. |
 | **D72** (2026-10-31, owner) | Windows restore: the password-file ACL is not checked; the docs note is enough. Releases build only from `main`. Gradle distribution checksum stays a warning. Load-tool delivery deadline stays 30 s. |
+| **D73** (2026-10-31, owner; D70 O1) | Backups also drop the MLS/crypto state (with D71): a restored device keeps history but re-joins group key exchange instead of cloning the old device. |
+| **D74** (2026-10-31, owner; D70 O2) | A Welcome whose key package expired or was pruned is skipped with an "ask to be re-added" notice; sync keeps going. |
+| **D75** (2026-10-31, owner) | Order: the D70 sealed-state redesign (ABI 10) lands before K2's crypto changes. |
 
 ## Roadmap
 
