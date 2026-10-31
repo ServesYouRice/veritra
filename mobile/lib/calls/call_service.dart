@@ -52,6 +52,10 @@ class ActiveCall {
   /// read the same version and all but the first would be rejected as stale.
   Future<void> _outbound = Future<void>.value();
 
+  /// False until the signals that arrived before this call existed have
+  /// been applied; later signals wait behind them.
+  bool _drained = false;
+
   Future<void> enqueueSend(Future<void> Function() send) {
     final queued = _outbound.then((_) => send());
     _outbound = queued.catchError((Object _) {});
@@ -158,8 +162,13 @@ class NativeCallService {
       required Stream<IncomingCallSignal> incoming,
       CallMediaFactory? media})
       : media = media ?? const FlutterWebRtcMediaFactory() {
-    _subscription = incoming.listen(_handleIncoming);
+    _subscription = incoming.listen(_onIncoming,
+        onError: (Object error) => _reportError(null, error));
   }
+
+  /// Serial lane for inbound work; see [_inLane].
+  Future<void> _inbound = Future<void>.value();
+  bool _disposed = false;
 
   final ApiClient api;
   final String token;
@@ -176,6 +185,12 @@ class NativeCallService {
   final StreamController<IncomingCallSignal> _incomingOffers =
       StreamController<IncomingCallSignal>.broadcast();
   Stream<IncomingCallSignal> get incomingOffers => _incomingOffers.stream;
+
+  /// Inbound failures that belong to no active call: errors on the incoming
+  /// signal stream, or a failed signal for a call no longer held here.
+  /// Errors for an active call go to its [ActiveCall.signalErrors].
+  Stream<Object> get errors => _errors.stream;
+  final StreamController<Object> _errors = StreamController<Object>.broadcast();
 
   /// Ids of calls this service currently holds media for.
   @visibleForTesting
@@ -202,7 +217,7 @@ class NativeCallService {
       await media.release();
       rethrow;
     }
-    await _drainEarly(active.session.id);
+    await _finishSetup(active);
     return active;
   }
 
@@ -235,7 +250,7 @@ class NativeCallService {
       await media.release();
       rethrow;
     }
-    await _drainEarly(call.id);
+    await _finishSetup(active);
     return active;
   }
 
@@ -267,6 +282,7 @@ class NativeCallService {
   /// Wraps fully set-up [media] in an [ActiveCall] and registers it. Runs
   /// synchronously, so nothing can observe a half-registered call.
   ActiveCall _activate(CallSession call, _CallMedia media) {
+    if (_disposed) throw StateError('Call service was disposed during setup');
     final active = ActiveCall._(
         session: call,
         media: media,
@@ -276,6 +292,21 @@ class NativeCallService {
         onCandidate: (signal) => _queueSignal(active, signal),
         onRemoteStream: active._remoteUpdates.add);
     return active;
+  }
+
+  /// Drains early signals for a just-registered call. If the call cannot be
+  /// handed out (the service was disposed meanwhile), it is unregistered and
+  /// its media released before the error propagates.
+  Future<void> _finishSetup(ActiveCall active) async {
+    try {
+      await _drainEarly(active);
+    } catch (_) {
+      if (identical(_calls[active.session.id], active)) {
+        _calls.remove(active.session.id);
+      }
+      await _disposeCall(active);
+      rethrow;
+    }
   }
 
   /// Creates the peer connection and attaches local media. If any step after
@@ -336,47 +367,102 @@ class NativeCallService {
     active.session = updated;
   }
 
+  /// Runs [work] after every inbound step queued before it. Incoming signals
+  /// and the drain at the end of start()/answer() share this one lane, so
+  /// signals are applied strictly in arrival order (an 'ice' never reaches
+  /// addCandidate while the preceding 'answer' is still being applied).
+  Future<T> _inLane<T>(Future<T> Function() work) {
+    final result = _inbound.then((_) => work());
+    _inbound = result.then<void>((_) {}, onError: (Object _) {});
+    return result;
+  }
+
+  void _onIncoming(IncomingCallSignal incoming) {
+    unawaited(_inLane(() => _processIncoming(incoming)));
+  }
+
+  /// One inbound step. Never throws: failures are reported instead, and the
+  /// next signal is still processed.
+  Future<void> _processIncoming(IncomingCallSignal incoming) async {
+    if (_disposed) return;
+    try {
+      await _handleIncoming(incoming);
+    } catch (error) {
+      _reportError(_calls[incoming.call.id], error);
+    }
+  }
+
+  void _reportError(ActiveCall? active, Object error) {
+    if (active != null && !active.signalErrors.isClosed) {
+      active.signalErrors.add(error);
+    } else if (!_errors.isClosed) {
+      _errors.add(error);
+    }
+  }
+
   Future<void> _handleIncoming(IncomingCallSignal incoming) async {
     final active = _calls[incoming.call.id];
-    if (active == null) {
+    // Until its drain has run, a new call's signals queue behind the early
+    // ones so they are applied in arrival order.
+    if (active == null || !active._drained) {
       _pendingSessions[incoming.call.id] = incoming.call;
       (_earlySignals[incoming.call.id] ??= <Map<String, Object?>>[])
           .add(incoming.signal);
-      if (incoming.signal['kind'] == 'offer') _incomingOffers.add(incoming);
+      if (active == null && incoming.signal['kind'] == 'offer') {
+        _incomingOffers.add(incoming);
+      }
       return;
     }
     active.session = incoming.call;
     await _applySignal(active, incoming.signal);
   }
 
-  Future<void> _drainEarly(String callId) async {
-    _pendingSessions.remove(callId);
-    final active = _calls[callId];
-    if (active == null) return;
-    for (final signal
-        in _earlySignals.remove(callId) ?? const <Map<String, Object?>>[]) {
-      await _applySignal(active, signal);
-    }
-  }
+  /// Applies the signals that arrived before [active] existed, inside the
+  /// inbound lane. Throws when the service was disposed meanwhile, so
+  /// start()/answer() never return a call whose media is already released.
+  Future<void> _drainEarly(ActiveCall active) => _inLane(() async {
+        final callId = active.session.id;
+        if (_disposed || active._media.released) {
+          throw StateError('Call $callId ended during setup');
+        }
+        _pendingSessions.remove(callId);
+        active._drained = true;
+        for (final signal in _earlySignals.remove(callId) ??
+            const <Map<String, Object?>>[]) {
+          if (_disposed || active._media.released) return;
+          try {
+            await _applySignal(active, signal);
+          } catch (error) {
+            _reportError(active, error);
+          }
+        }
+      });
 
   Future<void> _applySignal(
       ActiveCall active, Map<String, Object?> signal) async {
     switch (signal['kind']) {
       case 'answer':
-        if (signal['sdp'] is! String || signal['sdp_type'] is! String) {
+        final sdp = signal['sdp'];
+        final type = signal['sdp_type'];
+        if (sdp is! String || type is! String) {
           throw const FormatException('invalid encrypted call answer');
         }
-        await active.peerConnection.setRemoteDescription(RTCSessionDescription(
-            signal['sdp'] as String, signal['sdp_type'] as String));
+        await active.peerConnection
+            .setRemoteDescription(RTCSessionDescription(sdp, type));
         break;
       case 'ice':
         final candidate = signal['candidate'];
-        if (candidate is! String)
+        final rawMid = signal['sdp_mid'];
+        final rawIndex = signal['sdp_mline_index'];
+        final sdpMid = rawMid is String ? rawMid : null;
+        final index = rawIndex is int && rawIndex >= 0 ? rawIndex : null;
+        if (candidate is! String ||
+            (rawMid != null && sdpMid == null) ||
+            (rawIndex != null && index == null)) {
           throw const FormatException('invalid encrypted ICE candidate');
-        await active.peerConnection.addCandidate(RTCIceCandidate(
-            candidate,
-            signal['sdp_mid'] as String?,
-            (signal['sdp_mline_index'] as num?)?.toInt()));
+        }
+        await active.peerConnection
+            .addCandidate(RTCIceCandidate(candidate, sdpMid, index));
         break;
     }
   }
@@ -388,7 +474,12 @@ class NativeCallService {
   }
 
   Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
     await _subscription?.cancel();
+    // Steps not yet started see _disposed and do nothing; wait for the one
+    // in flight so no inbound work runs against a released peer.
+    await _inbound;
     for (final call in _calls.values.toList()) {
       await _disposeCall(call);
     }
@@ -396,5 +487,6 @@ class NativeCallService {
     _earlySignals.clear();
     _pendingSessions.clear();
     await _incomingOffers.close();
+    await _errors.close();
   }
 }

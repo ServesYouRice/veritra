@@ -62,6 +62,7 @@ void _expectReleasedOnce(FakeMediaFactory media, {required bool hadStream}) {
 
 void main() {
   _task016();
+  _task017();
   group('TASK-015 setup failure releases media', () {
     const startSteps = <String>[
       'getUserMedia',
@@ -259,6 +260,127 @@ void _task016() {
       h.media.peer.emitCandidate(_relay(2));
       await _settle();
       expect(h.api.transitions, isEmpty);
+    });
+  });
+}
+
+Map<String, Object?> _ice(Object? candidate,
+        {Object? sdpMid = '0', Object? index = 0}) =>
+    <String, Object?>{
+      'kind': 'ice',
+      'candidate': candidate,
+      'sdp_mid': sdpMid,
+      'sdp_mline_index': index,
+    };
+
+const Map<String, Object?> _answer = <String, Object?>{
+  'kind': 'answer',
+  'sdp': 'remote-answer',
+  'sdp_type': 'answer',
+};
+
+void _task017() {
+  group('TASK-017 serialized inbound signals', () {
+    test('an ice signal waits for the preceding answer', () async {
+      final h = _harness();
+      final call = await h.service.start('conv_1');
+      final gate = Completer<void>();
+      h.media.peer.setRemoteGate = gate;
+
+      h.incoming.add(IncomingCallSignal(call.session, _answer));
+      h.incoming.add(IncomingCallSignal(call.session, _ice('remote-1')));
+      await _settle();
+      expect(h.log, isNot(contains('peer.addCandidate:remote-1')));
+
+      gate.complete();
+      await _settle();
+      final done = h.log.indexOf('peer.setRemoteDescription:done');
+      final added = h.log.indexOf('peer.addCandidate:remote-1');
+      expect(done, isNonNegative);
+      expect(added, greaterThan(done));
+    });
+
+    test('signals arriving during the drain wait behind it', () async {
+      final h = _harness();
+      final gate = Completer<void>();
+      h.media.configurePeer = (peer) => peer.setRemoteGate = gate;
+      h.api.createGate = () async {
+        h.incoming.add(IncomingCallSignal(callSession(), _answer));
+        await _settle();
+      };
+
+      final started = h.service.start('conv_1');
+      while (!h.log.contains('peer.setRemoteDescription:start')) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      h.incoming.add(IncomingCallSignal(callSession(), _ice('remote-1')));
+      await _settle();
+      expect(h.log, isNot(contains('peer.addCandidate:remote-1')));
+      gate.complete();
+      await started;
+      await _settle();
+      expect(h.log.indexOf('peer.addCandidate:remote-1'),
+          greaterThan(h.log.indexOf('peer.setRemoteDescription:done')));
+    });
+
+    test('bad and failing signals are reported, not thrown', () async {
+      final uncaught = <Object>[];
+      await runZonedGuarded(() async {
+        final h = _harness();
+        final call = await h.service.start('conv_1');
+        final errors = <Object>[];
+        call.signalErrors.stream.listen(errors.add);
+
+        h.incoming.add(IncomingCallSignal(call.session, _ice('a', sdpMid: 5)));
+        h.incoming.add(IncomingCallSignal(call.session, _ice('b', index: 'x')));
+        h.incoming.add(IncomingCallSignal(call.session, _ice(7)));
+        h.incoming.add(IncomingCallSignal(call.session,
+            const <String, Object?>{'kind': 'answer', 'sdp': 1}));
+        await _settle();
+        h.media.peer.failures['addCandidate'] = InjectedFailure('addCandidate');
+        h.incoming.add(IncomingCallSignal(call.session, _ice('c')));
+        await _settle();
+        h.media.peer.failures.remove('addCandidate');
+        h.incoming.add(IncomingCallSignal(call.session, _ice('d')));
+        await _settle();
+
+        expect(errors, hasLength(5));
+        expect(errors.take(4), everyElement(isA<FormatException>()));
+        expect(errors.last, isA<InjectedFailure>());
+        expect(h.media.peer.addedCandidates.map((c) => c.candidate),
+            <String>['d']);
+      }, (error, _) => uncaught.add(error));
+      expect(uncaught, isEmpty);
+    });
+
+    test('errors on the incoming stream reach the service error stream',
+        () async {
+      final uncaught = <Object>[];
+      await runZonedGuarded(() async {
+        final h = _harness();
+        final errors = <Object>[];
+        h.service.errors.listen(errors.add);
+        final failure = InjectedFailure('incoming');
+        h.incoming.addError(failure);
+        await _settle();
+        expect(errors, <Object>[failure]);
+      }, (error, _) => uncaught.add(error));
+      expect(uncaught, isEmpty);
+    });
+
+    test('dispose() during setup drops the call and releases media',
+        () async {
+      final h = _harness();
+      final created = Completer<void>();
+      h.api.createGate = () => created.future;
+      final started = h.service.start('conv_1');
+      await _settle();
+      final disposed = h.service.dispose();
+      created.complete();
+      await expectLater(started, throwsStateError);
+      await disposed;
+      expect(h.media.peer.closeCount, 1);
+      expect(h.media.stream.disposeCount, 1);
     });
   });
 }
