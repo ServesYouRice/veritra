@@ -53,8 +53,7 @@ void main() {
     expect(h.store.value, isFalse);
   });
 
-  test('a refresh started while the change is being sent is ignored',
-      () async {
+  test('a refresh started while the change is being sent is ignored', () async {
     final h = build();
     addTearDown(h.state.dispose);
     final put = Completer<void>();
