@@ -168,6 +168,10 @@ class Ops {
 
 enum RequestBucket { chat, request, hidden }
 
+/// Why the stored message-request state is not in use: the read failed
+/// (tried again later) or the value could not be decoded.
+enum _RequestStateFault { unreadable, undecodable }
+
 class AppState extends ChangeNotifier implements ConversationAuthority {
   AppState({
     required this.apiClientFactory,
@@ -736,18 +740,46 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// conversations already there, so an update never turns existing chats
   /// into requests. A fresh device (link, reinstall, restore) starts with
   /// only what this account created accepted.
+  ///
+  /// Only an absent value (or one written for another account) is a first
+  /// run. A value that cannot be read or decoded fails closed: every DM and
+  /// group from someone else is held back as a request, nothing is
+  /// grandfathered, and the stored value is not overwritten. A read error is
+  /// tried again on the next load; decisions made meanwhile are kept in
+  /// memory and merged in then.
   Future<void> _loadRequestState({required bool grandfather}) async {
     final me = session?.accountId;
-    if (me == null || _acceptedPeers != null) return;
+    if (me == null) return;
+    if (_acceptedPeers == null) {
+      // A fresh session's state: nothing carries over from an earlier one.
+      _requestStateFault = null;
+      _requestGrandfatherPending = null;
+      _requestUndeclinedPending.clear();
+      _requestDecisionsPending = false;
+    } else if (_requestStateFault != _RequestStateFault.unreadable) {
+      return;
+    }
+    final generation = _sessionGeneration;
+    bool owned() =>
+        generation == _sessionGeneration && session?.accountId == me;
     final accepted = <String>{};
     final groups = <String>{};
     final declined = <String, DateTime>{};
     var known = false;
+    _RequestStateFault? fault;
+    String? raw;
     try {
-      final raw = await localStore.loadSetting(_requestSettingName);
-      if (raw != null) {
+      raw = await localStore.loadSetting(_requestSettingName);
+    } catch (_) {
+      fault = _RequestStateFault.unreadable;
+    }
+    if (!owned()) return;
+    if (raw != null) {
+      try {
         final decoded = jsonDecode(raw);
-        if (decoded is Map && decoded['account'] == me) {
+        if (decoded is! Map) {
+          fault = _RequestStateFault.undecodable;
+        } else if (decoded['account'] == me) {
           known = true;
           final peers = decoded['accepted'];
           if (peers is List) accepted.addAll(peers.whereType<String>());
@@ -765,20 +797,48 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             }
           }
         }
+      } catch (_) {
+        fault = _RequestStateFault.undecodable;
       }
-    } catch (_) {
-      // An unreadable value is treated as first run.
+    }
+    if (fault != null) {
+      // Fail closed: hold back what is not this account's own, keep any
+      // decision already made in this run, and write nothing.
+      if (grandfather) {
+        _requestGrandfatherPending ??= List.of(conversations);
+      }
+      _requestStateFault = fault;
+      _acceptedPeers ??= <String>{};
+      return;
+    }
+    // Decisions made while the value could not be read are newer than it.
+    final pending = _acceptedPeers;
+    final save = !known || _requestDecisionsPending;
+    if (pending != null) {
+      accepted.addAll(pending);
+      groups.addAll(_acceptedGroups);
+      declined
+        ..removeWhere((id, _) => _requestUndeclinedPending.contains(id))
+        ..addAll(_declined);
     }
     if (!known) {
-      if (grandfather) {
-        for (final conversation in conversations) {
+      final earlier = _requestGrandfatherPending;
+      if (grandfather || earlier != null) {
+        for (final conversation in earlier ?? conversations) {
           final peer = conversation.peerAccountId;
           if (conversation.isDm && peer != null) accepted.add(peer);
           if (conversation.isGroup) groups.add(conversation.id);
         }
       }
-      await _saveRequestState(me, accepted, groups, declined);
     }
+    if (save) {
+      await _saveRequestState(me, accepted, groups, declined);
+      if (!owned()) return;
+    }
+    _requestStateFault = null;
+    _requestGrandfatherPending = null;
+    _requestUndeclinedPending.clear();
+    _requestDecisionsPending = false;
     _acceptedPeers = accepted;
     _acceptedGroups
       ..clear()
@@ -788,11 +848,34 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       ..addAll(declined);
   }
 
+  /// Why the stored request state could not be used, or null when it was.
+  _RequestStateFault? _requestStateFault;
+
+  /// The conversations a failed upgrade load would have grandfathered, kept
+  /// for the retry so it does not turn existing chats into requests.
+  List<Conversation>? _requestGrandfatherPending;
+
+  /// Conversations accepted while the stored value could not be read: their
+  /// stored declines are cleared when it is merged.
+  final Set<String> _requestUndeclinedPending = <String>{};
+
+  /// A decision was made while the stored value could not be read.
+  bool _requestDecisionsPending = false;
+
+  /// Saves the request state after a user decision. While the stored value
+  /// cannot be read, the decision is kept for the merge on the next good
+  /// read instead, so nothing stored is lost. A value that cannot be decoded
+  /// is replaced only here, by the user's own decision.
   Future<void> _persistRequestState() async {
     final me = session?.accountId;
     final accepted = _acceptedPeers;
     if (me == null || accepted == null) return;
+    if (_requestStateFault == _RequestStateFault.unreadable) {
+      _requestDecisionsPending = true;
+      return;
+    }
     await _saveRequestState(me, accepted, _acceptedGroups, _declined);
+    if (session?.accountId == me) _requestStateFault = null;
   }
 
   Future<void> _saveRequestState(
@@ -830,6 +913,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       accepted.add(sender);
     }
     _declined.remove(conversation.id);
+    if (_requestStateFault == _RequestStateFault.unreadable) {
+      _requestUndeclinedPending.add(conversation.id);
+    }
     await _persistRequestState();
     notifyListeners();
     return true;
