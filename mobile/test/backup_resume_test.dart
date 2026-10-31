@@ -118,8 +118,9 @@ void main() {
     final target = MemoryLocalStore();
     await serviceFor(target).recover(code);
     expect((await target.loadSession())?.deviceId, 'dev_1');
-    // Refused past the end, then exactly one download from the start.
-    expect(server.rangeStarts, <int>[stale.length, 0]);
+    // Its frame 0 does not open with this code: no range request, exactly
+    // one download from the start.
+    expect(server.rangeStarts, <int>[0]);
     expect(scratch.listSync(), isEmpty);
   }, skip: skip);
 

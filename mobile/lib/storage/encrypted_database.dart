@@ -650,6 +650,14 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   bool get upgradeStarted => _upgradeStarted;
   bool _upgradeStarted = false;
 
+  /// Whether opening this database started creating the schema. Like
+  /// [upgradeStarted]: onCreate runs only after the key has opened the file
+  /// (its first read of `sqlite_master` fails on a wrong key) or the file was
+  /// empty, so a create that then fails rolls back to an empty version-0
+  /// file and is not a wrong key.
+  bool get createStarted => _createStarted;
+  bool _createStarted = false;
+
   @override
   MigrationStrategy get migration => MigrationStrategy(
         // Drift runs this outside a transaction and writes the version only
@@ -658,6 +666,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         // next open creates again, never committed tables at version 0.
         onCreate: (migrator) async {
           if (requireExistingSchema) throw const ExistingDatabaseUnavailable();
+          _createStarted = true;
           await transaction(() async {
             await migrator.createAll();
             await _createHistoryNamespace();
