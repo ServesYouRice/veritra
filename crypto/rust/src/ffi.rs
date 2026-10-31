@@ -80,15 +80,42 @@ unsafe fn borrowed<'a>(input: PmByteSlice, maximum: usize) -> Result<&'a [u8], i
     Ok(unsafe { core::slice::from_raw_parts(input.data, input.len) })
 }
 
+/// Drops a Vec through a non-elidable wipe of its whole capacity.
+fn wipe(bytes: Vec<u8>) {
+    drop(tls_codec::SecretVLBytes::new(bytes));
+}
+
+/// Hands `bytes` over as a library-owned buffer of exactly its length. A Vec
+/// with spare capacity is copied and the original wiped, instead of being
+/// shrunk in place: a realloc may move the block and free the source with
+/// its contents intact. Empty input stays (null, 0).
+fn into_owned(bytes: Vec<u8>) -> PmOwnedBuffer {
+    if bytes.is_empty() {
+        wipe(bytes);
+        return PmOwnedBuffer::default();
+    }
+    let boxed = if bytes.capacity() == bytes.len() {
+        // No reallocation: capacity already equals length.
+        bytes.into_boxed_slice()
+    } else {
+        let copy = Box::<[u8]>::from(bytes.as_slice());
+        wipe(bytes);
+        copy
+    };
+    PmOwnedBuffer {
+        len: boxed.len(),
+        data: Box::into_raw(boxed).cast::<u8>(),
+    }
+}
+
 unsafe fn output(target: *mut PmOwnedBuffer, bytes: Vec<u8>) -> Result<(), i32> {
     if target.is_null() || bytes.is_empty() {
+        wipe(bytes);
         return Err(PM_CRYPTO_INVALID_ARGUMENT);
     }
-    let boxed = bytes.into_boxed_slice();
-    let len = boxed.len();
-    let data = Box::into_raw(boxed).cast::<u8>();
+    let buffer = into_owned(bytes);
     // SAFETY: The caller provides writable storage for one PmOwnedBuffer.
-    unsafe { target.write(PmOwnedBuffer { data, len }) };
+    unsafe { target.write(buffer) };
     Ok(())
 }
 
@@ -99,18 +126,12 @@ unsafe fn two_outputs(
     second: Vec<u8>,
 ) -> Result<(), i32> {
     if first_target.is_null() || second_target.is_null() || first.is_empty() || second.is_empty() {
+        wipe(first);
+        wipe(second);
         return Err(PM_CRYPTO_INVALID_ARGUMENT);
     }
-    let first = first.into_boxed_slice();
-    let second = second.into_boxed_slice();
-    let first_buffer = PmOwnedBuffer {
-        len: first.len(),
-        data: Box::into_raw(first).cast::<u8>(),
-    };
-    let second_buffer = PmOwnedBuffer {
-        len: second.len(),
-        data: Box::into_raw(second).cast::<u8>(),
-    };
+    let first_buffer = into_owned(first);
+    let second_buffer = into_owned(second);
     // SAFETY: Both targets were checked before either is written.
     unsafe {
         first_target.write(first_buffer);
@@ -122,13 +143,10 @@ unsafe fn two_outputs(
 unsafe fn three_outputs(targets: [*mut PmOwnedBuffer; 3], values: [Vec<u8>; 3]) -> Result<(), i32> {
     if targets.iter().any(|target| target.is_null()) || values.iter().any(|value| value.is_empty())
     {
+        values.into_iter().for_each(wipe);
         return Err(PM_CRYPTO_INVALID_ARGUMENT);
     }
-    let [first, second, third] = values.map(Vec::into_boxed_slice);
-    let buffers = [first, second, third].map(|value| PmOwnedBuffer {
-        len: value.len(),
-        data: Box::into_raw(value).cast::<u8>(),
-    });
+    let buffers = values.map(into_owned);
     // SAFETY: Every target was checked before any output is written.
     unsafe {
         targets[0].write(buffers[0]);
@@ -653,19 +671,15 @@ pub unsafe extern "C" fn pm_crypto_group_stage_commit(
             })?
         };
         if staged.commit.is_empty() {
+            wipe(staged.welcome);
             return Err(PM_CRYPTO_ERROR);
         }
-        let welcome = if staged.welcome.is_empty() {
-            PmOwnedBuffer::default()
-        } else {
-            let boxed = staged.welcome.into_boxed_slice();
-            PmOwnedBuffer {
-                len: boxed.len(),
-                data: Box::into_raw(boxed).cast::<u8>(),
-            }
-        };
+        // All three targets were checked above, so nothing below can fail
+        // after a buffer has been handed over.
+        let commit = into_owned(staged.commit);
+        let welcome = into_owned(staged.welcome);
         unsafe {
-            output(out_commit, staged.commit)?;
+            out_commit.write(commit);
             out_welcome.write(welcome);
             out_epoch.write(staged.epoch);
         }
@@ -884,6 +898,9 @@ pub unsafe extern "C" fn pm_crypto_group_encrypt(
     out_ciphertext: *mut PmOwnedBuffer,
 ) -> i32 {
     ffi_call(|| {
+        if out_ciphertext.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
         let group_id = unsafe { borrowed(group_id, MAX_ID_BYTES)? };
         let plaintext = unsafe { borrowed(plaintext, MAX_MESSAGE_BYTES)? };
         let ciphertext = unsafe {
@@ -912,6 +929,10 @@ pub unsafe extern "C" fn pm_crypto_group_decrypt(
     out_plaintext: *mut PmOwnedBuffer,
 ) -> i32 {
     ffi_call(|| {
+        // Checked before decrypting: a decrypt consumes its ratchet step.
+        if out_plaintext.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
         let group_id = unsafe { borrowed(group_id, MAX_ID_BYTES)? };
         let ciphertext = unsafe { borrowed(ciphertext, MAX_MESSAGE_BYTES)? };
         let sender_account_id = unsafe { borrowed(sender_account_id, MAX_ID_BYTES)? };
@@ -1034,6 +1055,139 @@ mod tests {
         let value = unsafe { core::slice::from_raw_parts(buffer.data, buffer.len) }.to_vec();
         unsafe { pm_crypto_buffer_free(buffer) };
         value
+    }
+
+    const SECRET: u8 = 0xa7;
+
+    fn secret_with_spare_capacity(len: usize) -> Vec<u8> {
+        let mut value = Vec::with_capacity(len * 4);
+        value.resize(len, SECRET);
+        value
+    }
+
+    #[test]
+    fn owned_outputs_never_release_an_unwiped_secret() {
+        // A Vec with spare capacity used to go through into_boxed_slice,
+        // whose realloc may free the original block unwiped.
+        let mut out = PmOwnedBuffer::default();
+        let value = secret_with_spare_capacity(1000);
+        crate::test_memory::watch_secret(SECRET);
+        assert_eq!(unsafe { output(&mut out, value) }, Ok(()));
+        assert_eq!(crate::test_memory::unwiped_releases(), 0);
+        assert_eq!(out.len, 1000);
+        let held = unsafe { core::slice::from_raw_parts(out.data, out.len) };
+        assert!(held.iter().all(|byte| *byte == SECRET));
+        crate::test_memory::watch_secret(SECRET);
+        unsafe { pm_crypto_buffer_free(out) };
+        assert_eq!(crate::test_memory::unwiped_releases(), 0);
+
+        // An exact-capacity Vec is handed over without a copy.
+        let exact = vec![SECRET; 64];
+        let address = exact.as_ptr();
+        let mut out = PmOwnedBuffer::default();
+        assert_eq!(unsafe { output(&mut out, exact) }, Ok(()));
+        assert_eq!(out.data.cast_const(), address);
+        unsafe { pm_crypto_buffer_free(out) };
+
+        // A rejected target wipes the output it refused.
+        crate::test_memory::watch_secret(SECRET);
+        assert_eq!(
+            unsafe { output(ptr::null_mut(), secret_with_spare_capacity(100)) },
+            Err(PM_CRYPTO_INVALID_ARGUMENT)
+        );
+        assert_eq!(crate::test_memory::unwiped_releases(), 0);
+
+        let mut first = PmOwnedBuffer::default();
+        crate::test_memory::watch_secret(SECRET);
+        assert_eq!(
+            unsafe {
+                two_outputs(
+                    &mut first,
+                    secret_with_spare_capacity(100),
+                    ptr::null_mut(),
+                    secret_with_spare_capacity(100),
+                )
+            },
+            Err(PM_CRYPTO_INVALID_ARGUMENT)
+        );
+        assert_eq!(crate::test_memory::unwiped_releases(), 0);
+        assert!(first.data.is_null());
+
+        let mut targets = [PmOwnedBuffer::default(); 2];
+        let [a, b] = &mut targets;
+        crate::test_memory::watch_secret(SECRET);
+        assert_eq!(
+            unsafe {
+                three_outputs(
+                    [a, b, ptr::null_mut()],
+                    [
+                        secret_with_spare_capacity(100),
+                        secret_with_spare_capacity(100),
+                        secret_with_spare_capacity(100),
+                    ],
+                )
+            },
+            Err(PM_CRYPTO_INVALID_ARGUMENT)
+        );
+        assert_eq!(crate::test_memory::unwiped_releases(), 0);
+        assert!(targets.iter().all(|target| target.data.is_null()));
+
+        // Success paths copy exactly and leave nothing unwiped behind.
+        let mut pair = [PmOwnedBuffer::default(); 2];
+        let [first, second] = &mut pair;
+        crate::test_memory::watch_secret(SECRET);
+        assert_eq!(
+            unsafe {
+                two_outputs(
+                    first,
+                    secret_with_spare_capacity(10),
+                    second,
+                    secret_with_spare_capacity(20),
+                )
+            },
+            Ok(())
+        );
+        assert_eq!(crate::test_memory::unwiped_releases(), 0);
+        assert_eq!((pair[0].len, pair[1].len), (10, 20));
+        unsafe {
+            pm_crypto_buffer_free(pair[0]);
+            pm_crypto_buffer_free(pair[1]);
+        }
+    }
+
+    #[test]
+    fn decrypt_with_a_null_output_is_rejected() {
+        let mut alice = ptr::null_mut();
+        assert_eq!(
+            unsafe { pm_crypto_device_create(slice(b"acct_a"), slice(b"dev_a"), &mut alice) },
+            PM_CRYPTO_OK
+        );
+        assert_eq!(
+            unsafe { pm_crypto_group_create(alice, slice(b"conv_null")) },
+            PM_CRYPTO_OK
+        );
+        let mut ciphertext = PmOwnedBuffer::default();
+        assert_eq!(
+            unsafe {
+                pm_crypto_group_encrypt(alice, slice(b"conv_null"), slice(b"x"), &mut ciphertext)
+            },
+            PM_CRYPTO_OK
+        );
+        let ciphertext = unsafe { take(ciphertext) };
+        assert_eq!(
+            unsafe {
+                pm_crypto_group_decrypt(
+                    alice,
+                    slice(b"conv_null"),
+                    slice(&ciphertext),
+                    slice(b"acct_a"),
+                    slice(b"dev_a"),
+                    ptr::null_mut(),
+                )
+            },
+            PM_CRYPTO_INVALID_ARGUMENT
+        );
+        unsafe { pm_crypto_device_destroy(alice) };
     }
 
     #[test]
