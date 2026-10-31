@@ -1043,7 +1043,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get backupRestoreMessage =>
-      'Овај уређај заузима место уређаја који је направио резервну копију. Прво престаните да користите тај уређај.';
+      'Ваше поруке и подешавања враћају се на овај уређај. Резервна копија не садржи пријаву, па се овај уређај затим придружује вашем налогу као нови уређај.';
 
   @override
   String get backupRecoveryCode => 'Код за опоравак';
@@ -1893,8 +1893,8 @@ class AppLocalizationsSr extends AppLocalizations {
       'Овај уређај није могао да сачува резервну копију.';
 
   @override
-  String get backupErrorSignInAgain =>
-      'Резервна копија је враћена на овај уређај, али њена сесија више није важећа. Пријавите се лозинком да бисте наставили.';
+  String get backupRestoredLinkToFinish =>
+      'Ваше поруке и подешавања су враћени на овај уређај. Да бисте завршили, повежите овај уређај са другог уређаја који је пријављен на ваш налог. Завршетак без другог уређаја још није доступан.';
 
   @override
   String get syncErrorCursorExpired =>
@@ -3597,7 +3597,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get backupRestoreMessage =>
-      'Ovaj uređaj zauzima mesto uređaja koji je napravio rezervnu kopiju. Prvo prestanite da koristite taj uređaj.';
+      'Vaše poruke i podešavanja vraćaju se na ovaj uređaj. Rezervna kopija ne sadrži prijavu, pa se ovaj uređaj zatim pridružuje vašem nalogu kao novi uređaj.';
 
   @override
   String get backupRecoveryCode => 'Kod za oporavak';
@@ -4447,8 +4447,8 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Ovaj uređaj nije mogao da sačuva rezervnu kopiju.';
 
   @override
-  String get backupErrorSignInAgain =>
-      'Rezervna kopija je vraćena na ovaj uređaj, ali njena sesija više nije važeća. Prijavite se lozinkom da biste nastavili.';
+  String get backupRestoredLinkToFinish =>
+      'Vaše poruke i podešavanja su vraćeni na ovaj uređaj. Da biste završili, povežite ovaj uređaj sa drugog uređaja koji je prijavljen na vaš nalog. Završetak bez drugog uređaja još nije dostupan.';
 
   @override
   String get syncErrorCursorExpired =>

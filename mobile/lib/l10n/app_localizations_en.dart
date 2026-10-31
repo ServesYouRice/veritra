@@ -1034,7 +1034,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get backupRestoreMessage =>
-      'This device takes the place of the one that made the backup. Stop using that device first.';
+      'Your messages and settings come back on this device. The backup holds no sign-in, so this device then joins your account as a new device.';
 
   @override
   String get backupRecoveryCode => 'Recovery code';
@@ -1878,8 +1878,8 @@ class AppLocalizationsEn extends AppLocalizations {
   String get backupErrorStorage => 'This device could not store the backup.';
 
   @override
-  String get backupErrorSignInAgain =>
-      'The backup is restored on this device, but its session is no longer valid. Sign in with your password to continue.';
+  String get backupRestoredLinkToFinish =>
+      'Your messages and settings are restored on this device. To finish, link this device from another device that is signed in to your account. Finishing without another device is not available yet.';
 
   @override
   String get syncErrorCursorExpired =>
