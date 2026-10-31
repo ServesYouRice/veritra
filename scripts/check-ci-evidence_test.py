@@ -3,7 +3,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
+import json
+import os
 from pathlib import Path
 
 MODULE_PATH = Path(__file__).with_name("check-ci-evidence.py")
@@ -127,9 +131,55 @@ def test_simulator_job_stays_mandatory() -> None:
     assert set(result["jobs"]) == set(REQUIRED_JOBS)
 
 
+def has_pair(args: list[str], flag: str, value: str) -> bool:
+    return any(args[i] == flag and args[i + 1] == value for i in range(len(args) - 1))
+
+
+def test_run_query_is_filtered_by_commit() -> None:
+    """The run query asks GitHub for the release commit's runs only, so
+    qualifying evidence older than the latest workflow runs is still found."""
+    args = check_ci.run_list_args(COMMIT)
+    assert has_pair(args, "--commit", COMMIT), args
+    assert has_pair(args, "--workflow", "ci.yml"), args
+    assert has_pair(args, "--event", "push"), args
+    assert has_pair(args, "--status", "completed"), args
+    assert args[:2] == ["run", "list"], args
+
+
+def test_main_uses_commit_filtered_query() -> None:
+    calls: list[tuple[str, ...]] = []
+    candidate_run = {"databaseId": 501, "headSha": COMMIT, "status": "completed", "conclusion": "success", "createdAt": "2026-08-24T16:00:00Z"}
+
+    def fake_gh_json(*args: str) -> object:
+        calls.append(args)
+        if args[:2] == ("run", "list"):
+            return [candidate_run]
+        return {"jobs": [{"name": job, "conclusion": "success"} for job in REQUIRED_JOBS]}
+
+    original_gh_json = check_ci.gh_json
+    original_sha = os.environ.get("GITHUB_SHA")
+    check_ci.gh_json = fake_gh_json
+    os.environ["GITHUB_SHA"] = COMMIT
+    try:
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            assert check_ci.main() == 0
+    finally:
+        check_ci.gh_json = original_gh_json
+        if original_sha is None:
+            os.environ.pop("GITHUB_SHA", None)
+        else:
+            os.environ["GITHUB_SHA"] = original_sha
+    run_list = [call for call in calls if call[:2] == ("run", "list")]
+    assert len(run_list) == 1, calls
+    assert has_pair(list(run_list[0]), "--commit", COMMIT), run_list
+    assert json.loads(output.getvalue())["run_id"] == 501
+
+
 if __name__ == "__main__":
     test_commit_validation()
     test_policy_validation()
     test_select_ci_evidence()
     test_simulator_job_stays_mandatory()
+    test_run_query_is_filtered_by_commit()
+    test_main_uses_commit_filtered_query()
     print("CI evidence selection adversarial tests passed")

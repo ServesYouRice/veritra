@@ -61,4 +61,60 @@ for workflow in "$ROOT/.github/workflows/ci.yml" "$ROOT/.github/workflows/releas
   fi
 done
 
+# Docker ignores the tag when a digest is given, so a digest left behind by a
+# version bump keeps building with the old Go. VERITRA_VERIFY_GO_IMAGE_DIGEST=1
+# asks the registry (docker buildx, network) whether the pinned digest is
+# golang:$GO_VERSION's index or one of its platform images. Off by default, so
+# local and offline runs make no network calls; any other value is an error.
+case "${VERITRA_VERIFY_GO_IMAGE_DIGEST:-}" in
+  ''|0) ;;
+  1)
+    if ! command -v docker >/dev/null 2>&1; then
+      echo "Go image check: docker with buildx is required when VERITRA_VERIFY_GO_IMAGE_DIGEST=1" >&2
+      exit 1
+    fi
+    # Captured first: sh has no pipefail, so a docker | python3 pipe would hide
+    # a failed inspection.
+    if ! GO_IMAGE_MANIFEST="$(docker buildx imagetools inspect "golang:$GO_VERSION" --format '{{json .Manifest}}')"; then
+      echo "Go image check: cannot inspect golang:$GO_VERSION in the registry" >&2
+      exit 1
+    fi
+    if ! printf '%s' "$GO_IMAGE_MANIFEST" | python3 -c '
+import json
+import re
+import sys
+
+pinned, tag = sys.argv[1], sys.argv[2]
+digest = re.compile(r"sha256:[0-9a-f]{64}")
+try:
+    manifest = json.load(sys.stdin)
+except ValueError:
+    sys.exit(f"Go image check: unreadable manifest for {tag}")
+if not isinstance(manifest, dict) or not digest.fullmatch(str(manifest.get("digest", ""))):
+    sys.exit(f"Go image check: manifest for {tag} has no valid digest")
+entries = manifest.get("manifests", [])
+if not isinstance(entries, list):
+    sys.exit(f"Go image check: malformed manifest list for {tag}")
+index = manifest["digest"]
+accepted = {index}
+for entry in entries:
+    if not isinstance(entry, dict) or not digest.fullmatch(str(entry.get("digest", ""))):
+        sys.exit(f"Go image check: malformed manifest entry for {tag}")
+    annotations = entry.get("annotations") or {}
+    if isinstance(annotations, dict) and annotations.get("vnd.docker.reference.type") == "attestation-manifest":
+        continue
+    accepted.add(entry["digest"])
+if pinned not in accepted:
+    sys.exit(f"Go image drift: server/Dockerfile digest {pinned} is not {tag} (registry index {index})")
+' "$DOCKER_DIGEST" "golang:$GO_VERSION"; then
+      exit 1
+    fi
+    echo "Go image digest $DOCKER_DIGEST verified as golang:$GO_VERSION"
+    ;;
+  *)
+    echo "VERITRA_VERIFY_GO_IMAGE_DIGEST must be 1 (verify), 0 or unset" >&2
+    exit 1
+    ;;
+esac
+
 echo "Go toolchain aligned at $GO_VERSION"

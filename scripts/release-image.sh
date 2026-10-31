@@ -3,11 +3,11 @@
 #
 #   scripts/release-image.sh [--image REPO] [--infra-dir DIR] [--no-push] [--skip-smoke]
 #
-# 1. Refuses a dirty tree, so the image always matches a commit.
+# 1. Refuses a dirty tree and any commit not on freshly fetched origin/main.
 # 2. Runs the server checks and dependency scans: gofmt, go vet, go test,
 #    govulncheck and cargo audit (scripts/audit-rust.sh).
-# 3. Builds the image from `git archive HEAD`, so only committed files reach
-#    the build context (no local .env, keys or data), tagged with the commit.
+# 3. Builds the image from `git archive` of the checked commit (only committed
+#    files, no local .env, keys or data), tagged with it; stops if HEAD moved.
 # 4. Scans the image with Trivy (vulnerabilities and secrets); a HIGH or
 #    CRITICAL finding stops the release.
 # 5. Runs scripts/smoke-deploy.sh on that exact image (hardened Compose
@@ -57,18 +57,37 @@ if [ -n "$INFRA_DIR" ] && [ "$PUSH" -eq 0 ]; then
   fail "--infra-dir needs a pushed digest; drop --no-push"
 fi
 command -v git >/dev/null 2>&1 || fail "git is not installed"
+# History must read as committed: a replace ref or a grafts file (in .git or
+# from GIT_GRAFT_FILE) could make an unpublished commit look like part of the
+# default branch, or change what git archive packages. Same guard as
+# scripts/check-release-evidence.py; the graft path cannot exist.
+export GIT_NO_REPLACE_OBJECTS=1
+export GIT_GRAFT_FILE=/dev/null/grafts
 cd "$ROOT"
-if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
+TREE_STATUS="$(git status --porcelain --untracked-files=normal)" || fail "cannot read the working tree status"
+if [ -n "$TREE_STATUS" ]; then
   fail "the working tree is dirty; commit or remove changes first"
 fi
 for tool in go docker; do
   command -v "$tool" >/dev/null 2>&1 || fail "$tool is not installed"
 done
 command -v trivy >/dev/null 2>&1 || fail "trivy is not installed (https://trivy.dev); the image scan is required"
-COMMIT="$(git rev-parse HEAD)"
-TAG="$(git rev-parse --short=12 HEAD)"
-VERSION="$(git describe --tags --always)"
+# Later steps use $COMMIT; HEAD is read again only to check it has not moved.
+COMMIT="$(git rev-parse --verify 'HEAD^{commit}')"
+TAG="$(git rev-parse --short=12 "$COMMIT")"
+VERSION="$(git describe --tags --always "$COMMIT")"
 GO_VERSION="$(tr -d '[:space:]' < .go-version)"
+
+# Only reviewed, published commits are released: $COMMIT must be on the
+# protected default branch as origin serves it now (the anchor
+# scripts/release-readiness.sh uses for mobile approvals). A failed fetch stops
+# the release rather than trusting a stale origin/main.
+DEFAULT_BRANCH=main
+step "published commit"
+git fetch --no-tags --quiet origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH" ||
+  fail "cannot fetch $DEFAULT_BRANCH from origin; the release commit must be checked against it"
+git merge-base --is-ancestor "$COMMIT" "refs/remotes/origin/$DEFAULT_BRANCH" ||
+  fail "commit $COMMIT is not on origin/$DEFAULT_BRANCH; push it through review first"
 
 if [ -n "$INFRA_DIR" ]; then
   KUSTOMIZATION="$INFRA_DIR/kustomization.yaml"
@@ -81,7 +100,9 @@ if [ -n "$INFRA_DIR" ]; then
 fi
 
 step "checks"
-sh scripts/check-go-toolchain.sh
+# The release builds FROM golang@digest, so confirm with the registry that the
+# pinned digest really is golang:$GO_VERSION (needs docker buildx and network).
+VERITRA_VERIFY_GO_IMAGE_DIGEST=1 sh scripts/check-go-toolchain.sh
 (
   cd server
   unformatted="$(gofmt -l .)"
@@ -95,7 +116,12 @@ step "dependency scans"
 sh scripts/audit-rust.sh
 
 step "build $IMAGE:$TAG"
-git archive --format=tar HEAD | docker build \
+# The checks ran on the working tree, so it must still be exactly $COMMIT.
+HEAD_NOW="$(git rev-parse --verify 'HEAD^{commit}')" || fail "cannot read HEAD after the checks"
+[ "$HEAD_NOW" = "$COMMIT" ] || fail "HEAD moved during the checks ($COMMIT -> $HEAD_NOW); start the release again"
+TREE_STATUS="$(git status --porcelain --untracked-files=normal)" || fail "cannot read the working tree status"
+[ -z "$TREE_STATUS" ] || fail "the working tree changed during the checks; start the release again"
+git archive --format=tar "$COMMIT" | docker build \
   --platform linux/amd64 \
   -f server/Dockerfile \
   --build-arg "GO_VERSION=$GO_VERSION" \

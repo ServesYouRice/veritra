@@ -44,6 +44,30 @@ def validate_policy_jobs(policy: dict[str, object], required_jobs: tuple[str, ..
         raise ValueError("release policy required CI jobs do not match the protected set")
 
 
+def run_list_args(commit: str) -> list[str]:
+    """gh arguments listing completed push runs of ci.yml for one commit.
+
+    GitHub filters by head SHA, so a qualifying run is found however many later
+    runs exist; select_ci_evidence still checks headSha on every result.
+    """
+    return [
+        "run",
+        "list",
+        "--workflow",
+        "ci.yml",
+        "--event",
+        "push",
+        "--status",
+        "completed",
+        "--commit",
+        commit,
+        "--limit",
+        "20",
+        "--json",
+        "databaseId,headSha,status,conclusion,createdAt",
+    ]
+
+
 def select_ci_evidence(
     commit: str,
     runs: object,
@@ -99,20 +123,7 @@ def main() -> int:
         print(str(exc), file=sys.stderr)
         return 1
     try:
-        runs = gh_json(
-            "run",
-            "list",
-            "--workflow",
-            "ci.yml",
-            "--event",
-            "push",
-            "--status",
-            "completed",
-            "--limit",
-            "20",
-            "--json",
-            "databaseId,headSha,status,conclusion,createdAt",
-        )
+        runs = gh_json(*run_list_args(commit))
         evidence = select_ci_evidence(
             commit,
             runs,
