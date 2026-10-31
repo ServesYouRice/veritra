@@ -42,17 +42,20 @@ bool _hasTurnUrl(Map<String, Object?> server) {
 String? relayCandidateOnly(String candidate) {
   final body = candidate.startsWith('a=') ? candidate.substring(2) : candidate;
   if (!body.startsWith('candidate:')) return null;
-  final tokens = candidate.split(' ');
-  final typ = tokens.indexOf('typ');
-  if (typ < 0 || typ + 1 >= tokens.length || tokens[typ + 1] != 'relay') {
+  // Any whitespace separates tokens, and keywords match in any case, so
+  // `raddr  1.2.3.4` or `RADDR` cannot slip past.
+  final tokens = candidate.trim().split(RegExp(r'\s+'));
+  final keys = tokens.map((token) => token.toLowerCase()).toList();
+  final typ = keys.indexOf('typ');
+  if (typ < 0 || typ + 1 >= keys.length || keys[typ + 1] != 'relay') {
     return null;
   }
   // Every token is checked, not key/value pairs, so a malformed extension
   // cannot shift the pairing and let the related address through.
   for (var i = typ + 2; i < tokens.length; i++) {
-    if (tokens[i] == 'raddr' || tokens[i] == 'rport') {
+    if (keys[i] == 'raddr' || keys[i] == 'rport') {
       if (i + 1 >= tokens.length) return null;
-      tokens[i + 1] = tokens[i] == 'rport'
+      tokens[i + 1] = keys[i] == 'rport'
           ? '0'
           : tokens[i + 1].contains(':')
               ? '::'
@@ -318,6 +321,7 @@ class NativeCallService {
   Future<ActiveCall> start(String conversationId, {bool video = false}) async {
     final media = await _createConnection(video: video);
     final ActiveCall active;
+    CallSession? created;
     try {
       final offer = await media.peer.createOffer(<String, Object?>{});
       await media.peer.setLocalDescription(offer);
@@ -328,15 +332,36 @@ class NativeCallService {
         'sdp_type': offer.type,
         'video': video
       });
-      final call =
+      final call = created =
           await api.createCall(token, conversationId, encrypted.metadata);
       active = _activate(call, media);
     } catch (_) {
       await media.release();
+      if (created != null) unawaited(_abandon(created));
       rethrow;
     }
-    await _finishSetup(active);
+    try {
+      await _finishSetup(active);
+    } catch (_) {
+      unawaited(_abandon(active.session));
+      rethrow;
+    }
     return active;
+  }
+
+  /// Best-effort 'ended' for a call created here that setup gave up on, so
+  /// the other side does not ring until the server expires it. Never throws.
+  Future<void> _abandon(CallSession call) async {
+    if (_terminated.contains(call.id)) return;
+    var latest = call;
+    try {
+      await _transition(() => latest, (session) => latest = session,
+          state: (_) => 'ended',
+          giveUp: (current) => isTerminalCallState(current.state));
+    } catch (_) {
+      // Best effort: the server expires the ringing call eventually.
+    }
+    _markTerminated(call.id);
   }
 
   Future<ActiveCall> answer(
@@ -347,7 +372,7 @@ class NativeCallService {
       throw const FormatException('invalid encrypted call offer');
     }
     // Already over: do not turn on the microphone or camera for it.
-    if (_terminated.contains(call.id)) {
+    if (_isOver(call.id)) {
       throw CallUnavailableException(call.id, 'ended');
     }
     final media = await _createConnection(video: offer['video'] == true);
@@ -367,7 +392,8 @@ class NativeCallService {
           () => _newest(_pendingSessions[call.id], call), _recordPending,
           state: (_) => 'active',
           metadata: encrypted.metadata,
-          giveUp: (current) => current.state != 'ringing');
+          giveUp: (current) =>
+              current.state != 'ringing' || _isOver(current.id));
       active = _activate(updated, media);
     } catch (_) {
       await media.release();
@@ -503,8 +529,8 @@ class NativeCallService {
   /// synchronously, so nothing can observe a half-registered call.
   ActiveCall _activate(CallSession call, _CallMedia media) {
     if (_disposed) throw StateError('Call service was disposed during setup');
-    if (_terminated.contains(call.id)) {
-      // The other side ended the call before setup finished.
+    if (_isOver(call.id)) {
+      // Ended by the other side, or hung up here, before setup finished.
       throw CallUnavailableException(call.id, 'ended');
     }
     final active = ActiveCall._(
@@ -617,7 +643,15 @@ class NativeCallService {
   }
 
   /// Records [session] for a call with no [ActiveCall] yet, if newer.
+  /// Whether [callId] is over or being hung up here.
+  bool _isOver(String callId) =>
+      _terminated.contains(callId) ||
+      _terminating.containsKey(callId) ||
+      _endings.containsKey(callId);
+
   void _recordPending(CallSession session) {
+    // A call that is over must not come back as pending.
+    if (_isOver(session.id)) return;
     final known = _pendingSessions[session.id];
     if (known == null || session.version > known.version) {
       _pendingSessions[session.id] = session;

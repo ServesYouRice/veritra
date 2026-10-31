@@ -78,6 +78,7 @@ void main() {
   _task020();
   _task021();
   _followUps();
+  _reviewFixes();
   group('TASK-015 setup failure releases media', () {
     const startSteps = <String>[
       'getUserMedia',
@@ -884,6 +885,86 @@ void _followUps() {
               'odd raddr 198.51.100.7 rport 9'),
           'candidate:1 1 udp 1 203.0.113.9 5 typ relay '
           'odd raddr 0.0.0.0 rport 0');
+    });
+  });
+}
+
+void _reviewFixes() {
+  group('review fixes', () {
+    test('hanging up while answer() is in flight leaves no live call',
+        () async {
+      final h = _harness();
+      final offer = h.service.incomingOffers.first;
+      h.incoming.add(IncomingCallSignal(callSession(version: 1), _offer));
+      await offer;
+      // The server accepts 'active' (1 -> 2) but the response is held.
+      final hold = Completer<void>();
+      final activeSent = Completer<void>();
+      h.api.onTransition = (request) async {
+        if (request.state == 'active') {
+          h.api.server['call_1'] = callSession(state: 'active', version: 2);
+          activeSent.complete();
+          await hold.future;
+          return h.api.server['call_1']!;
+        }
+        final current = h.api.server['call_1']!;
+        if (current.version != request.expectedVersion) {
+          throw versionConflict();
+        }
+        return h.api.server['call_1'] =
+            callSession(state: request.state, version: current.version + 1);
+      };
+      // The first 'ended' conflicts and waits to retry.
+      final retrying = Completer<void>();
+      final resume = Completer<void>();
+      h.delayGate = () {
+        retrying.complete();
+        return resume.future;
+      };
+
+      final answered = h.service.answer(callSession(version: 1), _offer);
+      await activeSent.future;
+      final ended = h.service.end('call_1');
+      await retrying.future;
+      hold.complete();
+      await expectLater(answered, throwsA(isA<CallUnavailableException>()));
+      resume.complete();
+      await ended;
+
+      expect(h.service.activeCallIds, isEmpty);
+      expect(h.service.pendingCallIds, isEmpty);
+      _expectReleasedOnce(h.media, hadStream: true);
+      expect(h.api.server['call_1']!.state, 'ended');
+    });
+
+    test('start() abandoned after createCall ends the server call', () async {
+      final h = _harness();
+      final created = Completer<void>();
+      h.api.createGate = () => created.future;
+      final started = h.service.start('conv_1');
+      await _settle();
+      final disposed = h.service.dispose();
+      created.complete();
+      await expectLater(started, throwsStateError);
+      await disposed;
+      await _settle();
+      expect(h.api.transitions.single.state, 'ended');
+      _expectReleasedOnce(h.media, hadStream: true);
+    });
+
+    test('relay filter splits on any whitespace and ignores case', () {
+      expect(
+          relayCandidateOnly('candidate:1 1 udp 1 203.0.113.9 5 typ relay '
+              'raddr  198.51.100.7   rport\t9'),
+          'candidate:1 1 udp 1 203.0.113.9 5 typ relay '
+          'raddr 0.0.0.0 rport 0');
+      expect(
+          relayCandidateOnly('candidate:1 1 udp 1 203.0.113.9 5 TYP RELAY '
+              'RADDR 198.51.100.7 RPORT 9'),
+          'candidate:1 1 udp 1 203.0.113.9 5 TYP RELAY '
+          'RADDR 0.0.0.0 RPORT 0');
+      expect(relayCandidateOnly('candidate:1 1 udp 1 192.168.1.2 5 typ  host'),
+          isNull);
     });
   });
 }
