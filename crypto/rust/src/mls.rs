@@ -378,10 +378,18 @@ impl MlsDevice {
         let processed = group
             .process_message(&self.provider, protocol_message)
             .map_err(|_| MlsError::InvalidMessage)?;
+        // Veritra commits come from members only. An external commit would
+        // bring in a new leaf without an Add proposal to inspect.
+        let Sender::Member(committer) = *processed.sender() else {
+            return Err(MlsError::UnexpectedMessage);
+        };
         let ProcessedMessageContent::StagedCommitMessage(staged_commit) = processed.into_content()
         else {
             return Err(MlsError::UnexpectedMessage);
         };
+        // Inspect before merging: once merged, the leaves it brings in are
+        // what decrypt() attributes messages to.
+        inspect_commit(group, committer, &staged_commit)?;
         group
             .merge_staged_commit(&self.provider, *staged_commit)
             .map_err(|_| MlsError::GroupOperation)
@@ -744,6 +752,76 @@ fn decode_device_identity(identity: &[u8]) -> Result<(&[u8], &[u8]), MlsError> {
     Ok((account, &rest[2..end]))
 }
 
+/// The structural checks a remote commit must pass before it is merged.
+/// Who may commit, and whether an identity really belongs to its signing
+/// key, needs a trust anchor (L1) and is not decided here.
+///
+/// - Only Add, Remove and Update proposals: Veritra sends nothing else.
+/// - Every credential it brings in is a Basic credential holding a
+///   well-formed device identity.
+/// - An added identity appears once in the roster the commit produces.
+/// - An update (proposal or update path) keeps the leaf's identity.
+fn inspect_commit(
+    group: &MlsGroup,
+    committer: LeafNodeIndex,
+    staged: &StagedCommit,
+) -> Result<(), MlsError> {
+    let refused = MlsError::InvalidIdentity;
+    if staged.queued_proposals().any(|proposal| {
+        !matches!(
+            proposal.proposal(),
+            Proposal::Add(_) | Proposal::Remove(_) | Proposal::Update(_)
+        )
+    }) {
+        return Err(MlsError::UnexpectedMessage);
+    }
+    let removed: Vec<_> = staged
+        .remove_proposals()
+        .map(|proposal| proposal.remove_proposal().removed())
+        .collect();
+    let added = staged
+        .add_proposals()
+        .map(|proposal| {
+            basic_identity(
+                proposal
+                    .add_proposal()
+                    .key_package()
+                    .leaf_node()
+                    .credential(),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    ensure_added_identities_unique(&roster_identities(group, &removed), &added)?;
+
+    let keeps_identity = |leaf: LeafNodeIndex, credential: &Credential| {
+        let current = group.member_at(leaf).ok_or(refused)?;
+        if basic_identity(credential)? != current.credential.serialized_content() {
+            return Err(refused);
+        }
+        Ok(())
+    };
+    for update in staged.update_proposals() {
+        let Sender::Member(leaf) = *update.sender() else {
+            return Err(refused);
+        };
+        keeps_identity(leaf, update.update_proposal().leaf_node().credential())?;
+    }
+    if let Some(leaf_node) = staged.update_path_leaf_node() {
+        keeps_identity(committer, leaf_node.credential())?;
+    }
+    Ok(())
+}
+
+/// The device identity inside a Basic credential, checked for format.
+fn basic_identity(credential: &Credential) -> Result<Vec<u8>, MlsError> {
+    if credential.credential_type() != CredentialType::Basic {
+        return Err(MlsError::InvalidIdentity);
+    }
+    let identity = credential.serialized_content();
+    decode_device_identity(identity)?;
+    Ok(identity.to_vec())
+}
+
 /// Identities of the current members, leaving out the `removed` leaves.
 fn roster_identities(group: &MlsGroup, removed: &[LeafNodeIndex]) -> Vec<Vec<u8>> {
     group
@@ -1081,6 +1159,166 @@ mod tests {
             alice.member_indices(&group, b"acct_bob", b"dev_bob"),
             Err(MlsError::InvalidIdentity)
         );
+    }
+
+    /// A key package whose credential carries an arbitrary identity, signed
+    /// by a fresh key: what a hostile client or server can hand out.
+    fn forged_key_package(identity: &[u8]) -> KeyPackage {
+        let forger = MlsDevice::new(b"acct_forger", b"dev_forger").unwrap();
+        let credential = CredentialWithKey {
+            credential: BasicCredential::new(identity.to_vec()).into(),
+            signature_key: forger.signer.public().into(),
+        };
+        KeyPackage::builder()
+            .build(CIPHERSUITE, &forger.provider, &forger.signer, credential)
+            .unwrap()
+            .key_package()
+            .clone()
+    }
+
+    /// Alice, Bob and Carol in one group at epoch 1.
+    fn three_members(group_id: &[u8]) -> ([MlsDevice; 3], [MlsGroup; 3]) {
+        let alice = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
+        let bob = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+        let carol = MlsDevice::new(b"acct_carol", b"dev_carol").unwrap();
+        let mut alice_group = alice.create_group(group_id).unwrap();
+        let (bob_kp, carol_kp) = (
+            bob.create_key_package().unwrap(),
+            carol.create_key_package().unwrap(),
+        );
+        let staged = alice
+            .stage_membership_commit(
+                &mut alice_group,
+                &[
+                    MemberAdd {
+                        key_package: &bob_kp,
+                        account_id: b"acct_bob",
+                        device_id: b"dev_bob",
+                    },
+                    MemberAdd {
+                        key_package: &carol_kp,
+                        account_id: b"acct_carol",
+                        device_id: b"dev_carol",
+                    },
+                ],
+                &[],
+            )
+            .unwrap();
+        alice.merge_pending_commit(&mut alice_group).unwrap();
+        let bob_group = bob.join_group(group_id, &staged.welcome).unwrap();
+        let carol_group = carol.join_group(group_id, &staged.welcome).unwrap();
+        ([alice, bob, carol], [alice_group, bob_group, carol_group])
+    }
+
+    /// Alice refuses `commit`; her stored group keeps its epoch, and a valid
+    /// commit Bob makes afterwards on the same epoch still applies.
+    fn assert_refused_then_recovers(
+        devices: &[MlsDevice; 3],
+        groups: &mut [MlsGroup; 3],
+        group_id: &[u8],
+        commit: &[u8],
+    ) {
+        let [alice, bob, _] = devices;
+        let [alice_group, bob_group, _] = groups;
+        let epoch = alice.group_epoch(alice_group);
+        assert_eq!(
+            alice.process_commit(alice_group, commit),
+            Err(MlsError::InvalidIdentity)
+        );
+        assert_eq!(alice.group_epoch(alice_group), epoch);
+        let mut stored = alice.load_group(group_id).unwrap();
+        assert_eq!(alice.group_epoch(&stored), epoch);
+        // Bob's refused commit is dropped and he commits again.
+        bob.clear_pending_commit(bob_group).unwrap();
+        let update = bob.self_update(bob_group).unwrap();
+        bob.merge_pending_commit(bob_group).unwrap();
+        alice.process_commit(&mut stored, &update).unwrap();
+        assert_eq!(alice.group_epoch(&stored), epoch + 1);
+        let message = bob.encrypt(bob_group, b"after").unwrap();
+        assert_eq!(
+            alice
+                .decrypt(&mut stored, &message, b"acct_bob", b"dev_bob")
+                .unwrap(),
+            b"after"
+        );
+        *alice_group = stored;
+    }
+
+    #[test]
+    fn a_commit_adding_a_malformed_identity_is_refused() {
+        let (devices, mut groups) = three_members(b"conv_bad_add");
+        let commit = {
+            let [_, bob, _] = &devices;
+            let (commit, _, _) = groups[1]
+                .add_members(
+                    &bob.provider,
+                    &bob.signer,
+                    &[forged_key_package(b"garbage")],
+                )
+                .unwrap();
+            commit.tls_serialize_detached().unwrap()
+        };
+        assert_refused_then_recovers(&devices, &mut groups, b"conv_bad_add", &commit);
+    }
+
+    #[test]
+    fn a_commit_adding_an_identity_already_present_is_refused() {
+        let (devices, mut groups) = three_members(b"conv_twin_add");
+        let carol_identity = encode_device_identity(b"acct_carol", b"dev_carol").unwrap();
+        let commit = {
+            let [_, bob, _] = &devices;
+            let (commit, _, _) = groups[1]
+                .add_members(
+                    &bob.provider,
+                    &bob.signer,
+                    &[forged_key_package(&carol_identity)],
+                )
+                .unwrap();
+            commit.tls_serialize_detached().unwrap()
+        };
+        assert_refused_then_recovers(&devices, &mut groups, b"conv_twin_add", &commit);
+
+        // The same new identity twice in one commit.
+        let dave = encode_device_identity(b"acct_dave", b"dev_dave").unwrap();
+        let commit = {
+            let [_, bob, _] = &devices;
+            let (commit, _, _) = groups[1]
+                .add_members(
+                    &bob.provider,
+                    &bob.signer,
+                    &[forged_key_package(&dave), forged_key_package(&dave)],
+                )
+                .unwrap();
+            commit.tls_serialize_detached().unwrap()
+        };
+        assert_refused_then_recovers(&devices, &mut groups, b"conv_twin_add", &commit);
+    }
+
+    #[test]
+    fn a_commit_changing_a_leaf_identity_is_refused() {
+        let (devices, mut groups) = three_members(b"conv_rename");
+        // Bob's update path claims to be Alice, with his own key.
+        let commit = {
+            let [_, bob, _] = &devices;
+            let disguise = CredentialWithKey {
+                credential: BasicCredential::new(
+                    encode_device_identity(b"acct_alice", b"dev_alice").unwrap(),
+                )
+                .into(),
+                signature_key: bob.signer.public().into(),
+            };
+            let parameters = LeafNodeParameters::builder()
+                .with_credential_with_key(disguise)
+                .build();
+            groups[1]
+                .self_update(&bob.provider, &bob.signer, parameters)
+                .unwrap()
+                .into_contents()
+                .0
+                .tls_serialize_detached()
+                .unwrap()
+        };
+        assert_refused_then_recovers(&devices, &mut groups, b"conv_rename", &commit);
     }
 
     #[test]
