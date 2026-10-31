@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
 
 import '../core/models.dart';
 import '../core/server_origin.dart';
@@ -1470,7 +1471,10 @@ int? mlsMessageEpoch(List<int> message, String groupId) {
     length = (length << 8) | message[offset + index];
   }
   offset += sizeBytes;
-  final expected = utf8.encode(groupId);
+  // The bytes the bindings send as the group ID (`native_crypto_bindings.dart`
+  // passes `Uint8List.fromList(groupId.codeUnits)`), so a header matches the
+  // group the native side created, whatever characters the ID holds.
+  final expected = Uint8List.fromList(groupId.codeUnits);
   if (length != expected.length || offset + length + 8 > message.length) {
     return null;
   }

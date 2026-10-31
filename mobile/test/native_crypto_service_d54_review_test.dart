@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/app_payload.dart';
@@ -197,6 +200,26 @@ void main() {
       expect(await stale.groupEpoch('conv_1'), (epoch: 1, pending: false));
       expect(faults.restores, restores + 1);
     }, skip: skip);
+  });
+
+  group('mlsMessageEpoch reads the group ID as the bindings send it', () {
+    // The bindings pass `Uint8List.fromList(groupId.codeUnits)` to the native
+    // side: one byte per UTF-16 unit, its low byte.
+    List<int> header(List<int> groupId, int epoch) => <int>[
+          0, 1, 0, 1, groupId.length, ...groupId, //
+          0, 0, 0, 0, 0, 0, 0, epoch,
+        ];
+
+    for (final groupId in <String>['conv_1', 'é', '€x']) {
+      test(groupId, () {
+        final wire = Uint8List.fromList(groupId.codeUnits);
+        expect(mlsMessageEpoch(header(wire, 7), groupId), 7);
+        if (groupId.codeUnits.any((unit) => unit > 0x7f)) {
+          expect(mlsMessageEpoch(header(utf8.encode(groupId), 7), groupId),
+              isNull);
+        }
+      });
+    }
   });
 
   group('an own commit with no queued bundle (fork check)', () {
