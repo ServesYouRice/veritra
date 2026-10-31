@@ -30,6 +30,9 @@ import (
 const (
 	stagingMarkerName  = ".veritra-staging"
 	restoreJournalName = ".veritra-restore-journal.json"
+	// restoreDirLockName guards the journal of its directory (see
+	// acquireRestoreDirLock). It does not match the staging prefix.
+	restoreDirLockName = ".veritra-restore.lock"
 	backupFormat       = "v1"
 	// drillDirName is the restore drill's scratch area inside the data dir.
 	// The data dir is always writable (the database lives there) and is
@@ -597,6 +600,13 @@ func restore(cfg config.Config, args []string, stdout io.Writer) error {
 		return err
 	}
 	defer lock.Release()
+	// Another database in the same directory shares the journal path; its
+	// restore must not have its journal overwritten or removed.
+	dirLock, err := acquireRestoreDirLock(live)
+	if err != nil {
+		return err
+	}
+	defer dirLock.Release()
 	// A running server holds its process locks even when idle, which the
 	// SQLite probe below cannot see in WAL mode.
 	server, err := acquireServerExclusion(cfg)
@@ -612,7 +622,11 @@ func restore(cfg config.Config, args []string, stdout io.Writer) error {
 		return fmt.Errorf("a server appears to be running; stop the server before restore: %w", err)
 	}
 	defer blobLock.Release()
-	if _, err := os.Stat(journalPath(live)); err == nil {
+	// Any entry at the journal path, or one that cannot be checked, stops
+	// the restore: a journal read as absent would be overwritten.
+	if present, err := entryPresent(journalPath(live)); err != nil {
+		return fmt.Errorf("check for a restore journal: %w", err)
+	} else if present {
 		return errors.New("an earlier restore is unfinished; run the command again after it is settled")
 	}
 	staged, err := stageBackup(cfg, args[0], live, liveBlobs)
@@ -644,18 +658,27 @@ func restore(cfg config.Config, args []string, stdout io.Writer) error {
 		Version: 1, State: "activating", StartedAt: time.Now().UTC(), Database: live,
 		Companions: map[string]string{}, StagingDir: staged.dir,
 	}
-	if _, err := os.Stat(live); err == nil {
+	// An original that cannot be checked is not taken as absent: the
+	// journal would not list it, and a rollback treats unlisted files at the
+	// live paths as restored copies.
+	if present, err := entryPresent(live); err != nil {
+		return fmt.Errorf("check live database: %w", err)
+	} else if present {
 		journal.DatabaseRollback = live + suffix
 	}
 	for _, companion := range []string{live + "-wal", live + "-shm"} {
-		if _, err := os.Stat(companion); err == nil {
+		if present, err := entryPresent(companion); err != nil {
+			return fmt.Errorf("check SQLite companion: %w", err)
+		} else if present {
 			// The WAL holds committed data: it moves with its database.
 			journal.Companions[companion] = companion + suffix
 		}
 	}
 	if staged.blobs != "" {
 		journal.Blobs = liveBlobs
-		if _, err := os.Stat(liveBlobs); err == nil {
+		if present, err := entryPresent(liveBlobs); err != nil {
+			return fmt.Errorf("check live blob directory: %w", err)
+		} else if present {
 			journal.BlobsRollback = liveBlobs + suffix
 		}
 	}
@@ -757,6 +780,20 @@ func restore(cfg config.Config, args []string, stdout io.Writer) error {
 	return nil
 }
 
+// entryPresent reports whether a directory entry exists at path, without
+// following a final symlink. An error other than "not exist" is returned, so
+// callers fail closed.
+func entryPresent(path string) (bool, error) {
+	_, err := os.Lstat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
+
 // rollBackRestore puts every preserved original back: the database, then
 // its WAL and SHM, then the blobs, stopping at the first failure. Restored
 // copies are moved into staging only where an original is waiting to replace
@@ -824,6 +861,16 @@ func rollBackRestore(journal restoreJournal) error {
 	// not check which database a WAL belongs to, so the original -wal and
 	// -shm may only go back once the original database is live again.
 	err := faultHook("restore:rollback-database")
+	if err == nil {
+		// A -wal or -shm the journal does not list belongs to the restored
+		// database (a validation killed mid-way can leave them), never to
+		// the original, so it goes before the original database comes back.
+		for _, companion := range []string{journal.Database + "-wal", journal.Database + "-shm"} {
+			if _, listed := journal.Companions[companion]; !listed && err == nil {
+				err = withdraw(companion, journal.StagingDir, "rolled-back-"+filepath.Base(companion))
+			}
+		}
+	}
 	if err == nil {
 		if journal.DatabaseRollback != "" {
 			err = putBack(journal.Database, journal.DatabaseRollback, journal.StagingDir)
@@ -897,6 +944,13 @@ func recoverInterruptedRestore(cfg config.Config, stdout io.Writer) error {
 		return err
 	}
 	defer lock.Release()
+	// The journal may also belong to a restore of another database in this
+	// directory.
+	dirLock, err := acquireRestoreDirLock(live)
+	if err != nil {
+		return err
+	}
+	defer dirLock.Release()
 	// Settling moves live files, so it never runs beside a server. The blob
 	// lock is only checked: the rollback may move the directory holding it.
 	server, err := acquireServerExclusion(cfg)
