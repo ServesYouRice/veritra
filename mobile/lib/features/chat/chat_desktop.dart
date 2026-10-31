@@ -112,29 +112,56 @@ class _ChatDropZoneState extends State<ChatDropZone> {
   }
 }
 
-/// Reads files, then an image, from the system clipboard. Returns what was
-/// found, or an empty list when the clipboard holds neither (plain text).
-/// Pasted image bytes are written to a private cache file, which the caller
-/// passes on as temporary.
-Future<({List<XFile> files, Set<String> temporary})>
-    readClipboardFiles() async {
+/// Reads files from the system clipboard, else an image. Returns what was
+/// found, or an empty list when the clipboard holds neither, or holds plain
+/// text: Office-style apps put a bitmap next to the text they copy, and the
+/// person who pressed Ctrl+V wants the text. Files still come first.
+///
+/// The readers default to the system clipboard; tests replace them. Pasted
+/// image bytes are written to a private cache file, which the caller passes on
+/// as temporary.
+Future<({List<XFile> files, Set<String> temporary})> readClipboardFiles({
+  Future<List<String>> Function()? readFiles,
+  Future<String?> Function()? readText,
+  Future<Uint8List?> Function()? readImage,
+  Future<XFile> Function(Uint8List bytes)? storeImage,
+}) async {
   try {
-    final paths = await Pasteboard.files();
+    final paths = await (readFiles ?? Pasteboard.files)();
     if (paths.isNotEmpty) {
       return (
         files: <XFile>[for (final path in paths) XFile(path)],
         temporary: const <String>{},
       );
     }
-    final Uint8List? image = await Pasteboard.image;
+    if (await _clipboardHasText(readText)) {
+      return (files: const <XFile>[], temporary: const <String>{});
+    }
+    final image = await (readImage ?? () => Pasteboard.image)();
     if (image != null && image.isNotEmpty) {
-      final file = await writePastedImage(image);
+      final file = await (storeImage ?? writePastedImage)(image);
       return (files: <XFile>[file], temporary: <String>{file.path});
     }
   } catch (_) {
     // No clipboard plugin or an unreadable clipboard: fall back to text.
   }
   return (files: const <XFile>[], temporary: const <String>{});
+}
+
+/// Whether the clipboard holds text other than whitespace. A clipboard whose
+/// text cannot be read counts as having none, so an image can still be pasted.
+Future<bool> _clipboardHasText(Future<String?> Function()? readText) async {
+  try {
+    final String? text;
+    if (readText != null) {
+      text = await readText();
+    } else {
+      text = (await Clipboard.getData(Clipboard.kTextPlain))?.text;
+    }
+    return text != null && text.trim().isNotEmpty;
+  } catch (_) {
+    return false;
+  }
 }
 
 /// Wraps the composer's text field so that Ctrl+V / Cmd+V attaches files and
