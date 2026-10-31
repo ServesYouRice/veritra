@@ -681,6 +681,19 @@ func (s *Store) pruneEventRows(ctx context.Context, query string, olderThan time
 // message content, ciphertext, or any field that would defeat the privacy
 // promise that admins cannot read user data.
 func (s *Store) RecordAuditEvent(ctx context.Context, actorAccountID *string, eventType string, metadata interface{}) error {
+	return insertAuditEvent(ctx, s.db, actorAccountID, eventType, metadata)
+}
+
+// AuditEvent is a metadata-only audit row that a store method writes in the
+// same transaction as the change it records, so the change is never
+// persisted without it. The same rule applies as for RecordAuditEvent: no
+// message content, ciphertext or secrets in Metadata.
+type AuditEvent struct {
+	Type     string
+	Metadata interface{}
+}
+
+func insertAuditEvent(ctx context.Context, exec syncEventExecer, actorAccountID *string, eventType string, metadata interface{}) error {
 	payload := json.RawMessage(`{}`)
 	if metadata != nil {
 		b, err := json.Marshal(metadata)
@@ -689,7 +702,7 @@ func (s *Store) RecordAuditEvent(ctx context.Context, actorAccountID *string, ev
 		}
 		payload = b
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO audit_events(actor_account_id, event_type, metadata_json, created_at) VALUES(?, ?, ?, ?)`, nullableString(actorAccountID), eventType, string(payload), nowString())
+	_, err := exec.ExecContext(ctx, `INSERT INTO audit_events(actor_account_id, event_type, metadata_json, created_at) VALUES(?, ?, ?, ?)`, nullableString(actorAccountID), eventType, string(payload), nowString())
 	return err
 }
 
