@@ -45,6 +45,15 @@ const (
 // disk or a permission failure would.
 var faultHook = func(step string) error { return nil }
 
+// maxBackupManifestBytes caps a backup manifest. backup() refuses to publish
+// a larger one and every reader rejects it, so a backup that is written can
+// always be restored. One blob entry takes about 190 bytes (measured: 188
+// with a blob_<32 hex> key and an 8-digit size), so 64 MiB holds roughly
+// 350,000 attachments while reading one stays well within a small host's
+// memory. Blob count has no other bound (T49D limits bytes, not files).
+// A var so tests can lower it.
+var maxBackupManifestBytes int64 = 64 << 20
+
 // errSimulatedCrash makes restore stop without any cleanup, like a killed
 // process.
 var errSimulatedCrash = errors.New("simulated crash")
@@ -307,6 +316,10 @@ func backup(ctx context.Context, cfg config.Config, args []string, stdout io.Wri
 	if err != nil {
 		return err
 	}
+	// The trailing newline counts too.
+	if size := int64(len(manifestBytes)) + 1; size > maxBackupManifestBytes {
+		return fmt.Errorf("backup manifest of %d bytes exceeds the restorable limit of %d bytes", size, maxBackupManifestBytes)
+	}
 	if err := writeFileSynced(filepath.Join(stage, "manifest.json"), append(manifestBytes, '\n'), 0o600); err != nil {
 		return err
 	}
@@ -339,11 +352,17 @@ func syncFile(path string) error {
 }
 
 func readAndValidateBackupManifest(root string) (instanceBackupManifest, error) {
-	raw, err := os.ReadFile(filepath.Join(root, "manifest.json"))
+	file, err := os.Open(filepath.Join(root, "manifest.json"))
 	if err != nil {
 		return instanceBackupManifest{}, err
 	}
-	if len(raw) > 1<<20 {
+	defer file.Close()
+	// One byte past the limit is enough to tell an oversized manifest.
+	raw, err := io.ReadAll(io.LimitReader(file, maxBackupManifestBytes+1))
+	if err != nil {
+		return instanceBackupManifest{}, err
+	}
+	if int64(len(raw)) > maxBackupManifestBytes {
 		return instanceBackupManifest{}, errors.New("backup manifest is too large")
 	}
 	var manifest instanceBackupManifest
