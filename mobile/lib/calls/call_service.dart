@@ -75,6 +75,9 @@ class ActiveCall {
   /// been applied; later signals wait behind them.
   bool _drained = false;
 
+  /// Set when the call is being torn down; queued sends then do nothing.
+  bool _ending = false;
+
   Future<void> enqueueSend(Future<void> Function() send) {
     final queued = _outbound.then((_) => send());
     _outbound = queued.catchError((Object _) {});
@@ -211,6 +214,11 @@ class NativeCallService {
   /// keeps signalling while the callee decides, so the session that arrived
   /// with the offer is stale by the time answer/reject is sent.
   final Map<String, CallSession> _pendingSessions = <String, CallSession>{};
+
+  /// Latest session of calls being hung up whose 'ended' transition has not
+  /// succeeded yet, so end(callId) can retry.
+  final Map<String, CallSession> _terminating = <String, CallSession>{};
+  final Map<String, Future<void>> _endings = <String, Future<void>>{};
   final StreamController<IncomingCallSignal> _incomingOffers =
       StreamController<IncomingCallSignal>.broadcast();
   Stream<IncomingCallSignal> get incomingOffers => _incomingOffers.stream;
@@ -300,21 +308,72 @@ class NativeCallService {
     _earlySignals.remove(call.id);
   }
 
-  Future<void> end(String callId, {int? expectedVersion}) async {
+  /// Hangs up. Local media stops at once, whatever the server answers. The
+  /// 'ended' transition runs after any send already in flight for the call,
+  /// on the newest known version, and queued sends not yet started are
+  /// dropped. If it fails, the call's latest session is kept, so calling
+  /// end(callId) again retries without an [expectedVersion]. A call the
+  /// server already shows as over counts as ended.
+  Future<void> end(String callId, {int? expectedVersion}) {
+    final running = _endings[callId];
+    if (running != null) return running;
+    final ending = _end(callId, expectedVersion)
+        // A block body: returning the removed future would await itself.
+        .whenComplete(() {
+      _endings.remove(callId);
+    });
+    _endings[callId] = ending;
+    return ending;
+  }
+
+  Future<void> _end(String callId, int? expectedVersion) async {
     final active = _calls.remove(callId);
     final pending = _pendingSessions.remove(callId);
     _earlySignals.remove(callId);
-    final version =
-        expectedVersion ?? active?.session.version ?? pending?.version;
-    if (version == null) {
+    if (active != null) {
+      active._ending = true;
+      _recordTerminating(_newest(pending, active.session));
+      await active._media.release();
+      try {
+        await active.enqueueSend(() => _sendEnded(
+            callId, () => _newest(_terminating[callId], active.session)));
+      } finally {
+        await _closeCall(active);
+      }
+      return;
+    }
+    if (pending != null) _recordTerminating(pending);
+    final known = _terminating[callId];
+    if (expectedVersion == null && known != null) {
+      await _sendEnded(callId, () => _terminating[callId] ?? known);
+      return;
+    }
+    if (expectedVersion == null) {
       throw StateError(
           'Cannot end unknown call session $callId without an explicit expectedVersion');
     }
+    // The caller vouches for the version; without a session there is no
+    // conversation to refresh from, so this is a single attempt.
+    await api.transitionCall(token, callId, 'ended',
+        expectedVersion: expectedVersion);
+    _terminating.remove(callId);
+  }
+
+  Future<void> _sendEnded(String callId, CallSession Function() latest) async {
     try {
-      await api.transitionCall(token, callId, 'ended',
-          expectedVersion: version);
-    } finally {
-      if (active != null) await _disposeCall(active);
+      await _transition(latest, _recordTerminating,
+          state: (_) => 'ended',
+          giveUp: (current) => isTerminalCallState(current.state));
+    } on CallUnavailableException {
+      // The server already shows the call as over.
+    }
+    _terminating.remove(callId);
+  }
+
+  void _recordTerminating(CallSession session) {
+    final known = _terminating[session.id];
+    if (known == null || session.version > known.version) {
+      _terminating[session.id] = session;
     }
   }
 
@@ -397,6 +456,8 @@ class NativeCallService {
 
   Future<void> _sendSignal(
       ActiveCall active, Map<String, Object?> signal) async {
+    // Hung up after this send was queued: the call is over, skip it.
+    if (active._ending) return;
     final encrypted =
         await crypto.encryptCallSignal(active.session.conversationId, signal);
     final updated = await _transition(
@@ -504,7 +565,14 @@ class NativeCallService {
   }
 
   Future<void> _handleIncoming(IncomingCallSignal incoming) async {
-    final active = _calls[incoming.call.id];
+    final callId = incoming.call.id;
+    if (_terminating.containsKey(callId)) {
+      // Being hung up here: keep the newest version for a retried end(),
+      // and apply nothing to the released peer.
+      _recordTerminating(incoming.call);
+      return;
+    }
+    final active = _calls[callId];
     // Until its drain has run, a new call's signals queue behind the early
     // ones so they are applied in arrival order.
     if (active == null || !active._drained) {
@@ -573,8 +641,15 @@ class NativeCallService {
     }
   }
 
+  /// Stops [call]'s queued sends and releases its media, then closes its
+  /// streams.
   Future<void> _disposeCall(ActiveCall call) async {
+    call._ending = true;
     await call._media.release();
+    await _closeCall(call);
+  }
+
+  Future<void> _closeCall(ActiveCall call) async {
     await call._remoteUpdates.close();
     await call.signalErrors.close();
   }
@@ -592,6 +667,7 @@ class NativeCallService {
     _calls.clear();
     _earlySignals.clear();
     _pendingSessions.clear();
+    _terminating.clear();
     await _incomingOffers.close();
     await _errors.close();
   }

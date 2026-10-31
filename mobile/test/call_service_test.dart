@@ -68,6 +68,7 @@ void main() {
   _task016();
   _task017();
   _task018();
+  _task019();
   group('TASK-015 setup failure releases media', () {
     const startSteps = <String>[
       'getUserMedia',
@@ -541,6 +542,81 @@ void _task018() {
       await h.service.reject(callSession(version: 1));
       expect(h.api.transitions.last.expectedVersion, 2);
       expect(h.api.callsRequests, 0);
+    });
+  });
+}
+
+void _task019() {
+  group('TASK-019 end() through the outbound queue', () {
+    test('end() waits for the in-flight send and skips queued ones',
+        () async {
+      final h = _harness();
+      final call = await h.service.start('conv_1');
+      final gate = Completer<void>();
+      h.api.transitionGate = (request) async {
+        if (request.state != 'ended') await gate.future;
+      };
+      h.media.peer.emitCandidate(_relay(1));
+      h.media.peer.emitCandidate(_relay(2));
+      await _settle();
+      expect(h.api.transitions, hasLength(1));
+
+      final ended = h.service.end(call.session.id);
+      await _settle();
+      // Media stops at once, before the server answers.
+      _expectReleasedOnce(h.media, hadStream: true);
+      expect(h.api.transitions, hasLength(1));
+
+      gate.complete();
+      await ended;
+      expect(h.api.transitions.map((t) => '${t.state}@${t.expectedVersion}'),
+          <String>['ringing@1', 'ended@2']);
+      expect(_sentCandidates(h.api), <String>[_relay(1)]);
+      expect(h.service.activeCallIds, isEmpty);
+    });
+
+    test('a failed end() releases media and can be retried', () async {
+      final h = _harness();
+      final call = await h.service.start('conv_1');
+      final failure = InjectedFailure('network');
+      h.api.failures['transitionCall'] = failure;
+
+      await expectLater(h.service.end(call.session.id), throwsA(same(failure)));
+      _expectReleasedOnce(h.media, hadStream: true);
+
+      // The callee answered meanwhile; its push carries the newer version.
+      h.api.failures.clear();
+      h.api.server['call_1'] = callSession(state: 'active', version: 2);
+      h.incoming.add(IncomingCallSignal(
+          callSession(state: 'active', version: 2), _answer));
+      await _settle();
+
+      await h.service.end(call.session.id);
+      expect(h.api.transitions.last.state, 'ended');
+      expect(h.api.transitions.last.expectedVersion, 2);
+      expect(h.api.server['call_1']!.state, 'ended');
+      expect(h.media.peer.remoteDescriptions, isEmpty,
+          reason: 'no signal is applied to a released peer');
+      await expectLater(h.service.end(call.session.id), throwsStateError);
+    });
+
+    test('end() of a call the server already ended succeeds', () async {
+      final h = _harness();
+      final call = await h.service.start('conv_1');
+      h.api.server['call_1'] = callSession(state: 'ended', version: 2);
+      await h.service.end(call.session.id);
+      expect(h.api.transitions, hasLength(1));
+      _expectReleasedOnce(h.media, hadStream: true);
+    });
+
+    test('end() retries a version conflict with the refreshed session',
+        () async {
+      final h = _harness();
+      final call = await h.service.start('conv_1');
+      h.api.server['call_1'] = callSession(state: 'active', version: 4);
+      await h.service.end(call.session.id);
+      expect(h.api.transitions.map((t) => '${t.state}@${t.expectedVersion}'),
+          <String>['ended@1', 'ended@4']);
     });
   });
 }
