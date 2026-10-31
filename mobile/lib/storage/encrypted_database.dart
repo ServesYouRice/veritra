@@ -652,15 +652,22 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
+        // Drift runs this outside a transaction and writes the version only
+        // after it returns. One transaction with the version inside it means a
+        // failed or interrupted create leaves an empty version-0 file that the
+        // next open creates again, never committed tables at version 0.
         onCreate: (migrator) async {
           if (requireExistingSchema) throw const ExistingDatabaseUnavailable();
-          await migrator.createAll();
-          await _createHistoryNamespace();
-          await _createNoticeOutbox();
-          await _createSearchIndex();
-          await into(localSyncStates).insert(
-            LocalSyncStatesCompanion.insert(singleton: const Value(1)),
-          );
+          await transaction(() async {
+            await migrator.createAll();
+            await _createHistoryNamespace();
+            await _createNoticeOutbox();
+            await _createSearchIndex();
+            await into(localSyncStates).insert(
+              LocalSyncStatesCompanion.insert(singleton: const Value(1)),
+            );
+            await customStatement('PRAGMA user_version = $schemaVersion');
+          });
         },
         // One transaction for every step and the new version number: a failed
         // upgrade leaves the old schema and version untouched and the next

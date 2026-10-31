@@ -2795,7 +2795,14 @@ class SecureLocalStore implements LocalStore {
           throw const LocalStoreUnavailableException(
               LocalStoreFailureKind.sqliteFeatureMissing);
         }
-        if (!databaseExists) rethrow;
+        if (!databaseExists) {
+          // A new database that failed to open: close the handle so nothing
+          // holds the file (Windows refuses to move an open one).
+          try {
+            await database?.close();
+          } catch (_) {}
+          rethrow;
+        }
         if (database != null && database.upgradeStarted) {
           // The key opened the file and the upgrade rolled back. Drift
           // refuses any further use of this handle, so close it; a retry
