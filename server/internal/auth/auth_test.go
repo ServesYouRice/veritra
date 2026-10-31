@@ -225,15 +225,14 @@ func workUnits(t *testing.T) *[]string {
 	return &units
 }
 
-// VerifyPassword timing policy (audit plan Q-003 option (c), with the
-// Q-OUTCOME constraint): the work done never depends on whether the password
-// matched, for every stored profile (VAL-303). It does depend on the stored
-// profile: an older supported Argon2id profile or an off-configuration
-// bcrypt cost runs at its own cost, which an unknown account cannot imitate.
-// That residual is accepted because a real hash is only checked after the
-// caller presents a valid username and device ID, and rehash-on-success
-// removes it. VAL-209 asserts the residual explicitly so a change to it is
-// a visible decision.
+// VerifyPassword work units (audit plan Q-003 and its Q-OUTCOME constraint):
+// the work done never depends on whether the password matched, for every
+// stored profile (VAL-303). It does depend on the stored profile: an older
+// supported Argon2id profile or an off-configuration bcrypt cost runs at its
+// own cost, which an unknown account cannot imitate. That residual is open:
+// the owner has not chosen a timing policy (pad, extra dummy, or accept), and
+// this test only records today's behaviour (VAL-209) so that changing it is a
+// visible decision.
 func TestVerificationWorkUnitsDoNotDependOnOutcome(t *testing.T) {
 	const configured = DefaultBcryptCost
 	legacyConfigured, err := bcrypt.GenerateFromPassword([]byte(testPassword), configured)

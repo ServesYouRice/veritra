@@ -310,15 +310,17 @@ type PasswordCheck struct {
 // the account does not exist; the work done is the same as for a real
 // account, and it never depends on whether the password matched.
 //
-// Accepted residual: work cannot be equalized exactly across stored
-// profiles. A hash with older Argon2id parameters, or a bcrypt hash whose
-// cost differs from opts.LegacyBcryptCost, runs at its own cost, which an
-// unknown account (no profile to imitate) cannot copy. A real hash is only
-// reached after the caller names a valid username and device, and
-// rehash-on-success removes the difference. No padding is added: padding only
-// failed checks would reveal whether a password was right to a request whose
-// device secret is invalid. TestVerificationWorkUnitsDoNotDependOnOutcome
-// asserts both the outcome independence and this residual.
+// Open residual (the owner has not chosen a timing policy; nothing here
+// closes it): work cannot be equalized exactly across stored profiles. A hash
+// with older Argon2id parameters, or a bcrypt hash whose cost differs from
+// opts.LegacyBcryptCost, runs at its own cost, which an unknown account (no
+// profile to imitate) cannot copy. A real hash is only reached after the
+// caller names a valid username and device, and rehash-on-success removes the
+// difference. No padding is added, and any added must not depend on the
+// outcome: padding only failed checks would reveal whether a password was
+// right to a request whose device secret is invalid.
+// TestVerificationWorkUnitsDoNotDependOnOutcome pins the outcome independence
+// and records today's residual so a change to it is visible.
 func VerifyPassword(ctx context.Context, stored, password string, opts VerifyOptions) (PasswordCheck, error) {
 	release, err := acquirePasswordSlot(ctx, opts.Caller)
 	if err != nil {
