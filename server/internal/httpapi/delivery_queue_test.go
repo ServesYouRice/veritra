@@ -125,6 +125,55 @@ func TestDeliveryQueueRequeuesOnWriteFailure(t *testing.T) {
 	}
 }
 
+// Giving up on a batch that keeps failing drops that batch only. Cursors that
+// other accounts queued in the meantime are still written.
+func TestDeliveryQueueGivingUpKeepsOtherPendingCursors(t *testing.T) {
+	deliveryRetryBase = time.Millisecond
+	t.Cleanup(func() { deliveryRetryBase = 100 * time.Millisecond })
+	var (
+		mu     sync.Mutex
+		calls  int
+		stored = map[string]string{}
+	)
+	api := &API{}
+	api.applyDeliveries = func(_ context.Context, accountID string, advances []storage.DeliveryAdvance) ([]storage.DeliveryAdvance, error) {
+		mu.Lock()
+		calls++
+		n := calls
+		mu.Unlock()
+		if accountID == "acct_bad" {
+			if n == maxDeliveryRetries+1 {
+				// The last attempt before giving up: another account's
+				// cursor arrives while this batch is being written.
+				api.deliveries.mu.Lock()
+				api.deliveries.mergeLocked("acct_good", storage.DeliveryAdvance{ConversationID: "c1", MessageID: "m1", CreatedAt: time.Now()})
+				api.deliveries.mu.Unlock()
+			}
+			return nil, errors.New("database is locked")
+		}
+		mu.Lock()
+		stored[accountID+"/"+advances[0].ConversationID] = advances[0].MessageID
+		mu.Unlock()
+		return nil, nil
+	}
+	api.recordDeliveredAsync("acct_bad", []storage.DeliveryAdvance{{ConversationID: "c1", MessageID: "m1", CreatedAt: time.Now()}})
+	api.WaitDeliveryWrites(time.Now().Add(10 * time.Second))
+	mu.Lock()
+	defer mu.Unlock()
+	if stored["acct_good/c1"] != "m1" {
+		t.Fatalf("another account's pending cursor was dropped with the failed batch: %v", stored)
+	}
+	if _, ok := stored["acct_bad/c1"]; ok {
+		t.Fatal("the failing batch was written")
+	}
+	q := &api.deliveries
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.workers != 0 || len(q.pending) != 0 {
+		t.Fatalf("queue not idle: workers=%d pending=%d", q.workers, len(q.pending))
+	}
+}
+
 // The retry is bounded: a store that never recovers cannot keep a worker
 // running, and shutdown still ends.
 func TestDeliveryQueueGivesUpAfterBoundedRetries(t *testing.T) {

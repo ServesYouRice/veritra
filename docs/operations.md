@@ -135,21 +135,44 @@ whole address no more than one account's budget; raise it for a large
 office. A refusal is 429 with `Retry-After`;
 `veritra_rate_limit_rejections_total` counts it by scope (`general`,
 `auth`, `enrollment`, `account`, `signed_in`). Realtime sockets have their
-own fixed limits (20 per address, 10 per account). The server logs the
-resolved values at start (`rate_limits`).
+own limits: 10 per account and 3 per device, 20 per address, and for IPv6 a
+separate cap on all addresses of one /64 (default 200,
+`PRIVATE_MESSENGER_LIMIT_SOCKETS_PER_IPV6_PREFIX`, 20-10,000; an office or home
+network hands out many addresses, so the /64 cap is higher than the address
+cap). IPv4 clients behind one NAT share their address's 20. The server logs
+the resolved values at start (`rate_limits`, `admission_limits`).
 
-Login and reauthentication also use bounded account, source/device and
-session backoff scopes: the first two failures are unauthorized responses,
-the third starts a 1-second delay that progresses to 60 seconds, and entries
-expire after 15 minutes. The controls
-evict under bounded-table pressure and sweep expired state; they do not expose
-usernames, addresses, device IDs or tokens in metrics. Address budgets and
-per-account budgets are kept in two tables of 65,536 entries each, so one
-account seen from many addresses (each IPv6 /64 counts as one) evicts only
-other account budgets, never an address's credential budget;
-`veritra_rate_limit_buckets` counts both tables. Monitor
-`veritra_rate_limit_buckets`, `veritra_rate_limit_evictions_total`,
-`veritra_login_backoff_entries` and
+Login and reauthentication also use bounded backoff scopes: the first two
+failures are unauthorized responses, the third starts a 1-second delay that
+progresses to 60 seconds, and entries expire after 15 minutes. A login
+counts every failure against its source scope (client address, device and
+username). A second scope, username plus device from any address, is counted
+and enforced only for a request that presented that device's valid secret,
+so someone who only knows a username cannot lock its owner out by failing
+logins from elsewhere; for such requests a right and a wrong password look
+the same and change nothing else. Whoever holds the device secret is limited
+across addresses as before. When the backoff table is full it evicts the
+entry with the fewest failures first, so filler identities do not push out
+an account that is being guessed. The controls sweep expired state; they do
+not expose usernames, addresses, device IDs or tokens in metrics.
+
+Address budgets and per-account budgets are kept in two tables of 65,536
+entries each (IPv6 sources count per /64). When a table is full, a new key
+first replaces an expired bucket, then the least used live bucket that has
+used no credential and no enrollment budget; those two budgets are never
+reset before their minute ends. Only if every sampled bucket has used one
+does the new key share an overflow bucket, one of 256 chosen by a salted hash
+of its network (a /48 for IPv6, a /24 for IPv4), so a network that fills the
+table and burns its overflow bucket affects itself and the few networks that
+hash alongside it, not everyone's first request. One account seen from many
+addresses evicts only other account budgets, never an address's credential
+budget. `veritra_rate_limit_buckets` counts both tables.
+`veritra_rate_limit_evictions_total` counts each time a new key found its
+table full of live buckets, whether it evicted a credential-free bucket or
+went to an overflow bucket; it does not count reset credential budgets. A
+steady rise means a table is under pressure (an address flood or very many
+networks). Monitor `veritra_rate_limit_buckets`,
+`veritra_rate_limit_evictions_total`, `veritra_login_backoff_entries` and
 `veritra_login_backoff_evictions_total` as aggregate pressure signals.
 Sessions enforce a 30-day idle limit and a 30-day absolute lifetime using
 server-side last-use state. Token rotation is deferred until the client/server
@@ -558,6 +581,30 @@ means the job was dropped for good (its subscription is gone or retired);
 fails after delivery is sent again after its lease, which only makes the
 device sync once more.
 
+How a provider's refusal is treated:
+
+- Retired (subscription disabled, jobs removed): HTTP 410 from FCM or APNs,
+  an FCM error whose `error.details` carry `errorCode` `UNREGISTERED`, an APNs
+  reason `Unregistered`. Only the exact fields count, not words found
+  anywhere in a body.
+- Dropped, subscription kept: APNs `BadDeviceToken` and `DeviceTokenNotForTopic`,
+  and an FCM 404 without `UNREGISTERED`. Apple also answers `BadDeviceToken`
+  for a valid token sent to the wrong (sandbox or production) environment,
+  and a 404 can come from the FCM project, so neither proves the target dead,
+  and retrying would be refused again. These jobs count as `abandoned`. A
+  subscription refused this way 10 times over more than 24 hours with no
+  successful send in between is then retired. That count is in memory: a
+  restart only delays retiring a dead target. A persistent `abandoned` rate
+  for one provider means a configuration problem (the `Sandbox` environment,
+  the bundle ID or the FCM project), not dead devices.
+- Retried with backoff until the 24-hour job age: any other failure
+  (timeouts, 5xx, 429, authentication).
+- An APNs key that is not P-256 is refused at startup; an APNs key and
+  `Sandbox` setting apply to every subscription.
+- A Web Push endpoint must resolve to a globally routable address: private,
+  loopback, link-local, shared address space (100.64.0.0/10), benchmarking,
+  documentation and reserved ranges, NAT64 and 6to4 are refused.
+
 ## Scheduled backups
 
 `messenger-server scheduled-backup` is the supported backup job. One run:
@@ -746,6 +793,7 @@ write transaction, so concurrent requests cannot both take the last slot.
 | `DELIVERIES_PER_MINUTE` | 1,000 | 60-1,000,000, and at least 2 × (1 + members) | per account, each fan-out write counts 1 plus every account it is published to | 429 `write_rate_limited` with `Retry-After` |
 | `WRITE_MIB_PER_HOUR` | 64 | 16-65,536 | request bodies of those writes | 429 `write_rate_limited` |
 | `ATTACHMENT_MIB` | 48 | 1-48 | the largest file one attachment may hold (plaintext; the upload route allows the chunk framing on top) | 413 `upload_too_large` |
+| `SOCKETS_PER_IPV6_PREFIX` | 200 | 20-10,000 | realtime sockets of all addresses in one IPv6 /64 (one address always gets at most 20) | 429 `realtime_connection_limit` |
 
 Why these defaults: a realtime delivery costs the server 4-10 ms of CPU;
 one account at 1,000 a minute (17/s) is about a third of the 47/s tier S

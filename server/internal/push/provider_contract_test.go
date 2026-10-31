@@ -121,21 +121,22 @@ func TestFCMRequestContract(t *testing.T) {
 
 func TestFCMClassifiesProviderAnswers(t *testing.T) {
 	for name, test := range map[string]struct {
-		status int
-		body   string
-		gone   bool
+		status   int
+		body     string
+		gone     bool
+		rejected bool // refused without proof the token is dead: not retried, not retired
 	}{
 		// A bare 404 (an unknown project, say) says nothing about the token.
-		"not found":                 {404, `{}`, false},
-		"not found empty":           {404, ``, false},
-		"not found other detail":    {404, `{"error":{"status":"NOT_FOUND","details":[{"errorCode":"SENDER_ID_MISMATCH"}]}}`, false},
-		"unregistered only in text": {404, `{"error":{"message":"token UNREGISTERED somewhere"}}`, false},
-		"unparseable":               {404, `not json UNREGISTERED`, false},
-		"gone":                      {410, `{}`, true},
-		"not found unregistered":    {404, `{"error":{"status":"NOT_FOUND","details":[{"@type":"type.googleapis.com/google.firebase.fcm.v1.FcmError","errorCode":"UNREGISTERED"}]}}`, true},
-		"unregistered":              {400, `{"error":{"details":[{"errorCode":"UNREGISTERED"}]}}`, true},
-		"server error":              {503, `{}`, false},
-		"huge body":                 {500, strings.Repeat("x", 1<<20), false},
+		"not found":                 {404, `{}`, false, true},
+		"not found empty":           {404, ``, false, true},
+		"not found other detail":    {404, `{"error":{"status":"NOT_FOUND","details":[{"errorCode":"SENDER_ID_MISMATCH"}]}}`, false, true},
+		"unregistered only in text": {404, `{"error":{"message":"token UNREGISTERED somewhere"}}`, false, true},
+		"unparseable":               {404, `not json UNREGISTERED`, false, true},
+		"gone":                      {410, `{}`, true, false},
+		"not found unregistered":    {404, `{"error":{"status":"NOT_FOUND","details":[{"@type":"type.googleapis.com/google.firebase.fcm.v1.FcmError","errorCode":"UNREGISTERED"}]}}`, true, false},
+		"unregistered":              {400, `{"error":{"details":[{"errorCode":"UNREGISTERED"}]}}`, true, false},
+		"server error":              {503, `{}`, false, false},
+		"huge body":                 {500, strings.Repeat("x", 1<<20), false, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			provider := newTestFCM(t, func(r *http.Request) (*http.Response, error) {
@@ -147,6 +148,9 @@ func TestFCMClassifiesProviderAnswers(t *testing.T) {
 			err := provider.SendEncryptedEventAvailable(context.Background(), Notification{Provider: "fcm", Endpoint: testFCMToken})
 			if test.gone != errors.Is(err, ErrSubscriptionGone) || err == nil {
 				t.Fatalf("err=%v gone=%v", err, test.gone)
+			}
+			if test.rejected != errors.Is(err, ErrTargetRejected) {
+				t.Fatalf("err=%v rejected=%v", err, test.rejected)
 			}
 		})
 	}
@@ -210,21 +214,27 @@ func TestAPNsRequestContractAndPKCS8Keys(t *testing.T) {
 		status int
 		body   string
 		gone   bool
+		// rejected: the provider refused this send about the target without
+		// proving it dead, so it is neither retried nor retired.
+		rejected bool
 	}{
-		{410, `{}`, true},
-		{410, `{"reason":"ExpiredToken"}`, true},
-		{400, `{"reason":"Unregistered"}`, true},
-		{400, `{"reason":"BadDeviceToken"}`, false},
-		{400, `{"reason":"DeviceTokenNotForTopic"}`, false},
-		{400, `{"reason":"PayloadEmpty","detail":"BadDeviceToken Unregistered"}`, false},
-		{403, `{"reason":"InvalidProviderToken","note":"Unregistered"}`, false},
-		{400, `not json BadDeviceToken`, false},
-		{400, ``, false},
+		{410, `{}`, true, false},
+		{410, `{"reason":"ExpiredToken"}`, true, false},
+		{400, `{"reason":"Unregistered"}`, true, false},
+		{400, `{"reason":"BadDeviceToken"}`, false, true},
+		{400, `{"reason":"DeviceTokenNotForTopic"}`, false, true},
+		{400, `{"reason":"PayloadEmpty","detail":"BadDeviceToken Unregistered"}`, false, false},
+		{403, `{"reason":"InvalidProviderToken","note":"Unregistered"}`, false, false},
+		{400, `not json BadDeviceToken`, false, false},
+		{400, ``, false, false},
 	} {
 		status, answer = answerCase.status, answerCase.body
 		err := provider.SendEncryptedEventAvailable(context.Background(), Notification{Provider: "apns", Endpoint: token})
 		if err == nil || errors.Is(err, ErrSubscriptionGone) != answerCase.gone {
 			t.Fatalf("%d %s err=%v, want gone=%v", status, answer, err, answerCase.gone)
+		}
+		if errors.Is(err, ErrTargetRejected) != answerCase.rejected {
+			t.Fatalf("%d %s err=%v, want rejected=%v", status, answer, err, answerCase.rejected)
 		}
 	}
 	status, answer = 503, `{}`
