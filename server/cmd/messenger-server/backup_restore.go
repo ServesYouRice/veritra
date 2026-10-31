@@ -30,6 +30,9 @@ import (
 const (
 	stagingMarkerName  = ".veritra-staging"
 	restoreJournalName = ".veritra-restore-journal.json"
+	// restoreDirLockName guards the journal of its directory (see
+	// acquireRestoreDirLock). It does not match the staging prefix.
+	restoreDirLockName = ".veritra-restore.lock"
 	backupFormat       = "v1"
 	// drillDirName is the restore drill's scratch area inside the data dir.
 	// The data dir is always writable (the database lives there) and is
@@ -597,6 +600,13 @@ func restore(cfg config.Config, args []string, stdout io.Writer) error {
 		return err
 	}
 	defer lock.Release()
+	// Another database in the same directory shares the journal path; its
+	// restore must not have its journal overwritten or removed.
+	dirLock, err := acquireRestoreDirLock(live)
+	if err != nil {
+		return err
+	}
+	defer dirLock.Release()
 	// A running server holds its process locks even when idle, which the
 	// SQLite probe below cannot see in WAL mode.
 	server, err := acquireServerExclusion(cfg)
@@ -897,6 +907,13 @@ func recoverInterruptedRestore(cfg config.Config, stdout io.Writer) error {
 		return err
 	}
 	defer lock.Release()
+	// The journal may also belong to a restore of another database in this
+	// directory.
+	dirLock, err := acquireRestoreDirLock(live)
+	if err != nil {
+		return err
+	}
+	defer dirLock.Release()
 	// Settling moves live files, so it never runs beside a server. The blob
 	// lock is only checked: the rollback may move the directory holding it.
 	server, err := acquireServerExclusion(cfg)
