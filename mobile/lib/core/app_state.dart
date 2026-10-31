@@ -4370,15 +4370,32 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (client == null) {
       return;
     }
-    // A stopped device stays stopped until the user picks a recovery choice
-    // (I33): retrying the same event on every wake would be a poison loop.
-    final stored = await localStore.loadSyncRecovery();
-    if (!_syncOwnerActive(current, ownerGeneration)) return;
-    if (stored != null) {
-      _enterSyncRecovery(stored);
-      return;
-    }
     try {
+      // A stopped device stays stopped until the user picks a recovery
+      // choice (I33): retrying the same event on every wake would be a
+      // poison loop. A storage error reading the record is handled below
+      // like any other.
+      var stored = await localStore.loadSyncRecovery();
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      if (stored?.kind == SyncFailureKind.applicationUndecryptable &&
+          wake == null &&
+          await localStore.loadSetting(_undecryptableRetrySetting) == null) {
+        // Under D54 a peer message this device can never decrypt no longer
+        // stops sync. A stop recorded for one before that rule is cleared,
+        // once per store, so its event is applied again. If it still
+        // fails, the new record stays.
+        await localStore.saveSetting(_undecryptableRetrySetting, 'done');
+        await localStore.saveSyncRecovery(null);
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        stored = null;
+      }
+      if (stored != null) {
+        _enterSyncRecovery(stored);
+        return;
+      }
+      // Envelopes an earlier pass committed but could not show.
+      await _publishReceived(
+          <ReceivedMessageEnvelope>[], current, ownerGeneration);
       var pageCursor = await localStore.loadSyncCursor();
       const pageSize = 200;
       while (true) {
@@ -4413,6 +4430,36 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         // a conversation's whole history after every message made a burst
         // quadratic (T49C).
         final received = <ReceivedMessageEnvelope>[];
+        // Projection events only ask for a refresh. A run of them in a row
+        // is refreshed once per kind, then each is committed in order, all
+        // before the next crypto event is applied; a failed refresh commits
+        // none of the run. Returns false once this run no longer owns sync.
+        final projections = <SyncEvent>[];
+        Future<bool> commitProjections() async {
+          if (projections.isEmpty) return true;
+          if (wake != null) {
+            // A background pass makes no list/device requests; the next
+            // foreground resume refreshes instead.
+            projections.forEach(_deferProjectionRefresh);
+          } else {
+            await _refreshProjectionForSyncEvents(projections);
+          }
+          for (final event in projections) {
+            if (!_syncOwnerActive(current, ownerGeneration)) return false;
+            final expectedCursor = await localStore.loadSyncCursor();
+            await localStore.commitSyncEvent(SyncEventCommit(
+              eventKey: 'sync:${event.id}',
+              conversationId: event.conversationId ?? '',
+              expectedCursor: expectedCursor,
+              cursor: event.id,
+              checkCanCommit: wake?.checkCanCommit,
+            ));
+          }
+          projections.clear();
+          notifyListeners();
+          return true;
+        }
+
         try {
           for (final event in events) {
             final committedCursor = await localStore.loadSyncCursor();
@@ -4421,6 +4468,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             await wake?.check();
 
             if (_isCryptoSyncEvent(event.type)) {
+              if (!await commitProjections()) return;
               if (_mlsCrypto == null) {
                 throw SyncEventFailure(SyncFailureKind.cryptoUnavailable,
                     eventId: event.id,
@@ -4439,35 +4487,24 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             } else {
               // An unknown type outside the crypto namespaces only asks for
               // a refresh, so it is skipped and the cursor moves past it
-              // (P5). Unknown crypto types still stop sync.
+              // (P5). Unknown crypto types still stop sync, at this event.
               if (!_knownProjectionEvent(event.type) &&
                   _failsClosedEvent(event.type)) {
+                if (!await commitProjections()) return;
                 throw SyncEventFailure(SyncFailureKind.unsupportedEvent,
                     eventId: event.id,
                     eventType: event.type,
                     conversationId: event.conversationId);
               }
-              if (wake != null) {
-                // Projection events carry no ciphertext and only ask for a
-                // refresh. A background pass makes no list/device requests;
-                // the next foreground resume refreshes instead.
-                _deferProjectionRefresh(event);
-              } else {
-                await _refreshProjectionForSyncEvent(event);
-              }
-              final expectedCursor = await localStore.loadSyncCursor();
-              await localStore.commitSyncEvent(SyncEventCommit(
-                eventKey: 'sync:${event.id}',
-                conversationId: event.conversationId ?? '',
-                expectedCursor: expectedCursor,
-                cursor: event.id,
-                checkCanCommit: wake?.checkCanCommit,
-              ));
+              projections.add(event);
+              continue;
             }
             notifyListeners();
           }
+          if (!await commitProjections()) return;
         } catch (_) {
-          // Messages committed before the failure still reach the UI; the
+          // Messages committed before the failure still reach the UI (or,
+          // if their history cannot be read now, the next catch-up); the
           // failure itself is what the caller handles.
           try {
             await _publishReceived(received, current, ownerGeneration);
@@ -4522,17 +4559,32 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (wake != null) rethrow;
       if (!_syncOwnerActive(current, ownerGeneration)) return;
       if (err is ApiException && err.statusCode == 401) {
-        await _clearLocalSession(
-            preserveDeviceIdentity: true,
-            keepDrafts: true,
-            preserveOutbox: true,
-            drainSyncOwner: false);
+        try {
+          await _clearLocalSession(
+              preserveDeviceIdentity: true,
+              keepDrafts: true,
+              preserveOutbox: true,
+              drainSyncOwner: false);
+        } catch (_) {
+          // Signing out failed in local storage. Callers do not await this
+          // run, so nothing may escape it: stay offline and try again.
+          if (!_syncOwnerActive(current, ownerGeneration)) return;
+          syncError = describeError(err, l10n);
+          _setConnectionStatus(ConnectionStatus.offline);
+          notifyListeners();
+          _scheduleCatchUpRetry();
+        }
         return;
       }
       final failure = _recoveryFailureFor(err);
       if (failure != null) {
         final recovery = SyncRecovery.fromFailure(failure, DateTime.now());
-        await localStore.saveSyncRecovery(recovery);
+        try {
+          await localStore.saveSyncRecovery(recovery);
+        } catch (_) {
+          // A failing store may refuse this write too. The device still
+          // stops here; the record is written when a later pass stops.
+        }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         _enterSyncRecovery(recovery);
         return;
@@ -4550,6 +4602,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           retryAfter: err is ApiException ? err.retryAfter : null);
     }
   }
+
+  /// Set once a stop recorded for an undecryptable message has been cleared
+  /// for D54 (see [_runOwnedCatchUp]).
+  static const _undecryptableRetrySetting = 'sync.d54_undecryptable_retried';
 
   /// A catch-up that failed for a reason that passes (no connection, a
   /// rate limit, a server error) is tried again with backoff, so the device
@@ -4705,46 +4761,60 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       type == 'mls.revocation.pending' ||
       type == 'mls.revocation.completed';
 
-  Future<void> _refreshProjectionForSyncEvent(SyncEvent event) async {
-    final type = event.type;
-    if (type.startsWith('device.') ||
-        type.startsWith('membership.') ||
-        type.startsWith('conversation.')) {
-      _mlsReconcileRequested = true;
-    }
-    if (type.startsWith('device.')) {
-      await _refreshDevices();
-      await _refreshConversations(notify: false, persist: false);
-      return;
-    }
-    if (type.startsWith('conversation.') ||
-        type.startsWith('membership.') ||
-        type == 'retention.updated') {
-      if (event.conversationId != null) {
-        membersByConversation = Map.of(membersByConversation)
-          ..remove(event.conversationId);
-      } else if (type.startsWith('membership.')) {
-        membersByConversation = {};
+  /// Refreshes what a run of projection events asks for, once per kind: a
+  /// burst of device or membership events costs one device-list and one
+  /// conversation-list request, not one per event. Devices are read before
+  /// conversations, as for a single event, and the open chat is reloaded
+  /// only when an event in the run names it.
+  Future<void> _refreshProjectionForSyncEvents(List<SyncEvent> events) async {
+    var devices = false;
+    var conversationList = false;
+    var selectedMessages = false;
+    final receipts = <String>{};
+    for (final event in events) {
+      final type = event.type;
+      if (type.startsWith('device.') ||
+          type.startsWith('membership.') ||
+          type.startsWith('conversation.')) {
+        _mlsReconcileRequested = true;
       }
-      await _refreshConversations(notify: false, persist: false);
-      return;
-    }
-    if (type.startsWith('reaction.') || type == 'read_receipt.updated') {
-      if (event.conversationId == selectedConversationId) {
-        await refreshSelectedMessages(notify: false, persist: false);
-        if (type == 'read_receipt.updated') {
-          unawaited(refreshReceipts(event.conversationId!));
+      if (type.startsWith('device.')) {
+        devices = true;
+        conversationList = true;
+      } else if (type.startsWith('conversation.') ||
+          type.startsWith('membership.') ||
+          type == 'retention.updated') {
+        if (event.conversationId != null) {
+          membersByConversation = Map.of(membersByConversation)
+            ..remove(event.conversationId);
+        } else if (type.startsWith('membership.')) {
+          membersByConversation = {};
         }
+        conversationList = true;
+      } else if (type.startsWith('reaction.') ||
+          type == 'read_receipt.updated') {
+        if (event.conversationId == selectedConversationId) {
+          selectedMessages = true;
+          if (type == 'read_receipt.updated' && event.conversationId != null) {
+            receipts.add(event.conversationId!);
+          }
+        }
+      } else if (type != 'mls.revocation.pending' &&
+          type != 'mls.revocation.completed' &&
+          _failsClosedEvent(type)) {
+        throw SyncEventFailure(SyncFailureKind.unsupportedEvent,
+            eventId: event.id, eventType: type);
       }
-      return;
     }
-    if (type == 'mls.revocation.pending' ||
-        type == 'mls.revocation.completed') {
-      return;
+    if (devices) await _refreshDevices();
+    if (conversationList) {
+      await _refreshConversations(notify: false, persist: false);
     }
-    if (_failsClosedEvent(type)) {
-      throw SyncEventFailure(SyncFailureKind.unsupportedEvent,
-          eventId: event.id, eventType: type);
+    if (selectedMessages) {
+      await refreshSelectedMessages(notify: false, persist: false);
+    }
+    for (final conversationId in receipts) {
+      unawaited(refreshReceipts(conversationId));
     }
   }
 
@@ -4870,6 +4940,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         }
         await _ensureConversationAuthority(resolved.conversationId,
             client: client);
+        // A message this device can never decrypt does not throw: the
+        // crypto service commits past it with a placeholder row (D54), and
+        // the envelope is shown as that placeholder. What still throws here
+        // is a malformed event or a local failure, and that stops sync.
         try {
           if (bounded != null) {
             await bounded.processApplicationMessageBounded(resolved, event.id,
@@ -4937,7 +5011,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// failed to apply may be passed over only when its own expiry proves it
   /// would be gone anyway. The tombstone moves the cursor past the event and
   /// stores nothing else: no text, no envelope. Control messages never get
-  /// one.
+  /// one. (One the crypto service can never decrypt does not fail: it is
+  /// committed past with a placeholder, D54.)
   Future<void> _commitExpiredTombstone(
       SyncEvent event, String targetId, WakeRunContext? wake) async {
     final cursor = await localStore.loadSyncCursor();
@@ -4962,20 +5037,48 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// them; the rest of a sync page is shown when the page ends.
   static const _receivedBatchLimit = 50;
 
+  /// Received envelopes already committed whose history could not be read
+  /// to show them, and the sync owner generation that committed them. The
+  /// cursor is past them, so a later catch-up of that owner shows them, even
+  /// with no new events; no other owner ever does.
+  final _unpublishedReceived = <ReceivedMessageEnvelope>[];
+  int? _unpublishedGeneration;
+
   /// Shows [received] (already committed) with the decrypted history of
-  /// their conversations in one notification, then empties the list. The
-  /// history is read first, so no frame draws a decrypted message as
-  /// ciphertext; if that read fails the list is kept for the caller's
-  /// retry. Nothing is applied once another session owns sync.
+  /// their conversations in one notification, then empties the list.
+  /// Envelopes an earlier try of the same owner could not show go first.
+  /// The history is read first, so no frame draws a decrypted message as
+  /// ciphertext; if that read fails, the envelopes move to
+  /// [_unpublishedReceived] for the owner's next try and the error is
+  /// rethrown. Nothing is applied once another session owns sync, and work
+  /// kept for an owner that no longer runs is dropped.
   Future<void> _publishReceived(
     List<ReceivedMessageEnvelope> received,
     Session owner,
     int ownerGeneration,
   ) async {
+    if (_unpublishedGeneration != _sessionGeneration) {
+      _unpublishedReceived.clear();
+      _unpublishedGeneration = null;
+    }
+    if (_unpublishedGeneration == ownerGeneration) {
+      received.insertAll(0, _unpublishedReceived);
+      _unpublishedReceived.clear();
+      _unpublishedGeneration = null;
+    }
     if (received.isEmpty) return;
     final histories = <String, ConversationHistory>{};
-    for (final id in received.map((item) => item.conversationId).toSet()) {
-      histories[id] = await _loadHistory(id);
+    try {
+      for (final id in received.map((item) => item.conversationId).toSet()) {
+        histories[id] = await _loadHistory(id);
+      }
+    } catch (_) {
+      if (_syncOwnerActive(owner, ownerGeneration)) {
+        _unpublishedReceived.addAll(received);
+        _unpublishedGeneration = ownerGeneration;
+      }
+      received.clear();
+      rethrow;
     }
     if (_syncOwnerActive(owner, ownerGeneration)) {
       _mergeReceivedEnvelopes(received);

@@ -2901,6 +2901,12 @@ abstract class AppLocalizations {
   /// **'A message could not be read'**
   String get chatMessageInvalid;
 
+  /// No description provided for @chatMessageUndecryptable.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t unlock this message'**
+  String get chatMessageUndecryptable;
+
   /// No description provided for @chatReactionCount.
   ///
   /// In en, this message translates to:

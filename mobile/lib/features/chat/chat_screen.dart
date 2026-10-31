@@ -1572,8 +1572,18 @@ class _MessageBubble extends StatelessWidget {
       local?.kind == LocalMessageKind.unsupported ||
       local?.kind == LocalMessageKind.invalid;
 
-  String _placeholderLabel(AppLocalizations l10n) =>
-      local?.kind == LocalMessageKind.invalid
+  /// A peer message this device can never decrypt (D54). NativeCryptoService
+  /// stores it as an `invalid` row, which holds no content and offers no
+  /// action, keyed `undecryptable:<sync event>:<server id>`.
+  bool get _isUndecryptable =>
+      local?.kind == LocalMessageKind.invalid &&
+      local!.key.startsWith(_undecryptableKeyPrefix);
+
+  static const _undecryptableKeyPrefix = 'undecryptable:';
+
+  String _placeholderLabel(AppLocalizations l10n) => _isUndecryptable
+      ? l10n.chatMessageUndecryptable
+      : local?.kind == LocalMessageKind.invalid
           ? l10n.chatMessageInvalid
           : l10n.chatMessageUnsupported;
 
@@ -1741,9 +1751,11 @@ class _MessageBubble extends StatelessWidget {
                         mainAxisSize: MainAxisSize.min,
                         children: <Widget>[
                           Icon(
-                              local?.kind == LocalMessageKind.invalid
-                                  ? Icons.warning_amber_outlined
-                                  : Icons.update_outlined,
+                              _isUndecryptable
+                                  ? Icons.lock_outline
+                                  : local?.kind == LocalMessageKind.invalid
+                                      ? Icons.warning_amber_outlined
+                                      : Icons.update_outlined,
                               size: 16,
                               color: scheme.onSurfaceVariant),
                           const SizedBox(width: 6),

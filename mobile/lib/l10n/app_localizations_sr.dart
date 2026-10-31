@@ -1757,6 +1757,9 @@ class AppLocalizationsSr extends AppLocalizations {
   String get chatMessageInvalid => 'Једна порука није могла да се прочита';
 
   @override
+  String get chatMessageUndecryptable => 'Ова порука није могла да се откључа';
+
+  @override
   String chatReactionCount(String reaction, int count) {
     final intl.NumberFormat countNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -4294,6 +4297,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get chatMessageInvalid => 'Jedna poruka nije mogla da se pročita';
+
+  @override
+  String get chatMessageUndecryptable => 'Ova poruka nije mogla da se otključa';
 
   @override
   String chatReactionCount(String reaction, int count) {
