@@ -166,6 +166,14 @@ func resetOwnerPassword(ctx context.Context, cfg config.Config, username, passwo
 	if err != nil {
 		return fmt.Errorf("new password rejected: %w", err)
 	}
+	server, err := acquireServerExclusion(cfg)
+	if err != nil {
+		return fmt.Errorf("a server appears to be running; stop the server before recovery: %w", err)
+	}
+	defer server.Release()
+	if _, err := os.Stat(cfg.DatabasePath); err != nil {
+		return fmt.Errorf("no database to recover at %s: %w", cfg.DatabasePath, err)
+	}
 	probeCtx, cancel := context.WithTimeout(ctx, time.Second)
 	err = storage.ProbeDatabaseExclusive(probeCtx, cfg.DatabasePath)
 	cancel()

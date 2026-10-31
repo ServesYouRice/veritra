@@ -39,6 +39,28 @@ type PushWakeBacklog struct {
 	OldestCreatedAt time.Time
 }
 
+// pushWakeEligible is the condition under which push-wake job w, queued for
+// subscription ps (both table aliases), may still wake its recipient: the
+// recipient is a member of the conversation, the subscribed device is not
+// revoked, the recipient has not blocked the sender, and the conversation is
+// not muted for a legacy-mode subscription (a local_decrypt_v1 subscription
+// is woken silently even when muted). A timed mute that has run out no longer
+// counts. It has one placeholder, the current time in unix seconds, and it is
+// the only definition of eligibility: the claim, the pre-send refresh, both
+// kinds of deletion and the backlog all use it with the same time, so a mute
+// that ends between two statements cannot be classified both ways.
+const pushWakeEligible = `(
+	EXISTS (SELECT 1 FROM memberships m WHERE m.conversation_id = w.conversation_id AND m.account_id = w.recipient_account_id)
+	AND (ps.device_id IS NULL OR EXISTS (
+		SELECT 1 FROM devices d WHERE d.id = ps.device_id AND d.account_id = ps.account_id AND d.revoked_at IS NULL))
+	AND NOT EXISTS (
+		SELECT 1 FROM account_blocks b
+		WHERE b.blocker_account_id = w.recipient_account_id AND b.blocked_account_id = w.sender_account_id)
+	AND (ps.notification_mode = 'local_decrypt_v1' OR NOT EXISTS (
+		SELECT 1 FROM conversation_notification_preferences p
+		WHERE p.account_id = w.recipient_account_id AND p.conversation_id = w.conversation_id
+		  AND p.muted = 1 AND (p.muted_until IS NULL OR p.muted_until > ?))))`
+
 func enqueuePushWakeJobs(ctx context.Context, tx *sql.Tx, eventID int64, conversationID, senderAccountID string, createdAt, expiresAt string) error {
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO push_wake_jobs(sync_event_id, conversation_id, sender_account_id, recipient_account_id, subscription_id, created_at, next_attempt_at, expires_at)
@@ -83,15 +105,33 @@ func (s *Store) ClaimPushWakeJobs(ctx context.Context, provider string, limit in
 		return nil, 0, err
 	}
 	defer tx.Rollback()
+	nowSeconds := now.Unix()
+	// Only expired jobs that were still eligible are abandoned: they could
+	// have been sent and were not. The eligibility condition is part of this
+	// statement, so how many ineligible rows exist, and whether the cleanup
+	// below ran first, cannot change the count.
 	result, err := tx.ExecContext(ctx, `
 		DELETE FROM push_wake_jobs
 		WHERE rowid IN (
 			SELECT w.rowid FROM push_wake_jobs w
 			JOIN push_subscriptions ps ON ps.id = w.subscription_id AND ps.account_id = w.recipient_account_id
-			WHERE ps.provider = ? AND w.expires_at <= ?
+			WHERE ps.provider = ? AND w.expires_at <= ? AND `+pushWakeEligible+`
 			ORDER BY w.expires_at, w.sync_event_id, w.subscription_id LIMIT ?
-		)`, provider, nowText, pushWakeBatchLimit)
+		)`, provider, nowText, nowSeconds, pushWakeBatchLimit)
 	if err != nil {
+		return nil, 0, err
+	}
+	// Jobs that can no longer be sent are removed, expired or not, so that a
+	// mute or block that is lifted later cannot revive a wake for an old
+	// event. They are not abandoned work and are not counted.
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM push_wake_jobs
+		WHERE rowid IN (
+			SELECT w.rowid FROM push_wake_jobs w
+			JOIN push_subscriptions ps ON ps.id = w.subscription_id AND ps.account_id = w.recipient_account_id
+			WHERE ps.provider = ? AND NOT `+pushWakeEligible+`
+			ORDER BY w.expires_at, w.sync_event_id, w.subscription_id LIMIT ?
+		)`, provider, nowSeconds, pushWakeBatchLimit); err != nil {
 		return nil, 0, err
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -116,24 +156,14 @@ func (s *Store) ClaimPushWakeJobs(ctx context.Context, provider string, limit in
 		SELECT w.sync_event_id, w.recipient_account_id, w.subscription_id
 		FROM push_wake_jobs w
 		JOIN push_subscriptions ps ON ps.id = w.subscription_id AND ps.account_id = w.recipient_account_id
-		JOIN memberships m ON m.conversation_id = w.conversation_id AND m.account_id = w.recipient_account_id
-		LEFT JOIN devices d ON d.id = ps.device_id AND d.account_id = ps.account_id
 		WHERE ps.provider = ?
 		  AND ps.disabled_at IS NULL
-		  AND (ps.device_id IS NULL OR (d.id IS NOT NULL AND d.revoked_at IS NULL))
-		  AND NOT EXISTS (
-			SELECT 1 FROM account_blocks b
-			WHERE b.blocker_account_id = w.recipient_account_id AND b.blocked_account_id = w.sender_account_id
-		  )
-		  AND (ps.notification_mode='local_decrypt_v1' OR NOT EXISTS (
-			SELECT 1 FROM conversation_notification_preferences p
-			WHERE p.account_id = w.recipient_account_id AND p.conversation_id = w.conversation_id AND p.muted = 1 AND (p.muted_until IS NULL OR p.muted_until > CAST(strftime('%s', 'now') AS INTEGER))
-		  ))
+		  AND `+pushWakeEligible+`
 		  AND w.expires_at > ?
 		  AND w.next_attempt_at <= ?
 		  AND (w.lease_expires_at IS NULL OR w.lease_expires_at <= ?)
 		ORDER BY w.next_attempt_at, w.sync_event_id, w.subscription_id
-		LIMIT ?`, provider, nowText, nowText, nowText, limit)
+		LIMIT ?`, provider, nowSeconds, nowText, nowText, nowText, limit)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -225,21 +255,11 @@ func (s *Store) RefreshPushWakeJob(ctx context.Context, job PushWakeJob, now tim
 		       w.attempts,ps.notification_mode
 		FROM push_wake_jobs w
 		JOIN push_subscriptions ps ON ps.id = w.subscription_id AND ps.account_id = w.recipient_account_id
-		JOIN memberships m ON m.conversation_id = w.conversation_id AND m.account_id = w.recipient_account_id
-		LEFT JOIN devices d ON d.id = ps.device_id AND d.account_id = ps.account_id
 		WHERE w.sync_event_id = ? AND w.recipient_account_id = ? AND w.subscription_id = ?
 		  AND w.lease_token = ? AND w.expires_at > ?
 		  AND ps.disabled_at IS NULL
-		  AND (ps.device_id IS NULL OR (d.id IS NOT NULL AND d.revoked_at IS NULL))
-		  AND NOT EXISTS (
-			SELECT 1 FROM account_blocks b
-			WHERE b.blocker_account_id = w.recipient_account_id AND b.blocked_account_id = w.sender_account_id
-		  )
-		  AND (ps.notification_mode='local_decrypt_v1' OR NOT EXISTS (
-			SELECT 1 FROM conversation_notification_preferences p
-			WHERE p.account_id = w.recipient_account_id AND p.conversation_id = w.conversation_id AND p.muted = 1 AND (p.muted_until IS NULL OR p.muted_until > CAST(strftime('%s', 'now') AS INTEGER))
-		  ))`,
-		job.EventID, job.RecipientAccountID, job.SubscriptionID, job.LeaseToken, formatTime(now.UTC())).Scan(
+		  AND `+pushWakeEligible,
+		job.EventID, job.RecipientAccountID, job.SubscriptionID, job.LeaseToken, formatTime(now.UTC()), now.UTC().Unix()).Scan(
 		&fresh.EventID, &fresh.RecipientAccountID, &fresh.SubscriptionID, &fresh.Provider, &fresh.Endpoint,
 		&fresh.PublicKey, &fresh.AuthSecret, &fresh.Attempts, &fresh.NotificationMode)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -321,8 +341,8 @@ func (s *Store) PushWakeBacklog(ctx context.Context, now time.Time) ([]PushWakeB
 		SELECT ps.provider, COUNT(*), MIN(w.created_at)
 		FROM push_wake_jobs w
 		JOIN push_subscriptions ps ON ps.id = w.subscription_id AND ps.account_id = w.recipient_account_id
-		WHERE w.expires_at > ? AND ps.disabled_at IS NULL
-		GROUP BY ps.provider ORDER BY ps.provider`, formatTime(now.UTC()))
+		WHERE w.expires_at > ? AND ps.disabled_at IS NULL AND `+pushWakeEligible+`
+		GROUP BY ps.provider ORDER BY ps.provider`, formatTime(now.UTC()), now.UTC().Unix())
 	if err != nil {
 		return nil, err
 	}

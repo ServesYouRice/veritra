@@ -551,8 +551,6 @@ func (s *Store) CreateChannelWithConversation(ctx context.Context, communityID, 
 	if !domain.CanManageMembers(actorRole) {
 		return domain.Channel{}, domain.Conversation{}, ErrForbidden
 	}
-	// Other members' conversation counts are not checked here: one creator
-	// adds them to at most its own conversation limit of channels.
 	communityMembers, err := communityMemberCount(ctx, tx, communityID)
 	if err != nil {
 		return domain.Channel{}, domain.Conversation{}, err
@@ -561,12 +559,6 @@ func (s *Store) CreateChannelWithConversation(ctx context.Context, communityID, 
 		return domain.Channel{}, domain.Conversation{}, err
 	}
 	if err := s.checkOwnConversations(ctx, tx, createdBy, 1); err != nil {
-		return domain.Channel{}, domain.Conversation{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO channels(id, community_id, name, kind, created_at) VALUES(?, ?, ?, ?, ?)`, channelID, communityID, strings.TrimSpace(name), kind, createdAt); err != nil {
-		return domain.Channel{}, domain.Conversation{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO conversations(id, kind, title, community_id, channel_id, created_by, created_at) VALUES(?, 'community_channel', ?, ?, ?, ?, ?)`, conversationID, strings.TrimSpace(name), communityID, channelID, createdBy, createdAt); err != nil {
 		return domain.Channel{}, domain.Conversation{}, err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT account_id, role FROM memberships WHERE community_id = ?`, communityID)
@@ -583,7 +575,28 @@ func (s *Store) CreateChannelWithConversation(ctx context.Context, communityID, 
 		}
 		members = append(members, item)
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return domain.Channel{}, domain.Conversation{}, err
+	}
 	if err := rows.Close(); err != nil {
+		return domain.Channel{}, domain.Conversation{}, err
+	}
+	// Every community member joins the new channel, so each one needs room for
+	// it, as CreateConversation requires of the members it adds. One member at
+	// the limit refuses the channel rather than being left out of it.
+	for _, item := range members {
+		if item.accountID == createdBy {
+			continue
+		}
+		if err := s.checkOtherConversations(ctx, tx, item.accountID, 1); err != nil {
+			return domain.Channel{}, domain.Conversation{}, err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO channels(id, community_id, name, kind, created_at) VALUES(?, ?, ?, ?, ?)`, channelID, communityID, strings.TrimSpace(name), kind, createdAt); err != nil {
+		return domain.Channel{}, domain.Conversation{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO conversations(id, kind, title, community_id, channel_id, created_by, created_at) VALUES(?, 'community_channel', ?, ?, ?, ?, ?)`, conversationID, strings.TrimSpace(name), communityID, channelID, createdBy, createdAt); err != nil {
 		return domain.Channel{}, domain.Conversation{}, err
 	}
 	for _, item := range members {
@@ -657,6 +670,16 @@ func (s *Store) ManageCommunityMember(ctx context.Context, communityID, actorAcc
 	if activeTarget == 0 {
 		return nil, ErrNotFound
 	}
+	// Adding or promoting also joins the target to every channel conversation,
+	// where RemoveConversationMember cannot take it out again, so a block in
+	// either direction refuses the change as it does for ManageConversationMember.
+	var blocked int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM account_blocks WHERE (blocker_account_id = ? AND blocked_account_id = ?) OR (blocker_account_id = ? AND blocked_account_id = ?)`, actorAccountID, targetAccountID, targetAccountID, actorAccountID).Scan(&blocked); err != nil {
+		return nil, err
+	}
+	if blocked > 0 {
+		return nil, ErrForbidden
+	}
 	var currentRole string
 	err = tx.QueryRowContext(ctx, `SELECT role FROM memberships WHERE community_id = ? AND account_id = ?`, communityID, targetAccountID).Scan(&currentRole)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -690,6 +713,10 @@ func (s *Store) ManageCommunityMember(ctx context.Context, communityID, actorAcc
 			return nil, err
 		}
 		conversationIDs = append(conversationIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -958,7 +985,8 @@ func (s *Store) ManageConversationMember(ctx context.Context, conversationID, ac
 	}
 	defer tx.Rollback()
 	var actorRole, conversationKind string
-	if err := tx.QueryRowContext(ctx, `SELECT m.role, c.kind FROM memberships m JOIN conversations c ON c.id = m.conversation_id WHERE m.conversation_id = ? AND m.account_id = ?`, conversationID, actorAccountID).Scan(&actorRole, &conversationKind); err != nil {
+	var conversationCommunityID sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT m.role, c.kind, c.community_id FROM memberships m JOIN conversations c ON c.id = m.conversation_id WHERE m.conversation_id = ? AND m.account_id = ?`, conversationID, actorAccountID).Scan(&actorRole, &conversationKind, &conversationCommunityID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, ErrNotMember
 		}
@@ -993,6 +1021,21 @@ func (s *Store) ManageConversationMember(ctx context.Context, conversationID, ac
 		return 0, ErrForbidden
 	}
 	if errors.Is(err, sql.ErrNoRows) {
+		// A channel belongs to its community: only a member of that community
+		// may join it, the rule CreateConversation applies to initial members.
+		// A channel without a community cannot be checked, so it refuses.
+		if conversationKind == "community_channel" {
+			if !conversationCommunityID.Valid {
+				return 0, ErrForbidden
+			}
+			var communityMember int
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM memberships WHERE community_id = ? AND account_id = ?`, conversationCommunityID.String, targetAccountID).Scan(&communityMember); err != nil {
+				return 0, err
+			}
+			if communityMember == 0 {
+				return 0, ErrForbidden
+			}
+		}
 		if err := s.checkNewConversationMember(ctx, tx, conversationID, targetAccountID); err != nil {
 			return 0, err
 		}
@@ -1155,7 +1198,24 @@ func (s *Store) ListConversations(ctx context.Context, accountID string) ([]doma
 // stopping at the first message that is not deleted, expired or from a
 // blocked sender. Unread counts and DM peers are computed only for the
 // conversations on the returned page.
-const listConversationsPageQuery = `
+const listConversationsPageQuery = conversationsPageHead + conversationsPageLegacyCursor + conversationsPageTail
+
+// listConversationsPageKeysetQuery is the same page with its boundary taken
+// from the (activity_at, id) pair the previous page returned: ?3 is the last
+// conversation id and ?5 its activity time in stored format. Nothing is looked
+// up for the boundary, so a new message, an expiry or a left conversation on
+// the cursor row between requests cannot move it.
+const listConversationsPageKeysetQuery = conversationsPageHead + conversationsPageKeysetCursor + conversationsPageTail
+
+// conversationsPageLegacyCursor recomputes the boundary from the cursor
+// conversation's current activity (the id-only cursor of older clients).
+const conversationsPageLegacyCursor = `(?3 = '' OR (activity_at, id) < (
+			SELECT activity_at, id FROM ranked WHERE id = ?3
+		))`
+
+const conversationsPageKeysetCursor = `(activity_at, id) < (?5, ?3)`
+
+const conversationsPageHead = `
 	WITH conversation_activity AS MATERIALIZED (
 		SELECT c.id, c.kind, c.title, c.community_id, c.channel_id,
 		       c.created_by, c.retention_seconds, c.created_at,
@@ -1174,17 +1234,19 @@ const listConversationsPageQuery = `
 		FROM conversation_activity
 	), page AS (
 		SELECT * FROM ranked
-		WHERE (?3 = '' OR (activity_at, id) < (
-			SELECT activity_at, id FROM ranked WHERE id = ?3
-		))
+		WHERE `
+
+const conversationsPageTail = `
 		ORDER BY activity_at DESC, id DESC
 		LIMIT ?4
 	)
 	SELECT p.id, p.kind, p.title, p.community_id, p.channel_id, p.created_by,
 	       p.retention_seconds, p.created_at, p.current_role, p.last_message_at,
 	       -- Unread: visible messages from others after the read receipt's
-	       -- message (all of them without a receipt). Split by case so the
-	       -- receipt bound is a created_at range on the index.
+	       -- message in (created_at, id) order, the order messages are listed
+	       -- in (all of them without a receipt). Split by case so the receipt
+	       -- bound keeps a created_at range on the index; the id comparison
+	       -- only settles messages that share the receipt message's timestamp.
 	       CASE WHEN rr.message_id IS NULL THEN (
 	           SELECT COUNT(*) FROM message_envelopes me
 	           WHERE me.conversation_id = p.id
@@ -1195,7 +1257,8 @@ const listConversationsPageQuery = `
 	       ) ELSE (
 	           SELECT COUNT(*) FROM message_envelopes me
 	           WHERE me.conversation_id = p.id
-	             AND me.created_at > (SELECT created_at FROM message_envelopes WHERE id = rr.message_id)
+	             AND me.created_at >= (SELECT created_at FROM message_envelopes WHERE id = rr.message_id)
+	             AND (me.created_at > (SELECT created_at FROM message_envelopes WHERE id = rr.message_id) OR me.id > rr.message_id)
 	             AND me.sender_account_id != ?1
 	             AND NOT EXISTS (SELECT 1 FROM account_blocks b WHERE b.blocker_account_id = ?1 AND b.blocked_account_id = me.sender_account_id)
 	             AND me.deleted_at IS NULL
@@ -1219,11 +1282,47 @@ const listConversationsPageQuery = `
 	LEFT JOIN read_receipts rr ON rr.conversation_id = p.id AND rr.account_id = ?1
 	ORDER BY p.activity_at DESC, p.id DESC`
 
+// ConversationCursor is the boundary of a conversation-list page: the last
+// conversation of the previous page and, when the client has it, the activity
+// time that page listed it with (its last_message_at, or created_at without
+// messages). With both set the boundary is fixed; with only BeforeID it is
+// recomputed from that conversation's current activity.
+type ConversationCursor struct {
+	BeforeID       string
+	BeforeActivity time.Time
+}
+
+// ListConversationsPage pages by conversation id alone; see ConversationCursor.
 func (s *Store) ListConversationsPage(ctx context.Context, accountID string, limit int, beforeID string) ([]domain.Conversation, error) {
+	return s.ListConversationsPageFrom(ctx, accountID, limit, ConversationCursor{BeforeID: beforeID})
+}
+
+// ListConversationsPageFrom lists one page of the account's conversations. A
+// cursor naming a conversation the account no longer belongs to cannot give a
+// boundary without its activity time: that is ErrInvalidInput, not an empty
+// page that would look like the end of the list.
+func (s *Store) ListConversationsPageFrom(ctx context.Context, accountID string, limit int, cursor ConversationCursor) ([]domain.Conversation, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, listConversationsPageQuery, accountID, nowString(), beforeID, limit)
+	query := listConversationsPageQuery
+	args := []interface{}{accountID, nowString(), cursor.BeforeID, limit}
+	switch {
+	case cursor.BeforeID == "" && !cursor.BeforeActivity.IsZero():
+		return nil, ErrInvalidInput
+	case cursor.BeforeID != "" && !cursor.BeforeActivity.IsZero():
+		query = listConversationsPageKeysetQuery
+		args = append(args, formatTime(cursor.BeforeActivity))
+	case cursor.BeforeID != "":
+		member, err := s.IsConversationMember(ctx, cursor.BeforeID, accountID)
+		if err != nil {
+			return nil, err
+		}
+		if !member {
+			return nil, ErrInvalidInput
+		}
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

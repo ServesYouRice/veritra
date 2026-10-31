@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -70,6 +71,12 @@ func (s *Store) exportAssociatedData(ctx context.Context, accountID string) (map
 			}
 			items = append(items, json.RawMessage(raw))
 		}
+		// Next also stops on a step error or a cancelled context. Only Err
+		// reports it, because Close on the already-closed Rows returns nil.
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
 		if err := rows.Close(); err != nil {
 			return nil, err
 		}
@@ -125,6 +132,12 @@ func (s *Store) DeleteAccountData(ctx context.Context, accountID string) ([]stri
 		}
 		storageKeys = append(storageKeys, key)
 	}
+	// An iteration failure must abort the deletion: continuing would commit
+	// the account scrub with blobs missing from the cleanup queue.
+	if err := blobRows.Err(); err != nil {
+		blobRows.Close()
+		return nil, err
+	}
 	if err := blobRows.Close(); err != nil {
 		return nil, err
 	}
@@ -145,7 +158,20 @@ func (s *Store) DeleteAccountData(ctx context.Context, accountID string) ([]stri
 	if _, err := tx.ExecContext(ctx, `UPDATE devices SET name = 'Deleted device', key_package = X'', signing_key = NULL, auth_secret_hash = NULL, revoked_at = COALESCE(revoked_at, ?) WHERE account_id = ?`, now, accountID); err != nil {
 		return nil, err
 	}
+	// Call metadata carries session descriptions the account produced. The
+	// pseudonymous ids stay for the other participant's call history; open
+	// calls end the way a normal hang-up ends them.
+	callExpiry := formatTime(time.Now().UTC().Add(7 * 24 * time.Hour))
+	if _, err := tx.ExecContext(ctx, `UPDATE call_sessions SET state = 'ended', ended_at = ?, expires_at = ?, version = version + 1 WHERE created_by = ? AND state NOT IN ('rejected', 'missed', 'ended')`, now, callExpiry, accountID); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE call_sessions SET metadata_json = '{}' WHERE created_by = ?`, accountID); err != nil {
+		return nil, err
+	}
 	for _, query := range []string{
+		`DELETE FROM conversation_notification_preferences WHERE account_id = ?`,
+		`DELETE FROM account_blocks WHERE blocker_account_id = ?`,
+		`DELETE FROM device_key_packages WHERE device_id IN (SELECT id FROM devices WHERE account_id = ?)`,
 		`DELETE FROM memberships WHERE account_id = ?`,
 		`DELETE FROM reactions WHERE account_id = ?`,
 		`DELETE FROM read_receipts WHERE account_id = ?`,

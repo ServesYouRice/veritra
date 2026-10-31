@@ -86,9 +86,28 @@ func TestPushNotificationModeIsSubscriptionScopedAndDowngradeSafe(t *testing.T) 
 	if err := store.SetConversationNotificationMute(ctx, conversation.ID, peer.Account.ID, false, nil); err != nil {
 		t.Fatal(err)
 	}
+	// The wake queued while the conversation was muted was dropped when it
+	// became ineligible; lifting the mute does not revive it (TASK-217). A
+	// message sent after the unmute is woken for.
 	jobs, _, err = store.ClaimPushWakeJobs(ctx, "fcm", 10, time.Now(), time.Minute)
-	if err != nil || len(jobs) != 1 {
+	if err != nil || len(jobs) != 0 {
+		t.Fatalf("stale wake revived by the unmute %v %v", jobs, err)
+	}
+	send("after-unmute")
+	jobs, _, err = store.ClaimPushWakeJobs(ctx, "fcm", 10, time.Now(), time.Minute)
+	if err != nil || len(jobs) != 2 {
 		t.Fatalf("unmute pending %v %v", jobs, err)
+	}
+	// Both of the peer's devices are legacy and unmuted now; follow the
+	// downgraded subscription the rest of the test is about.
+	for _, job := range jobs {
+		if job.SubscriptionID == id {
+			jobs = []PushWakeJob{job}
+			break
+		}
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("no wake job for the downgraded subscription %s", id)
 	}
 	if jobs[0].NotificationMode != domain.PushNotificationLegacy {
 		t.Fatal("claim used stale mode")
@@ -116,7 +135,11 @@ func TestPushNotificationModeIsSubscriptionScopedAndDowngradeSafe(t *testing.T) 
 	if err := store.AddConversationMember(ctx, conversation.ID, peer.Account.ID, domain.RoleMember); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.DisablePushTarget(ctx, id); err != nil {
+	current, err := store.DevicePushSubscriptionForDevice(ctx, id, peer.Account.ID, peer.Device.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DisablePushTarget(ctx, current.Target()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.RefreshPushWakeJob(ctx, jobs[0], time.Now()); !errors.Is(err, ErrNotFound) {

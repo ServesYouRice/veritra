@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"private-messenger/server/internal/config"
@@ -315,6 +317,9 @@ type blobResponseWriter struct {
 	// nothing can be confirmed and written is used as before.
 	flushUnsupported bool
 	flushErr         error
+	// cutOff is set from another goroutine to stop a stream whose recovery
+	// lease was lost. It is never set for ordinary downloads.
+	cutOff atomic.Bool
 }
 
 // recoveryFlushInterval is how many body bytes a recovery download writes
@@ -345,6 +350,9 @@ func (w *blobResponseWriter) confirmed() int64 {
 	return w.flushed
 }
 
+// errTransferCutOff ends a stream that no longer holds its recovery lease.
+var errTransferCutOff = errors.New("recovery transfer lease lost")
+
 func (w *blobResponseWriter) WriteHeader(status int) {
 	if w.status != 0 {
 		return
@@ -373,6 +381,9 @@ func (w *blobResponseWriter) Write(p []byte) (int, error) {
 	}
 	if w.integrityFailed {
 		return 0, uploads.ErrBlobIntegrity
+	}
+	if w.cutOff.Load() {
+		return 0, errTransferCutOff
 	}
 	n, err := w.ResponseWriter.Write(p)
 	w.written += int64(n)
@@ -449,7 +460,9 @@ func (a *API) serveRecoveryBlob(w http.ResponseWriter, r *http.Request, transfer
 	request.Header.Del("If-Modified-Since")
 	request.Header.Del("If-Unmodified-Since")
 	request.Header.Del("If-Range")
+	stopRenewing := a.renewRecoveryLease(r.Context(), tracked, transfer)
 	http.ServeContent(tracked, request, "encrypted.bin", time.Time{}, blob)
+	stopRenewing()
 	validResponse := !tracked.integrityFailed && (tracked.status == http.StatusOK || tracked.status == http.StatusPartialContent)
 	if r.Header.Get("Range") != "" {
 		validResponse = validResponse && tracked.status == http.StatusPartialContent &&
@@ -475,9 +488,59 @@ func (a *API) serveRecoveryBlob(w http.ResponseWriter, r *http.Request, transfer
 		written = 0
 	}
 	abort := a.finishBlobResponse(r, ref, blob, tracked)
-	_ = finalizeRecoveryTransfer(r, a.Store, transfer, written, expected)
+	if err := finalizeRecoveryTransfer(r, a.Store, transfer, written, expected); err != nil {
+		// No lease id, token or range goes into the log.
+		a.warn("recovery_transfer_completion_failed", "lease_lost", errors.Is(err, storage.ErrRecoveryBusy))
+	}
 	if abort {
 		panic(http.ErrAbortHandler)
+	}
+}
+
+// recoveryLeaseRenewInterval is well below storage.RecoveryLeaseLifetime, so
+// two renewals can fail before a lease lapses.
+var recoveryLeaseRenewInterval = storage.RecoveryLeaseLifetime / 3
+
+// renewRecoveryLease keeps transfer's lease alive while its body streams, so a
+// slow download is not taken over by a second caller and can still record its
+// progress. The stream ends with the request, whose deadline bounds the whole
+// transfer. If the lease cannot be renewed (it lapsed or was taken over) the
+// writer is cut off: the capability may already be in other hands. A failed
+// renewal for any other reason is retried at the next tick. The returned
+// function stops the renewal and waits for it.
+func (a *API) renewRecoveryLease(ctx context.Context, w *blobResponseWriter, transfer storage.RecoveryTransfer) (stop func()) {
+	done := make(chan struct{})
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		ticker := time.NewTicker(recoveryLeaseRenewInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+			renewCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			err := a.Store.RenewRecoveryTransfer(renewCtx, transfer.LeaseID)
+			cancel()
+			switch {
+			case err == nil:
+			case errors.Is(err, storage.ErrRecoveryBusy):
+				a.warn("recovery_transfer_lease_lost")
+				w.cutOff.Store(true)
+				return
+			default:
+				a.warn("recovery_transfer_lease_renew_failed")
+			}
+		}
+	}()
+	var once sync.Once
+	return func() {
+		once.Do(func() { close(done) })
+		<-finished
 	}
 }
 
@@ -731,7 +794,7 @@ func (a *API) sendTestPush(w http.ResponseWriter, r *http.Request, principal dom
 		case err == nil:
 		case errors.Is(err, push.ErrSubscriptionGone):
 			result = "gone"
-			_ = a.Store.DisablePushTarget(r.Context(), subscription.ID)
+			_ = a.Store.DisablePushTarget(r.Context(), target)
 		case errors.Is(err, push.ErrNoProvider):
 			result = "provider_unavailable"
 		default:

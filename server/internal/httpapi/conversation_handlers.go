@@ -159,8 +159,28 @@ func (a *API) listConversations(w http.ResponseWriter, r *http.Request, principa
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	conversations, err := a.Store.ListConversationsPage(r.Context(), principal.AccountID, limit, strings.TrimSpace(r.URL.Query().Get("before")))
+	// `before` is the last conversation id of the previous page. A client that
+	// also sends that row's activity time as `before_activity` (its
+	// last_message_at, or created_at when it has none) gets a boundary that
+	// later activity cannot move; without it the boundary is recomputed from
+	// the conversation's current activity, as older clients expect.
+	cursor := storage.ConversationCursor{BeforeID: strings.TrimSpace(r.URL.Query().Get("before"))}
+	if raw := strings.TrimSpace(r.URL.Query().Get("before_activity")); raw != "" {
+		activity, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil || cursor.BeforeID == "" {
+			writeError(w, http.StatusBadRequest, "invalid_cursor")
+			return
+		}
+		cursor.BeforeActivity = activity
+	}
+	conversations, err := a.Store.ListConversationsPageFrom(r.Context(), principal.AccountID, limit, cursor)
 	if err != nil {
+		if errors.Is(err, storage.ErrInvalidInput) {
+			// The cursor conversation is gone: an empty page would look like
+			// the end of the list.
+			writeError(w, http.StatusBadRequest, "invalid_cursor")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "conversations_list_failed")
 		return
 	}
