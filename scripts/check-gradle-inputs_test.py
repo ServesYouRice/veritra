@@ -145,10 +145,70 @@ def test_fails_closed() -> None:
             assert run(android)[0] == 1, text
 
 
+CHECKSUM = "0" * 63 + "1"
+WRAPPER_HEAD = "distributionBase=GRADLE_USER_HOME\ndistributionPath=wrapper/dists\n"
+GOOD_URL = r"distributionUrl=https\://services.gradle.org/distributions/gradle-9.1.0-all.zip"
+
+
+def run_wrapper(properties: str | None) -> tuple[int, str]:
+    with android_copy() as android:
+        path = android / "gradle/wrapper/gradle-wrapper.properties"
+        if properties is None:
+            path.unlink()
+        else:
+            path.write_text(properties, encoding="utf-8")
+        return run(android)
+
+
+def test_wrapper_must_be_pinned_to_services_gradle_org() -> None:
+    accepted = (
+        f"{WRAPPER_HEAD}{GOOD_URL}\ndistributionSha256Sum={CHECKSUM}\n",
+        # Unescaped, ':' separator, other order, a continuation line.
+        f"distributionSha256Sum : {CHECKSUM}\n"
+        "distributionUrl: https://services.gradle.org/distributions/gradle-8.14-bin.zip\n",
+        f"distributionUrl=https\\://services.gradle.org/\\\n    distributions/gradle-9.1.0-all.zip\ndistributionSha256Sum={CHECKSUM}\n",
+    )
+    for properties in accepted:
+        code, stderr = run_wrapper(properties)
+        assert code == 0, (properties, stderr)
+        assert "warning" not in stderr, stderr
+
+    rejected = {
+        "plain http": f"distributionUrl=http\\://services.gradle.org/distributions/gradle-9.1.0-all.zip\ndistributionSha256Sum={CHECKSUM}\n",
+        "foreign host": f"distributionUrl=https\\://mirror.example.invalid/distributions/gradle-9.1.0-all.zip\ndistributionSha256Sum={CHECKSUM}\n",
+        "look-alike host": f"distributionUrl=https\\://services.gradle.org.example.invalid/distributions/gradle-9.1.0-all.zip\ndistributionSha256Sum={CHECKSUM}\n",
+        "userinfo": f"distributionUrl=https\\://services.gradle.org@example.invalid/distributions/gradle-9.1.0-all.zip\ndistributionSha256Sum={CHECKSUM}\n",
+        "other path": f"distributionUrl=https\\://services.gradle.org/other/gradle-9.1.0-all.zip\ndistributionSha256Sum={CHECKSUM}\n",
+        "query": f"{GOOD_URL}?x=1\ndistributionSha256Sum={CHECKSUM}\n",
+        "unpinned version": "distributionUrl=https\\://services.gradle.org/distributions/gradle-latest-all.zip\n",
+        "no url": f"{WRAPPER_HEAD}distributionSha256Sum={CHECKSUM}\n",
+        "duplicate url": f"{GOOD_URL}\n{GOOD_URL.replace('9.1.0', '9.0.0')}\ndistributionSha256Sum={CHECKSUM}\n",
+        "malformed checksum (short)": f"{GOOD_URL}\ndistributionSha256Sum={CHECKSUM[1:]}\n",
+        "malformed checksum (upper case)": f"{GOOD_URL}\ndistributionSha256Sum={CHECKSUM.upper()[:-1]}A\n",
+        "malformed checksum (not hex)": f"{GOOD_URL}\ndistributionSha256Sum={'g' * 64}\n",
+        "empty file": "",
+    }
+    for name, properties in rejected.items():
+        code, stderr = run_wrapper(properties)
+        assert code == 1, (name, stderr)
+    assert run_wrapper(None)[0] == 1
+
+
+def test_missing_wrapper_checksum_is_reported() -> None:
+    # Not yet a failure: the repository's properties file has no checksum and
+    # adding it is outside this change. It is reported on every run.
+    code, stderr = run_wrapper(f"{WRAPPER_HEAD}{GOOD_URL}\n")
+    assert code == 0, stderr
+    assert "no distributionSha256Sum" in stderr, stderr
+    assert "https://services.gradle.org/distributions/gradle-9.1.0-all.zip.sha256" in stderr, stderr
+
+
 if __name__ == "__main__":
     test_real_tree_passes()
     test_dynamic_forms_fail_in_the_app_script()
     test_every_build_file_is_scanned()
     test_comments_and_code_are_not_versions()
     test_fails_closed()
+    test_wrapper_must_be_pinned_to_services_gradle_org()
+    test_missing_wrapper_checksum_is_reported()
     print("Gradle input fixture tests passed")

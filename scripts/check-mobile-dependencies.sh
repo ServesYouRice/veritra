@@ -37,9 +37,13 @@ if ! python3 "$ROOT/scripts/check-dart-retractions.py" "$OUTDATED"; then
   exit 1
 fi
 
-WRAPPER="$ANDROID/gradle/wrapper/gradle-wrapper.properties"
-if [ ! -s "$WRAPPER" ] || ! grep -Eq '^distributionUrl=.*gradle-[0-9]+\.[0-9]+(\.[0-9]+)?-(bin|all)\.zip' "$WRAPPER"; then
-  echo "mobile dependency check failed: Gradle wrapper is not pinned" >&2
+# The wrapper must download a pinned Gradle over https from services.gradle.org
+# (and a distributionSha256Sum, when set, must be well formed); every Gradle
+# build, settings and version-catalog file, comments skipped, must be free of
+# +, range, latest.* and SNAPSHOT versions. Fails if the app build script is
+# missing or any input cannot be read.
+if ! python3 "$ROOT/scripts/check-gradle-inputs.py" "$ANDROID"; then
+  echo "mobile dependency check failed: Gradle wrapper or Gradle versions are not pinned" >&2
   exit 1
 fi
 # Repository declarations are what matter here; a URL inside a comment is not
@@ -54,12 +58,4 @@ if [ -n "$gradle_repo_hits" ]; then
   echo "$gradle_repo_hits" >&2
   exit 1
 fi
-# Every Gradle build, settings and version-catalog file, comments skipped,
-# for +, range, latest.* and SNAPSHOT versions; fails if the app build script
-# is missing or any file cannot be read.
-if ! python3 "$ROOT/scripts/check-gradle-inputs.py" "$ANDROID"; then
-  echo "mobile dependency check failed: dynamic Gradle version or unreadable Gradle input" >&2
-  exit 1
-fi
-
 echo "mobile dependency policy passed: pub lock/retractions and pinned Gradle inputs"
