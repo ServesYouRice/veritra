@@ -13,14 +13,35 @@ class ActiveCall {
   ActiveCall._(
       {required this.session,
       required _CallMedia media,
-      required this.remoteStreams,
       required this.signalErrors})
       : _media = media;
   CallSession session;
   final _CallMedia _media;
   RTCPeerConnection get peerConnection => _media.peer;
   MediaStream get localStream => _media.stream!;
-  final StreamController<MediaStream> remoteStreams;
+
+  /// Remote streams received so far, in arrival order.
+  List<MediaStream> get currentRemoteStreams =>
+      List<MediaStream>.unmodifiable(_media.remoteStreams);
+
+  /// Every remote stream: first those already received, then new ones as
+  /// they arrive. Tracks often arrive during setRemoteDescription, before
+  /// start()/answer() returns, so a plain broadcast stream would lose them.
+  Stream<MediaStream> get remoteStreams =>
+      Stream<MediaStream>.multi((controller) {
+        for (final stream in _media.remoteStreams) {
+          controller.add(stream);
+        }
+        if (_remoteUpdates.isClosed) {
+          controller.close();
+          return;
+        }
+        final updates = _remoteUpdates.stream
+            .listen(controller.add, onDone: controller.close);
+        controller.onCancel = updates.cancel;
+      });
+  final StreamController<MediaStream> _remoteUpdates =
+      StreamController<MediaStream>.broadcast(sync: true);
 
   /// Outbound signalling failures. Trickle ICE is sent in the background, so
   /// without this its errors would be unobservable unhandled async errors.
@@ -47,7 +68,59 @@ class _CallMedia {
   MediaStream? stream;
   bool _released = false;
 
+  /// Remote streams, de-duplicated by id (one per stream, not per track).
+  final List<MediaStream> remoteStreams = <MediaStream>[];
+
+  /// Local candidates gathered before the call session exists, in order.
+  final List<Map<String, Object?>> _pendingCandidates =
+      <Map<String, Object?>>[];
+  void Function(Map<String, Object?> signal)? _onCandidate;
+  void Function(MediaStream stream)? _onRemoteStream;
+
   bool get released => _released;
+
+  /// Installs the peer's ICE and track handlers. Until [attach] runs, local
+  /// candidates are buffered and remote streams only recorded.
+  void listen() {
+    peer.onIceCandidate = (candidate) {
+      final value = candidate.candidate;
+      // A null or empty candidate marks the end of gathering; not signalled.
+      if (_released || value == null || value.isEmpty) return;
+      final signal = <String, Object?>{
+        'kind': 'ice',
+        'candidate': value,
+        'sdp_mid': candidate.sdpMid,
+        'sdp_mline_index': candidate.sdpMLineIndex,
+      };
+      final sink = _onCandidate;
+      if (sink == null) {
+        _pendingCandidates.add(signal);
+      } else {
+        sink(signal);
+      }
+    };
+    peer.onTrack = (event) {
+      if (_released) return;
+      for (final stream in event.streams) {
+        if (remoteStreams.any((known) => known.id == stream.id)) continue;
+        remoteStreams.add(stream);
+        _onRemoteStream?.call(stream);
+      }
+    };
+  }
+
+  /// Connects this media to its call: flushes buffered candidates in order
+  /// to [onCandidate], then routes later events directly.
+  void attach(
+      {required void Function(Map<String, Object?> signal) onCandidate,
+      required void Function(MediaStream stream) onRemoteStream}) {
+    for (final signal in _pendingCandidates) {
+      onCandidate(signal);
+    }
+    _pendingCandidates.clear();
+    _onCandidate = onCandidate;
+    _onRemoteStream = onRemoteStream;
+  }
 
   /// Stops every local track, disposes the stream and closes the peer. Each
   /// step runs even if an earlier one fails, and cleanup errors are dropped
@@ -55,6 +128,9 @@ class _CallMedia {
   Future<void> release() async {
     if (_released) return;
     _released = true;
+    _pendingCandidates.clear();
+    _onCandidate = null;
+    _onRemoteStream = null;
     final local = stream;
     if (local != null) {
       for (final track in local.getTracks()) {
@@ -194,10 +270,11 @@ class NativeCallService {
     final active = ActiveCall._(
         session: call,
         media: media,
-        remoteStreams: StreamController<MediaStream>.broadcast(),
         signalErrors: StreamController<Object>.broadcast());
-    _installCallbacks(active);
     _calls[call.id] = active;
+    media.attach(
+        onCandidate: (signal) => _queueSignal(active, signal),
+        onRemoteStream: active._remoteUpdates.add);
     return active;
   }
 
@@ -215,7 +292,10 @@ class NativeCallService {
       'bundlePolicy': 'max-bundle',
       'rtcpMuxPolicy': 'require',
     });
-    final call = _CallMedia(peer);
+    // Handlers go on before any description is set: gathering starts at
+    // setLocalDescription, tracks arrive during setRemoteDescription, and
+    // flutter_webrtc drops events while no handler is set.
+    final call = _CallMedia(peer)..listen();
     try {
       final stream = call.stream = await media.getUserMedia(<String, Object?>{
         'audio': <String, Object?>{
@@ -233,23 +313,6 @@ class NativeCallService {
       rethrow;
     }
     return call;
-  }
-
-  void _installCallbacks(ActiveCall active) {
-    active.peerConnection.onTrack = (event) {
-      for (final stream in event.streams) {
-        active.remoteStreams.add(stream);
-      }
-    };
-    active.peerConnection.onIceCandidate = (candidate) {
-      if (candidate.candidate == null) return;
-      _queueSignal(active, <String, Object?>{
-        'kind': 'ice',
-        'candidate': candidate.candidate,
-        'sdp_mid': candidate.sdpMid,
-        'sdp_mline_index': candidate.sdpMLineIndex,
-      });
-    };
   }
 
   /// Queues an outbound signal. ICE candidates arrive from the native layer in
@@ -320,7 +383,7 @@ class NativeCallService {
 
   Future<void> _disposeCall(ActiveCall call) async {
     await call._media.release();
-    await call.remoteStreams.close();
+    await call._remoteUpdates.close();
     await call.signalErrors.close();
   }
 
