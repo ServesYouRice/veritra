@@ -1225,8 +1225,10 @@ const listConversationsPageQuery = `
 	SELECT p.id, p.kind, p.title, p.community_id, p.channel_id, p.created_by,
 	       p.retention_seconds, p.created_at, p.current_role, p.last_message_at,
 	       -- Unread: visible messages from others after the read receipt's
-	       -- message (all of them without a receipt). Split by case so the
-	       -- receipt bound is a created_at range on the index.
+	       -- message in (created_at, id) order, the order messages are listed
+	       -- in (all of them without a receipt). Split by case so the receipt
+	       -- bound keeps a created_at range on the index; the id comparison
+	       -- only settles messages that share the receipt message's timestamp.
 	       CASE WHEN rr.message_id IS NULL THEN (
 	           SELECT COUNT(*) FROM message_envelopes me
 	           WHERE me.conversation_id = p.id
@@ -1237,7 +1239,8 @@ const listConversationsPageQuery = `
 	       ) ELSE (
 	           SELECT COUNT(*) FROM message_envelopes me
 	           WHERE me.conversation_id = p.id
-	             AND me.created_at > (SELECT created_at FROM message_envelopes WHERE id = rr.message_id)
+	             AND me.created_at >= (SELECT created_at FROM message_envelopes WHERE id = rr.message_id)
+	             AND (me.created_at > (SELECT created_at FROM message_envelopes WHERE id = rr.message_id) OR me.id > rr.message_id)
 	             AND me.sender_account_id != ?1
 	             AND NOT EXISTS (SELECT 1 FROM account_blocks b WHERE b.blocker_account_id = ?1 AND b.blocked_account_id = me.sender_account_id)
 	             AND me.deleted_at IS NULL
