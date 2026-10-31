@@ -483,6 +483,16 @@ func backupBlobRef(backup domain.BackupBlob) uploads.BlobRef {
 // serveEncryptedBlob streams a blob, verifying each chunk before it is sent
 // (see blobResponseWriter for what a client sees on a failure).
 func (a *API) serveEncryptedBlob(w http.ResponseWriter, r *http.Request, ref uploads.BlobRef) {
+	// Callers have authorized the request by now. Each range of a multipart
+	// response costs a seek plus a chunk read and hash, and a Range header
+	// can name thousands of them, so only one range is served (RFC 9110
+	// §14.2 lets a server refuse such a request). The recovery route already
+	// does the same; clients here send a single range or none.
+	if strings.Contains(r.Header.Get("Range"), ",") {
+		w.Header().Set("Content-Range", "bytes */"+strconv.FormatInt(ref.Size, 10))
+		writeError(w, http.StatusRequestedRangeNotSatisfiable, "multiple_ranges_not_supported")
+		return
+	}
 	blob, ok := a.openBlob(w, r, ref)
 	if !ok {
 		return
