@@ -5073,9 +5073,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         _flushMlsOutboxRequested = false;
         try {
           await _flushMlsOutboxOnce();
+          _mlsOutboxLocalFailures = 0;
         } catch (_) {
           // A local storage failure leaves every item queued; the retry
-          // timer or the next wake tries again.
+          // timer tries again with backoff, even for an item that names no
+          // due time.
+          _mlsOutboxLocalFailures++;
         }
       } while (_flushMlsOutboxRequested && !_disposed);
     } finally {
@@ -5097,6 +5100,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final ownerGeneration = _sessionGeneration;
     final messages = await localStore.pendingMlsMessages();
     if (!_syncOwnerActive(current, ownerGeneration)) return;
+    // Items settled some other way no longer need finishing.
+    _mlsAcceptedUnfinished.removeWhere((key) =>
+        !messages.any((message) => message.idempotencyKey == key));
     final byConversation = <String, List<PendingMlsMessage>>{};
     for (final message in messages) {
       byConversation
@@ -5115,7 +5121,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         if (message.nextAttemptAt?.isAfter(now) ?? false) break;
         final isBundle = message.kind == MlsCommitBundle.kind;
         try {
-          if (isBundle) {
+          if (_mlsAcceptedUnfinished.contains(message.idempotencyKey)) {
+            // The server already accepted it; only finishing it here
+            // failed. Sending it again could meet a refusal (this device
+            // removed meanwhile, say) that would drop an accepted commit.
+          } else if (isBundle) {
             await client.sendMlsCommitBundle(
               current.token,
               message.conversationId,
@@ -5180,8 +5190,23 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           break;
         }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
+        try {
+          if (isBundle) {
+            await _mlsCrypto?.completeCommitBundle(message);
+          } else {
+            await localStore.removePendingMlsMessage(message.idempotencyKey);
+          }
+        } catch (err) {
+          // Accepted but not finished here: it is never dropped, and it
+          // holds back the rest of its conversation until a timed retry
+          // finishes it.
+          if (!_syncOwnerActive(current, ownerGeneration)) return;
+          _mlsAcceptedUnfinished.add(message.idempotencyKey);
+          await _recordMlsFinishFailure(message, err);
+          break;
+        }
+        _mlsAcceptedUnfinished.remove(message.idempotencyKey);
         if (isBundle) {
-          await _mlsCrypto?.completeCommitBundle(message);
           final bundle = MlsCommitBundle.decode(message.payload);
           // A self-update, and any commit that removes someone, carries an
           // update path: this device's leaf key is fresh again.
@@ -5190,8 +5215,6 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
                 ?.recordPathCommit(message.conversationId, DateTime.now());
             await _saveSelfUpdates();
           }
-        } else {
-          await localStore.removePendingMlsMessage(message.idempotencyKey);
         }
       }
     }
@@ -5473,6 +5496,38 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     return terminal;
   }
 
+  /// Items the server accepted whose local finishing (merging the commit,
+  /// or removing the item) failed; the next pass only finishes them. Memory
+  /// only: after a restart the item is sent again, and the server answers
+  /// a repeated idempotency key with the original result.
+  final Set<String> _mlsAcceptedUnfinished = <String>{};
+
+  /// Consecutive MLS outbox passes or queue reads that failed locally.
+  int _mlsOutboxLocalFailures = 0;
+
+  /// Records that the server accepted [message] but finishing it here
+  /// failed with [error]. Always a timed retry with the item's own backoff,
+  /// never terminal: the group already moved on with it (TASK-030).
+  Future<void> _recordMlsFinishFailure(
+      PendingMlsMessage message, Object error) async {
+    // Body-free: no conversation, device or server text.
+    developer.log('mls_outbox_finish_failed ${error.runtimeType}',
+        name: 'veritra.sync');
+    final exponent = min(message.attemptCount, 8);
+    await localStore.recordMlsOutboxFailure(
+      message.idempotencyKey,
+      failureClass: 'retryable:finish',
+      terminal: false,
+      nextAttemptAt:
+          DateTime.now().toUtc().add(Duration(seconds: 1 << exponent)),
+    );
+  }
+
+  /// The wait after [failures] consecutive local storage failures of an
+  /// outbox worker: 1 s, doubling to 256 s, like an item's own retries.
+  static Duration _localRetryDelay(int failures) =>
+      Duration(seconds: 1 << min(max(failures - 1, 0), 8));
+
   Future<void> _scheduleMlsOutboxRetry() async {
     _mlsOutboxRetryTimer?.cancel();
     _mlsOutboxRetryTimer = null;
@@ -5483,6 +5538,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     try {
       messages = await localStore.pendingMlsMessages();
     } catch (_) {
+      // Unreadable queue: try again later rather than wait for a wake.
+      _mlsOutboxLocalFailures++;
+      if (!_disposed) {
+        _armMlsOutboxRetry(_localRetryDelay(_mlsOutboxLocalFailures));
+      }
       return;
     }
     // Only the head of each conversation can be sent next; a conversation
@@ -5500,8 +5560,21 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (head.terminal || due == null) continue;
       if (earliest == null || due.isBefore(earliest)) earliest = due;
     }
-    if (earliest == null || _disposed) return;
-    final delay = earliest.difference(now);
+    var delay = earliest?.difference(now);
+    // After a local failure the stored due times may be stale or missing
+    // (the failure could not be recorded), so wait at least the local
+    // backoff: a due head would otherwise be retried at the floor forever.
+    if (_mlsOutboxLocalFailures > 0) {
+      final fallback = _localRetryDelay(_mlsOutboxLocalFailures);
+      if (delay == null || delay < fallback) delay = fallback;
+    }
+    if (delay == null || _disposed) return;
+    _armMlsOutboxRetry(delay);
+  }
+
+  void _armMlsOutboxRetry(Duration delay) {
+    // Two schedulers may overlap their reads; only the last timer stays.
+    _mlsOutboxRetryTimer?.cancel();
     _mlsOutboxRetryTimer =
         Timer(delay < _minimumRetryDelay ? _minimumRetryDelay : delay, () {
       _mlsOutboxRetryTimer = null;

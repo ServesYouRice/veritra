@@ -158,6 +158,75 @@ void main() {
       h.state.dispose();
     });
   });
+
+  group('an accepted control message that fails to finish locally', () {
+    test('a commit that fails to merge is finished by the retry timer',
+        () async {
+      final h = await _Harness.start(pending: const <String>{});
+      await _settle();
+      // The failure comes after startup, with the connection already
+      // online, so no later wake would pick the bundle up.
+      h.crypto.completeFailures.add(StateError('merge failed'));
+      await h.state.addConversationMember('conv_a', 'acct_bob');
+      await _waitFor(() => h.crypto.completeCalls == 1);
+      await _waitFor(() => h.crypto.completed == 1,
+          timeout: const Duration(seconds: 6));
+      expect(h.api.bundles, hasLength(1),
+          reason: 'the accepted bundle is finished, not sent again');
+      expect(h.crypto.abandoned, 0, reason: 'an accepted commit is kept');
+      expect(await h.store.pendingMlsMessages(), isEmpty);
+      h.state.dispose();
+    });
+
+    test('a sent message whose removal fails is removed by the retry timer',
+        () async {
+      final store = _FlakyStore();
+      final h = await _Harness.start(
+          pending: const <String>{}, store: store);
+      await _settle();
+      store.removeFailures = 1;
+      await _queue(store, <PendingMlsMessage>[_message('c1', 'conv_a')]);
+      h.sync.frame();
+      await _waitFor(() => h.api.messages.isNotEmpty);
+      await _waitFor(() async => (await store.pendingMlsMessages()).isEmpty,
+          timeout: const Duration(seconds: 6));
+      expect(h.api.messages, <String>['c1']);
+      h.state.dispose();
+    });
+
+    test('a failed finish is retried with growing backoff', () async {
+      final h = await _Harness.start(pending: const <String>{});
+      await _settle();
+      h.crypto.completeFailures
+          .addAll(List<Object>.generate(50, (_) => StateError('stuck')));
+      await h.state.addConversationMember('conv_a', 'acct_bob');
+      await _waitFor(() => h.crypto.completeCalls == 1);
+      await Future<void>.delayed(const Duration(milliseconds: 4500));
+      // 1 s, then 2 s: three tries in 4.5 s, one more of slack.
+      expect(h.crypto.completeCalls, inInclusiveRange(2, 4));
+      expect(h.api.bundles, hasLength(1));
+      expect(h.crypto.abandoned, 0);
+      expect(h.state.mlsConversationFailed('conv_a'), isFalse);
+      h.state.dispose();
+    });
+
+    test('a queue read failure while scheduling still arms a retry', () async {
+      final store = _FlakyStore();
+      final h = await _Harness.start(
+          pending: const <String>{}, store: store);
+      await _settle();
+      await _queue(store, <PendingMlsMessage>[_message('c1', 'conv_a')]);
+      // The worker's read and the scheduler's read both fail.
+      store.mlsReadFailures = 2;
+      h.sync.frame();
+      await _waitFor(() => store.mlsReadFailures == 0);
+      await _waitFor(() => h.api.messages.contains('c1'),
+          timeout: const Duration(seconds: 6));
+      await _waitFor(() async => (await store.pendingMlsMessages()).isEmpty);
+      h.state.dispose();
+    });
+
+  });
 }
 
 const _origin = 'https://localhost:8080';
@@ -222,6 +291,17 @@ class _Harness {
   }
 }
 
+PendingMlsMessage _message(String key, String conversationId) =>
+    PendingMlsMessage(
+      idempotencyKey: key,
+      conversationId: conversationId,
+      kind: 'commit',
+      payload: const <int>[1],
+    );
+
+Future<void> _settle() =>
+    Future<void>.delayed(const Duration(milliseconds: 300));
+
 Future<void> _queue(LocalStore store, List<PendingMlsMessage> messages) async {
   if (messages.isEmpty) return;
   final counter = (await store.loadCryptoState())?.counter ?? 0;
@@ -277,6 +357,16 @@ class _Api extends ApiClient {
 
   @override
   Future<void> logout(String token) async {}
+
+  @override
+  Future<void> addConversationMember(
+    String token,
+    String conversationId,
+    String accountId, {
+    String role = 'member',
+  }) async {
+    pendingAdds.add(conversationId);
+  }
 
   @override
   Future<List<Conversation>> conversations(String token) async =>
@@ -392,7 +482,9 @@ class _Crypto implements MlsConversationCryptoService {
   final Map<String, int> epochs = <String, int>{};
   int staged = 0;
   int completed = 0;
+  int completeCalls = 0;
   int abandoned = 0;
+  final List<Object> completeFailures = <Object>[];
 
   int epochOf(String conversationId) => epochs[conversationId] ?? 3;
 
@@ -432,6 +524,8 @@ class _Crypto implements MlsConversationCryptoService {
 
   @override
   Future<void> completeCommitBundle(PendingMlsMessage bundle) async {
+    completeCalls++;
+    if (completeFailures.isNotEmpty) throw completeFailures.removeAt(0);
     completed++;
     epochs[bundle.conversationId] = epochOf(bundle.conversationId) + 1;
     await store.removePendingMlsMessage(bundle.idempotencyKey);
@@ -478,4 +572,30 @@ class _Sync implements SyncService {
 
   @override
   Future<void> dispose() => _controller.close();
+}
+
+/// A store whose MLS queue reads and removals can be made to fail.
+class _FlakyStore extends MemoryLocalStore {
+  int mlsReadFailures = 0;
+  int mlsReads = 0;
+  int removeFailures = 0;
+
+  @override
+  Future<List<PendingMlsMessage>> pendingMlsMessages() async {
+    mlsReads++;
+    if (mlsReadFailures > 0) {
+      mlsReadFailures--;
+      throw StateError('database is locked');
+    }
+    return super.pendingMlsMessages();
+  }
+
+  @override
+  Future<void> removePendingMlsMessage(String idempotencyKey) async {
+    if (removeFailures > 0) {
+      removeFailures--;
+      throw StateError('database is locked');
+    }
+    await super.removePendingMlsMessage(idempotencyKey);
+  }
 }
