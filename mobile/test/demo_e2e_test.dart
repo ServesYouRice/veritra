@@ -133,6 +133,10 @@ void main() {
     expect((await carol.store.loadMessages(group.id)).map((m) => m.body),
         isNot(contains('hello group')));
 
+    // Bob's list holds the group before his removal, so its absence later
+    // means something.
+    await bob.waitUntil(
+        () async => bob.state.conversations.any((c) => c.id == group.id));
     expect(await owner.state.removeConversationMember(group.id, bob.accountId),
         isTrue);
     await alice.waitUntil(() async => (await alice.epoch(group.id)) == 3,
