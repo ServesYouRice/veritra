@@ -159,6 +159,81 @@ not raised; if it changes, change the derivation with it.
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **Periodic self-update (2026-10-31, research round 2):** no payload or
+  local schema change, no new symbol and no ABI number change; server
+  migration 0043.
+  - **Why.** A device's leaf key changed only when that device committed
+    with an update path, which in practice meant removing someone. Most
+    devices kept the key from the key package they joined with, so a
+    leaked device state stayed readable for the life of the group:
+    post-compromise security rarely happened. A path commit soon after a
+    join also fills the device's path in the tree, which makes later
+    removals cheaper (research notes on post-quantum groups, cold trees).
+  - **Native.** `pm_crypto_group_stage_commit` with an empty change list
+    (version 1, no adds, no removes) stages a commit with an update path
+    and no proposals (`MlsDevice::stage_self_update`): the proposal store
+    is not consumed and every proposal is filtered out, and a result
+    without a path is cleared and refused. It is staged, not merged, like
+    every D28 commit. The credential and signature key are kept, so the
+    safety number does not change. Receivers need no change:
+    `inspect_commit` already accepts an update path that keeps the leaf's
+    identity. Earlier ABI 9 builds refuse an empty list, so a mismatched
+    library fails closed (the app backs off and sends nothing). The Dart
+    `selfUpdate` wrapper of `pm_crypto_group_self_update`, which merges
+    before any server answer and can fork the group, is removed; the
+    symbol stays in the library, documented as not for app use.
+  - **Server.** A commit bundle with a commit and no Added or Removed
+    devices is an update-only commit. It needs an active group device of
+    a member account, as every commit does, and is checked in this order:
+    idempotency key (a retried accepted commit returns the stored one,
+    even inside the budget), current epoch (409 `mls_epoch_conflict`),
+    then 409 `mls_change_pending` while the group has a pending
+    revocation or a device whose account left (removals take the epoch
+    first), then 429 `mls_self_update_limit` with `Retry-After` when the
+    same device made one in the conversation within
+    `PRIVATE_MESSENGER_LIMIT_MLS_SELF_UPDATE_MINUTES` (default 60). The
+    time is kept on the device's roster row. The route stays under the
+    D39 request budgets and the delivery write budget. A Welcome needs an
+    Added device and a revocation a Removed one, so neither can ride on
+    an update-only bundle; every other check is unchanged.
+  - **App.** `MlsSelfUpdatePolicy` (`mobile/lib/core/`) decides per
+    conversation: once after a Welcome (30 s plus a jitter of about a
+    minute per member, at most 3 h, since every device a commit adds
+    joins at once); after 100 application messages sent since this
+    device's last path commit (at least an hour after it); after 7 days
+    plus up to 12 h when the chat had activity since. Jitter is derived
+    from the device and conversation IDs. A chat first seen after an
+    upgrade gets a last update spread over the past 7 days, so devices
+    that upgrade together do not all update at once. AppState stages at
+    most one per foreground sync pass, a minute apart, after revocations
+    and reconcile, never in a background wake, and skips a group with a
+    pending revocation, a listed removal, queued MLS work, a staged
+    commit or a paused MLS outbox. Any 4xx refusal of an update-only
+    bundle (other than 401 and 408) drops the staged commit and backs off
+    (409: 10 min, the budget's 429: 1 h, others such as an older
+    server's 400: 24 h), so a self-update never pauses a conversation
+    the way a refused membership commit does. An accepted self-update, or
+    any own commit that removes a device, resets the counters. State is
+    a JSON setting in the encrypted local store, bound to the account and
+    device.
+  - **Trust model.** The server cannot read a commit. "Update only" is
+    what the sender declares, exactly as Added and Removed are for every
+    other bundle, and nothing cross-checks the declaration: not the
+    server, and not receivers, whose `inspect_commit` checks only the
+    commit's shape (proposal types, Basic credentials, unique
+    identities, identity kept on update). A malicious member's client
+    could already hide an Add or Remove inside a bundle that declares
+    another change. An update-only bundle widens that slightly: a hidden
+    Remove no longer needs a real pending change to ride on. The
+    per-device budget bounds how often. A hidden Add still needs a
+    member account and the server roster to receive anything. The fix is
+    L1 ("What L1 must provide"): receivers check every added and updated
+    leaf against the signed device list.
+  - **Open.** Commits that only add devices still carry no path, so the
+    committer's key is not refreshed by them. A device that loses its
+    local policy state updates early or late, never more often than the
+    budget allows.
+
 - **Attachment size padding, manifest v2 (2026-10-31, research round 2):**
   no ABI, chunk-crypto, AAD or upload change. Before this the server
   stored each attachment's exact ciphertext size, `plaintext + 20` bytes

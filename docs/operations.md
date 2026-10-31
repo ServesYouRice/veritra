@@ -867,6 +867,7 @@ write transaction, so concurrent requests cannot both take the last slot.
 | `CONVERSATION_MEMBERS` | 100 | 2-1,000 | members of a group, a community and each of its channels | 409 `conversation_member_limit_reached` |
 | `CONVERSATIONS_PER_ACCOUNT` | 1,000 | 10-10,000 | conversations an account belongs to | 409 `conversation_limit_reached` to that account; adding an account that is full answers 403 `forbidden`, as a block does |
 | `KEY_PACKAGE_CLAIMS_PER_TARGET` | 25 (half the 50 single-use key packages a device may hold) | 1-50 | key packages one account claims from one device of another account in 24 hours; claiming from its own devices is not limited | 429 `key_package_claim_limit` with `Retry-After`; adding devices to an existing group skips a device over its limit, as it skips one with no package left |
+| `MLS_SELF_UPDATE_MINUTES` | 60 | 1-10,080 | update-only MLS commits (a device's periodic key refresh, adding and removing no one) per device and conversation; each moves the group to a new epoch | 429 `mls_self_update_limit` with `Retry-After`; the app drops that update and tries again later |
 | `DELIVERIES_PER_MINUTE` | 1,000 | 60-1,000,000, and at least 2 × (1 + members) | per account, each fan-out write counts 1 plus every account it is published to | 429 `write_rate_limited` with `Retry-After` |
 | `WRITE_MIB_PER_HOUR` | 64 | 16-65,536 | request bodies of those writes | 429 `write_rate_limited` |
 | `ATTACHMENT_MIB` | 48 | 1-48 | the largest file one attachment may hold (plaintext with its padding; the upload route allows the chunk framing on top) | 413 `upload_too_large` |
@@ -884,6 +885,20 @@ of database, so 64 MiB an hour caps one account's database growth at about
 240 MiB an hour, while heavy text use writes about 1 MiB a day. The write
 budget is in memory: a restart refills it, and a bulk import through the
 API proceeds at its pace.
+
+**MLS self-updates.** Apps refresh their own MLS key in each conversation
+after 100 sent messages, after 7 days with activity, and once shortly
+after joining (`docs/crypto.md`, periodic self-update). Each refresh is a
+commit that every group device receives, so the server allows one per
+device and conversation per `PRIVATE_MESSENGER_LIMIT_MLS_SELF_UPDATE_MINUTES`,
+counted in `veritra_admission_rejections_total{limit="mls_self_updates"}`
+when refused. It also refuses one (409 `mls_change_pending`) while the
+group still has to remove a revoked or departed device, so removals land
+first. These commits also count in the request and delivery budgets
+above. The last refresh time is a column added by migration 0043; an
+older server binary ignores it, so rolling back past it needs no restore,
+but that binary refuses update-only commits (400), and apps then wait a
+day before trying again.
 
 **Attachment size cap.** `PRIVATE_MESSENGER_LIMIT_ATTACHMENT_MIB` is the
 per-file cap. The server reports it to apps as `max_attachment_bytes` in
