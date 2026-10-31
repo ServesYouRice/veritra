@@ -5689,11 +5689,27 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           // particular, a revocation commit queued before a restart is
           // still "pending" on the server until it is delivered; making
           // another one would fork the group.
+          var target = revocation;
           if (await _hasPendingMlsWork(revocation.conversationId)) {
             await _flushMlsOutbox();
             if (await _hasPendingMlsWork(revocation.conversationId)) continue;
+            // The drain may have delivered this revocation's own commit, and
+            // the list above predates it: read the revocation again and
+            // commit only if the server still waits for this device.
+            final fresh = (await client.mlsRevocations(current.token))
+                .where((item) =>
+                    item.conversationId == revocation.conversationId &&
+                    item.revokedDeviceId == revocation.revokedDeviceId)
+                .firstOrNull;
+            if (fresh == null ||
+                fresh.state != 'pending' ||
+                fresh.coordinatorDeviceId != current.deviceId ||
+                await _hasPendingMlsWork(revocation.conversationId)) {
+              continue;
+            }
+            target = fresh;
           }
-          await mls.createRevocationCommit(revocation);
+          await mls.createRevocationCommit(target);
           await _flushMlsOutbox();
           continue;
         }

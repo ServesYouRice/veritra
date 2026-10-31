@@ -1,7 +1,8 @@
 // MLS outbox and membership reconcile (I34, I51): refused commit bundles back
 // off and are reconciled again by a wake timer (TASK-029); accepted items
 // whose local finish failed are retried (TASK-030); storage failures in the
-// outbox workers are contained and retried with backoff (TASK-042).
+// outbox workers are contained and retried with backoff (TASK-042); a drained
+// revocation commit is not made twice (TASK-051).
 @Timeout(Duration(seconds: 60))
 library;
 
@@ -319,6 +320,72 @@ void main() {
       state.dispose();
     });
   });
+
+  group('a revocation this device coordinates', () {
+    MlsRevocation revocation(String state) => MlsRevocation(
+          conversationId: 'conv_a',
+          revokedDeviceId: 'dev_gone',
+          revokedAccountId: 'acct_me',
+          coordinatorDeviceId: 'dev_me',
+          state: state,
+          commitMessageId: state == 'pending' ? null : 'mls_rev1',
+          requestedAt: DateTime.utc(2026, 10, 31),
+        );
+
+    /// From the next fetch on, the server lists one revocation and [queued]
+    /// waits in the outbox before it, as after a restart. The revocation
+    /// moves to `commit_submitted` once `rev1` (its commit) is delivered.
+    void listRevocation(_Harness h, PendingMlsMessage queued) {
+      var listed = false;
+      h.api.revocationsHook = () async {
+        if (!listed) {
+          listed = true;
+          await _queue(h.store, <PendingMlsMessage>[queued]);
+        }
+        return <MlsRevocation>[
+          revocation(h.api.messages.contains('rev1')
+              ? 'commit_submitted'
+              : 'pending'),
+        ];
+      };
+    }
+
+    test('makes no second commit after draining its queued one', () async {
+      final h = await _Harness.start(pending: const <String>{});
+      await _settle();
+      listRevocation(
+          h,
+          PendingMlsMessage(
+            idempotencyKey: 'rev1',
+            conversationId: 'conv_a',
+            kind: 'commit',
+            payload: const <int>[1],
+            revocationDeviceId: 'dev_gone',
+          ));
+      h.state.handleAppLifecycleState(AppLifecycleState.paused);
+      h.state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await _waitFor(() => h.api.messages.contains('rev1'));
+      await _settle();
+      expect(h.crypto.revocationCommits, 0,
+          reason: 'the server already has this revocation\'s commit');
+      expect(h.api.messages, <String>['rev1']);
+      h.state.dispose();
+    });
+
+    test('still commits when the drained work was something else', () async {
+      final h = await _Harness.start(pending: const <String>{});
+      await _settle();
+      listRevocation(h, _message('other', 'conv_a'));
+      h.state.handleAppLifecycleState(AppLifecycleState.paused);
+      h.state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await _waitFor(() => h.crypto.revocationCommits == 1);
+      await _waitFor(() => h.api.messages.contains('rev1'));
+      expect(h.api.messages, <String>['other', 'rev1']);
+      await _settle();
+      expect(h.crypto.revocationCommits, 1);
+      h.state.dispose();
+    });
+  });
 }
 
 const _origin = 'https://localhost:8080';
@@ -483,9 +550,13 @@ class _Api extends ApiClient {
     return const <SyncEvent>[];
   }
 
+  Future<List<MlsRevocation>> Function()? revocationsHook;
+
   @override
-  Future<List<MlsRevocation>> mlsRevocations(String token) async =>
-      const <MlsRevocation>[];
+  Future<List<MlsRevocation>> mlsRevocations(String token) async {
+    await _network();
+    return await revocationsHook?.call() ?? const <MlsRevocation>[];
+  }
 
   @override
   Future<List<MlsPendingChange>> mlsPendingChanges(String token) async {
@@ -579,6 +650,7 @@ class _Crypto implements MlsConversationCryptoService {
   int completed = 0;
   int completeCalls = 0;
   int abandoned = 0;
+  int revocationCommits = 0;
   final List<Object> completeFailures = <Object>[];
 
   int epochOf(String conversationId) => epochs[conversationId] ?? 3;
@@ -613,6 +685,20 @@ class _Crypto implements MlsConversationCryptoService {
           ],
           removed: removes,
         ).encode(),
+      ),
+    ]);
+  }
+
+  @override
+  Future<void> createRevocationCommit(MlsRevocation revocation) async {
+    revocationCommits++;
+    await _queue(store, <PendingMlsMessage>[
+      PendingMlsMessage(
+        idempotencyKey: 'rev$revocationCommits',
+        conversationId: revocation.conversationId,
+        kind: 'commit',
+        payload: const <int>[1],
+        revocationDeviceId: revocation.revokedDeviceId,
       ),
     ]);
   }
