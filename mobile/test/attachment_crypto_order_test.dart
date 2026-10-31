@@ -6,6 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/crypto/attachment_crypto.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 
+import 'native_test_env.dart';
+
 /// The chunk index Dart passes to the bindings is the AEAD nonce suffix, so
 /// the native tests cannot see a Dart bug that repeats it. These tests check
 /// the index sequence, a fresh key and nonce prefix per attachment, and that
@@ -22,9 +24,8 @@ void main() {
   });
 
   const size = 2 * attachmentChunkSize + 1;
-  final chunkCount =
-      (paddedAttachmentSize(size) + attachmentChunkSize - 1) ~/
-          attachmentChunkSize;
+  final chunkCount = (paddedAttachmentSize(size) + attachmentChunkSize - 1) ~/
+      attachmentChunkSize;
 
   AttachmentCryptoService serviceWith(NativeCryptoBindings bindings) =>
       AttachmentCryptoService(bindings, directoryProvider: () async => tempDir);
@@ -114,8 +115,8 @@ void main() {
     final first = await encrypt(service, sourcePath);
     final second = await encrypt(service, sourcePath);
     expect(base64Decode(first.manifest['key']! as String), hasLength(32));
-    expect(base64Decode(first.manifest['nonce_prefix']! as String),
-        hasLength(8));
+    expect(
+        base64Decode(first.manifest['nonce_prefix']! as String), hasLength(8));
     expect(first.manifest['key'], isNot(second.manifest['key']));
     expect(
         first.manifest['nonce_prefix'], isNot(second.manifest['nonce_prefix']));
@@ -132,12 +133,13 @@ void main() {
     });
   }
 
-  final libraryPath = Platform.environment['VERITRA_CRYPTO_LIBRARY'];
+  final nativeSkip = nativeCryptoSkip();
   group('with the native library', () {
     for (final swap in <bool>[true, false]) {
       final what = swap ? 'swapped' : 'duplicated';
       test('$what chunk frames do not decrypt', () async {
-        final service = serviceWith(NativeCryptoBindings.open(libraryPath!));
+        final service = serviceWith(
+            NativeCryptoBindings.open(requireNativeCryptoLibrary()));
         final sourcePath = await writeSource();
         final prepared = await encrypt(service, sourcePath);
 
@@ -155,7 +157,7 @@ void main() {
         await expectRefused(service, prepared);
       });
     }
-  }, skip: libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false);
+  }, skip: nativeSkip);
 }
 
 List<Uint8List> _frames(Uint8List bytes) {

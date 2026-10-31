@@ -8,6 +8,8 @@ import 'package:private_messenger/crypto/backup_service.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/storage/local_store.dart';
 
+import 'native_test_env.dart';
+
 /// A recovery whose saved download the server will not continue (416, or
 /// 404 once a finished transfer used up the code) first tries the saved
 /// file, which may already be the whole backup, and only then downloads
@@ -36,24 +38,31 @@ Future<MemoryLocalStore> _seededStore() async {
 }
 
 void main() {
-  final libraryPath = Platform.environment['VERITRA_CRYPTO_LIBRARY'];
-  final skip = libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false;
+  final skip = nativeCryptoSkip();
 
   late _RecoveryServer server;
   late Directory scratch;
   late NativeCryptoBindings bindings;
+  // setUp can throw before these are set (required but missing library).
+  _RecoveryServer? startedServer;
+  Directory? createdScratch;
 
   setUp(() async {
-    if (libraryPath == null) return;
-    bindings = NativeCryptoBindings.open(libraryPath);
-    server = await _RecoveryServer.start();
-    scratch = await Directory.systemTemp.createTemp('veritra-backup-resume-');
+    startedServer = null;
+    createdScratch = null;
+    if (skip != false) return;
+    bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
+    server = startedServer = await _RecoveryServer.start();
+    scratch = createdScratch =
+        await Directory.systemTemp.createTemp('veritra-backup-resume-');
   });
 
   tearDown(() async {
-    if (libraryPath == null) return;
-    await server.close();
-    if (await scratch.exists()) await scratch.delete(recursive: true);
+    await startedServer?.close();
+    final directory = createdScratch;
+    if (directory != null && await directory.exists()) {
+      await directory.delete(recursive: true);
+    }
   });
 
   BackupService serviceFor(LocalStore store) => BackupService(

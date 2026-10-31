@@ -6,6 +6,8 @@ import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/backup_service.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
+
+import 'native_test_env.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
 
@@ -13,24 +15,31 @@ import 'package:private_messenger/storage/local_store.dart';
 /// library and a loopback server: create, upload, restore, and the ways a
 /// restore can fail without touching the device.
 void main() {
-  final libraryPath = Platform.environment['VERITRA_CRYPTO_LIBRARY'];
-  final skip = libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false;
+  final skip = nativeCryptoSkip();
 
   late _BackupServer server;
   late Directory scratch;
   late NativeCryptoBindings bindings;
+  // setUp can throw before these are set (required but missing library).
+  _BackupServer? startedServer;
+  Directory? createdScratch;
 
   setUp(() async {
-    if (libraryPath == null) return;
-    bindings = NativeCryptoBindings.open(libraryPath);
-    server = await _BackupServer.start();
-    scratch = await Directory.systemTemp.createTemp('veritra-backup-');
+    startedServer = null;
+    createdScratch = null;
+    if (skip != false) return;
+    bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
+    server = startedServer = await _BackupServer.start();
+    scratch = createdScratch =
+        await Directory.systemTemp.createTemp('veritra-backup-');
   });
 
   tearDown(() async {
-    if (libraryPath == null) return;
-    await server.close();
-    if (await scratch.exists()) await scratch.delete(recursive: true);
+    await startedServer?.close();
+    final directory = createdScratch;
+    if (directory != null && await directory.exists()) {
+      await directory.delete(recursive: true);
+    }
   });
 
   BackupService serviceFor(LocalStore store) => BackupService(
