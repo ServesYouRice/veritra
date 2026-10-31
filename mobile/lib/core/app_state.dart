@@ -1511,6 +1511,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       notifyListeners();
       try {
         await localStore.quarantineUnreadableDatabase(confirmed: true);
+        // The MLS outbox these marks follow went with the database.
+        _mlsAcceptedUnfinished.clear();
         localStoreFailure = null;
         _localDataDamaged = false;
         _storageFullFailures = 0;
@@ -4775,11 +4777,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   }
 
   /// Sync found the local database damaged while the app ran. The session
-  /// is put down in memory only, with no store writes (they would fail or
-  /// corrupt more), and the app shows the recovery screen a failed restore
-  /// shows: Retry reopens the store, and the confirmed reset moves it aside
-  /// (C-d0ba626ecdd7). This runs inside the sync owner's own pass, so the
-  /// owner is disposed, never drained.
+  /// is put down in memory; the only store call is a best-effort release of
+  /// the sync lease, whose failure is ignored. The app then shows the
+  /// recovery screen a failed restore shows. Retry restores the session
+  /// from the same open database handle (the store keeps it cached), so it
+  /// helps only if the damage does not touch what a restore reads; the
+  /// confirmed reset moves the database aside (C-d0ba626ecdd7). This runs
+  /// inside the sync owner's own pass, so the owner is disposed, never
+  /// drained.
   void _enterDamagedStorageRecovery() {
     _sessionGeneration++;
     _syncStartFailed = null;
@@ -4803,25 +4808,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (previousSync != null) {
       unawaited(previousSync.dispose().catchError((Object _) {}));
     }
+    _wakeRun?.cancel();
     api?.close();
     api = null;
     session = null;
-    _outboxRetryTimer?.cancel();
-    _outboxRetryTimer = null;
-    _mlsOutboxRetryTimer?.cancel();
-    _mlsOutboxRetryTimer = null;
-    _resetMlsRetries();
-    _expiryTimer?.cancel();
-    _expiryTimer = null;
-    _cancelCatchUpRetry();
-    devices = <Device>[];
-    conversationsLoaded = false;
-    messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
-    _history.clear();
-    composerDrafts.clear();
-    syncRecovery = null;
-    deviceRecoveryRequired = false;
-    syncError = null;
+    _resetSessionMemory();
     localStoreFailure = null;
     _localDataDamaged = true;
     lifecycle = SessionLifecycle.recoveryRequired;
@@ -5338,6 +5329,27 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final detachedApi = api;
     api = null;
     if (!keepApiOpen) detachedApi?.close();
+    _resetSessionMemory();
+    lifecycle = SessionLifecycle.ready;
+    recoveryMessage = null;
+    return keepApiOpen ? detachedApi : null;
+  }
+
+  /// Drops everything one session kept in memory: lists, flags, caches,
+  /// request decisions, retry state and timers. It makes no store call and
+  /// leaves [session], [api], [lifecycle] and [recoveryMessage] to the
+  /// caller. Shared by sign-out and the damaged-storage stop, so nothing of
+  /// one account carries over to the next (C-d0ba626ecdd7). The MLS
+  /// "accepted, unfinished" marks are not dropped here: they follow the
+  /// stored MLS outbox, not the session.
+  void _resetSessionMemory() {
+    _keyPackagesOwed = true;
+    _keyPackageRetryFailures = 0;
+    _keyPackageRetryAt = null;
+    if (cryptoService case final NoticeCaptureConsumer capture) {
+      capture.noticeCaptureEnabled = false;
+    }
+    _cancelDraftTimers();
     conversations = <Conversation>[];
     conversationsLoaded = false;
     communitiesLoaded = false;
@@ -5405,9 +5417,6 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     _pendingWakeGeneration = 0;
     deviceRecoveryRequired = false;
     syncRecovery = null;
-    lifecycle = SessionLifecycle.ready;
-    recoveryMessage = null;
-    return keepApiOpen ? detachedApi : null;
   }
 
   Future<void> _persistSnapshot() async {
