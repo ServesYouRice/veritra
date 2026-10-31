@@ -6060,7 +6060,21 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     _mlsRetryWake =
         Timer(delay < _minimumRetryDelay ? _minimumRetryDelay : delay, () {
       _mlsRetryWake = null;
-      if (_disposed || !_syncOwnerActive(owner, generation)) return;
+      if (_disposed) return;
+      if (!_syncOwnerActive(owner, generation)) {
+        // A rotated token or a sync restart keeps this device signed in:
+        // its backoffs are still in place (a session end clears them and
+        // cancels this timer), so the wake moves to the live owner instead
+        // of being lost.
+        final live = session;
+        if (live != null &&
+            live.baseUrl == owner.baseUrl &&
+            live.accountId == owner.accountId &&
+            live.deviceId == owner.deviceId) {
+          _armMlsRetryWake();
+        }
+        return;
+      }
       // Hand every expired deadline to the catch-up below, so a pass that
       // cannot reach the change (a failed fetch, say) does not re-fire the
       // wake at once.
