@@ -21,7 +21,7 @@ import (
 )
 
 // profile is a synthetic dataset. The workload model is per online device:
-// one sync socket; Poisson sends at -rate per minute through
+// one sync socket; open-loop Poisson sends at -rate per minute through
 // POST /messages/envelopes (the app's send path); one message in
 // AttachmentEvery carries an attachment that every online recipient
 // downloads, and one attachment in LargeEvery is LargeAttachmentBytes;
@@ -61,6 +61,12 @@ const (
 	attachmentMetadata = `{"version":1,"algorithm":"AES-256-GCM-chunked","chunk_size":1048576}`
 	seedWorkers        = 8
 	readEvery          = 2 * time.Minute
+	// maxSendsInFlight caps one device's concurrent arrivals (upload plus
+	// send). Arrivals over it are recorded as dropped sends, so a stalled
+	// server shows as failures instead of lowering the offered load.
+	maxSendsInFlight = 8
+	// rateCheckEvery bounds how long a new step's rate waits to apply.
+	rateCheckEvery = time.Second
 )
 
 type conversation struct {
@@ -86,6 +92,9 @@ type world struct {
 	// rate is the current messages per device per minute (float64 bits);
 	// each load step sets it.
 	rate atomic.Uint64
+	// arrivals counts scheduled send arrivals, dropped ones included, for
+	// the offered rate of each step.
+	arrivals atomic.Int64
 }
 
 type ackedMessage struct {
@@ -119,7 +128,10 @@ type runResult struct {
 
 // stepResult is one measured window at one send rate.
 type stepResult struct {
-	Rate     float64            `json:"messages_per_device_minute"`
+	Rate float64 `json:"messages_per_device_minute"`
+	// Offered is the send rate actually generated in the window: arrivals
+	// (dropped ones included) per online device per minute.
+	Offered  float64            `json:"offered_messages_per_device_minute"`
 	Ops      []opSummary        `json:"ops"`
 	Timeline timelineSummary    `json:"timeline"`
 	Server   map[string]float64 `json:"server_metrics,omitempty"`
@@ -201,10 +213,15 @@ func execute(ctx context.Context, target *url.URL, setupToken string, opts optio
 		before, beforeErr := scrape(ctx, opts.MetricsURL)
 		fmt.Fprintf(progress, "load: measuring for %s\n", opts.Duration)
 		measureFrom := time.Since(w.rec.started)
+		arrivalsFrom := w.arrivals.Load()
 		sleepCtx(ctx, opts.Duration)
 		measureTo := time.Since(w.rec.started)
+		arrivalsTo := w.arrivals.Load()
 		after, afterErr := scrape(ctx, opts.MetricsURL)
 		step := stepResult{Rate: rate}
+		if minutes := (measureTo - measureFrom).Minutes(); minutes > 0 {
+			step.Offered = float64(arrivalsTo-arrivalsFrom) / float64(opts.Online) / minutes
+		}
 		step.Ops, step.Timeline = w.rec.summarize(measureFrom, measureTo)
 		if opts.MetricsURL != "" {
 			step.Server, step.ServerError = serverMetrics(before, beforeErr, after, afterErr, (measureTo - measureFrom).Seconds())
@@ -477,7 +494,13 @@ func (w *world) sendMessage(ctx context.Context, dev *device, conversationID str
 }
 
 func (w *world) timed(op int, fn func() (int, error)) (int, error) {
-	started := time.Now()
+	return w.timedFrom(op, time.Now(), fn)
+}
+
+// timedFrom measures fn from started, which may be earlier than the call:
+// a send is timed from its scheduled arrival, so delay on the client side
+// counts against it (no coordinated omission).
+func (w *world) timedFrom(op int, started time.Time, fn func() (int, error)) (int, error) {
 	status, err := fn()
 	w.rec.record(op, started, time.Since(started), classify(status, err))
 	return status, err
@@ -505,66 +528,127 @@ func (w *world) runDevice(ctx context.Context, dev *device, coldWake <-chan stru
 	wg.Wait()
 }
 
+// sendRate is the current step's messages per device per minute.
+func (w *world) sendRate() float64 { return math.Float64frombits(w.rate.Load()) }
+
+// nextGap draws one exponential interarrival gap at rate messages a minute.
+// It is never truncated: these gaps make an exact Poisson process.
+func nextGap(rng *mrand.Rand, rate float64) time.Duration {
+	gap := rng.ExpFloat64() * float64(time.Minute) / rate
+	// Keep the conversion defined for a vanishing rate; the sender rechecks
+	// the rate every second anyway.
+	return time.Duration(min(gap, float64(100*365*24*time.Hour)))
+}
+
+// runSender generates the device's sends as an open loop: arrivals follow a
+// Poisson process at the current rate whether or not earlier sends have
+// finished, so a slow server cannot lower the load it is offered. The wait
+// is checked against the rate at least every rateCheckEvery; on a change
+// the remaining wait is redrawn at the new rate, which exponential gaps
+// allow without bias. Each arrival runs on its own goroutine, at most
+// maxSendsInFlight at once; an arrival over that cap is recorded as a
+// dropped send. runSender returns only after its sends have finished.
 func (w *world) runSender(ctx context.Context, dev *device, rng *mrand.Rand) {
 	convs := w.byDevice[dev.index]
 	if len(convs) == 0 {
 		<-ctx.Done()
 		return
 	}
+	var inFlight sync.WaitGroup
+	defer inFlight.Wait()
+	slots := make(chan struct{}, maxSendsInFlight)
+	rate := w.sendRate()
+	next := time.Now()
+	if rate > 0 {
+		next = next.Add(nextGap(rng, rate))
+	}
 	for {
-		rate := math.Float64frombits(w.rate.Load())
-		if rate <= 0 {
-			if !sleepCtx(ctx, time.Second) {
+		if now := time.Now(); rate <= 0 || now.Before(next) {
+			wait := rateCheckEvery
+			if rate > 0 {
+				wait = min(wait, next.Sub(now))
+			}
+			if !sleepCtx(ctx, wait) {
 				return
+			}
+			if current := w.sendRate(); current != rate {
+				rate = current
+				if rate > 0 {
+					next = time.Now().Add(nextGap(rng, rate))
+				}
 			}
 			continue
 		}
-		// Poisson arrivals; a gap is capped so a rate change applies soon.
-		meanGap := float64(time.Minute) / rate
-		gap := time.Duration(min(-math.Log(1-rng.Float64())*meanGap, float64(2*time.Minute)))
-		if !sleepCtx(ctx, gap) {
-			return
-		}
+		// The next arrival is drawn from this one's scheduled time, not from
+		// when the loop got here, so a late wake-up does not stretch gaps.
+		arrival := next
+		next = arrival.Add(nextGap(rng, rate))
+		w.arrivals.Add(1)
+		// rng is not safe for concurrent use: draw everything here.
 		conv := w.convs[convs[rng.IntN(len(convs))]]
-		var refs []string
+		attachment := 0
 		if w.profile.AttachmentEvery > 0 && rng.IntN(w.profile.AttachmentEvery) == 0 {
-			var id string
-			_, err := w.timed(opUpload, func() (int, error) {
-				var err error
-				size := w.profile.AttachmentBytes
-				if w.profile.LargeEvery > 0 && rng.IntN(w.profile.LargeEvery) == 0 {
-					size = w.profile.LargeBytes
-				}
-				id, err = w.uploadAttachment(ctx, dev, conv.id, "", size)
-				return http.StatusCreated, err
-			})
-			if err != nil {
-				continue
+			attachment = w.profile.AttachmentBytes
+			if w.profile.LargeEvery > 0 && rng.IntN(w.profile.LargeEvery) == 0 {
+				attachment = w.profile.LargeBytes
 			}
-			refs = []string{id}
 		}
-		key, err := randomSecret()
+		select {
+		case slots <- struct{}{}:
+		default:
+			w.rec.record(opSend, arrival, 0, outcomeDropped)
+			continue
+		}
+		inFlight.Add(1)
+		go func() {
+			defer inFlight.Done()
+			defer func() { <-slots }()
+			w.sendArrival(ctx, dev, conv, attachment, arrival)
+		}()
+	}
+}
+
+// sendArrival performs one arrival: the attachment upload first, when there
+// is one, then the send that references it. The upload is timed from the
+// scheduled arrival and the send from when it could start.
+func (w *world) sendArrival(ctx context.Context, dev *device, conv conversation, attachment int, arrival time.Time) {
+	sendStart := arrival
+	var refs []string
+	if attachment > 0 {
+		var id string
+		_, err := w.timedFrom(opUpload, arrival, func() (int, error) {
+			var err error
+			id, err = w.uploadAttachment(ctx, dev, conv.id, "", attachment)
+			return http.StatusCreated, err
+		})
 		if err != nil {
 			return
 		}
-		body := map[string]any{"conversation_id": conv.id, "idempotency_key": key,
-			"ciphertext": w.ciphertext(w.profile.CiphertextBytes), "crypto_protocol": cryptoProtocol}
-		if len(refs) > 0 {
-			body["attachment_refs"] = refs
-		}
-		w.pending.Store(key, time.Now())
-		var created struct {
-			ID string `json:"id"`
-		}
-		_, err = w.timed(opSend, func() (int, error) {
-			status, err := w.client.json(ctx, http.MethodPost, "/api/v1/messages/envelopes", dev, "", body, &created, nil)
-			return status, expect(status, err, http.StatusCreated)
-		})
-		if err == nil && created.ID != "" {
-			w.ackMu.Lock()
-			w.acked = append(w.acked, ackedMessage{id: created.ID, sender: dev.index})
-			w.ackMu.Unlock()
-		}
+		refs = []string{id}
+		sendStart = time.Now()
+	}
+	key, err := randomSecret()
+	if err != nil {
+		w.rec.record(opSend, sendStart, time.Since(sendStart), outcomeTransportError)
+		return
+	}
+	body := map[string]any{"conversation_id": conv.id, "idempotency_key": key,
+		"ciphertext": w.ciphertext(w.profile.CiphertextBytes), "crypto_protocol": cryptoProtocol}
+	if len(refs) > 0 {
+		body["attachment_refs"] = refs
+	}
+	w.pending.Store(key, sendStart)
+	var created struct {
+		ID string `json:"id"`
+	}
+	_, err = w.timedFrom(opSend, sendStart, func() (int, error) {
+		status, err := w.client.json(ctx, http.MethodPost, "/api/v1/messages/envelopes", dev, "", body, &created, nil)
+		return status, expect(status, err, http.StatusCreated)
+	})
+	if err == nil && created.ID != "" {
+		w.ackMu.Lock()
+		w.acked = append(w.acked, ackedMessage{id: created.ID, sender: dev.index})
+		w.ackMu.Unlock()
 	}
 }
 

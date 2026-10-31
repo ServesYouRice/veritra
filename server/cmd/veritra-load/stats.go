@@ -34,7 +34,7 @@ func printStep(w io.Writer, step stepResult) {
 	if !step.Verdict.Pass {
 		status = "MISS"
 	}
-	_, _ = fmt.Fprintf(w, "\nstep %.2f msgs/device/min: %s\n", step.Rate, status)
+	_, _ = fmt.Fprintf(w, "\nstep %.2f msgs/device/min (offered %.2f): %s\n", step.Rate, step.Offered, status)
 	_, _ = fmt.Fprintf(w, "%-18s %8s %8s %6s %6s %6s %9s %9s %9s %9s\n", "op", "count", "per_s", "err", "429", "4xx", "p50_ms", "p95_ms", "p99_ms", "max_ms")
 	for _, s := range step.Ops {
 		if s.Count == 0 {
@@ -75,7 +75,22 @@ const (
 	outcomeClientError
 	outcomeServerError
 	outcomeTransportError
+	// outcomeDropped is work the tool generated but could not start
+	// because too much was still waiting on the server (a device's send
+	// cap). It counts as an error, never as skipped work.
+	outcomeDropped
 )
+
+// failedOutcome reports whether result means the server did not complete
+// the work, for the outage timeline. Rate limits and client errors are
+// answers, so they do not count.
+func failedOutcome(result outcome) bool {
+	switch result {
+	case outcomeServerError, outcomeTransportError, outcomeDropped:
+		return true
+	}
+	return false
+}
 
 type sample struct {
 	at      time.Duration // since the load started
@@ -202,7 +217,7 @@ func timeline(samples []sample) timelineSummary {
 			bucket = &second{}
 			buckets[index] = bucket
 		}
-		if s.result == outcomeServerError || s.result == outcomeTransportError {
+		if failedOutcome(s.result) {
 			bucket.failed++
 		} else {
 			bucket.ok++

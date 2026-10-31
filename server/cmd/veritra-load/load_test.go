@@ -52,6 +52,9 @@ func TestSmokeLoadAgainstInProcessServer(t *testing.T) {
 		t.Fatalf("steps = %d, want 2", len(result.Steps))
 	}
 	for _, step := range result.Steps {
+		if step.Offered <= 0 {
+			t.Fatalf("step at %.0f/min reports no offered rate", step.Rate)
+		}
 		for _, op := range step.Ops {
 			if op.Errors+op.ClientErrors+op.RateLimited > 0 {
 				t.Fatalf("%s failed at %.0f/min: %+v", op.Op, step.Rate, op)
