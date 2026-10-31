@@ -10,9 +10,12 @@ review. The `docs/crypto.md` change-log entry lands with the ABI-10 package.
 map, the signer and the K2 transfers into one AES-256-GCM blob (format 3).
 Hard caps: 100,000 records, 4 MiB per record, 32 MiB in total (also in
 `ffi.rs` `MAX_STATE_BYTES` and on restore). Nothing shrinks the state: no
-leave or delete call, unclaimed key packages are never pruned,
-`clear_pending_commit` leaks the staged leaf key pair, and `MlsGroup::delete`
-leaves past-epoch key pairs. Once a cap is hit every `_sealNext` fails, sync
+leave or delete call, unclaimed key packages are never pruned, and
+`MlsGroup::delete` leaves past-epoch key pairs. (This design first assumed
+`clear_pending_commit` leaks the staged update-path key pair. S1 showed
+that is wrong for OpenMLS 0.9.2: a commit's path keys live inside the
+staged commit, in the group state record. Standalone key pairs come only
+from update proposals, which Veritra does not make.) Once a cap is hit every `_sealNext` fails, sync
 stops under I33 and the device stays on the recovery screen. Every event
 also re-encrypts all state, which is unworkable at C8 group sizes.
 
@@ -36,22 +39,25 @@ someone who can write the database: they already hold the key.
 `MlsDevice.provider` becomes `VeritraProvider { crypto: RustCrypto,
 storage: PartitionedStorage }`, implementing `OpenMlsProvider`. Both types
 are re-exported by `openmls_rust_crypto`, so no new crate.
-`PartitionedStorage` implements `StorageProvider<CURRENT_VERSION>` (about
-72 methods). Each method delegates to one inner `MemoryStorage`:
+`PartitionedStorage` implements `StorageProvider<CURRENT_VERSION>` (53
+methods in OpenMLS 0.9.2 without draft features). Each method delegates to one inner `MemoryStorage`:
 
 | Partition | Gets |
 |---|---|
 | `device` | `SignatureKeyPair`; PSK methods (unused today) |
 | `group(id)` | every method that takes a `GroupId`: tree, context, secrets, epoch key pairs, proposals, own leaf nodes, join config, group state, resumption PSKs |
-| `group(scope)` | `write/read/delete_encryption_key_pair` (standalone update-leaf key pairs, which carry no group id) |
+| `group(scope)` | `write/read/delete_encryption_key_pair` (standalone key pairs, which carry no group id; only update proposals write them) |
 | `kp(hash_ref)` | `write/read/delete_key_package` |
 
 - **Scope guard.** Every `MlsDevice` group method sets the active group
   before calling OpenMLS. A group-keyed call for another id fails with
   `MlsError::Storage`, and so does a key-pair write with no scope. A record
   can never be filed under the wrong owner without an error.
-- **Group id bytes.** Routing serializes the generic `GroupId` with
-  `serde_json`, the form `MemoryStorage` already uses in its keys (O3).
+- **Group id bytes.** Routing uses the exact key bytes `MemoryStorage`
+  writes for a `GroupId` (S1 takes them from a probe `MemoryStorage`) (O3).
+  A key package's hash reference is serialized once with `serde_json`
+  (D76), so a lookup goes straight to its partition: a Welcome may name
+  thousands of references.
 - **Byte-identical keys.** Inner keys and values are exactly what
   `MemoryStorage` writes today. The partitions together equal today's flat
   map.
@@ -61,8 +67,10 @@ are re-exported by `openmls_rust_crypto`, so no new crate.
 
 **Pruning in the core:**
 
-- **Leaked commit key.** `clear_pending_commit` first deletes the exact pair
-  found from `pending_commit().update_path_leaf_node().encryption_key()`.
+- **No commit-key pruning.** In OpenMLS 0.9.2 `clear_pending_commit`
+  leaves no standalone pair (S1 tests this), so nothing is pruned there. A
+  withdrawn update proposal does leave its pair; it sits in that group's
+  partition and goes with it.
 - **Own removal.** When a processed commit leaves the group inactive (own
   removal applied), the whole group partition is dropped in the same
   operation. That also clears the past-epoch pairs `MlsGroup::delete` misses.
@@ -191,9 +199,10 @@ version bytes only choose the route; Rust re-verifies everything.
    `counter == stored`.
 2. **Classify** each flat key by its exact `MemoryStorage` label, then parse
    the JSON `GroupId` or hash ref and require the trailing `u16` version.
-   - Standalone `EncryptionKeyPair`s go to the group whose pending commit's
-     update-path leaf has that key. The rest are past leaks: dropped and
-     counted.
+   - Standalone `EncryptionKeyPair`s come only from update proposals. Each
+     goes to the group whose `OwnLeafNodes` hold a leaf with that
+     encryption key. The rest are past leaks: dropped and counted. (S1
+     keeps them in an unowned store so v3 re-seals byte-identically.)
    - Inactive groups are dropped.
    - An unknown label, unparseable key or duplicate fails with
      `InvalidState`.
@@ -258,8 +267,8 @@ members, against v3.
 ## 8. Packages, in order
 
 1. **S1, Rust internal (Opus review).** `VeritraProvider`,
-   `PartitionedStorage`, scope guard, leak and own-removal pruning, v3
-   classifier. No ABI or format change: `seal_state` still writes v3 as the
+   `PartitionedStorage`, scope guard, own-removal pruning, v3 classifier
+   (no commit-key leak to prune; see section 1). No ABI or format change: `seal_state` still writes v3 as the
    union of partitions, and v3 restore runs the classifier, so it is
    exercised on every restore before anything depends on it.
 2. **S2, local schema (Opus review).** Table, `changes` plumbing,
