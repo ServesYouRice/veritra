@@ -8,6 +8,7 @@ import 'package:private_messenger/core/client_config.dart';
 import 'package:private_messenger/core/transport_policy.dart';
 import 'package:private_messenger/crypto/attachment_crypto.dart';
 import 'package:private_messenger/crypto/backup_service.dart';
+import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
@@ -251,12 +252,19 @@ void main() {
     // the groups add the new device.
     expect((await replacement.store.loadMessages(conv)).map((m) => m.body),
         contains('hi owner'));
+    // A member device adds it to the group (I51); a non-coordinator only
+    // falls back after three minutes.
+    final replacementMls =
+        replacement.state.cryptoService as MlsConversationCryptoService;
+    await replacement.waitUntil(
+        () async => await replacementMls.groupEpoch(conv) != null,
+        timeout: const Duration(minutes: 4));
     expect(await offline.state.sendMessageTo(conv, 'after restore'), isTrue);
     await replacement.waitFor(conv, (m) => m.body == 'after restore',
         timeout: const Duration(seconds: 90));
     expect(replacement.state.syncRecovery, isNull);
     expect(replacement.state.deviceRecoveryRequired, isFalse);
-  }, skip: skip, timeout: const Timeout(Duration(minutes: 8)));
+  }, skip: skip, timeout: const Timeout(Duration(minutes: 12)));
 }
 
 class _Server {
