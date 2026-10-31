@@ -234,7 +234,7 @@ On success, in one transaction:
 4. **Persist the pending claim.**
    - What: the claim token, device id, device secret, request id,
      `ready_at` and the claim's MLS state.
-   - Where: K2's encrypted pending-enrollment storage (local schema 16) if
+   - Where: K2's encrypted pending-enrollment storage (local schema 17; 16 is D70 S2's `local_crypto_records`) if
      it has landed. Otherwise this package builds it, and K2 reuses it.
    - **Never in a backup** (D71): the export skips it, and
      `backup_no_credentials_test.dart` scans for it.
