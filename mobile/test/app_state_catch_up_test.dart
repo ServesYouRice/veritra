@@ -1,0 +1,334 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:flutter/widgets.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:private_messenger/core/api_client.dart';
+import 'package:private_messenger/core/app_state.dart';
+import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/crypto/crypto_service.dart';
+import 'package:private_messenger/storage/encrypted_database.dart';
+import 'package:private_messenger/storage/local_store.dart';
+import 'package:private_messenger/sync/sync_service.dart';
+
+/// The catch-up loop in [AppState]: received messages whose publication
+/// failed (TASK-031), undecryptable peer messages under D54 (TASK-032),
+/// storage errors around the recovery record (TASK-034) and projection
+/// refreshes per run of events (TASK-036).
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('received messages whose publication failed (TASK-031)', () {
+    test('are shown once by the next catch-up, even with no new events',
+        () async {
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[
+          _envelopeEvent(4, 'msg_one'),
+          _envelopeEvent(5, 'msg_two'),
+        ];
+      // Reading history to show the page fails once.
+      final store = _FlakyStore()..historyFailures = 1;
+      final published = <String>[];
+      final harness = await _Harness.start(api,
+          store: store, configure: _recordPublished(published));
+
+      await harness.waitFor(() => harness.state.syncError != null);
+      expect(await store.loadSyncCursor(), 5);
+      expect(store.historyFailures, 0);
+      expect(harness.state.messagesFor('conv_1'), isEmpty);
+      expect(published, isEmpty);
+
+      // Nothing new on the server.
+      harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await harness.waitFor(() => published.isNotEmpty);
+      expect(published, <String>['msg_one', 'msg_two']);
+      expect(harness.state.messagesFor('conv_1').map((item) => item.id),
+          unorderedEquals(<String>['msg_one', 'msg_two']));
+      await harness.waitFor(() => harness.state.syncError == null);
+
+      // Shown exactly once.
+      harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await harness.settle();
+      await harness.waitFor(() => harness.state.syncError == null);
+      expect(published, <String>['msg_one', 'msg_two']);
+      expect(api.syncCalls, greaterThanOrEqualTo(3));
+      harness.dispose();
+    });
+
+    test('a failed batch and its retry are both kept for the next catch-up',
+        () async {
+      // The 50th envelope fills a batch; showing it fails, and so does the
+      // retry after the failure.
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[
+          for (var id = 1; id <= 51; id++) _envelopeEvent(id, 'msg_$id'),
+        ];
+      final store = _FlakyStore()..historyFailures = 2;
+      final published = <String>[];
+      final harness = await _Harness.start(api,
+          store: store, configure: _recordPublished(published));
+
+      await harness.waitFor(() => harness.state.syncError != null);
+      expect(await store.loadSyncCursor(), 50);
+      expect(store.historyFailures, 0);
+      expect(published, isEmpty);
+
+      harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await harness.waitFor(() => published.length >= 51);
+      await harness.waitFor(() => harness.state.syncError == null);
+      expect(published, <String>[for (var id = 1; id <= 51; id++) 'msg_$id']);
+      expect(harness.state.messagesFor('conv_1'), hasLength(51));
+      harness.dispose();
+    });
+
+    test('are dropped when the session changes', () async {
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[_envelopeEvent(4, 'msg_one')];
+      final store = _FlakyStore()..historyFailures = 1;
+      await _keepIdentity(store);
+      final published = <String>[];
+      final harness = await _Harness.start(api,
+          store: store, configure: _recordPublished(published));
+      await harness.waitFor(() => harness.state.syncError != null);
+      expect(await store.loadSyncCursor(), 4);
+
+      // Signed out and in again before any catch-up could show them.
+      await harness.state.logout();
+      await harness.state.login('https://localhost:8080', 'me', 'password');
+      await harness.waitFor(() => harness.state.lastSyncedAt != null);
+      await harness.settle();
+
+      expect(await store.loadSyncCursor(), 4);
+      expect(published, isEmpty);
+      expect(harness.state.messagesFor('conv_1'), isEmpty);
+      harness.dispose();
+    });
+  });
+}
+
+void Function(AppState) _recordPublished(List<String> published) =>
+    (state) => state.onMessagesPublished =
+        (items) => published.addAll(items.map((item) => item.id));
+
+/// Protected MLS state, so signing in again keeps this device's identity
+/// and its cursor.
+Future<void> _keepIdentity(LocalStore store) => store.saveCryptoState(
+    StoredCryptoState(
+        counter: 1,
+        stateKey: List<int>.filled(32, 7),
+        sealedState: const <int>[1]),
+    0);
+
+const _session = Session(
+  baseUrl: 'https://localhost:8080',
+  token: 'token',
+  accountId: 'acct_me',
+  deviceId: 'dev_me',
+  deviceSecret: 'secret',
+);
+
+SyncEvent _envelopeEvent(int id, String messageId,
+        {List<int> ciphertext = const <int>[1],
+        String conversationId = 'conv_1'}) =>
+    SyncEvent(
+      id: id,
+      type: 'message.envelope.created',
+      conversationId: conversationId,
+      payload: <String, Object?>{
+        'message_id': messageId,
+        'conversation_id': conversationId,
+        'envelope': ReceivedMessageEnvelope(
+          id: messageId,
+          conversationId: conversationId,
+          senderAccountId: 'acct_peer',
+          senderDeviceId: 'dev_peer',
+          idempotencyKey: 'idem_$messageId',
+          ciphertext: ciphertext,
+          cryptoProtocol: 'mls10-openmls-v1',
+          createdAt: DateTime.utc(2026, 9, 24, 0, 0, id),
+        ).toJson(),
+      },
+      createdAt: DateTime.utc(2026, 9, 24),
+    );
+
+class _Harness {
+  _Harness(this.state, this.store, this.crypto);
+
+  final AppState state;
+  final LocalStore store;
+  final _FakeMlsCrypto crypto;
+
+  static Future<_Harness> start(_ScriptedApi api,
+      {LocalStore? store, void Function(AppState state)? configure}) async {
+    final local = store ?? MemoryLocalStore();
+    await local.saveSession(_session);
+    final crypto = _FakeMlsCrypto(local);
+    final state = AppState(
+      apiClientFactory: (_) => api,
+      cryptoService: crypto,
+      localStore: local,
+      syncServiceFactory: (_, __) => _QuietSync(),
+    );
+    configure?.call(state);
+    await state.tryRestoreSession();
+    return _Harness(state, local, crypto);
+  }
+
+  Future<void> settle() async {
+    for (var i = 0; i < 20; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+  }
+
+  Future<void> waitFor(FutureOr<bool> Function() condition) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 15));
+    while (DateTime.now().isBefore(deadline)) {
+      if (await condition()) return;
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+    }
+    fail('condition not reached');
+  }
+
+  void dispose() => state.dispose();
+}
+
+/// A memory store whose history reads fail a set number of times.
+class _FlakyStore extends MemoryLocalStore {
+  int historyFailures = 0;
+
+  @override
+  Future<List<LocalMessage>> loadMessages(String conversationId) async {
+    if (historyFailures > 0) {
+      historyFailures--;
+      // EBUSY: a storage error that passes by itself.
+      throw const FileSystemException('busy', '', OSError('busy', 16));
+    }
+    return super.loadMessages(conversationId);
+  }
+}
+
+class _ScriptedApi extends ApiClient {
+  _ScriptedApi() : super(baseUrl: 'https://localhost:8080');
+
+  List<SyncEvent> events = <SyncEvent>[];
+  int? syncStatus;
+  int syncCalls = 0;
+  int conversationCalls = 0;
+  int deviceCalls = 0;
+
+  @override
+  Future<List<Conversation>> conversations(String token) async {
+    conversationCalls++;
+    return <Conversation>[
+      Conversation(id: 'conv_1', kind: 'group'),
+      Conversation(id: 'conv_2', kind: 'group'),
+    ];
+  }
+
+  @override
+  Future<List<Device>> devices(String token) async {
+    deviceCalls++;
+    return const <Device>[];
+  }
+
+  @override
+  Future<List<MlsRevocation>> mlsRevocations(String token) async =>
+      const <MlsRevocation>[];
+
+  @override
+  Future<Map<String, Object?>> pushConfig(String token) async =>
+      const <String, Object?>{'enabled': false};
+
+  @override
+  Future<List<SyncEvent>> syncEvents(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async {
+    syncCalls++;
+    if (syncStatus == 401) {
+      throw ApiException(401, '{"error":"unauthorized"}');
+    }
+    return events
+        .where((event) => event.id > after)
+        .take(limit)
+        .toList(growable: false);
+  }
+
+  @override
+  Future<Session> login({
+    required String username,
+    required String password,
+    required String deviceId,
+    required String deviceSecret,
+  }) async =>
+      Session(
+        baseUrl: baseUrl,
+        token: 'token_again',
+        accountId: 'acct_me',
+        deviceId: deviceId,
+        username: username,
+      );
+
+  @override
+  Future<void> publishDeviceKeyPackages(
+    String token,
+    List<List<int>> keyPackages, {
+    Duration lifetime = const Duration(days: 14),
+  }) async {}
+
+  @override
+  Future<ReceivedMessageEnvelope> message(
+          String token, String messageId) async =>
+      throw ApiException(404, '{"error":"not_found"}');
+}
+
+class _FakeMlsCrypto implements MlsConversationCryptoService {
+  _FakeMlsCrypto(this.store);
+
+  final LocalStore store;
+  final List<String> applied = <String>[];
+
+  @override
+  Future<void> activateSession(Session session) async {}
+
+  @override
+  Future<List<int>?> processApplicationMessage(
+      ReceivedMessageEnvelope envelope, int syncEventId) async {
+    applied.add(envelope.id);
+    await store.commitSyncEvent(SyncEventCommit(
+      eventKey: 'application:$syncEventId:${envelope.id}',
+      conversationId: envelope.conversationId,
+      expectedCursor: await store.loadSyncCursor(),
+      cursor: syncEventId,
+    ));
+    return null;
+  }
+
+  @override
+  Future<List<List<int>>> createReplenishmentKeyPackages(
+          {int count = 5}) async =>
+      <List<int>>[
+        for (var i = 0; i < count; i++) <int>[i]
+      ];
+
+  @override
+  Future<void> dispose() async {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName}');
+}
+
+class _QuietSync implements SyncService {
+  final _controller = StreamController<Map<String, Object?>>.broadcast();
+
+  @override
+  Stream<Map<String, Object?>> get events => _controller.stream;
+
+  @override
+  Future<void> connect() async {}
+
+  @override
+  Future<void> dispose() => _controller.close();
+}

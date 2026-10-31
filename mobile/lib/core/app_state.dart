@@ -4019,6 +4019,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       return;
     }
     try {
+      // Envelopes an earlier pass committed but could not show.
+      await _publishReceived(
+          <ReceivedMessageEnvelope>[], current, ownerGeneration);
       var pageCursor = await localStore.loadSyncCursor();
       const pageSize = 200;
       while (true) {
@@ -4107,7 +4110,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             notifyListeners();
           }
         } catch (_) {
-          // Messages committed before the failure still reach the UI; the
+          // Messages committed before the failure still reach the UI (or,
+          // if their history cannot be read now, the next catch-up); the
           // failure itself is what the caller handles.
           try {
             await _publishReceived(received, current, ownerGeneration);
@@ -4594,20 +4598,48 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// them; the rest of a sync page is shown when the page ends.
   static const _receivedBatchLimit = 50;
 
+  /// Received envelopes already committed whose history could not be read
+  /// to show them, and the sync owner generation that committed them. The
+  /// cursor is past them, so a later catch-up of that owner shows them, even
+  /// with no new events; no other owner ever does.
+  final _unpublishedReceived = <ReceivedMessageEnvelope>[];
+  int? _unpublishedGeneration;
+
   /// Shows [received] (already committed) with the decrypted history of
-  /// their conversations in one notification, then empties the list. The
-  /// history is read first, so no frame draws a decrypted message as
-  /// ciphertext; if that read fails the list is kept for the caller's
-  /// retry. Nothing is applied once another session owns sync.
+  /// their conversations in one notification, then empties the list.
+  /// Envelopes an earlier try of the same owner could not show go first.
+  /// The history is read first, so no frame draws a decrypted message as
+  /// ciphertext; if that read fails, the envelopes move to
+  /// [_unpublishedReceived] for the owner's next try and the error is
+  /// rethrown. Nothing is applied once another session owns sync, and work
+  /// kept for an owner that no longer runs is dropped.
   Future<void> _publishReceived(
     List<ReceivedMessageEnvelope> received,
     Session owner,
     int ownerGeneration,
   ) async {
+    if (_unpublishedGeneration != _sessionGeneration) {
+      _unpublishedReceived.clear();
+      _unpublishedGeneration = null;
+    }
+    if (_unpublishedGeneration == ownerGeneration) {
+      received.insertAll(0, _unpublishedReceived);
+      _unpublishedReceived.clear();
+      _unpublishedGeneration = null;
+    }
     if (received.isEmpty) return;
     final histories = <String, ConversationHistory>{};
-    for (final id in received.map((item) => item.conversationId).toSet()) {
-      histories[id] = await _loadHistory(id);
+    try {
+      for (final id in received.map((item) => item.conversationId).toSet()) {
+        histories[id] = await _loadHistory(id);
+      }
+    } catch (_) {
+      if (_syncOwnerActive(owner, ownerGeneration)) {
+        _unpublishedReceived.addAll(received);
+        _unpublishedGeneration = ownerGeneration;
+      }
+      received.clear();
+      rethrow;
     }
     if (_syncOwnerActive(owner, ownerGeneration)) {
       _mergeReceivedEnvelopes(received);
