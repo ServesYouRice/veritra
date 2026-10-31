@@ -72,6 +72,12 @@ const (
 	// every HTTP request ends on its own first. What is still running then
 	// is counted once as unfinished.
 	settleGrace = clientTimeout + 10*time.Second
+	// defaultDeliveryDeadline is how long after a send's start a recipient
+	// client may take to see its realtime event before the delivery counts
+	// as missed (-delivery-deadline). It is well above the 2 s p99 target,
+	// so a slow delivery stays a latency sample, and below settleGrace, so
+	// a step's summary waits for every delivery to end.
+	defaultDeliveryDeadline = 30 * time.Second
 )
 
 type conversation struct {
@@ -87,9 +93,13 @@ type world struct {
 	convs    []conversation
 	byDevice [][]int
 	rec      *recorder
-	// pending maps a message's idempotency key to its send start, for the
-	// realtime delivery latency seen by recipients.
-	pending    sync.Map
+	// clients holds, per online device index, the devices its simulated
+	// clients use: slot 0 is the primary client, slot 1 a companion. It is
+	// nil for devices that are offline during the load.
+	clients [][]*device
+	// deliveries measures the realtime delivery of each acknowledged send
+	// to every expected recipient client.
+	deliveries *deliveryTracker
 	ackMu      sync.Mutex
 	acked      []ackedMessage
 	reconnects atomic.Int64
@@ -175,25 +185,48 @@ func execute(ctx context.Context, target *url.URL, setupToken string, opts optio
 	defer stopLoad()
 	var running sync.WaitGroup
 	w.rec = newRecorder()
+	deadline := opts.DeliveryDeadline
+	if deadline <= 0 {
+		deadline = defaultDeliveryDeadline
+	}
+	w.deliveries = newDeliveryTracker(w.rec, deadline)
+	// Plan every online device's clients before any of them sends, so each
+	// send knows all the clients that should see it.
+	type devicePlan struct {
+		rng      *mrand.Rand
+		coldWake chan struct{}
+	}
+	plans := make([]devicePlan, opts.Online)
+	w.clients = make([][]*device, len(w.devices))
 	var coldWakes []chan struct{}
 	for i := 0; i < opts.Online; i++ {
 		dev := w.devices[i]
-		deviceRNG := mrand.New(mrand.NewPCG(opts.Seed, uint64(1000+i)))
-		var coldWake chan struct{}
-		if deviceRNG.Float64() < opts.Cold {
-			coldWake = make(chan struct{}, 1)
-			coldWakes = append(coldWakes, coldWake)
+		plan := devicePlan{rng: mrand.New(mrand.NewPCG(opts.Seed, uint64(1000+i)))}
+		if plan.rng.Float64() < opts.Cold {
+			plan.coldWake = make(chan struct{}, 1)
+			coldWakes = append(coldWakes, plan.coldWake)
 		}
-		companion := deviceRNG.Float64() < opts.Companions
-		if companion {
+		w.clients[i] = []*device{dev}
+		if plan.rng.Float64() < opts.Companions {
 			result.Companions++
+			// The companion client shares the primary's device session.
+			w.clients[i] = append(w.clients[i], dev)
 		}
+		plans[i] = plan
+	}
+	for i, plan := range plans {
+		dev := w.devices[i]
 		running.Add(1)
 		go func() {
 			defer running.Done()
-			w.runDevice(loadCtx, dev, coldWake, companion, deviceRNG)
+			w.runDevice(loadCtx, dev, plan.coldWake, plan.rng)
 		}()
 	}
+	running.Add(1)
+	go func() {
+		defer running.Done()
+		w.deliveries.sweep(loadCtx, time.Second)
+	}()
 	result.Cold = len(coldWakes)
 	for i := 0; i < 4; i++ {
 		running.Add(1)
@@ -244,6 +277,7 @@ func execute(ctx context.Context, target *url.URL, setupToken string, opts optio
 	}
 	stopLoad()
 	running.Wait()
+	w.deliveries.drain()
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -517,23 +551,20 @@ func (w *world) timedFrom(op int, started time.Time, fn func() (int, error)) (in
 	return status, err
 }
 
-func (w *world) runDevice(ctx context.Context, dev *device, coldWake <-chan struct{}, companion bool, rng *mrand.Rand) {
+func (w *world) runDevice(ctx context.Context, dev *device, coldWake <-chan struct{}, rng *mrand.Rand) {
 	var wg sync.WaitGroup
-	clients := 1
-	if companion {
-		clients = 2
-	}
-	for c := 0; c < clients; c++ {
+	for slot, clientDev := range w.clients[dev.index] {
 		catchUp := make(chan struct{}, 1)
 		var cold <-chan struct{}
-		if c == 0 {
+		if slot == 0 {
 			cold = coldWake
 		}
 		seed := rng.Uint64()
+		client := clientSlot{dev: dev.index, slot: slot}
 		wg.Add(3)
-		go func() { defer wg.Done(); w.runSocket(ctx, dev, catchUp) }()
-		go func() { defer wg.Done(); w.runCatchUp(ctx, dev, catchUp, cold) }()
-		go func() { defer wg.Done(); w.runReads(ctx, dev, seed) }()
+		go func() { defer wg.Done(); w.runSocket(ctx, clientDev, client, catchUp) }()
+		go func() { defer wg.Done(); w.runCatchUp(ctx, clientDev, catchUp, cold) }()
+		go func() { defer wg.Done(); w.runReads(ctx, clientDev, seed) }()
 	}
 	w.runSender(ctx, dev, rng)
 	wg.Wait()
@@ -651,12 +682,13 @@ func (w *world) sendArrival(ctx context.Context, dev *device, conv conversation,
 	if len(refs) > 0 {
 		body["attachment_refs"] = refs
 	}
-	w.pending.Store(key, send.start)
+	w.deliveries.start(key, send.start, w.expectedRecipients(dev, conv))
 	var created struct {
 		ID string `json:"id"`
 	}
 	status, err := w.client.json(ctx, http.MethodPost, "/api/v1/messages/envelopes", dev, "", body, &created, nil)
 	err = expect(status, err, http.StatusCreated)
+	w.deliveries.sent(key, err == nil && created.ID != "")
 	w.rec.end(send, classify(status, err), time.Since(send.start))
 	if err == nil && created.ID != "" {
 		w.ackMu.Lock()
@@ -674,7 +706,7 @@ type realtimeEvent struct {
 	} `json:"payload"`
 }
 
-func (w *world) runSocket(ctx context.Context, dev *device, catchUp chan<- struct{}) {
+func (w *world) runSocket(ctx context.Context, dev *device, client clientSlot, catchUp chan<- struct{}) {
 	backoff := time.Second
 	for ctx.Err() == nil {
 		var socket *syncSocket
@@ -708,10 +740,7 @@ func (w *world) runSocket(ctx context.Context, dev *device, catchUp chan<- struc
 			now := time.Now()
 			var event realtimeEvent
 			if json.Unmarshal(payload, &event) == nil && event.Type == "message.envelope.created" && event.Payload.SenderDeviceID != dev.deviceID {
-				if sent, ok := w.pending.Load(event.Payload.IdempotencyKey); ok {
-					started := sent.(time.Time)
-					w.rec.record(opDelivery, started, now.Sub(started), outcomeOK)
-				}
+				w.deliveries.observe(event.Payload.IdempotencyKey, client, now)
 				for _, id := range event.Payload.AttachmentRefs {
 					select {
 					case w.downloads <- download{dev: dev, id: id}:

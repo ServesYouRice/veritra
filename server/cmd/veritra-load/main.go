@@ -57,6 +57,8 @@ type options struct {
 	Verify         bool
 	Companions     float64
 	Cold           float64
+	// DeliveryDeadline is when an unseen realtime delivery counts as missed.
+	DeliveryDeadline time.Duration
 }
 
 func parseOptions(args []string, stderr io.Writer) (options, error) {
@@ -78,6 +80,7 @@ func parseOptions(args []string, stderr io.Writer) (options, error) {
 	fs.BoolVar(&opts.Verify, "verify", true, "after the load, check that every acknowledged message is still stored")
 	fs.Float64Var(&opts.Companions, "companions", 0.5, "share of online accounts with a second client (sockets, catch-up, reads)")
 	fs.Float64Var(&opts.Cold, "cold", 0.2, "share of devices that catch up once from the middle of history during the window")
+	fs.DurationVar(&opts.DeliveryDeadline, "delivery-deadline", defaultDeliveryDeadline, "time after a send starts by which every online recipient client must see its realtime event; later it counts as a missed delivery")
 	accounts := fs.Int("accounts", 0, "override the profile's account count")
 	history := fs.Int("history", -1, "override the profile's seeded message count")
 	attachments := fs.Int("attachments", -1, "override the profile's seeded attachment count")
@@ -115,6 +118,9 @@ func parseOptions(args []string, stderr io.Writer) (options, error) {
 	}
 	if opts.Duration <= 0 || opts.Warmup < 0 || opts.Companions < 0 || opts.Companions > 1 || opts.Cold < 0 || opts.Cold > 1 {
 		return opts, errors.New("-rate, -duration and -warmup must not be negative; -companions and -cold are shares between 0 and 1")
+	}
+	if opts.DeliveryDeadline <= targetDeliveryP99S*time.Second || opts.DeliveryDeadline >= settleGrace {
+		return opts, fmt.Errorf("-delivery-deadline must be above the %d s delivery target and below %s", targetDeliveryP99S, settleGrace)
 	}
 	if p.Accounts < 2 || p.GroupSize < 2 || p.GroupSize > p.Accounts {
 		return opts, errors.New("the profile needs at least two accounts and a group size between 2 and the account count")

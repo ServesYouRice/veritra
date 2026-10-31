@@ -22,7 +22,7 @@ func testWorld(t *testing.T, handler http.Handler) *world {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &world{
+	w := &world{
 		client: newAPIClient(target, 32), base: target, profile: profile{CiphertextBytes: 16}, rec: newRecorder(),
 		devices: []*device{
 			{index: 0, token: "token-0", accountID: "a0", deviceID: "d0", ip: deviceIP(0)},
@@ -31,6 +31,9 @@ func testWorld(t *testing.T, handler http.Handler) *world {
 		convs:    []conversation{{id: "c1", members: []int{0, 1}}},
 		byDevice: [][]int{{0}, {0}},
 	}
+	w.clients = [][]*device{{w.devices[0]}, {w.devices[1]}}
+	w.deliveries = newDeliveryTracker(w.rec, defaultDeliveryDeadline)
+	return w
 }
 
 // countSamples counts op's samples, and those with one of results when any

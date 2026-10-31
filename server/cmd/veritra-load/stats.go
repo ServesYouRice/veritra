@@ -84,6 +84,9 @@ const (
 	// when the window's grace period ran out, or that was given up on
 	// cancellation. It counts as an error.
 	outcomeUnfinished
+	// outcomeMissed is an expected realtime delivery that its recipient
+	// client did not see before the delivery deadline.
+	outcomeMissed
 )
 
 // failedOutcome reports whether result means the server did not complete
@@ -247,6 +250,10 @@ func (r *recorder) record(op int, started time.Time, latency time.Duration, resu
 	r.mu.Unlock()
 }
 
+// opSummary is one operation class over a window. The latency percentiles
+// and max cover successful operations; for realtime_delivery they also rank
+// missed and unfinished deliveries at the time waited for them (a lower
+// bound), so max_ms sits near the delivery deadline when any was missed.
 type opSummary struct {
 	Op           string  `json:"op"`
 	Count        int     `json:"count"`
@@ -295,6 +302,12 @@ func (r *recorder) summarize(from, to time.Duration) ([]opSummary, timelineSumma
 			summary.ClientErrors++
 		default:
 			summary.Errors++
+			// A delivery nobody saw took at least the time waited for it,
+			// so it ranks with that wait as a lower bound: a lost delivery
+			// can never make the delivery percentiles look better.
+			if s.op == opDelivery {
+				latencies[s.op] = append(latencies[s.op], s.latency)
+			}
 		}
 	}
 	for i := range summaries {
@@ -425,6 +438,12 @@ func evaluateStep(step stepResult) verdict {
 	}
 	if d := step.Ops[opDelivery]; d.Count > 0 && d.P99Ms > targetDeliveryP99S*1000 {
 		v.Missed = append(v.Missed, fmt.Sprintf("realtime delivery p99 %.0f ms > %d s", d.P99Ms, targetDeliveryP99S))
+	}
+	// The latency percentiles cover the deliveries that were seen. A missed
+	// one took longer than the delivery deadline (above the target), so
+	// when more than 1% are missed the p99 is above the target too.
+	if d := step.Ops[opDelivery]; d.Errors > 0 && float64(d.Errors) > 0.01*float64(d.Count) {
+		v.Missed = append(v.Missed, fmt.Sprintf("realtime delivery: %d of %d expected deliveries missed, so p99 > %d s", d.Errors, d.Count, targetDeliveryP99S))
 	}
 	v.Pass = len(v.Missed) == 0
 	return v
