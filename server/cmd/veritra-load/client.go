@@ -96,8 +96,10 @@ func (c *apiClient) do(ctx context.Context, req request, out any) (int, int64, e
 	}
 	defer resp.Body.Close()
 	if out == nil || resp.StatusCode >= 300 {
-		n, _ := io.Copy(io.Discard, io.LimitReader(resp.Body, 128<<20))
-		return resp.StatusCode, n, nil
+		// A body that breaks off (truncated, reset, timed out) is a failed
+		// transfer even after a 2xx status line.
+		n, err := io.Copy(io.Discard, io.LimitReader(resp.Body, 128<<20))
+		return resp.StatusCode, n, err
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	if err != nil {

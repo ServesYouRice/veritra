@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -72,5 +75,46 @@ func TestSyncSocketRefusesRedirects(t *testing.T) {
 	}
 	if n := hits.Load(); n != 0 {
 		t.Fatalf("destination received %d requests", n)
+	}
+}
+
+// truncatingServer answers every request with 200, a Content-Length of 1000
+// and only 10 body bytes, then closes the connection.
+func truncatingServer(t *testing.T) *url.URL {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				_, _ = http.ReadRequest(bufio.NewReader(conn))
+				_, _ = io.WriteString(conn, "HTTP/1.1 200 OK\r\nContent-Length: 1000\r\nContent-Type: application/octet-stream\r\n\r\n0123456789")
+			}()
+		}
+	}()
+	return &url.URL{Scheme: "http", Host: listener.Addr().String()}
+}
+
+// TestDiscardReportsTruncatedBody: a 2xx whose body breaks off is a failed
+// transfer, not a successful download or read.
+func TestDiscardReportsTruncatedBody(t *testing.T) {
+	client := newAPIClient(truncatingServer(t), 2)
+	status, n, err := client.do(context.Background(), request{method: http.MethodGet, path: "/api/v1/attachments/a"}, nil)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if err == nil {
+		t.Fatalf("truncated body (%d of 1000 bytes) returned no error", n)
+	}
+	if got := classify(status, expect(status, err, http.StatusOK)); got != outcomeTransportError {
+		t.Fatalf("classified as %d, want a transport error", got)
 	}
 }
