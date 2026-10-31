@@ -111,7 +111,11 @@ int32_t pm_crypto_k2_source_finish(PmCryptoHandle *, PmHistoryStream *,
 int32_t pm_crypto_k2_receive_finish(PmCryptoHandle *, PmHistoryStream *,
     PmByteSlice, PmOwnedBuffer *);
 void pm_crypto_k2_stream_destroy(PmHistoryStream *);
-/* ABI 7: returns hash32, claim MAC32, approval MAC32, SAS prefix4. */
+/* ABI 7: returns hash32, claim MAC32, approval MAC32, SAS prefix4. The SAS
+ * is prefix4 (big-endian) mod 10^8: 8 digits, about 26.6 bits. The prefix
+ * and both tags are MACs keyed from the 128-bit out-of-band link secret, so
+ * a relay without it cannot grind keys to match; if the secret leaks, the 8
+ * digits alone fall to about 10^4 key generations per side. */
 int32_t pm_crypto_device_link_transcript_hash(
     PmCryptoHandle *handle, PmByteSlice protocol_version,
     PmByteSlice server_origin, PmByteSlice link_id, PmByteSlice link_secret,

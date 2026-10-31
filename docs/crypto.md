@@ -91,6 +91,46 @@ safety code; the new device verifies the separate approval tag and its
 reserved identity before saving a session. JSON API redirects are refused.
 Legacy links must be recreated. Existing account/device sessions remain valid.
 
+SAS strength (TASK-010, TASK-048). The SAS is 8 digits, about 26.6 bits.
+The audit's grinding attack assumes the SAS is a hash of values the relay
+sees, so a relay that substitutes both keys can search for a collision
+(about 10^4 key generations per side). Under L0 that does not hold: the
+SAS, the claim tag and the approval tag are MACs keyed from the 128-bit
+secret, which travels only out of band. A relay without the secret cannot
+evaluate any of them, and a substituted key fails the claim tag on the old
+device, or the approval tag on the new one, before a SAS is shown. The
+secret plays the role a commit-then-reveal step would, so none is added.
+The residual case is a leaked secret (a QR seen by someone who also
+controls the relay): the attacker can then forge both tags and grind the
+SAS, which becomes the only check. Closing that needs a key commitment
+before the nonce is revealed, or a longer SAS. That is an owner decision
+(Q-001), not a defect in v2. Protocol v3 (`mls/link_v3.rs`) uses the same
+construction. Any transcript change needs a new protocol string and vector.
+
+### What L1 must provide (TASK-006)
+
+The crypto core now checks the shape of every commit and Welcome (Basic
+credentials, well-formed and unique device identities, no identity change
+on update, the own leaf, a member inviter). It cannot decide who may hold a
+key: the server publishes key packages, so it can still invent a device for
+a real account. L1, the signed approved-device list, must give the core:
+
+- a trust anchor: per account, the set of `(device_id, signing key)` pairs
+  the account's own devices signed, verifiable without trusting the server,
+  with rollback protection (a version or chain) so removed devices stay out;
+- a check on every added leaf, update-path leaf and Welcome roster member
+  that its identity and signing key are in the current list for its account;
+- authorization of the committer and of the Welcome sender: a member whose
+  pair is in that list (and, for conversation roles, allowed to change
+  membership);
+- the expected roster for a Welcome, from the conversation's participants,
+  so a join into a server-built group of look-alike devices is refused;
+- a defined result when the list is unavailable or stale: fail closed for
+  adds and joins, with a visible state instead of silent acceptance.
+
+With L1 the identity-only check on past-epoch senders (TASK-008) can also
+compare signing keys.
+
 ## Change log since the Stage 1 freeze
 
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
@@ -141,8 +181,13 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     corruption. The version is not authenticated: the code may lead only to
     re-linking, never to a weaker check. Everything else stays
     `PM_CRYPTO_ERROR`; old blobs are still refused.
+  - TASK-010, TASK-048: no protocol change. L0's secret-keyed SAS and tags
+    already stop a relay from grinding keys; the doc comments now state the
+    8-digit SAS (about 26.6 bits) and the leaked-secret residual. See
+    "Device linking".
   - Not closed here: which identities may hold which keys, and who may
-    commit or invite (TASK-006), needs the L1 approved-device list.
+    commit or invite (TASK-006), needs the L1 approved-device list. See
+    "What L1 must provide".
 
 - **K2 ABI8 controls (2026-10-28):** adds bounded local binary control
   operations and matching Dart bindings for protocol v3. Claim proof validates

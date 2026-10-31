@@ -307,6 +307,13 @@ pub unsafe extern "C" fn pm_crypto_device_signing_public_key(
 }
 
 /// ABI v7: hash32 || claim_tag32 || approval_tag32 || sas_mac_prefix4.
+///
+/// The SAS shown to the user is the prefix as a big-endian integer modulo
+/// 10^8: 8 digits, about 26.6 bits. The prefix and both tags are MACs keyed
+/// from the 128-bit link secret, so a relay without the secret cannot grind
+/// keys to match them; if the secret leaks, the 8 digits alone fall to about
+/// 10^4 key generations per side. See
+/// [`crate::mls::derive_device_link_verification`].
 #[no_mangle]
 pub unsafe extern "C" fn pm_crypto_device_link_transcript_hash(
     handle: *mut PmCryptoHandle,

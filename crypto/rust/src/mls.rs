@@ -129,6 +129,8 @@ impl MlsDevice {
         self.signer.public()
     }
 
+    /// This device's side of [`derive_device_link_verification`]; see there
+    /// for what the 8-digit SAS (about 26.6 bits) protects and when.
     // Explicit transcript fields mirror the ABI and make their order reviewable.
     #[allow(clippy::too_many_arguments)]
     pub fn derive_device_link_verification(
@@ -558,6 +560,20 @@ impl MlsDevice {
     }
 }
 
+/// L0 device-link verification (`veritra-device-link-v2`).
+///
+/// The SAS is 8 decimal digits: the first four MAC bytes modulo 10^8, about
+/// 26.6 bits (the modulo bias is negligible). It is not a hash of public
+/// data. The SAS, the claim tag and the approval tag are HMAC-SHA256 over the
+/// transcript under keys derived from the 128-bit link secret, which reaches
+/// the new device only out of band (QR or typed code). A relay that does not
+/// know the secret cannot evaluate them, so it cannot grind substitute keys
+/// towards a matching SAS, and a substituted key already fails the claim or
+/// approval tag before any SAS is shown. This replaces a commit-then-reveal
+/// step (TASK-010/TASK-048). The 8 digits stand alone only if the secret
+/// leaks: an active relay that knows it chooses both keys and needs about
+/// 10^4 key generations per side for the two SAS values to collide. Any
+/// transcript change needs a new protocol string and a new stable vector.
 // Keep the complete ordered transcript visible at each derivation call.
 #[allow(clippy::too_many_arguments)]
 pub fn derive_device_link_verification(
@@ -2046,6 +2062,40 @@ mod tests {
             changed[3] = vec![1; length];
             assert_eq!(derive(&changed), Err(MlsError::InvalidIdentity));
         }
+    }
+
+    #[test]
+    fn a_relay_cannot_compute_the_sas_from_public_link_data() {
+        // TASK-010/TASK-048: grinding needs the SAS as a function of values
+        // the relay sees. Two secrets give the same public transcript hash
+        // but unrelated SAS values and tags, so a relay without the secret
+        // has nothing to grind against.
+        let derive = |secret: &[u8], new_key: &[u8]| {
+            derive_device_link_verification(
+                DEVICE_LINK_PROTOCOL_VERSION,
+                b"https://example.test",
+                b"link_01",
+                secret,
+                b"acct_01",
+                &[0x11; 32],
+                b"dev_old",
+                &[0x22; 32],
+                b"dev_new",
+                new_key,
+            )
+            .unwrap()
+        };
+        let real = derive(&[0x55; 16], &[0x33; 32]);
+        let guessed = derive(&[0x56; 16], &[0x33; 32]);
+        assert_eq!(real.transcript_hash, guessed.transcript_hash);
+        assert_ne!(real.sas_bytes, guessed.sas_bytes);
+        assert_ne!(real.claim_tag, guessed.claim_tag);
+        assert_ne!(real.approval_tag, guessed.approval_tag);
+        // A substituted new-device key needs a fresh claim tag under the
+        // secret; the old device rejects the honest one for it.
+        let substituted = derive(&[0x55; 16], &[0x34; 32]);
+        assert_ne!(real.claim_tag, substituted.claim_tag);
+        assert_eq!(real.sas.len(), 8);
     }
 
     #[test]
