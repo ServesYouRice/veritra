@@ -957,7 +957,8 @@ func (s *Store) ManageConversationMember(ctx context.Context, conversationID, ac
 	}
 	defer tx.Rollback()
 	var actorRole, conversationKind string
-	if err := tx.QueryRowContext(ctx, `SELECT m.role, c.kind FROM memberships m JOIN conversations c ON c.id = m.conversation_id WHERE m.conversation_id = ? AND m.account_id = ?`, conversationID, actorAccountID).Scan(&actorRole, &conversationKind); err != nil {
+	var conversationCommunityID sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT m.role, c.kind, c.community_id FROM memberships m JOIN conversations c ON c.id = m.conversation_id WHERE m.conversation_id = ? AND m.account_id = ?`, conversationID, actorAccountID).Scan(&actorRole, &conversationKind, &conversationCommunityID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, ErrNotMember
 		}
@@ -992,6 +993,21 @@ func (s *Store) ManageConversationMember(ctx context.Context, conversationID, ac
 		return 0, ErrForbidden
 	}
 	if errors.Is(err, sql.ErrNoRows) {
+		// A channel belongs to its community: only a member of that community
+		// may join it, the rule CreateConversation applies to initial members.
+		// A channel without a community cannot be checked, so it refuses.
+		if conversationKind == "community_channel" {
+			if !conversationCommunityID.Valid {
+				return 0, ErrForbidden
+			}
+			var communityMember int
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM memberships WHERE community_id = ? AND account_id = ?`, conversationCommunityID.String, targetAccountID).Scan(&communityMember); err != nil {
+				return 0, err
+			}
+			if communityMember == 0 {
+				return 0, ErrForbidden
+			}
+		}
 		if err := s.checkNewConversationMember(ctx, tx, conversationID, targetAccountID); err != nil {
 			return 0, err
 		}
