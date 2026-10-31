@@ -838,10 +838,9 @@ class NativeCryptoService
           envelope: envelope,
           ownMessageKey:
               messageKey(envelope.senderDeviceId, envelope.idempotencyKey),
-          allowOwnPinEffect:
-              _authority?.conversationKind(envelope.conversationId) == 'dm' ||
-                  const {'owner', 'admin', 'moderator'}.contains(
-                      _authority?.roleOf(envelope.conversationId, _accountId!)),
+          allowOwnPinEffect: pinAllowed(
+              kind: _authority?.conversationKind(envelope.conversationId),
+              role: _authority?.roleOf(envelope.conversationId, _accountId!)),
         ));
         return null;
       }
@@ -1257,9 +1256,9 @@ List<MessageEffect> messageEffectsFor(
       ],
     AppPayloadType.pin => <MessageEffect>[
         row(LocalMessageKind.action),
-        if (authority?.conversationKind(conversationId) == 'dm' ||
-            const {'owner', 'admin', 'moderator'}
-                .contains(authority?.roleOf(conversationId, senderAccountId)))
+        if (pinAllowed(
+            kind: authority?.conversationKind(conversationId),
+            role: authority?.roleOf(conversationId, senderAccountId)))
           PinMessageEffect(
               conversationId: conversationId,
               targetKey: body['message_id'] as String,

@@ -173,12 +173,23 @@ void main() {
             createdAt: 1,
             state: LocalMessageState.received,
             authority: authority);
+    // Owner decision 2026-10-31: any group member may pin; community
+    // conversations keep moderator roles until C4.
     expect(effects(_Authority('group', 'member')).whereType<PinMessageEffect>(),
-        isEmpty);
+        hasLength(1));
     expect(effects(_Authority('group', 'admin')).whereType<PinMessageEffect>(),
         hasLength(1));
     expect(effects(_Authority('dm', 'member')).whereType<PinMessageEffect>(),
         hasLength(1));
+    for (final kind in ['community_shared', 'community_channel']) {
+      expect(effects(_Authority(kind, 'member')).whereType<PinMessageEffect>(),
+          isEmpty);
+      expect(
+          effects(_Authority(kind, 'moderator')).whereType<PinMessageEffect>(),
+          hasLength(1));
+    }
+    expect(effects(_Authority('', 'member')).whereType<PinMessageEffect>(),
+        isEmpty);
   });
 
   for (final encrypted in [false, true]) {
@@ -287,15 +298,17 @@ void main() {
             isNot(contains('resurrected')));
       });
 
-      test('four simultaneous pins evict first and ordering survives backup',
+      test('51 simultaneous pins evict the first and ordering survives backup',
           () async {
         final now = DateTime.now().millisecondsSinceEpoch;
-        await _commit(store, [for (var i = 0; i < 4; i++) _text('dev:$i')]);
-        for (var i = 0; i < 4; i++) {
+        await _commit(store,
+            [for (var i = 0; i <= pinLimitPerChat; i++) _text('dev:$i')]);
+        for (var i = 0; i <= pinLimitPerChat; i++) {
           await _commit(store, [_pin('dev:$i', at: now)]);
         }
+        expect(pinLimitPerChat, 50);
         expect((await store.loadPins('conv')).map((p) => p.targetKey),
-            ['dev:3', 'dev:2', 'dev:1']);
+            [for (var i = pinLimitPerChat; i >= 1; i--) 'dev:$i']);
         final before = await store.loadPins('conv');
         await store.restoreBackup(await store.exportBackup());
         expect(await store.loadPins('conv'), before);

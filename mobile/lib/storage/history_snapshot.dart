@@ -1006,7 +1006,7 @@ HistoryMerge mergeHistory(
         .where((x) =>
             x.conversationId == p.conversationId && x.channelId == p.channelId)
         .toList();
-    if (same.length > 3) pins.remove(same.first);
+    if (same.length > pinLimitPerChat) pins.remove(same.first);
   }
   var pinnedCount = existingPreferences.where((p) => p.pinnedAt != null).length;
   final prefs = <LocalConversationPref>[];

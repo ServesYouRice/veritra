@@ -269,10 +269,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   List<LocalPin> pinsFor(String id) => (_pins[id] ?? const [])
       .where((p) => p.expiresAt > DateTime.now().millisecondsSinceEpoch)
       .toList();
-  bool canPinMessages(String id) =>
-      conversationKind(id) == 'dm' ||
-      const {'owner', 'admin', 'moderator'}
-          .contains(roleOf(id, session?.accountId ?? ''));
+  bool canPinMessages(String id) => pinAllowed(
+      kind: conversationKind(id), role: roleOf(id, session?.accountId ?? ''));
   void toggleArchivedChats() {
     showArchivedChats = !showArchivedChats;
     notifyListeners();

@@ -396,27 +396,32 @@ class _ChatScreenState extends State<ChatScreen> {
                         color: Theme.of(context)
                             .colorScheme
                             .surfaceContainerHighest,
-                        child: Column(children: [
-                          for (final pin
-                              in widget.state.pinsFor(widget.conversationId))
-                            ListTile(
-                              dense: true,
-                              leading:
-                                  const Icon(Icons.push_pin_outlined, size: 18),
-                              title: Text(
-                                  quotedPreview(
-                                      context.l10n,
-                                      widget.state
-                                          .historyFor(widget.conversationId)
-                                          .forKey(pin.targetKey)),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis),
-                              onTap: () {
-                                setState(() => _jumpKey = pin.targetKey);
-                                _scheduleJump();
-                              },
-                            )
-                        ]),
+                        // Up to 50 pins per chat: about three rows show,
+                        // the rest scroll, so the timeline keeps its room.
+                        child: ConstrainedBox(
+                            key: const ValueKey('pin-bar'),
+                            constraints: const BoxConstraints(maxHeight: 144),
+                            child: ListView(shrinkWrap: true, children: [
+                              for (final pin in widget.state
+                                  .pinsFor(widget.conversationId))
+                                ListTile(
+                                  dense: true,
+                                  leading: const Icon(Icons.push_pin_outlined,
+                                      size: 18),
+                                  title: Text(
+                                      quotedPreview(
+                                          context.l10n,
+                                          widget.state
+                                              .historyFor(widget.conversationId)
+                                              .forKey(pin.targetKey)),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis),
+                                  onTap: () {
+                                    setState(() => _jumpKey = pin.targetKey);
+                                    _scheduleJump();
+                                  },
+                                )
+                            ])),
                       ),
                     Expanded(
                       child: conversation == null

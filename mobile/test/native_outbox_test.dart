@@ -228,7 +228,9 @@ void main() {
       final first = await harness.nextEnvelope();
       final target =
           messageKey('dev_alice', first['idempotency_key'] as String);
-      final authority = _ChangingAuthority();
+      // A community conversation still needs a moderator role to pin; a
+      // plain group lets any member pin (owner decision 2026-10-31).
+      final authority = _ChangingAuthority()..kind = 'community_channel';
       harness.aliceCrypto.conversationAuthority = authority;
       expect(await alice.pinMessage(_conversation, target, pinned: true), true);
       final json = await harness.nextEnvelope();
@@ -680,8 +682,9 @@ class _QuietSync implements SyncService {
 
 class _ChangingAuthority implements ConversationAuthority {
   String role = 'admin';
+  String kind = 'group';
   @override
-  String? conversationKind(String conversationId) => 'group';
+  String? conversationKind(String conversationId) => kind;
   @override
   String? conversationChannel(String conversationId) => null;
   @override
