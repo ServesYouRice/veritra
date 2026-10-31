@@ -41,16 +41,16 @@ func TestAttachmentRangeVerifiesOnlyServedChunks(t *testing.T) {
 		rec.Header().Get("Content-Range") != "" || rec.Header().Get("Etag") != "" {
 		t.Fatalf("range in bad chunk: status=%d headers=%v body=%q", rec.Code, rec.Header(), rec.Body.Bytes())
 	}
-	// Several ranges are served as multipart by a ServeContent goroutine;
-	// its chunks are verified on read too.
+	// Several ranges are refused: each would cost a seek and a chunk
+	// verification (see TestBlobDownloadRejectsMultiRange).
 	rec = getBlob(handler, url, token, fmt.Sprintf("bytes=0-9,%d-%d", 3*chunk, 3*chunk+9))
-	if rec.Code != http.StatusPartialContent || !bytes.Contains(rec.Body.Bytes(), payload[3*chunk:3*chunk+10]) {
-		t.Fatalf("multipart status=%d", rec.Code)
+	if rec.Code != http.StatusRequestedRangeNotSatisfiable {
+		t.Fatalf("multi-range status=%d, want 416", rec.Code)
 	}
 
 	server := httptest.NewServer(handler)
 	defer server.Close()
-	for _, rangeHeader := range []string{"", "bytes=10-", fmt.Sprintf("bytes=0-9,%d-%d", 2*chunk, 2*chunk+9)} {
+	for _, rangeHeader := range []string{"", "bytes=10-", fmt.Sprintf("bytes=0-%d", 2*chunk+9)} {
 		status, body, err := fetchBlob(t, server.URL+url, token, rangeHeader)
 		if status != 0 && status != http.StatusOK && status != http.StatusPartialContent {
 			t.Fatalf("range %q: status=%d", rangeHeader, status)
