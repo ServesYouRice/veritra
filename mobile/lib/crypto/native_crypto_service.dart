@@ -371,11 +371,16 @@ class NativeCryptoService
           return _requiredDevice().groupEpoch(conversationId);
         } on NativeCryptoException {
           // A missing group and a handle a native panic left poisoned both
-          // answer operationFailed. Reload the committed state and ask once
-          // more, so a poisoned handle never reads as "no group" and is not
-          // kept for the next operation.
+          // answer operationFailed. A call that takes the same device lock
+          // tells them apart: if it succeeds and the handle holds the
+          // committed state, the group is simply missing. Otherwise reload
+          // the committed state and ask once more, so a poisoned or stale
+          // handle never reads as "no group" and is not kept.
           final stored = await localStore.loadCryptoState();
           if (stored == null) return null;
+          if (stored.counter == _deviceCounter && _handleAnswers()) {
+            return null;
+          }
           await _restorePrevious(stored);
         }
         try {
@@ -384,6 +389,18 @@ class NativeCryptoService
           return null;
         }
       });
+
+  /// Whether the device handle still answers a call that takes its lock
+  /// (`with_device` in `crypto/rust/src/ffi.rs`). A native panic poisons that
+  /// lock, after which every call fails.
+  bool _handleAnswers() {
+    try {
+      _requiredDevice().signingPublicKey();
+      return true;
+    } on NativeCryptoException {
+      return false;
+    }
+  }
 
   MlsCommitBundle _stage(
     NativeCryptoDevice device,

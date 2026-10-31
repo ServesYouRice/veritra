@@ -170,7 +170,32 @@ void main() {
       final faults = _FaultyBindings(
           NativeCryptoBindings.open(requireNativeCryptoLibrary()));
       final alice = await _Client.enroll(faults, 'acct_alice', 'dev_alice');
+      final restores = faults.restores;
       expect(await alice.service.groupEpoch('conv_none'), isNull);
+      // A healthy handle answers the probe: no state restore for a plain miss.
+      expect(faults.restores, restores);
+    }, skip: skip);
+
+    test('a missing group restores when the stored state moved', () async {
+      final faults = _FaultyBindings(
+          NativeCryptoBindings.open(requireNativeCryptoLibrary()));
+      final alice = await _Client.enroll(faults, 'acct_alice', 'dev_alice');
+      final bob = await _Client.enroll(faults, 'acct_bob', 'dev_bob');
+      // A second service on Alice's store holds a handle from before conv_1,
+      // so the store moves on without it: the state a backup restore leaves.
+      final stale =
+          NativeCryptoService(bindings: faults, localStore: alice.store);
+      await stale.activateSession(Session(
+        baseUrl: 'https://localhost:8443',
+        token: 'token',
+        accountId: alice.accountId,
+        deviceId: alice.deviceId,
+      ));
+      await _startConversation(alice, bob);
+
+      final restores = faults.restores;
+      expect(await stale.groupEpoch('conv_1'), (epoch: 1, pending: false));
+      expect(faults.restores, restores + 1);
     }, skip: skip);
   });
 
@@ -292,6 +317,9 @@ class _FaultyBindings implements NativeCryptoBindings {
   final List<NativeCryptoError> decryptFaults = <NativeCryptoError>[];
   final List<NativeCryptoError> epochFaults = <NativeCryptoError>[];
 
+  /// How many times a device was restored from sealed state.
+  int restores = 0;
+
   @override
   NativeCryptoDevice createDevice(String accountId, String deviceId) =>
       _FaultyDevice(this, real.createDevice(accountId, deviceId));
@@ -303,6 +331,7 @@ class _FaultyBindings implements NativeCryptoBindings {
       List<int> stateKey,
       int minimumCounter,
       List<int> sealedState) {
+    restores++;
     final restored = real.restoreDevice(
         accountId, deviceId, stateKey, minimumCounter, sealedState);
     return (
@@ -356,6 +385,9 @@ class _FaultyDevice implements NativeCryptoDevice {
 
   @override
   List<int> createKeyPackage() => _plain(real.createKeyPackage);
+
+  @override
+  List<int> signingPublicKey() => _plain(real.signingPublicKey);
 
   @override
   List<int> sealState(List<int> stateKey, int counter) =>
