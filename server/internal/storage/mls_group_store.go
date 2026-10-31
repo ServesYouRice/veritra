@@ -260,11 +260,8 @@ func (s *Store) CreateMLSCommitBundle(ctx context.Context, input MLSCommitBundle
 		}
 	}
 	if input.RevocationDeviceID != "" {
-		var allowed bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-			SELECT 1 FROM mls_revocations WHERE conversation_id = ? AND revoked_device_id = ?
-			AND coordinator_device_id = ? AND state = 'pending')`, input.ConversationID,
-			input.RevocationDeviceID, input.SenderDeviceID).Scan(&allowed); err != nil {
+		allowed, err := mlsRevocationCommitAllowed(ctx, tx, input.ConversationID, input.RevocationDeviceID, input.SenderDeviceID)
+		if err != nil {
 			return MLSCommitBundleResult{}, err
 		}
 		if !allowed {

@@ -75,11 +75,8 @@ func (s *Store) CreateMLSMessage(ctx context.Context, input CreateMLSMessageInpu
 		return domain.MLSMessage{}, false, err
 	}
 	if input.RevocationDeviceID != "" {
-		var allowed bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-			SELECT 1 FROM mls_revocations WHERE conversation_id = ? AND revoked_device_id = ?
-			AND coordinator_device_id = ? AND state = 'pending')`, input.ConversationID,
-			input.RevocationDeviceID, input.SenderDeviceID).Scan(&allowed); err != nil {
+		allowed, err := mlsRevocationCommitAllowed(ctx, tx, input.ConversationID, input.RevocationDeviceID, input.SenderDeviceID)
+		if err != nil {
 			return domain.MLSMessage{}, false, err
 		}
 		if !allowed {
