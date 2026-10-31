@@ -1415,11 +1415,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       );
       await localStore.saveSession(session!);
       await _mlsCrypto?.activateSession(session!);
-      await _publishInitialMlsKeyPackages();
       await localStore.saveSyncCursor(0);
-      await _refreshConversations(notify: true);
-      await _refreshDevices();
-      _startSync();
+      await _finishSignIn(() async {
+        await _publishInitialMlsKeyPackages();
+        await _refreshConversations(notify: true);
+        await _refreshDevices();
+      });
     });
   }
 
@@ -1461,10 +1462,30 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (!sameIdentity || !hadMlsState) {
         await localStore.saveSyncCursor(0);
       }
-      await _refreshConversations(notify: true);
-      await _refreshDevices();
-      _startSync();
+      await _finishSignIn(() async {
+        await _refreshConversations(notify: true);
+        await _refreshDevices();
+      });
     });
+  }
+
+  /// The network steps after a sign-in: [steps] runs once the session is
+  /// saved and MLS is active. Sync starts even when a step fails, so a
+  /// signed-in app is never left without it; the error is still rethrown
+  /// for [_run] to report. A rejected session (401) starts nothing: [_run]
+  /// clears it.
+  Future<void> _finishSignIn(Future<void> Function() steps) async {
+    try {
+      await steps();
+    } catch (err) {
+      if (err is! ApiException ||
+          err.statusCode != 401 ||
+          err.serverCode == 'invalid_credentials') {
+        unawaited(_startSync());
+      }
+      rethrow;
+    }
+    unawaited(_startSync());
   }
 
   /// Puts the drafts kept through a session expiry back into the composer.
@@ -1812,11 +1833,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       );
       await localStore.saveSession(session!);
       await _mlsCrypto?.activateSession(session!);
-      await _publishInitialMlsKeyPackages();
       await localStore.saveSyncCursor(0);
-      await _refreshConversations(notify: true);
-      await _refreshDevices();
-      _startSync();
+      await _finishSignIn(() async {
+        await _publishInitialMlsKeyPackages();
+        await _refreshConversations(notify: true);
+        await _refreshDevices();
+      });
     });
   }
 
@@ -3062,11 +3084,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       pendingDeviceLinkClaim = null;
       await localStore.saveSession(session!);
       await _mlsCrypto?.activateSession(session!);
-      await _publishInitialMlsKeyPackages();
       await localStore.saveSyncCursor(0);
-      await _refreshConversations(notify: true);
-      await _refreshDevices();
-      _startSync();
+      await _finishSignIn(() async {
+        await _publishInitialMlsKeyPackages();
+        await _refreshConversations(notify: true);
+        await _refreshDevices();
+      });
     });
   }
 
