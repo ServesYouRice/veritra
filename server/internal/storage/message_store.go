@@ -1105,7 +1105,11 @@ var syncEventVisibleTo = `(NOT (se.event_type = 'mls.message.created' OR se.even
 	        OR se.event_type LIKE 'call.%')
 	   OR ` + mlsJoinFilterEventFor("?3") + `)
 	AND NOT ` + syncEventBlockedFor("?1") + `
-	AND (se.event_type NOT LIKE 'message.envelope.%' OR EXISTS (
+	AND ` + syncEventEnvelopeLive
+
+// syncEventEnvelopeLive is true unless se is a message event hidden for its
+// envelope: expired, gone, or (for all but the deleted marker) deleted.
+var syncEventEnvelopeLive = `(se.event_type NOT LIKE 'message.envelope.%' OR EXISTS (
 	  SELECT 1 FROM message_envelopes live
 	  WHERE live.id = json_extract(se.payload_json, '$.message_id')
 	    AND (live.expires_at IS NULL OR live.expires_at > ` + sqlNowText + `)
@@ -1209,7 +1213,26 @@ func syncEventBlockedFor(blocker string) string {
 // predicate runs only on the few rows at each edge instead of on every event
 // on the instance (T49A). The unary + keeps account_id IS NULL off
 // idx_sync_events_account, which would scan every conversation event.
-var syncBoundsQuery = `SELECT ` + syncOldestExpr + `, ` + syncLatestExpr
+// A message event sync hides for its envelope (expired and not yet pruned,
+// gone, or deleted) is not a bound either: no device is ever served it.
+var syncBoundsQuery = `SELECT ` + syncVisibleEdgeExpr("MIN", "ASC") + `, ` + syncVisibleEdgeExpr("MAX", "DESC")
+
+// syncVisibleEdgeExpr is syncOldestExpr (MIN, ASC) or syncLatestExpr (MAX,
+// DESC) with the envelope visibility of syncEventVisibleTo added. The
+// legacy cursor test keeps syncOldestExpr unchanged.
+func syncVisibleEdgeExpr(aggregate, order string) string {
+	return `
+	  (SELECT ` + aggregate + `(v) FROM (
+	     SELECT ` + aggregate + `(id) AS v FROM sync_events WHERE account_id = ?1
+	     UNION ALL
+	     SELECT (SELECT se.id FROM sync_events se
+	             WHERE se.conversation_id = m.conversation_id AND +se.account_id IS NULL
+	               AND NOT ` + syncEventBlockedFor("?1") + `
+	               AND ` + syncEventEnvelopeLive + `
+	             ORDER BY se.id ` + order + ` LIMIT 1)
+	     FROM memberships m WHERE m.account_id = ?1 AND m.conversation_id IS NOT NULL
+	  ))`
+}
 
 // legacySyncCursorExpiredQuery is the cursor test from before migration
 // 0044, kept for cursors into ids pruned before the marks existed. It is
