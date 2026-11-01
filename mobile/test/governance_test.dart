@@ -9,15 +9,13 @@ void main() {
   const carol = 'acct_carol';
   const members = {owner, admin, mod, bob, carol};
 
-  GovernanceState base() {
-    final g = GovernanceState.genesis(owner);
-    return g.copyWith(
-      assignments: {
-        admin: {'admin'},
-        mod: {'moderator'},
-      },
-    );
-  }
+  // rev 3: admin since rev 1, moderator since rev 2.
+  GovernanceState base() => GovernanceState(
+        rev: 3,
+        owner: owner,
+        admins: {admin: 1},
+        moderators: {mod},
+      );
 
   GovernanceCheck check(
     GovernanceState prev,
@@ -27,638 +25,354 @@ void main() {
   }) =>
       validateTransition(prev, next, who, members: roster);
 
-  ChannelOverride ov(
-    String channel,
-    String target, {
-    bool role = true,
-    Set<String> allow = const {},
-    Set<String> deny = const {},
-  }) =>
-      ChannelOverride(
-        channelId: channel,
-        targetIsRole: role,
-        targetId: target,
-        allow: allow,
-        deny: deny,
-      );
-
-  Map<String, ChannelOverride> keyed(Iterable<ChannelOverride> list) => {
-        for (final o in list) o.key: o,
-      };
-
   GovernanceState bump(
     GovernanceState s, {
-    Map<String, Role>? roles,
-    Map<String, Set<String>>? assignments,
-    Map<String, ChannelOverride>? overrides,
     String? owner,
+    Map<String, int>? admins,
+    Set<String>? moderators,
+    bool? adminsOnlyPosting,
+    Set<String>? announcementChannels,
   }) =>
       s.copyWith(
         rev: s.rev + 1,
-        roles: roles,
-        assignments: assignments,
-        overrides: overrides,
         owner: owner,
+        admins: admins,
+        moderators: moderators,
+        adminsOnlyPosting: adminsOnlyPosting,
+        announcementChannels: announcementChannels,
       );
 
-  group('permissions', () {
-    test('members get the open defaults, owner and admin get everything', () {
-      final s = base();
-      expect(s.can(bob, Perm.post, channelId: 'chan_a'), isTrue);
-      expect(s.can(bob, Perm.pin), isTrue);
-      expect(s.can(bob, Perm.kick), isFalse);
-      expect(s.can(owner, Perm.manageRoles), isTrue);
-      expect(s.can(admin, Perm.ban, channelId: 'chan_a'), isTrue);
-      expect(s.can(mod, Perm.kick), isTrue);
+  group('roles and posting', () {
+    test('genesis: the creator owns the group, nobody else has a role', () {
+      final g = GovernanceState.genesis(owner);
+      expect(g.rev, 0);
+      expect(g.roleOf(owner), BuiltInRole.owner);
+      expect(g.roleOf(bob), BuiltInRole.member);
+      expect(g.isRestricted(), isFalse);
     });
 
-    test(
-      'override order: member, then roles (deny then allow), then account',
-      () {
-        var s = base();
-        final roles = Map.of(
-          s.roles,
-        )..['poster'] = const Role('poster', 'Poster', 100, {Perm.viewChannel});
-        s = s.copyWith(
-          roles: roles,
-          assignments: {
-            ...s.assignments,
-            bob: {'poster'},
-          },
-        );
-        ChannelOverride ov(
-          String id,
-          bool role, {
-          Set<String> allow = const {},
-          Set<String> deny = const {},
-        }) =>
-            ChannelOverride(
-              channelId: 'chan_news',
-              targetIsRole: role,
-              targetId: id,
-              allow: allow,
-              deny: deny,
-            );
-        final denyMember = ov(memberRoleId, true, deny: {Perm.post});
-        final allowPoster = ov('poster', true, allow: {Perm.post});
-        s = s.copyWith(
-          overrides: {denyMember.key: denyMember, allowPoster.key: allowPoster},
-        );
-        expect(s.can(carol, Perm.post, channelId: 'chan_news'), isFalse);
-        expect(s.can(bob, Perm.post, channelId: 'chan_news'), isTrue);
-        expect(s.can(bob, Perm.post, channelId: 'chan_a'), isTrue);
-        final denyBob = ov(bob, false, deny: {Perm.post});
-        s = s.copyWith(overrides: {...s.overrides, denyBob.key: denyBob});
-        expect(s.can(bob, Perm.post, channelId: 'chan_news'), isFalse);
-        // Moderators keep their own post switch; admins skip overrides.
-        expect(s.can(admin, Perm.post, channelId: 'chan_news'), isTrue);
-        expect(s.can(mod, Perm.post, channelId: 'chan_news'), isFalse);
-      },
-    );
-
-    test('no view_channel means no channel-scoped switch', () {
+    test('ranks mirror the server (owner 4 .. member 1)', () {
       final s = base();
-      final o = ChannelOverride(
-        channelId: 'chan_a',
-        targetIsRole: true,
-        targetId: memberRoleId,
-        deny: {Perm.viewChannel},
-      );
-      final t = s.copyWith(overrides: {o.key: o});
-      expect(t.can(bob, Perm.post, channelId: 'chan_a'), isFalse);
-      expect(t.can(bob, Perm.react, channelId: 'chan_a'), isFalse);
-      expect(t.can(bob, Perm.post, channelId: 'chan_news'), isTrue);
+      expect(s.rankOf(owner), 4);
+      expect(s.rankOf(admin), 3);
+      expect(s.rankOf(mod), 2);
+      expect(s.rankOf(bob), 1);
     });
 
-    test('an unknown role id on an account is ignored', () {
-      final s = base().copyWith(
-        assignments: {
-          bob: {'ghost'},
-        },
-      );
-      expect(s.can(bob, Perm.kick), isFalse);
-      expect(s.can(bob, Perm.post), isTrue);
+    test('restricted posting: owner and admin only, not moderators', () {
+      final s = base().copyWith(announcementChannels: {'chan_news'});
+      for (final who in [owner, admin, mod, bob]) {
+        expect(s.mayPost(who, channelId: 'chan_talk'), isTrue);
+      }
+      expect(s.mayPost(owner, channelId: 'chan_news'), isTrue);
+      expect(s.mayPost(admin, channelId: 'chan_news'), isTrue);
+      expect(s.mayPost(mod, channelId: 'chan_news'), isFalse);
+      expect(s.mayPost(bob, channelId: 'chan_news'), isFalse);
+
+      final whole = base().copyWith(adminsOnlyPosting: true);
+      expect(whole.mayPost(admin), isTrue);
+      expect(whole.mayPost(mod), isFalse);
+      expect(whole.mayPost(bob, channelId: 'any'), isFalse);
+    });
+
+    test('mayActOn needs moderator or above and a strictly higher rank', () {
+      final s = base();
+      expect(s.mayActOn(mod, bob), isTrue);
+      expect(s.mayActOn(admin, mod), isTrue);
+      expect(s.mayActOn(mod, admin), isFalse);
+      expect(s.mayActOn(bob, carol), isFalse);
+      expect(s.mayActOn(admin, admin), isFalse);
+      expect(s.mayActOn(admin, owner), isFalse);
+      expect(s.mayActOn(owner, admin), isTrue);
     });
   });
 
   group('transitions', () {
     test('rev must advance by exactly one', () {
       final s = base();
-      expect(
-        check(s, s.copyWith(rev: s.rev), owner).reject,
-        GovernanceReject.badRev,
-      );
-      expect(
-        check(s, s.copyWith(rev: s.rev + 2), owner).reject,
-        GovernanceReject.badRev,
-      );
-      expect(check(s, bump(s), owner).ok, isTrue);
-    });
-
-    test('a plain member cannot create a role or assign one', () {
-      final s = base();
-      final withRole = bump(
-        s,
-        roles: {
-          ...s.roles,
-          'x': const Role('x', 'X', 500, {Perm.post}),
-        },
-      );
-      expect(check(s, withRole, bob).reject, GovernanceReject.notAllowed);
-      final assign = bump(
-        s,
-        assignments: {
-          ...s.assignments,
-          carol: {'moderator'},
-        },
-      );
-      expect(check(s, assign, bob).reject, GovernanceReject.notAllowed);
-    });
-
-    test('admin creates a role below itself and assigns it', () {
-      final s = base();
-      final roles = {
-        ...s.roles,
-        'helper': const Role('helper', 'Helper', 100, {Perm.pin, Perm.kick}),
-      };
-      final created = bump(s, roles: roles);
-      expect(check(s, created, admin).ok, isTrue);
-      final assigned = bump(
-        created,
-        roles: roles,
-        assignments: {
-          ...created.assignments,
-          bob: {'helper'},
-        },
-      );
-      expect(check(created, assigned, admin).ok, isTrue);
-      expect(assigned.can(bob, Perm.kick), isTrue);
-    });
-
-    test('hierarchy: no role at or above own rank, no touching peers', () {
-      final s = base();
-      final higher = bump(
-        s,
-        roles: {
-          ...s.roles,
-          'boss': const Role('boss', 'Boss', 5, {Perm.post}),
-        },
-      );
-      expect(check(s, higher, admin).reject, GovernanceReject.hierarchy);
-      final equal = bump(
-        s,
-        roles: {
-          ...s.roles,
-          'boss': const Role('boss', 'Boss', 10, {Perm.post}),
-        },
-      );
-      expect(check(s, equal, admin).reject, GovernanceReject.badShape);
-      // Admin may not demote the owner-level or a peer admin.
-      final peer = s.copyWith(
-        assignments: {
-          ...s.assignments,
-          carol: {'admin'},
-        },
-      );
-      final strip = bump(
-        peer,
-        assignments: {
-          admin: {'admin'},
-          mod: {'moderator'},
-        },
-      );
-      expect(check(peer, strip, admin).reject, GovernanceReject.hierarchy);
-      expect(check(peer, strip, owner).ok, isTrue);
-    });
-
-    test('cannot grant a switch you do not hold', () {
-      var s = base();
-      final roles = {
-        ...s.roles,
-        'roleman': const Role('roleman', 'Roleman', 50, {Perm.manageRoles}),
-      };
-      s = bump(
-        s,
-        roles: roles,
-        assignments: {
-          ...s.assignments,
-          bob: {'roleman'},
-        },
-      );
-      final grant = bump(
-        s,
-        roles: {
-          ...s.roles,
-          'x': const Role('x', 'X', 200, {Perm.ban}),
-        },
-      );
-      expect(check(s, grant, bob).reject, GovernanceReject.grantsMore);
-      final self = bump(
-        s,
-        roles: {
-          ...s.roles,
-          'x': const Role('x', 'X', 200, {Perm.administrator}),
-        },
-      );
-      expect(check(s, self, bob).reject, GovernanceReject.grantsMore);
-    });
-
-    test('only the owner moves ownership; owner is never a role holder', () {
-      final s = base();
-      expect(
-        check(s, bump(s, owner: bob), admin).reject,
-        GovernanceReject.ownerChange,
-      );
-      expect(check(s, bump(s, owner: bob), owner).ok, isTrue);
-      final bad = bump(
-        s,
-        assignments: {
-          ...s.assignments,
-          owner: {'admin'},
-        },
-      );
-      expect(check(s, bad, owner).reject, GovernanceReject.badShape);
-    });
-
-    test('a role holder may give up its own role, not take one', () {
-      final s = base();
-      final leave = bump(s, assignments: {mod: {}}..remove(mod));
-      expect(check(s, leave, mod).ok, isFalse); // admin's role also dropped
-      final onlyMod = bump(
-        s,
-        assignments: {
-          admin: {'admin'},
-        },
-      );
-      expect(check(s, onlyMod, mod).ok, isTrue);
-      final take = bump(
-        s,
-        assignments: {
-          ...s.assignments,
-          mod: {'moderator', 'admin'},
-        },
-      );
-      expect(check(s, take, mod).ok, isFalse);
-    });
-
-    test('assignments need members and known roles', () {
-      final s = base();
-      expect(
-        check(
-          s,
-          bump(
-            s,
-            assignments: {
-              ...s.assignments,
-              'acct_stranger': {'moderator'},
-            },
-          ),
-          owner,
-        ).reject,
-        GovernanceReject.notMember,
-      );
-      expect(
-        check(
-          s,
-          bump(
-            s,
-            assignments: {
-              ...s.assignments,
-              bob: {'nope'},
-            },
-          ),
-          owner,
-        ).reject,
-        GovernanceReject.unknownRole,
-      );
-    });
-
-    test('channel overrides need manage_channels and held switches', () {
-      final s = base();
-      final o = ChannelOverride(
-        channelId: 'chan_news',
-        targetIsRole: true,
-        targetId: memberRoleId,
-        deny: {Perm.post},
-      );
-      final next = bump(s, overrides: {o.key: o});
-      expect(check(s, next, bob).reject, GovernanceReject.notAllowed);
-      expect(check(s, next, admin).ok, isTrue);
-      // A moderator holds manage_channels only if given it.
-      final withManage = bump(
-        s,
-        roles: {
-          ...s.roles,
-          'moderator': Role('moderator', 'Moderator', 20, {
-            ...s.roles['moderator']!.perms,
-            Perm.manageChannels,
-          }),
-        },
-      );
-      final s2 = withManage;
-      final ov = ChannelOverride(
-        channelId: 'chan_news',
-        targetIsRole: true,
-        targetId: memberRoleId,
-        allow: {Perm.mentionAll},
-      );
-      // The moderator already holds mention_all, so it may allow it.
-      expect(check(s2, bump(s2, overrides: {ov.key: ov}), mod).ok, isTrue);
-      final unheld = ChannelOverride(
-        channelId: 'chan_news',
-        targetIsRole: true,
-        targetId: memberRoleId,
-        deny: {Perm.viewChannel},
-        allow: {},
-      );
-      expect(
-        check(s2, bump(s2, overrides: {unheld.key: unheld}), mod).ok,
-        isTrue,
-      );
-      final groupWide = ChannelOverride(
-        channelId: 'chan_news',
-        targetIsRole: true,
-        targetId: memberRoleId,
-        allow: {Perm.kick},
-      );
-      expect(
-        check(
-          s2,
-          bump(s2, overrides: {groupWide.key: groupWide}),
-          admin,
-        ).reject,
-        GovernanceReject.badShape,
-      );
-    });
-
-    test('limits and shape', () {
-      final s = base();
-      final many = {
-        ...s.roles,
-        for (var i = 0; i < maxRoles; i++)
-          'r$i': Role('r$i', 'R$i', 100 + i, {Perm.post}),
-      };
-      expect(
-        check(s, bump(s, roles: many), owner).reject,
-        GovernanceReject.limits,
-      );
-      final noMember = bump(s, roles: Map.of(s.roles)..remove(memberRoleId));
-      expect(check(s, noMember, owner).reject, GovernanceReject.badShape);
-      final longName = bump(
-        s,
-        roles: {
-          ...s.roles,
-          'x': Role('x', 'n' * 33, 200, {Perm.post}),
-        },
-      );
-      expect(check(s, longName, owner).reject, GovernanceReject.badShape);
+      final same = s.copyWith(moderators: {mod, bob});
+      expect(check(s, same, admin).reject, GovernanceReject.badRev);
+      final skip = s.copyWith(rev: s.rev + 2, moderators: {mod, bob});
+      expect(check(s, skip, admin).reject, GovernanceReject.badRev);
+      expect(check(s, bump(s, moderators: {mod, bob}), admin).ok, isTrue);
     });
 
     test('two concurrent edits from the same prev: the second is stale', () {
       final s = base();
-      final first = bump(
-        s,
-        assignments: {
-          ...s.assignments,
-          bob: {'moderator'},
-        },
-      );
-      final second = bump(
-        s,
-        assignments: {
-          ...s.assignments,
-          carol: {'moderator'},
-        },
-      );
+      final first = bump(s, moderators: {mod, bob});
+      final second = bump(s, moderators: {mod, carol});
       expect(check(s, first, admin).ok, isTrue);
-      // Applied in server order, the second now sees rev+1 already taken.
       expect(check(first, second, admin).reject, GovernanceReject.badRev);
     });
-  });
 
-  group('review 2026-11-01: escalation', () {
-    // A "muted" role carrying a channel deny, Discord style.
-    GovernanceState muted() {
+    test('a plain member cannot give anyone a role', () {
       final s = base();
-      return s.copyWith(
-        roles: {
-          ...s.roles,
-          'muted': const Role('muted', 'Muted', 900, {}),
-          'fan': const Role('fan', 'Fan', 800, {Perm.react}),
-        },
-        assignments: {
-          ...s.assignments,
-          carol: {'muted', 'fan'},
-        },
-        overrides: keyed([
-          ov('chan_a', 'muted', deny: {Perm.post})
-        ]),
-      );
-    }
-
-    test('dropping your own role that carries a channel deny is refused', () {
-      final s = muted();
-      expect(s.can(carol, Perm.post, channelId: 'chan_a'), isFalse);
-      final unmute = bump(
-        s,
-        assignments: {
-          ...s.assignments,
-          carol: {'fan'},
-        },
-      );
-      expect(check(s, unmute, carol).reject, GovernanceReject.grantsMore);
-      // A role whose loss gains nothing may still be given up.
-      final dropFan = bump(
-        s,
-        assignments: {
-          ...s.assignments,
-          carol: {'muted'},
-        },
-      );
-      expect(check(s, dropFan, carol).ok, isTrue);
-      expect(check(s, unmute, mod).reject, GovernanceReject.notAllowed);
-      expect(check(s, unmute, admin).ok, isTrue);
-    });
-
-    test('taking a role that carries a channel allow you lack is refused', () {
-      final s0 = base();
-      final s = s0.copyWith(
-        roles: {
-          ...s0.roles,
-          'roleman': const Role('roleman', 'Roleman', 50, {Perm.manageRoles}),
-          'poster': const Role('poster', 'Poster', 100, {Perm.viewChannel}),
-        },
-        assignments: {
-          ...s0.assignments,
-          bob: {'roleman'},
-        },
-        overrides: keyed([
-          ov('chan_news', memberRoleId, deny: {Perm.post}),
-          ov('chan_news', 'poster', allow: {Perm.post}),
-        ]),
-      );
-      expect(s.can(bob, Perm.post, channelId: 'chan_news'), isFalse);
-      final self = bump(
-        s,
-        assignments: {
-          ...s.assignments,
-          bob: {'roleman', 'poster'},
-        },
-      );
-      expect(check(s, self, bob).reject, GovernanceReject.grantsMore);
-      final other = bump(
-        s,
-        assignments: {
-          ...s.assignments,
-          carol: {'poster'},
-        },
-      );
-      expect(check(s, other, bob).reject, GovernanceReject.grantsMore);
-      expect(check(s, other, admin).ok, isTrue);
-    });
-
-    test('nobody writes an override for its own account', () {
-      final s0 = base();
-      final s = s0.copyWith(
-        roles: {
-          ...s0.roles,
-          'moderator': Role('moderator', 'Moderator', 20, {
-            ...s0.roles['moderator']!.perms,
-            Perm.manageChannels,
-          }),
-        },
-      );
-      final self = bump(
-        s,
-        overrides: keyed([
-          ov('chan_news', mod, role: false, allow: {Perm.post}),
-        ]),
-      );
-      expect(check(s, self, mod).reject, GovernanceReject.hierarchy);
-      final onBob = bump(
-        s,
-        overrides: keyed([
-          ov('chan_news', bob, role: false, allow: {Perm.post}),
-        ]),
-      );
-      expect(check(s, onBob, mod).ok, isTrue);
-    });
-
-    test('mayActOn needs the switch and a strictly higher rank', () {
-      final s = base();
-      expect(s.mayActOn(mod, bob, Perm.kick), isTrue);
-      expect(s.mayActOn(mod, admin, Perm.kick), isFalse);
-      expect(s.mayActOn(admin, owner, Perm.ban), isFalse);
-      expect(s.mayActOn(mod, mod, Perm.kick), isFalse);
-      expect(s.mayActOn(bob, carol, Perm.kick), isFalse);
-      expect(s.mayActOn(owner, admin, Perm.ban), isTrue);
-    });
-  });
-
-  group('review 2026-11-01: determinism and liveness', () {
-    test('unknown switches in overrides are kept; group-wide refused', () {
-      final s = base();
-      final future = bump(
-        s,
-        overrides: keyed([
-          ov('chan_a', memberRoleId, deny: {'post_polls'}),
-        ]),
-      );
-      expect(check(s, future, admin).ok, isTrue);
-      final wide = bump(
-        s,
-        overrides: keyed([
-          ov('chan_a', memberRoleId, allow: {Perm.manageRoles}),
-        ]),
-      );
-      expect(check(s, wide, admin).reject, GovernanceReject.badShape);
-    });
-
-    test('an override for a channel this device does not know is kept', () {
-      final s = base();
-      final next = bump(
-        s,
-        overrides: keyed([
-          ov('chan_not_synced_yet', memberRoleId, deny: {Perm.post}),
-        ]),
-      );
-      expect(check(s, next, admin).ok, isTrue);
-    });
-
-    test('a departed admin is pruned, so others can still write records', () {
-      final s = base().copyWith(
-        assignments: {
-          admin: {'admin'},
-          carol: {'admin'},
-          mod: {'moderator'},
-        },
-      );
-      const after = {owner, admin, mod, bob};
-      final edit = bump(
-        s,
-        assignments: {
-          ...s.assignments,
-          bob: {'moderator'},
-        },
-      );
-      // Without the prune every later record names carol and is refused.
       expect(
-        check(s, edit, admin, roster: after).reject,
+        check(s, bump(s, moderators: {mod, carol}), bob).reject,
+        GovernanceReject.notAllowed,
+      );
+    });
+
+    test('an admin promotes a member; a new admin starts at this rev', () {
+      final s = base();
+      final ok = bump(s, admins: {admin: 1, bob: s.rev + 1});
+      expect(check(s, ok, admin).ok, isTrue);
+      expect(ok.roleOf(bob), BuiltInRole.admin);
+      final backdated = bump(s, admins: {admin: 1, bob: 0});
+      expect(check(s, backdated, admin).reject, GovernanceReject.badShape);
+      final reset = bump(s, admins: {admin: s.rev + 1});
+      expect(check(s, reset, owner).reject, GovernanceReject.badShape);
+    });
+
+    test('hierarchy: target strictly below, new role at most own rank', () {
+      final s = base();
+      // A moderator may make a moderator, as the server allows.
+      expect(check(s, bump(s, moderators: {mod, bob}), mod).ok, isTrue);
+      // Not an admin.
+      expect(
+        check(s, bump(s, admins: {admin: 1, bob: 4}), mod).reject,
+        GovernanceReject.hierarchy,
+      );
+      // An admin may not touch another admin, nor a moderator its peer.
+      final twoAdmins = s.copyWith(admins: {admin: 1, carol: 2});
+      expect(
+        check(twoAdmins, bump(twoAdmins, admins: {admin: 1}), admin).reject,
+        GovernanceReject.hierarchy,
+      );
+      final twoMods = s.copyWith(moderators: {mod, carol});
+      expect(
+        check(twoMods, bump(twoMods, moderators: {mod}), mod).reject,
+        GovernanceReject.hierarchy,
+      );
+      // The owner may demote an admin.
+      expect(
+        check(s, bump(s, admins: const {}, moderators: {mod}), owner).ok,
+        isTrue,
+      );
+    });
+
+    test('anyone may step down; nobody may take a role', () {
+      final s = base();
+      expect(check(s, bump(s, moderators: const {}), mod).ok, isTrue);
+      final adminToMod = bump(s, admins: const {}, moderators: {mod, admin});
+      expect(check(s, adminToMod, admin).ok, isTrue);
+      final take = bump(s, admins: {admin: 1, mod: 4}, moderators: const {});
+      expect(check(s, take, mod).reject, GovernanceReject.hierarchy);
+      // Stepping down cannot widen posting rights either.
+      final news = s.copyWith(announcementChannels: {'chan_news'});
+      final down = bump(news, admins: const {});
+      expect(check(news, down, admin).ok, isTrue);
+      expect(down.mayPost(admin, channelId: 'chan_news'), isFalse);
+    });
+
+    test('ownership: owner only, to a current admin; it cannot be vacated', () {
+      final s = base();
+      final toAdmin = bump(s, owner: admin, admins: {owner: s.rev + 1});
+      expect(check(s, toAdmin, owner).ok, isTrue);
+      expect(toAdmin.roleOf(owner), BuiltInRole.admin);
+      // The old owner may also step down to member.
+      expect(
+        check(s, bump(s, owner: admin, admins: const {}), owner).ok,
+        isTrue,
+      );
+      // Not by an admin, not to a moderator or member.
+      expect(
+        check(s, bump(s, owner: admin, admins: const {}), admin).reject,
+        GovernanceReject.ownerChange,
+      );
+      expect(
+        check(s, bump(s, owner: mod, moderators: const {}), owner).reject,
+        GovernanceReject.ownerChange,
+      );
+      expect(
+        check(s, bump(s, owner: bob), owner).reject,
+        GovernanceReject.ownerChange,
+      );
+      final vacate = s.copyWith(rev: s.rev + 1, clearOwner: true);
+      expect(check(s, vacate, owner).reject, GovernanceReject.ownerChange);
+    });
+
+    test('the owner is never also an admin or moderator', () {
+      final s = base();
+      expect(
+        check(s, bump(s, moderators: {mod, owner}), owner).reject,
+        GovernanceReject.badShape,
+      );
+      expect(
+        check(s, bump(s, moderators: {mod, admin}), owner).reject,
+        GovernanceReject.badShape,
+      );
+    });
+
+    test('roles go only to members of the MLS roster', () {
+      final s = base();
+      expect(
+        check(s, bump(s, moderators: {mod, 'acct_stranger'}), admin).reject,
+        GovernanceReject.notMember,
+      );
+      expect(
+        check(s, bump(s, moderators: {mod, bob}), 'acct_stranger').reject,
+        GovernanceReject.notMember,
+      );
+    });
+
+    test('posting restrictions need admin or above', () {
+      final s = base();
+      expect(
+        check(s, bump(s, adminsOnlyPosting: true), mod).reject,
+        GovernanceReject.notAllowed,
+      );
+      expect(check(s, bump(s, adminsOnlyPosting: true), admin).ok, isTrue);
+      expect(
+        check(s, bump(s, announcementChannels: {'chan_news'}), bob).reject,
+        GovernanceReject.notAllowed,
+      );
+      // A channel this device has not fetched yet is not an input: kept.
+      expect(
+        check(s, bump(s, announcementChannels: {'chan_not_synced'}), admin).ok,
+        isTrue,
+      );
+      expect(
+        check(s, bump(s, announcementChannels: {''}), admin).reject,
+        GovernanceReject.badShape,
+      );
+    });
+  });
+
+  group('removals and succession', () {
+    test('a departed admin is pruned; invited back, it is a member', () {
+      final s = base().copyWith(admins: {admin: 1, carol: 2});
+      const after = {owner, admin, mod, bob};
+      // Without the prune every later change names carol and is refused.
+      expect(
+        check(s, bump(s, moderators: {mod, bob}), admin, roster: after).reject,
         GovernanceReject.notMember,
       );
       final pruned = s.removeAccount(carol, remaining: after);
       expect(pruned.rev, s.rev);
-      expect(pruned.assignments.containsKey(carol), isFalse);
-      final edit2 = bump(
-        pruned,
-        assignments: {
-          ...pruned.assignments,
-          bob: {'moderator'},
-        },
+      expect(pruned.roleOf(carol), BuiltInRole.member);
+      expect(
+        check(
+          pruned,
+          bump(pruned, moderators: {mod, bob}),
+          admin,
+          roster: after,
+        ).ok,
+        isTrue,
       );
-      expect(check(pruned, edit2, admin, roster: after).ok, isTrue);
-      // Invited back, carol is a plain member.
-      expect(pruned.isAdmin(carol), isFalse);
     });
 
-    test('pruning drops the account override of the departed account', () {
-      final s = base().copyWith(
-        overrides: keyed([
-          ov('chan_a', bob, role: false, deny: {Perm.post}),
-          ov('chan_a', memberRoleId, deny: {Perm.attach}),
-        ]),
-      );
-      final pruned = s.removeAccount(bob, remaining: {owner, admin, mod});
-      expect(pruned.overrides.length, 1);
-      expect(pruned.overrides.values.single.targetId, memberRoleId);
-    });
-
-    test('when the owner leaves, the strongest account inherits', () {
-      final s = base().copyWith(
-        assignments: {
-          admin: {'admin'},
-          'acct_aaa': {'admin'},
-          mod: {'moderator'},
-        },
-      );
+    test('the oldest admin inherits; ties go to the smaller account id', () {
+      final s = base().copyWith(admins: {admin: 2, 'acct_aaa': 2, carol: 1});
+      // carol is oldest but left in the same commit.
       const after = {admin, 'acct_aaa', mod, bob};
       final next = s.removeAccount(owner, remaining: after);
-      // Both hold rank 10; the smaller account id wins.
       expect(next.owner, 'acct_aaa');
-      expect(next.assignments.containsKey('acct_aaa'), isFalse);
-      expect(next.assignments[admin], {'admin'});
-      final rec = bump(
-        next,
-        assignments: {
-          ...next.assignments,
-          bob: {'moderator'},
-        },
+      expect(next.admins.containsKey('acct_aaa'), isFalse);
+      expect(next.admins[admin], 2);
+      const withCarol = {admin, 'acct_aaa', carol, mod, bob};
+      expect(s.removeAccount(owner, remaining: withCarol).owner, carol);
+      // A moderator never inherits, however long it has been there.
+      expect(next.roleOf(mod), BuiltInRole.moderator);
+    });
+
+    test('with no admin left, nobody inherits and nobody can claim it', () {
+      final s = base().copyWith(admins: const {});
+      final next = s.removeAccount(owner, remaining: {mod, bob, carol});
+      expect(next.owner, isNull);
+      expect(next.roleOf(mod), BuiltInRole.moderator);
+      final claim = bump(next, owner: mod, moderators: const {});
+      expect(
+        check(next, claim, mod, roster: {mod, bob, carol}).reject,
+        GovernanceReject.ownerChange,
       );
-      expect(check(next, rec, 'acct_aaa', roster: after).ok, isTrue);
-      // With no roles left, the smallest account id inherits.
-      final plain = GovernanceState.genesis(owner)
-          .removeAccount(owner, remaining: {carol, bob});
-      expect(plain.owner, bob);
+      // Moderators keep working.
+      expect(
+        check(
+          next,
+          bump(next, moderators: {mod, bob}),
+          mod,
+          roster: {mod, bob, carol},
+        ).ok,
+        isTrue,
+      );
+    });
+  });
+
+  group('commits', () {
+    test('a commit that removes a named account must prune it', () {
+      final s = base();
+      const after = {owner, admin, bob, carol};
+      expect(
+        validateCommit(s, s, bob, before: members, after: after).reject,
+        GovernanceReject.notPruned,
+      );
+      final pruned = s.removeAccount(mod, remaining: after);
+      // Pruning alone needs no role: any committer may carry it.
+      expect(
+        validateCommit(s, pruned, bob, before: members, after: after).ok,
+        isTrue,
+      );
+      // Removing an unnamed member leaves the extension as it is.
+      expect(
+        validateCommit(
+          s,
+          s,
+          bob,
+          before: members,
+          after: {owner, admin, mod, bob},
+        ).ok,
+        isTrue,
+      );
+    });
+
+    test('removing the owner must carry the succession', () {
+      final s = base();
+      const after = {admin, mod, bob, carol};
+      final expected = s.removeAccount(owner, remaining: after);
+      expect(expected.owner, admin);
+      expect(
+        validateCommit(s, expected, mod, before: members, after: after).ok,
+        isTrue,
+      );
+      // Naming anyone else as owner is a change the committer cannot make.
+      final wrong = s.copyWith(owner: mod, moderators: const {});
+      expect(
+        validateCommit(s, wrong, mod, before: members, after: after).ok,
+        isFalse,
+      );
+    });
+
+    test('an add with a role is checked as a grant by the committer', () {
+      final s = base();
+      const after = {...members, 'acct_new'};
+      final asMod = bump(s, moderators: {mod, 'acct_new'});
+      expect(
+        validateCommit(s, asMod, admin, before: members, after: after).ok,
+        isTrue,
+      );
+      final asAdmin = bump(s, admins: {admin: 1, 'acct_new': s.rev + 1});
+      expect(
+        validateCommit(s, asAdmin, mod, before: members, after: after).reject,
+        GovernanceReject.hierarchy,
+      );
+    });
+
+    test('prune and change in one commit', () {
+      final s = base().copyWith(admins: {admin: 1, carol: 2});
+      const after = {owner, admin, mod, bob};
+      final pruned = s.removeAccount(carol, remaining: after);
+      final change = bump(pruned, moderators: {mod, bob});
+      expect(
+        validateCommit(s, change, admin, before: members, after: after).ok,
+        isTrue,
+      );
+      // A change that still names carol is refused.
+      final stale = bump(s, moderators: {mod, bob});
+      expect(
+        validateCommit(s, stale, admin, before: members, after: after).reject,
+        GovernanceReject.notMember,
+      );
     });
   });
 }

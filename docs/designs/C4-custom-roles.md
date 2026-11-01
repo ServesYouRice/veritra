@@ -1,219 +1,178 @@
-# C4: custom roles, permission switches, channel overrides
+# C4: built-in roles, verified by every app
 
-**Status: design plus a pure rules engine; no wiring.** Written 2026-11-01
-against `main` at `f1b4a36`. Code: `mobile/lib/core/roles/governance.dart`,
-tests `mobile/test/governance_test.dart`. Wire record: `docs/crypto.md`,
-"Group governance record (C4)". C2, C3 and C5 call
-`GovernanceState.can(account, perm, channelId:)`, and `mayActOn` for
-actions on another account; membership wiring calls `removeAccount` at a
-removing commit.
+**Status: design plus a pure rules engine; no wiring, no ABI.** Rescoped
+2026-11-01 after the owner chose built-in roles only (D80). The custom-role
+design (switches, ranks, channel overrides) it replaces is in Git history at
+`5304eac`. Code: `mobile/lib/core/roles/governance.dart`, tests
+`mobile/test/governance_test.dart`. Wire record: `docs/crypto.md`, "Group
+role state (C4)". The file name is kept because other designs link to it.
 
 ## Decision
 
-A group's roles live in one **governance state**, carried as MLS
-application messages inside that group. The server never sees it, so it can
-enforce only the built-in `owner/admin/moderator/member` roles it already
-knows (owner question 1). Every device holds the state locally, applies
-each record through `validateTransition`, and checks every action with `can`.
+The only roles are the server's four: `owner`, `admin`, `moderator`,
+`member` (`domain.RoleRank` 4 to 1). The server keeps enforcing them as it
+does today. Apps enforce the same roles, without trusting the
+server-reported role (D80).
 
-## Model
+That still needs a **signed role state**, because nothing in today's MLS
+data names a role:
 
-- **Owner**: one account, the creator. Holds every switch, ignores
-  overrides, cannot be touched by anyone. Only the owner changes `owner`.
-- **Role**: `id` (`[a-z0-9_]{1,32}`), `name` (at most 32 UTF-16 units),
-  unique `rank` (lower is stronger; 0..1000), a set of switches. At most 32.
-- **`member`**: always present, rank 1000, held by everyone implicitly.
-  Genesis gives it the open defaults of D58/D59 (view, post, react, attach,
-  pin, edit group info). `admin` (rank 10, `administrator`) and `moderator`
-  (rank 20) exist at genesis as ordinary editable roles.
-- **Assignment**: account to extra role ids (never `member`, never the
-  owner). Effective rank is the lowest held.
-- **Override**: `(channel, role-or-account)` to `allow` and `deny` sets of
-  channel-scoped switches; at most 256.
-- **Switches** (unknown strings are kept, never given meaning):
-  group-wide `administrator, manage_channels, manage_roles, manage_members,
-  kick, ban, timeout, edit_group_info, view_audit_log, manage_invites`;
-  per-channel `view_channel, post, react, attach, mention_all, pin,
-  manage_messages`.
-- **Evaluation** (Discord order): union of role switches; `member` override;
-  union of the other role overrides (denies, then allows); the account's own
-  override. Owner and `administrator` skip overrides. Without
-  `view_channel` no channel-scoped switch is granted.
+- A leaf carries a Basic credential with the account and device id only
+  (`inspect_commit`, `crypto/rust/src/mls.rs`). No role.
+- The group context has no Veritra extension (only the ratchet-tree
+  extension is used), and receivers refuse any proposal other than Add,
+  Remove and Update.
+- The creator cannot be proven to a joiner: leaf 0 is reused after a
+  removal, and a Welcome does not say who created the group.
+- No FFI call lists a group's members (`docs/crypto.md`, D68 residual), so
+  the app cannot even read the roster MLS holds.
 
-## Who may change what
+So the C2 receiver drop is **not buildable on today's data**. It needs the
+role state below.
 
-`validateTransition(prev, next, actor, members:)` is deterministic when
-`members` is the MLS roster at the record's sync position. `rev` is exactly
-`prev.rev + 1`; shape and limits hold; role edits need `manage_roles`;
-overrides need `manage_channels`; the actor may only touch roles and
-accounts (itself included, for overrides) ranked strictly below its own top
-rank and may not grant a switch it does not hold, checked on effective
-switches in every scope; assignments go only to current members and known
-roles; a role holder may drop its own roles without permission if that
-gains it nothing. Rejections are stable codes (`GovernanceReject`).
+## The role state (minimal)
 
-## Concurrency and ordering
+One small record per MLS group. Content (Dart: `GovernanceState`):
 
-Each record is a full snapshot with `rev`. Two concurrent edits from the
-same `prev` both carry `prev.rev + 1`; the one processed first wins, the
-other is stale (`badRev`) and its sender rebases and resends. "First" is
-sync order. Devices that see different orders could fork (owner question 2,
-an MLS ordering choice for second opinion).
+- `rev`: +1 on every written change.
+- `owner`: one account, or none (see owner question 1).
+- `admins`: account to the `rev` at which it became admin. The smallest
+  value is the oldest admin.
+- `moderators`: accounts. Everyone else is a member.
+- `admins_only_posting` (C2 group setting) and `announcement_channels`
+  (C2 channel kind, by channel id).
 
-## Membership interplay
+The two posting fields are here because C2's drop has two inputs: the
+sender's role and whether posting is restricted. If the restriction came
+from the server, a lying server could switch it off and members' posts in
+an announcement channel would show. Apps restrict where **either** this
+state or the server says so (the server can only narrow). Nothing else is
+in the record: C3's "admins restrict info edits" flag and C5's ban list and
+timeouts join it only when those packages build them (see their designs);
+until then they are trusted to the server, and their designs say so.
 
-- A leave, kick or ban: every device applies `removeAccount` at the
-  removing commit (see Review, finding 3). `rolesOf` ignores unknown ids.
-- New joiners need the current state. A Welcome carries no application
-  data, so a joiner holds governed effects until it has a verified state
-  (Review, finding 5). Who sends it is owner question 3.
-- Private channels (C3) use `can(a, view_channel, channelId:)` to decide who
-  is in that channel's MLS group; C0's reconcile applies the diff.
+## Where it lives: a GroupContext extension
 
-## What other packages do
+The record is a Veritra GroupContext extension of the group's MLS group.
 
-- **C2**: post allowed iff `can(sender, post, channelId:)`; an announcement
-  channel denies `post` to `member` by an override.
-- **C5**: `kick/ban/timeout/manage_messages`; admin delete uses
-  `manage_messages`. The audit log is C5's.
-- **W8 pins, D58, D59**: replace `ConversationAuthority.roleOf` with
-  `can(..., Perm.pin)` and `Perm.editGroupInfo`.
+- Every change is a commit, so MLS orders it (epoch order) and every member
+  holds the same state. No `rev` race, no hash chain, no snapshot
+  hand-off: the custom-role design's ordering and joiner questions are moot.
+- A joiner receives it in its Welcome, with the same trust it gives the
+  roster: the group's members accepted it at every step. A joiner cannot
+  check history before it joined.
+- The creator writes the genesis state (`owner` = creator, nothing else) at
+  group creation, so the owner comes from MLS, never from the server.
+- In a community (C0) the record lives in the shared group only. A
+  private channel's group carries none, and actions there are judged
+  against the shared group's record as the device holds it. The two groups
+  have no common order, so a post racing a role change can be judged
+  differently on two devices (a residual the custom-role review accepted).
+- Existing demo groups have no extension. They are recreated, not migrated
+  (C0's rule; there is no release). A group without the extension has no
+  verified roles: everyone is a member to the app, and posting is
+  restricted where the server says so.
+
+ABI work (approved by the owner as "role-state handover", D80; each piece
+needs the independent review before it lands):
+
+1. The extension type in every key package's leaf capabilities, then in the
+   group's required capabilities at creation. `server/internal/mlswire`
+   must accept the capability.
+2. Group creation takes the genesis record.
+3. A staged commit may carry one GroupContextExtensions proposal holding
+   only this extension; `inspect_commit` allows exactly that and nothing
+   else new.
+4. Incoming commits become two-phase: stage, return to Dart the committer,
+   the account roster before and after, and the extension before and after;
+   Dart runs `validateCommit`; then merge or discard. Today
+   `pm_crypto_group_process_commit` merges inside Rust with no hook.
+5. A read of the current extension and account roster (after join, after
+   restore).
+
+A commit that `validateCommit` refuses is an invalid MLS control message:
+sync stops on it under I33, as for any invalid commit today.
+
+## Rules
+
+They mirror the server (`ManageConversationMember`,
+`storage/community_store.go`; `CanManageMembers`, `CanPostRestricted`,
+`CanModerate`, `domain`), so apps and server agree.
+
+- Changing another account's role needs moderator or above; its current
+  role must be strictly below the actor's and the new one at most the
+  actor's. So a moderator may make a moderator and an admin an admin, as
+  the server allows today.
+- Anyone may step down (gains nothing). The owner must transfer first.
+- Only the owner moves ownership, and only to a current admin (D80). The
+  old owner becomes an admin (seniority restarts) or steps further down.
+  Ownership cannot be vacated by a record.
+- Posting restrictions need admin or above.
+- A new admin's seniority is the record's `rev`; an admin keeps its value
+  while it stays admin.
+- Everything named must be in the MLS roster after the commit.
+
+Checks for other packages: `mayPost(sender, channelId:)` (C2: owner and
+admin only where restricted) and `mayActOn(actor, target)` (C1/C5 kick,
+ban, timeout, delete-others: moderator or above, strictly outranking, never
+itself).
+
+### Removal and succession
+
+A commit that removes an account's last device must also carry the pruned
+state (`removeAccount`): the account loses its role, so a kicked admin who
+is invited back is a member. If the owner left, the **oldest admin still in
+the group** (smallest `admins` value, then smallest account id) becomes
+owner (D80). With no admin left, nobody inherits (owner question 1).
+Pruning alone needs no role, so any committer may carry it; a removal that
+does not prune is refused (`notPruned`). `validateCommit` prunes first, then
+checks any further change against the pruned state.
+
+`validateCommit` does not judge whether the removal itself was allowed.
+That is C1/C5's receiver check (`mayActOn(committer, target)` for a kick). A
+leave is committed by another member on the server's word today, so until a
+leave is proven by the leaver, a malicious server can force a departure,
+and with it a succession.
 
 ## Built and not built
 
-Built: rules engine and 24 tests (evaluation order, hierarchy, no
-escalation, stale rev, limits, and the review's regressions). Not built: the `governance` payload type in
-the W7 registry (specified in crypto.md only), local storage (a schema bump,
-second-opinion area), snapshot hand-off, UI, server enforcement for
-built-in roles.
+Built: the rules engine and 21 tests (posting, hierarchy as on the server,
+step-down, ownership transfer, seniority, pruning, succession, the
+commit-level check). Not built: the ABI above, the record codec (format in
+`docs/crypto.md`), wiring into commit processing, local storage (none is
+needed beyond MLS state), UI, and the server half of the ownership rules
+(below).
+
+## Server differences to close
+
+The server has no single owner: an owner may grant `owner` to anyone it
+outranks or equals, and a group may have several. D80 says ownership moves
+only to a current admin. Until the server refuses `role = owner` except as
+a transfer to an admin, the two can disagree. They disagree safely: apps
+act on this state only, so a server-made second owner is an admin or less
+to every app. The server also has no self step-down and no succession;
+each is a small follow-up in `ManageConversationMember` and in account
+deletion.
 
 ## Owner questions
 
-1. Server refusal of posts (C2) works only for built-in roles. Accept that
-   custom-role limits are enforced by members' apps only?
-2. Concurrent records: sync order only, or bind each record to its MLS epoch
-   and drop it on a mismatch?
-3. Snapshot hand-off to joiners: admin resend on join, or an MLS
-   GroupContextExtension (needs a crypto ABI change)?
-4. May ownership move only to a current admin?
+1. **No admin left when the owner leaves.** Written default: nobody
+   inherits; moderators and the rest keep working, but owner-only acts
+   (transfer, demoting admins) are gone for good. Alternative: the oldest
+   moderator, then the smallest account id. The default never hands power
+   to someone no admin chose.
+2. **Moderators making moderators.** Allowed, as on the server today. If
+   not wanted, change the server and this rule together.
 
-## Review (2026-11-01)
+## History
 
-Independent review of `9f059b7` (design, crypto.md record, engine, tests).
-Fixes are on `agent/C4-review`; `flutter test test/governance_test.dart`
-(24 pass) and `dart analyze` (no issues) were run on Windows.
-
-### Findings fixed in the engine
-
-1. **Escalation by dropping your own role** (high). The self-drop exemption
-   skipped every check, so a member holding a "muted" role that carries a
-   channel `deny post` could drop it and post again. **Escalation by taking
-   a role** (medium): a `manage_roles` holder could assign itself (or
-   others) a role carrying a channel `allow` it lacked, because only the
-   role's group switches were compared. Fix: a final check on effective
-   switches. For every member and every scope (group-wide plus each channel
-   named in an override), any switch gained must already be held by the
-   actor in that scope; the actor can never gain one. Owner and
-   administrators are exempt (they hold everything).
-2. **Self-targeted account overrides** (medium). A `manage_channels`
-   holder could write an `allow` for its own account; account overrides
-   apply last, so it would outlive a later restriction of its roles. Now
-   refused (`hierarchy`), the same rule as for peers.
-3. **Governance froze when an account left** (high, liveness). Every
-   record had to name only current members, but pruning a departed
-   account's entry needed rank over it: after an admin left only the owner
-   could write records, and after the owner left nobody ever could. Simply
-   tolerating stale entries would give a kicked admin its role back on
-   rejoin. Fix: `removeAccount`, applied by every device at the removing
-   commit's place in sync order (deterministic, no record, `rev` kept); it
-   drops the account's assignments and own overrides and, for the owner,
-   passes ownership to the strongest remaining account.
-4. **Inputs that devices see differently** (high, fork). `channelIds` came
-   from server metadata, so a device that had not fetched a new channel
-   refused a record others accepted; their `rev`s then diverge for good. It
-   is removed: an override for an unknown channel is kept and inert.
-   `members` must be the MLS roster at the record's place in sync order.
-   Unknown switches in overrides were `badShape`, so an older app refused
-   a newer app's record (a version fork); now only known group-wide
-   switches are refused.
-5. Added `mayActOn(actor, target, perm)` for C1/C5 (holds the switch and
-   strictly outranks the target).
-
-### Findings for the wiring (not code yet)
-
-- **Joiners failed open.** "Member defaults" include `post`, `pin` and
-  `edit_group_info`, so a joiner without the state would accept a member's
-  post in an announcement channel (C2) or a rename in a restricted group.
-  A device without a verified state holds governed effects instead.
-- **Own records** apply at their sync position, not at send; otherwise a
-  sender whose record loses a race keeps a state no one else has.
-- **Genesis** is protocol: freeze its roles, ranks and switches in
-  crypto.md. The genesis owner must come from MLS (the group's creator),
-  never the server roster, or the server names the owner.
-- **Where the record lives (C0).** In a community, only in the shared
-  group; private-channel groups carry none. A post in a private group is
-  judged against the shared group's state at receipt; the two groups have
-  no common order, so a post racing a role change can be judged
-  differently on two devices. Accepted residual, as for S4 today.
-- **C1/C3/C5 receivers** must check MLS remove commits with
-  `mayActOn(committer, target, kick)` and private-group adds with
-  `can(added, view_channel, channelId:)`, or the hierarchy means nothing.
-- Deleting a role that has overrides also needs `manage_channels`.
-- An `allow` on a lower role the actor also holds still outlives later
-  restrictions (as in Discord); a stronger account sees and can remove it.
-- The effective-switch check costs members x scopes evaluations (up to
-  1,000 x 257 at C8 sizes). C8 should measure it, or limit it to the
-  accounts a record can affect.
-
-### Owner questions: recommendations
-
-1. **Custom roles enforced by apps only: accept.** The server stays a
-   coarse outer layer on its built-in roles, and apps apply server AND
-   governance, never widening what the server allows. So a custom role
-   cannot post in a channel the server marks announcement; such a channel
-   should be client-enforced only. There is a split brain to decide: the
-   server alone authorizes membership and invites (`CanManageMembers`,
-   `CanManageInvites`) and allows several owners, while governance has one.
-   Recommended: the app mirrors governance to the server's built-in role
-   (`administrator` to admin, `kick`/`ban`/`manage_members` to moderator)
-   and a server owner always equals the governance owner. That tells the
-   server who holds power, as it knows today.
-2. **Ordering: sync order plus a hash chain, not epoch drop.** Sync order
-   is the server's per-conversation order, the same for every device, and
-   is already the rule for pins and polls. `rev` alone cannot detect a fork
-   (a record skipped under D54, or withheld by a hostile server): add
-   `prev_hash`, the SHA-256 of the canonical state the record builds on. A
-   mismatch stops governance on that device and asks for a resync; it never
-   guesses. Dropping records whose epoch differs from the current one would
-   discard good records whenever a join or self-update commit races them,
-   and still cannot order two records in one epoch. This is moot if 3 picks
-   the extension.
-3. **Joiner hand-off: a GroupContext extension (recommended), needing a
-   crypto ABI change and an Opus design.** An admin resend cannot be
-   verified by the joiner: a forged snapshot can name its own sender as
-   owner. Putting the state in a GroupContext extension makes every change a
-   commit, so MLS itself orders it (epoch order, no hash chain), all members
-   agree on it, and the Welcome carries it, which also fixes genesis.
-   Costs: the extension type must be in every member's capabilities first;
-   an invalid governance commit halts receivers under I33, the same class
-   as any invalid commit today; size is tens of KB at 1,000 members, within
-   D70's 4 MiB per value. If size bites at C8, keep only `(rev, hash)` in
-   the extension and send the snapshot as an application message any member
-   can deliver. Without an ABI change, the fallback is admin resend plus
-   the hash chain, with joiners holding governed effects until a snapshot
-   arrives from the member that committed their Add.
-4. **Ownership transfer: to any current member in the protocol; restrict
-   in the UI** (for example to admins, with a confirmation), so the policy
-   can change without a protocol change. The server owner must move with
-   it, and no server transfer exists today. The automatic succession in
-   `removeAccount` (strongest remaining account, then smallest id) is also
-   the owner's to confirm. One case to weigh: only the owner can create a
-   role ranked 0 to 9; a cosmetic role there ("VIP" with just `post`)
-   outranks every admin, so its holder would inherit. "Administrators
-   first, then rank, then id" may be the better default.
-
-## Owner decisions (2026-11-01)
-
-- Enforcement: **built-in roles only** (owner chose this over app-enforced custom-role limits). Custom-role limits are therefore not required; revisit the design scope.
-- New crypto ABI functions (role-state handover, credential-key signing, HPKE seal) approved, with independent review before release.
-- Ownership goes to current admins only; the oldest admin inherits.
+The custom-role design (`9f059b7`) and its review (`bef742c`, `77968d4`)
+are superseded. What still applies, carried into the rules above: no
+escalation by taking a role, pruning departed accounts so governance never
+freezes and a kicked admin returns as a member, the roster from MLS and
+never the server, no server metadata (channel lists) as an input, and
+deterministic succession. What went: switches, custom ranks, channel
+overrides, limits, the effective-switch check, `rev` races and `prev_hash`,
+and the snapshot hand-off. Owner decisions (2026-11-01, D80): built-in roles
+only; new crypto ABI functions approved with independent review; ownership
+only to current admins, oldest admin inherits.

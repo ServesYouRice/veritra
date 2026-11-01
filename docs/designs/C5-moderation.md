@@ -1,8 +1,8 @@
 # C5: moderation
 
 **Status: proposed.** Written against `main` at `f1b4a36`. Builds on C0
-(shared group, `channel_id`), C1 (membership), C4 (roles, design on
-`agent/C4`) and C6 (sealed reports, design on `agent/C6`). Needs Opus review
+(shared group, `channel_id`), C1 (membership), C4 (the signed built-in
+role state, `docs/designs/C4-custom-roles.md`) and C6 (sealed reports, design on `agent/C6`). Needs Opus review
 before the server parts land. Revision 2 (2026-11-01) adds escalation to the
 instance owner and the instance ban (owner decision below).
 
@@ -10,8 +10,9 @@ instance owner and the instance ban (owner decision below).
 
 `server/internal/domain/moderation.go`: pure rules over the built-in roles
 (`CanModerate`, `CanDeleteOthersMessage`, timeout and slow-mode bounds and
-checks), with tests. When C4 lands, the role arguments become permission
-checks; the call sites stay.
+checks), with tests. Roles stay the built-in four (D80), so these stay as
+they are; apps apply the same rank rule from C4's signed role state
+(`GovernanceState.mayActOn`).
 
 Already exists: kick/leave of a group member (`RemoveConversationMember`,
 rank-checked, queues the MLS removal). C1 extends it to communities.
@@ -19,17 +20,22 @@ rank-checked, queues the MLS removal). C1 extends it to communities.
 ## Design
 
 Principle: the server enforces what it can see (account ids, times,
-`channel_id`); every app enforces the same rules from the encrypted state
-(C4), because the server may lie. No reasons or message text reach the
-server.
+`channel_id`); every app enforces the same built-in-role rules from C4's
+signed role state, because the server may lie about roles. No reasons or
+message text reach the server.
+
+C4's record holds only roles and C2's posting restrictions. A ban list and
+timeouts are not in it: until C5 adds them there (new fields in the C4
+record, reviewed with it), receivers cannot check them and trust the
+server's refusal, as the owner accepted for slow mode.
 
 | Action | Server | Apps (encrypted) |
 |---|---|---|
-| Kick | Remove membership, queue MLS removal (exists) | Commit removing the member's devices |
-| Ban | Row in `member_bans(community_id, account_id, banned_by, created_at)`; refuses add, join, invite redemption and key-package claims for that account | Ban list in group state (C4); a banned account's Add proposal is rejected |
-| Timeout | `timeout_until` on the membership; send refused until then (`TimedOut`) | Drop posts from a timed-out sender inside the period |
+| Kick | Remove membership, queue MLS removal (exists) | Commit removing the member's devices; receivers check `mayActOn(committer, target)` |
+| Ban | Row in `member_bans(community_id, account_id, banned_by, created_at)`; refuses add, join, invite redemption and key-package claims for that account | Later: ban list in the C4 record, a banned account's Add rejected. Until then, the server's refusal |
+| Timeout | `timeout_until` on the membership; send refused until then (`TimedOut`) | Later: drop posts from a timed-out sender (needs the timeout in the C4 record). Until then, the server's refusal |
 | Slow mode | `slow_mode_seconds` per channel; refuse a post within the gap of the sender's last one in `(conversation_id, channel_id)`; moderators exempt | Same check on receipt, with a small clock tolerance |
-| Delete others' messages | Redact the envelope like `deleteMessageEnvelope`, when the actor outranks the sender | Moderator sends a `moderation_delete` application message naming the target message; receivers verify the actor's authority before hiding it |
+| Delete others' messages | Redact the envelope like `deleteMessageEnvelope`, when the actor outranks the sender | Moderator sends a `moderation_delete` application message naming the target message; receivers verify the actor's authority (`mayActOn` on the C4 role state) before hiding it |
 | Audit log | Table `moderation_events(id, community_id, actor, target, action, created_at)`: ids and action kind only | Optional reason, encrypted as an application message to moderators |
 | Pause invites | `invites_paused_until` on the community; refuses redemption (C1) | Shown in the UI |
 
@@ -51,8 +57,8 @@ records; it never reads the reason or the evidence.
 
 ### 1. Raising it (community admin's app)
 
-- Offered to an account whose server-visible role in the community is
-  `owner` or `admin` and who holds C4 `ban`, on a target that is a current
+- Offered to an account whose role in the community is `owner` or `admin`,
+  both on the server and in C4's role state, on a target that is a current
   member or is in `member_bans` for that community. Escalating does not
   require a community ban first.
 - The app builds a sealed body, versioned JSON:
@@ -198,9 +204,8 @@ New W7 payload types `moderation_delete` (target message id) and
 
 ## Owner questions
 
-1. Is the server's refusal of timeout, ban and slow mode acceptable given it
-   cannot see custom roles (C4)? Proposal: server enforces built-in roles
-   only; apps enforce the rest.
+1. Answered (D80): built-in roles only, enforced by the server and checked
+   by apps from C4's role state.
 2. May the server keep an audit log of ids and action kinds (it sees them
    anyway), or must the log be encrypted-only and stored in group state?
 3. Slow mode clock: server time is authoritative; is drop-on-receipt in apps
