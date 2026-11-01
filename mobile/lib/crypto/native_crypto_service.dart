@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
+
 import '../core/models.dart';
 import '../core/server_origin.dart';
 import '../storage/encrypted_database.dart'
@@ -27,14 +29,19 @@ class NativeCryptoService
         BoundedMlsConversationCryptoService,
         ConversationAuthorityConsumer,
         MlsSelfUpdateCryptoService,
+        MlsStateMaintenanceCryptoService,
         NoticeCaptureConsumer {
   NativeCryptoService({
     required this.bindings,
     required this.localStore,
-  });
+    DateTime Function()? clock,
+  }) : _clock = clock ?? DateTime.now;
 
   final NativeCryptoBindings bindings;
   final LocalStore localStore;
+
+  /// The time key-package expiry is judged by (D70).
+  final DateTime Function() _clock;
   @override
   set conversationAuthority(ConversationAuthority value) => _authority = value;
   ConversationAuthority? _authority;
@@ -80,6 +87,10 @@ class NativeCryptoService
   /// seal moves the device's generation, so a retried activation must store
   /// this same state rather than seal again (D70).
   StoredCryptoState? _firstState;
+
+  /// Whether the first sealed state (and its state key) is still held.
+  @visibleForTesting
+  bool get holdsFirstState => _firstState != null;
   Future<void> _operationTail = Future<void>.value();
 
   @override
@@ -134,6 +145,9 @@ class NativeCryptoService
           _firstState = null;
           _deviceCounter = 1;
         } else {
+          // A state is stored, so the first save committed (its outcome
+          // may have been lost): the copy and its key are never needed.
+          _firstState = null;
           _device?.close();
           _device = null;
           final restored = await _openStored(accountId, deviceId, stored);
@@ -197,10 +211,24 @@ class NativeCryptoService
         }
         final previous = await _requiredState();
         try {
-          final packages = <List<int>>[
-            for (var index = 0; index < count; index++)
-              _requiredDevice().createKeyPackage(),
-          ];
+          final device = _requiredDevice();
+          // The pool holds at most 1,000 packages (D70). Expired ones are
+          // dropped first, so a full pool frees up as they expire instead
+          // of refusing every replenishment until a later sync prunes.
+          device.pruneKeyPackages(_clock());
+          final packages = <List<int>>[];
+          for (var index = 0; index < count; index++) {
+            try {
+              packages.add(device.createKeyPackage());
+            } on NativeCryptoException {
+              // The pool is full (or a key failed): keep the packages
+              // already made, so a pool with a few free places still
+              // fills them. The caller settles only what it gets; the rest
+              // stays owed.
+              if (packages.isEmpty || !_handleAnswers()) rethrow;
+              break;
+            }
+          }
           await _commitLocalMutation(previous);
           return packages;
         } catch (_) {
@@ -311,7 +339,23 @@ class NativeCryptoService
         try {
           if (bundle.hasCommit) {
             final device = _requiredDevice();
-            final before = device.groupEpoch(item.conversationId);
+            final ({int epoch, bool pending}) before;
+            try {
+              before = device.groupEpoch(item.conversationId);
+            } on NativeCryptoException {
+              // The group is gone: the user left or deleted the chat (D70),
+              // or this device was removed. Nothing is left to merge, and
+              // the entry settles instead of failing on every retry. A
+              // handle that no longer answers is not a missing group.
+              if (!_handleAnswers()) rethrow;
+              await localStore.commitLocalMlsState(
+                expectedCounter: previous.counter,
+                expectedCursor: await localStore.loadSyncCursor(),
+                state: _sealNext(previous),
+                resolvedMlsOutboxKey: item.idempotencyKey,
+              );
+              return;
+            }
             if (before.pending) device.mergePendingCommit(item.conversationId);
             final after = device.groupEpoch(item.conversationId);
             // Fail closed if the group is not where the accepted commit
@@ -375,8 +419,9 @@ class NativeCryptoService
       });
 
   /// Drops key packages that expired more than 24 hours before [now] and
-  /// stores the change (D70). Returns how many went. The trigger, after a
-  /// caught-up sync pass, is S4.
+  /// stores the change (D70). Returns how many went. AppState calls it
+  /// after a caught-up foreground sync pass (S4).
+  @override
   Future<int> pruneExpiredKeyPackages(DateTime now) => _serial(() async {
         final previous = await _requiredState();
         try {
@@ -389,21 +434,32 @@ class NativeCryptoService
         }
       });
 
-  /// Drops this device's state for a conversation the user deleted (D70),
-  /// and stores the change. Only a user action may call this, never a
-  /// server event: a removal already dropped the group. Returns whether a
-  /// group was stored. The leave and delete triggers are S4 and C1.
+  /// Drops this device's state for a conversation the user left or
+  /// deleted (D70), stores the change, then settles that conversation's
+  /// queued MLS control messages: with no group, a queued commit could only
+  /// fail. Only a user action may call this, never a server event: a
+  /// removal already dropped the group. Returns whether a group was stored.
+  @override
   Future<bool> deleteConversationState(String conversationId) =>
       _serial(() async {
         final previous = await _requiredState();
+        final bool deleted;
         try {
-          final deleted = _requiredDevice().deleteGroup(conversationId);
+          deleted = _requiredDevice().deleteGroup(conversationId);
           if (deleted) await _commitLocalMutation(previous);
-          return deleted;
         } catch (_) {
           await _restorePrevious(previous);
           rethrow;
         }
+        // After the group is gone. A crash in between leaves entries that
+        // settle on their own: [completeCommitBundle] and
+        // [abandonCommitBundle] settle a bundle whose group is missing.
+        for (final queued in await localStore.pendingMlsMessages()) {
+          if (queued.conversationId == conversationId) {
+            await localStore.removePendingMlsMessage(queued.idempotencyKey);
+          }
+        }
+        return deleted;
       });
 
   /// Whether [item] is still an unsettled entry of the MLS outbox. Run only
@@ -1299,8 +1355,14 @@ class NativeCryptoService
   /// root and the changed records, stored together by the caller (D70).
   StoredCryptoState _sealNext(StoredCryptoState previous) {
     final nextCounter = previous.counter + 1;
-    final next = _sealedState(nextCounter, previous.stateKey,
-        _requiredDevice().sealChanges(previous.stateKey, nextCounter));
+    final NativeChangeSet sealed;
+    try {
+      sealed = _requiredDevice().sealChanges(previous.stateKey, nextCounter);
+    } on NativeRecordLimitException catch (error) {
+      // Nothing was sealed; the caller rolls back (D70).
+      throw recordLimitFromNative(error);
+    }
+    final next = _sealedState(nextCounter, previous.stateKey, sealed);
     // The in-memory group now matches [next]. Callers that fail to commit it
     // call [_restorePrevious], which resets this.
     _deviceCounter = nextCounter;
@@ -1497,6 +1559,15 @@ class NativeCryptoService
         _deviceId = null;
       });
 }
+
+/// The app-level form of a native record-limit error: names the
+/// conversation when the record is its group (kind 2), else nothing.
+CryptoRecordLimitExceeded recordLimitFromNative(
+        NativeRecordLimitException error) =>
+    CryptoRecordLimitExceeded(
+        conversationId: error.recordKind == 2 && error.recordId.isNotEmpty
+            ? String.fromCharCodes(error.recordId)
+            : null);
 
 List<int> _randomBytes(int length) {
   final random = Random.secure();

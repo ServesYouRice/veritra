@@ -670,6 +670,8 @@
   "syncErrorCryptoUnavailable": "Encryption is unavailable in this build, so encrypted updates cannot be applied.",
   "syncErrorStopped": "Sync stopped. Try again.",
   "syncErrorLocalStorage": "This device could not read or write its local storage. Messages are paused so none are skipped. Free up space or restart the app, then try again.",
+  "syncErrorRecordLimit": "A conversation has grown too large for this device to store its encryption data. Messages are paused so none are skipped. Leave that conversation to continue.",
+  "syncErrorRecordLimitDevice": "This device's encryption data has grown too large to store. Messages are paused so none are skipped. Link this device again to continue.",
   "syncErrorStorageBusy": "This device's storage is busy or full. Sync will try again shortly.",
 
   "apiErrorSessionInvalid": "Your session is no longer valid. Sign in again.",
@@ -718,6 +720,8 @@
   "errorConversationPaused": "Sending is paused in this conversation.",
   "errorOutboxFull": "Your encrypted message queue is full. Send or discard a pending message before composing another.",
   "errorCryptoStateFormatUnsupported": "This device's encrypted data was saved in a format this version of the app cannot read. Link this device again to keep messaging.",
+  "errorConversationTooLarge": "This conversation has grown too large for this device to store its encryption data. Nothing was changed. You can leave the conversation to keep the others working.",
+  "errorCryptoRecordLimit": "This device's encryption data has grown too large to store. Nothing was changed. Link this device again to keep messaging.",
   "errorConversationPausedDetail": "Sending is paused in this conversation because the server rejected an encryption update. Other conversations still work.",
   "errorEncryptionUnavailable": "This build does not include the production encryption engine yet, so this action is unavailable.",
   "errorActionUnavailable": "This action is unavailable in this build.",

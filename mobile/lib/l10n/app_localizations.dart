@@ -3153,6 +3153,18 @@ abstract class AppLocalizations {
   /// **'This device could not read or write its local storage. Messages are paused so none are skipped. Free up space or restart the app, then try again.'**
   String get syncErrorLocalStorage;
 
+  /// No description provided for @syncErrorRecordLimit.
+  ///
+  /// In en, this message translates to:
+  /// **'A conversation has grown too large for this device to store its encryption data. Messages are paused so none are skipped. Leave that conversation to continue.'**
+  String get syncErrorRecordLimit;
+
+  /// No description provided for @syncErrorRecordLimitDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'This device\'s encryption data has grown too large to store. Messages are paused so none are skipped. Link this device again to continue.'**
+  String get syncErrorRecordLimitDevice;
+
   /// No description provided for @syncErrorStorageBusy.
   ///
   /// In en, this message translates to:
@@ -3428,6 +3440,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This device\'s encrypted data was saved in a format this version of the app cannot read. Link this device again to keep messaging.'**
   String get errorCryptoStateFormatUnsupported;
+
+  /// No description provided for @errorConversationTooLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'This conversation has grown too large for this device to store its encryption data. Nothing was changed. You can leave the conversation to keep the others working.'**
+  String get errorConversationTooLarge;
+
+  /// No description provided for @errorCryptoRecordLimit.
+  ///
+  /// In en, this message translates to:
+  /// **'This device\'s encryption data has grown too large to store. Nothing was changed. Link this device again to keep messaging.'**
+  String get errorCryptoRecordLimit;
 
   /// No description provided for @errorConversationPausedDetail.
   ///

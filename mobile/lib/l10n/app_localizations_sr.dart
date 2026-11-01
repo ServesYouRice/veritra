@@ -1937,6 +1937,14 @@ class AppLocalizationsSr extends AppLocalizations {
       'Овај уређај није могао да чита или пише у своје локално складиште. Поруке су паузиране да ниједна не би била прескочена. Ослободите простор или поново покрените апликацију, па покушајте поново.';
 
   @override
+  String get syncErrorRecordLimit =>
+      'Један разговор је постао превелик да би овај уређај сачувао његове шифроване податке. Поруке су паузиране да ниједна не би била прескочена. Напустите тај разговор да бисте наставили.';
+
+  @override
+  String get syncErrorRecordLimitDevice =>
+      'Шифровани подаци овог уређаја постали су превелики за чување. Поруке су паузиране да ниједна не би била прескочена. Поново повежите овај уређај да бисте наставили.';
+
+  @override
   String get syncErrorStorageBusy =>
       'Складиште овог уређаја је заузето или пуно. Синхронизација ће ускоро покушати поново.';
 
@@ -2106,6 +2114,14 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get errorCryptoStateFormatUnsupported =>
       'Шифровани подаци на овом уређају сачувани су у формату који ова верзија апликације не може да прочита. Поново повежите овај уређај да бисте наставили да шаљете поруке.';
+
+  @override
+  String get errorConversationTooLarge =>
+      'Овај разговор је постао превелик да би овај уређај сачувао његове шифроване податке. Ништа није промењено. Можете да напустите разговор да би остали радили.';
+
+  @override
+  String get errorCryptoRecordLimit =>
+      'Шифровани подаци овог уређаја постали су превелики за чување. Ништа није промењено. Поново повежите овај уређај да бисте наставили да шаљете поруке.';
 
   @override
   String get errorConversationPausedDetail =>
@@ -4499,6 +4515,14 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Ovaj uređaj nije mogao da čita ili piše u svoje lokalno skladište. Poruke su pauzirane da nijedna ne bi bila preskočena. Oslobodite prostor ili ponovo pokrenite aplikaciju, pa pokušajte ponovo.';
 
   @override
+  String get syncErrorRecordLimit =>
+      'Jedan razgovor je postao prevelik da bi ovaj uređaj sačuvao njegove šifrovane podatke. Poruke su pauzirane da nijedna ne bi bila preskočena. Napustite taj razgovor da biste nastavili.';
+
+  @override
+  String get syncErrorRecordLimitDevice =>
+      'Šifrovani podaci ovog uređaja postali su preveliki za čuvanje. Poruke su pauzirane da nijedna ne bi bila preskočena. Ponovo povežite ovaj uređaj da biste nastavili.';
+
+  @override
   String get syncErrorStorageBusy =>
       'Skladište ovog uređaja je zauzeto ili puno. Sinhronizacija će uskoro pokušati ponovo.';
 
@@ -4671,6 +4695,14 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get errorCryptoStateFormatUnsupported =>
       'Šifrovani podaci na ovom uređaju sačuvani su u formatu koji ova verzija aplikacije ne može da pročita. Ponovo povežite ovaj uređaj da biste nastavili da šaljete poruke.';
+
+  @override
+  String get errorConversationTooLarge =>
+      'Ovaj razgovor je postao prevelik da bi ovaj uređaj sačuvao njegove šifrovane podatke. Ništa nije promenjeno. Možete da napustite razgovor da bi ostali radili.';
+
+  @override
+  String get errorCryptoRecordLimit =>
+      'Šifrovani podaci ovog uređaja postali su preveliki za čuvanje. Ništa nije promenjeno. Ponovo povežite ovaj uređaj da biste nastavili da šaljete poruke.';
 
   @override
   String get errorConversationPausedDetail =>

@@ -121,6 +121,32 @@ abstract interface class MlsSelfUpdateCryptoService {
   Future<void> stageSelfUpdate(String conversationId);
 }
 
+/// Upkeep of the stored MLS state (D70 S4). Kept apart from
+/// [MlsConversationCryptoService] so a service without per-group state is
+/// simply never asked.
+abstract interface class MlsStateMaintenanceCryptoService {
+  /// Drops key packages that expired more than 24 hours before [now] and
+  /// stores the change. Returns how many went.
+  Future<int> pruneExpiredKeyPackages(DateTime now);
+
+  /// Drops this device's state for [conversationId] and settles that
+  /// conversation's queued MLS control messages. Only the user's own leave
+  /// or delete may call this, never a server event (docs/crypto.md,
+  /// "Rejoining a conversation"). Returns whether a group was stored.
+  Future<bool> deleteConversationState(String conversationId);
+}
+
+/// A change would make one sealed record of the MLS state larger than its
+/// cap (D70, native `PM_CRYPTO_RECORD_LIMIT`). Nothing was stored and the
+/// operation was rolled back. [conversationId] names the conversation when
+/// the record is its group; null for the device record or a key package.
+class CryptoRecordLimitExceeded implements Exception {
+  const CryptoRecordLimitExceeded({this.conversationId});
+  final String? conversationId;
+  @override
+  String toString() => 'encrypted state record is over its size limit';
+}
+
 /// Cached server roles today; C4 will replace this source with encrypted roles.
 abstract interface class ConversationAuthority {
   String? roleOf(String conversationId, String accountId);

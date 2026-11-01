@@ -2300,7 +2300,138 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         selectedConversationId = null;
       }
       await _persistSnapshot();
+      await _afterLeftConversation(current, conversationId);
     });
+  }
+
+  /// The user left [conversationId] (D70 S4). Its unsent messages can no
+  /// longer go, so they are dropped. Its MLS group is dropped by the next
+  /// foreground sync pass, before it reads events ([_dropLeftConversations]):
+  /// a pass already under way may still apply events of the conversation
+  /// from before the leave, and the server sends none after it. The note is
+  /// durable, so a restart still drops the group. A local failure here does
+  /// not undo or fail the leave.
+  Future<void> _afterLeftConversation(
+      Session current, String conversationId) async {
+    try {
+      for (final record in await localStore.pendingEnvelopeRecords()) {
+        if (record.envelope.conversationId == conversationId) {
+          await _removeFromOutboxByKey(record.envelope.idempotencyKey);
+        }
+      }
+    } catch (_) {
+      // Left queued, they fail at the server, which no longer takes them.
+    }
+    if (_mlsCrypto is! MlsStateMaintenanceCryptoService) return;
+    try {
+      await _changeLeftConversations(
+          current, (ids) => <String>{...ids, conversationId});
+    } catch (_) {
+      // Not noted: the group stays until a removal commit or the user
+      // leaves again. Nothing is weaker for it.
+      return;
+    }
+    unawaited(_catchUpSyncEvents());
+  }
+
+  // Conversations the user left whose MLS group is still to be dropped
+  // (D70 S4). One local setting, scoped to the origin, account and device
+  // like [_keyPackageNeedSetting]; a record of another identity counts as
+  // nothing. Only [leaveConversation], a user action, adds to it.
+  static const _leftConversationsSetting = 'mls.left_conversations';
+
+  /// Most conversations the record holds (D38's default conversation cap).
+  static const _leftConversationsCap = 1000;
+  Future<void> _leftConversationsLock = Future<void>.value();
+
+  Future<Set<String>> _readLeftConversations(Session owner) async {
+    final raw = await localStore.loadSetting(_leftConversationsSetting);
+    if (raw == null || raw.isEmpty) return <String>{};
+    try {
+      final record = jsonDecode(raw);
+      if (record is! Map || record['scope'] != _keyPackageScope(owner)) {
+        return <String>{};
+      }
+      final ids = record['ids'];
+      return ids is List
+          ? <String>{...ids.whereType<String>().where((id) => id.isNotEmpty)}
+          : <String>{};
+    } on FormatException {
+      return <String>{};
+    }
+  }
+
+  /// One read-modify-write of [owner]'s record; they never interleave.
+  /// Returns the set as stored.
+  Future<Set<String>> _changeLeftConversations(
+      Session owner, Set<String> Function(Set<String> ids) change) {
+    final done = _leftConversationsLock.then((_) async {
+      final current = await _readLeftConversations(owner);
+      final next = change(current);
+      if (!setEquals(current, next)) {
+        await localStore.saveSetting(
+            _leftConversationsSetting,
+            jsonEncode(<String, Object?>{
+              'scope': _keyPackageScope(owner),
+              'ids': next.take(_leftConversationsCap).toList(growable: false),
+            }));
+      }
+      return next;
+    });
+    _leftConversationsLock =
+        done.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    return done;
+  }
+
+  /// Drops the MLS group of every conversation the user left (D70 S4), and
+  /// with it that conversation's queued MLS control messages. Runs inside
+  /// a foreground sync pass before it reads events, so no event of the
+  /// conversation is being applied meanwhile. Best effort: a failure keeps
+  /// the note for the next pass and never stops sync.
+  Future<void> _dropLeftConversations(
+      Session current, int ownerGeneration) async {
+    final Object? mls = _mlsCrypto;
+    if (mls is! MlsStateMaintenanceCryptoService) return;
+    final Set<String> left;
+    try {
+      left = await _readLeftConversations(current);
+    } catch (_) {
+      return;
+    }
+    for (final conversationId in left) {
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      try {
+        await mls.deleteConversationState(conversationId);
+        await _changeLeftConversations(
+            current, (ids) => ids.difference(<String>{conversationId}));
+      } catch (err) {
+        // Body-free: no conversation id.
+        developer.log('mls_left_group_drop_failed ${err.runtimeType}',
+            name: 'veritra.sync');
+      }
+    }
+  }
+
+  /// How often a caught-up foreground pass drops expired key packages
+  /// (D70 S4). They expire over days; replenishment also prunes first, so
+  /// a full pool never waits for this.
+  static const _keyPackagePruneInterval = Duration(hours: 6);
+  DateTime? _keyPackagePruneAt;
+
+  Future<void> _maybePruneKeyPackages() async {
+    final Object? mls = _mlsCrypto;
+    if (mls is! MlsStateMaintenanceCryptoService) return;
+    final now = DateTime.now();
+    final due = _keyPackagePruneAt;
+    if (due != null && now.isBefore(due)) return;
+    // Set first: a failure waits for the next interval too.
+    _keyPackagePruneAt = now.add(_keyPackagePruneInterval);
+    try {
+      await mls.pruneExpiredKeyPackages(now);
+    } catch (err) {
+      developer.log('mls_key_package_prune_failed ${err.runtimeType}',
+          name: 'veritra.sync');
+    }
   }
 
   Future<void> refreshBlocks() async {
@@ -4828,6 +4959,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             <ReceivedMessageEnvelope>[], current, ownerGeneration);
       } catch (_) {}
       if (!mayRun() || !_syncOwnerActive(current, ownerGeneration)) return;
+      if (wake == null) {
+        await _dropLeftConversations(current, ownerGeneration);
+        if (!mayRun() || !_syncOwnerActive(current, ownerGeneration)) return;
+      }
       // Pending-changes reads finished before this fetch starts (D68).
       final fetchAfterRead = _removalReadCount;
       var pageCursor = await localStore.loadSyncCursor();
@@ -4992,6 +5127,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           if (err is ApiException && err.statusCode == 401) rethrow;
         }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
+        // Caught up: expired key packages may go (D70 S4).
+        await _maybePruneKeyPackages();
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
       }
       await _acknowledgePendingWake(current, ownerGeneration: ownerGeneration);
       lastSyncedAt = DateTime.now();
@@ -5132,6 +5270,42 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     _setConnectionStatus(ConnectionStatus.connecting);
     notifyListeners();
     await _catchUpSyncEvents();
+  }
+
+  /// The record-limit recovery (D70 S4): leaves the conversation whose
+  /// group outgrew its cap, then applies events again. The server sends
+  /// none of its events after the leave, so the stopped one is not skipped
+  /// on this device's word. The UI must get explicit confirmation first.
+  /// Returns whether the conversation was left.
+  Future<bool> leaveConversationAfterSyncRecovery(
+      {required bool confirmed}) async {
+    if (!confirmed) {
+      throw ArgumentError.value(
+          confirmed, 'confirmed', 'leaving a conversation needs confirmation');
+    }
+    final recovery = syncRecovery;
+    final conversationId = recovery?.conversationId;
+    if (recovery == null ||
+        conversationId == null ||
+        !recovery.choices.contains(SyncRecoveryChoice.leaveConversation)) {
+      return false;
+    }
+    if (!await leaveConversation(conversationId)) return false;
+    // Cleared only if still the same stop: the dialog may have stayed open
+    // meanwhile.
+    final stored = await localStore.loadSyncRecovery();
+    if (stored != null &&
+        (stored.kind != recovery.kind || stored.eventId != recovery.eventId)) {
+      return true;
+    }
+    await localStore.saveSyncRecovery(null);
+    syncRecovery = null;
+    deviceRecoveryRequired = false;
+    syncError = null;
+    _setConnectionStatus(ConnectionStatus.connecting);
+    notifyListeners();
+    await _catchUpSyncEvents();
+    return true;
   }
 
   /// The destructive recovery: signs out and removes this device's identity,
@@ -5365,6 +5539,13 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             eventType: event.type,
             conversationId: event.conversationId,
             damagedStorage: cause != null && _isDamagedStorage(cause));
+    // A record over its cap (D70) names the record's conversation, which
+    // may not be the event's (a Welcome, the device record).
+    SyncEventFailure recordLimit(CryptoRecordLimitExceeded err) =>
+        SyncEventFailure(SyncFailureKind.recordLimit,
+            eventId: event.id,
+            eventType: event.type,
+            conversationId: err.conversationId);
     switch (event.type) {
       case 'mls.message.created':
         // Control messages are never skipped: missing, malformed or
@@ -5404,6 +5585,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           if (_isDurableStorageError(err)) {
             throw failure(SyncFailureKind.localStorage, err);
           }
+          if (err is CryptoRecordLimitExceeded) throw recordLimit(err);
           throw failure(err is FormatException
               ? SyncFailureKind.mlsControlMalformed
               : SyncFailureKind.mlsState);
@@ -5481,6 +5663,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             await _commitExpiredTombstone(event, id, wake);
             return null;
           }
+          if (err is CryptoRecordLimitExceeded) throw recordLimit(err);
           throw failure(SyncFailureKind.applicationUndecryptable);
         }
         return resolved;
@@ -5511,6 +5694,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             await _commitExpiredTombstone(event, call.id, wake);
             return null;
           }
+          if (err is CryptoRecordLimitExceeded) throw recordLimit(err);
           throw failure(SyncFailureKind.applicationUndecryptable);
         }
         if (signal != null) _callSignals.add(IncomingCallSignal(call, signal));
@@ -5794,6 +5978,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     _manualRetryKey = null;
     _refreshAfterWake = false;
     _replenishAfterWake = false;
+    _keyPackagePruneAt = null;
     _unpublishedReceived.clear();
     _unpublishedGeneration = null;
     _loadingMessageConversations.clear();

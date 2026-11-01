@@ -182,6 +182,14 @@ class _SyncRecoveryBanner extends StatelessWidget {
               Wrap(
                 spacing: BoneSpacing.sm,
                 children: <Widget>[
+                  // D70: the named conversation outgrew what this device
+                  // can store; leaving it lets the others go on.
+                  if (choices.contains(SyncRecoveryChoice.leaveConversation))
+                    TextButton(
+                      onPressed:
+                          state.busy ? null : () => _confirmLeave(context),
+                      child: Text(context.l10n.detailsLeave),
+                    ),
                   if (choices.contains(SyncRecoveryChoice.retry))
                     TextButton(
                       onPressed: state.busy ? null : state.retrySyncRecovery,
@@ -213,6 +221,34 @@ class _SyncRecoveryBanner extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _confirmLeave(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(context.l10n.detailsLeaveTitle),
+        content: Text(context.l10n.detailsLeaveMessage),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(context.l10n.commonCancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(context.l10n.detailsLeaveConfirm),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final left =
+        await state.leaveConversationAfterSyncRecovery(confirmed: true);
+    final error = state.errorFor(Ops.members);
+    if (!left && error != null && context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error)));
+    }
   }
 
   Future<void> _confirmRelink(BuildContext context) async {

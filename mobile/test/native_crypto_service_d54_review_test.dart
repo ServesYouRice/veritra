@@ -499,6 +499,13 @@ class _FaultyDevice implements NativeCryptoDevice {
       _plain(() => real.encrypt(groupId, plaintext));
 
   @override
+  int pruneKeyPackages(DateTime now) =>
+      _plain(() => real.pruneKeyPackages(now));
+
+  @override
+  bool deleteGroup(String groupId) => _plain(() => real.deleteGroup(groupId));
+
+  @override
   void close() => real.close();
 
   @override
