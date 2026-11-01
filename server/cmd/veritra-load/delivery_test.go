@@ -124,7 +124,7 @@ func TestSettleWaitsForDeliveries(t *testing.T) {
 	started := time.Now()
 	tracker.start("k1", started, []clientSlot{alice})
 	tracker.sent("k1", true)
-	to := time.Since(rec.started)
+	to := windowEnd(rec)
 	done := settleAsync(rec, to, time.Minute)
 	expectBlocked(t, done)
 	clock.now = started.Add(time.Minute)
