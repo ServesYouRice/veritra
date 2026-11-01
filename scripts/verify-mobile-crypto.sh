@@ -10,7 +10,10 @@ verify_symbols() {
     pm_crypto_device_link_transcript_hash pm_crypto_buffer_free \
     pm_crypto_group_stage_commit pm_crypto_group_merge_pending_commit \
     pm_crypto_group_clear_pending_commit pm_crypto_group_epoch \
-    pm_crypto_device_seal_changes pm_crypto_restore_begin; do
+    pm_crypto_device_seal_changes pm_crypto_restore_begin \
+    pm_crypto_recovery_key_generate pm_crypto_recovery_key_encode \
+    pm_crypto_recovery_key_decode pm_crypto_recovery_key_derive \
+    pm_crypto_recovery_proof_sign; do
     case "$symbols" in
       *"$symbol"*) ;;
       *) echo "missing exported symbol: $symbol" >&2; return 1 ;;

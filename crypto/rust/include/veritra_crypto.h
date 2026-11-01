@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define PM_CRYPTO_UNAVAILABLE (-1)
-#define PM_CRYPTO_ABI_VERSION (10u)
+#define PM_CRYPTO_ABI_VERSION (11u)
 #define PM_CRYPTO_OK (0)
 #define PM_CRYPTO_INVALID_ARGUMENT (-2)
 #define PM_CRYPTO_ERROR (-3)
@@ -114,6 +114,32 @@ int32_t pm_crypto_device_signing_public_key(PmCryptoHandle *handle,
                                             PmOwnedBuffer *out);
 /* ABI 7: returns the 32-byte public locator. */
 int32_t pm_crypto_device_link_locator(PmByteSlice secret, PmOwnedBuffer *out);
+/* ABI 11 (K0 R1): the recovery key (RK). The entropy is 30 bytes; the
+ * display is 52 Crockford base32 characters (upper case, no separators) of
+ * entropy || 2-byte check. Decode is case-insensitive, reads O as 0 and I/L
+ * as 1, ignores '-' and ' ', and refuses anything else, a wrong check or
+ * non-zero padding bits with PM_CRYPTO_INVALID_ARGUMENT. Derive returns
+ * rk_pub (32), rk_id (16) and rk_auth_pub (32); no private key or seed ever
+ * crosses the ABI. The proof is an Ed25519 signature (64) by the RK auth key
+ * over "veritra-k0-recovery-proof-v1" | lp(challenge) | signing_key (32) |
+ * SHA-256(key_package) | lp(origin), lp a u16 big-endian length; the label is
+ * fixed, so this key signs nothing else. Vector:
+ * testing/vectors/k0-recovery-v1.json. */
+int32_t pm_crypto_recovery_key_generate(PmOwnedBuffer *out_entropy);
+int32_t pm_crypto_recovery_key_encode(PmByteSlice entropy,
+                                      PmOwnedBuffer *out_display);
+int32_t pm_crypto_recovery_key_decode(PmByteSlice display,
+                                      PmOwnedBuffer *out_entropy);
+int32_t pm_crypto_recovery_key_derive(PmByteSlice entropy,
+                                      PmOwnedBuffer *out_rk_pub,
+                                      PmOwnedBuffer *out_rk_id,
+                                      PmOwnedBuffer *out_rk_auth_pub);
+int32_t pm_crypto_recovery_proof_sign(PmByteSlice entropy,
+                                      PmByteSlice challenge,
+                                      PmByteSlice signing_key,
+                                      PmByteSlice key_package,
+                                      PmByteSlice origin,
+                                      PmOwnedBuffer *out_signature);
 /* ABI 8 control frames: PK2Q/PK2R v1, u16-BE operation, bounded64KiB.
  * See docs/designs/K2-abi8-boundary.md for exact fields and persistence rules.
  * Each success returns one owned buffer. Failure resets out to null/zero.

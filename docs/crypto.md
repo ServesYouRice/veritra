@@ -16,12 +16,12 @@ The server now reserves final account/device IDs before key generation and
 atomically verifies and consumes a signed enrollment proof covering the server
 challenge, Ed25519 public key, and SHA-256 key-package commitment. The Flutter
 client models this preflight, and its low-level Dart FFI binding requires ABI
-version 9 exactly (`native_crypto_bindings.dart`) and uses the owned
+version 11 exactly (`native_crypto_bindings.dart`) and uses the owned
 device/buffer calls. Native libraries are packaged for Android/iOS, while the
 production service remains behind the release gate.
 
 The public header is `crypto/rust/include/veritra_crypto.h`, which pins
-`PM_CRYPTO_ABI_VERSION` at 9. That version defines:
+`PM_CRYPTO_ABI_VERSION` at 11. Among other things it defines:
 
 - account/device-bound opaque handles with exactly-once destruction
 - library-owned, zero-on-free output buffers
@@ -382,6 +382,45 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
+
+- **K0 R1, recovery key and recovery proof, ABI 11 (2026-11-01):**
+  additive; the Dart binding and the header now pin ABI 11 exactly. Design:
+  [`K0-recovery-enrollment.md`](designs/K0-recovery-enrollment.md) (D78).
+  - **New symbols.** `pm_crypto_recovery_key_generate` (30 bytes of OS
+    entropy), `_encode` and `_decode` (52 Crockford base32 characters of
+    entropy ‖ `SHA-256("veritra-k0-rk-check-v1" ‖ entropy)[0..2]`; decode is
+    case-insensitive, reads O as 0 and I/L as 1, ignores `-` and spaces, and
+    refuses any other symbol, a wrong check or non-zero padding bits),
+    `pm_crypto_recovery_key_derive` (`rk_pub`, `rk_id`, `rk_auth_pub`) and
+    `pm_crypto_recovery_proof_sign`.
+  - **Derivation.** PRK = HKDF-Extract(SHA-256, salt `veritra-k0-v1`, ikm
+    entropy). `HKDF-Expand(PRK, "veritra-k0 recovery-hpke", 32)` feeds RFC
+    9180 DeriveKeyPair (DHKEM X25519) for `rk_pub`; `rk_id =
+    SHA-256("veritra-k0-rk-id-v1" ‖ rk_pub)[0..16]`; `HKDF-Expand(PRK,
+    "veritra-k0 recovery-auth", 32)` is the Ed25519 seed of `rk_auth_pub`.
+    `L` stays reserved and unused. No private key or seed crosses the ABI;
+    the entropy does (owned, zero-on-free buffers), because the app shows it.
+  - **Proof.** Ed25519 by the RK auth key over exactly what
+    `recoveryProofMessage` (`account_recovery_handlers.go`) rebuilds:
+    `"veritra-k0-recovery-proof-v1" | lp(challenge) | signing_key (32) |
+    SHA-256(key_package) | lp(origin)`, lp a u16 big-endian length. The label
+    is fixed in Rust, so the key signs nothing else. Bounds: challenge 1 to
+    4096 bytes, key package 1 byte to 48 KiB, origin 1 to 2048 bytes of UTF-8
+    with no control or space characters; anything else is
+    `PM_CRYPTO_INVALID_ARGUMENT`.
+  - **Known-answer vector.** `testing/vectors/k0-recovery-v1.json`, checked
+    by `crypto/rust/src/recovery_tests.rs`, by
+    `server/internal/httpapi/account_recovery_vector_test.go` (which derives
+    the display, `rk_pub`, `rk_id` and `rk_auth_pub` again with Go's own
+    HKDF, X25519 and Ed25519, rebuilds the message with the production
+    `recoveryProofMessage`, verifies the signature and reproduces it byte for
+    byte) and by `mobile/test/k0_recovery_native_test.dart`.
+  - **Dependency.** `ed25519-dalek` 2.2.0 (BSD-3-Clause) becomes a direct
+    dependency (D78); it was already built through `openmls_basic_credential`
+    and `openmls_rust_crypto`, so only the direct edge is added to
+    `Cargo.lock`.
+  - No server, payload or schema change. The app does not call these yet:
+    R3 (setup) and R4 (recovery) wire them.
 
 - **K0 R2 review, legacy-group revocation coordinator (2026-11-01):** no
   ABI, payload or schema change. In a legacy group (no recorded roster),
