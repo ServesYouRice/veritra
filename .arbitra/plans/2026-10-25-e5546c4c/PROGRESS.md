@@ -224,7 +224,7 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 199 `TASK-199` Tie-break the unread-count bound on (created_at, id)
 - [x] 200 `TASK-200` Make conversation-list pagination use an immutable keyset cursor
 - [ ] 201 `TASK-201` Prevent approved device links from orphaning devices at link expiry
-  - Skipped.
+  - Blocked on owner question Q-002 (remedy and window). Characterization test added; the orphan can still sign in with password + its device secret. Only revoke-at-expiry (sweeper, MLS revocations) or creating the device at consume meets VAL-253.
 - [x] 202 `TASK-202` Scope device-less push subscriptions with a NULL-safe device match
 - [x] 203 `TASK-203` Disable a push target only if it still matches the failed registration
 - [x] 204 `TASK-204` Enforce state_counter monotonicity and capability rotation for device-less backups

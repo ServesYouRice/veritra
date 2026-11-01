@@ -2504,11 +2504,11 @@
       "title": "Device is created at approval, but the session can only be consumed before the original link expiry, which can orphan the device",
       "severity": "medium",
       "task": "TASK-201",
-      "result": null,
+      "result": "blocked",
       "failedBefore": null,
-      "test": null,
-      "proof": "Skipped.",
-      "checkedEndToEnd": null
+      "test": "server/internal/storage/device_link_expiry_test.go TestApprovedDeviceLinkPastExpiryLeavesActiveDevice (characterization; passes on current code)",
+      "proof": "Confirmed: after approval and expiry, ConsumeApprovedDeviceLink returns ErrDeviceLinkInvalid while the device stays active with no session and counts toward the device limit. Mitigation found: the device keeps its device secret (issued at claim), so password + device ID + secret sign-in still works. Blocked on Q-002: remedies (a) min consume window at approval, (b) extend expires_at at approval, (c) consume grace period only narrow the window; VAL-253 ('never') needs (d) revoking the device at expiry (revokeDeviceTx with MLS revocations, run from PruneOperationalRows in content_store.go, outside the write scope) or creating the device at consume (API flow change).",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-5bf95ef6f32a",
