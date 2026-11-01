@@ -44,15 +44,20 @@ them) is sent in two parts:
 | Part | Content | Who reads it |
 |---|---|---|
 | **Reference** (the MLS ciphertext) | `"C7R1" \| body_key[32] \| sha256(body)[32]`: 68 bytes, the same for every message | Group members at that epoch, as today |
-| **Body** (stored next to the envelope) | `kc[32] \| ChaCha20-Poly1305(K_enc, nonce 0, sig[64] \| VAP1 payload, aad)` | Whoever holds `body_key` |
+| **Body** (stored next to the envelope) | `kc[32] \| nonce[24] \| XChaCha20-Poly1305(K_enc, nonce, sig[64] \| VAP1 payload, aad)` | Whoever holds `body_key` |
 
 - The VAP1 payload is today's W7 payload, padded to 256-byte buckets, with
   its context keys; the W7 receive policy runs on it unchanged once the
   body is opened.
 - `K_enc = HKDF(body_key, "veritra-c7-enc-v1")`, and the key commitment
   `kc = HKDF(body_key, "veritra-c7-kc-v1")` is checked before decrypting,
-  so no body opens to two plaintexts under two keys. Each key seals one
-  body, so the nonce is fixed.
+  so no body opens to two plaintexts under two keys. The nonce is random:
+  in a `full` channel the key is deterministic, and a retry that
+  re-encodes the payload (fresh VAP1 padding) must not reuse a nonce.
+- **A bad body never halts sync.** Once the reference decrypts, a missing
+  body, a hash or `kc` mismatch, or a failed open is a P1 `invalid` row:
+  the MLS state and cursor commit. Otherwise a server that strips one body
+  would stop the conversation under I33.
 - `aad = lp(conversation_id) | lp(channel_id or "") | lp(sender_device_id) | lp(action_id)`,
   the envelope's own fields, so the server cannot move a body.
 - **The key is the only difference.** While the sender's device holds the
@@ -72,8 +77,8 @@ them) is sent in two parts:
   6); live members verify it too, so both see the same signed content. It
   sits inside the encryption, so it adds nothing a member could not
   already prove from the MLS framing signature.
-- **Cost.** About 180 bytes more per message (reference plus body header,
-  tag and signature), whatever the message size. History is stored once:
+- **Cost.** About 200 bytes more per message (reference plus body
+  commitment, nonce, tag and signature), whatever the message size. History is stored once:
   there is no second copy, for `full` channels or any other.
 
 ## Decisions
@@ -128,44 +133,53 @@ them) is sent in two parts:
    every add or remove commit in any community group, whatever the modes,
    the committer sends one group-level message (no `channel_id`):
    - Reference as usual. Body: `seal(body_key, N × key_c)` followed by `N`
-     fixed slots `kc_c | AEAD(HKDF(key_c, "veritra-c7-slot-v1", ids, action_id), slot_c)`,
+     fixed slots `kc_c | nonce | AEAD(HKDF(key_c, "veritra-c7-slot-v1", ids, action_id), slot_c)`,
      one per channel the group carries, in channel-id order. `N` is the
      server-known channel count, so the size is a function of `N` only.
+   - `slot_c` is 448 bytes: the record (320) and a wrap (128:
+     `CHK_prev | lp(group_id_prev) | u64(E_open_prev)`, zeros when unused).
    - For a `full` channel, `key_c` is its current `CHK` and `slot_c` holds
      the latest record. After a **removal**, `key_c` is a new
-     `CHK_{g+1}` and `slot_c` holds the new `rekey` record plus
-     `CHK_g` (the backward wrap, below). For any other channel, `key_c` is
-     random and `slot_c` holds the latest record.
+     `CHK_{g+1}` and `slot_c` holds the new `rekey` record plus the wrap of
+     generation `g` (below). For any other channel, `key_c` is random and
+     `slot_c` holds the latest record.
    - **Handover.** Newcomers added by the commit read `key_c` for every
      channel, check it against the slot's `chk_commit`, and so hold the
      current key and setting of each channel in one fixed-size message.
      C3/C4 visibility holds because private channels are their own groups.
    - **Backward wrap.** Each rekey slot is sealed under the new key and
-     carries the previous one. A newcomer holding the current `CHK` walks
-     back through stored `history_sync` bodies to every generation of the
-     current period, and stops at its start: a switch record carries no
-     earlier key, so earlier periods stay unreadable (owner, round 2). A
-     removed member holds old keys only and learns nothing new.
+     carries the previous key with that generation's group and opening
+     epoch, so a newcomer has every window bound (decision 6) even when
+     the opening record lies beyond its fetch depth. A newcomer holding
+     the current `CHK` walks back through stored `history_sync` bodies to
+     every generation of the current period. Key use stops at the period
+     start (a switch record wraps no earlier key, so earlier periods stay
+     unreadable, owner round 2); the fetch never stops early there, or its
+     depth would show when the period began. A removed member holds old
+     keys only and learns nothing new.
    - **Removed members.** After applying a removal commit, a device seals
-     under random keys until it applies the `rekey` that follows it. The
-     window rule (decision 6) closes `g` at `close_epoch`.
+     posts under random keys until it applies the `rekey` that follows it,
+     and in a `full` channel holds its edits and deletes until then (the
+     D68 pattern): under the old key the removed member could read them
+     from the server; under a random key newcomers would miss them and see
+     the original text. The window rule closes `g` at `close_epoch`.
    - **Missing or racing.** If no `history_sync` follows a membership
-     commit within a minute (committer offline), any member sends one;
-     duplicates resolve by sync order per slot. A rekey slot that lost to
-     a concurrent switch is not retried on its own (a retry would show the
-     server that some channel is `full`); the device keeps the "rekey due"
-     note and does it in the next `history_sync`, sealing under random keys
-     meanwhile (a gap, I3). A newcomer whose message never arrives sends a
-     `history_sync_request` (always, after a timeout, whatever the modes);
-     any member answers with a fresh `history_sync`.
-6. **Windows.** Generation `g` is open from its starting record's
-   `(group_id, epoch)` to the next record's `close_epoch`. A newcomer
-   accepts a body sealed under `g` only if the signed `group_id` matches and
-   `E_open <= epoch < E_close`. Bodies in the closing epoch are dropped
-   (a gap, I3). One exception: a `delete` or `admin_delete` outside the
-   window is applied if its author may delete the target, since it carries
-   no content; senders seal a delete under the target's generation key
-   when they still hold it, so newcomers do not see deleted posts.
+     commit, C0's reconcile coordinator sends one first; every other
+     device waits a jittered delay that grows with group size and cancels
+     when it sees one for that commit. Answering a newcomer's
+     `history_sync_request` (sent always after a timeout, whatever the
+     modes) follows the same rule. Duplicates resolve by sync order per
+     slot. A rekey slot that lost to a concurrent switch is not retried on
+     its own (a retry would show the server that some channel is `full`);
+     the device keeps a "rekey due" note, does it in the next
+     `history_sync`, and seals under random keys meanwhile (a gap, I3).
+6. **Windows.** Generation `g` is open from its starting record's (or
+   wrap's) `(group_id, E_open)` to the next record's `close_epoch`. A
+   newcomer accepts a body sealed under `g` only if the signed `group_id`
+   matches and `E_open <= epoch < E_close`. Bodies in the closing epoch
+   are dropped (a gap, I3). Edits and deletes are sealed under the current
+   generation like posts, so a newcomer applies them in order and never
+   sees a post its author deleted within the period.
 7. **What each side reads.**
 
    | Change | Existing members | Later newcomers |
@@ -190,9 +204,9 @@ them) is sent in two parts:
 
 - **Send.** The envelope route (`POST /api/v1/messages/envelopes`) takes a
   `sealed_body` field. It is required on every envelope in a community
-  conversation and refused elsewhere; at most 64 KiB + 112 bytes, or
-  exactly `48 + 432 × N` for a `history_sync` (outer seal of `N` keys,
-  then `N` sealed 352-byte slots: record 320, wrap 32). A community envelope
+  conversation and refused elsewhere; at most 64 KiB + 136 bytes, or
+  exactly `72 + 552 × N` for a `history_sync` (outer seal of `N` keys,
+  then `N` sealed 448-byte slots). A community envelope
   carries no server-visible `reply_to_id` or `thread_root_id` (W7 keeps
   references inside the payload; check `mobile/lib/core/models.dart`
   before C7 sends), or a newcomer's reply would show it read a pre-join
@@ -226,7 +240,10 @@ them) is sent in two parts:
   current member devices only, the same for every channel and mode.
   References are never served there.
 - **Authority.** The server cannot check mode changes. Apps check them
-  under C4 (built-in roles, owner decision); old owner question 4 is moot.
+  against C4's signed governance state (built-in roles, owner decision),
+  never the server-reported role (C5: no interim trust in server roles).
+  C7 switches cannot ship before that state exists. Old owner question 4
+  is moot.
 
 ## What the server still learns
 
@@ -235,6 +252,7 @@ them) is sent in two parts:
 | A newcomer fetching deeper than the fixed prefetch, in some channels only | Those channels are `full`, and roughly since when | Never page deeper than the fixed depth (newcomers see at most that much), or prefetch all retained history of every channel (download cost per join). Owner question 1 |
 | A newcomer downloading a pre-join attachment | That post's channel was `full` then | Prefetch every pre-join attachment within the depth for every channel (large), or never offer pre-join attachments. Owner question 2 |
 | Message sizes | The W7 256-byte bucket, as today; records, `history_sync` and handovers have fixed shapes | Coarser padding (L2) |
+| Per-channel retention (D51) | A long retention on one channel hints that it keeps history | The UI never couples the two settings or suggests one from the other |
 | A `history_sync` from a second sender | A committer went offline; no mode information | None needed |
 | Timing of an admin's switch | A hidden message from an admin, like any short post | None needed |
 
@@ -275,15 +293,18 @@ cost of how much history a newcomer can see.
 
 - **Send format.** Every community message is reference + body (core idea);
   `"C7R1"` replaces VAP1 as the MLS plaintext in community conversations,
-  and the receive policy treats anything else there as `invalid`. No
-  release exists, so no compatibility path (C0 recreates demo
-  communities).
+  and the receive policy treats anything else there as `invalid`. This is
+  an explicit **amendment** of the framing that `docs/crypto.md` W7 §1
+  marks frozen for every version (VAP1 stays frozen, one layer down, inside
+  the body). No release exists, so no compatibility path (C0 recreates
+  demo communities).
 - **W7 types** (hidden): `history_change`, `history_sync`,
   `history_sync_request`. Belongs to the W7 section of `docs/crypto.md`.
 - **Rust ABI 12** (approved, needs independent review): credential-key
   `sign`/`verify` over a domain-separated message with a fixed domain
   allowlist (C7's two prefixes; C4 takes the same export), and
-  `c7_seal`/`c7_open` (HKDF-SHA256, key commitment, ChaCha20-Poly1305).
+  `c7_seal`/`c7_open` (HKDF-SHA256, key commitment, XChaCha20-Poly1305
+  with a random nonce).
   The core exposes no MLS exporter today; C7 does not need one.
 - **Server:** `sealed_body` on the envelope route, `envelope_bodies`, the
   history route, the group-level exception.
@@ -319,8 +340,8 @@ round 2; 3 (ABI) is approved; 4 (server-checked admins) is moot.
 2. **Pre-join attachments.** Downloading one shows the server the channel
    was `full`. Proposed: offer them on tap with that cost accepted.
    Alternatives: never offer them, or prefetch them all within the depth.
-3. **`history_sync` cost.** One message of about 430 bytes per channel
-   after every join and removal in every community group (about 13 MB of
+3. **`history_sync` cost.** One message of about 550 bytes per channel
+   after every join and removal in every community group (about 17 MB of
    egress per membership commit at 1,000 devices and 30 open channels,
    against 0.6 MB for the add commit itself; C0 batches joins).
    Accept, or add targeted delivery of add-time messages to the new
