@@ -2373,7 +2373,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             _leftConversationsSetting,
             jsonEncode(<String, Object?>{
               'scope': _keyPackageScope(owner),
-              'ids': next.take(_leftConversationsCap).toList(growable: false),
+              // The newest leaves are kept at the cap.
+              'ids': next
+                  .skip(max(0, next.length - _leftConversationsCap))
+                  .toList(growable: false),
             }));
       }
       return next;
@@ -2409,6 +2412,34 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         developer.log('mls_left_group_drop_failed ${err.runtimeType}',
             name: 'veritra.sync');
       }
+    }
+  }
+
+  /// A Welcome to this device for a conversation the user left whose group
+  /// was not dropped yet (D70 S4): the user's own deferred leave runs first,
+  /// so the old group never blocks the new join, and the note is cleared
+  /// only by that drop, never by a join (a D74 Welcome joins nothing). A
+  /// failed drop stops sync at this event with Retry, as a storage failure;
+  /// a background pass hands the event to the foreground.
+  Future<void> _dropLeftBeforeWelcome(Session current, String conversationId,
+      {required WakeRunContext? wake,
+      required SyncEventFailure Function(SyncFailureKind kind, [Object? cause])
+          failure}) async {
+    final Object? mls = _mlsCrypto;
+    if (mls is! MlsStateMaintenanceCryptoService) return;
+    try {
+      if (!(await _readLeftConversations(current)).contains(conversationId)) {
+        return;
+      }
+      if (wake != null) throw const WakeWorkCancelled();
+      await mls.deleteConversationState(conversationId);
+      await _changeLeftConversations(
+          current, (ids) => ids.difference(<String>{conversationId}));
+    } on WakeWorkCancelled {
+      rethrow;
+    } catch (err) {
+      if (_isTransientSyncError(err)) rethrow;
+      throw failure(SyncFailureKind.localStorage, err);
     }
   }
 
@@ -5567,6 +5598,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             await _queuedPathCommit(message.idempotencyKey);
         if (message.kind == 'welcome' &&
             message.recipientDeviceId == current.deviceId) {
+          await _dropLeftBeforeWelcome(current, message.conversationId,
+              wake: wake, failure: failure);
           // Write-ahead (TASK-028): a Welcome uses up one of this device's
           // published key packages, so its replacement is owed durably
           // before the Welcome commits. Counted once per Welcome; one that
@@ -5598,12 +5631,6 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         }
         if (message.kind == 'welcome' &&
             message.recipientDeviceId == current.deviceId) {
-          // Joined again: a leave noted earlier must not drop the new group
-          // (D70 S4). Best effort.
-          try {
-            await _changeLeftConversations(current,
-                (ids) => ids.difference(<String>{message.conversationId}));
-          } catch (_) {}
           // The leaf key came from a key package published earlier: update
           // it soon. Only noted here; staging waits for a foreground pass.
           await _noteSelfUpdate(

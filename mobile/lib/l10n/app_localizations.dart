@@ -3165,6 +3165,24 @@ abstract class AppLocalizations {
   /// **'This device\'s encryption data has grown too large to store. Messages are paused so none are skipped. Link this device again to continue.'**
   String get syncErrorRecordLimitDevice;
 
+  /// No description provided for @syncErrorRecordLimitNamed.
+  ///
+  /// In en, this message translates to:
+  /// **'\"{title}\" has grown too large for this device to store its encryption data. Messages are paused so none are skipped. Leave that conversation to continue.'**
+  String syncErrorRecordLimitNamed(String title);
+
+  /// No description provided for @bannerLeaveNamed.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave \"{title}\"'**
+  String bannerLeaveNamed(String title);
+
+  /// No description provided for @bannerLeaveNamedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave \"{title}\"?'**
+  String bannerLeaveNamedTitle(String title);
+
   /// No description provided for @syncErrorStorageBusy.
   ///
   /// In en, this message translates to:

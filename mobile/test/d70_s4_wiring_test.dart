@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -96,7 +97,104 @@ void main() {
     harness.dispose();
   });
 
-  test('a Welcome after a leave clears the note, so the new group stays',
+  test('a failed drop stops a re-add Welcome; Retry drops, then joins',
+      () async {
+    final api = _ScriptedApi();
+    final harness = await _Harness.start(api,
+        configure: (crypto) => crypto.deleteFailures = 3);
+    final state = harness.state;
+    await harness.waitFor(() => state.lastSyncedAt != null);
+    expect(await state.leaveConversation('conv_1'), isTrue);
+    await harness.waitFor(() => harness.crypto.deleteAttempts == 1);
+
+    // Added back while the old group is still stored: the drop is tried
+    // before the Welcome and fails, so sync stops there with Retry.
+    api.events = <SyncEvent>[_welcomeEvent(4, 'conv_1')];
+    state.handleAppLifecycleState(AppLifecycleState.resumed);
+    await harness.waitFor(() => state.syncRecovery != null);
+    expect(state.syncRecovery!.kind, SyncFailureKind.localStorage);
+    expect(state.syncRecovery!.eventId, 4);
+    expect(state.syncRecovery!.choices, contains(SyncRecoveryChoice.retry));
+    expect(harness.crypto.deleteAttempts, 3);
+    expect(harness.crypto.groups, contains('conv_1'));
+    expect(harness.crypto.joined, isEmpty);
+    expect(await harness.store.loadSyncCursor(), 0);
+
+    await state.retrySyncRecovery();
+    await harness
+        .waitFor(() async => await harness.store.loadSyncCursor() == 4);
+    expect(harness.crypto.deleted, <String>['conv_1']);
+    expect(harness.crypto.joined, <String>['conv_1']);
+    expect(harness.crypto.groups, contains('conv_1'));
+    expect(state.syncRecovery, isNull);
+
+    // The rejoined group stays.
+    state.handleAppLifecycleState(AppLifecycleState.resumed);
+    await harness.waitFor(() => state.syncError == null);
+    await harness.settle();
+    expect(harness.crypto.deleted, <String>['conv_1']);
+    expect(harness.crypto.groups, contains('conv_1'));
+    harness.dispose();
+  });
+
+  test('the drop runs before a re-add Welcome in the same pass', () async {
+    final api = _ScriptedApi();
+    final harness = await _Harness.start(api,
+        configure: (crypto) => crypto.deleteFailures = 2);
+    final state = harness.state;
+    await harness.waitFor(() => state.lastSyncedAt != null);
+    expect(await state.leaveConversation('conv_1'), isTrue);
+    await harness.waitFor(() => harness.crypto.deleteAttempts == 1);
+
+    // The pass-start drop fails again; the one before the Welcome works.
+    api.events = <SyncEvent>[_welcomeEvent(4, 'conv_1')];
+    state.handleAppLifecycleState(AppLifecycleState.resumed);
+    await harness
+        .waitFor(() async => await harness.store.loadSyncCursor() == 4);
+    expect(harness.crypto.deleteAttempts, 3);
+    expect(harness.crypto.deleted, <String>['conv_1']);
+    expect(harness.crypto.joined, <String>['conv_1']);
+    expect(await harness.store.loadSetting('mls.left_conversations'),
+        isNot(contains('conv_1')));
+    harness.dispose();
+  });
+
+  test('a note write that fails stops the Welcome; the rejoined group stays',
+      () async {
+    final api = _ScriptedApi();
+    final store = _NoteStore();
+    final harness = await _Harness.start(api, store: store);
+    final state = harness.state;
+    await harness.waitFor(() => state.lastSyncedAt != null);
+    // The leave is noted, then every note write fails for a while: the
+    // pass-start drop deletes the group but cannot clear the note, and the
+    // drop before the Welcome cannot either.
+    store.failNoteWrites = 1000;
+    store.allowNoteWrites = 1;
+    expect(await state.leaveConversation('conv_1'), isTrue);
+    await harness.waitFor(() => harness.crypto.deleted.isNotEmpty);
+    api.events = <SyncEvent>[_welcomeEvent(4, 'conv_1')];
+    state.handleAppLifecycleState(AppLifecycleState.resumed);
+    await harness.waitFor(() => state.syncRecovery != null);
+    expect(state.syncRecovery!.kind, SyncFailureKind.localStorage);
+    expect(harness.crypto.joined, isEmpty);
+
+    store.failNoteWrites = 0;
+    await state.retrySyncRecovery();
+    await harness
+        .waitFor(() async => await harness.store.loadSyncCursor() == 4);
+    expect(harness.crypto.joined, <String>['conv_1']);
+    final drops = harness.crypto.deleteAttempts;
+    // Later passes find no note: the joined group is not dropped.
+    state.handleAppLifecycleState(AppLifecycleState.resumed);
+    await harness.waitFor(() => state.syncError == null);
+    await harness.settle();
+    expect(harness.crypto.deleteAttempts, drops);
+    expect(harness.crypto.groups, contains('conv_1'));
+    harness.dispose();
+  });
+
+  test('a Welcome that joins nothing (D74) clears the note only by the drop',
       () async {
     final api = _ScriptedApi();
     final harness = await _Harness.start(api,
@@ -106,26 +204,40 @@ void main() {
     expect(await state.leaveConversation('conv_1'), isTrue);
     await harness.waitFor(() => harness.crypto.deleteAttempts == 1);
 
-    // Added back: the next pass still tries the old group first (and
-    // fails again here), then applies the Welcome.
+    harness.crypto.unavailableWelcomes.add('mls_4');
     api.events = <SyncEvent>[_welcomeEvent(4, 'conv_1')];
     state.handleAppLifecycleState(AppLifecycleState.resumed);
     await harness
         .waitFor(() async => await harness.store.loadSyncCursor() == 4);
-    expect(harness.crypto.joined, <String>['conv_1']);
-    expect(harness.crypto.deleteAttempts, 2);
-    expect(await harness.store.loadSetting('mls.left_conversations'),
-        isNot(contains('conv_1')));
+    // The old group went with the note, so the next re-add can join.
+    expect(harness.crypto.groups, isNot(contains('conv_1')));
+    expect(harness.crypto.joined, isEmpty);
 
-    // Later passes leave the joined group alone.
+    api.events = <SyncEvent>[...api.events, _welcomeEvent(5, 'conv_1')];
     state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await harness.waitFor(() => state.syncError == null);
-    await harness.settle();
-    expect(harness.crypto.deleteAttempts, 2);
-    expect(harness.crypto.deleted, isEmpty);
+    await harness
+        .waitFor(() async => await harness.store.loadSyncCursor() == 5);
+    expect(harness.crypto.joined, <String>['conv_1']);
     harness.dispose();
   });
 
+  test('a -9 Welcome with a failing drop keeps the note', () async {
+    final api = _ScriptedApi();
+    final harness = await _Harness.start(api,
+        configure: (crypto) => crypto.deleteFailures = 3);
+    final state = harness.state;
+    await harness.waitFor(() => state.lastSyncedAt != null);
+    expect(await state.leaveConversation('conv_1'), isTrue);
+    await harness.waitFor(() => harness.crypto.deleteAttempts == 1);
+    harness.crypto.unavailableWelcomes.add('mls_4');
+    api.events = <SyncEvent>[_welcomeEvent(4, 'conv_1')];
+    state.handleAppLifecycleState(AppLifecycleState.resumed);
+    await harness.waitFor(() => state.syncRecovery != null);
+    expect(await harness.store.loadSetting('mls.left_conversations'),
+        contains('conv_1'));
+    expect(harness.crypto.groups, contains('conv_1'));
+    harness.dispose();
+  });
   test('a leave the server refuses keeps the group', () async {
     final api = _ScriptedApi()..refuseLeave = true;
     final harness = await _Harness.start(api);
@@ -307,8 +419,9 @@ class _Harness {
   final _FakeMlsCrypto crypto;
 
   static Future<_Harness> start(_ScriptedApi api,
-      {void Function(_FakeMlsCrypto crypto)? configure}) async {
-    final local = MemoryLocalStore();
+      {void Function(_FakeMlsCrypto crypto)? configure,
+      MemoryLocalStore? store}) async {
+    final local = store ?? MemoryLocalStore();
     await local.saveSession(_session);
     final crypto = _FakeMlsCrypto(local);
     configure?.call(crypto);
@@ -338,6 +451,26 @@ class _Harness {
   }
 
   void dispose() => state.dispose();
+}
+
+/// A store whose leave-note writes fail [failNoteWrites] times once
+/// [allowNoteWrites] more have gone through.
+class _NoteStore extends MemoryLocalStore {
+  int failNoteWrites = 0;
+  int allowNoteWrites = 0;
+
+  @override
+  Future<void> saveSetting(String name, String value) async {
+    if (name == 'mls.left_conversations' && failNoteWrites > 0) {
+      if (allowNoteWrites > 0) {
+        allowNoteWrites--;
+      } else {
+        failNoteWrites--;
+        throw const FileSystemException('refused', '', OSError('refused', 13));
+      }
+    }
+    return super.saveSetting(name, value);
+  }
 }
 
 class _ScriptedApi extends ApiClient {
@@ -470,9 +603,23 @@ class _FakeMlsCrypto
 
   final List<String> joined = <String>[];
 
+  /// Groups this device stores. A Welcome for one of them is refused, as
+  /// the core refuses to replace an active group.
+  final Set<String> groups = <String>{'conv_1', 'conv_2'};
+
+  /// Welcomes (by message id) for a key package this device lacks (D74):
+  /// committed past, nothing joined.
+  final Set<String> unavailableWelcomes = <String>{};
+
   @override
   Future<void> processMlsMessage(MlsMessage message) async {
-    joined.add(message.conversationId);
+    if (!unavailableWelcomes.contains(message.id)) {
+      if (groups.contains(message.conversationId)) {
+        throw StateError('active group is never replaced');
+      }
+      groups.add(message.conversationId);
+      joined.add(message.conversationId);
+    }
     await store.commitSyncEvent(SyncEventCommit(
       eventKey: 'mls:${message.syncEventId}:${message.id}',
       conversationId: message.conversationId,
@@ -497,7 +644,7 @@ class _FakeMlsCrypto
       throw StateError('delete');
     }
     deleted.add(conversationId);
-    return true;
+    return groups.remove(conversationId);
   }
 
   @override

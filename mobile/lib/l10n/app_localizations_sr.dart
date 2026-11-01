@@ -1945,6 +1945,21 @@ class AppLocalizationsSr extends AppLocalizations {
       'Шифровани подаци овог уређаја постали су превелики за чување. Поруке су паузиране да ниједна не би била прескочена. Поново повежите овај уређај да бисте наставили.';
 
   @override
+  String syncErrorRecordLimitNamed(String title) {
+    return 'Разговор „$title“ је постао превелик да би овај уређај сачувао његове шифроване податке. Поруке су паузиране да ниједна не би била прескочена. Напустите тај разговор да бисте наставили.';
+  }
+
+  @override
+  String bannerLeaveNamed(String title) {
+    return 'Напусти „$title“';
+  }
+
+  @override
+  String bannerLeaveNamedTitle(String title) {
+    return 'Напустити „$title“?';
+  }
+
+  @override
   String get syncErrorStorageBusy =>
       'Складиште овог уређаја је заузето или пуно. Синхронизација ће ускоро покушати поново.';
 
@@ -4521,6 +4536,21 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get syncErrorRecordLimitDevice =>
       'Šifrovani podaci ovog uređaja postali su preveliki za čuvanje. Poruke su pauzirane da nijedna ne bi bila preskočena. Ponovo povežite ovaj uređaj da biste nastavili.';
+
+  @override
+  String syncErrorRecordLimitNamed(String title) {
+    return 'Razgovor „$title“ je postao prevelik da bi ovaj uređaj sačuvao njegove šifrovane podatke. Poruke su pauzirane da nijedna ne bi bila preskočena. Napustite taj razgovor da biste nastavili.';
+  }
+
+  @override
+  String bannerLeaveNamed(String title) {
+    return 'Napusti „$title“';
+  }
+
+  @override
+  String bannerLeaveNamedTitle(String title) {
+    return 'Napustiti „$title“?';
+  }
 
   @override
   String get syncErrorStorageBusy =>

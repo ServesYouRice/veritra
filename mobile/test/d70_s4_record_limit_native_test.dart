@@ -63,6 +63,31 @@ void main() {
     expect((await bob.store.loadMessages('conv_1')).single.body, 'hi');
     expect(await bob.store.loadSyncCursor(), event);
   }, skip: skip);
+
+  test('a stored group that fails to load does not settle an accepted commit',
+      () async {
+    final real = NativeCryptoBindings.open(libraryPath!);
+    final alice = await _Client.enroll(real, 'acct_alice', 'dev_alice');
+    final limited = _LimitBindings(real);
+    final bob = await _Client.enroll(limited, 'acct_bob', 'dev_bob');
+    await _startConversation(alice, bob);
+    await bob.service.stageSelfUpdate('conv_1');
+    final item = (await bob.store.pendingMlsMessages()).single;
+
+    // The group is stored; only this read fails. Not a missing group.
+    limited.epochFailures = 1;
+    await expectLater(bob.service.completeCommitBundle(item),
+        throwsA(isA<NativeCryptoException>()));
+    expect(await bob.store.pendingMlsMessages(), hasLength(1));
+    limited.epochFailures = 1;
+    await expectLater(bob.service.abandonCommitBundle(item),
+        throwsA(isA<NativeCryptoException>()));
+    expect(await bob.store.pendingMlsMessages(), hasLength(1));
+
+    await bob.service.completeCommitBundle(item);
+    expect(await bob.store.pendingMlsMessages(), isEmpty);
+    expect(await bob.service.groupEpoch('conv_1'), (epoch: 2, pending: false));
+  }, skip: skip);
 }
 
 /// Real bindings whose devices refuse every seal with a group record over
@@ -72,6 +97,9 @@ class _LimitBindings implements NativeCryptoBindings {
 
   final NativeCryptoBindings real;
   bool refuseSeal = false;
+
+  /// How many next `groupEpoch` calls fail with operationFailed.
+  int epochFailures = 0;
 
   @override
   NativeCryptoDevice createDevice(String accountId, String deviceId) =>
@@ -118,8 +146,24 @@ class _LimitDevice implements NativeCryptoDevice {
           senderAccountId: senderAccountId, senderDeviceId: senderDeviceId);
 
   @override
-  ({int epoch, bool pending}) groupEpoch(String groupId) =>
-      real.groupEpoch(groupId);
+  ({int epoch, bool pending}) groupEpoch(String groupId) {
+    if (limits.epochFailures > 0) {
+      limits.epochFailures--;
+      throw const NativeCryptoException(NativeCryptoError.operationFailed);
+    }
+    return real.groupEpoch(groupId);
+  }
+
+  @override
+  ({List<int> commit, List<int> welcome, int epoch}) stageSelfUpdate(
+          String groupId) =>
+      real.stageSelfUpdate(groupId);
+
+  @override
+  void mergePendingCommit(String groupId) => real.mergePendingCommit(groupId);
+
+  @override
+  void clearPendingCommit(String groupId) => real.clearPendingCommit(groupId);
 
   @override
   EnrollmentCredential createEnrollmentCredential(List<int> challenge) =>

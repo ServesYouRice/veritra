@@ -672,6 +672,12 @@
   "syncErrorLocalStorage": "This device could not read or write its local storage. Messages are paused so none are skipped. Free up space or restart the app, then try again.",
   "syncErrorRecordLimit": "A conversation has grown too large for this device to store its encryption data. Messages are paused so none are skipped. Leave that conversation to continue.",
   "syncErrorRecordLimitDevice": "This device's encryption data has grown too large to store. Messages are paused so none are skipped. Link this device again to continue.",
+  "syncErrorRecordLimitNamed": "\"{title}\" has grown too large for this device to store its encryption data. Messages are paused so none are skipped. Leave that conversation to continue.",
+  "@syncErrorRecordLimitNamed": {"placeholders": {"title": {"type": "String", "example": "Team"}}},
+  "bannerLeaveNamed": "Leave \"{title}\"",
+  "@bannerLeaveNamed": {"placeholders": {"title": {"type": "String", "example": "Team"}}},
+  "bannerLeaveNamedTitle": "Leave \"{title}\"?",
+  "@bannerLeaveNamedTitle": {"placeholders": {"title": {"type": "String", "example": "Team"}}},
   "syncErrorStorageBusy": "This device's storage is busy or full. Sync will try again shortly.",
 
   "apiErrorSessionInvalid": "Your session is no longer valid. Sign in again.",

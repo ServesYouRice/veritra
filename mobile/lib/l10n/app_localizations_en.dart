@@ -1929,6 +1929,21 @@ class AppLocalizationsEn extends AppLocalizations {
       'This device\'s encryption data has grown too large to store. Messages are paused so none are skipped. Link this device again to continue.';
 
   @override
+  String syncErrorRecordLimitNamed(String title) {
+    return '\"$title\" has grown too large for this device to store its encryption data. Messages are paused so none are skipped. Leave that conversation to continue.';
+  }
+
+  @override
+  String bannerLeaveNamed(String title) {
+    return 'Leave \"$title\"';
+  }
+
+  @override
+  String bannerLeaveNamedTitle(String title) {
+    return 'Leave \"$title\"?';
+  }
+
+  @override
   String get syncErrorStorageBusy =>
       'This device\'s storage is busy or full. Sync will try again shortly.';
 

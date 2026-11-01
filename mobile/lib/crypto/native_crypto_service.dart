@@ -346,8 +346,8 @@ class NativeCryptoService
               // The group is gone: the user left or deleted the chat (D70),
               // or this device was removed. Nothing is left to merge, and
               // the entry settles instead of failing on every retry. A
-              // handle that no longer answers is not a missing group.
-              if (!_handleAnswers()) rethrow;
+              // group that is stored but failed to load is not gone.
+              if (!await _groupGone(previous, item.conversationId)) rethrow;
               await localStore.commitLocalMlsState(
                 expectedCounter: previous.counter,
                 expectedCursor: await localStore.loadSyncCursor(),
@@ -392,8 +392,8 @@ class NativeCryptoService
             } on NativeCryptoException {
               // The group is gone (this device was removed, or the chat
               // deleted, D70): nothing is pending, and the entry settles.
-              // A handle that no longer answers is not a missing group.
-              if (!_handleAnswers()) rethrow;
+              // A group that is stored but failed to load is not gone.
+              if (!await _groupGone(previous, item.conversationId)) rethrow;
               status = null;
             }
             // Only a commit pending on the bundle's own epoch is this
@@ -495,6 +495,30 @@ class NativeCryptoService
           return null;
         }
       });
+
+  /// Whether a group lookup that failed means the group is truly gone: the
+  /// handle answers, it holds the committed state ([previous]), and the
+  /// stored records have no group record for [conversationId]. Anything
+  /// else (a poisoned or stale handle, a stored group that failed to load)
+  /// is not a missing group.
+  Future<bool> _groupGone(
+      StoredCryptoState previous, String conversationId) async {
+    if (!_handleAnswers() || _deviceCounter != previous.counter) return false;
+    final stored = await localStore.loadCryptoState();
+    if (stored == null || stored.counter != previous.counter) return false;
+    final id = conversationId.codeUnits;
+    return !(await localStore.loadCryptoRecords()).any((record) =>
+        record.kind == cryptoRecordKindGroup &&
+        _sameBytes(record.recordId, id));
+  }
+
+  static bool _sameBytes(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
 
   /// Whether the device handle still answers a call that takes its lock
   /// (`with_device` in `crypto/rust/src/ffi.rs`). A native panic poisons that
