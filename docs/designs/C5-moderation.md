@@ -71,3 +71,8 @@ New W7 payload types `moderation_delete` (target message id) and
    no, per community.
 4. Slow mode clock: server time is authoritative; is drop-on-receipt in apps
    needed, or is server refusal enough?
+
+## Owner decisions (2026-11-01)
+
+- Bans are per community. Admins can escalate to the instance owner, who may issue an instance-wide ban (needs a design for the escalation path).
+- No interim trust in the server-reported role: app-side drops wait for C4's signed roles.
