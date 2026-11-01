@@ -49,8 +49,8 @@ void main() {
   }
 
   Future<PendingAccountRecovery?> persisted() async =>
-      PendingAccountRecovery.decode(
-          await store.loadSetting('k0.pending_recovery'));
+      PendingAccountRecovery.fromEnrollment(
+          await store.loadPendingEnrollment());
 
   Future<void> until(bool Function() done) async {
     for (var i = 0; i < 200 && !done(); i++) {

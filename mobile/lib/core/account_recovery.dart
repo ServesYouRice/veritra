@@ -1,6 +1,7 @@
 import 'dart:convert';
 
-import '../storage/local_store.dart' show CryptoRecordChange, StoredCryptoState;
+import '../storage/local_store.dart'
+    show CryptoRecordChange, PendingEnrollment, StoredCryptoState;
 
 // K0 recovery enrollment, client side (docs/designs/K0-recovery-enrollment.md,
 // R3 and R4): the recovery key status, the claim a device that lost every
@@ -254,7 +255,9 @@ class AccountRecoveryStatus {
 /// The claim this device keeps through the wait (design, client flow step
 /// 4): the claim token, device id and secret, the request, its ready time
 /// and the new identity's sealed MLS state. It lives only in the encrypted
-/// local store's metadata, which a backup never carries (D71).
+/// local store's pending enrollment (schema 17), which no backup carries
+/// (D71); schema 16 kept it in the setting `k0.pending_recovery`
+/// ([encode]/[decode]), which the upgrade moves.
 class PendingAccountRecovery {
   const PendingAccountRecovery({
     required this.origin,
@@ -302,6 +305,86 @@ class PendingAccountRecovery {
 
   static const int _version = 1;
 
+  /// This claim as the device's pending enrollment.
+  PendingEnrollment toEnrollment() => PendingEnrollment(
+        kind: PendingEnrollment.kindAccountRecovery,
+        origin: origin,
+        accountId: accountId,
+        deviceId: deviceId,
+        payloadJson: encodePayload(),
+        state: mlsState,
+      );
+
+  /// The fields the enrollment's own columns do not hold.
+  String encodePayload() => jsonEncode(<String, Object?>{
+        'v': _version,
+        'username': username,
+        'device_name': deviceName,
+        'request_id': requestId,
+        'claim_token': claimToken,
+        'device_secret': deviceSecret,
+        'ready_at': readyAt.toUtc().toIso8601String(),
+        'needs_login': needsLogin,
+      });
+
+  /// The claim in [enrollment]; null when it is none, of another kind, or
+  /// not a whole, current claim.
+  static PendingAccountRecovery? fromEnrollment(PendingEnrollment? enrollment) {
+    if (enrollment == null ||
+        enrollment.kind != PendingEnrollment.kindAccountRecovery) {
+      return null;
+    }
+    final state = enrollment.state;
+    if (state == null) return null;
+    try {
+      final json = jsonDecode(enrollment.payloadJson);
+      if (json is! Map) return null;
+      return _fromFields(json,
+          origin: enrollment.origin,
+          accountId: enrollment.accountId,
+          deviceId: enrollment.deviceId,
+          mlsState: state);
+    } catch (_) {
+      // Never echo the text: it holds credentials.
+      return null;
+    }
+  }
+
+  static PendingAccountRecovery? _fromFields(
+    Map<Object?, Object?> json, {
+    required String origin,
+    required String accountId,
+    required String deviceId,
+    required StoredCryptoState mlsState,
+  }) {
+    if (json['v'] != _version) return null;
+    final readyAt = _time(json['ready_at']);
+    if (readyAt == null) return null;
+    String text(String name) {
+      final value = json[name];
+      if (value is! String || value.isEmpty) {
+        throw const FormatException('pending recovery');
+      }
+      return value;
+    }
+
+    if (origin.isEmpty || accountId.isEmpty || deviceId.isEmpty) return null;
+    return PendingAccountRecovery(
+      origin: origin,
+      username: text('username'),
+      accountId: accountId,
+      deviceId: deviceId,
+      deviceName: text('device_name'),
+      requestId: text('request_id'),
+      claimToken: text('claim_token'),
+      deviceSecret: text('device_secret'),
+      readyAt: readyAt,
+      needsLogin: json['needs_login'] == true,
+      mlsState: mlsState,
+    );
+  }
+
+  /// The schema 16 setting's format; kept for its upgrade.
   String encode() => jsonEncode(<String, Object?>{
         'v': _version,
         'origin': origin,
@@ -331,7 +414,8 @@ class PendingAccountRecovery {
         },
       });
 
-  /// Null for anything that is not a whole, current claim.
+  /// The schema 16 setting's claim. Null for anything that is not a whole,
+  /// current claim.
   static PendingAccountRecovery? decode(String? raw) {
     if (raw == null || raw.isEmpty) return null;
     try {

@@ -111,13 +111,13 @@ void main() {
       deviceSecret: 'secret',
       readyAt: DateTime.utc(2026, 11, 8),
       mlsState: sealed,
-    ).encode();
+    ).toEnrollment();
     await first.dispose();
 
     // Days later, after a restart: a new service over a new, empty store.
     final bobStore = MemoryLocalStore();
     final bob = NativeCryptoService(bindings: bindings, localStore: bobStore);
-    final pending = PendingAccountRecovery.decode(persisted)!;
+    final pending = PendingAccountRecovery.fromEnrollment(persisted)!;
     await bob.resumePendingEnrollment(
         accountId: 'acct_bob', deviceId: 'dev_bob', state: pending.mlsState);
     await bob.activateSession(session('acct_bob', 'dev_bob'));

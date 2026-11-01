@@ -45,5 +45,15 @@ Future<void> stripNoticeSchema(EncryptedLocalDatabase database) async {
 /// Remove schema16's per-record sealed MLS state (D70) from a historical
 /// fixture.
 Future<void> stripCryptoRecordsSchema(EncryptedLocalDatabase database) async {
+  await stripPendingEnrollmentSchema(database);
   await database.customStatement('DROP TABLE IF EXISTS local_crypto_records');
+}
+
+/// Remove schema17's pending device enrollment (K2/K0) from a historical
+/// fixture.
+Future<void> stripPendingEnrollmentSchema(
+    EncryptedLocalDatabase database) async {
+  for (final table in PendingEnrollmentSql.tables) {
+    await database.customStatement('DROP TABLE IF EXISTS $table');
+  }
 }

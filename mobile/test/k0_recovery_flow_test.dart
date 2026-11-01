@@ -44,8 +44,8 @@ void main() {
   }
 
   Future<PendingAccountRecovery?> persisted() async =>
-      PendingAccountRecovery.decode(
-          await store.loadSetting('k0.pending_recovery'));
+      PendingAccountRecovery.fromEnrollment(
+          await store.loadPendingEnrollment());
 
   Future<void> claim({String key = k0Display}) async {
     final ok = await state.startAccountRecovery(

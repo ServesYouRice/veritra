@@ -69,8 +69,9 @@ void main() {
     addTearDown(db.close);
     expect(await db.readCryptoRecords(), isEmpty);
     expect(await _hasRecordsTable(db), isTrue);
-    expect(EncryptedLocalDatabase.currentSchemaVersion, 16);
-    expect(await _version(db), 16);
+    expect(
+        EncryptedLocalDatabase.currentSchemaVersion, greaterThanOrEqualTo(16));
+    expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
   });
 
   test('schema 15 upgrades to 16 keeping crypto state and history', () async {
@@ -95,7 +96,7 @@ void main() {
     expect(await db.readSessionJson(), _sessionJson);
     expect(await _hasRecordsTable(db), isTrue);
     expect(await db.readCryptoRecords(), isEmpty);
-    expect(await _version(db), 16);
+    expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
   });
 
   test('a failed 15 to 16 upgrade rolls back and the next open retries it',
@@ -128,7 +129,7 @@ void main() {
     addTearDown(db.close);
     expect((await db.readCryptoState())?.counter, 2);
     expect(await _hasRecordsTable(db), isTrue);
-    expect(await _version(db), 16);
+    expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
   });
 
   test('records read back ordered by kind, then id bytes', () async {
