@@ -692,9 +692,14 @@ func queueMLSRevocations(ctx context.Context, tx *sql.Tx, accountID, deviceID, n
 	// Without a roster only a legacy group (pre-I51: it has MLS messages, the
 	// test CreateMLSCommitBundle uses) gets one. A conversation whose group
 	// was never created has no leaf to remove, and a revoked device is never
-	// added to a group created later.
+	// added to a group created later. In a legacy group the stored
+	// coordinator and the required confirmers are devices with evidence of a
+	// leaf (mlsLegacyLeafEvidence), so a revocation never waits on a device
+	// with none; the coordinator falls back to the lowest device only when
+	// no device shows evidence, and mlsRevocationCoordinator re-checks it.
 	rows, err := tx.QueryContext(ctx, `
-		SELECT m.conversation_id, MIN(d.id)
+		SELECT m.conversation_id,
+		       COALESCE(MIN(CASE WHEN `+mlsLegacyLeafEvidence("m.conversation_id", "d.id", "d.created_at")+` THEN d.id END), MIN(d.id))
 		FROM memberships m
 		JOIN memberships participants ON participants.conversation_id = m.conversation_id
 		JOIN devices d ON d.account_id = participants.account_id
@@ -751,7 +756,8 @@ func queueMLSRevocations(ctx context.Context, tx *sql.Tx, accountID, deviceID, n
 			SELECT ?, ?, d.id FROM memberships m
 			JOIN devices d ON d.account_id = m.account_id
 			WHERE m.conversation_id = ? AND d.revoked_at IS NULL AND d.id <> ?
-			  AND (NOT EXISTS (SELECT 1 FROM conversation_mls_groups g WHERE g.conversation_id = m.conversation_id)
+			  AND ((NOT EXISTS (SELECT 1 FROM conversation_mls_groups g WHERE g.conversation_id = m.conversation_id)
+			        AND `+mlsLegacyLeafEvidence("m.conversation_id", "d.id", "d.created_at")+`)
 			       OR EXISTS (SELECT 1 FROM conversation_mls_devices r WHERE r.conversation_id = m.conversation_id
 			                  AND r.device_id = d.id AND r.removed_after_event_id IS NULL))`,
 			item.conversationID, deviceID, item.conversationID, deviceID); err != nil {

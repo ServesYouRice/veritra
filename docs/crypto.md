@@ -380,6 +380,16 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **K0 R2 review, legacy-group revocation coordinator (2026-11-01):** no
+  ABI, payload or schema change. In a legacy group (no recorded roster),
+  the `coordinator_device_id` that `GET /api/v1/mls/revocations` reports now
+  skips devices with no evidence of a leaf. Evidence means the device sent
+  an MLS message in the conversation, received a Welcome there, or is no
+  newer than the oldest retained MLS message. Revocations queued in a legacy
+  group store such a coordinator and require confirmations only from such
+  devices. A device recovered through K0, which has no leaf, therefore never
+  coordinates a revocation and is never waited on to confirm one.
+
 - **D70 S3, per-record sealed state, ABI 10 (2026-10-31):** sealed state
   format 4 (see "Sealed state, format 4" above). ABI 10 removes
   `pm_crypto_device_restore` and `pm_crypto_device_seal_state` and adds
