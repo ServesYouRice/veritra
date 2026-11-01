@@ -151,24 +151,70 @@ void main() {
       expect(server.reserved, isEmpty);
     });
 
-    test('another stored enrollment stops the claim before the network',
-        () async {
-      await store.savePendingEnrollment(const PendingEnrollment(
-          kind: PendingEnrollment.kindDeviceLinkV3,
+    group('a stored enrollment the app did not load', () {
+      Future<bool> start() => state.startAccountRecovery(
+          baseUrl: k0Origin,
+          username: 'alice',
+          password: 'pw',
+          recoveryKey: k0Display);
+
+      test('a device link refuses before the network, with its own text',
+          () async {
+        await store.savePendingEnrollment(const PendingEnrollment(
+            kind: PendingEnrollment.kindDeviceLinkV3,
+            origin: k0Origin,
+            accountId: 'acct_me',
+            deviceId: 'dev_link',
+            payloadJson: '{}'));
+        expect(await start(), isFalse);
+        expect(state.errorFor(Ops.accountRecovery),
+            l10n.recoveryDeviceLinkInProgress);
+        expect(server.reserved, isEmpty);
+        expect((await store.loadPendingEnrollment())?.deviceId, 'dev_link');
+      });
+
+      test('a readable claim is shown instead of a second claim', () async {
+        final stored = PendingAccountRecovery(
           origin: k0Origin,
+          username: 'alice',
           accountId: 'acct_me',
-          deviceId: 'dev_link',
-          payloadJson: '{}'));
-      expect(
-          await state.startAccountRecovery(
-              baseUrl: k0Origin,
-              username: 'alice',
-              password: 'pw',
-              recoveryKey: k0Display),
-          isFalse);
-      expect(state.errorFor(Ops.accountRecovery), l10n.recoveryAlreadyPending);
-      expect(server.reserved, isEmpty);
-      expect((await store.loadPendingEnrollment())?.deviceId, 'dev_link');
+          deviceId: 'dev_waiting',
+          deviceName: 'Phone',
+          requestId: 'arr_stored',
+          claimToken: 'claim',
+          deviceSecret: 'secret',
+          readyAt: DateTime.now().toUtc().add(const Duration(days: 3)),
+          mlsState: StoredCryptoState(
+              counter: 1,
+              stateKey: List<int>.filled(32, 4),
+              sealedState: const [1, 2, 3]),
+        );
+        await store.savePendingEnrollment(stored.toEnrollment());
+        expect(await start(), isFalse);
+        expect(
+            state.errorFor(Ops.accountRecovery), l10n.recoveryAlreadyPending);
+        expect(server.reserved, isEmpty);
+        expect(state.pendingAccountRecovery?.requestId, 'arr_stored');
+        expect((await persisted())?.requestId, 'arr_stored');
+      });
+
+      test('an unreadable claim is dropped and the claim goes ahead', () async {
+        await store.savePendingEnrollment(PendingEnrollment(
+            kind: PendingEnrollment.kindAccountRecovery,
+            origin: k0Origin,
+            accountId: 'acct_me',
+            deviceId: 'dev_broken',
+            payloadJson: '{"v":1}',
+            state: StoredCryptoState(
+                counter: 1,
+                stateKey: List<int>.filled(32, 4),
+                sealedState: const [1])));
+        expect(await start(), isTrue,
+            reason: state.errorFor(Ops.accountRecovery));
+        expect(server.reserved, <String>['alice']);
+        expect((await persisted())?.deviceId, isNot('dev_broken'));
+        expect(state.pendingAccountRecovery, isNotNull);
+      });
     });
 
     test('a restored backup of another account stops before the claim',

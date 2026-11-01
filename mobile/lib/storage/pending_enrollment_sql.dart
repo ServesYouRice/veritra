@@ -11,14 +11,29 @@ part of 'encrypted_database.dart';
 /// A device makes one new identity at a time, so there is at most one row.
 /// Its MLS state is frozen once written: a retry must reopen exactly that
 /// identity, never a regenerated one.
-typedef PendingEnrollmentRow = ({
-  String kind,
-  String origin,
-  String accountId,
-  String deviceId,
-  String payloadJson,
-  PendingEnrollmentState? state,
-});
+///
+/// A class, not a record, so [toString] (in an error, a log or a test
+/// failure) names the kind only, never a credential or key.
+class PendingEnrollmentRow {
+  const PendingEnrollmentRow({
+    required this.kind,
+    required this.origin,
+    required this.accountId,
+    required this.deviceId,
+    required this.payloadJson,
+    this.state,
+  });
+
+  final String kind;
+  final String origin;
+  final String accountId;
+  final String deviceId;
+  final String payloadJson;
+  final PendingEnrollmentState? state;
+
+  @override
+  String toString() => 'PendingEnrollmentRow($kind)';
+}
 
 /// One record change of a pending enrollment's sealed MLS state (D70).
 typedef PendingEnrollmentRecord = ({
@@ -29,12 +44,22 @@ typedef PendingEnrollmentRecord = ({
 });
 
 /// The new identity's sealed MLS state: counter, key, root and records.
-typedef PendingEnrollmentState = ({
-  int counter,
-  List<int> stateKey,
-  List<int> root,
-  List<PendingEnrollmentRecord> records,
-});
+class PendingEnrollmentState {
+  const PendingEnrollmentState({
+    required this.counter,
+    required this.stateKey,
+    required this.root,
+    required this.records,
+  });
+
+  final int counter;
+  final List<int> stateKey;
+  final List<int> root;
+  final List<PendingEnrollmentRecord> records;
+
+  @override
+  String toString() => 'PendingEnrollmentState($counter)';
+}
 
 /// The waiting K0 claim as schema 16 stored it, in the metadata table.
 const String _legacyPendingRecoveryName = 'setting:k0.pending_recovery';
@@ -58,7 +83,8 @@ extension PendingEnrollmentSql on EncryptedLocalDatabase {
   ];
 
   Future<void> _createPendingEnrollment() async {
-    await customStatement('CREATE TABLE local_pending_enrollment ('
+    await customStatement(
+        'CREATE TABLE IF NOT EXISTS local_pending_enrollment ('
         'singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton = 1), '
         'kind TEXT NOT NULL, origin TEXT NOT NULL, account_id TEXT NOT NULL, '
         'device_id TEXT NOT NULL, payload_json TEXT NOT NULL, '
@@ -66,17 +92,22 @@ extension PendingEnrollmentSql on EncryptedLocalDatabase {
         'CHECK ((state_counter IS NULL) = (state_key IS NULL) '
         'AND (state_key IS NULL) = (state_root IS NULL)))');
     // The state's record changes in the order the seal listed them.
-    await customStatement('CREATE TABLE local_pending_enrollment_records ('
+    await customStatement(
+        'CREATE TABLE IF NOT EXISTS local_pending_enrollment_records ('
         'position INTEGER PRIMARY KEY NOT NULL CHECK(position >= 0), '
         'kind INTEGER NOT NULL, record_id BLOB NOT NULL, '
         'generation INTEGER NOT NULL, sealed BLOB)');
   }
 
   /// Schema 16 to 17: the waiting K0 claim moves from its metadata setting
-  /// into the table, in the upgrade's transaction. Only what the K0 loader
-  /// reads as a whole claim moves; anything else (an abandoned `''`, an
-  /// unreadable value) was never shown and is dropped. Nothing here throws
-  /// on the stored text or echoes it: it holds credentials.
+  /// into the table, in the upgrade's transaction. Only what the schema 16
+  /// loader read as a whole claim moves; anything else (an abandoned `''`,
+  /// an unreadable value) was never shown and is dropped. Nothing here
+  /// throws on the stored text or echoes it: it holds credentials.
+  ///
+  /// A row already in the table (a downgraded app that kept it, then
+  /// upgraded again) is kept; a setting written meanwhile is then dropped,
+  /// since a device holds one enrollment.
   Future<void> _movePendingRecoverySetting() async {
     final rows = await customSelect(
         'SELECT value FROM local_metadata WHERE name = ?',
@@ -88,7 +119,9 @@ extension PendingEnrollmentSql on EncryptedLocalDatabase {
     } catch (_) {
       row = null;
     }
-    if (row != null) await _insertPendingEnrollment(row);
+    if (row != null && await _readPendingEnrollmentInTransaction() == null) {
+      await _insertPendingEnrollment(row);
+    }
     await customStatement('DELETE FROM local_metadata WHERE name = ?',
         [_legacyPendingRecoveryName]);
   }
@@ -150,7 +183,7 @@ extension PendingEnrollmentSql on EncryptedLocalDatabase {
               : List<int>.from(r.read<Uint8List>('sealed')),
         ),
     ];
-    return (
+    return PendingEnrollmentRow(
       kind: row.read<String>('kind'),
       origin: row.read<String>('origin'),
       accountId: row.read<String>('account_id'),
@@ -158,7 +191,7 @@ extension PendingEnrollmentSql on EncryptedLocalDatabase {
       payloadJson: row.read<String>('payload_json'),
       state: counter == null || key == null || root == null
           ? null
-          : (
+          : PendingEnrollmentState(
               counter: counter,
               stateKey: List<int>.from(key),
               root: List<int>.from(root),
@@ -224,7 +257,7 @@ PendingEnrollmentRow mergePendingEnrollment(
   if (replacement != null && !_samePendingState(stored, replacement)) {
     throw const PendingEnrollmentConflict();
   }
-  return (
+  return PendingEnrollmentRow(
     kind: next.kind,
     origin: next.origin,
     accountId: next.accountId,
@@ -255,31 +288,71 @@ bool _samePendingState(PendingEnrollmentState a, PendingEnrollmentState b) {
   return true;
 }
 
-/// The schema 16 K0 claim as a row, exactly as the K0 loader reads it
-/// ([PendingAccountRecovery.decode]); null for anything it would ignore.
+/// The schema 16 K0 claim as a row; null for anything the schema 16 loader
+/// ignored. A frozen copy of that loader's v1 decoder (K0 R4's
+/// `PendingAccountRecovery.decode`), so a later change to the live claim
+/// format cannot change what this upgrade moves. The payload it writes is
+/// the v1 payload `PendingAccountRecovery.fromEnrollment` reads. Never
+/// echoes [raw]: it holds credentials.
 PendingEnrollmentRow? legacyPendingRecoveryRow(String raw) {
-  final claim = PendingAccountRecovery.decode(raw);
-  if (claim == null) return null;
-  final state = claim.mlsState;
-  return (
-    kind: pendingEnrollmentKindAccountRecovery,
-    origin: claim.origin,
-    accountId: claim.accountId,
-    deviceId: claim.deviceId,
-    payloadJson: claim.encodePayload(),
-    state: (
-      counter: state.counter,
-      stateKey: state.stateKey,
-      root: state.sealedState,
-      records: [
-        for (final change in state.changes)
-          (
-            kind: change.kind,
-            recordId: change.recordId,
-            generation: change.generation,
-            sealed: change.sealed,
-          ),
-      ],
-    ),
-  );
+  if (raw.isEmpty) return null;
+  try {
+    final json = jsonDecode(raw);
+    if (json is! Map || json['v'] != 1) return null;
+    final mls = json['mls'] as Map;
+    final readyAtText = json['ready_at'];
+    if (readyAtText is! String || readyAtText.isEmpty) return null;
+    final readyAt = DateTime.tryParse(readyAtText)?.toUtc();
+    if (readyAt == null) return null;
+    String text(String name) {
+      final value = json[name];
+      if (value is! String || value.isEmpty) {
+        throw const FormatException('pending recovery');
+      }
+      return value;
+    }
+
+    final origin = text('origin');
+    final username = text('username');
+    final accountId = text('account_id');
+    final deviceId = text('device_id');
+    final deviceName = text('device_name');
+    final requestId = text('request_id');
+    final claimToken = text('claim_token');
+    final deviceSecret = text('device_secret');
+    final counter = (mls['counter'] as num).toInt();
+    final stateKey = base64Decode(mls['key'] as String);
+    final root = base64Decode(mls['root'] as String);
+    final records = <PendingEnrollmentRecord>[
+      for (final record in mls['records'] as List)
+        (
+          kind: ((record as Map)['kind'] as num).toInt(),
+          recordId: base64Decode(record['id'] as String),
+          generation: (record['generation'] as num).toInt(),
+          sealed: record['sealed'] == null
+              ? null
+              : base64Decode(record['sealed'] as String),
+        ),
+    ];
+    return PendingEnrollmentRow(
+      kind: pendingEnrollmentKindAccountRecovery,
+      origin: origin,
+      accountId: accountId,
+      deviceId: deviceId,
+      payloadJson: jsonEncode(<String, Object?>{
+        'v': 1,
+        'username': username,
+        'device_name': deviceName,
+        'request_id': requestId,
+        'claim_token': claimToken,
+        'device_secret': deviceSecret,
+        'ready_at': readyAt.toIso8601String(),
+        'needs_login': json['needs_login'] == true,
+      }),
+      state: PendingEnrollmentState(
+          counter: counter, stateKey: stateKey, root: root, records: records),
+    );
+  } catch (_) {
+    return null;
+  }
 }

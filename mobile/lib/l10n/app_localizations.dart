@@ -4431,6 +4431,12 @@ abstract class AppLocalizations {
   /// **'A recovery is already waiting on this device.'**
   String get recoveryAlreadyPending;
 
+  /// No description provided for @recoveryDeviceLinkInProgress.
+  ///
+  /// In en, this message translates to:
+  /// **'A device link is in progress on this device, so an account recovery cannot start here.'**
+  String get recoveryDeviceLinkInProgress;
+
   /// No description provided for @recoveryWaitingTitle.
   ///
   /// In en, this message translates to:

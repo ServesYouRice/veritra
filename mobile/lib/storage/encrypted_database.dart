@@ -8,7 +8,6 @@ import 'package:sqlite3/common.dart' show CommonDatabase;
 import 'package:sqlite3/sqlite3.dart' show sqlite3, OpenMode;
 
 import 'message_search.dart';
-import '../core/account_recovery.dart' show PendingAccountRecovery;
 import 'history_snapshot.dart';
 import 'notice_outbox.dart';
 import '../core/models.dart' show Conversation, Session;

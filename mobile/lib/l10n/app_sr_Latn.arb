@@ -730,6 +730,7 @@
   "recoveryBackupOtherAccount": "Rezervna kopija vraćena na ovaj uređaj pripada drugom nalogu ili serveru. Ovde oporavite taj nalog ili prvo resetujte ovaj uređaj.",
   "recoverySignedInAlready": "Ovaj uređaj je već prijavljen.",
   "recoveryAlreadyPending": "Oporavak već čeka na ovom uređaju.",
+  "recoveryDeviceLinkInProgress": "Na ovom uređaju je u toku povezivanje uređaja, pa oporavak naloga ne može da počne ovde.",
   "recoveryWaitingTitle": "Oporavak čeka",
   "recoveryWaitingDetail": "Ovaj uređaj se pridružuje vašem nalogu posle {date}. Aplikacija sama proverava dok je otvorena. Vaši drugi uređaji mogu da otkažu ovaj oporavak.",
   "recoveryReadyDetail": "Čekanje je završeno. Proverite sada da biste završili.",

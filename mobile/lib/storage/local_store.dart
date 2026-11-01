@@ -229,7 +229,7 @@ class PendingEnrollment {
 
   PendingEnrollmentRow _toRow() {
     final state = this.state;
-    return (
+    return PendingEnrollmentRow(
       kind: kind,
       origin: origin,
       accountId: accountId,
@@ -237,7 +237,7 @@ class PendingEnrollment {
       payloadJson: payloadJson,
       state: state == null
           ? null
-          : (
+          : PendingEnrollmentState(
               counter: state.counter,
               stateKey: List<int>.from(state.stateKey),
               root: List<int>.from(state.sealedState),

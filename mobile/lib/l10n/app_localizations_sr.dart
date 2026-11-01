@@ -2717,6 +2717,10 @@ class AppLocalizationsSr extends AppLocalizations {
   String get recoveryAlreadyPending => 'Опоравак већ чека на овом уређају.';
 
   @override
+  String get recoveryDeviceLinkInProgress =>
+      'На овом уређају је у току повезивање уређаја, па опоравак налога не може да почне овде.';
+
+  @override
   String get recoveryWaitingTitle => 'Опоравак чека';
 
   @override
@@ -5529,6 +5533,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get recoveryAlreadyPending => 'Oporavak već čeka na ovom uređaju.';
+
+  @override
+  String get recoveryDeviceLinkInProgress =>
+      'Na ovom uređaju je u toku povezivanje uređaja, pa oporavak naloga ne može da počne ovde.';
 
   @override
   String get recoveryWaitingTitle => 'Oporavak čeka';

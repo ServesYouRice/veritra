@@ -239,8 +239,8 @@ void main() {
     }
 
     const stages = <String>[
-      'CREATE TABLE local_pending_enrollment (',
-      'CREATE TABLE local_pending_enrollment_records',
+      'CREATE TABLE IF NOT EXISTS local_pending_enrollment (',
+      'CREATE TABLE IF NOT EXISTS local_pending_enrollment_records',
       'INSERT INTO local_pending_enrollment (',
       'INSERT INTO local_pending_enrollment_records',
       'DELETE FROM local_metadata WHERE name = ?',
@@ -283,6 +283,109 @@ void main() {
         expect(await _version(db), 17);
       });
     }
+
+    // The setting exactly as K0 R4 wrote it (v1), fixed text: independent of
+    // today's encode().
+    for (final needsLogin in [false, true]) {
+      test('a fixed v1 setting moves (needsLogin: $needsLogin)', () async {
+        final legacy = '{"v":1,"origin":"https://chat.example.org",'
+            '"username":"alice","account_id":"acct_me","device_id":"dev_new",'
+            '"device_name":"Phone","request_id":"arr_1",'
+            '"claim_token":"$_claimToken","device_secret":"$_deviceSecret",'
+            '"ready_at":"2026-11-08T12:30:00.000Z","needs_login":$needsLogin,'
+            '"mls":{"counter":1,'
+            '"key":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",'
+            '"root":"cm9vdC12MS1maXh0dXJl","records":['
+            '{"kind":1,"id":"","generation":1,"sealed":"ZGV2aWNlLXJlY29yZC12MQ=="},'
+            '{"kind":2,"id":"CQgH","generation":1,"sealed":null}]}}';
+        final file = await _tempFile();
+        await _schema16(file, legacy: legacy);
+        final db = EncryptedLocalDatabase(NativeDatabase(file));
+        addTearDown(db.close);
+        _expectSameClaim(
+            PendingAccountRecovery.fromEnrollment(
+                _enrollment(await db.readPendingEnrollment())),
+            PendingAccountRecovery(
+              origin: 'https://chat.example.org',
+              username: 'alice',
+              accountId: 'acct_me',
+              deviceId: 'dev_new',
+              deviceName: 'Phone',
+              requestId: 'arr_1',
+              claimToken: _claimToken,
+              deviceSecret: _deviceSecret,
+              readyAt: DateTime.utc(2026, 11, 8, 12, 30),
+              needsLogin: needsLogin,
+              mlsState: StoredCryptoState(
+                counter: 1,
+                stateKey: List.filled(32, 1),
+                sealedState: utf8.encode('root-v1-fixture'),
+                changes: [
+                  CryptoRecordChange(
+                      kind: 1,
+                      recordId: const [],
+                      generation: 1,
+                      sealed: utf8.encode('device-record-v1')),
+                  const CryptoRecordChange(
+                      kind: 2,
+                      recordId: [9, 8, 7],
+                      generation: 1,
+                      sealed: null),
+                ],
+              ),
+            ));
+        expect(await db.readMetadata(_legacyName), isNull);
+      });
+    }
+
+    test('a downgrade to 16 and a re-upgrade keep the row', () async {
+      final file = await _tempFile();
+      var db = EncryptedLocalDatabase(NativeDatabase(file));
+      final claim = _claim(needsLogin: true);
+      await db.writePendingEnrollment(_row(claim));
+      // An older app at schema 16 leaves the unknown tables and may write
+      // its own setting.
+      await db.writeMetadata(_legacyName, _claim().encode());
+      await db.customStatement('PRAGMA user_version = 16');
+      await db.close();
+
+      db = EncryptedLocalDatabase(NativeDatabase(file));
+      addTearDown(db.close);
+      _expectSameClaim(
+          PendingAccountRecovery.fromEnrollment(
+              _enrollment(await db.readPendingEnrollment())),
+          claim);
+      expect(await db.readMetadata(_legacyName), isNull);
+      expect(await _version(db), 17);
+    });
+
+    test('a downgrade with only a setting moves it on re-upgrade', () async {
+      final file = await _tempFile();
+      var db = EncryptedLocalDatabase(NativeDatabase(file));
+      final claim = _claim();
+      await db.writeMetadata(_legacyName, claim.encode());
+      await db.customStatement('PRAGMA user_version = 16');
+      await db.close();
+      db = EncryptedLocalDatabase(NativeDatabase(file));
+      addTearDown(db.close);
+      _expectSameClaim(
+          PendingAccountRecovery.fromEnrollment(
+              _enrollment(await db.readPendingEnrollment())),
+          claim);
+    });
+
+    test('a row prints its kind only', () {
+      final text = '${_row(_claim())} ${_row(_claim()).state}';
+      for (final secret in [
+        _claimToken,
+        _deviceSecret,
+        'dev_new',
+        '${_stateKey.first}, ${_stateKey[1]}',
+      ]) {
+        expect(text, isNot(contains(secret)));
+      }
+      expect(text, contains('k0_recovery'));
+    });
 
     test('an upgrade from before 16 also creates the tables', () async {
       final file = await _tempFile();
@@ -546,13 +649,13 @@ void main() {
 
 PendingEnrollmentRow _row(PendingAccountRecovery claim) {
   final state = claim.mlsState;
-  return (
+  return PendingEnrollmentRow(
     kind: PendingEnrollment.kindAccountRecovery,
     origin: claim.origin,
     accountId: claim.accountId,
     deviceId: claim.deviceId,
     payloadJson: claim.encodePayload(),
-    state: (
+    state: PendingEnrollmentState(
       counter: state.counter,
       stateKey: state.stateKey,
       root: state.sealedState,

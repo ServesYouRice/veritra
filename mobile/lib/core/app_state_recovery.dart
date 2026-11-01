@@ -250,12 +250,22 @@ extension AccountRecoveryActions on AppState {
         if (session != null) {
           throw UserFacingException(l10n.recoverySignedInAlready);
         }
-        // A stored enrollment the app did not load (another kind, or one it
-        // could not read) would refuse the claim only after the server
-        // took it: stop before any network call instead.
-        if (pendingAccountRecovery != null ||
-            await localStore.loadPendingEnrollment() != null) {
+        if (pendingAccountRecovery != null) {
           throw UserFacingException(l10n.recoveryAlreadyPending);
+        }
+        // A stored enrollment the app did not load would refuse the claim
+        // only after the server took it, so it is settled before any
+        // network call: a readable claim is shown, an unreadable one is
+        // dropped, and another kind (a device link) refuses.
+        final stored = await _storedAccountRecovery();
+        if (stored.claim != null) {
+          pendingAccountRecovery = stored.claim;
+          notifyListeners();
+          _scheduleRecoveryPoll();
+          throw UserFacingException(l10n.recoveryAlreadyPending);
+        }
+        if (stored.otherKind) {
+          throw UserFacingException(l10n.recoveryDeviceLinkInProgress);
         }
         final Uint8List entropy;
         try {
@@ -573,8 +583,7 @@ extension AccountRecoveryActions on AppState {
     if (!recoveryAvailable) return;
     PendingAccountRecovery? pending;
     try {
-      pending = PendingAccountRecovery.fromEnrollment(
-          await localStore.loadPendingEnrollment());
+      pending = (await _storedAccountRecovery()).claim;
     } catch (_) {
       return;
     }
@@ -582,6 +591,25 @@ extension AccountRecoveryActions on AppState {
     if (pending != null && !pending.needsLogin) {
       unawaited(checkAccountRecovery());
     }
+  }
+
+  /// The stored K0 claim, if readable. An unreadable K0 row is deleted (it
+  /// could never be resumed and would block every later recovery);
+  /// [otherKind] reports an enrollment of another kind, which stays.
+  Future<({PendingAccountRecovery? claim, bool otherKind})>
+      _storedAccountRecovery() async {
+    final stored = await localStore.loadPendingEnrollment();
+    if (stored == null) return (claim: null, otherKind: false);
+    if (stored.kind != PendingEnrollment.kindAccountRecovery) {
+      return (claim: null, otherKind: true);
+    }
+    final claim = PendingAccountRecovery.fromEnrollment(stored);
+    if (claim == null) {
+      await localStore.deletePendingEnrollment(
+          kind: PendingEnrollment.kindAccountRecovery,
+          deviceId: stored.deviceId);
+    }
+    return (claim: claim, otherKind: false);
   }
 
   /// A recovered session whose MLS state did not reach the store before the
