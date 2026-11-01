@@ -2115,7 +2115,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
       final id = Uint8List.fromList(change.recordId);
       if (sealed == null) {
         await (delete(localCryptoRecords)
-              ..where((t) => t.kind.equals(change.kind) & t.recordId.equals(id)))
+              ..where(
+                  (t) => t.kind.equals(change.kind) & t.recordId.equals(id)))
             .go();
       } else {
         await into(localCryptoRecords).insertOnConflictUpdate(

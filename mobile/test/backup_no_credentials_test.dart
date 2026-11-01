@@ -86,9 +86,10 @@ void main() {
   Future<List<int>> seededBackup(LocalStore store) async {
     await store.saveSession(_session);
     await store.saveCryptoState(_state(1), 10);
-    await store.saveSnapshot(<Conversation>[
-      Conversation(id: 'conv_1', kind: 'dm', title: 'Chat')
-    ], const <String, List<ReceivedMessageEnvelope>>{}, 10);
+    await store.saveSnapshot(
+        <Conversation>[Conversation(id: 'conv_1', kind: 'dm', title: 'Chat')],
+        const <String, List<ReceivedMessageEnvelope>>{},
+        10);
     await store.commitMlsTransition(MlsStateTransition(
       messageId: 'application:11:m1',
       conversationId: 'conv_1',
@@ -226,7 +227,8 @@ void main() {
       await expectRestoredWithoutDevice(target);
     });
 
-    test('an old backup restores its history and drops its credentials '
+    test(
+        'an old backup restores its history and drops its credentials '
         '($label)', () async {
       final backup = legacyV5(
           await seededBackup(memory ? MemoryLocalStore() : createStore()));
@@ -236,11 +238,10 @@ void main() {
       await expectRestoredWithoutDevice(target);
     });
 
-    test('an old backup bound to another device is refused ($label)',
-        () async {
+    test('an old backup bound to another device is refused ($label)', () async {
       final root = Map<String, Object?>.from(jsonDecode(utf8.decode(legacyV5(
-              await seededBackup(
-                  memory ? MemoryLocalStore() : createStore())))) as Map)
+              await seededBackup(memory ? MemoryLocalStore() : createStore()))))
+          as Map)
         ..['device_id'] = 'dev_other';
       final target =
           memory ? MemoryLocalStore() : createStore(namespace: 'bound');
@@ -249,7 +250,8 @@ void main() {
       expect(await target.loadSession(), isNull);
     });
 
-    test('a restored account is marked as one, so a second restore is '
+    test(
+        'a restored account is marked as one, so a second restore is '
         'refused ($label)', () async {
       final backup =
           await seededBackup(memory ? MemoryLocalStore() : createStore());
@@ -269,7 +271,8 @@ void main() {
           isFalse);
     });
 
-    test('a device of the same account keeps the restored history; '
+    test(
+        'a device of the same account keeps the restored history; '
         'another account drops it ($label)', () async {
       final backup =
           await seededBackup(memory ? MemoryLocalStore() : createStore());

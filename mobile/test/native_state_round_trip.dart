@@ -7,8 +7,8 @@ NativeCryptoDevice reopenFreshDevice(NativeCryptoBindings bindings,
     {required List<int> stateKey, int generation = 1}) {
   final sealed = device.sealChanges(stateKey, generation);
   device.close();
-  final restored = bindings.restoreRecords(
-      accountId, deviceId, stateKey, generation, sealed.root, [
+  final restored = bindings
+      .restoreRecords(accountId, deviceId, stateKey, generation, sealed.root, [
     for (final change in sealed.changes)
       if (change.sealed != null) change.sealed!,
   ]);

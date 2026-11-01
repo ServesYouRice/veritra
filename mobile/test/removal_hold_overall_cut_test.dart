@@ -281,8 +281,7 @@ class _Api extends ApiClient {
           epoch: epochOf(conversationId),
           add: const <MlsDeviceRef>[],
           remove: const <MlsDeviceRef>[_bob],
-          truncated:
-              truncateReads || truncatedItems.contains(conversationId),
+          truncated: truncateReads || truncatedItems.contains(conversationId),
         ),
     ];
     final gate = readGate;

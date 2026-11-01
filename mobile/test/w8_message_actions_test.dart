@@ -524,6 +524,7 @@ PinMessageEffect _pin(String key,
         pinned: pinned,
         durationSeconds: 86400,
         channelId: channel);
+
 /// Restores [backup] into [store] and enrolls the same device again, as a
 /// restore now leaves no device or MLS state (D71, D73).
 Future<void> _restoreAndReenroll(LocalStore store, List<int> backup) async {

@@ -126,15 +126,13 @@ void main() {
     final restored = bindings.restoreRecords(
         'acct_alice', 'dev_alice', key, 1, sealed.root, records);
     expect(restored.generation, 1);
-    final oldFormat = List<int>.of(sealed.root)
-      ..setRange(8, 10, const [0, 1]);
+    final oldFormat = List<int>.of(sealed.root)..setRange(8, 10, const [0, 1]);
     expect(
         () => bindings.restoreRecords(
             'acct_alice', 'dev_alice', key, 1, oldFormat, records),
         throwsA(isA<NativeCryptoException>().having((error) => error.kind,
             'kind', NativeCryptoError.stateFormatUnsupported)));
-    final tampered = List<int>.of(sealed.root)
-      ..[sealed.root.length - 1] ^= 1;
+    final tampered = List<int>.of(sealed.root)..[sealed.root.length - 1] ^= 1;
     expect(
         () => bindings.restoreRecords(
             'acct_alice', 'dev_alice', key, 1, tampered, records),

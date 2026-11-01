@@ -95,7 +95,8 @@ typedef _GroupDeleteDart = int Function(
     Pointer<_PmCryptoHandle>, _PmByteSlice, Pointer<Uint8>);
 typedef _PruneNative = Int32 Function(
     Pointer<_PmCryptoHandle>, Uint64, Pointer<Uint64>);
-typedef _PruneDart = int Function(Pointer<_PmCryptoHandle>, int, Pointer<Uint64>);
+typedef _PruneDart = int Function(
+    Pointer<_PmCryptoHandle>, int, Pointer<Uint64>);
 typedef _HandleOutputNative = Int32 Function(
     Pointer<_PmCryptoHandle>, Pointer<_PmOwnedBuffer>);
 typedef _HandleOutputDart = int Function(
@@ -471,8 +472,8 @@ class NativeCryptoBindings {
       final token = calloc<Uint64>();
       final generation = calloc<Uint64>();
       try {
-        _check(_restoreBegin(slices[0], slices[1], slices[2],
-            minimumGeneration, slices[3], token, generation));
+        _check(_restoreBegin(slices[0], slices[1], slices[2], minimumGeneration,
+            slices[3], token, generation));
         return token.value;
       } finally {
         calloc.free(generation);
@@ -988,8 +989,7 @@ class NativeCryptoDevice implements Finalizable {
   /// one was stored. Never for a removal: that group is already gone.
   bool deleteGroup(String groupId) {
     _bindings._bounded(groupId.codeUnits, 128);
-    return _bindings._withSlice(Uint8List.fromList(groupId.codeUnits),
-        (group) {
+    return _bindings._withSlice(Uint8List.fromList(groupId.codeUnits), (group) {
       final deleted = calloc<Uint8>();
       try {
         _bindings._check(_bindings._groupDelete(_liveHandle, group, deleted));
