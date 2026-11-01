@@ -41,3 +41,7 @@ can already set any value in the range by hand; steps change the default.
 2. Should the delivery budget scale automatically with the member limit
    instead of being a separate setting?
 3. Should step 2 wait for a real 500-member capacity run on the owner's host?
+
+## Owner decisions (2026-11-01)
+
+- Default member limit 250 approved.
