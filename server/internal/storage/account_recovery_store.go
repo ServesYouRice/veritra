@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -60,17 +61,45 @@ func recoveryAttemptsCutoffDay(now time.Time) string {
 
 // recoveryDecoyKey returns the instance's decoy key, creating it on first
 // use for an instance set up after migration 0045 (the migration backfills
-// earlier ones). Before setup there is no instance row.
+// earlier ones). Before setup there is no instance row. It reads first, so
+// the usual call never waits for the writer; only the first call after
+// setup writes a key, from crypto/rand. Concurrent first callers each
+// write only while the column is still NULL and then read it back, so all
+// of them use the same key.
 func (s *Store) recoveryDecoyKey(ctx context.Context) ([]byte, error) {
-	if _, err := s.db.ExecContext(ctx, `UPDATE instances SET recovery_decoy_key = randomblob(32) WHERE id = 1 AND recovery_decoy_key IS NULL`); err != nil {
+	key, err := s.readRecoveryDecoyKey(ctx)
+	if err != nil || len(key) == 32 {
+		return key, err
+	}
+	fresh := make([]byte, 32)
+	if _, err := rand.Read(fresh); err != nil {
 		return nil, err
 	}
-	var key []byte
-	err := s.db.QueryRowContext(ctx, `SELECT recovery_decoy_key FROM instances WHERE id = 1`).Scan(&key)
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && len(key) != 32) {
+	if _, err := s.db.ExecContext(ctx, `UPDATE instances SET recovery_decoy_key = ? WHERE id = 1 AND recovery_decoy_key IS NULL`, fresh); err != nil {
+		return nil, err
+	}
+	key, err = s.readRecoveryDecoyKey(ctx)
+	if err == nil && len(key) != 32 {
 		return nil, ErrRecoveryUnavailable
 	}
 	return key, err
+}
+
+// readRecoveryDecoyKey returns the stored decoy key, nil when the instance
+// has none yet, or ErrRecoveryUnavailable before setup.
+func (s *Store) readRecoveryDecoyKey(ctx context.Context) ([]byte, error) {
+	var key []byte
+	err := s.db.QueryRowContext(ctx, `SELECT recovery_decoy_key FROM instances WHERE id = 1`).Scan(&key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrRecoveryUnavailable
+	}
+	if err != nil {
+		return nil, err
+	}
+	if key != nil && len(key) != 32 {
+		return nil, ErrRecoveryUnavailable
+	}
+	return key, nil
 }
 
 // RecoveryDecoyAccountID is the stable decoy account id for a username that
