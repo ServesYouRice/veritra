@@ -9,6 +9,8 @@ fail. POSIX only (the check is sh).
 
 from __future__ import annotations
 
+import posix_shell
+
 import os
 import shutil
 import subprocess
@@ -109,7 +111,7 @@ def scratch(temp: Path, overrides: dict[str, str]) -> Path:
 
 def run(root: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["sh", str(root / "scripts" / SCRIPT.name)], capture_output=True, text=True, check=False
+        [posix_shell.find("sh"), str(root / "scripts" / SCRIPT.name)], capture_output=True, text=True, check=False
     )
 
 
@@ -144,7 +146,7 @@ def test_missing_lib_fails() -> bool:
 
 
 def test_real_tree_passes() -> None:
-    result = subprocess.run(["sh", str(SCRIPT)], capture_output=True, text=True, check=False)
+    result = subprocess.run([posix_shell.find("sh"), str(SCRIPT)], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
 
 

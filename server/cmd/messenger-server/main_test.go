@@ -46,18 +46,19 @@ func TestInstanceLockIgnoresStaleLockFileWithoutHolder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stale lock file blocked startup: %v", err)
 	}
+	if _, err := acquireInstanceLock(dir); err == nil || !strings.Contains(err.Error(), "multiple writers") {
+		t.Fatalf("second lock while held error=%v", err)
+	}
+	if err := lock.Release(); err != nil {
+		t.Fatal(err)
+	}
+	// Read after release: Windows byte-range locks block other readers while held.
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(raw), "999999") || strings.Contains(string(raw), "leftover") || !strings.Contains(string(raw), "pid=") {
 		t.Fatalf("lock file not rewritten: %q", raw)
-	}
-	if _, err := acquireInstanceLock(dir); err == nil || !strings.Contains(err.Error(), "multiple writers") {
-		t.Fatalf("second lock while held error=%v", err)
-	}
-	if err := lock.Release(); err != nil {
-		t.Fatal(err)
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("lock file should be kept after release: %v", err)

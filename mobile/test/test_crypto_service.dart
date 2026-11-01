@@ -2,6 +2,9 @@ import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 
 class TestOnlyCryptoService implements CryptoService {
+  // Windows clocks tick coarsely, so a timestamp alone repeats within a test.
+  static int _keySequence = 0;
+
   @override
   Future<EnrollmentCredential> createEnrollmentCredential(
       EnrollmentReservation reservation) async {
@@ -17,7 +20,8 @@ class TestOnlyCryptoService implements CryptoService {
       String conversationId, String plaintext) async {
     return MessageEnvelope(
       conversationId: conversationId,
-      idempotencyKey: DateTime.now().microsecondsSinceEpoch.toString(),
+      idempotencyKey:
+          '${DateTime.now().microsecondsSinceEpoch}-${_keySequence++}',
       ciphertext: 'TEST_ONLY_CIPHERTEXT_LEN:${plaintext.length}'.codeUnits,
       cryptoProtocol: 'test-only-not-production',
       cryptoMetadata: const <String, Object?>{

@@ -121,15 +121,7 @@ func syncDir(dir string) error {
 	if err := faultHook("sync:" + dir); err != nil {
 		return err
 	}
-	handle, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer handle.Close()
-	if err := handle.Sync(); err != nil && !errors.Is(err, os.ErrInvalid) {
-		return err
-	}
-	return nil
+	return flushDir(dir)
 }
 
 func writeFileSynced(path string, data []byte, mode os.FileMode) error {

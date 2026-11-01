@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import posix_shell
+
 import contextlib
 import importlib.util
 import io
@@ -228,7 +230,7 @@ def test_shell_entry_point() -> None:
         def run() -> subprocess.CompletedProcess[str]:
             # CI runs it from mobile/ as ../scripts/check-dart-licenses.sh.
             return subprocess.run(
-                ["sh", "../scripts/check-dart-licenses.sh"], cwd=mobile, capture_output=True, text=True, check=False
+                [posix_shell.find("sh"), "../scripts/check-dart-licenses.sh"], cwd=mobile, capture_output=True, text=True, check=False
             )
 
         missing = run()
