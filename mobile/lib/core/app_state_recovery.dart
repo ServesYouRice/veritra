@@ -623,12 +623,11 @@ extension AccountRecoveryActions on AppState {
       final dismissed = _scopedLeakDay(
           await localStore.loadSetting(_passwordLeakDismissedSetting), current);
       _passwordLeakDay = _currentLeakDay(day, dismissed);
-      _recoveredDevice =
-          await localStore.loadSetting(_recoveredDeviceSetting) ==
-              '${current.accountId}\u0000${current.deviceId}';
     } catch (_) {
       // Unreadable settings: nothing to show.
     }
+    if (!identical(session, current)) return;
+    await _loadRecoveredMark();
     if (!identical(session, current)) return;
     if (_recoveredDevice) {
       await _refreshGroupless(conversations.map((item) => item.id));
@@ -756,53 +755,118 @@ extension AccountRecoveryActions on AppState {
   /// readable; the composer is replaced by a notice. A Welcome makes it a
   /// normal conversation again.
   ///
-  /// Until the member list has loaded this reads false, so a conversation a
-  /// peer is about to re-add this device to never shows the notice; the send
-  /// guard ([_readOnlyWithoutPeer]) refuses in that window anyway. A member
+  /// Until the member list has first loaded this reads false, so a
+  /// conversation a peer is about to re-add this device to never shows the
+  /// notice; the send guard ([_noPeerRefusal]) refuses in that window
+  /// anyway. A member
   /// account whose devices are all gone still counts as a peer: the app
   /// cannot see other accounts' devices, and with no group nothing can be
   /// encrypted there either.
-  bool readOnlyWithoutPeer(String conversationId) =>
-      _recoveredDevice &&
-      _grouplessConversations.contains(conversationId) &&
-      membersByConversation.containsKey(conversationId) &&
-      !_hasOtherMemberAccount(conversationId);
+  bool readOnlyWithoutPeer(String conversationId) {
+    if (!_recoveredDevice ||
+        !_grouplessConversations.contains(conversationId)) {
+      return false;
+    }
+    // While a membership event has dropped the list, the last loaded one
+    // decides, so the notice does not blink.
+    if (!membersByConversation.containsKey(conversationId)) {
+      return _lastKnownNoPeer.contains(conversationId);
+    }
+    return !_hasOtherMemberAccount(conversationId);
+  }
 
   bool _hasOtherMemberAccount(String conversationId) {
     final self = session?.accountId;
     return membersFor(conversationId).any((member) => member.accountId != self);
   }
 
-  /// The send guard: read again now, and closed when unsure. An unreadable
-  /// group counts as none, and a member list not yet loaded as one with no
-  /// other account.
-  Future<bool> _readOnlyWithoutPeer(String conversationId) async {
-    if (!_recoveredDevice) return false;
+  /// Keeps what a freshly loaded member list says about other accounts.
+  void _noteRosterPeers(String conversationId) {
+    if (_hasOtherMemberAccount(conversationId)) {
+      _lastKnownNoPeer.remove(conversationId);
+    } else {
+      _lastKnownNoPeer.add(conversationId);
+    }
+  }
+
+  /// Reads the recovered-device mark for this session, once. An unreadable
+  /// mark counts as set (closed): only group-less conversations are
+  /// affected, and nothing could be encrypted there anyway.
+  Future<void> _loadRecoveredMark() {
+    final current = session;
+    final generation = _sessionGeneration;
+    if (current == null || _recoveredMarkGeneration == generation) {
+      return Future<void>.value();
+    }
+    final running = _recoveredMarkLoad;
+    if (running != null) return running;
+    final load = () async {
+      bool recovered;
+      try {
+        recovered = await localStore.loadSetting(_recoveredDeviceSetting) ==
+            '${current.accountId}\u0000${current.deviceId}';
+      } catch (_) {
+        recovered = true;
+      }
+      if (generation == _sessionGeneration && identical(session, current)) {
+        _recoveredDevice = recovered;
+        _recoveredMarkGeneration = generation;
+      }
+    }();
+    _recoveredMarkLoad = load;
+    return load.whenComplete(() {
+      if (identical(_recoveredMarkLoad, load)) _recoveredMarkLoad = null;
+    });
+  }
+
+  /// The send guard, read again now and closed when unsure: why nothing
+  /// may be sent to [conversationId], or null. Until the recovered-device
+  /// mark is read, sends wait for it; a member list not loaded refuses
+  /// with a neutral reason unless the last loaded one had no other account.
+  Future<String?> _noPeerRefusal(String conversationId) async {
+    if (_recoveredMarkGeneration != _sessionGeneration) {
+      await _loadRecoveredMark();
+      if (_recoveredMarkGeneration != _sessionGeneration) {
+        return l10n.chatNoPeerCheckFailed;
+      }
+    }
+    if (!_recoveredDevice) return null;
     final mls = _mlsCrypto;
-    if (mls == null) return false;
+    if (mls == null) return null;
     bool groupless;
     try {
       groupless = await mls.groupEpoch(conversationId) == null;
     } catch (_) {
       groupless = true;
     }
-    if (groupless) {
-      _grouplessConversations.add(conversationId);
-    } else {
-      _grouplessConversations.remove(conversationId);
+    _grouplessChecked.add(conversationId);
+    if (!groupless) {
+      if (_grouplessConversations.remove(conversationId)) notifyListeners();
+      return null;
     }
-    return groupless && !_hasOtherMemberAccount(conversationId);
+    if (_grouplessConversations.add(conversationId)) notifyListeners();
+    if (!membersByConversation.containsKey(conversationId)) {
+      return _lastKnownNoPeer.contains(conversationId)
+          ? l10n.chatNoPeerReadOnly
+          : l10n.chatNoPeerCheckFailed;
+    }
+    return _hasOtherMemberAccount(conversationId)
+        ? null
+        : l10n.chatNoPeerReadOnly;
   }
 
   /// Reads which of [conversationIds] this recovered device holds no group
-  /// for, and redraws when that changed.
-  Future<void> _refreshGroupless(Iterable<String> conversationIds) async {
+  /// for, and redraws when that changed. Only conversations not read before
+  /// are read, unless [force]: a Welcome clears the mark by itself.
+  Future<void> _refreshGroupless(Iterable<String> conversationIds,
+      {bool force = false}) async {
     final mls = _mlsCrypto;
     final owner = session;
     final generation = _sessionGeneration;
     if (!_recoveredDevice || mls == null || owner == null) return;
     var changed = false;
     for (final id in conversationIds.toList(growable: false)) {
+      if (!force && _grouplessChecked.contains(id)) continue;
       bool groupless;
       try {
         groupless = await mls.groupEpoch(id) == null;
@@ -810,6 +874,7 @@ extension AccountRecoveryActions on AppState {
         groupless = true;
       }
       if (_disposed || !_refreshOwned(owner, generation)) return;
+      _grouplessChecked.add(id);
       changed |= groupless
           ? _grouplessConversations.add(id)
           : _grouplessConversations.remove(id);

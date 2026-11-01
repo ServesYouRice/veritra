@@ -197,7 +197,10 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
                         busy: state.isBusy(Ops.members),
                         onRemove: () => _confirmRemove(context, member),
                       ),
-                  if (!isDm && state.membershipChangesAvailable)
+                  // K0 step 8: no group device here could add them.
+                  if (!isDm &&
+                      state.membershipChangesAvailable &&
+                      !state.readOnlyWithoutPeer(conversationId))
                     ListTile(
                       leading: const Icon(Icons.person_add_outlined),
                       title: Text(l10n.detailsAddMember),

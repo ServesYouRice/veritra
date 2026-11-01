@@ -354,6 +354,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (current == null || client == null) return;
     final members = await client.conversationMembers(current.token, id);
     membersByConversation = {...membersByConversation, id: members};
+    _noteRosterPeers(id);
   }
 
   List<int>? _activeLinkSecret;
@@ -381,7 +382,17 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   // K0 step 8: whether this device came from a completed recovery, and the
   // conversations it was last found to have no MLS group for.
   bool _recoveredDevice = false;
+  // The session generation [_recoveredDevice] was read for; until it is the
+  // current one, sends wait for the read (and refuse if it fails).
+  int _recoveredMarkGeneration = -1;
+  Future<void>? _recoveredMarkLoad;
   final Set<String> _grouplessConversations = <String>{};
+  // Conversations whose group was read once; the list refresh reads only
+  // new ones, and a Welcome clears the group-less mark.
+  final Set<String> _grouplessChecked = <String>{};
+  // The last loaded member list said no other account: kept while a
+  // membership event drops the list until it is read again.
+  final Set<String> _lastKnownNoPeer = <String>{};
   Timer? _recoveryPollTimer;
   DateTime? _recoveryStatusReadAt;
   String? error;
@@ -2196,6 +2207,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (!membershipChangesAvailable) {
         throw StateError('adding members is not available in this build');
       }
+      // K0 step 8: an added member's devices join only through a commit by
+      // a group device, and here there is none: the add would wait forever.
+      final refusal = await _noPeerRefusal(conversationId);
+      if (refusal != null) throw UserFacingException(refusal);
       await client.addConversationMember(
         current.token,
         conversationId,
@@ -2225,6 +2240,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         ...membersByConversation,
         conversationId: members,
       };
+      _noteRosterPeers(conversationId);
     });
   }
 
@@ -2960,7 +2976,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     // The roster names message senders in group chats; a failure here only
     // falls back to shortened account IDs.
     unawaited(loadConversationMembers(conversationId));
-    unawaited(_refreshGroupless(<String>[conversationId]));
+    unawaited(_refreshGroupless(<String>[conversationId], force: true));
   }
 
   /// Encrypts, queues, and delivers one message. Scoped to [Ops.send] so a
@@ -3127,9 +3143,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     try {
       // K0 step 8: nothing is encrypted or uploaded for a conversation no
       // one can add this device to.
-      if (await _readOnlyWithoutPeer(conversationId)) {
-        throw UserFacingException(l10n.chatNoPeerReadOnly);
-      }
+      final refusal = await _noPeerRefusal(conversationId);
+      if (refusal != null) throw UserFacingException(refusal);
       final name = safeAttachmentName(fileName);
       // Padding stops at the server's cap, so a file just under it is not
       // refused for its padding (docs/crypto.md, attachment padding).
@@ -3588,9 +3603,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       }
       // K0 step 8: a recovered device that no one can add to this
       // conversation sends nothing, not even the acceptance below.
-      if (await _readOnlyWithoutPeer(conversation.id)) {
-        throw UserFacingException(l10n.chatNoPeerReadOnly);
-      }
+      final refusal = await _noPeerRefusal(conversation.id);
+      if (refusal != null) throw UserFacingException(refusal);
       if (!_syncOwnerActive(owner, ownerGeneration)) return;
       // Replying counts as accepting.
       if (isMessageRequest(conversation)) {
@@ -5695,6 +5709,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
               (policy) =>
                   policy.recordJoined(message.conversationId, DateTime.now()));
           // K0 step 8: the conversation is no longer read-only.
+          _grouplessChecked.add(message.conversationId);
           if (_grouplessConversations.remove(message.conversationId) &&
               !_disposed) {
             notifyListeners();
@@ -6052,7 +6067,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     recoveryFollowUp = null;
     _passwordLeakDay = null;
     _recoveredDevice = false;
+    _recoveredMarkGeneration = -1;
+    _recoveredMarkLoad = null;
     _grouplessConversations.clear();
+    _grouplessChecked.clear();
+    _lastKnownNoPeer.clear();
     messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
     _history.clear();
     composerDrafts.clear();
