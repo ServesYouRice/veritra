@@ -112,3 +112,7 @@ Recommendation: A for both.
 6. **False reports.** Rate limits only in v1; no automatic action.
 7. **Dependencies, not edited here.** C4 (moderator key), C5 (actions), W7
    (reserved key, receive policy).
+
+## Owner decisions (2026-11-01)
+
+- Reports are sealed to the recipient's key; the server carries ciphertext only.
