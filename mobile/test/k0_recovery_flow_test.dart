@@ -151,6 +151,26 @@ void main() {
       expect(server.reserved, isEmpty);
     });
 
+    test('another stored enrollment stops the claim before the network',
+        () async {
+      await store.savePendingEnrollment(const PendingEnrollment(
+          kind: PendingEnrollment.kindDeviceLinkV3,
+          origin: k0Origin,
+          accountId: 'acct_me',
+          deviceId: 'dev_link',
+          payloadJson: '{}'));
+      expect(
+          await state.startAccountRecovery(
+              baseUrl: k0Origin,
+              username: 'alice',
+              password: 'pw',
+              recoveryKey: k0Display),
+          isFalse);
+      expect(state.errorFor(Ops.accountRecovery), l10n.recoveryAlreadyPending);
+      expect(server.reserved, isEmpty);
+      expect((await store.loadPendingEnrollment())?.deviceId, 'dev_link');
+    });
+
     test('a restored backup of another account stops before the claim',
         () async {
       await store.saveSession(restoredAccountSession(
