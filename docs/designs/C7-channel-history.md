@@ -64,10 +64,14 @@ channel, not per group (C0: "C7 keys history per channel").
    limit as live groups today, stated to users by L1, not solved here.
 5. **Handover.** After a join commit applies, one existing member (the
    committer, so no election) sends the newcomer, inside the group as a W7
-   control payload `history_keys`: the channel's whole signed record chain
-   (decision 10) for every channel the newcomer can see, and, only for
-   channels whose current setting is `full`, the keys of the generations in
-   the **current period** (decision 12). C4/C3 visibility applies; a private
+   control payload `history_keys`, for every channel the newcomer can see:
+   the signed records (decision 10) from the one that started the current
+   period, or only the latest record if the setting is `members_from_join`;
+   and, only for `full` channels, the keys of the current period's
+   generations (decision 12). The first record's `prev` is an anchor the
+   newcomer does not verify back to `seq` 0, so the handover stays bounded
+   by the current period. A period with many rekeys is split across several
+   `history_keys` messages, each under the W7 size limit. C4/C3 visibility applies; a private
    channel's keys go only through that channel's group. The receiver accepts
    it only from a current member of that group and only for channels of this
    community; a key whose hash does not match its record's `chk_commit` is
