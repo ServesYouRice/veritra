@@ -1,5 +1,7 @@
+import 'dart:typed_data';
+
 import '../core/models.dart';
-import '../storage/local_store.dart' show PendingMlsMessage;
+import '../storage/local_store.dart' show PendingMlsMessage, StoredCryptoState;
 import 'mls_commit_bundle.dart';
 import 'app_payload.dart';
 
@@ -136,6 +138,67 @@ abstract interface class MlsStateMaintenanceCryptoService {
   Future<bool> deleteConversationState(String conversationId);
 }
 
+/// The public values derived from a K0 recovery key (ABI 11). [rkPub] is
+/// kept for K1 and never sent; [rkAuthPub] and [rkId] are what
+/// `PUT /api/v1/account/recovery-key` takes.
+class RecoveryKeyValues {
+  const RecoveryKeyValues({
+    required this.rkPub,
+    required this.rkId,
+    required this.rkAuthPub,
+  });
+
+  final Uint8List rkPub;
+  final Uint8List rkId;
+  final Uint8List rkAuthPub;
+}
+
+/// K0 recovery (docs/designs/K0-recovery-enrollment.md, R3/R4). Kept apart
+/// from [CryptoService] so a build without the native library is simply
+/// never asked: [UnavailableCryptoService] implements it only to refuse.
+///
+/// Every [Uint8List] of recovery key entropy belongs to the caller, who
+/// wipes it once used. Nothing here stores or logs a key.
+abstract interface class RecoveryCryptoService {
+  /// Fresh 30-byte recovery key entropy from the OS RNG.
+  Future<Uint8List> generateRecoveryKey();
+
+  /// The canonical 52-character display of [entropy].
+  Future<String> encodeRecoveryKey(Uint8List entropy);
+
+  /// Decodes typed key text (already normalised) to its entropy. A typo
+  /// throws, before any network call.
+  Future<Uint8List> decodeRecoveryKey(String text);
+
+  Future<RecoveryKeyValues> deriveRecoveryKey(Uint8List entropy);
+
+  /// The recovery proof for a claim, over [origin], the canonical origin
+  /// the app uses for this server.
+  Future<Uint8List> signRecoveryProof({
+    required Uint8List entropy,
+    required List<int> challenge,
+    required List<int> signingKey,
+    required List<int> keyPackage,
+    required String origin,
+  });
+
+  /// Seals the identity [CryptoService.createEnrollmentCredential] just
+  /// made, once, so a recovery claim can wait days and survive a restart.
+  /// The same state is what activation later stores.
+  Future<StoredCryptoState> sealPendingEnrollment();
+
+  /// Opens [state] (from [sealPendingEnrollment]) as the pending identity of
+  /// [accountId]/[deviceId], ready for activation.
+  Future<void> resumePendingEnrollment({
+    required String accountId,
+    required String deviceId,
+    required StoredCryptoState state,
+  });
+
+  /// Drops a pending (not yet activated) enrollment identity.
+  Future<void> abandonPendingEnrollment();
+}
+
 /// A change would make one sealed record of the MLS state larger than its
 /// cap (D70, native `PM_CRYPTO_RECORD_LIMIT`). Nothing was stored and the
 /// operation was rolled back. [conversationId] names the conversation when
@@ -185,7 +248,45 @@ class CryptoStateFormatUnsupported implements Exception {
   String toString() => 'protected MLS state format is unsupported';
 }
 
-class UnavailableCryptoService implements CryptoService {
+/// Fails closed: no recovery key, proof or pending identity exists without
+/// the reviewed native engine (`PM_CRYPTO_UNAVAILABLE`).
+class UnavailableCryptoService implements CryptoService, RecoveryCryptoService {
+  static Never _recoveryUnavailable() =>
+      throw StateError('Account recovery is unavailable');
+
+  @override
+  Future<Uint8List> generateRecoveryKey() async => _recoveryUnavailable();
+  @override
+  Future<String> encodeRecoveryKey(Uint8List entropy) async =>
+      _recoveryUnavailable();
+  @override
+  Future<Uint8List> decodeRecoveryKey(String text) async =>
+      _recoveryUnavailable();
+  @override
+  Future<RecoveryKeyValues> deriveRecoveryKey(Uint8List entropy) async =>
+      _recoveryUnavailable();
+  @override
+  Future<Uint8List> signRecoveryProof({
+    required Uint8List entropy,
+    required List<int> challenge,
+    required List<int> signingKey,
+    required List<int> keyPackage,
+    required String origin,
+  }) async =>
+      _recoveryUnavailable();
+  @override
+  Future<StoredCryptoState> sealPendingEnrollment() async =>
+      _recoveryUnavailable();
+  @override
+  Future<void> resumePendingEnrollment({
+    required String accountId,
+    required String deviceId,
+    required StoredCryptoState state,
+  }) async =>
+      _recoveryUnavailable();
+  @override
+  Future<void> abandonPendingEnrollment() async {}
+
   @override
   Future<String> deviceLinkLocator(List<int> secret) async =>
       throw StateError("Device linking is unavailable");

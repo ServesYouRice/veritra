@@ -5,6 +5,7 @@ import 'dart:math' show max;
 import 'dart:typed_data';
 
 import '../crypto/mls_commit_bundle.dart';
+import 'account_recovery.dart';
 import 'admin_models.dart';
 import 'api_errors.dart';
 import 'device_link_v3_models.dart';
@@ -542,6 +543,122 @@ class ApiClient {
       '/api/v1/account/password',
       token: token,
       body: {'new_password': newPassword},
+    );
+  }
+
+  // K0 recovery enrollment (docs/designs/K0-recovery-enrollment.md).
+
+  /// `GET /api/v1/account/recovery-key`.
+  Future<RecoveryKeyStatus> recoveryKeyStatus(String token) async {
+    final json =
+        await _jsonRequest('GET', '/api/v1/account/recovery-key', token: token);
+    return _decode(() => RecoveryKeyStatus.fromJson(json));
+  }
+
+  /// Sets or replaces the account's recovery key (needs recent auth). Only
+  /// the verification key and id leave the device, never the key.
+  Future<RecoveryKeyStatus> putRecoveryKey(
+    String token, {
+    required List<int> rkAuthPub,
+    required List<int> rkId,
+  }) async {
+    final json = await _jsonRequest(
+      'PUT',
+      '/api/v1/account/recovery-key',
+      token: token,
+      body: <String, Object?>{
+        'rk_auth_pub': base64Encode(rkAuthPub),
+        'rk_id': base64Encode(rkId),
+      },
+    );
+    return _decode(() => RecoveryKeyStatus.fromJson(json));
+  }
+
+  /// Reserves a recovery enrollment for [username]: the only recovery route
+  /// that takes one. An unknown account gets a decoy reservation.
+  Future<EnrollmentReservation> reserveAccountRecovery(String username) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/account-recovery/enrollment',
+      body: <String, Object?>{'username': username},
+    );
+    return _decode(() => EnrollmentReservation.fromJson(json));
+  }
+
+  /// Claims [enrollment] with the password and the recovery proof. The
+  /// account is always the reservation's; the body names no username.
+  Future<AccountRecoveryClaim> claimAccountRecovery({
+    required EnrollmentReservation enrollment,
+    required String password,
+    required String deviceName,
+    required EnrollmentCredential credential,
+    required List<int> recoverySignature,
+  }) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/account-recovery/claim',
+      body: <String, Object?>{
+        'enrollment_reservation_id': enrollment.id,
+        'password': password,
+        'device_name': deviceName,
+        'device_key_package': base64Encode(credential.deviceKeyPackage),
+        'signing_key': base64Encode(credential.signingKey),
+        'challenge_signature': base64Encode(credential.challengeSignature),
+        'recovery_signature': base64Encode(recoverySignature),
+      },
+    );
+    return _decode(() => AccountRecoveryClaim.fromJson(json));
+  }
+
+  /// Polls a recovery request with its claim token. The call after
+  /// `ready_at` completes it; only that call carries the session token.
+  Future<AccountRecoveryStatus> accountRecoveryStatus(
+      String requestId, String claimToken) async {
+    final (status, json) = await _jsonRequestWithStatus(
+      'GET',
+      '/api/v1/account-recovery/${Uri.encodeComponent(requestId)}/status',
+      extraHeaders: <String, String>{'X-Veritra-Claim-Token': claimToken},
+    );
+    return _decode(() {
+      final state = json['state'];
+      if (status == 202 && state == 'waiting') {
+        return AccountRecoveryStatus(
+          phase: AccountRecoveryPhase.waiting,
+          readyAt: DateTime.parse(json['ready_at'] as String).toUtc(),
+        );
+      }
+      if (status != 200 || state != 'completed') {
+        throw const ApiResponseException();
+      }
+      final token = json['token'];
+      if (token != null && (token is! String || token.isEmpty)) {
+        throw const ApiResponseException();
+      }
+      final accountId = _nestedId(json['account']);
+      final deviceId = _nestedId(json['device']);
+      if (accountId == null || deviceId == null) {
+        throw const ApiResponseException();
+      }
+      return AccountRecoveryStatus(
+        phase: token == null
+            ? AccountRecoveryPhase.completedWithoutToken
+            : AccountRecoveryPhase.completed,
+        accountId: accountId,
+        deviceId: deviceId,
+        username: _nestedField(json['account'], 'username'),
+        role: _nestedField(json['account'], 'role'),
+        token: token as String?,
+      );
+    });
+  }
+
+  /// Cancels a waiting recovery request of this account (needs recent
+  /// auth).
+  Future<void> cancelAccountRecovery(String token, String requestId) async {
+    await _jsonRequest(
+      'POST',
+      '/api/v1/account-recovery/${Uri.encodeComponent(requestId)}/cancel',
+      token: token,
     );
   }
 

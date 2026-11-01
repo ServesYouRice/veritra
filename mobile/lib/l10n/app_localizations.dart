@@ -3102,7 +3102,7 @@ abstract class AppLocalizations {
   /// No description provided for @backupRestoredLinkToFinish.
   ///
   /// In en, this message translates to:
-  /// **'Your messages and settings are restored on this device. To finish, link this device from another device that is signed in to your account. Finishing without another device is not available yet.'**
+  /// **'Your messages and settings are restored on this device. To finish, link this device from another device that is signed in to your account. If you lost every device, use “Lost all your devices?” with your password and recovery key.'**
   String get backupRestoredLinkToFinish;
 
   /// No description provided for @syncErrorCursorExpired.
@@ -4220,6 +4220,342 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No copied messages are left in this conversation.'**
   String get k2HistoryEmpty;
+
+  /// No description provided for @settingsRecoveryKey.
+  ///
+  /// In en, this message translates to:
+  /// **'Recovery key'**
+  String get settingsRecoveryKey;
+
+  /// No description provided for @recoveryUnavailableHere.
+  ///
+  /// In en, this message translates to:
+  /// **'Account recovery is not available in this build.'**
+  String get recoveryUnavailableHere;
+
+  /// No description provided for @recoveryKeyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Recovery key'**
+  String get recoveryKeyTitle;
+
+  /// No description provided for @recoveryKeyIntro.
+  ///
+  /// In en, this message translates to:
+  /// **'If you lose every device, your password and this recovery key get your account back on a new device. Keep the key on paper, somewhere safe. It does not bring back your message history.'**
+  String get recoveryKeyIntro;
+
+  /// No description provided for @recoveryKeyStatusSet.
+  ///
+  /// In en, this message translates to:
+  /// **'Set on {date}'**
+  String recoveryKeyStatusSet(String date);
+
+  /// No description provided for @recoveryKeyStatusNotSet.
+  ///
+  /// In en, this message translates to:
+  /// **'Not set'**
+  String get recoveryKeyStatusNotSet;
+
+  /// No description provided for @recoveryKeyStatusUnknown.
+  ///
+  /// In en, this message translates to:
+  /// **'Status unavailable right now'**
+  String get recoveryKeyStatusUnknown;
+
+  /// No description provided for @recoveryKeyStatusOff.
+  ///
+  /// In en, this message translates to:
+  /// **'This server has account recovery turned off'**
+  String get recoveryKeyStatusOff;
+
+  /// No description provided for @recoveryKeyCreate.
+  ///
+  /// In en, this message translates to:
+  /// **'Create a recovery key'**
+  String get recoveryKeyCreate;
+
+  /// No description provided for @recoveryKeyReplace.
+  ///
+  /// In en, this message translates to:
+  /// **'Replace the recovery key'**
+  String get recoveryKeyReplace;
+
+  /// No description provided for @recoveryKeyReplaceNote.
+  ///
+  /// In en, this message translates to:
+  /// **'A new key replaces the old one at once and cancels any recovery that is waiting.'**
+  String get recoveryKeyReplaceNote;
+
+  /// No description provided for @recoveryKeyShowTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Write down your recovery key'**
+  String get recoveryKeyShowTitle;
+
+  /// No description provided for @recoveryKeyShowDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Write these 52 characters on paper and keep it safe. Anyone with this key and your password can take over your account. Do not take a screenshot or keep it in a chat.'**
+  String get recoveryKeyShowDetail;
+
+  /// No description provided for @recoveryKeyWritten.
+  ///
+  /// In en, this message translates to:
+  /// **'I wrote it down'**
+  String get recoveryKeyWritten;
+
+  /// No description provided for @recoveryKeyConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Type your recovery key'**
+  String get recoveryKeyConfirmTitle;
+
+  /// No description provided for @recoveryKeyConfirmDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Type the whole key from your paper to check it. Dashes and spaces do not matter.'**
+  String get recoveryKeyConfirmDetail;
+
+  /// No description provided for @recoveryKeyField.
+  ///
+  /// In en, this message translates to:
+  /// **'Recovery key'**
+  String get recoveryKeyField;
+
+  /// No description provided for @recoveryKeyRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter the recovery key.'**
+  String get recoveryKeyRequired;
+
+  /// No description provided for @recoveryKeyMismatch.
+  ///
+  /// In en, this message translates to:
+  /// **'That is not the key shown. Check your paper and try again.'**
+  String get recoveryKeyMismatch;
+
+  /// No description provided for @recoveryKeyShowAgain.
+  ///
+  /// In en, this message translates to:
+  /// **'Show the key again'**
+  String get recoveryKeyShowAgain;
+
+  /// No description provided for @recoveryKeySave.
+  ///
+  /// In en, this message translates to:
+  /// **'Save recovery key'**
+  String get recoveryKeySave;
+
+  /// No description provided for @recoveryKeySaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Recovery key saved.'**
+  String get recoveryKeySaved;
+
+  /// No description provided for @recoveryFollowUpTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Finish recovering your account'**
+  String get recoveryFollowUpTitle;
+
+  /// No description provided for @recoveryFollowUpKeyDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Your account is back on this device, and your other devices were signed out. Before your chats open, replace your recovery key and then your password: someone else may know them.'**
+  String get recoveryFollowUpKeyDetail;
+
+  /// No description provided for @recoveryFollowUpPasswordDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Last step: choose a new password.'**
+  String get recoveryFollowUpPasswordDetail;
+
+  /// No description provided for @connectLostAllDevices.
+  ///
+  /// In en, this message translates to:
+  /// **'Lost all your devices?'**
+  String get connectLostAllDevices;
+
+  /// No description provided for @recoveryStartTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Recover your account'**
+  String get recoveryStartTitle;
+
+  /// No description provided for @recoveryStartDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Use this only if you lost every device signed in to your account. You need your password and your recovery key. If any of your devices was used in the last 7 days, this device joins only after 7 days, and those devices can cancel it. Your message history comes back only from a backup restored on this device.'**
+  String get recoveryStartDetail;
+
+  /// No description provided for @recoveryStartSubmit.
+  ///
+  /// In en, this message translates to:
+  /// **'Start recovery'**
+  String get recoveryStartSubmit;
+
+  /// No description provided for @recoveryKeyUnreadable.
+  ///
+  /// In en, this message translates to:
+  /// **'That recovery key is not valid. Check it for a typo.'**
+  String get recoveryKeyUnreadable;
+
+  /// No description provided for @recoveryClaimRefused.
+  ///
+  /// In en, this message translates to:
+  /// **'The password or recovery key is wrong, or this account cannot be recovered.'**
+  String get recoveryClaimRefused;
+
+  /// No description provided for @recoveryBackupOtherAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'The backup restored on this device belongs to another account or server. Recover that account here, or reset this device first.'**
+  String get recoveryBackupOtherAccount;
+
+  /// No description provided for @recoverySignedInAlready.
+  ///
+  /// In en, this message translates to:
+  /// **'This device is already signed in.'**
+  String get recoverySignedInAlready;
+
+  /// No description provided for @recoveryAlreadyPending.
+  ///
+  /// In en, this message translates to:
+  /// **'A recovery is already waiting on this device.'**
+  String get recoveryAlreadyPending;
+
+  /// No description provided for @recoveryWaitingTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Recovery is waiting'**
+  String get recoveryWaitingTitle;
+
+  /// No description provided for @recoveryWaitingDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'This device joins your account after {date}. The app checks by itself while it is open. Your other devices can cancel this recovery.'**
+  String recoveryWaitingDetail(String date);
+
+  /// No description provided for @recoveryReadyDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'The wait is over. Check now to finish.'**
+  String get recoveryReadyDetail;
+
+  /// No description provided for @recoveryCheckNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Check now'**
+  String get recoveryCheckNow;
+
+  /// No description provided for @recoveryAbandon.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop recovery'**
+  String get recoveryAbandon;
+
+  /// No description provided for @recoveryAbandonTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop recovery on this device?'**
+  String get recoveryAbandonTitle;
+
+  /// No description provided for @recoveryAbandonMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'This device forgets the request. To try again you need your password and recovery key again.'**
+  String get recoveryAbandonMessage;
+
+  /// No description provided for @recoveryRequestEnded.
+  ///
+  /// In en, this message translates to:
+  /// **'This recovery was cancelled or has expired. A password or recovery key change, or one of your devices, cancels it. You can start again.'**
+  String get recoveryRequestEnded;
+
+  /// No description provided for @recoveryLoginTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in to finish'**
+  String get recoveryLoginTitle;
+
+  /// No description provided for @recoveryLoginDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Your account was recovered on this device, but the answer did not arrive. Enter your password to finish.'**
+  String get recoveryLoginDetail;
+
+  /// No description provided for @recoveryLoginSubmit.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in'**
+  String get recoveryLoginSubmit;
+
+  /// No description provided for @recoveryAccountLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Account: {username}'**
+  String recoveryAccountLabel(String username);
+
+  /// No description provided for @recoveryPendingNotice.
+  ///
+  /// In en, this message translates to:
+  /// **'Someone is recovering your account on “{device}”, finishing {date}. Not you? Cancel, or change your password or recovery key.'**
+  String recoveryPendingNotice(String device, String date);
+
+  /// No description provided for @recoveryPendingCancel.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel recovery'**
+  String get recoveryPendingCancel;
+
+  /// No description provided for @recoveryCancelTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel this recovery?'**
+  String get recoveryCancelTitle;
+
+  /// No description provided for @recoveryCancelMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The new device will not join your account. If it was not you, change your password too.'**
+  String get recoveryCancelMessage;
+
+  /// No description provided for @recoveryCancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'Recovery cancelled.'**
+  String get recoveryCancelled;
+
+  /// No description provided for @passwordLeakNotice.
+  ///
+  /// In en, this message translates to:
+  /// **'Your password was used with a wrong recovery key many times. Change your password.'**
+  String get passwordLeakNotice;
+
+  /// No description provided for @passwordLeakDismiss.
+  ///
+  /// In en, this message translates to:
+  /// **'Dismiss'**
+  String get passwordLeakDismiss;
+
+  /// No description provided for @apiErrorRecoveryNotConfigured.
+  ///
+  /// In en, this message translates to:
+  /// **'This server has not turned on account recovery.'**
+  String get apiErrorRecoveryNotConfigured;
+
+  /// No description provided for @apiErrorRecoveryBackoff.
+  ///
+  /// In en, this message translates to:
+  /// **'Too many attempts. Wait a while, then try again.'**
+  String get apiErrorRecoveryBackoff;
+
+  /// No description provided for @apiErrorInvalidRecoveryKey.
+  ///
+  /// In en, this message translates to:
+  /// **'The server refused this recovery key. Create a new one.'**
+  String get apiErrorInvalidRecoveryKey;
 }
 
 class _AppLocalizationsDelegate

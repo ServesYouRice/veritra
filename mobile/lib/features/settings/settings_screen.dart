@@ -27,6 +27,7 @@ import 'blocked_accounts_screen.dart';
 import 'device_link_screen.dart';
 import 'invite_screen.dart';
 import 'profile_screen.dart';
+import 'recovery_key_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({required this.state, super.key});
@@ -105,6 +106,18 @@ class SettingsScreen extends StatelessWidget {
                     subtitle: Text(l10n.settingsChangePasswordDetail),
                     onTap: state.busy ? null : () => _changePassword(context),
                   ),
+                  if (state.recoveryAvailable)
+                    ListTile(
+                      key: const ValueKey<String>('settings-recovery-key'),
+                      leading: const Icon(Icons.key_outlined),
+                      title: Text(l10n.settingsRecoveryKey),
+                      subtitle: Text(_recoveryKeySubtitle(context)),
+                      onTap: () => Navigator.of(context).push(
+                        sharedAxisRoute<void>(
+                          (_) => RecoveryKeyScreen(state: state),
+                        ),
+                      ),
+                    ),
                   if (isAdmin)
                     ListTile(
                       leading: const Icon(Icons.card_giftcard_outlined),
@@ -393,6 +406,18 @@ class SettingsScreen extends StatelessWidget {
         );
       },
     );
+  }
+
+  String _recoveryKeySubtitle(BuildContext context) {
+    final l10n = context.l10n;
+    final status = state.recoveryKeyStatus;
+    if (status == null) return l10n.recoveryKeyStatusUnknown;
+    if (!status.available) return l10n.recoveryKeyStatusOff;
+    if (!status.configured) return l10n.recoveryKeyStatusNotSet;
+    final setAt = status.setAt;
+    return setAt == null
+        ? l10n.recoveryKeyStatusUnknown
+        : l10n.recoveryKeyStatusSet(formatDate(context, setAt));
   }
 
   void _copy(BuildContext context, String value, String label) {

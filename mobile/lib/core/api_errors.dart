@@ -328,6 +328,14 @@ class ApiException implements Exception {
         return l10n.apiErrorMessageExpired;
       case 'recovery_transfer_in_progress':
         return l10n.apiErrorRecoveryInProgress;
+      case 'recovery_not_configured':
+        return l10n.apiErrorRecoveryNotConfigured;
+      case 'recovery_backoff':
+        return l10n.apiErrorRecoveryBackoff;
+      case 'recovery_cancelled':
+        return l10n.recoveryRequestEnded;
+      case 'invalid_recovery_key':
+        return l10n.apiErrorInvalidRecoveryKey;
       case 'write_rate_limited':
         return l10n.apiErrorWriteRateLimited;
       case 'server_storage_low':
