@@ -120,6 +120,14 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'muted_until_invalid': ApiErrorKind.invalidRequest,
   'transcript_hash_required': ApiErrorKind.invalidRequest,
   'weak_password': ApiErrorKind.invalidRequest,
+  // K0 account recovery.
+  'recovery_not_configured': ApiErrorKind.unavailable,
+  'recovery_backoff': ApiErrorKind.rateLimited,
+  'recovery_claim_failed': ApiErrorKind.server,
+  'recovery_cancelled': ApiErrorKind.notFound,
+  'recovery_status_failed': ApiErrorKind.server,
+  'invalid_recovery_key': ApiErrorKind.invalidRequest,
+
   // Rate limits and quotas on request volume.
   'login_backoff': ApiErrorKind.rateLimited,
   'reauth_backoff': ApiErrorKind.rateLimited,
