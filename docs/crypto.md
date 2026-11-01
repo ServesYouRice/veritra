@@ -387,8 +387,12 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   an MLS message in the conversation, received a Welcome there, or is no
   newer than the oldest retained MLS message. Revocations queued in a legacy
   group store such a coordinator and require confirmations only from such
-  devices. A device recovered through K0, which has no leaf, therefore never
-  coordinates a revocation and is never waited on to confirm one.
+  devices. A device recovered through K0 has no leaf, so it is skipped while
+  the group keeps an MLS message older than the device. Known limit
+  (accepted; legacy groups come only from pre-I51 data and there are no real
+  users, D55): once sync retention prunes every older message, the third
+  rule admits it again and a revocation can wait on it. A durable per-group
+  low-water mark would close this and needs a schema change.
 
 - **D70 S3, per-record sealed state, ABI 10 (2026-10-31):** sealed state
   format 4 (see "Sealed state, format 4" above). ABI 10 removes
