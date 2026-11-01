@@ -58,7 +58,7 @@ records; it never reads the reason or the evidence.
 - The app builds a sealed body, versioned JSON:
   `community_name` (the owner cannot read C3 names), `reason` (at most 2,000
   characters), `community_action` (`none`, `kicked`, `banned`), and up to 20
-  C6 reveal tuples `(conversation_id, envelope_id, P, kf)` taken from reports
+  C6 reveal tuples `(conversation_id, envelope_id, action_id, P, kf)` taken from reports
   the admin received or from messages its own device holds (every recipient
   stores `kf`, C6 step 2).
 - Sealed with C6 transport A (the same HPKE seal call in the Rust ABI) to
@@ -93,7 +93,9 @@ attached message with a "verified" / "not verified" label (C6 step 6).
 For that check the owner, who is not a member, reads
 `GET /api/v1/admin/escalations/{id}/evidence`: for each envelope named in
 that escalation only, `conversation_id`, sender account and device,
-`created_at` and `frank_commit`. Never ciphertext, never other envelopes,
+`created_at` and `frank_commit` (every `ctx` input of C6 step 3 the server
+records). `action_id` is not stored on the server today, so it travels in
+the reveal tuple unless C6 adds it to the envelope; C6 settles which. Never ciphertext, never other envelopes,
 never membership lists. The owner sees exactly the messages the admin chose
 to reveal and nothing else.
 
@@ -111,8 +113,13 @@ sign-in, session, recovery and membership query already tests
 `status = 'active'` (`identity_store.go`, `account_recovery_store.go`,
 `content_store.go`, `admin_store.go`), and `accounts.status` has no CHECK
 constraint (`migrations/0001_init.sql`), so the new value is refused
-everywhere by default. `SetAccountStatus` keeps accepting only `active` and
-`suspended`, so a ban cannot be undone through the suspend route.
+everywhere by default; no Go path compares against `"suspended"` except the
+suspend route itself. `SetAccountStatus` (`storage/admin_store.go`) today
+lets an instance admin set any lower-ranked account to `active`; it must
+refuse a target whose status is `banned` (409 `account_banned`), so only the
+owner's ban route lifts a ban and a suspend cannot downgrade one. The B9 app
+reads `suspended` as `status == 'suspended'` (`mobile/lib/core/admin_models.dart`),
+so it must learn the `banned` value and hide the suspend toggle for it.
 
 One transaction, in this order (more than today's suspend):
 
