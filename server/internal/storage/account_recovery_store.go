@@ -472,8 +472,8 @@ func (s *Store) CompleteRecovery(ctx context.Context, id, claimTokenHash, sessio
 	// device is recorded as coordinator of a sibling's revocation. A
 	// revocation queued earlier with an old device as coordinator falls back
 	// to the lowest eligible device; in a legacy group the new device is not
-	// eligible, being newer than the group's latest MLS message
-	// (mlsRevocationEligibleDevice).
+	// eligible, as it shows no evidence of a leaf (mlsLegacyLeafEvidence),
+	// and it is not made a required confirmer of later legacy revocations.
 	if _, err := tx.ExecContext(ctx, `UPDATE devices SET revoked_at = ? WHERE account_id = ? AND revoked_at IS NULL`, nowText, record.AccountID); err != nil {
 		return RecoveryCompletion{}, err
 	}
