@@ -227,3 +227,9 @@ change), and on C6 open item 2 for the evidence pins.
 
 - Bans are per community. Admins can escalate to the instance owner, who may issue an instance-wide ban (needs a design for the escalation path).
 - No interim trust in the server-reported role: app-side drops wait for C4's signed roles.
+
+## Owner decisions, round 2 (2026-11-01)
+
+- Server enforces built-in roles; audit log of ids and action kinds on the server; server slow-mode refusal is enough.
+- Instance ban covers the whole instance; lifting it leaves devices revoked.
+- Escalations: instance owner only; 90 days open, sealed copies kept 30 days after closing; status-only replies.

@@ -211,3 +211,9 @@ Fixes are on `agent/C4-review`; `flutter test test/governance_test.dart`
    role ranked 0 to 9; a cosmetic role there ("VIP" with just `post`)
    outranks every admin, so its holder would inherit. "Administrators
    first, then rank, then id" may be the better default.
+
+## Owner decisions (2026-11-01)
+
+- Enforcement: **built-in roles only** (owner chose this over app-enforced custom-role limits). Custom-role limits are therefore not required; revisit the design scope.
+- New crypto ABI functions (role-state handover, credential-key signing, HPKE seal) approved, with independent review before release.
+- Ownership goes to current admins only; the oldest admin inherits.

@@ -269,3 +269,9 @@ halting, and C5 for blob deletion.
 
 - The history setting may be changed later by admins (needs re-keying rules; revisit the design).
 - Accepted: history copies double stored bytes for full-history channels, and history is lost if every key holder is gone.
+
+## Owner decisions, round 2 (2026-11-01)
+
+- Earlier `full` periods stay unreadable to newcomers after a switch off and on.
+- The server must **not** see the history flag: hide it (needs a design change; the sequence/flag handling above assumes server visibility).
+- Crypto ABI additions approved, with independent review.
