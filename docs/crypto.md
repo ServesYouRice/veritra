@@ -444,7 +444,10 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     commitment, `P` and its wire JSON, a seed, its public key and one sealed
     report), checked by `crypto/rust/src/report_tests.rs`,
     `server/internal/franking/franking_test.go` and
-    `mobile/test/c6_report_crypto_test.dart`.
+    `mobile/test/c6_report_crypto_test.dart`. The Go test derives the public
+    key with Go's own HKDF and `crypto/hpke` DeriveKeyPair and opens the
+    Rust-sealed report with `crypto/hpke`, an independent RFC 9180
+    implementation (test only; the server never opens reports).
   - **Dart.** `ReportCryptoService` (`crypto_service.dart`), implemented by
     `NativeCryptoService`; `UnavailableCryptoService` refuses every method
     with `StateError`. `mobile/lib/crypto/franking.dart` holds the `P` and

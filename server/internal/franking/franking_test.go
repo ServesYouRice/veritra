@@ -2,6 +2,10 @@ package franking
 
 import (
 	"bytes"
+	"crypto/ecdh"
+	"crypto/hkdf"
+	"crypto/hpke"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -98,5 +102,67 @@ func TestSharedVector(t *testing.T) {
 	}
 	if !Verify(want, kf, c, []byte(v.Payload)) {
 		t.Fatal("vector commit does not verify")
+	}
+}
+
+// TestSharedReportSealVector checks the vector's report key and sealed report
+// with Go's own HKDF and RFC 9180 HPKE (crypto/hpke), independently of the
+// Rust core that generated them (pm_crypto_report_key_public and
+// pm_crypto_report_seal, ABI 12). The server never opens reports; this is
+// interoperability evidence only.
+func TestSharedReportSealVector(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "testing", "vectors", "c6-franking-v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vector struct {
+		Report struct {
+			SeedHex   string `json:"seed_hex"`
+			PublicHex string `json:"public_hex"`
+			AAD       string `json:"aad"`
+			Plaintext string `json:"plaintext"`
+			SealedHex string `json:"sealed_hex"`
+		} `json:"report_hpke"`
+	}
+	if err := json.Unmarshal(raw, &vector); err != nil {
+		t.Fatal(err)
+	}
+	r := vector.Report
+	decode := func(value string) []byte {
+		out, err := hex.DecodeString(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	seed, public, sealed := decode(r.SeedHex), decode(r.PublicHex), decode(r.SealedHex)
+	prk, err := hkdf.Extract(sha256.New, seed, []byte("veritra-c6-report-key-v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ikm, err := hkdf.Expand(sha256.New, prk, "veritra-c6 report-hpke", 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	private, err := hpke.DHKEM(ecdh.X25519()).DeriveKeyPair(ikm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := private.PublicKey().Bytes(); !bytes.Equal(got, public) {
+		t.Fatalf("public %x, vector %x", got, public)
+	}
+	if len(sealed) < 4+32 || string(sealed[:4]) != "VRP1" {
+		t.Fatal("sealed vector lacks the VRP1 header")
+	}
+	recipient, err := hpke.NewRecipient(sealed[4:36], private, hpke.HKDFSHA256(), hpke.AES256GCM(), []byte("veritra-c6-report-v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := recipient.Open([]byte(r.AAD), sealed[36:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(opened) != r.Plaintext {
+		t.Fatalf("opened %q, vector %q", opened, r.Plaintext)
 	}
 }
