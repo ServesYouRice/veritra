@@ -70,7 +70,9 @@ RK entropy (30 random bytes; only the user keeps it)
  └─ PRK = HKDF-Extract(SHA-256, salt = "veritra-k0-v1", ikm = entropy)
      ├─ HKDF-Expand(PRK, "veritra-k0 recovery-hpke", 32)
      │    └─ DeriveKeyPair (DHKEM X25519) → rk_sk (never stored), rk_pub
-     ├─ HKDF-Expand(PRK, "veritra-k0 locator", 32) → locator L
+     ├─ HKDF-Expand(PRK, "veritra-k0 recovery-auth", 32)
+     │    └─ Ed25519 seed → rk_auth_pub (recovery enrollment proof, ABI 11)
+     ├─ HKDF-Expand(PRK, "veritra-k0 locator", 32) → locator L (reserved, unused)
      └─ "veritra-k0 locker" reserved, not used (see C7)
 
 rk_id = SHA-256("veritra-k0-rk-id-v1" || rk_pub)[0..16]   (not secret)

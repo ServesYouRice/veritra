@@ -195,6 +195,32 @@ typedef _AttachmentChunkDart = int Function(_PmByteSlice, _PmByteSlice, int,
 
 typedef _LocatorNative = Int32 Function(_PmByteSlice, Pointer<_PmOwnedBuffer>);
 typedef _LocatorDart = int Function(_PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _OutputNative = Int32 Function(Pointer<_PmOwnedBuffer>);
+typedef _OutputDart = int Function(Pointer<_PmOwnedBuffer>);
+typedef _RecoveryDeriveNative = Int32 Function(_PmByteSlice,
+    Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>);
+typedef _RecoveryDeriveDart = int Function(_PmByteSlice,
+    Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>);
+typedef _RecoveryProofNative = Int32 Function(_PmByteSlice, _PmByteSlice,
+    _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _RecoveryProofDart = int Function(_PmByteSlice, _PmByteSlice,
+    _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+
+/// The public values derived from a K0 recovery key (ABI 11). None is
+/// secret against the device. `rkPub` is integrity-critical and never goes
+/// to the server; `rkAuthPub` and `rkId` are what
+/// `PUT /api/v1/account/recovery-key` takes.
+class RecoveryKeyPublic {
+  const RecoveryKeyPublic({
+    required this.rkPub,
+    required this.rkId,
+    required this.rkAuthPub,
+  });
+
+  final Uint8List rkPub;
+  final Uint8List rkId;
+  final Uint8List rkAuthPub;
+}
 
 class NativeCryptoBindings {
   NativeCryptoBindings._(DynamicLibrary library)
@@ -238,6 +264,18 @@ class NativeCryptoBindings {
         _deviceLinkLocator =
             library.lookupFunction<_LocatorNative, _LocatorDart>(
                 'pm_crypto_device_link_locator'),
+        _recoveryGenerate = library.lookupFunction<_OutputNative, _OutputDart>(
+            'pm_crypto_recovery_key_generate'),
+        _recoveryEncode = library.lookupFunction<_LocatorNative, _LocatorDart>(
+            'pm_crypto_recovery_key_encode'),
+        _recoveryDecode = library.lookupFunction<_LocatorNative, _LocatorDart>(
+            'pm_crypto_recovery_key_decode'),
+        _recoveryDerive =
+            library.lookupFunction<_RecoveryDeriveNative, _RecoveryDeriveDart>(
+                'pm_crypto_recovery_key_derive'),
+        _recoveryProof =
+            library.lookupFunction<_RecoveryProofNative, _RecoveryProofDart>(
+                'pm_crypto_recovery_proof_sign'),
         _deviceLinkTranscript = library.lookupFunction<
             _DeviceLinkTranscriptNative,
             _DeviceLinkTranscriptDart>('pm_crypto_device_link_transcript_hash'),
@@ -280,7 +318,7 @@ class NativeCryptoBindings {
             _AttachmentChunkDart>('pm_crypto_attachment_encrypt_chunk'),
         _attachmentDecrypt = library.lookupFunction<_AttachmentChunkNative,
             _AttachmentChunkDart>('pm_crypto_attachment_decrypt_chunk') {
-    if (_abiVersion() != 10) {
+    if (_abiVersion() != 11) {
       throw const NativeCryptoException(NativeCryptoError.abiMismatch);
     }
     _k2Controls = {
@@ -325,6 +363,140 @@ class NativeCryptoBindings {
   final _HandleOutputDart _signingKey;
   final _DeviceLinkTranscriptDart _deviceLinkTranscript;
   final _LocatorDart _deviceLinkLocator;
+  final _OutputDart _recoveryGenerate;
+  final _LocatorDart _recoveryEncode;
+  final _LocatorDart _recoveryDecode;
+  final _RecoveryDeriveDart _recoveryDerive;
+  final _RecoveryProofDart _recoveryProof;
+
+  /// K0 recovery key entropy length (ABI 11).
+  static const recoveryKeyEntropyBytes = 30;
+
+  /// Length of the canonical recovery key display (no separators).
+  static const recoveryKeyDisplayChars = 52;
+
+  /// Fresh recovery key entropy (30 bytes) from the OS RNG (ABI 11). The
+  /// caller owns it: wipe it (`fillRange(0, length, 0)`) once it has been
+  /// shown, confirmed and used. Never store or log it.
+  Uint8List generateRecoveryKey() =>
+      _recoveryEntropy(_output((out) => _recoveryGenerate(out),
+          maximum: recoveryKeyEntropyBytes));
+
+  /// The canonical 52-character display (upper case, no separators) of
+  /// [entropy]. The UI groups it into 13 groups of 4. A Dart string cannot
+  /// be wiped, so keep it only while it is shown.
+  String encodeRecoveryKey(Uint8List entropy) {
+    _bounded(entropy, recoveryKeyEntropyBytes, exact: true);
+    final bytes = _withSlice(
+        entropy,
+        (slice) => _output((out) => _recoveryEncode(slice, out),
+            maximum: recoveryKeyDisplayChars));
+    try {
+      if (bytes.length != recoveryKeyDisplayChars) {
+        throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+      }
+      return ascii.decode(bytes);
+    } on FormatException {
+      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+    } finally {
+      _wipe(bytes);
+    }
+  }
+
+  /// Decodes typed recovery key text to its 30-byte entropy, before any
+  /// network call. Case-insensitive; O reads as 0 and I/L as 1; `-` and
+  /// spaces are ignored. A typo, a wrong length or any other symbol throws
+  /// [NativeCryptoError.invalidArgument]. The caller wipes the result.
+  Uint8List decodeRecoveryKey(String text) {
+    final bytes = utf8.encode(text);
+    try {
+      if (bytes.isEmpty || bytes.length > 256) {
+        throw const NativeCryptoException(NativeCryptoError.invalidArgument);
+      }
+      return _recoveryEntropy(_withSlice(
+          bytes,
+          (slice) => _output((out) => _recoveryDecode(slice, out),
+              maximum: recoveryKeyEntropyBytes)));
+    } finally {
+      _wipe(bytes);
+    }
+  }
+
+  /// Derives `rk_pub`, `rk_id` and `rk_auth_pub` from [entropy] (ABI 11).
+  RecoveryKeyPublic deriveRecoveryKey(Uint8List entropy) {
+    _bounded(entropy, recoveryKeyEntropyBytes, exact: true);
+    return _withSlice(entropy, (slice) {
+      final rkPub = calloc<_PmOwnedBuffer>();
+      final rkId = calloc<_PmOwnedBuffer>();
+      final rkAuthPub = calloc<_PmOwnedBuffer>();
+      try {
+        _check(_recoveryDerive(slice, rkPub, rkId, rkAuthPub));
+        final pub = Uint8List.fromList(_take(rkPub.ref, maximum: 32));
+        final id = Uint8List.fromList(_take(rkId.ref, maximum: 16));
+        final auth = Uint8List.fromList(_take(rkAuthPub.ref, maximum: 32));
+        if (pub.length != 32 || id.length != 16 || auth.length != 32) {
+          throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+        }
+        return RecoveryKeyPublic(rkPub: pub, rkId: id, rkAuthPub: auth);
+      } finally {
+        if (rkPub.ref.data != nullptr) _free(rkPub.ref);
+        if (rkId.ref.data != nullptr) _free(rkId.ref);
+        if (rkAuthPub.ref.data != nullptr) _free(rkAuthPub.ref);
+        calloc.free(rkPub);
+        calloc.free(rkId);
+        calloc.free(rkAuthPub);
+      }
+    });
+  }
+
+  /// Signs the recovery-enrollment proof for a claim (ABI 11):
+  /// `"veritra-k0-recovery-proof-v1" | lp(challenge) | signing_key |
+  /// SHA-256(key_package) | lp(origin)`. [origin] must be the canonical
+  /// origin the app uses for this server (`https://host[:port]`); the server
+  /// rebuilds the message with its configured origin. Returns the 64-byte
+  /// Ed25519 signature. The label is fixed in Rust, so the recovery key
+  /// signs nothing else.
+  Uint8List signRecoveryProof({
+    required Uint8List entropy,
+    required List<int> challenge,
+    required List<int> signingKey,
+    required List<int> keyPackage,
+    required String origin,
+  }) {
+    _bounded(entropy, recoveryKeyEntropyBytes, exact: true);
+    _bounded(challenge, 4096);
+    _bounded(signingKey, 32, exact: true);
+    _bounded(keyPackage, 48 * 1024);
+    final originBytes = utf8.encode(origin);
+    _bounded(originBytes, 2048);
+    final signature = _withSlice(
+        entropy,
+        (entropySlice) => _withByteLists(
+            <List<int>>[challenge, signingKey, keyPackage, originBytes],
+            (slices) => _output(
+                (out) => _recoveryProof(entropySlice, slices[0], slices[1],
+                    slices[2], slices[3], out),
+                maximum: 64)));
+    if (signature.length != 64) {
+      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+    }
+    return Uint8List.fromList(signature);
+  }
+
+  Uint8List _recoveryEntropy(List<int> bytes) {
+    if (bytes.length != recoveryKeyEntropyBytes) {
+      _wipe(bytes);
+      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+    }
+    // The owned-buffer copy is already a Uint8List: hand it over as is, so
+    // the caller holds the only Dart copy and can wipe it.
+    if (bytes is Uint8List) return bytes;
+    final copy = Uint8List.fromList(bytes);
+    _wipe(bytes);
+    return copy;
+  }
+
+  static void _wipe(List<int> bytes) => bytes.fillRange(0, bytes.length, 0);
 
   String deviceLinkLocator(List<int> secret) {
     _bounded(secret, 16, exact: true);

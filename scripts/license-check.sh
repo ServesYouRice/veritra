@@ -20,6 +20,7 @@ check_notice "github.com/SherClockHolmes/webpush-go"
 
 if grep -Eq '^openmls[[:space:]]*=' "$ROOT/crypto/rust/Cargo.toml"; then
   check_notice "aes-gcm"
+  check_notice "ed25519-dalek"
   check_notice "openmls"
   check_notice "openmls_basic_credential"
   check_notice "openmls_rust_crypto"

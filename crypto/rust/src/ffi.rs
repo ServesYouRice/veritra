@@ -4,7 +4,7 @@ use crate::{
         ChangeSet, MemberAdd, MemberIdentity, MlsDevice, MlsError, RestoreLoader, SealError,
         MAX_SEALED_RECORD_BYTES, MAX_SEALED_ROOT_BYTES,
     },
-    PmByteSlice,
+    recovery, PmByteSlice,
 };
 use core::ptr;
 use std::{
@@ -542,6 +542,124 @@ pub unsafe extern "C" fn pm_crypto_device_link_locator(
         let locator =
             crate::mls::device_link_locator(secret).map_err(|_| PM_CRYPTO_INVALID_ARGUMENT)?;
         unsafe { output(out, locator) }
+    })
+}
+
+/// ABI 11 (K0 R1): fresh 30-byte recovery-key entropy from the OS RNG.
+///
+/// # Safety
+/// `out` must point to writable buffer storage.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_recovery_key_generate(out: *mut PmOwnedBuffer) -> i32 {
+    ffi_call(|| {
+        if out.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let entropy = recovery::generate().map_err(|_| PM_CRYPTO_ERROR)?;
+        unsafe { output(out, entropy.as_slice().to_vec()) }
+    })
+}
+
+/// ABI 11: the canonical 52-character display (ASCII, upper case, no
+/// separators) of 30 bytes of recovery-key entropy.
+///
+/// # Safety
+/// `entropy` must be readable and `out` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_recovery_key_encode(
+    entropy: PmByteSlice,
+    out: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        let entropy = unsafe { borrowed(entropy, recovery::ENTROPY_BYTES)? };
+        let text = recovery::encode(entropy).map_err(|_| PM_CRYPTO_INVALID_ARGUMENT)?;
+        unsafe { output(out, text.into_bytes()) }
+    })
+}
+
+/// ABI 11: decodes typed recovery-key text to its 30-byte entropy.
+/// `PM_CRYPTO_INVALID_ARGUMENT` for a bad symbol, length, padding or check.
+///
+/// # Safety
+/// `text` must be readable and `out` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_recovery_key_decode(
+    text: PmByteSlice,
+    out: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        let text = unsafe { borrowed(text, recovery::MAX_DISPLAY_INPUT_BYTES)? };
+        let entropy = recovery::decode(text).map_err(|_| PM_CRYPTO_INVALID_ARGUMENT)?;
+        unsafe { output(out, entropy.as_slice().to_vec()) }
+    })
+}
+
+/// ABI 11: derives `rk_pub` (32), `rk_id` (16) and `rk_auth_pub` (32) from
+/// the entropy. No private key or seed is returned.
+///
+/// # Safety
+/// `entropy` must be readable and every output writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_recovery_key_derive(
+    entropy: PmByteSlice,
+    out_rk_pub: *mut PmOwnedBuffer,
+    out_rk_id: *mut PmOwnedBuffer,
+    out_rk_auth_pub: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if out_rk_pub.is_null() || out_rk_id.is_null() || out_rk_auth_pub.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let entropy = unsafe { borrowed(entropy, recovery::ENTROPY_BYTES)? };
+        let derived = recovery::derive(entropy).map_err(|error| match error {
+            recovery::RecoveryError::InvalidInput => PM_CRYPTO_INVALID_ARGUMENT,
+            recovery::RecoveryError::Crypto => PM_CRYPTO_ERROR,
+        })?;
+        unsafe {
+            three_outputs(
+                [out_rk_pub, out_rk_id, out_rk_auth_pub],
+                [
+                    derived.rk_pub.to_vec(),
+                    derived.rk_id.to_vec(),
+                    derived.rk_auth_pub.to_vec(),
+                ],
+            )
+        }
+    })
+}
+
+/// ABI 11: signs the recovery-enrollment proof
+/// `"veritra-k0-recovery-proof-v1" | lp(challenge) | signing_key |
+/// SHA-256(key_package) | lp(origin)` with the auth key derived from the
+/// entropy, and returns the 64-byte Ed25519 signature. The label is fixed
+/// in Rust; there is no way to sign other bytes with this key.
+///
+/// # Safety
+/// Every slice must be readable and `out_signature` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_recovery_proof_sign(
+    entropy: PmByteSlice,
+    challenge: PmByteSlice,
+    signing_key: PmByteSlice,
+    key_package: PmByteSlice,
+    origin: PmByteSlice,
+    out_signature: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if out_signature.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let entropy = unsafe { borrowed(entropy, recovery::ENTROPY_BYTES)? };
+        let challenge = unsafe { borrowed(challenge, recovery::MAX_CHALLENGE_BYTES)? };
+        let signing_key = unsafe { borrowed(signing_key, recovery::SIGNING_KEY_BYTES)? };
+        let key_package = unsafe { borrowed(key_package, recovery::MAX_KEY_PACKAGE_BYTES)? };
+        let origin = unsafe { borrowed(origin, recovery::MAX_ORIGIN_BYTES)? };
+        let signature = recovery::sign_proof(entropy, challenge, signing_key, key_package, origin)
+            .map_err(|error| match error {
+                recovery::RecoveryError::InvalidInput => PM_CRYPTO_INVALID_ARGUMENT,
+                recovery::RecoveryError::Crypto => PM_CRYPTO_ERROR,
+            })?;
+        unsafe { output(out_signature, signature.to_vec()) }
     })
 }
 
