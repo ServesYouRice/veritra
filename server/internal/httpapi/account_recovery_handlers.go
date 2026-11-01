@@ -1,10 +1,13 @@
 package httpapi
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
+	"math/big"
 	"net/http"
 	"strings"
 	"time"
@@ -352,6 +355,8 @@ func (a *API) accountRecoveryStatus(w http.ResponseWriter, r *http.Request) {
 			a.publishCommittedEvent(r.Context(), []string{accountID}, realtime.Event{Version: "v1", Type: "device.revoked", ID: completion.RevokedEventIDs[i], Payload: map[string]string{"device_id": deviceID}, CreatedAt: now})
 			a.Hub.DisconnectDevice(accountID, deviceID)
 		}
+		// Completion also deleted the account's device-less sessions.
+		a.Hub.DisconnectDevice(accountID, "")
 		revoked := completion.RevokedDevices
 		if revoked == nil {
 			revoked = []string{}
@@ -408,7 +413,7 @@ func (a *API) putRecoveryKey(w http.ResponseWriter, r *http.Request, principal d
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if len(req.RKAuthPub) != ed25519.PublicKeySize || len(req.RKID) != 16 {
+	if !validRecoveryAuthKey(req.RKAuthPub) || len(req.RKID) != 16 {
 		writeError(w, http.StatusBadRequest, "invalid_recovery_key")
 		return
 	}
@@ -419,7 +424,7 @@ func (a *API) putRecoveryKey(w http.ResponseWriter, r *http.Request, principal d
 	}
 	now := time.Now().UTC()
 	if result.CancelledEventID != 0 {
-		a.publishCommittedEvent(r.Context(), []string{principal.AccountID}, realtime.Event{Version: "v1", Type: "account.recovery.cancelled", ID: result.CancelledEventID, Payload: map[string]string{"reason": storage.RecoveryCancelledKeyChanged}, CreatedAt: now})
+		a.publishCommittedEvent(r.Context(), []string{principal.AccountID}, realtime.Event{Version: "v1", Type: "account.recovery.cancelled", ID: result.CancelledEventID, Payload: map[string]string{"request_id": result.CancelledRequestID, "reason": storage.RecoveryCancelledKeyChanged}, CreatedAt: now})
 	}
 	a.publishCommittedEvent(r.Context(), []string{principal.AccountID}, realtime.Event{Version: "v1", Type: "account.recovery_key.set", ID: result.EventID, Payload: map[string]interface{}{"rk_id": req.RKID}, CreatedAt: now})
 	a.recordAuditEvent(r.Context(), &principal.AccountID, "account.recovery_key_set", map[string]string{"device_id": principal.DeviceID})
@@ -429,4 +434,85 @@ func (a *API) putRecoveryKey(w http.ResponseWriter, r *http.Request, principal d
 		return
 	}
 	writeJSON(w, http.StatusOK, recoveryKeyPayload(true, status))
+}
+
+// recoverySmallOrderKeys are the canonical encodings of the eight Ed25519
+// points of small order. A signature for any message can be forged under
+// them without a secret key, so none may be a recovery auth key.
+var recoverySmallOrderKeys = func() [][]byte {
+	hexKeys := []string{
+		"0100000000000000000000000000000000000000000000000000000000000000",
+		"ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+		"0000000000000000000000000000000000000000000000000000000000000000",
+		"0000000000000000000000000000000000000000000000000000000000000080",
+		"26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+		"26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+		"c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+		"c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+	}
+	keys := make([][]byte, len(hexKeys))
+	for i, value := range hexKeys {
+		key, err := hex.DecodeString(value)
+		if err != nil || len(key) != ed25519.PublicKeySize {
+			panic("bad small-order key")
+		}
+		keys[i] = key
+	}
+	return keys
+}()
+
+var (
+	ed25519FieldPrime = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 255), big.NewInt(19))
+	// ed25519CurveD is -121665/121666 mod p.
+	ed25519CurveD = func() *big.Int {
+		d := new(big.Int).ModInverse(big.NewInt(121666), ed25519FieldPrime)
+		d.Mul(d, big.NewInt(-121665))
+		return d.Mod(d, ed25519FieldPrime)
+	}()
+)
+
+// validRecoveryAuthKey reports whether key is a canonical encoding of an
+// Ed25519 point on the curve that is not of small order. It runs only when
+// an account sets its recovery key, so the big-integer check costs nothing
+// that matters.
+func validRecoveryAuthKey(key []byte) bool {
+	if len(key) != ed25519.PublicKeySize {
+		return false
+	}
+	for _, small := range recoverySmallOrderKeys {
+		if bytes.Equal(key, small) {
+			return false
+		}
+	}
+	littleEndian := bytes.Clone(key)
+	sign := littleEndian[31] >> 7
+	littleEndian[31] &= 0x7f
+	bigEndian := make([]byte, len(littleEndian))
+	for i, b := range littleEndian {
+		bigEndian[len(littleEndian)-1-i] = b
+	}
+	y := new(big.Int).SetBytes(bigEndian)
+	if y.Cmp(ed25519FieldPrime) >= 0 {
+		return false
+	}
+	// x^2 = (y^2 - 1) / (d*y^2 + 1) must have a square root.
+	y2 := new(big.Int).Mul(y, y)
+	y2.Mod(y2, ed25519FieldPrime)
+	u := new(big.Int).Sub(y2, big.NewInt(1))
+	u.Mod(u, ed25519FieldPrime)
+	v := new(big.Int).Mul(ed25519CurveD, y2)
+	v.Add(v, big.NewInt(1))
+	v.Mod(v, ed25519FieldPrime)
+	vInverse := new(big.Int).ModInverse(v, ed25519FieldPrime)
+	if vInverse == nil {
+		return false
+	}
+	x2 := u.Mul(u, vInverse)
+	x2.Mod(x2, ed25519FieldPrime)
+	x := new(big.Int).ModSqrt(x2, ed25519FieldPrime)
+	if x == nil {
+		return false
+	}
+	// x = 0 has only the positive encoding.
+	return x.Sign() != 0 || sign == 0
 }

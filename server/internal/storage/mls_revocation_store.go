@@ -12,14 +12,21 @@ import (
 // commit revocation r (SQL text: a table alias): it is not the revoked
 // device, it is not revoked itself, its account is a member of the
 // conversation and, in a rostered group (card I51), it is an active group
-// device.
+// device. A legacy group (no roster) records no leaves, so there it must
+// at least not be newer than the group's latest MLS message: a device
+// created after every commit and welcome (a recovered device, say) cannot
+// have been added and has no leaf. That signal only rules devices out; a
+// device created before an unrelated later commit still counts, so in a
+// legacy group eligibility stays an approximation of leaf membership.
 func mlsRevocationEligibleDevice(r, device string) string {
 	return `EXISTS (SELECT 1 FROM devices ed
 		JOIN memberships em ON em.account_id = ed.account_id AND em.conversation_id = ` + r + `.conversation_id
 		WHERE ed.id = ` + device + ` AND ed.revoked_at IS NULL AND ed.id <> ` + r + `.revoked_device_id
-		  AND (NOT EXISTS (SELECT 1 FROM conversation_mls_groups eg WHERE eg.conversation_id = ` + r + `.conversation_id)
-		       OR EXISTS (SELECT 1 FROM conversation_mls_devices er WHERE er.conversation_id = ` + r + `.conversation_id
-		                  AND er.device_id = ed.id AND er.removed_after_event_id IS NULL)))`
+		  AND (EXISTS (SELECT 1 FROM conversation_mls_devices er WHERE er.conversation_id = ` + r + `.conversation_id
+		                  AND er.device_id = ed.id AND er.removed_after_event_id IS NULL)
+		       OR (NOT EXISTS (SELECT 1 FROM conversation_mls_groups eg WHERE eg.conversation_id = ` + r + `.conversation_id)
+		           AND ed.created_at <= (SELECT MAX(lm.created_at) FROM conversation_mls_messages lm
+		                                 WHERE lm.conversation_id = ` + r + `.conversation_id))))`
 }
 
 // mlsRevocationTargetInGroup is true when revocation r (SQL text: a table

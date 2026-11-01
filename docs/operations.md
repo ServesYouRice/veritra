@@ -81,7 +81,7 @@ backup restored within its window.
   `PRIVATE_MESSENGER_RECOVERY_WAIT_DAYS` (default 7). Active devices can
   cancel with recent authentication; a password change, an offline owner
   password reset or a new recovery key cancels it too. Completion revokes
-  every old device.
+  every old device and ends the account's device-less (restore) sessions.
 - **Routes.** `PUT`/`GET /api/v1/account/recovery-key`;
   `POST /api/v1/account-recovery/enrollment` (5/min, takes a username and
   answers a real or stable decoy account id), and `.../claim`,
@@ -93,7 +93,7 @@ backup restored within its window.
   wrong-recovery-key claims in a UTC day (D79) the account refuses every
   claim until the next day, and its devices are told once that the password
   appears leaked. The server stores only the recovery key's verification key
-  and id, never the key.
+  and id, never the key, and refuses a small-order or invalid one.
 
 Native FCM and APNs use the matching `PRIVATE_MESSENGER_FCM_*` and
 `PRIVATE_MESSENGER_APNS_*` environment secrets. Push payloads are fixed generic

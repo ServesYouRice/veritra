@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -60,17 +61,45 @@ func recoveryAttemptsCutoffDay(now time.Time) string {
 
 // recoveryDecoyKey returns the instance's decoy key, creating it on first
 // use for an instance set up after migration 0045 (the migration backfills
-// earlier ones). Before setup there is no instance row.
+// earlier ones). Before setup there is no instance row. It reads first, so
+// the usual call never waits for the writer; only the first call after
+// setup writes a key, from crypto/rand. Concurrent first callers each
+// write only while the column is still NULL and then read it back, so all
+// of them use the same key.
 func (s *Store) recoveryDecoyKey(ctx context.Context) ([]byte, error) {
-	if _, err := s.db.ExecContext(ctx, `UPDATE instances SET recovery_decoy_key = randomblob(32) WHERE id = 1 AND recovery_decoy_key IS NULL`); err != nil {
+	key, err := s.readRecoveryDecoyKey(ctx)
+	if err != nil || len(key) == 32 {
+		return key, err
+	}
+	fresh := make([]byte, 32)
+	if _, err := rand.Read(fresh); err != nil {
 		return nil, err
 	}
-	var key []byte
-	err := s.db.QueryRowContext(ctx, `SELECT recovery_decoy_key FROM instances WHERE id = 1`).Scan(&key)
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && len(key) != 32) {
+	if _, err := s.db.ExecContext(ctx, `UPDATE instances SET recovery_decoy_key = ? WHERE id = 1 AND recovery_decoy_key IS NULL`, fresh); err != nil {
+		return nil, err
+	}
+	key, err = s.readRecoveryDecoyKey(ctx)
+	if err == nil && len(key) != 32 {
 		return nil, ErrRecoveryUnavailable
 	}
 	return key, err
+}
+
+// readRecoveryDecoyKey returns the stored decoy key, nil when the instance
+// has none yet, or ErrRecoveryUnavailable before setup.
+func (s *Store) readRecoveryDecoyKey(ctx context.Context) ([]byte, error) {
+	var key []byte
+	err := s.db.QueryRowContext(ctx, `SELECT recovery_decoy_key FROM instances WHERE id = 1`).Scan(&key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrRecoveryUnavailable
+	}
+	if err != nil {
+		return nil, err
+	}
+	if key != nil && len(key) != 32 {
+		return nil, ErrRecoveryUnavailable
+	}
+	return key, nil
 }
 
 // RecoveryDecoyAccountID is the stable decoy account id for a username that
@@ -289,7 +318,7 @@ func (s *Store) ClaimRecovery(ctx context.Context, input RecoveryClaimInput) (Re
 		readyAt = now.Add(input.Wait)
 	}
 	result := RecoveryClaimResult{ActiveDeviceSeen: active}
-	result.ReplacedRequest, result.ReplacedEventID, err = cancelWaitingRecoveryRequestTx(ctx, tx, input.AccountID, RecoveryCancelledReplaced, nowText)
+	result.ReplacedRequest, result.ReplacedEventID, err = cancelWaitingRecoveryTx(ctx, tx, input.AccountID, RecoveryCancelledReplaced, nowText)
 	if err != nil {
 		return RecoveryClaimResult{}, err
 	}
@@ -440,9 +469,11 @@ func (s *Store) CompleteRecovery(ctx context.Context, id, claimTokenHash, sessio
 	// device (no MLS leaf yet) can never be elected coordinator of, or be
 	// snapshotted as a required confirmer for, these revocations. All of
 	// them are marked revoked first, as account deletion does: then no old
-	// device is recorded as coordinator of a sibling's revocation, which
-	// would hand the role, once that sibling is revoked too, to the lowest
-	// eligible device of a legacy group, possibly the new one.
+	// device is recorded as coordinator of a sibling's revocation. A
+	// revocation queued earlier with an old device as coordinator falls back
+	// to the lowest eligible device; in a legacy group the new device is not
+	// eligible, being newer than the group's latest MLS message
+	// (mlsRevocationEligibleDevice).
 	if _, err := tx.ExecContext(ctx, `UPDATE devices SET revoked_at = ? WHERE account_id = ? AND revoked_at IS NULL`, nowText, record.AccountID); err != nil {
 		return RecoveryCompletion{}, err
 	}
@@ -452,6 +483,11 @@ func (s *Store) CompleteRecovery(ctx context.Context, id, claimTokenHash, sessio
 			return RecoveryCompletion{}, err
 		}
 		completion.RevokedEventIDs = append(completion.RevokedEventIDs, eventID)
+	}
+	// Account-only sessions (restore sessions, no device) belong to the old
+	// owner of the account too.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE account_id = ? AND device_id IS NULL`, record.AccountID); err != nil {
+		return RecoveryCompletion{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO devices(id, account_id, name, key_package, signing_key, auth_secret_hash, created_at) VALUES(?, ?, ?, ?, ?, ?, ?)`,
 		record.DeviceID, record.AccountID, record.DeviceName, record.keyPackage, record.signingKey, record.deviceAuthHash, nowText); err != nil {
@@ -565,16 +601,18 @@ func (s *Store) CancelRecoveryRequest(ctx context.Context, accountID, id string)
 // cancelWaitingRecoveryTx cancels the account's waiting recovery request, if
 // any, in the caller's transaction, with its sync event and audit entry. A
 // password change, an owner password reset and a recovery key change call
-// it, so a request whose credentials moved never waits on.
-func cancelWaitingRecoveryTx(ctx context.Context, tx *sql.Tx, accountID, reason, now string) (int64, error) {
+// it, so a request whose credentials moved never waits on, and so does a
+// new claim that replaces the waiting request.
+// It returns the cancelled request id and its sync event, or "" and zero.
+func cancelWaitingRecoveryTx(ctx context.Context, tx *sql.Tx, accountID, reason, now string) (string, int64, error) {
 	requestID, eventID, err := cancelWaitingRecoveryRequestTx(ctx, tx, accountID, reason, now)
 	if err != nil || requestID == "" {
-		return 0, err
+		return "", 0, err
 	}
 	if err := insertAuditEvent(ctx, tx, &accountID, "account.recovery_cancelled", map[string]string{"request_id": requestID, "reason": reason}); err != nil {
-		return 0, err
+		return "", 0, err
 	}
-	return eventID, nil
+	return requestID, eventID, nil
 }
 
 func cancelWaitingRecoveryRequestTx(ctx context.Context, tx *sql.Tx, accountID, reason, now string) (string, int64, error) {
@@ -598,8 +636,11 @@ func cancelWaitingRecoveryRequestTx(ctx context.Context, tx *sql.Tx, accountID, 
 
 // RecoveryKeyResult is what SetRecoveryKey committed.
 type RecoveryKeyResult struct {
-	EventID          int64
-	CancelledEventID int64
+	EventID int64
+	// CancelledRequestID and CancelledEventID are the waiting request the
+	// change cancelled and its sync event, or "" and zero.
+	CancelledRequestID string
+	CancelledEventID   int64
 }
 
 // SetRecoveryKey sets or replaces the account's recovery key verifier and,
@@ -626,7 +667,7 @@ func (s *Store) SetRecoveryKey(ctx context.Context, accountID string, authPublic
 		return RecoveryKeyResult{}, ErrNotFound
 	}
 	var out RecoveryKeyResult
-	if out.CancelledEventID, err = cancelWaitingRecoveryTx(ctx, tx, accountID, RecoveryCancelledKeyChanged, now); err != nil {
+	if out.CancelledRequestID, out.CancelledEventID, err = cancelWaitingRecoveryTx(ctx, tx, accountID, RecoveryCancelledKeyChanged, now); err != nil {
 		return RecoveryKeyResult{}, err
 	}
 	if out.EventID, err = insertSyncEvent(ctx, tx, recoveryKeySetEventType, &accountID, "", map[string]interface{}{"rk_id": rkID}, now); err != nil {
