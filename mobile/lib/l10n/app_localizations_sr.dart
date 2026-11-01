@@ -2700,7 +2700,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get recoveryClaimRefused =>
-      'Лозинка или кључ за опоравак није исправан, или овај налог не може да се опорави.';
+      'Лозинка или кључ за опоравак није исправан, адреса сервера се разликује од записане, или овај налог не може да се опорави.';
 
   @override
   String get recoveryBackupOtherAccount =>
@@ -2792,6 +2792,22 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get apiErrorInvalidRecoveryKey =>
       'Сервер је одбио овај кључ за опоравак. Направите нови.';
+
+  @override
+  String get recoveryAlreadyEnded =>
+      'Овај опоравак је већ завршен или га је заменио новији.';
+
+  @override
+  String get apiErrorPasswordUnchanged =>
+      'Изаберите лозинку која се разликује од тренутне.';
+
+  @override
+  String get recoveryKeyServerAddress => 'Уз њега запишите и адресу сервера:';
+
+  @override
+  String recoveryKeyOriginMismatch(String current, String origin) {
+    return 'Овај уређај користи $current, али адреса сервера за опоравак је $origin. Опоравак ради само преко адресе $origin.';
+  }
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -5494,7 +5510,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get recoveryClaimRefused =>
-      'Lozinka ili ključ za oporavak nije ispravan, ili ovaj nalog ne može da se oporavi.';
+      'Lozinka ili ključ za oporavak nije ispravan, adresa servera se razlikuje od zapisane, ili ovaj nalog ne može da se oporavi.';
 
   @override
   String get recoveryBackupOtherAccount =>
@@ -5586,4 +5602,20 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get apiErrorInvalidRecoveryKey =>
       'Server je odbio ovaj ključ za oporavak. Napravite novi.';
+
+  @override
+  String get recoveryAlreadyEnded =>
+      'Ovaj oporavak je već završen ili ga je zamenio noviji.';
+
+  @override
+  String get apiErrorPasswordUnchanged =>
+      'Izaberite lozinku koja se razlikuje od trenutne.';
+
+  @override
+  String get recoveryKeyServerAddress => 'Uz njega zapišite i adresu servera:';
+
+  @override
+  String recoveryKeyOriginMismatch(String current, String origin) {
+    return 'Ovaj uređaj koristi $current, ali adresa servera za oporavak je $origin. Oporavak radi samo preko adrese $origin.';
+  }
 }

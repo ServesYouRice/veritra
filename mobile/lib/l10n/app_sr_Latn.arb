@@ -725,7 +725,7 @@
   "recoveryStartDetail": "Koristite ovo samo ako ste izgubili svaki uređaj prijavljen na vaš nalog. Potrebni su vam lozinka i ključ za oporavak. Ako je neki vaš uređaj korišćen u poslednjih 7 dana, ovaj uređaj se pridružuje tek posle 7 dana, a ti uređaji mogu da otkažu oporavak. Istorija poruka se vraća samo iz rezervne kopije vraćene na ovaj uređaj.",
   "recoveryStartSubmit": "Započni oporavak",
   "recoveryKeyUnreadable": "Taj ključ za oporavak nije ispravan. Proverite da li ima grešaka u kucanju.",
-  "recoveryClaimRefused": "Lozinka ili ključ za oporavak nije ispravan, ili ovaj nalog ne može da se oporavi.",
+  "recoveryClaimRefused": "Lozinka ili ključ za oporavak nije ispravan, adresa servera se razlikuje od zapisane, ili ovaj nalog ne može da se oporavi.",
   "recoveryBackupOtherAccount": "Rezervna kopija vraćena na ovaj uređaj pripada drugom nalogu ili serveru. Ovde oporavite taj nalog ili prvo resetujte ovaj uređaj.",
   "recoverySignedInAlready": "Ovaj uređaj je već prijavljen.",
   "recoveryAlreadyPending": "Oporavak već čeka na ovom uređaju.",
@@ -750,5 +750,9 @@
   "passwordLeakDismiss": "Zatvori",
   "apiErrorRecoveryNotConfigured": "Ovaj server nije uključio oporavak naloga.",
   "apiErrorRecoveryBackoff": "Previše pokušaja. Sačekajte malo, pa pokušajte ponovo.",
-  "apiErrorInvalidRecoveryKey": "Server je odbio ovaj ključ za oporavak. Napravite novi."
+  "apiErrorInvalidRecoveryKey": "Server je odbio ovaj ključ za oporavak. Napravite novi.",
+  "recoveryAlreadyEnded": "Ovaj oporavak je već završen ili ga je zamenio noviji.",
+  "apiErrorPasswordUnchanged": "Izaberite lozinku koja se razlikuje od trenutne.",
+  "recoveryKeyServerAddress": "Uz njega zapišite i adresu servera:",
+  "recoveryKeyOriginMismatch": "Ovaj uređaj koristi {current}, ali adresa servera za oporavak je {origin}. Oporavak radi samo preko adrese {origin}."
 }

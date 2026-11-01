@@ -2684,7 +2684,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get recoveryClaimRefused =>
-      'The password or recovery key is wrong, or this account cannot be recovered.';
+      'The password or recovery key is wrong, the server address differs from the one you wrote down, or this account cannot be recovered.';
 
   @override
   String get recoveryBackupOtherAccount =>
@@ -2776,4 +2776,21 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get apiErrorInvalidRecoveryKey =>
       'The server refused this recovery key. Create a new one.';
+
+  @override
+  String get recoveryAlreadyEnded =>
+      'This recovery had already ended or was replaced by a newer one.';
+
+  @override
+  String get apiErrorPasswordUnchanged =>
+      'Choose a password different from your current one.';
+
+  @override
+  String get recoveryKeyServerAddress =>
+      'Write down the server address with it:';
+
+  @override
+  String recoveryKeyOriginMismatch(String current, String origin) {
+    return 'This device uses $current, but the server\'s recovery address is $origin. Recovery works only from $origin.';
+  }
 }

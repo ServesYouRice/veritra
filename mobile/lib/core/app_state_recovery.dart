@@ -29,7 +29,7 @@ enum RecoveryFollowUpStep { recoveryKey, password }
 /// What saving or cancelling a recovery setting found, when it did not
 /// simply fail (the error is then under [Ops.recoveryKey] or
 /// [Ops.accountRecovery]).
-enum RecoveryActionResult { done, needsRecentAuth, failed }
+enum RecoveryActionResult { done, needsRecentAuth, alreadyEnded, failed }
 
 /// A newly generated recovery key while it is shown and confirmed. [dispose]
 /// wipes the entropy; the display string cannot be wiped and is dropped
@@ -169,6 +169,7 @@ extension AccountRecoveryActions on AppState {
   Future<RecoveryActionResult> cancelAccountRecoveryRequest(
       String requestId) async {
     var needsRecentAuth = false;
+    var alreadyEnded = false;
     final ok = await _runScoped(Ops.accountRecovery, () async {
       final current = session;
       final client = api;
@@ -182,30 +183,47 @@ extension AccountRecoveryActions on AppState {
           needsRecentAuth = true;
           return;
         }
-        // Already gone (completed, cancelled or expired): show what is.
-        if (err.statusCode != 404 && err.statusCode != 410) rethrow;
+        // Already gone (completed, cancelled, expired or replaced by a
+        // newer claim): say so and show what is. A bare 404 from something
+        // in front of the server proves none of that.
+        final code = err.serverCode;
+        if (err.statusCode != 410 &&
+            code != 'not_found' &&
+            code != 'recovery_cancelled') {
+          rethrow;
+        }
+        alreadyEnded = true;
       }
       final status = recoveryKeyStatus;
       if (status != null && status.pending?.id == requestId) {
         recoveryKeyStatus = RecoveryKeyStatus(
             available: status.available,
             configured: status.configured,
-            setAt: status.setAt);
+            setAt: status.setAt,
+            publicOrigin: status.publicOrigin);
       }
-      unawaited(refreshRecoveryKeyStatus());
+      if (alreadyEnded) {
+        await refreshRecoveryKeyStatus();
+      } else {
+        unawaited(refreshRecoveryKeyStatus());
+      }
     });
     if (needsRecentAuth) return RecoveryActionResult.needsRecentAuth;
+    if (ok && alreadyEnded) return RecoveryActionResult.alreadyEnded;
     return ok ? RecoveryActionResult.done : RecoveryActionResult.failed;
   }
 
   /// Hides the leak warning until the next one.
   Future<void> dismissPasswordLeakWarning() async {
     final day = _passwordLeakDay;
+    final current = session;
     if (day == null) return;
     _passwordLeakDay = null;
     notifyListeners();
+    if (current == null) return;
     try {
-      await localStore.saveSetting(_passwordLeakDismissedSetting, day);
+      await localStore.saveSetting(
+          _passwordLeakDismissedSetting, '${_leakScope(current)}$day');
     } catch (_) {
       // Shown again after a restart; harmless.
     }
@@ -351,7 +369,20 @@ extension AccountRecoveryActions on AppState {
 
   /// Drops the waiting claim on this device. The server's request expires
   /// on its own; only a signed-in device can cancel it there.
-  Future<void> abandonAccountRecovery() async {
+  ///
+  /// Runs in the session-transition queue, after any poll in flight: a
+  /// claim that completed meanwhile (its token is single-use) or a newer
+  /// claim than [requestId] is kept, never wiped.
+  Future<void> abandonAccountRecovery({String? requestId}) =>
+      _enqueueSessionTransition(() async {
+        final pending = pendingAccountRecovery;
+        if (pending == null || session != null) return;
+        if (requestId != null && pending.requestId != requestId) return;
+        await _abandonAccountRecoveryNow();
+      });
+
+  /// [abandonAccountRecovery] for callers already in the queue.
+  Future<void> _abandonAccountRecoveryNow() async {
     _recoveryPollTimer?.cancel();
     _recoveryPollTimer = null;
     pendingAccountRecovery = null;
@@ -407,10 +438,14 @@ extension AccountRecoveryActions on AppState {
       status = await client.accountRecoveryStatus(
           pending.requestId, pending.claimToken);
     } on ApiException catch (err) {
-      if (err.statusCode == 410 || err.statusCode == 404) {
+      final code = err.serverCode;
+      if (err.statusCode == 410 ||
+          code == 'not_found' ||
+          code == 'recovery_cancelled') {
         // Cancelled by the account's owner, by a password or recovery key
-        // change, replaced by a newer claim, or expired.
-        await abandonAccountRecovery();
+        // change, replaced by a newer claim, or expired. A bare 404 (a
+        // proxy, not this server) proves none of that: the claim stays.
+        await _abandonAccountRecoveryNow();
         throw UserFacingException(l10n.recoveryRequestEnded);
       }
       if (err.statusCode == 401) {
@@ -573,9 +608,10 @@ extension AccountRecoveryActions on AppState {
     try {
       recoveryFollowUp = _decodeFollowUp(
           await localStore.loadSetting(_recoveryFollowUpSetting), current);
-      final day = await localStore.loadSetting(_passwordLeakSetting);
-      final dismissed =
-          await localStore.loadSetting(_passwordLeakDismissedSetting);
+      final day = _scopedLeakDay(
+          await localStore.loadSetting(_passwordLeakSetting), current);
+      final dismissed = _scopedLeakDay(
+          await localStore.loadSetting(_passwordLeakDismissedSetting), current);
       _passwordLeakDay = _currentLeakDay(day, dismissed);
     } catch (_) {
       // Unreadable settings: nothing to show.
@@ -612,6 +648,18 @@ extension AccountRecoveryActions on AppState {
     notifyListeners();
   }
 
+  /// The leak settings belong to one account on one server: a later
+  /// sign-in to another account on this device never shows (or hides) its
+  /// warning.
+  String _leakScope(Session owner) =>
+      '${owner.baseUrl}\u0000${owner.accountId}\u0000';
+
+  String? _scopedLeakDay(String? raw, Session owner) {
+    final scope = _leakScope(owner);
+    if (raw == null || !raw.startsWith(scope)) return null;
+    return raw.substring(scope.length);
+  }
+
   String? _currentLeakDay(String? day, String? dismissed) {
     if (day == null || day.isEmpty || day == dismissed) return null;
     final parsed = DateTime.tryParse('${day}T00:00:00Z');
@@ -628,12 +676,15 @@ extension AccountRecoveryActions on AppState {
     if (day is! String || DateTime.tryParse('${day}T00:00:00Z') == null) {
       day = event.createdAt.toUtc().toIso8601String().substring(0, 10);
     }
+    final owner = session;
+    if (owner == null) return;
     try {
-      final dismissed =
-          await localStore.loadSetting(_passwordLeakDismissedSetting);
+      final dismissed = _scopedLeakDay(
+          await localStore.loadSetting(_passwordLeakDismissedSetting), owner);
       final current = _currentLeakDay(day, dismissed);
-      if (current == null) return;
-      await localStore.saveSetting(_passwordLeakSetting, current);
+      if (current == null || !identical(session, owner)) return;
+      await localStore.saveSetting(
+          _passwordLeakSetting, '${_leakScope(owner)}$current');
       _passwordLeakDay = current;
     } catch (_) {
       return;

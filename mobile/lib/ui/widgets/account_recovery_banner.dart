@@ -152,6 +152,7 @@ class AccountRecoveryBanner extends StatelessWidget {
     if (!context.mounted) return;
     final message = switch (result) {
       RecoveryActionResult.done => l10n.recoveryCancelled,
+      RecoveryActionResult.alreadyEnded => l10n.recoveryAlreadyEnded,
       _ => state.errorFor(Ops.accountRecovery),
     };
     if (message != null) {

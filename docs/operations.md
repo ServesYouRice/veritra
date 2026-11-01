@@ -73,8 +73,10 @@ backup restored within its window.
   one permanent hostname. While it is unset, every `/api/v1/account-recovery/`
   route and `PUT /api/v1/account/recovery-key` answer 503
   `recovery_not_configured`, and `GET /api/v1/account/recovery-key` reports
-  `available: false`. Changing it later invalidates proofs made for the old
-  origin.
+  `available: false`. When set, that `GET` also returns it as
+  `public_origin`, so signed-in clients show it next to the recovery key and
+  warn when they reach the server under another address (clients never sign
+  over it). Changing it later invalidates proofs made for the old origin.
 - **Wait.** When any device of the account was active (not revoked, a live
   session, seen) within `PRIVATE_MESSENGER_RECOVERY_ACTIVE_WINDOW_DAYS`
   (default 7), the new device joins only after

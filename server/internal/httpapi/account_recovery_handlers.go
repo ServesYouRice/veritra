@@ -385,7 +385,15 @@ func (a *API) getRecoveryKey(w http.ResponseWriter, r *http.Request, principal d
 		handleStorageError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, recoveryKeyPayload(a.recoveryConfigured(), status))
+	available := a.recoveryConfigured()
+	payload := recoveryKeyPayload(available, status)
+	if available {
+		// The origin claims are checked against, so a signed-in client can
+		// show it with the key and warn when it reaches the server under
+		// another address. Clients never sign over this value.
+		payload["public_origin"] = a.PublicOrigin
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func recoveryKeyPayload(available bool, status storage.RecoveryKeyStatus) map[string]interface{} {

@@ -237,6 +237,8 @@ class _AccountRecoveryWaitingScreenState
 
   Future<void> _confirmAbandon() async {
     final l10n = context.l10n;
+    final requestId = widget.state.pendingAccountRecovery?.requestId;
+    if (requestId == null) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -254,7 +256,9 @@ class _AccountRecoveryWaitingScreenState
         ],
       ),
     );
-    if (confirmed == true) await widget.state.abandonAccountRecovery();
+    if (confirmed == true) {
+      await widget.state.abandonAccountRecovery(requestId: requestId);
+    }
   }
 
   Future<void> _signIn() async {

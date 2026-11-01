@@ -4404,7 +4404,7 @@ abstract class AppLocalizations {
   /// No description provided for @recoveryClaimRefused.
   ///
   /// In en, this message translates to:
-  /// **'The password or recovery key is wrong, or this account cannot be recovered.'**
+  /// **'The password or recovery key is wrong, the server address differs from the one you wrote down, or this account cannot be recovered.'**
   String get recoveryClaimRefused;
 
   /// No description provided for @recoveryBackupOtherAccount.
@@ -4556,6 +4556,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The server refused this recovery key. Create a new one.'**
   String get apiErrorInvalidRecoveryKey;
+
+  /// No description provided for @recoveryAlreadyEnded.
+  ///
+  /// In en, this message translates to:
+  /// **'This recovery had already ended or was replaced by a newer one.'**
+  String get recoveryAlreadyEnded;
+
+  /// No description provided for @apiErrorPasswordUnchanged.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a password different from your current one.'**
+  String get apiErrorPasswordUnchanged;
+
+  /// No description provided for @recoveryKeyServerAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'Write down the server address with it:'**
+  String get recoveryKeyServerAddress;
+
+  /// No description provided for @recoveryKeyOriginMismatch.
+  ///
+  /// In en, this message translates to:
+  /// **'This device uses {current}, but the server\'s recovery address is {origin}. Recovery works only from {origin}.'**
+  String recoveryKeyOriginMismatch(String current, String origin);
 }
 
 class _AppLocalizationsDelegate

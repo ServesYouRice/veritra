@@ -191,7 +191,8 @@ void main() {
     await tester.tap(find.text('Start recovery'));
     await tester.pumpAndSettle();
     expect(
-        find.text('The password or recovery key is wrong, or this account '
+        find.text('The password or recovery key is wrong, the server '
+            'address differs from the one you wrote down, or this account '
             'cannot be recovered.'),
         findsOneWidget);
     expect(state.pendingAccountRecovery, isNull);
@@ -323,7 +324,8 @@ void main() {
     tall(tester);
     final state = signedIn();
     final today = DateTime.now().toUtc().toIso8601String().substring(0, 10);
-    await store.saveSetting('k0.password_leak_day', today);
+    const scope = '$k0Origin\u0000acct_me\u0000';
+    await store.saveSetting('k0.password_leak_day', '$scope$today');
     await state.refreshRecoveryNotices();
     await tester
         .pumpWidget(app(Scaffold(body: AccountRecoveryBanner(state: state))));
@@ -335,7 +337,8 @@ void main() {
     await tester.tap(find.text('Dismiss'));
     await tester.pumpAndSettle();
     expect(find.textContaining('wrong recovery key'), findsNothing);
-    expect(await store.loadSetting('k0.password_leak_dismissed'), today);
+    expect(
+        await store.loadSetting('k0.password_leak_dismissed'), '$scope$today');
     state.dispose();
   });
 }

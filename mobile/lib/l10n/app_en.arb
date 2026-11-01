@@ -917,7 +917,7 @@
   "recoveryStartDetail": "Use this only if you lost every device signed in to your account. You need your password and your recovery key. If any of your devices was used in the last 7 days, this device joins only after 7 days, and those devices can cancel it. Your message history comes back only from a backup restored on this device.",
   "recoveryStartSubmit": "Start recovery",
   "recoveryKeyUnreadable": "That recovery key is not valid. Check it for a typo.",
-  "recoveryClaimRefused": "The password or recovery key is wrong, or this account cannot be recovered.",
+  "recoveryClaimRefused": "The password or recovery key is wrong, the server address differs from the one you wrote down, or this account cannot be recovered.",
   "recoveryBackupOtherAccount": "The backup restored on this device belongs to another account or server. Recover that account here, or reset this device first.",
   "recoverySignedInAlready": "This device is already signed in.",
   "recoveryAlreadyPending": "A recovery is already waiting on this device.",
@@ -951,5 +951,13 @@
   "passwordLeakDismiss": "Dismiss",
   "apiErrorRecoveryNotConfigured": "This server has not turned on account recovery.",
   "apiErrorRecoveryBackoff": "Too many attempts. Wait a while, then try again.",
-  "apiErrorInvalidRecoveryKey": "The server refused this recovery key. Create a new one."
+  "apiErrorInvalidRecoveryKey": "The server refused this recovery key. Create a new one.",
+
+  "recoveryAlreadyEnded": "This recovery had already ended or was replaced by a newer one.",
+  "apiErrorPasswordUnchanged": "Choose a password different from your current one.",
+  "recoveryKeyServerAddress": "Write down the server address with it:",
+  "recoveryKeyOriginMismatch": "This device uses {current}, but the server's recovery address is {origin}. Recovery works only from {origin}.",
+  "@recoveryKeyOriginMismatch": {
+    "placeholders": {"current": {"type": "String", "example": "https://chat.example.org:8443"}, "origin": {"type": "String", "example": "https://chat.example.org"}}
+  }
 }

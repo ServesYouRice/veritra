@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
+import '../../core/server_origin.dart';
 import '../../core/errors.dart';
 import '../../l10n/l10n.dart';
 import '../../ui/format.dart';
@@ -132,6 +133,7 @@ class _RecoveryKeySetupState extends State<RecoveryKeySetup> {
           });
           widget.onSaved();
         case RecoveryActionResult.needsRecentAuth:
+        case RecoveryActionResult.alreadyEnded:
           break;
         case RecoveryActionResult.failed:
           final message = widget.state.errorFor(Ops.recoveryKey);
@@ -166,6 +168,53 @@ class _RecoveryKeySetupState extends State<RecoveryKeySetup> {
     );
   }
 
+  /// The address to write down with the key: the one the server checks
+  /// claims against, else the one this device uses.
+  String? _serverAddress() =>
+      widget.state.recoveryKeyStatus?.publicOrigin ??
+      widget.state.session?.baseUrl;
+
+  /// The server's own address when this device reaches it under another
+  /// one, where a claim made the same way would be refused.
+  String? _otherServerAddress() {
+    final origin = widget.state.recoveryKeyStatus?.publicOrigin;
+    final current = widget.state.session?.baseUrl;
+    if (origin == null || current == null) return null;
+    String canonical(String value) {
+      try {
+        return canonicalizeServerOrigin(value);
+      } on FormatException {
+        return value;
+      }
+    }
+
+    return canonical(current) == canonical(origin) ? null : origin;
+  }
+
+  Widget _originWarning(BuildContext context, String origin) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: BoneSpacing.md),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(Icons.warning_amber_outlined,
+              size: 20, color: theme.colorScheme.error),
+          const SizedBox(width: BoneSpacing.md),
+          Expanded(
+            child: Text(
+              context.l10n.recoveryKeyOriginMismatch(
+                  widget.state.session?.baseUrl ?? '', origin),
+              key: const ValueKey<String>('recovery-origin-mismatch'),
+              style: theme.textTheme.bodyMedium
+                  ?.copyWith(color: theme.colorScheme.error),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   List<Widget> _overview(BuildContext context) {
     final l10n = context.l10n;
     final theme = Theme.of(context);
@@ -185,10 +234,12 @@ class _RecoveryKeySetupState extends State<RecoveryKeySetup> {
     }
     final configured = status?.configured ?? false;
     final off = status != null && !status.available;
+    final otherAddress = _otherServerAddress();
     return <Widget>[
       Text(widget.intro ?? l10n.recoveryKeyIntro,
           style: theme.textTheme.bodyLarge),
       const SizedBox(height: BoneSpacing.lg),
+      if (otherAddress != null) _originWarning(context, otherAddress),
       ListTile(
         contentPadding: EdgeInsets.zero,
         leading: Icon(configured ? Icons.key : Icons.key_off_outlined),
@@ -215,6 +266,8 @@ class _RecoveryKeySetupState extends State<RecoveryKeySetup> {
     final l10n = context.l10n;
     final theme = Theme.of(context);
     final display = _draft?.display ?? '';
+    final address = _serverAddress();
+    final otherAddress = _otherServerAddress();
     return <Widget>[
       Text(l10n.recoveryKeyShowTitle, style: theme.textTheme.titleLarge),
       const SizedBox(height: BoneSpacing.sm),
@@ -243,6 +296,20 @@ class _RecoveryKeySetupState extends State<RecoveryKeySetup> {
           ),
         ),
       ),
+      if (address != null) ...<Widget>[
+        const SizedBox(height: BoneSpacing.lg),
+        Text(l10n.recoveryKeyServerAddress, style: theme.textTheme.bodyMedium),
+        const SizedBox(height: BoneSpacing.xs),
+        SelectableText(
+          address,
+          key: const ValueKey<String>('recovery-server-address'),
+          style: BoneType.mono.copyWith(color: theme.colorScheme.onSurface),
+        ),
+      ],
+      if (otherAddress != null) ...<Widget>[
+        const SizedBox(height: BoneSpacing.md),
+        _originWarning(context, otherAddress),
+      ],
       const SizedBox(height: BoneSpacing.xl),
       FilledButton(
         onPressed: () => setState(() => _step = _SetupStep.confirm),

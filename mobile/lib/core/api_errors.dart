@@ -120,6 +120,7 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'muted_until_invalid': ApiErrorKind.invalidRequest,
   'transcript_hash_required': ApiErrorKind.invalidRequest,
   'weak_password': ApiErrorKind.invalidRequest,
+  'password_unchanged': ApiErrorKind.invalidRequest,
   // K0 account recovery.
   'recovery_not_configured': ApiErrorKind.unavailable,
   'recovery_backoff': ApiErrorKind.rateLimited,
@@ -280,6 +281,8 @@ class ApiException implements Exception {
         return l10n.apiErrorLastOwner;
       case 'weak_password':
         return l10n.apiErrorWeakPassword;
+      case 'password_unchanged':
+        return l10n.apiErrorPasswordUnchanged;
       case 'invalid_invite':
         return l10n.apiErrorInvalidInvite;
       case 'invalid_device_link':

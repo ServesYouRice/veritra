@@ -147,6 +147,12 @@ class K0Server {
   bool requireRecentAuth = true;
   String reservationAccount = 'acct_me';
   Object? claimFailure;
+
+  /// When set, a status read waits for it (a poll in flight).
+  Completer<void>? statusGate;
+
+  /// When set, a cancel throws it after the recent-auth check.
+  Object? cancelFailure;
   final List<Object> statusAnswers = <Object>[];
   final List<String> reserved = <String>[];
   final List<Map<String, Object?>> claims = <Map<String, Object?>>[];
@@ -243,6 +249,8 @@ class K0Api extends ApiClient {
   Future<AccountRecoveryStatus> accountRecoveryStatus(
       String requestId, String claimToken) async {
     server.recoveryPolls++;
+    final gate = server.statusGate;
+    if (gate != null) await gate.future;
     if (server.statusAnswers.isEmpty) {
       return AccountRecoveryStatus(
           phase: AccountRecoveryPhase.waiting,
@@ -256,6 +264,8 @@ class K0Api extends ApiClient {
   @override
   Future<void> cancelAccountRecovery(String token, String requestId) async {
     if (!server.recentAuth) throw k0Error(403, 'recent_auth_required');
+    final failure = server.cancelFailure;
+    if (failure != null) throw failure;
     server.cancels.add(requestId);
     server.status = RecoveryKeyStatus(
         available: true, configured: server.status.configured);

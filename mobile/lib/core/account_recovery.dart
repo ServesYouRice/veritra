@@ -12,12 +12,19 @@ import '../storage/local_store.dart' show CryptoRecordChange, StoredCryptoState;
 /// non-breaking or zero-width spaces and typographic dashes between its
 /// groups, and sometimes in full-width forms. The decoder ignores only ASCII
 /// `-` and spaces, so every separator is dropped here and full-width letters
-/// and digits become ASCII. Any other character is kept, so a real typo
-/// still fails the decode.
+/// and digits become ASCII. A key typed on a Cyrillic keyboard layout (sr)
+/// arrives with Cyrillic look-alikes of Latin letters; those that can only
+/// be read as one Latin letter become it. Any other character is kept, so a
+/// real typo still fails the decode.
 String normalizeRecoveryKeyInput(String raw) {
   final output = StringBuffer();
   for (final rune in raw.runes) {
     if (_isRecoveryKeySeparator(rune)) continue;
+    final latin = _cyrillicLookAlikes[rune];
+    if (latin != null) {
+      output.write(latin);
+      continue;
+    }
     if ((rune >= 0xFF10 && rune <= 0xFF19) ||
         (rune >= 0xFF21 && rune <= 0xFF3A) ||
         (rune >= 0xFF41 && rune <= 0xFF5A)) {
@@ -28,6 +35,28 @@ String normalizeRecoveryKeyInput(String raw) {
   }
   return output.toString();
 }
+
+/// Cyrillic letters drawn the same as one Latin letter of the recovery key
+/// alphabet (Crockford base32; the decoder reads O as 0 and I as 1). Letters
+/// that only resemble a digit or several letters (З, Ч, П, Г, Д, Л) are left
+/// alone, so they still fail the decode.
+const Map<int, String> _cyrillicLookAlikes = <int, String>{
+  0x0410: 'A', 0x0430: 'A', // А а
+  0x0412: 'B', 0x0432: 'B', // В в
+  0x0415: 'E', 0x0435: 'E', // Е е
+  0x041A: 'K', 0x043A: 'K', // К к
+  0x041C: 'M', 0x043C: 'M', // М м
+  0x041D: 'H', 0x043D: 'H', // Н н
+  0x041E: 'O', 0x043E: 'O', // О о
+  0x0420: 'P', 0x0440: 'P', // Р р
+  0x0421: 'C', 0x0441: 'C', // С с
+  0x0422: 'T', 0x0442: 'T', // Т т
+  0x0423: 'Y', 0x0443: 'Y', // У у
+  0x0425: 'X', 0x0445: 'X', // Х х
+  0x0405: 'S', 0x0455: 'S', // Ѕ ѕ
+  0x0406: 'I', 0x0456: 'I', // І і
+  0x0408: 'J', 0x0458: 'J', // Ј ј
+};
 
 bool _isRecoveryKeySeparator(int rune) =>
     // ASCII space, tab, line feed, vertical tab, form feed, carriage return.
@@ -108,10 +137,16 @@ class RecoveryKeyStatus {
     required this.configured,
     this.setAt,
     this.pending,
+    this.publicOrigin,
   });
 
   /// Whether the server has recovery turned on (its public origin is set).
   final bool available;
+
+  /// The origin the server checks recovery proofs against, from the signed-in
+  /// status only. Shown and compared, never signed: a claim signs over the
+  /// address the user typed.
+  final String? publicOrigin;
 
   /// Whether this account has a recovery key.
   final bool configured;
@@ -129,8 +164,14 @@ class RecoveryKeyStatus {
       configured: configured,
       setAt: _time(json['set_at']),
       pending: PendingRecoveryRequest.fromJson(json['pending_request']),
+      publicOrigin: _origin(json['public_origin']),
     );
   }
+}
+
+String? _origin(Object? value) {
+  if (value is! String || value.isEmpty || value.length > 512) return null;
+  return value;
 }
 
 /// The 202 answer to a recovery claim. [claimToken] and [deviceSecret] are
