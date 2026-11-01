@@ -183,3 +183,8 @@ invent those foundations a second time.
 3. **Who edits community, category and channel names and topics?** Written
    default: admins only. The D59 pattern (any member unless admins restrict)
    is the alternative.
+
+## Owner decisions (2026-11-01)
+
+- Community key rotates immediately on a kick or ban.
+- Any member may edit channel names and topics unless admins restrict it.
