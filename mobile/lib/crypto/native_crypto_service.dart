@@ -506,7 +506,9 @@ class NativeCryptoService
     if (!_handleAnswers() || _deviceCounter != previous.counter) return false;
     final stored = await localStore.loadCryptoState();
     if (stored == null || stored.counter != previous.counter) return false;
-    final id = conversationId.codeUnits;
+    // The bytes the bindings send as the group id: the low byte of each
+    // code unit (they refuse an id with a unit above 0xff before any call).
+    final id = [for (final unit in conversationId.codeUnits) unit & 0xff];
     return !(await localStore.loadCryptoRecords()).any((record) =>
         record.kind == cryptoRecordKindGroup &&
         _sameBytes(record.recordId, id));

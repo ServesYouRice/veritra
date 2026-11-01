@@ -220,6 +220,12 @@ untouched on today's recovery screen.
 
 ## 6. Backups (depends on O1)
 
+**Resolved by D73 (S5 done, 2026-11-01):** backups carry no MLS state, so
+VBK2 and backup JSON v6 are unchanged. Export never reads the root or the
+records; restore deletes both with the singleton. A v1-v5 backup's crypto
+state is dropped unread, so the last bullet below no longer applies: no v3
+blob comes back from a backup. The options as first written:
+
 - **If D71 drops the MLS state and key from backups** (recommended, matching
   K0's "restore makes a new device"): no crypto state in backups, and no
   change to VBK2 or the backup JSON from D70.
@@ -287,7 +293,8 @@ members, against v3.
 4. **S4, wiring (Sonnet, Opus review).** Prune key packages after a
    caught-up sync; a "this chat is too large" screen for -8 that offers to
    leave; C1's leave calls `group_delete` when C1 lands.
-5. **S5, backups (after O1):** drop `crypto_state`, or backup v6.
+5. **S5, backups (after O1). Done:** O1 is D73, so no format change;
+   tests in `mobile/test/d70_backup_records_test.dart`.
 6. **Evidence and STATE.md:** mark D70 built.
 
 **Ordering risk with K2.** K2's remaining work targets ABI 9 and local
