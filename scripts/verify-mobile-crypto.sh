@@ -13,7 +13,9 @@ verify_symbols() {
     pm_crypto_device_seal_changes pm_crypto_restore_begin \
     pm_crypto_recovery_key_generate pm_crypto_recovery_key_encode \
     pm_crypto_recovery_key_decode pm_crypto_recovery_key_derive \
-    pm_crypto_recovery_proof_sign; do
+    pm_crypto_recovery_proof_sign pm_crypto_report_key_generate \
+    pm_crypto_report_key_public pm_crypto_report_seal pm_crypto_report_open \
+    pm_crypto_frank_commit; do
     case "$symbols" in
       *"$symbol"*) ;;
       *) echo "missing exported symbol: $symbol" >&2; return 1 ;;

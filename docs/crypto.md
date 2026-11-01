@@ -16,12 +16,12 @@ The server now reserves final account/device IDs before key generation and
 atomically verifies and consumes a signed enrollment proof covering the server
 challenge, Ed25519 public key, and SHA-256 key-package commitment. The Flutter
 client models this preflight, and its low-level Dart FFI binding requires ABI
-version 11 exactly (`native_crypto_bindings.dart`) and uses the owned
+version 12 exactly (`native_crypto_bindings.dart`) and uses the owned
 device/buffer calls. Native libraries are packaged for Android/iOS, while the
 production service remains behind the release gate.
 
 The public header is `crypto/rust/include/veritra_crypto.h`, which pins
-`PM_CRYPTO_ABI_VERSION` at 11. Among other things it defines:
+`PM_CRYPTO_ABI_VERSION` at 12. Among other things it defines:
 
 - account/device-bound opaque handles with exactly-once destruction
 - library-owned, zero-on-free output buffers
@@ -41,7 +41,17 @@ The public header is `crypto/rust/include/veritra_crypto.h`, which pins
   Groups keep two past epochs for decryption only (`max_past_epochs`).
 
 Key-package size checks mirror the server transport boundary (64 bytes through
-48 KiB). Passing that check does **not** verify an MLS key package.
+48 KiB). Passing that check does **not** verify an MLS key package. The server
+also parses every uploaded device key package (setup, register, device-link
+v2 and v3 claims, account recovery, key-package publish) as one bare RFC 9420
+KeyPackage, the bytes `MlsDevice::create_key_package` returns: version mls10,
+suite 0x0001 with 32-byte keys and 64-byte signatures, a basic credential with
+a non-empty identity, a `key_package` leaf with its lifetime, well-formed
+extension lists, minimal vector lengths and nothing after the signature
+(`server/internal/mlswire`, TASK-172). It verifies no signature and does not
+bind the credential to the enrollment signing key (bug-hunt question
+section-255217d2d387fd53976689b2/Q-1, open); clients still validate every key
+package they use.
 
 OpenMLS 0.9.2, `openmls_rust_crypto` 0.6.0, and their supporting crates are
 exactly pinned (Rust 1.91 or newer). All 205 locked third-party packages declare
@@ -146,6 +156,11 @@ until the package that builds it lands and adds its change-log entry.
   payload: required in `community_shared` conversations, absent elsewhere,
   and invalid on a mismatch with the envelope. It must land before any W8
   sender.
+- [C3: private channels and community info](designs/C3-private-channels-and-info.md):
+  names, topics and icons of communities, categories and channels as
+  encrypted W11-style records; a private channel's key travels only in its
+  own group. It proposes W7 payload types `info_key`, `info_key_request` and
+  `info_update` (W7 owns that section; not yet registered).
 
 ## Device linking
 
@@ -387,6 +402,66 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **C6 foundation, report seal and franking commitment, ABI 12
+  (2026-11-01):** additive; the Dart binding and the header now pin ABI 12
+  exactly. Design: [`C6-reports-franking.md`](designs/C6-reports-franking.md)
+  (D80: reports are sealed to the recipient's key; new HPKE ABI functions
+  approved with independent review). No wire, payload, server or schema
+  change: nothing sends a report or a `frank` member yet.
+  - **Report key.** `pm_crypto_report_key_generate` returns a 32-byte seed
+    from the OS RNG; the recipient app keeps it. `pm_crypto_report_key_public`
+    derives the X25519 public key: PRK = HKDF-Extract(SHA-256, salt
+    `veritra-c6-report-key-v1`, ikm seed), `HKDF-Expand(PRK, "veritra-c6
+    report-hpke", 32)` into RFC 9180 DeriveKeyPair (DHKEM X25519). No X25519
+    private key crosses the ABI: open takes the seed and derives the pair in
+    Rust. The seed crosses it (owned, zero-on-free buffers), as the K0
+    entropy and the state key do, because the app must store it.
+  - **Seal and open.** `pm_crypto_report_seal(recipient_public, aad,
+    plaintext)` and `pm_crypto_report_open(seed, aad, sealed)`: RFC 9180
+    base mode, DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, AES-256-GCM (the
+    suite K0 and K2 use), through `OpenMlsCrypto::hpke_seal/hpke_open` of
+    `openmls_rust_crypto` (hpke-rs 0.7, already in the graph and reviewed;
+    no new crate, no `Cargo.lock` change). `info` is fixed in Rust as
+    `veritra-c6-report-v1`, so a report key opens nothing sealed for another
+    purpose and no K0/K2 key opens a report. The output is `"VRP1" || enc
+    (32) || ciphertext`. `aad` is required (1 to 1024 bytes): the report
+    transport (C6 build step 3) fixes its layout and must bind at least the
+    recipient inbox and the report's routing fields. Plaintext 1 byte to 256
+    KiB. A bad or low-order public key (all-zero DH output, RFC 9180 §7.1.4)
+    is `PM_CRYPTO_INVALID_ARGUMENT`; altered bytes, another aad or another
+    key on open is `PM_CRYPTO_ERROR`. Base mode does not authenticate the
+    sender: who filed a report comes from the server's authenticated route,
+    and what was said from franking.
+  - **Franking commitment.** `pm_crypto_frank_commit(key, conversation_id,
+    sender_device_id, action_id, payload)` returns `HMAC-SHA256(kf,
+    "veritra-frank-v1" || lp(conversation_id) || lp(sender_device_id) ||
+    lp(action_id) || lp(payload))`, lp a u32 big-endian length, byte for
+    byte `server/internal/franking`. `kf` 32 bytes, ids 1 to 128 bytes,
+    payload 1 byte to 64 KiB. The payload is the canonical bytes `P` of
+    [Franking v1](#franking-v1-c6) below. The app compares commitments in
+    constant time (`frankCommitEquals`).
+  - **Known-answer vector.** `testing/vectors/c6-franking-v1.json` (the
+    commitment, `P` and its wire JSON, a seed, its public key and one sealed
+    report), checked by `crypto/rust/src/report_tests.rs`,
+    `server/internal/franking/franking_test.go` and
+    `mobile/test/c6_report_crypto_test.dart`. The Go test derives the public
+    key with Go's own HKDF and `crypto/hpke` DeriveKeyPair and opens the
+    Rust-sealed report with `crypto/hpke`, an independent RFC 9180
+    implementation (test only; the server never opens reports).
+  - **Dart.** `ReportCryptoService` (`crypto_service.dart`), implemented by
+    `NativeCryptoService`; `UnavailableCryptoService` refuses every method
+    with `StateError`. `mobile/lib/crypto/franking.dart` holds the `P` and
+    wire rules; `AppPayloadCodec.encodeFranked` writes a franked payload.
+    Neither is called by the send or receive path yet.
+
+- **Server key-package parsing (2026-11-01, TASK-172):** no ABI or wire
+  change. The server now refuses a device key package that does not parse as
+  one bare RFC 9420 KeyPackage in the client's suite (rules in the
+  key-package paragraph above), with 400 `invalid_device_key_package`, or
+  `invalid_key_packages` on publish. Packages already stored are not
+  rechecked. Signatures and the credential binding stay unverified (open
+  question Q-1). Fixture: one package from `create_key_package` at commit
+  1a21ee2, in `server/internal/mlswire/mlswiretest`.
 - **K0 R1, recovery key and recovery proof, ABI 11 (2026-11-01):**
   additive; the Dart binding and the header now pin ABI 11 exactly. Design:
   [`K0-recovery-enrollment.md`](designs/K0-recovery-enrollment.md) (D78).
@@ -1232,6 +1307,8 @@ notification.
     `unsupported` stores the row without showing it. Senders set it on
     `pin`, `poll_vote`, `poll_close`, `admin_delete`, `profile_key` and
     `group_profile_key`. It is ignored when the type is known.
+  - `frank` (C6): the franking key, always the last member in one fixed
+    byte form, `v` ≥ 2 only. Rules in [Franking v1](#franking-v1-c6).
 
 Step 0 already reads `channel_id` and `hidden`. Any `v` ≥ 2 may add
 top-level keys (P6) and body fields. A v3 must keep the frozen keys, so
@@ -1748,3 +1825,142 @@ Also required:
    Telegram uses more). They are easy to change.
 4. **Who may pin in groups.** This design allows moderator roles only.
    The alternative is any member until C4 adds a permission switch.
+
+## Franking v1 (C6)
+
+**Status:** the byte rules, the commitment (ABI 12) and the vector are
+built; no sender writes `frank` and no receiver checks it yet. Turning it
+on (C6 build step 2: sender, `frank_commit` storage, receive check) is a
+reviewed wire change. Design:
+[`C6-reports-franking.md`](designs/C6-reports-franking.md).
+
+**Canonical bytes `P`.** `P` is the inner JSON (the bytes between the `VAP1`
+header and the padding) exactly as the sender's encoder writes it **without**
+`frank`: `AppPayloadCodec.encode`'s key order (§10), at `v: 2`. `P` is never
+rebuilt by re-serializing parsed JSON, so it is the same bytes for the
+sender, every receiver and a verifier, whatever JSON library each uses.
+
+**Wire form.** The wire inner JSON is `P` without its final `}`, then
+exactly
+
+```text
+,"frank":{"k":"<kf as standard base64 with padding, 44 characters>"}}
+```
+
+so `frank` is always the last top-level member, with no whitespace and one
+member `k`.
+
+- **Version.** A franked payload is `v: 2` (or later). A v1 receiver checks
+  exactly six top-level keys, so `frank` on `v: 1` is `invalid` everywhere.
+  This overrides the §2 rule that writes `v: 1` for plain v1 types once
+  franking is turned on.
+- **Reserved key.** `frank` joins `channel_id` and `hidden` as an optional
+  top-level key frozen in meaning (§1). A `frank` inside `body` is not it.
+  Until the receive check lands, a v2 receiver ignores `frank` (P6).
+- **Receive rule** (`splitFrank`, `mobile/lib/crypto/franking.dart`). If the
+  parsed object has no top-level `frank`, the payload is unfranked. If it
+  has one, the bytes must end in the exact form above, the key must decode
+  to 32 bytes and re-encode to the same 44 characters, and `P` (the bytes
+  before the suffix, plus `}`) must parse on its own as an object with no
+  top-level `frank`. Then the suffix is necessarily the last top-level
+  member and `P` holds everything else. Anything else is malformed: the
+  payload is `invalid` (§1), never treated as unfranked.
+- **Commitment.** `c = pm_crypto_frank_commit(kf, conversation_id,
+  sender_device_id, action_id, P)` with the envelope's context fields,
+  already checked against `P` (P2). It rides in envelope metadata as
+  `frank_commit` (32 bytes) once step 2 lands.
+
+**Vector** (`testing/vectors/c6-franking-v1.json`): the §10 context
+`<C>`, `<D>`, `<A>`, `kf` = 32 bytes of `0x07`, and
+
+- `P` = `{"v":2,"type":"text","conversation_id":"<C>","sender_device_id":"<D>","action_id":"<A>","body":{"text":"hi"}}`;
+- wire = `P` without the final `}` + `,"frank":{"k":"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="}}`;
+- `c` = `e84e3e81d8ac625060a472b2c311b19fc56e8472c80ffa0b304e63930158980a`.
+
+`encodeFranked` writes exactly `P` and the wire bytes; `splitFrank` returns
+`P` and `kf` from the wire bytes; the Go reference, Rust and Dart all compute
+`c`.
+
+**Open before step 2** (design open items): what a receiver does with an
+unfranked payload once franking is on (refusing it is what makes every
+accepted message reportable, design step 5, but it needs every sender
+upgraded first); where `frank_commit` is stored (a write-once envelope
+column, not `crypto_metadata`, which the legacy edit and delete routes
+overwrite); and retention of that row for the report window.
+
+## Group role state (C4)
+
+Proposed, not implemented: no ABI, codec or payload exists yet. Design:
+`docs/designs/C4-custom-roles.md` (built-in roles only, D80). Rules engine:
+`mobile/lib/core/roles/governance.dart`.
+
+**Why it exists.** Apps must not trust the server-reported role (D80), and
+no MLS data names one: leaves carry Basic credentials with account and
+device ids only, the group context carries no Veritra extension, and the
+creator cannot be proven to a joiner. So the server's four built-in roles
+are also kept in a signed record that the group's members agree on. It
+replaces the proposed `governance` application payload for custom roles,
+which is withdrawn.
+
+**Carrier.** A GroupContext extension of type `0xF0C4` (private-use range;
+proposed), listed in every leaf's capabilities and in the group's required
+capabilities. It changes only through a commit carrying one
+GroupContextExtensions proposal with this extension alone, so MLS orders
+every change and a Welcome gives a joiner the current state. The creator
+writes the genesis record (itself as owner, nothing else) at group creation.
+Groups and a community's shared group carry it; a private channel's group
+does not, and is judged against the shared group's record (C0).
+
+**Format, version 1** (big-endian, canonical; any other byte string is
+invalid):
+
+```
+u8  version = 1
+u64 rev
+u8  flags            bit 0: admins_only_posting; other bits zero
+u16 owner_len || owner                         0 = no owner
+u16 admin_count     { u16 len || account || u64 since_rev }*
+u16 moderator_count { u16 len || account }*
+u16 channel_count   { u16 len || channel_id }*  announcement channels
+```
+
+Lists are sorted by bytes with no duplicates; ids are 1 to 255 bytes; the
+owner is in no list and no account is in both lists; at most 500 channels;
+nothing follows the last field. A record that does not decode, or a version
+this app does not know, makes the commit invalid (sync stops under I33); it
+is never guessed at.
+
+**Receiving a commit.** Rust stages it and hands Dart the committer
+account, the account roster before and after, and the record before and
+after (the record before, when the commit carries no proposal). Dart merges
+only if `validateCommit` accepts:
+
+- Accounts whose last device the commit removes are pruned first
+  (`removeAccount`): their role goes; if the owner left, the oldest admin
+  still present (smallest `since_rev`, then the smallest account id by
+  UTF-16 code-unit order, as Dart's `String.compareTo`; account ids are
+  ASCII today, where this equals byte order) becomes owner, and with no admin nobody does. `rev` is kept. A
+  record equal to that result is valid from any committer; a removal that
+  leaves a departed account named is invalid.
+- Any other difference is a change by the committer, checked by
+  `validateTransition` against the pruned record: `rev` + 1; everything
+  named is in the roster after the commit; role changes as on the server
+  (moderator or above; target strictly below the actor; new role at most
+  the actor's); stepping down is free; only the owner transfers ownership,
+  and only to a current admin; posting fields need admin or above; a new
+  admin's `since_rev` is the new `rev`, and an admin's stays unchanged.
+
+The check does not judge whether a removal was allowed; that is C1/C5's
+receiver check on the commit.
+
+**Sending a commit.** Every path that stages a commit (D68 reconcile,
+revocation removals, device replacement, role changes) computes the pruned
+record for its own commit, carries it as the proposal when it differs, and
+runs `validateCommit` on the result before staging. Producers are wired
+before or with the receiver check, or the first kick of an admin stops
+every receiver's sync.
+
+**Using it.** C2: a post is accepted where `mayPost` holds, and posting is
+restricted where this record or the server says so. C1/C5: `mayActOn`. A
+group without the extension (demo groups made before it) has no verified
+roles: every account is a member to the app.

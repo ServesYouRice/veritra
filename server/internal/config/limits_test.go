@@ -14,7 +14,7 @@ func TestLimitsDefaultWhenUnset(t *testing.T) {
 		t.Fatalf("unset limits = %+v, want zero (defaults applied later)", cfg.Limits)
 	}
 	got := cfg.Limits.WithDefaults()
-	want := Limits{AccountStorageBytes: 512 << 20, AccountBlobs: 10000, DevicesPerAccount: 10, ConversationMembers: 100,
+	want := Limits{AccountStorageBytes: 512 << 20, AccountBlobs: 10000, DevicesPerAccount: 10, ConversationMembers: 250,
 		ConversationsPerAccount: 1000, KeyPackageClaimsPerTarget: 25, MLSSelfUpdateMinutes: 60, DeliveriesPerMinute: 1000, WriteBytesPerHour: 64 << 20, AttachmentBytes: 48 << 20, SocketsPerIPv6Prefix: 200}
 	if got != want {
 		t.Fatalf("defaults = %+v, want %+v", got, want)

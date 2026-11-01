@@ -13,6 +13,19 @@ import sys
 import tempfile
 from pathlib import Path
 
+
+def _rmtree(path, ignore_errors=False):
+    """rmtree that also removes read-only repository objects on Windows."""
+
+    def clear_readonly(func, target, _exc):
+        os.chmod(target, 0o700)
+        func(target)
+
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, ignore_errors=ignore_errors, onexc=clear_readonly)
+    else:
+        shutil.rmtree(path, ignore_errors=ignore_errors, onerror=clear_readonly)
+
 MODULE_PATH = Path(__file__).with_name("write-release-evidence.py")
 spec = importlib.util.spec_from_file_location("write_release_evidence", MODULE_PATH)
 assert spec and spec.loader
@@ -233,7 +246,7 @@ def test_simulator_record() -> None:
         )
         assert result.returncode != 0 and not result.stdout
     finally:
-        shutil.rmtree(temp)
+        _rmtree(temp)
 
 
 def test_emulator_record() -> None:
@@ -267,7 +280,7 @@ def test_emulator_record() -> None:
         result = subprocess.run(command + ["--ios-simulator-record", str(artifact)], text=True, capture_output=True, check=False, env=env)
         assert result.returncode != 0 and not result.stdout
     finally:
-        shutil.rmtree(temp)
+        _rmtree(temp)
 
 
 # --- The CLI against a real git repository: a candidate commit holding the
@@ -347,7 +360,7 @@ class Repository:
         return subprocess.run([sys.executable, str(script)], text=True, capture_output=True, check=False, env=env)
 
     def close(self) -> None:
-        shutil.rmtree(self.root)
+        _rmtree(self.root)
 
 
 def expect_refused(result: subprocess.CompletedProcess[str], reason: str) -> None:
@@ -445,7 +458,7 @@ def test_git_reads_only_the_repository() -> None:
         moved = commit_files(other, repo.candidate, {".go-version": "9.9.9\n"}, "other toolchain")
         expect_refused(repo.run(RELEASE_COMMIT=moved, GIT_DIR=str(other / ".git")), "is missing from candidate commit")
     finally:
-        shutil.rmtree(other, ignore_errors=True)
+        _rmtree(other, ignore_errors=True)
         repo.close()
 
 

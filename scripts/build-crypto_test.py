@@ -9,6 +9,8 @@ network. POSIX only (the scripts are sh).
 
 from __future__ import annotations
 
+import posix_shell
+
 import hashlib
 import os
 import shutil
@@ -56,7 +58,7 @@ name = "libprivate_messenger_crypto.a" if target and "apple" in target else "lib
 """
 
 RUSTC_STUB = """#!/bin/sh
-echo "rustc cwd=$(pwd)" >> "$STUB_LOG"
+echo "rustc cwd=$(pwd -W 2>/dev/null || pwd)" >> "$STUB_LOG"
 case ${RUSTC_STUB:-ok} in
   fail) echo "rustc stub: failure" >&2; exit 1 ;;
   garbage) echo "not rustc output"; exit 0 ;;
@@ -120,7 +122,7 @@ ANDROID_LINKERS = (
 
 def write_executable(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content.replace("@PYTHON@", PYTHON).replace("@REAL_UNAME@", REAL_UNAME), encoding="utf-8")
+    path.write_text(content.replace("@PYTHON@", PYTHON).replace("@REAL_UNAME@", REAL_UNAME), encoding="utf-8", newline="\n")
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
@@ -209,7 +211,7 @@ class Scratch:
         env.update(extra_env or {})
         self.log.write_text("", encoding="utf-8")
         return subprocess.run(
-            ["sh", str(self.root / "scripts" / script), platform],
+            [posix_shell.find("sh"), str(self.root / "scripts" / script), platform],
             env=env,
             cwd=str(cwd or self.root),
             capture_output=True,
@@ -223,7 +225,7 @@ class Scratch:
 
 # (script, platform, extra environment, build-info.txt path relative to the root)
 PROVENANCE_CASES = (
-    ("build-desktop-crypto.sh", "linux", {}, "mobile/linux/crypto/metadata/build-info.txt"),
+    ("build-desktop-crypto.sh", "linux", {"UNAME_STUB": "Linux"}, "mobile/linux/crypto/metadata/build-info.txt"),
     ("build-desktop-crypto.sh", "macos", {"UNAME_STUB": "Darwin"}, "mobile/macos/crypto/metadata/build-info.txt"),
     ("build-mobile-crypto.sh", "android", {}, "mobile/android/app/src/main/assets/veritra-crypto/build-info.txt"),
     ("build-mobile-crypto.sh", "ios", {}, "mobile/ios/Frameworks/veritra-crypto-metadata/build-info.txt"),
@@ -260,7 +262,7 @@ def test_dirty_crypto_sources_are_recorded(scratch: Scratch) -> None:
     info = scratch.root / "mobile/linux/crypto/metadata/build-info.txt"
 
     def dirty_flag() -> str:
-        result = scratch.run("build-desktop-crypto.sh", "linux")
+        result = scratch.run("build-desktop-crypto.sh", "linux", {"UNAME_STUB": "Linux"})
         assert result.returncode == 0, result.stderr
         return info.read_text(encoding="utf-8").splitlines()[2]
 
@@ -304,7 +306,7 @@ def assert_aborts_before_build(
 def test_git_failure_aborts(scratch: Scratch) -> None:
     assert_aborts_before_build(scratch, "GIT_DIR=/nonexistent", {"GIT_DIR": "/nonexistent"})
     # An exported or tarball tree has no repository at all.
-    shutil.rmtree(scratch.root / ".git")
+    posix_shell.rmtree(scratch.root / ".git")
     assert_aborts_before_build(scratch, "no .git")
 
 
@@ -347,7 +349,7 @@ LIBRARY_A = "libprivate_messenger_crypto.a"
 # (script, platform, extra environment, artifacts under <crate>/target that the
 # script collects, packaged outputs relative to the root)
 ARTIFACT_CASES = (
-    ("build-desktop-crypto.sh", "linux", {}, (f"release/{LIBRARY_SO}",), (f"mobile/linux/crypto/{LIBRARY_SO}",)),
+    ("build-desktop-crypto.sh", "linux", {"UNAME_STUB": "Linux"}, (f"release/{LIBRARY_SO}",), (f"mobile/linux/crypto/{LIBRARY_SO}",)),
     (
         "build-desktop-crypto.sh",
         "macos",
@@ -397,7 +399,7 @@ def test_artifacts_come_from_the_directory_cargo_built(scratch: Scratch) -> None
         builds = [line for line in scratch.log_lines("cargo") if " build " in line]
         assert builds, platform
         for line in builds:
-            assert f"--target-dir {scratch.crate}/target" in line, (platform, line)
+            assert f"--target-dir {scratch.crate.as_posix()}/target" in line, (platform, line)
 
 
 @with_scratch

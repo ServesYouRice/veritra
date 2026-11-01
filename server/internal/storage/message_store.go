@@ -76,12 +76,25 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 	if !errors.Is(err, sql.ErrNoRows) {
 		return domain.MessageEnvelope{}, false, 0, err
 	}
-	var memberCount int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM memberships WHERE conversation_id = ? AND account_id = ?`, envelope.ConversationID, envelope.SenderAccountID).Scan(&memberCount); err != nil {
+	var senderRole string
+	if err := tx.QueryRowContext(ctx, `SELECT role FROM memberships WHERE conversation_id = ? AND account_id = ?`, envelope.ConversationID, envelope.SenderAccountID).Scan(&senderRole); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.MessageEnvelope{}, false, 0, ErrNotMember
+		}
 		return domain.MessageEnvelope{}, false, 0, err
 	}
-	if memberCount == 0 {
-		return domain.MessageEnvelope{}, false, 0, ErrNotMember
+	// C2: in an announcement channel or an admins-only group only owners and
+	// admins post. Checked after the idempotent replay above, so a retry of an
+	// already stored post still answers.
+	var restricted bool
+	if err := tx.QueryRowContext(ctx, `SELECT c.posting_policy = 'admins' OR COALESCE(ch.kind = 'announcement', 0) FROM conversations c LEFT JOIN channels ch ON ch.id = c.channel_id WHERE c.id = ?`, envelope.ConversationID).Scan(&restricted); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.MessageEnvelope{}, false, 0, ErrNotFound
+		}
+		return domain.MessageEnvelope{}, false, 0, err
+	}
+	if restricted && !domain.CanPostRestricted(senderRole) {
+		return domain.MessageEnvelope{}, false, 0, ErrPostingRestricted
 	}
 	for _, referenceID := range []*string{envelope.ReplyToID, envelope.ThreadRootID} {
 		if referenceID == nil || strings.TrimSpace(*referenceID) == "" {
@@ -773,16 +786,9 @@ func (s *Store) PruneExpiredContent(ctx context.Context, now time.Time) (int64, 
 	if err != nil {
 		return 0, nil, err
 	}
-	orphanKeys := make([]string, 0)
-	for orphans.Next() {
-		var key string
-		if err := orphans.Scan(&key); err != nil {
-			orphans.Close()
-			return 0, nil, err
-		}
-		orphanKeys = append(orphanKeys, key)
-	}
-	if err := orphans.Close(); err != nil {
+	// A query that stops early would leave orphaned blobs with no record.
+	orphanKeys, err := scanStorageKeys(orphans)
+	if err != nil {
 		return 0, nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM attachment_envelopes WHERE id IN (SELECT a.id FROM attachment_envelopes a WHERE a.created_at < ? AND NOT EXISTS (SELECT 1 FROM message_attachments ma WHERE ma.attachment_id = a.id) ORDER BY a.created_at, a.id LIMIT 500)`, orphanCutoff); err != nil {
@@ -1278,6 +1284,24 @@ var syncLatestExpr = `
 	             ORDER BY se.id DESC LIMIT 1)
 	     FROM memberships m WHERE m.account_id = ?1 AND m.conversation_id IS NOT NULL
 	  ))`
+
+// scanStorageKeys reads a one-column result of storage keys and closes it.
+// An iteration failure is returned, not taken for the end of the keys.
+func scanStorageKeys(rows rowIterator) ([]string, error) {
+	keys := make([]string, 0)
+	err := eachRow(rows, func(rows rowIterator) error {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return err
+		}
+		keys = append(keys, key)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return keys, nil
+}
 
 func (s *Store) SyncBounds(ctx context.Context, accountID string) (string, int64, int64, error) {
 	var epoch string

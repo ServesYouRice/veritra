@@ -27,7 +27,7 @@ func expectBlocked(t *testing.T, done <-chan int) {
 func TestSettleCountsAnOperationThatEndsAfterTheWindow(t *testing.T) {
 	r := newRecorder()
 	h := r.begin(opSend, time.Now())
-	to := time.Since(r.started)
+	to := windowEnd(r)
 	done := settleAsync(r, to, time.Minute)
 	expectBlocked(t, done)
 	if !r.end(h, outcomeOK, 30*time.Millisecond) {
@@ -47,7 +47,7 @@ func TestSettleCountsAnOperationThatEndsAfterTheWindow(t *testing.T) {
 func TestSettleCountsUnfinishedOnce(t *testing.T) {
 	r := newRecorder()
 	h := r.begin(opSync, time.Now())
-	to := time.Since(r.started)
+	to := windowEnd(r)
 	if forced := r.settle(context.Background(), to, 50*time.Millisecond); forced != 1 {
 		t.Fatalf("forced = %d, want 1", forced)
 	}
@@ -75,7 +75,7 @@ func TestSettleWaitsForABackdatedRegistration(t *testing.T) {
 	r := newRecorder()
 	eventAt := time.Now()
 	time.Sleep(20 * time.Millisecond)
-	to := time.Since(r.started)
+	to := windowEnd(r)
 	time.Sleep(20 * time.Millisecond) // the window is over in wall time
 	h := r.begin(opDownload, eventAt)
 	done := settleAsync(r, to, time.Minute)
@@ -92,7 +92,7 @@ func TestSettleWaitsForABackdatedRegistration(t *testing.T) {
 // hold up its summary and is not forced.
 func TestSettleIgnoresLaterWork(t *testing.T) {
 	r := newRecorder()
-	to := time.Since(r.started)
+	to := windowEnd(r)
 	time.Sleep(5 * time.Millisecond)
 	h := r.begin(opSend, time.Now())
 	if forced := r.settle(context.Background(), to, time.Minute); forced != 0 {
@@ -122,11 +122,19 @@ func TestSettleStopsOnCancel(t *testing.T) {
 	r.begin(opSend, time.Now())
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan int, 1)
-	go func() { done <- r.settle(ctx, time.Since(r.started), time.Hour) }()
+	go func() { done <- r.settle(ctx, windowEnd(r), time.Hour) }()
 	cancel()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("settle ignored cancellation")
 	}
+}
+
+// windowEnd returns a window end strictly after everything begun so far.
+// Coarse clocks (Windows) can repeat a reading, and settle only waits for
+// operations that started strictly before the window end.
+func windowEnd(r *recorder) time.Duration {
+	time.Sleep(20 * time.Millisecond)
+	return time.Since(r.started)
 }

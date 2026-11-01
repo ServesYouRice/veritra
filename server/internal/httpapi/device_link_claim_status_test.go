@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"private-messenger/server/internal/mlswire/mlswiretest"
 )
 
 // claim-status consumes the approved link and creates the session in one
@@ -34,7 +36,7 @@ func TestDeviceLinkClaimStatusAnswersFromTheConsumingTransaction(t *testing.T) {
 	claimBody := map[string]interface{}{
 		"code":               created.DeviceLink.Code,
 		"device_name":        "linked tablet",
-		"device_key_package": make([]byte, 64),
+		"device_key_package": mlswiretest.KeyPackage(),
 		"transcript_hash":    bytes.Repeat([]byte{7}, 32),
 		"claim_tag":          bytes.Repeat([]byte{8}, 32),
 	}

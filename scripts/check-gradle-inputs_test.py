@@ -78,7 +78,7 @@ def test_dynamic_forms_fail_in_the_app_script() -> None:
             append(android / "app/build.gradle.kts", f"\ndependencies {{\n    {form}\n}}\n")
             code, stderr = run(android)
             assert code == 1, form
-            assert "app/build.gradle.kts:" in stderr, (form, stderr)
+            assert "app/build.gradle.kts:" in stderr.replace("\\", "/"), (form, stderr)
 
 
 def test_every_build_file_is_scanned() -> None:

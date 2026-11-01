@@ -16,6 +16,7 @@ import (
 
 	"private-messenger/server/internal/app"
 	"private-messenger/server/internal/config"
+	"private-messenger/server/internal/mlswire/mlswiretest"
 )
 
 const rotateHeader = "X-Veritra-Rotate-Session"
@@ -51,7 +52,7 @@ func newRotationOwner(t *testing.T) rotationOwner {
 		"username":           "owner",
 		"password":           "owner-password-123",
 		"device_name":        "owner phone",
-		"device_key_package": make([]byte, 64),
+		"device_key_package": mlswiretest.KeyPackage(),
 	}
 	addEnrollmentProof(body, enrollment)
 	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/setup/owner", "", body)

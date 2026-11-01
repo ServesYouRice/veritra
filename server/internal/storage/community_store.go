@@ -618,7 +618,7 @@ func (s *Store) CreateChannelWithConversation(ctx context.Context, communityID, 
 	created := parseTime(createdAt)
 	channel := domain.Channel{ID: channelID, CommunityID: communityID, Name: strings.TrimSpace(name), Kind: kind, CreatedAt: created}
 	title := strings.TrimSpace(name)
-	conversation := domain.Conversation{ID: conversationID, Kind: "community_channel", Title: &title, CommunityID: &communityID, ChannelID: &channelID, CreatedBy: createdBy, CreatedAt: created}
+	conversation := domain.Conversation{ID: conversationID, Kind: "community_channel", Title: &title, CommunityID: &communityID, ChannelID: &channelID, CreatedBy: createdBy, CreatedAt: created, PostingRestricted: kind == "announcement"}
 	return channel, conversation, nil
 }
 
@@ -1346,7 +1346,13 @@ func (s *Store) ListConversationsPageFrom(ctx context.Context, accountID string,
 		}
 		conversations = append(conversations, conversation)
 	}
-	return conversations, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := s.annotatePostingRestricted(ctx, conversations); err != nil {
+		return nil, err
+	}
+	return conversations, nil
 }
 
 func (s *Store) UpdateConversationRetention(ctx context.Context, conversationID, updatedBy string, retentionSeconds *int64) (domain.Conversation, error) {
@@ -1414,7 +1420,11 @@ func (s *Store) ConversationByID(ctx context.Context, conversationID string) (do
 		}
 		return domain.Conversation{}, err
 	}
-	return conversation, nil
+	one := []domain.Conversation{conversation}
+	if err := s.annotatePostingRestricted(ctx, one); err != nil {
+		return domain.Conversation{}, err
+	}
+	return one[0], nil
 }
 
 func (s *Store) ListConversationMemberIDs(ctx context.Context, conversationID string) ([]string, error) {

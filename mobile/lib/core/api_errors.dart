@@ -60,6 +60,7 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'forbidden': ApiErrorKind.permission,
   'mls_not_in_group': ApiErrorKind.permission,
   'setup_authorization_required': ApiErrorKind.permission,
+  'posting_restricted': ApiErrorKind.permission,
   // Not found or gone.
   'not_found': ApiErrorKind.notFound,
   'blob_not_found': ApiErrorKind.notFound,
@@ -86,6 +87,8 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'conversation_limit_reached': ApiErrorKind.conflict,
   'conversation_member_limit_reached': ApiErrorKind.conflict,
   // Invalid request.
+  'invalid_posting_policy': ApiErrorKind.invalidRequest,
+  'posting_policy_not_supported': ApiErrorKind.invalidRequest,
   'account_id_required': ApiErrorKind.invalidRequest,
   'before_and_after_exclusive': ApiErrorKind.invalidRequest,
   'conversation_id_required': ApiErrorKind.invalidRequest,

@@ -31,7 +31,8 @@ class NativeCryptoService
         MlsSelfUpdateCryptoService,
         MlsStateMaintenanceCryptoService,
         NoticeCaptureConsumer,
-        RecoveryCryptoService {
+        RecoveryCryptoService,
+        ReportCryptoService {
   NativeCryptoService({
     required this.bindings,
     required this.localStore,
@@ -115,6 +116,50 @@ class NativeCryptoService
         _firstState = null;
         return device.createEnrollmentCredential(reservation.challenge);
       });
+
+  // C6 reports (ABI 12). Stateless: none touches the device or its state.
+
+  @override
+  Future<Uint8List> generateReportKeySeed() async =>
+      bindings.generateReportKeySeed();
+
+  @override
+  Future<Uint8List> reportPublicKey(Uint8List seed) async =>
+      bindings.reportPublicKey(seed);
+
+  @override
+  Future<Uint8List> sealReport({
+    required List<int> recipientPublicKey,
+    required List<int> aad,
+    required Uint8List plaintext,
+  }) async =>
+      bindings.sealReport(
+          recipientPublicKey: recipientPublicKey,
+          aad: aad,
+          plaintext: plaintext);
+
+  @override
+  Future<Uint8List> openReport({
+    required Uint8List seed,
+    required List<int> aad,
+    required List<int> sealed,
+  }) async =>
+      bindings.openReport(seed: seed, aad: aad, sealed: sealed);
+
+  @override
+  Future<Uint8List> frankCommit({
+    required Uint8List key,
+    required String conversationId,
+    required String senderDeviceId,
+    required String actionId,
+    required Uint8List payload,
+  }) async =>
+      bindings.frankCommit(
+          key: key,
+          conversationId: conversationId,
+          senderDeviceId: senderDeviceId,
+          actionId: actionId,
+          payload: payload);
 
   // K0 recovery (ABI 11). The bindings are synchronous; each call is
   // serialized with the MLS operations only where it touches the device.

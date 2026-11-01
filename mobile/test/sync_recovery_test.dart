@@ -395,6 +395,7 @@ void main() {
       for (final database in databases) {
         await database.close();
       }
+      await SecureLocalStore.releaseInstanceLocks();
       if (await directory.exists()) await directory.delete(recursive: true);
     });
 
@@ -593,6 +594,7 @@ void main() {
       for (final database in databases) {
         await database.close();
       }
+      await SecureLocalStore.releaseInstanceLocks();
       if (await directory.exists()) await directory.delete(recursive: true);
     });
 

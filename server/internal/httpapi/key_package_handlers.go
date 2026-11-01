@@ -36,7 +36,7 @@ func (a *API) publishDeviceKeyPackages(w http.ResponseWriter, r *http.Request, p
 	now := time.Now().UTC()
 	inputs := make([]storage.NewDeviceKeyPackage, 0, len(request.KeyPackages))
 	for _, item := range request.KeyPackages {
-		if len(item.KeyPackage) < 64 || len(item.KeyPackage) > 48*1024 ||
+		if !validDeviceKeyPackage(item.KeyPackage) ||
 			strings.TrimSpace(item.Ciphersuite) != openMLSCiphersuite ||
 			item.ExpiresAt.Before(now.Add(time.Hour)) || item.ExpiresAt.After(now.Add(30*24*time.Hour)) {
 			writeError(w, http.StatusBadRequest, "invalid_key_packages")

@@ -11,7 +11,13 @@ copy and keep that folder out of external backups.
 
 ## First setup and secret rotation
 
-Set `PRIVATE_MESSENGER_ENV=production` and generate a 32-byte base64url
+`PRIVATE_MESSENGER_ENV` is `production` or `development`. Unset or empty
+means `production`, so a deployment that omits it keeps every production
+check: a strong setup token (placeholders refused), a token on a fresh
+database, a trusted proxy for a non-loopback listener, and a loopback or
+private metrics address. Any other value refuses to start. Local development
+and demo scripts set `development` explicitly. Set
+`PRIVATE_MESSENGER_ENV=production` anyway, and generate a 32-byte base64url
 `PRIVATE_MESSENGER_SETUP_TOKEN` with `messenger-server generate-setup-token`.
 Place it in the root-readable environment file before the first start. Complete owner setup, remove the token, and restart. A fresh
 production database fails closed without the token; an initialized database no
@@ -229,15 +235,16 @@ entries each (IPv6 sources count per /64). When a table is full, a new key
 first replaces an expired bucket, then the least used live bucket that has
 used no credential and no enrollment budget; those two budgets are never
 reset before their minute ends. Only if every sampled bucket has used one
-does the new key share an overflow bucket, one of 256 chosen by a salted hash
-of its network (a /48 for IPv6, a /24 for IPv4), so a network that fills the
-table and burns its overflow bucket affects itself and the few networks that
-hash alongside it, not everyone's first request. One account seen from many
+does the new key share the table's one overflow bucket, which has the same
+limits as any other. Every key in it shares that budget, so while a flood
+keeps the table full of credential-using buckets and spends the overflow,
+other new addresses are refused until its minute ends; clients already in
+the table are not affected. One account seen from many
 addresses evicts only other account budgets, never an address's credential
 budget. `veritra_rate_limit_buckets` counts both tables.
 `veritra_rate_limit_evictions_total` counts each time a new key found its
 table full of live buckets, whether it evicted a credential-free bucket or
-went to an overflow bucket; it does not count reset credential budgets. A
+went to the overflow bucket; it does not count reset credential budgets. A
 steady rise means a table is under pressure (an address flood or very many
 networks). Monitor `veritra_rate_limit_buckets`,
 `veritra_rate_limit_evictions_total`, `veritra_login_backoff_entries` and
@@ -975,7 +982,7 @@ write transaction, so concurrent requests cannot both take the last slot.
 | `ACCOUNT_STORAGE_MIB` | 512, never above the instance limit | 16-1,048,576 | the same, per account | 507 `storage_quota_exceeded` |
 | `ACCOUNT_BLOBS` | 10,000 | 100-1,000,000 | attachments and backups per account (each takes at least 4 KiB on disk) | 507 `storage_quota_exceeded` |
 | `DEVICES_PER_ACCOUNT` | 10 (the realtime hub allows 10 sockets per account) | 1-10 | active devices; also at most 3 open device links | 409 `device_limit_reached`, `device_link_limit_reached` |
-| `CONVERSATION_MEMBERS` | 100 | 2-1,000 | members of a group, a community and each of its channels | 409 `conversation_member_limit_reached` |
+| `CONVERSATION_MEMBERS` | 250 (was 100; step 1 of C8) | 2-1,000 | members of a group, a community and each of its channels | 409 `conversation_member_limit_reached` |
 | `CONVERSATIONS_PER_ACCOUNT` | 1,000 | 10-10,000 | conversations an account belongs to | 409 `conversation_limit_reached` to that account; adding an account that is full answers 403 `forbidden`, as a block does |
 | `KEY_PACKAGE_CLAIMS_PER_TARGET` | 25 (half the 50 single-use key packages a device may hold) | 1-50 | key packages one account claims from one device of another account in 24 hours; claiming from its own devices is not limited | 429 `key_package_claim_limit` with `Retry-After`; adding devices to an existing group skips a device over its limit, as it skips one with no package left |
 | `MLS_SELF_UPDATE_MINUTES` | 60 | 1-10,080 | update-only MLS commits (a device's periodic key refresh, adding and removing no one) per device and conversation; each moves the group to a new epoch | 429 `mls_self_update_limit` with `Retry-After`; the app drops that update and waits for the `Retry-After` (at least an hour) |
@@ -988,8 +995,8 @@ Why these defaults: a realtime delivery costs the server 4-10 ms of CPU;
 one account at 1,000 a minute (17/s) is about a third of the 47/s tier S
 served within its latency targets. A message counts 1 plus every member
 account it reaches (the sender's own included, for its other devices), so
-that is about 330 DMs a minute but 10 messages a minute into a full
-100-member group, after a burst of the same size; raise it for large busy
+that is about 330 DMs a minute but 4 messages a minute into a full
+250-member group, after a burst of the same size; raise it for large busy
 groups. At 1,000 memberships a sync page
 costs 14-18 ms against 28-30 ms at 2,000. One 1 KiB message becomes 3.8 KiB
 of database, so 64 MiB an hour caps one account's database growth at about

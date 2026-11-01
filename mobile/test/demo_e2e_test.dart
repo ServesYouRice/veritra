@@ -282,6 +282,9 @@ class _Server {
       path,
       <String>['serve', '--addr', '127.0.0.1:$port', '--data-dir', dataDir],
       environment: <String, String>{
+        // An unset environment means production, which refuses this
+        // short local setup token.
+        'PRIVATE_MESSENGER_ENV': 'development',
         'PRIVATE_MESSENGER_SETUP_TOKEN': 'demo-e2e-setup-token',
         'PRIVATE_MESSENGER_LOG_LEVEL': 'error',
       },

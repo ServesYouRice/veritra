@@ -8,6 +8,8 @@ real script runs against the real repository files. POSIX only (the check is sh)
 
 from __future__ import annotations
 
+import posix_shell
+
 import json
 import os
 import re
@@ -57,7 +59,7 @@ class Stub:
         self.bin = temp / "bin"
         self.bin.mkdir()
         docker = self.bin / "docker"
-        docker.write_text(DOCKER_STUB, encoding="utf-8")
+        docker.write_text(DOCKER_STUB, encoding="utf-8", newline="\n")
         docker.chmod(docker.stat().st_mode | stat.S_IXUSR)
         self.log = temp / "docker.log"
         self.json = temp / "image.json"
@@ -82,7 +84,7 @@ class Stub:
         )
         if verify is not None:
             env["VERITRA_VERIFY_GO_IMAGE_DIGEST"] = verify
-        return subprocess.run(["/bin/sh", str(SCRIPT)], env=env, capture_output=True, text=True, check=False)
+        return subprocess.run([posix_shell.find("sh"), str(SCRIPT)], env=env, capture_output=True, text=True, check=False)
 
     def calls(self) -> list[str]:
         return self.log.read_text(encoding="utf-8").splitlines()
@@ -189,14 +191,22 @@ def test_docker_failure_fails(stub: Stub) -> None:
 def test_missing_docker_fails_closed(stub: Stub) -> None:
     tools = stub.temp / "tools"
     tools.mkdir()
-    for tool in ("dirname", "tr", "sed", "head", "grep", "sort", "python3"):
-        found = shutil.which(tool)
-        assert found, tool
-        os.symlink(found, tools / tool)
+    path = str(tools)
+    if posix_shell.usr_bin():
+        # Windows: the coreutils need their DLLs beside them, so keep Git's
+        # directory on PATH instead of symlinking (it has no docker).
+        posix_shell.write_python3_shim(tools)
+        path = os.pathsep.join([str(tools), posix_shell.usr_bin()])
+        assert shutil.which("docker", path=path) is None
+    else:
+        for tool in ("dirname", "tr", "sed", "head", "grep", "sort", "python3"):
+            found = shutil.which(tool)
+            assert found, tool
+            os.symlink(found, tools / tool)
     # The offline checks still pass with this PATH ...
-    assert stub.run(None, path=str(tools)).returncode == 0
+    assert stub.run(None, path=path).returncode == 0
     # ... and verification without docker fails.
-    result = stub.run("1", path=str(tools))
+    result = stub.run("1", path=path)
     assert result.returncode != 0, result.stdout
     assert "docker" in result.stderr, result.stderr
 

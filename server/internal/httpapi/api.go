@@ -18,6 +18,7 @@ import (
 	"private-messenger/server/internal/auth"
 	"private-messenger/server/internal/domain"
 	"private-messenger/server/internal/messaging"
+	"private-messenger/server/internal/mlswire"
 	"private-messenger/server/internal/push"
 	"private-messenger/server/internal/realtime"
 	"private-messenger/server/internal/storage"
@@ -382,6 +383,14 @@ func validRetention(seconds *int64) bool {
 	return *seconds >= 0 && *seconds <= tenYears
 }
 
+// validDeviceKeyPackage reports whether keyPackage is one RFC 9420
+// KeyPackage in the client's encoding, within the 64 B to 48 KiB transport
+// bound. The check is structural only: signatures and the credential's
+// binding to the enrollment signing key are not verified.
+func validDeviceKeyPackage(keyPackage []byte) bool {
+	return mlswire.ValidateKeyPackage(keyPackage) == nil
+}
+
 func isReservedNonProductionKeyPackage(keyPackage []byte) bool {
 	marker := strings.ToLower(string(keyPackage))
 	return strings.Contains(marker, "test_only") ||
@@ -474,6 +483,8 @@ func handleStorageError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 	case errors.Is(err, storage.ErrNotMember), errors.Is(err, storage.ErrForbidden):
 		writeError(w, http.StatusForbidden, "forbidden")
+	case errors.Is(err, storage.ErrPostingRestricted):
+		writeError(w, http.StatusForbidden, "posting_restricted")
 	case errors.Is(err, storage.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found")
 	case errors.Is(err, storage.ErrMessageExpired):

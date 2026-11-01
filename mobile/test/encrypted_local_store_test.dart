@@ -184,9 +184,9 @@ void main() {
     final root = directory.path;
     final rootPaths = <String>[
       root,
-      '$root/veritra-local.db-wal',
-      '$root/veritra-local.db-shm',
-      '$root/veritra-local.db',
+      '$root${Platform.pathSeparator}veritra-local.db-wal',
+      '$root${Platform.pathSeparator}veritra-local.db-shm',
+      '$root${Platform.pathSeparator}veritra-local.db',
     ];
     expect(excluded, <List<String>>[rootPaths, rootPaths]);
     // On first launch the directory is excluded before the new database is
@@ -194,13 +194,18 @@ void main() {
     // directory covers WAL and SHM files created later.
     expect(events,
         <String>['exclude before the file', 'open', 'exclude existing']);
-    expect(File('$root/veritra-local.db').existsSync(), isTrue);
-    expect(File('$root/veritra-local.db-wal').existsSync(), isTrue);
+    expect(File('$root${Platform.pathSeparator}veritra-local.db').existsSync(),
+        isTrue);
+    expect(
+        File('$root${Platform.pathSeparator}veritra-local.db-wal').existsSync(),
+        isTrue);
 
-    final demo = '$root/profiles/demo';
+    final demo =
+        '$root${Platform.pathSeparator}profiles${Platform.pathSeparator}demo';
     await openStore(namespace: 'demo').saveSyncCursor(1);
     expect(excluded.last.first, demo);
-    expect(excluded.last.last, '$demo/veritra-local.db');
+    expect(
+        excluded.last.last, '$demo${Platform.pathSeparator}veritra-local.db');
 
     // Defence in depth only: a platform failure does not block the store.
     for (final database in databases) {
@@ -236,7 +241,8 @@ void main() {
         throwsA(_storeFailure(LocalStoreFailureKind.keyRejected)));
     expect(excluded, hasLength(1));
     expect(excluded.single.first, directory.path);
-    expect(excluded.single, contains('${directory.path}/veritra-local.db'));
+    expect(excluded.single,
+        contains('${directory.path}${Platform.pathSeparator}veritra-local.db'));
 
     // So is one whose key is gone: that open fails before any database.
     await secureStorage.delete(key: 'veritra.database_key.v1');

@@ -6,14 +6,12 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
-	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -1196,11 +1194,11 @@ type rateLimiter struct {
 	buckets        map[string]*bucket
 	accountBuckets map[string]*bucket
 	// overflow and accountOverflow serve keys that arrive while the matching
-	// table is full of live buckets that all used a credential budget. Each
-	// is sharded by the key's network (overflowShard). They are not table
-	// entries.
-	overflow        [overflowShards]bucket
-	accountOverflow [overflowShards]bucket
+	// table is full of live buckets that all used a credential budget: one
+	// shared bucket per table, with the same limits as a table entry (owner
+	// decision). They are not table entries.
+	overflow        bucket
+	accountOverflow bucket
 	evictions       atomic.Int64
 	rejections      [len(rateLimitScopes)]atomic.Int64
 }
@@ -1269,7 +1267,7 @@ func (rl *rateLimiter) cleanupLoop(ctx context.Context) {
 // bucketLocked returns key's bucket in table for the current minute,
 // starting a new one (and evicting from the same table under pressure)
 // when needed. rl.mu must be held.
-func (rl *rateLimiter) bucketLocked(table map[string]*bucket, overflow *[overflowShards]bucket, host, key string, now time.Time) *bucket {
+func (rl *rateLimiter) bucketLocked(table map[string]*bucket, overflow *bucket, key string, now time.Time) *bucket {
 	b, ok := table[key]
 	if ok && !b.reset.Before(now) {
 		return b
@@ -1277,47 +1275,20 @@ func (rl *rateLimiter) bucketLocked(table map[string]*bucket, overflow *[overflo
 	if !ok && len(table) >= rl.maxEntries && !rl.evictOneLocked(table, now) {
 		// Every sampled entry is live and has used a credential or
 		// enrollment budget, which must not be reset before its minute
-		// ends. This key shares the overflow bucket of its network instead
-		// (a /48 for IPv6, a /24 for IPv4, salted and hashed into a fixed
-		// number of buckets): the cap holds, nothing is forgotten, and one
-		// network that fills the table and burns its overflow bucket cannot
-		// refuse clients of other networks.
+		// ends. This key shares the table's one overflow bucket instead,
+		// with the same limits: the cap holds and nothing is forgotten.
+		// Every key in the overflow shares its budget, so once a flood has
+		// spent it, other new keys are refused until the minute ends or a
+		// table entry frees up (owner decision: one shared bucket).
 		rl.evictions.Add(1)
-		shared := &overflow[rl.overflowShard(host)]
-		if shared.reset.Before(now) {
-			*shared = bucket{reset: now.Add(time.Minute)}
+		if overflow.reset.Before(now) {
+			*overflow = bucket{reset: now.Add(time.Minute)}
 		}
-		return shared
+		return overflow
 	}
 	b = &bucket{reset: now.Add(time.Minute)}
 	table[key] = b
 	return b
-}
-
-// overflowShards is how many overflow buckets each table has.
-const overflowShards = 256
-
-// overflowShard picks the overflow bucket for host (as rateLimitHost spells
-// it) from its network: a /48 for IPv6, a /24 for IPv4. The salt keeps the
-// assignment private to this process.
-func (rl *rateLimiter) overflowShard(host string) int {
-	network := host
-	if prefix, err := netip.ParsePrefix(host); err == nil {
-		network = netip.PrefixFrom(prefix.Addr(), 48).Masked().String()
-	} else if addr, err := netip.ParseAddr(host); err == nil {
-		addr = addr.Unmap()
-		if addr.Is4() {
-			network = netip.PrefixFrom(addr, 24).Masked().String()
-		} else {
-			network = netip.PrefixFrom(addr, 48).Masked().String()
-		}
-	}
-	hasher := sha256.New()
-	_, _ = hasher.Write(rl.salt[:])
-	_, _ = hasher.Write([]byte("overflow\x00"))
-	_, _ = hasher.Write([]byte(network))
-	sum := hasher.Sum(nil)
-	return int(binary.BigEndian.Uint32(sum[:4]) % overflowShards)
 }
 
 func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
@@ -1335,7 +1306,7 @@ func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
 		signedIn := class == httpapi.OrdinaryRoute && httpapi.HasBearerToken(r)
 
 		rl.mu.Lock()
-		b := rl.bucketLocked(rl.buckets, &rl.overflow, host, remoteHash(rl.salt[:], host), now)
+		b := rl.bucketLocked(rl.buckets, &rl.overflow, remoteHash(rl.salt[:], host), now)
 		if signedIn {
 			b.signedIn++
 		} else {
@@ -1438,11 +1409,11 @@ func (c *accountCharge) settleUnused() {
 // settleLocked charges key's general count in table for the current minute
 // against limit, counting a refusal under scope unless it is -1. rl.mu
 // must be held.
-func (c *accountCharge) settleLocked(table map[string]*bucket, overflow *[overflowShards]bucket, key string, limit, scope int) {
+func (c *accountCharge) settleLocked(table map[string]*bucket, overflow *bucket, key string, limit, scope int) {
 	rl := c.limiter
 	now := time.Now()
 	c.done = true
-	b := rl.bucketLocked(table, overflow, c.host, key, now)
+	b := rl.bucketLocked(table, overflow, key, now)
 	b.general++
 	c.ok = b.general <= limit
 	c.retryAfter = boundedRetryAfter(b.reset.Sub(now))
@@ -1507,7 +1478,7 @@ func rateLimitHost(host string) string {
 // code guessing and must not reset before their minute ends, but a bucket
 // with only ordinary request counts costs its owner little to lose. If every
 // sampled bucket has used a credential budget nothing is evicted and the
-// caller falls back to the network's overflow bucket.
+// caller falls back to the table's overflow bucket.
 func (rl *rateLimiter) evictOneLocked(table map[string]*bucket, now time.Time) bool {
 	if len(table) < rl.maxEntries {
 		return true
@@ -1544,7 +1515,7 @@ func (rl *rateLimiter) evictOneLocked(table map[string]*bucket, now time.Time) b
 // stats reports the entries of both tables together and how many times a new
 // key found its table full of live buckets: veritra_rate_limit_evictions_total
 // counts each, whether a bucket with no credential use was evicted to make
-// room or the key was admitted through its network's overflow bucket.
+// room or the key was admitted through the table's overflow bucket.
 func (rl *rateLimiter) stats() (entries int, evictions int64) {
 	rl.mu.Lock()
 	entries = len(rl.buckets) + len(rl.accountBuckets)
