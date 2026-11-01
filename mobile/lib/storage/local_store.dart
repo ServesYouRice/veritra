@@ -135,17 +135,51 @@ class StoredCryptoState {
     required this.counter,
     required this.stateKey,
     required this.sealedState,
+    this.changes = const <CryptoRecordChange>[],
   });
 
   final int counter;
   final List<int> stateKey;
+
+  /// The root (format 4) or, before migration, the whole format 2/3 state.
   final List<int> sealedState;
+
+  /// The record writes and deletes that go with [sealedState] (D70). They
+  /// are applied in the same transaction as the root, never on their own.
+  /// A loaded state carries none: the records are read separately.
+  final List<CryptoRecordChange> changes;
+}
+
+/// Record kinds of the sealed MLS state (D70): 1 the device record, 2 one
+/// group, 3 one key package. Kind 0 is the root, kept in the singleton.
+const int cryptoRecordKindDevice = 1;
+const int cryptoRecordKindGroup = 2;
+const int cryptoRecordKindKeyPackage = 3;
+
+/// The largest sealed record the native library writes or reads: a 32 MiB
+/// group plus the record overhead (D70 caps).
+const int maxSealedCryptoRecordBytes = 32 * 1024 * 1024 + 4096;
+const int _maxCryptoRecordIdBytes = 255;
+
+/// One change to a sealed MLS record: an upsert of [sealed], or a delete
+/// when [sealed] is null.
+class CryptoRecordChange {
+  const CryptoRecordChange({
+    required this.kind,
+    required this.recordId,
+    required this.generation,
+    required this.sealed,
+  });
+
+  final int kind;
+  final List<int> recordId;
+  final int generation;
+  final List<int>? sealed;
 }
 
 /// One sealed MLS record of the per-record state (D70, format 4), as the
-/// root in [StoredCryptoState.sealedState] lists it. Nothing writes records
-/// before the ABI-10 package (D70 S3); every path that drops the crypto
-/// state drops them with it.
+/// root in [StoredCryptoState.sealedState] lists it. Every path that drops
+/// the crypto state drops them with it.
 class StoredCryptoRecord {
   StoredCryptoRecord({
     required this.kind,
@@ -495,9 +529,26 @@ abstract class LocalStore {
   });
   Future<StoredCryptoState?> loadCryptoState();
 
-  /// The sealed MLS records (D70), ordered by kind, then id. Empty until
-  /// the ABI-10 package writes them; cleared with the crypto state.
+  /// The sealed MLS records (D70), ordered by kind, then id. Cleared with
+  /// the crypto state.
   Future<List<StoredCryptoRecord>> loadCryptoRecords();
+
+  /// The crypto state and its records, read together so a restore never
+  /// mixes two states (D70).
+  Future<({StoredCryptoState? state, List<StoredCryptoRecord> records})>
+      loadCryptoSnapshot();
+
+  /// The one-way format 2/3 to format 4 migration (D70 section 5): replaces
+  /// the stored state only if it is still [expectedSealedState] at
+  /// [expectedCounter], drops any records left beside it, and writes
+  /// [state] (one counter on, every record in [StoredCryptoState.changes])
+  /// in one transaction. The sync cursor does not move.
+  Future<void> commitCryptoMigration({
+    required int expectedCounter,
+    required List<int> expectedSealedState,
+    required StoredCryptoState state,
+    void Function()? checkCanCommit,
+  });
   Future<List<int>> exportHistorySnapshot();
   Future<void> importHistorySnapshot(
       List<int> encoded, HistoryImportContext context);
@@ -790,8 +841,28 @@ class MemoryLocalStore implements LocalStore {
     if (_cryptoState != null && state.counter <= _cryptoState!.counter) {
       throw StateError('crypto state counter must increase');
     }
-    _cryptoState = _copyCryptoState(state);
+    _cryptoRecords.clear();
+    _setCryptoState(state);
     _syncCursor = syncCursor;
+  }
+
+  /// Stores [state] and applies its record changes, as one step.
+  void _setCryptoState(StoredCryptoState state) {
+    for (final change in state.changes) {
+      final key = _cryptoRecordKey(change.kind, change.recordId);
+      final sealed = change.sealed;
+      if (sealed == null) {
+        _cryptoRecords.remove(key);
+      } else {
+        _cryptoRecords[key] = StoredCryptoRecord(
+          kind: change.kind,
+          recordId: List<int>.from(change.recordId),
+          generation: change.generation,
+          sealed: List<int>.from(sealed),
+        );
+      }
+    }
+    _cryptoState = _copyCryptoState(state);
   }
 
   @override
@@ -848,7 +919,7 @@ class MemoryLocalStore implements LocalStore {
     _noticeState = nextNotices;
     _history = nextHistory;
     _historyNamespace = nextNamespace;
-    _cryptoState = _copyCryptoState(transition.state);
+    _setCryptoState(transition.state);
     _processedMlsMessages.add(transition.messageId);
     final resolved = transition.resolvedMlsOutboxKey;
     if (resolved != null) _mlsOutbox.remove(resolved);
@@ -944,7 +1015,7 @@ class MemoryLocalStore implements LocalStore {
         .any((message) => _mlsOutbox.containsKey(message.idempotencyKey))) {
       throw StateError('duplicate MLS outbox idempotency key');
     }
-    _cryptoState = _copyCryptoState(transition.state);
+    _setCryptoState(transition.state);
     for (final message in transition.messages) {
       _mlsOutbox[message.idempotencyKey] = message;
     }
@@ -991,7 +1062,7 @@ class MemoryLocalStore implements LocalStore {
       throw const OutboxFullException();
     }
     _applyHistoryEffects(transition.messageEffects);
-    _cryptoState = _copyCryptoState(transition.state);
+    _setCryptoState(transition.state);
     final sentText = transition.draftText;
     final draft = _drafts[transition.envelope.conversationId];
     if (sentText != null &&
@@ -1016,7 +1087,7 @@ class MemoryLocalStore implements LocalStore {
   }) async {
     _validateLocalMlsState(expectedCounter, expectedCursor, state,
         currentCounter: _cryptoState?.counter ?? 0, currentCursor: _syncCursor);
-    _cryptoState = _copyCryptoState(state);
+    _setCryptoState(state);
     if (resolvedMlsOutboxKey != null) _mlsOutbox.remove(resolvedMlsOutboxKey);
   }
 
@@ -1030,8 +1101,34 @@ class MemoryLocalStore implements LocalStore {
     return [for (final k in keys) _copyCryptoRecord(_cryptoRecords[k]!)];
   }
 
-  /// Puts records in place the way the ABI-10 package will, so tests can
-  /// check that every crypto-state clear drops them (D70 S2).
+  @override
+  Future<({StoredCryptoState? state, List<StoredCryptoRecord> records})>
+      loadCryptoSnapshot() async =>
+          (state: await loadCryptoState(), records: await loadCryptoRecords());
+
+  @override
+  Future<void> commitCryptoMigration({
+    required int expectedCounter,
+    required List<int> expectedSealedState,
+    required StoredCryptoState state,
+    void Function()? checkCanCommit,
+  }) async {
+    checkCanCommit?.call();
+    _validateCryptoMigration(state);
+    final current = _cryptoState;
+    if (current == null ||
+        current.counter != expectedCounter ||
+        state.counter != expectedCounter + 1 ||
+        !_bytesEqual(current.sealedState, expectedSealedState) ||
+        !_bytesEqual(current.stateKey, state.stateKey)) {
+      throw StateError('stale or changed crypto state migration');
+    }
+    _cryptoRecords.clear();
+    _setCryptoState(state);
+  }
+
+  /// Puts records in place directly, so tests can check that every
+  /// crypto-state clear drops them (D70 S2).
   @visibleForTesting
   void seedCryptoRecordsForTest(Iterable<StoredCryptoRecord> records) {
     for (final r in records) {
@@ -2047,6 +2144,7 @@ class SecureLocalStore implements LocalStore {
       stateKey: state.stateKey,
       sealedState: state.sealedState,
       cursor: syncCursor,
+      recordChanges: _recordWrites(state),
     );
   }
 
@@ -2075,6 +2173,7 @@ class SecureLocalStore implements LocalStore {
               ))
           .toList(growable: false),
       deletedEnvelopeIds: transition.deletedEnvelopeIds,
+      recordChanges: _recordWrites(transition.state),
       messageEffects: transition.messageEffects,
       failureInjector: _mlsCommitFailureInjector,
       leaseKey: _syncLeaseKey,
@@ -2137,6 +2236,7 @@ class SecureLocalStore implements LocalStore {
                 payload: message.payload,
               ))
           .toList(growable: false),
+      recordChanges: _recordWrites(transition.state),
       leaseKey: _syncLeaseKey,
     );
   }
@@ -2203,6 +2303,7 @@ class SecureLocalStore implements LocalStore {
         maxEntries: maxPendingEnvelopes,
         draftText: transition.draftText,
         messageEffects: transition.messageEffects,
+        recordChanges: _recordWrites(transition.state),
         leaseKey: _syncLeaseKey,
       );
     } on StateError catch (error) {
@@ -2228,6 +2329,7 @@ class SecureLocalStore implements LocalStore {
       counter: state.counter,
       stateKey: state.stateKey,
       sealedState: state.sealedState,
+      recordChanges: _recordWrites(state),
       leaseKey: _syncLeaseKey,
       resolvedMlsOutboxKey: resolvedMlsOutboxKey,
     );
@@ -2249,11 +2351,65 @@ class SecureLocalStore implements LocalStore {
   @override
   Future<List<StoredCryptoRecord>> loadCryptoRecords() async => [
         for (final row in await (await _database()).readCryptoRecords())
-          StoredCryptoRecord(
-            kind: row.kind,
-            recordId: List<int>.from(row.recordId),
-            generation: row.generation,
-            sealed: List<int>.from(row.sealed),
+          _storedRecord(row),
+      ];
+
+  @override
+  Future<({StoredCryptoState? state, List<StoredCryptoRecord> records})>
+      loadCryptoSnapshot() async {
+    final snapshot = await (await _database()).readCryptoSnapshot();
+    final row = snapshot.state;
+    StoredCryptoState? state;
+    if (row != null) {
+      state = StoredCryptoState(
+        counter: row.counter,
+        stateKey: row.stateKey,
+        sealedState: row.sealedState,
+      );
+      _validateCryptoState(state);
+    }
+    return (
+      state: state,
+      records: [for (final r in snapshot.records) _storedRecord(r)],
+    );
+  }
+
+  @override
+  Future<void> commitCryptoMigration({
+    required int expectedCounter,
+    required List<int> expectedSealedState,
+    required StoredCryptoState state,
+    void Function()? checkCanCommit,
+  }) async {
+    _validateCryptoMigration(state);
+    await (await _database()).commitCryptoMigration(
+      expectedCounter: expectedCounter,
+      expectedSealedState: expectedSealedState,
+      counter: state.counter,
+      stateKey: state.stateKey,
+      sealedState: state.sealedState,
+      recordChanges: _recordWrites(state),
+      leaseKey: _syncLeaseKey,
+      failureInjector: _mlsCommitFailureInjector,
+      checkCanCommit: checkCanCommit,
+    );
+  }
+
+  static StoredCryptoRecord _storedRecord(LocalCryptoRecord row) =>
+      StoredCryptoRecord(
+        kind: row.kind,
+        recordId: List<int>.from(row.recordId),
+        generation: row.generation,
+        sealed: List<int>.from(row.sealed),
+      );
+
+  static List<CryptoRecordWrite> _recordWrites(StoredCryptoState state) => [
+        for (final change in state.changes)
+          (
+            kind: change.kind,
+            recordId: change.recordId,
+            generation: change.generation,
+            sealed: change.sealed,
           ),
       ];
 
@@ -3501,6 +3657,31 @@ void _validateCryptoState(StoredCryptoState state) {
       state.sealedState.isEmpty ||
       state.sealedState.length > 32 * 1024 * 1024) {
     throw const FormatException('invalid protected crypto state');
+  }
+  // Each change belongs to this state's generation, and names one record
+  // once (D70).
+  final seen = <String>{};
+  for (final change in state.changes) {
+    final sealed = change.sealed;
+    if (change.kind < cryptoRecordKindDevice ||
+        change.kind > cryptoRecordKindKeyPackage ||
+        change.generation != state.counter ||
+        change.recordId.length > _maxCryptoRecordIdBytes ||
+        (change.kind == cryptoRecordKindDevice) != change.recordId.isEmpty ||
+        (sealed != null &&
+            (sealed.isEmpty || sealed.length > maxSealedCryptoRecordBytes)) ||
+        !seen.add(_cryptoRecordKey(change.kind, change.recordId))) {
+      throw const FormatException('invalid protected crypto record');
+    }
+  }
+}
+
+/// A migration writes a complete state: a device record, and no deletes.
+void _validateCryptoMigration(StoredCryptoState state) {
+  _validateCryptoState(state);
+  if (state.changes.any((change) => change.sealed == null) ||
+      !state.changes.any((change) => change.kind == cryptoRecordKindDevice)) {
+    throw const FormatException('invalid crypto state migration');
   }
 }
 

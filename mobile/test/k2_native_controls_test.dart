@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 
+import 'native_state_round_trip.dart';
+
 void main() {
   final libraryPath = Platform.environment['VERITRA_CRYPTO_LIBRARY'];
   final skip = libraryPath == null ? 'host native library not built' : false;
@@ -56,11 +58,8 @@ void main() {
       final originalProof = proof();
       expect(originalProof.signature, hasLength(64));
       expect(originalProof.requestHash, hasLength(32));
-      final sealedRecipient = recipient.sealState(stateKey, 1);
-      recipient.close();
-      recipient = bindings
-          .restoreDevice('account', 'recipient', stateKey, 1, sealedRecipient)
-          .device;
+      recipient = reopenFreshDevice(bindings, recipient, 'account', 'recipient',
+          stateKey: stateKey);
       final resumed = recipient.k2ReceiveBegin(beginning, secret,
           originalExpiresAt: 1000, now: 100);
       expect(resumed.transferPublicKey, received.transferPublicKey);
@@ -68,11 +67,8 @@ void main() {
       expect(proof().requestHash, originalProof.requestHash);
 
       expect(source.k2SourceConfirm(id, claimed.sas, now: 100), 100);
-      final sealedSource = source.sealState(stateKey, 1);
-      source.close();
-      source = bindings
-          .restoreDevice('account', 'source', stateKey, 1, sealedSource)
-          .device;
+      source = reopenFreshDevice(bindings, source, 'account', 'source',
+          stateKey: stateKey);
       expect(source.k2Inspect(id, now: 100).intentPresent, isTrue);
       expect(source.k2SourceConfirm(id, claimed.sas, now: 110), 100);
       final approval = source.k2SourceApprovalRequest(id, now: 110);

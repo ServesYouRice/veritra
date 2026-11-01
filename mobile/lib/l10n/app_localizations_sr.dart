@@ -1764,6 +1764,10 @@ class AppLocalizationsSr extends AppLocalizations {
   String get chatMessageUndecryptable => 'Ова порука није могла да се откључа';
 
   @override
+  String get chatMessageWelcomeUnavailable =>
+      'Придруживање овом ћаскању није успело. Замолите члана да вас поново дода.';
+
+  @override
   String chatReactionCount(String reaction, int count) {
     final intl.NumberFormat countNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -4320,6 +4324,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get chatMessageUndecryptable => 'Ova poruka nije mogla da se otključa';
+
+  @override
+  String get chatMessageWelcomeUnavailable =>
+      'Pridruživanje ovom ćaskanju nije uspelo. Zamolite člana da vas ponovo doda.';
 
   @override
   String chatReactionCount(String reaction, int count) {

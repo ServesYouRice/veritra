@@ -190,6 +190,7 @@ impl MlsDevice {
                 account_id: account_id.to_vec(),
                 device_id: device_id.to_vec(),
                 pending_transfers,
+                sealed: Default::default(),
             },
             counter,
         ))
@@ -197,7 +198,7 @@ impl MlsDevice {
 }
 
 /// `records` must be sorted by key and unique (`with_records` ensures it).
-fn encode_records(records: &[(&[u8], &[u8])]) -> Result<Vec<u8>, MlsError> {
+pub(super) fn encode_records(records: &[(&[u8], &[u8])]) -> Result<Vec<u8>, MlsError> {
     if records.len() > MAX_RECORDS {
         return Err(MlsError::InvalidState);
     }
@@ -232,7 +233,7 @@ fn encode_records(records: &[(&[u8], &[u8])]) -> Result<Vec<u8>, MlsError> {
     Ok(output)
 }
 
-fn decode_records(bytes: &[u8]) -> Result<HashMap<Vec<u8>, Vec<u8>>, MlsError> {
+pub(super) fn decode_records(bytes: &[u8]) -> Result<HashMap<Vec<u8>, Vec<u8>>, MlsError> {
     let mut reader = Reader::new(bytes);
     let count = reader.u32()? as usize;
     if count > MAX_RECORDS {
@@ -257,24 +258,24 @@ fn decode_records(bytes: &[u8]) -> Result<HashMap<Vec<u8>, Vec<u8>>, MlsError> {
     Ok(records)
 }
 
-fn push_u16_bytes(output: &mut Vec<u8>, bytes: &[u8]) -> Result<(), MlsError> {
+pub(super) fn push_u16_bytes(output: &mut Vec<u8>, bytes: &[u8]) -> Result<(), MlsError> {
     let len = u16::try_from(bytes.len()).map_err(|_| MlsError::InvalidState)?;
     output.extend_from_slice(&len.to_be_bytes());
     output.extend_from_slice(bytes);
     Ok(())
 }
 
-struct Reader<'a> {
+pub(super) struct Reader<'a> {
     bytes: &'a [u8],
-    offset: usize,
+    pub(super) offset: usize,
 }
 
 impl<'a> Reader<'a> {
-    fn new(bytes: &'a [u8]) -> Self {
+    pub(super) fn new(bytes: &'a [u8]) -> Self {
         Self { bytes, offset: 0 }
     }
 
-    fn take(&mut self, len: usize) -> Result<&'a [u8], MlsError> {
+    pub(super) fn take(&mut self, len: usize) -> Result<&'a [u8], MlsError> {
         let end = self.offset.checked_add(len).ok_or(MlsError::InvalidState)?;
         let value = self
             .bytes
@@ -284,7 +285,7 @@ impl<'a> Reader<'a> {
         Ok(value)
     }
 
-    fn u16(&mut self) -> Result<u16, MlsError> {
+    pub(super) fn u16(&mut self) -> Result<u16, MlsError> {
         Ok(u16::from_be_bytes(
             self.take(2)?
                 .try_into()
@@ -292,7 +293,7 @@ impl<'a> Reader<'a> {
         ))
     }
 
-    fn u32(&mut self) -> Result<u32, MlsError> {
+    pub(super) fn u32(&mut self) -> Result<u32, MlsError> {
         Ok(u32::from_be_bytes(
             self.take(4)?
                 .try_into()
@@ -300,7 +301,7 @@ impl<'a> Reader<'a> {
         ))
     }
 
-    fn u64(&mut self) -> Result<u64, MlsError> {
+    pub(super) fn u64(&mut self) -> Result<u64, MlsError> {
         Ok(u64::from_be_bytes(
             self.take(8)?
                 .try_into()
@@ -308,12 +309,12 @@ impl<'a> Reader<'a> {
         ))
     }
 
-    fn u16_bytes(&mut self) -> Result<&'a [u8], MlsError> {
+    pub(super) fn u16_bytes(&mut self) -> Result<&'a [u8], MlsError> {
         let len = self.u16()? as usize;
         self.take(len)
     }
 
-    fn finished(&self) -> bool {
+    pub(super) fn finished(&self) -> bool {
         self.offset == self.bytes.len()
     }
 }

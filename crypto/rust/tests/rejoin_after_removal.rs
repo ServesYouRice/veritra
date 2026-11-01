@@ -1,6 +1,6 @@
 //! A device removed from a conversation and later re-added must be able to
-//! join again from the new Welcome once it has applied its own removal: the
-//! stored group is then inactive and the Welcome replaces it.
+//! join again from the new Welcome once it has applied its own removal:
+//! applying it drops the stored group (D70), so the Welcome is a fresh join.
 //!
 //! An active stored group is never replaced. A device that never saw its
 //! removal is refused, and keeps its group and its key package, until its
@@ -8,7 +8,9 @@
 //! conversation").
 
 use openmls::prelude::MlsGroup;
-use private_messenger_crypto::mls::{MemberAdd, MemberIdentity, MlsDevice, MlsError};
+use private_messenger_crypto::mls::{
+    MemberAdd, MemberIdentity, MlsDevice, MlsError, RestoreLoader,
+};
 
 const GROUP_ID: &[u8] = b"conv_rejoin";
 const STATE_KEY: [u8; 32] = [7; 32];
@@ -95,21 +97,33 @@ fn alice_and_bob() -> (Member, Member, MlsGroup, MlsGroup) {
     (alice, bob, alice_group, bob_group)
 }
 
-fn assert_rejoined(alice: &Member, alice_group: &mut MlsGroup, bob: &Member, welcome: &[u8]) {
+/// Applying its own removal leaves the device no group under this id.
+fn assert_dropped(bob: &Member) {
+    assert_eq!(
+        bob.device.load_group(GROUP_ID).err(),
+        Some(MlsError::InvalidState)
+    );
+}
+
+fn assert_rejoined(alice: &Member, alice_group: &mut MlsGroup, mut bob: Member, welcome: &[u8]) {
     let mut bob_group = bob
         .device
         .join_group(GROUP_ID, welcome)
         .expect("a re-added device joins from its new Welcome");
     assert!(bob_group.is_active());
     assert_eq!(bob_group.epoch(), alice_group.epoch());
-    alice.send(alice_group, bob, &mut bob_group, b"welcome back");
+    alice.send(alice_group, &bob, &mut bob_group, b"welcome back");
     bob.send(&mut bob_group, alice, alice_group, b"glad to be back");
 
-    // The replaced group left nothing behind: the state seals and restores,
-    // and a second removal and re-add works the same way.
-    let sealed = bob.device.seal_state(&STATE_KEY, 2).unwrap();
-    let (restored, _) =
-        MlsDevice::restore_state(&bob.account, &bob.device_id, &STATE_KEY, 2, &sealed).unwrap();
+    // The new group left nothing behind: the state seals to records and
+    // restores, and a second removal and re-add works the same way.
+    let set = bob.device.seal_changes(&STATE_KEY, 1).unwrap();
+    let mut loader =
+        RestoreLoader::begin(&bob.account, &bob.device_id, &STATE_KEY, 1, &set.root).unwrap();
+    for change in &set.changes {
+        loader.add(change.sealed.as_ref().unwrap()).unwrap();
+    }
+    let (restored, _) = loader.finish().unwrap();
     let mut restored_group = restored.load_group(GROUP_ID).unwrap();
     let ciphertext = alice.device.encrypt(alice_group, b"after restore").unwrap();
     assert_eq!(
@@ -133,6 +147,7 @@ fn assert_rejoined(alice: &Member, alice_group: &mut MlsGroup, bob: &Member, wel
         .process_commit(&mut restored_group, &removal)
         .unwrap();
     assert!(!restored_group.is_active());
+    assert_dropped(&bob);
     let (_, welcome) = alice.commit(alice_group, &[&bob], &[]);
     let mut again = bob.device.join_group(GROUP_ID, &welcome).unwrap();
     alice.send(alice_group, &bob, &mut again, b"second return");
@@ -144,9 +159,10 @@ fn a_device_that_processed_its_removal_rejoins() {
     let (removal, _) = alice.commit(&mut alice_group, &[], &[&bob]);
     bob.device.process_commit(&mut bob_group, &removal).unwrap();
     assert!(!bob_group.is_active());
+    assert_dropped(&bob);
 
     let (_, welcome) = alice.commit(&mut alice_group, &[&bob], &[]);
-    assert_rejoined(&alice, &mut alice_group, &bob, &welcome);
+    assert_rejoined(&alice, &mut alice_group, bob, &welcome);
 }
 
 /// Once the device has applied its removal it is in no group under this id,
@@ -166,7 +182,7 @@ fn a_device_that_processed_its_removal_rejoins_through_a_newer_member() {
 }
 
 /// Bob was offline for several commits, his removal among them. Applying
-/// them in order leaves his group inactive, and the re-add then works.
+/// them in order drops his group, and the re-add then works.
 #[test]
 fn a_device_that_catches_up_on_missed_commits_rejoins() {
     let (alice, bob, mut alice_group, mut bob_group) = alice_and_bob();
@@ -178,7 +194,8 @@ fn a_device_that_catches_up_on_missed_commits_rejoins() {
     assert!(bob_group.is_active());
     bob.device.process_commit(&mut bob_group, &removal).unwrap();
     assert!(!bob_group.is_active());
-    assert_rejoined(&alice, &mut alice_group, &bob, &welcome);
+    assert_dropped(&bob);
+    assert_rejoined(&alice, &mut alice_group, bob, &welcome);
 }
 
 /// Bob's stored group still loads, active and at the same epoch.
@@ -207,7 +224,7 @@ fn a_device_that_never_saw_its_removal_is_refused_until_it_does() {
     assert_untouched(&bob, epoch);
 
     bob.device.process_commit(&mut bob_group, &removal).unwrap();
-    assert_rejoined(&alice, &mut alice_group, &bob, &welcome);
+    assert_rejoined(&alice, &mut alice_group, bob, &welcome);
 }
 
 /// A device the server made up builds its own group under the same id, at a

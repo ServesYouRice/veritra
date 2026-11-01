@@ -1589,11 +1589,22 @@ class _MessageBubble extends StatelessWidget {
 
   static const _undecryptableKeyPrefix = 'undecryptable:';
 
+  /// A Welcome this device could not use: its key package is gone or
+  /// expired (D74). The crypto service keys the `invalid` row
+  /// `welcome-unavailable:<sync event>:<server id>`.
+  bool get _isWelcomeUnavailable =>
+      local?.kind == LocalMessageKind.invalid &&
+      local!.key.startsWith(_welcomeUnavailableKeyPrefix);
+
+  static const _welcomeUnavailableKeyPrefix = 'welcome-unavailable:';
+
   String _placeholderLabel(AppLocalizations l10n) => _isUndecryptable
       ? l10n.chatMessageUndecryptable
-      : local?.kind == LocalMessageKind.invalid
-          ? l10n.chatMessageInvalid
-          : l10n.chatMessageUnsupported;
+      : _isWelcomeUnavailable
+          ? l10n.chatMessageWelcomeUnavailable
+          : local?.kind == LocalMessageKind.invalid
+              ? l10n.chatMessageInvalid
+              : l10n.chatMessageUnsupported;
 
   /// The attachments of an attachment message. Entries that fail to parse,
   /// or name another conversation, are left out rather than shown.

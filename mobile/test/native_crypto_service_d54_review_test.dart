@@ -389,21 +389,22 @@ class _FaultyBindings implements NativeCryptoBindings {
       _FaultyDevice(this, real.createDevice(accountId, deviceId));
 
   @override
-  ({NativeCryptoDevice device, int counter}) restoreDevice(
+  ({NativeCryptoDevice device, int generation}) restoreRecords(
       String accountId,
       String deviceId,
       List<int> stateKey,
-      int minimumCounter,
-      List<int> sealedState) {
+      int minimumGeneration,
+      List<int> root,
+      Iterable<List<int>> records) {
     restores++;
     if (restoreFaults.isNotEmpty) {
       throw NativeCryptoException(restoreFaults.removeAt(0));
     }
-    final restored = real.restoreDevice(
-        accountId, deviceId, stateKey, minimumCounter, sealedState);
+    final restored = real.restoreRecords(
+        accountId, deviceId, stateKey, minimumGeneration, root, records);
     return (
       device: _FaultyDevice(this, restored.device),
-      counter: restored.counter
+      generation: restored.generation
     );
   }
 
@@ -457,8 +458,8 @@ class _FaultyDevice implements NativeCryptoDevice {
   List<int> signingPublicKey() => _plain(real.signingPublicKey);
 
   @override
-  List<int> sealState(List<int> stateKey, int counter) =>
-      _plain(() => real.sealState(stateKey, counter));
+  NativeChangeSet sealChanges(List<int> stateKey, int generation) =>
+      _plain(() => real.sealChanges(stateKey, generation));
 
   @override
   void createGroup(String groupId) => _plain(() => real.createGroup(groupId));

@@ -470,6 +470,7 @@
   "chatMessageUnsupported": "Ova poruka zahteva noviju verziju aplikacije Veritra",
   "chatMessageInvalid": "Jedna poruka nije mogla da se pročita",
   "chatMessageUndecryptable": "Ova poruka nije mogla da se otključa",
+  "chatMessageWelcomeUnavailable": "Pridruživanje ovom ćaskanju nije uspelo. Zamolite člana da vas ponovo doda.",
   "chatReactionCount": "{reaction} {count}",
   "chatEdited": "izmenjeno",
   "chatTickSent": "Poslato",

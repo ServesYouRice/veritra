@@ -175,9 +175,9 @@ void main() {
     expect(
         await alice.service.groupEpoch('conv_1'), (epoch: 3, pending: false));
     expect(await bob.service.groupEpoch('conv_1'), (epoch: 3, pending: false));
-    // The tablet applies its own removal and can no longer send.
-    expect(
-        await tablet.service.groupEpoch('conv_1'), (epoch: 3, pending: false));
+    // The tablet applies its own removal, which drops its group (D70), and
+    // can no longer send.
+    expect(await tablet.service.groupEpoch('conv_1'), isNull);
     await expectLater(
         tablet.send(AppPayloadType.text, <String, Object?>{'text': 'still?'}),
         throwsA(isA<NativeCryptoException>()));
