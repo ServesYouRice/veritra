@@ -355,6 +355,8 @@ func (a *API) accountRecoveryStatus(w http.ResponseWriter, r *http.Request) {
 			a.publishCommittedEvent(r.Context(), []string{accountID}, realtime.Event{Version: "v1", Type: "device.revoked", ID: completion.RevokedEventIDs[i], Payload: map[string]string{"device_id": deviceID}, CreatedAt: now})
 			a.Hub.DisconnectDevice(accountID, deviceID)
 		}
+		// Completion also deleted the account's device-less sessions.
+		a.Hub.DisconnectDevice(accountID, "")
 		revoked := completion.RevokedDevices
 		if revoked == nil {
 			revoked = []string{}

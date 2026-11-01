@@ -40,6 +40,44 @@ func TestPutRecoveryKeyRejectsSmallOrderAndInvalidKeys(t *testing.T) {
 	}
 }
 
+// Completion deletes the account's device-less sessions, so their sockets
+// are closed too; another account's stay open.
+func TestRecoveryCompletionClosesDeviceLessSockets(t *testing.T) {
+	f := newRecoveryFixture(t, recoveryTestOrigin)
+	f.ownerRK = f.setRK(f.ownerToken)
+	f.makeOwnerIdle()
+	claimed := f.claimOK(claimBody(t, f.reserve("owner"), "owner-password-123", f.ownerRK, recoveryTestOrigin))
+	restore, err := f.app.Hub.Register(f.ownerAccountID, "", "198.51.100.8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.app.Hub.Unregister(restore)
+	other, err := f.app.Hub.Register("acct_other", "", "198.51.100.9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.app.Hub.Unregister(other)
+	if status, body := f.status(claimed.RequestID, claimed.ClaimToken); status != http.StatusOK {
+		t.Fatalf("status=%d body=%s", status, body)
+	}
+	deadline := time.After(5 * time.Second)
+	for closed := false; !closed; {
+		select {
+		case _, open := <-restore.Send():
+			closed = !open
+		case <-deadline:
+			t.Fatal("the device-less socket stayed open")
+		}
+	}
+	select {
+	case _, open := <-other.Send():
+		if !open {
+			t.Fatal("another account's device-less socket was closed")
+		}
+	default:
+	}
+}
+
 // A new recovery key cancels the waiting request; the live event names the
 // request, as the stored sync event does.
 func TestPutRecoveryKeyCancelEventNamesTheRequest(t *testing.T) {
