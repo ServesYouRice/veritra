@@ -786,16 +786,9 @@ func (s *Store) PruneExpiredContent(ctx context.Context, now time.Time) (int64, 
 	if err != nil {
 		return 0, nil, err
 	}
-	orphanKeys := make([]string, 0)
-	for orphans.Next() {
-		var key string
-		if err := orphans.Scan(&key); err != nil {
-			orphans.Close()
-			return 0, nil, err
-		}
-		orphanKeys = append(orphanKeys, key)
-	}
-	if err := orphans.Close(); err != nil {
+	// A query that stops early would leave orphaned blobs with no record.
+	orphanKeys, err := scanStorageKeys(orphans)
+	if err != nil {
 		return 0, nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM attachment_envelopes WHERE id IN (SELECT a.id FROM attachment_envelopes a WHERE a.created_at < ? AND NOT EXISTS (SELECT 1 FROM message_attachments ma WHERE ma.attachment_id = a.id) ORDER BY a.created_at, a.id LIMIT 500)`, orphanCutoff); err != nil {
@@ -1291,6 +1284,24 @@ var syncLatestExpr = `
 	             ORDER BY se.id DESC LIMIT 1)
 	     FROM memberships m WHERE m.account_id = ?1 AND m.conversation_id IS NOT NULL
 	  ))`
+
+// scanStorageKeys reads a one-column result of storage keys and closes it.
+// An iteration failure is returned, not taken for the end of the keys.
+func scanStorageKeys(rows rowIterator) ([]string, error) {
+	keys := make([]string, 0)
+	err := eachRow(rows, func(rows rowIterator) error {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return err
+		}
+		keys = append(keys, key)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return keys, nil
+}
 
 func (s *Store) SyncBounds(ctx context.Context, accountID string) (string, int64, int64, error) {
 	var epoch string
