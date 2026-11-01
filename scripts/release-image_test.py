@@ -9,6 +9,8 @@ from the network. POSIX only (the script is bash).
 
 from __future__ import annotations
 
+import posix_shell
+
 import io
 import os
 import shutil
@@ -41,7 +43,7 @@ fi
 
 def write_executable(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    path.write_text(content, encoding="utf-8", newline="\n")
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
@@ -66,7 +68,7 @@ class Scratch:
         (self.work / ".go-version").write_text("1.26.10\n", encoding="utf-8")
         (self.work / "server").mkdir()
         (self.work / "server/Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
-        (self.work / "server/main.go").write_text("package main\n// first\n", encoding="utf-8")
+        (self.work / "server/main.go").write_text("package main\n// first\n", encoding="utf-8", newline="\n")
         self.commit("release candidate")
         self.git(self.work, "push", "-q", "origin", "main")
 
@@ -121,7 +123,7 @@ class Scratch:
             env["RELEASE_TEST_HOOK"] = str(self.hook(hook))
         env.update(extra_env or {})
         return subprocess.run(
-            ["bash", str(self.work / "scripts" / SCRIPT.name), "--no-push", "--skip-smoke"],
+            [posix_shell.find("bash"), str(self.work / "scripts" / SCRIPT.name), "--no-push", "--skip-smoke"],
             cwd=self.temp,
             env=env,
             capture_output=True,

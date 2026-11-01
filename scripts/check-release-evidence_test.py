@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import posix_shell
+
 import copy
 import hashlib
 import importlib.util
@@ -1727,7 +1729,7 @@ def release_readiness_cases() -> None:
 
         def readiness(**env: str) -> tuple[subprocess.CompletedProcess[str], list[str]]:
             calls.unlink(missing_ok=True)
-            result = subprocess.run(["sh", str(scripts / "release-readiness.sh")], text=True, capture_output=True,
+            result = subprocess.run([posix_shell.find("sh"), str(scripts / "release-readiness.sh")], text=True, capture_output=True,
                                     check=False, env={**base, **env})
             logged = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
             return result, logged
