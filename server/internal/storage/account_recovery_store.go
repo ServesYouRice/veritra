@@ -318,7 +318,7 @@ func (s *Store) ClaimRecovery(ctx context.Context, input RecoveryClaimInput) (Re
 		readyAt = now.Add(input.Wait)
 	}
 	result := RecoveryClaimResult{ActiveDeviceSeen: active}
-	result.ReplacedRequest, result.ReplacedEventID, err = cancelWaitingRecoveryRequestTx(ctx, tx, input.AccountID, RecoveryCancelledReplaced, nowText)
+	result.ReplacedRequest, result.ReplacedEventID, err = cancelWaitingRecoveryTx(ctx, tx, input.AccountID, RecoveryCancelledReplaced, nowText)
 	if err != nil {
 		return RecoveryClaimResult{}, err
 	}
@@ -594,16 +594,18 @@ func (s *Store) CancelRecoveryRequest(ctx context.Context, accountID, id string)
 // cancelWaitingRecoveryTx cancels the account's waiting recovery request, if
 // any, in the caller's transaction, with its sync event and audit entry. A
 // password change, an owner password reset and a recovery key change call
-// it, so a request whose credentials moved never waits on.
-func cancelWaitingRecoveryTx(ctx context.Context, tx *sql.Tx, accountID, reason, now string) (int64, error) {
+// it, so a request whose credentials moved never waits on, and so does a
+// new claim that replaces the waiting request.
+// It returns the cancelled request id and its sync event, or "" and zero.
+func cancelWaitingRecoveryTx(ctx context.Context, tx *sql.Tx, accountID, reason, now string) (string, int64, error) {
 	requestID, eventID, err := cancelWaitingRecoveryRequestTx(ctx, tx, accountID, reason, now)
 	if err != nil || requestID == "" {
-		return 0, err
+		return "", 0, err
 	}
 	if err := insertAuditEvent(ctx, tx, &accountID, "account.recovery_cancelled", map[string]string{"request_id": requestID, "reason": reason}); err != nil {
-		return 0, err
+		return "", 0, err
 	}
-	return eventID, nil
+	return requestID, eventID, nil
 }
 
 func cancelWaitingRecoveryRequestTx(ctx context.Context, tx *sql.Tx, accountID, reason, now string) (string, int64, error) {
@@ -627,8 +629,11 @@ func cancelWaitingRecoveryRequestTx(ctx context.Context, tx *sql.Tx, accountID, 
 
 // RecoveryKeyResult is what SetRecoveryKey committed.
 type RecoveryKeyResult struct {
-	EventID          int64
-	CancelledEventID int64
+	EventID int64
+	// CancelledRequestID and CancelledEventID are the waiting request the
+	// change cancelled and its sync event, or "" and zero.
+	CancelledRequestID string
+	CancelledEventID   int64
 }
 
 // SetRecoveryKey sets or replaces the account's recovery key verifier and,
@@ -655,7 +660,7 @@ func (s *Store) SetRecoveryKey(ctx context.Context, accountID string, authPublic
 		return RecoveryKeyResult{}, ErrNotFound
 	}
 	var out RecoveryKeyResult
-	if out.CancelledEventID, err = cancelWaitingRecoveryTx(ctx, tx, accountID, RecoveryCancelledKeyChanged, now); err != nil {
+	if out.CancelledRequestID, out.CancelledEventID, err = cancelWaitingRecoveryTx(ctx, tx, accountID, RecoveryCancelledKeyChanged, now); err != nil {
 		return RecoveryKeyResult{}, err
 	}
 	if out.EventID, err = insertSyncEvent(ctx, tx, recoveryKeySetEventType, &accountID, "", map[string]interface{}{"rk_id": rkID}, now); err != nil {

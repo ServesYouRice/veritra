@@ -422,7 +422,7 @@ func (a *API) putRecoveryKey(w http.ResponseWriter, r *http.Request, principal d
 	}
 	now := time.Now().UTC()
 	if result.CancelledEventID != 0 {
-		a.publishCommittedEvent(r.Context(), []string{principal.AccountID}, realtime.Event{Version: "v1", Type: "account.recovery.cancelled", ID: result.CancelledEventID, Payload: map[string]string{"reason": storage.RecoveryCancelledKeyChanged}, CreatedAt: now})
+		a.publishCommittedEvent(r.Context(), []string{principal.AccountID}, realtime.Event{Version: "v1", Type: "account.recovery.cancelled", ID: result.CancelledEventID, Payload: map[string]string{"request_id": result.CancelledRequestID, "reason": storage.RecoveryCancelledKeyChanged}, CreatedAt: now})
 	}
 	a.publishCommittedEvent(r.Context(), []string{principal.AccountID}, realtime.Event{Version: "v1", Type: "account.recovery_key.set", ID: result.EventID, Payload: map[string]interface{}{"rk_id": req.RKID}, CreatedAt: now})
 	a.recordAuditEvent(r.Context(), &principal.AccountID, "account.recovery_key_set", map[string]string{"device_id": principal.DeviceID})

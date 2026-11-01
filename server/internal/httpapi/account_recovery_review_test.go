@@ -3,8 +3,11 @@ package httpapi_test
 import (
 	"bytes"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
+	"reflect"
 	"testing"
+	"time"
 )
 
 // K0 R2 review follow-ups: HTTP behaviour.
@@ -34,5 +37,48 @@ func TestPutRecoveryKeyRejectsSmallOrderAndInvalidKeys(t *testing.T) {
 	status, body := f.do(http.MethodGet, "/api/v1/account/recovery-key", f.ownerToken, nil, nil)
 	if status != http.StatusOK || !bytes.Contains(body, []byte(`"configured":false`)) {
 		t.Fatalf("recovery key status=%d body=%s", status, body)
+	}
+}
+
+// A new recovery key cancels the waiting request; the live event names the
+// request, as the stored sync event does.
+func TestPutRecoveryKeyCancelEventNamesTheRequest(t *testing.T) {
+	f := newRecoveryFixture(t, recoveryTestOrigin)
+	f.ownerRK = f.setRK(f.ownerToken)
+	claimed := f.claimOK(claimBody(t, f.reserve("owner"), "owner-password-123", f.ownerRK, recoveryTestOrigin))
+	client, err := f.app.Hub.Register(f.ownerAccountID, f.ownerDeviceID, "198.51.100.7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.app.Hub.Unregister(client)
+	f.setRK(f.ownerToken)
+	var stored map[string]string
+	var payload string
+	if err := f.db.QueryRow(`SELECT payload_json FROM sync_events WHERE event_type = 'account.recovery.cancelled' AND account_id = ?`, f.ownerAccountID).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(payload), &stored); err != nil || stored["request_id"] != claimed.RequestID {
+		t.Fatalf("stored payload %s: %v", payload, err)
+	}
+	for {
+		select {
+		case raw := <-client.Send():
+			var event struct {
+				Type    string            `json:"type"`
+				Payload map[string]string `json:"payload"`
+			}
+			if err := json.Unmarshal(raw, &event); err != nil {
+				t.Fatal(err)
+			}
+			if event.Type != "account.recovery.cancelled" {
+				continue
+			}
+			if !reflect.DeepEqual(event.Payload, stored) {
+				t.Fatalf("live payload %v, stored %v", event.Payload, stored)
+			}
+			return
+		case <-time.After(5 * time.Second):
+			t.Fatal("no live account.recovery.cancelled event")
+		}
 	}
 }

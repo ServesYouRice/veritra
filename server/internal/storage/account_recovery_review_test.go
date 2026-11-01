@@ -45,3 +45,23 @@ func TestRecoveryDecoyKeyIsCreatedOnceAndReadWithoutTheWriter(t *testing.T) {
 		t.Fatalf("decoy key while the writer is busy = %x, err = %v, want %x", again, err, first)
 	}
 }
+
+// A claim that replaces a waiting request writes the same cancellation
+// audit row as every other cancel.
+func TestRecoveryClaimReplacementIsAudited(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	owner := createTestOwner(t, ctx, store)
+	first := claimTestRecovery(t, ctx, store, owner, time.Hour)
+	second := claimTestRecovery(t, ctx, store, owner, time.Hour)
+	if n := testRowCount(t, ctx, store, `SELECT COUNT(*) FROM audit_events WHERE event_type = 'account.recovery_cancelled'
+		AND json_extract(metadata_json, '$.request_id') = ? AND json_extract(metadata_json, '$.reason') = ?`,
+		first.request.ID, RecoveryCancelledReplaced); n != 1 {
+		t.Fatalf("replacement audit rows = %d, want 1", n)
+	}
+	if n := testRowCount(t, ctx, store, `SELECT COUNT(*) FROM audit_events WHERE event_type = 'account.recovery_cancelled'
+		AND json_extract(metadata_json, '$.request_id') = ?`, second.request.ID); n != 0 {
+		t.Fatalf("the waiting request has %d cancellation audit rows", n)
+	}
+}

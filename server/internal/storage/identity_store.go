@@ -543,7 +543,7 @@ func (s *Store) ChangePassword(ctx context.Context, accountID, keepTokenHash, ne
 	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET recent_auth_at = ?, previous_token_hash = NULL, previous_expires_at = NULL WHERE token_hash = ?`, nowString(), keepTokenHash); err != nil {
 		return err
 	}
-	if _, err := cancelWaitingRecoveryTx(ctx, tx, accountID, RecoveryCancelledPasswordChanged, nowString()); err != nil {
+	if _, _, err := cancelWaitingRecoveryTx(ctx, tx, accountID, RecoveryCancelledPasswordChanged, nowString()); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -568,7 +568,7 @@ func (s *Store) ResetOwnerPassword(ctx context.Context, username, newPasswordHas
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE account_id = ?`, accountID); err != nil {
 		return err
 	}
-	if _, err := cancelWaitingRecoveryTx(ctx, tx, accountID, RecoveryCancelledPasswordReset, nowString()); err != nil {
+	if _, _, err := cancelWaitingRecoveryTx(ctx, tx, accountID, RecoveryCancelledPasswordReset, nowString()); err != nil {
 		return err
 	}
 	metadata, _ := json.Marshal(map[string]string{"account_id": accountID, "method": "offline_owner_recovery"})
