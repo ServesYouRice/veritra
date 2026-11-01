@@ -76,12 +76,25 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 	if !errors.Is(err, sql.ErrNoRows) {
 		return domain.MessageEnvelope{}, false, 0, err
 	}
-	var memberCount int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM memberships WHERE conversation_id = ? AND account_id = ?`, envelope.ConversationID, envelope.SenderAccountID).Scan(&memberCount); err != nil {
+	var senderRole string
+	if err := tx.QueryRowContext(ctx, `SELECT role FROM memberships WHERE conversation_id = ? AND account_id = ?`, envelope.ConversationID, envelope.SenderAccountID).Scan(&senderRole); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.MessageEnvelope{}, false, 0, ErrNotMember
+		}
 		return domain.MessageEnvelope{}, false, 0, err
 	}
-	if memberCount == 0 {
-		return domain.MessageEnvelope{}, false, 0, ErrNotMember
+	// C2: in an announcement channel or an admins-only group only owners and
+	// admins post. Checked after the idempotent replay above, so a retry of an
+	// already stored post still answers.
+	var restricted bool
+	if err := tx.QueryRowContext(ctx, `SELECT c.posting_policy = 'admins' OR COALESCE(ch.kind = 'announcement', 0) FROM conversations c LEFT JOIN channels ch ON ch.id = c.channel_id WHERE c.id = ?`, envelope.ConversationID).Scan(&restricted); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.MessageEnvelope{}, false, 0, ErrNotFound
+		}
+		return domain.MessageEnvelope{}, false, 0, err
+	}
+	if restricted && !domain.CanPostRestricted(senderRole) {
+		return domain.MessageEnvelope{}, false, 0, ErrPostingRestricted
 	}
 	for _, referenceID := range []*string{envelope.ReplyToID, envelope.ThreadRootID} {
 		if referenceID == nil || strings.TrimSpace(*referenceID) == "" {

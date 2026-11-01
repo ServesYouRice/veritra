@@ -436,6 +436,30 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 		members := a.conversationMemberIDs(r.Context(), conversationID)
 		a.publishCommittedEvent(r.Context(), members, realtime.Event{Version: "v1", Type: "retention.updated", ID: eventID, ConversationID: conversationID, Payload: conversation, CreatedAt: time.Now().UTC()})
 		writeJSON(w, http.StatusOK, conversation)
+	case parts[1] == "posting-policy" && (r.Method == http.MethodPut || r.Method == http.MethodPatch):
+		var req struct {
+			Policy string `json:"policy"`
+		}
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		if req.Policy != storage.PostingPolicyEveryone && req.Policy != storage.PostingPolicyAdmins {
+			writeError(w, http.StatusBadRequest, "invalid_posting_policy")
+			return
+		}
+		conversation, eventID, err := a.Store.SetConversationPostingPolicy(r.Context(), conversationID, principal.AccountID, req.Policy)
+		if err != nil {
+			if errors.Is(err, storage.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "posting_policy_not_supported")
+				return
+			}
+			handleStorageError(w, err)
+			return
+		}
+		a.recordAuditEvent(r.Context(), &principal.AccountID, "conversation.posting_policy.updated", map[string]interface{}{"conversation_id": conversationID, "policy": req.Policy})
+		members := a.conversationMemberIDs(r.Context(), conversationID)
+		a.publishCommittedEvent(r.Context(), members, realtime.Event{Version: "v1", Type: "conversation.posting_policy.updated", ID: eventID, ConversationID: conversationID, Payload: conversation, CreatedAt: time.Now().UTC()})
+		writeJSON(w, http.StatusOK, conversation)
 	default:
 		writeError(w, http.StatusNotFound, "not_found")
 	}
