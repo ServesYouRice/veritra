@@ -132,11 +132,7 @@ switch to `GovernanceState.roleOf`.
 ### Removal and succession
 
 > **D81 (owner, 2026-11-01) supersedes the succession rule below and owner
-> question 1.** The owner cannot leave without transferring first. If the owner
-> is inactive for more than a month, the other admins vote and more than half
-> must agree; with no admin left, the longest-serving member becomes owner.
-> Not yet designed: how apps learn of inactivity without trusting the server,
-> and how votes are signed and counted in the group state.
+> question 1.** See "Owner handover (D81)" below.
 
 A commit that removes an account's last device must also carry the pruned
 state (`removeAccount`): the account loses its role, so a kicked admin who
@@ -152,6 +148,94 @@ That is C1/C5's receiver check (`mayActOn(committer, target)` for a kick). A
 leave is committed by another member on the server's word today, so until a
 leave is proven by the leaver, a malicious server can force a departure,
 and with it a succession.
+
+## Owner handover (D81)
+
+**Status: design only.** The merged rules engine still implements "oldest
+admin inherits" and must change to this before it is wired.
+
+The owner decided (D81): the owner cannot leave without transferring first.
+If the owner is inactive for more than a month, the other admins vote, and
+more than half must agree. With no admin left, the longest-serving member
+becomes owner. Two problems follow: apps cannot prove the owner is absent
+(the server can hold the owner's messages back), and a vote must not be
+fakeable by the server or stuffable by one admin.
+
+### Approach: challenge, wait, vote, all as commits
+
+Absence is never proven. It is **challenged**: an admin opens an election,
+and any commit from the owner afterwards cancels it. This mirrors K0's
+recovery (D49, D78): a wait that the real owner can cancel.
+
+| Step | Who | What every app checks (in `validateCommit`) |
+|---|---|---|
+| 1. Open | An admin in the electorate | No election is open. The commit writes `election = {opened: rev, votes: {}}` |
+| 2. Wait | Nobody | Nothing: the wait is a local rule (below) |
+| 3. Owner cancels | Any owner device | Every owner commit while an election is open must clear it. The owner's app does this by itself as soon as it sees one |
+| 4. Vote | Each admin in the electorate | The voter is in the electorate and in the roster, has not voted, and names a current admin |
+| 5. Win | The commit holding the deciding vote | When one candidate has more than half of the electorate still in the roster, that same commit must set `owner` to them and clear `election`. The old owner, if still a member, becomes an admin with seniority restarted |
+
+Votes are **ordinary governance commits**. MLS already proves who sent each
+commit (sender credential bound to the envelope, D25) and the server holds
+no member's signing key, so a vote cannot be forged. Nothing new is signed,
+no signatures are collected, and the ABI pieces above suffice.
+
+### New record fields
+
+- `owner_seen`: the `rev` of the owner's last commit. Every owner commit
+  must set it to the new `rev` (so an owner's commit always carries the
+  extension proposal; the cost is a few bytes per owner commit).
+- `election`: none, or the `rev` it opened at plus a map of voter to
+  candidate.
+- `joined`: account to the `rev` at which its first device was added. Every
+  add commit must write it (this touches C1's add path). Needed only for the
+  no-admin fallback; MLS leaf order is not join order.
+
+### Who may vote
+
+The **electorate** is the admins whose seniority is at most `owner_seen`:
+admins the owner already lived with. Without this, a rogue admin could make
+new admins while the owner is quiet and win the vote with them. If no admin
+qualifies, the no-admin fallback applies.
+
+### Clocks stay local
+
+The 30 days and the wait are **not** in `validateCommit`. Receivers check
+only order and roles, so devices with different clocks never disagree about
+the group state. Instead, an honest app refuses:
+
+- to open an election before it has seen no owner commit for 30 days;
+- to vote before 7 days have passed since it saw the election open.
+
+A majority of honest admin apps therefore enforces the timing. One rogue
+admin can open early, but cannot win alone.
+
+### Owner gone from the roster
+
+A forced leave or a deleted account removes the owner from MLS, which is
+provable. The pruning sets `owner` to none, and an election may open at once
+(no 30 days, still the 7-day wait). The electorate is the admins whose
+seniority is at most the removal's `rev`. This replaces "oldest admin
+inherits" in the succession rule above.
+
+### No admin left
+
+The longest-serving member (smallest `joined`, then smallest account id)
+may open a claim. After the 7-day wait (local rule) the same member commits
+`owner = itself`. An owner commit cancels the claim, as above. If that
+member is also inactive, nobody inherits; a later design may let the next
+member claim.
+
+### Residuals (accepted)
+
+- A server that hides the owner's messages for 37 days or more, while a
+  majority of the electorate goes along, gets a handover. The server alone
+  cannot do it. K0's recovery accepts the same kind of risk.
+- If the electorate itself is inactive, no majority forms and the group
+  keeps its absent owner.
+- Opening an election is visible to the server as a commit, but not what it
+  is (the record is encrypted). No heartbeat messages are sent, so the
+  owner's online times do not leak (D60, L2).
 
 ## Built and not built
 
