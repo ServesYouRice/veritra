@@ -131,6 +131,13 @@ switch to `GovernanceState.roleOf`.
 
 ### Removal and succession
 
+> **D81 (owner, 2026-11-01) supersedes the succession rule below and owner
+> question 1.** The owner cannot leave without transferring first. If the owner
+> is inactive for more than a month, the other admins vote and more than half
+> must agree; with no admin left, the longest-serving member becomes owner.
+> Not yet designed: how apps learn of inactivity without trusting the server,
+> and how votes are signed and counted in the group state.
+
 A commit that removes an account's last device must also carry the pruned
 state (`removeAccount`): the account loses its role, so a kicked admin who
 is invited back is a member. If the owner left, the **oldest admin still in
