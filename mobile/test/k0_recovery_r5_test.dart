@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/features/auth/account_recovery_screen.dart';
 import 'package:private_messenger/features/settings/recovery_key_screen.dart';
 import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
@@ -97,6 +98,46 @@ void main() {
       expect(state.pendingAccountRecovery, isNull);
       expect(await persisted(), isNull);
       expect(crypto.abandons, 1);
+    });
+
+    test('a poll that finds the answer lost keeps the device secret', () async {
+      await claim();
+      server.statusGate = Completer<void>();
+      server.statusAnswers.add(const AccountRecoveryStatus(
+        phase: AccountRecoveryPhase.completedWithoutToken,
+        accountId: 'acct_me',
+        deviceId: 'dev_new',
+      ));
+      final poll = state.checkAccountRecovery();
+      await until(() => server.recoveryPolls == 1);
+      // Stop was confirmed while the poll was out; same request id.
+      final stop = state.abandonAccountRecovery(requestId: 'arr_1');
+      server.statusGate!.complete();
+      await poll;
+      await stop;
+      expect(crypto.abandons, 0);
+      expect(state.pendingAccountRecovery?.needsLogin, isTrue);
+      expect((await persisted())?.deviceSecret, 'secret_new');
+      expect(await state.finishAccountRecoveryWithPassword('pw'), isTrue,
+          reason: state.errorFor(Ops.accountRecovery));
+      expect(server.logins.last['device_secret'], 'secret_new');
+      expect(state.session?.deviceId, 'dev_new');
+    });
+
+    testWidgets('no Stop is offered once a login is needed', (tester) async {
+      await tester.runAsync(claim);
+      server.statusAnswers.add(const AccountRecoveryStatus(
+        phase: AccountRecoveryPhase.completedWithoutToken,
+        accountId: 'acct_me',
+        deviceId: 'dev_new',
+      ));
+      await tester.runAsync(state.checkAccountRecovery);
+      expect(state.pendingAccountRecovery?.needsLogin, isTrue);
+      await tester.pumpWidget(MaterialApp(
+          theme: veritraLightTheme(),
+          home: AccountRecoveryWaitingScreen(state: state)));
+      await tester.pump();
+      expect(find.text(l10n.recoveryAbandon), findsNothing);
     });
 
     test('Stop for an older claim keeps the newer one', () async {

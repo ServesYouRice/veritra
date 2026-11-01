@@ -237,8 +237,9 @@ class _AccountRecoveryWaitingScreenState
 
   Future<void> _confirmAbandon() async {
     final l10n = context.l10n;
-    final requestId = widget.state.pendingAccountRecovery?.requestId;
-    if (requestId == null) return;
+    final pending = widget.state.pendingAccountRecovery;
+    if (pending == null || pending.needsLogin) return;
+    final requestId = pending.requestId;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -350,10 +351,13 @@ class _AccountRecoveryWaitingScreenState
                       label: Text(l10n.recoveryCheckNow),
                     ),
                   ],
-                  TextButton(
-                    onPressed: busy ? null : _confirmAbandon,
-                    child: Text(l10n.recoveryAbandon),
-                  ),
+                  // Once the server enrolled this device, the claim's
+                  // device secret is the only way in: no Stop.
+                  if (!pending.needsLogin)
+                    TextButton(
+                      onPressed: busy ? null : _confirmAbandon,
+                      child: Text(l10n.recoveryAbandon),
+                    ),
                 ],
                 if (error != null) ...<Widget>[
                   const SizedBox(height: BoneSpacing.lg),
