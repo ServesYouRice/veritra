@@ -293,6 +293,7 @@ fn ffi_matches_the_vector_and_round_trips() {
 
 #[test]
 fn ffi_fails_closed_and_writes_nothing() {
+    type FfiCall<'a> = dyn Fn(*mut PmOwnedBuffer) -> i32 + 'a;
     let seed = [3u8; SEED_BYTES];
     let public = public_key(&seed).unwrap();
     let sealed = seal(&public, b"aad", b"report").unwrap();
@@ -312,7 +313,7 @@ fn ffi_fails_closed_and_writes_nothing() {
             pm_crypto_report_key_public(slice(&seed), core::ptr::null_mut()),
             PM_CRYPTO_INVALID_ARGUMENT
         );
-        let cases: [(i32, Box<dyn Fn(*mut PmOwnedBuffer) -> i32>); 9] = [
+        let cases: [(i32, Box<FfiCall<'_>>); 9] = [
             (
                 PM_CRYPTO_ERROR,
                 Box::new(|o| {
