@@ -378,6 +378,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   PendingAccountRecovery? pendingAccountRecovery;
   RecoveryFollowUpStep? recoveryFollowUp;
   String? _passwordLeakDay;
+  // K0 step 8: whether this device came from a completed recovery, and the
+  // conversations it was last found to have no MLS group for.
+  bool _recoveredDevice = false;
+  final Set<String> _grouplessConversations = <String>{};
   Timer? _recoveryPollTimer;
   DateTime? _recoveryStatusReadAt;
   String? error;
@@ -1851,6 +1855,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     composerDrafts.retainOnly(conversations.map((item) => item.id));
     conversationsLoaded = true;
     _opErrors.remove(Ops.conversations);
+    if (_recoveredDevice) {
+      await _refreshGroupless(conversations.map((item) => item.id));
+      if (!_refreshOwned(current, generation)) return;
+    }
     if (persist) await _persistSnapshot();
     if (!_refreshOwned(current, generation)) return;
     if (notify) {
@@ -2952,6 +2960,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     // The roster names message senders in group chats; a failure here only
     // falls back to shortened account IDs.
     unawaited(loadConversationMembers(conversationId));
+    unawaited(_refreshGroupless(<String>[conversationId]));
   }
 
   /// Encrypts, queues, and delivers one message. Scoped to [Ops.send] so a
@@ -3116,6 +3125,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     notifyListeners();
     PreparedEncryptedAttachment? prepared;
     try {
+      // K0 step 8: nothing is encrypted or uploaded for a conversation no
+      // one can add this device to.
+      if (await _readOnlyWithoutPeer(conversationId)) {
+        throw UserFacingException(l10n.chatNoPeerReadOnly);
+      }
       final name = safeAttachmentName(fileName);
       // Padding stops at the server's cap, so a file just under it is not
       // refused for its padding (docs/crypto.md, attachment padding).
@@ -3572,6 +3586,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (current == null || client == null || conversation == null) {
         return;
       }
+      // K0 step 8: a recovered device that no one can add to this
+      // conversation sends nothing, not even the acceptance below.
+      if (await _readOnlyWithoutPeer(conversation.id)) {
+        throw UserFacingException(l10n.chatNoPeerReadOnly);
+      }
+      if (!_syncOwnerActive(owner, ownerGeneration)) return;
       // Replying counts as accepting.
       if (isMessageRequest(conversation)) {
         await _acceptConversation(conversation);
@@ -5674,6 +5694,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
               current,
               (policy) =>
                   policy.recordJoined(message.conversationId, DateTime.now()));
+          // K0 step 8: the conversation is no longer read-only.
+          if (_grouplessConversations.remove(message.conversationId) &&
+              !_disposed) {
+            notifyListeners();
+          }
           if (wake != null) {
             // Publishing is an outbound write; the foreground does it.
             _replenishAfterWake = true;
@@ -6026,6 +6051,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     recoveryKeyStatus = null;
     recoveryFollowUp = null;
     _passwordLeakDay = null;
+    _recoveredDevice = false;
+    _grouplessConversations.clear();
     messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
     _history.clear();
     composerDrafts.clear();

@@ -3015,6 +3015,12 @@ abstract class AppLocalizations {
   /// **'Your message waits until the removed member\'s encryption update finishes, then sends.'**
   String get chatRemovalHoldNotice;
 
+  /// No description provided for @chatNoPeerReadOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'No one else in this conversation can add this device back, so its history is read-only here. Start a new conversation to send messages.'**
+  String get chatNoPeerReadOnly;
+
   /// No description provided for @chatAttachment.
   ///
   /// In en, this message translates to:

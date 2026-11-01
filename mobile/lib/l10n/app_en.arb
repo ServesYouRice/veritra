@@ -639,6 +639,7 @@
   "@chatComposerCounter": {"placeholders": {"length": {"type": "int", "format": "decimalPattern"}, "max": {"type": "int", "format": "decimalPattern"}}},
   "chatPausedNotice": "Sending is paused here: the server rejected an encryption update for this conversation. Other conversations still work.",
   "chatRemovalHoldNotice": "Your message waits until the removed member's encryption update finishes, then sends.",
+  "chatNoPeerReadOnly": "No one else in this conversation can add this device back, so its history is read-only here. Start a new conversation to send messages.",
   "chatAttachment": "Attachment",
   "chatAttachmentOne": "Attachment: {name}",
   "@chatAttachmentOne": {"placeholders": {"name": {"type": "String"}}},

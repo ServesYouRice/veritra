@@ -1825,6 +1825,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Your message waits until the removed member\'s encryption update finishes, then sends.';
 
   @override
+  String get chatNoPeerReadOnly =>
+      'No one else in this conversation can add this device back, so its history is read-only here. Start a new conversation to send messages.';
+
+  @override
   String get chatAttachment => 'Attachment';
 
   @override

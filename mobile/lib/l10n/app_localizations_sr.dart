@@ -1839,6 +1839,10 @@ class AppLocalizationsSr extends AppLocalizations {
       'Ваша порука чека да се заврши ажурирање шифровања после уклањања члана, а затим се шаље.';
 
   @override
+  String get chatNoPeerReadOnly =>
+      'Нико други у овом разговору не може поново да дода овај уређај, па је историја овде само за читање. Започните нови разговор да бисте слали поруке.';
+
+  @override
   String get chatAttachment => 'Прилог';
 
   @override
@@ -4643,6 +4647,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get chatRemovalHoldNotice =>
       'Vaša poruka čeka da se završi ažuriranje šifrovanja posle uklanjanja člana, a zatim se šalje.';
+
+  @override
+  String get chatNoPeerReadOnly =>
+      'Niko drugi u ovom razgovoru ne može ponovo da doda ovaj uređaj, pa je istorija ovde samo za čitanje. Započnite novi razgovor da biste slali poruke.';
 
   @override
   String get chatAttachment => 'Prilog';
