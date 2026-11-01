@@ -58,9 +58,14 @@ If Go is installed locally:
 
 ```sh
 cd server
+export PRIVATE_MESSENGER_ENV=development
 go run ./cmd/messenger-server migrate
 go run ./cmd/messenger-server serve
 ```
+
+An unset `PRIVATE_MESSENGER_ENV` means `production`, which needs a setup
+token on a fresh database and a trusted proxy for a non-loopback listener;
+local runs set `development` as above.
 
 Then open:
 

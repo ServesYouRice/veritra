@@ -2075,11 +2075,11 @@
       "title": "Production safety checks are skipped when PRIVATE_MESSENGER_ENV is unset, because the environment defaults to development",
       "severity": "medium",
       "task": "TASK-164",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": "Skipped: every option breaks a dev workflow; open technical choice.",
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": true,
+      "test": "server/internal/config/config_test.go TestLoadEnvironmentPolicy, TestUnsetEnvironmentKeepsProductionChecks",
+      "proof": "Owner decision: unset means production. Before the fix: 'PRIVATE_MESSENGER_ENV=\"\": environment=\"development\" err=<nil>, want \"production\"' and 'unset=true: placeholder setup token accepted'. Unknown values were already refused and stay refused. dev.sh/dev.ps1, test-api-contracts.sh and the demo e2e server env now set development explicitly; README and docs/operations.md updated.",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-cfacb269c719",

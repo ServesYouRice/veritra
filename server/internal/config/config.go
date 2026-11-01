@@ -131,7 +131,7 @@ func Load() (Config, error) {
 		APNsPrivateKey:   secrets["PRIVATE_MESSENGER_APNS_PRIVATE_KEY"],
 		TURNURLs:         splitNonEmpty(os.Getenv("PRIVATE_MESSENGER_TURN_URLS")),
 		TURNSharedSecret: secrets["PRIVATE_MESSENGER_TURN_SHARED_SECRET"],
-		Environment:      strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_ENV", "development"))),
+		Environment:      loadEnvironment(),
 		LogLevel:         strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_LOG_LEVEL", "info"))),
 		LogFormat:        strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_LOG_FORMAT", "text"))),
 		PasswordCost:     passwordCost,
@@ -187,6 +187,18 @@ func Load() (Config, error) {
 	cfg.DatabasePath = getenv("PRIVATE_MESSENGER_DB_PATH", filepath.Join(cfg.DataDir, "private-messenger.db"))
 	cfg.StoragePath = getenv("PRIVATE_MESSENGER_STORAGE_PATH", filepath.Join(cfg.DataDir, "blobs"))
 	return cfg, nil
+}
+
+// loadEnvironment reads PRIVATE_MESSENGER_ENV. Unset, empty or blank means
+// production (owner decision, TASK-164): a deployment that omits the variable
+// keeps every production check. Local development must set "development"
+// explicitly. Load rejects any other value.
+func loadEnvironment() string {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_ENV")))
+	if value == "" {
+		return "production"
+	}
+	return value
 }
 
 func parsePasswordCost(raw string) (int, error) {

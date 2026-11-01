@@ -11,7 +11,13 @@ copy and keep that folder out of external backups.
 
 ## First setup and secret rotation
 
-Set `PRIVATE_MESSENGER_ENV=production` and generate a 32-byte base64url
+`PRIVATE_MESSENGER_ENV` is `production` or `development`. Unset or empty
+means `production`, so a deployment that omits it keeps every production
+check: a strong setup token (placeholders refused), a token on a fresh
+database, a trusted proxy for a non-loopback listener, and a loopback or
+private metrics address. Any other value refuses to start. Local development
+and demo scripts set `development` explicitly. Set
+`PRIVATE_MESSENGER_ENV=production` anyway, and generate a 32-byte base64url
 `PRIVATE_MESSENGER_SETUP_TOKEN` with `messenger-server generate-setup-token`.
 Place it in the root-readable environment file before the first start. Complete owner setup, remove the token, and restart. A fresh
 production database fails closed without the token; an initialized database no

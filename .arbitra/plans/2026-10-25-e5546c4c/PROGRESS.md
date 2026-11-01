@@ -182,8 +182,8 @@ Tick a task when it is done and verified; note anything left open under it.
 - [ ] 162 `TASK-162` Apply the chosen password-verification timing policy across stored hash profiles without creating a password-outcome oracle
   - Comment only (6108aaa, 2037787): the password timing residual is worded as open, not accepted. No policy change; the timing policy is still an open technical choice.
 - [x] 163 `TASK-163` Serialize backup-status writers and make replacement atomic and durable
-- [ ] 164 `TASK-164` Apply the decided policy when PRIVATE_MESSENGER_ENV is unset
-  - Skipped: every option breaks a dev workflow; open technical choice.
+- [x] 164 `TASK-164` Apply the decided policy when PRIVATE_MESSENGER_ENV is unset
+  - Owner decision: unset or empty means production. Dev, contract-test and demo e2e launchers set development explicitly. Demo e2e not run here.
 - [x] 165 `TASK-165` Resolve DataDir/backups symlinks before ownership checks
 - [x] 166 `TASK-166` Reject non-regular secret files without blocking on open
 - [x] 167 `TASK-167` Commit admin status changes and invite revocations atomically with their audit rows
