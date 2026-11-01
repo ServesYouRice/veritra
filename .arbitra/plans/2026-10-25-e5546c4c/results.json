@@ -2207,11 +2207,11 @@
       "title": "Server apparently accepts 64 zero bytes as a device key package; non-production check looks like a content denylist",
       "severity": "medium",
       "task": "TASK-172",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": "Not attempted.",
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": true,
+      "test": "server/internal/httpapi/key_package_validation_test.go TestDeviceKeyPackageStructuralValidation; server/internal/mlswire/keypackage_test.go",
+      "proof": "Before the fix all six routes took non-packages: setup 201 for a truncated package, register 201 and device-link claim 202 and publish 201 for 64 zero bytes; the v3 claim and recovery claim refused them only later, for other reasons (invalid_device_link, invalid_enrollment). Client bytes are a bare KeyPackage (MlsDevice::create_key_package -> tls_serialize_detached, no MLSMessage wrapper). Parser in server/internal/mlswire; fixture made by the Rust core at 1a21ee2. Also covered beyond the prompt: the v3 claim and the account-recovery claim. Signature and credential binding left open (Q-1).",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-b9634b1bb7f7",

@@ -25,6 +25,7 @@ import (
 	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/domain"
 	"private-messenger/server/internal/httpapi"
+	"private-messenger/server/internal/mlswire/mlswiretest"
 )
 
 // K0 recovery enrollment, package R2: HTTP behaviour.
@@ -83,7 +84,7 @@ func newRecoveryFixture(t *testing.T, origin string) *recoveryFixture {
 		"username":           "owner",
 		"password":           "owner-password-123",
 		"device_name":        "owner phone",
-		"device_key_package": make([]byte, 64),
+		"device_key_package": mlswiretest.KeyPackage(),
 	}
 	addEnrollmentProof(body, enrollment)
 	status, response := doJSON(t, f.handler, http.MethodPost, "/api/v1/setup/owner", "", body)
@@ -216,8 +217,7 @@ func claimBody(t *testing.T, reservation recoveryReservation, password string, r
 	if err != nil {
 		t.Fatal(err)
 	}
-	keyPackage := make([]byte, 96)
-	_, _ = rand.Read(keyPackage)
+	keyPackage := mlswiretest.KeyPackage()
 	return map[string]interface{}{
 		"enrollment_reservation_id": reservation.ID,
 		"password":                  password,

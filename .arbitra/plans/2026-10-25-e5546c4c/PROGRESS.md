@@ -196,8 +196,8 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 172 `TASK-173` Stop mapping transient TouchSession failures to 401 in withAuth
 - [x] 173 `TASK-176` Prevent third parties from locking a known user out of login via the username-only backoff key
 - [x] 174 `TASK-178` Return the device-link transcript from the consuming transaction in claim-status
-- [ ] 175 `TASK-172` Structurally validate device key packages on setup, registration, device-link claim and key-package publish
-  - Not attempted.
+- [x] 175 `TASK-172` Structurally validate device key packages on setup, registration, device-link claim and key-package publish
+  - Also on the v3 link claim and the recovery claim. Structural only: signatures and credential binding stay open (Q-1).
 - [x] 176 `TASK-174` Re-validate the session after WebSocket hub registration to close the revocation race
 - [x] 177 `TASK-175` Aggregate IPv6 clients to /64 for the realtime per-IP connection limit
 - [x] 178 `TASK-177` Make login backoff eviction respect accumulated failure counts

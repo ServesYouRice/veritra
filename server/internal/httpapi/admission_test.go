@@ -13,6 +13,7 @@ import (
 
 	"private-messenger/server/internal/app"
 	"private-messenger/server/internal/config"
+	"private-messenger/server/internal/mlswire/mlswiretest"
 )
 
 func newLimitedHandler(t *testing.T, limits config.Limits) (http.Handler, string) {
@@ -31,7 +32,7 @@ func newLimitedHandler(t *testing.T, limits config.Limits) (http.Handler, string
 	enrollment := reserveEnrollment(t, handler, "/api/v1/setup/owner/enrollment", "")
 	body := map[string]interface{}{
 		"instance_name": "Test Messenger", "username": "owner", "password": "owner-password-123",
-		"device_name": "owner phone", "device_key_package": make([]byte, 64),
+		"device_name": "owner phone", "device_key_package": mlswiretest.KeyPackage(),
 	}
 	addEnrollmentProof(body, enrollment)
 	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/setup/owner", "", body)

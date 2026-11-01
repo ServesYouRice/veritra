@@ -41,7 +41,17 @@ The public header is `crypto/rust/include/veritra_crypto.h`, which pins
   Groups keep two past epochs for decryption only (`max_past_epochs`).
 
 Key-package size checks mirror the server transport boundary (64 bytes through
-48 KiB). Passing that check does **not** verify an MLS key package.
+48 KiB). Passing that check does **not** verify an MLS key package. The server
+also parses every uploaded device key package (setup, register, device-link
+v2 and v3 claims, account recovery, key-package publish) as one bare RFC 9420
+KeyPackage, the bytes `MlsDevice::create_key_package` returns: version mls10,
+suite 0x0001 with 32-byte keys and 64-byte signatures, a basic credential with
+a non-empty identity, a `key_package` leaf with its lifetime, well-formed
+extension lists, minimal vector lengths and nothing after the signature
+(`server/internal/mlswire`, TASK-172). It verifies no signature and does not
+bind the credential to the enrollment signing key (bug-hunt question
+section-255217d2d387fd53976689b2/Q-1, open); clients still validate every key
+package they use.
 
 OpenMLS 0.9.2, `openmls_rust_crypto` 0.6.0, and their supporting crates are
 exactly pinned (Rust 1.91 or newer). All 205 locked third-party packages declare
@@ -387,6 +397,14 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **Server key-package parsing (2026-11-01, TASK-172):** no ABI or wire
+  change. The server now refuses a device key package that does not parse as
+  one bare RFC 9420 KeyPackage in the client's suite (rules in the
+  key-package paragraph above), with 400 `invalid_device_key_package`, or
+  `invalid_key_packages` on publish. Packages already stored are not
+  rechecked. Signatures and the credential binding stay unverified (open
+  question Q-1). Fixture: one package from `create_key_package` at commit
+  1a21ee2, in `server/internal/mlswire/mlswiretest`.
 - **K0 R1, recovery key and recovery proof, ABI 11 (2026-11-01):**
   additive; the Dart binding and the header now pin ABI 11 exactly. Design:
   [`K0-recovery-enrollment.md`](designs/K0-recovery-enrollment.md) (D78).

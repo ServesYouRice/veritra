@@ -8,6 +8,7 @@ import (
 
 	"private-messenger/server/internal/auth"
 	"private-messenger/server/internal/httpapi"
+	"private-messenger/server/internal/mlswire/mlswiretest"
 )
 
 // C-362f5a93b11d: register and owner setup hash the password only after the
@@ -39,7 +40,7 @@ func TestEnrollmentHashesThePasswordOnlyAfterTheProof(t *testing.T) {
 			"username":           "mallory",
 			"password":           "member-password-123",
 			"device_name":        "mallory phone",
-			"device_key_package": make([]byte, 64),
+			"device_key_package": mlswiretest.KeyPackage(),
 		}
 	}
 
@@ -59,7 +60,7 @@ func TestEnrollmentHashesThePasswordOnlyAfterTheProof(t *testing.T) {
 	// the proof check still comes before the hash.
 	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/setup/owner", "", map[string]interface{}{
 		"username": "second-owner", "password": "owner-password-123",
-		"device_name": "phone", "device_key_package": make([]byte, 64),
+		"device_name": "phone", "device_key_package": mlswiretest.KeyPackage(),
 	})
 	if status != http.StatusBadRequest || !jsonErrorIs(response, "invalid_enrollment") {
 		t.Fatalf("owner setup without proof status=%d body=%s", status, response)

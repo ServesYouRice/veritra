@@ -15,6 +15,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"private-messenger/server/internal/mlswire/mlswiretest"
 )
 
 // device is one simulated client: an account's single device session. The
@@ -160,7 +162,7 @@ type sessionResponse struct {
 }
 
 // enroll reserves an enrollment, proves possession of a fresh signing key
-// over a random key package, and creates the account through path.
+// over a synthetic key package (structurally valid, unsigned), and creates the account through path.
 func (c *apiClient) enroll(ctx context.Context, reservePath, createPath, ip string, headers map[string]string, reserveBody, createBody map[string]any) (sessionResponse, error) {
 	var reservation enrollmentReservation
 	if err := expect(c.json(ctx, http.MethodPost, reservePath, nil, ip, reserveBody, &reservation, headers)); err != nil {
@@ -170,10 +172,7 @@ func (c *apiClient) enroll(ctx context.Context, reservePath, createPath, ip stri
 	if err != nil {
 		return sessionResponse{}, err
 	}
-	keyPackage := make([]byte, 64)
-	if _, err := rand.Read(keyPackage); err != nil {
-		return sessionResponse{}, err
-	}
+	keyPackage := mlswiretest.KeyPackage()
 	createBody["device_key_package"] = keyPackage
 	createBody["enrollment_reservation_id"] = reservation.ID
 	createBody["signing_key"] = []byte(publicKey)
@@ -228,10 +227,7 @@ func (c *apiClient) linkDevice(ctx context.Context, owner *device, ip, name stri
 	if err != nil {
 		return sessionResponse{}, err
 	}
-	keyPackage, err := random(64)
-	if err != nil {
-		return sessionResponse{}, err
-	}
+	keyPackage := mlswiretest.KeyPackage()
 	transcript, err := random(sha256.Size)
 	if err != nil {
 		return sessionResponse{}, err

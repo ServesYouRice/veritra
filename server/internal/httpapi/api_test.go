@@ -24,6 +24,7 @@ import (
 
 	"private-messenger/server/internal/app"
 	"private-messenger/server/internal/config"
+	"private-messenger/server/internal/mlswire/mlswiretest"
 )
 
 func TestAccountExportRequiresRecentAuthentication(t *testing.T) {
@@ -575,7 +576,7 @@ func TestDeviceLinkingFlowRequiresExistingDeviceApproval(t *testing.T) {
 	claimBody := map[string]interface{}{
 		"code":               created.DeviceLink.Code,
 		"device_name":        "linked tablet",
-		"device_key_package": make([]byte, 64),
+		"device_key_package": mlswiretest.KeyPackage(),
 		"transcript_hash":    bytes.Repeat([]byte{7}, 32),
 		"claim_tag":          bytes.Repeat([]byte{8}, 32),
 	}
@@ -913,7 +914,7 @@ func newTestAppWithOwner(t *testing.T) (*app.App, http.Handler, string, string) 
 		"username":           "owner",
 		"password":           "owner-password-123",
 		"device_name":        "owner phone",
-		"device_key_package": make([]byte, 64),
+		"device_key_package": mlswiretest.KeyPackage(),
 	}
 	addEnrollmentProof(body, enrollment)
 	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/setup/owner", "", body)
@@ -951,7 +952,7 @@ func newTestHandlerWithOwnerDevice(t *testing.T) (http.Handler, string, string) 
 		"username":           "owner",
 		"password":           "owner-password-123",
 		"device_name":        "owner phone",
-		"device_key_package": make([]byte, 64),
+		"device_key_package": mlswiretest.KeyPackage(),
 	}
 	addEnrollmentProof(body, enrollment)
 	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/setup/owner", "", body)
@@ -1032,7 +1033,7 @@ func registerMemberWithID(t *testing.T, handler http.Handler, ownerToken, userna
 		"username":           username,
 		"password":           "member-password-123",
 		"device_name":        username + " phone",
-		"device_key_package": make([]byte, 64),
+		"device_key_package": mlswiretest.KeyPackage(),
 	}
 	addEnrollmentProof(body, enrollment)
 	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/register", "", body)

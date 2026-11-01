@@ -1,8 +1,9 @@
 // Deployment smoke client for scripts/smoke-deploy.sh (card T46).
 //
 // It drives a running Veritra server through its public API as a client
-// would, with synthetic data only: random bytes stand in for ciphertext and
-// for the MLS key package, which the server stores without reading. It
+// would, with synthetic data only: random bytes stand in for ciphertext, and
+// an unsigned, structurally valid key package for the MLS one (the server
+// parses its structure but verifies no signature). It
 // prints step names and error codes only, never tokens, passwords, secrets
 // or payload bytes. The state file it writes holds throwaway credentials for
 // the restore check and lives in the smoke's private temporary directory.
@@ -893,19 +894,50 @@ func enrollmentProof(challenge, signingKey, keyPackage []byte) []byte {
 	return append(proof, keyPackageHash[:]...)
 }
 
-// syntheticKeyPackage is random bytes of a plausible size. The server stores
-// it opaquely and rejects only reserved test markers.
+// syntheticKeyPackage is an RFC 9420 KeyPackage with random keys and random
+// bytes for both signatures. The server parses key packages structurally
+// (version mls10, suite 0x0001, key and signature sizes, a basic
+// credential, a key_package leaf, no trailing bytes) but verifies no
+// signature, so this passes; no MLS client would accept it. It mirrors
+// server/internal/mlswire/mlswiretest.KeyPackage, kept here because this
+// client builds from the standard library alone.
 func syntheticKeyPackage() []byte {
-	for {
-		value := make([]byte, 512)
+	random := func(n int) []byte {
+		value := make([]byte, n)
 		if _, err := rand.Read(value); err != nil {
 			panic(err)
 		}
-		lower := strings.ToLower(string(value))
-		if !strings.Contains(lower, "test") && !strings.Contains(lower, "placeholder") && !strings.Contains(lower, "non-production") {
-			return value
-		}
+		return value
 	}
+	vector := func(b, value []byte) []byte {
+		if len(value) >= 1<<6 {
+			return append(append(b, 0x40|byte(len(value)>>8), byte(len(value))), value...)
+		}
+		return append(append(b, byte(len(value))), value...)
+	}
+	identity := []byte{0x01}
+	for _, part := range [][]byte{random(16), random(16)} {
+		identity = binary.BigEndian.AppendUint16(identity, uint16(len(part)))
+		identity = append(identity, part...)
+	}
+	b := []byte{0x00, 0x01, 0x00, 0x01} // version mls10, cipher suite 0x0001
+	b = vector(b, random(32))           // init_key
+	b = vector(b, random(32))           // leaf encryption_key
+	b = vector(b, random(32))           // leaf signature_key
+	b = append(b, 0x00, 0x01)           // basic credential
+	b = vector(b, identity)
+	b = vector(b, []byte{0x00, 0x01})                         // versions
+	b = vector(b, []byte{0x00, 0x01, 0x00, 0x02, 0x00, 0x03}) // cipher suites
+	b = vector(b, nil)                                        // extensions
+	b = vector(b, nil)                                        // proposals
+	b = vector(b, []byte{0x00, 0x01})                         // credentials
+	b = append(b, 0x01)                                       // leaf_node_source key_package
+	b = binary.BigEndian.AppendUint64(b, 0)                   // not_before
+	b = binary.BigEndian.AppendUint64(b, 1<<62)               // not_after
+	b = vector(b, nil)                                        // leaf extensions
+	b = vector(b, random(64))                                 // leaf signature
+	b = vector(b, nil)                                        // key package extensions
+	return vector(b, random(64))                              // signature
 }
 
 // throttled paces reads to rate bytes per second, like a slow uplink.
