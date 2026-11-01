@@ -156,6 +156,11 @@ until the package that builds it lands and adds its change-log entry.
   payload: required in `community_shared` conversations, absent elsewhere,
   and invalid on a mismatch with the envelope. It must land before any W8
   sender.
+- [C3: private channels and community info](designs/C3-private-channels-and-info.md):
+  names, topics and icons of communities, categories and channels as
+  encrypted W11-style records; a private channel's key travels only in its
+  own group. It proposes W7 payload types `info_key`, `info_key_request` and
+  `info_update` (W7 owns that section; not yet registered).
 
 ## Device linking
 
