@@ -1829,6 +1829,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'No one else in this conversation can add this device back, so its history is read-only here. Start a new conversation to send messages.';
 
   @override
+  String get chatNoPeerCheckFailed =>
+      'Can\'t check this conversation\'s members right now. Try again in a moment.';
+
+  @override
   String get chatAttachment => 'Attachment';
 
   @override

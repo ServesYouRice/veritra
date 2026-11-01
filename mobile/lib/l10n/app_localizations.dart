@@ -3021,6 +3021,12 @@ abstract class AppLocalizations {
   /// **'No one else in this conversation can add this device back, so its history is read-only here. Start a new conversation to send messages.'**
   String get chatNoPeerReadOnly;
 
+  /// No description provided for @chatNoPeerCheckFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Can\'t check this conversation\'s members right now. Try again in a moment.'**
+  String get chatNoPeerCheckFailed;
+
   /// No description provided for @chatAttachment.
   ///
   /// In en, this message translates to:

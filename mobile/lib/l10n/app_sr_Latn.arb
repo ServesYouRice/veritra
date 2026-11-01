@@ -488,6 +488,7 @@
   "chatPausedNotice": "Slanje je ovde pauzirano: server je odbio ažuriranje šifrovanja za ovaj razgovor. Ostali razgovori i dalje rade.",
   "chatRemovalHoldNotice": "Vaša poruka čeka da se završi ažuriranje šifrovanja posle uklanjanja člana, a zatim se šalje.",
   "chatNoPeerReadOnly": "Niko drugi u ovom razgovoru ne može ponovo da doda ovaj uređaj, pa je istorija ovde samo za čitanje. Započnite novi razgovor da biste slali poruke.",
+  "chatNoPeerCheckFailed": "Trenutno ne možemo da proverimo članove ovog razgovora. Pokušajte ponovo za trenutak.",
   "chatAttachment": "Prilog",
   "chatAttachmentOne": "Prilog: {name}",
   "chatAttachmentMany": "Prilozi: {name} i još {count}",

@@ -1843,6 +1843,10 @@ class AppLocalizationsSr extends AppLocalizations {
       'Нико други у овом разговору не може поново да дода овај уређај, па је историја овде само за читање. Започните нови разговор да бисте слали поруке.';
 
   @override
+  String get chatNoPeerCheckFailed =>
+      'Тренутно не можемо да проверимо чланове овог разговора. Покушајте поново за тренутак.';
+
+  @override
   String get chatAttachment => 'Прилог';
 
   @override
@@ -4655,6 +4659,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get chatNoPeerReadOnly =>
       'Niko drugi u ovom razgovoru ne može ponovo da doda ovaj uređaj, pa je istorija ovde samo za čitanje. Započnite novi razgovor da biste slali poruke.';
+
+  @override
+  String get chatNoPeerCheckFailed =>
+      'Trenutno ne možemo da proverimo članove ovog razgovora. Pokušajte ponovo za trenutak.';
 
   @override
   String get chatAttachment => 'Prilog';

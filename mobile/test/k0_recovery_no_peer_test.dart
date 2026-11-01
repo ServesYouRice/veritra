@@ -4,8 +4,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/crypto/app_payload.dart';
 import 'package:private_messenger/features/chat/chat_screen.dart';
+import 'package:private_messenger/features/chat/conversation_details_screen.dart';
 import 'package:private_messenger/l10n/l10n.dart';
+import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/ui/theme.dart';
 
@@ -20,6 +23,22 @@ import 'k0_recovery_fakes.dart';
 /// conversations it holds an MLS group for.
 class _NoPeerCrypto extends K0Crypto {
   final Set<String> groups = <String>{};
+
+  /// Conversations a send reached encryption for. Encryption then fails,
+  /// so nothing is queued.
+  final List<String> encrypted = <String>[];
+
+  @override
+  Future<MessageEnvelope> encryptPayload(
+    String conversationId,
+    AppPayloadType type,
+    Map<String, Object?> body, {
+    List<String> attachmentRefs = const <String>[],
+    String? draftText,
+  }) async {
+    encrypted.add(conversationId);
+    throw StateError('test encryption');
+  }
 
   /// A Welcome to this device gives it the group.
   @override
@@ -76,7 +95,9 @@ class _NoPeerApi extends K0Api {
     if (roster == null) throw ApiException(503, '{"error":"unavailable"}');
     return <ConversationMember>[
       for (final account in roster)
-        ConversationMember(accountId: account, role: 'member'),
+        ConversationMember(
+            accountId: account,
+            role: account == 'acct_me' ? 'owner' : 'member'),
     ];
   }
 
@@ -97,6 +118,13 @@ class _NoPeerApi extends K0Api {
   @override
   Future<void> sendEnvelope(String token, MessageEnvelope envelope) async {
     writes.add('send');
+  }
+
+  @override
+  Future<void> addConversationMember(
+      String token, String conversationId, String accountId,
+      {String role = 'member'}) async {
+    writes.add('add-member');
   }
 }
 
@@ -158,7 +186,6 @@ void main() {
     expect(await app.checkAccountRecovery(), isTrue,
         reason: app.errorFor(Ops.accountRecovery));
     await app.refreshConversations();
-    await app.refreshRecoveryNotices();
   }
 
   Future<void> open(AppState app, String id) async {
@@ -173,10 +200,19 @@ void main() {
       await open(state, 'conv_self');
       expect(state.readOnlyWithoutPeer('conv_self'), isTrue);
 
-      expect(await state.sendMessageTo('conv_self', 'hello'), isFalse);
-      expect(state.errorFor(Ops.send), l10n.chatNoPeerReadOnly);
-      expect(await state.react('conv_self', 'k', '👍'), isFalse);
-      expect(await state.deleteMessage('conv_self', 'k'), isFalse);
+      Future<void> refused(Future<bool> attempt) async {
+        state.clearError(Ops.send);
+        expect(await attempt, isFalse);
+        expect(state.errorFor(Ops.send), l10n.chatNoPeerReadOnly);
+      }
+
+      await refused(state.sendMessageTo('conv_self', 'hello'));
+      await refused(state.react('conv_self', 'k', '👍'));
+      await refused(state.deleteMessage('conv_self', 'k'));
+      await refused(state.replyTo('conv_self', 'k', 'hello'));
+      await refused(state.editMessage('conv_self', 'k', 'hello'));
+      await refused(state.pinMessage('conv_self', 'k', pinned: true));
+      expect(crypto.encrypted, isEmpty);
       expect(
           await state.sendAttachment('conv_self',
               path: '/nonexistent/photo.jpg', fileName: 'photo.jpg'),
@@ -192,6 +228,54 @@ void main() {
       await recover(state);
       await open(state, 'conv_peer');
       expect(state.readOnlyWithoutPeer('conv_peer'), isFalse);
+      // The send goes on to encryption (which fails here: no group yet).
+      expect(await state.sendMessageTo('conv_peer', 'hello'), isFalse);
+      expect(state.errorFor(Ops.send), isNot(l10n.chatNoPeerReadOnly));
+      expect(crypto.encrypted, <String>['conv_peer']);
+    });
+
+    test('forwarding into a read-only conversation is refused', () async {
+      await recover(state);
+      await open(state, 'conv_self');
+      await open(state, 'conv_peer');
+      crypto.groups.add('conv_peer');
+      await store.saveCryptoState(
+          StoredCryptoState(
+              counter: 1, stateKey: List.filled(32, 1), sealedState: [1]),
+          0);
+      await store.commitMlsTransition(MlsStateTransition(
+          messageId: 'seed',
+          conversationId: 'conv_peer',
+          expectedCounter: 1,
+          expectedCursor: 0,
+          state: StoredCryptoState(
+              counter: 2, stateKey: List.filled(32, 1), sealedState: [2]),
+          cursor: 1,
+          messageEffects: [
+            InsertMessageEffect(
+                key: 'dev_bob:m1',
+                conversationId: 'conv_peer',
+                senderAccountId: 'acct_bob',
+                senderDeviceId: 'dev_bob',
+                kind: LocalMessageKind.text,
+                body: 'hi',
+                createdAt: 1,
+                state: LocalMessageState.received),
+          ]));
+      await state.refreshHistory('conv_peer');
+      final source = state.historyFor('conv_peer').forKey('dev_bob:m1')!;
+      expect(
+          await state.forwardMessage(source, <String>['conv_self']), isFalse);
+      expect(state.errorFor(Ops.send), l10n.chatNoPeerReadOnly);
+      expect(crypto.encrypted, isEmpty);
+    });
+
+    test('adding a member is refused and not offered', () async {
+      await recover(state);
+      await open(state, 'conv_self');
+      await state.addConversationMember('conv_self', 'acct_carol');
+      expect(state.error, l10n.chatNoPeerReadOnly);
+      expect(apis.expand((api) => api.writes), isEmpty);
     });
 
     test('becomes normal once a Welcome gave this device the group', () async {
@@ -200,8 +284,44 @@ void main() {
       expect(state.readOnlyWithoutPeer('conv_self'), isTrue);
 
       crypto.groups.add('conv_self');
+      // The list refresh reads only new conversations; opening one reads
+      // its group again.
       await state.refreshConversations();
+      expect(state.readOnlyWithoutPeer('conv_self'), isTrue);
+      await open(state, 'conv_self');
       expect(state.readOnlyWithoutPeer('conv_self'), isFalse);
+      expect(await state.sendMessageTo('conv_self', 'hello'), isFalse);
+      expect(state.errorFor(Ops.send), isNot(l10n.chatNoPeerReadOnly));
+      expect(crypto.encrypted, <String>['conv_self']);
+    });
+
+    test('the notice stays while a membership event reloads the list',
+        () async {
+      await recover(state);
+      await open(state, 'conv_self');
+      expect(state.readOnlyWithoutPeer('conv_self'), isTrue);
+      // As a membership event does: the list is dropped until read again.
+      state.membersByConversation = Map.of(state.membersByConversation)
+        ..remove('conv_self');
+      expect(state.readOnlyWithoutPeer('conv_self'), isTrue);
+      expect(await state.sendMessageTo('conv_self', 'hello'), isFalse);
+      expect(state.errorFor(Ops.send), l10n.chatNoPeerReadOnly);
+    });
+
+    test('the mark applies before any notice refresh has run', () async {
+      await recover(state);
+      state.dispose();
+      // A new app with the session set directly: nothing read the mark.
+      state = makeApp()
+        ..session = server.session()
+        ..api = _NoPeerApi(server, rosters)
+        ..conversations = <Conversation>[
+          Conversation(id: 'conv_self', kind: 'group', createdBy: 'acct_me'),
+        ];
+      expect(await state.loadConversationMembers('conv_self'), isTrue);
+      expect(await state.sendMessageTo('conv_self', 'hello'), isFalse);
+      expect(state.errorFor(Ops.send), l10n.chatNoPeerReadOnly);
+      expect(crypto.encrypted, isEmpty);
     });
 
     test('a Welcome through sync ends it without a refresh', () async {
@@ -253,7 +373,8 @@ void main() {
       expect(await state.loadConversationMembers('conv_unknown'), isFalse);
       expect(state.readOnlyWithoutPeer('conv_unknown'), isFalse);
       expect(await state.sendMessageTo('conv_unknown', 'hello'), isFalse);
-      expect(state.errorFor(Ops.send), l10n.chatNoPeerReadOnly);
+      expect(state.errorFor(Ops.send), l10n.chatNoPeerCheckFailed);
+      expect(crypto.encrypted, isEmpty);
       expect(await store.pendingEnvelopeRecords(), isEmpty);
     });
 
@@ -263,7 +384,6 @@ void main() {
       state.dispose();
       state = makeApp();
       await state.tryRestoreSession();
-      await state.refreshRecoveryNotices();
       await open(state, 'conv_self');
       expect(state.readOnlyWithoutPeer('conv_self'), isTrue);
 
@@ -298,11 +418,35 @@ void main() {
     expect(find.text(l10n.chatNoPeerReadOnly), findsOneWidget);
     expect(find.byType(TextField), findsNothing);
 
+    await tester.pumpWidget(MaterialApp(
+      theme: veritraLightTheme(),
+      home:
+          ConversationDetailsScreen(state: state, conversationId: 'conv_self'),
+    ));
+    // The screen reloads the member list; let that finish for real.
+    await tester.runAsync(() => pumpEventQueue());
+    await tester.pump();
+    expect(find.text(l10n.detailsAddMember), findsNothing);
+    await tester.pumpWidget(MaterialApp(
+      theme: veritraLightTheme(),
+      home: ChatScreen(state: state, conversationId: 'conv_self'),
+    ));
+    await tester.pumpAndSettle();
+
     crypto.groups.add('conv_self');
-    await tester.runAsync(state.refreshConversations);
+    await tester.runAsync(() => open(state, 'conv_self'));
     await tester.pumpAndSettle();
     expect(find.text(l10n.chatNoPeerReadOnly), findsNothing);
     expect(find.byType(TextField), findsOneWidget);
+
+    await tester.pumpWidget(MaterialApp(
+      theme: veritraLightTheme(),
+      home:
+          ConversationDetailsScreen(state: state, conversationId: 'conv_self'),
+    ));
+    await tester.runAsync(() => pumpEventQueue());
+    await tester.pump();
+    expect(find.text(l10n.detailsAddMember), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 5));
