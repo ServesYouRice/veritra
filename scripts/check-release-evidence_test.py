@@ -1759,7 +1759,7 @@ def release_readiness_cases() -> None:
         (temp / "dist/release-evidence.json").write_text("{}", encoding="utf-8")
         result, logged = readiness()
         assert result.returncode == 0 and len(logged) == 2, (result.stderr, logged)
-        assert "--evidence " + str(temp / "dist/release-evidence.json") in logged[1], logged
+        assert "--evidence " + (temp / "dist/release-evidence.json").as_posix() in logged[1], logged
         assert "including the release evidence" in result.stdout, result.stdout
         # Crypto not wired: blocked before anything is reported as passed.
         (temp / "mobile/lib/main.dart").write_text("UnavailableCryptoService()\n", encoding="utf-8")
